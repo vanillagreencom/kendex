@@ -198,6 +198,10 @@ echo "=== lanes context ==="
   printf '%s %%32 nclaude\n' "$LIVE_PID"
   # 33: a 1M-window lane one point above the handoff mark.
   printf '%s %%33 claude\n' "$LIVE_PID"
+  # 37: a claude lane on a tier the window table leaves out, whose line names
+  # no window either. Its parse prints an empty token, window and source in a
+  # row before the model, the one shape a collapsing split mis-reads.
+  printf '%s %%37 claude\n' "$LIVE_PID"
   printf '%s %%9 fish\n' "$LIVE_PID"
   # tmux reports a login shell with the leading dash it was started with.
   printf '%s %%11 -bash\n' "$LIVE_PID"
@@ -242,6 +246,7 @@ write_claim thirtyone   "%30" "$H/.codex"  "ken-131"
 write_claim thirtytwo   "%31" "$H/.claude" "ken-132"
 write_claim thirtythree "%32" "$H/.claude" "ken-133"
 write_claim thirtyfour  "%33" "$H/.nclaude" "ken-134"
+write_claim thirtyseven "%37" "$H/.claude"  "ken-137"
 # The foreign lane's pane NUMBER exists here too, on a screen that parses
 # cleanly: %1 is the first lane's, reading 35.
 write_claim_on "$FOREIGN_PID" foreign "%1" "$H/.claude" "ken-110"
@@ -416,6 +421,13 @@ screen 32 'plain shell output with no harness status line'
 # the codex line never names one.
 screen 33 '  kendex (🌳 ken-134) Fable 5.1 (1M context) 52% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
+# 37. Sonnet is not in the window table and this line names no window, so the
+# parse prints the percentage and then three empty fields before the model.
+# Split on collapsed tabs, the model lands in the token field and the row is
+# built with a model name where a number belongs, which is the whole report
+# failing rather than one lane losing a figure.
+screen 37 '  kendex (🌳 ken-137) Sonnet 4.5 47% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
 
 OUT="$(run_ctx --json)"
 
@@ -465,6 +477,7 @@ lanes_table "$OUT" \
   "a lane well above the mark is not marked|ken-103|headroom_pct=10 handoff_required=false" \
   "a line naming no window takes the window its model runs: 35% of Opus 5's 1M|ken-101|context_tokens=350000" \
   "a 1M lane at 52% reads 520000 tokens: the percentage times the window the line names|ken-134|harness=claude context_used_pct=52 context_tokens=520000" \
+  "a tier the window table leaves out is measured and carries no token figure: the empty fields before its model are not a shifted row|ken-137|status=ok harness=claude context_used_pct=47 context_tokens=null" \
   "a (1M context) parenthetical yields the token figure beside the percentage|ken-114|context_tokens=220000" \
   "the bottom-most reading wins over one repainted past|ken-103|context_used_pct=18" \
   "a (1M context) parenthetical between the model and the percentage is read through|ken-114|harness=claude context_used_pct=22" \
@@ -617,7 +630,7 @@ FIXTURES="$TEST_DIR/fixtures/oversee-watch"
 parse_fixture() { # <capture file name>
   "$BASH" -c 'source "$1"; lane_context_parse codex <"$2"' _ "$SCRIPTS_DIR/lib/lane-context.sh" "$FIXTURES/$1" || printf 'none\n'
 }
-for row in "codex-working.txt|codex,0,,," "codex-composer-draft.txt|codex,0,,," "codex-composer-idle.txt|codex,0,,," "codex-idle-after-turn.txt|codex,1,,," "codex-dialog-model.txt|none" "codex-dialog-trust.txt|none"; do
+for row in "codex-working.txt|codex,0,,,," "codex-composer-draft.txt|codex,0,,,," "codex-composer-idle.txt|codex,0,,,," "codex-idle-after-turn.txt|codex,1,,,," "codex-dialog-model.txt|none" "codex-dialog-trust.txt|none"; do
   IFS='|' read -r capture want <<<"$row"
   assert_eq "$(parse_fixture "$capture" | tr '\t' ',')" "$want" "$capture parses to its screen's figure"
 done

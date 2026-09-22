@@ -75,7 +75,10 @@
 #         wall; its keyed line on stderr says how many candidates were WALLED
 #         at or above --max-pct and how many measured nothing for the launch,
 #         and `no-candidate-unmeasured` is every candidate unmeasured, which is
-#         a read to fix rather than an allowance to wait out.
+#         a read to fix rather than an allowance to wait out. Under --json
+#         that exit also prints `{"walled":N,"unmeasured":N}` on stdout, the
+#         same two counts, so a caller walking several picks can report what
+#         each sweep found instead of parsing the message written for a person.
 #
 #         With --lane <config-dir> it judges that ONE account instead of
 #         choosing among the fleet, measuring only that directory. A launcher
@@ -162,11 +165,15 @@
 #                    bound as well, so a lane is room only where BOTH clear it.
 #                    With --model the two can differ: an account whose binding
 #                    bucket is a model this launch will not pass has room for
-#                    the launch and none of its own. For a caller that judges
-#                    the account again on `headroom_pct` afterwards, that lane
-#                    is already spent. Without --model the binding bucket is
-#                    the judged wall, so the flag asks for what is judged
-#                    anyway.
+#                    the launch and none of its own. Pass it for a caller whose
+#                    launched session will be judged on the binding bucket
+#                    rather than on --model — a session whose status line names
+#                    no model, which is every codex session. A session that
+#                    WILL be judged on --model is already held to the reading
+#                    it takes, and the flag would then refuse it an account
+#                    over a window neither judgement reads. Without --model the
+#                    binding bucket is the judged wall, so the flag asks for
+#                    what is judged anyway.
 #   --local          list: this machine's config dirs alone. The provider is
 #                    not asked, so a caller looking a config dir up by alias
 #                    costs no round trip and meets no hosted row.
@@ -1494,6 +1501,21 @@ cmd_pick() {
 			fi
 			render_table <<<"$lanes"
 		} >&2
+		# The two counts on STDOUT under --json, as the named form prints its
+		# record there on the same exit: a caller walking several picks reports
+		# what each sweep found, and the keyed line above is a message for a
+		# person. `{"walled":N,"unmeasured":N}` is the whole object; nothing
+		# else is printed on this path, so a caller reading `.walled` gets the
+		# count or a jq error, never a lane record it would mistake for a pick.
+		#
+		# Both are proven digits before jq is handed them: the reads above
+		# swallow a failure into an empty string, and --argjson on one is jq
+		# refusing its own arguments, which would abort this refusal instead of
+		# returning it.
+		[[ "${walled:-}" =~ ^[0-9]+$ ]] || walled=0
+		[[ "${unmeasured:-}" =~ ^[0-9]+$ ]] || unmeasured=0
+		[[ "$as_json" != "true" ]] || jq -nc --argjson w "$walled" --argjson u "$unmeasured" \
+			'{walled: $w, unmeasured: $u}'
 		return 3
 	fi
 	if [[ "$as_json" == "true" ]]; then

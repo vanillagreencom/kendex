@@ -246,6 +246,81 @@ launch_choice_write() { # HARNESS MODEL EFFORT
   printf '%s\n' "$out"
 }
 
+# The flags of a launch on HARNESS with that harness's own MODEL and EFFORT
+# words taken out, left in LAUNCH_CHOICE_KEPT. What is left is every other flag
+# in the order it was given.
+#
+# The inverse of launch_choice_write over the same row, and the reason it
+# exists: a caller hands its flags on to a launch it did not write, and those
+# flags name a model and an effort in the CALLER harness's spelling. A launch
+# generated for another harness has been given its own pair from its own row,
+# so carrying the caller's through would hand it a second model and a flag word
+# its own launch form may not have at all.
+#
+# Read exactly as launch_choice_value reads, so a spelling is added to the row
+# once and both halves get it: EVERY spelling in the list, not the written one
+# alone; a spelling ending in `=` matches a whole attached token and takes the
+# row's attach word with it where that word stands in front of it, since codex
+# writes the effort as two tokens and dropping the second alone would leave a
+# `-c` whose value is then the next flag; any other spelling takes its own
+# token and the `=VALUE` or following token that belongs to it. A spelling last
+# in the list names no value, so it goes alone: the caller named no model
+# there, and a bare flag word is the one thing its harness would refuse.
+#
+# Status 1 where the table holds no row for HARNESS, the same answer
+# launch_choice_write gives: nothing here knows how that harness spells either
+# word, and keeping them is the corruption this exists to stop. The caller
+# refuses rather than guessing.
+LAUNCH_CHOICE_KEPT=()
+launch_choice_strip() { # HARNESS FLAG...
+  local row attach word tok drop i n
+  local -a spellings=() rest=()
+  LAUNCH_CHOICE_KEPT=()
+  row="$(launch_choice_row "$1")"
+  [[ -n "$row" ]] || return 1
+  IFS='|' read -r _ _ _ _ attach <<<"$row"
+  read -r -a spellings \
+    <<<"$(launch_choice_model_spellings "$1") $(launch_choice_effort_spellings "$1")"
+  shift
+  rest=("$@")
+  n=${#rest[@]}
+  i=0
+  while (( i < n )); do
+    tok="${rest[i]}"
+    drop=0
+    if [[ "$attach" != - && "$tok" == "$attach" ]] && (( i + 1 < n )); then
+      for word in ${spellings[@]+"${spellings[@]}"}; do
+        [[ "$word" == *= && "${rest[i+1]}" == "$word"* ]] || continue
+        drop=2
+        break
+      done
+    fi
+    if (( drop == 0 )); then
+      for word in ${spellings[@]+"${spellings[@]}"}; do
+        if [[ "$word" == *= ]]; then
+          [[ "$tok" == "$word"* ]] || continue
+          drop=1
+          break
+        fi
+        if [[ "$tok" == "$word="* ]]; then
+          drop=1
+          break
+        fi
+        if [[ "$tok" == "$word" ]]; then
+          drop=1
+          (( i + 1 >= n )) || drop=2
+          break
+        fi
+      done
+    fi
+    if (( drop == 0 )); then
+      LAUNCH_CHOICE_KEPT+=("$tok")
+      drop=1
+    fi
+    i=$((i + drop))
+  done
+}
+
 # A value the pane's own shell reads back as itself.
 lane_single_quote() { # VALUE
   local escaped="'\\''"
