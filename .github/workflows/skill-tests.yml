@@ -1290,7 +1290,8 @@ jobs:
                 index_cli install_registers_project install_script \
                 install_ux installer instruction_shims_cli \
                 marketplace_author marketplace_cli missing_remedy \
-                packaging_recipes pi_extension_only_lock pi_shadow_package \
+                packaging_recipes pi_declared_both_scopes \
+                pi_extension_only_lock pi_shadow_package \
                 pi_staleness presentation refresh_fresh_clone \
                 refresh_ledger release_workflow remote_e2e safety_print \
                 template_cli terms_first_run unmanaged unmanaged_copy_check \
