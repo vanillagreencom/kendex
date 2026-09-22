@@ -1516,6 +1516,40 @@ check "no account above the trigger: the walled recovery refuses at exit 3 under
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
   "3|oversee-succeed: no-lane-qualifies entries=1 mark=wall|yes|0|none"
 
+# The successor keeps THIS session's model, effort and permission flags and
+# changes the account alone. The preference names where a later successor
+# goes at a MARK and is not walked here, so launch_choice_write writes no
+# model or effort beside the ones the caller's own flags already carry: a
+# command naming two models runs on whichever the harness reads last, which
+# is a model no pick judged.
+new_caller "$MARK"
+walled_world
+run_succeed walledflags 'codex:1:high' --walled-pane "$CALLER_PANE" -- --model fable --effort high --verbose
+check "--walled-pane keeps this session's own model and effort, and the preference writes none beside them" \
+  "$RC|$(recorded claude)|$(recorded codex)" \
+  "0|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;--verbose;$BRIEF;|none"
+
+# The one account this recovery may never open on is the one it is recovering
+# from. The caller's own lane is given the MOST room here, so the pick names
+# it: an inventory that has not caught up with the wall on that pane reads
+# exactly like this. The entry is skipped and the run refuses rather than
+# relaunching into the wall.
+new_caller "$MARK"
+claude_usage 10 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed walledspent '' --walled-pane "$CALLER_PANE"
+walled_world
+check "a pick naming the walled account itself is skipped, not opened on" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(keyed successor-lane-spent "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "3|oversee-succeed: successor-lane-spent lane=$H/.claude entry=caller|oversee-succeed: successor-lane-spent lane=$H/.claude entry=caller|yes|0|none"
+
+# The pick is NOT told the model this session runs, and a row asserting an
+# effect would assert one that does not exist. Every pick here passes
+# --binding-floor, which holds the candidate to its binding bucket, the
+# most-consumed of all its windows; the three windows that wall one model are
+# a subset of that maximum, so naming the model moves neither which lanes
+# qualify nor which of them is chosen. What the successor runs on is the
+# model in the flags above, written once, which the walledflags row pins.
 # What this mode refuses of the other four. A combination read as one of them
 # would send a line built for another pane, judge a mark against a pane that
 # takes no turn, or reopen on the account that walled. Every row refuses

@@ -168,13 +168,17 @@ ORCH_OVERSEER_LANES = "3"
 # "off" stops oversee-succeed from launching a successor overseer, and turns
 # off the turn-end refusal that names it. A live
 # overseer writes its handoff and asks the user to start the next session. A
-# dead overseer cannot ask, so the watch reports the death and leaves a notice
-# for a manual replacement.
+# dead or walled overseer cannot ask, so the watch reports the case and leaves
+# a notice for a manual replacement.
 # ORCH_OVERSEER_SUCCESSION = "on"
 
 # Consecutive oversee-watch passes the overseer's own pane must read exited
-# before the watch reports overseer-dead and relaunches. One pass is a poll
-# that caught a live session between its harness and its shell.
+# before the watch reports overseer-dead, or walled before it reports
+# overseer-walled, and relaunches. One pass is a poll that caught a live
+# session between its harness and its shell. A walled reading also needs the
+# account judged at or below ORCH_OVERSEER_HEADROOM_PCT: that pane carries the
+# limit banners the watch relays about other lanes, and passes alone never
+# close a window whose harness is alive.
 # ORCH_OVERSEER_DEAD_PASSES = "2"
 
 # Account headroom, in percent of the binding bucket, at or below which

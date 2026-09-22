@@ -36,8 +36,13 @@ HANDOFF_DEFAULT=tmp/handoffs/OVERSEER-HANDOFF.md
 # below pins what that pair resolves to.
 WALL_BANNER="You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)"
 WALL_NOW=1788364800
+# The account judgement that confirms a wall, and the two figures its line
+# carries: `mark-reached kind=headroom` is oversee-succeed's own answer for a
+# session whose account sits at or below its trigger, and the account and its
+# reset come from the same `lanes context` row that measured the headroom.
+WALL_ACCOUNT=9claude
 WALL_RESETS=2026-09-02T16:50:00Z
-WALL_ACCOUNT=/home/me/.9claude
+WALL_MARK_LINE="oversee-succeed: mark-reached kind=headroom value=0 mark=10 succession=on account=$WALL_ACCOUNT resets=$WALL_RESETS"
 
 # oversee-succeed stub. `--print-launch-line` answers with succeed.line (or the
 # default below), `--dead-pane PANE --line-file PATH` records the relaunch
@@ -838,26 +843,37 @@ assert_eq "marks=$(marks_seen)" "marks=1" \
   "control: without the repeat count the standing mark is reported on the very next pass" "$ERR"
 
 # --- the overseer's account spent, which is a death by the other road -------
-# A walled overseer's harness is alive and its lanes keep working, so nothing
-# but this check notices: it takes no turn, which means no event handled, no
-# lane answered and no mail read. The recovery is the dead arm's, on the same
-# two channels and with the same row machinery, differing only where it has
-# to: the successor's account is picked afresh, never taken from the recorded
-# line, which names the account that just walled.
+# A walled overseer is not dead: its harness is running and its lanes keep
+# working, so nothing but this check notices that it takes no turn, answers no
+# lane and reads no mail. The recovery is the dead arm's, on the same two
+# channels and with the same row machinery, and it differs where it has to:
+# the successor's account is picked afresh, never taken from the recorded line
+# which names the account that just walled.
+#
+# TWO readings gate it, and the second is the load-bearing one. This pane is
+# the one pane in a fleet carrying the limit banners the watch relays about
+# OTHER lanes, so the screen cannot tell those from the overseer's own account
+# running out — and acting on the screen alone closes a window whose harness
+# is alive. `wall_confirmed` is the account judgement that settles it.
+wall_confirmed() { printf '%s\n' "$WALL_MARK_LINE" > "$STUB_DIR/succeed.check"; }
+
 overseer_case walled_relaunch walled
 state_with "$LINE"
+wall_confirmed
 run TMUX_PANE="$PANE" -- --max-loops 2 -- --verbose
 assert_eq "$RC" "3" "a relaunched walled overseer ends the watch with the same status a death does" "$ERR"
 assert_eq "$(head -n 1 <<<"$OUT")" "EVENT overseer-walled $PANE window=$WINDOW passes=2 succession=on" \
   "the event names the pane, its window, the passes it took and the setting" "$ERR"
+assert_contains "$OUT" "$(printf "%b" "$WALL_BANNER")" \
+  "the banner's own window follows the line, as a lane's usage-limit payload does" "$ERR"
 assert_eq "$(succeed_calls --walled-pane)" "1" "the re-picking launch path is called once" "$ERR"
 assert_eq "$(cat "$STUB_DIR/succeed.launched")" \
   "--walled-pane $PANE --handoff $HANDOFF_DEFAULT -- --verbose" \
   "naming the walled pane, the handoff path and the overseer's own flags" "$ERR"
 assert_eq "$(succeed_calls --dead-pane)" "0" \
   "the recorded line is never sent: it names the account that walled" "$ERR"
-assert_eq "$(succeed_calls --check-marks)" "0" \
-  "a walled overseer takes no turn, so neither of its own marks is judged" "$ERR"
+assert_eq "$(succeed_calls --check-marks)" "1" \
+  "the account judgement is taken once, and it is what confirms the wall" "$ERR"
 assert_contains "$(cat "$ERR")" "env CLAUDE_CONFIG_DIR='/home/me/.eclaude' claude -n overseer" \
   "the launch line the recovery used is in the pass output" "$ERR"
 assert_eq "$(fleet_log_kind)" "close" "the fleet log records the wall as a close" "$ERR"
@@ -868,9 +884,47 @@ assert_contains "$(fleet_log_text)" "on an account the lane pick judged, never o
 assert_eq "$(mailbox text)" "$(fleet_log_text)" \
   "both channels carry one text, so they cannot describe the wall differently" "$ERR"
 
+# The account's own measurement is what separates the overseer's wall from a
+# wall it reported about a lane. This pane reads walled and its account
+# measures room, which is every relayed banner: nothing is launched, no window
+# is closed and the pass carries on as it does for any working overseer.
+overseer_case walled_quoted walled
+state_with "$LINE"
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "rc=$RC events=$(grep -c '^EVENT overseer-walled' <<<"$OUT" || true) launched=$(succeed_calls --walled-pane) mail=$(mailbox_lines)" \
+  "rc=0 events=0 launched=0 mail=0" \
+  "a wall the account refutes launches nothing and publishes nothing" "$ERR"
+assert_contains "$(cat "$ERR")" "oversee-watch: overseer-wall-unconfirmed pane=$PANE answer=below-mark" \
+  "and the watch says which judgement refuted it" "$ERR"
+
+# A judgement that could not be made refutes nothing and confirms nothing, so
+# the destructive half waits for a pass that can measure.
+overseer_case walled_unjudged walled
+state_with "$LINE"
+printf '2\n' > "$STUB_DIR/succeed.check-rc"
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "rc=$RC launched=$(succeed_calls --walled-pane) mail=$(mailbox_lines)" \
+  "rc=0 launched=0 mail=0" \
+  "a wall nothing could judge closes no window" "$ERR"
+assert_contains "$(cat "$ERR")" "oversee-watch: overseer-wall-unjudged pane=$PANE" \
+  "and says the judgement itself is what is missing" "$ERR"
+
+# One reading of the marks per pass. A wall the account refutes falls through
+# to the live arm, which reports the crossing off that same reading rather
+# than measuring every account of the fleet a second time.
+overseer_case walled_one_judgement walled
+state_with "$LINE"
+printf '%s\n' "oversee-succeed: mark-reached kind=context value=612000 mark=500000 succession=on headroom=80" \
+  > "$STUB_DIR/succeed.check"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "judged=$(succeed_calls --check-marks) marks=$(grep -c '^EVENT overseer-mark' <<<"$OUT" || true)" \
+  "judged=1 marks=1" \
+  "the refuted wall reports the standing context mark off the one reading it took" "$ERR"
+
 # One reading is a poll, exactly as it is for a death.
 overseer_case walled_one_pass walled
 state_with "$LINE"
+wall_confirmed
 run TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT") launched=$(succeed_calls --walled-pane)" \
   "rc=0 first=EVENT heartbeat loops=1 interval=0s since=none launched=0" \
@@ -880,6 +934,7 @@ assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT") launched=$(succeed_calls --walled
 # before the threshold, and the next wall starts its count over.
 overseer_case walled_then_alive walled
 state_with "$LINE"
+wall_confirmed
 run TMUX_PANE="$PANE" -- --max-loops 1
 printf '%b\n' '⏺ Back at it.' '\xe2\x9d\xaf\xc2\xa0' > "$STUB_DIR/pane-$PANE.txt"
 run TMUX_PANE="$PANE" -- --max-loops 1
@@ -891,7 +946,7 @@ assert_eq "rc=$RC launched=$(succeed_calls --walled-pane) mail=$(mailbox_lines)"
 
 # The wall comes from the shared judge and never from limit text the overseer
 # printed in its own output: a turn in flight behind that text is a working
-# overseer, and a working overseer is never touched.
+# overseer, and a working overseer is never read as walled at all.
 overseer_case walled_limit_text limit_text
 state_with "$LINE"
 run TMUX_PANE="$PANE" -- --max-loops 2
@@ -901,31 +956,72 @@ assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT") launched=$(succeed_calls --walled
 
 # No account qualifies. oversee-succeed answers exit 3, which a retry cannot
 # improve on, so the pass publishes ONE notice naming the spent account and
-# the reset its banner states, and stops the repeat the way notice-only
-# recovery does.
+# when its binding bucket frees up, and stops the repeat the way notice-only
+# recovery does. Both figures come from the account judgement that confirmed
+# the wall, which is the reading the fleet waits on.
 overseer_case walled_no_room walled
 state_with "$LINE"
+wall_confirmed
 printf '3\n' > "$STUB_DIR/succeed.rc"
-run TMUX_PANE="$PANE" CLAUDE_CONFIG_DIR="$WALL_ACCOUNT" -- --max-loops 2
+run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "rc=$RC launched=$(succeed_calls --walled-pane)" "rc=4 launched=1" \
   "the child tells its live owner to stop, having tried the recovery once" "$ERR"
 assert_eq "$(mailbox text)" \
-  "overseer-recovery-blocked: no account qualifies for a successor to the overseer in tmux window $WINDOW (pane $PANE). Its own account is $WALL_ACCOUNT and its banner states a reset at $WALL_RESETS. The repeat stops; start a fresh overseer by hand once an account has room." \
-  "the notice names the spent account and the reset the banner states" "$ERR"
+  "overseer-recovery-blocked: no account qualifies for a successor to the overseer in tmux window $WINDOW (pane $PANE). Its own account is $WALL_ACCOUNT and its binding bucket frees up at $WALL_RESETS. The repeat stops; start a fresh overseer by hand once an account has room." \
+  "the notice names the spent account and when it frees up" "$ERR"
 assert_eq "$(fleet_log_text)" "$(mailbox text)" \
   "and reaches the fleet log with that same text" "$ERR"
 assert_eq "mail=$(mailbox_lines) log=$(jq '[.fleet_log[] | select(.item == "overseer")] | length' "$STUB_DIR/oversee-state.json")" \
   "mail=2 log=2" "the wall and the blocked recovery are the whole of what went out" "$ERR"
 assert_contains "$(cat "$ERR")" "oversee-watch: overseer-recovery-blocked pane=$PANE account=$WALL_ACCOUNT resets=$WALL_RESETS" \
   "with the watch's own keyed line naming both" "$ERR"
-run TMUX_PANE="$PANE" CLAUDE_CONFIG_DIR="$WALL_ACCOUNT" -- --max-loops 1
+run TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "launched=$(succeed_calls --walled-pane) mail=$(mailbox_lines)" "launched=1 mail=2" \
   "a later pass neither retries the same accounts nor repeats the notice" "$ERR"
+
+# An account judgement that named neither figure. The notice says so rather
+# than carrying a figure from somewhere else: the words are `unknown` and
+# `none`, which is what the reader acts on.
+overseer_case walled_no_room_unnamed walled
+state_with "$LINE"
+printf '%s\n' "oversee-succeed: mark-reached kind=headroom value=0 mark=10 succession=on" \
+  > "$STUB_DIR/succeed.check"
+printf '3\n' > "$STUB_DIR/succeed.rc"
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_contains "$(mailbox text)" "Its own account is unknown and its binding bucket frees up at none." \
+  "a judgement naming neither figure gives the notice no figure to print" "$ERR"
+
+# A launcher that refuses leaves one bounded retry, written to the WALLED row:
+# the death's row is untouched throughout, so the two cases never spend each
+# other's attempts.
+overseer_case walled_relaunch_refused walled
+state_with "$LINE"
+wall_confirmed
+printf '4\n' > "$STUB_DIR/succeed.rc"
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "rc=$RC walled=$(succeed_calls --walled-pane) events=$(grep -c '^EVENT overseer-walled' <<<"$OUT" || true)" \
+  "rc=0 walled=1 events=1" \
+  "a refused walled relaunch neither ends the watch nor is retried in the same pass" "$ERR"
+assert_contains "$(cat "$ERR")" "oversee-watch: overseer-relaunch-failed pane=$PANE attempt=1 retry=pending step=launcher" \
+  "the first refusal records a pending retry" "$ERR"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "walled=$(succeed_calls --walled-pane) events=$(grep -c '^EVENT overseer-walled' <<<"$OUT" || true) mail=$(mailbox_lines)" \
+  "walled=2 events=0 mail=3" \
+  "the next pass retries off the walled row without repeating the event" "$ERR"
+assert_contains "$(cat "$ERR")" "oversee-watch: overseer-relaunch-failed pane=$PANE attempt=2 retry=exhausted step=launcher" \
+  "the second refusal records that the retry is spent" "$ERR"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "rc=$RC walled=$(succeed_calls --walled-pane) mail=$(mailbox_lines)" "rc=4 walled=2 mail=3" \
+  "later passes read the row reported, stop the repeat and call nothing" "$ERR"
+assert_eq "$(succeed_calls --dead-pane)" "0" \
+  "and the death's own launch path was never reached" "$ERR"
 
 # Succession off is read here as it is on the dead path: the notice goes out
 # and no successor opens.
 overseer_case walled_succession_off walled
 state_with "$LINE"
+printf '%s\n' "oversee-succeed: mark-reached kind=headroom value=0 mark=10 succession=off account=$WALL_ACCOUNT resets=$WALL_RESETS" \
+  > "$STUB_DIR/succeed.check"
 run ORCH_OVERSEER_SUCCESSION=off TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT") launched=$(succeed_calls --walled-pane)" \
   "rc=4 first=EVENT overseer-walled $PANE window=$WINDOW passes=2 succession=off launched=0" \
@@ -935,22 +1031,10 @@ assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT") launched=$(succeed_calls --walled
 # send. A wall picks its own account and builds its own line, so it launches.
 overseer_case walled_no_line walled
 state_with ""
+wall_confirmed
 run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "rc=$RC launched=$(succeed_calls --walled-pane)" "rc=3 launched=1" \
   "a wall with no recorded line still recovers: it needs none" "$ERR"
-
-# --- controls for the walled arm -------------------------------------------
-# Control 7: the walled reading dropped from the dispatch, which is what every
-# pass did before this arm existed. The row is cleared, nothing is published
-# and nothing is launched, on a pane walled for as many passes as one likes.
-mutate 's/^    walled) ov_case=walled ;;$/    walled) : ;;/' \
-  "drops the walled reading from the dispatch"
-overseer_case walled_dispatch_mutant walled
-state_with "$LINE"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
-assert_eq "rc=$RC events=$(grep -c '^EVENT overseer-walled' <<<"$OUT" || true) launched=$(succeed_calls --walled-pane) mail=$(mailbox_lines)" \
-  "rc=0 events=0 launched=0 mail=0" \
-  "control: without the walled arm the pass clears the reading and emits nothing" "$ERR"
 
 # A reading of the other case clears this one's row, so a wall that the pane
 # recovered from by dying, and then met again, starts its count over. The
@@ -958,6 +1042,7 @@ assert_eq "rc=$RC events=$(grep -c '^EVENT overseer-walled' <<<"$OUT" || true) l
 walled_case_flip() { # LABEL BIN
   overseer_case "walled_flip_$1" walled
   state_with "$LINE"
+  wall_confirmed
   WATCH_BIN="$2" run TMUX_PANE="$PANE" -- --max-loops 1
   printf 'bash\n' > "$STUB_DIR/cmd-$PANE.txt"
   printf 'dev@host ~/kendex $\n' > "$STUB_DIR/pane-$PANE.txt"
@@ -971,8 +1056,22 @@ assert_eq "walled=$(succeed_calls --walled-pane) dead=$(succeed_calls --dead-pan
   "walled=0 dead=0" \
   "a wall, a death and a wall again: each case counts its own readings alone" "$ERR"
 
-# Control 8: the other case's row left standing. The second wall then reads as
-# the second pass of the first one and fires on a single reading, which is the
+# --- controls for the walled arm -------------------------------------------
+# Control 7: the walled reading dropped from the dispatch, which is what every
+# pass did before this arm existed. The row is cleared, nothing is published
+# and nothing is launched, on a pane walled for as many passes as one likes.
+mutate 's/^    walled) ov_case=walled ;;$/    walled) : ;;/' \
+  "drops the walled reading from the dispatch"
+overseer_case walled_dispatch_mutant walled
+state_with "$LINE"
+wall_confirmed
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "rc=$RC events=$(grep -c '^EVENT overseer-walled' <<<"$OUT" || true) launched=$(succeed_calls --walled-pane) mail=$(mailbox_lines)" \
+  "rc=0 events=0 launched=0 mail=0" \
+  "control: without the walled arm the pass clears the reading and emits nothing" "$ERR"
+
+# Control 8: the two cases sharing one row. The second wall then reads as the
+# second pass of the first one and fires on a single reading, which is the
 # poll a threshold exists to rule out.
 mutate 's/^  rows="$(lane_row_clear "$other" "$rows" "$identity")"$/  :/' \
   "lets a case keep the other case's row"
@@ -986,10 +1085,37 @@ mutate 's/^    3) overseer_recovery_blocked "$row" "$rows" "$identity" "$pane" "
   "drops the blocked-recovery notice"
 overseer_case walled_blocked_mutant walled
 state_with "$LINE"
+wall_confirmed
 printf '3\n' > "$STUB_DIR/succeed.rc"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" CLAUDE_CONFIG_DIR="$WALL_ACCOUNT" -- --max-loops 2
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
 assert_not_contains "$(mailbox text)" "overseer-recovery-blocked" \
   "control: without that arm a fleet with no room is told nothing" "$ERR"
+
+# Control 10: the account judgement dropped, so the screen decides alone. The
+# relayed banner of another lane then closes a window whose harness is alive.
+mutate 's/^  \[\[ "$ov_case" != walled \]\] || overseer_wall_confirmed "$pane" || ov_case=""$/  :/' \
+  "lets the screen confirm the wall by itself"
+overseer_case walled_confirm_mutant walled
+state_with "$LINE"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "rc=$RC launched=$(succeed_calls --walled-pane)" "rc=3 launched=1" \
+  "control: without the account judgement a relayed lane banner relaunches a working overseer" "$ERR"
+
+# Control 11: the row name hardcoded inside overseer_relaunch_failed, which is
+# what it read before the walled arm existed. A walled recovery's pending
+# state then lands on the death's row, the next walled pass clears it as the
+# other case's, and the launcher is called on every pass with no bound.
+mutate 's/^  local row="$1" rows="$2" identity="$3" pane="$4" window="$5" attempt="$6" step="$7"$/  local row=overseer-dead rows="$2" identity="$3" pane="$4" window="$5" attempt="$6" step="$7"/' \
+  "hardcodes the death's row in the retry bookkeeping"
+overseer_case walled_retry_row_mutant walled
+state_with "$LINE"
+wall_confirmed
+printf '4\n' > "$STUB_DIR/succeed.rc"
+for _ in 1 2 3; do
+  WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
+done
+assert_eq "$(succeed_calls --walled-pane)" "3" \
+  "control: with the death's row hardcoded the walled retry never reaches its bound" "$ERR"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

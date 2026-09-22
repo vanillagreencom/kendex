@@ -28,12 +28,18 @@
 #   the pane answers for its harness exactly as a live caller's does, and no
 #   recorded line is needed to launch its successor. What it cannot do is take
 #   a turn, so it never reaches the mark judgement that would hand it over.
-#   This mode is therefore the succession with the WALL in place of the mark:
-#   no mark is judged, the caller's own account is never kept, every preference
-#   entry goes through `lanes pick`, and the successor opens on the account
-#   that pick names. `--dead-pane` cannot serve it, because that mode
-#   deliberately picks no lane — the recorded line IS its choice, and for a
-#   walled overseer that line names the account that just walled.
+#   This mode is therefore the succession with the WALL in place of the mark,
+#   and it changes the ACCOUNT and nothing else: no mark is judged, the
+#   preference is not walked, this session's own harness, model, effort and
+#   permission flags are kept, and `lanes pick` names the account, never the
+#   one the walled pane is spending. `--dead-pane` cannot serve it, because that mode deliberately
+#   picks no lane — the recorded line IS its choice, and for a walled overseer
+#   that line names the account that just walled.
+#
+#   Its CALLER confirms the wall before calling this. `oversee-watch` does so
+#   with the account judgement of `--check-marks`, because the overseer's own
+#   pane carries the limit banners it relays about other lanes; nothing here
+#   re-reads the pane's account, which that judgement has already measured.
 #
 #   Run from the overseer's own tmux pane after the overseer handoff file is
 #   rewritten (oversee.md § 5). In order:
@@ -191,8 +197,10 @@
 #                    place of the caller's own. No mark is judged and no
 #                    recorded line is read: the pane still draws a status line,
 #                    which answers for its harness, and step 3 picks the lane
-#                    as it does for a live succession — with the caller's own
-#                    account never kept, since it is the walled one. Its
+#                    as it does for a live succession — walking the caller
+#                    entry alone whatever ORCH_OVERSEER_PREFERENCE names, and
+#                    refusing a pick that names the account the walled pane is
+#                    spending. Its
 #                    window is where the successor lands. The command built is
 #                    printed bare on stdout before the window opens, so the
 #                    caller's own output records the line it sent, and it is
@@ -229,10 +237,7 @@ message() { # KEY FIELD=VALUE...
   shift
   case "$key" in
     tmux-missing) text='Run it from inside the overseer tmux pane.' ;;
-    unknown-option) text='Usage: oversee-succeed [--handoff PATH] [--wait-secs N] [-- HARNESS_FLAGS...]
-       oversee-succeed --print-launch-line [--handoff PATH] [-- HARNESS_FLAGS...]
-       oversee-succeed --check-marks
-       oversee-succeed --dead-pane PANE --line-file PATH [--wait-secs N]' ;;
+    unknown-option) text="$(usage | sed -n '/^Usage:/,/^$/p')" ;;
     invalid-wait-secs) text='--wait-secs takes a positive whole number of seconds.' ;;
     invalid-handoff) text='The handoff path takes letters, digits and ./_- only.' ;;
     invalid-dead-pane) text='--dead-pane takes a tmux pane id, %N.' ;;
@@ -260,6 +265,7 @@ message() { # KEY FIELD=VALUE...
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
     interrupted) text='A signal stopped the script; the successor window was closed and the caller keeps running.' ;;
     successor-launch) text='The successor command is built; the form names how the picked lane reaches the harness.' ;;
+    successor-lane-spent) text='The pick named the very account this walled overseer is running on, which its successor may never open on: an inventory that has not caught up with the wall on that pane can still report room there. The entry is skipped, so a fleet whose only candidate is that account refuses rather than relaunching into the wall.' ;;
     successor-dialog) text='The successor stopped at a dialog nobody is there to answer; the caller keeps running. The pane line follows.' ;;
     successor-not-working) text='The successor never showed a running turn; the caller keeps running.' ;;
     successor-wrong-lane) text='The successor is running on another account than the one picked, so a wrapper on PATH replaced the selection; the caller keeps running.' ;;
@@ -504,9 +510,13 @@ fi
 # each state reports on a below-mark line, set beside the name so no site
 # re-derives either from an empty string.
 #
-# Only the modes that judge a mark ask. The other two launch on a
-# death, not on a mark, and the recorded line already names the account: an
-# account read there would answer about the pane that DIED.
+# Only the modes that judge a mark ask. The other three do not: `print`
+# launches nothing, `dead` launches on a death whose recorded line already
+# names the account, and `walled` launches on the wall its caller read off
+# the pane. An account read in `dead` would answer about the pane that DIED;
+# in `walled` the caller has already had this figure judged, which is what
+# established the wall, so reading it again here would measure every account
+# of the fleet a second time inside one recovery.
 CALLER_STATE=unreadable HEADROOM_FIELD=unreadable
 CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS=""
 if (( JUDGES )) && ctx="$("$SCRIPT_DIR/lanes" context --json 2>"$DEP_ERR")"; then
@@ -602,16 +612,21 @@ fi
 # The preference names where a LATER successor goes; `print` records what THIS
 # session runs, so it walks the caller entry alone whatever the setting says,
 # and `dead` walks nothing: the recorded line IS the choice, already made by
-# whichever of the two modes above wrote it. `walled` walks it like a live
-# succession, which is the whole difference between the two recovery modes: a
-# dead overseer's account may be perfectly healthy and its recorded line is
-# the only record of what it ran, while a walled one's account is the thing
-# that failed, so its successor's account is chosen here and nowhere else.
+# whichever of the two modes above wrote it.
+#
+# `walled` walks the caller entry alone too, for the reason `print` does: it
+# recovers THIS session rather than choosing where a later one goes, so its
+# successor keeps this session's harness, model, effort and permission flags
+# and changes its ACCOUNT and nothing else. Walking the preference there would
+# write a model and effort of its own beside the ones the caller's own flags
+# already carry, and the command would name two. The account is the whole of
+# what this mode chooses, and it chooses it below rather than keeping the
+# caller's own, which is the account that walled.
 chosen=""
 ENTRIES=()
 if [[ "$MODE" == dead ]]; then
   chosen=recorded
-elif [[ "$MODE" == print || -z "${ORCH_OVERSEER_PREFERENCE:-}" ]]; then
+elif [[ "$MODE" == print || "$MODE" == walled || -z "${ORCH_OVERSEER_PREFERENCE:-}" ]]; then
   ENTRIES=(caller)
 else
   rest="$ORCH_OVERSEER_PREFERENCE,"
@@ -622,6 +637,25 @@ else
     ENTRIES+=("$entry")
   done
 fi
+
+# The account the walled pane is SPENDING: the one account its successor may
+# never open on. Read once before the walk, because `walled` walks the caller
+# entry alone.
+#
+# The pick judges room and nothing else, so a reading that still shows room
+# for the account whose own screen carries the wall — an inventory not yet
+# refreshed, a wall the usage endpoint does not report — would hand that
+# directory straight back.
+#
+# The pick is NOT told the model this session runs, and telling it would
+# change nothing: every pick here passes `--binding-floor`, which holds the
+# candidate to its binding bucket, the most-consumed of all its windows, and
+# the three windows that wall one model are a subset of that maximum. Neither
+# which lanes qualify nor which of them is chosen moves. The model this
+# session runs stays in the flags the successor is launched with, written
+# once, and is not read for the pick at all.
+WALLED_LANE=""
+[[ "$MODE" != walled ]] || WALLED_LANE="$(lane_context_caller_cfg "$CALLER_HARNESS")"
 
 # The config dir `lanes pick` names for harness $1, into PICKED_DIR. $2 is the
 # model the entry will pass, empty where it passes none: the bound is judged on
@@ -662,12 +696,14 @@ for entry in ${ENTRIES[@]+"${ENTRIES[@]}"}; do
     # folder-trust question; and the private launch home where this session runs
     # under one, which names no account anything claimed.
     #
-    # WHICH MODE a codex caller reaches this in: `print` alone. It judges no
-    # mark and runs no pick, so the caller's own lane is what it records. A
-    # `succeed` on a codex caller is already past the context mark above, which
-    # a codex status line names no window for, so only an at-trigger account
-    # gets this far — and at the trigger the caller's lane is not kept, the pick
-    # below naming the lane instead.
+    # WHICH MODE a codex caller reaches this in: `print` and `walled`. Print
+    # judges no mark and runs no pick, so the caller's own lane is what it
+    # records. `walled` reads this value and then replaces it with the pick's,
+    # keeping it only as the account the pick may NOT name. A `succeed` on a
+    # codex caller is already past the context mark above, which a codex
+    # status line names no window for, so only an at-trigger account gets this
+    # far — and at the trigger the caller's lane is not kept, the pick below
+    # naming the lane instead.
     lane_dir="$(lane_context_caller_cfg "$harness")"
   else
     IFS=: read -r harness rank effort <<<"$entry"
@@ -701,10 +737,19 @@ for entry in ${ENTRIES[@]+"${ENTRIES[@]}"}; do
      && [[ "$entry" != caller || "$CALLER_STATE" != has-room ]]; then
     pick_lane_dir "$harness" "$model" || rc=$?
     case "$rc" in
-      0) lane_dir="$PICKED_DIR" ;;
+      0) ;;
       3) continue ;;
       *) die lanes-failed "entry=$entry" "exit=$rc" ;;
     esac
+    # WALLED_LANE above says why this account is refused. The ENTRY is
+    # skipped rather than the pick re-run without it, so a fleet whose only
+    # candidate is the spent account refuses instead of reopening on it, and
+    # an inventory stale enough to name it is not trusted to order the rest.
+    if [[ "$MODE" == walled && "$PICKED_DIR" == "$WALLED_LANE" ]]; then
+      message successor-lane-spent "lane=$WALLED_LANE" "entry=$entry" >&2
+      continue
+    fi
+    lane_dir="$PICKED_DIR"
   fi
   chosen="$entry"
   break
