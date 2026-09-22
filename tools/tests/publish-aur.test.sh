@@ -134,7 +134,7 @@ decline() {
   local hook="$1/aur/$2.git/hooks/pre-receive"
   mkdir -p -- "$(dirname -- "$hook")"
   printf '#!/bin/sh\necho "pre-receive hook declined" >&2\nexit 1\n' >"$hook"
-  chmod +x -- "$hook"
+  chmod +x "$hook"
 }
 
 rows='

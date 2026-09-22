@@ -10,6 +10,7 @@ pkgbase = kendex-cli-git
 	makedepends = cargo
 	makedepends = git
 	depends = git>=2.41
+	depends = dbus
 	conflicts = kendex
 	conflicts = kendex-git
 	conflicts = kendex-bin

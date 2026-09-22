@@ -8,6 +8,7 @@ pkgbase = kendex-bin
 	arch = aarch64
 	license = MIT
 	depends = git>=2.41
+	depends = dbus
 	depends = fuse2
 	depends = hicolor-icon-theme
 	depends = desktop-file-utils

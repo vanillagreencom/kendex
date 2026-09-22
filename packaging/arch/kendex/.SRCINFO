@@ -10,6 +10,7 @@ pkgbase = kendex
 	makedepends = cargo
 	makedepends = npm
 	depends = git>=2.41
+	depends = dbus
 	depends = webkit2gtk-4.1
 	depends = gtk3
 	depends = hicolor-icon-theme

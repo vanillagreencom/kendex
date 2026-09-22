@@ -441,22 +441,31 @@ fn only_the_packages_installing_both_halves_provide_the_kendex_name() {
     );
 }
 
+/// The dependencies every package carries because the installed command needs
+/// them, whichever half of kendex the package ships. They are matched as name
+/// prefixes, so a version bound such as `git>=2.41` is one of them. The
+/// comparison below excuses these and no other name.
+const SHARED_DEPENDENCIES: [&str; 2] = ["git", "dbus"];
+
 /// The CLI-only package pulls no desktop build or runtime dependency. The set
 /// it must stay clear of is the union of what the three desktop packages
 /// declare, built without consulting the CLI-only package: consulting it
 /// first would drop a leaked dependency out of the union and leave the
 /// comparison below unable to fail.
 ///
-/// git is the one entry the two sides legitimately share, since the installed
-/// command shells out to it. That the arrays are read whole is
-/// `the_extractor_reads_the_same_depends_the_srcinfo_records`.
+/// `SHARED_DEPENDENCIES` names what the two sides legitimately share, each
+/// asserted present here as well as excused below. That the arrays are read
+/// whole is `the_extractor_reads_the_same_depends_the_srcinfo_records`.
 #[test]
 fn the_cli_only_package_carries_no_desktop_dependency() {
     let cli_depends = pkgbuild_field(&pkgbuild(CLI_ONLY_PACKAGE), "depends");
-    assert!(
-        cli_depends.iter().any(|d| d.starts_with("git")),
-        "{CLI_ONLY_PACKAGE}: depends {cli_depends:?} drops git, which the command shells out to"
-    );
+    for shared in SHARED_DEPENDENCIES {
+        assert!(
+            cli_depends.iter().any(|d| d.starts_with(shared)),
+            "{CLI_ONLY_PACKAGE}: depends {cli_depends:?} drops {shared}, which the \
+             installed command needs"
+        );
+    }
     let mut desktop: Vec<String> = Vec::new();
     for package in DESKTOP_PACKAGES {
         for dependency in pkgbuild_field(&pkgbuild(package), "depends") {
@@ -472,12 +481,38 @@ fn the_cli_only_package_carries_no_desktop_dependency() {
         "no desktop package depends on webkit2gtk: {desktop:?}"
     );
     for dependency in &desktop {
-        if dependency.starts_with("git") {
+        if SHARED_DEPENDENCIES
+            .iter()
+            .any(|shared| dependency.starts_with(shared))
+        {
             continue;
         }
         assert!(
             !cli_depends.contains(dependency),
             "{CLI_ONLY_PACKAGE}: depends on {dependency}, which only the desktop packages need"
+        );
+    }
+}
+
+/// Every package installs the `kendex` command, and that command links
+/// libdbus-1 directly: `kendex-core` depends on `keyring` unconditionally and
+/// the workspace enables its `sync-secret-service` backend, which reaches
+/// `libdbus-sys`. Arch ships the shared library, the headers and `dbus-1.pc`
+/// in the one `dbus` package, so that name covers both needs.
+///
+/// Without it the three source packages fail inside the `libdbus-sys` build
+/// script, which probes `dbus-1.pc` with pkg-config and panics, before any
+/// Rust code compiles; kendex-bin installs a command the dynamic loader
+/// cannot start. `SHARED_DEPENDENCIES` excuses the name where the CLI-only
+/// package meets the desktop ones, so it is asserted here rather than left to
+/// that comparison.
+#[test]
+fn every_package_declares_the_dbus_the_command_links() {
+    for package in arch_packages() {
+        let depends = pkgbuild_field(&pkgbuild(package), "depends");
+        assert!(
+            depends.iter().any(|entry| entry == "dbus"),
+            "{package}: depends {depends:?} drops dbus, which the installed command links"
         );
     }
 }

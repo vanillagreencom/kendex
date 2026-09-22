@@ -16,6 +16,10 @@ license=('MIT')
 # package from a git repository is refused.
 depends=(
   'git>=2.41'
+  # The released command links libdbus-1 directly, through the keyring
+  # crate sync-secret-service backend, so the name is a runtime need here
+  # rather than a build one.
+  'dbus'
   # The released desktop app is an AppImage, which needs FUSE to mount.
   'fuse2'
   'hicolor-icon-theme'

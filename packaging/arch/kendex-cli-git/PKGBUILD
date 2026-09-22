@@ -24,10 +24,15 @@ conflicts=('kendex' 'kendex-git' 'kendex-bin')
 # with it. 2.41 is the first that takes `--attr-source`, below which every
 # install of a package from a git repository is refused.
 #
-# Nothing else: this package builds and installs the command alone, so none
-# of the webkit2gtk, gtk3, icon-theme or freedesktop-tool dependencies the
-# three desktop packages carry belong here.
-depends=('git>=2.41')
+# dbus is both needs too: the command links libdbus-1 directly through the
+# keyring crate sync-secret-service backend, and the libdbus-sys build
+# probes dbus-1.pc with pkg-config and panics when it is absent. Arch ships
+# the shared library, the headers and dbus-1.pc in one package.
+#
+# Nothing beyond those two: this package builds and installs the command
+# alone, so none of the webkit2gtk, gtk3, icon-theme or freedesktop-tool
+# dependencies the three desktop packages carry belong here.
+depends=('git>=2.41' 'dbus')
 makedepends=('cargo' 'git')
 source=('git+https://github.com/vanillagreencom/kendex.git')
 sha256sums=('SKIP')

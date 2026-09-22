@@ -22,6 +22,12 @@ conflicts=('kendex-git' 'kendex-bin' 'kendex-cli-git')
 # install of a package from a git repository is refused.
 depends=(
   'git>=2.41'
+  # The command links libdbus-1 directly: the keyring crate reaches
+  # libdbus-sys through its sync-secret-service backend, and that build
+  # probes dbus-1.pc with pkg-config and panics when it is absent. One name
+  # carries the build need and the runtime one, since Arch ships the shared
+  # library, the headers and dbus-1.pc in the same package.
+  'dbus'
   # The desktop app is a webkit2gtk shell. gtk3 is linked directly as well
   # as through it, so it is named rather than left to webkit2gtk to pull.
   'webkit2gtk-4.1'
