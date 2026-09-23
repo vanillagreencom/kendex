@@ -171,11 +171,13 @@ Admin-credential route:
   ruleset rules and its classic branch protection, since --admin bypasses both.
   A ruleset rule type, or a classic protection setting that is on, which the
   route neither re-checks, nor can prove harmless to a PR merge, nor can prove
-  removes the bypass itself, refuses. So does an accounted one that forbids
-  the merge about to be issued: a
-  pull_request rule whose allowed_merge_methods excludes --squash, --merge or
-  --rebase as passed, and required_linear_history in either spelling against
-  --merge. An absent or empty allowed_merge_methods is every method. A base
+  removes the bypass itself, refuses. A Copilot review rule is accounted for,
+  since it only requests a review and holds no merge, and so is a required
+  merge queue, which the dequeue below takes the PR out of before --admin
+  merges past it. An accounted one that forbids the merge about to be issued
+  refuses too: a pull_request rule whose allowed_merge_methods excludes
+  --squash, --merge or --rebase as passed, and required_linear_history in
+  either spelling against --merge. An absent or empty allowed_merge_methods is every method. A base
   requiring every review conversation resolved refuses on any unresolved
   thread, outdated included, since GitHub holds the merge on all of them; the
   ruleset spells that required_review_thread_resolution and classic protection
@@ -357,11 +359,11 @@ exit_terminal_state() {
 # The ruleset read also refuses on a rule type it cannot account for. Only
 # `required_status_checks` names its contexts; the types listed in the filter
 # below gate the ref, its commits, its files or its reviews and put nothing in
-# the check rollup. `pull_request` and `copilot_code_review` are the review
-# gates among them: each demands a REVIEW, which arrives as a review and is
-# already carried by this command's review-thread gates and, on the
-# admin-credential route, its reviewDecision gate in every gate mode, never as
-# a check on the head. Every other type — `workflows`, `code_scanning`,
+# the check rollup. `pull_request` is the review gate among them: it demands a
+# REVIEW, which arrives as a review and is already carried by this command's
+# review-thread gates and, on the admin-credential route, its reviewDecision
+# gate in every gate mode, never as a check on the head. `copilot_code_review`
+# only requests a review and gates no merge at all. Every other type — `workflows`, `code_scanning`,
 # `code_quality`, `code_coverage` and whatever GitHub adds next — gates the
 # merge on a check result whose context the rule never names, so naming a
 # required set beside one would drop that check's red to a warning. An
@@ -1067,8 +1069,15 @@ admin_dequeue() {
 # branch protection, so a rule the route cannot account for must refuse rather
 # than be merged past. A rule fails this gate three ways. Its type may be one the
 # route neither re-checks (required_status_checks, pull_request) nor can prove
-# harmless to a PR merge (the ref-shape rules below): a required merge queue,
-# required deployments, required signatures, code scanning, or a future type.
+# harmless to a PR merge (the ref-shape rules, copilot_code_review and
+# merge_queue below): required deployments, required signatures, code
+# scanning, or a future type. copilot_code_review requests a Copilot review on
+# push and holds no merge. merge_queue is the queue admin_dequeue takes the PR
+# out of before the owner credential's --admin merge bypasses it, and a merge
+# GitHub enrolls in the queue instead is reported as enrolled, never as
+# merged. Its merge_method and grouping parameters decide only how the queue
+# itself merges, which this route's merge never passes through; the method a
+# direct merge may use is the pull_request rule's allowed_merge_methods.
 # `update` is not one of the harmless ref-shape rules. It restricts updates of
 # a matching ref to bypass actors, and the ref update a pull request merge
 # performs is one of those updates, so it holds this route's merge exactly as
@@ -1110,6 +1119,7 @@ admin_unhandled_ruleset_gate() {
                 || printf 'method:required_linear_history forbids the merge commit --merge creates\n'
             ;;
         required_status_checks | non_fast_forward | creation | deletion) ;;
+        copilot_code_review | merge_queue) ;;
         *) printf 'unhandled:%s\n' "$type" ;;
         esac
     done <<<"$rules" | LC_ALL=C sort -u
