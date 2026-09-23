@@ -90,6 +90,10 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "the tracked render set could not be read." ;;
     render-committed-set)
       echo "the committed render set could not be read." ;;
+    skill-instruction-config)
+      echo "the configured skill instruction keys could not be read." ;;
+    missing-skill-instructions)
+      echo "a managed skill render is missing the instructions block configured for its source; the render paths follow." ;;
     missing-render)
       echo "a render source changed without its tracked render — land the render in the same change; the pairs follow." ;;
     commit-changes)
@@ -556,6 +560,71 @@ render_is_tracked() { # PATH — PATH itself is tracked, PATH read literally
   case "$NL$render_tracked$NL" in *"$NL$1$NL"*) return 0 ;; esac
   return 1
 }
+
+# A configured instruction is visible only in the managed render: its source
+# deliberately has no copy. Read the effective source-catalog overlay and
+# require the renderer's outer block for a skill-specific entry and its inner
+# shared block for `all` or `*`. This is presence, not a byte comparison;
+# kendex verify owns the rendered bytes.
+configured_skill_instructions=""
+if [ -e kendex-local.toml ]; then
+  configured_skill_instructions=$(awk '
+    BEGIN { single = sprintf("%c%c%c", 39, 39, 39); double = "\"\"\"" }
+    multiline != "" {
+      if (index($0, multiline)) multiline = ""
+      next
+    }
+    /^[[:space:]]*\[skill-instructions\][[:space:]]*$/ { inside = 1; next }
+    /^[[:space:]]*\[/ { inside = 0; next }
+    !inside { next }
+    {
+      line = $0
+      sub(/^[[:space:]]*/, "", line)
+      if (line !~ /^([A-Za-z0-9_-]+|"[^"]+"|'\''[^'\'']+'\'')[[:space:]]*=/) next
+      key = line
+      sub(/[[:space:]]*=.*/, "", key)
+      sub(/[[:space:]]*$/, "", key)
+      if (key ~ /^".*"$/ || key ~ /^'\''.*'\''$/) key = substr(key, 2, length(key) - 2)
+      print key
+      value = line
+      sub(/^[^=]*=[[:space:]]*/, "", value)
+      if (index(value, single) == 1 && index(substr(value, 4), single) == 0) multiline = single
+      if (index(value, double) == 1 && index(substr(value, 4), double) == 0) multiline = double
+    }
+  ' kendex-local.toml) || { configured_skill_instructions=""; say skill-instruction-config unreadable; }
+fi
+skill_instruction_is_configured() { # NAME — exact key, or a shared key
+  case "$NL$configured_skill_instructions$NL" in
+    *"$NL$1$NL"* | *"$NL"all"$NL"* | *"$NL*$NL"*) return 0 ;;
+  esac
+  return 1
+}
+shared_skill_instruction_is_configured() {
+  case "$NL$configured_skill_instructions$NL" in
+    *"$NL"all"$NL"* | *"$NL*$NL"*) return 0 ;;
+  esac
+  return 1
+}
+instruction_hits=""
+while IFS= read -r render; do
+  case "$render" in .agents/skills/*/SKILL.md) ;; *) continue ;; esac
+  skill="${render#.agents/skills/}"
+  skill="${skill%/SKILL.md}"
+  [ -f "skills/$skill/SKILL.md" ] || continue
+  skill_instruction_is_configured "$skill" || continue
+  missing=0
+  grep -Fxq '<!-- kendex:project-instructions:start -->' "$render" || missing=1
+  if shared_skill_instruction_is_configured; then
+    grep -Fxq '<!-- kendex:shared-instructions:start -->' "$render" || missing=1
+  fi
+  [ "$missing" -eq 0 ] || instruction_hits="$instruction_hits$render
+"
+done <<<"$(printf '%s\n' "$render_tracked" | sort -u)"
+[ -n "$instruction_hits" ] && {
+  say missing-skill-instructions "$(count_lines "$instruction_hits")"
+  show "$instruction_hits" | sed -n '1,5p'
+}
+
 require_render() { # SOURCE RENDER — RENDER changes with SOURCE and outlives it
   { grep -Fxq -- "$2" <<<"$render_changed" && { [ ! -e "$1" ] || [ -e "$2" ]; }; } ||
     render_hits="$render_hits$1 -> $2

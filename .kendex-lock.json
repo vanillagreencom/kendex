@@ -3551,8 +3551,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "fe475649e928eeac2d31791118d3230be3e690a48d341aa814367d73f1d91c91",
-      "renderedHash": "1d1d77a1e52a2a1efe09226214df668a96b34aebbbd103e582258d45549f5b12",
+      "sourceHash": "ab39eeb91ab4d80299fe800c013ca18c180393871121bdca6fbdb52944f87f38",
+      "renderedHash": "7ee295458376fcf4653f21e5491a4957d1704c29f28bbc9c8195184a2acad8f4",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3572,6 +3572,15 @@
             "source": ".",
             "kind": "skill",
             "name": "dev",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "harness-ci",
             "harness": "claude"
           }
         },
@@ -3601,8 +3610,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "fe475649e928eeac2d31791118d3230be3e690a48d341aa814367d73f1d91c91",
-      "renderedHash": "1d1d77a1e52a2a1efe09226214df668a96b34aebbbd103e582258d45549f5b12",
+      "sourceHash": "ab39eeb91ab4d80299fe800c013ca18c180393871121bdca6fbdb52944f87f38",
+      "renderedHash": "7ee295458376fcf4653f21e5491a4957d1704c29f28bbc9c8195184a2acad8f4",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3621,6 +3630,15 @@
             "source": ".",
             "kind": "skill",
             "name": "dev",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "harness-ci",
             "harness": "codex"
           }
         },
@@ -3650,8 +3668,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "fe475649e928eeac2d31791118d3230be3e690a48d341aa814367d73f1d91c91",
-      "renderedHash": "1d1d77a1e52a2a1efe09226214df668a96b34aebbbd103e582258d45549f5b12",
+      "sourceHash": "ab39eeb91ab4d80299fe800c013ca18c180393871121bdca6fbdb52944f87f38",
+      "renderedHash": "7ee295458376fcf4653f21e5491a4957d1704c29f28bbc9c8195184a2acad8f4",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3670,6 +3688,15 @@
             "source": ".",
             "kind": "skill",
             "name": "dev",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "harness-ci",
             "harness": "pi"
           }
         },
