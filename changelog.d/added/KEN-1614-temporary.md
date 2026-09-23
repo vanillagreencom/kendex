@@ -1,1 +1,1 @@
-- A run that would put the named folder on your projects is refused when the folder sits under a temporary path, unless `--throwaway` is passed.
+- Naming a folder under a temporary path with `apply`, `refresh` or `updates --apply` is refused unless `--throwaway` is passed; `apply --plan` and a bare `updates` listing are not asked.

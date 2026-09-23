@@ -251,6 +251,10 @@ pub fn registrable(env: &Env, root: &std::path::Path, flag: ThrowawayFlag) -> Cl
 /// asks is asked here too, on the root resolution already settled on, and
 /// `--throwaway` beside `--project-path` is what answers it.
 ///
+/// Asked on the resolved root alone, before any declaration is read, so a
+/// run that would have found nothing to register is refused here too. The
+/// alternative is reading a project to decide whether it may be read.
+///
 /// A run with no named project registers nothing and is asked nothing:
 /// writing the project a command was typed in is what every release
 /// before `--project-path` did, and it never touched the registry.
@@ -278,8 +282,9 @@ pub fn target_registrable(
 /// has got through that project's write, whether the write had work to do
 /// or the place was already up to date. A run that never reaches the
 /// write leaves the list as it found it: `apply --plan` and a bare
-/// `updates` listing, which write nothing by design; a scope passed over
-/// because nothing is declared there; a plan that failed, reported
+/// `updates` listing, which write nothing by design; a scope that
+/// declares nothing, which neither verb lists even where an old lock
+/// still names installs in it; a plan that failed, reported
 /// instead; and a confirmation the reader declined — except in `refresh`,
 /// where a Pi settle before the final confirm has already written what
 /// this then registers.

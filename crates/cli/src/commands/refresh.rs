@@ -128,10 +128,6 @@ fn record_snapshots(env: &Env, scopes: &[kendex_core::model::Scope]) {
 }
 
 /// Whether this scope has a declaration file of its own to work from.
-///
-/// A scope with none is one `apply` passes over saying nothing is listed
-/// to install, and this verb passes over the same way: it is not a place
-/// either of them wrote.
 fn declares(env: &Env, scope: &kendex_core::model::Scope) -> bool {
     matches!(
         kendex_core::manifest::load(&kendex_core::manifest::manifest_path(env, scope)),
@@ -140,8 +136,16 @@ fn declares(env: &Env, scope: &kendex_core::model::Scope) -> bool {
 }
 
 /// The named project on the projects list, now that this run has got
-/// through that scope's write; [`super::project::register_target`] owns
-/// when that is and when it is not.
+/// through that scope; [`super::project::register_target`] owns when that
+/// is and when it is not.
+///
+/// A scope declaring nothing is the one exception this verb has to ask
+/// for itself, and it is asked here rather than at either caller, because
+/// both callers reach such a scope: this verb goes through its write
+/// wherever an old lock still names installs, and closes on "up to date",
+/// while `apply` passes the same folder over saying nothing is listed to
+/// install. Neither puts it on the projects list, which is the parity the
+/// rule claims.
 ///
 /// A registry that refuses is a failure of the run, not of the install:
 /// the packages are on disk and the message says so.
@@ -151,6 +155,9 @@ fn register_written(
     scope: &kendex_core::model::Scope,
     failures: &mut Vec<String>,
 ) {
+    if !declares(env, scope) {
+        return;
+    }
     if let Err(error) = super::project::register_target(env, target, scope) {
         failures.push(error.to_string());
     }
@@ -445,9 +452,7 @@ pub fn run(
                 // Nothing left to write is not a reason to leave the
                 // named project off the projects list: the run got
                 // through this scope, which is what registration follows.
-                if declares(env, &scope) {
-                    register_written(env, target, &scope, &mut failures);
-                }
+                register_written(env, target, &scope, &mut failures);
                 continue;
             }
         }

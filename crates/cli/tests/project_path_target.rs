@@ -122,10 +122,44 @@ fn world() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
 /// it. `world()`'s home is under the temp dir, which exempts it.
 #[allow(clippy::unwrap_used)]
 fn kept_world() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
-    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let tmp = kept_home();
     let home = rooted(&tmp);
     let (catalog, elsewhere) = furnish(&home);
     (tmp, home, catalog, elsewhere)
+}
+
+/// A home the temporary-project rule does not exempt, found rather than
+/// assumed: the first candidate root whose fixture registry
+/// `settings::temporary` does not claim.
+///
+/// `CARGO_TARGET_TMPDIR` sits inside the cargo target directory, which
+/// `CARGO_TARGET_DIR` can put under a temporary root — the repository's
+/// own mutation tool builds under one by default. The checkout's
+/// gitignored `tmp/` is the second candidate, and a machine offering
+/// neither kept root is what the panic names, because every row of the
+/// case this feeds asserts a refusal such a machine cannot produce.
+#[allow(clippy::unwrap_used)]
+fn kept_home() -> tempfile::TempDir {
+    let scratch = test_util::checkout_root().join("tmp");
+    fs::create_dir_all(&scratch).unwrap();
+    let mut exempted = Vec::new();
+    for root in [PathBuf::from(env!("CARGO_TARGET_TMPDIR")), scratch] {
+        let candidate = tempfile::tempdir_in(&root).unwrap();
+        let env = kendex_core::env::Env::host_rooted(rooted(&candidate));
+        // The spelling `refuse_temporary` judges the registry in, so the
+        // fixture and the binary read one answer.
+        let settings = kendex_core::paths::absolute(&env.settings_file());
+        match kendex_core::settings::temporary(&env, &settings) {
+            None => return candidate,
+            Some(why) => exempted.push(format!("{}: {why}", root.display())),
+        }
+    }
+    panic!(
+        "no kept fixture home on this machine: CARGO_TARGET_DIR and TMPDIR put \
+         every candidate registry under a temporary path, which exempts every \
+         folder this case asserts a refusal for ({})",
+        exempted.join("; ")
+    );
 }
 
 /// The declaration with no package listed: a project kendex reads and
@@ -164,6 +198,13 @@ fn declare(root: &Path, catalog: &Path) {
 /// no lock.
 fn declare_nothing(root: &Path, catalog: &Path) {
     write(&root.join("kendex.toml"), &manifest_head(catalog));
+}
+
+/// A folder that is a project root on a harness marker alone, with no
+/// declaration of its own for either verb to read.
+#[allow(clippy::unwrap_used)]
+fn mark_only(root: &Path) {
+    fs::create_dir_all(root.join(".claude")).unwrap();
 }
 
 fn installed(root: &Path) -> PathBuf {
@@ -407,18 +448,9 @@ fn a_plan_leaves_the_projects_list_as_it_found_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_temporary_project_is_refused_unless_a_throwaway_one_is_meant() {
+    // `kept_world` settles the precondition every row below rests on: a
+    // registry a temporary fixture home would have exempted.
     let (_tmp, home, catalog, elsewhere) = kept_world();
-    let env = kendex_core::env::Env::host_rooted(&home);
-    // Every row below asserts a refusal this fixture cannot produce once
-    // its own registry is temporary, so an unmet precondition reddens
-    // rather than passing four voided assertions in silence.
-    if let Some(why) = kendex_core::settings::temporary(&env, &env.settings_file()) {
-        panic!(
-            "the kept fixture registry at {} is itself temporary, which exempts every folder \
-             this case asserts about: {why}",
-            env.settings_file().display()
-        );
-    }
     let scratch = tempfile::tempdir().unwrap();
     let project = rooted(&scratch);
     declare(&project, &catalog);
@@ -499,19 +531,23 @@ fn refresh_writes_the_named_project_and_the_personal_scope() {
     );
 }
 
-/// A `refresh` with nothing left to write still puts the named project on
-/// the list, the way `apply` does on the same folder.
+/// A run with nothing left to write still puts the named project on the
+/// list, and `apply` and `refresh` answer that the same way.
 ///
 /// The case the flag exists for is a worktree whose renders were copied in
 /// by hand: the run finds nothing to install and the app still has to see
 /// the project. `refresh` used to return before its registration there.
+///
+/// A folder each: the two verbs are asked the same question about their
+/// own, so neither row can pass on what the other one wrote.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn refresh_registers_a_project_with_nothing_left_to_write() {
+fn a_run_with_nothing_left_to_write_registers_the_named_project() {
     let (_tmp, home, catalog, elsewhere) = world();
-    let project = home.join("dev/app");
-    fs::create_dir_all(&project).unwrap();
-    declare_nothing(&project, &catalog);
+    let refreshed = home.join("dev/refreshed");
+    let applied = home.join("dev/applied");
+    declare_nothing(&refreshed, &catalog);
+    declare_nothing(&applied, &catalog);
 
     let said = run(
         &home,
@@ -519,21 +555,137 @@ fn refresh_registers_a_project_with_nothing_left_to_write() {
         &[
             "refresh",
             "--project-path",
-            project.to_str().unwrap(),
+            refreshed.to_str().unwrap(),
             "--scope",
             "project",
             "-y",
         ],
     );
-
     assert!(
         said.contains("nothing installed"),
-        "the run had nothing to write: {said}"
+        "refresh had nothing to write: {said}"
     );
     assert_eq!(
         registered(&home),
-        std::slice::from_ref(&project),
-        "and the named project is on the list anyway: {said}"
+        std::slice::from_ref(&refreshed),
+        "and the project it named is on the list anyway: {said}"
+    );
+
+    let said = run(
+        &home,
+        &elsewhere,
+        &["apply", "--project-path", applied.to_str().unwrap(), "-y"],
+    );
+    assert!(
+        said.contains("up to date"),
+        "apply had nothing to write: {said}"
+    );
+    let mut both = vec![applied.clone(), refreshed.clone()];
+    both.sort();
+    let mut listed = registered(&home);
+    listed.sort();
+    assert_eq!(listed, both, "and it lists its own project too: {said}");
+}
+
+/// A project root with no declaration of its own goes on no list, and the
+/// two verbs answer that the same way.
+///
+/// This is the false branch of the rule the case above pins. `apply`
+/// passes such a folder over saying nothing is listed to install.
+/// `refresh` goes through its write wherever an old lock still names
+/// installs, closing on "up to date" — and leaves the list alone all the
+/// same, so sweeping a folder is not what starts tracking it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_undeclared_project_is_listed_by_neither_verb() {
+    let (_tmp, home, catalog, elsewhere) = world();
+
+    // A project root on its harness marker alone, kendex never installed
+    // into: an empty plan and no lock.
+    let bare = home.join("dev/bare");
+    mark_only(&bare);
+    let said = run(
+        &home,
+        &elsewhere,
+        &["apply", "--project-path", bare.to_str().unwrap(), "-y"],
+    );
+    assert!(said.contains("nothing listed to install"), "{said}");
+    assert!(
+        registered(&home).is_empty(),
+        "apply listed it: {:?}",
+        registered(&home)
+    );
+    let said = run(
+        &home,
+        &elsewhere,
+        &[
+            "refresh",
+            "--project-path",
+            bare.to_str().unwrap(),
+            "--scope",
+            "project",
+            "-y",
+        ],
+    );
+    assert!(said.contains("nothing installed"), "{said}");
+    assert!(
+        registered(&home).is_empty(),
+        "refresh listed it: {:?}",
+        registered(&home)
+    );
+
+    // The same folder once kendex has installed there and the declaration
+    // has gone: the lock still names the skill, so `refresh` reaches its
+    // write here and `apply` still does not.
+    let app = home.join("dev/app");
+    declare(&app, &catalog);
+    let named = app.to_str().unwrap();
+    run(
+        &home,
+        &elsewhere,
+        &[
+            "refresh",
+            "--project-path",
+            named,
+            "--scope",
+            "project",
+            "-y",
+        ],
+    );
+    run(&home, &elsewhere, &["project", "remove", named]);
+    fs::remove_file(app.join("kendex.toml")).unwrap();
+    assert!(
+        installed(&app).is_file() && registered(&home).is_empty(),
+        "the fixture is an install nothing declares and nothing lists"
+    );
+
+    let said = run(&home, &elsewhere, &["apply", "--project-path", named, "-y"]);
+    assert!(said.contains("nothing listed to install"), "{said}");
+    assert!(
+        registered(&home).is_empty(),
+        "apply listed it: {:?}",
+        registered(&home)
+    );
+    let said = run(
+        &home,
+        &elsewhere,
+        &[
+            "refresh",
+            "--project-path",
+            named,
+            "--scope",
+            "project",
+            "-y",
+        ],
+    );
+    assert!(
+        said.contains("up to date"),
+        "refresh reached its write: {said}"
+    );
+    assert!(
+        registered(&home).is_empty(),
+        "refresh listed it: {:?}",
+        registered(&home)
     );
 }
 
