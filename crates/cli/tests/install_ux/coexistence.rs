@@ -234,11 +234,10 @@ fn version_10_lock_recovery_completes_with_normal_apply() {
 
     crate::write(&exclude, &exclude_text.replace("/.kendex-lock.json\n", ""));
     world.run(&["check"]);
-    let ignored = std::process::Command::new("git")
-        .args(["check-ignore", "--no-index", ".kendex-lock.json"])
-        .current_dir(&world.project)
-        .output()
-        .unwrap();
+    let ignored = crate::git_output(
+        &world.project,
+        &["check-ignore", "--no-index", ".kendex-lock.json"],
+    );
     assert_eq!(
         ignored.status.code(),
         Some(1),
