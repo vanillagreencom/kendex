@@ -505,6 +505,12 @@ fn field_fails(key: &str, field: &str) -> Failing {
     record_fails(&format!("{key}: {field} is not what this pass records"))
 }
 
+/// One record entry's kind, name or harness is not what its key spells,
+/// as the record row names it.
+fn key_fails(key: &str) -> Failing {
+    record_fails(&format!("{key}: not the entry it names"))
+}
+
 /// Every keys position the project scope prints, with its judgement.
 fn keys_judged(document: &Document) -> Vec<(&str, Option<Foreign>)> {
     document
@@ -542,10 +548,11 @@ fn bookkeeping_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
 /// One row per field the record row compares an entry on: each planted
 /// value is a valid one that round-trips through the record's layout, so
 /// only the comparison with what the pass records can catch it, and each
-/// row pins the field's own name. The source repository is the exception
-/// the engine makes: a recorded source is never silently rebound, so the
-/// plan keeps the entry as recorded and the installation's own row is the
-/// one that fails.
+/// row pins the field's own name. The kind, name and harness are held to
+/// the key instead, whatever the plan carries under it. The source
+/// repository is the exception the engine makes: a recorded source is
+/// never silently rebound, so the plan keeps the entry as recorded and
+/// the installation's own row is the one that fails.
 const SECOND: &str = "skill:second:claude";
 
 #[allow(clippy::unwrap_used)]
@@ -558,17 +565,17 @@ fn field_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
         (
             "renames an entry under its own key",
             on_second("name", "other".into()),
-            vec![field_fails(second, "name")],
+            vec![key_fails(second)],
         ),
         (
             "records an entry as another kind under its own key",
             on_second("kind", "agent".into()),
-            vec![field_fails(second, "kind")],
+            vec![key_fails(second)],
         ),
         (
             "records an entry on another harness under its own key",
             on_second("harness", "codex".into()),
-            vec![field_fails(second, "harness")],
+            vec![key_fails(second)],
         ),
         (
             "records an entry from another declared source",
@@ -816,6 +823,13 @@ fn narrowing_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
             vec![record(
                 "skill:second:claude: sourceCommit HEAD is not a commit pin",
             )],
+        ),
+        (
+            "records a Pi extension on another harness under its own key",
+            on_record(|value| {
+                value["entries"]["pi-extension:@scope/widgets:pi"]["harness"] = "claude".into();
+            }),
+            vec![key_fails("pi-extension:@scope/widgets:pi")],
         ),
         (
             "widens a recorded position",

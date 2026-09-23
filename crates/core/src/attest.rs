@@ -219,6 +219,15 @@ pub fn record(
     }
     let planned = planned_record(report).unwrap_or_else(|| lock.clone());
     for (key, entry) in &lock.entries {
+        // The key is what every reader looks an entry up by, and the
+        // fields are what the entry says of itself; an entry the plan
+        // copies from the record by kind and name carries an edited
+        // harness through under its unchanged key, so the two are held
+        // to each other before the plan is asked.
+        if *key != crate::lock::entry_key(entry.kind, &entry.name, entry.harness) {
+            problems.push(format!("{key}: not the entry it names"));
+            continue;
+        }
         let Some(would_record) = planned.entries.get(key) else {
             continue;
         };
@@ -263,15 +272,17 @@ pub fn record(
 /// The first field on which a recorded entry is not the one the pass
 /// would record, named as the record spells it. Every field is
 /// destructured so one added to the entry has to be placed here: in the
-/// comparison, or beside the two left out. The source commit is judged by
-/// history rather than equality, in [`entry_commit_problem`], because a
-/// source's branch moves under an honest record. This machine's half is
-/// never in the committed record.
+/// comparison, or beside those left out. The kind, name and harness are
+/// the key, which [`record`] holds the entry to before it comes here, and
+/// the planned entry under the same key spells them the same way. The
+/// source commit is judged by history rather than equality, in
+/// [`entry_commit_problem`], because a source's branch moves under an
+/// honest record. This machine's half is never in the committed record.
 fn differs(recorded: &LockEntry, would_record: &LockEntry) -> Option<&'static str> {
     let LockEntry {
-        name,
-        kind,
-        harness,
+        name: _,
+        kind: _,
+        harness: _,
         source,
         source_repo,
         source_hash,
@@ -285,9 +296,6 @@ fn differs(recorded: &LockEntry, would_record: &LockEntry) -> Option<&'static st
         machine: _,
     } = recorded;
     [
-        ("name", *name != would_record.name),
-        ("kind", *kind != would_record.kind),
-        ("harness", *harness != would_record.harness),
         ("source", *source != would_record.source),
         ("sourceRepo", *source_repo != would_record.source_repo),
         ("sourceHash", *source_hash != would_record.source_hash),
