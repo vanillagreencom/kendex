@@ -62,16 +62,48 @@ fn global_manifest_file(home: &Path) -> PathBuf {
     kendex_core::env::Env::host_rooted(home).global_manifest_file()
 }
 
+/// Which file a project declares its installs in. A source catalog's own
+/// `kendex.toml` is the definition it publishes, so kendex routes that
+/// project's declarations to the sibling and the row must send the reader
+/// there instead.
+enum Declares {
+    InManifest,
+    InLocalManifest,
+}
+
+impl Declares {
+    /// The file name the row names, spelled here rather than read from the
+    /// production constant, so the row is pinned and not re-derived.
+    fn file(&self) -> &'static str {
+        match self {
+            Declares::InManifest => "kendex.toml",
+            Declares::InLocalManifest => "kendex-local.toml",
+        }
+    }
+}
+
 /// A home whose global manifest declares `global`, and a project under it
-/// whose own manifest declares `project`. Nothing is installed anywhere:
-/// the declarations alone are what the check reads.
+/// whose own manifest declares `project`, in the file `declares` names.
+/// Nothing is installed anywhere: the declarations alone are what the
+/// check reads.
 #[allow(clippy::unwrap_used)]
-fn fixture(global: Option<&str>, project: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+fn fixture(
+    global: Option<&str>,
+    project: &str,
+    declares: &Declares,
+) -> (tempfile::TempDir, PathBuf, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let root = home.join("dev/app");
     fs::create_dir_all(root.join(".pi")).unwrap();
-    write(&root.join("kendex.toml"), &manifest(project));
+    if let Declares::InLocalManifest = declares {
+        // The marker kendex reads to route install state to the sibling.
+        write(
+            &root.join("kendex.toml"),
+            "is_source_catalog = true\n\n[marketplace]\nname = \"cat\"\n",
+        );
+    }
+    write(&root.join(declares.file()), &manifest(project));
     if let Some(global) = global {
         write(&global_manifest_file(&home), &manifest(global));
     }
@@ -82,13 +114,14 @@ fn fixture(global: Option<&str>, project: &str) -> (tempfile::TempDir, PathBuf, 
 /// judgement this feature adds, so the line is pinned entire rather than
 /// by a prefix: a prefix match stands while a remedy or a clause naming
 /// the global copy is appended after it.
-fn expected_row(project: &str, global: &str) -> String {
+fn expected_row(project: &str, global: &str, declares: &Declares) -> String {
     format!(
         "pi-declared-twice={project}: the global manifest declares '{global}' too; \
          Pi loads both scopes' package lists together and will not start with one \
          package registered twice; keep the global declaration, which reaches every \
          project, and remove the [pi-extensions.\"{project}\"] table from this \
-         project's kendex.toml"
+         project's {}",
+        declares.file()
     )
 }
 
@@ -117,16 +150,23 @@ fn rows_in(text: &str) -> Vec<String> {
 #[test]
 fn a_project_declaration_the_global_manifest_also_holds_is_named_with_the_copy_to_keep() {
     let rows = [
-        ("both under the current name", "pi-widgets", "pi-widgets"),
+        (
+            "both under the current name",
+            "pi-widgets",
+            "pi-widgets",
+            Declares::InManifest,
+        ),
         (
             "the project under an earlier name",
             "@vanillagreen/pi-hooks",
             "pi-hooks",
+            Declares::InManifest,
         ),
         (
             "the global under an earlier name",
             "pi-hooks",
             "@vanillagreen/pi-hooks",
+            Declares::InManifest,
         ),
         // Two earlier names of one package, the pair a pairwise legacy
         // test reads as two packages while Pi registers one twice.
@@ -134,10 +174,20 @@ fn a_project_declaration_the_global_manifest_also_holds_is_named_with_the_copy_t
             "both under different earlier names",
             "pi-subagents",
             "pi-agents-tmux",
+            Declares::InManifest,
+        ),
+        // A source catalog publishes its own kendex.toml, so its install
+        // declarations sit in the sibling: the edit named there would
+        // change the catalog and leave Pi refusing to start.
+        (
+            "a source catalog, declaring in the sibling",
+            "pi-widgets",
+            "pi-widgets",
+            Declares::InLocalManifest,
         ),
     ];
-    for (case, global, project) in rows {
-        let (_tmp, home, root) = fixture(Some(global), project);
+    for (case, global, project, declares) in rows {
+        let (_tmp, home, root) = fixture(Some(global), project, &declares);
         // The conflict is the pair of declarations: no scope has the
         // package on disk, and the row still lands.
         assert!(
@@ -151,7 +201,7 @@ fn a_project_declaration_the_global_manifest_also_holds_is_named_with_the_copy_t
         assert!(text.contains("declared at both scopes:"), "{case}: {text}");
         assert_eq!(
             rows_in(&text),
-            vec![expected_row(project, global)],
+            vec![expected_row(project, global, &declares)],
             "{case}: {text}"
         );
 
@@ -171,7 +221,11 @@ fn a_project_declaration_the_global_manifest_also_holds_is_named_with_the_copy_t
             .as_array()
             .unwrap_or_else(|| panic!("{case}: section carries no lines: {report}"));
         assert_eq!(lines.len(), 1, "{case}: {report}");
-        assert_eq!(lines[0]["text"], expected_row(project, global), "{case}");
+        assert_eq!(
+            lines[0]["text"],
+            expected_row(project, global, &declares),
+            "{case}"
+        );
         assert_eq!(lines[0]["class"], "drift", "{case}");
         // No remedy: the fix is an edit to the person's own file, and a
         // remedy here would name a verb that removes nothing.
@@ -185,7 +239,7 @@ fn a_project_declaration_the_global_manifest_also_holds_is_named_with_the_copy_t
 /// second row for the same pair.
 #[test]
 fn an_unqualified_check_names_the_pair_once_under_the_project_scope_word() {
-    let (_tmp, home, root) = fixture(Some("pi-widgets"), "pi-widgets");
+    let (_tmp, home, root) = fixture(Some("pi-widgets"), "pi-widgets", &Declares::InManifest);
 
     let check = kendex(&home, &root, &["check"]);
     assert_eq!(check.status.code(), Some(1), "{}", said(&check));
@@ -194,7 +248,7 @@ fn an_unqualified_check_names_the_pair_once_under_the_project_scope_word() {
     assert!(
         text.contains(&format!(
             "app: {}",
-            expected_row("pi-widgets", "pi-widgets")
+            expected_row("pi-widgets", "pi-widgets", &Declares::InManifest)
         )),
         "{text}"
     );
@@ -213,7 +267,7 @@ fn a_project_declaration_the_global_manifest_does_not_hold_gets_no_row() {
         ),
     ];
     for (case, global) in rows {
-        let (_tmp, home, root) = fixture(global, "pi-widgets");
+        let (_tmp, home, root) = fixture(global, "pi-widgets", &Declares::InManifest);
         let check = kendex(&home, &root, &["check", "--scope", "project"]);
         let text = said(&check);
         // Exit 1, not 2: the declared package is not installed, which is
@@ -230,7 +284,7 @@ fn a_project_declaration_the_global_manifest_does_not_hold_gets_no_row() {
 /// never told to drop it.
 #[test]
 fn the_global_scope_is_not_told_to_drop_its_own_declaration() {
-    let (_tmp, home, root) = fixture(Some("pi-widgets"), "pi-widgets");
+    let (_tmp, home, root) = fixture(Some("pi-widgets"), "pi-widgets", &Declares::InManifest);
     let check = kendex(&home, &root, &["check", "--scope", "global"]);
     let text = said(&check);
     assert_eq!(check.status.code(), Some(1), "{text}");
@@ -264,7 +318,7 @@ fn an_unreadable_global_manifest_is_reported_once_and_never_read_as_no_duplicate
         ),
     ];
     for (case, args, wording) in rows {
-        let (_tmp, home, root) = fixture(Some("pi-widgets"), "pi-widgets");
+        let (_tmp, home, root) = fixture(Some("pi-widgets"), "pi-widgets", &Declares::InManifest);
         let global = global_manifest_file(&home);
         write(&global, BROKEN_GLOBAL);
 

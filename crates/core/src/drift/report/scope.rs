@@ -261,8 +261,8 @@ impl ScopeCheck<'_> {
     /// scope alone — the global scope holds the copy that stays, so a row
     /// there would name the wrong one.
     ///
-    /// The line carries no remedy. The fix is one table out of the
-    /// person's own `kendex.toml`, and the removal verb does not make it:
+    /// The line carries no remedy. The fix is one table out of the file
+    /// the scope declares in, and the removal verb does not make it:
     /// against a declaration with nothing installed and nothing recorded,
     /// its plan holds no trash, package removal or lock write, so it
     /// prints that it removed nothing and leaves the declaration where it
@@ -297,6 +297,17 @@ impl ScopeCheck<'_> {
             // declared twice: an answer, not a failure.
             Some(Ok(crate::manifest::ManifestFile::Absent)) | None => return,
         };
+        // The file this scope declares in, which is not always
+        // `kendex.toml`: a source catalog's own `kendex.toml` is the
+        // definition it publishes, so its install declarations sit in the
+        // sibling. Naming the wrong one sends the reader to edit the
+        // catalog and leaves the duplicate standing. `manifest_path`
+        // joins a name onto a directory, so one is always there.
+        let manifest_path = crate::manifest::manifest_path(self.env, self.scope);
+        let manifest_file = manifest_path
+            .file_name()
+            .unwrap_or(std::ffi::OsStr::new(crate::manifest::MANIFEST_FILE))
+            .to_string_lossy();
         for name in manifest.pi_extensions.keys() {
             let Some(globally) = global
                 .pi_extensions
@@ -311,7 +322,7 @@ impl ScopeCheck<'_> {
                      Pi loads both scopes' package lists together and will not start \
                      with one package registered twice; keep the global declaration, \
                      which reaches every project, and remove the \
-                     [pi-extensions.\"{}\"] table from this project's kendex.toml",
+                     [pi-extensions.\"{}\"] table from this project's {manifest_file}",
                     self.prefix,
                     shown(name),
                     shown(globally),
