@@ -43,7 +43,9 @@
 #     the context "Review gate" and behind an unrelated newer row, so a read
 #     that took the newest row of any context would take the wrong one.
 #     gate-status:absent a head carrying no status; gate-status:fail the read
-#     errors; gate-status:garbage a page that is not a status page
+#     errors; gate-status:garbage a page that is not a status page. Every
+#     gate-status knob binds the statuses read to $AHEAD: any other ref's
+#     statuses answer Not Found.
 #     review:none  no review decision and no review at all, the shape a
 #     review-mode repository answers on every pull request
 #     review:none+approved  no review decision beside one approving review,
@@ -314,10 +316,10 @@ word() {
     gate-mode:unresolvable) W_ENV+=("REVIEW_GATE_SETTINGS_FILE=$BAD_SETTINGS") ;;
     gate-mode:*) W_ENV+=("PR_REVIEW_GATE=$v") ;;
     gate-context:*) W_ENV+=("REVIEW_GATE_CONTEXT=$(printf '%s' "$v" | tr '+' ' ')") ;;
-    gate-status:absent) W_ENV+=("STUB_GATE_STATUS_JSON=[]") ;;
-    gate-status:fail) W_ENV+=("STUB_GATE_STATUS_FAIL=true") ;;
-    gate-status:garbage) W_ENV+=('STUB_GATE_STATUS_JSON={"message":"Not Found"}') ;;
-    gate-status:*) W_ENV+=("STUB_GATE_STATUS_JSON=$(jq -cn --arg s "$v" '[{context:"CI Required",state:"failure"},{context:"Review gate",state:$s}]')") ;;
+    gate-status:absent) W_ENV+=("STUB_GATE_STATUS_JSON=[]" "STUB_EXPECT_HEAD=$AHEAD") ;;
+    gate-status:fail) W_ENV+=("STUB_GATE_STATUS_FAIL=true" "STUB_EXPECT_HEAD=$AHEAD") ;;
+    gate-status:garbage) W_ENV+=('STUB_GATE_STATUS_JSON={"message":"Not Found"}' "STUB_EXPECT_HEAD=$AHEAD") ;;
+    gate-status:*) W_ENV+=("STUB_GATE_STATUS_JSON=$(jq -cn --arg s "$v" '[{context:"CI Required",state:"failure"},{context:"Review gate",state:$s}]')" "STUB_EXPECT_HEAD=$AHEAD") ;;
     review-partial) W_ENV+=("STUB_REVIEW_DECISION=REVIEW_REQUIRED" 'STUB_REVIEW_LATEST=[{"state":"APPROVED"}]') ;;
     ruleset:*) W_ENV+=("STUB_GATE_RULES=$(printf '%s' "$v" | tr ',' '\n' | jq -R -s -c 'split("\n") | map(select(. != "") | {type: .})')") ;;
     merge-methods:*) W_ENV+=("STUB_GATE_RULES=$(printf '%s' "$v" | tr '+' '\n' | jq -R -s -c '[split("\n")[] | select(. != "")] as $m | [{type:"pull_request", parameters:{allowed_merge_methods:$m}}]')") ;;

@@ -142,8 +142,17 @@ case "${1:-}" in
             'repos/{owner}/{repo}/rules/branches/'*/* | 'repos/{owner}/{repo}/branches/'*/*) ;;
             # The review-mode gate read: the head's commit statuses, newest
             # first. An unset fixture is a head carrying no status at all,
-            # which is a real answer and not a failed read.
+            # which is a real answer and not a failed read. With
+            # STUB_EXPECT_HEAD set, only that sha's statuses exist, so a read
+            # of any other ref cannot borrow a verdict the head never earned.
             'repos/{owner}/{repo}/commits/'*/statuses*)
+                status_prefix='repos/{owner}/{repo}/commits/'
+                status_ref="${2#"$status_prefix"}"
+                status_ref="${status_ref%%/statuses*}"
+                if [[ -n "${STUB_EXPECT_HEAD:-}" && "$status_ref" != "$STUB_EXPECT_HEAD" ]]; then
+                    echo "gh: Not Found (HTTP 404)" >&2
+                    exit 1
+                fi
                 if [[ "${STUB_GATE_STATUS_FAIL:-false}" == "true" ]]; then
                     echo "gh: Not Found (HTTP 404)" >&2
                     exit 1
