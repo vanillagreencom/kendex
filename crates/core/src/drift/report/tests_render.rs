@@ -66,9 +66,10 @@ fn report_budget_counts_its_truncation_line_and_never_cuts_a_line() {
     assert!(lines.len() <= REPORT_LINES, "{} lines", lines.len());
     assert!(text.len() <= REPORT_BYTES, "{} bytes", text.len());
     assert!(
-        lines.last().unwrap().starts_with("… report truncated ("),
+        lines[lines.len() - 2].starts_with("… report truncated ("),
         "{text}"
     );
+    assert!(lines.last().unwrap().starts_with("Next: "), "{text}");
     // No line was cut mid-way: every remedy that rendered is complete.
     for line in &lines {
         if line.contains("fix: kendex fork") {
@@ -238,7 +239,11 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
             lines: vec![
                 line(
                     "'orch' does not match its source",
-                    Remedy::Apply { global: false },
+                    Remedy::Refresh { global: false },
+                ),
+                line(
+                    "global 'dev' does not match its source",
+                    Remedy::Refresh { global: true },
                 ),
                 line(
                     "'orch' was edited on disk",
@@ -271,7 +276,7 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
 
     let text = render_plain(&report);
     assert!(
-        text.contains("— fix: kendex apply --project-path '/w/lane'\n"),
+        text.contains("— fix: kendex refresh --project-path '/w/lane'\n"),
         "{text}"
     );
     for command in [
@@ -286,6 +291,7 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
             "{command} missing its marker: {text}"
         );
     }
+    assert!(text.ends_with("Next: kendex check --global to list global packages; kendex refresh --global --yes for global packages; kendex refresh --scope project --project-path '/w/lane' --yes in that checkout for project packages.\n"));
 }
 
 #[test]

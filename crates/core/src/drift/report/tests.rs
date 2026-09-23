@@ -49,7 +49,7 @@ pub(super) fn package(name: &str) -> PackageSnapshot {
         name: name.into(),
         source: "cat".into(),
         repo: "owner/repo".into(),
-        refs_state: None,
+        refs_state: Some("same-refs".into()),
         update_available: false,
         removed_upstream: false,
         held: false,
@@ -70,6 +70,9 @@ pub(super) fn snapshot_aged(
     packages: Vec<PackageSnapshot>,
     taken_at: u64,
 ) {
+    if let Some(package) = packages.iter().find(|package| package.refs_state.is_some()) {
+        record_refs(env, &package.repo, package.refs_state.as_deref());
+    }
     crate::drift::snapshot::store(
         env,
         scope,
@@ -82,6 +85,11 @@ pub(super) fn snapshot_aged(
         },
     )
     .unwrap();
+}
+
+pub(super) fn record_refs(env: &Env, repo: &str, refs: Option<&str>) {
+    let key = crate::remote::cache_key(env, repo);
+    stamps::record_success(env, &key, refs.map(str::to_owned), crate::clock::unix_now()).unwrap();
 }
 
 #[test]
@@ -163,6 +171,7 @@ fn held_only_and_ignored_only_drift_stays_silent() {
         ..package("held-two")
     };
     snapshot_with(&env, &scope, vec![held, ignored, held_edited]);
+    record_refs(&env, "owner/repo", Some("new-refs"));
 
     let report = check(&env, std::slice::from_ref(&scope));
     assert_eq!(report.status, CheckStatus::Clean, "{report:?}");
@@ -257,7 +266,7 @@ fn each_classification_lands_in_its_section_with_its_remedy() {
     // line.
     let text = render_plain(&report);
     let stale_at = text.find("stale:").unwrap();
-    let age_at = text.find("(checked against sources").unwrap();
+    let age_at = text.find("(package evaluation:").unwrap();
     assert!(stale_at < age_at, "{text}");
 }
 
@@ -291,25 +300,20 @@ fn edited_outranks_stale_for_one_package() {
 fn a_mirror_that_moved_since_evaluation_reads_as_unevaluated() {
     let tmp = tempfile::tempdir().unwrap();
     let env = env_in(tmp.path());
-    let scope = project_scope(tmp.path());
+    let scope = Scope::Global;
     write_manifest(&env, &scope, &manifest_with_remote());
-    let key = crate::remote::store::repo_key(&crate::remote::clone_url(&env, "owner/repo"));
-    stamps::record_success(
-        &env,
-        &key,
-        Some("new-refs".into()),
-        crate::clock::unix_now(),
-    )
-    .unwrap();
     snapshot_with(
         &env,
         &scope,
-        vec![PackageSnapshot {
-            update_available: true,
-            refs_state: Some("old-refs".into()),
-            ..package("moved")
-        }],
+        ["moved", "also-moved"]
+            .map(|name| PackageSnapshot {
+                update_available: name == "moved",
+                refs_state: Some("old-refs".into()),
+                ..package(name)
+            })
+            .to_vec(),
     );
+    record_refs(&env, "owner/repo", Some("new-refs"));
 
     let report = check(&env, std::slice::from_ref(&scope));
     // The honest "maybe": never a guessed verdict, and never a failure to
@@ -318,7 +322,7 @@ fn a_mirror_that_moved_since_evaluation_reads_as_unevaluated() {
     assert_eq!(report.status.exit_code(), 1);
     assert_eq!(
         render_plain(&report),
-        "source comparison needed:\n  1 package(s) have not been compared since their sources changed — fix: kendex updates\n(checked against sources moments ago)\n"
+        "source comparison needed:\n  skill 'moved': source changed since evaluation; not yet re-evaluated — fix: kendex refresh --global\n  skill 'also-moved': source changed since evaluation; not yet re-evaluated — fix: kendex refresh --global\n(package evaluation: moments ago)\nNext: kendex check --global to list global packages; kendex refresh --global --yes to refresh them.\n"
     );
 }
 
@@ -390,7 +394,11 @@ fn snapshot_age_is_rendered() {
 
     let report = check(&env, std::slice::from_ref(&scope));
     assert_eq!(report.snapshot_age_secs.map(|age| age / 3600), Some(3));
-    assert!(render_plain(&report).contains("(checked against sources 3h ago)"));
+    let text = render_plain(&report);
+    assert!(text.contains("(package evaluation: 3h ago)"));
+    assert!(text.ends_with(
+        "Next: kendex refresh --scope project --yes in this checkout to refresh project packages.\n"
+    ));
 }
 
 #[test]

@@ -1,0 +1,1 @@
+- Name packages whose source comparison is missing or outdated, label the evaluation age, and end the session drift report with a refresh command limited to the reported scope.

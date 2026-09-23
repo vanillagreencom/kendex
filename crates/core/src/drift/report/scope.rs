@@ -839,33 +839,37 @@ impl ScopeCheck<'_> {
         };
         let age = self.now.saturating_sub(snapshot.taken_at);
         *oldest_age = Some(oldest_age.map_or(age, |oldest| oldest.max(age)));
-        let mut pending = 0usize;
         for package in &snapshot.packages {
             // A hold or an ignore is a decision already made; re-announcing
             // it every session teaches agents to skim.
             if package.held || package.ignored {
                 continue;
             }
+            let kind = package.kind.name();
+            let name = shown(&package.name);
             let stamp_refs = stamp_for(self.env, &package.repo).and_then(|stamp| stamp.refs_state);
-            if let (Some(stamp_refs), Some(evaluated)) = (&stamp_refs, &package.refs_state)
-                && stamp_refs != evaluated
-            {
-                // The mirror moved since this verdict was computed: the
-                // honest answer is "maybe", never a guess.
-                pending += 1;
-                continue;
+            match (stamp_refs.as_ref(), package.refs_state.as_ref()) {
+                _ if package.repo.is_empty() => self.package_line(package, sections),
+                (Some(current), Some(evaluated)) if current == evaluated => {
+                    self.package_line(package, sections);
+                }
+                (Some(_), Some(_)) => sections.unevaluated.push(unevaluated(
+                    format!(
+                        "{prefix}{kind} '{name}': source changed since evaluation; not yet re-evaluated"
+                    ),
+                    Remedy::Refresh {
+                        global: self.global,
+                    },
+                )),
+                _ => sections.unevaluated.push(unevaluated(
+                    format!(
+                        "{prefix}{kind} '{name}': could not compare source versions; comparison data is missing"
+                    ),
+                    Remedy::Refresh {
+                        global: self.global,
+                    },
+                )),
             }
-            self.package_line(package, sections);
-        }
-        if pending > 0 {
-            sections.unevaluated.push(unevaluated(
-                format!(
-                    "{prefix}{pending} package(s) have not been compared since their sources changed"
-                ),
-                Remedy::Updates {
-                    global: self.global,
-                },
-            ));
         }
         for note in &snapshot.unreadable {
             sections
