@@ -220,11 +220,11 @@ fn a_rendered_fix_inside_a_worktree_names_the_project_it_writes() {
 }
 
 /// A stale record is itself a project remedy. No missing installation or
-/// other row should be needed before the report names the linked worktree
-/// whose record `apply` removes.
+/// other row should be needed before the report marks the explicit remove
+/// as a command that cannot name its linked-worktree destination.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn record_cleanup_alone_names_the_linked_worktree_in_its_apply_command() {
+fn record_cleanup_alone_marks_remove_as_elsewhere_in_a_linked_worktree() {
     let (_tmp, env, _main, linked) = repository();
     let scope = scope(&linked);
     declare(&env, &scope);
@@ -244,10 +244,9 @@ fn record_cleanup_alone_names_the_linked_worktree_in_its_apply_command() {
 
     let text = report::render_plain(&checked);
     assert!(
-        text.contains(&format!(
-            "fix: kendex apply --project-path '{}'",
-            kendex_core::paths::canonical(&linked).unwrap().display()
-        )),
+        text.contains(
+            "fix: kendex remove gh (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)"
+        ),
         "{text}"
     );
 }

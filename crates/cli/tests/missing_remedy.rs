@@ -31,6 +31,14 @@ fn declaration(name: &str) -> String {
     )
 }
 
+fn cleanup_declaration(name: Option<&str>) -> String {
+    let mut text = "schema = 6\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n".to_owned();
+    if let Some(name) = name {
+        text.push_str(&format!("[skills.{name}]\nsource = \"cat\"\n"));
+    }
+    text
+}
+
 #[allow(clippy::unwrap_used)]
 fn rename_recorded_skill(
     home: &Path,
@@ -171,6 +179,9 @@ fn run_missing_remedy(
     assert_eq!(matching.len(), 1, "one package row: {text}");
     let missing = matching[0];
     let command = missing.split_once("fix: kendex ").unwrap().1;
+    if renamed {
+        assert!(command.starts_with("remove old-name"), "{missing}");
+    }
     let mut args: Vec<&str> = command.split_whitespace().collect();
     if matches!(args.first(), Some(&"apply" | &"refresh")) {
         args.push("--yes");
@@ -179,6 +190,71 @@ fn run_missing_remedy(
     assert!(repaired.status.success(), "{repaired:?}");
 
     let checked = kendex(home, project, &["check", "--scope", scope_name, "--quiet"]);
+    assert!(checked.status.success(), "{checked:?}");
+    assert!(checked.stdout.is_empty(), "{checked:?}");
+}
+
+#[allow(clippy::unwrap_used)]
+fn repair_cleanup_state(absent_manifest: bool, edited_orphan: bool) {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("project");
+    let catalog = project.join("catalog");
+    fs::create_dir_all(catalog.join("skills/old-name")).unwrap();
+    fs::write(
+        catalog.join("skills/old-name/SKILL.md"),
+        "---\nname: old-name\ndescription: Test skill.\n---\n\nUse this skill.\n",
+    )
+    .unwrap();
+    let env = Env::host_rooted(&home);
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let manifest_path = manifest::manifest_path(&env, &scope);
+    fs::write(&manifest_path, cleanup_declaration(Some("old-name"))).unwrap();
+    let installed = kendex(&home, &project, &["apply", "--scope", "project", "--yes"]);
+    assert!(installed.status.success(), "{installed:?}");
+
+    let lock_path = lock::lock_path(&env, &scope);
+    let record = lock::load(&lock_path).unwrap();
+    let entry = record
+        .entries
+        .values()
+        .find(|entry| entry.name == "old-name")
+        .unwrap();
+    let installed_path = engine::installed_paths(&env, &scope, entry)
+        .into_iter()
+        .find(|path| path.exists())
+        .unwrap();
+    if edited_orphan {
+        fs::write(installed_path.join("SKILL.md"), "Edited by the user.\n").unwrap();
+    }
+    if absent_manifest {
+        fs::remove_file(&manifest_path).unwrap();
+    } else {
+        fs::write(&manifest_path, cleanup_declaration(None)).unwrap();
+    }
+
+    let checked = kendex(&home, &project, &["check", "--scope", "project", "--quiet"]);
+    assert_eq!(checked.status.code(), Some(1), "{checked:?}");
+    let text = String::from_utf8(checked.stdout).unwrap();
+    let row = text
+        .lines()
+        .find(|line| line.contains("does not list recorded skill 'old-name'"))
+        .unwrap();
+    assert!(row.contains("fix: kendex remove old-name"), "{row}");
+
+    let removed = kendex(&home, &project, &["remove", "old-name"]);
+    assert!(removed.status.success(), "{removed:?}");
+    assert!(!installed_path.exists(), "{removed:?}");
+    let record = lock::load(&lock_path).unwrap();
+    assert!(
+        !record
+            .entries
+            .values()
+            .any(|entry| entry.name == "old-name")
+    );
+    let checked = kendex(&home, &project, &["check", "--scope", "project", "--quiet"]);
     assert!(checked.status.success(), "{checked:?}");
     assert!(checked.stdout.is_empty(), "{checked:?}");
 }
@@ -195,4 +271,14 @@ fn the_printed_remedy_restores_declared_missing_files() {
     for global in [false, true] {
         repair_missing(global, false);
     }
+}
+
+#[test]
+fn the_printed_remove_remedy_seeds_an_absent_manifest_and_clears_its_record() {
+    repair_cleanup_state(true, false);
+}
+
+#[test]
+fn the_printed_remove_remedy_confirms_an_edited_orphan_and_clears_its_record() {
+    repair_cleanup_state(false, true);
 }

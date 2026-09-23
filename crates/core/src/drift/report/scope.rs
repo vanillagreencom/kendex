@@ -392,7 +392,8 @@ impl ScopeCheck<'_> {
                             shown(&name),
                             harness_list(&harnesses)
                         ),
-                        Some(Remedy::Apply {
+                        Some(Remedy::Remove {
+                            name,
                             global: self.global,
                         }),
                     ));

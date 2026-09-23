@@ -1,1 +1,1 @@
-- Scope `kendex check` to the current manifest, group missing installs by package, show every row for an explicit check, and name the available commands for supported repairs.
+- Scope `kendex check` to current manifest, group missing installs by package, show every row for an explicit check, and name commands that complete supported repairs, including stale record removal.
