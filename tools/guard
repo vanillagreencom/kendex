@@ -568,30 +568,15 @@ render_is_tracked() { # PATH — PATH itself is tracked, PATH read literally
 # kendex verify owns the rendered bytes.
 configured_skill_instructions=""
 if [ -e kendex-local.toml ]; then
-  configured_skill_instructions=$(awk '
-    BEGIN { single = sprintf("%c%c%c", 39, 39, 39); double = "\"\"\"" }
-    multiline != "" {
-      if (index($0, multiline)) multiline = ""
-      next
-    }
-    /^[[:space:]]*\[skill-instructions\][[:space:]]*$/ { inside = 1; next }
-    /^[[:space:]]*\[/ { inside = 0; next }
-    !inside { next }
-    {
-      line = $0
-      sub(/^[[:space:]]*/, "", line)
-      if (line !~ /^([A-Za-z0-9_-]+|"[^"]+"|'\''[^'\'']+'\'')[[:space:]]*=/) next
-      key = line
-      sub(/[[:space:]]*=.*/, "", key)
-      sub(/[[:space:]]*$/, "", key)
-      if (key ~ /^".*"$/ || key ~ /^'\''.*'\''$/) key = substr(key, 2, length(key) - 2)
-      print key
-      value = line
-      sub(/^[^=]*=[[:space:]]*/, "", value)
-      if (index(value, single) == 1 && index(substr(value, 4), single) == 0) multiline = single
-      if (index(value, double) == 1 && index(substr(value, 4), double) == 0) multiline = double
-    }
-  ' kendex-local.toml) || { configured_skill_instructions=""; say skill-instruction-config unreadable; }
+  configured_skill_instructions=$(python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from lib import manifest
+from lib.tree import Worktree
+table = manifest.resolve(Worktree(".")).data.get("skill-instructions", {})
+print(*table.keys(), sep="\n")
+' "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts" 2>/dev/null) ||
+    { configured_skill_instructions=""; say skill-instruction-config unreadable; }
 fi
 skill_instruction_is_configured() { # NAME — exact key, or a shared key
   case "$NL$configured_skill_instructions$NL" in
@@ -609,15 +594,18 @@ instruction_hits=""
 render_skill_paths=$(printf '%s\n' "$render_tracked" | sort -u) ||
   { render_skill_paths=""; say render-tracked-set unreadable; }
 while IFS= read -r render; do
-  case "$render" in .agents/skills/*/SKILL.md) ;; *) continue ;; esac
+  case "$render" in .agents/skills/*/SKILL.md | .agents/skills/*/SKILL.md.disabled) ;; *) continue ;; esac
   skill="${render#.agents/skills/}"
+  skill="${skill%/SKILL.md.disabled}"
   skill="${skill%/SKILL.md}"
   [ -f "skills/$skill/SKILL.md" ] || continue
   skill_instruction_is_configured "$skill" || continue
   missing=0
-  grep -Fxq '<!-- kendex:project-instructions:start -->' "$render" || missing=1
+  { grep -Fxq '<!-- kendex:project-instructions:start -->' "$render" &&
+    grep -Fxq '<!-- kendex:project-instructions:end -->' "$render"; } || missing=1
   if shared_skill_instruction_is_configured; then
-    grep -Fxq '<!-- kendex:shared-instructions:start -->' "$render" || missing=1
+    { grep -Fxq '<!-- kendex:shared-instructions:start -->' "$render" &&
+      grep -Fxq '<!-- kendex:shared-instructions:end -->' "$render"; } || missing=1
   fi
   [ "$missing" -eq 0 ] || instruction_hits="$instruction_hits$render
 "
