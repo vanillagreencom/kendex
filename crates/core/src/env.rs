@@ -64,6 +64,7 @@ pub struct Env {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SourceCacheWait {
     Foreground,
+    FixtureForeground,
     Background,
 }
 
@@ -188,7 +189,9 @@ impl Env {
 
     /// Fixture environment shaped like the given OS, rooted under `home`.
     pub fn fake(home: impl Into<PathBuf>, os: FakeOs) -> Self {
-        Self::rooted(home.into(), os)
+        let mut env = Self::rooted(home.into(), os);
+        env.source_cache_wait = SourceCacheWait::FixtureForeground;
+        env
     }
 
     /// This machine's own layout under a home of your choosing. A test

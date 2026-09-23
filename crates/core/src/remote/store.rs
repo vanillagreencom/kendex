@@ -123,6 +123,7 @@ impl CacheGuard {
 /// A detached refresh waits only for a neighbour's quick local step. A
 /// foreground operation covers a detached cold clone and its fetch.
 const BACKGROUND_LOCK_WAIT: Duration = Duration::from_millis(500);
+const FIXTURE_FOREGROUND_LOCK_WAIT: Duration = Duration::from_secs(1);
 const LOCK_POLL: Duration = Duration::from_millis(10);
 
 #[cfg(not(test))]
@@ -145,7 +146,9 @@ pub(super) fn lock_repo_notifying(
 ) -> Result<CacheGuard> {
     let wait = cache_wait(env);
     match env.source_cache_wait() {
-        SourceCacheWait::Foreground => lock_repo_for(env, key, wait, on_wait),
+        SourceCacheWait::Foreground | SourceCacheWait::FixtureForeground => {
+            lock_repo_for(env, key, wait, on_wait)
+        }
         SourceCacheWait::Background => lock_repo_for(env, key, wait, || {}),
     }
 }
@@ -155,13 +158,14 @@ fn cache_wait(env: &Env) -> Duration {
     WAIT_COUNTS.with(|cell| {
         let mut counts = cell.get();
         match env.source_cache_wait() {
-            SourceCacheWait::Foreground => counts.0 += 1,
+            SourceCacheWait::Foreground | SourceCacheWait::FixtureForeground => counts.0 += 1,
             SourceCacheWait::Background => counts.1 += 1,
         }
         cell.set(counts);
     });
     match env.source_cache_wait() {
         SourceCacheWait::Foreground => FOREGROUND_LOCK_WAIT,
+        SourceCacheWait::FixtureForeground => FIXTURE_FOREGROUND_LOCK_WAIT,
         SourceCacheWait::Background => BACKGROUND_LOCK_WAIT,
     }
 }
