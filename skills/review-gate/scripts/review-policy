@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Apply the review gate's policy to the class reported by harness-ci. A caller
+# supplies a diff range, never a class. stdout is one policy record.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)" || exit 2
+SETTINGS="$SCRIPT_DIR/lib/settings.sh"
+if [ ! -r "$SETTINGS" ]; then
+  printf 'review-gate-error=policy-settings-load value=%q\nCould not load review-gate settings.\n' "$SETTINGS" >&2
+  exit 2
+fi
+. "$SETTINGS" 2>/dev/null || exit 2
+
+usage() {
+  cat <<'USAGE'
+Usage: review-policy [--check-config]
+       review-policy --event EVENT [--base REF] [--head REF] [--repo DIR]
+
+REVIEW_GATE_CLASS_POLICY is empty by default. Empty prints `policy=inactive`
+without calling the classifier. An active policy has one entry per class:
+
+  render:none;trivial:none;micro:none;small:bot;standard:current
+
+`none` skips review evidence and review threads. `bot` requires both even when
+REVIEW_GATE_MODE is off. `current` keeps the gate's existing behavior.
+
+The live form calls the sibling harness-ci change classifier. It prints:
+
+  change_class=CLASS review_evidence=none|required|current policy=active
+
+Exit 2 prints no policy record. The caller cannot assert a class.
+USAGE
+}
+
+fail() { # CODE VALUE MESSAGE
+  rg_message error "$1" "$2" "review-policy: $3" >&2
+  exit 2
+}
+
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+POLICY="$(rg_setting REVIEW_GATE_CLASS_POLICY "")" || exit 2
+
+# Normalize and validate once. Every active policy names the closed class set
+# exactly once, so a missing row cannot inherit a less strict neighbor.
+if [ -n "$POLICY" ]; then
+  if ! POLICY_ROWS="$(awk -v raw="$POLICY" '
+    function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+    BEGIN {
+      n = split(raw, entries, ";")
+      if (n != 5) exit 1
+      for (i = 1; i <= n; i++) {
+        if (split(entries[i], pair, ":") != 2) exit 1
+        class = trim(pair[1]); decision = trim(pair[2])
+        if (class !~ /^(render|trivial|micro|small|standard)$/ || decision !~ /^(none|bot|current)$/ || seen[class]++) exit 1
+        policy[class] = decision
+      }
+      required[1] = "render"; required[2] = "trivial"; required[3] = "micro"; required[4] = "small"; required[5] = "standard"
+      for (i = 1; i <= 5; i++) {
+        class = required[i]
+        if (!(class in policy)) exit 1
+        print class "\t" policy[class]
+      }
+    }')"; then
+    fail policy-invalid "$POLICY" "REVIEW_GATE_CLASS_POLICY must name each class once with none, bot, or current"
+  fi
+else
+  POLICY_ROWS=""
+fi
+
+CLASSIFIER="$SCRIPT_DIR/../../harness-ci/scripts/change-class"
+if [ "${1:-}" = "--check-config" ]; then
+  [ "$#" -eq 1 ] || fail policy-arguments "$*" "--check-config takes no other arguments"
+  [ -z "$POLICY" ] || [ -x "$CLASSIFIER" ] || fail policy-classifier "$CLASSIFIER" "the harness-ci change classifier is not executable"
+  if [ -n "$POLICY" ]; then printf 'review-policy=active\n'; else printf 'review-policy=inactive\n'; fi
+  exit 0
+fi
+if [ -z "$POLICY" ]; then
+  printf 'policy=inactive\n'
+  exit 0
+fi
+[ -x "$CLASSIFIER" ] || fail policy-classifier "$CLASSIFIER" "the harness-ci change classifier is not executable"
+if ! CLASS_OUT="$("$CLASSIFIER" "$@")"; then
+  fail policy-classifier-call "$CLASSIFIER" "the harness-ci change classifier could not answer"
+fi
+case "$CLASS_OUT" in
+  change_class=render|change_class=trivial|change_class=micro|change_class=small|change_class=standard) CLASS="${CLASS_OUT#change_class=}" ;;
+  *) fail policy-classifier-protocol "$CLASS_OUT" "the harness-ci change classifier returned an invalid record" ;;
+esac
+DECISION=""
+while IFS=$'\t' read -r row_class row_decision; do
+  [ "$row_class" != "$CLASS" ] || DECISION="$row_decision"
+done <<EOF_POLICY
+$POLICY_ROWS
+EOF_POLICY
+case "$DECISION" in none) EVIDENCE=none ;; bot) EVIDENCE=required ;; current) EVIDENCE=current ;; *) fail policy-unresolved "$CLASS" "the class has no policy" ;; esac
+printf 'change_class=%s review_evidence=%s policy=active\n' "$CLASS" "$EVIDENCE"

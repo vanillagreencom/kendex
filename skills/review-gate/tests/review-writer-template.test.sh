@@ -100,6 +100,29 @@ for i in "${!WORKFLOWS[@]}"; do
   assert_eq "$checkout_shape" \
     'ref: ${{ github.event.repository.default_branch }}|persist-credentials: false|fetch-depth: 1' \
     "[${WORKFLOW_LABELS[$i]}] writer checkout is shallow trusted-default code"
+
+  install_block="$(awk '
+    /- name: Install kendex for change classification/ { copying = 1 }
+    copying && /- name: Evaluate and converge the gate/ { exit }
+    copying { print }
+  ' "${WORKFLOWS[$i]}")"
+  install_shape="$(printf '%s\n' "$install_block" | sed -n \
+    -e '/GH_TOKEN: ""/p' \
+    -e '/KENDEX_VERSION: main-build-131-1-07ab0fdf2efff60a4be7a2c93ac26f320b55f8f3/p' \
+    -e '/review-policy --check-config/p' \
+    -e '/if \[ "$policy" = "review-policy=active" \]/p' \
+    -e '/curl -fsSL https:\/\/kendex.ai\/install.sh | sh -s -- --version "$KENDEX_VERSION"/p' \
+    | sed 's/^[[:space:]]*//' | paste -sd'|' -)"
+  policy_path='.agents/skills/review-gate/scripts/review-policy'
+  [ "${WORKFLOW_LABELS[$i]}" != "self-adoption copy" ] || policy_path='skills/review-gate/scripts/review-policy'
+  assert_eq "$install_shape" \
+    "GH_TOKEN: \"\"|KENDEX_VERSION: main-build-131-1-07ab0fdf2efff60a4be7a2c93ac26f320b55f8f3|policy=\"\$($policy_path --check-config)\"|if [ \"\$policy\" = \"review-policy=active\" ]; then|curl -fsSL https://kendex.ai/install.sh | sh -s -- --version \"\$KENDEX_VERSION\"" \
+    "[${WORKFLOW_LABELS[$i]}] active class policy installs the pinned kendex without the writer token"
+  if grep -Fq 'github.event.pull_request' <<<"$install_block"; then
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "[${WORKFLOW_LABELS[$i]}] install step must not read a pull request supplied path or ref"
+  else
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "[${WORKFLOW_LABELS[$i]}] install step contains no pull request supplied path or ref"
+  fi
 done
 
 # ---------------------------------------------------- relay step behavior ---

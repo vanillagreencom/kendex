@@ -128,6 +128,7 @@ unknown key~append~REVIEW_GATE_CONTXET = "Review gate"~FAIL~settings-unknown~ken
 caller handle in settings~append~REVIEW_GATE_SETTINGS_FILE = "other.toml"~FAIL~settings-seam~REVIEW_GATE_SETTINGS_FILE~~~~~
 illegal mode with predicate diagnostic~append~REVIEW_GATE_MODE = "bogus"~FAIL~settings-values~2~predicate-mode~bogus~~~
 illegal docs-only policy with predicate diagnostic~append~REVIEW_GATE_DOCS_ONLY = "bogus"~FAIL~settings-values~2~predicate-docs-only~bogus~~~
+incomplete class policy with owner diagnostic~append~REVIEW_GATE_CLASS_POLICY = "render:none"~FAIL~settings-values~2~policy-invalid~render:none~~~
 numeric bound~append~REVIEW_GATE_SHA_PREFIX_FLOOR = "2"~FAIL~settings-values~2~~~~~
 duplicate key~append~REVIEW_GATE_MODE = "off"\nREVIEW_GATE_MODE = "enforce"~FAIL~settings-values~2~~~~~
 exported legal mode cannot hide committed error~exported~~FAIL~settings-values~2~~~~~

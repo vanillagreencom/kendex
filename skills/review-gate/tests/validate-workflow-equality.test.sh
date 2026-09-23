@@ -47,13 +47,14 @@ hardcoded checkout branch position 2~workflow-equality~2~2~ref: \$\{\{ github.ev
 checkout keeps credentials position 1~workflow-equality~2~1~^          persist-credentials: false$~/^          persist-credentials: false$/d
 checkout keeps credentials position 2~workflow-equality~2~2~^          persist-credentials: false$~/^          persist-credentials: false$/d
 missing relay binding position 1~workflow-equality~1~1~^      DISPATCH_REF: ~/^      DISPATCH_REF: /d
-consumer uses catalog path position 1~clean~7~1~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
-consumer uses catalog path position 2~workflow-equality~7~2~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
-consumer uses catalog path position 3~workflow-equality~7~3~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
-consumer uses catalog path position 4~workflow-equality~7~4~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
-consumer uses catalog path position 5~workflow-equality~7~5~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
-consumer uses catalog path position 6~workflow-equality~7~6~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
-consumer uses catalog path position 7~workflow-equality~7~7~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
+consumer uses catalog path position 1~clean~8~1~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
+consumer uses catalog path position 2~workflow-equality~8~2~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
+consumer uses catalog path position 3~workflow-equality~8~3~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
+consumer uses catalog path position 4~workflow-equality~8~4~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
+consumer uses catalog path position 5~workflow-equality~8~5~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
+consumer uses catalog path position 6~workflow-equality~8~6~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
+consumer uses catalog path position 7~workflow-equality~8~7~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
+consumer uses catalog path position 8~workflow-equality~8~8~\.agents/skills/review-gate/~s#\.agents/skills/review-gate/#skills/review-gate/#g
 opt-in trigger alone position 1~workflow-opt-in~1~1~^  #   check_run:$~s|^  #   check_run:$|  check_run:|
 opt-in types alone position 1~workflow-opt-in~1~1~^  #     types: \[created, completed\]$~s|^  #     types: \[created, completed\]$|    types: [created, completed]|
 opt-in lines separated position 1~workflow-opt-in~1~1~^  workflow_dispatch: \{\}$~s|^  workflow_dispatch: {}$|  check_run:\n  workflow_dispatch: {}\n    types: [created, completed]|
@@ -102,15 +103,15 @@ done
 
 # Each repository kind keeps its own script path.
 rows=0; before=$((PASS + FAIL))
-for spelling in tracked vendored-1 vendored-2 vendored-3 vendored-4 vendored-5 vendored-6 vendored-7; do
+for spelling in tracked vendored-1 vendored-2 vendored-3 vendored-4 vendored-5 vendored-6 vendored-7 vendored-8; do
   rows=$((rows + 1))
   sandbox
   mkdir "$DIR/skills"
   mv "$DIR/.agents/skills/review-gate" "$DIR/skills/review-gate"
-  workflow_edit "$DIR" 7 '\.agents/skills/review-gate/' 's#\.agents/skills/review-gate/#skills/review-gate/#g'
+  workflow_edit "$DIR" 8 '\.agents/skills/review-gate/' 's#\.agents/skills/review-gate/#skills/review-gate/#g'
   DRIVER_REL='skills/review-gate/scripts/validate-workflow.sh'
   if [ "$spelling" != tracked ]; then
-    workflow_edit "$DIR" 7 'skills/review-gate/' 's#skills/review-gate/#.agents/skills/review-gate/#g' "${spelling#vendored-}"
+    workflow_edit "$DIR" 8 'skills/review-gate/' 's#skills/review-gate/#.agents/skills/review-gate/#g' "${spelling#vendored-}"
     if [ "$spelling" = vendored-1 ]; then
       expect_clean "catalog path in a YAML comment" "$DIR"
     else

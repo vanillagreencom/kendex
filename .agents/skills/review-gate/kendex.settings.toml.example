@@ -100,6 +100,10 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE = ""
 # fails the selftest.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 
+# Per-class review evidence policy. Empty keeps the existing gate behavior.
+# The supported active value is documented in README.md § Class policy.
+REVIEW_GATE_CLASS_POLICY = ""
+
 # "bot" requires normal review evidence for a docs-only diff. "none" lets
 # harness-ci's shared docs classifier substitute for missing evidence.
 # Objections, suppressed findings, and unresolved threads still block.
@@ -114,9 +118,9 @@ REVIEW_GATE_DOCS_ONLY = "bot"
 # Empty disables the lane.
 REVIEW_GATE_RENDER_PATHS = ""
 
-# The one-switch gate disable: "enforce" is the full gate; "off" attests
-# approved before any evidence read and merging gates on CI alone. Unknown
-# values are a loud config error — a typo cannot disable a merge gate.
+# "off" disables an inactive or "current" class policy before evidence
+# reads. A "bot" class still requires its review round. Unknown values are a
+# loud config error.
 REVIEW_GATE_MODE = "enforce"
 
 # Review-wait quiet period in seconds — SHARED with orch's approval-wait,
