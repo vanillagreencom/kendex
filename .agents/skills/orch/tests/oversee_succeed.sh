@@ -71,10 +71,9 @@ STUB
 # `claude` stub above cannot hold the pane — it records its argv, and the
 # successor's row would be the caller's.
 #
-# A COPY of the shell, never a script named for the harness: the kernel names a
-# `#!` script's process for its interpreter, so tmux reports such a pane as `sh`
-# and the shape rule never sees the harness word at all.
-cp "$(command -v sh)" "$BIN/hclaude"
+# A COPY of sleep, never a shell or script named for the harness: both can reset
+# the process name tmux reads, so the shape rule never sees the harness word.
+cp "$(command -v sleep)" "$BIN/hclaude"
 chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex" "$BIN/hclaude"
 
 # The trigger every headroom fixture below is derived from: a lane at exactly
@@ -184,7 +183,8 @@ new_caller() {
 # line. The account triggers can use that identity without guessing a model or
 # context window.
 new_known_claude_caller() {
-  new_caller "$1" "$1" "exec '$BIN/hclaude' -c \"cat '$TMP_ROOT/caller.screen'; read _held\""
+  new_caller "$1" "$1" "cat '$TMP_ROOT/caller.screen'; exec '$BIN/hclaude' 100000"
+  tm display-message -p -t "$CALLER_PANE" 'fixture: known caller command=#{pane_current_command}'
 }
 
 # succeed-env ROW PREFERENCE ARGS... — the script under an explicit, whole
@@ -510,7 +510,7 @@ check "an entry whose rank the ladder cannot answer refuses model-failed and sto
 # left the successor to take whatever account the tmux server hands a new pane,
 # never the one judged. The pane runs a harness-named process, which is what
 # lets that owner name the account from the default alone.
-new_caller "$MARK" '(fixture@example.com)' "exec '$BIN/hclaude' -c \"cat '$TMP_ROOT/caller.screen'; read _held\""
+new_caller "$MARK" '(fixture@example.com)' "cat '$TMP_ROOT/caller.screen'; exec '$BIN/hclaude' 100000"
 CALLER_LANE=none run_succeed callerdefault ''
 check "a caller entry naming no account variable launches on the account its room was measured on" \
   "$RC|$(caller_open)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(recorded claude)" \
