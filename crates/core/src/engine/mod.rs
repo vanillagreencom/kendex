@@ -124,6 +124,19 @@ pub use report_types::{
     ItemWarning, PlanOptions, Registrations,
 };
 
+fn owned_paths_for_plan(
+    env: &Env,
+    scope: &Scope,
+    lock: &Lock,
+    desired: &[desired::Desired],
+) -> Result<BTreeSet<std::path::PathBuf>> {
+    let mut paths = owned::paths(env, scope, lock);
+    if lock.entries.is_empty() && posture::has_legacy_lock_rule(scope)? {
+        paths.extend(unmanaged::clean_render_paths(desired)?);
+    }
+    Ok(paths)
+}
+
 /// Compute drift and the plan that would fix it — the Audit page and
 /// `apply` both consume this.
 pub fn plan_scope(
@@ -164,7 +177,7 @@ pub fn plan_scope(
         lock,
         &manifest,
         options,
-        &owned::paths(env, scope, lock),
+        &owned_paths_for_plan(env, scope, lock, &state.items)?,
         &mut drift,
         &mut ops,
         &mut config_edits,

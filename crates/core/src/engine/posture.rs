@@ -9,10 +9,12 @@ use crate::apply::{Op, PlannedOp, Pre};
 use crate::error::Result;
 use crate::guard::Repo;
 use crate::model::Scope;
+use std::ops::Range;
 
 const IGNORE_BEGIN: &str = "# kendex:local-state begin";
 const IGNORE_END: &str = "# kendex:local-state end";
 const LOCAL_STATE: &str = "/tmp/\n/.cache/";
+const LEGACY_LOCK_RULE: &str = "/.kendex-lock.json";
 
 /// One line kendex adds, with the comment that says why it is there — so
 /// a reader who never ran kendex knows which tool put it there and what it
@@ -147,14 +149,52 @@ pub(crate) fn planned(scope: &Scope) -> Result<Vec<PlannedOp>> {
     Ok(ops)
 }
 
+/// Whether an earlier kendex release marked this project as one of its
+/// installs by putting the install record in its managed ignore block.
+/// A rule outside the block belongs to the consumer and proves nothing.
+pub(super) fn has_legacy_lock_rule(scope: &Scope) -> Result<bool> {
+    let Scope::Project { root } = scope else {
+        return Ok(false);
+    };
+    let path = root.join(".gitignore");
+    let text = crate::fs::read_if_exists(&path)?.unwrap_or_default();
+    let Some(span) = managed_block(&text).map_err(|reason| {
+        crate::error::CoreError::io(
+            &path,
+            std::io::Error::new(std::io::ErrorKind::InvalidData, reason),
+        )
+    })?
+    else {
+        return Ok(false);
+    };
+    Ok(text[span]
+        .lines()
+        .any(|line| line.trim() == LEGACY_LOCK_RULE))
+}
+
 /// Git ignore markers are complete comment lines, without Markdown fences.
 /// A consumer editing this file can damage a boundary; never claim their
 /// rules when the managed block's bounds are no longer clear.
 fn with_local_state(text: &str) -> std::result::Result<String, &'static str> {
+    let mut out = text.to_owned();
+    if let Some(span) = managed_block(text)? {
+        out.replace_range(span, "");
+    }
+    // Git reads the last matching rule, so a later user negation must not
+    // expose local state after the block is refreshed.
+    let newline = crate::fs::line_terminator(text);
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push_str(newline);
+    }
+    out.push_str(&format!("{IGNORE_BEGIN}\n{LOCAL_STATE}\n{IGNORE_END}\n").replace('\n', newline));
+    Ok(out)
+}
+
+fn managed_block(text: &str) -> std::result::Result<Option<Range<usize>>, &'static str> {
     enum Block {
         Absent,
         Open(usize),
-        Closed(std::ops::Range<usize>),
+        Closed(Range<usize>),
     }
     const INVALID: &str = "invalid kendex local-state ignore block";
     let mut block = Block::Absent;
@@ -177,20 +217,11 @@ fn with_local_state(text: &str) -> std::result::Result<String, &'static str> {
         }
         offset += line.len();
     }
-    let mut out = text.to_owned();
     match block {
-        Block::Closed(span) => out.replace_range(span, ""),
-        Block::Absent => {}
-        Block::Open(_) => return Err(INVALID),
+        Block::Closed(span) => Ok(Some(span)),
+        Block::Absent => Ok(None),
+        Block::Open(_) => Err(INVALID),
     }
-    // Git reads the last matching rule, so a later user negation must not
-    // expose local state after the block is refreshed.
-    let newline = crate::fs::line_terminator(text);
-    if !out.is_empty() && !out.ends_with('\n') {
-        out.push_str(newline);
-    }
-    out.push_str(&format!("{IGNORE_BEGIN}\n{LOCAL_STATE}\n{IGNORE_END}\n").replace('\n', newline));
-    Ok(out)
 }
 
 /// The file with every line kendex owes in it, or nothing where the rules

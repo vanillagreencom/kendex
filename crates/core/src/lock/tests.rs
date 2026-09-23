@@ -192,7 +192,7 @@ fn only_a_record_naming_this_builds_version_loads() {
 }
 
 /// What the corrupt-lock refusal must keep saying, and what it must not.
-/// It asks for a fresh install. It names the pi files beside a scope
+/// It asks for a normal apply. It names the pi files beside a scope
 /// root, because this record is the only thing naming them and nothing
 /// in this build looks there — a person who threw the lock away alone
 /// would be left with the hook registered twice. And it asks for them to
@@ -213,7 +213,7 @@ fn the_corrupt_lock_refusal_asks_for_a_move_and_names_no_path_of_its_own() {
     let path = tmp.path().join("lock.json");
     std::fs::write(&path, "{not json").unwrap();
     let said = load_file(&path).unwrap_err().to_string();
-    assert!(said.contains("install fresh"), "{said}");
+    assert!(said.contains("kendex apply"), "{said}");
     assert!(said.contains("hooks.json"), "{said}");
     assert!(
         !said.contains("delet"),

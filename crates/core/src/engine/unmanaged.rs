@@ -7,8 +7,29 @@ use crate::lock::Lock;
 use crate::manifest::{ItemDecl, Manifest};
 use crate::model::{ItemKind, Scope};
 
-use super::desired::{self, Desired};
+use super::desired::{self, Artifact, Desired};
 use super::{DriftRow, DriftState};
+
+/// Clean tracked render roots from the install an earlier kendex release
+/// left behind. Git-visible edits return `None`, so this recovery never
+/// turns a person's changed copy into kendex-owned content.
+pub(super) fn clean_render_paths(desired: &[Desired]) -> Result<BTreeSet<PathBuf>> {
+    let mut paths = BTreeSet::new();
+    for item in desired {
+        let path = match &item.artifact {
+            Artifact::File { path, .. } => Some(path),
+            Artifact::Tree { canonical, .. } => Some(canonical),
+            Artifact::Registration { script, .. } => script.as_ref().map(|(path, _)| path),
+        };
+        let Some(path) = path.filter(|path| path.exists()) else {
+            continue;
+        };
+        if crate::hash::hash_clean_checkout_tree(path)?.is_some() {
+            paths.insert(path.clone());
+        }
+    }
+    Ok(paths)
+}
 
 /// What this scope holds that nothing here manages: the skills, agents and
 /// hooks already on disk that no declaration and no lock claims.

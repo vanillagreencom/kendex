@@ -3,6 +3,33 @@
 
 use crate::{World, read, tree};
 
+fn plant_version_10_state(world: &World) {
+    let lock = world.at(".kendex-lock.json");
+    let current = kendex_core::lock::LOCK_VERSION;
+    let older = read(&lock).replace(
+        &format!("\"version\": {current}"),
+        &format!("\"version\": {}", current - 1),
+    );
+    assert_ne!(older, read(&lock), "the fixture must rewrite the version");
+    crate::write(&lock, &older);
+    let ignore = world.at(".gitignore");
+    let legacy = read(&ignore).replace(
+        "# kendex:local-state begin\n/tmp/\n/.cache/\n",
+        "# kendex:local-state begin\n/tmp/\n/.kendex-lock.json\n/.cache/\n",
+    );
+    assert_ne!(legacy, read(&ignore), "the fixture must plant the old rule");
+    crate::write(&ignore, &legacy);
+}
+
+#[allow(clippy::expect_used)]
+fn move_old_lock_aside(world: &World) {
+    std::fs::rename(
+        world.at(".kendex-lock.json"),
+        world.at(".kendex-lock.v10.json"),
+    )
+    .expect("version 10 lock moves aside for recovery");
+}
+
 /// A neighbour in each directory kendex writes into, surviving the whole
 /// install → refresh → remove round trip byte for byte.
 #[test]
@@ -140,7 +167,7 @@ fn a_scope_whose_lock_cannot_be_read_fails_at_the_read() {
             "work that did not happen must not exit 0: {said}"
         );
         assert!(
-            said.contains("install fresh"),
+            said.contains("move it aside") && said.contains("kendex apply"),
             "the parse error names the recovery path: {said}"
         );
         assert!(
@@ -157,4 +184,86 @@ fn a_scope_whose_lock_cannot_be_read_fails_at_the_read() {
         world.at(".claude/skills/deploy").exists(),
         "and the item it could not account for is still installed"
     );
+}
+
+/// The version 10 recovery is one complete sequence: the refusal names the
+/// command, a normal apply updates the clean tracked render, removes the old
+/// managed ignore rule, and reports a clone-local rule that still hides the
+/// new record. Once that local rule is removed, check is clean.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn version_10_lock_recovery_completes_with_normal_apply() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    world.run(&["add", "cat", "--skill", "deploy", "-y"]);
+    world.commit_all("version 10 install");
+    crate::write(
+        &world.catalog.join("skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
+    );
+    plant_version_10_state(&world);
+
+    let refused = world.try_run(&["apply", "--plan"]);
+    let said = crate::said(&refused);
+    assert!(!refused.status.success(), "{said}");
+    assert!(
+        said.contains("move it aside") && said.contains("kendex apply"),
+        "the refusal must name the complete recovery: {said}"
+    );
+
+    move_old_lock_aside(&world);
+    let exclude = world.at(".git/info/exclude");
+    let mut exclude_text = read(&exclude);
+    exclude_text.push_str("/.kendex-lock.json\n");
+    crate::write(&exclude, &exclude_text);
+    let applied = world.run(&["apply", "-y"]);
+    assert!(
+        applied.contains(&exclude.display().to_string())
+            && applied.contains("ignores .kendex-lock.json"),
+        "the apply must name the clone-local rule: {applied}"
+    );
+    assert!(
+        read(&world.at(".agents/skills/deploy/SKILL.md")).contains("updated deploy"),
+        "the stale render must be replaced"
+    );
+    assert!(
+        !read(&world.at(".gitignore")).contains(".kendex-lock.json"),
+        "the managed ignore block must stop hiding the record"
+    );
+
+    crate::write(&exclude, &exclude_text.replace("/.kendex-lock.json\n", ""));
+    world.run(&["check"]);
+    let ignored = std::process::Command::new("git")
+        .args(["check-ignore", "--no-index", ".kendex-lock.json"])
+        .current_dir(&world.project)
+        .output()
+        .unwrap();
+    assert_eq!(
+        ignored.status.code(),
+        Some(1),
+        "the new lock must be visible to Git"
+    );
+}
+
+/// A Git-visible edit is the ownership boundary during version 10 recovery.
+/// The legacy managed rule proves the install's origin, but it does not give
+/// kendex permission to replace content the person changed afterwards.
+#[test]
+fn version_10_recovery_keeps_a_hand_edited_render_as_a_conflict() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    world.run(&["add", "cat", "--skill", "deploy", "-y"]);
+    world.commit_all("version 10 install");
+    let rendered = world.at(".agents/skills/deploy/SKILL.md");
+    crate::write(&rendered, "person's edit\n");
+    crate::write(
+        &world.catalog.join("skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
+    );
+    plant_version_10_state(&world);
+    move_old_lock_aside(&world);
+
+    let planned = crate::said(&world.try_run(&["apply", "--plan"]));
+    assert!(planned.contains("conflict: skill deploy"), "{planned}");
+    assert_eq!(read(&rendered), "person's edit\n");
 }
