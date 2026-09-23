@@ -13,7 +13,7 @@ use std::ops::Range;
 
 const IGNORE_BEGIN: &str = "# kendex:local-state begin";
 const IGNORE_END: &str = "# kendex:local-state end";
-const LOCAL_STATE: &str = "/tmp/\n/.cache/";
+const LOCAL_STATE: &str = "/tmp/\n/.cache/\n/.kendex-lock.v10.json";
 
 /// One line kendex adds, with the comment that says why it is there — so
 /// a reader who never ran kendex knows which tool put it there and what it
@@ -374,7 +374,9 @@ mod tests {
         crate::apply::execute(&env, &plan).unwrap();
         let ignore = std::fs::read_to_string(root.join(".gitignore")).unwrap();
         assert!(ignore.starts_with("# user\ntarget/\ndocs/private/\n!/.kendex-lock.json\n"));
-        assert!(ignore.ends_with(&format!("{IGNORE_BEGIN}\n/tmp/\n/.cache/\n{IGNORE_END}\n")));
+        assert!(ignore.ends_with(&format!(
+            "{IGNORE_BEGIN}\n/tmp/\n/.cache/\n/.kendex-lock.v10.json\n{IGNORE_END}\n"
+        )));
         for (path, expected) in [
             ("tmp/round.json", 0),
             ("tmp/handoffs/OVERSEER-HANDOFF.md", 0),

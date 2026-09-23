@@ -18,8 +18,8 @@ fn plant_version_10_state(world: &World) {
     plant_version_10_lock(world);
     let ignore = world.at(".gitignore");
     let legacy = read(&ignore).replace(
-        "# kendex:local-state begin\n/tmp/\n/.cache/\n",
-        "# kendex:local-state begin\n/tmp/\n/.kendex-lock.json\n/.cache/\n",
+        "# kendex:local-state begin\n",
+        "# kendex:local-state begin\n/.kendex-lock.json\n",
     );
     assert_ne!(legacy, read(&ignore), "the fixture must plant the old rule");
     crate::write(&ignore, &legacy);
@@ -251,15 +251,21 @@ fn version_10_lock_recovery_completes_with_normal_apply() {
 
     crate::write(&exclude, &exclude_text.replace("/.kendex-lock.json\n", ""));
     world.run(&["check"]);
-    let ignored = crate::git_output(
-        &world.project,
-        &["check-ignore", "--no-index", ".kendex-lock.json"],
-    );
-    assert_eq!(
-        ignored.status.code(),
-        Some(1),
-        "the new lock must be visible to Git"
-    );
+    for (path, expected, reason) in [
+        (
+            ".kendex-lock.v10.json",
+            Some(0),
+            "the machine-specific recovery record must stay ignored",
+        ),
+        (
+            ".kendex-lock.json",
+            Some(1),
+            "the portable current lock must be visible to Git",
+        ),
+    ] {
+        let ignored = crate::git_output(&world.project, &["check-ignore", "--no-index", path]);
+        assert_eq!(ignored.status.code(), expected, "{reason}");
+    }
 }
 
 /// A pending source can make the first recovery apply partial. The current
