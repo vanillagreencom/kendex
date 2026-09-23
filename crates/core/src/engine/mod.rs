@@ -131,9 +131,7 @@ fn owned_paths_for_plan(
     desired: &[desired::Desired],
 ) -> Result<BTreeSet<std::path::PathBuf>> {
     let mut paths = owned::paths(env, scope, lock);
-    if lock.entries.is_empty() && posture::has_legacy_lock_rule(scope)? {
-        paths.extend(unmanaged::version_10_render_paths(scope, desired)?);
-    }
+    paths.extend(unmanaged::version_10_render_paths(scope, lock, desired)?);
     Ok(paths)
 }
 

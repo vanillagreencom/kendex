@@ -14,7 +14,6 @@ use std::ops::Range;
 const IGNORE_BEGIN: &str = "# kendex:local-state begin";
 const IGNORE_END: &str = "# kendex:local-state end";
 const LOCAL_STATE: &str = "/tmp/\n/.cache/";
-const LEGACY_LOCK_RULE: &str = "/.kendex-lock.json";
 
 /// One line kendex adds, with the comment that says why it is there — so
 /// a reader who never ran kendex knows which tool put it there and what it
@@ -147,29 +146,6 @@ pub(crate) fn planned(scope: &Scope) -> Result<Vec<PlannedOp>> {
     let mut notes = Vec::new();
     plan_posture(scope, None, &mut ops, &mut notes)?;
     Ok(ops)
-}
-
-/// Whether an earlier kendex release marked this project as one of its
-/// installs by putting the install record in its managed ignore block.
-/// A rule outside the block belongs to the consumer and proves nothing.
-pub(super) fn has_legacy_lock_rule(scope: &Scope) -> Result<bool> {
-    let Scope::Project { root } = scope else {
-        return Ok(false);
-    };
-    let path = root.join(".gitignore");
-    let text = crate::fs::read_if_exists(&path)?.unwrap_or_default();
-    let Some(span) = managed_block(&text).map_err(|reason| {
-        crate::error::CoreError::io(
-            &path,
-            std::io::Error::new(std::io::ErrorKind::InvalidData, reason),
-        )
-    })?
-    else {
-        return Ok(false);
-    };
-    Ok(text[span]
-        .lines()
-        .any(|line| line.trim() == LEGACY_LOCK_RULE))
 }
 
 /// Git ignore markers are complete comment lines, without Markdown fences.

@@ -3,7 +3,7 @@
 
 use crate::{World, read, tree};
 
-fn plant_version_10_state(world: &World) {
+fn plant_version_10_lock(world: &World) {
     let lock = world.at(".kendex-lock.json");
     let current = kendex_core::lock::LOCK_VERSION;
     let older = read(&lock).replace(
@@ -12,6 +12,10 @@ fn plant_version_10_state(world: &World) {
     );
     assert_ne!(older, read(&lock), "the fixture must rewrite the version");
     crate::write(&lock, &older);
+}
+
+fn plant_version_10_state(world: &World) {
+    plant_version_10_lock(world);
     let ignore = world.at(".gitignore");
     let legacy = read(&ignore).replace(
         "# kendex:local-state begin\n/tmp/\n/.cache/\n",
@@ -186,6 +190,19 @@ fn a_scope_whose_lock_cannot_be_read_fails_at_the_read() {
     );
 }
 
+#[allow(clippy::unwrap_used)]
+fn declares_two_sources(world: &World, waiting_source: &str) {
+    crate::write(
+        &world.at("kendex.toml"),
+        &format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[sources.waiting]\n{waiting_source}\n\n\
+             [install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n\
+             [skills.deploy]\nsource = \"cat\"\n\n[skills.wait]\nsource = \"waiting\"\n",
+            crate::test_util::source_path(&world.catalog)
+        ),
+    );
+}
+
 /// The version 10 recovery is one complete sequence: the refusal names the
 /// sidecar name and command, a normal apply updates the render whose bytes
 /// match that record, removes the old managed ignore rule, and reports a
@@ -242,6 +259,95 @@ fn version_10_lock_recovery_completes_with_normal_apply() {
         ignored.status.code(),
         Some(1),
         "the new lock must be visible to Git"
+    );
+}
+
+/// A pending source can make the first recovery apply partial. The current
+/// lock and the refreshed ignore block then stop carrying the original
+/// one-shot conditions, so the sidecar itself must keep proving ownership of
+/// the declaration that the retry can finally read.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn version_10_recovery_continues_after_a_partial_apply() {
+    let world = World::new(&["claude"]);
+    let waiting = world.home.join("waiting-catalog");
+    crate::write(
+        &waiting.join("skills/wait/SKILL.md"),
+        "---\nname: wait\ndescription: wait for the source\n---\nRun the wait.\n",
+    );
+    let ready = crate::test_util::source_path(&waiting);
+    declares_two_sources(&world, &ready);
+    world.run(&["apply", "-y"]);
+    world.commit_all("version 10 two-source install");
+
+    crate::write(
+        &world.catalog.join("skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
+    );
+    crate::write(
+        &waiting.join("skills/wait/SKILL.md"),
+        "---\nname: wait\ndescription: wait for the source\n---\nRun the updated wait.\n",
+    );
+    declares_two_sources(&world, "repo = \"owner/pending\"");
+    plant_version_10_state(&world);
+    move_old_lock_aside(&world);
+
+    let first = world.run(&["apply", "-y"]);
+    assert!(first.contains("not fetched yet"), "{first}");
+    let partial = kendex_core::lock::load(&world.at(".kendex-lock.json")).unwrap();
+    assert!(
+        partial.entries.values().any(|entry| entry.name == "deploy"),
+        "the first apply did not record its recovered entry: {partial:?}"
+    );
+    assert!(
+        partial.entries.values().all(|entry| entry.name != "wait"),
+        "the pending entry was recorded before its source resolved: {partial:?}"
+    );
+    assert!(
+        !read(&world.at(".gitignore")).contains("/.kendex-lock.json"),
+        "the first apply must remove the legacy ignore rule"
+    );
+
+    let deploy = world.at(".agents/skills/deploy/SKILL.md");
+    let recovered = read(&deploy);
+    crate::write(&deploy, "person's edit after the partial recovery\n");
+    let held = crate::said(&world.try_run(&["apply", "--plan"]));
+    assert!(held.contains("conflict: skill deploy"), "{held}");
+    crate::write(&deploy, &recovered);
+
+    declares_two_sources(&world, &ready);
+    world.run(&["apply", "-y"]);
+    assert!(
+        read(&world.at(".agents/skills/wait/SKILL.md")).contains("updated wait"),
+        "the retry must recover the remaining sidecar-proven render"
+    );
+}
+
+/// A project outside Git has no managed ignore block. The moved record is
+/// still a complete per-entry ownership proof, so normal recovery works there
+/// with the same hash boundary.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn version_10_recovery_works_outside_git() {
+    let world = World::new(&["claude"]);
+    std::fs::remove_dir_all(world.at(".git")).unwrap();
+    world.declare_catalog();
+    world.run(&["add", "cat", "--skill", "deploy", "-y"]);
+    assert!(
+        !world.at(".gitignore").exists(),
+        "a non-Git project must not get a Git marker"
+    );
+    crate::write(
+        &world.catalog.join("skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
+    );
+    plant_version_10_lock(&world);
+    move_old_lock_aside(&world);
+
+    world.run(&["apply", "-y"]);
+    assert!(
+        read(&world.at(".agents/skills/deploy/SKILL.md")).contains("updated deploy"),
+        "the non-Git recovery must replace the sidecar-proven render"
     );
 }
 

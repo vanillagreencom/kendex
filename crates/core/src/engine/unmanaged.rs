@@ -30,11 +30,13 @@ struct Version10Entry {
 }
 
 /// Render roots whose current bytes the moved version 10 record proves
-/// kendex wrote. This is an upgrade-only, read-only ownership proof. It
-/// deliberately ignores that record's machine-specific positions and never
-/// loads it as the scope's working lock.
+/// kendex wrote. This is an upgrade-only, read-only ownership proof. It stays
+/// available across partial applies and outside Git because the sidecar is
+/// the proof. It deliberately ignores that record's machine-specific
+/// positions and never loads it as the scope's working lock.
 pub(super) fn version_10_render_paths(
     scope: &Scope,
+    lock: &Lock,
     desired: &[Desired],
 ) -> Result<BTreeSet<PathBuf>> {
     let Scope::Project { root } = scope else {
@@ -53,6 +55,11 @@ pub(super) fn version_10_render_paths(
 
     let mut paths = BTreeSet::new();
     for item in desired {
+        // A current entry already has the ordinary ownership and edit checks.
+        // The sidecar fills only the entries a partial upgrade has not reached.
+        if lock.entries.contains_key(&item.key) {
+            continue;
+        }
         let Some(entry) = record.entries.get(&item.key).filter(|entry| {
             entry.name == item.name
                 && entry.kind == item.kind
