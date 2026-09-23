@@ -1129,6 +1129,8 @@ CONTEXT_MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=
 # judgement reports on its own line and this hook reads nowhere else.
 OFF_MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=500000 succession=off headroom=80"
 HEADROOM_MARK_LINE="oversee-succeed: mark-reached kind=headroom value=4 mark=10 succession=on account=eclaude resets=2026-07-27T06:00:00Z"
+RATE_MARK_LINE="oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=eclaude"
+QUALIFYING_MARK_LINE="oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on"
 BELOW_MARK_LINE="oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
 
 # An overseer session: a repository on a branch no mailbox is named for, so the
@@ -1242,6 +1244,20 @@ expect 2 "lane-mail-check: headroom=4" \
 assert_eq "named=$(grep -cF -- 'the ORCH_OVERSEER_HEADROOM_PCT mark of 10' "$ERR_FILE") route=$(overseer_route)" \
   "named=1 route=1" "and the refusal names the judge's own setting and the succession"
 
+for mark_row in \
+  "rate|$RATE_MARK_LINE|30|ORCH_OVERSEER_WALL_MINUTES" \
+  "qualifying|$QUALIFYING_MARK_LINE|1|ORCH_OVERSEER_SUCCESSOR_ACCOUNTS"; do
+  IFS='|' read -r mark_kind mark_line mark_value mark_setting <<<"$mark_row"
+  new_overseer "overseer_$mark_kind"
+  judge_says "$mark_line"
+  # shellcheck disable=SC2046
+  stop_at "$TRANSCRIPT" false $(overseer_env)
+  expect 2 "lane-mail-check: $mark_kind=$mark_value" \
+    "an overseer at its $mark_kind mark is refused with the value it read"
+  assert_eq "setting=$(grep -cF -- "$mark_setting" "$ERR_FILE") route=$(overseer_route)" \
+    "setting=1 route=1" "and the refusal names the setting and succession route"
+done
+
 # What the marks cannot judge is reported and passed, never refused: an
 # overseer whose marks nothing could measure must still end a turn, exactly as
 # a lane whose account nothing measured does.
@@ -1270,6 +1286,43 @@ expect 0 "lane-mail-check: marks=unjudged" \
 # The judgement reads every account the fleet can launch on, which can outlast
 # this hook's budget; a hook killed at its budget writes no line at all.
 if command -v timeout >/dev/null 2>&1; then
+  variant short-real-judge -e 's@^ACCOUNT_CEILING=20$@ACCOUNT_CEILING=3@'
+  new_overseer overseer_fast_context
+  install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+  rm -f -- "$LANE/.claude/skills/orch/scripts/oversee-succeed" \
+    "$LANE/.claude/skills/orch/scripts/lanes"
+  ln -s "$REPO_ROOT/skills/orch/scripts/oversee-succeed" \
+    "$LANE/.claude/skills/orch/scripts/oversee-succeed"
+  cat > "$LANE/.claude/skills/orch/scripts/lanes" <<'SLOWCAPACITY'
+#!/bin/sh
+case " $* " in
+  *" --lane "*)
+    printf '%s\n' '{"wall":20,"alias":"claude","binding_resets_at":"2026-09-24T00:00:00Z","usage_rate_state":"not-increasing","projected_wall_minutes":null}'
+    ;;
+  *) sleep 120 ;;
+esac
+SLOWCAPACITY
+  chmod +x "$LANE/.claude/skills/orch/scripts/lanes"
+  REAL_TMUX_BIN="$TMP_ROOT/real-tmux-bin"; mkdir -p "$REAL_TMUX_BIN"
+  cat > "$REAL_TMUX_BIN/tmux" <<'REALTMUX'
+#!/bin/sh
+case " $* " in
+  *"#{pid}"*) printf '%s\n' "$FIXTURE_TMUX_SERVER" ;;
+  *"#{window_id}"*) printf '%s\n' '@7' ;;
+  *"#{pane_current_path}"*) printf '%s\n' "$FIXTURE_TMUX_PATH" ;;
+  *"#{pane_current_command}"*) printf '%s\n' claude ;;
+  *" capture-pane "*) printf '%s\n' '  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /rc' ;;
+  *) exit 1 ;;
+esac
+REALTMUX
+  chmod +x "$REAL_TMUX_BIN/tmux"
+  # shellcheck disable=SC2046
+  stop_at "$TRANSCRIPT" false $(overseer_env) "PATH=$REAL_TMUX_BIN:$PATH" \
+    "FIXTURE_TMUX_SERVER=$OVERSEER_SERVER" "FIXTURE_TMUX_PATH=$LANE" \
+    "ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=1"
+  expect 2 "lane-mail-check: context=520000" \
+    "a real hook returns an available context mark before a slow capacity sweep reaches its ceiling"
+
   variant short-judge -e 's@^ACCOUNT_CEILING=20$@ACCOUNT_CEILING=1@'
   new_overseer overseer_ceiling
   install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
