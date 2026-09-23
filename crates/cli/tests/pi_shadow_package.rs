@@ -472,3 +472,62 @@ fn the_managed_copy_alone_is_not_a_second_copy() {
         said(&check)
     );
 }
+
+/// The manifest declares the package under an earlier name and the stray
+/// copy's `package.json` carries the current one. Pi de-duplicates by
+/// package identity, so the two are one package and both copies load; a
+/// candidate set built off the declared spelling alone holds that one
+/// name and the section stays silent while update-pi installs beside the
+/// copy Pi runs.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_copy_under_the_current_name_is_named_for_a_package_declared_under_an_earlier_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("dev/app");
+    write(
+        &project.join("kendex.toml"),
+        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"pi-hooks\"]\nsource = \"cat\"\n",
+    );
+    let manifest = |name: &str, version: &str| {
+        format!(
+            "{{\n  \"name\": \"{name}\",\n  \"version\": \"{version}\",\n  \"pi\": {{ \"extensions\": [\"index.js\"] }}\n}}\n"
+        )
+    };
+    write(
+        &project.join("catalog/pi-extensions/pi-hooks/package.json"),
+        &manifest("pi-hooks", "2.0.0"),
+    );
+    write(
+        &project.join("catalog/pi-extensions/pi-hooks/index.js"),
+        "export const version = 2;\n",
+    );
+    let installed = kendex(&home, &project, &["update-pi", "--scope", "project"]);
+    assert!(installed.status.success(), "{}", said(&installed));
+
+    // Named neither for the declared spelling nor by its own directory:
+    // the manifest's package name is the whole of what identifies it.
+    let shadow = project.join(".pi/extensions/stray");
+    write(
+        &shadow.join("package.json"),
+        &manifest("@vanillagreen/pi-hooks", "0.9.0"),
+    );
+    write(&shadow.join("index.js"), "export const version = 1;\n");
+
+    let check = kendex(&home, &project, &["check", "--scope", "project"]);
+    assert_eq!(check.status.code(), Some(1), "{}", said(&check));
+    let text = said(&check);
+    assert!(text.contains("loaded twice by pi:"), "{text}");
+    assert!(text.contains("pi-shadow-package=pi-hooks"), "{text}");
+    assert!(
+        text.contains(&format!("{} (version 0.9.0)", shadow.display())),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "move stray out of {}",
+            project.join(".pi/extensions").display()
+        )),
+        "{text}"
+    );
+}

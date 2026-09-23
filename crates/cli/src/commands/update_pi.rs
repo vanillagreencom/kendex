@@ -194,11 +194,19 @@ fn settleable(
             name,
             kendex_core::model::HarnessId::Pi,
         );
-        let own = [root.to_path_buf()];
+        // Two different questions. The first is package identity across
+        // the paired roots, which folds the rename family. The second is
+        // the family's OTHER spellings at this scope's own root, the
+        // left-over an older kendex installed under a name this one no
+        // longer uses. That probe excludes the declared spelling itself:
+        // a bare `duplicate_elsewhere` against the own root would match
+        // the copy the settle is for and skip every correctly installed
+        // package.
         if pi_ext::duplicate_elsewhere(name, other_roots).is_some()
-            || pi_ext::legacy_names(name)
+            || pi_ext::family(name)
                 .iter()
-                .any(|legacy| pi_ext::duplicate_elsewhere(legacy, &own).is_some())
+                .filter(|other| **other != name)
+                .any(|other| pi_ext::installed_under(root, other))
         {
             continue;
         }

@@ -695,60 +695,130 @@ fn a_package_in_the_unregistered_current_project_blocks_the_global_install() {
     assert!(!tmp.path().join(".pi/agent/packages/pi-widgets").exists());
 }
 
+/// One package under two spellings registers the same resources twice, so
+/// the cross-scope guard blocks whichever spelling the manifest declares
+/// against whichever the other root carries. Both directions: the guard
+/// reaches the family through its current name, so neither declaration
+/// need be the one the copy uses.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_legacy_named_package_at_the_other_scope_blocks_the_scoped_name() {
-    let tmp = tempfile::tempdir().unwrap();
-    let project = tmp.path().join("dev/app");
-    write(
-        &project.join("kendex.toml"),
-        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n",
-    );
-    write(
-        &project.join("catalog/pi-extensions/@vanillagreen/pi-hooks/package.json"),
-        "{\"name\": \"@vanillagreen/pi-hooks\", \"version\": \"1.0.0\"}\n",
-    );
-    fs::create_dir_all(project.join(".pi")).unwrap();
-    // The unscoped compatibility name still sits at the global scope; it
-    // registers the same resources as the scoped package.
-    write(
-        &tmp.path().join(".pi/agent/packages/pi-hooks/package.json"),
-        "{\"name\": \"pi-hooks\", \"version\": \"0.9.0\"}\n",
-    );
+fn a_package_at_the_other_scope_blocks_the_declared_name_under_either_spelling() {
+    let rows = [
+        (
+            "declared scoped, installed unscoped",
+            "@vanillagreen/pi-hooks",
+            "pi-hooks",
+        ),
+        (
+            "declared unscoped, installed scoped",
+            "pi-hooks",
+            "@vanillagreen/pi-hooks",
+        ),
+    ];
+    for (case, declared, installed) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = rooted(&tmp);
+        let project = root.join("dev/app");
+        write(
+            &project.join("kendex.toml"),
+            &format!(
+                "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"{declared}\"]\nsource = \"cat\"\n"
+            ),
+        );
+        write(
+            &project.join(format!("catalog/pi-extensions/{declared}/package.json")),
+            &format!("{{\"name\": \"{declared}\", \"version\": \"1.0.0\"}}\n"),
+        );
+        fs::create_dir_all(project.join(".pi")).unwrap();
+        // The other spelling of the same package sits at the global
+        // scope, registering the same resources.
+        write(
+            &root.join(format!(".pi/agent/packages/{installed}/package.json")),
+            &format!("{{\"name\": \"{installed}\", \"version\": \"0.9.0\"}}\n"),
+        );
 
-    let output = kendex(tmp.path(), &project, &["update-pi"]);
-    assert!(output.status.success());
-    let plan = String::from_utf8_lossy(&output.stdout);
-    assert!(plan.contains("blocked"), "{plan}");
-    assert!(plan.contains("pi-hooks is installed at"), "{plan}");
-    assert!(!project.join(".pi/packages/@vanillagreen").exists());
+        let output = kendex(&root, &project, &["update-pi"]);
+        assert!(output.status.success(), "{case}: {output:?}");
+        let plan = String::from_utf8_lossy(&output.stdout);
+        // The whole opening of the blocked line: the unscoped name is a
+        // suffix of the scoped one, so a bare substring would pass while
+        // the line named the other spelling.
+        assert!(
+            plan.contains(&format!("blocked: {installed} is installed at")),
+            "{case}: {plan}"
+        );
+        assert!(plan.contains("would register twice"), "{case}: {plan}");
+        assert!(
+            !project.join(".pi/packages").join(declared).exists(),
+            "{case}: the declared name landed"
+        );
+    }
 }
 
-/// The scope's own root still holds the copy an older kendex installed
-/// under the package's earlier name, and no record says so: a settle of
-/// the scoped name would register the package twice in one root.
+/// The probe a settle makes at its own root asks the family's OTHER
+/// spellings, never the declared one. Blocked where the root holds the
+/// copy an older kendex installed under an earlier name, which no record
+/// accounts for: settling the scoped name would register the package
+/// twice in one root. Settled where the only copy sits under the declared
+/// name itself, which is every correctly installed catalog package, all
+/// of which carry a rename entry — a probe that folded the whole family
+/// would answer yes for each and settle none.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_legacy_named_copy_in_the_same_root_blocks_the_scoped_settle() {
-    let tmp = tempfile::tempdir().unwrap();
-    let root = rooted(&tmp);
-    let project = root.join("dev/app");
-    write(
-        &project.join("kendex.toml"),
-        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n",
-    );
-    write(
-        &project.join("catalog/pi-extensions/pi-hooks/package.json"),
-        "{\"name\": \"@vanillagreen/pi-hooks\", \"version\": \"1.0.0\"}\n",
-    );
-    write(
-        &project.join(".pi/packages/pi-hooks/package.json"),
-        "{\"name\": \"pi-hooks\", \"version\": \"0.9.0\"}\n",
-    );
+fn a_settle_is_blocked_by_an_earlier_named_copy_and_runs_over_the_declared_one() {
+    const SOURCE: &str = "{\"name\": \"@vanillagreen/pi-hooks\", \"version\": \"1.0.0\"}\n";
+    let rows = [
+        (
+            "an earlier-named copy the record knows nothing about",
+            ".pi/packages/pi-hooks/package.json",
+            "{\"name\": \"pi-hooks\", \"version\": \"0.9.0\"}\n",
+            false,
+        ),
+        (
+            "the declared name's own copy, the source's bytes",
+            ".pi/packages/@vanillagreen/pi-hooks/package.json",
+            SOURCE,
+            true,
+        ),
+    ];
+    for (case, installed, bytes, settles) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = rooted(&tmp);
+        let project = root.join("dev/app");
+        write(
+            &project.join("kendex.toml"),
+            "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n",
+        );
+        write(
+            &project.join("catalog/pi-extensions/pi-hooks/package.json"),
+            SOURCE,
+        );
+        write(&project.join(installed), bytes);
+        // No lock entry either way: the settle is what would write one.
+        assert!(
+            !project.join(".kendex-lock.json").exists(),
+            "{case}: the fixture records nothing"
+        );
 
-    let output = kendex(&root, &project, &["refresh", "--scope", "project", "--yes"]);
-    assert!(!output.status.success(), "{output:?}");
-    assert!(!project.join(".pi/packages/@vanillagreen").exists());
+        let output = kendex(&root, &project, &["refresh", "--scope", "project", "--yes"]);
+        assert_eq!(output.status.success(), settles, "{case}: {output:?}");
+        let key = kendex_core::lock::entry_key(
+            kendex_core::model::ItemKind::PiExtension,
+            "@vanillagreen/pi-hooks",
+            kendex_core::model::HarnessId::Pi,
+        );
+        let recorded = kendex_core::lock::load(&project.join(".kendex-lock.json"))
+            .unwrap()
+            .entries
+            .contains_key(&key);
+        assert_eq!(recorded, settles, "{case}");
+        if !settles {
+            assert!(
+                !project.join(".pi/packages/@vanillagreen").exists(),
+                "{case}"
+            );
+        }
+    }
 }
 
 #[test]
