@@ -609,12 +609,11 @@ collect_unrestored_links() {
 warn_if_links_materialized() {
   local wt="$1" path="" materialized="" rel="" child_damage=""
   [[ -n "$wt" && -d "$wt" ]] || return 0
-  # In the main checkout, and in a standalone clone, every configured entry IS
-  # its own source: a regular file or a real directory, never a link, which is
-  # the one shape this function reads as damage. Nothing is missing there, so
-  # the warning would be false, and its remedy is unreachable — the fix-links
-  # it names refuses the main checkout. `repair-links` exits 0 there on the
-  # same ground, and so does the setup pass below.
+  # In a same-checkout pass each configured entry is its own source, so any
+  # damage this function could report is the checkout's own state rather than a
+  # worktree missing what setup should have laid down, and the remedy it names
+  # is unreachable: fix-links refuses the main checkout. `repair-links` exits 0
+  # there on the same ground, and so does the setup pass below.
   same_canonical_dir "$PROJECT_ROOT" "$wt" && return 0
   validate_worktree_setup_config >/dev/null 2>&1 || return 0
 
@@ -976,20 +975,21 @@ setup_worktree_links() {
   # Nothing to provision when the destination IS the source. `push --rebase`
   # reaches here with the main checkout, which is a registered worktree of
   # itself and so passes push's own precondition, and a standalone clone with
-  # no worktrees reaches here the same way. Every configured entry would then
-  # act on its own source: a symlink entry renames a link pointing at the file
-  # over that same file, leaving a self-link where the local settings were, and
-  # a copy entry hands `cp` one path twice. Both destroy the data the entry
-  # exists to carry.
+  # no worktrees reaches here the same way.
   #
-  # The whole body is skipped, not only those two shapes, because every shape
-  # below states a fact about a worktree and the main checkout it came from,
-  # and there is no such pair here. That deliberately gives up two harmless
-  # passes on this route, which is `push --rebase` and nothing else: the
-  # WORKTREE_MKDIRS directories are not created and their exclude entries not
-  # written, and a package.json with no node_modules beside it is not warned
-  # about. Neither is push's work, and a checkout that is its own source has no
-  # worktree to provision them for.
+  # The whole body is skipped, on the one reason that holds for every shape
+  # below: each provisions a worktree, and on this route there is no worktree
+  # to provision. Every shape that writes into the destination also destroys
+  # the checkout's own data once the destination is the source — a symlink
+  # entry renames a link pointing at the file over that same file, leaving a
+  # self-link where the local settings were; a copy entry hands `cp` one path
+  # twice; a relative entry removes the real file at the configured path and
+  # links its relative target over it, with no index check to stop it.
+  #
+  # That deliberately gives up two harmless passes on this route, which is
+  # `push --rebase` and nothing else: the WORKTREE_MKDIRS directories are not
+  # created and their exclude entries not written, and a package.json with no
+  # node_modules beside it is not warned about. Neither is push's work.
   if same_canonical_dir "$PROJECT_ROOT" "$wt"; then
     return 0
   fi

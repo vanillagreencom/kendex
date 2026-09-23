@@ -286,6 +286,12 @@ step() {
       make_standalone_clone 'WORKTREE_SYMLINKS="settings.local"'
       LOCAL_LINK=settings.local
       ;;
+    # The third shape that writes into its own source: a relative entry whose
+    # configured path is a real file in the checkout being pushed.
+    standalone-clone-relative)
+      make_standalone_clone 'WORKTREE_RELATIVE_SYMLINKS="settings.local=../elsewhere"'
+      LOCAL_LINK=settings.local
+      ;;
     pair-local-link) make_pair_with_local_link ;;
     # The issue worktree is registered outside the configured trees base:
     # the layout an app that owns worktree creation leaves.
@@ -741,6 +747,8 @@ must-fail: without the same-checkout no-op, the same clone copies its local file
 a main-checkout push that rebases leaves its configured local settings file a regular file|standalone-clone-link clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=file:local-settings map=hop:map2
 must-fail: without the same-checkout no-op, that push links the settings file onto itself|standalone-clone-link clone-advance fix lock-fix unfixed-same-checkout|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=link:<wt>/settings.local map=hop:map2
 must-fail: without the same-checkout return in the detector, that push warns the settings file is materialized|standalone-clone-link clone-advance fix lock-fix unfixed-materialized-check|push @wt --set-upstream|0|map2|materialized+map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=file:local-settings map=hop:map2
+a main-checkout push that rebases leaves a configured relative-symlink path a regular file|standalone-clone-relative clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=file:local-settings map=hop:map2
+must-fail: without the same-checkout no-op, that push links the relative target over the real file|standalone-clone-relative clone-advance fix lock-fix unfixed-same-checkout|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=link:../elsewhere map=hop:map2
 a linked-worktree push relinks its configured local settings file after the rebase|pair-local-link advance fix fix2|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=- local=link:<root>/main/settings.local map=hop:map2
 a setup failure after a successful rebase leaves the map durable and does not push|pair advance fix setup-fails|push @wt --set-upstream|1|map2|map:2+copy-failed:copy-parent/copied.txt|head=rebased ahead=2 tree=copy-parent:blocked,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- map=hop:map2
 must-fail: setup before map persistence leaves the successful rewrite unmapped|pair advance fix setup-fails unfixed-map-order|push @wt --set-upstream|1|-|copy-failed:copy-parent/copied.txt|head=rebased ahead=2 tree=copy-parent:blocked,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- map=end
