@@ -29,6 +29,15 @@ fixture() {
 #!/usr/bin/env bash
 printf 'v22.19.0\n'
 SH
+  cat >"$R/fake-bin/git" <<'SH'
+#!/usr/bin/env bash
+set -eu
+[ "$*" = "rev-parse HEAD:ui/package.json HEAD:ui/package-lock.json" ]
+printf 'package:'
+cat ui/package.json
+printf 'lock:'
+cat ui/package-lock.json
+SH
   cat >"$R/fake-bin/npm" <<'SH'
 #!/usr/bin/env bash
 set -eu
@@ -130,12 +139,15 @@ IMAGE="$(sed -n 's/^IMAGE="\(.*\)"$/\1/p' "$TOOLS/bash32-parse")"
 ran32=no
 causes=""
 fixture bash32
+run_bash32() {
+  "$runtime_path" run --rm --init --network=none --volume "$R:/repo" --workdir /repo --env HOME=/tmp --env PATH=/repo/fake-bin:/usr/local/bin:/usr/bin:/bin --env NPM_LOG=/repo/npm.log --env RUSTUP_LOG=/repo/rustup.log --env RUSTUP_STATE=/repo/rustup.state "$IMAGE" bash "$@"
+}
 for runtime in $RUNTIMES; do
   runtime_path="$(command -v "$runtime" 2>/dev/null)" || continue
-  probe="$($runtime_path run --rm --init --network=none "$IMAGE" bash -c 'printf %s "$BASH_VERSION"' 2>&1)" || { causes="$causes $runtime:$probe"; continue; }
+  probe="$(run_bash32 -c 'for command in bash git node npm rustc rustup grep cat; do command -v "$command" >/dev/null || exit 1; done; printf %s "$BASH_VERSION"' 2>&1)" || { causes="$causes $runtime:$probe"; continue; }
   case "$probe" in 3.2.*) ;; *) causes="$causes $runtime:$probe"; continue ;; esac
   RC=0
-  OUT="$($runtime_path run --rm --init --network=none --volume "$R:/repo" --workdir /repo --env HOME=/tmp --env PATH=/repo/fake-bin:/usr/bin:/bin --env NPM_LOG=/repo/npm.log --env RUSTUP_LOG=/repo/rustup.log --env RUSTUP_STATE=/repo/rustup.state "$IMAGE" bash ./tools/lane-setup 2>&1)" || RC=$?
+  OUT="$(run_bash32 ./tools/lane-setup 2>&1)" || RC=$?
   [ "$RC" -eq 0 ] && case "$OUT" in *"lane-setup: rust-targets=install"*) true ;; *) false ;; esac \
     && ok "the setup executes under Bash $probe" \
     || bad "the setup executes under Bash $probe" "rc=$RC out=$OUT"
