@@ -20,8 +20,12 @@
 # segment from each word the shell may execute, for a caller judging what a
 # command is rather than what it mentions.
 #
-# The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED
-# and COMMAND_TEXTS, so a caller does not use those names for its own state.
+# `command_arguments SEGMENT` leaves COMMAND_ARGUMENTS holding that segment
+# without redirection operators and their target words.
+#
+# The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED,
+# COMMAND_ARGUMENTS and COMMAND_TEXTS, so a caller does not use those names for
+# its own state.
 
 NL=$'\n'
 MASK=$'\001'
@@ -51,15 +55,23 @@ SHELL_RE='(^|[[:space:]])([^[:space:]]*/)?([^[:space:]/]*sh|eval|source|\.)([[:s
 # opens, never the command it runs, so `cat > script.sh` names no shell. The
 # operator takes an optional file descriptor digit in front of it.
 REDIRECT_RE='[0-9]?(>>|>|<)[[:blank:]]*[^[:space:]]+'
+# Remove the shell words that open a redirection rather than reaching the
+# command as arguments. The parser owns this view so callers do not parse shell
+# redirections again.
+command_arguments() { # SEGMENT -> COMMAND_ARGUMENTS
+  COMMAND_ARGUMENTS=$1
+  while [[ $COMMAND_ARGUMENTS =~ $REDIRECT_RE ]]; do
+    COMMAND_ARGUMENTS=${COMMAND_ARGUMENTS/"${BASH_REMATCH[0]}"/ }
+  done
+}
 # The quotes come off the text first: a command word may be quoted whole, as in
 # `"/bin/bash" -c ...`, and a quoted word ends in the quote character, so the
 # basename would never read as a shell. The redirection targets go next, since
 # a target named for a script would otherwise read as the interpreter of one.
 runs_shell_text() { # TEXT -> 0 when a word in it runs shell text
   local bare=${1//[\'\"]/}
-  while [[ $bare =~ $REDIRECT_RE ]]; do
-    bare=${bare/"${BASH_REMATCH[0]}"/ }
-  done
+  command_arguments "$bare"
+  bare=$COMMAND_ARGUMENTS
   [[ $bare =~ $SHELL_RE ]]
 }
 # A `<<` or `<<-` with only blanks after it takes the next span as its heredoc

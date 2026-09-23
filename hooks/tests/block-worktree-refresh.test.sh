@@ -194,8 +194,8 @@ directory_table() {
 # label|status|first line|command
 # The verb is read only where the shell would run it: the rows below vary the
 # command position against a quoted argument, a heredoc body, a comment and
-# the quoted argument of `-c` and `eval`. Verb help is refused and the bare
-# source shorthand is not read; those are stated limits.
+# the quoted argument of `-c` and `eval`. Verb help passes, while a redirection
+# target named like that option does not; the bare source shorthand is not read.
 # A `source add` and a `source remove` reach the values `add` and `remove`:
 # the pattern's earlier alternative ends at the same word, and a POSIX match
 # prefers the longer earlier subexpression, so the second word is the verb it
@@ -255,6 +255,7 @@ updates without --apply is a read|0|-|kendex updates
 a global updates --apply passes|0|-|kendex updates --apply -g
 help after a write verb is a read|0|-|kendex refresh --help
 plan after a write verb is a read|0|-|kendex apply --plan
+a redirection target named --help does not exempt the write|2|block-worktree-refresh: refused=refresh|kendex refresh -y > --help
 kendex verify from the worktree passes|0|-|kendex verify
 kendex check from the worktree passes|0|-|kendex check
 kendex list from the worktree passes|0|-|kendex list
