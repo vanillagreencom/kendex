@@ -180,6 +180,13 @@ new_caller() {
   exit 1
 }
 
+# A pane whose command establishes its harness but whose screen has no context
+# line. The account triggers can use that identity without guessing a model or
+# context window.
+new_known_claude_caller() {
+  new_caller "$1" "$1" "exec '$BIN/hclaude' -c \"cat '$TMP_ROOT/caller.screen'; read _held\""
+}
+
 # succeed-env ROW PREFERENCE ARGS... — the script under an explicit, whole
 # environment, with TMUX and TMUX_PANE taken from the caller of this file: the
 # test passes them, and a pane's own shell already carries them.
@@ -738,6 +745,44 @@ SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyinglaunch ''
 check "the qualifying-set trigger succeeds onto the remaining account" \
   "$RC|$(caller_open)|$(recorded claude)" \
   "0|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
+
+# A known harness remains enough to judge account triggers when its context
+# line is absent. The account read receives no model, and the context reading
+# remains unmeasured when none of those triggers fires.
+NO_CONTEXT='fixture known claude without context'
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+new_known_claude_caller "$NO_CONTEXT"
+run_succeed knownheadroom '' --check-marks
+check "a known harness with no context line still fires the headroom trigger" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=headroom value=$TRIGGER mark=$TRIGGER succession=on account=claude resets=2026-07-27T06:00:00Z"
+
+stage_usage_pair knownrate 40 20 600
+new_known_claude_caller "$NO_CONTEXT"
+WALL_MINUTES=30 run_succeed knownrate '' --check-marks
+check "a known harness with no context line still fires the rate trigger" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=claude"
+
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+new_known_claude_caller "$NO_CONTEXT"
+SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed knownqualifying '' --check-marks
+check "a known harness with no context line still fires the qualifying-set trigger" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on"
+
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
+new_known_claude_caller "$NO_CONTEXT"
+SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed knownunmeasured '' --check-marks
+check "a known harness with no account trigger reports its context as unmeasured" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-unmeasured kind=context reason=window-none source=none succession=on"
+new_caller "$NO_CONTEXT" "$NO_CONTEXT"
+run_succeed unknowncontext '' --check-marks
+check "a pane with no known harness and no context line still refuses" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "1|oversee-succeed: no-status-line pane=$CALLER_PANE"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
 
 NORATE="$TMP_ROOT/no-rate-trigger"
 script_copy "$NORATE"

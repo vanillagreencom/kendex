@@ -521,25 +521,30 @@ CALLER_WINDOW="$(tmux display-message -p -t "$CALLER_PANE" '#{window_id}' 2>"$DE
   || die pane-unreadable "pane=$CALLER_PANE"
 CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 2>"$DEP_ERR")" \
   || die pane-unreadable "pane=$CALLER_PANE"
-# The status line is the whole of what the caller's pane is asked, and a dead
-# pane draws none: the harness that was running there left no line to read, so
-# the recorded command answers for all of it instead. A WALLED pane draws one,
-# its harness being alive and merely unable to take a turn, so that mode asks
-# the pane the same question every live caller is asked; only the mark
-# judgement below is skipped for it.
+# The status line is the context reading. A judging caller whose foreground
+# command already names one harness can still have its account triggers judged
+# when that line is absent; its context and model stay unmeasured. A command
+# that names neither harness still refuses. A dead pane draws no command or
+# status, so the recorded command answers for all of it instead.
 CALLER_HARNESS="" tokens=0 window="" window_source="" CALLER_MODEL=""
 if [[ "$MODE" != dead ]]; then
   CALLER_CMD="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_command}' 2>"$DEP_ERR")" \
     || die pane-unreadable "pane=$CALLER_PANE"
   screen="$(tmux capture-pane -pJ -t "$CALLER_PANE" 2>"$DEP_ERR")" || die pane-unreadable "pane=$CALLER_PANE"
-  parsed="$(lane_context_parse "${CALLER_CMD#-}" <<<"$screen" 2>"$DEP_ERR")" || die no-status-line "pane=$CALLER_PANE"
-  # Through lib/lane-context.sh's own splitter, never `IFS=$'\t' read`: a claude
-  # line naming no window prints three empty fields before the model, and read
-  # collapses that run into one delimiter, handing the model back as the token
-  # count. That file owns the split; this is its second consumer.
-  lane_context_fields "$parsed"
-  CALLER_HARNESS="$LANE_CTX_HARNESS" tokens="$LANE_CTX_TOKENS" window="$LANE_CTX_WINDOW"
-  window_source="$LANE_CTX_SOURCE" CALLER_MODEL="$LANE_CTX_MODEL"
+  if parsed="$(lane_context_parse "${CALLER_CMD#-}" <<<"$screen" 2>"$DEP_ERR")"; then
+    # Through lib/lane-context.sh's own splitter, never `IFS=$'\t' read`: a claude
+    # line naming no window prints three empty fields before the model, and read
+    # collapses that run into one delimiter, handing the model back as the token
+    # count. That file owns the split; this is its second consumer.
+    lane_context_fields "$parsed"
+    CALLER_HARNESS="$LANE_CTX_HARNESS" tokens="$LANE_CTX_TOKENS" window="$LANE_CTX_WINDOW"
+    window_source="$LANE_CTX_SOURCE" CALLER_MODEL="$LANE_CTX_MODEL"
+  else
+    if ! CALLER_HARNESS="$(lane_context_shape "${CALLER_CMD#-}")"; then
+      die no-status-line "pane=$CALLER_PANE"
+    fi
+    (( JUDGES )) && [[ "$CALLER_HARNESS" != both ]] || die no-status-line "pane=$CALLER_PANE"
+  fi
 fi
 
 # The account mark, judged on the account THIS session is spending and on the
