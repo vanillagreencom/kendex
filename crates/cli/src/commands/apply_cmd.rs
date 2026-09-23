@@ -37,7 +37,9 @@ pub struct ApplyArgs {
     /// Say yes to the repository changes a newly installed package asks for
     #[arg(long)]
     allow_repo_effects: bool,
-    /// The project this run writes, named rather than walked up to
+    // The project this run writes, named rather than walked up to. The
+    // help clap prints is the flag's own, on `flags::ProjectTargetFlag`;
+    // a doc comment here would reach no output.
     #[command(flatten)]
     target: crate::flags::ProjectTargetFlag,
     /// Record matching installed files after moving an unreadable install record aside
@@ -46,7 +48,8 @@ pub struct ApplyArgs {
         conflicts_with_all = ["discard_edits", "replace_unmanaged", "allow_repo_effects"]
     )]
     record_existing: bool,
-    /// The commit offer's answer, without asking
+    // The commit offer's answer, without asking. Its help is
+    // `commit_offer::CommitFlags`' own, for the same reason.
     #[command(flatten)]
     _commit: crate::commands::commit_offer::CommitFlags,
 }
@@ -58,10 +61,9 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
     // the first write beats a half-applied run.
     let mut planned = Vec::new();
     let scopes = resolve_scopes_at(env, filter, args.target.path())?;
-    // A named project goes on the projects list once this run has written
-    // it, and the refusal that rule carries is asked here, before the
-    // first write. A plan writes nothing, so it asks nothing and leaves
-    // the list as it found it.
+    // The refusal that registration carries, asked before the first
+    // write. A plan never reaches a write, so it is asked nothing;
+    // `project::register_target` owns the rule itself.
     if !args.plan {
         super::project::target_registrable(env, &args.target, &scopes)?;
     }
@@ -156,12 +158,10 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                 );
             },
         )?;
-        // After the write, the way `add` registers what it installed into:
-        // a project named by a command that never stood in it is one the
-        // app sees. The temporary-path gate above already passed for this
-        // path, and an up-to-date project reaches here too — having
-        // nothing to write is not a reason to leave the folder off the
-        // list.
+        // After the write, the way `add` registers what it installed
+        // into: a project named by a command that never stood in it is
+        // one the app sees. The temporary-path gate above already passed
+        // for this path.
         super::project::register_target(env, &args.target, &scope)?;
     }
     Ok(())

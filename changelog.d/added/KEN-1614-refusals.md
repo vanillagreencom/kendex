@@ -1,1 +1,1 @@
-- A `--project-path` that is no kendex project root is refused before anything is planned, and one under a temporary folder is refused unless `--throwaway` is passed.
+- A `--project-path` that is no kendex project root is refused before anything is planned.

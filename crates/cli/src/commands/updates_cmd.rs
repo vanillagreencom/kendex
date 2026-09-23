@@ -45,7 +45,8 @@ pub struct UpdatesArgs {
     // reach no output.
     #[command(flatten)]
     target: crate::flags::ProjectTargetFlag,
-    /// The commit offer's answer, without asking
+    // The commit offer's answer, without asking. Its help is
+    // `commit_offer::CommitFlags`' own, for the same reason.
     #[command(flatten)]
     _commit: crate::commands::commit_offer::CommitFlags,
 }

@@ -128,12 +128,21 @@ fn kept_world() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
     (tmp, home, catalog, elsewhere)
 }
 
+/// The declaration with no package listed: a project kendex reads and
+/// finds nothing to install in.
+fn manifest_head(catalog: &Path) -> String {
+    format!(
+        "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n",
+        catalog.display()
+    )
+}
+
 /// One declaration of the fixture catalog's one skill. Both scopes write
 /// this same body; only the file it lands in tells them apart.
 fn manifest_text(catalog: &Path) -> String {
     format!(
-        "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
-        catalog.display()
+        "{}\n[skills.deploy]\nsource = \"cat\"\n",
+        manifest_head(catalog)
     )
 }
 
@@ -149,6 +158,12 @@ fn declare_globally(home: &Path, catalog: &Path) {
 /// The manifest a project keeps of its own, naming the fixture catalog.
 fn declare(root: &Path, catalog: &Path) {
     write(&root.join("kendex.toml"), &manifest_text(catalog));
+}
+
+/// The same, listing no package, so a run here plans nothing and writes
+/// no lock.
+fn declare_nothing(root: &Path, catalog: &Path) {
+    write(&root.join("kendex.toml"), &manifest_head(catalog));
 }
 
 fn installed(root: &Path) -> PathBuf {
@@ -344,7 +359,7 @@ fn a_linked_worktree_with_its_own_manifest_is_a_project_a_command_can_name() {
     assert!(!row(&main).contains("(worktree"), "{}", row(&main));
 }
 
-/// A run that writes nothing puts nothing on the projects list.
+/// `apply --plan` puts nothing on the projects list.
 ///
 /// The plan's own help is "print the plan and change nothing", and the
 /// projects list is something. Registering while resolving the scope made
@@ -394,9 +409,15 @@ fn a_plan_leaves_the_projects_list_as_it_found_it() {
 fn a_temporary_project_is_refused_unless_a_throwaway_one_is_meant() {
     let (_tmp, home, catalog, elsewhere) = kept_world();
     let env = kendex_core::env::Env::host_rooted(&home);
+    // Every row below asserts a refusal this fixture cannot produce once
+    // its own registry is temporary, so an unmet precondition reddens
+    // rather than passing four voided assertions in silence.
     if let Some(why) = kendex_core::settings::temporary(&env, &env.settings_file()) {
-        eprintln!("skipped: the fixture registry is itself temporary: {why}");
-        return;
+        panic!(
+            "the kept fixture registry at {} is itself temporary, which exempts every folder \
+             this case asserts about: {why}",
+            env.settings_file().display()
+        );
     }
     let scratch = tempfile::tempdir().unwrap();
     let project = rooted(&scratch);
@@ -475,6 +496,44 @@ fn refresh_writes_the_named_project_and_the_personal_scope() {
         registered(&home).contains(&project),
         "the written project is on the list: {:?}",
         registered(&home)
+    );
+}
+
+/// A `refresh` with nothing left to write still puts the named project on
+/// the list, the way `apply` does on the same folder.
+///
+/// The case the flag exists for is a worktree whose renders were copied in
+/// by hand: the run finds nothing to install and the app still has to see
+/// the project. `refresh` used to return before its registration there.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn refresh_registers_a_project_with_nothing_left_to_write() {
+    let (_tmp, home, catalog, elsewhere) = world();
+    let project = home.join("dev/app");
+    fs::create_dir_all(&project).unwrap();
+    declare_nothing(&project, &catalog);
+
+    let said = run(
+        &home,
+        &elsewhere,
+        &[
+            "refresh",
+            "--project-path",
+            project.to_str().unwrap(),
+            "--scope",
+            "project",
+            "-y",
+        ],
+    );
+
+    assert!(
+        said.contains("nothing installed"),
+        "the run had nothing to write: {said}"
+    );
+    assert_eq!(
+        registered(&home),
+        std::slice::from_ref(&project),
+        "and the named project is on the list anyway: {said}"
     );
 }
 

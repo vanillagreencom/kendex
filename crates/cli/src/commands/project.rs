@@ -244,8 +244,8 @@ pub fn registrable(env: &Env, root: &std::path::Path, flag: ThrowawayFlag) -> Cl
 /// Whether the project a `--project-path` named may go on the projects
 /// list, asked by the whole-scope writing verbs before their first write.
 ///
-/// The registration itself comes after the write, through
-/// [`register_destination`] — but the refusal cannot wait for it: a run
+/// The registration itself comes after the write, under the rule
+/// [`register_target`] owns — but the refusal cannot wait for it: a run
 /// that installed and only then declined to register would leave packages
 /// in a folder kendex does not track. So the rule every registering verb
 /// asks is asked here too, on the root resolution already settled on, and
@@ -272,6 +272,17 @@ pub fn target_registrable(
 
 /// The project a `--project-path` named, on the projects list now that the
 /// run has written it.
+///
+/// **The rule lives here, and every other surface stating it points at
+/// this function.** A named run registers the project it resolved once it
+/// has got through that project's write, whether the write had work to do
+/// or the place was already up to date. A run that never reaches the
+/// write leaves the list as it found it: `apply --plan` and a bare
+/// `updates` listing, which write nothing by design; a scope passed over
+/// because nothing is declared there; a plan that failed, reported
+/// instead; and a confirmation the reader declined — except in `refresh`,
+/// where a Pi settle before the final confirm has already written what
+/// this then registers.
 ///
 /// Called by `refresh`, `apply` and `updates --apply` after the write, and
 /// only where the destination was named: a walked-up project is the one

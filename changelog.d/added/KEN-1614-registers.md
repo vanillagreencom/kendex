@@ -1,0 +1,1 @@
+- Naming a project with `apply`, `refresh` or `updates --apply` puts it on your projects list, even where nothing was left to install; a plan and a bare `updates` listing leave the list alone.

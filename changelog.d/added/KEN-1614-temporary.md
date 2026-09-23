@@ -1,0 +1,1 @@
+- A run that would put the named folder on your projects is refused when the folder sits under a temporary path, unless `--throwaway` is passed.

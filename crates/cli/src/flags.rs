@@ -169,9 +169,10 @@ impl ReportFlags {
 /// that cannot move its shell, and one standing in a linked git worktree,
 /// name the checkout it means.
 ///
-/// A named project goes on the projects list once the run has written it,
-/// so the flag that answers the temporary-path refusal rides here beside
-/// the path it answers for.
+/// The flag answering the temporary-path refusal rides here beside the
+/// path it answers for, because a named run can put that path on the
+/// projects list; [`commands::project::register_target`] owns when it
+/// does.
 #[derive(Args, Clone, Default)]
 pub struct ProjectTargetFlag {
     /// The project this run reads and writes, by path, instead of the one it was typed in

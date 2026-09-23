@@ -33,10 +33,13 @@ pub struct RefreshArgs {
     /// Overwrite installations you edited by hand
     #[arg(long)]
     discard_edits: bool,
-    /// The project this run writes, named rather than walked up to
+    // The project this run writes, named rather than walked up to. The
+    // help clap prints is the flag's own, on `flags::ProjectTargetFlag`;
+    // a doc comment here would reach no output.
     #[command(flatten)]
     target: crate::flags::ProjectTargetFlag,
-    /// The commit offer's answer, without asking
+    // The commit offer's answer, without asking. Its help is
+    // `commit_offer::CommitFlags`' own, for the same reason.
     #[command(flatten)]
     _commit: crate::commands::commit_offer::CommitFlags,
 }
@@ -116,13 +119,40 @@ fn finish_scopes(env: &Env, reached: &[kendex_core::model::Scope], closing: Vec<
 /// was written, and the next deep pass rewrites the file.
 fn record_snapshots(env: &Env, scopes: &[kendex_core::model::Scope]) {
     for scope in scopes {
-        if matches!(
-            kendex_core::manifest::load(&kendex_core::manifest::manifest_path(env, scope)),
-            Ok(kendex_core::manifest::ManifestFile::Current(_))
-        ) && let Err(error) = kendex_core::drift::snapshot::record(env, scope)
+        if declares(env, scope)
+            && let Err(error) = kendex_core::drift::snapshot::record(env, scope)
         {
             warn(&format!("warning: snapshot not derived ({})", error));
         }
+    }
+}
+
+/// Whether this scope has a declaration file of its own to work from.
+///
+/// A scope with none is one `apply` passes over saying nothing is listed
+/// to install, and this verb passes over the same way: it is not a place
+/// either of them wrote.
+fn declares(env: &Env, scope: &kendex_core::model::Scope) -> bool {
+    matches!(
+        kendex_core::manifest::load(&kendex_core::manifest::manifest_path(env, scope)),
+        Ok(kendex_core::manifest::ManifestFile::Current(_))
+    )
+}
+
+/// The named project on the projects list, now that this run has got
+/// through that scope's write; [`super::project::register_target`] owns
+/// when that is and when it is not.
+///
+/// A registry that refuses is a failure of the run, not of the install:
+/// the packages are on disk and the message says so.
+fn register_written(
+    env: &Env,
+    target: &crate::flags::ProjectTargetFlag,
+    scope: &kendex_core::model::Scope,
+    failures: &mut Vec<String>,
+) {
+    if let Err(error) = super::project::register_target(env, target, scope) {
+        failures.push(error.to_string());
     }
 }
 
@@ -210,10 +240,9 @@ fn prepare_scopes(
     discard_edits: bool,
 ) -> Result<Vec<PreparedScope>, Box<dyn std::error::Error>> {
     let scopes = resolve_scopes_at(env, filter, target.path())?;
-    // The named project goes on the projects list once this run has
-    // written it; the refusal that rule carries is asked here, before the
-    // first write, so a run never installs into a folder it would then
-    // decline to register.
+    // The refusal that registration carries, asked before the first write
+    // so a run never installs into a folder it would then decline to
+    // register. `project::register_target` owns the rule itself.
     super::project::target_registrable(env, target, &scopes)?;
     let prepared: Vec<_> = scopes
         .into_iter()
@@ -413,6 +442,12 @@ pub fn run(
             blocked = print_diagnostics(env, &report, verbose);
             failures.extend(refresh_failures(&report));
             if lock.entries.is_empty() && report.plan.is_empty() && blocked.is_empty() {
+                // Nothing left to write is not a reason to leave the
+                // named project off the projects list: the run got
+                // through this scope, which is what registration follows.
+                if declares(env, &scope) {
+                    register_written(env, target, &scope, &mut failures);
+                }
                 continue;
             }
         }
@@ -437,13 +472,7 @@ pub fn run(
                 // and `commands::repo_effects` says why the record of an
                 // earlier yes does not change that.
                 super::repo_effects::say_lapsed(env, &scope, &[]);
-                // The write has landed, so the project this run was told
-                // to write goes on the projects list. A registry that
-                // refuses is a failure of the run, not of the install:
-                // the packages are on disk and the message says so.
-                if let Err(error) = super::project::register_target(env, target, &scope) {
-                    failures.push(error.to_string());
-                }
+                register_written(env, target, &scope, &mut failures);
                 closing.push(Closing {
                     scope: scope.clone(),
                     count: written.count,
