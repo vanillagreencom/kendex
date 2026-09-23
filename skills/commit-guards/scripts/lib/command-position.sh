@@ -20,9 +20,8 @@
 # segment from each word the shell may execute, for a caller judging what a
 # command is rather than what it mentions.
 #
-# `command_arguments SEGMENT` leaves COMMAND_ARGUMENTS without redirections.
-# The helpers below set BARE, UPTO, SUBS, OUTSIDE, MASKED, COMMAND_ARGUMENTS
-# and COMMAND_TEXTS; callers do not use those names for their own state.
+# The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED
+# and COMMAND_TEXTS, so a caller does not use those names for its own state.
 
 NL=$'\n'
 MASK=$'\001'
@@ -51,24 +50,16 @@ SHELL_RE='(^|[[:space:]])([^[:space:]]*/)?([^[:space:]/]*sh|eval|source|\.)([[:s
 # A word standing immediately after a redirection operator is a file the shell
 # opens, never the command it runs, so `cat > script.sh` names no shell. The
 # operator takes an optional file descriptor digit in front of it.
-REDIRECT_RE='[0-9]?[<>]+-?[[:blank:]]*[^[:space:]]+'
-# Remove the shell words that open a redirection rather than reaching the
-# command as arguments. The parser owns this view so callers do not parse shell
-# redirections again.
-command_arguments() { # SEGMENT -> COMMAND_ARGUMENTS
-  COMMAND_ARGUMENTS=$1
-  while [[ $COMMAND_ARGUMENTS =~ $REDIRECT_RE ]]; do
-    COMMAND_ARGUMENTS=${COMMAND_ARGUMENTS/"${BASH_REMATCH[0]}"/ }
-  done
-}
+REDIRECT_RE='[0-9]?(>>|>|<)[[:blank:]]*[^[:space:]]+'
 # The quotes come off the text first: a command word may be quoted whole, as in
 # `"/bin/bash" -c ...`, and a quoted word ends in the quote character, so the
 # basename would never read as a shell. The redirection targets go next, since
 # a target named for a script would otherwise read as the interpreter of one.
 runs_shell_text() { # TEXT -> 0 when a word in it runs shell text
   local bare=${1//[\'\"]/}
-  command_arguments "$bare"
-  bare=$COMMAND_ARGUMENTS
+  while [[ $bare =~ $REDIRECT_RE ]]; do
+    bare=${bare/"${BASH_REMATCH[0]}"/ }
+  done
   [[ $bare =~ $SHELL_RE ]]
 }
 # A `<<` or `<<-` with only blanks after it takes the next span as its heredoc
