@@ -163,6 +163,12 @@ fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_ho
         Some(kendex_core::paths::canonical(&main).unwrap().as_path()),
         "a worktree with no manifest of its own points at the checkout that has one"
     );
+    assert!(
+        report::render_plain(&checked).contains(
+            "fix: kendex remove gh (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)"
+        ),
+        "an absent manifest retains the explicit elsewhere marker"
+    );
 
     declare(&env, &scope(&linked));
     let checked = report::check(&env, &[scope(&linked)]);
@@ -213,6 +219,38 @@ fn a_rendered_fix_inside_a_worktree_names_the_project_it_writes() {
     assert!(
         text.contains(&format!(
             "fix: kendex apply --project-path '{}'",
+            kendex_core::paths::canonical(&linked).unwrap().display()
+        )),
+        "{text}"
+    );
+}
+
+/// A current manifest can still want the recorded name in another harness.
+/// The preview names the linked worktree without choosing a write.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn record_cleanup_alone_names_the_linked_worktree_in_its_plan_command() {
+    let (_tmp, env, _main, linked) = repository();
+    let scope = scope(&linked);
+    declare(&env, &scope);
+    record_a_missing_agent(&env, &scope);
+
+    let checked = report::check(&env, std::slice::from_ref(&scope));
+    assert_eq!(
+        checked
+            .sections
+            .iter()
+            .map(|section| section.title.as_str())
+            .collect::<Vec<_>>(),
+        ["record cleanup needed"],
+        "the stale record is the only reported drift: {:?}",
+        checked.sections
+    );
+
+    let text = report::render_plain(&checked);
+    assert!(
+        text.contains(&format!(
+            "see: kendex apply --plan --project-path '{}'",
             kendex_core::paths::canonical(&linked).unwrap().display()
         )),
         "{text}"

@@ -177,12 +177,26 @@ fn a_second_copy_under_any_paired_root_is_named_by_update_pi_and_check() {
 
         let check = kendex(&home, &project, &["check", "--scope", "project"]);
         assert_eq!(check.status.code(), Some(1), "{case}: {}", said(&check));
-        expect("check", &said(&check));
+        let check_text = said(&check);
+        expect("check", &check_text);
+        let move_command = format!(
+            "fix: mv -i {} {}",
+            kendex_core::names::quoted(&shadow.display().to_string()),
+            kendex_core::names::quoted(&extensions.parent().unwrap().display().to_string())
+        );
+        assert!(
+            check_text.contains(&move_command),
+            "{case}, check: {check_text}"
+        );
         let quiet = kendex(&home, &project, &["check", "--scope", "project", "--quiet"]);
         assert_eq!(quiet.status.code(), Some(1), "{case}: {}", said(&quiet));
         let stdout = String::from_utf8_lossy(&quiet.stdout);
         assert!(stdout.contains("loaded twice by pi:"), "{case}: {stdout}");
         expect("check --quiet", &stdout);
+        assert!(
+            stdout.contains(&move_command),
+            "{case}, check --quiet: {stdout}"
+        );
     }
 }
 

@@ -14,8 +14,8 @@
 //! This report is the one deliberate exception to the no-command-lines
 //! rule: it is written for an agent that can act, so each line may carry a
 //! remedy built from a fixed template set: apply, replace-unmanaged,
-//! refresh, remove, add, fork, findings, plan — with only validated
-//! identifiers in argument positions.
+//! refresh, remove, add, fork, drift-hook, move-aside, findings, plan —
+//! with validated identifiers or quoted paths in argument positions.
 //! Free text from sources or errors renders in quoted informational
 //! positions, never in a command position. A remedy that changes something
 //! is offered as the fix; the one that only prints is offered as what to
@@ -93,6 +93,21 @@ pub enum Remedy {
     Refresh {
         global: bool,
     },
+    /// Compare installed packages with the current source state.
+    Updates {
+        global: bool,
+    },
+    /// Replace this scope's old session drift hook with the current copy.
+    DriftHook {
+        global: bool,
+    },
+    /// Move an unmanaged Pi copy out of the directory Pi scans. Paths are
+    /// shell-quoted when rendered. `windows` selects PowerShell syntax.
+    MoveAside {
+        from: std::path::PathBuf,
+        to: std::path::PathBuf,
+        windows: bool,
+    },
     Remove {
         name: String,
         global: bool,
@@ -141,18 +156,21 @@ impl Remedy {
         !matches!(self, Remedy::Plan { .. })
     }
 
-    /// Whether this remedy is about the personal scope. A global command
-    /// is one flag wherever it is typed and never names a project.
+    /// Whether this remedy is about the personal scope or targets an
+    /// absolute path directly. Neither kind needs a project destination.
     pub fn global(&self) -> bool {
         match self {
             Remedy::Apply { global }
             | Remedy::ReplaceUnmanaged { global }
             | Remedy::UpdatePi { global }
             | Remedy::Refresh { global }
+            | Remedy::Updates { global }
+            | Remedy::DriftHook { global }
             | Remedy::Plan { global }
             | Remedy::Remove { global, .. }
             | Remedy::Add { global, .. }
             | Remedy::Fork { global, .. } => *global,
+            Remedy::MoveAside { .. } => true,
         }
     }
 
@@ -166,6 +184,7 @@ impl Remedy {
             Remedy::Apply { .. }
                 | Remedy::ReplaceUnmanaged { .. }
                 | Remedy::Refresh { .. }
+                | Remedy::Updates { .. }
                 | Remedy::Plan { .. }
         )
     }
@@ -195,10 +214,7 @@ impl Remedy {
         let named = target.filter(|_| !self.global());
         let place = match (self.global(), named.filter(|_| self.takes_project_path())) {
             (true, _) => " --global".to_owned(),
-            (false, Some(path)) => format!(
-                " --project-path {}",
-                crate::names::quoted(&path.display().to_string())
-            ),
+            (false, Some(path)) => format!(" --project-path {}", command_word(path, false)?),
             (false, None) => String::new(),
         };
         let command = match self {
@@ -213,6 +229,23 @@ impl Remedy {
                 }
             ),
             Remedy::Refresh { .. } => format!("kendex refresh{place}"),
+            Remedy::Updates { .. } => format!("kendex updates{place}"),
+            Remedy::DriftHook { global } => format!(
+                "kendex drift-hook --yes --scope {}",
+                if *global { "global" } else { "project" }
+            ),
+            Remedy::MoveAside { from, to, windows } => match *windows {
+                true => format!(
+                    "Move-Item -LiteralPath {} -Destination {} -Confirm",
+                    command_word(from, true)?,
+                    command_word(to, true)?
+                ),
+                false => format!(
+                    "mv -i {} {}",
+                    command_word(from, false)?,
+                    command_word(to, false)?
+                ),
+            },
             Remedy::Remove { name, .. } => format!("kendex remove {name}{place}"),
             Remedy::Add { kind, name, .. } => {
                 format!("kendex add --{} {name}{place}", kind.name())
@@ -227,6 +260,41 @@ impl Remedy {
             false => Fix::Here(command),
         })
     }
+}
+
+/// Quote one path for the shell this environment uses. A non-UTF-8 path,
+/// a control byte or a path past the report's fragment bound cannot be
+/// printed as the same word, so no command is offered for that path.
+fn command_word(path: &std::path::Path, windows: bool) -> Option<String> {
+    let word = path.to_str()?;
+    let quoted = match windows {
+        true => format!("'{}'", word.replace('\'', "''")),
+        false => crate::names::quoted(word),
+    };
+    (text::shown(&quoted) == quoted).then_some(quoted)
+}
+
+/// The platform editor command for a manifest. Opening the file is an edit
+/// step, not a remedy that claims the named table was removed.
+pub(super) fn edit_command(env: &Env, path: &std::path::Path) -> Option<String> {
+    let path = command_word(path, env.is_windows())?;
+    Some(match env.is_windows() {
+        true => format!("notepad.exe {path}"),
+        false => format!("${{EDITOR:-vi}} {path}"),
+    })
+}
+
+/// A non-clobbering backup command for an installed file that another
+/// remedy replaces. The backup sits beside the file with `.backup` added.
+pub(super) fn backup_command(env: &Env, path: &std::path::Path) -> Option<String> {
+    let from = command_word(path, env.is_windows())?;
+    let mut backup = path.as_os_str().to_owned();
+    backup.push(".backup");
+    let to = command_word(std::path::Path::new(&backup), env.is_windows())?;
+    Some(match env.is_windows() {
+        true => format!("Copy-Item -LiteralPath {from} -Destination {to} -Confirm"),
+        false => format!("cp -i {from} {to}"),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
@@ -273,7 +341,7 @@ pub struct CheckReport {
     /// main checkout's — and absent again where the main checkout holds
     /// no project root at that place, which leaves every remedy in the
     /// bare spelling a command typed in the checked directory would take.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "project_target_not_serializable")]
     pub project_target: Option<std::path::PathBuf>,
     /// Whether a scope's plan over unrecorded copies outran the deadline
     /// and is still owed — what sends the caller's background refresh
@@ -282,6 +350,12 @@ pub struct CheckReport {
     #[serde(skip)]
     #[specta(skip)]
     pub deep_pass_owed: bool,
+}
+
+/// A project target is command data. JSON omits a path the platform cannot
+/// represent as the exact UTF-8 argument the command renderer requires.
+fn project_target_not_serializable(target: &Option<std::path::PathBuf>) -> bool {
+    target.as_deref().is_none_or(|path| path.to_str().is_none())
 }
 
 impl CheckReport {
@@ -317,6 +391,7 @@ struct Sections {
     removed: Vec<Line>,
     mixed: Vec<Line>,
     missing: Vec<Line>,
+    record_cleanup: Vec<Line>,
     blocked: Vec<Line>,
     /// A Pi package this project declares that the global manifest
     /// declares too.
@@ -339,6 +414,7 @@ impl Sections {
             &self.removed,
             &self.mixed,
             &self.missing,
+            &self.record_cleanup,
             &self.blocked,
             &self.shadowed,
             &self.references,
@@ -365,6 +441,7 @@ impl Sections {
             removed: Vec::new(),
             mixed: Vec::new(),
             missing: Vec::new(),
+            record_cleanup: Vec::new(),
             blocked: Vec::new(),
             declared_twice: Vec::new(),
             shadowed: Vec::new(),
@@ -388,11 +465,12 @@ impl Sections {
             ("gone from their source", self.removed),
             ("mixed installs", self.mixed),
             ("missing on disk", self.missing),
+            ("record cleanup needed", self.record_cleanup),
             ("blocked by files already there", self.blocked),
             ("declared at both scopes", self.declared_twice),
             ("loaded twice by pi", self.shadowed),
             ("broken references", self.references),
-            ("not yet evaluated", self.unevaluated),
+            ("source comparison needed", self.unevaluated),
             ("could not check", self.unknown),
         ]
         .into_iter()
@@ -482,11 +560,11 @@ fn drift(text: String, remedy: Option<Remedy>) -> Line {
     }
 }
 
-fn unevaluated(text: String) -> Line {
+fn unevaluated(text: String, remedy: Remedy) -> Line {
     Line {
         class: Class::Unevaluated,
         text,
-        remedy: None,
+        remedy: Some(remedy),
     }
 }
 
@@ -582,7 +660,7 @@ pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) ->
     }
     crate::pi_ext::ShadowScan::fold(scans.iter_mut().map(|(_, scan)| scan));
     for (prefix, scan) in scans {
-        scope::shadow_lines(&prefix, scan, &mut sections);
+        scope::shadow_lines(env, &prefix, scan, &mut sections);
     }
     // Asked last, and only where an answer would be printed: resolving it
     // spawns git children, and the session-start check runs on every
@@ -675,6 +753,6 @@ mod tests_evidence;
 mod tests_render;
 mod text;
 
-pub use render::render_plain;
+pub use render::{render_full, render_plain};
 use scope::check_scope;
 pub use text::{Text, fold};

@@ -2,10 +2,13 @@
 //! lock, snapshot, stamps and the Pi roots' `extensions/`, each emitting
 //! classified lines.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use super::text::shown;
 use super::*;
+use crate::lock::{InstallRef, LockEntry, Reason};
+use crate::model::HarnessId;
 
 /// One scope's outcome beyond the lines it pushed: its second-copy scan,
 /// which the caller folds with the other scopes' before rendering through
@@ -20,6 +23,99 @@ pub(super) struct ScopeOutcome {
     pub(super) manifest: ManifestState,
 }
 
+fn selected_record_keys(
+    env: &Env,
+    manifest: &crate::manifest::Manifest,
+    lock: &crate::lock::Lock,
+    scope: &Scope,
+) -> BTreeSet<String> {
+    let custom_names = crate::hook::custom_hook_names(manifest);
+    let identity = |entry: &LockEntry, source: &str| InstallRef {
+        source: source.to_owned(),
+        kind: entry.kind,
+        name: entry.name.clone(),
+        harness: entry.harness,
+    };
+    let mut selected = BTreeSet::new();
+    for entry in lock.entries.values() {
+        if let Some(decl) = manifest.declared(entry.kind).get(&entry.name)
+            && ((entry.kind == ItemKind::PiExtension && entry.harness == HarnessId::Pi)
+                || crate::engine::desired::target_harnesses(decl, manifest, entry.kind, scope)
+                    .contains(&entry.harness))
+        {
+            selected.insert(identity(entry, &decl.source));
+        }
+        let plugin = entry.kind == ItemKind::Plugin
+            && manifest
+                .plugins
+                .get(&entry.name)
+                .is_some_and(|decl| decl.harness == entry.harness);
+        let custom = entry.kind == ItemKind::Hook
+            && manifest
+                .custom_hooks
+                .iter()
+                .zip(&custom_names)
+                .any(|(hook, name)| {
+                    let spec = crate::hook::HookSpec::custom(hook, name.clone());
+                    name == &entry.name
+                        && (spec.harnesses.is_some()
+                            || manifest.install.harnesses.contains(&entry.harness))
+                        && spec.applies_to(entry.harness)
+                        && crate::hook::delivery(env, scope, entry.harness, &spec)
+                            == crate::hook::Delivery::Registered
+                });
+        if plugin || custom {
+            selected.insert(identity(entry, &entry.source));
+        }
+        let bundle_member = !manifest.is_held_back(entry.kind, &entry.name)
+            && entry.reasons.iter().any(|reason| {
+                let Reason::MemberOf { bundle } = reason else {
+                    return false;
+                };
+                manifest.bundles.get(&bundle.name).is_some_and(|decl| {
+                    decl.source == bundle.source
+                        && entry.source == bundle.source
+                        && crate::engine::desired::target_harnesses(
+                            decl, manifest, entry.kind, scope,
+                        )
+                        .contains(&entry.harness)
+                })
+            });
+        if bundle_member {
+            selected.insert(identity(entry, &entry.source));
+        }
+    }
+
+    loop {
+        let mut changed = false;
+        for entry in lock.entries.values() {
+            if !manifest.is_held_back(entry.kind, &entry.name)
+                && entry.reasons.iter().any(
+                    |reason| matches!(reason, Reason::RequiredBy { by } if selected.contains(by)),
+                )
+            {
+                changed |= selected.insert(identity(entry, &entry.source));
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    lock.entries
+        .iter()
+        .filter(|(_, entry)| selected.contains(&identity(entry, &entry.source)))
+        .map(|(key, _)| key.clone())
+        .collect()
+}
+
+fn harness_list(harnesses: &BTreeSet<crate::model::HarnessId>) -> String {
+    harnesses
+        .iter()
+        .map(|harness| harness.name())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// One scope's lines, and what the caller still needs from it.
 pub(super) fn check_scope(
     ctx: &ScopeCheck,
@@ -31,9 +127,9 @@ pub(super) fn check_scope(
     // Read once, read by two checks: what the lock says is on disk, and
     // what it says nothing about.
     let lock = crate::lock::load_file(&crate::lock::lock_path(env, scope));
-    ctx.lock_lines(manifest.as_ref(), &lock, sections);
+    ctx.lock_lines(&manifest, &lock, sections);
     let mut scan = crate::pi_ext::ShadowScan::default();
-    if let Some(manifest) = &manifest {
+    if let Some(manifest) = manifest.current() {
         ctx.pi_scope_duplicate_lines(manifest, sections);
         for name in manifest.pi_extensions.keys() {
             let key =
@@ -49,9 +145,9 @@ pub(super) fn check_scope(
         }
         scan = ctx.pi_shadow_scan(manifest.pi_extensions.keys().cloned().collect(), sections);
     }
-    ctx.blocked_lines(manifest.as_ref(), &lock, sections);
-    ctx.snapshot_lines(manifest.as_ref(), sections, oldest_age);
-    ctx.stamp_lines(manifest.as_ref(), sections);
+    ctx.blocked_lines(manifest.current(), &lock, sections);
+    ctx.snapshot_lines(manifest.current(), sections, oldest_age);
+    ctx.stamp_lines(manifest.current(), sections);
     ScopeOutcome {
         scan,
         manifest: manifest_state,
@@ -69,23 +165,35 @@ fn pi_unknown_line(prefix: &str, subject: &str, error: &str, sections: &mut Sect
 /// The lines of one scope's folded scan. A copy of a declared package
 /// under an `extensions/` directory Pi loads with the scope runs beside
 /// the managed one whatever state that one is in, so a fix update-pi
-/// installs runs next to the old code: one line per copy, no remedy from
-/// the fixed set, since the fix is a move kendex does not make, and the
-/// line names the entry to move and the directory to move it out of. A
+/// installs runs next to the old code: one line per copy, with a quoted
+/// shell move from the scanned directory into its parent. A
 /// root or name that would not read is one could-not-check line beside
 /// the copies found. Once per report for each, the fold having run.
-pub(super) fn shadow_lines(prefix: &str, scan: crate::pi_ext::ShadowScan, sections: &mut Sections) {
+pub(super) fn shadow_lines(
+    env: &Env,
+    prefix: &str,
+    scan: crate::pi_ext::ShadowScan,
+    sections: &mut Sections,
+) {
     for error in &scan.errors {
         pi_unknown_line(prefix, "pi-extensions", &error.to_string(), sections);
     }
     for shadow in scan.found {
         let lines = shadow.lines(shown);
+        let remedy = shadow.extensions.parent().and_then(|destination| {
+            let remedy = Remedy::MoveAside {
+                from: shadow.shadow.clone(),
+                to: destination.to_path_buf(),
+                windows: env.is_windows(),
+            };
+            remedy.render(None).is_some().then_some(remedy)
+        });
         sections.shadowed.push(drift(
             format!(
                 "{prefix}{}: {}; {}; {}",
                 lines.key, lines.managed, lines.shadow, lines.remedy
             ),
-            None,
+            remedy,
         ));
     }
 }
@@ -117,39 +225,61 @@ pub(super) struct ScopeCheck<'a> {
     pub(super) global_manifest_named: &'a std::cell::Cell<bool>,
 }
 
+enum ManifestRead {
+    Current(Box<crate::manifest::Manifest>),
+    Absent,
+    Unreadable,
+}
+
+impl ManifestRead {
+    fn current(&self) -> Option<&crate::manifest::Manifest> {
+        match self {
+            Self::Current(manifest) => Some(manifest.as_ref()),
+            Self::Absent | Self::Unreadable => None,
+        }
+    }
+}
+
 impl ScopeCheck<'_> {
     /// The manifest: parse failures — a v1 file among them — are
     /// could-not-check, and the one hard failure this check has always had
     /// — an agent referencing an undeclared skill — stays one.
-    fn manifest_lines(
-        &self,
-        sections: &mut Sections,
-    ) -> (Option<crate::manifest::Manifest>, ManifestState) {
+    fn manifest_lines(&self, sections: &mut Sections) -> (ManifestRead, ManifestState) {
         let prefix = self.prefix;
         let (manifest, state) =
             match crate::manifest::load(&crate::manifest::manifest_path(self.env, self.scope)) {
                 Ok(crate::manifest::ManifestFile::Current(manifest)) => {
-                    (Some(*manifest), ManifestState::Declared)
+                    (ManifestRead::Current(manifest), ManifestState::Declared)
                 }
-                Ok(crate::manifest::ManifestFile::Absent) => (None, ManifestState::Absent),
+                Ok(crate::manifest::ManifestFile::Absent) => {
+                    (ManifestRead::Absent, ManifestState::Absent)
+                }
                 Err(error) => {
                     sections.unknown.push(unknown(format!(
                         "{prefix}manifest: {}",
                         shown(&error.to_string())
                     )));
-                    (None, ManifestState::Unreadable)
+                    (ManifestRead::Unreadable, ManifestState::Unreadable)
                 }
             };
-        if let Some(manifest) = &manifest {
+        if let Some(manifest) = manifest.current() {
             // A drift hook running an older release's script: the one
             // comparison of disk to the embedded copy, or upgrades would
             // strand every existing install on the old script forever.
             if crate::drift::hook::script_current(self.env, self.scope, manifest) == Some(false) {
+                let script = crate::drift::hook::script_path(self.env, self.scope);
+                let backup = super::backup_command(self.env, &script);
                 sections.stale.push(drift(
                     format!(
-                        "{prefix}the session drift hook script is from an older kendex — reinstall it with the drift-hook command, or fork it to keep your changes"
+                        "{prefix}the session drift hook script is from an older kendex; reinstalling overwrites local changes{}",
+                        backup
+                            .as_ref()
+                            .map(|command| format!("; backup first if needed: {command}"))
+                            .unwrap_or_default()
                     ),
-                    None,
+                    Some(Remedy::DriftHook {
+                        global: self.global,
+                    }),
                 ));
             }
             for (agent, skills) in &manifest.agent_skills {
@@ -178,14 +308,33 @@ impl ScopeCheck<'_> {
     /// installation wrote, absent under both its names, is missing.
     fn lock_lines(
         &self,
-        manifest: Option<&crate::manifest::Manifest>,
+        manifest: &ManifestRead,
         lock: &crate::error::Result<crate::lock::LockFile>,
         sections: &mut Sections,
     ) {
         let prefix = self.prefix;
         match lock {
             Ok(crate::lock::LockFile::Current(lock)) => {
-                for entry in lock.entries.values() {
+                let selected = match manifest {
+                    ManifestRead::Current(manifest) => {
+                        Some(selected_record_keys(self.env, manifest, lock, self.scope))
+                    }
+                    ManifestRead::Absent => Some(BTreeSet::new()),
+                    ManifestRead::Unreadable => None,
+                };
+                let mut missing: BTreeMap<(ItemKind, String), BTreeSet<_>> = BTreeMap::new();
+                let mut unselected: BTreeMap<(ItemKind, String), BTreeSet<_>> = BTreeMap::new();
+                for (key, entry) in &lock.entries {
+                    if selected
+                        .as_ref()
+                        .is_some_and(|selected| !selected.contains(key))
+                    {
+                        unselected
+                            .entry((entry.kind, entry.name.clone()))
+                            .or_default()
+                            .insert(entry.harness);
+                        continue;
+                    }
                     if !entry.enabled {
                         continue;
                     }
@@ -193,9 +342,7 @@ impl ScopeCheck<'_> {
                         self.pi_installation_line(
                             &entry.name,
                             entry.rendered_hash.as_deref(),
-                            manifest.is_some_and(|manifest| {
-                                manifest.pi_extensions.contains_key(&entry.name)
-                            }),
+                            true,
                             sections,
                         );
                         continue;
@@ -208,19 +355,48 @@ impl ScopeCheck<'_> {
                         .iter()
                         .all(|path| !path.exists() && !toggled_sibling(path).exists());
                     if gone {
-                        sections.missing.push(drift(
-                            format!(
-                                "{prefix}{} '{}' has no files on disk",
-                                entry.kind.name(),
-                                shown(&entry.name)
-                            ),
-                            // The record can outlive its declaration. Apply
-                            // restores wanted files and clears unwanted records.
-                            Some(Remedy::Apply {
-                                global: self.global,
-                            }),
-                        ));
+                        missing
+                            .entry((entry.kind, entry.name.clone()))
+                            .or_default()
+                            .insert(entry.harness);
                     }
+                }
+                for ((kind, name), harnesses) in missing {
+                    sections.missing.push(drift(
+                        format!(
+                            "{prefix}{} '{}' ({}) has no files on disk",
+                            kind.name(),
+                            shown(&name),
+                            harness_list(&harnesses)
+                        ),
+                        Some(Remedy::Apply {
+                            global: self.global,
+                        }),
+                    ));
+                }
+                for ((kind, name), harnesses) in unselected {
+                    let mut text = format!(
+                        "{prefix}kendex.toml does not list recorded {} '{}' ({})",
+                        kind.name(),
+                        shown(&name),
+                        harness_list(&harnesses)
+                    );
+                    let remedy = match manifest {
+                        ManifestRead::Current(_) => {
+                            text.push_str("; preview cleanup");
+                            Remedy::Plan {
+                                global: self.global,
+                            }
+                        }
+                        ManifestRead::Absent => Remedy::Remove {
+                            name,
+                            global: self.global,
+                        },
+                        ManifestRead::Unreadable => {
+                            unreachable!("an unreadable manifest produces no cleanup set")
+                        }
+                    };
+                    sections.record_cleanup.push(drift(text, Some(remedy)));
                 }
             }
             Ok(crate::lock::LockFile::Absent) => {}
@@ -265,7 +441,11 @@ impl ScopeCheck<'_> {
             }
         };
         sections.missing.push(drift(
-            format!("{}pi-extension '{}' {detail}", self.prefix, shown(name)),
+            format!(
+                "{}pi-extension '{}' (pi) {detail}",
+                self.prefix,
+                shown(name)
+            ),
             declared.then_some(Remedy::UpdatePi {
                 global: self.global,
             }),
@@ -328,6 +508,7 @@ impl ScopeCheck<'_> {
             .file_name()
             .unwrap_or(std::ffi::OsStr::new(crate::manifest::MANIFEST_FILE))
             .to_string_lossy();
+        let edit = super::edit_command(self.env, &manifest_path);
         for name in manifest.pi_extensions.keys() {
             let Some(globally) = global
                 .pi_extensions
@@ -341,12 +522,15 @@ impl ScopeCheck<'_> {
                     "{}pi-declared-twice={}: the global manifest declares '{}' too; \
                      Pi loads both scopes' package lists together and will not start \
                      with one package registered twice; keep the global declaration, \
-                     which reaches every project, and remove the \
-                     [pi-extensions.\"{}\"] table from this project's {manifest_file}",
+                     which reaches every project; remove the \
+                     [pi-extensions.\"{}\"] table from this project's {manifest_file}{}",
                     self.prefix,
                     shown(name),
                     shown(globally),
-                    shown(name)
+                    shown(name),
+                    edit.as_ref()
+                        .map(|command| format!("; edit: {command}"))
+                        .unwrap_or_default()
                 ),
                 None,
             ));
@@ -574,9 +758,12 @@ impl ScopeCheck<'_> {
                         .any(|source| source.enabled && source.repo.is_some())
                 });
                 if has_remote {
-                    sections.unevaluated.push(unevaluated(format!(
-                        "{prefix}packages not yet evaluated against their sources"
-                    )));
+                    sections.unevaluated.push(unevaluated(
+                        format!("{prefix}packages have not been compared with their sources"),
+                        Remedy::Updates {
+                            global: self.global,
+                        },
+                    ));
                 }
                 return;
             }
@@ -609,9 +796,14 @@ impl ScopeCheck<'_> {
             self.package_line(package, sections);
         }
         if pending > 0 {
-            sections.unevaluated.push(unevaluated(format!(
-                "{prefix}{pending} package(s) changed upstream and are not yet re-evaluated"
-            )));
+            sections.unevaluated.push(unevaluated(
+                format!(
+                    "{prefix}{pending} package(s) have not been compared since their sources changed"
+                ),
+                Remedy::Updates {
+                    global: self.global,
+                },
+            ));
         }
         for note in &snapshot.unreadable {
             sections

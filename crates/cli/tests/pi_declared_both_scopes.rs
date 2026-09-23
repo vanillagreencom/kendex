@@ -114,14 +114,16 @@ fn fixture(
 /// judgement this feature adds, so the line is pinned entire rather than
 /// by a prefix: a prefix match stands while a remedy or a clause naming
 /// the global copy is appended after it.
-fn expected_row(project: &str, global: &str, declares: &Declares) -> String {
+fn expected_row(project: &str, global: &str, declares: &Declares, root: &Path) -> String {
+    let manifest = root.join(declares.file());
     format!(
         "pi-declared-twice={project}: the global manifest declares '{global}' too; \
          Pi loads both scopes' package lists together and will not start with one \
          package registered twice; keep the global declaration, which reaches every \
-         project, and remove the [pi-extensions.\"{project}\"] table from this \
-         project's {}",
-        declares.file()
+         project; remove the [pi-extensions.\"{project}\"] table from this \
+         project's {}; edit: ${{EDITOR:-vi}} {}",
+        declares.file(),
+        kendex_core::names::quoted(&manifest.display().to_string())
     )
 }
 
@@ -201,7 +203,7 @@ fn a_project_declaration_the_global_manifest_also_holds_is_named_with_the_copy_t
         assert!(text.contains("declared at both scopes:"), "{case}: {text}");
         assert_eq!(
             rows_in(&text),
-            vec![expected_row(project, global, &declares)],
+            vec![expected_row(project, global, &declares, &root)],
             "{case}: {text}"
         );
 
@@ -223,7 +225,7 @@ fn a_project_declaration_the_global_manifest_also_holds_is_named_with_the_copy_t
         assert_eq!(lines.len(), 1, "{case}: {report}");
         assert_eq!(
             lines[0]["text"],
-            expected_row(project, global, &declares),
+            expected_row(project, global, &declares, &root),
             "{case}"
         );
         assert_eq!(lines[0]["class"], "drift", "{case}");
@@ -248,7 +250,7 @@ fn an_unqualified_check_names_the_pair_once_under_the_project_scope_word() {
     assert!(
         text.contains(&format!(
             "app: {}",
-            expected_row("pi-widgets", "pi-widgets", &Declares::InManifest)
+            expected_row("pi-widgets", "pi-widgets", &Declares::InManifest, &root)
         )),
         "{text}"
     );

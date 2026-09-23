@@ -30,7 +30,10 @@ fn section_budget_counts_its_overflow_line_inside_itself() {
         .take_while(|line| line.starts_with("  "))
         .collect();
     assert_eq!(section_lines.len(), SECTION_ITEMS, "{text}");
-    assert_eq!(*section_lines.last().unwrap(), "  … and 5 more");
+    assert_eq!(
+        *section_lines.last().unwrap(),
+        "  … 5 more — see: kendex check"
+    );
 }
 
 #[test]
@@ -171,6 +174,49 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_elsewhere()
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_project_target_keeps_the_row_and_omits_the_command() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let target =
+        std::path::PathBuf::from(std::ffi::OsString::from_vec(b"/w/non-utf8-\xff".to_vec()));
+    let report = CheckReport {
+        status: CheckStatus::Drift,
+        sections: vec![Section {
+            title: "stale".to_owned(),
+            lines: vec![Line {
+                class: Class::Drift,
+                text: "'orch' does not match its source".to_owned(),
+                remedy: Some(Remedy::Apply { global: false }),
+            }],
+        }],
+        project_target: Some(target.clone()),
+        ..check_report()
+    };
+
+    let text = render_plain(&report);
+    assert!(text.contains("'orch' does not match its source"), "{text}");
+    assert!(!text.contains("fix:"), "{text}");
+    assert!(!text.contains('\u{fffd}'), "{text}");
+    let json = serde_json::to_string(&report).expect("the full report remains serializable");
+    assert!(json.contains("'orch' does not match its source"), "{json}");
+    assert!(!json.contains("projectTarget"), "{json}");
+    assert!(!json.contains('\u{fffd}'), "{json}");
+
+    let moved = Remedy::MoveAside {
+        from: target.clone(),
+        to: std::path::PathBuf::from("/w"),
+        windows: false,
+    };
+    assert_eq!(moved.render(None), None);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    assert_eq!(edit_command(&env, &target), None);
+    assert_eq!(backup_command(&env, &target), None);
+}
+
 /// What the reader is handed, through the renderer rather than the
 /// remedy: a verb that takes the name carries it, and one that does not
 /// keeps its command, marked with why it will not run here.
@@ -267,6 +313,41 @@ fn an_unsafe_identifier_drops_the_remedy_not_the_line() {
         None,
         "a name shaped like an option never reaches a command position"
     );
+}
+
+#[test]
+fn a_manual_move_quotes_paths_for_the_platform_shell() {
+    let posix = Remedy::MoveAside {
+        from: "/tmp/it's/extensions/pkg".into(),
+        to: "/tmp/it's".into(),
+        windows: false,
+    };
+    assert_eq!(
+        posix.render(None),
+        Some(Fix::Here(
+            "mv -i '/tmp/it'\\''s/extensions/pkg' '/tmp/it'\\''s'".to_owned()
+        ))
+    );
+
+    let powershell = Remedy::MoveAside {
+        from: r"C:\Users\Pat's\extensions\pkg".into(),
+        to: r"C:\Users\Pat's".into(),
+        windows: true,
+    };
+    assert_eq!(
+        powershell.render(None),
+        Some(Fix::Here(
+            "Move-Item -LiteralPath 'C:\\Users\\Pat''s\\extensions\\pkg' -Destination 'C:\\Users\\Pat''s' -Confirm"
+                .to_owned()
+        ))
+    );
+
+    let control = Remedy::MoveAside {
+        from: "/tmp/bad\nname".into(),
+        to: "/tmp".into(),
+        windows: false,
+    };
+    assert_eq!(control.render(None), None);
 }
 
 #[test]

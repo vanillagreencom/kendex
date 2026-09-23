@@ -1,4 +1,5 @@
-//! The bounded plain-text rendering of a check report.
+//! Plain-text rendering of a check report, bounded for the session hook
+//! and complete for an explicit check.
 
 use super::*;
 
@@ -18,18 +19,26 @@ fn age_word(secs: u64) -> String {
     }
 }
 
-/// The bounded plain-text rendering — what the session-start hook prints
-/// into agent context. Empty when clean. Every budget counts its own
-/// overflow line inside itself, and no line is ever cut mid-way: command
-/// arguments are never truncated.
+/// The bounded plain-text rendering for the session-start hook.
 pub fn render_plain(report: &CheckReport) -> String {
+    render(report, true)
+}
+
+/// The complete plain-text rendering for an explicit `kendex check`.
+pub fn render_full(report: &CheckReport) -> String {
+    render(report, false)
+}
+
+/// Empty when clean. Every bounded budget counts its own overflow line,
+/// and no line is cut mid-way: command arguments remain complete.
+fn render(report: &CheckReport, bounded: bool) -> String {
     if report.is_clean() {
         return String::new();
     }
     let mut lines: Vec<String> = Vec::new();
     for section in &report.sections {
         lines.push(format!("{}:", section.title));
-        let over = section.lines.len() > SECTION_ITEMS;
+        let over = bounded && section.lines.len() > SECTION_ITEMS;
         // The overflow line spends one of the section's own slots.
         let shown_count = match over {
             true => SECTION_ITEMS - 1,
@@ -62,13 +71,17 @@ pub fn render_plain(report: &CheckReport) -> String {
         }
         if over {
             lines.push(format!(
-                "  … and {} more",
+                "  … {} more — see: kendex check",
                 section.lines.len() - shown_count
             ));
         }
     }
     if let Some(age) = report.snapshot_age_secs {
         lines.push(format!("(checked against sources {} ago)", age_word(age)));
+    }
+
+    if !bounded {
+        return lines.join("\n") + "\n";
     }
 
     // Whole-report budgets, overflow line counted inside them: drop whole
@@ -84,7 +97,10 @@ pub fn render_plain(report: &CheckReport) -> String {
         let mut out: Vec<&str> = lines[..shown_lines].iter().map(String::as_str).collect();
         let note;
         if truncated {
-            note = format!("… report truncated ({} more line(s))", total - shown_lines);
+            note = format!(
+                "… report truncated ({} more line(s)) — see: kendex check",
+                total - shown_lines
+            );
             out.push(&note);
         }
         let text = out.join("\n");
