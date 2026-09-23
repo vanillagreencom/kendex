@@ -109,9 +109,14 @@ pub enum CoreError {
     LegacyManifest { path: PathBuf, message: String },
 
     #[error(
-        "{path}: this lock file could not be read — {message}; move it aside, then run `kendex apply` in this project or `kendex apply --global` for the Personal lock. That apply replaces renders written under the old record. Keep it: it is the only record naming a pi hooks.json or hooks/ beside a scope root, so move those aside as well"
+        "{path}: this lock file could not be read — {message}; move it aside and install fresh. Keep it: it is the only record naming a pi hooks.json or hooks/ beside a scope root, so move those aside as well"
     )]
     LockCorrupt { path: PathBuf, message: String },
+
+    #[error(
+        "{path}: this project lock is a version 10 record; move it to {aside}, then run `kendex apply` in this project. That apply replaces only renders whose current bytes match the version 10 record; other files remain conflicts. Keep it: it is the only record naming a pi hooks.json or hooks/ beside the project root, so move those aside as well"
+    )]
+    LegacyProjectLock { path: PathBuf, aside: PathBuf },
 
     #[error("{path}: the existing install was not recorded — {reason}")]
     RecordExistingRefused { path: PathBuf, reason: String },

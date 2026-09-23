@@ -652,11 +652,17 @@ fn a_lock_naming_another_version_is_refused_in_both_directions() {
 
     renumber(LOCK_VERSION - 1);
     let error = load_lock(&path).unwrap_err();
-    assert!(matches!(error, CoreError::LockCorrupt { .. }), "{error}");
-    assert!(error.to_string().contains("kendex apply"), "{error}");
+    assert!(
+        matches!(error, CoreError::LegacyProjectLock { .. }),
+        "{error}"
+    );
+    assert!(
+        error.to_string().contains(".kendex-lock.v10.json"),
+        "{error}"
+    );
     let error = audit(&w.env, &w.scope).unwrap_err();
     assert!(
-        matches!(error, CoreError::LockCorrupt { .. }),
+        matches!(error, CoreError::LegacyProjectLock { .. }),
         "and nothing plans past it: {error:?}"
     );
 

@@ -80,7 +80,9 @@ pub struct AuditView {
 impl From<&CoreError> for ScopeError {
     fn from(error: &CoreError) -> Self {
         let kind = match error {
-            CoreError::LockCorrupt { .. } => ScopeErrorKind::LockCorrupt,
+            CoreError::LockCorrupt { .. } | CoreError::LegacyProjectLock { .. } => {
+                ScopeErrorKind::LockCorrupt
+            }
             CoreError::LegacyManifest { .. } => ScopeErrorKind::ManifestOutdated,
             CoreError::SchemaTooNew { .. } => ScopeErrorKind::SchemaTooNew,
             CoreError::ManifestInvalid { .. } => ScopeErrorKind::ManifestInvalid,

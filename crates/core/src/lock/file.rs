@@ -13,7 +13,7 @@ use crate::error::{CoreError, Result};
 use crate::fs::{atomic_write_no_follow, read_if_exists};
 
 use super::roots::{project_root_at, read_against, write_under};
-use super::{LOCK_VERSION, Lock, MACHINE_FILE, MachineRecord};
+use super::{LOCK_FILE, LOCK_VERSION, Lock, MACHINE_FILE, MachineRecord, VERSION_10_LOCK_FILE};
 
 /// What sits at a lock path. Only the shape this build writes loads: a
 /// record from an older generation is damaged as far as this build is
@@ -187,6 +187,12 @@ fn parse_versioned<T: DeserializeOwned>(path: &Path, text: &str) -> Result<T> {
     // is a wrong answer rather than a missing one. Nothing converts the
     // older shape, so nothing plans against it either.
     if version != Some(i64::from(LOCK_VERSION)) {
+        if version == Some(10) && path.file_name().is_some_and(|name| name == LOCK_FILE) {
+            return Err(CoreError::LegacyProjectLock {
+                path: path.to_path_buf(),
+                aside: path.with_file_name(VERSION_10_LOCK_FILE),
+            });
+        }
         return Err(CoreError::LockCorrupt {
             path: path.to_path_buf(),
             message: match version {

@@ -48,15 +48,19 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// ([`machine_path`]). A version 10 record spells every
 /// position absolute, which read as a remainder is a claim outside the
 /// project; the version gate refuses it by name instead. For a project the
-/// way out is to move it aside and run `kendex apply`: the old managed
-/// ignore rule marks clean tracked renders as kendex's, while Git-visible
-/// edits remain conflicts.
+/// way out is to move it to [`.kendex-lock.v10.json`](VERSION_10_LOCK_FILE)
+/// and run `kendex apply`. The old managed ignore rule enables that recovery,
+/// and the moved record proves ownership only where its `renderedHash`
+/// matches the destination. Every other destination remains a conflict.
 pub const LOCK_VERSION: u32 = 11;
 
 /// The lock file a project scope carries, committed with the renders it
 /// records. The global lock is `lock.json` under the app's own directory
 /// ([`Env::global_lock_file`]).
 pub const LOCK_FILE: &str = ".kendex-lock.json";
+
+/// The read-only ownership proof used by the version 10 project recovery.
+pub const VERSION_10_LOCK_FILE: &str = ".kendex-lock.v10.json";
 
 /// This machine's half of a project record, under the cache directory the
 /// managed ignore block keeps out of git (`engine::posture`). Beside the

@@ -64,13 +64,14 @@ const V1_LOCK: &str = r#"{
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_v1_lock_refuses_the_audit_and_names_the_apply_recovery() {
+fn a_v1_lock_refuses_the_audit_and_names_a_fresh_install() {
     let f = fixture();
     fs::write(&f.lock_path, V1_LOCK).unwrap();
 
     let error = audit(&f.env, &f.scope).unwrap_err();
     assert!(matches!(error, CoreError::LockCorrupt { .. }), "{error}");
-    assert!(error.to_string().contains("kendex apply"), "{error}");
+    assert!(error.to_string().contains("install fresh"), "{error}");
+    assert!(!error.to_string().contains("kendex apply"), "{error}");
 }
 
 #[test]

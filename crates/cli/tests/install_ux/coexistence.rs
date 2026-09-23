@@ -167,7 +167,7 @@ fn a_scope_whose_lock_cannot_be_read_fails_at_the_read() {
             "work that did not happen must not exit 0: {said}"
         );
         assert!(
-            said.contains("move it aside") && said.contains("kendex apply"),
+            said.contains(".kendex-lock.v10.json") && said.contains("kendex apply"),
             "the parse error names the recovery path: {said}"
         );
         assert!(
@@ -187,9 +187,10 @@ fn a_scope_whose_lock_cannot_be_read_fails_at_the_read() {
 }
 
 /// The version 10 recovery is one complete sequence: the refusal names the
-/// command, a normal apply updates the clean tracked render, removes the old
-/// managed ignore rule, and reports a clone-local rule that still hides the
-/// new record. Once that local rule is removed, check is clean.
+/// sidecar name and command, a normal apply updates the render whose bytes
+/// match that record, removes the old managed ignore rule, and reports a
+/// clone-local rule that still hides the new record. Once that local rule is
+/// removed, check is clean.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn version_10_lock_recovery_completes_with_normal_apply() {
@@ -207,7 +208,7 @@ fn version_10_lock_recovery_completes_with_normal_apply() {
     let said = crate::said(&refused);
     assert!(!refused.status.success(), "{said}");
     assert!(
-        said.contains("move it aside") && said.contains("kendex apply"),
+        said.contains(".kendex-lock.v10.json") && said.contains("kendex apply"),
         "the refusal must name the complete recovery: {said}"
     );
 
@@ -245,9 +246,9 @@ fn version_10_lock_recovery_completes_with_normal_apply() {
     );
 }
 
-/// A Git-visible edit is the ownership boundary during version 10 recovery.
-/// The legacy managed rule proves the install's origin, but it does not give
-/// kendex permission to replace content the person changed afterwards.
+/// The old record's rendered hash is the ownership boundary during version
+/// 10 recovery. Even a committed hand edit stays a conflict when its bytes
+/// do not match that record.
 #[test]
 fn version_10_recovery_keeps_a_hand_edited_render_as_a_conflict() {
     let world = World::new(&["claude"]);
@@ -256,6 +257,8 @@ fn version_10_recovery_keeps_a_hand_edited_render_as_a_conflict() {
     world.commit_all("version 10 install");
     let rendered = world.at(".agents/skills/deploy/SKILL.md");
     crate::write(&rendered, "person's edit\n");
+    crate::git(&world.project, &["add", ".agents/skills/deploy/SKILL.md"]);
+    crate::git(&world.project, &["commit", "-m", "committed hand edit"]);
     crate::write(
         &world.catalog.join("skills/deploy/SKILL.md"),
         "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",

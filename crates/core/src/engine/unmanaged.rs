@@ -1,5 +1,7 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+
+use serde::Deserialize;
 
 use crate::env::Env;
 use crate::error::Result;
@@ -10,12 +12,58 @@ use crate::model::{ItemKind, Scope};
 use super::desired::{self, Artifact, Desired};
 use super::{DriftRow, DriftState};
 
-/// Clean tracked render roots from the install an earlier kendex release
-/// left behind. Git-visible edits return `None`, so this recovery never
-/// turns a person's changed copy into kendex-owned content.
-pub(super) fn clean_render_paths(desired: &[Desired]) -> Result<BTreeSet<PathBuf>> {
+#[derive(Deserialize)]
+struct Version10Record {
+    version: u32,
+    #[serde(default)]
+    entries: BTreeMap<String, Version10Entry>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Version10Entry {
+    name: String,
+    kind: ItemKind,
+    harness: crate::model::HarnessId,
+    #[serde(default)]
+    rendered_hash: Option<String>,
+}
+
+/// Render roots whose current bytes the moved version 10 record proves
+/// kendex wrote. This is an upgrade-only, read-only ownership proof. It
+/// deliberately ignores that record's machine-specific positions and never
+/// loads it as the scope's working lock.
+pub(super) fn version_10_render_paths(
+    scope: &Scope,
+    desired: &[Desired],
+) -> Result<BTreeSet<PathBuf>> {
+    let Scope::Project { root } = scope else {
+        return Ok(BTreeSet::new());
+    };
+    let sidecar = root.join(crate::lock::VERSION_10_LOCK_FILE);
+    let Some(text) = crate::fs::read_if_exists(&sidecar)? else {
+        return Ok(BTreeSet::new());
+    };
+    let Ok(record) = serde_json::from_str::<Version10Record>(&text) else {
+        return Ok(BTreeSet::new());
+    };
+    if record.version != 10 {
+        return Ok(BTreeSet::new());
+    }
+
     let mut paths = BTreeSet::new();
     for item in desired {
+        let Some(entry) = record.entries.get(&item.key).filter(|entry| {
+            entry.name == item.name
+                && entry.kind == item.kind
+                && entry.harness == item.harness
+                && crate::lock::entry_key(entry.kind, &entry.name, entry.harness) == item.key
+        }) else {
+            continue;
+        };
+        let Some(rendered_hash) = entry.rendered_hash.as_deref() else {
+            continue;
+        };
         let path = match &item.artifact {
             Artifact::File { path, .. } => Some(path),
             Artifact::Tree { canonical, .. } => Some(canonical),
@@ -24,7 +72,7 @@ pub(super) fn clean_render_paths(desired: &[Desired]) -> Result<BTreeSet<PathBuf
         let Some(path) = path.filter(|path| path.exists()) else {
             continue;
         };
-        if crate::hash::hash_clean_checkout_tree(path)?.is_some() {
+        if crate::hash::RenderedIdentity::from_path(path, false)?.matches(rendered_hash) {
             paths.insert(path.clone());
         }
     }
