@@ -121,6 +121,8 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #   out                   stdout, whole; lines its line count
 #   <alias>.<field>       that field of the listed lane with that alias
 #   key                   the first keyed stderr line, `key,field=value,...`
+#   keyed.<key>           the first keyed stderr line carrying that key, in the
+#                         same form, or none
 #   first.<field>         that field of the only listed lane
 #   bs.<field>            that field of the backslash-named lane
 #   aliases               every listed alias, sorted
@@ -183,6 +185,13 @@ observe() {
       # splits on whitespace, hence the commas.
       key)
         value="$(awk '$1 == "lanes:" { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' "$ERR" 2>/dev/null || true)"
+        value="${value:-none}"
+        ;;
+      # A notice another keyed line can precede: a state directory that cannot
+      # hold a refusal cannot hold the refresh lock either, and that notice is
+      # printed first.
+      keyed.*)
+        value="$(awk -v k="${name#keyed.}" '$1 == "lanes:" && $2 == k { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' "$ERR" 2>/dev/null || true)"
         value="${value:-none}"
         ;;
       first.model_label)
@@ -700,11 +709,11 @@ rm -rf -- "${UNRECORDED_STATE:?}"
 mkdir -p "$UNRECORDED_STATE"
 : > "$UNRECORDED_STATE/usage"
 table \
-  "a refusal that cannot be recorded is a notice naming the state directory, and the lane is still reported|FETCH_STATUS=429;OVERSEE_WATCH_STATE_DIR=$UNRECORDED_STATE|$LIST|rc=0 first.status=rate_limited key=refusal-unrecorded,dir=$UNRECORDED_STATE/usage"
+  "a refusal that cannot be recorded is a notice naming the state directory, and the lane is still reported|FETCH_STATUS=429;OVERSEE_WATCH_STATE_DIR=$UNRECORDED_STATE|$LIST|rc=0 first.status=rate_limited keyed.refusal-unrecorded=refusal-unrecorded,dir=$UNRECORDED_STATE/usage"
 lanes_mutant mutant-unrecorded-silent lanes 'message refusal-unrecorded "\$USAGE_CACHE_DIR" >&2' ':'
 LANES="$TMP_ROOT/mutant-unrecorded-silent/lanes"
 table \
-  "control: without the notice the unrecorded refusal is silent|FETCH_STATUS=429;OVERSEE_WATCH_STATE_DIR=$UNRECORDED_STATE|$LIST|rc=0 first.status=rate_limited key=none"
+  "control: without the notice the unrecorded refusal is silent|FETCH_STATUS=429;OVERSEE_WATCH_STATE_DIR=$UNRECORDED_STATE|$LIST|rc=0 first.status=rate_limited keyed.refusal-unrecorded=none"
 LANES="$SCRIPTS_DIR/lanes"
 
 echo "=== the real POST and GET, read through a curl shim ==="
@@ -755,6 +764,10 @@ printf 'HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 429 Too Many Requests\r\nContent-T
   > "$CAPTURES/token-429"
 printf 'HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\n\r\nupstream connect error\n503' \
   > "$CAPTURES/usage-503"
+# A Retry-After on the interim block and none on the refusal: the interim
+# block's header is not the refusal's own.
+printf 'HTTP/1.1 100 Continue\r\nRetry-After: 900\r\n\r\nHTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\n\r\n{"error":{"type":"rate_limit_error"}}\n429' \
+  > "$CAPTURES/usage-429-interim-retry"
 CURL_RENEW_ENV="$CURL_ENV;ORCH_LANES_CLAUDE_CLIENT_ID=client-1;TOKEN_UA_LOG=$UA_LOG;CURL_TOKEN_ANSWER=$CAPTURES/token-200;CURL_USAGE_ANSWER=$CAPTURES/usage-200"
 CURL_429_ENV="$CURL_ENV;ORCH_LANES_CLAUDE_CLIENT_ID=client-1;CURL_TOKEN_ANSWER=$CAPTURES/token-429"
 # curl_home NAME EXPIRES_IN_S — a fresh home with one lane and its usage fixture.
@@ -773,6 +786,9 @@ table \
 curl_home curl-usage-503 3600
 table \
   "a real usage answer of 503 reads unreachable with that code in its detail|$CURL_ENV;CURL_USAGE_ANSWER=$CAPTURES/usage-503|$LIST|first.status=unreachable claude.cause=usage_query_refused_with_HTTP_503"
+curl_home curl-usage-interim 3600
+table \
+  "a Retry-After on an interim block is not the refusal's, so a 429 naming none takes the default window|$CURL_ENV;CURL_USAGE_ANSWER=$CAPTURES/usage-429-interim-retry|$LIST|first.status=rate_limited refusalwindow=300"
 
 # The must-fail controls. The POST with its User-Agent line deleted, which is
 # the request the endpoint answers 429 to whatever the rate.
@@ -789,6 +805,14 @@ curl_home curl-429-control -60
 LANES="$TMP_ROOT/mutant-http-retry/lanes"
 table \
   "control: without the parser's Retry-After rule the real 429 takes the default window|$CURL_429_ENV|$LIST|claude.status=rate_limited refusalwindow=300"
+LANES="$SCRIPTS_DIR/lanes"
+# The parser carrying one Retry-After across blocks, so the interim block's
+# header is recorded as the refusal's window.
+lanes_mutant mutant-http-hop lanes 'blank = 0; retry = ""; next' 'blank = 0; next'
+curl_home curl-usage-interim-control 3600
+LANES="$TMP_ROOT/mutant-http-hop/lanes"
+table \
+  "control: without the per-block reset the interim block's Retry-After is the window|$CURL_ENV;CURL_USAGE_ANSWER=$CAPTURES/usage-429-interim-retry|$LIST|first.status=rate_limited refusalwindow=900"
 LANES="$SCRIPTS_DIR/lanes"
 
 echo "=== codex windows route by duration, not by position ==="
@@ -1164,10 +1188,8 @@ assert_eq "$(jq -r '.[0].usage_rate_state' <<<"$OUT")" "one-sample" \
 echo "=== a refused usage refresh serves the last figures rather than walling the host ==="
 # The control VM's failure: eleven accounts answered HTTP 429 with valid
 # bearers while the shared cache held good reads seconds old, and every lane
-# reported `unreachable` -- the word that reads downstream as an account
-# nothing can reach, whose remedy line sends the operator to log in again. No
-# rate limit is a credential problem, and a figure seconds old is not no
-# figure.
+# reported no windows at all. No rate limit is a credential problem, and a
+# figure seconds old is not no figure.
 #
 # ORCH_LANES_USAGE_TTL=0 on these rows is what puts a request on the wire at
 # all: it expires the cached figure for the FRESHNESS read while leaving the
@@ -1178,49 +1200,33 @@ make_lane "$H" claude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 RL_STATE="$TMP_ROOT/ratelimit-state"
 RL_ENV="OVERSEE_WATCH_STATE_DIR=$RL_STATE;ORCH_LANE_DIRS=$H/.claude"
-# The answer the control VM received from every account, Retry-After and all.
-REFUSAL=$'HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0\r\n\r\n'
 table \
   "a first run measures the account and leaves the figures it read|$RL_ENV|$LIST|first.status=ok first.headroom_pct=80 fetched=claude"
 age_usage_record "$RL_STATE" "$H/.claude" 45
 # The endpoint's body moves while it is refusing, so which figures a row
 # reports says which record it served: 80 headroom is the cached one and 40 is
 # the body that came back with the refusal. The stub answers both, as the
-# control host's endpoint did.
+# control host's endpoint did, and with the `Retry-After: 0` the control VM
+# received from every account.
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-printf '%s' "$REFUSAL" > "$FIXTURE_DIR/.claude.headers"
-# Read BEFORE the run, so the floor is pinned without racing the clock: the
-# record is written at an instant at or after this one, so a window of at least
-# the floor can only read as at least the floor from here.
-RL_BEFORE="$(date +%s)"
+printf '429 0\n' > "$FIXTURE_DIR/.claude.status"
 table \
-  "a 429 with a cached figure serves that figure as rate_limited, never unreachable|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=rate_limited first.headroom_pct=80 claude.aged=30+ fetched=claude"
-RL_RECORD="$(cat "$RL_STATE"/usage/*.backoff.json 2>/dev/null | jq -r '[.config_dir, .code, .until] | @tsv')"
-assert_eq "$(cut -f1,2 <<<"$RL_RECORD")" "$H/.claude"$'\t'"429" \
-  "the refusal is recorded beside the lane it refused, under the code that gave it"
-assert_eq "$([[ "$(cut -f3 <<<"$RL_RECORD")" -ge "$((RL_BEFORE + 2))" ]] && echo floored || echo "unfloored:$RL_RECORD")" \
-  "floored" \
-  "a Retry-After of 0 is floored, so the refusal is not re-posted in the second it arrived"
-# A window wide enough for the rows below to sit inside on any runner. The
-# endpoint named it, and honouring it is the point: a later caller reads the
-# record rather than re-posting what was already refused. The floored window
-# above is removed first, so this run posts whatever the clock has done since,
-# and the long deadline, capped at USAGE_BACKOFF_MAX_S, is pinned before any
-# row leans on it.
-printf 'HTTP/1.1 429 Too Many Requests\r\nRetry-After: 600\r\n\r\n' > "$FIXTURE_DIR/.claude.headers"
-rm -f -- "${RL_STATE:?}"/usage/*.backoff.json
-RL_BEFORE="$(date +%s)"
-run_lanes "$RL_ENV;ORCH_LANES_USAGE_TTL=0" $LIST
-RL_UNTIL="$(cat "$RL_STATE"/usage/*.backoff.json 2>/dev/null | jq -r '.until')"
-assert_eq "$(observe 'fetched=') $([[ "$RL_UNTIL" =~ ^[0-9]+$ && "$RL_UNTIL" -ge "$((RL_BEFORE + 300))" ]] && echo long || echo "short:$RL_UNTIL")" \
-  "fetched=claude long" \
-  "with the short window gone the refusal is posted again and its long window recorded, capped at 300 seconds"
+  "a 429 with a cached figure serves that figure as rate_limited, never as no reading|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=rate_limited first.headroom_pct=80 claude.aged=30+ fetched=claude"
+RL_RECORD="$(cat "$RL_STATE"/usage/*.json 2>/dev/null | jq -r 'select(.refusal) | [.config_dir, .refusal.code, (.refusal.expires_at - .fetched_at), (.usage | type)] | @tsv')"
+assert_eq "$(cut -f1,2,4 <<<"$RL_RECORD")" "$H/.claude"$'\t'"429"$'\t'"object" \
+  "the refusal is recorded in the lane's own record, under the code that gave it, with the figure it served kept beside it"
+# A zero names no seconds to wait out, and honouring it is a retry loop at the
+# rate being refused, so it takes the default window like an answer naming
+# none. That window is wide enough for the rows below to sit inside on any
+# runner.
+assert_eq "window=$(cut -f3 <<<"$RL_RECORD")" "window=300" \
+  "a Retry-After of 0 takes the default window, so the refusal is not re-posted in the second it arrived"
 table \
   "a later caller inside that window posts nothing and still reports the figures|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=rate_limited first.headroom_pct=80 fetched=none" \
   "--no-cache inside it posts nothing either: it asks for a fresh figure, not to re-post a refused request|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST --no-cache|first.status=rate_limited first.headroom_pct=80 fetched=none" \
   "and pick judges those served figures instead of walling every launch on the host|$RL_ENV;ORCH_LANES_USAGE_TTL=0|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
-# The control: the served row left as `unreachable`, which is the word this
-# change replaced. The lane then measures nothing and `pick` refuses the fleet
+# The control: the served row left as `unreachable`, the word this served
+# figure replaced. The lane then measures nothing and `pick` refuses the fleet
 # for as long as the burst lasts.
 lanes_mutant mutant-rate-limited lanes \
   'status="rate_limited"$' 'status="unreachable"'
@@ -1231,13 +1237,13 @@ table \
   "control: and the whole host is walled for the length of a transient burst|$RL_ENV;ORCH_LANES_USAGE_TTL=0|pick --harness claude|rc=3"
 LANES="$RL_PATCHED"
 
-# A refusal the endpoint keeps giving never rewrites the record, so the figure
+# A refusal the endpoint keeps giving never replaces the figure, so the figure
 # it serves only grows older. Past the 5-hour session window it cannot say what
 # that window holds now, and `pick` must not launch on it. Still inside the
 # 300-second window recorded above, so no row here posts.
 age_usage_record "$RL_STATE" "$H/.claude" 86400
 table \
-  "a figure a day old is not served under a refusal: the lane is unreachable|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=unreachable first.headroom_pct=null fetched=none" \
+  "a figure a day old is not served under a refusal: the lane reports the refusal with no windows|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=rate_limited first.headroom_pct=null claude.cause=usage_query_refused_with_HTTP_429 fetched=none" \
   "and pick refuses the host rather than launching on that figure|$RL_ENV;ORCH_LANES_USAGE_TTL=0|pick --harness claude|rc=3"
 # The control: the age bound dropped, so any figure the host ever read stands
 # in for the refused one.
@@ -1248,105 +1254,78 @@ table \
   "control: unbounded, the day-old figure is served as rate_limited|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=rate_limited first.headroom_pct=80" \
   "control: and pick launches on it|$RL_ENV;ORCH_LANES_USAGE_TTL=0|pick --harness claude|rc=0"
 LANES="$RL_PATCHED"
+rm -f -- "${FIXTURE_DIR:?}/.claude.status"
 
 echo "=== a refusal's window is counted from when the refusal arrived ==="
 # A request slower than the window it is refused with would otherwise record a
 # deadline already past, and the next caller would post to the same account at
-# once. FETCH_DELAY holds the answer 3 seconds; the floored 2-second window
-# then ends at least 5 seconds after this run started.
+# once. FETCH_DELAY holds the answer 3 seconds; the 2-second window then ends
+# at least 5 seconds after this run started.
 new_home ratelimit-slow
 make_lane "$H" claude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 SLOW_STATE="$TMP_ROOT/ratelimit-slow-state"
 SLOW_ENV="OVERSEE_WATCH_STATE_DIR=$SLOW_STATE;ORCH_LANE_DIRS=$H/.claude"
 table "a first run leaves a figure to serve|$SLOW_ENV|$LIST|first.status=ok fetched=claude"
-printf '%s' "$REFUSAL" > "$FIXTURE_DIR/.claude.headers"
+printf '429 2\n' > "$FIXTURE_DIR/.claude.status"
 SLOW_BEFORE="$(date +%s)"
 table "the slow refusal serves the cached figure|$SLOW_ENV;ORCH_LANES_USAGE_TTL=0;FETCH_DELAY=3|$LIST|first.status=rate_limited fetched=claude"
-SLOW_UNTIL="$(cat "$SLOW_STATE"/usage/*.backoff.json 2>/dev/null | jq -r '.until')"
+SLOW_UNTIL="$(cat "$SLOW_STATE"/usage/*.json 2>/dev/null | jq -r 'select(.refusal) | .refusal.expires_at')"
 assert_eq "$([[ "$SLOW_UNTIL" =~ ^[0-9]+$ && "$SLOW_UNTIL" -ge "$((SLOW_BEFORE + 5))" ]] && echo from-answer || echo "from-request:$SLOW_UNTIL")" \
   "from-answer" \
   "the recorded deadline is the refusal's arrival plus its window, not the request's start"
+rm -f -- "${FIXTURE_DIR:?}/.claude.status"
 
-echo "=== the recorded window is the refusal's own Retry-After, floored and capped ==="
-# One row per rule the window is built by: the answer's own number, the cap,
-# the floor, the default for a value that is not a number of seconds, and the
-# last hop's headers alone. Each row removes the record the previous one left,
-# so its run posts, and brackets the recorded deadline between the clocks read
-# before and after that run: a deadline a rule got wrong falls outside it.
-new_home ratelimit-window
-make_lane "$H" claude 3600
-claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-RW_STATE="$TMP_ROOT/ratelimit-window-state"
-RW_ENV="OVERSEE_WATCH_STATE_DIR=$RW_STATE;ORCH_LANE_DIRS=$H/.claude"
-table "a first run leaves a figure to serve|$RW_ENV|$LIST|first.status=ok fetched=claude"
-for row in \
-  "a Retry-After in seconds is the window|HTTP/1.1 429 Too Many Requests\r\nRetry-After: 45\r\n\r\n|45" \
-  "a Retry-After past the cap is capped at 300 seconds|HTTP/1.1 429 Too Many Requests\r\nRetry-After: 600\r\n\r\n|300" \
-  "a Retry-After of 0 is floored at 2 seconds|HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0\r\n\r\n|2" \
-  "an HTTP-date Retry-After takes the 30-second default|HTTP/1.1 429 Too Many Requests\r\nRetry-After: Wed, 21 Oct 2026 07:28:00 GMT\r\n\r\n|30" \
-  "a redirect's Retry-After is not the refusal's, so a 429 naming none takes the default|HTTP/1.1 301 Moved Permanently\r\nRetry-After: 600\r\n\r\nHTTP/1.1 429 Too Many Requests\r\n\r\n|30"; do
-  IFS='|' read -r label headers window <<<"$row"
-  rm -f -- "${RW_STATE:?}"/usage/*.backoff.json
-  printf '%b' "$headers" > "$FIXTURE_DIR/.claude.headers"
-  RW_BEFORE="$(date +%s)"
-  run_lanes "$RW_ENV;ORCH_LANES_USAGE_TTL=0" $LIST
-  RW_AFTER="$(date +%s)"
-  RW_UNTIL="$(cat "$RW_STATE"/usage/*.backoff.json 2>/dev/null | jq -r '.until')"
-  if [[ "$RW_UNTIL" =~ ^[0-9]+$ && "$RW_UNTIL" -ge "$((RW_BEFORE + window))" && "$RW_UNTIL" -le "$((RW_AFTER + window))" ]]; then
-    RW_GOT="window=$window"
-  else
-    RW_GOT="window-outside:until=$RW_UNTIL,before=$RW_BEFORE,after=$RW_AFTER"
-  fi
-  assert_eq "$(observe 'first.status=') $RW_GOT" "first.status=rate_limited window=$window" "$label" "$ERR"
-done
-
-echo "=== an answer other than 200 or 429 is unreachable and never cached ==="
+echo "=== an answer other than 2xx or 429 is unreachable and its body never cached ==="
 # The endpoint's error bodies are JSON objects too, so only the status keeps
 # one from being parsed as usage and written to the cache for the next caller.
+# Each row takes a state directory of its own, so neither reads the refusal the
+# other recorded.
 new_home badstatus
 make_lane "$H" claude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 for row in \
-  "a 500 with a JSON body is unreachable, and the body is not cached|HTTP/1.1 500 Internal Server Error\r\n\r\n" \
-  "a 401 with a JSON body is unreachable, and the body is not cached|HTTP/1.1 401 Unauthorized\r\n\r\n"; do
-  IFS='|' read -r label headers <<<"$row"
-  printf '%b' "$headers" > "$FIXTURE_DIR/.claude.headers"
-  run_lanes "ORCH_LANE_DIRS=$H/.claude" $LIST
-  assert_eq "$(observe 'first.status= first.headroom_pct= cachefiles=')" \
-    "first.status=unreachable first.headroom_pct=null cachefiles=none" "$label" "$ERR"
+  "a 500 with a JSON body is unreachable, and the body is not cached|500|$TMP_ROOT/badstatus-500-state" \
+  "a 401 with a JSON body is unreachable, and the body is not cached|401|$TMP_ROOT/badstatus-401-state"; do
+  IFS='|' read -r label code state <<<"$row"
+  printf '%s \n' "$code" > "$FIXTURE_DIR/.claude.status"
+  run_lanes "OVERSEE_WATCH_STATE_DIR=$state;ORCH_LANE_DIRS=$H/.claude" $LIST
+  assert_eq "$(observe 'first.status= first.headroom_pct= fetched=') body=$(jq -r 'select(.usage) | "cached"' "$state"/usage/*.json 2>/dev/null)" \
+    "first.status=unreachable first.headroom_pct=null fetched=claude body=" "$label" "$ERR"
 done
+rm -f -- "${FIXTURE_DIR:?}/.claude.status"
 
-echo "=== a 429 with nothing cached retries once before reporting unreachable ==="
-# The one path where `unreachable` stays correct: nothing on this host has ever
-# read this account, so there is no figure to stand in for the refused one.
-# Both rows fetch TWICE, and the log is what proves the retry is a second
-# request rather than a sleep before the same verdict.
+echo "=== a 429 with nothing cached retries once before reporting the refusal ==="
+# Nothing on this host has ever read this account, so there is no figure to
+# stand in for the refused one and the lane reports the refusal with no
+# windows. Both rows fetch TWICE, and the log is what proves the retry is a
+# second request rather than a sleep before the same verdict.
 new_home ratelimit-cold
 make_lane "$H" claude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 COLD_STATE="$TMP_ROOT/ratelimit-cold-state"
 COLD_ENV="OVERSEE_WATCH_STATE_DIR=$COLD_STATE;ORCH_LANE_DIRS=$H/.claude"
-# The retry is refused with a window of its own. The first refusal's floored
+# The retry is refused with a window of its own. The first refusal's 1-second
 # window has passed by the time the retry answers, so only a record of the
 # RETRY's refusal keeps the next caller off the endpoint.
-printf '%s' "$REFUSAL" > "$FIXTURE_DIR/.claude.headers.1"
-printf 'HTTP/1.1 429 Too Many Requests\r\nRetry-After: 600\r\n\r\n' > "$FIXTURE_DIR/.claude.headers.2"
+printf '429 1\n' > "$FIXTURE_DIR/.claude.status.1"
+printf '429 600\n' > "$FIXTURE_DIR/.claude.status.2"
 table \
-  "refused twice with a cold cache, the lane reports unreachable|$COLD_ENV|$LIST|first.status=unreachable first.headroom_pct=null fetched=claude,claude" \
-  "the caller after it posts nothing and reports unreachable, the retry's refusal being on record|$COLD_ENV|$LIST|first.status=unreachable fetched=none"
+  "refused twice with a cold cache, the lane reports the refusal with no windows|$COLD_ENV|$LIST|first.status=rate_limited first.headroom_pct=null fetched=claude,claude" \
+  "the caller after it posts nothing and reports the refusal, the retry's being on record|$COLD_ENV|$LIST|first.status=rate_limited fetched=none"
 # The must-fail inverse: the SECOND request answers, so a retry that never
 # happened would leave this row on the first refusal. A state directory of its
-# own, so the window recorded above does not gate it. The answer also drops the
-# refusal the first request recorded: a record left standing would serve the
-# next caller stale figures as rate_limited for its whole window.
-mv "$FIXTURE_DIR/.claude.headers.2" "$FIXTURE_DIR/.claude.headers.held"
+# own, so the window recorded above does not gate it. The answer also replaces
+# the refusal the first request recorded: a refusal left standing would keep
+# the next caller off an endpoint that answers again for its whole window.
+rm -f -- "${FIXTURE_DIR:?}/.claude.status.2"
 COLD_OK_STATE="$TMP_ROOT/ratelimit-cold-ok-state"
 table \
   "with the second request answering, that same lane reads ok on what the retry brought back|OVERSEE_WATCH_STATE_DIR=$COLD_OK_STATE;ORCH_LANE_DIRS=$H/.claude|$LIST|first.status=ok first.headroom_pct=80 fetched=claude,claude"
-COLD_OK_RECORDS="$(find "$COLD_OK_STATE/usage" -name '*.backoff.json' 2>/dev/null | wc -l | tr -d ' ')"
-assert_eq "records=$COLD_OK_RECORDS" "records=0" \
-  "the answer drops the refusal record the first request wrote"
+COLD_OK_REFUSALS="$(cat "$COLD_OK_STATE"/usage/*.json 2>/dev/null | jq -r 'select(.refusal) | "refusal"' | grep -c . || true)"
+assert_eq "refusals=${COLD_OK_REFUSALS:-0}" "refusals=0" \
+  "the answer drops the refusal the first request recorded"
+rm -f -- "${FIXTURE_DIR:?}/.claude.status.1"
 
 echo "=== a caller naming its own pass interval is served its last figure ==="
 # A watch whose pass is longer than the TTL finds the figure expired on every
@@ -1539,7 +1518,7 @@ assert_eq "$(observe 'rc= key= fetched=')" \
 # The control: the cache read before the lock skipped, which is the lock
 # covering the read. The same pick then waits the whole lock wait out.
 lanes_mutant mutant-lock-over-read lanes \
-  'if \[\[ "\$USE_CACHE" == "true" \]\] && cached="\$(read_usage_cache "\$harness" "\$dir" "\$now_s" "\$(usage_serve_max_age)")"; then' 'if false; then'
+  'if ! usage_from_record "\$now_s"; then' 'if true; then'
 LW_PATCHED="$LANES"
 LANES="$TMP_ROOT/mutant-lock-over-read/lanes"
 waited_s "$LW_ENV" pick --lane "$H/.claude" --harness claude --json
@@ -1587,7 +1566,7 @@ sleep 2
 now="$(date +%s)"
 sed -E "s/\"fetched_at\": *[0-9]+/\"fetched_at\": $now/" "$PEER_RECORD" > "$PEER_RECORD.peer" \
   && mv "$PEER_RECORD.peer" "$PEER_RECORD"
-printf '{"access_token":"renewed-token","refresh_token":"rotated-refresh","expires_in":3600}\n'
+printf '200 \n{"access_token":"renewed-token","refresh_token":"rotated-refresh","expires_in":3600}\n'
 STUB
 chmod +x "$TOKEN_PEER"
 new_home lockrenew
