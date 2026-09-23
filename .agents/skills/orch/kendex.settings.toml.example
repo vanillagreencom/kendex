@@ -1,214 +1,203 @@
 [env]
 
-# ORCH — PR review gate, CI waits, reviewer fan-out, and handoff lanes.
-# Nothing below is marked `# required`, so installing this skill writes
-# nothing into <project>/kendex.settings.toml. What an install writes, and
-# when, is kendex's docs/authoring/settings.md. Comments here are one-line
-# intent + landmines; full key reference: orch README.md / DEVELOPMENT.md.
-# Fleet handoff default: tmp/handoffs/OVERSEER-HANDOFF.md (workflows/oversee.md).
+# How a pull request is reviewed, merged and handed on, and how much of
+# that runs without asking you.
 
-# Directory orch keeps its per-issue workflow state in; the `--state-dir`
-# flag wins where both are set.
+# The folder where the per-issue state of a piece of work is kept. A folder
+# named on the command line outranks this setting.
 ORCH_STATE_DIR = "tmp"
 
-# Absolute consumer base checkouts, space-separated in refresh order. The train
-# also refreshes every other registered project that subscribes to the package.
+# The other checkouts to refresh when this package changes, as full paths
+# separated by spaces, in the order they are refreshed. Every registered
+# project that subscribes to the package is refreshed as well.
 ORCH_CONSUMER_REPOS = ""
 
-# Overseer watcher baselines and lane claims. Empty uses
-# <project-root>/tmp/oversee-watch. The overseer's host owns persistence.
+# Where the overseer keeps what it has already seen and which lanes it has
+# claimed. Empty uses a scratch folder in the project. The machine running
+# the overseer owns that record.
 OVERSEE_WATCH_STATE_DIR = ""
 
-# Path to the worktree CLI `open-terminal` drives. Empty resolves the
-# installed worktree skill's `scripts/worktree`; a value that is not
-# executable stops the launch with that path named.
+# The worktree program that opens a terminal on a lane. Empty finds the
+# installed worktree package. A path that is not executable stops the
+# launch and names that path.
 WORKTREE_CLI = ""
 
-# Host provider used by lane-host. open-terminal launches lanes through it, and
-# its --host option overrides it. A script path opts in; credentials alone never
-# select a remote host.
+# Where lanes run. "local" runs them on this machine. A path to a script
+# runs them wherever that script reaches. Credentials alone never send a
+# lane to another machine.
 ORCH_LANE_HOST = "local"
 
-# Lane pane output. No person reads a lane's pane, so "quiet" is the package
-# default: one line per completed step, and each <output_format> block the lane
-# fills itself written to a file instead of printed: the artifact that step
-# owns, or one of its own under the worktree tmp/. "normal" prints every block
-# as written; any other value is quiet. Harness output is never suppressed. The
-# destinations in full: references/skill-rules.md, Lane Output.
+# How much a lane prints into its own window. "quiet" prints one line per
+# finished step and writes each filled-in report to a file. "normal" prints
+# every report as it is written. Anything else is taken as "quiet" rather
+# than refused.
+# values: quiet | normal
 ORCH_LANE_OUTPUT = "quiet"
 
-# Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a
-# non-author review of the current head plus zero unresolved threads (for
-# bots that comment but never approve); "off" only where no reviewer exists.
+# What counts as a review before a merge. "approval" needs a GitHub
+# approval. "review" needs any non-author review of the current commit and
+# no open comment threads, for bots that comment but never approve. "off"
+# is only for a project with no reviewer at all.
+# values: approval | review | off
 PR_REVIEW_GATE = "approval"
 
-# The review-gate ENGINE's one-switch disable, consumed by orch even where
-# the review-gate skill is not installed. Only the exact value "off"
-# narrows; anything else leaves PR_REVIEW_GATE authoritative.
+# The review-gate engine's own off switch, read here even where that
+# package is not installed. Only the exact word "off" narrows the gate;
+# anything else leaves the setting above in charge.
+# values: enforce | off
 REVIEW_GATE_MODE = "enforce"
 
-# Total review-wait budget in seconds before the on-timeout policy applies;
-# an explicit max_wait argument always wins.
+# Seconds to wait for a review before the timeout policy below applies. A
+# wait named on the command line always wins.
 PR_REVIEW_WAIT_SECS = "900"
 
-# Check-run or commit-status name a trusted review bot publishes on
-# analyzed heads; a
-# success counts as review-received. SECURITY: matched by NAME and anyone
-# can publish under any name — name only the trusted bot's check. Empty =
-# review objects only.
+# The check name a trusted review bot publishes, whose success counts as a
+# review received. Anyone can publish under any name, so name only the bot
+# you trust. Empty counts reviews alone.
 PR_REVIEW_CHECK = ""
 
-# Review timeout: "proceed" advances only when no reviewer engaged and no thread is open; "block" stops.
+# What happens when that wait runs out. "proceed" goes ahead only where no
+# reviewer engaged and no thread is open. "block" stops and waits for a
+# person.
+# values: proceed | block
 PR_REVIEW_ON_TIMEOUT = "proceed"
 
-# Seconds ci-wait keeps polling before failing when no CI checks registered
-# yet; raise for approval-gated CI with slow dispatch.
+# Seconds to keep waiting for the build to start before treating its
+# absence as a failure. Raise it where a build needs approval before it
+# begins.
 CI_WAIT_NO_CHECKS_GRACE = "180"
 
-# Max automated ci-fix rounds per PR before a human takes over.
+# How many times a lane may try to fix a failing build before a person
+# takes over.
 CI_FIX_MAX_CYCLES = "6"
 
-# Max internal re-review cycles per issue before the verdict pass; the
-# re-review re-entry raises rereview_cycles and refuses at this, so the number
-# set is the number of re-entries allowed.
+# How many times one piece of work may go back for internal re-review
+# before the final verdict is taken.
 REVIEW_MAX_CYCLES = "4"
 
-# Max external review rounds on an open PR. At or past it a finding gets a
-# disposition and no fix push, except a defect the diff introduces or arms.
+# How many rounds of outside review an open pull request takes. Past the
+# limit a finding gets a written answer instead of a fix, unless the change
+# itself introduced the defect.
 REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 
-# Total concurrent agent-session budget, counting the primary; "0" =
-# unlimited. Reviews run in waves when the reviewer set exceeds free slots.
-# On the Codex runtime, set the cap `spawn-adapter slots` reports.
+# How many agent sessions may run at once, counting the one in charge. "0"
+# is unlimited. Where more reviewers are wanted than there are free places,
+# the reviews run in waves. On the Codex runtime set the cap the spawn
+# adapter reports.
 REVIEWER_SLOT_BUDGET = "0"
 
 # Who the session is talking to. "ceo" asks only about outcomes, in plain
-# language, and runs the decision, merge and issue-creation gates below
-# unattended unless this file sets one of them. "engineer" keeps each of those
-# keys' own default and the package's original wording.
+# language, and settles the three questions below on its own unless this
+# file answers them. "engineer" leaves each of those at its own default.
 # values: ceo | engineer
 ORCH_USER_MODE = "ceo"
 
-# Post-PR choices: "auto-recommended" continues within each budget; "ask" prompts.
+# Who chooses what happens after a pull request is opened.
+# "auto-recommended" takes the recommended course. "ask" puts each choice
+# to you.
+# values: auto-recommended | ask
 ORCH_DECISION_MODE = "auto-recommended"
 
-# Merge consent only: "auto" merges after every gate passes; "ask" prompts.
+# Who consents to a merge. "auto" merges once every gate is green. "ask"
+# asks you each time.
+# values: auto | ask
 ORCH_MERGE_AUTONOMY = "auto"
 
-# Merge route: "fast-path" merges a PR directly, ahead of the queue and its
-# second CI pass, when the head already holds the base head and every gate is
-# met; any other value, unset or unrecognized, arms auto-merge first and the
-# PR takes the queue. It instructs the lane and grants nothing: the ruleset
-# bypass for the merging account is the org's decision.
+# How a merge reaches the branch. "fast-path" merges straight away where the
+# change is already up to date and every gate is met; anything but that word
+# joins the merge queue rather than being refused. Permission to skip the
+# queue is the organisation's to grant, not this setting's.
+# values: off | fast-path
 ORCH_MERGE_BYPASS = "off"
 
-# The gh config directory on the control host holding the owner credential the
-# overseer merges a gate-met PR with, through `github.sh pr-merge
-# --admin-credential`. Empty turns the route off and every lane takes the
-# queue; no lane ever holds the credential.
+# Where the owner's GitHub credential sits on the machine running the
+# overseer, used to merge a pull request that has met every gate. Empty
+# turns that route off and every lane joins the queue. No lane ever holds
+# the credential.
 ORCH_ADMIN_MERGE_GH_CONFIG_DIR = ""
 
-# Change classes that route may merge, comma- or space-separated. Empty means
-# every class; only an empty ORCH_ADMIN_MERGE_GH_CONFIG_DIR turns the route
-# off. A set value names classes the change classifier answers: render,
-# trivial, micro, small and standard. The class comes from that classifier
-# alone, and a classifier that cannot be reached or read refuses the merge
-# with class-unreadable.
+# Which sizes of change that route may merge, separated by commas or
+# spaces: render, trivial, micro, small and standard. With a value set, a
+# change whose size cannot be read is refused rather than merged. Empty
+# allows every size and reads no size at all.
 ORCH_ADMIN_MERGE_CLASSES = ""
 
-# Seconds per brief-delivery verification pass on tmux handoff lanes.
+# Seconds allowed for each check that a lane received its instructions.
 ORCH_TMUX_VERIFY_SECS = "15"
 
-# Seconds a hosted lane waits for its remote shell prompt after the ssh line is
-# typed. Its own bound, not the one above: it measures a route coming up and
-# another machine's login. A bound spent with ssh still on the pane interrupts
-# that client and waits the bound again for the pane's own shell; the ssh line
-# is typed again only once that shell is back, because the pane has to be out
-# of ssh before a line pasted into it is run rather than typed into the stalled
-# session. The refusal counts the ssh lines typed in its attempts field.
+# Seconds a lane on another machine waits for that machine to answer after
+# the login line is sent. It is a separate bound because it measures a
+# network route coming up and a remote login. A value above 300 is reported
+# and cut back to 300.
 ORCH_LANE_SSH_PROMPT_SECS = "60"
 
-# Rename auto-discovered launch lanes (`<config-dir>=<alias>` pairs); the
-# inventory is always discovered — this only renames it. ORCH_LANE_DIRS
-# covers layouts discovery cannot reach.
+# Friendlier names for the lanes found on this machine, as real-name=alias
+# pairs. Lanes are always discovered; this only renames them.
 # ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
 
-# Launch lanes never listed, measured or picked; lanes retired from a UTC date.
-# Each is named by its directory name or alias, never a path.
+# Lanes never listed, measured or picked, and lanes retired from a date.
+# Each is named by its own name or its alias, never by a path.
 # ORCH_LANE_EXCLUDE = "sclaude"
 # ORCH_LANE_RETIRE = "nclaude=YYYY-MM-DD"
 
-# Seconds a per-host cached lane usage figure is reused; 0 fetches every run.
+# Seconds a lane's usage figure is reused before it is fetched again. 0
+# fetches it every time.
 # ORCH_LANES_USAGE_TTL = "60"
 
-# Usage share at or above which `lanes pick` refuses an account, read against
-# the binding bucket or, with --model, against the window that walls that
-# model. Never compared with ORCH_HANDOFF_HEADROOM_PCT below: a lane picked on
-# a model window can already be at or below the handoff mark on the account's
-# own bucket, and `lanes pick --binding-floor` is what holds both to one bound
-# for a caller that needs it.
+# The usage share at which a lane stops being offered for new work. It is
+# read against the account's own allowance, or against the chosen model's
+# window where one is named.
 # ORCH_LANE_MAX_PCT = "95"
 
-# Account headroom at or below which `lanes context` marks a live lane for
-# handoff, read against the binding bucket. The overseer asks a marked lane for
-# its handoff at the next safe point.
+# The allowance left on an account at which a running lane is marked for
+# handover. The overseer asks a marked lane to hand over at its next safe
+# point.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
-# Context tokens at or past which a turn end is refused until that session's
-# handoff record stands: the lane-mail-check hook judges a lane on it, and
-# oversee-succeed judges the overseer on it for that hook and for the watch.
+# How much context a session may use before it must write its handover note
+# before it can end a turn.
 # ORCH_HANDOFF_CONTEXT_TOKENS = "500000"
 
-# Path globs that add the needs-perf-test QA signal to review routing.
+# The files whose change asks for a performance test, as path patterns
+# separated by spaces.
 # QA_PERF_PATHS = "src/hot/* engine/src/*"
 
-# Max concurrent lanes the overseer keeps in flight.
+# How many lanes the overseer keeps running at once.
 ORCH_OVERSEER_LANES = "3"
 
-# "off" stops oversee-succeed from launching a successor overseer, and turns
-# off the turn-end refusal that names it. A live
-# overseer writes its handoff and asks the user to start the next session. A
-# dead or walled overseer cannot ask, so the watch reports the case and leaves
-# a notice for a manual replacement.
+# Whether a finished overseer starts its own replacement. "on" starts one.
+# "off" leaves a live overseer to write its handover note and ask you to
+# start the next session, and a dead one to be reported for replacement by
+# hand.
 # ORCH_OVERSEER_SUCCESSION = "on"
 
-# Consecutive oversee-watch passes the overseer's own pane must read exited
-# before the watch reports overseer-dead, or walled before it reports
-# overseer-walled, and relaunches. One pass is a poll that caught a live
-# session between its harness and its shell. A walled reading also needs the
-# account judged at or below ORCH_OVERSEER_HEADROOM_PCT: that pane carries the
-# limit banners the watch relays about other lanes, and passes alone never
-# close a window whose harness is alive.
+# How many checks in a row must find the overseer gone, or out of account
+# allowance, before it is replaced. One check alone can catch a healthy
+# session between programs.
 # ORCH_OVERSEER_DEAD_PASSES = "2"
 
-# Account headroom, in percent of the binding bucket, at or below which
-# oversee-succeed succeeds the overseer and refuses its turn end through the
-# lane-mail-check hook. No successor is opened on an account at or below it.
+# The allowance left on an account at which the overseer hands over. No
+# replacement is started on an account at or below it.
 # ORCH_OVERSEER_HEADROOM_PCT = "10"
 
-# Watch passes a standing overseer-mark waits before oversee-watch reports it
-# again. The first crossing is always reported; this only bounds how often a
-# mark the overseer has not yet acted on comes back.
+# How many checks pass before a warning nobody has acted on is reported
+# again. The first time it appears is always reported.
 # ORCH_OVERSEER_MARK_REPEAT = "5"
 
-# Most lines any one oversee-watch event prints off a lane's pane. Each event
-# kind already carries only what its handling reads; this caps what is left.
-# Raise it to carry a screen the default trims.
+# The most lines the overseer reads off a lane's window for one event.
+# Raise it to see a screen the default cuts short.
 # ORCH_WATCH_TAIL_LINES = "12"
 
-# Branch size measurement: branch-size-check --help.
-# Size alone never refuses work.
-# Render-mirror roots, blank separated. A path under one of
-# them drops out of the count only when what remains after the root names a
-# source changed in the same diff; a render whose source did not change is
-# counted.
+# Branch size, which is reported and never refuses work: the folders
+# holding generated copies, separated by spaces. A file under one of them
+# leaves the count only where the file it was generated from changed too.
 # ORCH_SIZE_RENDER_ROOTS = ".agents .claude .codex .pi"
-# Extra test-path globs, blank separated, added to the built-in test rule
-# (test/, tests/, __tests__/, tests.rs, *test_util.rs, *.test.*, *.spec.*).
-# A glob matches the whole repository-relative path; `*` spans `/` and every
-# character but `*` and `?` is literal. Empty, the built-in rule stands alone.
+
+# Extra test-file patterns added to the built-in ones, separated by spaces.
+# A pattern matches the whole path from the project root. Empty leaves the
+# built-in rule alone.
 # ORCH_SIZE_TEST_PATHS = "scripts/check-*.py"
 
-# Hours before an In Progress / In Review item counts as started-stale in
-# reconcile-work-items sweeps.
+# Hours an issue may sit in progress or in review before a sweep reports it
+# as stalled.
 # RECONCILE_STALE_HOURS = "24"

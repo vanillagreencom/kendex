@@ -1,13 +1,9 @@
 [env]
 
-# DECIDER — where this project keeps its decision records (decider skill).
-# Nothing below is marked `# required`, so installing this skill writes
-# nothing into <project>/kendex.settings.toml. What an install writes, and
-# when, is kendex's docs/authoring/settings.md. Full reference: decider
-# README.md.
+# Where this project keeps its decision records.
 
-# Directory holding the decision documents and their INDEX.md. Empty =
-# auto-discovery, walking up for a `docs/decisions`, `decisions`,
-# `doc/decisions`, or `adr` directory that has an INDEX.md; set it where the
-# tree is somewhere else.
+# The folder holding the decision records and their index. Empty means the
+# skill looks in the current folder and then each parent folder for
+# docs/decisions, decisions, doc/decisions or adr holding an INDEX.md. Records
+# kept anywhere else need their path set here.
 DECISIONS_DIR = ""

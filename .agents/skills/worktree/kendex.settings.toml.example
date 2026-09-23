@@ -1,48 +1,49 @@
 [env]
 
-# WORKTREE — where worktrees land, what gets linked into them, and the git
-# identity their commits carry (worktree skill). Nothing below is marked
-# `# required`, so installing this skill writes nothing into
-# <project>/kendex.settings.toml. What an install writes, and when, is
-# kendex's docs/authoring/settings.md. Every key here is inert while empty;
-# full reference: worktree README.md.
+# Where worktrees are created, what is linked into them, and whose name
+# their commits carry.
 
-# Base branch new worktrees fork from. Empty = detection from `origin/HEAD`,
-# falling back to `main`.
+# The branch a new worktree starts from. Empty reads this checkout's own
+# record of the remote's default branch, and falls back to main. That record
+# is refreshed locally, never by the remote, so a stale one keeps handing
+# out the old branch.
 WORKTREE_DEFAULT_BRANCH = ""
 
-# Where worktrees live; empty = <parent-of-checkout>/.worktrees/<checkout-name>.
-# Never point it inside the repo root — watched build outputs exhaust
-# inotify.
+# Where worktrees are created. Empty puts them in a .worktrees folder beside
+# the checkout. Never choose a folder inside the project: build output there
+# is watched and exhausts the system's file watches.
 WORKTREE_BASE_DIR = ""
 
-# Space-separated paths symlinked into every worktree: list only what git
-# does not carry. An entry does nothing when git carries every path under
-# it; one with untracked children still links those children. Include
-# `.env.local` only when worktrees should share local secrets.
+# Paths linked into every new worktree, separated by spaces. List only what
+# git does not already carry, since an entry git carries in full does
+# nothing. Include the private env file only where worktrees should share
+# this project's credentials.
 WORKTREE_SYMLINKS = ""
 
-# Space-separated link=target pairs; each target resolves from the LINK's
-# own directory (`ui/.env=../.env.worktree` reaches the worktree root's
-# `.env.worktree`). A tracked file, such as the `CLAUDE.md` shim kendex
-# writes beside `AGENTS.md`, arrives through git and needs no entry.
+# Links whose target is worked out from the link's own folder, written as
+# link=target pairs separated by spaces. Use it where a link sits in a
+# subfolder and points back up to the worktree root.
 WORKTREE_RELATIVE_SYMLINKS = ""
 
-# Space-separated files copied (not linked) into new worktrees.
+# Files copied, rather than linked, into every new worktree, separated by
+# spaces.
 WORKTREE_COPIES = ""
 
-# Space-separated gitignored scratch dirs created in new worktrees.
+# Scratch folders created empty in every new worktree, separated by spaces.
+# No git ignore rule is written for them, so list each one in the project's
+# .gitignore yourself.
 WORKTREE_MKDIRS = ""
 
-# Git identity worktree commits carry. BOT_NAME gates the pair: empty = the
-# logged-in user (BOT_EMAIL then ignored); set = name and email written
-# verbatim, empty values included.
+# The name on commits made in a worktree. Empty uses the signed-in user, and
+# the email below is then ignored. A name here is written on every commit
+# exactly as typed.
 BOT_NAME = ""
 
-# Email written with BOT_NAME. Read only while BOT_NAME is set.
+# The email written beside the name above. It is read only while that name
+# is set.
 BOT_EMAIL = ""
 
-# Remote name pushes target; empty = origin. Set BOT_REMOTE_URL alongside it
-# to have `create` add that remote in each new worktree; without a URL the
-# remote must already exist.
+# The remote a push from a worktree targets. Empty uses origin. Set
+# BOT_REMOTE_URL beside it to have each new worktree add that remote;
+# without that URL the remote must already exist.
 BOT_REMOTE_NAME = ""

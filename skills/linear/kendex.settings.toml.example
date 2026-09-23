@@ -1,50 +1,44 @@
 [env]
 
-# LINEAR — which Linear team this project writes to. LINEAR_TEAM below is
-# the one key marked `# required`, so installing this skill writes that key
-# into <project>/kendex.settings.toml and nothing else. What an install
-# writes, and when, is kendex's docs/authoring/settings.md. Full key
-# reference: linear README.md.
+# Which Linear team this project writes to, and how its issues are read and
+# created.
 
-# The team every Linear write targets. No default: an empty value refuses
-# writes instead of guessing inside whatever workspace the API key reaches
-# (the create actions still take `--team <name>` per call). Confirm with
-# `linear.sh auth-check --strict`.
+# The team a Linear write targets unless the command names another team.
+# Creating an issue, project, cycle or label can name one for that call.
+# There is no default: while this is empty, writes are refused rather than
+# guessing which team inside the workspace the key reaches.
 LINEAR_TEAM = "" # required
 
-# Issue identifier prefix used in examples (e.g. PROJ-123).
+# The letters in front of this team's issue numbers, as in PROJ-123. Help
+# text and examples use it.
 LINEAR_TEAM_PREFIX = "PROJ"
 
-# Declared agent-routing label set (e.g. "agent:generalist, agent:rust").
-# Non-empty makes `issues create` refuse a create carrying none of them —
-# such an issue is invisible to agent routing. Empty = guard off.
+# The labels that route an issue to an agent, separated by commas. With a
+# list here, creating an issue that carries none of them is refused, because
+# nothing would pick that issue up. Empty turns the refusal off.
 LINEAR_AGENT_LABELS = ""
 
-# Non-empty makes `issues create` enforce the creation bar in the
-# project-management skill's SKILL.md, § Disposition → **Name what reaches
-# it**: it refuses a body with no `Reached by:` line, and a `--review-born
-# --priority 2` body with no `Symptom:` line. Empty = guard off.
+# Whether a new issue must say who runs into the problem. Any value turns it
+# on: a description with no "Reached by" line is refused, and a
+# high-priority issue born from a review also needs a "Symptom" line. Empty
+# turns it off.
 LINEAR_REQUIRE_REACH = ""
 
-# Default output format for read commands: safe, table, ids, raw.
+# How read commands print: "safe" flat, "table" for a person, "ids" bare
+# identifiers, "compact" small for routing, "raw" Linear's own nesting.
+# Getting one issue, or listing its children or relations, refuses a shape
+# it lacks. Other commands print safe in its place and report nothing.
 LINEAR_FORMAT = "safe"
 
-# Seconds before the first retry of a rate-limited or failed GraphQL call,
-# doubling on each further attempt. A whole number of seconds; 0 retries
-# without waiting at all.
+# Seconds to wait before retrying a Linear call that was rate limited or
+# failed. The wait doubles on each further attempt. Whole seconds; 0 retries
+# with no wait at all.
 LINEAR_RETRY_BASE_DELAY = "1"
 
 [secrets]
 
-# The Linear API key every call to Linear authenticates with. Create one
-# at Linear → Settings → Security & access → Personal API keys. It reaches
-# every workspace it owns, so LINEAR_TEAM above is what keeps this
-# project's writes to one team. A 1Password reference — op://vault/item/field
-# — works in place of the key itself.
-#
-# A key set here wins over one exported in your shell, unlike every other
-# setting: a machine-wide key is the wrong workspace for every repository
-# but one, so this project's own key decides. LINEAR_API_KEY_OVERRIDE beats
-# both for a single call, and auth-check warns, by fingerprint alone, when
-# a key set here shadows a different inherited one.
+# The key every Linear call authenticates with. Create one in Linear, under
+# Settings, Security and access, Personal API keys. A key set here beats one
+# already in your shell, unlike every other setting, because a machine-wide
+# key points at the wrong workspace for all but one project.
 LINEAR_API_KEY = "" # required
