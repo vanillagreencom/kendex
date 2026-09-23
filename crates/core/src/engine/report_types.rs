@@ -203,6 +203,17 @@ impl DeclarationStatus {
     }
 }
 
+/// One installation this pass derived from the scope's declarations, by
+/// kind, name and harness, and the positions it occupies. What the record
+/// should hold an entry for, and where `verify` says each row sits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Installation {
+    pub kind: ItemKind,
+    pub name: String,
+    pub harness: HarnessId,
+    pub positions: Vec<super::desired::Position>,
+}
+
 #[derive(Debug)]
 pub struct EngineReport {
     pub declaration_status: DeclarationStatus,
@@ -258,11 +269,64 @@ pub struct EngineReport {
     /// entry key, as the pass held them in place: a record write for an
     /// entry this pass proved holds them in place again before it writes.
     pub registrations: Registrations,
+    /// Every installation the scope's declarations derive this pass, by
+    /// lock entry key, with the positions the engine resolved for it: the
+    /// items the plan built, and each declared Pi extension at the package
+    /// directory the carrier installs it under. A recorded entry outside
+    /// this set is one nothing declares; a key here with no entry is one
+    /// the record does not hold.
+    pub installations: BTreeMap<String, Installation>,
+    /// The sources whose root this pass reached through the commit the
+    /// record last resolved, because the mirror could not serve the
+    /// declared revision. Everything rendered from one was measured
+    /// against a commit the record chose, so a proof over that record
+    /// refuses them by name.
+    pub sources_from_record: BTreeSet<String>,
+}
+
+impl EngineReport {
+    /// A report carrying `plan` and nothing else: no drift, no
+    /// derivation, every declaration complete. What a caller that planned
+    /// its ops outside the engine, or read a scope back after a write,
+    /// hands to the readers that take a report. `Plan` is built fallibly
+    /// through [`Plan::landed`], which is why the plan is the one argument
+    /// rather than a default.
+    pub fn observed(plan: Plan) -> EngineReport {
+        EngineReport {
+            declaration_status: DeclarationStatus::Complete,
+            drift: Vec::new(),
+            plan,
+            notes: Vec::new(),
+            warnings: Vec::new(),
+            set_changes: Vec::new(),
+            sweepable: Vec::new(),
+            kept: Vec::new(),
+            safety: Vec::new(),
+            repo_effects: Vec::new(),
+            repo_effects_leaving: Vec::new(),
+            instruction_shims: Vec::new(),
+            fork_edits: Vec::new(),
+            resolved_sources: BTreeMap::new(),
+            recorded_gone: Vec::new(),
+            generated: super::GeneratedPaths::default(),
+            registrations: Registrations::default(),
+            installations: BTreeMap::new(),
+            sources_from_record: BTreeSet::new(),
+        }
+    }
 }
 
 /// The settings edits registrations are, by the lock entry key of the
-/// installation that registers them.
-pub type Registrations = BTreeMap<String, Vec<(std::path::PathBuf, crate::configedit::ConfigEdit)>>;
+/// installation that registers them, in the order the pass walks its
+/// items. A list rather than a map because that order is the order the
+/// edits land in a shared file: the writer collects each file's edits
+/// item by item, and a reader rebuilding the file from a revision that
+/// never held it has to apply them the same way round, or two keys
+/// created by two registrations come out swapped.
+pub type Registrations = Vec<(
+    String,
+    Vec<(std::path::PathBuf, crate::configedit::ConfigEdit)>,
+)>;
 
 /// An installation `EngineReport::recorded_gone` names, by kind and name.
 pub type RecordedGone = (ItemKind, String);

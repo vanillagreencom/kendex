@@ -119,6 +119,8 @@ fn each_verb_prints_its_plain_lines() {
             vec![
                 "✓ skill tidy [claude]",
                 "✓ skill tidy [codex]",
+                "<project>: 1 package listed and not in the install record",
+                "  - skill commit-guards — kendex apply records it",
                 "2 checked, 2 OK, 0 failed",
             ],
         ),

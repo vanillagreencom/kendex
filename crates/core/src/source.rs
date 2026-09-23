@@ -64,6 +64,11 @@ pub struct ResolvedSource {
     /// Remotes only: the commit this root holds. The root is that commit's
     /// own directory, so it cannot change while it is being read.
     pub commit: Option<String>,
+    /// Whether the root is the commit the scope's record last resolved,
+    /// reached because the mirror could not serve the declared revision.
+    /// A render from such a root was measured against a commit the record
+    /// chose, and a proof that reads the record refuses it by name.
+    pub from_record: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,6 +226,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
             root,
             provenance: INPLACE_SOURCE_NAME.to_owned(),
             commit: None,
+            from_record: false,
         }));
     }
     if name == LOCAL_SOURCE_NAME {
@@ -238,6 +244,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
             root,
             provenance: LOCAL_SOURCE_NAME.to_owned(),
             commit: None,
+            from_record: false,
         }));
     }
     let Some(decl) = manifest.sources.get(name) else {
@@ -258,6 +265,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
                 provenance: declared_path_identity(path),
                 root,
                 commit: None,
+                from_record: false,
             })),
             _ => Ok(SourceState::Missing {
                 name: name.to_owned(),
@@ -272,6 +280,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
                 root: resolution.root,
                 provenance: repo.clone(),
                 commit: Some(resolution.commit),
+                from_record: false,
             }));
         }
         // Last resort: the commit this scope last resolved to. A tag that
@@ -285,6 +294,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
                 root,
                 provenance: repo.clone(),
                 commit: Some(commit),
+                from_record: true,
             }));
         }
         return Ok(SourceState::Pending {
@@ -362,6 +372,7 @@ pub fn resolve_at(
             root: resolution.root,
             provenance: repo.clone(),
             commit: Some(resolution.commit),
+            from_record: false,
         })),
         None => Ok(SourceState::Pending {
             name: name.to_owned(),

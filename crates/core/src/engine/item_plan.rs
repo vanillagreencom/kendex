@@ -163,24 +163,19 @@ pub(super) fn plan_item(
         .filter(|_| !dirty && !hash_moved)
         .and_then(|entry| entry.machine.as_ref())
         .map_or_else(timestamp, |machine| machine.installed_at.clone());
-    new_lock.entries.insert(
-        item.key.clone(),
-        record(item, existing, dirty, installed_at),
-    );
+    new_lock
+        .entries
+        .insert(item.key.clone(), record(item, installed_at));
     Ok(())
 }
 
 /// What this pass records about the installation it just planned.
-fn record(
-    item: &Desired,
-    existing: Option<&LockEntry>,
-    dirty: bool,
-    installed_at: String,
-) -> LockEntry {
-    let rendered_hash = existing
-        .filter(|entry| !dirty && entry.source_hash == item.hash)
-        .and_then(|entry| entry.rendered_hash.clone())
-        .or_else(|| rendered_hash(item));
+fn record(item: &Desired, installed_at: String) -> LockEntry {
+    // The artifact's own hash every pass, never the record's copy of it:
+    // an entry in sync renders to the bytes on disk, so the value written
+    // last time is this one already, and a recorded value that is not it
+    // is the record's to answer for in `attest::record`.
+    let rendered_hash = rendered_hash(item);
     LockEntry {
         name: item.name.clone(),
         kind: item.kind,
@@ -313,17 +308,13 @@ fn plan_registration(
     let locked = existing.is_some();
     // What the record says this installation registered, where that is no
     // longer what it registers: a changed event or matcher is a move, and
-    // a move takes the old entry out before it puts the current one in.
-    // Placed in front of this item's own edits, since the file is edited in
-    // the order they are collected — the other way round, an upsert under
-    // the current event would leave the old one live and the hook would
-    // fire twice.
-    let retire = match super::item_record::retire_previous(item, existing) {
-        super::item_record::Previous::Settled => None,
-        super::item_record::Previous::Retire(path, edit) => Some((path, edit)),
-    };
-    let edits: Vec<(PathBuf, ConfigEdit)> =
-        retire.into_iter().chain(edits.iter().cloned()).collect();
+    // a move takes the old entry out before it puts the current one in,
+    // read off the record and the file as they are now.
+    let edits: Vec<(PathBuf, ConfigEdit)> = super::item_record::edit_sequence(
+        edits,
+        existing.and_then(|entry| entry.registration.as_ref()),
+        &|path| crate::fs::read_if_exists(path).ok().flatten(),
+    );
     let edits = &edits;
     // Every edit is checked before anything is planned: a settings file
     // kendex cannot read back — comments in a JSON, a torn edit — blocks

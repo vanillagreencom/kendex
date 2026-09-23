@@ -29,25 +29,7 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
         for op in &plan.ops {
             say(&format!("  - {}", op.line()));
         }
-        let report = kendex_core::engine::EngineReport {
-            declaration_status: kendex_core::engine::DeclarationStatus::Complete,
-            repo_effects: Vec::new(),
-            repo_effects_leaving: Vec::new(),
-            drift: Vec::new(),
-            plan,
-            notes: Vec::new(),
-            warnings: Vec::new(),
-            set_changes: Vec::new(),
-            sweepable: Vec::new(),
-            kept: Vec::new(),
-            safety: Vec::new(),
-            instruction_shims: Vec::new(),
-            fork_edits: Vec::new(),
-            resolved_sources: Default::default(),
-            recorded_gone: Vec::new(),
-            generated: kendex_core::engine::GeneratedPaths::default(),
-            registrations: Default::default(),
-        };
+        let report = kendex_core::engine::EngineReport::observed(plan);
         confirm_and_execute(env, &report, yes)?;
     }
     // Render what was just declared — the same refresh any declaration

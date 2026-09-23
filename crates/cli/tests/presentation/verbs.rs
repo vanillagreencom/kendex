@@ -123,6 +123,33 @@ fn every_framed_verb_carries_what_its_plain_run_said() {
     }
 }
 
+/// A declared package with no install-record entry closes `verify`
+/// non-zero, the unmanaged-copy state included: the install was skipped on
+/// a conflict, the declaration stands, and the record holds nothing for
+/// it. The snapshot pins the line; this pins the exit status a pipeline
+/// reads.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_declaration_with_no_record_entry_closes_verify_non_zero() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = blocked_project(&home);
+    let refreshed = kendex(
+        &home,
+        &project,
+        "plain",
+        &["refresh", "-y", "--scope", "project"],
+    );
+    assert!(refreshed.status.success(), "{}", said(&refreshed));
+    let verified = kendex(&home, &project, "plain", &["verify", "--scope", "project"]);
+    let printed = said(&verified);
+    assert!(
+        printed.contains("1 package listed and not in the install record"),
+        "{printed}"
+    );
+    assert!(!verified.status.success(), "{printed}");
+}
+
 /// Both confirm sites refuse the same way with nobody to ask, and neither
 /// writes anything first. One guard, one sentence, both call sites.
 #[test]

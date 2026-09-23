@@ -266,6 +266,38 @@ pub fn ref_names(mirror: &Path) -> Option<Vec<String>> {
     )
 }
 
+/// Whether `ancestor` is `descendant` or on its history, read from the
+/// mirror alone. A mirror clone holds the whole history, so an older
+/// commit a record kept is answered here without a fetch.
+///
+/// Three answers, because a reader acts on each differently: `Some(true)`
+/// and `Some(false)` are the mirror's verdict, a commit it never held
+/// counting as off the history; `None` is a mirror that cannot answer at
+/// all — it does not hold `descendant`, or git could not run in it — so
+/// the reader points at the mirror rather than at the commit it asked
+/// about. `git merge-base --is-ancestor` exits 1 for "not an ancestor" and
+/// otherwise for an object or repository it cannot read, and the two are
+/// told apart here by asking the mirror for each commit first.
+pub fn is_ancestor(mirror: &Path, ancestor: &str, descendant: &str) -> Option<bool> {
+    if !has_commit(mirror, descendant) {
+        return None;
+    }
+    if !has_commit(mirror, ancestor) {
+        return Some(false);
+    }
+    let output = Hardened::git_bare(
+        mirror,
+        &["merge-base", "--is-ancestor", ancestor, descendant],
+    )
+    .run()
+    .ok()?;
+    match output.status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
+    }
+}
+
 pub fn has_commit(mirror: &Path, commit: &str) -> bool {
     Hardened::git_bare(mirror, &["cat-file", "-e", &format!("{commit}^{{commit}}")])
         .run()

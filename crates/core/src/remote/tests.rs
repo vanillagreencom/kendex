@@ -166,6 +166,67 @@ fn a_cached_pin_resolves_offline_and_an_uncached_one_is_a_hard_error() {
     assert!(!reason.is_empty(), "{error}");
 }
 
+/// The mirror's three answers on ancestry, one row each: on the history,
+/// off it (a later commit asked of an earlier one, and a commit the
+/// mirror never held), and no answer at all where the mirror is absent or
+/// does not hold the commit it is asked to measure against. The last two
+/// rows are what tells a reader to fetch rather than to search the record.
+#[test]
+fn the_mirror_answers_ancestry_three_ways() {
+    let f = fixture();
+    let one = head(&f.upstream);
+    sync(&f.env, REPO, Some(&one)).unwrap();
+    write_skill(&f.upstream, "v2");
+    let two = commit(&f.upstream, "two");
+    sync(&f.env, REPO, Some(&two)).unwrap();
+    let mirror = store::mirror_dir(&f.env, &key_for(&f.env));
+    let unheld = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    let rows: [(&str, &Path, &str, &str, Option<bool>); 5] = [
+        (
+            "an earlier commit is on a later one's history",
+            &mirror,
+            &one,
+            &two,
+            Some(true),
+        ),
+        (
+            "a later commit is off an earlier one's history",
+            &mirror,
+            &two,
+            &one,
+            Some(false),
+        ),
+        (
+            "a commit the mirror never held is off every history",
+            &mirror,
+            unheld,
+            &two,
+            Some(false),
+        ),
+        (
+            "a mirror that does not hold the descendant cannot answer",
+            &mirror,
+            &one,
+            unheld,
+            None,
+        ),
+        (
+            "an absent mirror cannot answer",
+            Path::new("/kendex-no-such-mirror.git"),
+            &one,
+            &two,
+            None,
+        ),
+    ];
+    for (label, mirror, ancestor, descendant, expected) in rows {
+        assert_eq!(
+            store::is_ancestor(mirror, ancestor, descendant),
+            expected,
+            "{label}"
+        );
+    }
+}
+
 /// A tag that moved upstream is followed on the next refresh, and the
 /// commit it pointed at before keeps its own directory, unchanged.
 #[test]

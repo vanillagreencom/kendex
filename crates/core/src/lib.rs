@@ -15,6 +15,7 @@ mod test_util;
 
 pub mod app_update;
 pub mod apply;
+pub mod attest;
 pub mod author;
 pub mod base;
 pub mod bookmark;

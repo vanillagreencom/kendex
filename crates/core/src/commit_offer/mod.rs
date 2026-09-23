@@ -38,7 +38,7 @@ use crate::process::{DEFAULT_TIMEOUT, INTERACTIVE_TIMEOUT};
 
 mod changes;
 mod gh;
-mod git;
+pub(crate) mod git;
 mod message;
 mod paths;
 mod pathspec;

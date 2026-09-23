@@ -86,6 +86,8 @@ enum Command {
         /// project | global | all (default all)
         #[arg(long)]
         scope: Option<String>,
+        #[command(flatten)]
+        output: commands::verify::Output,
     },
     /// Make installed files match what kendex.toml lists — leftover removal and instruction shims included
     Apply(commands::apply_cmd::ApplyArgs),
@@ -494,9 +496,10 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             names,
             global,
             scope,
+            output,
         } => {
             let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::All)?;
-            return commands::verify::run(&env, names, filter);
+            return commands::verify::run(&env, names, filter, output);
         }
         Command::Apply(args) => commands::apply_cmd::run(&env, args)?,
         Command::Adopt {

@@ -87,14 +87,16 @@ pub fn load_file(path: &Path) -> Result<LockFile> {
     let Some(text) = read_if_exists(path)? else {
         return Ok(LockFile::Absent);
     };
-    parse_text(path, &text)
+    parse_text(path, &text).map(LockFile::Current)
 }
 
 /// [`load_file`] for text the caller already read — the importer binds its
 /// preconditions to the exact bytes it classified, so it must classify the
-/// bytes it read rather than a later re-read. This machine's half is read
-/// from disk either way: it is not part of what the importer classifies.
-pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
+/// bytes it read rather than a later re-read, and a replay reads a
+/// revision's copy of the record through the same refusals the file at
+/// `path` gets. This machine's half is read from disk either way: it is
+/// not part of what the importer classifies.
+pub fn parse_text(path: &Path, text: &str) -> Result<Lock> {
     let mut lock: Lock = parse_versioned(path, text)?;
     read_against(path, &mut lock)?;
     let root = project_root_at(path);
@@ -110,7 +112,7 @@ pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
             }
         }
     }
-    Ok(LockFile::Current(lock))
+    Ok(lock)
 }
 
 /// The roots this machine's half of the record at the path was written
@@ -236,6 +238,22 @@ pub fn save(path: &Path, lock: &Lock) -> Result<()> {
     let mut lock = lock.clone();
     lock.version = LOCK_VERSION;
     let root = write_under(path, &mut lock)?;
+    write_halves(path, root, &lock)
+}
+
+/// The committed half exactly as [`save`] lays it down at `path` for this
+/// record: the version stamped, every position spelled as a remainder of
+/// the project, the newline the file already uses. What a reader holding
+/// a committed record to "as kendex writes it" compares against, so the
+/// serialization is not derived a second time.
+pub fn committed_text(path: &Path, lock: &Lock) -> Result<String> {
+    let mut lock = lock.clone();
+    lock.version = LOCK_VERSION;
+    write_under(path, &mut lock)?;
+    document(path, &lock)
+}
+
+fn write_halves(path: &Path, root: Option<PathBuf>, lock: &Lock) -> Result<()> {
     let mut machine = machine_state(path)?.unwrap_or_default();
     machine.version = LOCK_VERSION;
     machine.written.retain(|row| row.root != root);
@@ -248,7 +266,7 @@ pub fn save(path: &Path, lock: &Lock) -> Result<()> {
             .collect(),
     });
     machine.written.sort_by(|a, b| a.root.cmp(&b.root));
-    atomic_write_no_follow(path, &document(path, &lock)?)?;
+    atomic_write_no_follow(path, &document(path, lock)?)?;
     let beside = machine_path(path);
     atomic_write_no_follow(&beside, &document(&beside, &machine)?)
 }

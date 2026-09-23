@@ -154,6 +154,7 @@ pub(crate) fn open_repo(
         root: resolution.root,
         provenance: key.clone(),
         commit: Some(resolution.commit),
+        from_record: false,
     };
     browsed(records, source, None, Some(key))
 }
