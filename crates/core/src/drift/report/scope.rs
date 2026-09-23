@@ -25,6 +25,7 @@ pub(super) struct ScopeOutcome {
 /// Requested items and bundle members seed the set. Dependency edges then
 /// extend it until every package required by a selected package is present.
 fn selected_record_keys(
+    env: &Env,
     manifest: &crate::manifest::Manifest,
     lock: &crate::lock::Lock,
     scope: &Scope,
@@ -53,20 +54,28 @@ fn selected_record_keys(
                     .iter()
                     .zip(&custom_names)
                     .any(|(hook, name)| {
-                        let listed: Option<Vec<_>> = hook.harnesses.as_ref().map(|harnesses| {
+                        if name != &entry.name {
+                            return false;
+                        }
+                        let spec = crate::hook::HookSpec::custom(hook, name.clone());
+                        let listed: Option<Vec<_>> = spec.harnesses.as_ref().map(|harnesses| {
                             harnesses
                                 .iter()
                                 .filter_map(|name| crate::model::HarnessId::parse(name))
                                 .collect()
                         });
-                        name == &entry.name
-                            && crate::engine::desired::harnesses_for(
-                                listed.as_deref(),
-                                manifest,
-                                ItemKind::Hook,
-                                scope,
+                        crate::engine::desired::harnesses_for(
+                            listed.as_deref(),
+                            manifest,
+                            ItemKind::Hook,
+                            scope,
+                        )
+                        .contains(&entry.harness)
+                            && spec.applies_to(entry.harness)
+                            && matches!(
+                                crate::hook::delivery(env, scope, entry.harness, &spec),
+                                crate::hook::Delivery::Registered
                             )
-                            .contains(&entry.harness)
                     }));
         let bundle_member = !manifest.is_held_back(entry.kind, &entry.name)
             && entry.reasons.iter().any(|reason| {
@@ -181,14 +190,14 @@ pub(super) fn shadow_lines(
     }
     for shadow in scan.found {
         let lines = shadow.lines(shown);
-        let remedy = shadow
-            .extensions
-            .parent()
-            .map(|destination| Remedy::MoveAside {
-                from: shadow.shadow.display().to_string(),
-                to: destination.display().to_string(),
+        let remedy = shadow.extensions.parent().and_then(|destination| {
+            let remedy = Remedy::MoveAside {
+                from: shadow.shadow.clone(),
+                to: destination.to_path_buf(),
                 windows: env.is_windows(),
-            });
+            };
+            remedy.render(None).is_some().then_some(remedy)
+        });
         sections.shadowed.push(drift(
             format!(
                 "{prefix}{}: {}; {}; {}",
@@ -318,7 +327,7 @@ impl ScopeCheck<'_> {
             Ok(crate::lock::LockFile::Current(lock)) => {
                 let selected = match manifest {
                     ManifestRead::Current(manifest) => {
-                        Some(selected_record_keys(manifest, lock, self.scope))
+                        Some(selected_record_keys(self.env, manifest, lock, self.scope))
                     }
                     ManifestRead::Absent => Some(BTreeSet::new()),
                     ManifestRead::Unreadable => None,

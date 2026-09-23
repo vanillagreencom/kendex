@@ -663,6 +663,34 @@ fn record_selection_tracks_each_manifest_owner() {
 }
 
 #[test]
+fn a_custom_hook_moved_into_agent_files_leaves_its_registry_record_for_cleanup() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    let scope = project_scope(tmp.path());
+    let (mut manifest, entries) = SelectionCase::CustomHook.fixture();
+    write_manifest(&env, &scope, &manifest);
+    write_record(&env, &scope, entries);
+
+    let registered = check(&env, std::slice::from_ref(&scope));
+    assert!(
+        !cleanup_names(&registered)
+            .iter()
+            .any(|line| line.contains("custom-hook")),
+        "the registered hook is still selected: {registered:?}"
+    );
+
+    manifest.custom_hooks[0].agents = crate::manifest::HookAgents::One("reviewer".into());
+    write_manifest(&env, &scope, &manifest);
+    let in_agent_file = check(&env, std::slice::from_ref(&scope));
+    assert!(
+        cleanup_names(&in_agent_file)
+            .iter()
+            .any(|line| line.contains("hook 'custom-hook'")),
+        "the old registry record was still selected: {in_agent_file:?}"
+    );
+}
+
+#[test]
 fn suppression_excludes_derived_records_but_not_direct_declarations() {
     for case in [
         SelectionCase::BundleMember,
@@ -801,8 +829,8 @@ fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not(
     assert_eq!(
         line.remedy,
         Some(Remedy::MoveAside {
-            from: shadow.display().to_string(),
-            to: root.join(".pi").display().to_string(),
+            from: shadow.clone(),
+            to: root.join(".pi"),
             windows: false,
         })
     );
@@ -840,6 +868,39 @@ fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not(
         )),
         "{text}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_shadow_path_keeps_the_row_and_omits_the_move_command() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    let root = tmp.path().join(".pi");
+    let extensions = root.join("extensions");
+    let shadow = extensions.join(std::ffi::OsString::from_vec(b"pi-widgets-\xff".to_vec()));
+    let scan = crate::pi_ext::ShadowScan {
+        found: vec![crate::pi_ext::ShadowPackage {
+            name: "pi-widgets".into(),
+            managed: root.join("packages/pi-widgets"),
+            managed_version: Some("2.0.0".into()),
+            extensions,
+            shadow: shadow.clone(),
+            shadow_version: Some("1.0.0".into()),
+        }],
+        errors: Vec::new(),
+    };
+    let mut sections = Sections::new();
+    scope::shadow_lines(&env, "", scan, &mut sections);
+    let report = sections.into_report(None, None);
+    let line = &report.sections[0].lines[0];
+
+    assert!(line.text.starts_with("pi-shadow-package=pi-widgets: "));
+    assert_eq!(line.remedy, None, "the lossy move command was retained");
+    let json = serde_json::to_string(&report).expect("the full report remains serializable");
+    assert!(json.contains("pi-shadow-package=pi-widgets"), "{json}");
+    assert!(!json.contains("move-aside"), "{json}");
 }
 
 /// A package declared at both scopes with one copy under the global

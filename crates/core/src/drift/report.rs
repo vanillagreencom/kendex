@@ -104,8 +104,8 @@ pub enum Remedy {
     /// Move an unmanaged Pi copy out of the directory Pi scans. Paths are
     /// shell-quoted when rendered. `windows` selects PowerShell syntax.
     MoveAside {
-        from: String,
-        to: String,
+        from: std::path::PathBuf,
+        to: std::path::PathBuf,
         windows: bool,
     },
     Remove {
@@ -214,10 +214,7 @@ impl Remedy {
         let named = target.filter(|_| !self.global());
         let place = match (self.global(), named.filter(|_| self.takes_project_path())) {
             (true, _) => " --global".to_owned(),
-            (false, Some(path)) => format!(
-                " --project-path {}",
-                crate::names::quoted(&path.display().to_string())
-            ),
+            (false, Some(path)) => format!(" --project-path {}", command_word(path, false)?),
             (false, None) => String::new(),
         };
         let command = match self {
@@ -265,10 +262,11 @@ impl Remedy {
     }
 }
 
-/// Quote one path for the shell this environment uses. A control byte or
-/// a path past the report's fragment bound cannot be printed as the same
-/// word, so no command is offered for that path.
-fn command_word(word: &str, windows: bool) -> Option<String> {
+/// Quote one path for the shell this environment uses. A non-UTF-8 path,
+/// a control byte or a path past the report's fragment bound cannot be
+/// printed as the same word, so no command is offered for that path.
+fn command_word(path: &std::path::Path, windows: bool) -> Option<String> {
+    let word = path.to_str()?;
     let quoted = match windows {
         true => format!("'{}'", word.replace('\'', "''")),
         false => crate::names::quoted(word),
@@ -279,7 +277,7 @@ fn command_word(word: &str, windows: bool) -> Option<String> {
 /// The platform editor command for a manifest. Opening the file is an edit
 /// step, not a remedy that claims the named table was removed.
 pub(super) fn edit_command(env: &Env, path: &std::path::Path) -> Option<String> {
-    let path = command_word(&path.display().to_string(), env.is_windows())?;
+    let path = command_word(path, env.is_windows())?;
     Some(match env.is_windows() {
         true => format!("notepad.exe {path}"),
         false => format!("${{EDITOR:-vi}} {path}"),
@@ -289,9 +287,10 @@ pub(super) fn edit_command(env: &Env, path: &std::path::Path) -> Option<String> 
 /// A non-clobbering backup command for an installed file that another
 /// remedy replaces. The backup sits beside the file with `.backup` added.
 pub(super) fn backup_command(env: &Env, path: &std::path::Path) -> Option<String> {
-    let from = command_word(&path.display().to_string(), env.is_windows())?;
-    let backup = format!("{}.backup", path.display());
-    let to = command_word(&backup, env.is_windows())?;
+    let from = command_word(path, env.is_windows())?;
+    let mut backup = path.as_os_str().to_owned();
+    backup.push(".backup");
+    let to = command_word(std::path::Path::new(&backup), env.is_windows())?;
     Some(match env.is_windows() {
         true => format!("Copy-Item -LiteralPath {from} -Destination {to} -Confirm"),
         false => format!("cp -i {from} {to}"),
@@ -342,7 +341,7 @@ pub struct CheckReport {
     /// main checkout's — and absent again where the main checkout holds
     /// no project root at that place, which leaves every remedy in the
     /// bare spelling a command typed in the checked directory would take.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "project_target_not_serializable")]
     pub project_target: Option<std::path::PathBuf>,
     /// Whether a scope's plan over unrecorded copies outran the deadline
     /// and is still owed — what sends the caller's background refresh
@@ -351,6 +350,12 @@ pub struct CheckReport {
     #[serde(skip)]
     #[specta(skip)]
     pub deep_pass_owed: bool,
+}
+
+/// A project target is command data. JSON omits a path the platform cannot
+/// represent as the exact UTF-8 argument the command renderer requires.
+fn project_target_not_serializable(target: &Option<std::path::PathBuf>) -> bool {
+    target.as_deref().is_none_or(|path| path.to_str().is_none())
 }
 
 impl CheckReport {
