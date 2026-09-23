@@ -299,28 +299,38 @@ export function schedulePersistSharedSession(ctxLike?: { sessionManager?: unknow
 	timer.unref?.();
 }
 
+interface ConvertedTranscript {
+	/** The records to import, after recovery, placeholder insertion and pairing repair. */
+	records: ReturnType<typeof repairToolPairing>;
+	/** Pre-repair count, which reportSyntheticToolResultRepair reports. */
+	anthropicMessageCount: number;
+	/** tool_use ids that got a bridge-authored error result because pi's history lost theirs. */
+	missingToolResults: ReturnType<typeof findUnpairedToolUses>;
+}
+
 // Convert pi messages to Anthropic API format for session import.
 // Lossy: non-Anthropic thinking blocks are dropped (no valid signature). User and
 // tool-result image blocks are preserved when possible. If assistant blocks are
 // otherwise incompatible, convertPiMessages emits a text placeholder so the record
 // sequence stays valid before repairToolPairing runs.
-function convertAndImportMessages(
-	session: ReturnType<typeof createSession>,
+//
+// Pure: it creates no session and touches no disk, so syncSharedSession can read
+// the record count BEFORE deciding whether a rebuild has anything to rebuild.
+function convertMessagesForImport(
 	messages: Context["messages"],
 	customToolNameToSdk?: Map<string, string>,
-	cwd?: string,
-): void {
+): ConvertedTranscript {
 	const { anthropicMessages, sanitizedIds } = convertPiMessages(messages, customToolNameToSdk);
 
-	debug(`convertAndImportMessages: ${messages.length} pi msgs → ${anthropicMessages.length} anthropic msgs`);
-	debug(`convertAndImportMessages: imported roles:`, anthropicMessages.map((m, i) => {
+	debug(`convertMessagesForImport: ${messages.length} pi msgs → ${anthropicMessages.length} anthropic msgs`);
+	debug(`convertMessagesForImport: imported roles:`, anthropicMessages.map((m, i) => {
 		const c = m.content;
 		if (typeof c === "string") return `[${i}]${m.role}:text`;
 		if (Array.isArray(c)) return `[${i}]${m.role}:${(c).map((b) => b.type).join("+")}`;
 		return `[${i}]${m.role}:?`;
 	}).join(" "));
 	if (sanitizedIds.size > 0) {
-		debug(`convertAndImportMessages: sanitized ${sanitizedIds.size} tool IDs:`,
+		debug(`convertMessagesForImport: sanitized ${sanitizedIds.size} tool IDs:`,
 			[...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}→${clean}`).join(", "));
 	}
 	// A steer can make Pi split one parallel Claude batch across several visible
@@ -329,7 +339,7 @@ function convertAndImportMessages(
 	const recoveredToolResults = recoverLaterToolResults(anthropicMessages);
 	if (recoveredToolResults.length > 0) {
 		debug(
-			`convertAndImportMessages: recovered ${recoveredToolResults.length} later tool result(s) for original parallel batch`,
+			`convertMessagesForImport: recovered ${recoveredToolResults.length} later tool result(s) for original parallel batch`,
 			recoveredToolResults.map((item) => item.id).join(", "),
 		);
 	}
@@ -341,19 +351,31 @@ function convertAndImportMessages(
 	const missingToolResults = findUnpairedToolUses(anthropicMessages);
 	if (missingToolResults.length > 0) insertLostToolResultPlaceholders(anthropicMessages, missingToolResults);
 	const repaired = repairToolPairing(anthropicMessages);
-	if (missingToolResults.length > 0) {
-		reportSyntheticToolResultRepair(missingToolResults, {
+	if (repaired.length !== anthropicMessages.length) {
+		debug(`convertMessagesForImport: repairToolPairing ${anthropicMessages.length} → ${repaired.length} msgs`);
+	}
+	return { records: repaired, anthropicMessageCount: anthropicMessages.length, missingToolResults };
+}
+
+// Write an already-converted transcript into a freshly created session. Split
+// from the conversion above because the synthetic-result report names the
+// session file, which only exists once the rebuild has committed to creating one.
+function importConvertedMessages(
+	session: ReturnType<typeof createSession>,
+	converted: ConvertedTranscript,
+	messageCount: number,
+	cwd?: string,
+): void {
+	if (converted.missingToolResults.length > 0) {
+		reportSyntheticToolResultRepair(converted.missingToolResults, {
 			cwd,
-			messageCount: messages.length,
-			anthropicMessageCount: anthropicMessages.length,
+			messageCount,
+			anthropicMessageCount: converted.anthropicMessageCount,
 			sessionId: session.sessionId,
 			jsonlPath: session.jsonlPath,
 		});
 	}
-	if (repaired.length !== anthropicMessages.length) {
-		debug(`convertAndImportMessages: repairToolPairing ${anthropicMessages.length} → ${repaired.length} msgs`);
-	}
-	if (repaired.length) session.importMessages(repaired);
+	session.importMessages(converted.records);
 }
 
 interface SyncResult {
@@ -593,9 +615,17 @@ export function syncSharedSession(
 		}
 	}
 
-	// REBUILD path
-	if (priorMessages.length === 0) {
-		debug(`Case 1: clean start, ${messages.length} total messages, account=${accountProfileId ?? "default"}`);
+	// REBUILD path. Convert first: the decision below is the CONVERTED RECORD
+	// COUNT, not the pi message count, and it has to be made before deleteSession
+	// or createSession runs. Pi carries history the Claude transcript cannot hold —
+	// since Pi 0.86 a first turn arrives as [system, user], and `system` entries are
+	// dropped by convertPiMessages — so priors that look non-empty can convert to
+	// nothing. A rebuild on those created a session id, imported no records, wrote
+	// no file, and left a record the NEXT turn resumed into "No conversation found".
+	// Zero records is a clean start: no delete, no create, no record write.
+	const converted = convertMessagesForImport(priorMessages, customToolNameToSdk);
+	if (converted.records.length === 0) {
+		debug(`Case 1: clean start, ${messages.length} total messages (${priorMessages.length} prior message(s) carry no Claude record), account=${accountProfileId ?? "default"}`);
 		debug(`syncResult: path=clean-start`);
 		return { sessionId: null, promptStart: messages.length - 1 };
 	}
@@ -620,7 +650,7 @@ export function syncSharedSession(
 		...(preserveId ? { sessionId: previousSessionId } : {}),
 		...(modelId ? { model: modelId } : {}),
 	});
-	convertAndImportMessages(session, priorMessages, customToolNameToSdk, cwd);
+	importConvertedMessages(session, converted, priorMessages.length, cwd);
 	session.save();
 	verifyWrittenSession(session.jsonlPath, session.sessionId, session.messages.length, cwd, claudeDir);
 	setSharedSession({

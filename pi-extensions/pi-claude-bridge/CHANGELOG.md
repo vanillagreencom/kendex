@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### 4.0.4
+
+- **Requires Pi 0.86.0 or later.** Pi 0.86 moved the system prompt and the tool declarations out of the provider's `Context` fields and into `system` entries of the message transcript. The bridge read the retired fields, so on Pi 0.86 and 0.87 a `pi-claude` session reached the model with no file or shell tools at all: Pi's tools were never bridged onto the `custom-tools` MCP server, while Claude Code's own built-ins stayed disabled. Pi's skills block and forwarded prompt context were dropped from the child's prompt the same way. Both are now read from the transcript, and the declared Pi peer range names 0.86.0 as the floor so an older host is reported rather than silently degraded (kendex#2749).
+- Claude Code's built-in tools are disabled only when Pi's tools actually reached the child on the bridged server. A turn that resolves no Pi tools now keeps Claude Code's own file, shell and web tools and shows a notice, instead of leaving the session with neither set. Pi's own one-shot calls (compaction and branch summaries), which carry no tools by design, are unaffected. A connectors session is also unaffected: its built-in restriction is a security boundary rather than a substitution.
+- A new Pi session's first turn no longer resumes a Claude Code session that was never written. On Pi 0.86 that turn arrives as a system entry followed by the user message, and the system entry carries no Claude Code record; the bridge treated it as prior history, minted a session id, wrote no file, and the second turn failed with `No conversation found`. Prior messages that carry no record are now a clean start: no session is created, none is deleted, and no record is stored (kendex#2749).
+
 ### 4.0.3
 
 - Claude Opus 5.5 (`claude-opus-5-5`) is selectable under the `pi-claude` provider, listed between Fable 5.1 and Opus 5, with the same 1M context, 128k output and `xhigh`/`max` effort mapping as Opus 5 and the same Opus 4.8 safety fallback (kendex#2782).

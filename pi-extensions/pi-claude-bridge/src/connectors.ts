@@ -373,7 +373,7 @@ export function isChildInternalTool(name: string | undefined): boolean {
  * Two tool classes run the other way, and both must stay un-mirrored:
  *
  * 1. claude.ai connectors (`isConnectorTool`). Pi has never heard of them.
- *    Mirroring one made Pi's agent loop look the name up in `context.tools`,
+ *    Mirroring one made Pi's agent loop look the name up in its own tool set,
  *    miss, and write a synthetic `Tool <name> not found` error result into the
  *    transcript — while the child went on and executed the real call. The Pi
  *    transcript then RECORDED A FAILURE FOR A CALL THAT SUCCEEDED, next to an
@@ -622,8 +622,8 @@ function denyAllOutput(toolName: string) {
 // write-deny hook additionally while writes are denied. Spread into the SDK
 // query options; continuation queries inherit it via `{ ...queryOptions }`.
 // Exported so the wiring is unit-testable end to end.
-export function connectorQueryOptions(connectorsEnabled: boolean, writeMode: ConnectorWriteMode = "deny"): Partial<Pick<NonNullable<Parameters<typeof query>[0]["options"]>, "tools" | "allowedTools" | "disallowedTools" | "hooks">> {
-	const isolation = toolIsolationForQuery(connectorsEnabled, writeMode);
+export function connectorQueryOptions(connectorsEnabled: boolean, writeMode: ConnectorWriteMode = "deny", bridgedToolsPresent = true): Partial<Pick<NonNullable<Parameters<typeof query>[0]["options"]>, "tools" | "allowedTools" | "disallowedTools" | "hooks">> {
+	const isolation = toolIsolationForQuery(connectorsEnabled, writeMode, bridgedToolsPresent);
 	if (!connectorsEnabled) return isolation;
 	// The allowlist applies in BOTH write modes — the one-shot write executor is
 	// still a connectors session ingesting third-party content. Deny rules from
@@ -644,8 +644,22 @@ export function connectorQueryOptions(connectorsEnabled: boolean, writeMode: Con
 // view (verified — Pi's SDK-injected custom-tools survive it, but connectors do
 // not). Dropping `tools` leaves the connectors visible; disallowedTools still
 // hard-denies the built-ins so Pi keeps ownership of file/shell/web tools.
-export function toolIsolationForQuery(connectorsEnabled: boolean, writeMode: ConnectorWriteMode = "deny"): Partial<Pick<NonNullable<Parameters<typeof query>[0]["options"]>, "tools" | "allowedTools" | "disallowedTools">> {
-	if (!connectorsEnabled) return CLAUDE_BRIDGE_TOOL_ISOLATION;
+export function toolIsolationForQuery(connectorsEnabled: boolean, writeMode: ConnectorWriteMode = "deny", bridgedToolsPresent = true): Partial<Pick<NonNullable<Parameters<typeof query>[0]["options"]>, "tools" | "allowedTools" | "disallowedTools">> {
+	// FAIL SOFT. The isolation below is a TRADE: Claude Code's own file, shell and
+	// web built-ins go away because pi's equivalents arrive on the bridged
+	// custom-tools server instead. With no such server the trade has only the
+	// cost — the child keeps neither set and the session has no tools at all,
+	// silently, which is how a pi-ai contract change became an unusable session
+	// (kendex#2749). Applying isolation only when the replacement exists makes the
+	// next break degrade to Claude Code's own tools instead of to nothing.
+	//
+	// Connectors mode does NOT take this route: its built-in restriction is a
+	// security boundary, not a trade. That session ingests untrusted third-party
+	// content (mail bodies, tickets, documents), and connectorBuiltinAllowlistHook
+	// denies everything outside three name classes at runtime regardless, so
+	// relaxing the request-side lists there would weaken the boundary and change
+	// nothing the model can reach.
+	if (!connectorsEnabled) return bridgedToolsPresent ? CLAUDE_BRIDGE_TOOL_ISOLATION : {};
 	// Keep ToolSearch + MCP-resource tools available so the model can discover the
 	// deferred cloud connector tools; still block file/shell/web built-ins.
 	//

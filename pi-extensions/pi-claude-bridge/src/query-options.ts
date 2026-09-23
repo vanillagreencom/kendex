@@ -14,7 +14,7 @@ import { PROVIDER_ID } from "./convert.js";
 import { makeCliDebugOptions } from "./debug.js";
 import { FABLE_MODEL_ID, fallbackModelForPrimaryModel } from "./models.js";
 import { buildPromptContextAppend } from "./prompt-context.js";
-import { extractSkillsBlock } from "./skills.js";
+import { extractSkillsBlock, MCP_SERVER_NAME } from "./skills.js";
 
 // --- Effort level mapping ---
 // Pi reasoning levels → CC SDK effort levels
@@ -57,10 +57,18 @@ export interface BuildClaudeQueryOptionsInput {
 	resumeSessionId: string | null;
 	mcpServers?: Record<string, ReturnType<typeof createSdkMcpServer>>;
 	claudeExecutable?: string;
+	/**
+	 * True for a request pi marks as a one-shot it drives itself (compaction and
+	 * branch summaries, `cacheRetention: "none"`). Those legitimately carry no
+	 * tools, so their empty tool set must not trip the fail-soft below.
+	 */
+	ephemeralOneShot?: boolean;
 }
 
 export interface BuiltClaudeQueryOptions {
 	queryOptions: NonNullable<Parameters<typeof query>[0]["options"]>;
+	/** False when the fail-soft dropped the built-in isolation; the caller reports it. */
+	bridgedToolsPresent: boolean;
 	// Diagnostics-ish bits the caller's debug line reports.
 	enableCloudMcp: boolean;
 	appendSystemPrompt: boolean;
@@ -71,7 +79,7 @@ export interface BuiltClaudeQueryOptions {
 }
 
 export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): BuiltClaudeQueryOptions {
-	const { cwd, requestedModel, queryModel, account, bridgeConfig, systemPrompt, reasoning, resumeSessionId, mcpServers, claudeExecutable } = input;
+	const { cwd, requestedModel, queryModel, account, bridgeConfig, systemPrompt, reasoning, resumeSessionId, mcpServers, claudeExecutable, ephemeralOneShot } = input;
 	const providerSettings = bridgeConfig.provider ?? {};
 	const accountScope = accountSessionScope(account);
 	// Whether to expose the Claude account's claude.ai cloud MCP connectors
@@ -81,6 +89,10 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 	// Connector WRITE control: read-only by default (writes denied); the one-shot
 	// approved-write executor sets CLAUDE_BRIDGE_CONNECTOR_WRITE=allow / config.
 	const connectorWriteMode = connectorWriteModeFor(bridgeConfig);
+	// Whether pi's tools actually reached the child on this request. The built-in
+	// isolation is only safe to apply when they did — see toolIsolationForQuery.
+	// A pi-driven one-shot has no tools by design and keeps the isolation.
+	const bridgedToolsPresent = ephemeralOneShot === true || Boolean(mcpServers?.[MCP_SERVER_NAME]);
 	// Declare the account's connected connectors explicitly so `alwaysLoad` can
 	// hold startup until they attach — otherwise the turn-1 manifest is built
 	// before the CLI has fetched them.
@@ -149,7 +161,7 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 		cwd,
 		model: queryModel.id,
 		env: childEnv,
-		...connectorQueryOptions(enableCloudMcp, connectorWriteMode),
+		...connectorQueryOptions(enableCloudMcp, connectorWriteMode, bridgedToolsPresent),
 		permissionMode: "bypassPermissions",
 		includePartialMessages: true,
 		...(fallbackModel ? { fallbackModel } : {}),
@@ -173,6 +185,7 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 
 	return {
 		queryOptions,
+		bridgedToolsPresent,
 		enableCloudMcp,
 		appendSystemPrompt,
 		promptContextLabels: promptContextAppend.labels,

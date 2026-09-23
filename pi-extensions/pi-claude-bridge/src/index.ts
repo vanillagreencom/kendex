@@ -1,4 +1,4 @@
-import { type AssistantMessage, type AssistantMessageEventStream, type Context, type Model, type SimpleStreamOptions, type Tool } from "@earendil-works/pi-ai";
+import { type AssistantMessage, type AssistantMessageEventStream, type Context, getCurrentSystemPrompt, getCurrentTools, type Model, type SimpleStreamOptions, type Tool } from "@earendil-works/pi-ai";
 import * as piAi from "@earendil-works/pi-ai";
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createSdkMcpServer, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -291,9 +291,13 @@ export function resolveMcpTools(context: Context, excludeToolName?: string): {
 	const customToolNameToSdk = new Map<string, string>();
 	const customToolNameToPi = new Map<string, string>();
 
-	if (!context.tools) return { mcpTools, customToolNameToSdk, customToolNameToPi };
-
-	for (const tool of context.tools) {
+	// Pi 0.86 moved tool declarations out of `context.tools` and into the
+	// transcript's `system` entries, where getCurrentTools replays every
+	// addition and removal in order. Reading the retired field left mcpTools
+	// empty on every turn, so buildMcpServers created no custom-tools server
+	// while the built-in denylist still applied — a session with no tools at
+	// all (kendex#2749).
+	for (const tool of getCurrentTools(context.messages ?? [])) {
 		if (tool.name === excludeToolName) continue;
 		// Never re-offer a tool the child owns natively. The claude.ai connector
 		// namespace belongs to the child's own MCP servers, so a Pi tool sitting
@@ -323,6 +327,24 @@ export function resolveMcpTools(context: Context, excludeToolName?: string): {
 	}
 
 	return { mcpTools, customToolNameToSdk, customToolNameToPi };
+}
+
+// The fail-soft notice fires at most once per process: the condition is a
+// provider-contract mismatch that holds for every turn of the run, so a
+// per-query toast would repeat on each one while telling the reader nothing new.
+let reportedMissingBridgedTools = false;
+
+/** Announce that pi's tools did not reach the child and Claude Code's own are in use. */
+export function reportMissingBridgedTools(messageCount: number): void {
+	debug(`provider: no bridged custom-tools server for a ${messageCount}-message context; built-in isolation skipped`);
+	if (reportedMissingBridgedTools) return;
+	reportedMissingBridgedTools = true;
+	appendIntegrityEntry("bridged_tools_absent", { messageCount });
+	safeNotify(
+		"Pi Claude found no pi tools to bridge, so this session uses Claude Code's own file and shell tools. " +
+		"Usually a pi version whose provider contract the bridge has not adopted yet; update @vanillagreen/pi-claude-bridge.",
+		"warning",
+	);
 }
 
 // finalizeToolUseTurnFromMcpInvocation moved to assistant-stream.ts: it is now
@@ -963,6 +985,11 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	if (attemptBuffer) attemptCtx.currentPiStream = attemptBuffer as unknown as AssistantMessageEventStream;
 
 	const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context);
+	// Same 0.86 move as the tools above: the prompt now lives in the transcript's
+	// `system` entries, so `context.systemPrompt` is undefined and the skills
+	// block and pi prompt-context appends silently vanished from the child's
+	// prompt. getCurrentSystemPrompt replays those entries into the current text.
+	const resolvedSystemPrompt = getCurrentSystemPrompt(context.messages ?? []) || undefined;
 
 	// Config + executable preflight run BEFORE syncSharedSession on purpose: the
 	// sync's REBUILD path is destructive (deleteSession + createSession + save),
@@ -1039,13 +1066,15 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		queryModel,
 		account,
 		bridgeConfig,
-		systemPrompt: context.systemPrompt,
+		systemPrompt: resolvedSystemPrompt,
 		reasoning: options?.reasoning,
 		resumeSessionId,
 		mcpServers,
 		claudeExecutable,
+		ephemeralOneShot: options?.cacheRetention === "none",
 	});
 	const { queryOptions } = built;
+	if (!built.bridgedToolsPresent) reportMissingBridgedTools(context.messages.length);
 
 	debug("provider: fresh query",
 		`model=${queryModel.id} requested=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
