@@ -57,17 +57,20 @@ if git -C "$OUTSIDE" rev-parse --git-dir >/dev/null 2>&1; then
   exit 2
 fi
 
-json_for() { # command [cwd] -> payload as Claude Code sends it
-  if [ -n "${2:-}" ]; then
+json_for() { # command [cwd] [tool field] -> payload
+  if [ -n "${3:-}" ]; then
+    jq -nc --arg c "$1" --arg d "$2" --arg f "$3" --arg s "$WT" \
+      '{tool_name: "Bash", cwd: $s, tool_input: ({command: $c} + {($f): $d})}'
+  elif [ -n "${2:-}" ]; then
     jq -nc --arg c "$1" --arg d "$2" '{tool_name: "Bash", cwd: $d, tool_input: {command: $c}}'
   else
     jq -nc --arg c "$1" '{tool_name: "Bash", tool_input: {command: $c}}'
   fi
 }
 
-run_in() { # dir command -> rc, stderr in ERR_FILE; the payload names the cwd
+run_in() { # dir command [tool field] -> rc, stderr in ERR_FILE
   set +e
-  json_for "$2" "$1" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+  json_for "$2" "$1" "${3:-}" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
   rc=$?
   set -e
 }
@@ -158,6 +161,8 @@ directory_table() {
     esac
     case "$mode" in
       payload) run_in "$dir" "$command" ;;
+      tool-workdir) run_in "$dir" "$command" workdir ;;
+      tool-cwd) run_in "$dir" "$command" cwd ;;
       pwd) run_from "$dir" "$command" ;;
       *) printf 'directory table: unknown cwd mode: %s\n' "$mode" >&2; exit 1 ;;
     esac
@@ -173,8 +178,8 @@ directory_table() {
 # label|status|first line|command
 # The verb is read only where the shell would run it: the rows below vary the
 # command position against a quoted argument, a heredoc body, a comment and
-# the quoted argument of `-c` and `eval`. Verb help is refused and the bare
-# source shorthand is not read; those are stated limits.
+# the quoted argument of `-c` and `eval`. Verb help passes only on a plain
+# tail; the bare source shorthand is not read.
 # A `source add` and a `source remove` reach the values `add` and `remove`:
 # the pattern's earlier alternative ends at the same word, and a POSIX match
 # prefers the longer earlier subexpression, so the second word is the verb it
@@ -232,6 +237,9 @@ a commented-out write is not a write|0|-|# kendex refresh
 updates --apply delegates to refresh and is refused|2|block-worktree-refresh: refused=updates|kendex updates --apply
 updates without --apply is a read|0|-|kendex updates
 a global updates --apply passes|0|-|kendex updates --apply -g
+help after a write verb is a read|0|-|kendex refresh --help
+plan after a write verb is a read|0|-|kendex apply --plan
+an escaped-space local path is not a help argument|2|block-worktree-refresh: refused=add|kendex add ./catalog\ --help -y
 kendex verify from the worktree passes|0|-|kendex verify
 kendex check from the worktree passes|0|-|kendex check
 kendex list from the worktree passes|0|-|kendex list
@@ -261,7 +269,6 @@ a substitution inside a double-quoted argument runs where it stands|2|block-work
 a substitution in a heredoc body the shell expands runs too|2|block-worktree-refresh: refused=refresh|cat \0074\0074EOF\n\0044(kendex refresh)\nEOF
 a quoted delimiter stops the expansion, so the same body is data|0|-|cat \0074\0074'EOF'\n\0044(kendex refresh)\nEOF
 a hash after a backtick begins a comment, so the marker behind it arms nothing|2|block-worktree-refresh: refused=refresh|echo hi \0140# <<EOF\nkendex refresh\nEOF\n\0140
-a help read spelling the verb is refused; kendex --help is the read that passes|2|block-worktree-refresh: refused=refresh|kendex refresh --help
 the bare source shorthand for add is not read: it is every kendex word|0|-|kendex vanillagreencom/kendex
 the named target on refresh passes: the write lands where the command says|0|-|kendex refresh --project-path /elsewhere
 the named target on apply passes, spelled with an equals sign|0|-|kendex apply --project-path=/elsewhere
@@ -283,6 +290,8 @@ a named target after a cd passes: the command names the directory the write land
 a pushd in an earlier segment is a move too|payload|outside|2|block-worktree-refresh: moved=apply|pushd $WT; kendex apply
 a global write after a cd passes: no directory is written|payload|main|0|-|cd $WT && kendex refresh -g
 a cd after the verb does not move the write|payload|main|0|-|kendex refresh && cd $WT
+Codex tool_input.workdir takes precedence over the session cwd|tool-workdir|main|0|-|kendex refresh
+A tool_input.cwd takes precedence over the session cwd|tool-cwd|main|0|-|kendex refresh
 without a cwd in the payload the hook judges the directory it runs in|pwd|worktree|2|block-worktree-refresh: refused=refresh|kendex refresh
 the same write from the main checkout passes|payload|main|0|-|kendex refresh
 outside a repository there is no worktree to protect|payload|outside|0|-|kendex refresh
