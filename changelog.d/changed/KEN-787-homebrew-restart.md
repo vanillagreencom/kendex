@@ -1,0 +1,1 @@
+- A Homebrew install of kendex 5.x is not offered 1.0.0, because brew reads the restarted version as older. Both recipes now say to uninstall the package and install it again from the tap.

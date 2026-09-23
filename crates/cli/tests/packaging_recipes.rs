@@ -393,6 +393,53 @@ fn every_arch_package_ships_a_recipe_pair_under_one_epoch() {
     }
 }
 
+/// The body of a recipe's `caveats` block: the formula wraps it in
+/// `def caveats` and the cask writes the stanza directly, and both hold the
+/// text in a `<<~EOS` heredoc. Read as a block rather than searched for over
+/// the whole file because each recipe's header comment already spells out the
+/// install command the caveat has to name.
+fn homebrew_caveats(recipe: &str) -> String {
+    let text = read(recipe);
+    let lines: Vec<&str> = text.lines().collect();
+    let opener = lines
+        .iter()
+        .position(|l| l.trim().trim_start_matches("def ").starts_with("caveats"))
+        .unwrap_or_else(|| panic!("{recipe}: no caveats block"));
+    let body = &lines[opener + 1..];
+    let end = body
+        .iter()
+        .position(|l| l.trim() == "EOS")
+        .unwrap_or_else(|| panic!("{recipe}: the caveats heredoc never closes"));
+    assert!(end > 0, "{recipe}: the caveats block is empty");
+    body[..end].join("\n")
+}
+
+/// Homebrew has no epoch, so the transition the Arch epoch covers above is
+/// unmitigated here: brew reads 1.0.0 as lower than an installed 5.x, so
+/// `brew outdated` names nothing and `brew upgrade` changes nothing, and the
+/// cask's `auto_updates true` defers to an app that renders no notice for a
+/// feed older than itself. A 5.x install is reached by telling the person to
+/// uninstall and install again, so each recipe prints those two commands.
+#[test]
+fn both_homebrew_recipes_tell_a_5_x_install_to_reinstall() {
+    for (recipe, package) in [
+        ("packaging/homebrew/kendex-cli.rb", "kendex-cli"),
+        ("packaging/homebrew/kendex-cask.rb", "kendex"),
+    ] {
+        let caveats = homebrew_caveats(recipe);
+        for step in [
+            format!("brew uninstall {package}"),
+            format!("brew install vanillagreencom/kendex/{package}"),
+        ] {
+            assert!(
+                caveats.contains(&step),
+                "{recipe}: the caveats do not name `{step}`, so a 5.x install \
+                 is told nothing:\n{caveats}"
+            );
+        }
+    }
+}
+
 /// All four install `/usr/bin/kendex`, so no two may be installed together.
 /// Each names the other three, in both directions: a one-sided declaration
 /// is enough for pacman and leaves the reader of the other recipe with no

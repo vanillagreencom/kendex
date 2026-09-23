@@ -7,9 +7,9 @@
 #
 # Installs the app and, through the formula dependency, the kendex command.
 cask "kendex" do
-  version "5.0.1"
-  sha256 arm:   "f8215e1c059d2afcebfc1b56d64094b2f9fe7dacb1a773ce127acc85c262fb3b",
-         intel: "0000000000000000000000000000000000000000000000000000000000000000"
+  version "1.0.0"
+  sha256 arm:   "ec48eb743789aad02581a1272ceadb6f49a15646d7774818f140d5ef4afbc350",
+         intel: "dac61f402f66441e80ddf8f9fbbb59fa53660f0a997a906c9ad11c27a1e7910f"
 
   # Tauri names the Intel disk image `x64` and the Apple-silicon one `aarch64`.
   arch arm: "aarch64", intel: "x64"
@@ -26,7 +26,18 @@ cask "kendex" do
 
   app "kendex.app"
 
+  # Homebrew has no epoch, so an installed 5.x reads as newer than 1.0.0
+  # and `brew upgrade` changes nothing; `auto_updates true` above defers
+  # to the app, which renders no notice for a feed older than itself. The
+  # reinstall below is what reaches a 5.x install on this channel.
   caveats <<~EOS
+    Upgrading from kendex 5.x: 1.0.0 restarts the version number, and
+    Homebrew reads it as older than what you have, so neither `brew
+    upgrade` nor the app's own updater offers it. Reinstall once:
+
+      brew uninstall kendex
+      brew install vanillagreencom/kendex/kendex
+
     Releases through v5.0.1 predate Apple notarization; on those, macOS
     may say the app is "damaged" on first launch. Clear the quarantine
     flag once:
