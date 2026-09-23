@@ -443,6 +443,28 @@ fn every_arch_package_ships_a_recipe_pair_under_one_epoch() {
     }
 }
 
+/// makepkg LTO makes ring's C objects fail to link with rust-lld. Every
+/// package that compiles kendex disables LTO, and records the option in the
+/// generated metadata that AUR clients read.
+#[test]
+fn every_source_arch_package_disables_makepkg_lto() {
+    for package in arch_packages()
+        .into_iter()
+        .filter(|package| *package != PREBUILT_PACKAGE)
+    {
+        let options = pkgbuild_field(&pkgbuild(package), "options");
+        assert!(
+            options.iter().any(|option| option == "!lto"),
+            "{package}: builds from source without disabling makepkg LTO"
+        );
+        assert_eq!(
+            options,
+            srcinfo_field(&srcinfo(package), "options"),
+            "{package}: .SRCINFO is stale for options"
+        );
+    }
+}
+
 /// brew compares a formula's `version_scheme` before its version, so the
 /// bump is what makes 1.0.0 outrank an installed 5.x, which sits on scheme
 /// 0, in `brew outdated` and `brew upgrade`. This is the formula's side of
