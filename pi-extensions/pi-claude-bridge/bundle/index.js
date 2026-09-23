@@ -37745,7 +37745,7 @@ function hasClaudeCredentials(env = process.env, platform = osPlatform()) {
 }
 
 // src/native-provider.ts
-var NATIVE_PROVIDER_UNSUPPORTED_MESSAGE = "Claude bridge 4.x requires pi >= 0.86 (native provider API and the transcript prompt/tool helpers). Upgrade the host pi, or pin @vanillagreen/pi-claude-bridge@3.x.";
+var NATIVE_PROVIDER_UNSUPPORTED_MESSAGE = "Claude bridge 4.x requires pi >= 0.86 (native provider API and the transcript prompt/tool helpers). Upgrade the host pi.";
 function supportsNativeProvider(piAi2) {
   const host = piAi2;
   return ["createProvider", "getCurrentTools", "getCurrentSystemPrompt"].every((name) => typeof host?.[name] === "function");

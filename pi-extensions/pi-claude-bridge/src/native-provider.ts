@@ -25,7 +25,7 @@ import { hasClaudeCredentials } from "./auth-presence.js";
 import { PROVIDER_ID } from "./convert.js";
 
 export const NATIVE_PROVIDER_UNSUPPORTED_MESSAGE =
-	"Claude bridge 4.x requires pi >= 0.86 (native provider API and the transcript prompt/tool helpers). Upgrade the host pi, or pin @vanillagreen/pi-claude-bridge@3.x.";
+	"Claude bridge 4.x requires pi >= 0.86 (native provider API and the transcript prompt/tool helpers). Upgrade the host pi.";
 
 /**
  * Whether the host pi-ai is new enough for this bridge.
