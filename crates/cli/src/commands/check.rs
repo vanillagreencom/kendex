@@ -142,6 +142,7 @@ mod tests {
                     .collect(),
             }],
             snapshot_age_secs: None,
+            project_target: None,
             deep_pass_owed: false,
         }
     }
@@ -174,6 +175,7 @@ mod tests {
             status: CheckStatus::Clean,
             sections: Vec::new(),
             snapshot_age_secs: None,
+            project_target: None,
             deep_pass_owed: false,
         };
         assert!(verdict(&empty, "").contains("all clear"));

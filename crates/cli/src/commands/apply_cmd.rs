@@ -4,7 +4,7 @@ use kendex_core::manifest::{self, ManifestFile};
 
 use super::engine_common::{confirm_and_apply, print_report, print_unmanaged};
 use super::ledger::{Wrote, say_ledger, say_preview};
-use super::{CliResult, resolve_scopes, say, scope_label, warn};
+use super::{CliResult, fail_refusal, resolve_scopes_at, say, scope_label, warn};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
@@ -37,13 +37,19 @@ pub struct ApplyArgs {
     /// Say yes to the repository changes a newly installed package asks for
     #[arg(long)]
     allow_repo_effects: bool,
+    // The project this run writes, named rather than walked up to. The
+    // help clap prints is the flag's own, on `flags::ProjectTargetFlag`;
+    // a doc comment here would reach no output.
+    #[command(flatten)]
+    target: crate::flags::ProjectTargetFlag,
     /// Record matching installed files after moving an unreadable install record aside
     #[arg(
         long,
         conflicts_with_all = ["discard_edits", "replace_unmanaged", "allow_repo_effects"]
     )]
     record_existing: bool,
-    /// The commit offer's answer, without asking
+    // The commit offer's answer, without asking. Its help is
+    // `commit_offer::CommitFlags`' own, for the same reason.
     #[command(flatten)]
     _commit: crate::commands::commit_offer::CommitFlags,
 }
@@ -54,7 +60,14 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
     // Every scope is planned before any of them is written: failing before
     // the first write beats a half-applied run.
     let mut planned = Vec::new();
-    for scope in resolve_scopes(env, filter)? {
+    let scopes = resolve_scopes_at(env, filter, args.target.path())?;
+    // The refusal that registration carries, asked before the first
+    // write. A plan never reaches a write, so it is asked nothing;
+    // `project::register_target` owns the rule itself.
+    if !args.plan {
+        super::project::target_registrable(env, &args.target, &scopes)?;
+    }
+    for scope in scopes {
         // Read the manifest as it sits on disk, through the same loader
         // the audit uses, so this verb refuses exactly what the audit
         // refused rather than planning against a normalized copy.
@@ -116,7 +129,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         // same account and the same separate yes an `add` gives it —
         // asked after the write, so the scope is finalized whatever the
         // answer and before any error from it leaves this loop.
-        super::repo_effects::disclose_and_finish(
+        let walked = super::repo_effects::disclose_and_finish(
             env,
             &scope,
             &report.repo_effects,
@@ -144,7 +157,28 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                     &report.safety,
                 );
             },
-        )?;
+        );
+        // After the write, the way `add` registers what it installed
+        // into: a project named by a command that never stood in it is
+        // one the app sees. The temporary-path gate above already passed
+        // for this path.
+        //
+        // `confirm_and_apply` has written by the time the effects step
+        // runs, so registration is not that step's to skip: an installer
+        // that failed, or a walkthrough nobody answered, leaves the
+        // packages on disk in a folder the app would never show.
+        // `add::write_and_close` closes on the same pair, and says the
+        // registry's refusal beside the failure it did not cause.
+        let listed = super::project::register_target(env, &args.target, &scope);
+        match walked {
+            Ok(()) => listed?,
+            Err(error) => {
+                if let Err(refused) = listed {
+                    fail_refusal("warning: ", refused.as_ref());
+                }
+                return Err(error);
+            }
+        }
     }
     Ok(())
 }

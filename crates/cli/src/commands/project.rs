@@ -54,7 +54,12 @@ pub enum ProjectCommand {
     },
 }
 
-/// The one flag every registering verb takes, flattened into each.
+/// The one answer to the temporary-path refusal, flattened into every
+/// verb that can put a folder on the projects list. Most of them register
+/// the destination they settle on, and the flag answers for that. On
+/// `refresh`, `apply` and `updates` it answers only for the project a
+/// `--project-path` names: those register nothing otherwise, so without
+/// that flag beside it the flag decides nothing.
 #[derive(Args, Clone, Copy, Default)]
 pub struct ThrowawayFlag {
     /// Add a throwaway project to Projects: a folder under a temporary
@@ -130,21 +135,7 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
                 }
             ));
         }
-        ProjectCommand::List => {
-            for project in settings::load(env)?.projects {
-                out(&format!(
-                    "{}{}",
-                    project.display(),
-                    match kendex_core::scan::missing_why(&project) {
-                        None => "",
-                        Some(kendex_core::scan::MissingWhy::Gone) => "  (folder not found)",
-                        Some(kendex_core::scan::MissingWhy::NotAFolder) => "  (not a folder)",
-                        Some(kendex_core::scan::MissingWhy::Unreadable { .. }) =>
-                            "  (folder could not be read)",
-                    }
-                ));
-            }
-        }
+        ProjectCommand::List => list(env)?,
         ProjectCommand::Discover {
             root,
             register,
@@ -177,6 +168,56 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
     Ok(())
 }
 
+/// The projects this machine tracks, one per line, each with what is
+/// wrong with it or what it is.
+fn list(env: &Env) -> CliResult {
+    for project in settings::load(env)?.projects {
+        let missing = kendex_core::scan::missing_why(&project);
+        out(&format!(
+            "{}{}{}",
+            project.display(),
+            match &missing {
+                None => "",
+                Some(kendex_core::scan::MissingWhy::Gone) => "  (folder not found)",
+                Some(kendex_core::scan::MissingWhy::NotAFolder) => "  (not a folder)",
+                Some(kendex_core::scan::MissingWhy::Unreadable { .. }) =>
+                    "  (folder could not be read)",
+            },
+            match missing {
+                // A folder nobody could read answers no question about the
+                // repository it might be in.
+                Some(_) => String::new(),
+                None => worktree_note(&project),
+            }
+        ));
+    }
+    Ok(())
+}
+
+/// What a listed project is, where it is one work tree of a repository
+/// whose main checkout is somewhere else.
+///
+/// A linked git worktree carrying declarations of its own is a project in
+/// its own right, and it sits on this list beside the checkout it was
+/// added from — two entries, two manifests, two installs. Which is which
+/// is not readable from the paths, so the line says it.
+///
+/// A git that cannot answer says nothing rather than guessing: this is a
+/// listing, and an entry annotated from a failed read would claim a
+/// repository relationship nobody established.
+fn worktree_note(project: &std::path::Path) -> String {
+    let Ok(Some(repo)) = kendex_core::guard::Repo::probe(project) else {
+        return String::new();
+    };
+    if !repo.is_linked() {
+        return String::new();
+    }
+    match repo.main_checkout() {
+        Ok(main) => format!("  (worktree of {})", main.display()),
+        Err(_) => "  (worktree)".to_owned(),
+    }
+}
+
 /// Whether a folder may go on the projects list, asked by every
 /// registering verb before its first write: a run that refused only once
 /// it had installed would leave packages in a folder it then would not
@@ -197,6 +238,70 @@ pub fn registrable(env: &Env, root: &std::path::Path, flag: ThrowawayFlag) -> Cl
         ))
         .into()),
         Err(error) => Err(error.into()),
+    }
+}
+
+/// Whether the project a `--project-path` named may go on the projects
+/// list, asked by the whole-scope writing verbs before their first write.
+///
+/// The registration itself comes after the write, under the rule
+/// [`register_target`] owns — but the refusal cannot wait for it: a run
+/// that installed and only then declined to register would leave packages
+/// in a folder kendex does not track. So the rule every registering verb
+/// asks is asked here too, on the root resolution already settled on, and
+/// `--throwaway` beside `--project-path` is what answers it.
+///
+/// Asked on the resolved root alone, before any declaration is read, so a
+/// run that would have found nothing to register is refused here too. The
+/// alternative is reading a project to decide whether it may be read.
+///
+/// A run with no named project registers nothing and is asked nothing:
+/// writing the project a command was typed in is what every release
+/// before `--project-path` did, and it never touched the registry.
+pub fn target_registrable(
+    env: &Env,
+    target: &crate::flags::ProjectTargetFlag,
+    scopes: &[Scope],
+) -> CliResult {
+    if target.path().is_none() {
+        return Ok(());
+    }
+    for scope in scopes {
+        if let Scope::Project { root } = scope {
+            registrable(env, root, target.throwaway)?;
+        }
+    }
+    Ok(())
+}
+
+/// The project a `--project-path` named, on the projects list now that the
+/// run has written it.
+///
+/// **The rule lives here, and every other surface stating it points at
+/// this function.** A named run registers the project it resolved once it
+/// has got through that project's write, whether the write had work to do
+/// or the place was already up to date. A run that never reaches the
+/// write leaves the list as it found it: `apply --plan` and a bare
+/// `updates` listing, which write nothing by design; a scope that
+/// declares nothing, which neither `apply` nor `refresh` lists even where
+/// an old lock still names installs in it; a scope whose plan failed, or
+/// came back with a failure to report and nothing to write, which is a
+/// run that exits nonzero; and a confirmation the reader declined —
+/// except in `refresh`,
+/// where a Pi settle before the final confirm has already written what
+/// this then registers.
+///
+/// Called by `refresh`, `apply` and `updates --apply` after the write, and
+/// only where the destination was named: a walked-up project is the one
+/// the command was typed in, which those verbs have never registered.
+pub fn register_target(
+    env: &Env,
+    target: &crate::flags::ProjectTargetFlag,
+    scope: &Scope,
+) -> CliResult {
+    match target.path() {
+        Some(_) => register_destination(env, scope),
+        None => Ok(()),
     }
 }
 

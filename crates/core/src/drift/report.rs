@@ -116,6 +116,22 @@ pub enum Remedy {
     },
 }
 
+/// A remedy as a reader gets it: the command, and whether it runs where
+/// the report was read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Fix {
+    /// Runnable where the report was read.
+    Here(String),
+    /// Runnable, but not where it was read: the line is about a project
+    /// the command has to name and this verb has no `--project-path`
+    /// form, so a session running the catalog's `block-worktree-refresh`
+    /// hook is refused it inside a linked git worktree. The command is
+    /// still the fix, and the renderer marks it with why it will not run
+    /// here — a reader handed no remedy at all is left with the drift and
+    /// no way out of it.
+    Elsewhere(String),
+}
+
 impl Remedy {
     /// Whether running this changes anything. Every other remedy settles
     /// the line it sits on; the plan prints and returns, so calling it a
@@ -125,34 +141,90 @@ impl Remedy {
         !matches!(self, Remedy::Plan { .. })
     }
 
-    /// The pasteable spelling, or `None` when an identifier fails
-    /// validation — the line then stands without a remedy.
-    pub fn render(&self) -> Option<String> {
-        let flag = |global: &bool| if *global { " --global" } else { "" };
+    /// Whether this remedy is about the personal scope. A global command
+    /// is one flag wherever it is typed and never names a project.
+    pub fn global(&self) -> bool {
+        match self {
+            Remedy::Apply { global }
+            | Remedy::ReplaceUnmanaged { global }
+            | Remedy::UpdatePi { global }
+            | Remedy::Refresh { global }
+            | Remedy::Plan { global }
+            | Remedy::Remove { global, .. }
+            | Remedy::Add { global, .. }
+            | Remedy::Fork { global, .. } => *global,
+        }
+    }
+
+    /// Whether this verb takes `--project-path`, the flag that puts the
+    /// project a write lands in into the command's own words. The four
+    /// whole-scope verbs have it; the rest reach a project only by being
+    /// typed inside it.
+    pub fn takes_project_path(&self) -> bool {
+        matches!(
+            self,
+            Remedy::Apply { .. }
+                | Remedy::ReplaceUnmanaged { .. }
+                | Remedy::Refresh { .. }
+                | Remedy::Plan { .. }
+        )
+    }
+
+    /// The pasteable spelling, or `None` when the identifier the command
+    /// would carry is not one that may reach a command position — the
+    /// line then stands without a remedy.
+    ///
+    /// `target` is the project a project-scope command has to name to
+    /// reach the place the line is about, set by [`CheckReport`] where a
+    /// command typed where the check ran does not reach it. A verb with
+    /// no `--project-path` form still renders its command there, as
+    /// [`Fix::Elsewhere`]: the command is the fix, and the marker the
+    /// renderer adds says why it will not run where the report was read.
+    pub fn render(&self, target: Option<&std::path::Path>) -> Option<Fix> {
         if let Remedy::Remove { name, .. } | Remedy::Add { name, .. } | Remedy::Fork { name, .. } =
             self
             && !crate::names::plain_argument(name)
         {
             return None;
         }
-        Some(match self {
-            Remedy::Apply { global } => format!("kendex apply{}", flag(global)),
-            Remedy::ReplaceUnmanaged { global } => {
-                format!("kendex apply --replace-unmanaged{}", flag(global))
-            }
+        // Asked once, for every arm below. The global scope is one flag
+        // wherever it appears; a project scope is the place the command is
+        // typed in, or the one it names where this verb can name it.
+        // `quoted` because a project path is whatever the filesystem
+        // allowed and this is a command position.
+        let named = target.filter(|_| !self.global());
+        let place = match (self.global(), named.filter(|_| self.takes_project_path())) {
+            (true, _) => " --global".to_owned(),
+            (false, Some(path)) => format!(
+                " --project-path {}",
+                crate::names::quoted(&path.display().to_string())
+            ),
+            (false, None) => String::new(),
+        };
+        let command = match self {
+            Remedy::Apply { .. } => format!("kendex apply{place}"),
+            Remedy::ReplaceUnmanaged { .. } => format!("kendex apply --replace-unmanaged{place}"),
+            // Its own scope spelling, so `place` says nothing here.
             Remedy::UpdatePi { global } => format!(
                 "kendex update-pi --scope {}",
-                if *global { "global" } else { "project" }
+                match global {
+                    true => "global",
+                    false => "project",
+                }
             ),
-            Remedy::Refresh { global } => format!("kendex refresh{}", flag(global)),
-            Remedy::Remove { name, global } => format!("kendex remove {name}{}", flag(global)),
-            Remedy::Add { kind, name, global } => {
-                format!("kendex add --{} {name}{}", kind.name(), flag(global))
+            Remedy::Refresh { .. } => format!("kendex refresh{place}"),
+            Remedy::Remove { name, .. } => format!("kendex remove {name}{place}"),
+            Remedy::Add { kind, name, .. } => {
+                format!("kendex add --{} {name}{place}", kind.name())
             }
-            Remedy::Fork { kind, name, global } => {
-                format!("kendex fork {} {name}{}", kind.name(), flag(global))
+            Remedy::Fork { kind, name, .. } => {
+                format!("kendex fork {} {name}{place}", kind.name())
             }
-            Remedy::Plan { global } => format!("kendex apply --plan{}", flag(global)),
+            Remedy::Plan { .. } => format!("kendex apply --plan{place}"),
+        };
+        Some(match named.is_some() && !self.takes_project_path() {
+            true => Fix::Elsewhere(command),
+            false => Fix::Here(command),
         })
     }
 }
@@ -182,6 +254,27 @@ pub struct CheckReport {
     /// how stale the verdicts might be. Absent when nothing was evaluated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot_age_secs: Option<u64>,
+    /// The project a project-scope remedy here has to name to reach the
+    /// place its line is about, absent where a command typed in the
+    /// checked directory already reaches it.
+    ///
+    /// Set for a checked project that is a linked git worktree. kendex
+    /// refuses no write there; the catalog's `block-worktree-refresh`
+    /// hook does, in a session that installed it, because a bare verb
+    /// does not say which checkout the write lands in. The name is put in
+    /// the command for every worktree reader all the same: it is the one
+    /// spelling that is right whether or not the hook is installed, and a
+    /// report cannot see which sessions run it.
+    ///
+    /// It is the worktree itself where the worktree carries a manifest of
+    /// its own, readable or not. Where it carries none it is the project
+    /// at the same place inside the main checkout — there the worktree
+    /// declares nothing and the declarations this report is about are the
+    /// main checkout's — and absent again where the main checkout holds
+    /// no project root at that place, which leaves every remedy in the
+    /// bare spelling a command typed in the checked directory would take.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_target: Option<std::path::PathBuf>,
     /// Whether a scope's plan over unrecorded copies outran the deadline
     /// and is still owed — what sends the caller's background refresh
     /// through it. For the caller that ran the check, never for the
@@ -203,6 +296,21 @@ const SECTION_ITEMS: usize = 10;
 const REPORT_LINES: usize = 60;
 const REPORT_BYTES: usize = 8 * 1024;
 
+/// What a scope's own manifest file turned out to be, from the one read
+/// the check makes of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManifestState {
+    /// A manifest is there and parsed: this place declares packages of
+    /// its own.
+    Declared,
+    /// No manifest file at all.
+    Absent,
+    /// A manifest file that would not load — conflict markers, a schema
+    /// this release does not read, a validation finding, a failed read.
+    /// The file is still this place's own.
+    Unreadable,
+}
+
 struct Sections {
     stale: Vec<Line>,
     edited: Vec<Line>,
@@ -223,6 +331,33 @@ struct Sections {
 }
 
 impl Sections {
+    /// Every line pushed so far, across the sections holding them.
+    fn lines(&self) -> impl Iterator<Item = &Line> {
+        [
+            &self.stale,
+            &self.edited,
+            &self.removed,
+            &self.mixed,
+            &self.missing,
+            &self.blocked,
+            &self.shadowed,
+            &self.references,
+            &self.unevaluated,
+            &self.unknown,
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    /// Whether any line here carries a remedy a project-scope command
+    /// would run. Nothing else in the report needs the project such a
+    /// command has to name, so nothing else pays for resolving it.
+    fn has_project_remedy(&self) -> bool {
+        self.lines()
+            .filter_map(|line| line.remedy.as_ref())
+            .any(|remedy| !remedy.global())
+    }
+
     fn new() -> Sections {
         Sections {
             stale: Vec::new(),
@@ -242,7 +377,11 @@ impl Sections {
 
     /// Drift before suggestions: the sections that name broken state come
     /// first, the unknowns after.
-    fn into_report(self, snapshot_age_secs: Option<u64>) -> CheckReport {
+    fn into_report(
+        self,
+        snapshot_age_secs: Option<u64>,
+        project_target: Option<std::path::PathBuf>,
+    ) -> CheckReport {
         let sections: Vec<Section> = [
             ("stale", self.stale),
             ("edited by hand", self.edited),
@@ -276,9 +415,63 @@ impl Sections {
             status,
             sections,
             snapshot_age_secs,
+            project_target,
             deep_pass_owed: self.deep_pass_owed,
         }
     }
+}
+
+/// The project a project-scope remedy over `scope` has to name, or `None`
+/// where a command typed in the checked directory reaches it on its own.
+///
+/// One question, asked of the two judges that own its halves:
+/// [`crate::guard::Repo`] says whether the project is a linked work tree
+/// and which checkout the repository's main one is, and `manifest` is
+/// what the check's own read of this place's manifest found.
+///
+/// The three manifest states are three different answers. A work tree
+/// that declares packages is a project in its own right and names itself.
+/// One whose manifest would not load is still the place those broken
+/// declarations sit in, so it names itself too — pointing a reader at the
+/// main checkout there would put the drift lines of one place above the
+/// fix for another. Only a work tree with no manifest at all is a
+/// checkout of somebody else's declarations, and there the project that
+/// holds them is the destination.
+///
+/// A git that cannot answer leaves the remedies as they are, which is what
+/// every release before this one printed. Nothing is written on the
+/// strength of the guess: what a reader then runs is the bare verb, which
+/// the catalog's `block-worktree-refresh` hook refuses out loud where a
+/// session installed it.
+fn remedy_target(scope: &Scope, manifest: ManifestState) -> Option<std::path::PathBuf> {
+    let Scope::Project { root } = scope else {
+        return None;
+    };
+    let repo = crate::guard::Repo::probe(root).ok().flatten()?;
+    if !repo.is_linked() {
+        return None;
+    }
+    match manifest {
+        ManifestState::Declared | ManifestState::Unreadable => Some(root.clone()),
+        ManifestState::Absent => main_checkout_project(&repo, root),
+    }
+}
+
+/// The project inside the repository's main work tree that answers for
+/// `root`, or `None` where there is none.
+///
+/// A kendex project can sit below the git top level, so the main work
+/// tree's top level is not the destination: the same path under it is,
+/// and it is only a destination if it is a project root there. A folder
+/// that is not one names nothing a write could use — `--project-path`
+/// would refuse it, or it would land in a project nobody asked about.
+fn main_checkout_project(
+    repo: &crate::guard::Repo,
+    root: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let below = root.strip_prefix(&repo.worktree).ok()?;
+    let mapped = repo.main_checkout().ok()?.join(below);
+    crate::discover::is_project(&mapped).then_some(mapped)
 }
 
 fn drift(text: String, remedy: Option<Remedy>) -> Line {
@@ -348,6 +541,11 @@ pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) ->
             .any(|scope| scope.canonical() == Scope::Global),
     );
     let mut oldest_age: Option<u64> = None;
+    // The one project scope a check covers, and what its own manifest
+    // file turned out to be. Held rather than acted on: which project a
+    // remedy names is asked once, after the lines are in, and only if a
+    // line will carry the answer.
+    let mut project_scope: Option<(Scope, ManifestState)> = None;
     let many = scopes.len() > 1;
     // Every scope reads the same two Pi roots, so the scans are folded
     // across scopes before their lines land: one copy, one failure, once
@@ -374,14 +572,26 @@ pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) ->
             global_manifest: global_manifest.as_ref(),
             global_manifest_named: &global_manifest_named,
         };
-        let scan = check_scope(&ctx, &mut sections, &mut oldest_age);
-        scans.push((prefix, scan));
+        let outcome = check_scope(&ctx, &mut sections, &mut oldest_age);
+        // A check covers at most one project scope, so one target answers
+        // for every project remedy in the report.
+        if !global {
+            project_scope = Some((scope.clone(), outcome.manifest));
+        }
+        scans.push((prefix, outcome.scan));
     }
     crate::pi_ext::ShadowScan::fold(scans.iter_mut().map(|(_, scan)| scan));
     for (prefix, scan) in scans {
         scope::shadow_lines(&prefix, scan, &mut sections);
     }
-    sections.into_report(oldest_age)
+    // Asked last, and only where an answer would be printed: resolving it
+    // spawns git children, and the session-start check runs on every
+    // session — a clean report has no project remedy to point anywhere,
+    // so it pays for none of them.
+    let project_target = project_scope
+        .filter(|_| sections.has_project_remedy())
+        .and_then(|(scope, manifest)| remedy_target(&scope, manifest));
+    sections.into_report(oldest_age, project_target)
 }
 
 /// A scope's short spelling in a report line: "global", or the project

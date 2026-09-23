@@ -1,0 +1,1 @@
+- A folder that declares nothing, a run that failed without writing, an `apply --plan` and a bare `updates` listing leave your projects list alone, even where `--project-path` names it.

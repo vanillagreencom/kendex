@@ -37,6 +37,10 @@
 # (a no-op hook, an always-print hook) can be run against these same
 # assertions.
 set -euo pipefail
+# A suite run from a git hook inherits these, and they take precedence over
+# `git -C`: left set, the fixture repository below would be written into the
+# repository the hook fired in.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/session-drift-check.sh}"
@@ -271,6 +275,36 @@ echo "session-drift-check: project directory"
 mkdir -p "$TMP_ROOT/proj"
 capture FAKE_RC=0 CLAUDE_PROJECT_DIR="$TMP_ROOT/proj"
 assert_eq "$(cd "$TMP_ROOT/proj" && pwd -P)" "$(cd "$(cat "$CWD_LOG")" && pwd -P)" "runs kendex inside CLAUDE_PROJECT_DIR"
+
+echo "session-drift-check: inside a linked worktree"
+# The fix a session in a linked worktree is shown is kendex's own: the project
+# a project-scope write lands in is named there with `--project-path`, because
+# a session running the block-worktree-refresh hook is refused that write with
+# no target. This hook neither composes that line nor rewrites it, so what is
+# pinned here is the pair that makes it right where it is read: the check is
+# asked about the worktree, and what it answered reaches stdout as the bytes
+# it wrote.
+#
+# The git setup documents that scenario. It drives no branch of this hook,
+# which reads nothing about worktree-ness, so no assertion below depends on
+# it. It runs under a fixture HOME, so the person's own git config decides
+# nothing here.
+GIT_HOME="$TMP_ROOT/git-home"
+mkdir -p "$GIT_HOME"
+printf '[user]\n\temail = t@t\n\tname = t\n[init]\n\tdefaultBranch = main\n' >"$GIT_HOME/.gitconfig"
+fixture_git() { env HOME="$GIT_HOME" git "$@"; }
+WT_MAIN="$TMP_ROOT/wt-main"
+WT_LINKED="$TMP_ROOT/wt-linked"
+fixture_git init -q "$WT_MAIN"
+fixture_git -C "$WT_MAIN" commit -q --allow-empty -m init
+fixture_git -C "$WT_MAIN" worktree add -q "$WT_LINKED" -b lane
+WT_REPORT="stale:
+  orch (skill) — fix: kendex apply --project-path '$WT_LINKED'"
+capture FAKE_RC=1 FAKE_OUT="$WT_REPORT" CLAUDE_PROJECT_DIR="$WT_LINKED"
+assert_eq "$(cd "$WT_LINKED" && pwd -P)" "$(cd "$(cat "$CWD_LOG")" && pwd -P)" \
+  "asks the check about the worktree, not the checkout it was added from"
+assert_eq "keyed=$(keyed_of) relayed=$(relayed_text)" "keyed=drift=found relayed=$WT_REPORT" \
+  "and relays the named-target fix byte for byte"
 
 echo "session-drift-check: start reasons"
 for src in resume compact; do

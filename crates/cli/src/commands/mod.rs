@@ -65,6 +65,80 @@ pub fn scope_label(scope: &Scope) -> String {
 /// The scopes a filter selects on this machine: the current project (walked
 /// up from CWD) and/or global.
 pub fn resolve_scopes(env: &Env, filter: ScopeFilter) -> Result<Vec<Scope>, String> {
+    resolve_scopes_at(env, filter, None)
+}
+
+/// [`resolve_scopes`] with the project scope named rather than walked up
+/// to: `target` is a `--project-path`, and it replaces the walk's answer.
+///
+/// The walk answers for the directory a command was typed in, which a
+/// session that cannot move its shell cannot choose. Inside a linked git
+/// worktree there is nothing to choose either: the catalog's
+/// `block-worktree-refresh` hook refuses a bare project-scope verb typed
+/// there, and refuses a `cd` before it, because neither says which
+/// checkout the write lands in. A named project is the other door: the
+/// write lands in the checkout the command's own words carry, and nowhere
+/// else, which is the one thing that guard was missing.
+///
+/// Naming a project and naming the personal scope are two different
+/// destinations, so a run that asks for both is refused rather than
+/// silently given one of them.
+///
+/// Resolution only resolves: what puts the named project on the projects
+/// list, and what leaves the list alone, is [`project::register_target`]'s
+/// rule.
+pub fn resolve_scopes_at(
+    env: &Env,
+    filter: ScopeFilter,
+    target: Option<&std::path::Path>,
+) -> Result<Vec<Scope>, String> {
+    let Some(target) = target else {
+        return walked_scopes(env, filter);
+    };
+    match filter {
+        ScopeFilter::Global => Err(
+            "--project-path names a project and the global scope is your personal setup; pass one or the other".to_owned(),
+        ),
+        ScopeFilter::Project => Ok(vec![Scope::Project {
+            root: project_target(env, target)?,
+        }]),
+        ScopeFilter::All => Ok(vec![
+            Scope::Project {
+                root: project_target(env, target)?,
+            },
+            Scope::Global,
+        ]),
+    }
+}
+
+/// The project a `--project-path` names, in the spelling the registry and
+/// every other surface keys off.
+///
+/// The path has to be a kendex project ROOT, not merely a directory inside
+/// one: a write aimed at a subdirectory would land in the project above it,
+/// which is the very thing naming a target is here to stop.
+/// `discover::is_project` owns which markers make a folder one, and the
+/// walk is asked rather than the list restated — so the refusal below says
+/// that no marker was found, never which ones were looked for.
+fn project_target(env: &Env, path: &std::path::Path) -> Result<PathBuf, String> {
+    let canonical = kendex_core::paths::canonical(path)
+        .map_err(|e| format!("--project-path {} could not be read: {e}", path.display()))?;
+    let found = discover::project_root_from(&canonical, env.real_home());
+    match found {
+        Some(root) if root == canonical => Ok(root),
+        Some(above) => Err(format!(
+            "--project-path {} is inside the project {}, not a project root of its own; name that root instead",
+            canonical.display(),
+            above.display()
+        )),
+        None => Err(format!(
+            "--project-path {} is not a kendex project: the folder carries no kendex or harness marker",
+            canonical.display()
+        )),
+    }
+}
+
+fn walked_scopes(env: &Env, filter: ScopeFilter) -> Result<Vec<Scope>, String> {
     let current = current_project(env);
     match filter {
         ScopeFilter::Global => Ok(vec![Scope::Global]),

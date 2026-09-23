@@ -1,0 +1,1 @@
+- Naming a project with `apply`, `refresh` or `updates --apply` puts it on your projects list, even where the packages it declares were all up to date.

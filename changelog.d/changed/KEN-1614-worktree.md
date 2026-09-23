@@ -1,0 +1,1 @@
+- A linked git worktree with its own `kendex.toml` is a project of its own: `project list` marks it a worktree of its checkout, and the session-start check names it wherever the verb takes it.

@@ -1,6 +1,7 @@
-//! The two flag sets that are shared or long enough to crowd the verb
-//! list: `add`, which the bare `kendex <source>` form reuses flag for
-//! flag, and `report`.
+//! The flag sets that are shared or long enough to crowd the verb list:
+//! `add`, which the bare `kendex <source>` form reuses flag for flag,
+//! `report`, and the explicit project target the whole-scope writing verbs
+//! share.
 
 use clap::Args;
 
@@ -155,5 +156,36 @@ impl ReportFlags {
             area: self.area,
             dry_run: self.dry_run,
         }
+    }
+}
+
+/// The explicit project a whole-scope run works on, shared by `refresh`,
+/// `apply` and `updates` — written by the first two and by
+/// `updates --apply`, and read by the `updates` listing.
+///
+/// Without it those verbs take the project the command was typed in,
+/// which is the behaviour every release before this one had. With it the
+/// place is in the command's own words — which is what lets a session
+/// that cannot move its shell, and one standing in a linked git worktree,
+/// name the checkout it means.
+///
+/// The flag answering the temporary-path refusal rides here beside the
+/// path it answers for, because a named run can put that path on the
+/// projects list; [`commands::project::register_target`] owns when it
+/// does.
+#[derive(Args, Clone, Default)]
+pub struct ProjectTargetFlag {
+    /// The project this run reads and writes, by path, instead of the one it was typed in
+    #[arg(long, value_name = "PATH")]
+    project_path: Option<std::path::PathBuf>,
+    /// The temporary-path refusal's answer, for the project --project-path names
+    #[command(flatten)]
+    pub throwaway: commands::project::ThrowawayFlag,
+}
+
+impl ProjectTargetFlag {
+    /// The project this run was told to write, where it was told one.
+    pub fn path(&self) -> Option<&std::path::Path> {
+        self.project_path.as_deref()
     }
 }

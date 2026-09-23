@@ -1,0 +1,1 @@
+- A `--project-path` that is no kendex project root is refused before anything is planned.

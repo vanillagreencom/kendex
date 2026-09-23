@@ -2,6 +2,12 @@
 
 use super::*;
 
+/// Why a fix will not run where the report was read. Said once, here,
+/// because this is the only place it is printed, and it names the
+/// condition rather than a place to go instead: which session is free of
+/// the hook is not something a report can know.
+const NOT_FROM_HERE: &str = " (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)";
+
 /// A duration as the shortest honest spelling: "3m", "5h", "2d".
 fn age_word(secs: u64) -> String {
     match secs {
@@ -31,10 +37,26 @@ pub fn render_plain(report: &CheckReport) -> String {
         };
         for line in &section.lines[..shown_count] {
             match line.remedy.as_ref().and_then(|remedy| {
-                Remedy::render(remedy).map(|rendered| (remedy.mutates(), rendered))
+                Remedy::render(remedy, report.project_target.as_deref())
+                    .map(|rendered| (remedy.mutates(), rendered))
             }) {
-                Some((true, remedy)) => lines.push(format!("  {} — fix: {remedy}", line.text)),
-                Some((false, remedy)) => lines.push(format!("  {} — see: {remedy}", line.text)),
+                Some((mutates, fix)) => {
+                    // A remedy that only prints is what to see next, never
+                    // the fix; and a fix this session cannot type is still
+                    // the fix, marked with why it will not run here.
+                    let word = match mutates {
+                        true => "fix",
+                        false => "see",
+                    };
+                    let (command, where_it_runs) = match &fix {
+                        Fix::Here(command) => (command, ""),
+                        Fix::Elsewhere(command) => (command, NOT_FROM_HERE),
+                    };
+                    lines.push(format!(
+                        "  {} — {word}: {command}{where_it_runs}",
+                        line.text
+                    ));
+                }
                 None => lines.push(format!("  {}", line.text)),
             }
         }
