@@ -917,13 +917,15 @@ admin_review_decision() {
         ADMIN_REVIEW=ok
         ;;
     "")
-        case "$ADMIN_GATE_MODE: $warn_keys " in
-        "approval: "*" not_approved "*)
-            ADMIN_REVIEW=required
-            admin_refuse review-required "the review gate is not met: $(jq -r '[.warnings[] | select(startswith("not_approved:"))] | join("; ")' <<<"$ADMIN_CHECK_JSON")"
-            return 1
-            ;;
-        esac
+        if [ "$ADMIN_GATE_MODE" = approval ]; then
+            case " $warn_keys " in
+            *" not_approved "*)
+                ADMIN_REVIEW=required
+                admin_refuse review-required "the review gate is not met: $(jq -r '[.warnings[] | select(startswith("not_approved:"))] | join("; ")' <<<"$ADMIN_CHECK_JSON")"
+                return 1
+                ;;
+            esac
+        fi
         ADMIN_REVIEW=ok
         ;;
     *)
