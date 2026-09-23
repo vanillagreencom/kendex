@@ -16,6 +16,14 @@ metadata:
 tags: [automation]
 ---
 
+<!-- kendex:project-instructions:start -->
+## Project Instructions
+
+<!-- kendex:shared-instructions:start -->
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->
+<!-- kendex:project-instructions:end -->
+
 # Orchestration
 
 Load `github` and `worktree` before anything else; a Linear work item also needs `linear`. The dev and reviewer skills call orch scripts.

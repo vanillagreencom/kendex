@@ -90,6 +90,10 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "the tracked render set could not be read." ;;
     render-committed-set)
       echo "the committed render set could not be read." ;;
+    skill-instruction-config)
+      echo "the configured skill instruction keys could not be read." ;;
+    missing-skill-instructions)
+      echo "a managed skill render is missing the instructions block configured for its source; the render paths follow." ;;
     missing-render)
       echo "a render source changed without its tracked render — land the render in the same change; the pairs follow." ;;
     commit-changes)
@@ -556,6 +560,42 @@ render_is_tracked() { # PATH — PATH itself is tracked, PATH read literally
   case "$NL$render_tracked$NL" in *"$NL$1$NL"*) return 0 ;; esac
   return 1
 }
+
+# A configured instruction is visible only in the managed render: its source
+# deliberately has no copy. Judge the same candidate for configuration,
+# source existence, and render bytes: the index at commit time, the worktree
+# under --full. One ordered-pair reader owns both instruction block shapes;
+# kendex verify owns the rendered bytes inside them.
+render_skill_paths=$(printf '%s\n' "$render_tracked" | sort -u) ||
+  { render_skill_paths=""; say render-tracked-set unreadable; }
+instruction_hits=$(python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from lib import manifest
+from lib.tree import Index, Worktree
+tree = Worktree(".") if sys.argv[2] == "1" else Index(".")
+keys = manifest.resolve(tree).data.get("skill-instructions", {})
+shared = "all" in keys or "*" in keys
+def has_block(text, name):
+    start = f"<!-- kendex:{name}-instructions:start -->"
+    end = f"<!-- kendex:{name}-instructions:end -->"
+    return start in text and end in text.split(start, 1)[1]
+for render in sys.stdin.read().splitlines():
+    if not render.startswith(".agents/skills/") or not render.endswith(("/SKILL.md", "/SKILL.md.disabled")):
+        continue
+    skill = render.removeprefix(".agents/skills/").removesuffix("/SKILL.md.disabled").removesuffix("/SKILL.md")
+    text = tree.read(render)
+    if tree.read(f"skills/{skill}/SKILL.md") is None or text is None or skill not in keys and not shared:
+        continue
+    if not has_block(text, "project") or shared and not has_block(text, "shared"):
+        print(render)
+' "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts" "$FULL" 2>/dev/null <<<"$render_skill_paths") ||
+  { instruction_hits=""; say skill-instruction-config unreadable; }
+[ -n "$instruction_hits" ] && {
+  say missing-skill-instructions "$(count_lines "$instruction_hits")"
+  show "$instruction_hits" | sed -n '1,5p'
+}
+
 require_render() { # SOURCE RENDER — RENDER changes with SOURCE and outlives it
   { grep -Fxq -- "$2" <<<"$render_changed" && { [ ! -e "$1" ] || [ -e "$2" ]; }; } ||
     render_hits="$render_hits$1 -> $2
