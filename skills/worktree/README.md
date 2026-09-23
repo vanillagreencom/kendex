@@ -32,7 +32,7 @@ Put project defaults in committed `kendex.settings.toml` under `[env]`; `.env.lo
 | `WORKTREE_DEFAULT_BRANCH` | Overrides default-branch detection |
 | `WORKTREE_SYMLINKS` | Space-separated paths symlinked from the main checkout into each worktree |
 | `WORKTREE_RELATIVE_SYMLINKS` | Space-separated `link=target` pairs created inside each worktree |
-| `WORKTREE_COPIES` | Space-separated files copied from the main checkout only when neither checkout's Git index owns them; Git-owned files stay with their checkout, and configured copies do nothing in a standalone checkout |
+| `WORKTREE_COPIES` | Space-separated files copied from the main checkout only when neither checkout's Git index owns them; Git-owned files stay with their checkout |
 | `WORKTREE_MKDIRS` | Space-separated gitignored scratch directories created in each worktree |
 | `BOT_NAME` / `BOT_EMAIL` | Git identity for worktree commits |
 | `BOT_SIGNING_KEY` | SSH signing key for those commits |
@@ -44,6 +44,8 @@ WORKTREE_SYMLINKS = ".env.local .cache node_modules"
 WORKTREE_RELATIVE_SYMLINKS = "ui/.env=../.env.worktree"
 WORKTREE_MKDIRS = "tmp"
 ```
+
+Worktree setup does nothing when the checkout is both the source and the destination, as in a standalone clone or the main checkout: every configured entry would act on its own source.
 
 Point `WORKTREE_SYMLINKS` only at paths git does not carry: an entry does nothing when git carries every path under it, and a directory holding tracked files stays a real directory with only its untracked children linked. Each key's full semantics: `scripts/worktree --help` and `scripts/worktree fix-links --help`.
 
