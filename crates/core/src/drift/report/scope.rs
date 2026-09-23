@@ -7,6 +7,8 @@ use std::path::PathBuf;
 
 use super::text::shown;
 use super::*;
+use crate::lock::{InstallRef, LockEntry, Reason};
+use crate::model::HarnessId;
 
 /// One scope's outcome beyond the lines it pushed: its second-copy scan,
 /// which the caller folds with the other scopes' before rendering through
@@ -21,9 +23,6 @@ pub(super) struct ScopeOutcome {
     pub(super) manifest: ManifestState,
 }
 
-/// Record entries that still trace to the manifest's selected packages.
-/// Requested items and bundle members seed the set. Dependency edges then
-/// extend it until every package required by a selected package is present.
 fn selected_record_keys(
     env: &Env,
     manifest: &crate::manifest::Manifest,
@@ -31,91 +30,82 @@ fn selected_record_keys(
     scope: &Scope,
 ) -> BTreeSet<String> {
     let custom_names = crate::hook::custom_hook_names(manifest);
+    let identity = |entry: &LockEntry, source: &str| InstallRef {
+        source: source.to_owned(),
+        kind: entry.kind,
+        name: entry.name.clone(),
+        harness: entry.harness,
+    };
     let mut selected = BTreeSet::new();
-    for (key, entry) in &lock.entries {
-        let requested = (entry.kind == ItemKind::PiExtension
-            && entry.harness == crate::model::HarnessId::Pi
-            && manifest.pi_extensions.contains_key(&entry.name))
-            || manifest
-                .declared(entry.kind)
+    for entry in lock.entries.values() {
+        if let Some(decl) = manifest.declared(entry.kind).get(&entry.name)
+            && ((entry.kind == ItemKind::PiExtension && entry.harness == HarnessId::Pi)
+                || crate::engine::desired::target_harnesses(decl, manifest, entry.kind, scope)
+                    .contains(&entry.harness))
+        {
+            selected.insert(identity(entry, &decl.source));
+        }
+        let plugin = entry.kind == ItemKind::Plugin
+            && manifest
+                .plugins
                 .get(&entry.name)
-                .is_some_and(|decl| {
-                    crate::engine::desired::target_harnesses(decl, manifest, entry.kind, scope)
-                        .contains(&entry.harness)
-                })
-            || (entry.kind == ItemKind::Plugin
-                && manifest
-                    .plugins
-                    .get(&entry.name)
-                    .is_some_and(|decl| decl.harness == entry.harness))
-            || (entry.kind == ItemKind::Hook
-                && manifest
-                    .custom_hooks
-                    .iter()
-                    .zip(&custom_names)
-                    .any(|(hook, name)| {
-                        if name != &entry.name {
-                            return false;
-                        }
-                        let spec = crate::hook::HookSpec::custom(hook, name.clone());
-                        let listed: Option<Vec<_>> = spec.harnesses.as_ref().map(|harnesses| {
-                            harnesses
-                                .iter()
-                                .filter_map(|name| crate::model::HarnessId::parse(name))
-                                .collect()
-                        });
-                        crate::engine::desired::harnesses_for(
-                            listed.as_deref(),
-                            manifest,
-                            ItemKind::Hook,
-                            scope,
-                        )
-                        .contains(&entry.harness)
-                            && spec.applies_to(entry.harness)
-                            && matches!(
-                                crate::hook::delivery(env, scope, entry.harness, &spec),
-                                crate::hook::Delivery::Registered
-                            )
-                    }));
+                .is_some_and(|decl| decl.harness == entry.harness);
+        let custom = entry.kind == ItemKind::Hook
+            && manifest
+                .custom_hooks
+                .iter()
+                .zip(&custom_names)
+                .any(|(hook, name)| {
+                    let spec = crate::hook::HookSpec::custom(hook, name.clone());
+                    name == &entry.name
+                        && (spec.harnesses.is_some()
+                            || manifest.install.harnesses.contains(&entry.harness))
+                        && spec.applies_to(entry.harness)
+                        && crate::hook::delivery(env, scope, entry.harness, &spec)
+                            == crate::hook::Delivery::Registered
+                });
+        if plugin || custom {
+            selected.insert(identity(entry, &entry.source));
+        }
         let bundle_member = !manifest.is_held_back(entry.kind, &entry.name)
             && entry.reasons.iter().any(|reason| {
-                let crate::lock::Reason::MemberOf { bundle } = reason else {
+                let Reason::MemberOf { bundle } = reason else {
                     return false;
                 };
                 manifest.bundles.get(&bundle.name).is_some_and(|decl| {
                     decl.source == bundle.source
+                        && entry.source == bundle.source
                         && crate::engine::desired::target_harnesses(
                             decl, manifest, entry.kind, scope,
                         )
                         .contains(&entry.harness)
                 })
             });
-        if requested || bundle_member {
-            selected.insert(key.clone());
+        if bundle_member {
+            selected.insert(identity(entry, &entry.source));
         }
     }
 
     loop {
         let mut changed = false;
-        for (key, entry) in &lock.entries {
-            if selected.contains(key) {
-                continue;
-            }
-            let required = !manifest.is_held_back(entry.kind, &entry.name)
-                && entry.reasons.iter().any(|reason| {
-                    let crate::lock::Reason::RequiredBy { by } = reason else {
-                        return false;
-                    };
-                    selected.contains(&crate::lock::entry_key(by.kind, &by.name, by.harness))
-                });
-            if required {
-                changed |= selected.insert(key.clone());
+        for entry in lock.entries.values() {
+            if !manifest.is_held_back(entry.kind, &entry.name)
+                && entry.reasons.iter().any(
+                    |reason| matches!(reason, Reason::RequiredBy { by } if selected.contains(by)),
+                )
+            {
+                changed |= selected.insert(identity(entry, &entry.source));
             }
         }
         if !changed {
-            return selected;
+            break;
         }
     }
+    lock.entries
+        .iter()
+        .filter(|(_, entry)| selected.contains(&identity(entry, &entry.source)))
+        .map(|(key, _)| key.clone())
+        .collect()
 }
 
 fn harness_list(harnesses: &BTreeSet<crate::model::HarnessId>) -> String {
@@ -385,18 +375,28 @@ impl ScopeCheck<'_> {
                     ));
                 }
                 for ((kind, name), harnesses) in unselected {
-                    sections.record_cleanup.push(drift(
-                        format!(
-                            "{prefix}kendex.toml does not list recorded {} '{}' ({})",
-                            kind.name(),
-                            shown(&name),
-                            harness_list(&harnesses)
-                        ),
-                        Some(Remedy::Remove {
+                    let mut text = format!(
+                        "{prefix}kendex.toml does not list recorded {} '{}' ({})",
+                        kind.name(),
+                        shown(&name),
+                        harness_list(&harnesses)
+                    );
+                    let remedy = match manifest {
+                        ManifestRead::Current(_) => {
+                            text.push_str("; preview cleanup");
+                            Remedy::Plan {
+                                global: self.global,
+                            }
+                        }
+                        ManifestRead::Absent => Remedy::Remove {
                             name,
                             global: self.global,
-                        }),
-                    ));
+                        },
+                        ManifestRead::Unreadable => {
+                            unreachable!("an unreadable manifest produces no cleanup set")
+                        }
+                    };
+                    sections.record_cleanup.push(drift(text, Some(remedy)));
                 }
             }
             Ok(crate::lock::LockFile::Absent) => {}

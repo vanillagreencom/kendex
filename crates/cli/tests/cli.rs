@@ -577,7 +577,7 @@ fn the_read_only_verbs_answer_in_a_checkout_seeded_with_another_checkouts_lock()
         1,
         "one record-cleanup row for the worktree manifest: {printed}"
     );
-    assert!(printed.contains("fix: kendex remove deploy"), "{printed}");
+    assert!(printed.contains("see: kendex apply --plan"), "{printed}");
     assert!(!printed.contains("has no files on disk"), "{printed}");
 }
 

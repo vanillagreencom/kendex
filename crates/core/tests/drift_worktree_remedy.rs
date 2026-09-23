@@ -163,6 +163,12 @@ fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_ho
         Some(kendex_core::paths::canonical(&main).unwrap().as_path()),
         "a worktree with no manifest of its own points at the checkout that has one"
     );
+    assert!(
+        report::render_plain(&checked).contains(
+            "fix: kendex remove gh (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)"
+        ),
+        "an absent manifest retains the explicit elsewhere marker"
+    );
 
     declare(&env, &scope(&linked));
     let checked = report::check(&env, &[scope(&linked)]);
@@ -219,12 +225,11 @@ fn a_rendered_fix_inside_a_worktree_names_the_project_it_writes() {
     );
 }
 
-/// A stale record is itself a project remedy. No missing installation or
-/// other row should be needed before the report marks the explicit remove
-/// as a command that cannot name its linked-worktree destination.
+/// A current manifest can still want the recorded name in another harness.
+/// The preview names the linked worktree without choosing a write.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn record_cleanup_alone_marks_remove_as_elsewhere_in_a_linked_worktree() {
+fn record_cleanup_alone_names_the_linked_worktree_in_its_plan_command() {
     let (_tmp, env, _main, linked) = repository();
     let scope = scope(&linked);
     declare(&env, &scope);
@@ -244,9 +249,10 @@ fn record_cleanup_alone_marks_remove_as_elsewhere_in_a_linked_worktree() {
 
     let text = report::render_plain(&checked);
     assert!(
-        text.contains(
-            "fix: kendex remove gh (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)"
-        ),
+        text.contains(&format!(
+            "see: kendex apply --plan --project-path '{}'",
+            kendex_core::paths::canonical(&linked).unwrap().display()
+        )),
         "{text}"
     );
 }

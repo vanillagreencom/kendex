@@ -663,6 +663,35 @@ fn record_selection_tracks_each_manifest_owner() {
 }
 
 #[test]
+fn dependency_selection_keeps_the_owners_source_identity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    let scope = project_scope(tmp.path());
+    let (mut manifest, mut entries) = SelectionCase::RequiredDependency.fixture();
+    plant_recorded_skill_files(&scope, &mut entries);
+    manifest.sources.insert(
+        "other".into(),
+        crate::manifest::SourceDecl {
+            repo: None,
+            path: Some("other-catalog".into()),
+            rev: None,
+            enabled: true,
+        },
+    );
+    manifest.skills.get_mut("parent").unwrap().source = "other".into();
+    write_manifest(&env, &scope, &manifest);
+    write_record(&env, &scope, entries);
+
+    let report = check(&env, std::slice::from_ref(&scope));
+    assert!(
+        cleanup_names(&report)
+            .iter()
+            .any(|line| line.contains("skill 'dependency'")),
+        "a dependency owned by the old source stayed selected: {report:?}"
+    );
+}
+
+#[test]
 fn a_custom_hook_moved_into_agent_files_leaves_its_registry_record_for_cleanup() {
     let tmp = tempfile::tempdir().unwrap();
     let env = env_in(tmp.path());
