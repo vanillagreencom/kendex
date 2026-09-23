@@ -211,7 +211,13 @@ fn local_workflow_state_is_ignored_and_consumer_rules_are_preserved() {
         .collect();
     assert_eq!(
         rules,
-        ["target/", "docs/private/", "/tmp/", "/.cache/"],
+        [
+            "target/",
+            "docs/private/",
+            "/tmp/",
+            "/.cache/",
+            "/.kendex-lock.v10.json",
+        ],
         "{ignore}"
     );
     assert!(world.at(".kendex-lock.json").is_file());
