@@ -37,6 +37,8 @@ The shell loaders decide it (`skills/*/scripts/lib/kendex-env.sh` and `settings.
 
 `kendex marketplace check` reads a template against that grammar and names each defect with its line, including a template declaring neither table, a key with no comment block, an assignment outside both tables, a key assigned twice, a `[secrets]` key carrying a value, and a file that is not valid TOML; the check runs strict, so any of them fails it. One run names every defect except that a TOML syntax error stops the parser at its first. Seeding itself stays lenient, so write each key once: a duplicate inside `[env]` fails the consumer's load while the template is read past.
 
+Write each comment block for the consumer who reads it. The first line says what the setting is. The lines after it say what each value does and what the consumer sees change, and a `# values:` line declares the set wherever one is fixed. Keep the prose to four lines of plain words, and name a script, a flag or a path only where the consumer has to act on it. A `[secrets]` block follows the same rule and says where the consumer gets the credential. The file's own opening comment says in one sentence what the package's settings cover. The check reads the grammar and not the prose, so this rule is the author's to hold.
+
 ## Naming
 
 Prefix keys with the skill name in upper-snake: `REVIEW_GATE_MODE` for a skill named `review-gate`. A convention, not enforced; a skill that deliberately ships a companion package's key is legitimate.
