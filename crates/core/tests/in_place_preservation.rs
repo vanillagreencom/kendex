@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use kendex_core::apply;
 use kendex_core::drift;
-use kendex_core::engine::{PlanOptions, plan_apply};
+use kendex_core::engine::{PlanOptions, ops, plan_apply};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::Scope;
 
@@ -148,6 +148,105 @@ fn replace_unmanaged_preserves_an_in_place_source_tree() {
     assert!(trash_is_empty(&world.env));
     assert!(world.project.join(".claude/skills/deploy").is_symlink());
     assert_eq!(check_text(&world), "");
+}
+
+/// Apply records only the harness positions that kendex creates. An
+/// explicit removal therefore removes those positions and keeps the source.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_an_applied_in_place_skill_preserves_its_source_tree() {
+    let world = world();
+    let source = world.project.join(".agents/skills/deploy");
+    let before = tree_bytes(&source);
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&world.env, &report.plan).unwrap();
+
+    let lock_path = kendex_core::lock::lock_path(&world.env, &world.scope);
+    let lock = kendex_core::lock::load(&lock_path).unwrap();
+    assert!(lock.entries.values().all(|entry| {
+        entry
+            .emitted
+            .as_ref()
+            .is_none_or(|emitted| !emitted.paths.contains(&source))
+    }));
+
+    let report = ops::remove(
+        &world.env,
+        &world.scope,
+        &["deploy".to_owned()],
+        None,
+        false,
+    )
+    .unwrap();
+    apply::execute(&world.env, &report.plan).unwrap();
+
+    assert_eq!(tree_bytes(&source), before);
+    assert!(!world.project.join(".claude/skills/deploy").exists());
+}
+
+/// Existing records can name the source as emitted content. Removal reads
+/// that record through the current ownership rule and keeps the source.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_a_legacy_in_place_record_preserves_its_source_tree() {
+    let world = world();
+    let source = world.project.join(".agents/skills/deploy");
+    let before = tree_bytes(&source);
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&world.env, &report.plan).unwrap();
+    let lock_path = kendex_core::lock::lock_path(&world.env, &world.scope);
+    let mut lock = kendex_core::lock::load(&lock_path).unwrap();
+    lock.entries
+        .get_mut("skill:deploy:codex")
+        .unwrap()
+        .emitted
+        .as_mut()
+        .unwrap()
+        .paths
+        .push(source.clone());
+    kendex_core::lock::save(&lock_path, &lock).unwrap();
+
+    let report = ops::remove(
+        &world.env,
+        &world.scope,
+        &["deploy".to_owned()],
+        None,
+        false,
+    )
+    .unwrap();
+    apply::execute(&world.env, &report.plan).unwrap();
+
+    assert_eq!(tree_bytes(&source), before);
+}
+
+/// A record for one target does not prove that a newly declared target has
+/// its link. Check reports the missing link once for the skill.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_reports_a_missing_link_for_a_new_target_harness() {
+    let world = world();
+    fs::write(
+        world.project.join("kendex.toml"),
+        "schema = 6\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\n",
+    )
+    .unwrap();
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&world.env, &report.plan).unwrap();
+    fs::write(
+        world.project.join("kendex.toml"),
+        "schema = 6\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\n",
+    )
+    .unwrap();
+
+    let text = check_text(&world);
+
+    assert_eq!(
+        text.matches("skill 'deploy' has harness links that are not rendered")
+            .count(),
+        1,
+        "{text}"
+    );
+    assert!(text.contains("fix: kendex refresh"), "{text}");
 }
 
 /// A command read from the in-place catalog is still a generated install.

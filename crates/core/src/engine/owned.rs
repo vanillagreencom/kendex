@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use super::desired::native_dir;
+use super::desired::{is_in_place_source, native_dir};
 use super::targets::{
     HookFormat, HookTarget, hook_target, mcp_registry, mcp_remove, plugin_settings,
 };
@@ -42,7 +42,15 @@ pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
         // never took: a codex command stored as a skill tree under a name
         // the collision rules may have changed, a skill's tree and the
         // link a tool's directory has since moved away from.
-        (Some(emitted), _) => files.extend(emitted.paths.iter().cloned()),
+        (Some(emitted), _) => files.extend(
+            emitted
+                .paths
+                .iter()
+                .filter(|path| {
+                    !is_in_place_source(env, scope, (entry.kind, &entry.source, &entry.name), path)
+                })
+                .cloned(),
+        ),
         (None, ItemKind::Agent) => {
             if let Some(dir) = native_dir(env, scope, entry.harness, ItemKind::Agent) {
                 files.push(dir.join(file_name(entry.harness, &entry.name)));

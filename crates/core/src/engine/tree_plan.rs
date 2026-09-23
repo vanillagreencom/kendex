@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::compared::of_tree;
-use super::desired::{Artifact, Desired};
+use super::desired::{Artifact, Desired, is_in_place_source};
 use super::file_plan::{TAKEN_OVER, set_aside};
 use super::item_plan::{Planned, unmanaged, unmanaged_compared};
 use super::written::Written;
@@ -18,7 +18,7 @@ use crate::apply::{Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::Result;
 use crate::hash::hash_tree;
-use crate::model::{ItemKind, Scope};
+use crate::model::Scope;
 
 mod link;
 
@@ -40,10 +40,8 @@ pub(super) fn plan_tree(
     else {
         return Ok(Planned::Clean);
     };
-    if item.kind == ItemKind::Skill
-        && item.source_name == crate::manifest::INPLACE_SOURCE_NAME
-        && canonical == &super::desired::skill_canonical(env, scope, &item.name)
-    {
+    let identity = (item.kind, item.source_name.as_str(), item.name.as_str());
+    if is_in_place_source(env, scope, identity, canonical) {
         return plan_in_place_tree(scope, item, replace_unmanaged, owned, written, ops);
     }
     let collapsed = match collapsed_link(env, scope, item, canonical, files, owned) {
@@ -159,14 +157,10 @@ fn plan_in_place_tree(
     let Artifact::Tree {
         canonical,
         files,
-        link,
+        link: Some(link),
     } = &item.artifact
     else {
         return Ok(Planned::Clean);
-    };
-    let result = Planned::Clean;
-    let Some(link) = link else {
-        return Ok(result);
     };
     link::plan_link(
         scope,
@@ -178,7 +172,7 @@ fn plan_in_place_tree(
         owned,
         written,
         ops,
-        &result,
+        &Planned::Clean,
     )
 }
 

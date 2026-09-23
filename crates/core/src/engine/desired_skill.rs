@@ -8,8 +8,8 @@ use crate::model::{HarnessId, ItemKind, Scope};
 use crate::render::skill::render_skill;
 
 use super::desired::{
-    Artifact, Desired, DesiredState, ItemCtx, effective_method, native_dir, skill_canonical,
-    skill_dir,
+    Artifact, Desired, DesiredState, ItemCtx, effective_method, is_in_place_source, native_dir,
+    skill_canonical, skill_dir,
 };
 
 /// One physical skill surface and the harnesses that read it. Every tool but
@@ -225,10 +225,16 @@ fn push_installs(
     // directory moves between kendex versions, and a pass that derived
     // the place again would name one this install never wrote — the
     // link it did write is then findable only through the record.
+    let identity = (ItemKind::Skill, ctx.decl.source.as_str(), ctx.name);
+    let paths = artifact
+        .paths()
+        .into_iter()
+        .filter(|path| !is_in_place_source(ctx.env, ctx.scope, identity, path))
+        .collect();
     let emitted = Some(EmittedArtifact {
         kind: ItemKind::Skill,
         name: group.installed.clone(),
-        paths: artifact.paths(),
+        paths,
     });
     let source = Some(ctx.source(&artifact)?);
     for harness in &group.members {

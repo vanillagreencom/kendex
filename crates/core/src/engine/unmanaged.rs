@@ -355,16 +355,13 @@ pub(crate) fn unrendered_in_place_skills(
         .filter(|(_, decl)| decl.enabled && decl.source == crate::manifest::INPLACE_SOURCE_NAME)
     {
         let harnesses = desired::target_harnesses(decl, manifest, ItemKind::Skill, scope);
-        let unrecorded = harnesses.iter().all(|harness| {
-            !lock
-                .entries
-                .contains_key(&crate::lock::entry_key(ItemKind::Skill, name, *harness))
-        });
-        if !unrecorded {
-            continue;
-        }
         let links: BTreeSet<PathBuf> = harnesses
             .into_iter()
+            .filter(|harness| {
+                !lock
+                    .entries
+                    .contains_key(&crate::lock::entry_key(ItemKind::Skill, name, *harness))
+            })
             .flat_map(|harness| {
                 installation_paths(env, scope, manifest, ItemKind::Skill, name, decl, harness)
             })
@@ -381,11 +378,11 @@ pub(crate) fn unrendered_in_place_skills(
         if !source_is_dir {
             continue;
         }
-        let mut any_present = false;
+        let mut any_missing = false;
         for path in links {
-            any_present |= crate::fs::exists(&path)?;
+            any_missing |= !crate::fs::exists(&path)?;
         }
-        if !any_present {
+        if any_missing {
             missing.push(name.clone());
         }
     }
