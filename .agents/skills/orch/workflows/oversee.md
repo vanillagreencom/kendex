@@ -124,7 +124,7 @@ One repeat-mode command watches for the whole session. Pass the fleet's start as
 .agents/skills/orch/scripts/oversee-watch --repeat 60 --state [OVERSEE_STATE] --interval 240 --since [FLEET_SINCE] --repo [ITEMS_REPO] --repo [OTHER_REPO]... -- [FLAGS]
 ```
 
-`[FLAGS]` are the permission flags this overseer runs under, plus its current model and effort flags. Pass all of them even when `ORCH_OVERSEER_PREFERENCE` is set. The watch records this session, while that preference chooses a later live successor. The record binds the launch line to the tmux server, pane and window because a dead pane names neither its model nor its account. Start the watch from the overseer's own pane. Missing permission flags can stop an unattended successor at a prompt. Missing model or effort flags can relaunch it with harness defaults.
+`[FLAGS]` are the permission flags this overseer runs under, plus its current model and effort flags. Pass all of them even when `ORCH_OVERSEER_PREFERENCE` is set. The watch records this session. A caller, print or walled succession keeps the flags whole. A named preference entry replaces the caller's model, effort and permission words with its own harness's row. The record binds the launch line to the tmux server, pane and window because a dead pane names neither its model nor its account. Start the watch from the overseer's own pane. Missing permission flags can stop a caller-entry successor at a prompt. Missing model or effort flags can relaunch it with harness defaults.
 
 The mail pass reads each lane's mailbox, never a pane, so it runs on every surface and outside tmux.
 

@@ -1963,7 +1963,7 @@ run_ot "cmd=true --model sonnet --effort high" --harness claude --lane "$H/.ucla
 assert_eq "$(observe "rc=1 launched=nolog modelmissing=none unreadable=lane=$H/.uclaude,model=sonnet,step=windows")" \
   "rc=1 launched=nolog modelmissing=none unreadable=lane=$H/.uclaude,model=sonnet,step=windows" \
   "the space-spelled model is judged against that lane's own window, which measures nothing for it"
-mutant_repo ctl-take "$LAUNCH_LIB" 'tokens\[i+1\]'
+mutant_repo ctl-take "$LAUNCH_LIB" 'printf.*tokens\[i+1\]'
 OPEN_TERMINAL="$TMP_ROOT/ctl-take/scripts/open-terminal"
 run_ot "cmd=true --model sonnet --effort high" --harness claude --lane "$H/.uclaude" CC-66
 assert_eq "$(observe "rc=1 launched=nolog unreadable=none modelmissing=harness=claude,lane=$H/.uclaude,spellings=--model")" \

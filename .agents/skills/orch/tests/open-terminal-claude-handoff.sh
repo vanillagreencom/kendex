@@ -7,8 +7,8 @@
 #    FIRST tool call with nobody attached, so launch-only autonomy needs a
 #    permission-mode argument. Model, effort, and permission posture arrive as
 #    --launch-flags, chosen per task at launch time rather than stored
-#    anywhere, and a lane whose flags carry no permission bypass must warn
-#    that handoff autonomy is void.
+#    anywhere. Each harness row that names a permission posture warns when the
+#    launch flags carry none of its accepted spellings.
 #
 # 2. The brief (initial '/orch start …' prompt) rides as a CLI arg; first-run
 #    dialogs (theme/trust/browser-integration) consume it, leaving a healthy
@@ -244,6 +244,7 @@ run() {
   fi
   case "$mode" in
     gui) envs=(TMUX=); args=(--ghostty --harness claude) ;;
+    gui-codex) envs=(TMUX=); args=(--ghostty --harness codex) ;;
     github) envs=(TMUX=); args=(--tracker github --repo acme/widgets --ghostty --harness claude) ;;
     custom) envs=(TMUX=); args=(--ghostty --cmd "claude 'Read the agent\\'s brief'") ;;
     custom-tmux) envs=(TMUX=stub,1,0); args=(--tmux --cmd "claude 'Read the agent\\'s brief'") ;;
@@ -385,6 +386,8 @@ launch_table \
   "github:claude renders the same|github|-|--effort max --dangerously-skip-permissions|-|rc=0 cmd~'--effort'+'max'+'--dangerously-skip-permissions'+'/orch+start+github+acme/widgets#42'=true" \
   "a second launch renders its own flags, nothing leaking from another launch or a stored default|gui|-|--model sonnet --permission-mode bypassPermissions|-|rc=0 cmd~'--model'+'sonnet'+'--permission-mode'+'bypassPermissions'+'$BRIEFN'=true cmd~'--effort'+'max'=false stderr~open-terminal:+permission-prompt=false" \
   "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|rc=0 tail=claude+-n+CC-737+'$BRIEFN' stderr~open-terminal:+permission-prompt+flags==true" \
+  "an unflagged codex launch warns for the same unattended prompt|gui-codex|-|-|-|rc=0 stderr~open-terminal:+permission-prompt+flags==true" \
+  "codex's unattended permission word suppresses the warning|gui-codex|-|--dangerously-bypass-approvals-and-sandbox|-|rc=0 cmd~--dangerously-bypass-approvals-and-sandbox=true stderr~open-terminal:+permission-prompt=false" \
   "a prompting override still launches, rendered as given, and warns loudly|gui|-|--permission-mode plan|-|rc=0 cmd~'--permission-mode'+'plan'+'$BRIEFN'=true stderr~open-terminal:+permission-prompt+flags=--permission-mode+plan=true" \
   "metacharacter launch flags refuse to launch, naming the option, and nothing runs|gui|-|--flag; touch $TMP_ROOT/pwned|-|rc=1 stderr~open-terminal:+flags-invalid+option=--launch-flags+value=--flag;+touch+$TMP_ROOT/pwned=true launched=false" \
   "a backslash cannot escape an apostrophe inside a single-quoted GUI brief|custom|-|-|-|rc=1 stderr1~open-terminal:+cmd-unbalanced-quote+item=CC-737=true creates=0 launched=false" \
@@ -392,6 +395,15 @@ launch_table \
   "an unbalanced double-quoted custom brief is refused at the same boundary|custom-double|-|-|-|rc=1 stderr1~open-terminal:+cmd-unbalanced-quote+item=CC-737=true creates=0 launched=false" \
   "the portable apostrophe spelling stays balanced and reaches the pane shell|custom-portable|-|-|-|rc=0 creates=1 log~new-window=true stderr~open-terminal:+cmd-unbalanced-quote=false" \
   "a broken tmux-only verify setting does not abort a GUI launch, which never reads it|gui|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS=false"
+
+assert_eq "$(grep -cF 'if [[ -z "$CMD_TEMPLATE" && -n "$LAUNCH_PERMISSION_SPELLINGS" ]]' "$SRC_OT")" 1 \
+  'control locates the harness-neutral permission warning'
+mutant permission-warning-claude-only open-terminal \
+  's/^  if \[\[ -z "\$CMD_TEMPLATE"/  if [[ "$LAUNCH_HARNESS" == claude \&\& -z "$CMD_TEMPLATE"/' \
+  'the harness-neutral permission warning'
+launch_table \
+  "control: a claude-only warning misses the codex launch with no permission posture|gui-codex|-|-|-|rc=0 stderr~open-terminal:+permission-prompt=false"
+unmutate
 
 assert_eq "$(grep -Fc 'cmd_has_unbalanced_quote "$cmd" &&' "$SRC_OT")" 1 'control locates the command quote guard'
 mutant quote-guard-removed open-terminal 's/cmd_has_unbalanced_quote "$cmd" &&/false \&\&/' 'the command quote guard'

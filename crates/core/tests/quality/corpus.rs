@@ -95,31 +95,35 @@ fn commit_guards_is_flagged_where_the_switch_stands_as_code() {
     assert_eq!(result.safety.score, 73);
 }
 
-/// Ten lines of this skill's tests spell `--dangerously-skip-permissions`
-/// inside a shell string — the value of a `--launch-flags` argument, or the
-/// command line an assertion expects back. Six are in the open-terminal
-/// fixture and four are in the overseer-watch fixture. Every one of them is
-/// the switch written as code in a file a harness loads, and the rule counts
-/// it there rather than deciding which program the string reaches.
+/// Thirty-five lines of this skill spell `--dangerously-skip-permissions`.
+/// Two are in the launch table's source, six are in the open-terminal fixture,
+/// twenty-three are in the oversee-succeed fixture and four are in the
+/// overseer-watch fixture. Every one of them is the switch written as code in
+/// a file a harness loads, and the rule counts it there rather than deciding
+/// which program the string reaches.
 ///
-/// That is the cost of the reading, pinned to a real tree: ten findings
-/// one severity down for a supporting file. A reading that went quiet on
-/// them would be reading an argument list again, and this is where that
-/// fails.
+/// That is the cost of the reading, pinned to a real tree: two Critical
+/// findings in production and thirty-three High findings in supporting files.
+/// A reading that went quiet on them would be reading an argument list again,
+/// and this is where that fails.
 #[test]
 fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
     let result = shipped("orch");
+    let lane_launch = "skills/orch/scripts/lib/lane-launch.sh";
     let open_terminal = "skills/orch/tests/open-terminal-claude-handoff.sh";
+    let oversee_succeed = "skills/orch/tests/oversee_succeed.sh";
     let overseer_watch = "skills/orch/tests/oversee_watch_overseer.sh";
     assert_eq!(
         found(&result),
         [
+            vec![("safety-bypass", Severity::Critical, lane_launch); 2],
             vec![("safety-bypass", Severity::High, open_terminal); 6],
+            vec![("safety-bypass", Severity::High, oversee_succeed); 23],
             vec![("safety-bypass", Severity::High, overseer_watch); 4],
         ]
         .concat(),
         "{:#?}",
         result.findings
     );
-    assert_eq!(result.safety.score, 76);
+    assert_eq!(result.safety.score, 50);
 }
