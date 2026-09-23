@@ -148,7 +148,8 @@ fn refresh_waits_for_the_download_another_process_is_finishing() {
     let env = kendex_core::env::Env::host_rooted(&home)
         .with_var("KENDEX_GIT_BASE", &format!("file://{}/git", home.display()));
     let key = kendex_core::remote::cache_key(&env, "vanillagreencom/kendex");
-    let guard = kendex_core::remote::store::lock_repo(&env, &key).unwrap();
+    let guard =
+        kendex_core::remote::store::lock_repo(&env, &key, "vanillagreencom/kendex").unwrap();
     let child_home = home.clone();
     let child_project = project.clone();
     let refreshing = std::thread::spawn(move || {
