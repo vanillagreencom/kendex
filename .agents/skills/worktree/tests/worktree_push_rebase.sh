@@ -8,7 +8,8 @@
 # inside one), and the row pins its exit status, its stdout, the tool's own
 # stderr, and what is left: the head, the commits ahead of origin/main, every
 # tracked file with its first line, each remote's branch ref, the upstream
-# the branch tracks, and the push argv when a shim captured it.
+# the branch tracks, the shape and first line of a configured local settings
+# file when the row names one, and the push argv when a shim captured it.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
@@ -66,6 +67,7 @@ ROW_SCRIPT="" # the package copy a row runs instead of the script under test
 ROW_PATH=""   # a PATH prefix holding a row's git shim
 ROW_CWD=""    # the directory a row's command runs from, when not the main checkout
 SEED=""       # the source checkout for a true standalone clone fixture
+LOCAL_LINK="" # the WORKTREE_SYMLINKS entry whose shape and contents a row pins
 
 make_repo() {
   local repo="$1"
@@ -101,6 +103,9 @@ make_pair_with_lock() {
   (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" >/dev/null 2>&1)
 }
 
+# A clone of origin holding no worktrees: its own checkout is both the source
+# and the destination of worktree setup. $1 is the `.env.local` body the row
+# needs, which decides which configured shape acts on that checkout.
 make_standalone_clone() {
   SEED="$ROOT/seed"
   make_repo "$SEED"
@@ -116,11 +121,27 @@ make_standalone_clone() {
   git -C "$MAIN" config user.name Test
   git -C "$MAIN" config commit.gpgsign false
   git -C "$MAIN" switch -q -c "$ISSUE"
-  printf 'WORKTREE_COPIES=".kendex-lock.json local.txt"\n' >"$MAIN/.env.local"
+  printf '%s\n' "$1" >"$MAIN/.env.local"
   printf 'local-only\n' >"$MAIN/local.txt"
-  printf 'local.txt\n' >>"$MAIN/.git/info/exclude"
+  printf 'local-settings\n' >"$MAIN/settings.local"
+  printf 'local.txt\nsettings.local\n' >>"$MAIN/.git/info/exclude"
   WT="$MAIN"
   ROW_CWD="$MAIN"
+}
+
+# A main+origin pair whose main checkout carries an untracked local settings file
+# that WORKTREE_SYMLINKS hands to the worktree. The link `create` laid down is
+# removed, so the worktree enters the row with that entry unrepaired.
+make_pair_with_local_link() {
+  make_repo "$MAIN"
+  printf 'local-settings\n' >"$MAIN/settings.local"
+  printf 'WORKTREE_SYMLINKS="settings.local"\n' >>"$MAIN/.env.local"
+  git init -q --bare "$ROOT/origin.git"
+  git -C "$MAIN" remote add origin "$ROOT/origin.git"
+  git -C "$MAIN" push -q -u origin main
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" >/dev/null 2>&1)
+  rm -f -- "${WT:?}/settings.local"
+  LOCAL_LINK=settings.local
 }
 
 commit_main() {
@@ -258,7 +279,14 @@ step() {
   case "$1" in
     pair) make_pair ;;
     pair-lock) make_pair_with_lock ;;
-    standalone-clone) make_standalone_clone ;;
+    standalone-clone) make_standalone_clone 'WORKTREE_COPIES=".kendex-lock.json local.txt"' ;;
+    # The same clone under the configured shape that destroyed FLT-145's
+    # settings: a symlink entry whose source is its own destination.
+    standalone-clone-link)
+      make_standalone_clone 'WORKTREE_SYMLINKS="settings.local"'
+      LOCAL_LINK=settings.local
+      ;;
+    pair-local-link) make_pair_with_local_link ;;
     # The issue worktree is registered outside the configured trees base:
     # the layout an app that owns worktree creation leaves.
     outside)
@@ -434,17 +462,19 @@ step() {
         exit 2
       }
       ;;
-    unfixed-standalone-copy)
+    # The one same-checkout no-op guards every configured shape, so one mutant
+    # world serves both standalone rows: the copy entry and the symlink entry.
+    unfixed-same-checkout)
       step standalone
       mutant="$ROOT/pkg/worktree/scripts/lib/links.sh"
       [[ "$(grep -cF 'if same_canonical_dir "$PROJECT_ROOT" "$wt"; then' "$mutant")" == 1 ]] || {
-        echo "FIXTURE: the standalone-copy arm was not unique in $mutant" >&2
+        echo "FIXTURE: the same-checkout no-op was not unique in $mutant" >&2
         exit 2
       }
       sed -i.bak 's/if same_canonical_dir "$PROJECT_ROOT" "$wt"; then/if false; then/' "$mutant"
       rm -f "$mutant.bak"
       grep -qF 'if false; then' "$mutant" || {
-        echo "FIXTURE: the standalone-copy edit matched nothing in $mutant" >&2
+        echo "FIXTURE: the same-checkout no-op edit matched nothing in $mutant" >&2
         exit 2
       }
       ;;
@@ -499,6 +529,7 @@ build() {
   MAIN="$ROOT/main"
   WT="$ROOT/trees/$ISSUE"
   BASE="" END="" END1="" END2="" EXTERNAL="" UNMAPPED="" ROW_SCRIPT="" ROW_PATH="" ROW_CWD="" SEED=""
+  LOCAL_LINK=""
   for word in "$@"; do
     step "$word"
   done
@@ -573,6 +604,24 @@ pending_record() {
   message_records <"$path" | alias_text
 }
 
+# The configured local settings entry after the command: `file:<first line>`
+# when the checkout still holds its own regular file, `link:<target>` when
+# setup laid a symlink there, `absent` when nothing is at the path. A
+# same-checkout pass that links the entry onto itself reads as a link whose
+# target is the path itself, with the contents gone.
+local_link_state() {
+  local path=""
+  [[ -n "$LOCAL_LINK" ]] || return 0
+  path="$WT/$LOCAL_LINK"
+  if [[ -L "$path" ]]; then
+    printf ' local=link:%s' "$(readlink "$path" | sed -e "s|$WT|<wt>|" -e "s|$ROOT|<root>|")"
+  elif [[ -f "$path" ]]; then
+    printf ' local=file:%s' "$(sed -n '1p' "$path")"
+  else
+    printf ' local=absent'
+  fi
+}
+
 state() {
   local ahead tree remotes="" name push="-" lock_state="" lock_clean=clean
   ahead="$(git -C "$WT" rev-list --count "$BASE..HEAD" 2>/dev/null || true)"
@@ -588,10 +637,10 @@ state() {
     git -C "$WT" diff --quiet -- .kendex-lock.json || lock_clean=dirty
     lock_state=" lock=$(sed -n '1p' "$WT/.kendex-lock.json"):$lock_clean"
   fi
-  printf 'head=%s ahead=%s tree=%s remote=%s upstream=%s push=%s%s map=%s' \
+  printf 'head=%s ahead=%s tree=%s remote=%s upstream=%s push=%s%s%s map=%s' \
     "$(worktree_head)" "${ahead:--}" "${tree%,}" "${remotes:-,-}" \
     "$(git -C "$WT" config "branch.$ISSUE.remote" 2>/dev/null || printf -- '-')" "$push" "$lock_state" \
-    "$(pending_record)"
+    "$(local_link_state)" "$(pending_record)"
 }
 
 # The command runs from the main checkout (or the row's directory) under the
@@ -630,6 +679,7 @@ err_text() {
     push-failed) printf 'worktree-push-failed: origin/topic' ;;
     not-contained) printf 'worktree-push-remote-uncontained: origin/topic' ;;
     fetch-failed) printf 'worktree-remote-fetch-failed: broken/topic' ;;
+    materialized) printf 'worktree-links-materialized: <wt>' ;;
     copy-failed:*) printf 'worktree-copy-failed: <wt>/%s' "${spec#copy-failed:}" ;;
     index-read-wt) printf 'worktree-index-read-failed: <wt>:.kendex-lock.json' ;;
     index-read-main) printf 'worktree-index-read-failed: <root>/main:.kendex-lock.json' ;;
@@ -671,7 +721,10 @@ a failed worktree index read refuses the copy and preserves the branch lock|pair
 a failed main index read refuses the copy and preserves the branch lock|pair-lock advance fix lock-fix index-unreadable-main|push @wt --set-upstream|1|map2|map:2+index-read-main|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean map=hop:map2
 must-fail: without the checked index read, the failed probe overwrites the branch lock|pair-lock advance fix lock-fix index-unreadable-wt unfixed-index-read|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=base-lock:dirty map=hop:map2
 a true standalone clone ignores its stale committed-lock copy setting and pushes after rebase|standalone-clone clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean map=hop:map2
-must-fail: without the standalone no-op, the same clone copies its local file onto itself|standalone-clone clone-advance fix lock-fix unfixed-standalone-copy|push @wt --set-upstream|1|map2|map:2+copy-failed:local.txt|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean map=hop:map2
+must-fail: without the same-checkout no-op, the same clone copies its local file onto itself|standalone-clone clone-advance fix lock-fix unfixed-same-checkout|push @wt --set-upstream|1|map2|map:2+copy-failed:local.txt|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean map=hop:map2
+a main-checkout push that rebases leaves its configured local settings file a regular file|standalone-clone-link clone-advance fix lock-fix|push @wt --set-upstream|0|map2|materialized+map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=file:local-settings map=hop:map2
+must-fail: without the same-checkout no-op, that push links the settings file onto itself|standalone-clone-link clone-advance fix lock-fix unfixed-same-checkout|push @wt --set-upstream|0|map2|materialized+map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=link:<wt>/settings.local map=hop:map2
+a linked-worktree push relinks its configured local settings file after the rebase|pair-local-link advance fix fix2|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=- local=link:<root>/main/settings.local map=hop:map2
 a setup failure after a successful rebase leaves the map durable and does not push|pair advance fix setup-fails|push @wt --set-upstream|1|map2|map:2+copy-failed:copy-parent/copied.txt|head=rebased ahead=2 tree=copy-parent:blocked,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- map=hop:map2
 must-fail: setup before map persistence leaves the successful rewrite unmapped|pair advance fix setup-fails unfixed-map-order|push @wt --set-upstream|1|-|copy-failed:copy-parent/copied.txt|head=rebased ahead=2 tree=copy-parent:blocked,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- map=end
 --no-rebase pushes the behind branch where it stands|pair advance fix|push @wt --set-upstream --no-rebase|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- map=-

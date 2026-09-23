@@ -20,7 +20,7 @@ The renders under `.agents/`, `.claude/`, `.codex/` and `.pi/` are committed, bu
 
 A linked worktree now carries the committed record of its own branch, and its `.cache` is a link to the main checkout's under the worktree convention this repository ships (`WORKTREE_SYMLINKS`), so the main checkout and every linked worktree write one machine-half file. Each keeps its own row in it.
 
-A standalone clone carries the committed record in its checkout. Worktree setup treats configured copies as a no-op when the checkout is both the source and destination.
+A standalone clone carries the committed record in its checkout. Worktree setup is a no-op when the checkout is both the source and the destination, for every configured shape rather than copies alone: a symlink entry acting on its own source leaves a self-link where a local settings file was.
 
 ## Pattern
 

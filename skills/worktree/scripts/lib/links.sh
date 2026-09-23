@@ -966,6 +966,19 @@ setup_worktree_links() {
   local wt="$1" root_nm_warned=0 copy_tracked=""
   validate_worktree_setup_config || return 1
 
+  # Nothing to provision when the destination IS the source. `push --rebase`
+  # reaches here with the main checkout, which is a registered worktree of
+  # itself and so passes push's own precondition, and a standalone clone with
+  # no worktrees reaches here the same way. Every configured entry would then
+  # act on its own source: a symlink entry renames a link pointing at the file
+  # over that same file, leaving a self-link where the local settings were, and
+  # a copy entry hands `cp` one path twice. Both destroy the data the entry
+  # exists to carry, which is why this is one guard over every shape below
+  # rather than a per-shape arm.
+  if same_canonical_dir "$PROJECT_ROOT" "$wt"; then
+    return 0
+  fi
+
   # Project-configured mkdirs (run first so subsequent symlinks/copies can
   # land inside them if needed). Idempotent; ignores empty entries.
   split_worktree_config_words "${WORKTREE_MKDIRS:-}"
@@ -990,11 +1003,6 @@ setup_worktree_links() {
   split_worktree_config_words "${WORKTREE_COPIES:-}"
   for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
     path="$(normalize_worktree_config_path WORKTREE_COPIES "$path")" || return 1
-    # In a standalone checkout the source and destination are the same tree.
-    # A configured copy has no work to do there.
-    if same_canonical_dir "$PROJECT_ROOT" "$wt"; then
-      continue
-    fi
     if [[ -f "$PROJECT_ROOT/$path" ]]; then
       # An exact entry or tracked descendant makes the configured path Git's
       # in either checkout. The main index check also protects ownership that
