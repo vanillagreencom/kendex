@@ -34,6 +34,8 @@ conflicts=('kendex' 'kendex-git' 'kendex-bin')
 # dependencies the three desktop packages carry belong here.
 depends=('git>=2.41' 'dbus')
 makedepends=('cargo' 'git')
+# makepkg LTO makes ring's C objects fail to link with rust-lld.
+options=('!lto')
 source=('git+https://github.com/vanillagreencom/kendex.git')
 sha256sums=('SKIP')
 

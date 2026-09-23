@@ -43,6 +43,8 @@ depends=(
 # build clones. git is a runtime dependency above, at the version the
 # installed program needs.
 makedepends=('cargo' 'npm')
+# makepkg LTO makes ring's C objects fail to link with rust-lld.
+options=('!lto')
 source=("kendex-$pkgver.tar.gz::https://github.com/vanillagreencom/kendex/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('9f4418337c828e886cf882b48a905bd58c8a0cf3944ec79134d9e3d53fc3e6d7')
 

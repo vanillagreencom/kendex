@@ -42,6 +42,8 @@ depends=(
   'xdg-utils'
 )
 makedepends=('cargo' 'git' 'npm')
+# makepkg LTO makes ring's C objects fail to link with rust-lld.
+options=('!lto')
 source=('git+https://github.com/vanillagreencom/kendex.git')
 sha256sums=('SKIP')
 

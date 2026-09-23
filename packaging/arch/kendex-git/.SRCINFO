@@ -21,6 +21,7 @@ pkgbase = kendex-git
 	conflicts = kendex
 	conflicts = kendex-bin
 	conflicts = kendex-cli-git
+	options = !lto
 	source = git+https://github.com/vanillagreencom/kendex.git
 	sha256sums = SKIP
 
