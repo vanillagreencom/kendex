@@ -27,8 +27,20 @@
 #   list  Print every lane found, measured, with its live claim count and the
 #         age of its usage figure. A lane whose access token has expired is
 #         RENEWED first and then measured like any other, its record marked
-#         `refreshable`; one that cannot be renewed reports `expired` with the
-#         cause. Table by default, --json for the structured record.
+#         `refreshable`; one that cannot be renewed reports the status its
+#         refusal took, with the cause. Table by default, --json for the
+#         structured record.
+#         The STATUS words are `ok`; `rate_limited`, an endpoint that answered
+#         HTTP 429; `unreachable`, one that answered 5xx or that nothing could
+#         be read from at all, or a renewal another tool's credentials lock kept
+#         from being tried; `expired`, a login proven dead; `no_credentials`;
+#         `no_usage_data`, authenticated with no window to measure; `retired`;
+#         and `error`, a step this machine failed on its own, a renewal's
+#         included. Only `ok` is pickable. The split matters because
+#         `expired` is the one word an operator answers by logging in again —
+#         `open-terminal` turns it into exactly that remedy line — so a refusal
+#         the account will survive never takes it, and every refusal an endpoint
+#         answered names its HTTP code in the record's `detail`.
 #         Where ORCH_LANE_HOST names a provider that implements the OPTIONAL
 #         `accounts` verb, its answer is merged in: one further row per account
 #         the PROVIDER holds a credential for, carrying the windows read
@@ -179,6 +191,10 @@
 #                    costs no round trip and meets no hosted row.
 #   --no-cache       Fetch every lane's usage afresh instead of reusing a
 #                    cached figure; the fresh figure still refreshes the cache.
+#                    A RECORDED REFUSAL is not a cached figure and is not
+#                    bypassed: an operator asking for a fresh reading must not
+#                    be the one caller on the host that posts again what the
+#                    endpoint has already refused.
 #   --json           Machine-readable output
 #
 # The lane INVENTORY is always discovered, never hand-maintained: config is an
@@ -232,7 +248,7 @@
 #                      asked to ask the provider now.
 #   ORCH_LANES_CLAUDE_CLIENT_ID  The OAuth client id the renewal posts with.
 #                      Required for it: with this unset every Claude account
-#                      whose access token has expired reads `expired` with the
+#                      whose access token has expired reads `error` with the
 #                      cause `no OAuth client id is configured`, and `pick`
 #                      refuses every one of them. Set it once per host.
 # All read through the kendex settings ladder (process env > .env.local >
@@ -244,7 +260,16 @@
 # ORCH_LANES_USAGE_TTL, so every overseer sharing that directory polls an
 # account at most once per TTL. `usage_age_s` (the AGE column) is how old the
 # figure is. Credentials are still read every run: an expired token is renewed
-# or reports `expired`, whatever the cache holds. A failed fetch is never cached.
+# or reports its refusal, whatever the cache holds.
+#
+# A fetch that could not be RUN is never cached, but one an endpoint REFUSED is:
+# the record then holds a short negative entry in place of a figure — the status
+# the refusal took, its HTTP code, the cause, and the instant the window closes
+# — and while that window is open no caller on the host posts to that endpoint
+# for that lane again. The window is the answer's own Retry-After where it named
+# one in seconds, and USAGE_REFUSAL_WINDOW_S where it did not. Re-posting is
+# what sustains a rate limit, so every watch pass on the host reads the record
+# instead of asking again.
 # The lane host's `accounts` answer shares that cache and TTL, under
 # `host-accounts-<provider path checksum>.json`: one record per provider rather
 # than per account, since one answer covers every account it names. The
@@ -294,6 +319,15 @@
 # the window scoped to it, since the account with weekly room can still have
 # none left for that one model and the launch's first turn is a usage banner.
 #
+# Why the renewal names itself:
+#   platform.claude.com answers HTTP 429 `rate_limit_error` to a token POST
+#   carrying no User-Agent, whatever the rate, and matches on the `claude-cli/`
+#   prefix without parsing the version. Claude Code sends
+#   `claude-cli/<version> (external, cli)`, which is why an interactive launch
+#   renews an account this script could not. The version is read from the
+#   installed `claude` once per measuring shell, with a fallback where PATH
+#   holds none, since the endpoint does not read it.
+#
 # Why the renewal is unconditional:
 #   Refreshing rotates the refresh token in the credentials file, which other
 #   tools on the machine share (a Waybar usage widget doing the same thing is
@@ -307,10 +341,14 @@
 # tokens go to curl over stdin via `-K -`, and the refresh and access tokens
 # reach jq through the environment rather than `--arg`.
 #
-# Testing: ORCH_LANES_FETCH_CMD takes `<harness> <config_dir>` on argv and
-# prints the raw usage JSON; ORCH_LANES_TOKEN_CMD takes the token request body
-# on stdin and prints the token endpoint's JSON response. The network layer is
-# the only impure part; everything else is pure parsing.
+# Testing: ORCH_LANES_FETCH_CMD takes `<harness> <config_dir>` on argv;
+# ORCH_LANES_TOKEN_CMD takes the token request body on stdin and reads the
+# User-Agent the POST would have carried from LANES_USER_AGENT in its
+# environment. Both print what their network call prints: the HTTP status and
+# any Retry-After on the FIRST line, separated by a space, and the response body
+# under it. A command that exits non-zero is the call failing outright, which
+# names no status at all. The network layer is the only impure part; everything
+# else is pure parsing.
 
 set -uo pipefail
 
@@ -344,6 +382,10 @@ message() {
     pick-claims)
       printf 'lanes: pick-claims exit=%s\n' "1"
       printf '%s\n' "in-flight lane claims could not be read; refusing to pick (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
+      ;;
+    refusal-unrecorded)
+      printf 'lanes: refusal-unrecorded dir=%s\n' "$1"
+      printf '%s\n' "an endpoint's refusal could not be recorded, so every caller on this host posts to it again until one can (fix the state directory, or set OVERSEE_WATCH_STATE_DIR)"
       ;;
     pick-lane-claims)
       printf 'lanes: pick-lane-claims claims=%s\n' "null"
@@ -646,6 +688,58 @@ alias_pairs() {
 }
 
 # ── Usage fetch (the only impure layer) ──────────────────────────────────────
+#
+# Both network calls, and both of the commands the suite injects in their place,
+# answer in ONE shape: the HTTP status and any Retry-After on the first line,
+# the response body under it. A caller that read only the body could not tell a
+# rate limit from a dead login, which is the whole defect this shape closes.
+
+# Turn a `curl -D - -w '\n%{http_code}'` capture into that shape. The headers
+# reach stdout ahead of the body, so the body starts after the LAST header
+# block: a 1xx interim response is a block of its own, and a split at the first
+# blank line would hand the real headers back as the body.
+http_answer() { # CAPTURE
+	local capture code
+	capture="$(printf '%s' "$1" | tr -d '\r')"
+	code="${capture##*$'\n'}"
+	printf '%s' "${capture%$'\n'"$code"}" | awk -v code="$code" '
+		BEGIN { inhdr = 1; blank = 0; retry = "" }
+		inhdr && blank && /^HTTP\// { blank = 0; next }
+		inhdr && blank { inhdr = 0; printf "%s %s\n", code, retry }
+		inhdr && /^$/ { blank = 1; next }
+		inhdr && tolower($1) == "retry-after:" { retry = $2; next }
+		inhdr { next }
+		{ print }
+		END { if (inhdr) printf "%s %s\n", code, retry }
+	'
+}
+
+# Read that shape into HTTP_CODE, HTTP_RETRY and HTTP_BODY. A field the answer
+# does not name is empty, and so is a code that is not three digits. HTTP_RETRY
+# is passed on as the answer wrote it: `write_usage_refusal` is the one judge of
+# whether it names seconds to wait out.
+split_http_answer() { # ANSWER
+	local head="${1%%$'\n'*}"
+	HTTP_BODY="${1#*$'\n'}"
+	[[ "$1" == *$'\n'* ]] || HTTP_BODY=""
+	HTTP_CODE="${head%% *}"
+	HTTP_RETRY="${head#* }"
+	[[ "$head" == *' '* ]] || HTTP_RETRY=""
+	[[ "$HTTP_CODE" =~ ^[0-9]{3}$ ]] || HTTP_CODE=""
+}
+
+# What an HTTP refusal of a lane's own request means for the lane, with the
+# caller's own reading of every other code as $2. `expired` is read downstream
+# as a proven-dead login — `open-terminal` turns it into a remedy line telling
+# the operator to log in again on this machine — so a refusal the account will
+# survive must never take it.
+http_refusal_status() { # CODE DEFAULT
+	case "$1" in
+		429) printf 'rate_limited' ;;
+		5??) printf 'unreachable' ;;
+		*) printf '%s' "$2" ;;
+	esac
+}
 
 fetch_usage() {
 	local harness="$1" dir="$2" token="$3" account_id="${4:-}"
@@ -654,25 +748,22 @@ fetch_usage() {
 		return $?
 	fi
 	command -v curl >/dev/null 2>&1 || return 1
-	local resp code
+	local resp
 	if [[ "$harness" == "claude" ]]; then
-		resp=$(curl -s --max-time 10 -w '\n%{http_code}' "$CLAUDE_USAGE_URL" \
+		resp=$(curl -s --max-time 10 -D - -w '\n%{http_code}' "$CLAUDE_USAGE_URL" \
 			-H "anthropic-beta: $CLAUDE_OAUTH_BETA" -K - <<-CURLCFG
 			header = "Authorization: Bearer ${token}"
 		CURLCFG
 		) || return 1
 	else
-		local args=(-s --max-time 10 -w $'\n%{http_code}' "$CODEX_USAGE_URL")
+		local args=(-s --max-time 10 -D - -w $'\n%{http_code}' "$CODEX_USAGE_URL")
 		[[ -n "$account_id" ]] && args+=(-H "chatgpt-account-id: $account_id")
 		resp=$(curl "${args[@]}" -K - <<-CURLCFG
 			header = "Authorization: Bearer ${token}"
 		CURLCFG
 		) || return 1
 	fi
-	code="${resp##*$'\n'}"
-	resp="${resp%$'\n'"$code"}"
-	[[ "$code" == "200" ]] || return 1
-	printf '%s' "$resp"
+	http_answer "$resp"
 }
 
 # ── Parsing ──────────────────────────────────────────────────────────────────
@@ -779,6 +870,18 @@ parse_codex_usage() {
 
 # ── Per-lane measurement ─────────────────────────────────────────────────────
 
+# Report a lane from a refusal the cache holds, which is how a lane inside a
+# refusal window is answered: the recorded status and cause, and the record's
+# own age in place of a usage figure's, so a reader sees how long ago the
+# endpoint refused and that this run posted nothing.
+emit_refusal() { # ALIAS HARNESS DIR PLAN RECORD
+	local status detail age
+	IFS=$'\t' read -r status detail age < <(
+		jq -r '[.refusal.status, .refusal.detail, (.age | tostring)] | @tsv' <<<"$5"
+	)
+	emit_lane "$1" "$2" "$3" "$status" "$detail" "$4" '{}' "$age"
+}
+
 # Emit one lane record. Never fails the whole run for one bad lane: an
 # unreadable or unauthenticated lane is reported with a status and skipped by
 # `pick`, because a fleet launch must still see the lanes that DO work.
@@ -826,24 +929,61 @@ measure_lane() {
 
 	# An expired access token is renewed here, so the lane `pick` prints is one
 	# whose token is live — see the header. A renewal that cannot happen fails
-	# closed as `expired`, naming its cause, and is never measured as `ok`.
+	# closed with the status `refresh_claude_token` judged, naming its cause, and
+	# is never measured as `ok`.
+	local refusal
 	if claude_token_expired "$expires_ms" "$now_s"; then
+		if refusal="$(read_usage_refusal "$harness" "$dir" "$now_s" token)"; then
+			emit_refusal "$alias" "$harness" "$dir" "$plan" "$refusal"
+			return
+		fi
+		# At most one `claude --version` per measuring shell, and none at all on a
+		# run whose lanes all carry live tokens.
+		[[ -n "$CLAUDE_TOKEN_UA" ]] || CLAUDE_TOKEN_UA="$(claude_token_ua)"
 		if ! refresh_out="$(refresh_claude_token "$dir" "$creds")"; then
-			emit_lane "$alias" "$harness" "$dir" "expired" \
-				"access token expired and could not be renewed: $refresh_out" "$plan" '{}'
+			local head code retry
+			head="${refresh_out%%$'\n'*}"
+			read -r status code retry <<<"$head"
+			[[ "$code" != "-" ]] || code=""
+			[[ "$retry" != "-" ]] || retry=""
+			detail="access token expired and could not be renewed: ${refresh_out#*$'\n'}"
+			# Recorded only where the endpoint answered: a refusal this machine
+			# raised on its own posted nothing, so there is nothing to stop a
+			# later caller from posting.
+			[[ -z "$code" ]] ||
+				write_usage_refusal "$harness" "$dir" "$now_s" token "$status" "$code" "$detail" "$retry" || true
+			emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" '{}'
 			return
 		fi
 		token="$refresh_out"
 		refreshed=true
 	fi
 
-	local raw buckets cached age=0
+	local raw buckets cached age=0 answer
 	if cached="$(read_usage_cache "$harness" "$dir" "$now_s")"; then
 		age="$(jq -r '.age' <<<"$cached")"
 		raw="$(jq -c '.usage' <<<"$cached")"
+	elif refusal="$(read_usage_refusal "$harness" "$dir" "$now_s" usage)"; then
+		emit_refusal "$alias" "$harness" "$dir" "$plan" "$refusal"
+		return
 	else
-		if ! raw="$(fetch_usage "$harness" "$dir" "$token" "$account_id")" || [[ -z "$raw" ]]; then
-			emit_lane "$alias" "$harness" "$dir" "unreachable" "usage query failed (offline, rate-limited, or rejected)" "$plan" '{}' null "$refreshed"
+		if ! answer="$(fetch_usage "$harness" "$dir" "$token" "$account_id")"; then
+			emit_lane "$alias" "$harness" "$dir" "unreachable" "usage query could not be run" "$plan" '{}' null "$refreshed"
+			return
+		fi
+		split_http_answer "$answer"
+		# The usage endpoint refusing says nothing about the login, so every code
+		# it answers that is not a rate limit stays `unreachable`.
+		if [[ -n "$HTTP_CODE" && "$HTTP_CODE" != 2?? ]]; then
+			status="$(http_refusal_status "$HTTP_CODE" unreachable)"
+			detail="usage query refused with HTTP $HTTP_CODE"
+			write_usage_refusal "$harness" "$dir" "$now_s" usage "$status" "$HTTP_CODE" "$detail" "$HTTP_RETRY" || true
+			emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" '{}' null "$refreshed"
+			return
+		fi
+		raw="$HTTP_BODY"
+		if [[ -z "$raw" ]]; then
+			emit_lane "$alias" "$harness" "$dir" "unreachable" "usage query answered HTTP $HTTP_CODE with no body" "$plan" '{}' null "$refreshed"
 			return
 		fi
 		if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$raw"; then
@@ -869,6 +1009,14 @@ measure_lane() {
 # so lanes sharing a directory name keep separate records and no name can leave
 # the cache directory. The record still carries harness and config dir, and a
 # record naming another lane (a checksum collision) is a miss.
+#
+# A lane's record holds EITHER a usage figure or a refusal, never both: a lane
+# an endpoint has just refused was not measured, so a figure left beside the
+# refusal would be a number nothing stands behind. The two readers select on the
+# key they need, so a refusal record is a miss for the figure reader and a
+# figure record a miss for the refusal reader, with no shape either can
+# misread. The refusal names which endpoint refused, because the token endpoint
+# and the usage endpoint are different hosts under different limits.
 
 usage_cache_file() {
 	local sum
@@ -908,6 +1056,65 @@ write_usage_cache() {
 	return 1
 }
 
+# Prints `{age, refusal}` for a live recorded refusal of endpoint $4 on the lane
+# of harness $1 and dir $2 at epoch $3; fails on a miss, a refusal of the other
+# endpoint, a malformed record and one stamped in the future.
+#
+# --no-cache does NOT reach this. It declines a cached FIGURE, and an operator
+# asking for a fresh reading must not be the one caller on the host that posts
+# again what the endpoint has already refused.
+read_usage_refusal() {
+	local file
+	file="$(usage_cache_file "$1" "$2")" || return 1
+	[[ -f "$file" ]] || return 1
+	jq -ce --arg h "$1" --arg d "$2" --argjson now "$3" --arg ep "$4" '
+		select(.harness == $h and .config_dir == $d
+		       and (.fetched_at | type) == "number"
+		       and (.refusal | type) == "object"
+		       and .refusal.endpoint == $ep
+		       and (.refusal.expires_at | type) == "number"
+		       and .refusal.expires_at > $now)
+		| ($now - .fetched_at) as $age
+		| select($age >= 0)
+		| {age: $age, refusal: .refusal}' "$file" 2>/dev/null
+}
+
+# Record a refusal the endpoint answered, so every caller sharing this state
+# directory reads it instead of posting the same request again. Its window is
+# the answer's own Retry-After where it named one in seconds, and
+# USAGE_REFUSAL_WINDOW_S where it did not: a Retry-After written as an HTTP date
+# names no seconds this can wait out, and a window nobody can read must not
+# become a window of zero.
+#
+# A record that could not be written leaves every caller on the host posting
+# again each pass, which is what the window exists to stop, so that failure is a
+# `refusal-unrecorded` notice on stderr. The lane is still reported.
+write_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFTER]
+	store_usage_refusal "$@" && return 0
+	message refusal-unrecorded "$USAGE_CACHE_DIR" >&2
+	return 1
+}
+
+store_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFTER]
+	local file tmp window="${8:-}"
+	[[ "$window" =~ ^[0-9]+$ && "$window" -gt 0 ]] || window="$USAGE_REFUSAL_WINDOW_S"
+	file="$(usage_cache_file "$1" "$2")" || return 1
+	mkdir -p -- "$USAGE_CACHE_DIR" 2>/dev/null || return 1
+	tmp="$(mktemp -- "$USAGE_CACHE_DIR/.usage.XXXXXX" 2>/dev/null)" || return 1
+	if jq -nc --arg h "$1" --arg d "$2" --argjson now "$3" --arg ep "$4" \
+		--arg status "$5" --arg code "$6" --arg detail "$7" \
+		--argjson until "$(( $3 + window ))" \
+		'{harness: $h, config_dir: $d, fetched_at: $now,
+		  refusal: {endpoint: $ep, status: $status,
+		            code: (if $code == "" then null else $code end),
+		            detail: $detail, expires_at: $until}}' >"$tmp" \
+		&& mv -f -- "$tmp" "$file"; then
+		return 0
+	fi
+	rm -f -- "${tmp:?}"
+	return 1
+}
+
 # Whether an OAuth expiresAt in milliseconds has passed at epoch seconds $2.
 # A zero or unparseable stamp is NOT expired: the file states no expiry, and
 # refusing on it would disable a lane that works.
@@ -917,17 +1124,55 @@ claude_token_expired() {
 	[[ "$exp" -gt 0 ]] && (( exp / 1000 <= $2 ))
 }
 
+# The User-Agent the renewal posts with. platform.claude.com answers HTTP 429
+# `rate_limit_error` to a token POST carrying none, whatever the rate, which is
+# why an interactive `claude` launch renews an account this script could not.
+# The endpoint matches the `claude-cli/` prefix and does not parse the version,
+# so a host with no `claude` on PATH sends the fallback rather than nothing.
+CLAUDE_CLI_UA_FALLBACK="2.1.278"
+claude_token_ua() {
+	local version=""
+	version="$(claude --version 2>/dev/null)" && version="${version%% *}"
+	[[ "$version" =~ ^[0-9][0-9A-Za-z.+-]*$ ]] || version="$CLAUDE_CLI_UA_FALLBACK"
+	printf 'claude-cli/%s (external, cli)' "$version"
+}
+
+# The failure form every refusal below takes: a first line the caller reads the
+# classification off — `<status> <code> <retry-after>`, `-` for a field the
+# answer named none of — and the cause under it. The classification travels with
+# the cause because this function is the only judge of why a renewal did not
+# happen, and a caller re-deriving it from the sentence would be a second judge.
+token_refusal() { # STATUS CODE RETRY_AFTER CAUSE
+	printf '%s %s %s\n%s' "$1" "${2:--}" "${3:--}" "$4"
+}
+
+# The endpoint's own error object, as a suffix for the cause, so an operator
+# reads what the endpoint said rather than only that it said no. Empty where the
+# answer carries none.
+token_error_suffix() { # BODY
+	local type message
+	type="$(jq -r 'try (.error.type // empty) catch empty' <<<"$1")"
+	message="$(jq -r 'try (.error.message // empty) catch empty' <<<"$1")"
+	[[ -n "$type" || -n "$message" ]] || return 0
+	if [[ -n "$type" && -n "$message" ]]; then printf ' (%s: %s)' "$type" "$message"
+	else printf ' (%s%s)' "$type" "$message"; fi
+}
+
 # Refresh under a lock on the credentials file, re-reading inside the lock:
 # a peer tool may have rotated the refresh token between our first read and
 # this attempt, and refreshing with the stale one fails while the credentials
 # are actually fine. lib/file-lock.sh carries the lock on a host with no
 # flock, where the bare `flock -w 30 9` this used to run resolved to nothing
 # and every refresh on that host returned failure instead of a token.
-# Prints the new access token on stdout and returns 0; on failure prints the
-# cause there instead and returns 1, so this stays the only judge of why a
-# renewal did not happen.
+# Prints the new access token on stdout and returns 0; on failure prints a
+# `token_refusal` there instead and returns 1, so this stays the only judge of
+# why a renewal did not happen and of what the lane's status becomes. Only a
+# login this renewal proved dead takes `expired`: a step this machine failed on
+# its own is `error`, and a POST that never reached the endpoint, or one a held
+# lock kept from being tried, is `unreachable`. None of those carries a code, so
+# none is recorded as a refusal window.
 refresh_claude_token() {
-	local dir="$1" creds="$2" rt client_id body resp new_at lock
+	local dir="$1" creds="$2" rt client_id body resp new_at lock suffix
 	# Composed after the declaration, never inside it: bash expands every word
 	# on a `local` line in the ENCLOSING scope before the builtin creates any
 	# local, so a `lock` built there reads whatever `dir` the CALLER has rather
@@ -937,12 +1182,12 @@ refresh_claude_token() {
 	# there and would answer the root at the next caller to be added.
 	lock="$dir/.lanes-refresh.lock"
 	client_id="${ORCH_LANES_CLAUDE_CLIENT_ID:-}"
-	[[ -n "$client_id" ]] || { printf 'no OAuth client id is configured (ORCH_LANES_CLAUDE_CLIENT_ID)'; return 1; }
-	exec 9>"$lock" || { printf 'the lock file %s could not be opened' "$lock"; return 1; }
+	[[ -n "$client_id" ]] || { token_refusal error '' '' 'no OAuth client id is configured (ORCH_LANES_CLAUDE_CLIENT_ID)'; return 1; }
+	exec 9>"$lock" || { token_refusal error '' '' "the lock file $lock could not be opened"; return 1; }
 	# Every caller runs this function in a command substitution, so the whole
 	# body is a subshell and the EXIT trap orch_take_lock arms releases a mkdir
 	# mutex on every path out — including this one.
-	orch_take_lock 9 "$lock" 30 || { printf 'another tool holds the credentials lock %s' "$lock"; exec 9>&-; return 1; }
+	orch_take_lock 9 "$lock" 30 || { token_refusal unreachable '' '' "another tool holds the credentials lock $lock"; exec 9>&-; return 1; }
 	# The expiry was decided before this lock was taken. A peer that renewed
 	# while this call waited has already written a live token, and posting
 	# anyway would rotate the peer's fresh refresh token away and leave that
@@ -953,23 +1198,38 @@ refresh_claude_token() {
 		if [[ -n "$fresh_at" ]]; then exec 9>&-; printf '%s' "$fresh_at"; return 0; fi
 	fi
 	rt=$(jq -r 'try (.claudeAiOauth.refreshToken // empty) catch empty' "$creds")
-	[[ -n "$rt" ]] || { printf 'there is no refresh token in %s to renew with' "$creds"; exec 9>&-; return 1; }
+	[[ -n "$rt" ]] || { token_refusal expired '' '' "there is no refresh token in $creds to renew with"; exec 9>&-; return 1; }
 	# Secrets travel in the environment, never in an argument vector: on Linux
 	# /proc/<pid>/cmdline is world-readable and /proc/<pid>/environ is not, so a
 	# `jq --arg rt "$rt"` hands every local user a refresh token that renews
 	# indefinitely. The client id is not a secret and stays on argv.
 	body=$(LANES_RT="$rt" jq -nc --arg ci "$client_id" \
 		'{grant_type:"refresh_token", client_id:$ci, refresh_token:env.LANES_RT}') \
-		|| { printf 'the token request body could not be built'; exec 9>&-; return 1; }
+		|| { token_refusal error '' '' 'the token request body could not be built'; exec 9>&-; return 1; }
+	# The User-Agent reaches the injected command through its ENVIRONMENT, never
+	# argv, which is where the real POST carries it too: a stub asserting the
+	# header asserts what curl would send.
 	if [[ -n "${ORCH_LANES_TOKEN_CMD:-}" ]]; then
-		resp=$("$ORCH_LANES_TOKEN_CMD" <<<"$body")
+		resp=$(LANES_USER_AGENT="$CLAUDE_TOKEN_UA" "$ORCH_LANES_TOKEN_CMD" <<<"$body")
 	else
 		resp=$(curl -s --max-time 25 -X POST "$CLAUDE_TOKEN_URL" \
+			-A "$CLAUDE_TOKEN_UA" \
 			-H "Content-Type: application/json" -H "anthropic-beta: $CLAUDE_OAUTH_BETA" \
-			--data-binary @- <<<"$body")
-	fi || { printf 'the token endpoint could not be reached'; exec 9>&-; return 1; }
-	new_at=$(jq -r 'try (.access_token // empty) catch empty' <<<"$resp")
-	[[ -n "$new_at" ]] || { printf 'the token endpoint returned no access token'; exec 9>&-; return 1; }
+			-D - -w '\n%{http_code}' --data-binary @- <<<"$body") \
+			&& resp="$(http_answer "$resp")"
+	fi || { token_refusal unreachable '' '' 'the token endpoint could not be reached'; exec 9>&-; return 1; }
+	split_http_answer "$resp"
+	suffix="$(token_error_suffix "$HTTP_BODY")"
+	# A status the endpoint refused with IS the failure, so it is what the cause
+	# names. `rate_limited` and `unreachable` leave the login itself untested;
+	# only a code that is neither still reads as a proven-dead one.
+	if [[ -n "$HTTP_CODE" && "$HTTP_CODE" != 2?? ]]; then
+		token_refusal "$(http_refusal_status "$HTTP_CODE" expired)" "$HTTP_CODE" "$HTTP_RETRY" \
+			"the token endpoint refused the renewal with HTTP $HTTP_CODE$suffix"
+		exec 9>&-; return 1
+	fi
+	new_at=$(jq -r 'try (.access_token // empty) catch empty' <<<"$HTTP_BODY")
+	[[ -n "$new_at" ]] || { token_refusal expired "$HTTP_CODE" "$HTTP_RETRY" "the token endpoint returned no access token$suffix"; exec 9>&-; return 1; }
 	local tmp new_rt expires_in new_exp
 	# The new expiry is written with the new token or nothing is: a credentials
 	# file carrying a live token under a past expiresAt reads as expired on
@@ -979,11 +1239,11 @@ refresh_claude_token() {
 	# the lane returns renewed and the next run reads it expired and renews
 	# again. That is the rotation storm this renewal exists to close, reached
 	# through the check that closes it.
-	expires_in=$(jq -r 'try (.expires_in // empty) catch empty' <<<"$resp")
-	[[ "$expires_in" =~ ^[0-9]+$ && "$expires_in" -gt 0 ]] || { printf 'the token endpoint returned no usable expires_in'; exec 9>&-; return 1; }
+	expires_in=$(jq -r 'try (.expires_in // empty) catch empty' <<<"$HTTP_BODY")
+	[[ "$expires_in" =~ ^[0-9]+$ && "$expires_in" -gt 0 ]] || { token_refusal expired "$HTTP_CODE" "$HTTP_RETRY" 'the token endpoint returned no usable expires_in'; exec 9>&-; return 1; }
 	new_exp=$(( ($(date +%s) + expires_in) * 1000 ))
-	new_rt=$(jq -r 'try (.refresh_token // empty) catch empty' <<<"$resp")
-	tmp="$(mktemp "$dir/.credentials.XXXXXX")" || { printf 'no temporary file could be created in %s' "$dir"; exec 9>&-; return 1; }
+	new_rt=$(jq -r 'try (.refresh_token // empty) catch empty' <<<"$HTTP_BODY")
+	tmp="$(mktemp "$dir/.credentials.XXXXXX")" || { token_refusal error '' '' "no temporary file could be created in $dir"; exec 9>&-; return 1; }
 	# Between here and the rename this file holds a live rotated refresh token.
 	# An interrupt that left it in the config directory would park that token
 	# where a backup or a dotfile sync carries it off the machine. This replaces
@@ -996,7 +1256,7 @@ refresh_claude_token() {
 		 | .claudeAiOauth.refreshToken = env.LANES_RT
 		 | .claudeAiOauth.expiresAt = $exp' \
 		"$creds" >"$tmp" && mv "$tmp" "$creds" \
-		|| { rm -f -- "${tmp:?}"; printf 'the renewed credentials could not be written to %s' "$creds"; exec 9>&-; return 1; }
+		|| { rm -f -- "${tmp:?}"; token_refusal error '' '' "the renewed credentials could not be written to $creds"; exec 9>&-; return 1; }
 	# Back to the lock's own handlers, never to the default disposition: the
 	# mutex is still held over the two builtins below, and `trap - INT TERM`
 	# would leave a signal there killing this shell with no trap at all, the
@@ -1682,6 +1942,14 @@ CODEX_USAGE_URL="${ORCH_LANES_CODEX_USAGE_URL:-https://chatgpt.com/backend-api/w
 SESSION_WINDOW_S=18000
 
 USAGE_TTL="${ORCH_LANES_USAGE_TTL:-60}"
+# How long a refused endpoint is left alone when its answer named no
+# Retry-After: long enough that a fleet measuring every thirty seconds stops
+# feeding the limit it hit, short enough that a lane comes back inside one
+# operator's attention. An answer that DOES name a Retry-After is waited out for
+# exactly that, since the endpoint is the one that knows.
+USAGE_REFUSAL_WINDOW_S=300
+# Built at most once per measuring shell, by the first lane that needs renewing.
+CLAUDE_TOKEN_UA=""
 # Seconds the provider's `accounts` verb may take. It can cross a network, and
 # this listing runs on every overseer cycle, so an unbounded call makes the fleet
 # inventory wait on one host. 0 asks for no bound.

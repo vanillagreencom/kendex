@@ -213,6 +213,7 @@ n=$((n + 1)); printf '%s' "$n" > "$FLAKY_COUNT"
 [[ "$n" -le "${FLAKY_OK:-3}" ]] || exit 1
 f="$FIXTURE_DIR/$(basename "$2").json"
 [[ -f "$f" ]] || exit 1
+printf '200 \n'
 cat "$f"
 STUB
 chmod +x "$TMP_ROOT/fetch-flaky"
@@ -1032,24 +1033,26 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=
 # flag: the answer comes from `lanes host-accounts`, the one reader of that verb,
 # and only `held` skips the usage gate.
 #
-# xclaude carries an expired access token and no OAuth client id is configured
-# for it, so `lanes` reports it `expired` and measures no window. Each row below
-# differs from its neighbour in one thing: what the provider answers, and whether
-# the launch is a relaunch.
-make_lane "$H" xclaude -3600
+# xclaude carries an expired access token and no refresh token to renew it with,
+# so `lanes` reports it `expired`, the login proven dead, and measures no window.
+# A client id is configured for every row on it: without one the renewal fails on
+# this machine's own setting, which reads `error` and proves nothing about the
+# login. Each row below differs from its neighbour in one thing: what the
+# provider answers, and whether the launch is a relaunch.
+make_dead_lane "$H" xclaude
 printf 'account=%s\tharness=claude\n' "$H/.xclaude" > "$TMP_ROOT/hosted-accounts.tsv"
 HOSTED_ACCOUNT="LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts.tsv"
-run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=;$HOSTED_ACCOUNT;$CHOICE_CMD" --host "$HOST_STUB" --harness claude \
+run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;$HOSTED_ACCOUNT;$CHOICE_CMD" --host "$HOST_STUB" --harness claude \
   --lane "$H/.xclaude" --repo o/r CC-77
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=lane=$H/.xclaude,host=$HOST_STUB unreadable=none")" \
   "rc=1 launched=nolog credentialdead=lane=$H/.xclaude,host=$HOST_STUB unreadable=none" \
   "a fresh hosted launch on an account this machine cannot renew is refused as host-credential-dead"
-run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=;$HOSTED_ACCOUNT;flags=--model fable --effort high" --host "$HOST_STUB" --harness claude \
+run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;$HOSTED_ACCOUNT;flags=--model fable --effort high" --host "$HOST_STUB" --harness claude \
   --lane "$H/.xclaude" --repo o/r --relaunch CC-78
 assert_eq "$(observe "rc=0 launched=1 credentialdead=none unreadable=none relaunchgate=1")" \
   "rc=0 launched=1 credentialdead=none unreadable=none relaunchgate=1" \
   "a hosted relaunch on that same dead local copy proceeds, and says which credential runs it"
-run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=;$CHOICE_CMD" --host "$HOST_STUB" --harness claude \
+run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;$CHOICE_CMD" --host "$HOST_STUB" --harness claude \
   --lane "$H/.xclaude" --repo o/r CC-79
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows")" \
   "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows" \
@@ -1060,7 +1063,7 @@ assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H
 # relaunch is judged on the local reading it runs on. Silent: the absent verb is
 # no news.
 RELAUNCH_FLAGS='flags=--model fable --effort high'
-run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=;LANE_HOST_STUB_NO_ACCOUNTS=1;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
+run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_NO_ACCOUNTS=1;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
   --harness claude --lane "$H/.xclaude" --repo o/r --relaunch CC-100
 assert_eq "$(observe "rc=1 launched=nolog relaunchgate=0 unanswered=0 credentialdead=none unreadable=lane=$H/.xclaude,model=fable,step=windows")" \
   "rc=1 launched=nolog relaunchgate=0 unanswered=0 credentialdead=none unreadable=lane=$H/.xclaude,model=fable,step=windows" \
@@ -1086,7 +1089,7 @@ assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H
 # of this harness is an answer that does not name this one, so the exact
 # comparison is what stands between a held account and a neighbour's.
 printf 'account=%s\tharness=claude\n' "$H/.eclaude" > "$TMP_ROOT/hosted-accounts-other.tsv"
-run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-other.tsv;$CHOICE_CMD" \
+run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-other.tsv;$CHOICE_CMD" \
   --host "$HOST_STUB" --harness claude --lane "$H/.xclaude" --repo o/r CC-111
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows")" \
   "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows" \
@@ -1111,7 +1114,7 @@ assert_eq "$(observe "rc=1 launched=nolog creates=nolog relaunchgate=0 walled=la
 # A verb that exists and fails is the other case: the reader prints the
 # provider's own bytes under its keyed line, this launcher adds one of its own,
 # and the gate still holds, because no answer establishes nothing.
-run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=;LANE_HOST_STUB_ACCOUNTS_STATUS=7;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
+run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_ACCOUNTS_STATUS=7;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
   --harness claude --lane "$H/.xclaude" --repo o/r --relaunch CC-101
 assert_eq "$(observe "rc=1 launched=nolog relaunchgate=0 unanswered=1 unreadable=lane=$H/.xclaude,model=fable,step=windows") provider=$(said 'lane-host-fixture: accounts-failed') reader=$(grep -c "^lanes: host-accounts-unreadable host=$HOST_STUB exit=7\$" <<<"$OUT" || true)" \
   "rc=1 launched=nolog relaunchgate=0 unanswered=1 unreadable=lane=$H/.xclaude,model=fable,step=windows provider=1 reader=1" \
@@ -1121,7 +1124,7 @@ assert_eq "$(observe "rc=1 launched=nolog relaunchgate=0 unanswered=1 unreadable
 # here either, so the refusal is the unread window and not a login remedy the
 # owner cannot act on.
 printf 'account=%s\tharness=claude\tweekly-pct=999\n' "$H/.xclaude" > "$TMP_ROOT/hosted-accounts-bad.tsv"
-run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-bad.tsv;$CHOICE_CMD" \
+run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-bad.tsv;$CHOICE_CMD" \
   --host "$HOST_STUB" --harness claude --lane "$H/.xclaude" --repo o/r CC-102
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows") dropped=$(grep -c "^lanes: host-account-invalid account=$H/.xclaude field=weekly-pct\$" <<<"$OUT" || true)" \
   "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows dropped=1" \
@@ -1129,7 +1132,7 @@ assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H
 # The harness is part of the match, and the reader makes it: a row naming this
 # account under the other harness is not this launch's account.
 printf 'account=%s\tharness=codex\n' "$H/.xclaude" > "$TMP_ROOT/hosted-accounts-codex.tsv"
-run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-codex.tsv;$CHOICE_CMD" \
+run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-codex.tsv;$CHOICE_CMD" \
   --host "$HOST_STUB" --harness claude --lane "$H/.xclaude" --repo o/r CC-103
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows")" \
   "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows" \
@@ -1904,7 +1907,7 @@ OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
 # on that world's expired xclaude lane and the same absent-verb provider.
 mutant_repo ctl-relaunch-skip scripts/open-terminal '&& "\$HOST_ACCOUNT" == held \]\]' ']]'
 OPEN_TERMINAL="$TMP_ROOT/ctl-relaunch-skip/scripts/open-terminal"
-run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=;LANE_HOST_STUB_NO_ACCOUNTS=1;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
+run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_NO_ACCOUNTS=1;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
   --harness claude --lane "$H/.xclaude" --repo o/r --relaunch CC-106
 assert_eq "$(observe "rc=0 launched=1 relaunchgate=1 unreadable=none")" \
   "rc=0 launched=1 relaunchgate=1 unreadable=none" \

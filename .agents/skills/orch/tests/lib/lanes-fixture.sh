@@ -23,6 +23,19 @@ make_lane() {
     > "$dir/.credentials.json"
 }
 
+# make_dead_lane HOME NAME — a claude lane whose access token expired an hour
+# ago and whose credentials carry no refresh token to renew it with: the login
+# `lanes` proves dead and reports `expired`. That reading needs a client id
+# configured, since the renewal refuses on a missing one first, and it never
+# reaches the token endpoint, so no row on it posts anywhere.
+make_dead_lane() {
+  local dir="$1/.$2"
+  mkdir -p "$dir"
+  jq -n --arg at "token-$2" --argjson exp "$(( ($(date +%s) - 3600) * 1000 ))" \
+    '{claudeAiOauth: {accessToken: $at, expiresAt: $exp, subscriptionType: "max"}}' \
+    > "$dir/.credentials.json"
+}
+
 # make_codex_lane DIR — a codex home with an auth file.
 make_codex_lane() {
   local dir="$1"
@@ -30,15 +43,22 @@ make_codex_lane() {
   jq -n '{tokens: {access_token: "codex-token", account_id: "acct-1"}}' > "$dir/auth.json"
 }
 
-# make_fetcher PATH — the ORCH_LANES_FETCH_CMD stub: prints the fixture file
-# $FIXTURE_DIR/<basename of the config dir>.json, or fails when there is none.
-# With FETCH_LOG set, every call first appends that basename to it.
+# make_fetcher PATH — the ORCH_LANES_FETCH_CMD stub: answers in the shape both
+# network calls of `lanes` answer in, the HTTP status and any Retry-After on the
+# first line and the body under it, with the fixture file
+# $FIXTURE_DIR/<basename of the config dir>.json as that body, or fails when
+# there is none. $FETCH_STATUS names a status other than 200, and
+# $FETCH_RETRY_AFTER a Retry-After beside it, so a case can stage a refusal
+# without a stub of its own. With FETCH_LOG set, every call first appends that
+# basename to it.
 make_fetcher() {
   local path="$1"
   cat > "$path" <<'STUB'
 #!/usr/bin/env bash
 # argv: <harness> <config_dir>
 [[ -z "${FETCH_LOG:-}" ]] || basename "$2" >> "$FETCH_LOG"
+printf '%s %s\n' "${FETCH_STATUS:-200}" "${FETCH_RETRY_AFTER:-}"
+[[ "${FETCH_STATUS:-200}" == 200 ]] || exit 0
 f="$FIXTURE_DIR/$(basename "$2").json"
 [[ -f "$f" ]] || exit 1
 cat "$f"
