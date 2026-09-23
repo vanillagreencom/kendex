@@ -691,7 +691,7 @@ jobs:
       - name: kendex, for the change-class render rows
         if: matrix.shard == 'rest' && runner.os == 'Linux'
         env:
-          KENDEX_VERSION: main-build-98-1-c702f94961a9e8ebf90a5bf766cdd55029d4bb67
+          KENDEX_VERSION: main-build-112-1-9212309b157d743f093cf8a26b8dbd96816dadfd
         run: |
           set -euo pipefail
           curl -fsSL https://kendex.ai/install.sh | sh -s -- --version "$KENDEX_VERSION"
