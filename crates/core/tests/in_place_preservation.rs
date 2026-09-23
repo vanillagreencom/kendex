@@ -9,6 +9,7 @@ use test_util::rooted;
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use kendex_core::apply;
@@ -87,6 +88,25 @@ fn trash_is_empty(env: &Env) -> bool {
     }
 }
 
+#[allow(clippy::unwrap_used)]
+fn assert_unreadable_parent_is_unknown(world: &World, parent: &Path) {
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o000)).unwrap();
+    let checked = drift::report::check(&world.env, std::slice::from_ref(&world.scope));
+    let text = drift::report::render_plain(&checked);
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(
+        checked.status,
+        drift::report::CheckStatus::Unknown,
+        "{text}"
+    );
+    assert!(text.contains("could not check:\n"), "{text}");
+    assert!(
+        !text.contains("harness links that are not rendered"),
+        "{text}"
+    );
+}
+
 /// The source directory is present, but no harness link or install record
 /// exists. This is one package-level missing-render state, not one
 /// unmanaged-copy result per harness.
@@ -128,4 +148,59 @@ fn replace_unmanaged_preserves_an_in_place_source_tree() {
     assert!(trash_is_empty(&world.env));
     assert!(world.project.join(".claude/skills/deploy").is_symlink());
     assert_eq!(check_text(&world), "");
+}
+
+/// A command read from the in-place catalog is still a generated install.
+/// Codex reads commands as skill trees, so apply must write that tree even
+/// though its destination is also the shared skill directory.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_in_place_command_still_renders_its_codex_skill_tree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("app");
+    fs::create_dir_all(project.join(".agents/commands")).unwrap();
+    fs::write(
+        project.join(".agents/commands/ship.md"),
+        "---\ndescription: Ship the branch\n---\n\nRun the release checklist.\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 6\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n\n[commands.ship]\nsource = \"in-place\"\n",
+    )
+    .unwrap();
+    let env = Env::fake(&home, FakeOs::Linux);
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+
+    let report = plan_apply(&env, &scope, &PlanOptions::default()).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
+
+    let rendered = fs::read_to_string(project.join(".agents/skills/ship/SKILL.md")).unwrap();
+    assert!(
+        rendered.contains("Run the release checklist."),
+        "{rendered}"
+    );
+}
+
+/// A source that cannot be inspected is an unknown state. It is not a
+/// clean check and it cannot support a missing-link remedy.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_inaccessible_in_place_source_is_could_not_check() {
+    let world = world();
+    assert_unreadable_parent_is_unknown(&world, &world.project.join(".agents"));
+}
+
+/// An unreadable harness parent cannot prove that its link is absent.
+/// The report must keep the file-status error instead of prescribing refresh.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_inaccessible_harness_parent_is_could_not_check() {
+    let world = world();
+    let parent = world.project.join(".claude");
+    fs::create_dir_all(&parent).unwrap();
+    assert_unreadable_parent_is_unknown(&world, &parent);
 }

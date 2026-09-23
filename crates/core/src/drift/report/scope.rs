@@ -410,18 +410,24 @@ impl ScopeCheck<'_> {
             Ok(crate::lock::LockFile::Absent) => &empty,
             _ => return,
         };
-        for name in crate::engine::unrendered_in_place_skills(self.env, self.scope, manifest, lock)
-        {
-            sections.missing.push(drift(
-                format!(
-                    "{}skill '{}' has harness links that are not rendered",
+        let names = crate::engine::unrendered_in_place_skills(self.env, self.scope, manifest, lock)
+            .unwrap_or_else(|error| {
+                sections.unknown.push(unknown(format!(
+                    "{}in-place skill links: {}",
                     self.prefix,
-                    shown(&name)
-                ),
-                Some(Remedy::Refresh {
-                    global: self.global,
-                }),
-            ));
+                    shown(&error.to_string())
+                )));
+                Vec::new()
+            });
+        for name in names {
+            let name = shown(&name);
+            let text = format!(
+                "{}skill '{name}' has harness links that are not rendered",
+                self.prefix
+            );
+            let global = self.global;
+            let remedy = Remedy::Refresh { global };
+            sections.missing.push(drift(text, Some(remedy)));
         }
         let occupied =
             crate::engine::declared_over_existing_files(self.env, self.scope, manifest, lock);

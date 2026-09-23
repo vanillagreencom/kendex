@@ -18,7 +18,7 @@ use crate::apply::{Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::Result;
 use crate::hash::hash_tree;
-use crate::model::Scope;
+use crate::model::{ItemKind, Scope};
 
 mod link;
 
@@ -40,7 +40,8 @@ pub(super) fn plan_tree(
     else {
         return Ok(Planned::Clean);
     };
-    if item.source_name == crate::manifest::INPLACE_SOURCE_NAME
+    if item.kind == ItemKind::Skill
+        && item.source_name == crate::manifest::INPLACE_SOURCE_NAME
         && canonical == &super::desired::skill_canonical(env, scope, &item.name)
     {
         return plan_in_place_tree(scope, item, replace_unmanaged, owned, written, ops);
@@ -145,9 +146,8 @@ pub(super) fn plan_tree(
     })
 }
 
-/// An in-place tree is the user's source. The engine maintains only the
-/// harness links around it and never compares, rewrites or trashes its
-/// content, including content the catalog reader deliberately excludes.
+/// An in-place skill tree is the user's source. The engine maintains its
+/// harness links without comparing, rewriting or trashing the content.
 fn plan_in_place_tree(
     scope: &Scope,
     item: &Desired,

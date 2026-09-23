@@ -347,32 +347,47 @@ pub(crate) fn unrendered_in_place_skills(
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
-) -> Vec<String> {
-    manifest
+) -> Result<Vec<String>> {
+    let mut missing = Vec::new();
+    for (name, decl) in manifest
         .skills
         .iter()
         .filter(|(_, decl)| decl.enabled && decl.source == crate::manifest::INPLACE_SOURCE_NAME)
-        .filter_map(|(name, decl)| {
-            let harnesses = desired::target_harnesses(decl, manifest, ItemKind::Skill, scope);
-            let unrecorded = harnesses.iter().all(|harness| {
-                !lock
-                    .entries
-                    .contains_key(&crate::lock::entry_key(ItemKind::Skill, name, *harness))
-            });
-            if !unrecorded || !desired::skill_canonical(env, scope, name).is_dir() {
-                return None;
-            }
-            let links: BTreeSet<PathBuf> = harnesses
-                .into_iter()
-                .flat_map(|harness| {
-                    installation_paths(env, scope, manifest, ItemKind::Skill, name, decl, harness)
-                })
-                .collect();
-            (!links.is_empty()
-                && links
-                    .iter()
-                    .all(|path| !path.exists() && !path.is_symlink()))
-            .then(|| name.clone())
-        })
-        .collect()
+    {
+        let harnesses = desired::target_harnesses(decl, manifest, ItemKind::Skill, scope);
+        let unrecorded = harnesses.iter().all(|harness| {
+            !lock
+                .entries
+                .contains_key(&crate::lock::entry_key(ItemKind::Skill, name, *harness))
+        });
+        if !unrecorded {
+            continue;
+        }
+        let links: BTreeSet<PathBuf> = harnesses
+            .into_iter()
+            .flat_map(|harness| {
+                installation_paths(env, scope, manifest, ItemKind::Skill, name, decl, harness)
+            })
+            .collect();
+        if links.is_empty() {
+            continue;
+        }
+        let source = desired::skill_canonical(env, scope, name);
+        let source_is_dir = match std::fs::metadata(&source) {
+            Ok(metadata) => metadata.is_dir(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(crate::error::CoreError::io(&source, error)),
+        };
+        if !source_is_dir {
+            continue;
+        }
+        let mut any_present = false;
+        for path in links {
+            any_present |= crate::fs::exists(&path)?;
+        }
+        if !any_present {
+            missing.push(name.clone());
+        }
+    }
+    Ok(missing)
 }
