@@ -1203,9 +1203,18 @@ assert_eq "$([[ "$(cut -f3 <<<"$RL_RECORD")" -ge "$((RL_BEFORE + 2))" ]] && echo
   "a Retry-After of 0 is floored, so the refusal is not re-posted in the second it arrived"
 # A window wide enough for the rows below to sit inside on any runner. The
 # endpoint named it, and honouring it is the point: a later caller reads the
-# record rather than re-posting what was already refused.
+# record rather than re-posting what was already refused. The floored window
+# above is removed first, so this run posts whatever the clock has done since,
+# and the long deadline, capped at USAGE_BACKOFF_MAX_S, is pinned before any
+# row leans on it.
 printf 'HTTP/1.1 429 Too Many Requests\r\nRetry-After: 600\r\n\r\n' > "$FIXTURE_DIR/.claude.headers"
+rm -f -- "${RL_STATE:?}"/usage/*.backoff.json
+RL_BEFORE="$(date +%s)"
 run_lanes "$RL_ENV;ORCH_LANES_USAGE_TTL=0" $LIST
+RL_UNTIL="$(cat "$RL_STATE"/usage/*.backoff.json 2>/dev/null | jq -r '.until')"
+assert_eq "$(observe 'fetched=') $([[ "$RL_UNTIL" =~ ^[0-9]+$ && "$RL_UNTIL" -ge "$((RL_BEFORE + 300))" ]] && echo long || echo "short:$RL_UNTIL")" \
+  "fetched=claude long" \
+  "with the short window gone the refusal is posted again and its long window recorded, capped at 300 seconds"
 table \
   "a later caller inside that window posts nothing and still reports the figures|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=rate_limited first.headroom_pct=80 fetched=none" \
   "--no-cache inside it posts nothing either: it asks for a fresh figure, not to re-post a refused request|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST --no-cache|first.status=rate_limited first.headroom_pct=80 fetched=none" \
@@ -1222,6 +1231,43 @@ table \
   "control: and the whole host is walled for the length of a transient burst|$RL_ENV;ORCH_LANES_USAGE_TTL=0|pick --harness claude|rc=3"
 LANES="$RL_PATCHED"
 
+# A refusal the endpoint keeps giving never rewrites the record, so the figure
+# it serves only grows older. Past the 5-hour session window it cannot say what
+# that window holds now, and `pick` must not launch on it. Still inside the
+# 600-second window, so no row here posts.
+age_usage_record "$RL_STATE" "$H/.claude" 86400
+table \
+  "a figure a day old is not served under a refusal: the lane is unreachable|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=unreachable first.headroom_pct=null fetched=none" \
+  "and pick refuses the host rather than launching on that figure|$RL_ENV;ORCH_LANES_USAGE_TTL=0|pick --harness claude|rc=3"
+# The control: the age bound dropped, so any figure the host ever read stands
+# in for the refused one.
+lanes_mutant mutant-rate-limited-unbounded lanes \
+  '"\$SESSION_WINDOW_S")" || return 1' '"")" || return 1'
+LANES="$TMP_ROOT/mutant-rate-limited-unbounded/lanes"
+table \
+  "control: unbounded, the day-old figure is served as rate_limited|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=rate_limited first.headroom_pct=80" \
+  "control: and pick launches on it|$RL_ENV;ORCH_LANES_USAGE_TTL=0|pick --harness claude|rc=0"
+LANES="$RL_PATCHED"
+
+echo "=== a refusal's window is counted from when the refusal arrived ==="
+# A request slower than the window it is refused with would otherwise record a
+# deadline already past, and the next caller would post to the same account at
+# once. FETCH_DELAY holds the answer 3 seconds; the floored 2-second window
+# then ends at least 5 seconds after this run started.
+new_home ratelimit-slow
+make_lane "$H" claude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+SLOW_STATE="$TMP_ROOT/ratelimit-slow-state"
+SLOW_ENV="OVERSEE_WATCH_STATE_DIR=$SLOW_STATE;ORCH_LANE_DIRS=$H/.claude"
+table "a first run leaves a figure to serve|$SLOW_ENV|$LIST|first.status=ok fetched=claude"
+printf '%s' "$REFUSAL" > "$FIXTURE_DIR/.claude.headers"
+SLOW_BEFORE="$(date +%s)"
+table "the slow refusal serves the cached figure|$SLOW_ENV;ORCH_LANES_USAGE_TTL=0;FETCH_DELAY=3|$LIST|first.status=rate_limited fetched=claude"
+SLOW_UNTIL="$(cat "$SLOW_STATE"/usage/*.backoff.json 2>/dev/null | jq -r '.until')"
+assert_eq "$([[ "$SLOW_UNTIL" =~ ^[0-9]+$ && "$SLOW_UNTIL" -ge "$((SLOW_BEFORE + 5))" ]] && echo from-answer || echo "from-request:$SLOW_UNTIL")" \
+  "from-answer" \
+  "the recorded deadline is the refusal's arrival plus its window, not the request's start"
+
 echo "=== a 429 with nothing cached retries once before reporting unreachable ==="
 # The one path where `unreachable` stays correct: nothing on this host has ever
 # read this account, so there is no figure to stand in for the refused one.
@@ -1230,16 +1276,22 @@ echo "=== a 429 with nothing cached retries once before reporting unreachable ==
 new_home ratelimit-cold
 make_lane "$H" claude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-COLD_ENV="ORCH_LANE_DIRS=$H/.claude"
+COLD_STATE="$TMP_ROOT/ratelimit-cold-state"
+COLD_ENV="OVERSEE_WATCH_STATE_DIR=$COLD_STATE;ORCH_LANE_DIRS=$H/.claude"
+# The retry is refused with a window of its own. The first refusal's floored
+# window has passed by the time the retry answers, so only a record of the
+# RETRY's refusal keeps the next caller off the endpoint.
 printf '%s' "$REFUSAL" > "$FIXTURE_DIR/.claude.headers.1"
-printf '%s' "$REFUSAL" > "$FIXTURE_DIR/.claude.headers.2"
+printf 'HTTP/1.1 429 Too Many Requests\r\nRetry-After: 600\r\n\r\n' > "$FIXTURE_DIR/.claude.headers.2"
 table \
-  "refused twice with a cold cache, the lane reports unreachable|$COLD_ENV|$LIST|first.status=unreachable first.headroom_pct=null fetched=claude,claude"
+  "refused twice with a cold cache, the lane reports unreachable|$COLD_ENV|$LIST|first.status=unreachable first.headroom_pct=null fetched=claude,claude" \
+  "the caller after it posts nothing and reports unreachable, the retry's refusal being on record|$COLD_ENV|$LIST|first.status=unreachable fetched=none"
 # The must-fail inverse: the SECOND request answers, so a retry that never
-# happened would leave this row on the first refusal.
+# happened would leave this row on the first refusal. A state directory of its
+# own, so the window recorded above does not gate it.
 mv "$FIXTURE_DIR/.claude.headers.2" "$FIXTURE_DIR/.claude.headers.held"
 table \
-  "with the second request answering, that same lane reads ok on what the retry brought back|$COLD_ENV|$LIST|first.status=ok first.headroom_pct=80 fetched=claude,claude"
+  "with the second request answering, that same lane reads ok on what the retry brought back|ORCH_LANE_DIRS=$H/.claude|$LIST|first.status=ok first.headroom_pct=80 fetched=claude,claude"
 
 echo "=== a caller naming its own pass interval is served its last figure ==="
 # A watch whose pass is longer than the TTL finds the figure expired on every
@@ -1265,6 +1317,21 @@ table \
 age_usage_record "$MA_STATE" "$H/.claude" 30
 table \
   "an interval shorter than the TTL never narrows it|$MA_ENV|$LIST --max-age 10|claude.aged=30+ fetched=none"
+# The watch names two of its intervals: its previous reading is one interval
+# of sleep plus a pass's work old, which one interval alone has always expired.
+age_usage_record "$MA_STATE" "$H/.claude" 150
+table \
+  "a reading one 100-second pass and its work old is served under the 200 seconds such a watch names|$MA_ENV|$LIST --max-age 200|claude.aged=30+ fetched=none" \
+  "a TTL of 0 is never widened, so every run still fetches|$MA_ENV;ORCH_LANES_USAGE_TTL=0|$LIST --max-age 300|fetched=claude"
+# The control: the TTL-0 arm dropped, so the caller's interval serves a cached
+# figure to an operator who asked for a fetch on every run.
+lanes_mutant mutant-ttl-zero-widened lanes \
+  'if \[\[ "\$USAGE_TTL" -eq 0 \]\]; then' 'if false; then'
+MA_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-ttl-zero-widened/lanes"
+table \
+  "control: widened, the TTL-0 run is served the cache instead|$MA_ENV;ORCH_LANES_USAGE_TTL=0|$LIST --max-age 300|fetched=none"
+LANES="$MA_PATCHED"
 
 echo "=== one host-wide refresh per window, whatever the number of callers ==="
 # The TTL alone cannot do this: at expiry every caller's fetch lands in the
@@ -1301,12 +1368,83 @@ concurrent_fetches() {
 assert_eq "$(concurrent_fetches "$LANES" "$TMP_ROOT/lockshare-locked")" "claude,eclaude" \
   "two callers arriving together are one refresh of each account, not two"
 # The control: without the lock each caller fetches every account for itself,
-# which is the burst the endpoint refused.
+# which is the burst the endpoint refused. The take is deleted and the release
+# kept, and a release with nothing held is a no-op.
 lanes_mutant mutant-usage-lock lanes \
-  'with_usage_lock measure_configured_lanes' 'measure_configured_lanes'
+  'usage_lock_take$'
 assert_eq "$(concurrent_fetches "$TMP_ROOT/mutant-usage-lock/lanes" "$TMP_ROOT/lockshare-unlocked")" \
   "claude,claude,eclaude,eclaude" \
   "control: unlocked, the same two callers post one request per account each"
+
+echo "=== a lane the cache can answer never waits for the refresh lock ==="
+# `pick --lane` runs under lane-mail-check's 20-second ceiling. A lane whose
+# figure is fresh has nothing to refresh, so another caller holding the lock
+# over a slow fleet refresh must not hold this read too. The holder below takes
+# the lock the way `lanes` does on this host: flock where it is installed, the
+# mkdir mutex where it is not.
+new_home lockwarm
+make_lane "$H" claude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+LW_STATE="$TMP_ROOT/lockwarm-state"
+LW_ENV="OVERSEE_WATCH_STATE_DIR=$LW_STATE;ORCH_LANE_DIRS=$H/.claude"
+LW_LOCK="$LW_STATE/usage/.usage-refresh.lock"
+table "a first run leaves a fresh figure|$LW_ENV|$LIST|fetched=claude"
+# hold_usage_lock LOCK_FILE / release_usage_lock LOCK_FILE: the holder is a
+# background process for flock, whose lock the kernel drops when it is killed.
+LOCK_HOLDER=""
+hold_usage_lock() {
+  local tries=0
+  if command -v flock > /dev/null 2>&1; then
+    ( exec 7> "$1"; flock 7; exec sleep 120 ) &
+    LOCK_HOLDER=$!
+    while flock -n "$1" true 2> /dev/null; do
+      tries=$((tries + 1))
+      [[ "$tries" -lt 100 ]] || { echo "hold_usage_lock: the holder never took $1" >&2; exit 1; }
+      sleep 0.1
+    done
+  else
+    mkdir -- "$1.d"
+  fi
+}
+release_usage_lock() {
+  [[ -z "$LOCK_HOLDER" ]] || { kill "$LOCK_HOLDER" 2> /dev/null; wait "$LOCK_HOLDER" 2> /dev/null; }
+  LOCK_HOLDER=""
+  rmdir -- "$1.d" 2> /dev/null || true
+}
+# waited_s ENV ARGS... — runs `lanes` and prints how many whole seconds it
+# took. It sets OUT, RC and ERR as run_lanes does, so it runs in this shell.
+LW_WAIT=0
+waited_s() {
+  local start env="$1"
+  shift
+  start="$(date +%s)"
+  run_lanes "$env" "$@"
+  LW_WAIT=$(( $(date +%s) - start ))
+}
+hold_usage_lock "$LW_LOCK"
+waited_s "$LW_ENV" pick --lane "$H/.claude" --harness claude --json
+assert_eq "rc=$RC $(observe 'fetched=') prompt=$([[ "$LW_WAIT" -lt 5 ]] && echo yes || echo "no:${LW_WAIT}s")" \
+  "rc=0 fetched=none prompt=yes" \
+  "with the lock held elsewhere, pick --lane answers a warm lane off the cache at once" "$ERR"
+# The control: the cache read before the lock skipped, which is the lock
+# covering the read. The same pick then waits the whole lock wait out.
+lanes_mutant mutant-lock-over-read lanes \
+  'if \[\[ "\$USE_CACHE" == "true" \]\] && cached="\$(read_usage_cache "\$harness" "\$dir" "\$now_s" "\$(usage_serve_max_age)")"; then' 'if false; then'
+LW_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-lock-over-read/lanes"
+waited_s "$LW_ENV" pick --lane "$H/.claude" --harness claude --json
+assert_eq "$([[ "$LW_WAIT" -ge 10 ]] && echo waited || echo "prompt:${LW_WAIT}s")" "waited" \
+  "control: with the lock over the read, the warm lane waits for the holder"
+LANES="$LW_PATCHED"
+# A lock that never comes free is a keyed notice, and the lane is still
+# refreshed and answered. The figure is expired first, so this read needs the
+# lock it cannot have.
+age_usage_record "$LW_STATE" "$H/.claude" 600
+run_lanes "$LW_ENV" pick --lane "$H/.claude" --harness claude --json
+assert_eq "rc=$RC $(observe 'key= fetched=')" \
+  "rc=0 key=usage-lock-timeout,lock-file=$LW_LOCK,wait-s=10 fetched=claude" \
+  "past the lock wait the read names the lock it could not take and still refreshes the lane" "$ERR"
+release_usage_lock "$LW_LOCK"
 
 echo "=== the usage TTL default outlasts the longest watch interval on the host ==="
 # `oversee-watch --interval` defaults to 240. A TTL under that has every pass
