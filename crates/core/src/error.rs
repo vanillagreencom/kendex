@@ -237,6 +237,11 @@ pub enum CoreError {
     CacheBusy { lock: PathBuf },
 
     #[error(
+        "source '{name}' ({repo}) is busy: another kendex process is downloading it; run the command again"
+    )]
+    SourceBusy { name: String, repo: String },
+
+    #[error(
         "{repo} is pinned to {pin}, which is not in the cache and could not be fetched: {reason}"
     )]
     PinUnavailable {

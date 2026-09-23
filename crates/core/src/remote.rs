@@ -69,8 +69,11 @@ pub struct Synced {
     /// One line per source that could not be brought current, or whose
     /// older snapshots could not all be removed.
     pub notes: Vec<String>,
+    /// Source-level failures that make the command fail once per source.
+    pub failures: Vec<String>,
     /// Snapshots the pass removed from the cache, across every source.
     pub removed_snapshots: usize,
+    busy_sources: std::collections::BTreeSet<String>,
 }
 
 impl Synced {
@@ -92,7 +95,20 @@ impl Synced {
 
     pub fn extend(&mut self, other: Synced) {
         self.notes.extend(other.notes);
+        self.failures.extend(other.failures);
+        self.busy_sources.extend(other.busy_sources);
         self.removed_snapshots += other.removed_snapshots;
+    }
+
+    /// Remove package-level pending notes for sources already reported busy.
+    pub fn suppress_busy_pending(&self, notes: &mut Vec<String>) {
+        notes.retain(|note| {
+            !note.contains("not fetched yet")
+                || !self
+                    .busy_sources
+                    .iter()
+                    .any(|source| note.contains(&format!("source '{source}'")))
+        });
     }
 }
 
@@ -113,7 +129,7 @@ pub fn sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
         if let Some(root) = store::published(env, &key, pin) {
             return Ok(Resolution::at(pin, root));
         }
-        let _guard = store::lock_repo(env, &key)?;
+        let _guard = store::lock_repo_notifying(env, &key, || waiting(repo))?;
         let fetched = store::ensure_mirror(&mirror, &url).and_then(|()| store::fetch(&mirror));
         stamp_fetch(env, &key, &mirror, &fetched);
         if !store::has_commit(&mirror, pin) {
@@ -133,7 +149,7 @@ pub fn sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
     }
 
     let selector = rev.unwrap_or("HEAD");
-    let _guard = store::lock_repo(env, &key)?;
+    let _guard = store::lock_repo_notifying(env, &key, || waiting(repo))?;
     let fetched = store::ensure_mirror(&mirror, &url).and_then(|()| store::fetch(&mirror));
     stamp_fetch(env, &key, &mirror, &fetched);
     let warning = match &fetched {
@@ -184,9 +200,10 @@ pub fn cached(env: &Env, repo: &str, rev: Option<&str>) -> Result<Option<Resolut
         // The mirror holds the objects even when the checkout is missing or
         // does not match what was published: rebuilding it is local.
         if store::has_commit(&mirror, &commit) {
-            match store::lock_repo(env, &key) {
-                Ok(_guard) => {
+            match store::lock_repo_notifying(env, &key, || waiting(repo)) {
+                Ok(guard) => {
                     let published = store::publish(env, &key, &mirror, &commit)?;
+                    drop(guard);
                     return Ok(Some(Resolution::published(&commit, published)));
                 }
                 // Someone else is materializing this repository. Reading is
@@ -199,6 +216,14 @@ pub fn cached(env: &Env, repo: &str, rev: Option<&str>) -> Result<Option<Resolut
         }
     }
     Ok(None)
+}
+
+#[allow(
+    clippy::print_stderr,
+    reason = "a source-lock wait must stay off stdout so machine output remains valid"
+)]
+fn waiting(repo: &str) {
+    eprintln!("{repo}: waiting for another kendex process to finish downloading it");
 }
 
 /// Every fetch stamps its mirror, success or failure, so freshness and
@@ -314,6 +339,10 @@ pub fn sync_declared_sources(env: &Env, manifest: &Manifest) -> Synced {
     for (name, decl) in syncable(manifest, |name| in_use.contains(name)) {
         match sync_source(env, name, decl) {
             Ok(one) => synced.extend(one),
+            Err(error @ CoreError::SourceBusy { .. }) => {
+                synced.failures.push(error.to_string());
+                synced.busy_sources.insert(name.to_owned());
+            }
             Err(error) => synced.notes.push(error.to_string()),
         }
     }
@@ -355,6 +384,10 @@ pub fn sync_source(env: &Env, name: &str, decl: &SourceDecl) -> Result<Synced> {
         Ok(resolution) => Ok(Synced::of(repo, resolution)),
         // Already names the repository and the pin the user must fix.
         Err(error @ CoreError::PinUnavailable { .. }) => Err(error),
+        Err(CoreError::CacheBusy { .. }) => Err(CoreError::SourceBusy {
+            name: name.to_owned(),
+            repo: repo.to_owned(),
+        }),
         Err(error) => Err(CoreError::GitFailed {
             command: format!("resolving source '{name}' ({repo})"),
             stderr: error.to_string(),

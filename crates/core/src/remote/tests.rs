@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use super::*;
 use crate::env::FakeOs;
@@ -604,21 +604,70 @@ fn a_checkout_published_under_older_rules_is_rebuilt() {
     );
 }
 
-/// Two resolvers must not materialize one repository at once. A refresh is
-/// told the cache is busy rather than sitting on someone else's download,
-/// while a read — which never has to write anything — answers what it can
-/// without failing the whole scope over a neighbour.
+/// A foreground resolver waits because the lock holder can be the detached
+/// download that kendex itself started during the preceding check. The hold
+/// is longer than the background path waits, so using that path here makes
+/// both calls fail this test.
 #[test]
-fn a_busy_repository_cache_is_reported_not_waited_on() {
+fn foreground_sync_and_cached_wait_for_the_active_download() {
+    let f = fixture();
+    let key = key_for(&f.env);
+    let guard = store::lock_repo(&f.env, &key).unwrap();
+    let env = f.env.clone();
+    let syncing = std::thread::spawn(move || sync(&env, REPO, None));
+    std::thread::sleep(Duration::from_millis(700));
+    drop(guard);
+    let synced = syncing.join().unwrap().unwrap();
+
+    fs::remove_dir_all(&synced.root).unwrap();
+    fs::remove_file(store::receipt_path(&f.env, &key, &synced.commit)).unwrap();
+    let guard = store::lock_repo(&f.env, &key).unwrap();
+    let env = f.env.clone();
+    let reading = std::thread::spawn(move || cached(&env, REPO, None));
+    std::thread::sleep(Duration::from_millis(700));
+    drop(guard);
+    reading.join().unwrap().unwrap().unwrap();
+}
+
+/// A foreground wait still has a bound. The unit-test bound is short so
+/// this reaches the same deadline branch without paying a production wait.
+#[test]
+fn foreground_sync_reports_a_lock_held_past_its_bound() {
     let f = fixture();
     let guard = store::lock_repo(&f.env, &key_for(&f.env)).unwrap();
-    assert!(matches!(
-        sync(&f.env, REPO, None),
-        Err(CoreError::CacheBusy { .. })
-    ));
-    assert!(cached(&f.env, REPO, None).unwrap().is_none());
+    let error = sync(&f.env, REPO, None).unwrap_err();
     drop(guard);
-    sync(&f.env, REPO, None).unwrap();
+    assert!(matches!(error, CoreError::CacheBusy { .. }));
+}
+
+/// Detached refreshes use the short acquisition path, so two session starts
+/// do not queue their downloads behind each other.
+#[test]
+fn background_refresh_still_skips_a_busy_source_without_the_foreground_wait() {
+    let f = fixture();
+    let scope = crate::model::Scope::Global;
+    let mut manifest = crate::manifest::seed(&scope, &[]);
+    manifest.sources.insert(
+        "cat".to_owned(),
+        SourceDecl {
+            repo: Some(REPO.to_owned()),
+            path: None,
+            rev: None,
+            enabled: true,
+        },
+    );
+    manifest
+        .sources
+        .remove(crate::manifest::DEFAULT_SOURCE_NAME);
+    crate::manifest::save(&crate::manifest::manifest_path(&f.env, &scope), &manifest).unwrap();
+    let guard = store::lock_repo(&f.env, &key_for(&f.env)).unwrap();
+
+    let started = Instant::now();
+    let notes = crate::drift::refresh::refresh_stale(&f.env, &[scope]);
+    drop(guard);
+
+    assert!(started.elapsed() < Duration::from_secs(1), "{notes:?}");
+    assert!(notes.iter().any(|note| note == "owner/repo: busy, skipped"));
 }
 
 /// One repository written three ways is one repository: the endings that
@@ -646,8 +695,7 @@ fn the_cache_lock_is_released_with_its_guard() {
 
 /// As with the scope lock: a child forked by any thread holds a copy of
 /// this fd's open file description until it execs, so a release relying on
-/// close alone stays held for the length of that spawn window — here paid
-/// as the full LOCK_WAIT and then a false CacheBusy. The try_clone is that
+/// close alone stays held for the length of that spawn window. The try_clone is that
 /// fork copy at the description level: dropping the guard must release the
 /// lock while the copy still exists.
 #[cfg(unix)]

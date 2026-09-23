@@ -222,9 +222,12 @@ fn prepare_scope(
         plan_apply(env, &scope, &options)
     };
     let planned = match report {
-        Ok(report) => super::update_pi::pending_settle(env, &scope)
-            .map(|pending| (report, pending))
-            .map_err(|error| error.to_string()),
+        Ok(mut report) => {
+            synced.suppress_busy_pending(&mut report.notes);
+            super::update_pi::pending_settle(env, &scope)
+                .map(|pending| (report, pending))
+                .map_err(|error| error.to_string())
+        }
         Err(error) => Err(error.to_string()),
     };
     PreparedScope {
@@ -277,6 +280,7 @@ fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
     let mut failures = Vec::new();
     for scope in prepared {
         print_synced(&scope.synced);
+        failures.extend(scope.synced.failures.iter().cloned());
         match &scope.planned {
             Ok((report, pending)) => {
                 if pending.is_empty() {
@@ -420,6 +424,7 @@ pub fn run(
         // An unreachable catalog is reported, not fatal: what came from
         // every other catalog still refreshes.
         print_synced(&prepared.synced);
+        failures.extend(prepared.synced.failures.iter().cloned());
         let (report, pending) = match prepared.planned {
             Ok(planned) => planned,
             Err(error) => {

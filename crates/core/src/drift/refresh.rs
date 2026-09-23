@@ -14,7 +14,7 @@ use crate::remote::store;
 
 /// The background fetch may take longer than an interactive wait, but it
 /// still has to finish — a hung link is a failure stamp, not a hung job.
-const FETCH_DEADLINE: Duration = Duration::from_secs(60);
+pub(crate) const FETCH_DEADLINE: Duration = Duration::from_secs(60);
 
 /// Fetch stale mirrors for these scopes and re-derive their snapshots.
 /// Returns notes for a caller that has a terminal; the detached job drops
@@ -50,7 +50,7 @@ pub fn refresh_stale(env: &Env, scopes: &[Scope]) -> Vec<String> {
                 continue;
             }
             let mirror = store::mirror_dir(env, &key);
-            let guard = match store::lock_repo(env, &key) {
+            let guard = match store::lock_repo_background(env, &key) {
                 Ok(guard) => guard,
                 Err(CoreError::CacheBusy { .. }) => {
                     notes.push(format!("{repo}: busy, skipped"));

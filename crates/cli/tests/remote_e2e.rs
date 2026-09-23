@@ -9,6 +9,7 @@ mod test_util;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
+use std::time::Duration;
 
 fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
     run(launch(home, cwd, args))
@@ -128,6 +129,49 @@ fn fixture() -> tempfile::TempDir {
     fs::create_dir_all(home.join(".claude")).unwrap();
     fs::create_dir_all(home.join("proj/.claude")).unwrap();
     tmp
+}
+
+/// A check can start the download that a foreground refresh meets. The
+/// refresh waits for that same kendex work, then installs from its result.
+/// Holding the lock past the old short wait is the control for the change.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn refresh_waits_for_the_download_another_process_is_finishing() {
+    let tmp = fixture();
+    let home = test_util::rooted(&tmp);
+    let project = home.join("proj");
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 6\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n",
+    )
+    .unwrap();
+    let env = kendex_core::env::Env::host_rooted(&home)
+        .with_var("KENDEX_GIT_BASE", &format!("file://{}/git", home.display()));
+    let key = kendex_core::remote::cache_key(&env, "vanillagreencom/kendex");
+    let guard = kendex_core::remote::store::lock_repo(&env, &key).unwrap();
+    let child_home = home.clone();
+    let child_project = project.clone();
+    let refreshing = std::thread::spawn(move || {
+        kendex(
+            &child_home,
+            &child_project,
+            &["refresh", "--scope", "project", "--yes", "--leave"],
+        )
+    });
+
+    std::thread::sleep(Duration::from_secs(1));
+    drop(guard);
+    let output = refreshing.join().unwrap();
+    let printed = said(&output);
+
+    assert!(output.status.success(), "{printed}");
+    assert_eq!(
+        printed.matches("another kendex process").count(),
+        1,
+        "{printed}"
+    );
+    assert!(!printed.contains("not fetched yet"), "{printed}");
+    assert!(project.join(".claude/skills/gh/SKILL.md").is_file());
 }
 
 #[test]

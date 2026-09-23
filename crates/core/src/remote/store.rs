@@ -120,25 +120,56 @@ impl CacheGuard {
     }
 }
 
-/// How long a resolver waits for the lock before calling the cache busy.
-/// Long enough to ride out a neighbour holding it for one quick step — a
-/// fetch stamp, publishing an already-materialized checkout — and far too
-/// short to leave anyone waiting on someone else's download.
-const LOCK_WAIT: Duration = Duration::from_millis(500);
+/// A detached refresh waits only for a neighbour's quick local step. A
+/// foreground operation also covers that refresh's fetch deadline.
+const BACKGROUND_LOCK_WAIT: Duration = Duration::from_millis(500);
 const LOCK_POLL: Duration = Duration::from_millis(10);
 
+#[cfg(not(test))]
+const FOREGROUND_LOCK_WAIT: Duration =
+    crate::drift::refresh::FETCH_DEADLINE.saturating_add(BACKGROUND_LOCK_WAIT);
+#[cfg(test)]
+const FOREGROUND_LOCK_WAIT: Duration = Duration::from_secs(1);
+
 pub fn lock_repo(env: &Env, key: &str) -> Result<CacheGuard> {
+    lock_repo_for(env, key, FOREGROUND_LOCK_WAIT, || {})
+}
+
+pub(super) fn lock_repo_notifying(
+    env: &Env,
+    key: &str,
+    on_wait: impl FnOnce(),
+) -> Result<CacheGuard> {
+    lock_repo_for(env, key, FOREGROUND_LOCK_WAIT, on_wait)
+}
+
+pub(crate) fn lock_repo_background(env: &Env, key: &str) -> Result<CacheGuard> {
+    lock_repo_for(env, key, BACKGROUND_LOCK_WAIT, || {})
+}
+
+fn lock_repo_for(
+    env: &Env,
+    key: &str,
+    wait: Duration,
+    on_wait: impl FnOnce(),
+) -> Result<CacheGuard> {
     let dir = env.source_cache_dir().join(LOCKS);
     fs::create_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))?;
     let path = dir.join(format!("{key}.lock"));
-    let deadline = Instant::now() + LOCK_WAIT;
+    let deadline = Instant::now() + wait;
+    let mut on_wait = Some(on_wait);
     loop {
         match crate::fs::LockedFile::try_exclusive(&path) {
             Ok(Some(file)) => return Ok(CacheGuard { _file: file }),
             Ok(None) if Instant::now() >= deadline => {
                 return Err(CoreError::CacheBusy { lock: path });
             }
-            Ok(None) => std::thread::sleep(LOCK_POLL),
+            Ok(None) => {
+                if let Some(on_wait) = on_wait.take() {
+                    on_wait();
+                }
+                std::thread::sleep(LOCK_POLL);
+            }
             // A filesystem that cannot lock at all is its own failure;
             // waiting out the deadline would misname it "busy".
             Err(error) => return Err(CoreError::io(&path, error)),
