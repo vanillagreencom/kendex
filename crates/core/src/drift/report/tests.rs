@@ -396,11 +396,9 @@ fn snapshot_age_is_rendered() {
     assert_eq!(report.snapshot_age_secs.map(|age| age / 3600), Some(3));
     let text = render_plain(&report);
     assert!(text.contains("(package evaluation: 3h ago)"));
-    assert!(
-        text.ends_with(
-            "Next: kendex refresh --yes in this checkout to refresh project packages.\n"
-        )
-    );
+    assert!(text.ends_with(
+        "Next: kendex refresh --scope project --yes in this checkout to refresh project packages.\n"
+    ));
 }
 
 #[test]

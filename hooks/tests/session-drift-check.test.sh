@@ -78,7 +78,7 @@ fake_out() {
   case "$1" in
     -) : ;;
     report) printf '%s' "$REPORT" ;;
-    unevaluated) printf '%s' $'source comparison needed:\n  skill '\''orch'\'': source changed since evaluation; not yet re-evaluated\nNext: kendex refresh --yes in this checkout to refresh project packages.' ;;
+    unevaluated) printf '%s' $'source comparison needed:\n  skill '\''orch'\'': source changed since evaluation; not yet re-evaluated\nNext: kendex refresh --scope project --yes in this checkout to refresh project packages.' ;;
     could-not-check) printf '%s' $'could not check:\n  manifest: expected a table' ;;
     error-inside-a-line) printf '%s' $'could not check:\n  source github.com/x/y unreachable since 2026-08-01: error: cannot lock ref' ;;
     Error-line) printf '%s' 'Error: loading lock file' ;;

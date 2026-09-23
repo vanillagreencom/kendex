@@ -291,7 +291,7 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
             "{command} missing its marker: {text}"
         );
     }
-    assert!(text.ends_with("Next: kendex check --global to list global packages; kendex refresh --global --yes for global packages; kendex refresh --project-path '/w/lane' --yes in that checkout for project packages.\n"));
+    assert!(text.ends_with("Next: kendex check --global to list global packages; kendex refresh --global --yes for global packages; kendex refresh --scope project --project-path '/w/lane' --yes in that checkout for project packages.\n"));
 }
 
 #[test]

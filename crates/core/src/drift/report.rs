@@ -200,6 +200,18 @@ impl Remedy {
     /// [`Fix::Elsewhere`]: the command is the fix, and the marker the
     /// renderer adds says why it will not run where the report was read.
     pub fn render(&self, target: Option<&std::path::Path>) -> Option<Fix> {
+        self.render_with_scope(target, false)
+    }
+
+    fn render_refresh_action(global: bool, target: Option<&std::path::Path>) -> Option<Fix> {
+        Remedy::Refresh { global }.render_with_scope(target, !global)
+    }
+
+    fn render_with_scope(
+        &self,
+        target: Option<&std::path::Path>,
+        explicit_project: bool,
+    ) -> Option<Fix> {
         if let Remedy::Remove { name, .. } | Remedy::Add { name, .. } | Remedy::Fork { name, .. } =
             self
             && !crate::names::plain_argument(name)
@@ -212,10 +224,17 @@ impl Remedy {
         // `quoted` because a project path is whatever the filesystem
         // allowed and this is a command position.
         let named = target.filter(|_| !self.global());
+        let scope = if !self.global() && explicit_project {
+            " --scope project"
+        } else {
+            ""
+        };
         let place = match (self.global(), named.filter(|_| self.takes_project_path())) {
             (true, _) => " --global".to_owned(),
-            (false, Some(path)) => format!(" --project-path {}", command_word(path, false)?),
-            (false, None) => String::new(),
+            (false, Some(path)) => {
+                format!("{scope} --project-path {}", command_word(path, false)?)
+            }
+            (false, None) => scope.to_owned(),
         };
         let command = match self {
             Remedy::Apply { .. } => format!("kendex apply{place}"),

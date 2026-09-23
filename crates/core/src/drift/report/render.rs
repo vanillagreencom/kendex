@@ -34,7 +34,7 @@ fn next_action(report: &CheckReport) -> Option<String> {
         }
     }
     let command =
-        |global| match (Remedy::Refresh { global }).render(report.project_target.as_deref()) {
+        |global| match Remedy::render_refresh_action(global, report.project_target.as_deref()) {
             Some(Fix::Here(command)) => Some(format!("{command} --yes")),
             Some(Fix::Elsewhere(_)) | None => None,
         };
