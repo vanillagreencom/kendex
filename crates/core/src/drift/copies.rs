@@ -29,7 +29,7 @@ use crate::model::Scope;
 
 /// Bumped when the shape changes; an older or newer file reads as absent,
 /// which costs one plan.
-pub const MEMO_SCHEMA: u32 = 2;
+pub const MEMO_SCHEMA: u32 = 3;
 
 /// The memoized verdicts of one scope. Retired by every record write
 /// (`apply::execute`), since what a plan proved it proved against the
