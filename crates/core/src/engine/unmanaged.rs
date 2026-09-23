@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::Lock;
+use crate::lock::{HookRegistration, Lock};
 use crate::manifest::{ItemDecl, Manifest};
 use crate::model::{ItemKind, Scope};
 
@@ -27,6 +27,14 @@ struct Version10Entry {
     harness: crate::model::HarnessId,
     #[serde(default)]
     rendered_hash: Option<String>,
+    #[serde(default)]
+    registration: Option<HookRegistration>,
+}
+
+#[derive(Default)]
+pub(super) struct Version10Proof {
+    pub(super) render_paths: BTreeSet<PathBuf>,
+    pub(super) registrations: BTreeMap<String, HookRegistration>,
 }
 
 /// Render roots whose current bytes the moved version 10 record proves
@@ -34,26 +42,26 @@ struct Version10Entry {
 /// available across partial applies and outside Git because the sidecar is
 /// the proof. It deliberately ignores that record's machine-specific
 /// positions and never loads it as the scope's working lock.
-pub(super) fn version_10_render_paths(
+pub(super) fn version_10_proof(
     scope: &Scope,
     lock: &Lock,
     desired: &[Desired],
-) -> Result<BTreeSet<PathBuf>> {
+) -> Result<Version10Proof> {
     let Scope::Project { root } = scope else {
-        return Ok(BTreeSet::new());
+        return Ok(Version10Proof::default());
     };
     let sidecar = root.join(crate::lock::VERSION_10_LOCK_FILE);
     let Some(text) = crate::fs::read_if_exists(&sidecar)? else {
-        return Ok(BTreeSet::new());
+        return Ok(Version10Proof::default());
     };
     let Ok(record) = serde_json::from_str::<Version10Record>(&text) else {
-        return Ok(BTreeSet::new());
+        return Ok(Version10Proof::default());
     };
     if record.version != 10 {
-        return Ok(BTreeSet::new());
+        return Ok(Version10Proof::default());
     }
 
-    let mut paths = BTreeSet::new();
+    let mut proof = Version10Proof::default();
     for item in desired {
         // A current entry already has the ordinary ownership and edit checks.
         // The sidecar fills only the entries a partial upgrade has not reached.
@@ -80,10 +88,22 @@ pub(super) fn version_10_render_paths(
             continue;
         };
         if crate::hash::RenderedIdentity::from_path(path, false)?.matches(rendered_hash) {
-            paths.insert(path.clone());
+            proof.render_paths.insert(path.clone());
+            if matches!(
+                &item.artifact,
+                Artifact::Registration {
+                    script: Some(_),
+                    ..
+                }
+            ) && let Some(registration) = &entry.registration
+            {
+                proof
+                    .registrations
+                    .insert(item.key.clone(), registration.clone());
+            }
         }
     }
-    Ok(paths)
+    Ok(proof)
 }
 
 /// What this scope holds that nothing here manages: the skills, agents and

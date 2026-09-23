@@ -34,6 +34,25 @@ fn move_old_lock_aside(world: &World) {
     .expect("version 10 lock moves aside for recovery");
 }
 
+fn declare_script_hook(world: &World, event: &str, matcher: &str) {
+    crate::write(&world.catalog.join("kendex.toml"), "[catalog]\n");
+    crate::write(
+        &world.catalog.join("hooks/guard.sh"),
+        &format!(
+            "#!/bin/sh\n# ---\n# name: guard\n# event: {event}\n# matcher: {matcher}\n\
+             # description: guards commands\n# ---\nexit 0\n"
+        ),
+    );
+    crate::write(
+        &world.at("kendex.toml"),
+        &format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\n\
+             method = \"copy\"\n\n[hooks.guard]\nsource = \"cat\"\n",
+            crate::test_util::source_path(&world.catalog)
+        ),
+    );
+}
+
 /// A neighbour in each directory kendex writes into, surviving the whole
 /// install → refresh → remove round trip byte for byte.
 #[test]
@@ -380,4 +399,49 @@ fn version_10_recovery_keeps_a_hand_edited_render_as_a_conflict() {
     let planned = crate::said(&world.try_run(&["apply", "--plan"]));
     assert!(planned.contains("conflict: skill deploy"), "{planned}");
     assert_eq!(read(&rendered), "person's edit\n");
+}
+
+/// A saved script-backed registration names the exact old entry. Recovery
+/// retires it through the normal reconciliation before it writes the new
+/// event and matcher, so the hook cannot run twice.
+#[test]
+fn version_10_hook_recovery_retires_the_saved_registration() {
+    let world = World::new(&["claude"]);
+    declare_script_hook(&world, "PreToolUse", "Bash");
+    world.run(&["apply", "-y"]);
+    plant_version_10_state(&world);
+    move_old_lock_aside(&world);
+    declare_script_hook(&world, "PostToolUse", "Edit");
+
+    world.run(&["apply", "-y"]);
+
+    let settings = read(&world.at(".claude/settings.json"));
+    assert!(!settings.contains("PreToolUse"), "{settings}");
+    assert!(settings.contains("PostToolUse"), "{settings}");
+    assert!(settings.contains("Edit"), "{settings}");
+    assert_eq!(settings.matches("guard.sh").count(), 1, "{settings}");
+}
+
+/// The registration identity is usable only after the script bytes prove
+/// ownership. An edited script blocks both its replacement and any registry
+/// change, leaving the person's old entry intact.
+#[test]
+fn version_10_hook_recovery_keeps_an_edited_script_and_registration() {
+    let world = World::new(&["claude"]);
+    declare_script_hook(&world, "PreToolUse", "Bash");
+    world.run(&["apply", "-y"]);
+    plant_version_10_state(&world);
+    move_old_lock_aside(&world);
+    let script = world.at(".claude/hooks/guard.sh");
+    crate::write(&script, "#!/bin/sh\necho person's edit\n");
+    declare_script_hook(&world, "PostToolUse", "Edit");
+
+    let planned = crate::said(&world.try_run(&["apply", "--plan"]));
+
+    assert!(planned.contains("conflict: hook guard"), "{planned}");
+    assert_eq!(read(&script), "#!/bin/sh\necho person's edit\n");
+    let settings = read(&world.at(".claude/settings.json"));
+    assert!(settings.contains("PreToolUse"), "{settings}");
+    assert!(!settings.contains("PostToolUse"), "{settings}");
+    assert_eq!(settings.matches("guard.sh").count(), 1, "{settings}");
 }
