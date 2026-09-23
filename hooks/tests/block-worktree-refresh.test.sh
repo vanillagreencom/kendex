@@ -72,6 +72,25 @@ run_in() { # dir command -> rc, stderr in ERR_FILE; the payload names the cwd
   set -e
 }
 
+run_in_tool_dir() { # field dir command -> rc; payload cwd stays at the worktree
+  set +e
+  case "$1" in
+    workdir)
+      jq -nc --arg c "$3" --arg d "$2" --arg s "$WT" \
+        '{tool_name: "Bash", cwd: $s, tool_input: {command: $c, workdir: $d}}' \
+        | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+      ;;
+    cwd)
+      jq -nc --arg c "$3" --arg d "$2" --arg s "$WT" \
+        '{tool_name: "Bash", cwd: $s, tool_input: {command: $c, cwd: $d}}' \
+        | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+      ;;
+    *) printf 'tool directory: unknown field: %s\n' "$1" >&2; exit 1 ;;
+  esac
+  rc=$?
+  set -e
+}
+
 run_from() { # dir command -> rc; no cwd in the payload, the hook runs in dir
   set +e
   (cd "$1" && json_for "$2" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE")
@@ -158,6 +177,8 @@ directory_table() {
     esac
     case "$mode" in
       payload) run_in "$dir" "$command" ;;
+      tool-workdir) run_in_tool_dir workdir "$dir" "$command" ;;
+      tool-cwd) run_in_tool_dir cwd "$dir" "$command" ;;
       pwd) run_from "$dir" "$command" ;;
       *) printf 'directory table: unknown cwd mode: %s\n' "$mode" >&2; exit 1 ;;
     esac
@@ -232,6 +253,8 @@ a commented-out write is not a write|0|-|# kendex refresh
 updates --apply delegates to refresh and is refused|2|block-worktree-refresh: refused=updates|kendex updates --apply
 updates without --apply is a read|0|-|kendex updates
 a global updates --apply passes|0|-|kendex updates --apply -g
+help after a write verb is a read|0|-|kendex refresh --help
+plan after a write verb is a read|0|-|kendex apply --plan
 kendex verify from the worktree passes|0|-|kendex verify
 kendex check from the worktree passes|0|-|kendex check
 kendex list from the worktree passes|0|-|kendex list
@@ -261,7 +284,6 @@ a substitution inside a double-quoted argument runs where it stands|2|block-work
 a substitution in a heredoc body the shell expands runs too|2|block-worktree-refresh: refused=refresh|cat \0074\0074EOF\n\0044(kendex refresh)\nEOF
 a quoted delimiter stops the expansion, so the same body is data|0|-|cat \0074\0074'EOF'\n\0044(kendex refresh)\nEOF
 a hash after a backtick begins a comment, so the marker behind it arms nothing|2|block-worktree-refresh: refused=refresh|echo hi \0140# <<EOF\nkendex refresh\nEOF\n\0140
-a help read spelling the verb is refused; kendex --help is the read that passes|2|block-worktree-refresh: refused=refresh|kendex refresh --help
 the bare source shorthand for add is not read: it is every kendex word|0|-|kendex vanillagreencom/kendex
 the named target on refresh passes: the write lands where the command says|0|-|kendex refresh --project-path /elsewhere
 the named target on apply passes, spelled with an equals sign|0|-|kendex apply --project-path=/elsewhere
@@ -283,6 +305,8 @@ a named target after a cd passes: the command names the directory the write land
 a pushd in an earlier segment is a move too|payload|outside|2|block-worktree-refresh: moved=apply|pushd $WT; kendex apply
 a global write after a cd passes: no directory is written|payload|main|0|-|cd $WT && kendex refresh -g
 a cd after the verb does not move the write|payload|main|0|-|kendex refresh && cd $WT
+Codex tool_input.workdir takes precedence over the session cwd|tool-workdir|main|0|-|kendex refresh
+A tool_input.cwd takes precedence over the session cwd|tool-cwd|main|0|-|kendex refresh
 without a cwd in the payload the hook judges the directory it runs in|pwd|worktree|2|block-worktree-refresh: refused=refresh|kendex refresh
 the same write from the main checkout passes|payload|main|0|-|kendex refresh
 outside a repository there is no worktree to protect|payload|outside|0|-|kendex refresh
