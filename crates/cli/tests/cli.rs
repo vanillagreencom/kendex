@@ -164,7 +164,7 @@ fn check_reports_an_unevaluated_package_as_drift_not_a_failure() {
     assert_eq!(quiet.status.code(), Some(1), "{quiet:?}");
     assert_eq!(
         String::from_utf8_lossy(&quiet.stdout),
-        "not yet evaluated:\n  packages not yet evaluated against their sources\n"
+        "source comparison needed:\n  packages have not been compared with their sources — fix: kendex updates\n"
     );
     assert_eq!(String::from_utf8_lossy(&quiet.stderr).trim(), "");
 
@@ -173,7 +173,7 @@ fn check_reports_an_unevaluated_package_as_drift_not_a_failure() {
     let parsed: serde_json::Value =
         serde_json::from_slice(&json.stdout).expect("check --json is valid JSON");
     assert_eq!(parsed["status"], "drift");
-    assert_eq!(parsed["sections"][0]["title"], "not yet evaluated");
+    assert_eq!(parsed["sections"][0]["title"], "source comparison needed");
     assert_eq!(parsed["sections"][0]["lines"][0]["class"], "unevaluated");
 }
 
@@ -555,6 +555,30 @@ fn the_read_only_verbs_answer_in_a_checkout_seeded_with_another_checkouts_lock()
         Some(0),
         "check reads the same record and reaches the same verdict: {printed}"
     );
+
+    // The branch carries its own manifest. A package left only in the
+    // copied record is cleanup for this checkout, never a missing package
+    // selected by the main checkout's manifest.
+    fs::write(
+        worktree.join("kendex.toml"),
+        format!(
+            "schema = 6\n\n[sources.own]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+            source_path(Path::new("."))
+        ),
+    )
+    .unwrap();
+    let checked = kendex(home, &worktree, &["check", "--quiet"]);
+    let printed = String::from_utf8_lossy(&checked.stdout).into_owned();
+    assert_eq!(checked.status.code(), Some(1), "{printed}");
+    assert_eq!(
+        printed
+            .matches("kendex.toml does not list recorded skill 'deploy'")
+            .count(),
+        1,
+        "one record-cleanup row for the worktree manifest: {printed}"
+    );
+    assert!(printed.contains("fix: kendex apply"), "{printed}");
+    assert!(!printed.contains("has no files on disk"), "{printed}");
 }
 
 /// A plan that cannot write says so. An install kendex refuses to touch

@@ -93,6 +93,10 @@ pub enum Remedy {
     Refresh {
         global: bool,
     },
+    /// Compare installed packages with the current source state.
+    Updates {
+        global: bool,
+    },
     Remove {
         name: String,
         global: bool,
@@ -149,6 +153,7 @@ impl Remedy {
             | Remedy::ReplaceUnmanaged { global }
             | Remedy::UpdatePi { global }
             | Remedy::Refresh { global }
+            | Remedy::Updates { global }
             | Remedy::Plan { global }
             | Remedy::Remove { global, .. }
             | Remedy::Add { global, .. }
@@ -166,6 +171,7 @@ impl Remedy {
             Remedy::Apply { .. }
                 | Remedy::ReplaceUnmanaged { .. }
                 | Remedy::Refresh { .. }
+                | Remedy::Updates { .. }
                 | Remedy::Plan { .. }
         )
     }
@@ -213,6 +219,7 @@ impl Remedy {
                 }
             ),
             Remedy::Refresh { .. } => format!("kendex refresh{place}"),
+            Remedy::Updates { .. } => format!("kendex updates{place}"),
             Remedy::Remove { name, .. } => format!("kendex remove {name}{place}"),
             Remedy::Add { kind, name, .. } => {
                 format!("kendex add --{} {name}{place}", kind.name())
@@ -317,6 +324,7 @@ struct Sections {
     removed: Vec<Line>,
     mixed: Vec<Line>,
     missing: Vec<Line>,
+    record_cleanup: Vec<Line>,
     blocked: Vec<Line>,
     /// A Pi package this project declares that the global manifest
     /// declares too.
@@ -365,6 +373,7 @@ impl Sections {
             removed: Vec::new(),
             mixed: Vec::new(),
             missing: Vec::new(),
+            record_cleanup: Vec::new(),
             blocked: Vec::new(),
             declared_twice: Vec::new(),
             shadowed: Vec::new(),
@@ -388,11 +397,12 @@ impl Sections {
             ("gone from their source", self.removed),
             ("mixed installs", self.mixed),
             ("missing on disk", self.missing),
+            ("record cleanup needed", self.record_cleanup),
             ("blocked by files already there", self.blocked),
             ("declared at both scopes", self.declared_twice),
             ("loaded twice by pi", self.shadowed),
             ("broken references", self.references),
-            ("not yet evaluated", self.unevaluated),
+            ("source comparison needed", self.unevaluated),
             ("could not check", self.unknown),
         ]
         .into_iter()
@@ -482,11 +492,11 @@ fn drift(text: String, remedy: Option<Remedy>) -> Line {
     }
 }
 
-fn unevaluated(text: String) -> Line {
+fn unevaluated(text: String, remedy: Remedy) -> Line {
     Line {
         class: Class::Unevaluated,
         text,
-        remedy: None,
+        remedy: Some(remedy),
     }
 }
 
@@ -675,6 +685,6 @@ mod tests_evidence;
 mod tests_render;
 mod text;
 
-pub use render::render_plain;
+pub use render::{render_full, render_plain};
 use scope::check_scope;
 pub use text::{Text, fold};

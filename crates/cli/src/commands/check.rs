@@ -16,9 +16,9 @@ use commit_hooks::fold_commit_hooks;
 /// deep read of its own, budgeted and memoized, for a declaration sitting
 /// on files no record accounts for; and it spawns one detached background
 /// refresh when any mirror is stale, a scope has no snapshot, or that read
-/// is still owed, so the next session reads fresh verdicts. `--quiet`
-/// prints the bounded report and nothing when clean; `--json` prints the
-/// machine shape.
+/// is still owed, so the next session reads fresh verdicts. An explicit
+/// check prints every line. `--quiet` prints the bounded session report and
+/// nothing when clean. `--json` prints the machine shape.
 pub fn run(
     env: &Env,
     filter: ScopeFilter,
@@ -62,7 +62,7 @@ fn render_text(checked: &CheckReport, quiet: bool) {
     if !quiet {
         ui::intro("kendex check");
     }
-    let text = report::render_plain(checked);
+    let text = rendered_text(checked, quiet);
     // The report is agent- and composition-facing content: stdout.
     for line in text.lines() {
         out(line);
@@ -73,33 +73,27 @@ fn render_text(checked: &CheckReport, quiet: bool) {
     ui::ledger(&verdict(checked, &text), &[]);
 }
 
-/// How the run ended, describing the report the reader was actually
-/// shown. The renderer drops lines to fit its budgets, so a count taken
-/// from the report rather than from the rendering claims items that never
-/// reached the page; and the pointer to the lines above is named only
-/// where EVERY counted line carries a remedy, since a pointer printed as
-/// the answer to the whole count is a claim about all of it.
+fn rendered_text(checked: &CheckReport, quiet: bool) -> String {
+    match quiet {
+        true => report::render_plain(checked),
+        false => report::render_full(checked),
+    }
+}
+
+/// How the run ended, describing the complete report above it. The pointer
+/// to those lines is named only where every counted line has a remedy.
 fn verdict(checked: &CheckReport, rendered: &str) -> String {
-    // Clean is the report's answer, never the page's. The renderer drops
-    // whole lines from the end to fit its budget, so a report carrying
-    // findings can come out as a header and a truncation notice with
-    // nothing indented under it — and reading emptiness off the page
-    // would tell the reader everything matched while findings were cut.
     if checked.is_clean() {
         return "all clear — every install matches its source".to_owned();
     }
     let items: Vec<&str> = rendered
         .lines()
-        .filter(|line| line.starts_with("  ") && !line.starts_with("  … and "))
+        .filter(|line| line.starts_with("  "))
         .collect();
-    // Findings the page could not carry. The count still comes off what
-    // was shown — a number the lines above cannot account for sends the
-    // reader looking for items that are not there — so with nothing shown
-    // there is no count to give, only the reason.
-    if items.is_empty() {
-        return "items need attention — the report above was truncated and names none of them"
-            .to_owned();
-    }
+    assert!(
+        !items.is_empty(),
+        "a non-clean complete check report must contain an item line"
+    );
     let every = items
         .iter()
         .all(|line| line.contains(" — fix: ") || line.contains(" — see: "));
@@ -125,9 +119,9 @@ fn verdict(checked: &CheckReport, rendered: &str) -> String {
 mod tests {
     use kendex_core::drift::report::{CheckReport, CheckStatus, Class, Line, Section};
 
-    use super::verdict;
+    use super::{rendered_text, verdict};
 
-    fn reported(lines: Vec<&str>) -> CheckReport {
+    fn reported<T: Into<String>>(lines: Vec<T>) -> CheckReport {
         CheckReport {
             status: CheckStatus::Drift,
             sections: vec![Section {
@@ -136,7 +130,7 @@ mod tests {
                     .into_iter()
                     .map(|text| Line {
                         class: Class::Drift,
-                        text: text.to_owned(),
+                        text: text.into(),
                         remedy: None,
                     })
                     .collect(),
@@ -147,28 +141,7 @@ mod tests {
         }
     }
 
-    /// The report decides whether the run is clean, not the page. A
-    /// finding the renderer's budget dropped wholesale leaves nothing
-    /// indented behind, and a verdict read off the page alone calls that
-    /// all clear while findings were cut.
-    #[test]
-    fn a_report_whose_findings_were_all_truncated_is_not_all_clear() {
-        let truncated = "drift:\n  … and 3 more\n";
-        let said = verdict(&reported(vec!["a", "b", "c"]), truncated);
-        assert!(
-            !said.contains("all clear"),
-            "a truncated report read as clean: {said}"
-        );
-        assert!(said.contains("need attention"), "{said}");
-        assert!(said.contains("truncated"), "{said}");
-        // No count the page cannot account for.
-        assert!(
-            !said.contains('3'),
-            "a count the page cannot support: {said}"
-        );
-    }
-
-    /// A report with nothing in it is the only thing that reads as clean.
+    /// A report with nothing in it reads as clean.
     #[test]
     fn an_empty_report_is_all_clear() {
         let empty = CheckReport {
@@ -181,12 +154,25 @@ mod tests {
         assert!(verdict(&empty, "").contains("all clear"));
     }
 
-    /// What survived the page is still what the count is taken from.
+    /// The complete report's item lines determine the count.
     #[test]
     fn the_count_comes_off_the_lines_the_reader_saw() {
         let page = "drift:\n  one — fix: kendex apply\n  two — fix: kendex apply\n";
         let said = verdict(&reported(vec!["one", "two"]), page);
         assert!(said.starts_with("2 items need attention"), "{said}");
         assert!(said.contains("each line above says what to run"), "{said}");
+    }
+
+    #[test]
+    fn an_explicit_check_prints_every_item_while_the_session_hook_stays_bounded() {
+        let report = reported((0..12).map(|i| format!("item-{i}")).collect());
+
+        let hook = rendered_text(&report, true);
+        assert!(hook.contains("see: kendex check"), "{hook}");
+        assert!(!hook.contains("item-11"), "{hook}");
+
+        let explicit = rendered_text(&report, false);
+        assert!(explicit.contains("item-11"), "{explicit}");
+        assert!(!explicit.contains("more — see:"), "{explicit}");
     }
 }

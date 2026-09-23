@@ -655,28 +655,25 @@ fn a_name_reaching_stdout_is_printed_as_what_it_is() {
     );
 }
 
-/// The verdict counts what the reader was shown. The report drops lines to
-/// fit its own budgets, so a count taken from the report behind it would
-/// name items that never reached the page.
+/// An explicit check prints every package row, and the verdict counts the
+/// same rows the reader sees.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_verdict_counts_the_lines_the_report_actually_printed() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
-    let project = crowded_project(home, 14);
+    let package_count = 14;
+    let project = crowded_project(home, package_count);
     let output = kendex(home, &project, "plain", &["check", "--scope", "project"]);
     let report = String::from_utf8_lossy(&output.stdout).into_owned();
     let verdict = said(&output);
 
     let shown = report
         .lines()
-        .filter(|line| line.starts_with("  ") && !line.starts_with("  … and "))
+        .filter(|line| line.starts_with("  unmanaged copy of skill 'skill"))
         .count();
-    assert!(
-        report.contains("… and "),
-        "the fixture has to overflow a section: {report}"
-    );
-    assert!(shown < 14, "nothing was dropped: {report}");
+    assert_eq!(shown, package_count, "a package row was omitted: {report}");
+    assert!(!report.contains('…'), "the report was capped: {report}");
     assert!(
         verdict.starts_with(&format!("{shown} items need attention")),
         "the verdict counted {} rather than the {shown} lines above it: {verdict}",

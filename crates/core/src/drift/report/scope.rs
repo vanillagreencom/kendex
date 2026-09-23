@@ -2,6 +2,7 @@
 //! lock, snapshot, stamps and the Pi roots' `extensions/`, each emitting
 //! classified lines.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use super::text::shown;
@@ -18,6 +19,98 @@ use super::*;
 pub(super) struct ScopeOutcome {
     pub(super) scan: crate::pi_ext::ShadowScan,
     pub(super) manifest: ManifestState,
+}
+
+/// Record entries that still trace to the manifest's selected packages.
+/// Requested items and bundle members seed the set. Dependency edges then
+/// extend it until every package required by a selected package is present.
+fn selected_record_keys(
+    manifest: &crate::manifest::Manifest,
+    lock: &crate::lock::Lock,
+    scope: &Scope,
+) -> BTreeSet<String> {
+    let custom_names = crate::hook::custom_hook_names(manifest);
+    let mut selected = BTreeSet::new();
+    for (key, entry) in &lock.entries {
+        let requested = (entry.kind == ItemKind::PiExtension
+            && entry.harness == crate::model::HarnessId::Pi
+            && manifest.pi_extensions.contains_key(&entry.name))
+            || manifest
+                .declared(entry.kind)
+                .get(&entry.name)
+                .is_some_and(|decl| {
+                    crate::engine::desired::target_harnesses(decl, manifest, entry.kind, scope)
+                        .contains(&entry.harness)
+                })
+            || (entry.kind == ItemKind::Plugin
+                && manifest
+                    .plugins
+                    .get(&entry.name)
+                    .is_some_and(|decl| decl.harness == entry.harness))
+            || (entry.kind == ItemKind::Hook
+                && manifest
+                    .custom_hooks
+                    .iter()
+                    .zip(&custom_names)
+                    .any(|(hook, name)| {
+                        let listed: Option<Vec<_>> = hook.harnesses.as_ref().map(|harnesses| {
+                            harnesses
+                                .iter()
+                                .filter_map(|name| crate::model::HarnessId::parse(name))
+                                .collect()
+                        });
+                        name == &entry.name
+                            && crate::engine::desired::harnesses_for(
+                                listed.as_deref(),
+                                manifest,
+                                ItemKind::Hook,
+                                scope,
+                            )
+                            .contains(&entry.harness)
+                    }));
+        let bundle_member = entry.reasons.iter().any(|reason| {
+            let crate::lock::Reason::MemberOf { bundle } = reason else {
+                return false;
+            };
+            manifest.bundles.get(&bundle.name).is_some_and(|decl| {
+                decl.source == bundle.source
+                    && crate::engine::desired::target_harnesses(decl, manifest, entry.kind, scope)
+                        .contains(&entry.harness)
+            })
+        });
+        if requested || bundle_member {
+            selected.insert(key.clone());
+}
+    }
+
+    loop {
+        let mut changed = false;
+        for (key, entry) in &lock.entries {
+            if selected.contains(key) {
+                continue;
+            }
+            let required = entry.reasons.iter().any(|reason| {
+                let crate::lock::Reason::RequiredBy { by } = reason else {
+                    return false;
+                };
+                selected.contains(&crate::lock::entry_key(by.kind, &by.name, by.harness))
+            });
+            if required {
+                changed |= selected.insert(key.clone());
+            }
+        }
+        if !changed {
+            return selected;
+        }
+    }
+}
+
+fn harness_list(harnesses: &BTreeSet<crate::model::HarnessId>) -> String {
+    harnesses
+        .iter()
+        .map(|harness| harness.name())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// One scope's lines, and what the caller still needs from it.
@@ -185,7 +278,19 @@ impl ScopeCheck<'_> {
         let prefix = self.prefix;
         match lock {
             Ok(crate::lock::LockFile::Current(lock)) => {
-                for entry in lock.entries.values() {
+                let selected = manifest
+                    .map(|manifest| selected_record_keys(manifest, lock, self.scope))
+                    .unwrap_or_default();
+                let mut missing: BTreeMap<(ItemKind, String), BTreeSet<_>> = BTreeMap::new();
+                let mut unselected: BTreeMap<(ItemKind, String), BTreeSet<_>> = BTreeMap::new();
+                for (key, entry) in &lock.entries {
+                    if !selected.contains(key) {
+                        unselected
+                            .entry((entry.kind, entry.name.clone()))
+                            .or_default()
+                            .insert(entry.harness);
+                        continue;
+                    }
                     if !entry.enabled {
                         continue;
                     }
@@ -193,9 +298,7 @@ impl ScopeCheck<'_> {
                         self.pi_installation_line(
                             &entry.name,
                             entry.rendered_hash.as_deref(),
-                            manifest.is_some_and(|manifest| {
-                                manifest.pi_extensions.contains_key(&entry.name)
-                            }),
+                            true,
                             sections,
                         );
                         continue;
@@ -208,19 +311,37 @@ impl ScopeCheck<'_> {
                         .iter()
                         .all(|path| !path.exists() && !toggled_sibling(path).exists());
                     if gone {
-                        sections.missing.push(drift(
-                            format!(
-                                "{prefix}{} '{}' has no files on disk",
-                                entry.kind.name(),
-                                shown(&entry.name)
-                            ),
-                            // The record can outlive its declaration. Apply
-                            // restores wanted files and clears unwanted records.
-                            Some(Remedy::Apply {
-                                global: self.global,
-                            }),
-                        ));
+                        missing
+                            .entry((entry.kind, entry.name.clone()))
+                            .or_default()
+                            .insert(entry.harness);
                     }
+                }
+                for ((kind, name), harnesses) in missing {
+                    sections.missing.push(drift(
+                        format!(
+                            "{prefix}{} '{}' ({}) has no files on disk",
+                            kind.name(),
+                            shown(&name),
+                            harness_list(&harnesses)
+                        ),
+                        Some(Remedy::Apply {
+                            global: self.global,
+                        }),
+                    ));
+                }
+                for ((kind, name), harnesses) in unselected {
+                    sections.record_cleanup.push(drift(
+                        format!(
+                            "{prefix}kendex.toml does not list recorded {} '{}' ({})",
+                            kind.name(),
+                            shown(&name),
+                            harness_list(&harnesses)
+                        ),
+                        Some(Remedy::Apply {
+                            global: self.global,
+                        }),
+                    ));
                 }
             }
             Ok(crate::lock::LockFile::Absent) => {}
@@ -265,7 +386,11 @@ impl ScopeCheck<'_> {
             }
         };
         sections.missing.push(drift(
-            format!("{}pi-extension '{}' {detail}", self.prefix, shown(name)),
+            format!(
+                "{}pi-extension '{}' (pi) {detail}",
+                self.prefix,
+                shown(name)
+            ),
             declared.then_some(Remedy::UpdatePi {
                 global: self.global,
             }),
@@ -574,9 +699,12 @@ impl ScopeCheck<'_> {
                         .any(|source| source.enabled && source.repo.is_some())
                 });
                 if has_remote {
-                    sections.unevaluated.push(unevaluated(format!(
-                        "{prefix}packages not yet evaluated against their sources"
-                    )));
+                    sections.unevaluated.push(unevaluated(
+                        format!("{prefix}packages have not been compared with their sources"),
+                        Remedy::Updates {
+                            global: self.global,
+                        },
+                    ));
                 }
                 return;
             }
@@ -609,9 +737,14 @@ impl ScopeCheck<'_> {
             self.package_line(package, sections);
         }
         if pending > 0 {
-            sections.unevaluated.push(unevaluated(format!(
-                "{prefix}{pending} package(s) changed upstream and are not yet re-evaluated"
-            )));
+            sections.unevaluated.push(unevaluated(
+                format!(
+                    "{prefix}{pending} package(s) have not been compared since their sources changed"
+                ),
+                Remedy::Updates {
+                    global: self.global,
+                },
+            ));
         }
         for note in &snapshot.unreadable {
             sections

@@ -278,7 +278,7 @@ fn a_mirror_that_moved_since_evaluation_reads_as_unevaluated() {
     assert_eq!(report.status.exit_code(), 1);
     assert_eq!(
         render_plain(&report),
-        "not yet evaluated:\n  1 package(s) changed upstream and are not yet re-evaluated\n(checked against sources moments ago)\n"
+        "source comparison needed:\n  1 package(s) have not been compared since their sources changed — fix: kendex updates\n(checked against sources moments ago)\n"
     );
 }
 
@@ -297,7 +297,7 @@ fn an_unreadable_snapshot_is_could_not_check_not_unevaluated() {
     let text = render_plain(&report);
     assert!(text.contains("could not check:"), "{text}");
     assert!(text.contains("drift snapshot unreadable:"), "{text}");
-    assert!(!text.contains("not yet evaluated"), "{text}");
+    assert!(!text.contains("source comparison needed"), "{text}");
 }
 
 #[test]
@@ -312,7 +312,7 @@ fn could_not_check_outranks_unevaluated() {
     assert_eq!(report.status, CheckStatus::Unknown);
     assert_eq!(report.status.exit_code(), 2);
     let text = render_plain(&report);
-    assert!(text.contains("not yet evaluated:"), "{text}");
+    assert!(text.contains("source comparison needed:"), "{text}");
     assert!(text.contains("could not check:"), "{text}");
 }
 
@@ -328,7 +328,7 @@ fn a_scope_with_remotes_and_no_snapshot_is_unevaluated() {
     assert_eq!(report.status.exit_code(), 1);
     assert_eq!(
         render_plain(&report),
-        "not yet evaluated:\n  packages not yet evaluated against their sources\n"
+        "source comparison needed:\n  packages have not been compared with their sources — fix: kendex updates\n"
     );
 }
 

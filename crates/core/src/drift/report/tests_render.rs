@@ -30,7 +30,10 @@ fn section_budget_counts_its_overflow_line_inside_itself() {
         .take_while(|line| line.starts_with("  "))
         .collect();
     assert_eq!(section_lines.len(), SECTION_ITEMS, "{text}");
-    assert_eq!(*section_lines.last().unwrap(), "  … and 5 more");
+    assert_eq!(
+        *section_lines.last().unwrap(),
+        "  … 5 more — see: kendex check"
+    );
 }
 
 #[test]

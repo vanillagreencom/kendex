@@ -4,6 +4,7 @@
 mod test_util;
 use test_util::rooted;
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -22,6 +23,43 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .output()
         .expect("kendex binary runs")
+}
+
+fn declaration(name: &str) -> String {
+    format!(
+        "schema = 6\n[install]\nharnesses = [\"claude\", \"codex\", \"pi\"]\n[sources.cat]\npath = \"catalog\"\n[skills.{name}]\nsource = \"cat\"\n"
+    )
+}
+
+#[allow(clippy::unwrap_used)]
+fn rename_recorded_skill(
+    home: &Path,
+    project: &Path,
+    catalog: &Path,
+    manifest_path: &Path,
+    lock_path: &Path,
+    scope_name: &str,
+) {
+    fs::rename(
+        catalog.join("skills/old-name"),
+        catalog.join("skills/new-name"),
+    )
+    .unwrap();
+    fs::write(
+        catalog.join("skills/new-name/SKILL.md"),
+        "---\nname: new-name\ndescription: Test skill.\n---\n\nUse this skill.\n",
+    )
+    .unwrap();
+    fs::write(manifest_path, declaration("new-name")).unwrap();
+    let refreshed = kendex(home, project, &["refresh", "--scope", scope_name, "--yes"]);
+    assert!(refreshed.status.success(), "{refreshed:?}");
+    assert!(
+        lock::load(lock_path)
+            .unwrap()
+            .entries
+            .values()
+            .any(|entry| entry.name == "old-name")
+    );
 }
 
 #[allow(clippy::unwrap_used)]
@@ -48,22 +86,21 @@ fn repair_missing(global: bool, renamed: bool) {
         "---\nname: old-name\ndescription: Test skill.\n---\n\nUse this skill.\n",
     )
     .unwrap();
-    let declaration = |name| {
-        format!(
-            "schema = 6\n[install]\nharnesses = [\"claude\"]\n[sources.cat]\npath = \"catalog\"\n[skills.{name}]\nsource = \"cat\"\n"
-        )
-    };
     fs::write(&manifest_path, declaration("old-name")).unwrap();
     let installed = kendex(&home, &project, &["apply", "--scope", scope_name, "--yes"]);
     assert!(installed.status.success(), "{installed:?}");
     let lock_path = lock::lock_path(&env, &scope);
     let recorded = lock::load(&lock_path).unwrap();
-    let entry = recorded
+    let entries: Vec<_> = recorded
         .entries
         .values()
-        .find(|e| e.name == "old-name")
-        .unwrap();
-    let paths = engine::installed_paths(&env, &scope, entry);
+        .filter(|entry| entry.name == "old-name")
+        .collect();
+    assert_eq!(entries.len(), 3, "one record per selected harness");
+    let paths: BTreeSet<_> = entries
+        .into_iter()
+        .flat_map(|entry| engine::installed_paths(&env, &scope, entry))
+        .collect();
     assert!(!paths.is_empty(), "the install must produce recorded files");
     let bytes = fs::read(&lock_path).unwrap();
     let clean = kendex(
@@ -75,36 +112,22 @@ fn repair_missing(global: bool, renamed: bool) {
     assert!(clean.stdout.is_empty(), "{clean:?}");
     assert_eq!(fs::read(&lock_path).unwrap(), bytes);
 
-    for path in &paths {
-        fs::remove_dir_all(path).unwrap();
+    if !renamed {
+        for path in &paths {
+            fs::remove_dir_all(path).unwrap();
+        }
     }
     if renamed {
-        fs::rename(
-            catalog.join("skills/old-name"),
-            catalog.join("skills/new-name"),
-        )
-        .unwrap();
-        fs::write(
-            catalog.join("skills/new-name/SKILL.md"),
-            "---\nname: new-name\ndescription: Test skill.\n---\n\nUse this skill.\n",
-        )
-        .unwrap();
-        fs::write(&manifest_path, declaration("new-name")).unwrap();
-        let refreshed = kendex(
+        rename_recorded_skill(
             &home,
             &project,
-            &["refresh", "--scope", scope_name, "--yes"],
-        );
-        assert!(refreshed.status.success(), "{refreshed:?}");
-        assert!(
-            lock::load(&lock_path)
-                .unwrap()
-                .entries
-                .values()
-                .any(|e| e.name == "old-name")
+            &catalog,
+            &manifest_path,
+            &lock_path,
+            scope_name,
         );
     }
-    run_missing_remedy(&home, &project, scope_name, &lock_path);
+    run_missing_remedy(&home, &project, scope_name, &lock_path, renamed);
     let recorded = lock::load(&lock_path).unwrap();
     assert_eq!(
         recorded.entries.values().any(|e| e.name == "old-name"),
@@ -125,16 +148,28 @@ fn repair_missing(global: bool, renamed: bool) {
 }
 
 #[allow(clippy::unwrap_used)]
-fn run_missing_remedy(home: &Path, project: &Path, scope_name: &str, lock_path: &Path) {
+fn run_missing_remedy(
+    home: &Path,
+    project: &Path,
+    scope_name: &str,
+    lock_path: &Path,
+    renamed: bool,
+) {
     let bytes = fs::read(lock_path).unwrap();
     let checked = kendex(home, project, &["check", "--scope", scope_name, "--quiet"]);
     assert_eq!(checked.status.code(), Some(1), "{checked:?}");
     assert_eq!(fs::read(lock_path).unwrap(), bytes);
     let text = String::from_utf8(checked.stdout).unwrap();
-    let missing = text
+    let expected = match renamed {
+        true => "kendex.toml does not list recorded skill 'old-name' (claude, codex, pi)",
+        false => "skill 'old-name' (claude, codex, pi) has no files on disk",
+    };
+    let matching: Vec<_> = text
         .lines()
-        .find(|line| line.contains("'old-name' has no files on disk"))
-        .unwrap();
+        .filter(|line| line.contains(expected))
+        .collect();
+    assert_eq!(matching.len(), 1, "one package row: {text}");
+    let missing = matching[0];
     let command = missing.split_once("fix: kendex ").unwrap().1;
     let mut args: Vec<&str> = command.split_whitespace().collect();
     if matches!(args.first(), Some(&"apply" | &"refresh")) {
