@@ -638,6 +638,27 @@ fn foreground_sync_reports_a_lock_held_past_its_bound() {
     let error = sync(&f.env, REPO, None).unwrap_err();
     drop(guard);
     assert!(matches!(error, CoreError::CacheBusy { .. }));
+
+    let synced = sync(&f.env, REPO, None).unwrap();
+    fs::remove_dir_all(&synced.root).unwrap();
+    fs::remove_file(store::receipt_path(
+        &f.env,
+        &key_for(&f.env),
+        &synced.commit,
+    ))
+    .unwrap();
+    let guard = store::lock_repo(&f.env, &key_for(&f.env)).unwrap();
+    store::reset_wait_counts();
+    let error = cached_or_sync(&f.env, REPO, None).unwrap_err();
+    let waits = store::wait_counts();
+    drop(guard);
+
+    assert!(matches!(error, CoreError::CacheBusy { .. }));
+    assert_eq!(
+        waits,
+        (1, 0),
+        "cache miss retried the busy source: {waits:?}"
+    );
 }
 
 /// Detached refreshes use the short acquisition path, so two session starts

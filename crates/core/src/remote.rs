@@ -186,6 +186,23 @@ pub fn sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
 /// refresh in another window is never a precondition for reading what is
 /// already installed.
 pub fn cached(env: &Env, repo: &str, rev: Option<&str>) -> Result<Option<Resolution>> {
+    match cached_strict(env, repo, rev) {
+        // Planning treats a checkout another process is publishing like a
+        // source not fetched yet, so one source cannot block the scope.
+        Err(CoreError::CacheBusy { .. }) => Ok(None),
+        result => result,
+    }
+}
+
+/// Resolve from cache when possible, and fetch only on a real cache miss.
+pub(crate) fn cached_or_sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
+    match cached_strict(env, repo, rev)? {
+        Some(resolution) => Ok(resolution),
+        None => sync(env, repo, rev),
+    }
+}
+
+fn cached_strict(env: &Env, repo: &str, rev: Option<&str>) -> Result<Option<Resolution>> {
     let key = cache_key(env, repo);
     let mirror = store::mirror_dir(env, &key);
     let selector = rev.unwrap_or("HEAD");
@@ -200,19 +217,10 @@ pub fn cached(env: &Env, repo: &str, rev: Option<&str>) -> Result<Option<Resolut
         // The mirror holds the objects even when the checkout is missing or
         // does not match what was published: rebuilding it is local.
         if store::has_commit(&mirror, &commit) {
-            match store::lock_repo_notifying(env, &key, || waiting(repo)) {
-                Ok(guard) => {
-                    let published = store::publish(env, &key, &mirror, &commit)?;
-                    drop(guard);
-                    return Ok(Some(Resolution::published(&commit, published)));
-                }
-                // Someone else is materializing this repository. Reading is
-                // never worth failing a whole scope over: this one source
-                // reads as unfetched, like any other content that is not
-                // here yet, and the next pass picks it up.
-                Err(CoreError::CacheBusy { .. }) => {}
-                Err(error) => return Err(error),
-            }
+            let guard = store::lock_repo_notifying(env, &key, || waiting(repo))?;
+            let published = store::publish(env, &key, &mirror, &commit)?;
+            drop(guard);
+            return Ok(Some(Resolution::published(&commit, published)));
         }
     }
     Ok(None)

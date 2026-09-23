@@ -310,8 +310,5 @@ fn item_in_tree(root: &Path, provenance: &str, kind: ItemKind, name: &str) -> Re
 /// The cache answers first — a version the mirror already holds needs no
 /// network — and the network fills in what it cannot.
 fn resolve_selector(env: &Env, repo: &str, selector: &str) -> Result<crate::remote::Resolution> {
-    if let Some(resolution) = crate::remote::cached(env, repo, Some(selector))? {
-        return Ok(resolution);
-    }
-    crate::remote::sync(env, repo, Some(selector))
+    crate::remote::cached_or_sync(env, repo, Some(selector))
 }
