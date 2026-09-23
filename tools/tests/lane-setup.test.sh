@@ -138,9 +138,9 @@ RUNTIMES="$(sed -n 's/^RUNTIMES="\(.*\)"$/\1/p' "$TOOLS/bash32-parse")"
 IMAGE="$(sed -n 's/^IMAGE="\(.*\)"$/\1/p' "$TOOLS/bash32-parse")"
 ran32=no
 causes=""
-fixture bash32
+fixture bash32 && mkdir -p "$R/ui/node_modules"
 run_bash32() {
-  "$runtime_path" run --rm --init --network=none --volume "$R:/repo" --workdir /repo --env HOME=/tmp --env PATH=/repo/fake-bin:/usr/local/bin:/usr/bin:/bin --env NPM_LOG=/repo/npm.log --env RUSTUP_LOG=/repo/rustup.log --env RUSTUP_STATE=/repo/rustup.state "$IMAGE" bash "$@"
+  "$runtime_path" run --rm --init --network=none --volume "$R:/repo:ro" --tmpfs /repo/ui/node_modules --workdir /repo --env HOME=/tmp --env PATH=/repo/fake-bin:/usr/local/bin:/usr/bin:/bin --env NPM_LOG=/tmp/npm.log --env RUSTUP_LOG=/tmp/rustup.log --env RUSTUP_STATE=/tmp/rustup.state "$IMAGE" bash "$@"
 }
 for runtime in $RUNTIMES; do
   runtime_path="$(command -v "$runtime" 2>/dev/null)" || continue
@@ -148,8 +148,8 @@ for runtime in $RUNTIMES; do
   case "$probe" in 3.2.*) ;; *) causes="$causes $runtime:$probe"; continue ;; esac
   RC=0
   OUT="$(run_bash32 ./tools/lane-setup 2>&1)" || RC=$?
-  [ "$RC" -eq 0 ] && case "$OUT" in *"lane-setup: rust-targets=install"*) true ;; *) false ;; esac \
-    && ok "the setup executes under Bash $probe" \
+  [ "$RC" -eq 0 ] && [ ! -e "$R/ui/node_modules/.kendex-lane-setup" ] && case "$OUT" in *"lane-setup: rust-targets=install"*) true ;; *) false ;; esac \
+    && ok "the setup executes under Bash $probe and cleans its runtime-owned tree" \
     || bad "the setup executes under Bash $probe" "rc=$RC out=$OUT"
   ran32=yes
   break
