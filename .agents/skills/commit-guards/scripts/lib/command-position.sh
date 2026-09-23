@@ -20,12 +20,9 @@
 # segment from each word the shell may execute, for a caller judging what a
 # command is rather than what it mentions.
 #
-# `command_arguments SEGMENT` leaves COMMAND_ARGUMENTS holding that segment
-# without redirection operators and their target words.
-#
-# The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED,
-# COMMAND_ARGUMENTS and COMMAND_TEXTS, so a caller does not use those names for
-# its own state.
+# `command_arguments SEGMENT` leaves COMMAND_ARGUMENTS without redirections.
+# The helpers below set BARE, UPTO, SUBS, OUTSIDE, MASKED, COMMAND_ARGUMENTS
+# and COMMAND_TEXTS; callers do not use those names for their own state.
 
 NL=$'\n'
 MASK=$'\001'
@@ -54,7 +51,7 @@ SHELL_RE='(^|[[:space:]])([^[:space:]]*/)?([^[:space:]/]*sh|eval|source|\.)([[:s
 # A word standing immediately after a redirection operator is a file the shell
 # opens, never the command it runs, so `cat > script.sh` names no shell. The
 # operator takes an optional file descriptor digit in front of it.
-REDIRECT_RE='[0-9]?(>>|>|<)[[:blank:]]*[^[:space:]]+'
+REDIRECT_RE='[0-9]?[<>]+-?[[:blank:]]*[^[:space:]]+'
 # Remove the shell words that open a redirection rather than reaching the
 # command as arguments. The parser owns this view so callers do not parse shell
 # redirections again.

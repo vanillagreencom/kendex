@@ -57,36 +57,20 @@ if git -C "$OUTSIDE" rev-parse --git-dir >/dev/null 2>&1; then
   exit 2
 fi
 
-json_for() { # command [cwd] -> payload as Claude Code sends it
-  if [ -n "${2:-}" ]; then
+json_for() { # command [cwd] [tool field] -> payload
+  if [ -n "${3:-}" ]; then
+    jq -nc --arg c "$1" --arg d "$2" --arg f "$3" --arg s "$WT" \
+      '{tool_name: "Bash", cwd: $s, tool_input: ({command: $c} + {($f): $d})}'
+  elif [ -n "${2:-}" ]; then
     jq -nc --arg c "$1" --arg d "$2" '{tool_name: "Bash", cwd: $d, tool_input: {command: $c}}'
   else
     jq -nc --arg c "$1" '{tool_name: "Bash", tool_input: {command: $c}}'
   fi
 }
 
-run_in() { # dir command -> rc, stderr in ERR_FILE; the payload names the cwd
+run_in() { # dir command [tool field] -> rc, stderr in ERR_FILE
   set +e
-  json_for "$2" "$1" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
-  rc=$?
-  set -e
-}
-
-run_in_tool_dir() { # field dir command -> rc; payload cwd stays at the worktree
-  set +e
-  case "$1" in
-    workdir)
-      jq -nc --arg c "$3" --arg d "$2" --arg s "$WT" \
-        '{tool_name: "Bash", cwd: $s, tool_input: {command: $c, workdir: $d}}' \
-        | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
-      ;;
-    cwd)
-      jq -nc --arg c "$3" --arg d "$2" --arg s "$WT" \
-        '{tool_name: "Bash", cwd: $s, tool_input: {command: $c, cwd: $d}}' \
-        | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
-      ;;
-    *) printf 'tool directory: unknown field: %s\n' "$1" >&2; exit 1 ;;
-  esac
+  json_for "$2" "$1" "${3:-}" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
   rc=$?
   set -e
 }
@@ -177,8 +161,8 @@ directory_table() {
     esac
     case "$mode" in
       payload) run_in "$dir" "$command" ;;
-      tool-workdir) run_in_tool_dir workdir "$dir" "$command" ;;
-      tool-cwd) run_in_tool_dir cwd "$dir" "$command" ;;
+      tool-workdir) run_in "$dir" "$command" workdir ;;
+      tool-cwd) run_in "$dir" "$command" cwd ;;
       pwd) run_from "$dir" "$command" ;;
       *) printf 'directory table: unknown cwd mode: %s\n' "$mode" >&2; exit 1 ;;
     esac
@@ -255,7 +239,12 @@ updates without --apply is a read|0|-|kendex updates
 a global updates --apply passes|0|-|kendex updates --apply -g
 help after a write verb is a read|0|-|kendex refresh --help
 plan after a write verb is a read|0|-|kendex apply --plan
-a redirection target named --help does not exempt the write|2|block-worktree-refresh: refused=refresh|kendex refresh -y > --help
+a single output redirection target is not a help argument|2|block-worktree-refresh: refused=refresh|kendex refresh -y > --help
+an append output redirection target is not a help argument|2|block-worktree-refresh: refused=refresh|kendex refresh -y >> --help
+a single input redirection target is not a help argument|2|block-worktree-refresh: refused=refresh|kendex refresh -y < --help
+a here-string operand is not a help argument|2|block-worktree-refresh: refused=refresh|kendex refresh -y <<< --help
+a heredoc delimiter is not a help argument|2|block-worktree-refresh: refused=refresh|kendex refresh -y << --help\n--help
+a tab-stripping heredoc delimiter is not a help argument|2|block-worktree-refresh: refused=refresh|kendex refresh -y <<- --help\n--help
 kendex verify from the worktree passes|0|-|kendex verify
 kendex check from the worktree passes|0|-|kendex check
 kendex list from the worktree passes|0|-|kendex list
