@@ -98,8 +98,12 @@ fn the_take_over_is_named_only_where_the_sweep_settles_the_scope() {
     let text = report(&w);
     assert!(
         text.contains(
-            "unmanaged copy of skill 'deploy' for Claude Code: 1 file differs from source 'cat' — fix: kendex apply --replace-unmanaged"
+            "unmanaged copy of skill 'deploy' for Claude Code: 1 file differs from source 'cat'"
         ),
+        "the control: a scope the sweep settles names it: {text}"
+    );
+    assert!(
+        text.contains("fix: kendex apply --replace-unmanaged"),
         "the control: a scope the sweep settles names it: {text}"
     );
 }

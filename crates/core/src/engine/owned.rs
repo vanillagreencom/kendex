@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use super::desired::native_dir;
+use super::desired::{in_place_source, native_dir};
 use super::targets::{
     HookFormat, HookTarget, hook_target, mcp_registry, mcp_remove, plugin_settings,
 };
@@ -37,12 +37,19 @@ pub(crate) struct Owned {
 pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut edits: Vec<(PathBuf, ConfigEdit)> = Vec::new();
+    let in_place = in_place_source(env, scope, (entry.kind, &entry.source, &entry.name));
     match (&entry.emitted, entry.kind) {
         // What an install recorded landing at beats deriving a place it
         // never took: a codex command stored as a skill tree under a name
         // the collision rules may have changed, a skill's tree and the
         // link a tool's directory has since moved away from.
-        (Some(emitted), _) => files.extend(emitted.paths.iter().cloned()),
+        (Some(emitted), _) => files.extend(
+            emitted
+                .paths
+                .iter()
+                .filter(|path| in_place.as_ref() != Some(path))
+                .cloned(),
+        ),
         (None, ItemKind::Agent) => {
             if let Some(dir) = native_dir(env, scope, entry.harness, ItemKind::Agent) {
                 files.push(dir.join(file_name(entry.harness, &entry.name)));

@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::compared::of_tree;
-use super::desired::{Artifact, Desired};
+use super::desired::{Artifact, Desired, in_place_source};
 use super::file_plan::{TAKEN_OVER, set_aside};
 use super::item_plan::{Planned, unmanaged, unmanaged_compared};
 use super::written::Written;
@@ -40,6 +40,10 @@ pub(super) fn plan_tree(
     else {
         return Ok(Planned::Clean);
     };
+    let identity = (item.kind, item.source_name.as_str(), item.name.as_str());
+    if in_place_source(env, scope, identity).as_ref() == Some(canonical) {
+        return plan_in_place_tree(scope, item, replace_unmanaged, owned, written, ops);
+    }
     let collapsed = match collapsed_link(env, scope, item, canonical, files, owned) {
         Ok(collapsed) => collapsed,
         Err(conflict) => return Ok(conflict),
@@ -138,6 +142,38 @@ pub(super) fn plan_tree(
         (Planned::Drift(_, staged), Planned::Drift(..)) if staged == TAKEN_OVER => result,
         _ => linked,
     })
+}
+
+/// An in-place skill tree is the user's source. The engine maintains its
+/// harness links without comparing, rewriting or trashing the content.
+fn plan_in_place_tree(
+    scope: &Scope,
+    item: &Desired,
+    replace_unmanaged: bool,
+    owned: &BTreeSet<PathBuf>,
+    written: &mut Written,
+    ops: &mut Vec<PlannedOp>,
+) -> Result<Planned> {
+    let Artifact::Tree {
+        canonical,
+        files,
+        link: Some(link),
+    } = &item.artifact
+    else {
+        return Ok(Planned::Clean);
+    };
+    link::plan_link(
+        scope,
+        item,
+        link,
+        canonical,
+        files,
+        replace_unmanaged,
+        owned,
+        written,
+        ops,
+        &Planned::Clean,
+    )
 }
 
 /// The harness-native position when it holds the person's own files too.

@@ -175,15 +175,20 @@ fn installation_paths(
         // question is asked the same way the install answers it.
         ItemKind::Skill => {
             let copies = desired::effective_method(decl, manifest) == crate::manifest::Method::Copy;
+            let in_place = decl.source == crate::manifest::INPLACE_SOURCE_NAME;
+            let canonical = desired::skill_canonical(env, scope, name);
             let mut paths = Vec::new();
-            if !copies {
-                paths.push(desired::skill_canonical(env, scope, name));
+            if !copies && !in_place {
+                paths.push(canonical.clone());
             }
             let dir = match copies {
                 true => desired::own_dir(env, scope, harness, kind),
                 false => native(kind),
             };
-            paths.extend(dir.map(|dir| dir.join(crate::harness::rendered_name(harness, name))));
+            paths.extend(
+                dir.map(|dir| dir.join(crate::harness::rendered_name(harness, name)))
+                    .filter(|path| !in_place || path != &canonical),
+            );
             paths
         }
         // A tool with no command surface of its own takes commands as
@@ -331,4 +336,61 @@ pub fn declared_over_existing_files(
         }
     }
     blocked
+}
+
+pub(crate) enum InPlaceSkillFinding {
+    Disabled(String),
+    MissingSource { name: String, path: PathBuf },
+    MissingLinks(String),
+}
+
+/// Source and link problems for in-place skills. Source availability is
+/// checked before delivery records because a shared-directory install can
+/// correctly own no paths. One skill produces at most one finding.
+pub(crate) fn in_place_skill_findings(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+) -> Result<Vec<InPlaceSkillFinding>> {
+    let mut findings = Vec::new();
+    for (name, decl) in &manifest.skills {
+        let identity = (ItemKind::Skill, decl.source.as_str(), name.as_str());
+        let Some(source) = desired::in_place_source(env, scope, identity) else {
+            continue;
+        };
+        if !decl.enabled {
+            findings.push(InPlaceSkillFinding::Disabled(name.clone()));
+            continue;
+        }
+        if crate::fs::entry(&source)?.is_none() {
+            findings.push(InPlaceSkillFinding::MissingSource {
+                name: name.clone(),
+                path: source,
+            });
+            continue;
+        }
+        let sealed = crate::source_read::SealedSource::open(&source)?;
+        sealed.entries(&source)?;
+        let harnesses = desired::target_harnesses(decl, manifest, ItemKind::Skill, scope);
+        let links: BTreeSet<PathBuf> = harnesses
+            .into_iter()
+            .filter(|harness| {
+                !lock
+                    .entries
+                    .contains_key(&crate::lock::entry_key(ItemKind::Skill, name, *harness))
+            })
+            .flat_map(|harness| {
+                installation_paths(env, scope, manifest, ItemKind::Skill, name, decl, harness)
+            })
+            .collect();
+        let mut any_missing = false;
+        for path in links {
+            any_missing |= !crate::fs::exists(&path)?;
+        }
+        if any_missing {
+            findings.push(InPlaceSkillFinding::MissingLinks(name.clone()));
+        }
+    }
+    Ok(findings)
 }

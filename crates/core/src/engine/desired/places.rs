@@ -100,6 +100,18 @@ pub fn skill_canonical(env: &Env, scope: &Scope, name: &str) -> PathBuf {
     }
 }
 
+pub(crate) const IN_PLACE_DISABLED: &str =
+    "an in-place skill cannot be switched off without changing its authored source";
+
+pub(crate) fn in_place_source(
+    env: &Env,
+    scope: &Scope,
+    item: (ItemKind, &str, &str),
+) -> Option<PathBuf> {
+    (item.0 == ItemKind::Skill && item.1 == crate::manifest::INPLACE_SOURCE_NAME)
+        .then(|| skill_canonical(env, scope, item.2))
+}
+
 pub(crate) fn target_harnesses(
     decl: &ItemDecl,
     manifest: &Manifest,

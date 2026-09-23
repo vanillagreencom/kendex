@@ -8,8 +8,8 @@ use crate::model::{HarnessId, ItemKind, Scope};
 use crate::render::skill::render_skill;
 
 use super::desired::{
-    Artifact, Desired, DesiredState, ItemCtx, effective_method, native_dir, skill_canonical,
-    skill_dir,
+    Artifact, Desired, DesiredState, IN_PLACE_DISABLED, ItemCtx, effective_method, in_place_source,
+    native_dir, skill_canonical, skill_dir,
 };
 
 /// One physical skill surface and the harnesses that read it. Every tool but
@@ -143,6 +143,13 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
         );
         return Ok(());
     }
+    let identity = (ItemKind::Skill, ctx.decl.source.as_str(), ctx.name);
+    if !enabled && in_place_source(ctx.env, ctx.scope, identity).is_some() {
+        for group in &groups {
+            refuse(ctx, state, group, IN_PLACE_DISABLED);
+        }
+        return Ok(());
+    }
     // A skill's `[env]` defaults ride with an installation: a skill no
     // harness here installs seeds nothing, so nothing reaches the settings
     // file that no installation here asked for.
@@ -225,10 +232,17 @@ fn push_installs(
     // directory moves between kendex versions, and a pass that derived
     // the place again would name one this install never wrote — the
     // link it did write is then findable only through the record.
+    let identity = (ItemKind::Skill, ctx.decl.source.as_str(), ctx.name);
+    let in_place = in_place_source(ctx.env, ctx.scope, identity);
+    let paths = artifact
+        .paths()
+        .into_iter()
+        .filter(|path| in_place.as_ref() != Some(path))
+        .collect();
     let emitted = Some(EmittedArtifact {
         kind: ItemKind::Skill,
         name: group.installed.clone(),
-        paths: artifact.paths(),
+        paths,
     });
     let source = Some(ctx.source(&artifact)?);
     for harness in &group.members {

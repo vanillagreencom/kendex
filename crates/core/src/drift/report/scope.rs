@@ -558,6 +558,63 @@ impl ScopeCheck<'_> {
         }
     }
 
+    fn in_place_lines(
+        &self,
+        manifest: &crate::manifest::Manifest,
+        lock: &crate::lock::Lock,
+        sections: &mut Sections,
+    ) {
+        let findings =
+            match crate::engine::in_place_skill_findings(self.env, self.scope, manifest, lock) {
+                Ok(findings) => findings,
+                Err(error) => {
+                    sections.unknown.push(unknown(format!(
+                        "{}in-place skills: {}",
+                        self.prefix,
+                        shown(&error.to_string())
+                    )));
+                    return;
+                }
+            };
+        for finding in findings {
+            match finding {
+                crate::engine::InPlaceSkillFinding::Disabled(name) => {
+                    sections.blocked.push(drift(
+                        format!(
+                            "{}skill '{}': {}",
+                            self.prefix,
+                            shown(&name),
+                            crate::engine::IN_PLACE_DISABLED
+                        ),
+                        None,
+                    ));
+                }
+                crate::engine::InPlaceSkillFinding::MissingSource { name, path } => {
+                    sections.missing.push(drift(
+                        format!(
+                            "{}skill '{}' source is missing at {}",
+                            self.prefix,
+                            shown(&name),
+                            shown(&path.display().to_string())
+                        ),
+                        None,
+                    ));
+                }
+                crate::engine::InPlaceSkillFinding::MissingLinks(name) => {
+                    let text = format!(
+                        "{}skill '{}' has harness links that are not rendered",
+                        self.prefix,
+                        shown(&name)
+                    );
+                    let remedy = Remedy::Refresh {
+                        global: self.global,
+                    };
+                    sections.missing.push(drift(text, Some(remedy)));
+                }
+            }
+        }
+    }
+
     /// Asked for, no record of installing it for this tool, and files
     /// already where that install goes. A stat finds the state; what it
     /// means needs the render, so this is the one place the check plans
@@ -584,16 +641,14 @@ impl ScopeCheck<'_> {
         let Some(manifest) = manifest else {
             return;
         };
-        // No lock file at all is the state this reports on most often: a
-        // repository declaring what another tool already put on disk.
-        // A lock this build cannot read says nothing either way, and the
-        // `could not check` line above already carries that.
+        // An unreadable lock already has a could-not-check line.
         let empty = crate::lock::Lock::default();
         let lock = match lock {
             Ok(crate::lock::LockFile::Current(lock)) => lock,
             Ok(crate::lock::LockFile::Absent) => &empty,
             _ => return,
         };
+        self.in_place_lines(manifest, lock, sections);
         let occupied =
             crate::engine::declared_over_existing_files(self.env, self.scope, manifest, lock);
         if occupied.is_empty() {
@@ -685,18 +740,25 @@ impl ScopeCheck<'_> {
         take_over_settles: bool,
         sections: &mut Sections,
     ) {
+        let mut text = format!(
+            "{}unmanaged copy of {} '{}' for {}: {} file{} differ{} from {}",
+            self.prefix,
+            install.kind.name(),
+            shown(&install.name),
+            install.harness.display_name(),
+            files,
+            if files == 1 { "" } else { "s" },
+            if files == 1 { "s" } else { "" },
+            shown(rendered_from)
+        );
+        if take_over_settles {
+            text.push_str(&format!(
+                "; take-over moves the existing content to the trash at {}",
+                shown(&crate::paths::slashed(&self.env.trash_dir()))
+            ));
+        }
         sections.stale.push(drift(
-            format!(
-                "{}unmanaged copy of {} '{}' for {}: {} file{} differ{} from {}",
-                self.prefix,
-                install.kind.name(),
-                shown(&install.name),
-                install.harness.display_name(),
-                files,
-                if files == 1 { "" } else { "s" },
-                if files == 1 { "s" } else { "" },
-                shown(rendered_from)
-            ),
+            text,
             Some(match take_over_settles {
                 true => Remedy::ReplaceUnmanaged {
                     global: self.global,

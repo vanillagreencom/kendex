@@ -444,9 +444,13 @@ fn an_unrecorded_copy_is_measured_against_the_commit_its_source_resolved() {
     ));
     assert!(
         text.contains(&format!(
-            "unmanaged copy of skill 'gh' for Claude Code: 1 file differs from {REPO}@{} — fix: kendex apply --replace-unmanaged",
+            "unmanaged copy of skill 'gh' for Claude Code: 1 file differs from {REPO}@{}",
             &first[..7]
         )),
+        "{text}"
+    );
+    assert!(
+        text.contains("fix: kendex apply --replace-unmanaged"),
         "{text}"
     );
     assert!(!lock_path.exists(), "a copy that differs is not recorded");
