@@ -280,8 +280,10 @@ fn a_manual_move_quotes_paths_for_the_platform_shell() {
         windows: false,
     };
     assert_eq!(
-        posix.render().as_deref(),
-        Some("mv -i '/tmp/it'\\''s/extensions/pkg' '/tmp/it'\\''s'")
+        posix.render(None),
+        Some(Fix::Here(
+            "mv -i '/tmp/it'\\''s/extensions/pkg' '/tmp/it'\\''s'".to_owned()
+        ))
     );
 
     let powershell = Remedy::MoveAside {
@@ -290,10 +292,11 @@ fn a_manual_move_quotes_paths_for_the_platform_shell() {
         windows: true,
     };
     assert_eq!(
-        powershell.render().as_deref(),
-        Some(
+        powershell.render(None),
+        Some(Fix::Here(
             "Move-Item -LiteralPath 'C:\\Users\\Pat''s\\extensions\\pkg' -Destination 'C:\\Users\\Pat''s' -Confirm"
-        )
+                .to_owned()
+        ))
     );
 
     let control = Remedy::MoveAside {
@@ -301,7 +304,7 @@ fn a_manual_move_quotes_paths_for_the_platform_shell() {
         to: "/tmp".into(),
         windows: false,
     };
-    assert_eq!(control.render(), None);
+    assert_eq!(control.render(None), None);
 }
 
 #[test]

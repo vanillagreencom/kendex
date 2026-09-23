@@ -80,7 +80,7 @@ fn selected_record_keys(
                         )
                         .contains(&entry.harness)
                 })
-        });
+            });
         if requested || bundle_member {
             selected.insert(key.clone());
         }
@@ -245,10 +245,7 @@ impl ScopeCheck<'_> {
     /// The manifest: parse failures — a v1 file among them — are
     /// could-not-check, and the one hard failure this check has always had
     /// — an agent referencing an undeclared skill — stays one.
-    fn manifest_lines(
-        &self,
-        sections: &mut Sections,
-    ) -> (ManifestRead, ManifestState) {
+    fn manifest_lines(&self, sections: &mut Sections) -> (ManifestRead, ManifestState) {
         let prefix = self.prefix;
         let (manifest, state) =
             match crate::manifest::load(&crate::manifest::manifest_path(self.env, self.scope)) {

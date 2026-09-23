@@ -409,6 +409,7 @@ impl Sections {
             &self.removed,
             &self.mixed,
             &self.missing,
+            &self.record_cleanup,
             &self.blocked,
             &self.shadowed,
             &self.references,

@@ -219,6 +219,39 @@ fn a_rendered_fix_inside_a_worktree_names_the_project_it_writes() {
     );
 }
 
+/// A stale record is itself a project remedy. No missing installation or
+/// other row should be needed before the report names the linked worktree
+/// whose record `apply` removes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn record_cleanup_alone_names_the_linked_worktree_in_its_apply_command() {
+    let (_tmp, env, _main, linked) = repository();
+    let scope = scope(&linked);
+    declare(&env, &scope);
+    record_a_missing_agent(&env, &scope);
+
+    let checked = report::check(&env, std::slice::from_ref(&scope));
+    assert_eq!(
+        checked
+            .sections
+            .iter()
+            .map(|section| section.title.as_str())
+            .collect::<Vec<_>>(),
+        ["record cleanup needed"],
+        "the stale record is the only reported drift: {:?}",
+        checked.sections
+    );
+
+    let text = report::render_plain(&checked);
+    assert!(
+        text.contains(&format!(
+            "fix: kendex apply --project-path '{}'",
+            kendex_core::paths::canonical(&linked).unwrap().display()
+        )),
+        "{text}"
+    );
+}
+
 /// A worktree whose own manifest will not load still names itself.
 ///
 /// The broken declarations are this worktree's, and so are the drift lines
