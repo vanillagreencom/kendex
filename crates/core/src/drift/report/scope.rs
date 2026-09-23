@@ -22,6 +22,7 @@ pub(super) fn check_scope(
     ctx.lock_lines(manifest.as_ref(), &lock, sections);
     let mut scan = crate::pi_ext::ShadowScan::default();
     if let Some(manifest) = &manifest {
+        ctx.pi_scope_duplicate_lines(manifest, sections);
         for name in manifest.pi_extensions.keys() {
             let key =
                 crate::lock::entry_key(ItemKind::PiExtension, name, crate::model::HarnessId::Pi);
@@ -90,6 +91,15 @@ pub(super) struct ScopeCheck<'a> {
     /// it in this session, resolved once for every Pi line; the settings
     /// read that failed when it did not resolve.
     pub(super) pi_roots: crate::error::Result<(PathBuf, Vec<PathBuf>)>,
+    /// The global manifest, read once for the whole report and shared by
+    /// every scope of it. `None` where no project scope is checked.
+    pub(super) global_manifest: Option<&'a crate::error::Result<crate::manifest::ManifestFile>>,
+    /// Whether a global manifest that would not read has already been
+    /// named. Shared by every scope of the report, so one unreadable file
+    /// is one could-not-check line however many project scopes the run
+    /// covers; set before the first scope when the run covers the global
+    /// scope, whose own manifest read names that same file.
+    pub(super) global_manifest_named: &'a std::cell::Cell<bool>,
 }
 
 impl ScopeCheck<'_> {
@@ -240,6 +250,87 @@ impl ScopeCheck<'_> {
                 global: self.global,
             }),
         ));
+    }
+
+    /// Pi packages this project declares that the global manifest declares
+    /// too. Pi reads the two scopes' package lists together at startup and
+    /// will not start with one package registered twice, so the pair of
+    /// declarations is the conflict on its own and nothing on disk is read
+    /// to find it. The global declaration is the one to keep: it reaches
+    /// every project, and this one reaches only here. Asked of a project
+    /// scope alone — the global scope holds the copy that stays, so a row
+    /// there would name the wrong one.
+    ///
+    /// The line carries no remedy. The fix is one table out of the file
+    /// the scope declares in, and the removal verb does not make it:
+    /// against a declaration with nothing installed and nothing recorded,
+    /// its plan holds no trash, package removal or lock write, so it
+    /// prints that it removed nothing and leaves the declaration where it
+    /// was. A remedy an agent runs and then meets again next session is
+    /// worse than none, so the line names the edit instead.
+    fn pi_scope_duplicate_lines(
+        &self,
+        manifest: &crate::manifest::Manifest,
+        sections: &mut Sections,
+    ) {
+        if self.global || manifest.pi_extensions.is_empty() {
+            return;
+        }
+        let global = match self.global_manifest {
+            Some(Ok(crate::manifest::ManifestFile::Current(global))) => global,
+            // The check cannot run: this scope's declarations stay
+            // unjudged, which is a could-not-check line naming the file
+            // at fault and the check it skipped, never silence read as no
+            // duplicate.
+            Some(Err(error)) => {
+                if !self.global_manifest_named.replace(true) {
+                    pi_unknown_line(
+                        self.prefix,
+                        "pi declared at both scopes: global manifest",
+                        &error.to_string(),
+                        sections,
+                    );
+                }
+                return;
+            }
+            // No global manifest declares anything, so nothing is
+            // declared twice: an answer, not a failure.
+            Some(Ok(crate::manifest::ManifestFile::Absent)) | None => return,
+        };
+        // The file this scope declares in, which is not always
+        // `kendex.toml`: a source catalog's own `kendex.toml` is the
+        // definition it publishes, so its install declarations sit in the
+        // sibling. Naming the wrong one sends the reader to edit the
+        // catalog and leaves the duplicate standing. `manifest_path`
+        // joins a name onto a directory, so one is always there.
+        let manifest_path = crate::manifest::manifest_path(self.env, self.scope);
+        let manifest_file = manifest_path
+            .file_name()
+            .unwrap_or(std::ffi::OsStr::new(crate::manifest::MANIFEST_FILE))
+            .to_string_lossy();
+        for name in manifest.pi_extensions.keys() {
+            let Some(globally) = global
+                .pi_extensions
+                .keys()
+                .find(|declared| crate::pi_ext::same_package(name, declared))
+            else {
+                continue;
+            };
+            sections.declared_twice.push(drift(
+                format!(
+                    "{}pi-declared-twice={}: the global manifest declares '{}' too; \
+                     Pi loads both scopes' package lists together and will not start \
+                     with one package registered twice; keep the global declaration, \
+                     which reaches every project, and remove the \
+                     [pi-extensions.\"{}\"] table from this project's {manifest_file}",
+                    self.prefix,
+                    shown(name),
+                    shown(globally),
+                    shown(name)
+                ),
+                None,
+            ));
+        }
     }
 
     /// The scope's second-copy scan, rendered by [`shadow_lines`] once the

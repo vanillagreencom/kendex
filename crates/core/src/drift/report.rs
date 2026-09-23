@@ -210,6 +210,9 @@ struct Sections {
     mixed: Vec<Line>,
     missing: Vec<Line>,
     blocked: Vec<Line>,
+    /// A Pi package this project declares that the global manifest
+    /// declares too.
+    declared_twice: Vec<Line>,
     /// A declared Pi package Pi also loads from a directory under
     /// `extensions/` that kendex does not own.
     shadowed: Vec<Line>,
@@ -228,6 +231,7 @@ impl Sections {
             mixed: Vec::new(),
             missing: Vec::new(),
             blocked: Vec::new(),
+            declared_twice: Vec::new(),
             shadowed: Vec::new(),
             references: Vec::new(),
             unevaluated: Vec::new(),
@@ -246,6 +250,7 @@ impl Sections {
             ("mixed installs", self.mixed),
             ("missing on disk", self.missing),
             ("blocked by files already there", self.blocked),
+            ("declared at both scopes", self.declared_twice),
             ("loaded twice by pi", self.shadowed),
             ("broken references", self.references),
             ("not yet evaluated", self.unevaluated),
@@ -321,6 +326,27 @@ pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) ->
     let now = crate::clock::unix_now();
     let deadline = std::time::Instant::now() + budget;
     let mut sections = Sections::new();
+    // The global manifest, read once for the whole report: every project
+    // scope judges its own Pi declarations against it, and a read per
+    // scope would report one unreadable file once per scope and count it
+    // as that many items. A global-only check asks for none, its own
+    // manifest read being that same file.
+    let global_manifest = scopes
+        .iter()
+        .any(|scope| scope.canonical() != Scope::Global)
+        .then(|| crate::manifest::load(&crate::manifest::manifest_path(env, &Scope::Global)));
+    // A global manifest that will not parse leaves unjudged only the
+    // scopes that reach the duplicate check, so the line is pushed from
+    // that check and not from here. Once for the whole report: every
+    // project scope reads the same file, and a line per scope would count
+    // one file as that many items. Already reported where the run covers
+    // the global scope, because that scope's own manifest read names the
+    // same file with the same error.
+    let global_manifest_named = std::cell::Cell::new(
+        scopes
+            .iter()
+            .any(|scope| scope.canonical() == Scope::Global),
+    );
     let mut oldest_age: Option<u64> = None;
     let many = scopes.len() > 1;
     // Every scope reads the same two Pi roots, so the scans are folded
@@ -345,6 +371,8 @@ pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) ->
             budget,
             pi_roots: crate::settings::load(env)
                 .map(|settings| crate::pi_ext::session_roots(env, &settings, &scope)),
+            global_manifest: global_manifest.as_ref(),
+            global_manifest_named: &global_manifest_named,
         };
         let scan = check_scope(&ctx, &mut sections, &mut oldest_age);
         scans.push((prefix, scan));

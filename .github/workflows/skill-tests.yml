@@ -691,7 +691,7 @@ jobs:
       - name: kendex, for the change-class render rows
         if: matrix.shard == 'rest' && runner.os == 'Linux'
         env:
-          KENDEX_VERSION: main-build-98-1-c702f94961a9e8ebf90a5bf766cdd55029d4bb67
+          KENDEX_VERSION: main-build-112-1-9212309b157d743f093cf8a26b8dbd96816dadfd
         run: |
           set -euo pipefail
           curl -fsSL https://kendex.ai/install.sh | sh -s -- --version "$KENDEX_VERSION"
@@ -1290,7 +1290,8 @@ jobs:
                 index_cli install_registers_project install_script \
                 install_ux installer instruction_shims_cli \
                 marketplace_author marketplace_cli missing_remedy \
-                packaging_recipes pi_extension_only_lock pi_shadow_package \
+                packaging_recipes pi_declared_both_scopes \
+                pi_extension_only_lock pi_shadow_package \
                 pi_staleness presentation refresh_fresh_clone \
                 refresh_ledger release_workflow remote_e2e safety_print \
                 template_cli terms_first_run unmanaged unmanaged_copy_check \
