@@ -325,7 +325,7 @@ if ! test -r "$lib"; then
   exit 1
 fi
 . "$lib"
-if ! declare -F lane_owned_processes >/dev/null; then
+if ! declare -F lane_owned_processes >/dev/null || ! declare -F lane_process_state >/dev/null; then
   printf 'lane-host-ssh: stop-operation-missing path=%s\n' "$lib" >&2
   exit 1
 fi
@@ -333,20 +333,33 @@ lane_owned_processes "$1" "$2" || {
   printf 'lane-host-ssh: stop-process-read-failed item=%s\n' "$4" >&2
   exit 1
 }
-root=$(cd -- "$1" && pwd -P) || exit 1
+root=$(cd -- "$1" && pwd -P) || {
+  printf 'lane-host-ssh: stop-worktree-read-failed item=%s\n' "$4" >&2
+  exit 1
+}
 signaled=""
 for pid in $LANE_OWNED_PROCESS_PIDS; do
   if ! current=$(readlink -- "/proc/$pid/cwd" 2>/dev/null); then
-    test ! -d "/proc/$pid" || exit 1
-    continue
+    state=$(lane_process_state "$pid") || {
+      printf 'lane-host-ssh: stop-state-read-failed item=%s pid=%s\n' "$4" "$pid" >&2
+      exit 1
+    }
+    if test -z "$state" || test "$state" = Z; then continue; fi
+    printf 'lane-host-ssh: stop-cwd-read-failed item=%s pid=%s\n' "$4" "$pid" >&2
+    exit 1
   fi
   test "$current" = "$root" || {
     printf 'lane-host-ssh: stop-owner-changed item=%s pid=%s\n' "$4" "$pid" >&2
     exit 1
   }
   if ! kill -TERM "$pid" 2>/dev/null; then
-    test ! -d "/proc/$pid" || exit 1
-    continue
+    state=$(lane_process_state "$pid") || {
+      printf 'lane-host-ssh: stop-state-read-failed item=%s pid=%s\n' "$4" "$pid" >&2
+      exit 1
+    }
+    if test -z "$state" || test "$state" = Z; then continue; fi
+    printf 'lane-host-ssh: stop-signal-refused item=%s pid=%s\n' "$4" "$pid" >&2
+    exit 1
   fi
   signaled+="${signaled:+ }$pid"
 done
@@ -354,7 +367,10 @@ passes=50
 while test "$passes" -gt 0; do
   live=""
   for pid in $signaled; do
-    state=$(awk '{ print $3 }' "/proc/$pid/stat" 2>/dev/null) || state=""
+    state=$(lane_process_state "$pid") || {
+      printf 'lane-host-ssh: stop-state-read-failed item=%s pid=%s\n' "$4" "$pid" >&2
+      exit 1
+    }
     test -z "$state" || test "$state" = Z || live+="${live:+ }$pid"
   done
   test -n "$live" || break

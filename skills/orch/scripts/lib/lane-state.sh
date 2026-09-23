@@ -281,18 +281,33 @@ pane_has_child() {
 # process table or an existing candidate could not be read.
 LANE_OWNED_PROCESS_TABLE=""
 LANE_OWNED_PROCESS_PIDS=""
+
+# Print a process state from /proc, or an empty line when the process has gone
+# or its state cannot be read. The command name can contain spaces and `)`, so
+# the state begins after the last closing parenthesis rather than at a fixed
+# field number.
+lane_process_state() { # PID
+  local stat rest
+  stat="$(cat -- "/proc/$1/stat" 2>/dev/null)" || stat=""
+  rest="${stat##*)}"
+  rest="${rest# }"
+  printf '%s\n' "${rest%% *}"
+}
+
 lane_owned_processes() { # WORKTREE HARNESS
-  local root table candidates pid cwd
+  local root raw table candidates pid cwd state
   LANE_OWNED_PROCESS_TABLE=""
   LANE_OWNED_PROCESS_PIDS=""
   root="$(cd -- "$1" && pwd -P)" || return 2
-  table="$(ps -A -o pid= -o ppid= -o comm= | awk '{ pid = $1; ppid = $2; $1 = ""; $2 = ""; name = substr($0, 3); sub(/.*\//, "", name); print pid, ppid, name }')" \
+  raw="$(ps -A -o pid= -o ppid= -o comm=)" || return 2
+  table="$(awk '{ pid = $1; ppid = $2; $1 = ""; $2 = ""; name = substr($0, 3); sub(/.*\//, "", name); print pid, ppid, name }' <<<"$raw")" \
     || return 2
   candidates="$(awk -v harness="$2" '$3 == harness { print $1 }' <<<"$table")" || return 2
   for pid in $candidates; do
     [[ -d /proc/self ]] || return 2
     if ! cwd="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)"; then
-      [[ -d "/proc/$pid" ]] || continue
+      state="$(lane_process_state "$pid")" || return 2
+      [[ -z "$state" || "$state" == Z ]] && continue
       return 2
     fi
     [[ "$cwd" == "$root" ]] || continue
