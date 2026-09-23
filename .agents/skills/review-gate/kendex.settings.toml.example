@@ -59,12 +59,12 @@ REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable 
 # values: enforce | off
 REVIEW_GATE_THREADS = "enforce"
 
-# How many times this gate retries a read from GitHub that failed. A read
-# that fails every attempt leaves the gate with no verdict, never with a
-# pass.
+# How many tries this gate gives one read from GitHub, counting the first.
+# At least 1, and 1 means a single try with no retry. A read that fails
+# every try leaves the gate with no verdict, never with a pass.
 REVIEW_GATE_API_ATTEMPTS = "1"
 
-# Seconds between those retries.
+# Seconds between those tries.
 REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
 # Which later changes an earlier review still covers: docs, comments and
@@ -73,10 +73,10 @@ REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 # requested changes and open threads. Empty turns it off.
 REVIEW_GATE_CARRY_FORWARD = ""
 
-# The folders holding generated output that the vendored kind above trusts,
-# separated by semicolons. Everything under them carries an earlier review,
-# so keep hook scripts and instruction documents out of the set and in the
-# exclusion list below.
+# Path patterns naming the generated output the vendored kind above trusts,
+# separated by semicolons, such as .agents/* to cover a folder's contents.
+# Everything matching carries an earlier review, so keep hook scripts and
+# instruction documents out of the set and in the exclusion list below.
 REVIEW_GATE_VENDORED_PATHS = ""
 
 # Documents that always need a fresh review, even where the change would
@@ -96,16 +96,16 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 # values: bot | none
 REVIEW_GATE_DOCS_ONLY = "bot"
 
-# The folders holding files kendex generates, separated by semicolons. A
-# pull request whose whole change sits under them is approved with no
-# review, and the build still decides the merge. Anything outside takes the
-# normal path, so name no document that carries policy.
+# Path patterns naming the files kendex generates, separated by semicolons,
+# such as .agents/* to cover a folder's contents. A pull request matching
+# them entirely is approved with no review, and the build still decides the
+# merge. Name no document that carries policy.
 REVIEW_GATE_RENDER_PATHS = ""
 
 # The one switch that turns this gate off. "enforce" is the full gate. "off"
 # reports approved before reading any evidence, leaving the merge to the
-# build alone. A misspelt value is refused loudly, so a typo cannot disable
-# it. Set it here or in your shell; the private env file is not read for it.
+# build alone. A misspelt value is refused loudly. It reads only your shell
+# and this committed file, so no private or machine-local file can set it.
 # values: enforce | off
 REVIEW_GATE_MODE = "enforce"
 

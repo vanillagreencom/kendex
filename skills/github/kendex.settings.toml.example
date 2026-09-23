@@ -3,9 +3,10 @@
 # The review bot this project trusts, the shape of its issue ids, and how
 # long GitHub commands may take.
 
-# The login of the review bot whose verdict this project reads. Empty
-# accepts a review summary from any known review bot. A login here pins the
-# verdict to that one account and accepts no other.
+# The login of the review bot whose verdict this project reads. Empty means
+# review-bot[bot]: most commands match that login alone, and only the
+# sticky-comment search falls back to other known review bots, and only
+# where that login posted no summary. A login here replaces it everywhere.
 GH_BOT_USERNAME = ""
 
 # A regular expression that pulls the issue id out of a branch name. Empty

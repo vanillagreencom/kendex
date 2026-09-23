@@ -2,9 +2,10 @@
 
 # Which outside models review a change, and how each one is run.
 
-# The reviewers to try, best first, separated by spaces or commas. Each name
-# needs a command below saying how to run it. A review goes to the first
-# name that is installed and is not the model running this session.
+# The reviewers to try, best first, separated by spaces or commas. The
+# claude and codex names have built-in commands; any other name needs one
+# below. A review goes to the first name that is installed and is not the
+# model running this session.
 SECOND_OPINION_MODELS = "claude codex"
 
 # How many separate opinions one review collects. 2 or more sends the same

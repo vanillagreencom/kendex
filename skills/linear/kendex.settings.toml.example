@@ -23,10 +23,10 @@ LINEAR_AGENT_LABELS = ""
 # turns it off.
 LINEAR_REQUIRE_REACH = ""
 
-# The shape read commands print in. "safe" is flat and easy to read, "table"
-# is for a person, "ids" prints identifiers alone and "raw" prints Linear's
-# own nesting. Individual commands accept only part of that set, so a choice
-# other than "safe" is refused in places.
+# The shape read commands print in: "safe" is flat and easy to read, "table"
+# is for a person, "ids" prints identifiers alone, "compact" is a small
+# shape for routing, and "raw" prints Linear's own nesting. Each command
+# accepts its own subset and refuses the rest, so any other choice fails.
 LINEAR_FORMAT = "safe"
 
 # Seconds to wait before retrying a Linear call that was rate limited or

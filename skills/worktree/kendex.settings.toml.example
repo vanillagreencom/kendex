@@ -3,8 +3,10 @@
 # Where worktrees are created, what is linked into them, and whose name
 # their commits carry.
 
-# The branch a new worktree starts from. Empty asks the remote which branch
-# is its default, and falls back to main.
+# The branch a new worktree starts from. Empty reads this checkout's own
+# record of the remote's default branch, and falls back to main. That record
+# is refreshed locally, never by the remote, so a stale one keeps handing
+# out the old branch.
 WORKTREE_DEFAULT_BRANCH = ""
 
 # Where worktrees are created. Empty puts them in a .worktrees folder beside

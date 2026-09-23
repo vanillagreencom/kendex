@@ -8,6 +8,7 @@
 PREFLIGHT_JSONC_GLOBS = "**/tsconfig*.json **/jsconfig*.json **/.vscode/*.json **/.devcontainer/*.json **/*-color-theme.json"
 
 # The database migrations that must never change once written, separated by
-# spaces. Preflight reports any edit to one. A value replaces the list shown
-# here.
+# spaces. Preflight reports an edit to a migration that already existed on
+# the base branch; correcting one this branch added is not reported. A value
+# replaces the list shown here.
 PREFLIGHT_MIGRATION_GLOBS = "**/migrations/V*__*.sql **/db/migration/V*__*.sql"

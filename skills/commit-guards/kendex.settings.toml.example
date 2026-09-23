@@ -2,9 +2,10 @@
 
 # The checks that run before a commit lands, and the limit each one holds.
 
-# Which checks run, separated by spaces. The value shown here names every
-# check; delete a name to turn that one off for this project. What each name
-# refuses is in the skill's CHECKS.md.
+# Which checks run, separated by spaces. The value shown here is the default
+# set; delete a name to turn that one off. The comments check is a further
+# one a project adds by name, and commit-msg never runs in this batch. What
+# each name refuses is in the skill's CHECKS.md.
 COMMIT_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names"
 
 # Kilobytes one tracked file may reach before a commit carrying it is
@@ -32,9 +33,10 @@ COMMIT_GUARDS_CHANGELOG_RECORD = "CHANGELOG.md"
 # say [no-changelog] in its subject line. Empty turns the rule off.
 COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = ""
 
-# How much markdown the formatting and link checks read when nothing tells
-# them otherwise. "touched" judges only what the commit changes. "all"
-# judges every matching file in the project, every time.
+# How much markdown these two checks read when nothing tells them otherwise.
+# Under "touched" the formatting check reads the changed documents and the
+# link check reads every configured document whenever anything is staged.
+# "all" reads every matching file in the project, every time.
 # values: touched | all
 COMMIT_GUARDS_MD_SCOPE = "touched"
 
@@ -49,14 +51,16 @@ COMMIT_GUARDS_MD_PATHS = "*.md"
 COMMIT_GUARDS_MD_REFS_PATHS = "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
 
 # The source files whose comments are checked for those same document
-# links, as path patterns separated by spaces. Empty uses the list of file
-# extensions the skill ships.
-# COMMIT_GUARDS_MD_REFS_SOURCE_PATHS = ""
+# links, as path patterns separated by spaces. Leaving the key unset uses
+# the list of file extensions the skill ships; an explicitly empty value is
+# refused, so name a path or drop the check.
+# COMMIT_GUARDS_MD_REFS_SOURCE_PATHS = "*.rs *.sh"
 
 # The source files the comments check reads, as path patterns separated by
 # spaces. A value replaces the list of file extensions the skill ships; add
-# the shapes an extension cannot name, such as scripts with no suffix.
-# COMMIT_GUARDS_COMMENT_PATHS = ""
+# the shapes an extension cannot name, such as scripts with no suffix. An
+# explicitly empty value is refused, so name a path or drop the check.
+# COMMIT_GUARDS_COMMENT_PATHS = "*.rs *.sh hooks/* */scripts/*"
 
 # The file listing the generated and vendored folders whose comments this
 # project does not own. Each row names a pattern and the reason it is

@@ -3,7 +3,8 @@
 # How a pull request is reviewed, merged and handed on, and how much of
 # that runs without asking you.
 
-# The folder where the per-issue state of a piece of work is kept.
+# The folder where the per-issue state of a piece of work is kept. A folder
+# named on the command line outranks this setting.
 ORCH_STATE_DIR = "tmp"
 
 # The other checkouts to refresh when this package changes, as full paths
@@ -26,9 +27,10 @@ WORKTREE_CLI = ""
 # lane to another machine.
 ORCH_LANE_HOST = "local"
 
-# How much a lane prints into its own window. Nobody watches a lane, so
-# "quiet" prints one line per finished step and writes each filled-in
-# report to a file. "normal" prints every report as it is written.
+# How much a lane prints into its own window. "quiet" prints one line per
+# finished step and writes each filled-in report to a file. "normal" prints
+# every report as it is written. Anything else is taken as "quiet" rather
+# than refused.
 # values: quiet | normal
 ORCH_LANE_OUTPUT = "quiet"
 
@@ -80,7 +82,8 @@ REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 
 # How many agent sessions may run at once, counting the one in charge. "0"
 # is unlimited. Where more reviewers are wanted than there are free places,
-# the reviews run in waves.
+# the reviews run in waves. On the Codex runtime set the cap the spawn
+# adapter reports.
 REVIEWER_SLOT_BUDGET = "0"
 
 # Who the session is talking to. "ceo" asks only about outcomes, in plain
@@ -100,10 +103,10 @@ ORCH_DECISION_MODE = "auto-recommended"
 # values: auto | ask
 ORCH_MERGE_AUTONOMY = "auto"
 
-# How a merge reaches the branch. "fast-path" merges straight away where
-# the change is already up to date and every gate is met. "off" joins the
-# merge queue and its second build. It only instructs; permission to skip
-# the queue is the organisation's to grant.
+# How a merge reaches the branch. "fast-path" merges straight away where the
+# change is already up to date and every gate is met; anything but that word
+# joins the merge queue rather than being refused. Permission to skip the
+# queue is the organisation's to grant, not this setting's.
 # values: off | fast-path
 ORCH_MERGE_BYPASS = "off"
 
@@ -114,16 +117,18 @@ ORCH_MERGE_BYPASS = "off"
 ORCH_ADMIN_MERGE_GH_CONFIG_DIR = ""
 
 # Which sizes of change that route may merge, separated by commas or
-# spaces: render, trivial, micro, small and standard. Empty allows every
-# size. A change whose size cannot be read is refused rather than merged.
+# spaces: render, trivial, micro, small and standard. With a value set, a
+# change whose size cannot be read is refused rather than merged. Empty
+# allows every size and reads no size at all.
 ORCH_ADMIN_MERGE_CLASSES = ""
 
 # Seconds allowed for each check that a lane received its instructions.
 ORCH_TMUX_VERIFY_SECS = "15"
 
 # Seconds a lane on another machine waits for that machine to answer after
-# the login line is sent. It is its own bound, longer than the one above,
-# because it measures a network route and a remote login.
+# the login line is sent. It is a separate bound because it measures a
+# network route coming up and a remote login. A value above 300 is reported
+# and cut back to 300.
 ORCH_LANE_SSH_PROMPT_SECS = "60"
 
 # Friendlier names for the lanes found on this machine, as real-name=alias
