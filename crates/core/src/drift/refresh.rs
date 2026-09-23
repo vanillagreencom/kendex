@@ -21,6 +21,10 @@ pub(crate) const FETCH_DEADLINE: Duration = Duration::from_secs(60);
 /// them. A busy mirror lock is neither success nor failure — skipped, its
 /// stamp untouched, for the next pass to pick up.
 pub fn refresh_stale(env: &Env, scopes: &[Scope]) -> Vec<String> {
+    let background = env
+        .clone()
+        .with_source_cache_wait(crate::env::SourceCacheWait::Background);
+    let env = &background;
     let now = crate::clock::unix_now();
     let mut notes = Vec::new();
     let mut fetched: std::collections::BTreeSet<String> = Default::default();
@@ -50,7 +54,7 @@ pub fn refresh_stale(env: &Env, scopes: &[Scope]) -> Vec<String> {
                 continue;
             }
             let mirror = store::mirror_dir(env, &key);
-            let guard = match store::lock_repo_background(env, &key) {
+            let guard = match store::lock_repo(env, &key) {
                 Ok(guard) => guard,
                 Err(CoreError::CacheBusy { .. }) => {
                     notes.push(format!("{repo}: busy, skipped"));

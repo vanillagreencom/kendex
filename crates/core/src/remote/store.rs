@@ -17,7 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::env::Env;
+use crate::env::{Env, SourceCacheWait};
 use crate::error::{CoreError, Result};
 use crate::fs::atomic_write;
 use crate::process::Hardened;
@@ -121,18 +121,21 @@ impl CacheGuard {
 }
 
 /// A detached refresh waits only for a neighbour's quick local step. A
-/// foreground operation also covers that refresh's fetch deadline.
+/// foreground operation covers a detached cold clone and its fetch.
 const BACKGROUND_LOCK_WAIT: Duration = Duration::from_millis(500);
 const LOCK_POLL: Duration = Duration::from_millis(10);
 
 #[cfg(not(test))]
+const DETACHED_OPERATION_LIMIT: Duration =
+    crate::process::DEFAULT_TIMEOUT.saturating_add(crate::drift::refresh::FETCH_DEADLINE);
+#[cfg(not(test))]
 const FOREGROUND_LOCK_WAIT: Duration =
-    crate::drift::refresh::FETCH_DEADLINE.saturating_add(BACKGROUND_LOCK_WAIT);
+    DETACHED_OPERATION_LIMIT.saturating_add(BACKGROUND_LOCK_WAIT);
 #[cfg(test)]
 const FOREGROUND_LOCK_WAIT: Duration = Duration::from_secs(1);
 
 pub fn lock_repo(env: &Env, key: &str) -> Result<CacheGuard> {
-    lock_repo_for(env, key, FOREGROUND_LOCK_WAIT, || {})
+    lock_repo_for(env, key, cache_wait(env), || {})
 }
 
 pub(super) fn lock_repo_notifying(
@@ -140,11 +143,42 @@ pub(super) fn lock_repo_notifying(
     key: &str,
     on_wait: impl FnOnce(),
 ) -> Result<CacheGuard> {
-    lock_repo_for(env, key, FOREGROUND_LOCK_WAIT, on_wait)
+    let wait = cache_wait(env);
+    match env.source_cache_wait() {
+        SourceCacheWait::Foreground => lock_repo_for(env, key, wait, on_wait),
+        SourceCacheWait::Background => lock_repo_for(env, key, wait, || {}),
+    }
 }
 
-pub(crate) fn lock_repo_background(env: &Env, key: &str) -> Result<CacheGuard> {
-    lock_repo_for(env, key, BACKGROUND_LOCK_WAIT, || {})
+fn cache_wait(env: &Env) -> Duration {
+    #[cfg(test)]
+    WAIT_COUNTS.with(|cell| {
+        let mut counts = cell.get();
+        match env.source_cache_wait() {
+            SourceCacheWait::Foreground => counts.0 += 1,
+            SourceCacheWait::Background => counts.1 += 1,
+        }
+        cell.set(counts);
+    });
+    match env.source_cache_wait() {
+        SourceCacheWait::Foreground => FOREGROUND_LOCK_WAIT,
+        SourceCacheWait::Background => BACKGROUND_LOCK_WAIT,
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static WAIT_COUNTS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_wait_counts() {
+    WAIT_COUNTS.set((0, 0));
+}
+
+#[cfg(test)]
+pub(crate) fn wait_counts() -> (usize, usize) {
+    WAIT_COUNTS.get()
 }
 
 fn lock_repo_for(

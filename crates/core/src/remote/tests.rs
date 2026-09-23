@@ -670,6 +670,96 @@ fn background_refresh_still_skips_a_busy_source_without_the_foreground_wait() {
     assert!(notes.iter().any(|note| note == "owner/repo: busy, skipped"));
 }
 
+fn remote_skill_scope(f: &Fixture) -> (crate::model::Scope, Resolution) {
+    let root = f.env.home.join("project");
+    fs::create_dir_all(&root).unwrap();
+    let scope = crate::model::Scope::Project { root };
+    let mut manifest = crate::manifest::seed(&scope, &[crate::model::HarnessId::Claude]);
+    manifest.sources.insert(
+        "cat".to_owned(),
+        SourceDecl {
+            repo: Some(REPO.to_owned()),
+            path: None,
+            rev: None,
+            enabled: true,
+        },
+    );
+    manifest.skills.insert(
+        "gh".to_owned(),
+        crate::manifest::ItemDecl::from_source("cat"),
+    );
+    crate::manifest::save(&crate::manifest::manifest_path(&f.env, &scope), &manifest).unwrap();
+    (scope, sync(&f.env, REPO, None).unwrap())
+}
+
+fn remove_checkout(f: &Fixture, published: &Resolution) {
+    fs::remove_dir_all(&published.root).unwrap();
+    fs::remove_file(store::receipt_path(
+        &f.env,
+        &key_for(&f.env),
+        &published.commit,
+    ))
+    .unwrap();
+}
+
+/// Snapshot derivation is part of the detached refresh. Its nested cache
+/// publication keeps the short wait instead of turning back into foreground
+/// work after the fetch lock has been released.
+#[test]
+fn background_snapshot_derivation_skips_a_busy_cached_checkout() {
+    let f = fixture();
+    let (scope, published) = remote_skill_scope(&f);
+    remove_checkout(&f, &published);
+    let guard = store::lock_repo(&f.env, &key_for(&f.env)).unwrap();
+    store::reset_wait_counts();
+
+    crate::drift::refresh::refresh_stale(&f.env, &[scope]);
+    let waits = store::wait_counts();
+    drop(guard);
+
+    assert_eq!(waits.0, 0, "foreground cache waits: {waits:?}");
+    assert!(waits.1 > 0, "no background cache wait: {waits:?}");
+    assert!(store::published(&f.env, &key_for(&f.env), &published.commit).is_none());
+}
+
+/// Copy derivation is the other deep read after a detached refresh. A current
+/// snapshot isolates this path, and the occupied skill makes it resolve the
+/// source while another process owns the cache lock.
+#[test]
+fn background_copy_derivation_skips_a_busy_cached_checkout() {
+    let f = fixture();
+    let (scope, published) = remote_skill_scope(&f);
+    crate::drift::snapshot::store(
+        &f.env,
+        &scope,
+        &crate::drift::snapshot::ScopeSnapshot {
+            schema: crate::drift::snapshot::SNAPSHOT_SCHEMA,
+            taken_at: crate::clock::unix_now(),
+            scope: scope.label(),
+            packages: Vec::new(),
+            unreadable: Vec::new(),
+        },
+    )
+    .unwrap();
+    let crate::model::Scope::Project { root } = &scope else {
+        unreachable!("the fixture creates a project scope");
+    };
+    let occupied = root.join(".agents/skills/gh");
+    fs::create_dir_all(&occupied).unwrap();
+    fs::write(occupied.join("SKILL.md"), "unmanaged\n").unwrap();
+    remove_checkout(&f, &published);
+    let guard = store::lock_repo(&f.env, &key_for(&f.env)).unwrap();
+    store::reset_wait_counts();
+
+    crate::drift::refresh::refresh_stale(&f.env, &[scope]);
+    let waits = store::wait_counts();
+    drop(guard);
+
+    assert_eq!(waits.0, 0, "foreground cache waits: {waits:?}");
+    assert!(waits.1 > 0, "no background cache wait: {waits:?}");
+    assert!(store::published(&f.env, &key_for(&f.env), &published.commit).is_none());
+}
+
 /// One repository written three ways is one repository: the endings that
 /// name no repository of their own share a mirror, a checkout tree and a
 /// lock, and a different host never shares any of them.

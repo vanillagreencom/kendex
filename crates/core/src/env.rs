@@ -56,7 +56,15 @@ pub struct Env {
     /// answers about the current project depends on its arguments alone.
     cwd: Option<PathBuf>,
     vars: BTreeMap<String, String>,
+    source_cache_wait: SourceCacheWait,
     held: Arc<Mutex<Held>>,
+}
+
+/// How this invocation responds when another process owns a source cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SourceCacheWait {
+    Foreground,
+    Background,
 }
 
 /// What this invocation holds in the source cache, which its own
@@ -86,6 +94,7 @@ impl Env {
             temp_dir: std::env::temp_dir(),
             cwd: std::env::current_dir().ok(),
             vars: BTreeMap::new(),
+            source_cache_wait: SourceCacheWait::Foreground,
             held: Arc::default(),
         };
         let vars = HARNESS_VARS
@@ -140,6 +149,7 @@ impl Env {
     /// next run against the cache this one filled.
     pub fn next_invocation(&self) -> Env {
         Env {
+            source_cache_wait: SourceCacheWait::Foreground,
             held: Arc::default(),
             ..self.clone()
         }
@@ -161,6 +171,15 @@ impl Env {
     pub fn with_var(mut self, key: &str, value: &str) -> Self {
         self.vars.insert(key.to_owned(), value.to_owned());
         self
+    }
+
+    pub(crate) fn with_source_cache_wait(mut self, wait: SourceCacheWait) -> Self {
+        self.source_cache_wait = wait;
+        self
+    }
+
+    pub(crate) fn source_cache_wait(&self) -> SourceCacheWait {
+        self.source_cache_wait
     }
 
     pub(crate) fn is_windows(&self) -> bool {
@@ -213,6 +232,7 @@ impl Env {
             temp_dir: std::env::temp_dir(),
             cwd: None,
             vars: BTreeMap::new(),
+            source_cache_wait: SourceCacheWait::Foreground,
             held: Arc::default(),
         }
     }
