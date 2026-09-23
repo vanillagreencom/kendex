@@ -129,7 +129,7 @@ pub fn sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
         if let Some(root) = store::published(env, &key, pin) {
             return Ok(Resolution::at(pin, root));
         }
-        let _guard = store::lock_repo_notifying(env, &key, || waiting(repo))?;
+        let _guard = store::lock_repo(env, &key, repo)?;
         let fetched = store::ensure_mirror(&mirror, &url).and_then(|()| store::fetch(&mirror));
         stamp_fetch(env, &key, &mirror, &fetched);
         if !store::has_commit(&mirror, pin) {
@@ -149,7 +149,7 @@ pub fn sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
     }
 
     let selector = rev.unwrap_or("HEAD");
-    let _guard = store::lock_repo_notifying(env, &key, || waiting(repo))?;
+    let _guard = store::lock_repo(env, &key, repo)?;
     let fetched = store::ensure_mirror(&mirror, &url).and_then(|()| store::fetch(&mirror));
     stamp_fetch(env, &key, &mirror, &fetched);
     let warning = match &fetched {
@@ -217,21 +217,13 @@ fn cached_strict(env: &Env, repo: &str, rev: Option<&str>) -> Result<Option<Reso
         // The mirror holds the objects even when the checkout is missing or
         // does not match what was published: rebuilding it is local.
         if store::has_commit(&mirror, &commit) {
-            let guard = store::lock_repo_notifying(env, &key, || waiting(repo))?;
+            let guard = store::lock_repo(env, &key, repo)?;
             let published = store::publish(env, &key, &mirror, &commit)?;
             drop(guard);
             return Ok(Some(Resolution::published(&commit, published)));
         }
     }
     Ok(None)
-}
-
-#[allow(
-    clippy::print_stderr,
-    reason = "a source-lock wait must stay off stdout so machine output remains valid"
-)]
-fn waiting(repo: &str) {
-    eprintln!("{repo}: waiting for another kendex process to finish downloading it");
 }
 
 /// Every fetch stamps its mirror, success or failure, so freshness and
@@ -270,7 +262,7 @@ pub fn fetch_all(env: &Env, manifest: &Manifest) -> Vec<String> {
         let url = clone_url(env, repo);
         let key = cache_key(env, repo);
         let mirror = store::mirror_dir(env, &key);
-        let guard = match store::lock_repo(env, &key) {
+        let guard = match store::lock_repo(env, &key, repo) {
             Ok(guard) => guard,
             Err(error) => {
                 warnings.push(format!("{repo}: not checked ({error})"));

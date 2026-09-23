@@ -100,7 +100,7 @@ pub(crate) fn package_ref_for(
     let root = match crate::remote::store::published(env, &key, &tip) {
         Some(root) => root,
         None => {
-            let _guard = crate::remote::store::lock_repo(env, &key)?;
+            let _guard = crate::remote::store::lock_repo(env, &key, &repo)?;
             crate::remote::store::publish(env, &key, &mirror, &tip)?.root
         }
     };

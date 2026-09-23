@@ -612,7 +612,7 @@ fn a_checkout_published_under_older_rules_is_rebuilt() {
 fn foreground_sync_and_cached_wait_for_the_active_download() {
     let f = fixture();
     let key = key_for(&f.env);
-    let guard = store::lock_repo(&f.env, &key).unwrap();
+    let guard = store::lock_repo(&f.env, &key, REPO).unwrap();
     let env = f.env.clone();
     let syncing = std::thread::spawn(move || sync(&env, REPO, None));
     std::thread::sleep(Duration::from_millis(700));
@@ -621,7 +621,7 @@ fn foreground_sync_and_cached_wait_for_the_active_download() {
 
     fs::remove_dir_all(&synced.root).unwrap();
     fs::remove_file(store::receipt_path(&f.env, &key, &synced.commit)).unwrap();
-    let guard = store::lock_repo(&f.env, &key).unwrap();
+    let guard = store::lock_repo(&f.env, &key, REPO).unwrap();
     let env = f.env.clone();
     let reading = std::thread::spawn(move || cached(&env, REPO, None));
     std::thread::sleep(Duration::from_millis(700));
@@ -634,7 +634,7 @@ fn foreground_sync_and_cached_wait_for_the_active_download() {
 #[test]
 fn foreground_sync_reports_a_lock_held_past_its_bound() {
     let f = fixture();
-    let guard = store::lock_repo(&f.env, &key_for(&f.env)).unwrap();
+    let guard = store::lock_repo(&f.env, &key_for(&f.env), REPO).unwrap();
     let error = sync(&f.env, REPO, None).unwrap_err();
     drop(guard);
     assert!(matches!(error, CoreError::CacheBusy { .. }));
@@ -647,7 +647,7 @@ fn foreground_sync_reports_a_lock_held_past_its_bound() {
         &synced.commit,
     ))
     .unwrap();
-    let guard = store::lock_repo(&f.env, &key_for(&f.env)).unwrap();
+    let guard = store::lock_repo(&f.env, &key_for(&f.env), REPO).unwrap();
     store::reset_wait_counts();
     let error = cached_or_sync(&f.env, REPO, None).unwrap_err();
     let waits = store::wait_counts();
@@ -681,7 +681,7 @@ fn background_refresh_still_skips_a_busy_source_without_the_foreground_wait() {
         .sources
         .remove(crate::manifest::DEFAULT_SOURCE_NAME);
     crate::manifest::save(&crate::manifest::manifest_path(&f.env, &scope), &manifest).unwrap();
-    let guard = store::lock_repo(&f.env, &key_for(&f.env)).unwrap();
+    let guard = store::lock_repo(&f.env, &key_for(&f.env), REPO).unwrap();
 
     let started = Instant::now();
     let notes = crate::drift::refresh::refresh_stale(&f.env, &[scope]);
@@ -731,7 +731,7 @@ fn background_snapshot_derivation_skips_a_busy_cached_checkout() {
     let f = fixture();
     let (scope, published) = remote_skill_scope(&f);
     remove_checkout(&f, &published);
-    let guard = store::lock_repo(&f.env, &key_for(&f.env)).unwrap();
+    let guard = store::lock_repo(&f.env, &key_for(&f.env), REPO).unwrap();
     store::reset_wait_counts();
 
     crate::drift::refresh::refresh_stale(&f.env, &[scope]);
@@ -769,7 +769,7 @@ fn background_copy_derivation_skips_a_busy_cached_checkout() {
     fs::create_dir_all(&occupied).unwrap();
     fs::write(occupied.join("SKILL.md"), "unmanaged\n").unwrap();
     remove_checkout(&f, &published);
-    let guard = store::lock_repo(&f.env, &key_for(&f.env)).unwrap();
+    let guard = store::lock_repo(&f.env, &key_for(&f.env), REPO).unwrap();
     store::reset_wait_counts();
 
     crate::drift::refresh::refresh_stale(&f.env, &[scope]);
@@ -798,10 +798,33 @@ fn one_repository_spelled_three_ways_keeps_one_cache_entry() {
 fn the_cache_lock_is_released_with_its_guard() {
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let guard = store::lock_repo(&env, "catalog").unwrap();
-    assert!(store::lock_repo(&env, "catalog").is_err());
+    let guard = store::lock_repo(&env, "catalog", "owner/catalog").unwrap();
+    assert!(store::lock_repo(&env, "catalog", "owner/catalog").is_err());
     drop(guard);
-    store::lock_repo(&env, "catalog").expect("the lock releases with its guard");
+    store::lock_repo(&env, "catalog", "owner/catalog").expect("the lock releases with its guard");
+}
+
+/// Every repository lock enters through one policy: foreground contention
+/// names the repository once, while detached work keeps its short silent skip.
+#[test]
+fn the_common_cache_lock_notices_only_foreground_waits() {
+    let f = fixture();
+    let key = key_for(&f.env);
+    let guard = store::lock_repo(&f.env, &key, REPO).unwrap();
+    store::take_wait_notices();
+
+    let error = store::lock_repo(&f.env, &key, REPO).err().unwrap();
+    assert!(matches!(error, CoreError::CacheBusy { .. }));
+    assert_eq!(store::take_wait_notices(), [REPO]);
+
+    let background = f
+        .env
+        .clone()
+        .with_source_cache_wait(crate::env::SourceCacheWait::Background);
+    let error = store::lock_repo(&background, &key, REPO).err().unwrap();
+    assert!(matches!(error, CoreError::CacheBusy { .. }));
+    assert!(store::take_wait_notices().is_empty());
+    drop(guard);
 }
 
 /// As with the scope lock: a child forked by any thread holds a copy of
@@ -814,10 +837,10 @@ fn the_cache_lock_is_released_with_its_guard() {
 fn the_cache_lock_releases_while_a_description_copy_exists() {
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let guard = store::lock_repo(&env, "catalog").unwrap();
+    let guard = store::lock_repo(&env, "catalog", "owner/catalog").unwrap();
     let copy = guard.file().try_clone().unwrap();
     drop(guard);
-    let relock = store::lock_repo(&env, "catalog");
+    let relock = store::lock_repo(&env, "catalog", "owner/catalog");
     drop(copy);
     relock.expect("drop released the lock despite the live description copy");
 }

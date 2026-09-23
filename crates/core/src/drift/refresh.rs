@@ -54,7 +54,7 @@ pub fn refresh_stale(env: &Env, scopes: &[Scope]) -> Vec<String> {
                 continue;
             }
             let mirror = store::mirror_dir(env, &key);
-            let guard = match store::lock_repo(env, &key) {
+            let guard = match store::lock_repo(env, &key, repo) {
                 Ok(guard) => guard,
                 Err(CoreError::CacheBusy { .. }) => {
                     notes.push(format!("{repo}: busy, skipped"));

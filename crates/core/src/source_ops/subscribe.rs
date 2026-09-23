@@ -417,7 +417,7 @@ fn normalize_tree(
     let url = crate::remote::clone_url(env, repo);
     let key = crate::remote::cache_key(env, repo);
     let mirror = crate::remote::store::mirror_dir(env, &key);
-    let _guard = crate::remote::store::lock_repo(env, &key)?;
+    let _guard = crate::remote::store::lock_repo(env, &key, repo)?;
     // Best-effort fetch: a mirror already downloaded answers offline.
     let fetched = crate::remote::store::ensure_mirror(&mirror, &url)
         .and_then(|()| crate::remote::store::fetch(&mirror));

@@ -121,7 +121,7 @@ fn a_busy_source_is_one_failure_instead_of_one_pending_note_per_package() {
             .skills
             .insert(name.to_owned(), manifest::ItemDecl::from_source("cat"));
     }
-    let guard = super::store::lock_repo(&f.env, &super::key_for(&f.env)).unwrap();
+    let guard = super::store::lock_repo(&f.env, &super::key_for(&f.env), super::REPO).unwrap();
     let synced = sync_declared_sources(&f.env, &manifest);
     drop(guard);
 

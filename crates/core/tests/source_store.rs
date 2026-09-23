@@ -267,7 +267,7 @@ fn a_busy_cache_costs_only_its_own_source() {
         .clone();
     fs::remove_dir_all(remote::store::checkout_dir(&w.env, &key, &commit)).unwrap();
     fs::remove_dir_all(w.home.join("app").join(".agents/skills/local-gh")).unwrap();
-    let guard = remote::store::lock_repo(&w.env, &key).unwrap();
+    let guard = remote::store::lock_repo(&w.env, &key, REPO).unwrap();
 
     let started = Instant::now();
     let report = audit(&w.env, &scope).unwrap();

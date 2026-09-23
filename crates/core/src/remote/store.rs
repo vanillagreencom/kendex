@@ -135,22 +135,24 @@ const FOREGROUND_LOCK_WAIT: Duration =
 #[cfg(test)]
 const FOREGROUND_LOCK_WAIT: Duration = Duration::from_secs(1);
 
-pub fn lock_repo(env: &Env, key: &str) -> Result<CacheGuard> {
-    lock_repo_for(env, key, cache_wait(env), || {})
-}
-
-pub(super) fn lock_repo_notifying(
-    env: &Env,
-    key: &str,
-    on_wait: impl FnOnce(),
-) -> Result<CacheGuard> {
+pub fn lock_repo(env: &Env, key: &str, repo: &str) -> Result<CacheGuard> {
     let wait = cache_wait(env);
     match env.source_cache_wait() {
         SourceCacheWait::Foreground | SourceCacheWait::FixtureForeground => {
-            lock_repo_for(env, key, wait, on_wait)
+            lock_repo_for(env, key, wait, || waiting(repo))
         }
         SourceCacheWait::Background => lock_repo_for(env, key, wait, || {}),
     }
+}
+
+#[allow(
+    clippy::print_stderr,
+    reason = "a source-lock wait must stay off stdout so machine output remains valid"
+)]
+fn waiting(repo: &str) {
+    #[cfg(test)]
+    WAIT_NOTICES.with(|notices| notices.borrow_mut().push(repo.to_owned()));
+    eprintln!("{repo}: waiting for another kendex process to finish downloading it");
 }
 
 fn cache_wait(env: &Env) -> Duration {
@@ -173,6 +175,7 @@ fn cache_wait(env: &Env) -> Duration {
 #[cfg(test)]
 thread_local! {
     static WAIT_COUNTS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    static WAIT_NOTICES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 #[cfg(test)]
@@ -183,6 +186,11 @@ pub(crate) fn reset_wait_counts() {
 #[cfg(test)]
 pub(crate) fn wait_counts() -> (usize, usize) {
     WAIT_COUNTS.get()
+}
+
+#[cfg(test)]
+pub(crate) fn take_wait_notices() -> Vec<String> {
+    WAIT_NOTICES.take()
 }
 
 fn lock_repo_for(
