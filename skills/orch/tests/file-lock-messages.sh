@@ -68,6 +68,51 @@ EOF
     settled_mutex "$lock.d" "${3:-}"
   }
 
+  # A NESTED take must never release the outer shell's mutex. `lanes` holds
+  # the host-wide usage mutex while it renews a credential under a second one,
+  # in a command substitution; a renewal whose take TIMES OUT leaves that
+  # subshell with the OUTER directory still named in ORCH_LOCK_MUTEX_DIR, and
+  # its EXIT trap would rmdir the lock its own take never got. The name is
+  # cleared at the start of every take for that reason.
+  #
+  # The inner lock is contended by construction, so the inner take is the
+  # timeout this rule is about and not a second held mutex.
+  mkdir -p "$SCRATCH/contended.lock.d"
+  nested_outcome() { # LIBRARY
+    cat > "$SCRATCH/nested.sh" << EOF
+set -uo pipefail
+. "$1"
+exec 8> "$SCRATCH/outer.lock"
+orch_take_lock 8 "$SCRATCH/outer.lock" 5 || exit 1
+inner() {
+  exec 9> "$SCRATCH/contended.lock"
+  orch_take_lock 9 "$SCRATCH/contended.lock" 0 || return 1
+}
+taken=\$(inner) || true
+[ -d "$SCRATCH/outer.lock.d" ] && printf outer-held || printf outer-gone
+EOF
+    PATH="$NOFLOCK" bash "$SCRATCH/nested.sh" 2> /dev/null
+    rmdir -- "$SCRATCH/outer.lock.d" 2> /dev/null || true
+  }
+  LIBRARY="$ROOT/skills/orch/scripts/lib/file-lock.sh"
+  [[ "$(nested_outcome "$LIBRARY")" == outer-held ]]
+  # The must-fail control: the same library with the take's own clearing line
+  # dropped, and nothing else. Both counts are asserted, so a control that
+  # matched nothing reddens here instead of passing on an unmutated copy. The
+  # line is deleted inside orch_take_lock alone: orch_release_lock ends with
+  # the identical assignment, and removing that one would prove nothing about
+  # this rule.
+  UNCLEARING="$SCRATCH/lib-unclearing.sh"
+  awk '
+    /^orch_take_lock\(\) \{/ { inside = 1 }
+    inside && !done && $0 == "  ORCH_LOCK_MUTEX_DIR=\"\"" { done = 1; next }
+    { print }
+  ' "$LIBRARY" > "$UNCLEARING"
+  [[ "$(grep -c '^  ORCH_LOCK_MUTEX_DIR=""$' "$LIBRARY")" -eq 2 ]]
+  [[ "$(grep -c '^  ORCH_LOCK_MUTEX_DIR=""$' "$UNCLEARING")" -eq 1 ]]
+  bash -n "$UNCLEARING"
+  [[ "$(nested_outcome "$UNCLEARING")" == outer-gone ]]
+
   [[ "$(reaped_mutex rearmed orch_arm_lock_signals)" == released ]]
   # The inverse, and the must-fail control for the row above it: the same
   # holder clearing the handlers instead of restoring them keeps the mutex,

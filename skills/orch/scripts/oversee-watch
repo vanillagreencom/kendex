@@ -2145,7 +2145,12 @@ overseer_marks_judge() {
   # ceiling exists to bound and not one it can prevent there.
   BOUND_BY=()
   ! command -v timeout >/dev/null 2>&1 || BOUND_BY=(timeout "$MARK_CEILING")
-  line="$(${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SUCCEED" --check-marks 2>"$errf")" || rc=$?
+  # This watch's own pass interval, named to the lane reader inside that
+  # judgement: a figure younger than one pass is one this watch has not come
+  # round for yet, so re-posting for it is a request per pass per account and
+  # nothing else. `lanes --max-age` only ever widens its TTL, so a pass shorter
+  # than the configured TTL changes nothing.
+  line="$(ORCH_LANES_USAGE_MAX_AGE="$INTERVAL" ${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SUCCEED" --check-marks 2>"$errf")" || rc=$?
   if (( rc != 0 )); then
     [[ "$rc" -ne 124 ]] || overseer_note overseer-mark-unjudged "path=$SUCCEED" "seconds=$MARK_CEILING"
     [[ "$rc" -eq 124 ]] || overseer_note overseer-mark-unjudged "path=$SUCCEED" "exit=$rc"

@@ -58,6 +58,14 @@ orch_take_lock() { # FD LOCK_FILE WAIT_SECONDS
     return
   fi
   limit=$((wait_s * 10))
+  # Cleared before anything is armed, because a nested take inherits the outer
+  # shell's value: `lanes` holds the host-wide usage mutex while it renews a
+  # credential under a second one, and a renewal that TIMED OUT would otherwise
+  # exit with the outer mutex still named here and release the usage lock its
+  # own subshell never took. Clearing costs a caller nothing: a shell holding a
+  # mutex has to release it before it can take another, and the previous code
+  # overwrote this name on a successful take anyway.
+  ORCH_LOCK_MUTEX_DIR=""
   # Armed before the loop, never after it wins: recording the directory before
   # mkdir would let a losing contender rmdir the winner's mutex, and arming
   # after the win leaves a signal in that window holding the lock for good.

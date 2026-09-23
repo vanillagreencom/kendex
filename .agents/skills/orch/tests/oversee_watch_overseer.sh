@@ -71,6 +71,10 @@ case "${1:-}" in
     else echo "claude -n overseer 'brief'"; fi
     exit 0 ;;
   --check-marks)
+    # The lane-read window this judgement inherits, recorded per call: the
+    # watch names its own pass interval there so the reader inside serves a
+    # figure it has not come round for yet instead of posting for it again.
+    printf '%s\n' "${ORCH_LANES_USAGE_MAX_AGE:-unset}" >> "$STUB_DIR/succeed.max-age"
     rc=0; [[ ! -f "$STUB_DIR/succeed.check-rc" ]] || rc="$(cat "$STUB_DIR/succeed.check-rc")"
     # stdout is handed away before the wait: the watch reads this mode in a
     # command substitution, which stays open while any writer holds that pipe,
@@ -931,6 +935,20 @@ run TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "judged=$(succeed_calls --check-marks) marks=$(grep -c '^EVENT overseer-mark' <<<"$OUT" || true)" \
   "judged=1 marks=1" \
   "the refuted wall reports the standing context mark off the one reading it took" "$ERR"
+
+# The usage endpoint answered every account 429 on the control host because
+# each watch, each judgement and each pick refreshed the same accounts
+# independently. A pass names its OWN interval to the lane reader inside the
+# judgement, so a figure this watch has not come round for yet is served
+# rather than posted for again. One pass, so the interval is never slept.
+overseer_case mark_interval walled
+state_with "$LINE"
+printf '%s\n' "oversee-succeed: mark-reached kind=context value=612000 mark=500000 succession=on headroom=80" \
+  > "$STUB_DIR/succeed.check"
+run TMUX_PANE="$PANE" -- --max-loops 1 --interval 45
+assert_eq "judged=$(succeed_calls --check-marks) age=$(paste -sd, "$STUB_DIR/succeed.max-age")" \
+  "judged=1 age=45" \
+  "the judgement is told this watch's pass interval as the age a usage figure may be served at" "$ERR"
 
 # One reading is a poll, exactly as it is for a death.
 overseer_case walled_one_pass walled

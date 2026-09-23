@@ -99,7 +99,7 @@ run_lanes() {
   ERR="$RUN/stderr"
   OUT=$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
     LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" FETCH_LOG="$RUN/fetch.log" \
-    TOKEN_LOG="$RUN/token.log" \
+    FETCH_SEQ_DIR="$RUN/fetchseq" TOKEN_LOG="$RUN/token.log" \
     OVERSEE_WATCH_STATE_DIR="$RUN/store" TMUX_PANES_FILE="$RUN/panes" \
     PATH="$CLAIM_BIN:$PATH" ${env_args[@]+"${env_args[@]}"} "$LANES" "$@" 2>"$ERR")
   RC=$?
@@ -169,7 +169,7 @@ observe() {
       jqsecrets) value="$(grep -c -e refresh-claude -e renewed-token -e rotated-refresh "$JQ_ARGV_LOG" 2>/dev/null || true)"; value="${value:-0}" ;;
       newtoken) value="$(jq -r '.claudeAiOauth.accessToken' "$H/.claude/.credentials.json" 2>/dev/null || echo UNREADABLE)" ;;
       newrefresh) value="$(jq -r '.claudeAiOauth.refreshToken' "$H/.claude/.credentials.json" 2>/dev/null || echo UNREADABLE)" ;;
-      cachefiles) value="$(cat "$RUN/store/usage"/*.json 2>/dev/null | jq -r '.config_dir' | sed "s#^$H/\\.##" | sort | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
+      cachefiles) value="$(cat "$RUN/store/usage"/*.json 2>/dev/null | jq -r 'select(.usage) | .config_dir' | sed "s#^$H/\\.##" | sort | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
       # The chooser adds a working field to rank candidates on. A record that
       # carried it out would put the chooser's own scratch in every consumer's
       # lane record.
@@ -1084,7 +1084,7 @@ stage_cache() {
   env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" OVERSEE_WATCH_STATE_DIR="$CACHE_STATE" \
     PATH="$CLAIM_BIN:$PATH" "$LANES" list --harness claude --json >/dev/null 2>&1
   for f in "$CACHE_STATE"/usage/*.json; do
-    [[ -f "$f" && "$(jq -r '.config_dir' "$f")" == "$H/.claude" ]] || continue
+    [[ -f "$f" && "$(jq -r 'select(.usage) | .config_dir' "$f")" == "$H/.claude" ]] || continue
     jq --argjson at "$(( $(date +%s) - $1 ))" --argjson u "$(claude_usage 50 20 5 Opus)" \
       '.fetched_at = $at | .usage = $u' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
     return 0
@@ -1160,6 +1160,190 @@ lanes_mutant no-retained-rate lanes 'argjson p "$prior"' 'argjson p "null"'
 retain_rate_samples "$TMP_ROOT/no-retained-rate/lanes" "$TMP_ROOT/mutant-retained-rate"
 assert_eq "$(jq -r '.[0].usage_rate_state' <<<"$OUT")" "one-sample" \
   "control: without persisted retention the next cache read loses the rate sample"
+
+echo "=== a refused usage refresh serves the last figures rather than walling the host ==="
+# The control VM's failure: eleven accounts answered HTTP 429 with valid
+# bearers while the shared cache held good reads seconds old, and every lane
+# reported `unreachable` -- the word that reads downstream as an account
+# nothing can reach, whose remedy line sends the operator to log in again. No
+# rate limit is a credential problem, and a figure seconds old is not no
+# figure.
+#
+# ORCH_LANES_USAGE_TTL=0 on these rows is what puts a request on the wire at
+# all: it expires the cached figure for the FRESHNESS read while leaving the
+# record itself for the refusal to fall back to, which is the state the control
+# host was in and needs no clock to reach.
+new_home ratelimit
+make_lane "$H" claude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+RL_STATE="$TMP_ROOT/ratelimit-state"
+RL_ENV="OVERSEE_WATCH_STATE_DIR=$RL_STATE;ORCH_LANE_DIRS=$H/.claude"
+# The answer the control VM received from every account, Retry-After and all.
+REFUSAL=$'HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0\r\n\r\n'
+table \
+  "a first run measures the account and leaves the figures it read|$RL_ENV|$LIST|first.status=ok first.headroom_pct=80 fetched=claude"
+age_usage_record "$RL_STATE" "$H/.claude" 45
+# The endpoint's body moves while it is refusing, so which figures a row
+# reports says which record it served: 80 headroom is the cached one and 40 is
+# the body that came back with the refusal. The stub answers both, as the
+# control host's endpoint did.
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+printf '%s' "$REFUSAL" > "$FIXTURE_DIR/.claude.headers"
+# Read BEFORE the run, so the floor is pinned without racing the clock: the
+# record is written at an instant at or after this one, so a window of at least
+# the floor can only read as at least the floor from here.
+RL_BEFORE="$(date +%s)"
+table \
+  "a 429 with a cached figure serves that figure as rate_limited, never unreachable|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=rate_limited first.headroom_pct=80 claude.aged=30+ fetched=claude"
+RL_RECORD="$(cat "$RL_STATE"/usage/*.backoff.json 2>/dev/null | jq -r '[.config_dir, .code, .until] | @tsv')"
+assert_eq "$(cut -f1,2 <<<"$RL_RECORD")" "$H/.claude"$'\t'"429" \
+  "the refusal is recorded beside the lane it refused, under the code that gave it"
+assert_eq "$([[ "$(cut -f3 <<<"$RL_RECORD")" -ge "$((RL_BEFORE + 2))" ]] && echo floored || echo "unfloored:$RL_RECORD")" \
+  "floored" \
+  "a Retry-After of 0 is floored, so the refusal is not re-posted in the second it arrived"
+# A window wide enough for the rows below to sit inside on any runner. The
+# endpoint named it, and honouring it is the point: a later caller reads the
+# record rather than re-posting what was already refused.
+printf 'HTTP/1.1 429 Too Many Requests\r\nRetry-After: 600\r\n\r\n' > "$FIXTURE_DIR/.claude.headers"
+run_lanes "$RL_ENV;ORCH_LANES_USAGE_TTL=0" $LIST
+table \
+  "a later caller inside that window posts nothing and still reports the figures|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=rate_limited first.headroom_pct=80 fetched=none" \
+  "--no-cache inside it posts nothing either: it asks for a fresh figure, not to re-post a refused request|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST --no-cache|first.status=rate_limited first.headroom_pct=80 fetched=none" \
+  "and pick judges those served figures instead of walling every launch on the host|$RL_ENV;ORCH_LANES_USAGE_TTL=0|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+# The control: the served row left as `unreachable`, which is the word this
+# change replaced. The lane then measures nothing and `pick` refuses the fleet
+# for as long as the burst lasts.
+lanes_mutant mutant-rate-limited lanes \
+  'status="rate_limited"$' 'status="unreachable"'
+RL_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-rate-limited/lanes"
+table \
+  "control: reported as unreachable instead, the same account measures nothing|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=unreachable first.headroom_pct=null" \
+  "control: and the whole host is walled for the length of a transient burst|$RL_ENV;ORCH_LANES_USAGE_TTL=0|pick --harness claude|rc=3"
+LANES="$RL_PATCHED"
+
+echo "=== a 429 with nothing cached retries once before reporting unreachable ==="
+# The one path where `unreachable` stays correct: nothing on this host has ever
+# read this account, so there is no figure to stand in for the refused one.
+# Both rows fetch TWICE, and the log is what proves the retry is a second
+# request rather than a sleep before the same verdict.
+new_home ratelimit-cold
+make_lane "$H" claude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+COLD_ENV="ORCH_LANE_DIRS=$H/.claude"
+printf '%s' "$REFUSAL" > "$FIXTURE_DIR/.claude.headers.1"
+printf '%s' "$REFUSAL" > "$FIXTURE_DIR/.claude.headers.2"
+table \
+  "refused twice with a cold cache, the lane reports unreachable|$COLD_ENV|$LIST|first.status=unreachable first.headroom_pct=null fetched=claude,claude"
+# The must-fail inverse: the SECOND request answers, so a retry that never
+# happened would leave this row on the first refusal.
+mv "$FIXTURE_DIR/.claude.headers.2" "$FIXTURE_DIR/.claude.headers.held"
+table \
+  "with the second request answering, that same lane reads ok on what the retry brought back|$COLD_ENV|$LIST|first.status=ok first.headroom_pct=80 fetched=claude,claude"
+
+echo "=== a caller naming its own pass interval is served its last figure ==="
+# A watch whose pass is longer than the TTL finds the figure expired on every
+# pass and fetches on every pass, which is the burst with no caller doing
+# anything wrong. --max-age is that caller's own interval, and it only ever
+# widens the TTL: a caller passing nothing, or less than the TTL, keeps the
+# TTL it configured.
+new_home maxage
+make_lane "$H" claude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+MA_STATE="$TMP_ROOT/maxage-state"
+MA_ENV="OVERSEE_WATCH_STATE_DIR=$MA_STATE;ORCH_LANE_DIRS=$H/.claude;ORCH_LANES_USAGE_TTL=60"
+table "a first run leaves a figure to reuse|$MA_ENV|$LIST|fetched=claude"
+age_usage_record "$MA_STATE" "$H/.claude" 120
+table \
+  "past the TTL with no interval named, the figure is fetched again|$MA_ENV|$LIST|fetched=claude"
+age_usage_record "$MA_STATE" "$H/.claude" 120
+table \
+  "a caller naming a longer pass is served that same figure, with its age, and posts nothing|$MA_ENV|$LIST --max-age 300|first.status=ok claude.aged=30+ fetched=none" \
+  "an interval that is not a whole number of seconds is refused before any lane is measured|$MA_ENV|$LIST --max-age 4m|rc=1 key=invalid-usage-max-age,value=4m"
+# A pass SHORTER than the TTL leaves the TTL deciding: this figure is inside
+# the configured 60 seconds and outside the named 10, and it is still served.
+age_usage_record "$MA_STATE" "$H/.claude" 30
+table \
+  "an interval shorter than the TTL never narrows it|$MA_ENV|$LIST --max-age 10|claude.aged=30+ fetched=none"
+
+echo "=== one host-wide refresh per window, whatever the number of callers ==="
+# The TTL alone cannot do this: at expiry every caller's fetch lands in the
+# same second, which is what put eleven accounts over the endpoint's rate at
+# once. The lock is what turns N callers times M lanes into one refresh, and
+# the second caller through re-reads the cache INSIDE it rather than fetching
+# what the first has already brought back.
+new_home lockshare
+make_lane "$H" claude 3600
+make_lane "$H" eclaude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 80 30 10 Opus > "$FIXTURE_DIR/.eclaude.json"
+LOCK_LOG="$TMP_ROOT/lockshare-fetch.log"
+# concurrent_fetches SCRIPT STATE_DIR -- two `lanes list` runs started together
+# against one state directory and one log; prints the lanes fetched across
+# both, each repeated once per request it served. Each call takes its OWN empty
+# state directory rather than clearing a shared one, so no run can read a
+# record the previous one left. FETCH_DELAY holds every request open long
+# enough that two unsynchronized callers provably overlap, so a single count is
+# the lock and not the scheduler.
+concurrent_fetches() {
+  local i
+  : > "$LOCK_LOG"
+  for i in 1 2; do
+    ( cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" \
+      FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" FETCH_LOG="$LOCK_LOG" \
+      FETCH_DELAY=1 ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" \
+      OVERSEE_WATCH_STATE_DIR="$2" PATH="$CLAIM_BIN:$PATH" \
+      "$1" list --harness claude --json >/dev/null 2>&1 ) &
+  done
+  wait
+  fetched_lanes "$LOCK_LOG"
+}
+assert_eq "$(concurrent_fetches "$LANES" "$TMP_ROOT/lockshare-locked")" "claude,eclaude" \
+  "two callers arriving together are one refresh of each account, not two"
+# The control: without the lock each caller fetches every account for itself,
+# which is the burst the endpoint refused.
+lanes_mutant mutant-usage-lock lanes \
+  'with_usage_lock measure_configured_lanes' 'measure_configured_lanes'
+assert_eq "$(concurrent_fetches "$TMP_ROOT/mutant-usage-lock/lanes" "$TMP_ROOT/lockshare-unlocked")" \
+  "claude,claude,eclaude,eclaude" \
+  "control: unlocked, the same two callers post one request per account each"
+
+echo "=== the usage TTL default outlasts the longest watch interval on the host ==="
+# `oversee-watch --interval` defaults to 240. A TTL under that has every pass
+# find the figure expired and fetch again. The number is read out of the
+# shipped script, so a red here names a document that drifted from it and
+# never the reverse; the floor above it names this sed as broken rather than
+# the script as unset.
+TTL_DEFAULT="$(sed -n 's/^USAGE_TTL="${ORCH_LANES_USAGE_TTL:-\([0-9][0-9]*\)}"$/\1/p' "$LANES")"
+assert_eq "$([[ -n "$TTL_DEFAULT" ]] && echo found || echo none)" "found" \
+  "the extractor reads the TTL fallback out of the shipped script"
+assert_eq "$([[ "$TTL_DEFAULT" -gt 240 ]] && echo outlasts || echo "under-interval:$TTL_DEFAULT")" \
+  "outlasts" "the default TTL outlasts the default watch interval"
+# The two documents that STATE the default name the setting on one line each,
+# so every line naming it has to carry the script's own number: the two counts
+# are equal or a document has drifted. The left count floors the comparison, so
+# a document that stopped naming the setting reddens rather than passing as
+# agreeing. README.md names the setting without stating its value and is left
+# out for that reason.
+SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
+for doc in DEVELOPMENT.md kendex.settings.toml.example; do
+  assert_eq "names=$(grep -c -F -e "ORCH_LANES_USAGE_TTL" "$SKILL_DIR/$doc" || true) agrees=$(grep -F -e "ORCH_LANES_USAGE_TTL" "$SKILL_DIR/$doc" | grep -c -F -e "$TTL_DEFAULT" || true)" \
+    "names=1 agrees=1" \
+    "$doc states the script's own TTL default on the line that names the setting"
+done
+# The script's own help text is the third place the number is written out, and
+# it is a different line from the assignment the extractor above read.
+assert_eq "$(grep -c -F -e "reused (default $TTL_DEFAULT;" "$LANES" || true)" "1" \
+  "the script header states the same TTL default its own fallback assigns"
+new_home ttl-default
+make_lane "$H" claude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+TTLD_STATE="$TMP_ROOT/ttl-default-state"
+TTLD_ENV="OVERSEE_WATCH_STATE_DIR=$TTLD_STATE;ORCH_LANE_DIRS=$H/.claude"
+table "a first run leaves a figure to reuse|$TTLD_ENV|$LIST|fetched=claude"
+age_usage_record "$TTLD_STATE" "$H/.claude" 240
+table \
+  "with the setting unset, a figure one whole watch interval old is still served|$TTLD_ENV|$LIST|claude.aged=30+ fetched=none"
 
 echo "=== pick --json names the binding bucket and its reset ==="
 # claude's largest bucket is weekly, eclaude's the 5-hour session.
@@ -1714,7 +1898,7 @@ assert_eq "calls=$(grep -c '^accounts' "$MALFORMED_LOG" || true) $(observe 'thro
 # Control: without the cache read every invocation forks its own provider call,
 # which is the cost this cache exists to remove.
 lanes_mutant mutant-accounts-uncached lanes \
-  'if cached="\$(read_usage_cache host-accounts "\$host" "\$now_s")"; then' 'if false; then'
+  'if \[\[ "\$USE_CACHE" == "true" \]\] && cached="\$(read_usage_cache host-accounts "\$host" "\$now_s" "\$(usage_serve_max_age)")"; then' 'if false; then'
 UNCACHED_LOG="$TMP_ROOT/accounts-uncached.log"; : > "$UNCACHED_LOG"
 LANES_PATCHED="$LANES"
 LANES="$TMP_ROOT/mutant-accounts-uncached/lanes"
@@ -1844,6 +2028,12 @@ echo "=== a ceiling that reaps a renewal releases the credentials mutex ==="
 # returns, through lib/lanes-fixture.sh's `settled_mutex`, the one reading of a
 # reaped lock these suites share.
 #
+# Each run gets its own OVERSEE_WATCH_STATE_DIR, because `lanes` also takes the
+# host-wide usage mutex under that directory and the control below reaps a run
+# whose release is gutted: sharing the fallback under the checkout would leave
+# that mutex for the next row to wait out, and its own reading would then be of
+# a renewal that never started.
+#
 # The library rule has its own rows in file-lock-messages.sh; what those cannot
 # reach is whether the SHIPPED caller takes it. The ceiling row below hangs at
 # the token POST, before the rename, so no run of this suite executes the line
@@ -1895,6 +2085,7 @@ if command -v timeout > /dev/null 2>&1; then
   claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
   CEILING_RC=0
   PATH="$NOFLOCK" LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    OVERSEE_WATCH_STATE_DIR="$H/state" \
     ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_HANG" \
     timeout 2 "$LANES" pick --lane "$H/.claude" --harness claude --json > /dev/null 2>&1 ||
     CEILING_RC=$?
@@ -1925,6 +2116,7 @@ if command -v timeout > /dev/null 2>&1; then
   make_lane "$H" claude -60
   claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
   PATH="$NOFLOCK" LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    OVERSEE_WATCH_STATE_DIR="$H/state" \
     ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_HANG" \
     timeout 2 "$CEILCTL/lanes" pick --lane "$H/.claude" --harness claude --json > /dev/null 2>&1 || true
   assert_eq "$(settled_mutex "$H/.claude/.lanes-refresh.lock.d" 10)" "held" \
