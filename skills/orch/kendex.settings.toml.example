@@ -172,6 +172,14 @@ ORCH_OVERSEER_LANES = "3"
 # a notice for a manual replacement.
 # ORCH_OVERSEER_SUCCESSION = "on"
 
+# Minutes before the projected account wall that starts overseer succession.
+# Zero disables the rate trigger.
+ORCH_OVERSEER_WALL_MINUTES = "30"
+
+# Maximum number of better successor accounts that starts succession.
+# Zero disables the qualifying-account trigger.
+ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
+
 # Consecutive oversee-watch passes the overseer's own pane must read exited
 # before the watch reports overseer-dead, or walled before it reports
 # overseer-walled, and relaunches. One pass is a poll that caught a live

@@ -95,7 +95,7 @@ make_fetcher "$FETCHER"
 # The caller's own account is .claude. The second claude lane stands walled by
 # default so every row that does not speak about it picks .claude as before;
 # a row exercising the headroom trigger gives it room of its own.
-claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 codex_usage() { # USED_PCT
   jq -n --argjson u "$1" '{rate_limit: {primary_window: {used_percent: $u, reset_at: 1785000000, limit_window_seconds: 18000}, secondary_window: null}}'
@@ -727,11 +727,27 @@ for rate_row in \
     "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
     "0|oversee-succeed: mark-unmeasured kind=rate reason=$rate_reason succession=on|0"
 done
+new_caller "$UNDER_MARK"
+WALL_MINUTES=bad run_succeed badwall '' --check-marks
+check "a malformed projected-wall setting is refused before judgement" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "1|oversee-succeed: invalid-wall-minutes ORCH_OVERSEER_WALL_MINUTES=bad"
+new_caller "$UNDER_MARK"
+SUCCESSOR_ACCOUNTS=bad run_succeed badsuccessors '' --check-marks
+check "a malformed successor-account setting is refused before judgement" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "1|oversee-succeed: invalid-successor-accounts ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=bad"
+stage_usage_pair rateleadingzero 40 20 600
+new_caller "$UNDER_MARK"
+WALL_MINUTES=030 run_succeed rateleadingzero '' --check-marks
+check "a leading-zero wall setting remains valid decimal input" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=claude"
 
 # The chooser itself counts successor accounts after omitting this session.
 # Two leave the overseer in place. One fires and moves it to that account.
 make_lane "$H" nclaude
-claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
 THREE_LANES="$H/.claude:$H/.eclaude:$H/.nclaude"
@@ -739,10 +755,10 @@ new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyingtwo '' --check-marks
 check "two successor accounts do not fire the qualifying-set trigger" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80|0"
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=40|0"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
 new_caller "$UNDER_MARK"
-SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyingone '' --check-marks
+SUCCESSOR_ACCOUNTS=01 LANE_DIRS="$THREE_LANES" run_succeed qualifyingone '' --check-marks
 check "one successor account fires the named qualifying-set trigger" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on|0"
@@ -751,6 +767,18 @@ SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyinglaunch ''
 check "the qualifying-set trigger succeeds onto the remaining account" \
   "$RC|$(caller_open)|$(recorded claude)" \
   "0|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
+new_caller "$UNDER_MARK"
+CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.eclaude" SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" \
+  run_succeed qualifyingstable '' --check-marks
+check "the successor stays in place when no remaining account has more headroom" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=50"
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+new_caller "$UNDER_MARK"
+SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyingequal '' --check-marks
+check "an equal-headroom successor does not fire the qualifying-set trigger" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=50"
 
 # A known harness remains enough to judge account triggers when its context
 # line is absent. The account read receives no model, and the context reading
@@ -770,7 +798,7 @@ check "a known harness with no context line still fires the rate trigger" \
   "$RC|$(sed -n 1p <<<"$OUT")" \
   "0|oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=claude"
 
-claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 new_known_claude_caller "$NO_CONTEXT"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed knownqualifying '' --check-marks
 check "a known harness with no context line still fires the qualifying-set trigger" \
@@ -808,7 +836,7 @@ NOQUALIFY="$TMP_ROOT/no-qualifying-trigger"
 script_copy "$NOQUALIFY"
 rm -f -- "${NOQUALIFY:?}/oversee-succeed"
 awk '$0 == "elif (( SUCCESSOR_ACCOUNTS > 0 )) && [[ \"$QUALIFYING_STATE\" == measured ]] \\" {
-       print "elif false; then"; getline; hits++; next } { print }
+       print "elif false; then"; getline; getline; hits++; next } { print }
      END { if (hits != 1) exit 1 }' "$SUCCEED" > "$NOQUALIFY/oversee-succeed"
 chmod +x "$NOQUALIFY/oversee-succeed"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"

@@ -1779,7 +1779,9 @@ cmd_pick() {
 		  | . + {verdict: (.wall | wall_verdict($max))} ]
 		| { chosen: ([ .[] | select(.verdict == "room") ]
 		              | sort_by([(.claims // 0), .wall]) | first
-		              | if . == null then null else del(.wall, .verdict) | lane_public end),
+		              | if . == null then null
+		                else . + {effective_headroom_pct: (if .wall == null then null else 100 - .wall end)}
+		                | del(.wall, .verdict) | lane_public end),
 		    qualifying: ([ .[] | select(.verdict == "room") ] | length),
 		    walled: ([ .[] | select(.verdict == "walled") ] | length),
 		    unmeasured: ([ .[] | select(.verdict == "unmeasured") ] | length) }

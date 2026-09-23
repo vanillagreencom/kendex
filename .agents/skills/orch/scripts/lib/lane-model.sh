@@ -100,7 +100,7 @@ def binding_bucket:
   if (.status != "ok" or .headroom_pct == null
       or .binding_bucket == null) then null
   else {bucket: .binding_bucket,
-        label: (if .binding_bucket == "model" then .model_label else null end),
+        label: (if .binding_bucket == "model" then ([.model_buckets[]] | max_by(.pct).label // null) else null end),
         pct: (100 - .headroom_pct),
         resets_at: (.binding_resets_at // null)}
   end;
@@ -139,14 +139,14 @@ def lane_binding($model; $binding_floor):
 
 def with_lane_binding($model; $binding_floor):
   lane_binding($model; $binding_floor) as $binding
-  | (if $binding == null then null
-     elif $binding.bucket == "session" then ._rate_prior.session_5h_pct
-     elif $binding.bucket == "weekly" then ._rate_prior.weekly_pct
-     elif $binding.bucket == "model" then
-       ([ (._rate_prior.model_buckets // [])[]
-          | select((.label // null) == ($binding.label // null))
-          | .pct ] | first // null)
-     else null end) as $prior
+  | (if $binding == null then [] elif $binding.bucket == "model" then (._rate_prior.model_buckets // [])
+     else [{label: null,
+            pct: (if $binding.bucket == "session" then ._rate_prior.session_5h_pct
+                  elif $binding.bucket == "weekly" then ._rate_prior.weekly_pct else null end),
+            resets_at: ._rate_prior.resets[$binding.bucket]}] end
+     | map(select((.label // null) == ($binding.label // null)
+                  and .resets_at != null and .resets_at == $binding.resets_at))
+     | first.pct // null) as $prior
   | (if $binding == null or $prior == null then null
      else ($binding.pct - $prior) end) as $delta
   | (if $delta == null then "one-sample"

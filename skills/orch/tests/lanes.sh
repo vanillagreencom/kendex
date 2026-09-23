@@ -1227,6 +1227,33 @@ table \
   "a named Opus pick reports its approaching wall when the larger Fable bucket is flat|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|pick --lane $H/.claude --harness claude --model opus --json|usage_rate_state=measured projected_wall_minutes=10" \
   "a fleet Opus pick reports the same approaching wall|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|pick --harness claude --model opus --json|usage_rate_state=measured projected_wall_minutes=10"
 
+stage_raw_rate() { # NAME CURRENT PRIOR
+  local name="$1" current="$2" prior="$3" f now
+  CACHE_STATE="$TMP_ROOT/model-identity-$name"
+  printf '%s\n' "$current" > "$FIXTURE_DIR/.claude.json"
+  stage_cache 0
+  now="$(date +%s)"
+  f="$(find "$CACHE_STATE/usage" -type f -name '*.json' -print -quit)"
+  jq --argjson now "$now" --argjson current "$current" --argjson prior "$prior" \
+    '.fetched_at = $now | .usage = $current
+     | .prior = {fetched_at: ($now - 600), usage: $prior}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+unlabeled_usage() { # PERCENT RESET
+  jq -nc --argjson pct "$1" --arg reset "$2" '{
+    five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+    seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+    limits: [{kind: "weekly_scoped", percent: $pct, resets_at: $reset,
+              scope: {model: {}}}]}'
+}
+stage_raw_rate reset-crossing \
+  "$(unlabeled_usage 80 2026-08-02T06:00:00Z)" \
+  "$(unlabeled_usage 60 2026-07-26T06:00:00Z)"
+table "samples from different quota windows never form a rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.usage_rate_state=one-sample claude.projected_wall_minutes=null"
+stage_raw_rate unlabeled-model \
+  "$(unlabeled_usage 80 2026-08-02T06:00:00Z)" \
+  "$(unlabeled_usage 60 2026-08-02T06:00:00Z)"
+table "an unlabeled model bucket matches its prior raw null identity|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.usage_rate_state=measured claude.projected_wall_minutes=10"
+
 echo "=== pick --model judges shared and scoped buckets together ==="
 # The account-wide 5-hour and weekly windows wall every model. A model launch
 # therefore uses the largest matching bucket, and the returned binding fields
