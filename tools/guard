@@ -606,6 +606,8 @@ shared_skill_instruction_is_configured() {
   return 1
 }
 instruction_hits=""
+render_skill_paths=$(printf '%s\n' "$render_tracked" | sort -u) ||
+  { render_skill_paths=""; say render-tracked-set unreadable; }
 while IFS= read -r render; do
   case "$render" in .agents/skills/*/SKILL.md) ;; *) continue ;; esac
   skill="${render#.agents/skills/}"
@@ -619,7 +621,7 @@ while IFS= read -r render; do
   fi
   [ "$missing" -eq 0 ] || instruction_hits="$instruction_hits$render
 "
-done <<<"$(printf '%s\n' "$render_tracked" | sort -u)"
+done <<<"$render_skill_paths"
 [ -n "$instruction_hits" ] && {
   say missing-skill-instructions "$(count_lines "$instruction_hits")"
   show "$instruction_hits" | sed -n '1,5p'

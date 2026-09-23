@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # tools/guard's configured skill instructions rule: each managed skill render
 # carries the outer project block, and shared instructions carry their inner
-# block. The control removes the rule from a guard copy and expects the same
-# missing block to pass.
+# block. The controls isolate shared-marker enforcement and a failed render
+# path normalization.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -24,6 +24,8 @@ echo "=== configured instructions require their render blocks ==="
 while IFS='|' read -r key skill block; do
   reset_world
   seed_skill "$skill"
+  [ "$block" != shared ] ||
+    printf '%s\n' '---' "name: $skill" '---' '<!-- kendex:project-instructions:start -->' '<!-- kendex:project-instructions:end -->' '# Skill' >"$R/.agents/skills/$skill/SKILL.md"
   printf '%s\n' '[skill-instructions]' "$key = \"Rule.\"" >"$R/kendex-local.toml"
   git -C "$R" add kendex-local.toml
   run_guard
@@ -32,15 +34,13 @@ while IFS='|' read -r key skill block; do
     && ok "$key instructions require the $block render block" \
     || bad "$key instructions require the $block render block" "rc=$RC out=$OUT"
 
-  if [ "$key" = all ]; then
-    if mutant_guard '/^# A configured instruction /,/^require_render() {/ { /^require_render() {/!d; }'; then
-      run_mutant
-      [ "$RC" -eq 0 ] \
-        && ok "control: with the configured-block rule deleted the missing block passes" \
-        || bad "control: with the configured-block rule deleted the missing block passes" "rc=$RC out=$OUT"
-    else
-      bad "control: the configured-block rule could not be deleted from a guard copy"
-    fi
+  if [ "$key" = all ] && mutant_guard "s@^    grep -Fxq '<!-- kendex:shared-instructions:start -->'.*@    :@"; then
+    run_mutant
+    [ "$RC" -eq 0 ] \
+      && ok "control: without shared-marker enforcement the isolated missing marker passes" \
+      || bad "control: without shared-marker enforcement the isolated missing marker passes" "rc=$RC out=$OUT"
+  elif [ "$key" = all ]; then
+    bad "control: shared-marker enforcement could not be disabled in a guard copy"
   fi
 
   {
@@ -61,6 +61,12 @@ all|shared-all|shared
 named|named|project
 "*"|shared-star|shared
 ROWS
+
+printf '%s\n' '#!/bin/sh' 'exit 9' >"$MUTANT_TOOLS/sort"
+chmod +x "$MUTANT_TOOLS/sort"
+run_guard PATH="$MUTANT_TOOLS:$PATH"
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: render-tracked-set=unreadable"* ]] \
+  && ok "a failed render path normalization blocks the guard" || bad "a failed render path normalization blocks the guard" "rc=$RC out=$OUT"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
