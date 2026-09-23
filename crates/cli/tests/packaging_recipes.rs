@@ -393,51 +393,65 @@ fn every_arch_package_ships_a_recipe_pair_under_one_epoch() {
     }
 }
 
-/// The body of a recipe's `caveats` block: the formula wraps it in
-/// `def caveats` and the cask writes the stanza directly, and both hold the
-/// text in a `<<~EOS` heredoc. Read as a block rather than searched for over
-/// the whole file because each recipe's header comment already spells out the
-/// install command the caveat has to name.
-fn homebrew_caveats(recipe: &str) -> String {
-    let text = read(recipe);
+/// brew compares a formula's `version_scheme` before its version, so the
+/// bump is what makes 1.0.0 outrank an installed 5.x, which sits on scheme
+/// 0, in `brew outdated` and `brew upgrade`. This is the formula's side of
+/// the transition the Arch epoch covers above; the cask has no equivalent.
+#[test]
+fn the_formula_declares_the_restart_as_a_new_version_scheme() {
+    let formula = read("packaging/homebrew/kendex-cli.rb");
+    assert!(
+        formula.lines().any(|l| l.trim() == "version_scheme 1"),
+        "kendex-cli.rb: no `version_scheme 1`, so a 5.x install never shows \
+         as outdated:\n{formula}"
+    );
+}
+
+/// The body of the cask's `caveats <<~EOS` heredoc. Read as a block rather
+/// than searched for over the whole file because the header comment already
+/// spells out the install command the caveat has to name.
+fn homebrew_cask_caveats() -> String {
+    const RECIPE: &str = "packaging/homebrew/kendex-cask.rb";
+    const OPENER: &str = "caveats <<~EOS";
+    let text = read(RECIPE);
     let lines: Vec<&str> = text.lines().collect();
     let opener = lines
         .iter()
-        .position(|l| l.trim().trim_start_matches("def ").starts_with("caveats"))
-        .unwrap_or_else(|| panic!("{recipe}: no caveats block"));
+        .position(|l| l.trim() == OPENER)
+        .unwrap_or_else(|| panic!("{RECIPE}: no `{OPENER}` stanza"));
     let body = &lines[opener + 1..];
     let end = body
         .iter()
         .position(|l| l.trim() == "EOS")
-        .unwrap_or_else(|| panic!("{recipe}: the caveats heredoc never closes"));
-    assert!(end > 0, "{recipe}: the caveats block is empty");
+        .unwrap_or_else(|| panic!("{RECIPE}: the caveats heredoc never closes"));
+    assert!(end > 0, "{RECIPE}: the caveats block is empty");
     body[..end].join("\n")
 }
 
-/// Homebrew has no epoch, so the transition the Arch epoch covers above is
-/// unmitigated here: brew reads 1.0.0 as lower than an installed 5.x, so
-/// `brew outdated` names nothing and `brew upgrade` changes nothing, and the
-/// cask's `auto_updates true` defers to an app that renders no notice for a
-/// feed older than itself. A 5.x install is reached by telling the person to
-/// uninstall and install again, so each recipe prints those two commands.
+/// A cask has no `version_scheme`, and `auto_updates true` defers to an app
+/// that renders no notice for a feed older than itself, so a 5.x install is
+/// reached by telling the person to uninstall and install again. Uninstalling
+/// the cask leaves its kendex-cli formula dependency installed, so the
+/// command is removed as its own step before the install pulls it back at
+/// 1.0.0; the order is the instruction.
 #[test]
-fn both_homebrew_recipes_tell_a_5_x_install_to_reinstall() {
-    for (recipe, package) in [
-        ("packaging/homebrew/kendex-cli.rb", "kendex-cli"),
-        ("packaging/homebrew/kendex-cask.rb", "kendex"),
-    ] {
-        let caveats = homebrew_caveats(recipe);
-        for step in [
-            format!("brew uninstall {package}"),
-            format!("brew install vanillagreencom/kendex/{package}"),
-        ] {
-            assert!(
-                caveats.contains(&step),
-                "{recipe}: the caveats do not name `{step}`, so a 5.x install \
-                 is told nothing:\n{caveats}"
-            );
-        }
-    }
+fn the_cask_tells_a_5_x_install_to_reinstall_the_app_and_its_cli() {
+    let caveats = homebrew_cask_caveats();
+    let steps: Vec<&str> = caveats
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("brew "))
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            "brew uninstall kendex",
+            "brew uninstall kendex-cli",
+            "brew install vanillagreencom/kendex/kendex",
+        ],
+        "kendex-cask.rb: the caveats' brew steps are not the reinstall of the \
+         app and its command:\n{caveats}"
+    );
 }
 
 /// All four install `/usr/bin/kendex`, so no two may be installed together.

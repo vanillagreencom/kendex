@@ -26,16 +26,21 @@ cask "kendex" do
 
   app "kendex.app"
 
-  # Homebrew has no epoch, so an installed 5.x reads as newer than 1.0.0
-  # and `brew upgrade` changes nothing; `auto_updates true` above defers
-  # to the app, which renders no notice for a feed older than itself. The
-  # reinstall below is what reaches a 5.x install on this channel.
+  # A cask has no `version_scheme`, the formula's way over the 5.x-to-1.0
+  # restart: `auto_updates true` above hands the upgrade to the app, and
+  # the app renders no notice for a feed older than itself, so a 5.x
+  # install is offered nothing. The reinstall below is what reaches it.
+  # `brew uninstall kendex` leaves the kendex-cli formula in place, so the
+  # command is removed by hand before the install pulls it back at 1.0.0.
   caveats <<~EOS
-    Upgrading from kendex 5.x: 1.0.0 restarts the version number, and
-    Homebrew reads it as older than what you have, so neither `brew
-    upgrade` nor the app's own updater offers it. Reinstall once:
+    Upgrading from kendex 5.x: 1.0.0 restarts the version number. This
+    cask leaves upgrades to the app, and the app's updater sees 1.0.0 as
+    older than itself, so nothing offers it. Reinstall once, the kendex
+    command included, because uninstalling the app leaves its kendex-cli
+    formula behind:
 
       brew uninstall kendex
+      brew uninstall kendex-cli
       brew install vanillagreencom/kendex/kendex
 
     Releases through v5.0.1 predate Apple notarization; on those, macOS

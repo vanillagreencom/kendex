@@ -11,6 +11,11 @@ class KendexCli < Formula
   desc "Package manager for agents, skills, and hooks across AI coding tools"
   homepage "https://kendex.ai"
   version "1.0.0"
+  # 1.0.0 follows 5.0.1, so the version number restarts. brew compares
+  # this scheme before the number: an installed 5.x sits on scheme 0 and
+  # reads as outdated, so `brew upgrade` reaches it. The Arch recipes
+  # carry `epoch=1` for the same transition. Never lower it.
+  version_scheme 1
   license "MIT"
 
   # Materializing a catalog shells out to git, and kendex refuses on
@@ -43,22 +48,6 @@ class KendexCli < Formula
 
   def install
     bin.install Dir["*"].first => "kendex"
-  end
-
-  # kendex 1.0.0 follows 5.0.1, so the version number goes backwards.
-  # Homebrew has no epoch: it reads 1.0.0 as lower than an installed 5.x,
-  # `brew outdated` names nothing and `brew upgrade` changes nothing, with
-  # no way to say otherwise in a formula. The Arch recipes carry `epoch=1`
-  # for the same transition; here the reinstall below is the whole answer.
-  def caveats
-    <<~EOS
-      Upgrading from kendex 5.x: 1.0.0 restarts the version number, and
-      Homebrew reads it as older than what you have, so `brew upgrade`
-      offers nothing. Reinstall once:
-
-        brew uninstall kendex-cli
-        brew install vanillagreencom/kendex/kendex-cli
-    EOS
   end
 
   test do

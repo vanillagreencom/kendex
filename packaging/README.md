@@ -51,7 +51,7 @@ Each Linux CLI `sha256` (one per architecture) is the same value in `kendex-cli.
 
 ### The version restart, once
 
-Arch survives 1.0.0 following 5.0.1 on the `epoch=1` above. Homebrew has no epoch: brew finds 1.0.0 lower than an installed 5.0.1, reports nothing outdated and upgrades nothing, and the cask's `auto_updates true` hands the upgrade to an app that renders no notice for a feed older than itself. So both recipes carry a `caveats` block telling a 5.x install to `brew uninstall` the package and install it again from the tap, the only thing that moves such a machine to 1.0.0. `both_homebrew_recipes_tell_a_5_x_install_to_reinstall` in `crates/cli/tests/packaging_recipes.rs` holds that block in place; drop it from both recipes once no install is left on 5.x.
+Arch survives 1.0.0 following 5.0.1 on the `epoch=1` above. The formula's counterpart is `version_scheme 1`: brew compares the scheme before the number, so an installed 5.0.1 (scheme 0) shows in `brew outdated` and `brew upgrade kendex-cli` moves it; the scheme never goes down. A cask has no version scheme, and `auto_updates true` hands its upgrade to an app that renders no notice for a feed older than itself, so the cask's `caveats` block tells a 5.x install to `brew uninstall` the app, then the `kendex-cli` formula that leaves behind, and install the app again from the tap. `the_formula_declares_the_restart_as_a_new_version_scheme` and `the_cask_tells_a_5_x_install_to_reinstall_the_app_and_its_cli` in `crates/cli/tests/packaging_recipes.rs` hold both; drop the cask's block once no install is left on 5.x.
 
 ## Publishing
 
