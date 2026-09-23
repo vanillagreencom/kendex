@@ -410,6 +410,19 @@ impl ScopeCheck<'_> {
             Ok(crate::lock::LockFile::Absent) => &empty,
             _ => return,
         };
+        for name in crate::engine::unrendered_in_place_skills(self.env, self.scope, manifest, lock)
+        {
+            sections.missing.push(drift(
+                format!(
+                    "{}skill '{}' has harness links that are not rendered",
+                    self.prefix,
+                    shown(&name)
+                ),
+                Some(Remedy::Refresh {
+                    global: self.global,
+                }),
+            ));
+        }
         let occupied =
             crate::engine::declared_over_existing_files(self.env, self.scope, manifest, lock);
         if occupied.is_empty() {
@@ -501,18 +514,25 @@ impl ScopeCheck<'_> {
         take_over_settles: bool,
         sections: &mut Sections,
     ) {
+        let mut text = format!(
+            "{}unmanaged copy of {} '{}' for {}: {} file{} differ{} from {}",
+            self.prefix,
+            install.kind.name(),
+            shown(&install.name),
+            install.harness.display_name(),
+            files,
+            if files == 1 { "" } else { "s" },
+            if files == 1 { "s" } else { "" },
+            shown(rendered_from)
+        );
+        if take_over_settles {
+            text.push_str(&format!(
+                "; take-over moves the existing content to the trash at {}",
+                shown(&crate::paths::slashed(&self.env.trash_dir()))
+            ));
+        }
         sections.stale.push(drift(
-            format!(
-                "{}unmanaged copy of {} '{}' for {}: {} file{} differ{} from {}",
-                self.prefix,
-                install.kind.name(),
-                shown(&install.name),
-                install.harness.display_name(),
-                files,
-                if files == 1 { "" } else { "s" },
-                if files == 1 { "s" } else { "" },
-                shown(rendered_from)
-            ),
+            text,
             Some(match take_over_settles {
                 true => Remedy::ReplaceUnmanaged {
                     global: self.global,

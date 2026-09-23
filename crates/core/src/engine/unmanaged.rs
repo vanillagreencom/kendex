@@ -175,15 +175,20 @@ fn installation_paths(
         // question is asked the same way the install answers it.
         ItemKind::Skill => {
             let copies = desired::effective_method(decl, manifest) == crate::manifest::Method::Copy;
+            let in_place = decl.source == crate::manifest::INPLACE_SOURCE_NAME;
+            let canonical = desired::skill_canonical(env, scope, name);
             let mut paths = Vec::new();
-            if !copies {
-                paths.push(desired::skill_canonical(env, scope, name));
+            if !copies && !in_place {
+                paths.push(canonical.clone());
             }
             let dir = match copies {
                 true => desired::own_dir(env, scope, harness, kind),
                 false => native(kind),
             };
-            paths.extend(dir.map(|dir| dir.join(crate::harness::rendered_name(harness, name))));
+            paths.extend(
+                dir.map(|dir| dir.join(crate::harness::rendered_name(harness, name)))
+                    .filter(|path| !in_place || path != &canonical),
+            );
             paths
         }
         // A tool with no command surface of its own takes commands as
@@ -331,4 +336,43 @@ pub fn declared_over_existing_files(
         }
     }
     blocked
+}
+
+/// In-place skills whose source exists but whose harness links have never
+/// been rendered, by package name. The source tree is not an installation
+/// position. A report therefore asks this separately from occupied paths.
+/// One package is returned once however many target harnesses need links.
+pub(crate) fn unrendered_in_place_skills(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+) -> Vec<String> {
+    manifest
+        .skills
+        .iter()
+        .filter(|(_, decl)| decl.enabled && decl.source == crate::manifest::INPLACE_SOURCE_NAME)
+        .filter_map(|(name, decl)| {
+            let harnesses = desired::target_harnesses(decl, manifest, ItemKind::Skill, scope);
+            let unrecorded = harnesses.iter().all(|harness| {
+                !lock
+                    .entries
+                    .contains_key(&crate::lock::entry_key(ItemKind::Skill, name, *harness))
+            });
+            if !unrecorded || !desired::skill_canonical(env, scope, name).is_dir() {
+                return None;
+            }
+            let links: BTreeSet<PathBuf> = harnesses
+                .into_iter()
+                .flat_map(|harness| {
+                    installation_paths(env, scope, manifest, ItemKind::Skill, name, decl, harness)
+                })
+                .collect();
+            (!links.is_empty()
+                && links
+                    .iter()
+                    .all(|path| !path.exists() && !path.is_symlink()))
+            .then(|| name.clone())
+        })
+        .collect()
 }

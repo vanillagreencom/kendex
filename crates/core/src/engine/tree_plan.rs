@@ -40,6 +40,11 @@ pub(super) fn plan_tree(
     else {
         return Ok(Planned::Clean);
     };
+    if item.source_name == crate::manifest::INPLACE_SOURCE_NAME
+        && canonical == &super::desired::skill_canonical(env, scope, &item.name)
+    {
+        return plan_in_place_tree(scope, item, replace_unmanaged, owned, written, ops);
+    }
     let collapsed = match collapsed_link(env, scope, item, canonical, files, owned) {
         Ok(collapsed) => collapsed,
         Err(conflict) => return Ok(conflict),
@@ -138,6 +143,43 @@ pub(super) fn plan_tree(
         (Planned::Drift(_, staged), Planned::Drift(..)) if staged == TAKEN_OVER => result,
         _ => linked,
     })
+}
+
+/// An in-place tree is the user's source. The engine maintains only the
+/// harness links around it and never compares, rewrites or trashes its
+/// content, including content the catalog reader deliberately excludes.
+fn plan_in_place_tree(
+    scope: &Scope,
+    item: &Desired,
+    replace_unmanaged: bool,
+    owned: &BTreeSet<PathBuf>,
+    written: &mut Written,
+    ops: &mut Vec<PlannedOp>,
+) -> Result<Planned> {
+    let Artifact::Tree {
+        canonical,
+        files,
+        link,
+    } = &item.artifact
+    else {
+        return Ok(Planned::Clean);
+    };
+    let result = Planned::Clean;
+    let Some(link) = link else {
+        return Ok(result);
+    };
+    link::plan_link(
+        scope,
+        item,
+        link,
+        canonical,
+        files,
+        replace_unmanaged,
+        owned,
+        written,
+        ops,
+        &result,
+    )
 }
 
 /// The harness-native position when it holds the person's own files too.

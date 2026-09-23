@@ -1,0 +1,1 @@
+- Keep in-place skill source directories unchanged when rendering links, and report missing links as a refresh instead of offering to take over the source.

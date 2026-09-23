@@ -127,8 +127,9 @@ fn a_differing_copy_is_stale_under_quiet_and_its_fix_settles_it() {
         assert_eq!(checked.status.code(), Some(1), "{}", said(&checked));
         let text = String::from_utf8(checked.stdout).unwrap();
         assert!(text.starts_with("stale:\n"), "global={global}: {text}");
+        let trash = kendex_core::paths::slashed(&Env::host_rooted(&w.home).trash_dir());
         let line = format!(
-            "  unmanaged copy of skill 'deploy' for Claude Code: 1 file differs from source 'cat' — fix: {fix}\n"
+            "  unmanaged copy of skill 'deploy' for Claude Code: 1 file differs from source 'cat'; take-over moves the existing content to the trash at {trash} — fix: {fix}\n"
         );
         assert!(text.contains(&line), "global={global}: {text}");
         assert!(

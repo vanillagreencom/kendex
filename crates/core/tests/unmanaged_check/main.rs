@@ -126,11 +126,18 @@ fn a_copy_that_differs_is_stale_and_the_take_over_is_its_fix() {
     );
 
     let text = report(&w);
+    let trash = kendex_core::paths::slashed(&w.env.trash_dir());
     assert!(text.starts_with("stale:\n"), "{text}");
     assert!(
         text.contains(
-            "unmanaged copy of skill 'deploy' for Claude Code: 1 file differs from source 'cat' — fix: kendex apply --replace-unmanaged"
+            "unmanaged copy of skill 'deploy' for Claude Code: 1 file differs from source 'cat'"
         ),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "take-over moves the existing content to the trash at {trash} — fix: kendex apply --replace-unmanaged"
+        )),
         "{text}"
     );
     assert!(

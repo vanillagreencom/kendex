@@ -74,6 +74,7 @@ pub(crate) use targets::disabled_name;
 mod tree_plan;
 mod unmanaged;
 pub use unmanaged::unmanaged_here;
+pub(crate) use unmanaged::unrendered_in_place_skills;
 mod written;
 
 pub use desired::{CatalogSource, Owns, Position};
