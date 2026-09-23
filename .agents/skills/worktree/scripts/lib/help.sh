@@ -177,13 +177,13 @@ implementer.
   - A fresh worktree is unclaimed: create never claims a session-guard lease.
 
 Options:
-  --base BRANCH   Checkout an existing branch into the worktree; BRANCH must
-                  be on origin. A branch that is only local, or only on another
-                  remote, is refused: push it first, or `git switch` to it in
-                  the main checkout and pass --transfer instead. The default
-                  branch instead starts a new issue branch from it (it is
-                  always checked out in the main checkout and is never
-                  issue-ownership evidence)
+  --base BRANCH   Checkout an existing branch into the worktree; a BRANCH
+                  other than the default must be on origin. One that is only
+                  local, or only on another remote, is refused: push it first,
+                  or `git switch` to it in the main checkout and pass
+                  --transfer instead. The default branch instead starts a new
+                  issue branch from it (it is always checked out in the main
+                  checkout and is never issue-ownership evidence)
   --from REF      Create a new branch (named after ID) starting from REF
                   (branch, tag, or commit) after the normal ownership claim
                   gate

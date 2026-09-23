@@ -2176,6 +2176,7 @@ refuse_existing_branch() {
     echo "To check out that branch intentionally, pass --base $branch." >&2
   else
     echo "Branch '$branch' is not on origin, so --base cannot check it out. Either:" >&2
+    [[ "$signal" == remote ]] && echo "  fetch it first:           git fetch ${details%/"$branch"} $branch:$branch" >&2
     echo "  push it first:            git push -u origin $branch; then $0 create $issue --base $branch" >&2
     echo "  from the main checkout:   git switch $branch; then $0 create $issue --transfer $branch" >&2
   fi
