@@ -392,6 +392,307 @@ fn corrupt_manifest_and_lock_are_could_not_check() {
     assert!(text.contains("lock:"), "{text}");
 }
 
+fn selection_manifest() -> crate::manifest::Manifest {
+    let mut manifest = crate::manifest::Manifest {
+        schema: crate::manifest::MANIFEST_SCHEMA,
+        ..Default::default()
+    };
+    manifest.install.harnesses = vec![crate::model::HarnessId::Claude];
+    manifest.sources.insert(
+        "cat".into(),
+        crate::manifest::SourceDecl {
+            repo: None,
+            path: Some("catalog".into()),
+            rev: None,
+            enabled: true,
+        },
+    );
+    manifest
+}
+
+fn recorded_entry(
+    kind: ItemKind,
+    name: &str,
+    reasons: std::collections::BTreeSet<crate::lock::Reason>,
+) -> crate::lock::LockEntry {
+    crate::lock::LockEntry {
+        name: name.into(),
+        kind,
+        harness: crate::model::HarnessId::Claude,
+        source: "cat".into(),
+        source_repo: "local".into(),
+        machine: None,
+        source_hash: "source".into(),
+        source_commit: None,
+        rendered_hash: None,
+        enabled: true,
+        upstream_skills: None,
+        emitted: None,
+        registration: None,
+        reasons,
+    }
+}
+
+fn plant_recorded_skill_files(scope: &Scope, entries: &mut [crate::lock::LockEntry]) {
+    let Scope::Project { root } = scope else {
+        unreachable!("selection tests use project scopes");
+    };
+    for entry in entries
+        .iter_mut()
+        .filter(|entry| entry.kind == ItemKind::Skill)
+    {
+        let path = root.join(".claude/skills").join(&entry.name);
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("SKILL.md"), "Recorded.\n").unwrap();
+        entry.machine = Some(crate::lock::MachineRecord {
+            method: crate::manifest::Method::Copy,
+            installed_at: crate::clock::timestamp(),
+        });
+        entry.emitted = Some(crate::lock::EmittedArtifact {
+            kind: ItemKind::Skill,
+            name: entry.name.clone(),
+            paths: vec![path],
+        });
+    }
+}
+
+fn write_record(env: &Env, scope: &Scope, entries: Vec<crate::lock::LockEntry>) {
+    let mut lock = crate::lock::Lock {
+        version: crate::lock::LOCK_VERSION,
+        ..Default::default()
+    };
+    for entry in entries {
+        let key = crate::lock::entry_key(entry.kind, &entry.name, entry.harness);
+        lock.entries.insert(key, entry);
+    }
+    crate::lock::save(&crate::lock::lock_path(env, scope), &lock).unwrap();
+}
+
+fn cleanup_names(report: &CheckReport) -> Vec<&str> {
+    report
+        .sections
+        .iter()
+        .find(|section| section.title == "record cleanup needed")
+        .into_iter()
+        .flat_map(|section| section.lines.iter().map(|line| line.text.as_str()))
+        .collect()
+}
+
+#[derive(Clone, Copy)]
+enum SelectionCase {
+    Plugin,
+    CustomHook,
+    BundleMember,
+    RequiredDependency,
+}
+
+impl SelectionCase {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Plugin => "plugin",
+            Self::CustomHook => "custom hook",
+            Self::BundleMember => "bundle member",
+            Self::RequiredDependency => "required dependency",
+        }
+    }
+
+    fn target(self) -> (ItemKind, &'static str) {
+        match self {
+            Self::Plugin => (ItemKind::Plugin, "plugin@market"),
+            Self::CustomHook => (ItemKind::Hook, "custom-hook"),
+            Self::BundleMember => (ItemKind::Skill, "bundle-member"),
+            Self::RequiredDependency => (ItemKind::Skill, "dependency"),
+        }
+    }
+
+    fn fixture(self) -> (crate::manifest::Manifest, Vec<crate::lock::LockEntry>) {
+        use crate::lock::{BundleRef, InstallRef, Reason};
+
+        let mut manifest = selection_manifest();
+        let (kind, name) = self.target();
+        let reasons = match self {
+            Self::Plugin => {
+                manifest.plugins.insert(
+                    name.into(),
+                    crate::manifest::PluginDecl {
+                        enabled: true,
+                        harness: crate::model::HarnessId::Claude,
+                    },
+                );
+                std::collections::BTreeSet::from([Reason::Requested])
+            }
+            Self::CustomHook => {
+                manifest.custom_hooks.push(crate::manifest::CustomHook {
+                    name: Some(name.into()),
+                    event: "SessionStart".into(),
+                    matcher: None,
+                    command: "true".into(),
+                    description: None,
+                    timeout: None,
+                    harnesses: Some(vec!["claude".into()]),
+                    enabled: true,
+                    agents: crate::manifest::HookAgents::One("all".into()),
+                });
+                std::collections::BTreeSet::from([Reason::Requested])
+            }
+            Self::BundleMember => {
+                manifest.bundles.insert(
+                    "starter".into(),
+                    crate::manifest::ItemDecl::from_source("cat"),
+                );
+                std::collections::BTreeSet::from([Reason::MemberOf {
+                    bundle: BundleRef {
+                        source: "cat".into(),
+                        name: "starter".into(),
+                    },
+                }])
+            }
+            Self::RequiredDependency => {
+                manifest.skills.insert(
+                    "parent".into(),
+                    crate::manifest::ItemDecl::from_source("cat"),
+                );
+                std::collections::BTreeSet::from([Reason::RequiredBy {
+                    by: InstallRef {
+                        source: "cat".into(),
+                        kind: ItemKind::Skill,
+                        name: "parent".into(),
+                        harness: crate::model::HarnessId::Claude,
+                    },
+                }])
+            }
+        };
+        let mut entries = vec![recorded_entry(kind, name, reasons)];
+        if matches!(self, Self::RequiredDependency) {
+            entries.push(recorded_entry(
+                ItemKind::Skill,
+                "parent",
+                std::collections::BTreeSet::from([Reason::Requested]),
+            ));
+        }
+        (manifest, entries)
+    }
+
+    fn remove_owner(self, manifest: &mut crate::manifest::Manifest) {
+        match self {
+            Self::Plugin => manifest.plugins.clear(),
+            Self::CustomHook => manifest.custom_hooks.clear(),
+            Self::BundleMember => manifest.bundles.clear(),
+            Self::RequiredDependency => manifest.skills.clear(),
+        }
+    }
+}
+
+#[test]
+fn record_selection_tracks_each_manifest_owner() {
+    for case in [
+        SelectionCase::Plugin,
+        SelectionCase::CustomHook,
+        SelectionCase::BundleMember,
+        SelectionCase::RequiredDependency,
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let scope = project_scope(tmp.path());
+        let (mut manifest, mut entries) = case.fixture();
+        plant_recorded_skill_files(&scope, &mut entries);
+        write_manifest(&env, &scope, &manifest);
+        write_record(&env, &scope, entries);
+
+        let report = check(&env, std::slice::from_ref(&scope));
+        let (kind, name) = case.target();
+        assert!(
+            !cleanup_names(&report)
+                .iter()
+                .any(|line| line.contains(name)),
+            "selected {} was called stale: {report:?}",
+            case.label()
+        );
+
+        case.remove_owner(&mut manifest);
+        write_manifest(&env, &scope, &manifest);
+        let report = check(&env, std::slice::from_ref(&scope));
+        assert!(
+            cleanup_names(&report)
+                .iter()
+                .any(|line| line.contains(&format!("{} '{name}'", kind.name()))),
+            "unselected {} was not called stale: {report:?}",
+            case.label()
+        );
+    }
+}
+
+#[test]
+fn suppression_excludes_derived_records_but_not_direct_declarations() {
+    for case in [
+        SelectionCase::BundleMember,
+        SelectionCase::RequiredDependency,
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let scope = project_scope(tmp.path());
+        let (mut manifest, mut entries) = case.fixture();
+        plant_recorded_skill_files(&scope, &mut entries);
+        let (kind, name) = case.target();
+        manifest.suppressed.insert(kind, vec![name.into()]);
+        write_manifest(&env, &scope, &manifest);
+        write_record(&env, &scope, entries);
+
+        let report = check(&env, std::slice::from_ref(&scope));
+        assert!(
+            cleanup_names(&report)
+                .iter()
+                .any(|line| line.contains(name)),
+            "suppressed {} stayed selected: {report:?}",
+            case.label()
+        );
+
+        manifest
+            .declared_mut(kind)
+            .insert(name.into(), crate::manifest::ItemDecl::from_source("cat"));
+        write_manifest(&env, &scope, &manifest);
+        let report = check(&env, std::slice::from_ref(&scope));
+        assert!(
+            !cleanup_names(&report)
+                .iter()
+                .any(|line| line.contains(name)),
+            "direct {} did not override suppression: {report:?}",
+            case.label()
+        );
+    }
+}
+
+#[test]
+fn unreadable_manifest_does_not_guess_that_recorded_packages_need_cleanup() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    let scope = project_scope(tmp.path());
+    write_record(
+        &env,
+        &scope,
+        vec![recorded_entry(
+            ItemKind::Skill,
+            "recorded",
+            std::collections::BTreeSet::from([crate::lock::Reason::Requested]),
+        )],
+    );
+
+    let absent = check(&env, std::slice::from_ref(&scope));
+    assert!(
+        cleanup_names(&absent)
+            .iter()
+            .any(|line| line.contains("recorded")),
+        "an absent manifest is a known empty selection: {absent:?}"
+    );
+
+    std::fs::write(crate::manifest::manifest_path(&env, &scope), "not = [valid").unwrap();
+    let unreadable = check(&env, std::slice::from_ref(&scope));
+    let text = render_plain(&unreadable);
+    assert!(text.contains("manifest:"), "{text}");
+    assert!(!text.contains("record cleanup needed"), "{text}");
+    assert!(!text.contains("kendex apply"), "{text}");
+}
+
 /// A declared Pi package with a second copy under the scope's
 /// `extensions/` is one line in its own section, opening on the stable
 /// key and naming both copies; with only the managed copy the section is

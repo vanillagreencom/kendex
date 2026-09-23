@@ -68,19 +68,22 @@ fn selected_record_keys(
                             )
                             .contains(&entry.harness)
                     }));
-        let bundle_member = entry.reasons.iter().any(|reason| {
-            let crate::lock::Reason::MemberOf { bundle } = reason else {
-                return false;
-            };
-            manifest.bundles.get(&bundle.name).is_some_and(|decl| {
-                decl.source == bundle.source
-                    && crate::engine::desired::target_harnesses(decl, manifest, entry.kind, scope)
+        let bundle_member = !manifest.is_held_back(entry.kind, &entry.name)
+            && entry.reasons.iter().any(|reason| {
+                let crate::lock::Reason::MemberOf { bundle } = reason else {
+                    return false;
+                };
+                manifest.bundles.get(&bundle.name).is_some_and(|decl| {
+                    decl.source == bundle.source
+                        && crate::engine::desired::target_harnesses(
+                            decl, manifest, entry.kind, scope,
+                        )
                         .contains(&entry.harness)
-            })
+                })
         });
         if requested || bundle_member {
             selected.insert(key.clone());
-}
+        }
     }
 
     loop {
@@ -89,12 +92,13 @@ fn selected_record_keys(
             if selected.contains(key) {
                 continue;
             }
-            let required = entry.reasons.iter().any(|reason| {
-                let crate::lock::Reason::RequiredBy { by } = reason else {
-                    return false;
-                };
-                selected.contains(&crate::lock::entry_key(by.kind, &by.name, by.harness))
-            });
+            let required = !manifest.is_held_back(entry.kind, &entry.name)
+                && entry.reasons.iter().any(|reason| {
+                    let crate::lock::Reason::RequiredBy { by } = reason else {
+                        return false;
+                    };
+                    selected.contains(&crate::lock::entry_key(by.kind, &by.name, by.harness))
+                });
             if required {
                 changed |= selected.insert(key.clone());
             }
@@ -124,9 +128,9 @@ pub(super) fn check_scope(
     // Read once, read by two checks: what the lock says is on disk, and
     // what it says nothing about.
     let lock = crate::lock::load_file(&crate::lock::lock_path(env, scope));
-    ctx.lock_lines(manifest.as_ref(), &lock, sections);
+    ctx.lock_lines(&manifest, &lock, sections);
     let mut scan = crate::pi_ext::ShadowScan::default();
-    if let Some(manifest) = &manifest {
+    if let Some(manifest) = manifest.current() {
         ctx.pi_scope_duplicate_lines(manifest, sections);
         for name in manifest.pi_extensions.keys() {
             let key =
@@ -142,9 +146,9 @@ pub(super) fn check_scope(
         }
         scan = ctx.pi_shadow_scan(manifest.pi_extensions.keys().cloned().collect(), sections);
     }
-    ctx.blocked_lines(manifest.as_ref(), &lock, sections);
-    ctx.snapshot_lines(manifest.as_ref(), sections, oldest_age);
-    ctx.stamp_lines(manifest.as_ref(), sections);
+    ctx.blocked_lines(manifest.current(), &lock, sections);
+    ctx.snapshot_lines(manifest.current(), sections, oldest_age);
+    ctx.stamp_lines(manifest.current(), sections);
     ScopeOutcome {
         scan,
         manifest: manifest_state,
@@ -210,6 +214,21 @@ pub(super) struct ScopeCheck<'a> {
     pub(super) global_manifest_named: &'a std::cell::Cell<bool>,
 }
 
+enum ManifestRead {
+    Current(Box<crate::manifest::Manifest>),
+    Absent,
+    Unreadable,
+}
+
+impl ManifestRead {
+    fn current(&self) -> Option<&crate::manifest::Manifest> {
+        match self {
+            Self::Current(manifest) => Some(manifest.as_ref()),
+            Self::Absent | Self::Unreadable => None,
+        }
+    }
+}
+
 impl ScopeCheck<'_> {
     /// The manifest: parse failures — a v1 file among them — are
     /// could-not-check, and the one hard failure this check has always had
@@ -217,23 +236,25 @@ impl ScopeCheck<'_> {
     fn manifest_lines(
         &self,
         sections: &mut Sections,
-    ) -> (Option<crate::manifest::Manifest>, ManifestState) {
+    ) -> (ManifestRead, ManifestState) {
         let prefix = self.prefix;
         let (manifest, state) =
             match crate::manifest::load(&crate::manifest::manifest_path(self.env, self.scope)) {
                 Ok(crate::manifest::ManifestFile::Current(manifest)) => {
-                    (Some(*manifest), ManifestState::Declared)
+                    (ManifestRead::Current(manifest), ManifestState::Declared)
                 }
-                Ok(crate::manifest::ManifestFile::Absent) => (None, ManifestState::Absent),
+                Ok(crate::manifest::ManifestFile::Absent) => {
+                    (ManifestRead::Absent, ManifestState::Absent)
+                }
                 Err(error) => {
                     sections.unknown.push(unknown(format!(
                         "{prefix}manifest: {}",
                         shown(&error.to_string())
                     )));
-                    (None, ManifestState::Unreadable)
+                    (ManifestRead::Unreadable, ManifestState::Unreadable)
                 }
             };
-        if let Some(manifest) = &manifest {
+        if let Some(manifest) = manifest.current() {
             // A drift hook running an older release's script: the one
             // comparison of disk to the embedded copy, or upgrades would
             // strand every existing install on the old script forever.
@@ -271,20 +292,27 @@ impl ScopeCheck<'_> {
     /// installation wrote, absent under both its names, is missing.
     fn lock_lines(
         &self,
-        manifest: Option<&crate::manifest::Manifest>,
+        manifest: &ManifestRead,
         lock: &crate::error::Result<crate::lock::LockFile>,
         sections: &mut Sections,
     ) {
         let prefix = self.prefix;
         match lock {
             Ok(crate::lock::LockFile::Current(lock)) => {
-                let selected = manifest
-                    .map(|manifest| selected_record_keys(manifest, lock, self.scope))
-                    .unwrap_or_default();
+                let selected = match manifest {
+                    ManifestRead::Current(manifest) => {
+                        Some(selected_record_keys(manifest, lock, self.scope))
+                    }
+                    ManifestRead::Absent => Some(BTreeSet::new()),
+                    ManifestRead::Unreadable => None,
+                };
                 let mut missing: BTreeMap<(ItemKind, String), BTreeSet<_>> = BTreeMap::new();
                 let mut unselected: BTreeMap<(ItemKind, String), BTreeSet<_>> = BTreeMap::new();
                 for (key, entry) in &lock.entries {
-                    if !selected.contains(key) {
+                    if selected
+                        .as_ref()
+                        .is_some_and(|selected| !selected.contains(key))
+                    {
                         unselected
                             .entry((entry.kind, entry.name.clone()))
                             .or_default()
