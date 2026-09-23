@@ -24,13 +24,10 @@ LINEAR_AGENT_LABELS = ""
 # turns it off.
 LINEAR_REQUIRE_REACH = ""
 
-# The shape read commands print in: "safe" is flat and easy to read, "table"
-# is for a person, "ids" prints identifiers alone, "compact" is a small
-# shape for routing, and "raw" prints Linear's own nesting. Not every
-# command prints every shape. Getting one issue, and listing an issue's
-# children or relations, refuse a shape they lack. Every other command
-# prints the safe shape in place of one it lacks, so a wrong choice here can
-# go unnoticed.
+# How read commands print: "safe" flat, "table" for a person, "ids" bare
+# identifiers, "compact" small for routing, "raw" Linear's own nesting.
+# Getting one issue, or listing its children or relations, refuses a shape
+# it lacks. Other commands print safe in its place and report nothing.
 LINEAR_FORMAT = "safe"
 
 # Seconds to wait before retrying a Linear call that was rate limited or
