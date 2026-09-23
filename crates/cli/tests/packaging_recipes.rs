@@ -119,6 +119,56 @@ fn homebrew_formula_places_each_lane_under_its_os_and_arch_block() {
     );
 }
 
+/// The Linux command links libdbus-1; macOS uses the native keyring.
+#[test]
+fn homebrew_formula_declares_dbus_and_build_only_patchelf_only_for_linux() {
+    let formula = read("packaging/homebrew/kendex-cli.rb");
+    let mut blocks = Vec::new();
+    let mut dependencies = Vec::new();
+    for line in formula.lines().map(str::trim) {
+        match line {
+            "end" => {
+                blocks.pop();
+            }
+            _ if line.starts_with("depends_on ")
+                && (line.contains(r#""dbus""#) || line.contains(r#""patchelf""#)) =>
+            {
+                dependencies.push((line, blocks.clone()));
+            }
+            _ if line.ends_with(" do") => blocks.push(line),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        dependencies,
+        [
+            (r#"depends_on "dbus""#, vec!["on_linux do"]),
+            (r#"depends_on "patchelf" => :build"#, vec!["on_linux do"]),
+        ]
+    );
+}
+
+/// Patching the staged Linux command leaves macOS and child environments alone.
+#[test]
+fn homebrew_formula_patches_the_linux_command_before_installing_it() {
+    let formula = read("packaging/homebrew/kendex-cli.rb");
+    let install: Vec<_> = formula
+        .lines()
+        .map(str::trim)
+        .skip_while(|line| *line != "def install")
+        .skip(1)
+        .take_while(|line| *line != "end")
+        .collect();
+    assert_eq!(
+        install,
+        [
+            r#"executable = Dir["*"].first"#,
+            r#"system "patchelf", "--set-rpath", Formula["dbus"].opt_lib, executable if OS.linux?"#,
+            r#"bin.install executable => "kendex""#,
+        ]
+    );
+}
+
 /// Tauri names the disk image by `aarch64` / `x64`; the cask selects one
 /// through its `arch` stanza and needs a checksum for each.
 #[test]

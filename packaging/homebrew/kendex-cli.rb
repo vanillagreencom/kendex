@@ -36,6 +36,9 @@ class KendexCli < Formula
   end
 
   on_linux do
+    depends_on "dbus"
+    depends_on "patchelf" => :build
+
     on_intel do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-x86_64-unknown-linux-gnu"
       sha256 "0d4ae9ffa82f3600d34a18e4a36009bae29ecd06ba7fa8fb0ef1d569d3a0936f"
@@ -47,7 +50,9 @@ class KendexCli < Formula
   end
 
   def install
-    bin.install Dir["*"].first => "kendex"
+    executable = Dir["*"].first
+    system "patchelf", "--set-rpath", Formula["dbus"].opt_lib, executable if OS.linux?
+    bin.install executable => "kendex"
   end
 
   test do
