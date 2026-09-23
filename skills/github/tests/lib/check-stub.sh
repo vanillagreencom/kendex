@@ -140,6 +140,17 @@ case "${1:-}" in
                 exit 0
                 ;;
             'repos/{owner}/{repo}/rules/branches/'*/* | 'repos/{owner}/{repo}/branches/'*/*) ;;
+            # The review-mode gate read: the head's commit statuses, newest
+            # first. An unset fixture is a head carrying no status at all,
+            # which is a real answer and not a failed read.
+            'repos/{owner}/{repo}/commits/'*/statuses*)
+                if [[ "${STUB_GATE_STATUS_FAIL:-false}" == "true" ]]; then
+                    echo "gh: Not Found (HTTP 404)" >&2
+                    exit 1
+                fi
+                printf '%s\n' "${STUB_GATE_STATUS_JSON:-[]}"
+                exit 0
+                ;;
             # The base-containment read: how many commits the base has that the
             # PR head does not.
             'repos/{owner}/{repo}/compare/'*)
@@ -367,7 +378,11 @@ case "${1:-}" in
                 if [[ "$*" == *"--json reviewDecision,latestReviews"* ]]; then
                     latest="${STUB_REVIEW_LATEST:-}"
                     [[ -n "$latest" ]] || latest='[{"state":"APPROVED"}]'
-                    jq -cn --arg d "${STUB_REVIEW_DECISION:-APPROVED}" --argjson l "$latest" \
+                    # Unset is a PR nobody set a decision for, which GitHub
+                    # answers APPROVED here. Set-but-empty is the answer a base
+                    # with no required-review rule gives, so the default must
+                    # not swallow it: `-`, never `:-`.
+                    jq -cn --arg d "${STUB_REVIEW_DECISION-APPROVED}" --argjson l "$latest" \
                         '{reviewDecision:$d,latestReviews:$l}'
                     exit 0
                 fi
