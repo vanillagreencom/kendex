@@ -166,23 +166,35 @@ fn pi_unknown_line(prefix: &str, subject: &str, error: &str, sections: &mut Sect
 /// The lines of one scope's folded scan. A copy of a declared package
 /// under an `extensions/` directory Pi loads with the scope runs beside
 /// the managed one whatever state that one is in, so a fix update-pi
-/// installs runs next to the old code: one line per copy, no remedy from
-/// the fixed set, since the fix is a move kendex does not make, and the
-/// line names the entry to move and the directory to move it out of. A
+/// installs runs next to the old code: one line per copy, with a quoted
+/// shell move from the scanned directory into its parent. A
 /// root or name that would not read is one could-not-check line beside
 /// the copies found. Once per report for each, the fold having run.
-pub(super) fn shadow_lines(prefix: &str, scan: crate::pi_ext::ShadowScan, sections: &mut Sections) {
+pub(super) fn shadow_lines(
+    env: &Env,
+    prefix: &str,
+    scan: crate::pi_ext::ShadowScan,
+    sections: &mut Sections,
+) {
     for error in &scan.errors {
         pi_unknown_line(prefix, "pi-extensions", &error.to_string(), sections);
     }
     for shadow in scan.found {
         let lines = shadow.lines(shown);
+        let remedy = shadow
+            .extensions
+            .parent()
+            .map(|destination| Remedy::MoveAside {
+                from: shadow.shadow.display().to_string(),
+                to: destination.display().to_string(),
+                windows: env.is_windows(),
+            });
         sections.shadowed.push(drift(
             format!(
                 "{prefix}{}: {}; {}; {}",
                 lines.key, lines.managed, lines.shadow, lines.remedy
             ),
-            None,
+            remedy,
         ));
     }
 }
@@ -259,11 +271,19 @@ impl ScopeCheck<'_> {
             // comparison of disk to the embedded copy, or upgrades would
             // strand every existing install on the old script forever.
             if crate::drift::hook::script_current(self.env, self.scope, manifest) == Some(false) {
+                let script = crate::drift::hook::script_path(self.env, self.scope);
+                let backup = super::backup_command(self.env, &script);
                 sections.stale.push(drift(
                     format!(
-                        "{prefix}the session drift hook script is from an older kendex — reinstall it with the drift-hook command, or fork it to keep your changes"
+                        "{prefix}the session drift hook script is from an older kendex; reinstalling overwrites local changes{}",
+                        backup
+                            .as_ref()
+                            .map(|command| format!("; backup first if needed: {command}"))
+                            .unwrap_or_default()
                     ),
-                    None,
+                    Some(Remedy::DriftHook {
+                        global: self.global,
+                    }),
                 ));
             }
             for (agent, skills) in &manifest.agent_skills {
@@ -481,6 +501,7 @@ impl ScopeCheck<'_> {
             .file_name()
             .unwrap_or(std::ffi::OsStr::new(crate::manifest::MANIFEST_FILE))
             .to_string_lossy();
+        let edit = super::edit_command(self.env, &manifest_path);
         for name in manifest.pi_extensions.keys() {
             let Some(globally) = global
                 .pi_extensions
@@ -494,12 +515,15 @@ impl ScopeCheck<'_> {
                     "{}pi-declared-twice={}: the global manifest declares '{}' too; \
                      Pi loads both scopes' package lists together and will not start \
                      with one package registered twice; keep the global declaration, \
-                     which reaches every project, and remove the \
-                     [pi-extensions.\"{}\"] table from this project's {manifest_file}",
+                     which reaches every project; remove the \
+                     [pi-extensions.\"{}\"] table from this project's {manifest_file}{}",
                     self.prefix,
                     shown(name),
                     shown(globally),
-                    shown(name)
+                    shown(name),
+                    edit.as_ref()
+                        .map(|command| format!("; edit: {command}"))
+                        .unwrap_or_default()
                 ),
                 None,
             ));

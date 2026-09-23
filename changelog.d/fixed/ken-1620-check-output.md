@@ -1,1 +1,1 @@
-- Scope `kendex check` to the current manifest, group missing installs by package, show every row for an explicit check, and name the command that completes pending source comparisons.
+- Scope `kendex check` to the current manifest, group missing installs by package, show every row for an explicit check, and name the available commands for supported repairs.

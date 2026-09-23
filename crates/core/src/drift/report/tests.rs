@@ -98,6 +98,46 @@ fn a_clean_scope_is_silent_and_exit_zero() {
     assert_eq!(render_plain(&report), "");
 }
 
+/// A stale session hook names the supported reinstall command and a safe
+/// backup command before the reinstall can replace local changes.
+#[test]
+fn an_old_drift_hook_names_reinstall_and_backup_commands() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    let scope = project_scope(tmp.path());
+    let mut manifest = manifest_with_remote();
+    manifest.hooks.insert(
+        crate::drift::hook::HOOK_NAME.to_owned(),
+        crate::manifest::ItemDecl::from_source(crate::manifest::LOCAL_SOURCE_NAME),
+    );
+    write_manifest(&env, &scope, &manifest);
+    let script = crate::drift::hook::script_path(&env, &scope);
+    std::fs::create_dir_all(script.parent().unwrap()).unwrap();
+    std::fs::write(&script, "old hook\n").unwrap();
+
+    let report = check(&env, std::slice::from_ref(&scope));
+    let stale = report
+        .sections
+        .iter()
+        .find(|section| section.title == "stale")
+        .and_then(|section| section.lines.first())
+        .unwrap();
+    assert_eq!(stale.remedy, Some(Remedy::DriftHook { global: false }));
+    let text = render_full(&report);
+    assert!(
+        text.contains(&format!(
+            "backup first if needed: cp -i {} {}",
+            crate::names::quoted(&script.display().to_string()),
+            crate::names::quoted(&format!("{}.backup", script.display()))
+        )),
+        "{text}"
+    );
+    assert!(
+        text.contains("fix: kendex drift-hook --yes --scope project"),
+        "{text}"
+    );
+}
+
 #[test]
 fn held_only_and_ignored_only_drift_stays_silent() {
     let tmp = tempfile::tempdir().unwrap();
@@ -758,7 +798,14 @@ fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not(
     assert_eq!(lines.len(), 1, "{report:?}");
     let line = &lines[0];
     assert_eq!(line.class, Class::Drift);
-    assert_eq!(line.remedy, None);
+    assert_eq!(
+        line.remedy,
+        Some(Remedy::MoveAside {
+            from: shadow.display().to_string(),
+            to: root.join(".pi").display().to_string(),
+            windows: false,
+        })
+    );
     assert!(
         line.text.starts_with("pi-shadow-package=pi-widgets: "),
         "{}",
@@ -783,6 +830,15 @@ fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not(
         )),
         "{}",
         line.text
+    );
+    let text = render_full(&report);
+    assert!(
+        text.contains(&format!(
+            "fix: mv -i {} {}",
+            crate::names::quoted(&shadow.display().to_string()),
+            crate::names::quoted(&root.join(".pi").display().to_string())
+        )),
+        "{text}"
     );
 }
 

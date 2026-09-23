@@ -14,8 +14,8 @@
 //! This report is the one deliberate exception to the no-command-lines
 //! rule: it is written for an agent that can act, so each line may carry a
 //! remedy built from a fixed template set: apply, replace-unmanaged,
-//! refresh, remove, add, fork, findings, plan — with only validated
-//! identifiers in argument positions.
+//! refresh, remove, add, fork, drift-hook, move-aside, findings, plan —
+//! with validated identifiers or quoted paths in argument positions.
 //! Free text from sources or errors renders in quoted informational
 //! positions, never in a command position. A remedy that changes something
 //! is offered as the fix; the one that only prints is offered as what to
@@ -97,6 +97,17 @@ pub enum Remedy {
     Updates {
         global: bool,
     },
+    /// Replace this scope's old session drift hook with the current copy.
+    DriftHook {
+        global: bool,
+    },
+    /// Move an unmanaged Pi copy out of the directory Pi scans. Paths are
+    /// shell-quoted when rendered. `windows` selects PowerShell syntax.
+    MoveAside {
+        from: String,
+        to: String,
+        windows: bool,
+    },
     Remove {
         name: String,
         global: bool,
@@ -145,8 +156,8 @@ impl Remedy {
         !matches!(self, Remedy::Plan { .. })
     }
 
-    /// Whether this remedy is about the personal scope. A global command
-    /// is one flag wherever it is typed and never names a project.
+    /// Whether this remedy is about the personal scope or targets an
+    /// absolute path directly. Neither kind needs a project destination.
     pub fn global(&self) -> bool {
         match self {
             Remedy::Apply { global }
@@ -154,10 +165,12 @@ impl Remedy {
             | Remedy::UpdatePi { global }
             | Remedy::Refresh { global }
             | Remedy::Updates { global }
+            | Remedy::DriftHook { global }
             | Remedy::Plan { global }
             | Remedy::Remove { global, .. }
             | Remedy::Add { global, .. }
             | Remedy::Fork { global, .. } => *global,
+            Remedy::MoveAside { .. } => true,
         }
     }
 
@@ -220,6 +233,22 @@ impl Remedy {
             ),
             Remedy::Refresh { .. } => format!("kendex refresh{place}"),
             Remedy::Updates { .. } => format!("kendex updates{place}"),
+            Remedy::DriftHook { global } => format!(
+                "kendex drift-hook --yes --scope {}",
+                if *global { "global" } else { "project" }
+            ),
+            Remedy::MoveAside { from, to, windows } => match *windows {
+                true => format!(
+                    "Move-Item -LiteralPath {} -Destination {} -Confirm",
+                    command_word(from, true)?,
+                    command_word(to, true)?
+                ),
+                false => format!(
+                    "mv -i {} {}",
+                    command_word(from, false)?,
+                    command_word(to, false)?
+                ),
+            },
             Remedy::Remove { name, .. } => format!("kendex remove {name}{place}"),
             Remedy::Add { kind, name, .. } => {
                 format!("kendex add --{} {name}{place}", kind.name())
@@ -234,6 +263,39 @@ impl Remedy {
             false => Fix::Here(command),
         })
     }
+}
+
+/// Quote one path for the shell this environment uses. A control byte or
+/// a path past the report's fragment bound cannot be printed as the same
+/// word, so no command is offered for that path.
+fn command_word(word: &str, windows: bool) -> Option<String> {
+    let quoted = match windows {
+        true => format!("'{}'", word.replace('\'', "''")),
+        false => crate::names::quoted(word),
+    };
+    (text::shown(&quoted) == quoted).then_some(quoted)
+}
+
+/// The platform editor command for a manifest. Opening the file is an edit
+/// step, not a remedy that claims the named table was removed.
+pub(super) fn edit_command(env: &Env, path: &std::path::Path) -> Option<String> {
+    let path = command_word(&path.display().to_string(), env.is_windows())?;
+    Some(match env.is_windows() {
+        true => format!("notepad.exe {path}"),
+        false => format!("${{EDITOR:-vi}} {path}"),
+    })
+}
+
+/// A non-clobbering backup command for an installed file that another
+/// remedy replaces. The backup sits beside the file with `.backup` added.
+pub(super) fn backup_command(env: &Env, path: &std::path::Path) -> Option<String> {
+    let from = command_word(&path.display().to_string(), env.is_windows())?;
+    let backup = format!("{}.backup", path.display());
+    let to = command_word(&backup, env.is_windows())?;
+    Some(match env.is_windows() {
+        true => format!("Copy-Item -LiteralPath {from} -Destination {to} -Confirm"),
+        false => format!("cp -i {from} {to}"),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
@@ -592,7 +654,7 @@ pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) ->
     }
     crate::pi_ext::ShadowScan::fold(scans.iter_mut().map(|(_, scan)| scan));
     for (prefix, scan) in scans {
-        scope::shadow_lines(&prefix, scan, &mut sections);
+        scope::shadow_lines(env, &prefix, scan, &mut sections);
     }
     // Asked last, and only where an answer would be printed: resolving it
     // spawns git children, and the session-start check runs on every

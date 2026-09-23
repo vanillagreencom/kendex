@@ -273,6 +273,38 @@ fn an_unsafe_identifier_drops_the_remedy_not_the_line() {
 }
 
 #[test]
+fn a_manual_move_quotes_paths_for_the_platform_shell() {
+    let posix = Remedy::MoveAside {
+        from: "/tmp/it's/extensions/pkg".into(),
+        to: "/tmp/it's".into(),
+        windows: false,
+    };
+    assert_eq!(
+        posix.render().as_deref(),
+        Some("mv -i '/tmp/it'\\''s/extensions/pkg' '/tmp/it'\\''s'")
+    );
+
+    let powershell = Remedy::MoveAside {
+        from: r"C:\Users\Pat's\extensions\pkg".into(),
+        to: r"C:\Users\Pat's".into(),
+        windows: true,
+    };
+    assert_eq!(
+        powershell.render().as_deref(),
+        Some(
+            "Move-Item -LiteralPath 'C:\\Users\\Pat''s\\extensions\\pkg' -Destination 'C:\\Users\\Pat''s' -Confirm"
+        )
+    );
+
+    let control = Remedy::MoveAside {
+        from: "/tmp/bad\nname".into(),
+        to: "/tmp".into(),
+        windows: false,
+    };
+    assert_eq!(control.render(), None);
+}
+
+#[test]
 fn control_characters_and_secrets_never_reach_the_report() {
     let cleaned =
         shown("evil\x1b[2Jname with sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345 inside");
