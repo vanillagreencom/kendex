@@ -15,7 +15,8 @@
 # Usage:
 #   lanes list [--harness claude|codex|all] [--local] [--no-cache] [--json]
 #   lanes pick [--harness claude|codex] [--max-pct N | --min-headroom-pct N]
-#              [--model NAME] [--binding-floor] [--no-cache] [--json]
+#              [--model NAME] [--binding-floor] [--exclude-lane DIR]
+#              [--no-cache] [--json]
 #   lanes pick --lane <config-dir> [--harness claude|codex]
 #              [--max-pct N | --min-headroom-pct N] [--model NAME]
 #              [--binding-floor] [--no-cache] [--json]
@@ -79,7 +80,8 @@
 #         --max-pct, the one with the fewest launches already in flight, the
 #         room under that same threshold breaking the tie. --json prints that
 #         lane's whole record, which carries headroom_pct, binding_bucket
-#         (session, weekly or model) and the matching binding_resets_at. With
+#         (session, weekly or model), the matching binding_resets_at, and
+#         qualifying_count from that same judgement. With
 #         --model those fields name the most-consumed
 #         bucket among the shared 5-hour window, the all-model weekly window,
 #         and the named model's scoped weekly window. Exit 3 when no lane
@@ -186,6 +188,9 @@
 #                    over a window neither judgement reads. Without --model the
 #                    binding bucket is the judged wall, so the flag asks for
 #                    what is judged anyway.
+#   --exclude-lane DIR  pick: omit this config dir before the chooser judges
+#                    the remaining accounts. Used when the caller needs a
+#                    different account rather than capacity on its own.
 #   --local          list: this machine's config dirs alone. The provider is
 #                    not asked, so a caller looking a config dir up by alias
 #                    costs no round trip and meets no hosted row.
@@ -259,8 +264,10 @@
 # oversee-watch/usage, beside the claim store) and reused while younger than
 # ORCH_LANES_USAGE_TTL, so every overseer sharing that directory polls an
 # account at most once per TTL. `usage_age_s` (the AGE column) is how old the
-# figure is. Credentials are still read every run: an expired token is renewed
-# or reports its refusal, whatever the cache holds.
+# figure is. A fresh write keeps the displaced figure as `prior`; lane records
+# expose the binding bucket's rate and projected wall after samples at least a
+# minute apart. Credentials are still read every run: an expired token is
+# renewed or reports its refusal, whatever the cache holds.
 #
 # A fetch that could not be RUN is never cached, but one an endpoint REFUSED is:
 # the record then holds a short negative entry in place of a figure — the status
@@ -959,10 +966,13 @@ measure_lane() {
 		refreshed=true
 	fi
 
-	local raw buckets cached age=0 answer
+	local raw buckets cached age=0 answer current_at="$now_s" prior_at="" prior_raw="" prior_buckets='{}' elapsed="null"
 	if cached="$(read_usage_cache "$harness" "$dir" "$now_s")"; then
 		age="$(jq -r '.age' <<<"$cached")"
+		current_at="$(jq -r '.fetched_at' <<<"$cached")"
 		raw="$(jq -c '.usage' <<<"$cached")"
+		prior_at="$(jq -r '.prior.fetched_at // empty' <<<"$cached")"
+		prior_raw="$(jq -c '.prior.usage // empty' <<<"$cached")"
 	elif refusal="$(read_usage_refusal "$harness" "$dir" "$now_s" usage)"; then
 		emit_refusal "$alias" "$harness" "$dir" "$plan" "$refusal"
 		return
@@ -993,14 +1003,24 @@ measure_lane() {
 		# A cache that cannot be written costs the next run a fetch, never a
 		# wrong figure, so this run reports what it measured either way.
 		write_usage_cache "$harness" "$dir" "$now_s" "$raw" || true
+		prior_at="$USAGE_PRIOR_AT"; prior_raw="$USAGE_PRIOR_RAW"
 	fi
 	if [[ "$harness" == "claude" ]]; then
 		buckets="$(parse_claude_usage <<<"$raw")"
 	else
 		buckets="$(parse_codex_usage "$SESSION_WINDOW_S" <<<"$raw")"
 	fi
+	if [[ "$prior_at" =~ ^[0-9]+$ && -n "$prior_raw" ]]; then
+		elapsed=$((10#$current_at - 10#$prior_at))
+		if [[ "$harness" == "claude" ]]; then
+			prior_buckets="$(parse_claude_usage <<<"$prior_raw")"
+		else
+			prior_buckets="$(parse_codex_usage "$SESSION_WINDOW_S" <<<"$prior_raw")"
+		fi
+	fi
 	[[ -n "$buckets" ]] || buckets='{}'
-	emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" "$buckets" "$age" "$refreshed"
+	[[ -n "$prior_buckets" ]] || prior_buckets='{}'
+	emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" "$buckets" "$age" "$refreshed" local "$prior_buckets" "$elapsed"
 }
 
 # ── Usage cache ──────────────────────────────────────────────────────────────
@@ -1024,7 +1044,7 @@ usage_cache_file() {
 	printf '%s/%s-%s.json' "$USAGE_CACHE_DIR" "$1" "${sum// /-}"
 }
 
-# Prints `{age, usage}` for a cached body of harness $1 and dir $2 younger
+# Prints `{fetched_at, age, usage, prior}` for a cached body of harness $1 and dir $2 younger
 # than the TTL at epoch $3; fails on a miss, including --no-cache, an
 # unreadable or malformed record, and one stamped in the future.
 read_usage_cache() {
@@ -1037,18 +1057,29 @@ read_usage_cache() {
 		       and (.fetched_at | type) == "number" and (.usage | type) == "object")
 		| ($now - .fetched_at) as $age
 		| select($age >= 0 and $age < $ttl)
-		| {age: $age, usage: .usage}' "$file" 2>/dev/null
+		| {fetched_at, age: $age, usage: .usage, prior: (.prior // null)}' "$file" 2>/dev/null
 }
 
 # Renamed into place only once complete, so a concurrent reader never parses
 # half a record.
 write_usage_cache() {
-	local file tmp
+	local file tmp prior=null
 	file="$(usage_cache_file "$1" "$2")" || return 1
+	USAGE_PRIOR_AT=""; USAGE_PRIOR_RAW=""
+	if [[ -f "$file" ]]; then
+		prior="$(jq -ce --arg h "$1" --arg d "$2" '
+			select(.harness == $h and .config_dir == $d
+			       and (.fetched_at | type) == "number" and (.usage | type) == "object")
+			| {fetched_at, usage}' "$file" 2>/dev/null)" || prior=null
+	fi
+	if [[ "$prior" != null ]]; then
+		USAGE_PRIOR_AT="$(jq -r '.fetched_at' <<<"$prior")"
+		USAGE_PRIOR_RAW="$(jq -c '.usage' <<<"$prior")"
+	fi
 	mkdir -p -- "$USAGE_CACHE_DIR" 2>/dev/null || return 1
 	tmp="$(mktemp -- "$USAGE_CACHE_DIR/.usage.XXXXXX" 2>/dev/null)" || return 1
-	if jq -nc --arg h "$1" --arg d "$2" --argjson now "$3" --argjson u "$4" \
-		'{harness: $h, config_dir: $d, fetched_at: $now, usage: $u}' >"$tmp" \
+	if jq -nc --arg h "$1" --arg d "$2" --argjson now "$3" --argjson u "$4" --argjson p "$prior" \
+		'{harness: $h, config_dir: $d, fetched_at: $now, usage: $u, prior: $p}' >"$tmp" \
 		&& mv -f -- "$tmp" "$file"; then
 		return 0
 	fi
@@ -1286,7 +1317,8 @@ emit_lane() {
 	# config dir on this machine, `host` for a row the provider reported. Carried
 	# in the record itself so no listing stamps it afterwards, which cost the
 	# whole listing one jq pass whether or not a provider was configured.
-	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7" age="${8:-null}" refreshable="${9:-false}" through="${10:-local}"
+	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7" age="${8:-null}" refreshable="${9:-false}" through="${10:-local}" prior="${11:-}" elapsed="${12:-null}"
+	[[ -n "$prior" ]] || prior='{}'
 	# `null`, never 0, when the store could not be read: "we could not see the
 	# launches in flight" must not read as "there are none".
 	local claims="null"
@@ -1296,13 +1328,21 @@ emit_lane() {
 		--arg status "$status" --arg detail "$detail" --arg plan "$plan" \
 		--argjson claims "$claims" --argjson age "$age" \
 		--argjson refreshable "$refreshable" \
-		--arg through "$through" \
-		--argjson b "$buckets" '
+		--arg through "$through" --argjson b "$buckets" \
+		--argjson pb "$prior" --argjson elapsed "$elapsed" '
 		($b // {}) as $b
 		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct] | map(select(. != null)) as $known
 		| (if ($status == "ok" and ($known | length) == 0) then "no_usage_data" else $status end) as $st
 		| ([{k: "weekly", p: $b.weekly_pct}, {k: "model", p: $b.model_pct}, {k: "session", p: $b.session_5h_pct}]
 		   | map(select(.p != null)) | sort_by(-.p) | first // null) as $bind
+		| ($bind.k // null) as $bk
+		| (if $bk == "session" then $pb.session_5h_pct
+		   elif $bk == "weekly" then $pb.weekly_pct
+		   elif $bk == "model" then $pb.model_pct else null end) as $prior_pct
+		| (if $bind == null or $prior_pct == null then null else ($bind.p - $prior_pct) end) as $delta
+		| (if $delta == null then "one-sample"
+		   elif $elapsed < 60 then "samples-too-close"
+		   elif $delta <= 0 then "not-increasing" else "measured" end) as $rate_state
 		| {
 		    alias: $alias,
 		    harness: $harness,
@@ -1321,6 +1361,9 @@ emit_lane() {
 		    binding_bucket: (if ($st == "ok") then $bind.k else null end),
 		    binding_resets_at: (if ($st == "ok") then ($b.resets[$bind.k] // null) else null end),
 		    usage_age_s: $age,
+		    usage_rate_state: $rate_state,
+		    usage_rate_pct_per_min: (if $rate_state == "measured" then ($delta * 60 / $elapsed) else null end),
+		    projected_wall_minutes: (if $rate_state == "measured" then (((100 - $bind.p) * $elapsed / ($delta * 60)) | ceil) else null end),
 		    resets: ($b.resets // {session: null, weekly: null, model: null}),
 		    detail: (if $st == "no_usage_data" and $detail == ""
 		             then "authenticated, but the usage response carried no session/weekly window"
@@ -1338,12 +1381,14 @@ load_lane_claims() {
 }
 
 collect_lanes() {
-	local harness_filter="$1" d h
+	local harness_filter="$1" exclude="${2:-}" exclude_id="" d h
+	[[ -z "$exclude" ]] || exclude_id="$(lane_claims_canon "$exclude")"
 	{
 		for h in claude codex; do
 			[[ "$harness_filter" == "all" || "$harness_filter" == "$h" ]] || continue
 			while IFS= read -r d; do
 				[[ -n "$d" ]] || continue
+				[[ -z "$exclude_id" || "$(lane_claims_canon "$d")" != "$exclude_id" ]] || continue
 				measure_lane "$h" "$d"
 			done < <(lane_dirs "$h")
 		done
@@ -1724,10 +1769,10 @@ cmd_pick_lane() {
 }
 
 cmd_pick() {
-	local harness="$1" max_pct="$2" as_json="$3" model="$4" binding_floor="$5"
+	local harness="$1" max_pct="$2" as_json="$3" model="$4" binding_floor="$5" exclude="$6"
 	local lanes judged chosen walled unmeasured
 	load_lane_claims
-	lanes="$(collect_lanes "$harness")"
+	lanes="$(collect_lanes "$harness" "$exclude")"
 	# An unreadable claim store reads as "no launches in flight", which is the
 	# one thing it must not read as: picking on it can stack a second session
 	# onto an account already running one.
@@ -1742,6 +1787,7 @@ cmd_pick() {
 		| { chosen: ([ .[] | select(.verdict == "room") ]
 		              | sort_by([(.claims // 0), .wall]) | first
 		              | if . == null then null else del(.wall, .verdict) end),
+		    qualifying: ([ .[] | select(.verdict == "room") ] | length),
 		    walled: ([ .[] | select(.verdict == "walled") ] | length),
 		    unmeasured: ([ .[] | select(.verdict == "unmeasured") ] | length) }
 	' <<<"$lanes")"
@@ -1775,11 +1821,11 @@ cmd_pick() {
 		[[ "${walled:-}" =~ ^[0-9]+$ ]] || walled=0
 		[[ "${unmeasured:-}" =~ ^[0-9]+$ ]] || unmeasured=0
 		[[ "$as_json" != "true" ]] || jq -nc --argjson w "$walled" --argjson u "$unmeasured" \
-			'{walled: $w, unmeasured: $u}'
+			'{walled: $w, unmeasured: $u, qualifying_count: 0}'
 		return 3
 	fi
 	if [[ "$as_json" == "true" ]]; then
-		printf '%s\n' "$chosen"
+		jq -c --argjson n "$(jq -r '.qualifying' <<<"$judged")" '. + {qualifying_count: $n}' <<<"$chosen"
 		return 0
 	fi
 	lane_env_prefix "$harness" "$(jq -r '.config_dir' <<<"$chosen")"
@@ -1820,6 +1866,7 @@ parse_argv() {
 	AS_JSON=false
 	USE_CACHE=true
 	LANE_ARG=""
+	EXCLUDE_LANE=""
 	MODEL=""
 	BINDING_FLOOR=false
 	LOCAL_ONLY=false
@@ -1847,6 +1894,8 @@ parse_argv() {
 			--local) LOCAL_ONLY=true; shift ;;
 			--lane) need_val "$@"; LANE_ARG="$2"; shift 2 ;;
 			--lane=*) LANE_ARG="${1#--lane=}"; need_val --lane "$LANE_ARG"; shift ;;
+			--exclude-lane) need_val "$@"; EXCLUDE_LANE="$2"; shift 2 ;;
+			--exclude-lane=*) EXCLUDE_LANE="${1#--exclude-lane=}"; need_val --exclude-lane "$EXCLUDE_LANE"; shift ;;
 			--json) AS_JSON=true; shift ;;
 			--no-cache) USE_CACHE=false; shift ;;
 			--help|-h) print_lanes_usage; exit 0 ;;
@@ -2084,9 +2133,10 @@ case "$SUB" in
 		[[ "$HARNESS" =~ ^(claude|codex)$ ]] || die invalid-pick-harness "$@"
 		validate_lane_settings
 		if [[ -n "$LANE_ARG" ]]; then
+			[[ -z "$EXCLUDE_LANE" ]] || die unknown-option --exclude-lane
 			cmd_pick_lane "$LANE_ARG" "$HARNESS" "$MAX_PCT" "$MODEL" "$AS_JSON" "$BINDING_FLOOR"
 		else
-			cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON" "$MODEL" "$BINDING_FLOOR"
+			cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON" "$MODEL" "$BINDING_FLOOR" "$EXCLUDE_LANE"
 		fi
 		;;
 	check)

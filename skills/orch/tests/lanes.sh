@@ -278,7 +278,8 @@ echo "=== pick: the most headroom, or a refusal ==="
 # fleet launches into a wall anyway.
 table \
   "pick returns the lane with the most headroom as a launch env prefix||pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
-  "pick --json returns the whole lane record||pick --harness claude --json|alias=claude" \
+  "pick --json returns the whole lane record and the qualifying set size||pick --harness claude --json|alias=claude qualifying_count=2" \
+  "excluding the caller leaves the one other qualifying account|ORCH_LANE_DIRS=$H/.claude:$H/.eclaude:$H/.nclaude|pick --harness claude --exclude-lane $H/.claude --json|alias=eclaude qualifying_count=1" \
   "pick exits 3 when no lane is under the threshold||pick --harness claude --max-pct 15|rc=3"
 
 echo "=== unmeasurable lanes are never idle ==="
@@ -1102,6 +1103,36 @@ table \
 stage_cache 30
 table \
   "a figure at or past the TTL is fetched afresh|OVERSEE_WATCH_STATE_DIR=$CACHE_STATE;ORCH_LANES_USAGE_TTL=30|$LIST|claude.headroom_pct=80 fetched=claude,eclaude,nclaude"
+
+# The displaced cache record is the prior sample. The lane record reports a
+# rate only when the samples are at least a minute apart and usage increased.
+stage_rate() { # CURRENT PRIOR GAP
+  local f now
+  stage_cache 0
+  now="$(date +%s)"
+  for f in "$CACHE_STATE"/usage/*.json; do
+    [[ -f "$f" && "$(jq -r '.config_dir' "$f")" == "$H/.claude" ]] || continue
+    jq --argjson now "$now" --argjson gap "$3" \
+      --argjson current "$(claude_usage "$1" 20 5 Opus)" \
+      --argjson prior "$(claude_usage "$2" 20 5 Opus)" \
+      '.fetched_at = $now | .usage = $current
+       | .prior = {fetched_at: ($now - $gap), usage: $prior}' "$f" > "$f.tmp" \
+      && mv "$f.tmp" "$f"
+    return 0
+  done
+  return 1
+}
+RATE_LIST='list --harness claude --json'
+stage_rate 40 20 600
+table "two spaced samples expose a two-point rate and a thirty-minute wall|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.usage_rate_pct_per_min=2 claude.projected_wall_minutes=30 claude.usage_rate_state=measured"
+stage_rate 22 20 600
+table "a slower positive rate exposes its later projected wall|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.projected_wall_minutes=390 claude.usage_rate_state=measured"
+stage_rate 40 20 30
+table "samples less than a minute apart report an unmeasured rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.projected_wall_minutes=null claude.usage_rate_state=samples-too-close"
+stage_rate 20 20 600
+table "a flat rate reports unmeasured rather than healthy|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.projected_wall_minutes=null claude.usage_rate_state=not-increasing"
+stage_cache 0
+table "one sample reports an unmeasured rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.projected_wall_minutes=null claude.usage_rate_state=one-sample"
 
 echo "=== pick --json names the binding bucket and its reset ==="
 # claude's largest bucket is weekly, eclaude's the 5-hour session.

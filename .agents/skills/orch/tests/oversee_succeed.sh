@@ -204,12 +204,14 @@ cm=""
 # judge itself to fail rather than answer.
 ttl=""
 [ -z "\${USAGE_TTL:-}" ] || ttl="ORCH_LANES_USAGE_TTL=\$USAGE_TTL"
+wall="ORCH_OVERSEER_WALL_MINUTES=\${WALL_MINUTES:-0}"
+successors="ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=\${SUCCESSOR_ACCOUNTS:-0}"
 cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
   \$lane \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
   ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \\
-  \$hp \$cm \$ttl "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
+  \$hp \$cm \$ttl \$wall \$successors "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
 # in-pane ARGS... — a caller pane's own command: draw the screen, wait until
 # tmux shows it, then become the script.
@@ -232,6 +234,27 @@ run_succeed() {
   rm -f "${TMP_ROOT:?}"/argv.*
   RC=0
   OUT="$(exec_succeed "$@" 2>&1)" || RC=$?
+}
+
+# stage_usage_pair ROW CURRENT PRIOR GAP — write the cache record the row will
+# read, then make its displaced sample explicit. PRIOR=none leaves one sample.
+stage_usage_pair() {
+  local row="$1" current="$2" prior="$3" gap="$4" state="$TMP_ROOT/state-$1" f now
+  rm -rf -- "${state:?}"
+  claude_usage "$current" 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  (cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" LANES_HOME="$H" \
+    FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$state" \
+    ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" \
+    "$SRC_DIR/lanes" list --harness claude --json --no-cache >/dev/null)
+  [[ "$prior" != none ]] || return 0
+  now="$(date +%s)"
+  for f in "$state"/usage/*.json; do
+    [[ "$(jq -r '.config_dir' "$f")" == "$H/.claude" ]] || continue
+    jq --argjson at "$((now - gap))" --argjson usage "$(claude_usage "$prior" 20 5 Opus)" \
+      '.prior = {fetched_at: $at, usage: $usage}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    return 0
+  done
+  return 1
 }
 
 # keyed KEY TEXT — the lines of TEXT from the one starting with KEY, so a row
@@ -460,7 +483,7 @@ run_succeed headroom-wall 'claude:1:high,codex:1:high'
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 check "every account under the trigger: refusal names the account and its reset" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)|$(recorded codex)" \
-  "3|oversee-succeed: no-lane-qualifies entries=2 fallback=claude walled=5 unmeasured=0 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none|none"
+  "3|oversee-succeed: no-lane-qualifies entries=2 fallback=claude walled=5 unmeasured=0 mark=headroom account=claude resets=2026-07-27T06:00:00Z|yes|0|none|none"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 # The entry's model is resolved before its lane, because the lane is judged on
@@ -495,7 +518,7 @@ CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codexwall 'codex:1:high'
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 check "a codex overseer's refusal names its reset as a time, not an epoch" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
-  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=codex walled=2 unmeasured=0 mark=account account=codex resets=2026-07-25T17:20:00Z|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=codex walled=2 unmeasured=0 mark=headroom account=codex resets=2026-07-25T17:20:00Z|yes|0|none"
 
 # The account judged is the one this session's own environment names, and a
 # claim is not that answer: pane ids restart at %0 on every tmux server, so a
@@ -663,6 +686,89 @@ run_succeed checkunder '' --check-marks
 check "--check-marks under both marks: the below-mark line, nothing launched" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
   "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80|0|yes"
+
+# The projected wall is measured from the displaced cache sample. A fast burn
+# reaches the setting. A slow burn does not. Missing, close, and flat samples
+# are each reported as unmeasured rather than read as a safe rate.
+stage_usage_pair ratefast 40 20 600
+new_caller "$UNDER_MARK"
+WALL_MINUTES=30 run_succeed ratefast '' --check-marks
+check "a sixty-point headroom burning two points a minute fires the rate trigger" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=claude|0"
+stage_usage_pair rateslow 22 20 600
+new_caller "$UNDER_MARK"
+WALL_MINUTES=30 run_succeed rateslow '' --check-marks
+check "a projected wall beyond the setting does not fire" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=78|0"
+for rate_row in \
+  "rateone|40|none|0|one-sample" \
+  "rateclose|40|20|30|samples-too-close" \
+  "rateflat|20|20|600|not-increasing"; do
+  IFS='|' read -r rate_name rate_current rate_prior rate_gap rate_reason <<<"$rate_row"
+  stage_usage_pair "$rate_name" "$rate_current" "$rate_prior" "$rate_gap"
+  new_caller "$UNDER_MARK"
+  WALL_MINUTES=30 run_succeed "$rate_name" '' --check-marks
+  check "an unmeasurable rate reports $rate_reason" \
+    "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+    "0|oversee-succeed: mark-unmeasured kind=rate reason=$rate_reason succession=on|0"
+done
+
+# The chooser itself counts successor accounts after omitting this session.
+# Two leave the overseer in place. One fires and moves it to that account.
+make_lane "$H" nclaude
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
+THREE_LANES="$H/.claude:$H/.eclaude:$H/.nclaude"
+new_caller "$UNDER_MARK"
+SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyingtwo '' --check-marks
+check "two successor accounts do not fire the qualifying-set trigger" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80|0"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
+new_caller "$UNDER_MARK"
+SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyingone '' --check-marks
+check "one successor account fires the named qualifying-set trigger" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on|0"
+new_caller "$UNDER_MARK"
+SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyinglaunch ''
+check "the qualifying-set trigger succeeds onto the remaining account" \
+  "$RC|$(caller_open)|$(recorded claude)" \
+  "0|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
+
+NORATE="$TMP_ROOT/no-rate-trigger"
+script_copy "$NORATE"
+rm -f -- "${NORATE:?}/oversee-succeed"
+awk '$0 == "elif (( WALL_MINUTES > 0 )) && [[ \"$RATE_STATE\" == measured ]] \\" {
+       print "elif false; then"; getline; hits++; next } { print }
+     END { if (hits != 1) exit 1 }' "$SUCCEED" > "$NORATE/oversee-succeed"
+chmod +x "$NORATE/oversee-succeed"
+stage_usage_pair ratecontrol 40 20 600
+new_caller "$UNDER_MARK"
+SUCCEED_BIN="$NORATE/oversee-succeed" WALL_MINUTES=30 run_succeed ratecontrol '' --check-marks
+check "control: without the rate trigger the fast burn stays below the context mark" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=60"
+
+NOQUALIFY="$TMP_ROOT/no-qualifying-trigger"
+script_copy "$NOQUALIFY"
+rm -f -- "${NOQUALIFY:?}/oversee-succeed"
+awk '$0 == "elif (( SUCCESSOR_ACCOUNTS > 0 )) && [[ \"$QUALIFYING_STATE\" == measured ]] \\" {
+       print "elif false; then"; getline; hits++; next } { print }
+     END { if (hits != 1) exit 1 }' "$SUCCEED" > "$NOQUALIFY/oversee-succeed"
+chmod +x "$NOQUALIFY/oversee-succeed"
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+new_caller "$UNDER_MARK"
+SUCCEED_BIN="$NOQUALIFY/oversee-succeed" SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" \
+  run_succeed qualifyingcontrol '' --check-marks
+check "control: without the qualifying-set trigger one successor does not fire" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 
 # The account mark leads, and only its line names the account and the reset the
 # operator waits on: at the context mark the overseer's own account either has
@@ -1059,7 +1165,7 @@ claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed pickatbound 'claude:1:high'
 check "a candidate at exactly the trigger is refused, not picked" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=claude walled=4 unmeasured=0 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=claude walled=4 unmeasured=0 mark=headroom account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
 
 new_caller "$MARK"
 claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
@@ -1110,7 +1216,7 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 check "a caller at the trigger with every lane walled refuses at the account mark" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=2 unmeasured=0 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=2 unmeasured=0 mark=headroom account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
 
 # A claim from this server already naming the caller's pane changes nothing
 # about which account the mark judges: that is the account this session's own
@@ -1265,7 +1371,7 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 check "control: judged with no model the caller fallback refuses the lane that had room" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=2 unmeasured=0 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=2 unmeasured=0 mark=headroom account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
 
 # The successor pick and the successor's own first judgement read ONE bucket.
 # The second claude lane has room for the model this entry passes, its Fable
@@ -1340,7 +1446,7 @@ new_caller "$MARK"
 SUCCEED_BIN="$FLOORFWD/oversee-succeed" run_succeed floorfwd 'codex:1:high'
 check "the codex sweep is asked with the binding floor, so an account walled on its own bucket is refused" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
-  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=claude walled=2 unmeasured=0 mark=account account=fixture@example.com resets=2026-09-22T00:00:00Z|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=claude walled=2 unmeasured=0 mark=headroom account=fixture@example.com resets=2026-09-22T00:00:00Z|yes|0|none"
 
 # The must-fail inverse: with the floor expansion dropped from the pick call,
 # the same stub answers the codex sweep with room and the successor opens on
@@ -1349,8 +1455,8 @@ FLOORDROP="$TMP_ROOT/floordrop"
 script_copy "$FLOORDROP"
 rm -f -- "${FLOORDROP:?}/lanes" "${FLOORDROP:?}/oversee-succeed"
 cp "$STUB_LANES" "$FLOORDROP/lanes"
-awk -v line='    ${floor[@]+"${floor[@]}"} ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?' \
-    -v repl='    ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?' \
+awk -v line='    ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?' \
+    -v repl='    ${exclude[@]+"${exclude[@]}"} ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?' \
   '$0 == line { print repl; hits++; next } { print }
    END { if (hits != 1) exit 1 }' "$SUCCEED" > "$FLOORDROP/oversee-succeed"
 chmod +x "$FLOORDROP/oversee-succeed"

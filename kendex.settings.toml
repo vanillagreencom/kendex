@@ -143,6 +143,13 @@ ORCH_OVERSEER_LANES = "3"
 # judges, the binding bucket or with --model that model's window.
 ORCH_LANE_MAX_PCT = "95"
 
+# The overseer moves before its account walls when its current binding bucket
+# reaches 10 percent headroom, its projected wall is within 30 minutes, or only
+# one other account still qualifies for the successor.
+ORCH_OVERSEER_HEADROOM_PCT = "10"
+ORCH_OVERSEER_WALL_MINUTES = "30"
+ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
+
 # A lane whose account reaches 97 percent used is marked, and the overseer asks
 # it for a handoff at the next safe point.
 ORCH_HANDOFF_HEADROOM_PCT = "3"
