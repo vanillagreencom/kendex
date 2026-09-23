@@ -558,7 +558,7 @@ table \
 echo "=== a recorded refusal parks the lane for its window, and nothing re-posts inside it ==="
 # The fleet measures every thirty seconds and several overseers share one state
 # directory, so a refusal one of them met is one they all must read: re-posting
-# is what kept the limit up for fourteen hours on 2026-09-21.
+# is what sustains a rate limit.
 new_home refusal-window
 make_lane "$H" claude -60
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"

@@ -266,8 +266,8 @@
 # — and while that window is open no caller on the host posts to that endpoint
 # for that lane again. The window is the answer's own Retry-After where it named
 # one in seconds, and USAGE_REFUSAL_WINDOW_S where it did not. Re-posting is
-# what sustains a rate limit: nine accounts sat unusable for fourteen hours on
-# 2026-09-21 because every watch pass on the host asked again.
+# what sustains a rate limit, so every watch pass on the host reads the record
+# instead of asking again.
 # The lane host's `accounts` answer shares that cache and TTL, under
 # `host-accounts-<provider path checksum>.json`: one record per provider rather
 # than per account, since one answer covers every account it names. The
