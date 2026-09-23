@@ -812,9 +812,11 @@ assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "workflow-state set KE
   "RC=2 first=lane-mail-check: setting-range=ORCH_HANDOFF_HEADROOM_PCT=101 named=1" \
   "a headroom setting out of range names the setting and its value, never the account"
 
-# The read waits on a credentials lock and two network calls, which together
-# outlast this hook's budget, and a hook the harness kills at its budget writes
-# no line at all. The copy shortens the ceiling so the row need not wait for it.
+# The read waits on a credentials lock and two network calls, and on a cache
+# miss on the host-wide usage refresh lock and a 429 retry's sleep and third
+# call, which together outlast this hook's budget, and a hook the harness kills
+# at its budget writes no line at all. The copy shortens the ceiling so the row
+# need not wait for it.
 if command -v timeout >/dev/null 2>&1; then
   variant short-ceiling -e 's@^ACCOUNT_CEILING=20$@ACCOUNT_CEILING=1@'
   standard_home handoff-ceiling

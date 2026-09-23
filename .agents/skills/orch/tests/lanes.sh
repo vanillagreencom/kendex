@@ -1552,6 +1552,66 @@ mkdir -p "$LU_STATE/usage/.usage-refresh.lock"
 table \
   "a lock file that cannot be opened is named and the lane is still measured|OVERSEE_WATCH_STATE_DIR=$LU_STATE;ORCH_LANE_DIRS=$H/.claude|$LIST|key=usage-lock-unopenable,lock-file=$LU_STATE/usage/.usage-refresh.lock first.status=ok fetched=claude"
 
+echo "=== a renewal that waited finds the figure its peer wrote meanwhile ==="
+# Two callers renewing one expired token: the second waits on the credentials
+# lock while the first renews, measures and writes this lane's figure. The
+# second's cache read must judge that figure against the clock as it reads it,
+# not the one it started with, or a record seconds old reads as stamped in the
+# future and the read queues behind the usage lock for a figure already there.
+# The token stub stands in for the peer: it waits, then stamps the lane's
+# record with the time it answers, which is what the peer's write leaves.
+TOKEN_PEER="$TMP_ROOT/token-peer"
+cat > "$TOKEN_PEER" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+sleep 2
+now="$(date +%s)"
+sed -E "s/\"fetched_at\": *[0-9]+/\"fetched_at\": $now/" "$PEER_RECORD" > "$PEER_RECORD.peer" \
+  && mv "$PEER_RECORD.peer" "$PEER_RECORD"
+printf '{"access_token":"renewed-token","refresh_token":"rotated-refresh","expires_in":3600}\n'
+STUB
+chmod +x "$TOKEN_PEER"
+new_home lockrenew
+make_lane "$H" claude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+LR_STATE="$TMP_ROOT/lockrenew-state"
+LR_LOCK="$LR_STATE/usage/.usage-refresh.lock"
+table "a first run leaves a figure|OVERSEE_WATCH_STATE_DIR=$LR_STATE;ORCH_LANE_DIRS=$H/.claude|$LIST|fetched=claude"
+LR_RECORD="$(for f in "$LR_STATE"/usage/*.json; do
+  [[ "$(jq -r 'select(.usage) | .config_dir' "$f" 2>/dev/null)" == "$H/.claude" ]] && printf '%s' "$f"
+done)"
+assert_eq "$([[ -f "$LR_RECORD" ]] && echo found || echo none)" "found" \
+  "the lane's usage record is found for the peer to rewrite"
+LR_ENV="OVERSEE_WATCH_STATE_DIR=$LR_STATE;ORCH_LANE_DIRS=$H/.claude;ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_PEER;PEER_RECORD=$LR_RECORD"
+# lr_expire_and_hold: the token expired again and the figure past the TTL, so
+# only the peer's write can answer, and the usage lock held elsewhere, so a
+# read that misses it waits.
+lr_expire_and_hold() {
+  make_lane "$H" claude -60
+  age_usage_record "$LR_STATE" "$H/.claude" 600
+  hold_usage_lock "$LR_LOCK"
+}
+lr_expire_and_hold
+waited_s "$LR_ENV" pick --lane "$H/.claude" --harness claude --json
+release_usage_lock "$LR_LOCK"
+assert_eq "rc=$RC $(observe 'key= fetched=') prompt=$([[ "$LW_WAIT" -lt 8 ]] && echo yes || echo "no:${LW_WAIT}s")" \
+  "rc=0 key=none fetched=none prompt=yes" \
+  "after a renewal that waited, pick --lane answers off the peer's figure without the usage lock" "$ERR"
+# The control: the clock the read judges by left at the one measure_lane
+# started with. The same pick then misses the peer's figure, waits the whole
+# lock wait out and names the lock it could not take.
+lanes_mutant mutant-stale-read-clock lanes \
+  '	now_s="\$(date +%s)"$'
+LR_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-stale-read-clock/lanes"
+lr_expire_and_hold
+waited_s "$LR_ENV" pick --lane "$H/.claude" --harness claude --json
+release_usage_lock "$LR_LOCK"
+assert_eq "$(observe 'key=') $([[ "$LW_WAIT" -ge 10 ]] && echo waited || echo "prompt:${LW_WAIT}s")" \
+  "key=usage-lock-timeout,lock-file=$LR_LOCK,wait-s=10 waited" \
+  "control: with the stale clock, the same pick waits for the lock over a figure already there"
+LANES="$LR_PATCHED"
+
 echo "=== the usage TTL default outlasts the longest watch interval on the host ==="
 # A TTL under `oversee-watch --interval` has every pass find the figure expired
 # and fetch again. Both numbers are read out of the shipped scripts, so a red
