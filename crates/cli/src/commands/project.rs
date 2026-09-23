@@ -283,8 +283,8 @@ pub fn target_registrable(
 /// or the place was already up to date. A run that never reaches the
 /// write leaves the list as it found it: `apply --plan` and a bare
 /// `updates` listing, which write nothing by design; a scope that
-/// declares nothing, which neither verb lists even where an old lock
-/// still names installs in it; a plan that failed, reported
+/// declares nothing, which neither `apply` nor `refresh` lists even where
+/// an old lock still names installs in it; a plan that failed, reported
 /// instead; and a confirmation the reader declined — except in `refresh`,
 /// where a Pi settle before the final confirm has already written what
 /// this then registers.

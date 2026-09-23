@@ -132,18 +132,19 @@ fn kept_world() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
 /// assumed: the first candidate root whose fixture registry
 /// `settings::temporary` does not claim.
 ///
-/// `CARGO_TARGET_TMPDIR` sits inside the cargo target directory, which
-/// `CARGO_TARGET_DIR` can put under a temporary root — the repository's
-/// own mutation tool builds under one by default. The checkout's
-/// gitignored `tmp/` is the second candidate, and a machine offering
-/// neither kept root is what the panic names, because every row of the
-/// case this feeds asserts a refusal such a machine cannot produce.
+/// The first two candidates follow the checkout, so a checkout under a
+/// temporary root leaves neither of them kept: `CARGO_TARGET_TMPDIR` sits
+/// inside the cargo target directory, and the second candidate is the
+/// checkout's own gitignored `tmp/`. That layout is what the mutation
+/// tool makes, copying the tree under `TMPDIR`. The person's home
+/// directory is the third, and the one no temporary root can key on,
+/// since a home under one is a machine where kendex refuses to register
+/// anything at all. The panic is the last resort it names.
 #[allow(clippy::unwrap_used)]
 fn kept_home() -> tempfile::TempDir {
-    let scratch = test_util::checkout_root().join("tmp");
-    fs::create_dir_all(&scratch).unwrap();
     let mut exempted = Vec::new();
-    for root in [PathBuf::from(env!("CARGO_TARGET_TMPDIR")), scratch] {
+    for root in kept_candidates() {
+        fs::create_dir_all(&root).unwrap();
         let candidate = tempfile::tempdir_in(&root).unwrap();
         let env = kendex_core::env::Env::host_rooted(rooted(&candidate));
         // The spelling `refuse_temporary` judges the registry in, so the
@@ -155,11 +156,26 @@ fn kept_home() -> tempfile::TempDir {
         }
     }
     panic!(
-        "no kept fixture home on this machine: CARGO_TARGET_DIR and TMPDIR put \
-         every candidate registry under a temporary path, which exempts every \
+        "no kept fixture home on this machine: CARGO_TARGET_DIR, TMPDIR and HOME \
+         put every candidate registry under a temporary path, which exempts every \
          folder this case asserts a refusal for ({})",
         exempted.join("; ")
     );
+}
+
+/// Where a kept fixture home is looked for, nearest to the build first.
+/// The home directory's own entry is a kendex-owned folder, so a fixture
+/// this leaves behind is one line in a listing rather than a stranger in
+/// the person's home.
+fn kept_candidates() -> Vec<PathBuf> {
+    let mut roots = vec![
+        PathBuf::from(env!("CARGO_TARGET_TMPDIR")),
+        test_util::checkout_root().join("tmp"),
+    ];
+    roots.extend(
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".kendex-test-fixtures")),
+    );
+    roots
 }
 
 /// The declaration with no package listed: a project kendex reads and

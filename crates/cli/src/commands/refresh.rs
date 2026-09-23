@@ -139,13 +139,10 @@ fn declares(env: &Env, scope: &kendex_core::model::Scope) -> bool {
 /// through that scope; [`super::project::register_target`] owns when that
 /// is and when it is not.
 ///
-/// A scope declaring nothing is the one exception this verb has to ask
-/// for itself, and it is asked here rather than at either caller, because
-/// both callers reach such a scope: this verb goes through its write
-/// wherever an old lock still names installs, and closes on "up to date",
-/// while `apply` passes the same folder over saying nothing is listed to
-/// install. Neither puts it on the projects list, which is the parity the
-/// rule claims.
+/// The rule's undeclared-scope exception is asked here rather than at
+/// either caller, because both of them reach such a scope: this verb
+/// goes through its write for one wherever an old lock still names
+/// installs there.
 ///
 /// A registry that refuses is a failure of the run, not of the install:
 /// the packages are on disk and the message says so.

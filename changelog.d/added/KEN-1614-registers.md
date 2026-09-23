@@ -1,1 +1,1 @@
-- Naming a project with `apply`, `refresh` or `updates --apply` puts it on your projects list, even where its packages were all up to date; a plan and a bare `updates` listing leave the list alone.
+- Naming a project with `apply`, `refresh` or `updates --apply` puts it on your projects list, even where the packages it declares were all up to date.
