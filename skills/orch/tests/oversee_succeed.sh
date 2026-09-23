@@ -835,8 +835,8 @@ check "control: without the rate trigger the fast burn stays below the context m
 NOQUALIFY="$TMP_ROOT/no-qualifying-trigger"
 script_copy "$NOQUALIFY"
 rm -f -- "${NOQUALIFY:?}/oversee-succeed"
-awk '$0 == "elif (( SUCCESSOR_ACCOUNTS > 0 )) && [[ \"$QUALIFYING_STATE\" == measured ]] \\" {
-       print "elif false; then"; getline; getline; hits++; next } { print }
+awk '$0 == "  if [[ \"$QUALIFYING_STATE\" == measured ]] \\" {
+       print "  if false; then MARK_KIND=qualifying; fi"; getline; getline; hits++; next } { print }
      END { if (hits != 1) exit 1 }' "$SUCCEED" > "$NOQUALIFY/oversee-succeed"
 chmod +x "$NOQUALIFY/oversee-succeed"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"

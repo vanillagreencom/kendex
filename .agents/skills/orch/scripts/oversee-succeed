@@ -632,10 +632,37 @@ if (( JUDGES )); then
   esac
 fi
 
-# The chooser omits this session's account and reports the best remaining
-# account with the qualifying count. Scarcity moves only to strictly more
-# effective headroom, so two healthy peers cannot succeed back and forth.
-if (( JUDGES && SUCCESSOR_ACCOUNTS > 0 )) && [[ "$CALLER_STATE" != at-trigger ]]; then
+# One line names one trigger. The level trigger leads when several fire on the
+# same reading because it also identifies the account that must not be reused.
+MARK_KIND=""
+if [[ "$CALLER_STATE" == at-trigger ]]; then
+  MARK_KIND=headroom
+elif (( WALL_MINUTES > 0 )) && [[ "$RATE_STATE" == measured ]] \
+     && matches "$WALL_PROJECTED" '^[0-9]+$' && (( WALL_PROJECTED <= WALL_MINUTES )); then
+  MARK_KIND=rate
+fi
+
+# The context mark, which the account mark does not wait on: an overseer with
+# room in its window and none in its account still has to move.
+if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
+  read_context_mark
+  # Whether the window this mark is set for was measured at all, asked once and
+  # matched by name below. A named window always carries its token figure, so
+  # this flag and the mark comparison are the whole of whether the CONTEXT mark
+  # fired.
+  WINDOW_OK=0
+  if [[ -n "$window" ]] && (( window >= WINDOW_FLOOR )); then
+    WINDOW_OK=1
+  fi
+  CONTEXT_FIRED=0
+  if (( WINDOW_OK )) && (( tokens >= CONTEXT_MARK )); then
+    CONTEXT_FIRED=1; MARK_KIND=context
+  fi
+fi
+
+# Capacity is the only fleet-wide read. Headroom, rate and context are already
+# decided, so a slow sweep cannot hide a mark this pane already reached.
+if (( JUDGES && SUCCESSOR_ACCOUNTS > 0 )) && [[ -z "$MARK_KIND" && "$CALLER_STATE" != at-trigger ]]; then
   capacity_rc=0
   capacity_floor=()
   [[ -n "$(lane_context_mark_model "$CALLER_HARNESS" "$CALLER_MODEL")" ]] || capacity_floor=(--binding-floor)
@@ -653,39 +680,12 @@ if (( JUDGES && SUCCESSOR_ACCOUNTS > 0 )) && [[ "$CALLER_STATE" != at-trigger ]]
          && { (( QUALIFYING_COUNT == 0 )) || matches "$QUALIFYING_HEADROOM" '^[0-9]{1,3}$'; }; then QUALIFYING_STATE=measured; fi
       ;;
   esac
-fi
-
-# One line names one trigger. The level trigger leads when several fire on the
-# same reading because it also identifies the account that must not be reused.
-MARK_KIND=""
-if [[ "$CALLER_STATE" == at-trigger ]]; then
-  MARK_KIND=headroom
-elif (( WALL_MINUTES > 0 )) && [[ "$RATE_STATE" == measured ]] \
-     && matches "$WALL_PROJECTED" '^[0-9]+$' && (( WALL_PROJECTED <= WALL_MINUTES )); then
-  MARK_KIND=rate
-elif (( SUCCESSOR_ACCOUNTS > 0 )) && [[ "$QUALIFYING_STATE" == measured ]] \
+  if [[ "$QUALIFYING_STATE" == measured ]] \
      && (( QUALIFYING_COUNT > 0 && QUALIFYING_COUNT <= SUCCESSOR_ACCOUNTS \
-           && QUALIFYING_HEADROOM > CALLER_HEADROOM )); then
-  MARK_KIND=qualifying
+           && QUALIFYING_HEADROOM > CALLER_HEADROOM )); then MARK_KIND=qualifying; fi
 fi
 
-# The context mark, which the account mark does not wait on: an overseer with
-# room in its window and none in its account still has to move.
 if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
-  read_context_mark
-  # Whether the window this mark is set for was measured at all, asked once and
-  # matched by name below. A named window always carries its token figure, so
-  # this flag and the mark comparison are the whole of whether the CONTEXT mark
-  # fired.
-  WINDOW_OK=0
-  if [[ -n "$window" ]] && (( window >= WINDOW_FLOOR )); then
-    WINDOW_OK=1
-  fi
-  CONTEXT_FIRED=0
-  if (( WINDOW_OK )) && (( tokens >= CONTEXT_MARK )); then
-    CONTEXT_FIRED=1
-  fi
-  if (( ! CONTEXT_FIRED )); then
     # A reading that did not succeed is not a mark that did not fire, and only
     # `check` has to tell them apart: its caller holds a standing mark across a
     # pass that could not measure, where a run about to launch has the
@@ -727,8 +727,6 @@ if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
     message context-below-mark "tokens=$tokens" "mark=$CONTEXT_MARK" \
       "headroom=$HEADROOM_FIELD"
     exit 0
-  fi
-  MARK_KIND=context
 fi
 
 # A mark is reached, and `check` ends here: its caller acts on the answer, so

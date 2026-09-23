@@ -1286,6 +1286,43 @@ expect 0 "lane-mail-check: marks=unjudged" \
 # The judgement reads every account the fleet can launch on, which can outlast
 # this hook's budget; a hook killed at its budget writes no line at all.
 if command -v timeout >/dev/null 2>&1; then
+  variant short-real-judge -e 's@^ACCOUNT_CEILING=20$@ACCOUNT_CEILING=3@'
+  new_overseer overseer_fast_context
+  install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+  rm -f -- "$LANE/.claude/skills/orch/scripts/oversee-succeed" \
+    "$LANE/.claude/skills/orch/scripts/lanes"
+  ln -s "$REPO_ROOT/skills/orch/scripts/oversee-succeed" \
+    "$LANE/.claude/skills/orch/scripts/oversee-succeed"
+  cat > "$LANE/.claude/skills/orch/scripts/lanes" <<'SLOWCAPACITY'
+#!/bin/sh
+case " $* " in
+  *" --lane "*)
+    printf '%s\n' '{"wall":20,"alias":"claude","binding_resets_at":"2026-09-24T00:00:00Z","usage_rate_state":"not-increasing","projected_wall_minutes":null}'
+    ;;
+  *) sleep 120 ;;
+esac
+SLOWCAPACITY
+  chmod +x "$LANE/.claude/skills/orch/scripts/lanes"
+  REAL_TMUX_BIN="$TMP_ROOT/real-tmux-bin"; mkdir -p "$REAL_TMUX_BIN"
+  cat > "$REAL_TMUX_BIN/tmux" <<'REALTMUX'
+#!/bin/sh
+case " $* " in
+  *"#{pid}"*) printf '%s\n' "$FIXTURE_TMUX_SERVER" ;;
+  *"#{window_id}"*) printf '%s\n' '@7' ;;
+  *"#{pane_current_path}"*) printf '%s\n' "$FIXTURE_TMUX_PATH" ;;
+  *"#{pane_current_command}"*) printf '%s\n' claude ;;
+  *" capture-pane "*) printf '%s\n' '  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /rc' ;;
+  *) exit 1 ;;
+esac
+REALTMUX
+  chmod +x "$REAL_TMUX_BIN/tmux"
+  # shellcheck disable=SC2046
+  stop_at "$TRANSCRIPT" false $(overseer_env) "PATH=$REAL_TMUX_BIN:$PATH" \
+    "FIXTURE_TMUX_SERVER=$OVERSEER_SERVER" "FIXTURE_TMUX_PATH=$LANE" \
+    "ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=1"
+  expect 2 "lane-mail-check: context=520000" \
+    "a real hook returns an available context mark before a slow capacity sweep reaches its ceiling"
+
   variant short-judge -e 's@^ACCOUNT_CEILING=20$@ACCOUNT_CEILING=1@'
   new_overseer overseer_ceiling
   install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
