@@ -444,16 +444,14 @@ while IFS= read -r row; do
   assert_eq "$(run "create topic" | sed 's/ out=.*//') $(advice_tail)" "rc=$rc $(advice_text "$advice")" "$label"
 done <<<"$ADVICE_ROWS"
 
-# Each not-on-origin route, followed from the refusal: the push route ends in
-# --base, the main-checkout route in --transfer, each with the worktree on
-# the branch.
+# Each not-on-origin route the advice names, from the local branch its first
+# row refused: the push route ends in --base, the main-checkout route in
+# --transfer, each with the worktree on the branch.
 build follow-push local:topic
-run "create topic" >/dev/null
 git -C "$MAIN" push -q -u origin topic
 assert_eq "$(run "create topic --base topic")" "rc=0 out=<topic> err= main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-" \
   "the push route from the not-on-origin advice ends in a worktree on the branch"
 build follow-transfer local:topic
-run "create topic" >/dev/null
 git -C "$MAIN" switch -q topic
 assert_eq "$(run "create topic --transfer topic")" "rc=0 out=<topic> err= main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-" \
   "the main-checkout route from the not-on-origin advice ends in a worktree on the branch"
