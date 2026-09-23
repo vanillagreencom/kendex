@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::compared::of_tree;
-use super::desired::{Artifact, Desired, is_in_place_source};
+use super::desired::{Artifact, Desired, in_place_source};
 use super::file_plan::{TAKEN_OVER, set_aside};
 use super::item_plan::{Planned, unmanaged, unmanaged_compared};
 use super::written::Written;
@@ -41,7 +41,7 @@ pub(super) fn plan_tree(
         return Ok(Planned::Clean);
     };
     let identity = (item.kind, item.source_name.as_str(), item.name.as_str());
-    if is_in_place_source(env, scope, identity, canonical) {
+    if in_place_source(env, scope, identity).as_ref() == Some(canonical) {
         return plan_in_place_tree(scope, item, replace_unmanaged, owned, written, ops);
     }
     let collapsed = match collapsed_link(env, scope, item, canonical, files, owned) {

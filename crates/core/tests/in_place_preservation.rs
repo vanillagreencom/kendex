@@ -61,6 +61,17 @@ fn check_text(world: &World) -> String {
 }
 
 #[allow(clippy::unwrap_used)]
+fn set_manifest(world: &World, harnesses: &str, enabled: bool) {
+    fs::write(
+        world.project.join("kendex.toml"),
+        format!(
+            "schema = 6\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"in-place\"\nenabled = {enabled}\n"
+        ),
+    )
+    .unwrap();
+}
+
+#[allow(clippy::unwrap_used)]
 fn tree_bytes(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     fn walk(root: &Path, at: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
         for entry in fs::read_dir(at).unwrap() {
@@ -249,6 +260,55 @@ fn check_reports_a_missing_link_for_a_new_target_harness() {
     assert!(text.contains("fix: kendex refresh"), "{text}");
 }
 
+/// Switching off a live source refuses the install and removes managed
+/// links. It does not rename the authored entry point inside the source.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn disabling_an_applied_in_place_skill_preserves_its_source() {
+    let world = world();
+    let source = world.project.join(".agents/skills/deploy");
+    let before = tree_bytes(&source);
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&world.env, &report.plan).unwrap();
+    set_manifest(&world, "\"claude\", \"codex\", \"pi\"", false);
+
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::default()).unwrap();
+    assert!(report.drift.iter().any(|row| {
+        row.name == "deploy" && row.state == kendex_core::engine::DriftState::Conflict
+    }));
+    apply::execute(&world.env, &report.plan).unwrap();
+
+    assert_eq!(tree_bytes(&source), before);
+    assert!(!world.project.join(".claude/skills/deploy").exists());
+    let lock_path = kendex_core::lock::lock_path(&world.env, &world.scope);
+    let lock = kendex_core::lock::load(&lock_path).unwrap();
+    assert!(lock.entries.values().all(|entry| entry.name != "deploy"));
+    let text = check_text(&world);
+    assert!(text.contains("cannot be switched off"), "{text}");
+    assert!(!text.contains("fix:"), "{text}");
+}
+
+/// A shared-directory install owns no delivery path. Its source still has
+/// to exist for the shallow check to report the scope as clean.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_reports_a_missing_pathless_in_place_source() {
+    let world = world();
+    set_manifest(&world, "\"codex\"", true);
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&world.env, &report.plan).unwrap();
+    fs::remove_dir_all(world.project.join(".agents/skills/deploy")).unwrap();
+
+    let text = check_text(&world);
+
+    assert_eq!(
+        text.matches("skill 'deploy' source is missing").count(),
+        1,
+        "{text}"
+    );
+    assert!(!text.contains("fix:"), "{text}");
+}
+
 /// A command read from the in-place catalog is still a generated install.
 /// Codex reads commands as skill trees, so apply must write that tree even
 /// though its destination is also the shared skill directory.
@@ -290,7 +350,10 @@ fn an_in_place_command_still_renders_its_codex_skill_tree() {
 #[allow(clippy::unwrap_used)]
 fn an_inaccessible_in_place_source_is_could_not_check() {
     let world = world();
-    assert_unreadable_parent_is_unknown(&world, &world.project.join(".agents"));
+    set_manifest(&world, "\"codex\"", true);
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::default()).unwrap();
+    apply::execute(&world.env, &report.plan).unwrap();
+    assert_unreadable_parent_is_unknown(&world, &world.project.join(".agents/skills/deploy"));
 }
 
 /// An unreadable harness parent cannot prove that its link is absent.

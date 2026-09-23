@@ -338,22 +338,40 @@ pub fn declared_over_existing_files(
     blocked
 }
 
-/// In-place skills whose source exists but whose harness links have never
-/// been rendered, by package name. The source tree is not an installation
-/// position. A report therefore asks this separately from occupied paths.
-/// One package is returned once however many target harnesses need links.
-pub(crate) fn unrendered_in_place_skills(
+pub(crate) enum InPlaceSkillFinding {
+    Disabled(String),
+    MissingSource { name: String, path: PathBuf },
+    MissingLinks(String),
+}
+
+/// Source and link problems for in-place skills. Source availability is
+/// checked before delivery records because a shared-directory install can
+/// correctly own no paths. One skill produces at most one finding.
+pub(crate) fn in_place_skill_findings(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
-) -> Result<Vec<String>> {
-    let mut missing = Vec::new();
-    for (name, decl) in manifest
-        .skills
-        .iter()
-        .filter(|(_, decl)| decl.enabled && decl.source == crate::manifest::INPLACE_SOURCE_NAME)
-    {
+) -> Result<Vec<InPlaceSkillFinding>> {
+    let mut findings = Vec::new();
+    for (name, decl) in &manifest.skills {
+        let identity = (ItemKind::Skill, decl.source.as_str(), name.as_str());
+        let Some(source) = desired::in_place_source(env, scope, identity) else {
+            continue;
+        };
+        if !decl.enabled {
+            findings.push(InPlaceSkillFinding::Disabled(name.clone()));
+            continue;
+        }
+        if crate::fs::entry(&source)?.is_none() {
+            findings.push(InPlaceSkillFinding::MissingSource {
+                name: name.clone(),
+                path: source,
+            });
+            continue;
+        }
+        let sealed = crate::source_read::SealedSource::open(&source)?;
+        sealed.entries(&source)?;
         let harnesses = desired::target_harnesses(decl, manifest, ItemKind::Skill, scope);
         let links: BTreeSet<PathBuf> = harnesses
             .into_iter()
@@ -366,25 +384,13 @@ pub(crate) fn unrendered_in_place_skills(
                 installation_paths(env, scope, manifest, ItemKind::Skill, name, decl, harness)
             })
             .collect();
-        if links.is_empty() {
-            continue;
-        }
-        let source = desired::skill_canonical(env, scope, name);
-        let source_is_dir = match std::fs::metadata(&source) {
-            Ok(metadata) => metadata.is_dir(),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-            Err(error) => return Err(crate::error::CoreError::io(&source, error)),
-        };
-        if !source_is_dir {
-            continue;
-        }
         let mut any_missing = false;
         for path in links {
             any_missing |= !crate::fs::exists(&path)?;
         }
         if any_missing {
-            missing.push(name.clone());
+            findings.push(InPlaceSkillFinding::MissingLinks(name.clone()));
         }
     }
-    Ok(missing)
+    Ok(findings)
 }

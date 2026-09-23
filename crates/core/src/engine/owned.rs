@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use super::desired::{is_in_place_source, native_dir};
+use super::desired::{in_place_source, native_dir};
 use super::targets::{
     HookFormat, HookTarget, hook_target, mcp_registry, mcp_remove, plugin_settings,
 };
@@ -37,6 +37,7 @@ pub(crate) struct Owned {
 pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut edits: Vec<(PathBuf, ConfigEdit)> = Vec::new();
+    let in_place = in_place_source(env, scope, (entry.kind, &entry.source, &entry.name));
     match (&entry.emitted, entry.kind) {
         // What an install recorded landing at beats deriving a place it
         // never took: a codex command stored as a skill tree under a name
@@ -46,9 +47,7 @@ pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
             emitted
                 .paths
                 .iter()
-                .filter(|path| {
-                    !is_in_place_source(env, scope, (entry.kind, &entry.source, &entry.name), path)
-                })
+                .filter(|path| in_place.as_ref() != Some(path))
                 .cloned(),
         ),
         (None, ItemKind::Agent) => {

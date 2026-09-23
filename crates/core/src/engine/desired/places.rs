@@ -7,7 +7,7 @@
 //! shared one is where an install goes, and its own is where a per-tool
 //! copy goes.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::env::Env;
 use crate::harness::{Surface, adapter};
@@ -100,15 +100,16 @@ pub fn skill_canonical(env: &Env, scope: &Scope, name: &str) -> PathBuf {
     }
 }
 
-pub(crate) fn is_in_place_source(
+pub(crate) const IN_PLACE_DISABLED: &str =
+    "an in-place skill cannot be switched off without changing its authored source";
+
+pub(crate) fn in_place_source(
     env: &Env,
     scope: &Scope,
     item: (ItemKind, &str, &str),
-    path: &Path,
-) -> bool {
-    item.0 == ItemKind::Skill
-        && item.1 == crate::manifest::INPLACE_SOURCE_NAME
-        && path == skill_canonical(env, scope, item.2)
+) -> Option<PathBuf> {
+    (item.0 == ItemKind::Skill && item.1 == crate::manifest::INPLACE_SOURCE_NAME)
+        .then(|| skill_canonical(env, scope, item.2))
 }
 
 pub(crate) fn target_harnesses(
