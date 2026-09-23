@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Tests for the `lanes` helper: discovery, measurement, aliases, pick, and the
 # in-flight claim store. The network layer is the only impure part of `lanes`
-# and is injected through ORCH_LANES_FETCH_CMD, so every row here runs offline
-# against fixed responses; a chooser tested against live accounts would assert
-# whatever today's usage happens to be. open-terminal's --lane wiring is
+# and is injected through ORCH_LANES_FETCH_CMD and ORCH_LANES_TOKEN_CMD, or, for
+# the rows that exercise the real curl calls, through a `curl` shim first on
+# PATH, so every row here runs offline against fixed responses; a chooser tested
+# against live accounts would assert whatever today's usage happens to be. open-terminal's --lane wiring is
 # open-terminal-lane.sh.
 #
 # One case per behaviour surface; shaped input is one table per case, one
@@ -281,17 +282,28 @@ table \
   "pick exits 3 when no lane is under the threshold||pick --harness claude --max-pct 15|rc=3"
 
 echo "=== unmeasurable lanes are never idle ==="
-# An expired token, an authenticated lane whose usage body carries none of the
+# An expired login, an authenticated lane whose usage body carries none of the
 # consumer windows (a real enterprise plan), and an unreachable API each report
 # their status with null headroom, and pick never chooses them.
 new_home expired
-make_lane "$H" claude -60
+make_dead_lane "$H" claude
 make_lane "$H" eclaude 3600
 claude_usage 90 90 90 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 40 40 40 Opus > "$FIXTURE_DIR/.eclaude.json"
 table \
-  "an expired token is reported as expired with null headroom||$LIST|claude.status=expired claude.headroom_pct=null" \
-  "pick skips an expired lane||pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.eclaude"
+  "an expired login is reported as expired with null headroom|ORCH_LANES_CLAUDE_CLIENT_ID=client-1|$LIST|claude.status=expired claude.headroom_pct=null" \
+  "pick skips an expired lane|ORCH_LANES_CLAUDE_CLIENT_ID=client-1|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.eclaude"
+# With no client id the renewal fails on this machine's own setting before it
+# reads the credentials, so the login is untested: `error`, never `expired`,
+# which would send the operator to a re-login that fixes nothing.
+NO_CLIENT_CAUSE="access_token_expired_and_could_not_be_renewed:_no_OAuth_client_id_is_configured_(ORCH_LANES_CLAUDE_CLIENT_ID)"
+table \
+  "an expired lane with no client id configured reads error, naming the setting|ORCH_LANES_CLAUDE_CLIENT_ID=|$LIST|claude.status=error claude.cause=$NO_CLIENT_CAUSE"
+lanes_mutant mutant-no-client lanes "token_refusal error '' '' 'no OAuth client id" "token_refusal expired '' '' 'no OAuth client id"
+LANES="$TMP_ROOT/mutant-no-client/lanes"
+table \
+  "control: with the missing client id read as expired, the lane sends its operator to a re-login|ORCH_LANES_CLAUDE_CLIENT_ID=|$LIST|claude.status=expired"
+LANES="$SCRIPTS_DIR/lanes"
 new_home enterprise
 make_lane "$H" claude 3600 enterprise
 jq -n '{spend: {}}' > "$FIXTURE_DIR/.claude.json"
@@ -459,10 +471,7 @@ table \
 wait "$PEER_PID"
 
 new_home no-refresh-token
-mkdir -p "$H/.claude"
-jq -n --argjson exp "$(( ($(date +%s) - 60) * 1000 ))" \
-  '{claudeAiOauth: {accessToken: "stale", expiresAt: $exp, subscriptionType: "max"}}' \
-  > "$H/.claude/.credentials.json"
+make_dead_lane "$H" claude
 table \
   "an expired lane with no refresh token beside it names that, and never reaches the endpoint|ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_OK|$LIST|claude.status=expired claude.refreshable=false claude.cause=access_token_expired_and_could_not_be_renewed:_there_is_no_refresh_token_in_$H/.claude/.credentials.json_to_renew_with tokencalls=0"
 
@@ -547,13 +556,57 @@ MUTANT_OUT="$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
 assert_eq "$(jq -r '.[] | select(.alias=="claude") | .status' <<<"$MUTANT_OUT")" "expired" \
   "control: without the 429 arm the rate limit reads as the dead login again"
 
+# A token POST that never reached the endpoint (DNS, a refused connection, the
+# timeout) proves nothing about the login, and carries no code, so no window is
+# recorded for it and the next run posts again. The pair shares one state
+# directory, which is what the second row reads.
+UNREACHED_STATE="$TMP_ROOT/token-unreached-state"
+UNREACHED_ENV="ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=false;OVERSEE_WATCH_STATE_DIR=$UNREACHED_STATE"
+UNREACHED_CAUSE="access_token_expired_and_could_not_be_renewed:_the_token_endpoint_could_not_be_reached"
+# unreached_home — a fresh expired lane and an empty state directory, since the
+# second row of the pair renews the lane it measured.
+unreached_home() {
+  new_home token-unreached
+  make_lane "$H" claude -60
+  claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  rm -rf -- "${UNREACHED_STATE:?}"
+}
+unreached_home
+table \
+  "a token POST that never reached the endpoint reads unreachable, and no account reads expired|$UNREACHED_ENV|$LIST|claude.status=unreachable statuses=unreachable claude.cause=$UNREACHED_CAUSE"
+assert_eq "$(find "$UNREACHED_STATE" -path '*/usage/*.json' 2>/dev/null | grep -c . || true)" "0" \
+  "and it records no refusal window, since no endpoint answered"
+table \
+  "so the next run on that state directory posts again and renews the lane|$REFRESH_ENV;OVERSEE_WATCH_STATE_DIR=$UNREACHED_STATE|$LIST|claude.status=ok claude.refreshable=true tokencalls=1"
+
+# The must-fail controls, one planted defect each. First the transport failure
+# read as the dead login again.
+lanes_mutant mutant-unreached lanes \
+  "token_refusal unreachable '' '' 'the token endpoint could not be reached'" \
+  "token_refusal expired '' '' 'the token endpoint could not be reached'"
+unreached_home
+LANES="$TMP_ROOT/mutant-unreached/lanes"
+table \
+  "control: with the transport failure read as expired, the lane sends its operator to a re-login|$UNREACHED_ENV|$LIST|claude.status=expired statuses=expired"
+LANES="$SCRIPTS_DIR/lanes"
+# Then a code-less refusal recorded as a window, which parks the lane with
+# nothing left to re-try it.
+lanes_mutant mutant-codeless lanes '\[\[ -z "\$code" \]\] ||' 'true \&\&'
+unreached_home
+LANES="$TMP_ROOT/mutant-codeless/lanes"
+run_lanes "$UNREACHED_ENV" $LIST
+table \
+  "control: with a code-less refusal recorded, the next run reads that window and posts nothing|$REFRESH_ENV;OVERSEE_WATCH_STATE_DIR=$UNREACHED_STATE|$LIST|claude.status=unreachable tokencalls=0"
+LANES="$SCRIPTS_DIR/lanes"
+
 new_home usage-refused
 make_lane "$H" claude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 table \
   "a usage endpoint answering 503 reads unreachable with that code in its detail, not the fixed offline sentence|FETCH_STATUS=503|$LIST|first.status=unreachable first.headroom_pct=null claude.cause=usage_query_refused_with_HTTP_503" \
   "a usage endpoint answering 429 reads rate_limited on the same judgement the token endpoint takes|FETCH_STATUS=429|$LIST|first.status=rate_limited claude.cause=usage_query_refused_with_HTTP_429" \
-  "a usage query that could not be run at all still reads unreachable, with no code to name|ORCH_LANES_FETCH_CMD=false|$LIST|first.status=unreachable claude.cause=usage_query_failed_(offline,_rate-limited,_or_rejected)"
+  "a usage query that could not be run at all still reads unreachable, with no code to name|ORCH_LANES_FETCH_CMD=false|$LIST|first.status=unreachable claude.cause=usage_query_could_not_be_run" \
+  "a usage endpoint answering 2xx with no body reads unreachable, naming the code it answered|FETCH_STATUS=204|$LIST|first.status=unreachable claude.cause=usage_query_answered_HTTP_204_with_no_body"
 
 echo "=== a recorded refusal parks the lane for its window, and nothing re-posts inside it ==="
 # The fleet measures every thirty seconds and several overseers share one state
@@ -601,6 +654,16 @@ table \
   "the window is the answer's own Retry-After where it named one|$RL_ENV;TOKEN_RETRY=900|$LIST|claude.status=rate_limited refusalwindow=900" \
   "and the script's own five minutes where the answer named none|$RL_ENV|$LIST|claude.status=rate_limited refusalwindow=300" \
   "a Retry-After written as an HTTP date names no seconds to wait, so the default window stands|$RL_ENV;TOKEN_RETRY=Wed, 21 Oct 2026 07:28:00 GMT|$LIST|claude.status=rate_limited refusalwindow=300"
+# The must-fail control: `write_usage_refusal` is the one judge of whether a
+# Retry-After names seconds, so with its check reduced to presence the date
+# reaches the window arithmetic, which ends the run before any window is
+# recorded.
+lanes_mutant mutant-retry-numeric lanes \
+  '\[\[ "\$window" =~ ^\[0-9\]+\$ && "\$window" -gt 0 \]\]' '[[ -n "$window" ]]'
+LANES="$TMP_ROOT/mutant-retry-numeric/lanes"
+table \
+  "control: without the numeric check an HTTP-date Retry-After records no window|$RL_ENV;TOKEN_RETRY=Wed, 21 Oct 2026 07:28:00 GMT|$LIST|refusalwindow=none"
+LANES="$SCRIPTS_DIR/lanes"
 
 new_home usage-refusal-window
 make_lane "$H" claude 3600
@@ -610,6 +673,122 @@ rm -rf -- "${USAGE_REFUSAL_STATE:?}"
 run_lanes "FETCH_STATUS=503;OVERSEE_WATCH_STATE_DIR=$USAGE_REFUSAL_STATE" $LIST
 table \
   "a recorded usage refusal is read the same way, and the second run fetches nothing even though the endpoint would now answer|OVERSEE_WATCH_STATE_DIR=$USAGE_REFUSAL_STATE|$LIST|first.status=unreachable claude.cause=usage_query_refused_with_HTTP_503 fetched=none"
+
+# The usage endpoint's own Retry-After sets its window as the token endpoint's
+# does. The control drops that argument from the usage call alone.
+new_home usage-refusal-retry-after
+make_lane "$H" claude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+table \
+  "a usage refusal is waited out for the endpoint's own Retry-After|FETCH_STATUS=429;FETCH_RETRY_AFTER=900|$LIST|first.status=rate_limited refusalwindow=900"
+lanes_mutant mutant-usage-retry lanes \
+  'usage "\$status" "\$HTTP_CODE" "\$detail" "\$HTTP_RETRY"' 'usage "$status" "$HTTP_CODE" "$detail"'
+LANES="$TMP_ROOT/mutant-usage-retry/lanes"
+table \
+  "control: without the answer's Retry-After the usage refusal takes the default window|FETCH_STATUS=429;FETCH_RETRY_AFTER=900|$LIST|first.status=rate_limited refusalwindow=300"
+LANES="$SCRIPTS_DIR/lanes"
+
+# A refusal the state directory cannot hold leaves every caller re-posting each
+# pass, so the failure is a keyed notice naming the directory; the lane is still
+# reported. The usage path is a regular file here, so only that write fails.
+new_home refusal-unrecorded
+make_lane "$H" claude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+UNRECORDED_STATE="$TMP_ROOT/refusal-unrecorded-state"
+rm -rf -- "${UNRECORDED_STATE:?}"
+mkdir -p "$UNRECORDED_STATE"
+: > "$UNRECORDED_STATE/usage"
+table \
+  "a refusal that cannot be recorded is a notice naming the state directory, and the lane is still reported|FETCH_STATUS=429;OVERSEE_WATCH_STATE_DIR=$UNRECORDED_STATE|$LIST|rc=0 first.status=rate_limited key=refusal-unrecorded,dir=$UNRECORDED_STATE/usage"
+lanes_mutant mutant-unrecorded-silent lanes 'message refusal-unrecorded "\$USAGE_CACHE_DIR" >&2' ':'
+LANES="$TMP_ROOT/mutant-unrecorded-silent/lanes"
+table \
+  "control: without the notice the unrecorded refusal is silent|FETCH_STATUS=429;OVERSEE_WATCH_STATE_DIR=$UNRECORDED_STATE|$LIST|rc=0 first.status=rate_limited key=none"
+LANES="$SCRIPTS_DIR/lanes"
+
+echo "=== the real POST and GET, read through a curl shim ==="
+# Every other row injects ORCH_LANES_TOKEN_CMD or ORCH_LANES_FETCH_CMD, so none
+# runs the curl branches or http_answer, the only parser of a real answer. These
+# rows leave both unset and put a `curl` first on PATH that logs the User-Agent
+# it was handed and prints a canned `-D - -w '\n%{http_code}'` capture. Both URLs
+# are under the reserved .invalid domain, so a real curl reached by mistake
+# fails to resolve rather than reaching an endpoint.
+CURL_BIN="$TMP_ROOT/curl-bin"; mkdir -p "$CURL_BIN"
+cat > "$CURL_BIN/curl" <<'STUB'
+#!/usr/bin/env bash
+# The token POST carries its body on stdin and the usage GET its bearer header
+# (-K -); both are read and dropped. The URL argument names the endpoint, and
+# CURL_TOKEN_ANSWER or CURL_USAGE_ANSWER names the capture it answers with.
+cat >/dev/null
+ua=UNSET endpoint=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -A) ua="$2"; shift ;;
+    "$ORCH_LANES_CLAUDE_TOKEN_URL") endpoint=token ;;
+    "$ORCH_LANES_CLAUDE_USAGE_URL") endpoint=usage ;;
+  esac
+  shift
+done
+case "$endpoint" in
+  token)
+    [[ -z "${TOKEN_LOG:-}" ]] || printf 'refresh\n' >> "$TOKEN_LOG"
+    [[ -z "${TOKEN_UA_LOG:-}" ]] || printf '%s\n' "$ua" >> "$TOKEN_UA_LOG"
+    answer="${CURL_TOKEN_ANSWER:-}"
+    ;;
+  usage) answer="${CURL_USAGE_ANSWER:-}" ;;
+  *) printf 'curl shim: no endpoint this suite answers\n' >&2; exit 6 ;;
+esac
+[[ -f "$answer" ]] || { printf 'curl shim: no capture for %s\n' "$endpoint" >&2; exit 6; }
+cat "$answer"
+STUB
+chmod +x "$CURL_BIN/curl"
+CURL_ENV="ORCH_LANES_FETCH_CMD=;ORCH_LANES_CLAUDE_TOKEN_URL=https://token.lanes-test.invalid/v1/oauth/token;ORCH_LANES_CLAUDE_USAGE_URL=https://usage.lanes-test.invalid/api/oauth/usage;PATH=$CURL_BIN:$CLAIM_BIN:$PATH"
+CAPTURES="$TMP_ROOT/curl-captures"; mkdir -p "$CAPTURES"
+printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{"access_token":"renewed-token","refresh_token":"rotated-refresh","expires_in":3600}\n200' \
+  > "$CAPTURES/token-200"
+{ printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n'; claude_usage 10 20 5 Opus; printf '\n200'; } \
+  > "$CAPTURES/usage-200"
+# An interim 100 block ahead of the real headers, CRLF line ends, and the
+# Retry-After among them: every rule of the parser at once.
+printf 'HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nRetry-After: 900\r\n\r\n{"error":{"type":"rate_limit_error","message":"Rate limited. Please try again later."}}\n429' \
+  > "$CAPTURES/token-429"
+printf 'HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\n\r\nupstream connect error\n503' \
+  > "$CAPTURES/usage-503"
+CURL_RENEW_ENV="$CURL_ENV;ORCH_LANES_CLAUDE_CLIENT_ID=client-1;TOKEN_UA_LOG=$UA_LOG;CURL_TOKEN_ANSWER=$CAPTURES/token-200;CURL_USAGE_ANSWER=$CAPTURES/usage-200"
+CURL_429_ENV="$CURL_ENV;ORCH_LANES_CLAUDE_CLIENT_ID=client-1;CURL_TOKEN_ANSWER=$CAPTURES/token-429"
+# curl_home NAME EXPIRES_IN_S — a fresh home with one lane and its usage fixture.
+curl_home() {
+  new_home "$1"
+  make_lane "$H" claude "$2"
+  claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  : > "$UA_LOG"
+}
+curl_home curl-renew -60
+table \
+  "the real renewal POST carries the claude-cli User-Agent, and its 200 answer renews the lane|$CURL_RENEW_ENV|$LIST|claude.status=ok claude.refreshable=true claude.headroom_pct=80 ua=claude-cli/V_(external,_cli) tokencalls=1"
+curl_home curl-429 -60
+table \
+  "a real 429 behind a 100 Continue block, with CRLF headers, reads rate_limited and is parked for its Retry-After|$CURL_429_ENV|$LIST|claude.status=rate_limited claude.cause=$RL_429_CAUSE refusalwindow=900"
+curl_home curl-usage-503 3600
+table \
+  "a real usage answer of 503 reads unreachable with that code in its detail|$CURL_ENV;CURL_USAGE_ANSWER=$CAPTURES/usage-503|$LIST|first.status=unreachable claude.cause=usage_query_refused_with_HTTP_503"
+
+# The must-fail controls. The POST with its User-Agent line deleted, which is
+# the request the endpoint answers 429 to whatever the rate.
+lanes_mutant mutant-curl-ua lanes '-A "\$CLAUDE_TOKEN_UA"'
+curl_home curl-renew-control -60
+LANES="$TMP_ROOT/mutant-curl-ua/lanes"
+table \
+  "control: without the -A line the real POST names no User-Agent|$CURL_RENEW_ENV|$LIST|ua=UNSET"
+LANES="$SCRIPTS_DIR/lanes"
+# The parser with its Retry-After rule deleted, so every real refusal window
+# would fall back to the default.
+lanes_mutant mutant-http-retry lanes 'tolower(\$1) == "retry-after:"'
+curl_home curl-429-control -60
+LANES="$TMP_ROOT/mutant-http-retry/lanes"
+table \
+  "control: without the parser's Retry-After rule the real 429 takes the default window|$CURL_429_ENV|$LIST|claude.status=rate_limited refusalwindow=300"
+LANES="$SCRIPTS_DIR/lanes"
 
 echo "=== codex windows route by duration, not by position ==="
 # OpenAI's primary/secondary windows do not map to session/weekly by position:
@@ -1280,7 +1459,7 @@ echo "=== a hosted fleet lists the provider's own credentials beside this machin
 # leaves the listing the local reading it always was, and a percentage nobody
 # can parse drops that row rather than listing it as an account with room.
 new_home hosted-accounts
-make_lane "$H" claude -3600
+make_dead_lane "$H" claude
 HOST_FIXTURE="$TEST_DIR/fixtures/lane-host"
 HOST_ENV="ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_LOG=$TMP_ROOT/accounts.log"
 printf 'account=%s\tharness=claude\tsession-5h-pct=3\tweekly-pct=8\tmodel-pct=11\tmodel-label=Fable\tmodel-resets=2026-08-02T06:00:00Z\n' \
@@ -1310,7 +1489,7 @@ printf 'account=%s\tharness=codex\tsession-5h-pct=5\tweekly-pct=6\n' \
 table \
   "with no provider the local config dirs are the whole listing|ORCH_LANE_HOST=local|list --harness claude --json|through=claude:local length=1 key=none" \
   "the provider's own reading of the same account is listed beside this machine's|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|through=claude:local,claude:host length=2" \
-  "the local copy stays expired while the provider's reading carries its own windows|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|first.status=expired last.session_5h_pct=3 last.weekly_pct=8 last.headroom_pct=89" \
+  "the local copy stays expired while the provider's reading carries its own windows|$HOST_ENV;ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|first.status=expired last.session_5h_pct=3 last.weekly_pct=8 last.headroom_pct=89" \
   "the hosted reading carries its deciding model bucket and reset|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json --no-cache|last.measured_through=host last.binding_bucket=model last.binding_resets_at=2026-08-02T06:00:00Z" \
   "a status the provider reports is the host row's status, not this parser's default|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-dead.tsv|list --harness claude --json|through=claude:local,claude:host last.status=expired last.headroom_pct=null" \
   "a provider that fails the verb it implements says so, and the listing stays this machine's reading|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS_STATUS=7|list --harness claude --json|through=claude:local length=1 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=7" \

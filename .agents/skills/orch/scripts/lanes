@@ -32,9 +32,11 @@
 #         structured record.
 #         The STATUS words are `ok`; `rate_limited`, an endpoint that answered
 #         HTTP 429; `unreachable`, one that answered 5xx or that nothing could
-#         be read from at all; `expired`, a login proven dead; `no_credentials`;
+#         be read from at all, or a renewal another tool's credentials lock kept
+#         from being tried; `expired`, a login proven dead; `no_credentials`;
 #         `no_usage_data`, authenticated with no window to measure; `retired`;
-#         and `error`. Only `ok` is pickable. The split matters because
+#         and `error`, a step this machine failed on its own, a renewal's
+#         included. Only `ok` is pickable. The split matters because
 #         `expired` is the one word an operator answers by logging in again —
 #         `open-terminal` turns it into exactly that remedy line — so a refusal
 #         the account will survive never takes it, and every refusal an endpoint
@@ -246,7 +248,7 @@
 #                      asked to ask the provider now.
 #   ORCH_LANES_CLAUDE_CLIENT_ID  The OAuth client id the renewal posts with.
 #                      Required for it: with this unset every Claude account
-#                      whose access token has expired reads `expired` with the
+#                      whose access token has expired reads `error` with the
 #                      cause `no OAuth client id is configured`, and `pick`
 #                      refuses every one of them. Set it once per host.
 # All read through the kendex settings ladder (process env > .env.local >
@@ -380,6 +382,10 @@ message() {
     pick-claims)
       printf 'lanes: pick-claims exit=%s\n' "1"
       printf '%s\n' "in-flight lane claims could not be read; refusing to pick (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
+      ;;
+    refusal-unrecorded)
+      printf 'lanes: refusal-unrecorded dir=%s\n' "$1"
+      printf '%s\n' "an endpoint's refusal could not be recorded, so every caller on this host posts to it again until one can (fix the state directory, or set OVERSEE_WATCH_STATE_DIR)"
       ;;
     pick-lane-claims)
       printf 'lanes: pick-lane-claims claims=%s\n' "null"
@@ -709,9 +715,9 @@ http_answer() { # CAPTURE
 }
 
 # Read that shape into HTTP_CODE, HTTP_RETRY and HTTP_BODY. A field the answer
-# does not name is empty, and so is one nothing can read as a number: a
-# Retry-After written as an HTTP date names no seconds this can wait out, and a
-# window nobody can read must not become a window of zero.
+# does not name is empty, and so is a code that is not three digits. HTTP_RETRY
+# is passed on as the answer wrote it: `write_usage_refusal` is the one judge of
+# whether it names seconds to wait out.
 split_http_answer() { # ANSWER
 	local head="${1%%$'\n'*}"
 	HTTP_BODY="${1#*$'\n'}"
@@ -720,7 +726,6 @@ split_http_answer() { # ANSWER
 	HTTP_RETRY="${head#* }"
 	[[ "$head" == *' '* ]] || HTTP_RETRY=""
 	[[ "$HTTP_CODE" =~ ^[0-9]{3}$ ]] || HTTP_CODE=""
-	[[ "$HTTP_RETRY" =~ ^[0-9]+$ ]] || HTTP_RETRY=""
 }
 
 # What an HTTP refusal of a lane's own request means for the lane, with the
@@ -963,7 +968,7 @@ measure_lane() {
 		return
 	else
 		if ! answer="$(fetch_usage "$harness" "$dir" "$token" "$account_id")"; then
-			emit_lane "$alias" "$harness" "$dir" "unreachable" "usage query failed (offline, rate-limited, or rejected)" "$plan" '{}' null "$refreshed"
+			emit_lane "$alias" "$harness" "$dir" "unreachable" "usage query could not be run" "$plan" '{}' null "$refreshed"
 			return
 		fi
 		split_http_answer "$answer"
@@ -978,7 +983,7 @@ measure_lane() {
 		fi
 		raw="$HTTP_BODY"
 		if [[ -z "$raw" ]]; then
-			emit_lane "$alias" "$harness" "$dir" "unreachable" "usage query failed (offline, rate-limited, or rejected)" "$plan" '{}' null "$refreshed"
+			emit_lane "$alias" "$harness" "$dir" "unreachable" "usage query answered HTTP $HTTP_CODE with no body" "$plan" '{}' null "$refreshed"
 			return
 		fi
 		if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$raw"; then
@@ -1077,8 +1082,20 @@ read_usage_refusal() {
 # Record a refusal the endpoint answered, so every caller sharing this state
 # directory reads it instead of posting the same request again. Its window is
 # the answer's own Retry-After where it named one in seconds, and
-# USAGE_REFUSAL_WINDOW_S where it did not.
+# USAGE_REFUSAL_WINDOW_S where it did not: a Retry-After written as an HTTP date
+# names no seconds this can wait out, and a window nobody can read must not
+# become a window of zero.
+#
+# A record that could not be written leaves every caller on the host posting
+# again each pass, which is what the window exists to stop, so that failure is a
+# `refusal-unrecorded` notice on stderr. The lane is still reported.
 write_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFTER]
+	store_usage_refusal "$@" && return 0
+	message refusal-unrecorded "$USAGE_CACHE_DIR" >&2
+	return 1
+}
+
+store_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFTER]
 	local file tmp window="${8:-}"
 	[[ "$window" =~ ^[0-9]+$ && "$window" -gt 0 ]] || window="$USAGE_REFUSAL_WINDOW_S"
 	file="$(usage_cache_file "$1" "$2")" || return 1
@@ -1094,7 +1111,7 @@ write_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFT
 		&& mv -f -- "$tmp" "$file"; then
 		return 0
 	fi
-	rm -f -- "$tmp"
+	rm -f -- "${tmp:?}"
 	return 1
 }
 
@@ -1149,7 +1166,11 @@ token_error_suffix() { # BODY
 # and every refresh on that host returned failure instead of a token.
 # Prints the new access token on stdout and returns 0; on failure prints a
 # `token_refusal` there instead and returns 1, so this stays the only judge of
-# why a renewal did not happen and of what the lane's status becomes.
+# why a renewal did not happen and of what the lane's status becomes. Only a
+# login this renewal proved dead takes `expired`: a step this machine failed on
+# its own is `error`, and a POST that never reached the endpoint, or one a held
+# lock kept from being tried, is `unreachable`. None of those carries a code, so
+# none is recorded as a refusal window.
 refresh_claude_token() {
 	local dir="$1" creds="$2" rt client_id body resp new_at lock suffix
 	# Composed after the declaration, never inside it: bash expands every word
@@ -1161,12 +1182,12 @@ refresh_claude_token() {
 	# there and would answer the root at the next caller to be added.
 	lock="$dir/.lanes-refresh.lock"
 	client_id="${ORCH_LANES_CLAUDE_CLIENT_ID:-}"
-	[[ -n "$client_id" ]] || { token_refusal expired '' '' 'no OAuth client id is configured (ORCH_LANES_CLAUDE_CLIENT_ID)'; return 1; }
-	exec 9>"$lock" || { token_refusal expired '' '' "the lock file $lock could not be opened"; return 1; }
+	[[ -n "$client_id" ]] || { token_refusal error '' '' 'no OAuth client id is configured (ORCH_LANES_CLAUDE_CLIENT_ID)'; return 1; }
+	exec 9>"$lock" || { token_refusal error '' '' "the lock file $lock could not be opened"; return 1; }
 	# Every caller runs this function in a command substitution, so the whole
 	# body is a subshell and the EXIT trap orch_take_lock arms releases a mkdir
 	# mutex on every path out — including this one.
-	orch_take_lock 9 "$lock" 30 || { token_refusal expired '' '' "another tool holds the credentials lock $lock"; exec 9>&-; return 1; }
+	orch_take_lock 9 "$lock" 30 || { token_refusal unreachable '' '' "another tool holds the credentials lock $lock"; exec 9>&-; return 1; }
 	# The expiry was decided before this lock was taken. A peer that renewed
 	# while this call waited has already written a live token, and posting
 	# anyway would rotate the peer's fresh refresh token away and leave that
@@ -1184,7 +1205,7 @@ refresh_claude_token() {
 	# indefinitely. The client id is not a secret and stays on argv.
 	body=$(LANES_RT="$rt" jq -nc --arg ci "$client_id" \
 		'{grant_type:"refresh_token", client_id:$ci, refresh_token:env.LANES_RT}') \
-		|| { token_refusal expired '' '' 'the token request body could not be built'; exec 9>&-; return 1; }
+		|| { token_refusal error '' '' 'the token request body could not be built'; exec 9>&-; return 1; }
 	# The User-Agent reaches the injected command through its ENVIRONMENT, never
 	# argv, which is where the real POST carries it too: a stub asserting the
 	# header asserts what curl would send.
@@ -1196,7 +1217,7 @@ refresh_claude_token() {
 			-H "Content-Type: application/json" -H "anthropic-beta: $CLAUDE_OAUTH_BETA" \
 			-D - -w '\n%{http_code}' --data-binary @- <<<"$body") \
 			&& resp="$(http_answer "$resp")"
-	fi || { token_refusal expired '' '' 'the token endpoint could not be reached'; exec 9>&-; return 1; }
+	fi || { token_refusal unreachable '' '' 'the token endpoint could not be reached'; exec 9>&-; return 1; }
 	split_http_answer "$resp"
 	suffix="$(token_error_suffix "$HTTP_BODY")"
 	# A status the endpoint refused with IS the failure, so it is what the cause
@@ -1222,7 +1243,7 @@ refresh_claude_token() {
 	[[ "$expires_in" =~ ^[0-9]+$ && "$expires_in" -gt 0 ]] || { token_refusal expired "$HTTP_CODE" "$HTTP_RETRY" 'the token endpoint returned no usable expires_in'; exec 9>&-; return 1; }
 	new_exp=$(( ($(date +%s) + expires_in) * 1000 ))
 	new_rt=$(jq -r 'try (.refresh_token // empty) catch empty' <<<"$HTTP_BODY")
-	tmp="$(mktemp "$dir/.credentials.XXXXXX")" || { token_refusal expired '' '' "no temporary file could be created in $dir"; exec 9>&-; return 1; }
+	tmp="$(mktemp "$dir/.credentials.XXXXXX")" || { token_refusal error '' '' "no temporary file could be created in $dir"; exec 9>&-; return 1; }
 	# Between here and the rename this file holds a live rotated refresh token.
 	# An interrupt that left it in the config directory would park that token
 	# where a backup or a dotfile sync carries it off the machine. This replaces
@@ -1235,7 +1256,7 @@ refresh_claude_token() {
 		 | .claudeAiOauth.refreshToken = env.LANES_RT
 		 | .claudeAiOauth.expiresAt = $exp' \
 		"$creds" >"$tmp" && mv "$tmp" "$creds" \
-		|| { rm -f -- "${tmp:?}"; token_refusal expired '' '' "the renewed credentials could not be written to $creds"; exec 9>&-; return 1; }
+		|| { rm -f -- "${tmp:?}"; token_refusal error '' '' "the renewed credentials could not be written to $creds"; exec 9>&-; return 1; }
 	# Back to the lock's own handlers, never to the default disposition: the
 	# mutex is still held over the two builtins below, and `trap - INT TERM`
 	# would leave a signal there killing this shell with no trap at all, the

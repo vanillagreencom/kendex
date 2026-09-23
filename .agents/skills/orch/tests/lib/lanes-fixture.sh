@@ -23,6 +23,19 @@ make_lane() {
     > "$dir/.credentials.json"
 }
 
+# make_dead_lane HOME NAME — a claude lane whose access token expired an hour
+# ago and whose credentials carry no refresh token to renew it with: the login
+# `lanes` proves dead and reports `expired`. That reading needs a client id
+# configured, since the renewal refuses on a missing one first, and it never
+# reaches the token endpoint, so no row on it posts anywhere.
+make_dead_lane() {
+  local dir="$1/.$2"
+  mkdir -p "$dir"
+  jq -n --arg at "token-$2" --argjson exp "$(( ($(date +%s) - 3600) * 1000 ))" \
+    '{claudeAiOauth: {accessToken: $at, expiresAt: $exp, subscriptionType: "max"}}' \
+    > "$dir/.credentials.json"
+}
+
 # make_codex_lane DIR — a codex home with an auth file.
 make_codex_lane() {
   local dir="$1"
