@@ -138,7 +138,7 @@ RUNTIMES="$(sed -n 's/^RUNTIMES="\(.*\)"$/\1/p' "$TOOLS/bash32-parse")"
 IMAGE="$(sed -n 's/^IMAGE="\(.*\)"$/\1/p' "$TOOLS/bash32-parse")"
 ran32=no
 causes=""
-fixture bash32 && mkdir -p "$R/ui/node_modules"
+fixture bash32; mkdir -p "$R/ui/node_modules"
 run_bash32() {
   "$runtime_path" run --rm --init --network=none --volume "$R:/repo:ro" --tmpfs /repo/ui/node_modules --workdir /repo --env HOME=/tmp --env PATH=/repo/fake-bin:/usr/local/bin:/usr/bin:/bin --env NPM_LOG=/tmp/npm.log --env RUSTUP_LOG=/tmp/rustup.log --env RUSTUP_STATE=/tmp/rustup.state "$IMAGE" bash "$@"
 }
