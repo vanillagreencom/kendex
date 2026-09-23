@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Prepare a fleet clone before its worktree is created.
+set -euo pipefail
+
+node_version=""
+node_version="$(node --version)" || exit $?
+npm_version=""
+npm_version="$(npm --version)" || exit $?
+printf 'lane-setup: versions=node:%s npm:%s\n' "$node_version" "$npm_version"
+
+ui_inputs=""
+ui_inputs="$(git rev-parse HEAD:ui/package.json HEAD:ui/package-lock.json)" || exit $?
+ui_marker=ui/node_modules/.kendex-lane-setup
+installed_ui_inputs=""
+if [ -f "$ui_marker" ]; then
+  installed_ui_inputs="$(cat -- "$ui_marker")" || exit $?
+fi
+if [ "$installed_ui_inputs" = "$ui_inputs" ]; then
+  printf 'lane-setup: ui=skip\n'
+else
+  printf 'lane-setup: ui=install\n'
+  npm ci --no-audit --no-fund --prefix ui
+  printf '%s\n' "$ui_inputs" >"$ui_marker"
+fi
+
+targets="aarch64-apple-darwin x86_64-pc-windows-msvc"
+installed_targets=""
+installed_targets="$(rustup target list --installed)" || exit $?
+targets_ready=yes
+for target in $targets; do
+  if ! grep -Fxq "$target" <<<"$installed_targets"; then
+    targets_ready=no
+  fi
+done
+
+if [ "$targets_ready" = yes ]; then
+  printf 'lane-setup: rust-targets=skip\n'
+else
+  printf 'lane-setup: rust-targets=install\n'
+  rustc --version
+  rustup target add aarch64-apple-darwin x86_64-pc-windows-msvc
+fi
