@@ -2167,10 +2167,17 @@ refuse_existing_branch() {
   echo "  Signal: $signal${details:+ ($details)}" >&2
   echo "No worktree was created and no local branch was rebased or modified." >&2
   echo "Inspect or monitor the existing work instead of spawning another implementer." >&2
+  # The signal names the ref the scan met first, not where the branch is:
+  # `local` fires for a published branch too, and `remote` for one on a
+  # secondary remote. --base asks origin alone, so origin decides the advice.
   if [[ "$signal" == pr ]]; then
     echo "To inspect that PR in a worktree intentionally, pass --pr <number>." >&2
-  else
+  elif remote_branch_discovered origin "$branch"; then
     echo "To check out that branch intentionally, pass --base $branch." >&2
+  else
+    echo "Branch '$branch' is not on origin, so --base cannot check it out. Either:" >&2
+    echo "  push it first:            git push -u origin $branch; then $0 create $issue --base $branch" >&2
+    echo "  from the main checkout:   git switch $branch; then $0 create $issue --transfer $branch" >&2
   fi
   return "$ACTIVE_WORK_EXIT"
 }
