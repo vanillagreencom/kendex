@@ -21,6 +21,7 @@ use std::process::{Command, Output};
 use kendex_core::attest::{Document, Foreign, Row, State};
 use kendex_core::engine::Owns;
 use kendex_core::env::Env;
+use kendex_core::lock::LOCK_VERSION;
 use kendex_core::model::HarnessId;
 use kendex_core::process::Hardened;
 
@@ -504,8 +505,31 @@ fn field_fails(key: &str, field: &str) -> Failing {
     record_fails(&format!("{key}: {field} is not what this pass records"))
 }
 
+/// Every keys position the project scope prints, with its judgement.
+fn keys_judged(document: &Document) -> Vec<(&str, Option<Foreign>)> {
+    document
+        .rows
+        .iter()
+        .flat_map(|row| row.positions.iter())
+        .filter(|position| position.owns == Owns::Keys)
+        .map(|position| (position.path.as_str(), position.foreign))
+        .collect()
+}
+
+/// The project scope's keys positions, every one answered `unknown`.
+fn every_key_unknown() -> Vec<(&'static str, Option<Foreign>)> {
+    vec![
+        (".claude/settings.json", Some(Foreign::Unknown)),
+        (".mcp.json", Some(Foreign::Unknown)),
+        (".claude/settings.json", Some(Foreign::Unknown)),
+        (".gemini/settings.json", Some(Foreign::Unknown)),
+    ]
+}
+
 /// Each way a branch can edit what it is judged by, and the rows that
-/// fail it.
+/// fail it. The revision-expression rows plant a name the mirror resolves
+/// to the declared tip itself, so only a refusal to ask git about a value
+/// that is not a pin can fail them.
 fn bookkeeping_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
     let mut edits = narrowing_edits();
     edits.extend(moving_edits());
@@ -665,6 +689,13 @@ fn provenance_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
                 "set starter: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef is not on the declared revision's history",
             )],
         ),
+        (
+            "records a set's commit as a revision expression",
+            on_record(|lock| {
+                lock["bundles"]["starter"]["commit"] = "HEAD".into();
+            }),
+            vec![record("set starter: commit HEAD is not a commit pin")],
+        ),
     ]
 }
 
@@ -768,6 +799,22 @@ fn narrowing_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
             }),
             vec![record(
                 "skill:second:claude: sourceCommit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef is not on the declared revision's history",
+            )],
+        ),
+        (
+            "records a source commit as a revision expression",
+            on_record(|value| {
+                value["sources"]["cat"]["commit"] = "HEAD".into();
+            }),
+            vec![record("source cat: commit HEAD is not a commit pin")],
+        ),
+        (
+            "records an entry's source commit as a revision expression",
+            on_record(|value| {
+                value["entries"]["skill:second:claude"]["sourceCommit"] = "HEAD".into();
+            }),
+            vec![record(
+                "skill:second:claude: sourceCommit HEAD is not a commit pin",
             )],
         ),
         (
@@ -1120,23 +1167,31 @@ fn a_base_the_project_cannot_resolve_answers_unknown_for_every_keys_position() {
     let world = world();
     let (output, document) = verify(&world, Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"));
     assert!(output.status.success(), "{}", said(&output));
-    let keys: Vec<(&str, Option<Foreign>)> = document
-        .rows
-        .iter()
-        .flat_map(|row| row.positions.iter())
-        .filter(|position| position.owns == Owns::Keys)
-        .map(|position| (position.path.as_str(), position.foreign))
-        .collect();
-    assert_eq!(
-        keys,
-        vec![
-            (".claude/settings.json", Some(Foreign::Unknown)),
-            (".mcp.json", Some(Foreign::Unknown)),
-            (".claude/settings.json", Some(Foreign::Unknown)),
-            (".gemini/settings.json", Some(Foreign::Unknown)),
-        ],
-        "{document:?}"
+    assert_eq!(keys_judged(&document), every_key_unknown(), "{document:?}");
+}
+
+/// A base revision whose record another lock version wrote is one this
+/// build cannot read, as it cannot read the same record at the head: a
+/// field the older shape lacks is a wrong answer, not a missing one, so
+/// the replay reads nothing from it and every keys position answers
+/// `unknown` rather than `unchanged` over a record it could not judge.
+/// The record here differs from the head's in its version alone.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_base_record_from_another_lock_version_answers_unknown_for_every_keys_position() {
+    let world = world();
+    git(
+        &world.project,
+        &["checkout", "-q", "-B", "older", INSTALLED],
     );
+    edit_json(&world.project.join(RECORD), |lock| {
+        lock["version"] = (LOCK_VERSION - 1).into();
+    });
+    commit(&world.project, "the record as an earlier kendex wrote it");
+    git(&world.project, &["checkout", "-q", "-B", "case", INSTALLED]);
+    let (output, document) = verify(&world, Some("older"));
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(keys_judged(&document), every_key_unknown(), "{document:?}");
 }
 
 /// A key the person adds beside kendex's in a registry file is a change

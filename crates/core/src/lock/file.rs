@@ -87,14 +87,16 @@ pub fn load_file(path: &Path) -> Result<LockFile> {
     let Some(text) = read_if_exists(path)? else {
         return Ok(LockFile::Absent);
     };
-    parse_text(path, &text)
+    parse_text(path, &text).map(LockFile::Current)
 }
 
 /// [`load_file`] for text the caller already read — the importer binds its
 /// preconditions to the exact bytes it classified, so it must classify the
-/// bytes it read rather than a later re-read. This machine's half is read
-/// from disk either way: it is not part of what the importer classifies.
-pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
+/// bytes it read rather than a later re-read, and a replay reads a
+/// revision's copy of the record through the same refusals the file at
+/// `path` gets. This machine's half is read from disk either way: it is
+/// not part of what the importer classifies.
+pub fn parse_text(path: &Path, text: &str) -> Result<Lock> {
     let mut lock: Lock = parse_versioned(path, text)?;
     read_against(path, &mut lock)?;
     let root = project_root_at(path);
@@ -110,7 +112,7 @@ pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
             }
         }
     }
-    Ok(LockFile::Current(lock))
+    Ok(lock)
 }
 
 /// The roots this machine's half of the record at the path was written

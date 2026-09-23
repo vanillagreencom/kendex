@@ -396,11 +396,14 @@ fn selector(rev: Option<&str>) -> &str {
 }
 
 /// The sentence that fails a recorded commit, after `subject` names it:
-/// one off the declared revision's history, or one the mirror cannot
-/// place. Equal commits are answered without a git call, which is also
-/// the only answer a path source ever needs; the rest is the mirror this
-/// declaration fetches into, asked through
-/// [`crate::remote::store::is_ancestor`].
+/// one that is no commit pin, one off the declared revision's history,
+/// or one the mirror cannot place. Equal commits are answered without a
+/// git call, which is also the only answer a path source ever needs; the
+/// rest is the mirror this declaration fetches into, asked through
+/// [`crate::remote::store::is_ancestor`]. Only a pin is asked about: git
+/// reads any revision expression the record could be edited to hold,
+/// and `HEAD` names the declared tip itself, so the ancestry answer for
+/// a value that is not a pin would vouch for the edit.
 fn history_problem(
     env: &Env,
     repo: &str,
@@ -410,6 +413,9 @@ fn history_problem(
 ) -> Option<String> {
     if recorded == resolved {
         return None;
+    }
+    if !crate::remote::store::is_pin(recorded) {
+        return Some(format!("{subject} is not a commit pin"));
     }
     let key = crate::remote::cache_key(env, repo);
     let mirror = crate::remote::store::mirror_dir(env, &key);
@@ -509,7 +515,10 @@ enum BaseCopy {
 }
 
 /// The record as the revision held it, which names what each registration
-/// was written under then.
+/// was written under then. Read as the head's record is read, so a record
+/// another lock version wrote is one this build cannot read here too: a
+/// field the other shape lacks is a wrong answer rather than a missing
+/// one, and a replay over it would vouch for files it never judged.
 enum BaseRecord {
     Held(Lock),
     /// The revision had no record: nothing of kendex's was there to move.
@@ -534,8 +543,9 @@ impl Base<'_> {
 
     /// `None` where the record is there and this build cannot read it.
     fn record(&self) -> Option<BaseRecord> {
-        match self.copy(&self.root.join(LOCK_FILE)) {
-            BaseCopy::Held(text) => serde_json::from_str::<Lock>(&text)
+        let path = self.root.join(LOCK_FILE);
+        match self.copy(&path) {
+            BaseCopy::Held(text) => crate::lock::parse_text(&path, &text)
                 .ok()
                 .map(BaseRecord::Held),
             BaseCopy::Absent => Some(BaseRecord::Absent),

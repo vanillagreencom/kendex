@@ -628,10 +628,7 @@ fn a_relatively_named_project_lock_reads_as_the_directory_it_names() {
     let here = crate::paths::canonical(Path::new(".")).unwrap();
     recording(&path, "skill:gh:claude", Path::new(".agents/skills/gh"));
     let text = std::fs::read_to_string(&path).unwrap();
-    let lock = match parse_text(Path::new(LOCK_FILE), &text).unwrap() {
-        LockFile::Current(lock) => lock,
-        LockFile::Absent => unreachable!("the text is a record"),
-    };
+    let lock = parse_text(Path::new(LOCK_FILE), &text).unwrap();
     assert_eq!(
         lock.entries["skill:gh:claude"]
             .emitted
