@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 4.0.3
+
+- Claude Opus 5.5 (`claude-opus-5-5`) is selectable under the `pi-claude` provider, listed between Fable 5.1 and Opus 5, with the same 1M context, 128k output and `xhigh`/`max` effort mapping as Opus 5 and the same Opus 4.8 safety fallback (kendex#2782).
+
 ### 4.0.2
 
 - Pi 0.84.4 and later compact between tool execution and the next assistant response, which can rewrite the conversation while a bridge query is still waiting for a tool result. That query's Claude Code session held the history Pi had replaced, so every further request in the tool loop re-sent it and Pi compacted again and again. The bridge now restarts the query at that boundary: the next provider callback stops the stale query and opens a replacement over Pi's compacted context, so Claude Code sees the summary and the retained messages. Pi's context is imported whole, so the results of the tool calls Pi executed are carried across exactly once and none of them runs again. A turn in which the child ran a call Pi never sees — a claude.ai connector, or a foreign MCP tool loaded from Claude Code's own settings — is not handed over at all: those calls never reach Pi's messages and their results are never recorded, so no rebuild can carry them, and the query keeps its own history rather than risk the model repeating an account-visible call. The replacement takes a new Claude Code session id instead of reusing the one the stopped child may still be writing to, and that child's transcript is left in place. A compaction observed while a query runs also survives that query's end, so the next turn rebuilds rather than resuming the replaced history. Interrupted tool calls at a compaction boundary are now reported as expected teardown instead of a tool-result integrity fault. A turn stopped before the replacement starts ends on that abort instead of spawning it, and a failure while the stale query is being torn down surfaces on the waiting turn rather than leaving Pi with a stream that never ends. A compaction with no active query, and ordinary tool-result delivery, are unchanged.

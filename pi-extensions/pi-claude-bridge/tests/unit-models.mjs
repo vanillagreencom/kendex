@@ -5,7 +5,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { FABLE_FALLBACK_MODEL_ID, FABLE_MODEL_ID, MODEL_IDS_IN_ORDER, OPUS_5_MODEL_ID, SONNET_5_MODEL_ID, buildModels, fallbackModelForPrimaryModel, modelDisplayName } from "../src/models.js";
+import { FABLE_FALLBACK_MODEL_ID, FABLE_MODEL_ID, MODEL_IDS_IN_ORDER, OPUS_5_5_MODEL_ID, OPUS_5_MODEL_ID, SONNET_5_MODEL_ID, buildModels, fallbackModelForPrimaryModel, modelDisplayName } from "../src/models.js";
 
 // Simulated pi-ai registry entry — extra fields mimic the ones pi-ai exposes
 // that must not leak into the provider-registered MODELS array.
@@ -34,16 +34,21 @@ describe("MODELS projection", () => {
 		assert.deepEqual(models.map((m) => m.id), MODEL_IDS_IN_ORDER);
 	});
 
-	it("lists Fable 5.1 first, then Opus 5 ahead of older Opus models", () => {
+	it("lists Fable 5.1 first, then Opus 5.5 and Opus 5 ahead of older Opus models", () => {
 		const models = buildModels(MODEL_IDS_IN_ORDER.map(mockPiAiModel));
 		assert.equal(models[0]?.id, FABLE_MODEL_ID);
-		assert.equal(models[1]?.id, OPUS_5_MODEL_ID);
-		assert.equal(models[2]?.id, FABLE_FALLBACK_MODEL_ID);
+		assert.equal(models[1]?.id, OPUS_5_5_MODEL_ID);
+		assert.equal(models[2]?.id, OPUS_5_MODEL_ID);
+		assert.equal(models[3]?.id, FABLE_FALLBACK_MODEL_ID);
 	});
 
 	it("fills supported model metadata missing from pi-ai and drops unknown missing IDs", () => {
 		const models = buildModels([mockPiAiModel("claude-haiku-4-5")]);
-		assert.deepEqual(models.map((m) => m.id), ["claude-fable-5-1", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"]);
+		assert.deepEqual(models.map((m) => m.id), ["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"]);
+		assert.equal(models.find((m) => m.id === "claude-opus-5-5")?.name, "Claude Opus 5.5");
+		assert.equal(models.find((m) => m.id === "claude-opus-5-5")?.contextWindow, 1000000);
+		assert.equal(models.find((m) => m.id === "claude-opus-5-5")?.maxTokens, 128000);
+		assert.deepEqual(models.find((m) => m.id === "claude-opus-5-5")?.thinkingLevelMap, { xhigh: "xhigh", max: "max" });
 		assert.equal(models.find((m) => m.id === "claude-fable-5-1")?.name, "Claude Fable 5.1");
 		assert.equal(models.find((m) => m.id === "claude-fable-5-1")?.contextWindow, 1000000);
 		assert.equal(models.find((m) => m.id === "claude-opus-4-8")?.maxTokens, 128000);
@@ -86,9 +91,10 @@ describe("MODELS projection", () => {
 });
 
 describe("model fallback pairing", () => {
-	it("configures Opus 4.8 safety fallback for the two models whose classifiers decline", () => {
+	it("configures Opus 4.8 safety fallback for the Claude 5 models whose classifiers decline", () => {
 		for (const [id, expected] of [
 			[FABLE_MODEL_ID, FABLE_FALLBACK_MODEL_ID],
+			[OPUS_5_5_MODEL_ID, FABLE_FALLBACK_MODEL_ID],
 			[OPUS_5_MODEL_ID, FABLE_FALLBACK_MODEL_ID],
 			[FABLE_FALLBACK_MODEL_ID, undefined],
 			[SONNET_5_MODEL_ID, undefined],
@@ -101,6 +107,7 @@ describe("model fallback pairing", () => {
 	it("labels every model in a configured fallback pairing", () => {
 		for (const [id, expected] of [
 			[FABLE_MODEL_ID, "Claude Fable 5.1"],
+			[OPUS_5_5_MODEL_ID, "Claude Opus 5.5"],
 			[OPUS_5_MODEL_ID, "Claude Opus 5"],
 			[FABLE_FALLBACK_MODEL_ID, "Claude Opus 4.8"],
 			["gpt-9", "gpt-9"],
