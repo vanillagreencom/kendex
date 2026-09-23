@@ -284,8 +284,10 @@ pub fn target_registrable(
 /// write leaves the list as it found it: `apply --plan` and a bare
 /// `updates` listing, which write nothing by design; a scope that
 /// declares nothing, which neither `apply` nor `refresh` lists even where
-/// an old lock still names installs in it; a plan that failed, reported
-/// instead; and a confirmation the reader declined — except in `refresh`,
+/// an old lock still names installs in it; a scope whose plan failed, or
+/// came back with a failure to report and nothing to write, which is a
+/// run that exits nonzero; and a confirmation the reader declined —
+/// except in `refresh`,
 /// where a Pi settle before the final confirm has already written what
 /// this then registers.
 ///

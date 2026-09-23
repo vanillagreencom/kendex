@@ -444,12 +444,21 @@ pub fn run(
         // reported off the plan derived after its settle.
         if pending.is_empty() {
             blocked = print_diagnostics(env, &report, verbose);
-            failures.extend(refresh_failures(&report));
+            let reported = refresh_failures(&report);
+            let failed = !reported.is_empty();
+            failures.extend(reported);
             if lock.entries.is_empty() && report.plan.is_empty() && blocked.is_empty() {
                 // Nothing left to write is not a reason to leave the
                 // named project off the projects list: the run got
                 // through this scope, which is what registration follows.
-                register_written(env, target, &scope, &mut failures);
+                //
+                // A scope that reported a failure is the exception. It
+                // wrote nothing and the run exits nonzero, so listing the
+                // folder would be the one lasting effect of a run that
+                // failed.
+                if !failed {
+                    register_written(env, target, &scope, &mut failures);
+                }
                 continue;
             }
         }

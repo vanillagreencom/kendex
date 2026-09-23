@@ -216,6 +216,31 @@ fn declare_nothing(root: &Path, catalog: &Path) {
     write(&root.join("kendex.toml"), &manifest_head(catalog));
 }
 
+/// One declaration of a package whose installer exits nonzero, and the
+/// package itself in the fixture catalog. The installer runs after the
+/// write, which is what makes it the case for registration's placement.
+#[allow(clippy::unwrap_used)]
+fn declare_a_failing_installer(root: &Path, catalog: &Path) {
+    write(
+        &catalog.join("skills/wobble/SKILL.md"),
+        "---\nname: wobble\ndescription: the wobble skill\nrepo-effects:\n  \
+         summary: \"Arms a hook that refuses to arm.\"\n  writes:\n    - \".git/hooks/pre-commit\"\n  \
+         installer: \"scripts/arm\"\n---\nBody.\n",
+    );
+    let arm = catalog.join("skills/wobble/scripts/arm");
+    write(&arm, "#!/bin/sh\necho 'arm: refusing' >&2\nexit 1\n");
+    let mut mode = fs::metadata(&arm).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o755);
+    fs::set_permissions(&arm, mode).unwrap();
+    write(
+        &root.join("kendex.toml"),
+        &format!(
+            "{}\n[skills.wobble]\nsource = \"cat\"\n",
+            manifest_head(catalog)
+        ),
+    );
+}
+
 /// A folder that is a project root on a harness marker alone, with no
 /// declaration of its own for either verb to read.
 #[allow(clippy::unwrap_used)]
@@ -601,6 +626,100 @@ fn a_run_with_nothing_left_to_write_registers_the_named_project() {
     let mut listed = registered(&home);
     listed.sort();
     assert_eq!(listed, both, "and it lists its own project too: {said}");
+}
+
+/// A package's installer that exits nonzero, after the write. The
+/// packages are on disk by then, so the named project goes on the list
+/// whatever the effects step did, and the run still reports the
+/// installer's failure.
+///
+/// `install_registers_project.rs` holds this rule for `add`. This is the
+/// same rule at the named-target door, where the effects error used to
+/// return before the registration was reached.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_installer_that_fails_after_the_write_still_lists_the_named_project() {
+    let (_tmp, home, catalog, elsewhere) = world();
+    let project = home.join("dev/app");
+    fs::create_dir_all(&project).unwrap();
+    // A repository effect names what it writes under `.git`, so the
+    // disclosure resolves a git directory before it offers anything.
+    git(&project, &["init", "--quiet", "-b", "main"]);
+    declare_a_failing_installer(&project, &catalog);
+
+    let refused = kendex(
+        &home,
+        &elsewhere,
+        &[
+            "apply",
+            "--project-path",
+            project.to_str().unwrap(),
+            "-y",
+            "--allow-repo-effects",
+        ],
+    );
+    let text = said(&refused);
+
+    assert!(!refused.status.success(), "{text}");
+    assert!(
+        text.contains("scripts/arm"),
+        "the installer's failure is still what the run reports: {text}"
+    );
+    assert!(
+        project.join(".claude/skills/wobble/SKILL.md").is_file(),
+        "the packages landed: {text}"
+    );
+    assert_eq!(
+        registered(&home),
+        std::slice::from_ref(&project),
+        "and the folder they landed in is on the list: {text}"
+    );
+}
+
+/// A named refresh whose catalog cannot be read writes nothing, exits
+/// nonzero, and leaves the projects list as it found it.
+///
+/// The inverse of the case above: registration follows a write the run
+/// got through, and a scope that came back with a failure to report wrote
+/// nothing. Listing the folder would be the one lasting effect of a run
+/// that failed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refresh_that_reports_a_failure_lists_nothing() {
+    let (_tmp, home, _catalog, elsewhere) = world();
+    let project = home.join("dev/app");
+    // The catalog the manifest names is not there, so the declared skill
+    // is skipped and the note it leaves is a failure of the run.
+    declare(&project, &home.join("nowhere"));
+
+    let refused = kendex(
+        &home,
+        &elsewhere,
+        &[
+            "refresh",
+            "--project-path",
+            project.to_str().unwrap(),
+            "--scope",
+            "project",
+            "-y",
+        ],
+    );
+    let text = said(&refused);
+
+    assert!(!refused.status.success(), "{text}");
+    assert!(
+        text.contains("missing at"),
+        "the unreadable catalog is what the run reports: {text}"
+    );
+    assert!(
+        !installed(&project).is_file(),
+        "and it wrote nothing: {text}"
+    );
+    assert!(
+        registered(&home).is_empty(),
+        "and listed nothing: {:?}",
+        registered(&home)
+    );
 }
 
 /// A project root with no declaration of its own goes on no list, and the

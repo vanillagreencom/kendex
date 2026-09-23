@@ -4,7 +4,7 @@ use kendex_core::manifest::{self, ManifestFile};
 
 use super::engine_common::{confirm_and_apply, print_report, print_unmanaged};
 use super::ledger::{Wrote, say_ledger, say_preview};
-use super::{CliResult, resolve_scopes_at, say, scope_label, warn};
+use super::{CliResult, fail_refusal, resolve_scopes_at, say, scope_label, warn};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
@@ -129,7 +129,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         // same account and the same separate yes an `add` gives it —
         // asked after the write, so the scope is finalized whatever the
         // answer and before any error from it leaves this loop.
-        super::repo_effects::disclose_and_finish(
+        let walked = super::repo_effects::disclose_and_finish(
             env,
             &scope,
             &report.repo_effects,
@@ -157,12 +157,28 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                     &report.safety,
                 );
             },
-        )?;
+        );
         // After the write, the way `add` registers what it installed
         // into: a project named by a command that never stood in it is
         // one the app sees. The temporary-path gate above already passed
         // for this path.
-        super::project::register_target(env, &args.target, &scope)?;
+        //
+        // `confirm_and_apply` has written by the time the effects step
+        // runs, so registration is not that step's to skip: an installer
+        // that failed, or a walkthrough nobody answered, leaves the
+        // packages on disk in a folder the app would never show.
+        // `add::write_and_close` closes on the same pair, and says the
+        // registry's refusal beside the failure it did not cause.
+        let listed = super::project::register_target(env, &args.target, &scope);
+        match walked {
+            Ok(()) => listed?,
+            Err(error) => {
+                if let Err(refused) = listed {
+                    fail_refusal("warning: ", refused.as_ref());
+                }
+                return Err(error);
+            }
+        }
     }
     Ok(())
 }
