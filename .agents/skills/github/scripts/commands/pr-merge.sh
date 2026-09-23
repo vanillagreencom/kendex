@@ -171,10 +171,13 @@ Admin-credential route:
   ruleset rules and its classic branch protection, since --admin bypasses both.
   A ruleset rule type, or a classic protection setting that is on, which the
   route neither re-checks, nor can prove harmless to a PR merge, nor can prove
-  removes the bypass itself, refuses. A Copilot review rule is accounted for,
-  since it only requests a review and holds no merge, and so is a required
-  merge queue, which the dequeue below takes the PR out of before --admin
-  merges past it. An accounted one that forbids the merge about to be issued
+  removes the bypass itself, refuses. The ruleset types the route accounts
+  for are pull_request, required_status_checks, required_linear_history,
+  non_fast_forward, creation, deletion, copilot_code_review and merge_queue;
+  any other type refuses. A Copilot review rule is accounted for, since it
+  only requests a review and holds no merge, and so is a required merge
+  queue, which the dequeue below takes the PR out of before --admin merges
+  past it. An accounted one that forbids the merge about to be issued
   refuses too: a pull_request rule whose allowed_merge_methods excludes
   --squash, --merge or --rebase as passed, and required_linear_history in
   either spelling against --merge. An absent or empty allowed_merge_methods is every method. A base
