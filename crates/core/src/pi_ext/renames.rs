@@ -43,20 +43,14 @@ const RENAMES: &[(&str, &[&str])] = &[
     ("@vanillagreen/pi-web-tools", &["pi-web-tools"]),
 ];
 
-/// Earlier names this package shipped under.
-pub fn legacy_names(name: &str) -> &'static [&'static str] {
+/// Earlier names this package shipped under, keyed on the current name.
+/// Private: a caller holding an arbitrary spelling wants [`family`],
+/// which folds the spelling to its current name first.
+fn legacy_names(name: &str) -> &'static [&'static str] {
     RENAMES
         .iter()
         .find_map(|(current, legacy)| (*current == name).then_some(*legacy))
         .unwrap_or(&[])
-}
-
-/// Every name a package may be installed or declared under: the current
-/// one first, then each earlier one.
-pub fn all_names(name: &str) -> Vec<&str> {
-    let mut names = vec![name];
-    names.extend(legacy_names(name));
-    names
 }
 
 /// The current name of the package a spelling belongs to: the `RENAMES`
@@ -71,6 +65,18 @@ fn canonical(name: &str) -> &str {
         .unwrap_or(name)
 }
 
+/// Every name the package a spelling belongs to may be installed or
+/// declared under: its current name first, then each earlier one. The
+/// one owner of package identity as a set — a caller that builds its own
+/// candidates off a raw spelling gets a one-element set for a package
+/// declared under an earlier name and misses every copy carrying another.
+pub fn family(name: &str) -> Vec<&str> {
+    let current = canonical(name);
+    let mut names = vec![current];
+    names.extend(legacy_names(current));
+    names
+}
+
 /// Whether two spellings name one package. Pi de-duplicates by package
 /// identity, so two declarations that fold to one current name are one
 /// registration to it whichever names they were written under.
@@ -81,18 +87,19 @@ pub fn same_package(one: &str, other: &str) -> bool {
 /// Whether this exact spelling is installed at `scope_root`, as a package
 /// directory or a settings registration. The one-spelling question: a
 /// caller asking whether the same PACKAGE sits at another scope wants
-/// [`duplicate_elsewhere`], which folds renames.
+/// [`duplicate_elsewhere`], and one asking which spellings to try wants
+/// [`family`]; both fold renames.
 pub fn installed_under(scope_root: &Path, name: &str) -> bool {
     installed_at(scope_root, name)
 }
 
 /// The name (or legacy name) already installed at another scope that makes
 /// installing `name` here unsafe, with the scope root carrying it. The
-/// candidate set is the whole rename family, reached through the current
-/// name, so a copy installed under an earlier name is found when the
-/// declaration uses the current one and equally the other way round.
+/// candidate set is the whole rename [`family`], so a copy installed
+/// under an earlier name is found when the declaration uses the current
+/// one and equally the other way round.
 pub fn duplicate_elsewhere(name: &str, other_roots: &[PathBuf]) -> Option<(String, PathBuf)> {
-    let candidates = all_names(canonical(name));
+    let candidates = family(name);
     for root in other_roots {
         for candidate in &candidates {
             if installed_at(root, candidate) {
@@ -125,6 +132,37 @@ mod tests {
             ["pi-agents-tmux", "pi-subagents-tmux", "pi-subagents"]
         );
         assert!(legacy_names("pi-widgets").is_empty());
+    }
+
+    /// The family is the same set whichever member names it, so a caller
+    /// holding an earlier spelling gets the current name too.
+    #[test]
+    fn the_family_of_any_spelling_is_the_whole_package() {
+        let rows = [
+            (
+                "@vanillagreen/pi-agents-tmux",
+                vec![
+                    "@vanillagreen/pi-agents-tmux",
+                    "pi-agents-tmux",
+                    "pi-subagents-tmux",
+                    "pi-subagents",
+                ],
+            ),
+            (
+                "pi-subagents",
+                vec![
+                    "@vanillagreen/pi-agents-tmux",
+                    "pi-agents-tmux",
+                    "pi-subagents-tmux",
+                    "pi-subagents",
+                ],
+            ),
+            ("pi-hooks", vec!["@vanillagreen/pi-hooks", "pi-hooks"]),
+            ("pi-widgets", vec!["pi-widgets"]),
+        ];
+        for (spelling, expected) in rows {
+            assert_eq!(family(spelling), expected, "{spelling}");
+        }
     }
 
     #[test]
@@ -177,7 +215,7 @@ mod tests {
     /// The rename family is reached through the current name, so the
     /// declaration's spelling and the installed copy's may be any two
     /// members of it. Asked under an earlier name against a copy installed
-    /// under the current one, the direction `all_names` alone cannot take.
+    /// under the current one, the direction a raw-spelling lookup misses.
     #[test]
     #[allow(clippy::unwrap_used)]
     fn an_earlier_name_finds_a_current_name_copy_at_another_root() {

@@ -30,8 +30,7 @@ pub use state::{PackageState, RecordBasis, declared_state, installed_state};
 use files::{copy_package, inside, read_dir, trash};
 pub(crate) use files::{owned_package_exact_hash, owned_package_hash, owned_package_identity};
 pub use files::{package_hash, package_path};
-pub(crate) use renames::all_names;
-pub use renames::{duplicate_elsewhere, installed_under, legacy_names, same_package};
+pub use renames::{duplicate_elsewhere, family, installed_under, same_package};
 pub use settings::list_npm_entries;
 pub use shadow::{ShadowLines, ShadowPackage, ShadowScan, shadows};
 

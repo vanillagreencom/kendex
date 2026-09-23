@@ -41,6 +41,15 @@ fn write(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 
+/// A global manifest with an unterminated table header: it will not parse,
+/// so no read of it can answer whether a package is declared twice.
+const BROKEN_GLOBAL: &str = "schema = 6\n[pi-extensions\n";
+
+/// The whole of what a could-not-check line says when an unreadable global
+/// manifest leaves the duplicate check unrun: the file at fault and the
+/// check it skipped, before the parser's own words.
+const SKIPPED_CHECK: &str = "pi declared at both scopes: global manifest: ";
+
 /// A manifest declaring one Pi extension from a catalog beside it.
 fn manifest(name: &str) -> String {
     format!(
@@ -240,25 +249,75 @@ fn the_global_scope_is_not_told_to_drop_its_own_declaration() {
 #[test]
 fn an_unreadable_global_manifest_is_reported_once_and_never_read_as_no_duplicate() {
     let rows = [
+        // The duplicate check names the file and the check it skipped.
         (
             "the project scope alone",
             vec!["check", "--scope", "project"],
+            SKIPPED_CHECK,
         ),
-        ("the unqualified run, both scopes", vec!["check"]),
+        // The global scope is in the run, so its own manifest read names
+        // that same file first and the duplicate check adds nothing.
+        (
+            "the unqualified run, both scopes",
+            vec!["check"],
+            "global: manifest: ",
+        ),
     ];
-    for (case, args) in rows {
+    for (case, args, wording) in rows {
         let (_tmp, home, root) = fixture(Some("pi-widgets"), "pi-widgets");
-        write(&global_manifest_file(&home), "schema = 6\n[pi-extensions\n");
+        let global = global_manifest_file(&home);
+        write(&global, BROKEN_GLOBAL);
 
         let check = kendex(&home, &root, &args);
         assert_eq!(check.status.code(), Some(2), "{case}: {}", said(&check));
         let text = said(&check);
         assert!(text.contains("could not check:"), "{case}: {text}");
+        // Counted over the lines that name the file itself: one file at
+        // fault is one line. The bare word "manifest" would count both
+        // this line and a scope's own manifest read, so a line that
+        // stopped saying which file it is about would still pass.
         let named: Vec<&str> = text
             .lines()
-            .filter(|line| line.contains("manifest: "))
+            .filter(|line| line.contains(&global.display().to_string()))
             .collect();
         assert_eq!(named.len(), 1, "{case}: {text}");
+        // The whole wording, and the parser's own words after it, so the
+        // reader learns which file will not read and why.
+        assert!(named[0].contains(wording), "{case}: {text}");
+        assert!(named[0].contains("unclosed table"), "{case}: {text}");
         assert!(!text.contains("pi-declared-twice"), "{case}: {text}");
+    }
+}
+
+/// A global manifest that will not read is a could-not-check line only
+/// where the duplicate check would have run. A scope that declares no Pi
+/// extension, and a directory that is not a kendex project at all, never
+/// reach it: reporting them unverifiable would fail every project on a
+/// machine whose global manifest is a schema behind, mid-upgrade.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_scope_the_duplicate_check_never_reaches_is_clean_under_an_unreadable_global_manifest() {
+    let rows = [
+        (
+            "a project manifest declaring no Pi extension",
+            Some("schema = 6\n\n[sources.cat]\npath = \"catalog\"\n"),
+        ),
+        ("a directory with no kendex.toml", None),
+    ];
+    for (case, project) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let root = home.join("dev/app");
+        fs::create_dir_all(root.join(".pi")).unwrap();
+        if let Some(project) = project {
+            write(&root.join("kendex.toml"), project);
+        }
+        write(&global_manifest_file(&home), BROKEN_GLOBAL);
+
+        let check = kendex(&home, &root, &["check", "--scope", "project"]);
+        let text = said(&check);
+        assert_eq!(check.status.code(), Some(0), "{case}: {text}");
+        assert!(!text.contains("global manifest"), "{case}: {text}");
+        assert!(!text.contains(SKIPPED_CHECK), "{case}: {text}");
     }
 }

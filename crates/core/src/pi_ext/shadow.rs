@@ -205,7 +205,9 @@ struct Declared {
     name: String,
     managed: PathBuf,
     version: Option<String>,
-    /// Every name the package may carry, current and earlier.
+    /// Every name the package may carry, current and earlier: the rename
+    /// family of the declared spelling, so a manifest declaring an earlier
+    /// name still meets a copy carrying the current one.
     names: Vec<String>,
     /// The managed copy's declared entry files, as `package_entries` keeps them.
     entries: BTreeSet<String>,
@@ -225,10 +227,7 @@ impl Declared {
             name: name.to_owned(),
             managed,
             version: package.and_then(|package| package.version),
-            names: super::all_names(name)
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
+            names: super::family(name).into_iter().map(str::to_owned).collect(),
             entries,
         })
     }
@@ -463,6 +462,30 @@ mod tests {
                 "bridge",
                 "pi-session-bridge",
                 "0.9.0",
+                &["./src/index.ts"],
+                true,
+            ),
+            // The manifest declares an earlier name and the copy carries
+            // the current one: the family is reached through the current
+            // name, so the declared spelling need not be it.
+            declaring(
+                "declared under an earlier name, a copy under the current one",
+                "pi-session-bridge",
+                "bridge",
+                BRIDGE,
+                "0.9.0",
+                &["./src/index.ts"],
+                true,
+            ),
+            // Two earlier names of one package, neither of which carries
+            // the other: a candidate set built off the declared spelling
+            // holds one name and misses the copy.
+            declaring(
+                "declared under one earlier name, a copy under another",
+                "pi-subagents",
+                "tmux",
+                "pi-subagents-tmux",
+                "0.4.0",
                 &["./src/index.ts"],
                 true,
             ),

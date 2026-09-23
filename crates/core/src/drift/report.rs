@@ -335,20 +335,18 @@ pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) ->
         .iter()
         .any(|scope| scope.canonical() != Scope::Global)
         .then(|| crate::manifest::load(&crate::manifest::manifest_path(env, &Scope::Global)));
-    // A global manifest that will not parse leaves every project's Pi
-    // declarations unjudged, which is one could-not-check line — and only
-    // where the global scope is not itself checked, because that scope's
-    // own manifest read names the same file with the same error.
-    if let Some(Err(error)) = &global_manifest
-        && !scopes
+    // A global manifest that will not parse leaves unjudged only the
+    // scopes that reach the duplicate check, so the line is pushed from
+    // that check and not from here. Once for the whole report: every
+    // project scope reads the same file, and a line per scope would count
+    // one file as that many items. Already reported where the run covers
+    // the global scope, because that scope's own manifest read names the
+    // same file with the same error.
+    let global_manifest_named = std::cell::Cell::new(
+        scopes
             .iter()
-            .any(|scope| scope.canonical() == Scope::Global)
-    {
-        sections.unknown.push(unknown(format!(
-            "global manifest: {}",
-            text::shown(&error.to_string())
-        )));
-    }
+            .any(|scope| scope.canonical() == Scope::Global),
+    );
     let mut oldest_age: Option<u64> = None;
     let many = scopes.len() > 1;
     // Every scope reads the same two Pi roots, so the scans are folded
@@ -374,6 +372,7 @@ pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) ->
             pi_roots: crate::settings::load(env)
                 .map(|settings| crate::pi_ext::session_roots(env, &settings, &scope)),
             global_manifest: global_manifest.as_ref(),
+            global_manifest_named: &global_manifest_named,
         };
         let scan = check_scope(&ctx, &mut sections, &mut oldest_age);
         scans.push((prefix, scan));

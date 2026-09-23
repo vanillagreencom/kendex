@@ -196,14 +196,17 @@ fn settleable(
         );
         // Two different questions. The first is package identity across
         // the paired roots, which folds the rename family. The second is
-        // one exact earlier spelling at this scope's own root, the
-        // left-over an older kendex installed, and must not fold it: the
-        // family includes the current name, under which a correctly
-        // installed package sits, and folding would skip every one.
+        // the family's OTHER spellings at this scope's own root, the
+        // left-over an older kendex installed under a name this one no
+        // longer uses. That probe excludes the declared spelling itself:
+        // a bare `duplicate_elsewhere` against the own root would match
+        // the copy the settle is for and skip every correctly installed
+        // package.
         if pi_ext::duplicate_elsewhere(name, other_roots).is_some()
-            || pi_ext::legacy_names(name)
+            || pi_ext::family(name)
                 .iter()
-                .any(|legacy| pi_ext::installed_under(root, legacy))
+                .filter(|other| **other != name)
+                .any(|other| pi_ext::installed_under(root, other))
         {
             continue;
         }
