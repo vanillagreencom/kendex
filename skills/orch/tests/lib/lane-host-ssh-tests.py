@@ -658,23 +658,59 @@ exec git "$@"
                                      "trap 'exit 0' TERM; while :; do sleep 1; done"],
                                     cwd=cwd, env=self.env)
 
+        holder = subprocess.Popen(
+            [sys.executable, "-c",
+             "import os,sys,time; p=os.fork(); "
+             "os.execl(sys.argv[1],sys.argv[1],'-c','exit 0') if p == 0 else "
+             "(print(p,flush=True),time.sleep(30))", str(self.bin / "claude")],
+            cwd=worktree, env=self.env, stdout=subprocess.PIPE, text=True)
+        zombie = int(holder.stdout.readline())
+        holder.stdout.close()
+        for _ in range(100):
+            state = Path(f"/proc/{zombie}/stat").read_text().rsplit(")", 1)[1].split()[0]
+            if state == "Z":
+                break
+            time.sleep(0.01)
+        self.assertEqual(state, "Z")
+
         lane = harness(worktree)
+        lane_two = harness(worktree)
         outside = harness(clone)
-        self.addCleanup(lambda: lane.poll() is None and lane.terminate())
-        self.addCleanup(lambda: outside.poll() is None and outside.terminate())
         try:
             stopped = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-            self.assertEqual(stopped.returncode, 0, stopped.stderr)
-            self.assertEqual(stopped.stdout, b"stopped item=TEST-1 processes=1\n")
+            self.assertEqual((stopped.returncode, stopped.stdout),
+                             (0, b"stopped item=TEST-1 processes=2\n"), stopped.stderr)
             lane.wait(timeout=2)
+            lane_two.wait(timeout=2)
             self.assertIsNone(outside.poll())
 
+            library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
+            library_original = library.read_text()
+            library.write_text(library_original + f'\nlane_owned_processes() {{ LANE_OWNED_PROCESS_PIDS="{zombie}"; }}\n')
+            raced = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+            self.assertEqual((raced.returncode, raced.stdout),
+                             (0, b"stopped item=TEST-1 processes=0\n"), raced.stderr)
+
+            original = self.script.read_text()
+            guard = '''  if ! current=$(readlink -- "/proc/$pid/cwd" 2>/dev/null); then
+    state=$(lane_process_state "$pid") || {
+      printf 'lane-host-ssh: stop-state-read-failed item=%s pid=%s\\n' "$4" "$pid" >&2
+      exit 1
+    }
+    if test -z "$state" || test "$state" = Z; then continue; fi'''
+            self.assertEqual(original.count(guard), 1)
+            self.script.write_text(original.replace(guard, guard.replace(
+                'if test -z "$state" || test "$state" = Z; then continue; fi', 'if false; then continue; fi')))
+            control = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+            self.assertEqual((control.returncode, b"stop-cwd-read-failed" in control.stderr), (1, True), control.stderr)
+
+            self.script.write_text(original)
+            library.write_text(library_original)
             inverse = self.call("stop", "--item", "TEST-1", "--harness", "codex")
             self.assertEqual((inverse.returncode, inverse.stdout),
                              (0, b"stopped item=TEST-1 processes=0\n"), inverse.stderr)
 
             lane = harness(worktree)
-            original = self.script.read_text()
             guard = 'lane_owned_processes "$1" "$2" || {'
             self.assertEqual(original.count(guard), 1)
             self.script.write_text(original.replace(guard, 'lane_owned_processes "$1" claude || {'))
@@ -683,16 +719,22 @@ exec git "$@"
             lane.wait(timeout=2)
         finally:
             self.script.write_text(original if 'original' in locals() else self.script.read_text())
-            for process in (lane, outside):
+            if 'library_original' in locals():
+                library.write_text(library_original)
+            for process in (lane, lane_two, outside, holder):
                 if process.poll() is None:
                     process.terminate()
-                    process.wait(timeout=2)
+                process.wait(timeout=2)
 
     def test_stop_refuses_an_unreadable_owned_process_set(self):
         self.assertEqual(self.create().returncode, 0)
         clone = Path(self.row["clone"])
         library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
-        library.write_text(library.read_text() + '\nlane_owned_processes() { return 2; }\n')
+        library_original = library.read_text()
+        library.write_text(library_original + '\nunset -f lane_process_state\n')
+        missing = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((missing.returncode, b"stop-operation-missing" in missing.stderr), (1, True), missing.stderr)
+        library.write_text(library_original + '\nlane_owned_processes() { return 2; }\n')
         refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
         self.assertEqual((refused.returncode, b"stop-process-read-failed item=TEST-1" in refused.stderr),
                          (1, True), refused.stderr)
@@ -717,6 +759,13 @@ exec git "$@"
                                    cwd=worktree, env=self.env)
         self.addCleanup(process.wait, 2)
         self.addCleanup(lambda: process.poll() is None and process.kill())
+        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/lane-state.sh"
+        library_original = library.read_text()
+        library.write_text(library_original + f'\nlane_owned_processes() {{ LANE_OWNED_PROCESS_PIDS="{process.pid}"; }}\nkill() {{ return 1; }}\n')
+        signal_refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((signal_refused.returncode, b"stop-signal-refused" in signal_refused.stderr),
+                         (1, True), signal_refused.stderr)
+        library.write_text(library_original)
         refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
         self.assertEqual((refused.returncode, b"stop-timeout item=TEST-1" in refused.stderr),
                          (1, True), refused.stderr)

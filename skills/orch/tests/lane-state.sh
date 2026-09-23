@@ -13,6 +13,8 @@
 #                to hand it, over both forms of recorded window
 #   § composer    whether the lane's live input line is empty, the one question
 #                a caller about to TYPE into the pane must ask
+#   § process ownership
+#                the host process table, zombie states and unreadable processes
 #   § agreement  one screen read by BOTH the watch and the wake. The pane rungs
 #                are shared, so above idle the two answer the same word; the
 #                idle rung falls through to the harness-process read that only
@@ -290,6 +292,106 @@ the padded Codex placeholder is still empty too|codex_padded|0
 a marker line matching neither composer measures nothing|bare_marker|2
 a screen with no marker at all measures nothing|blank|2
 COMPOSER_ROWS
+
+echo "=== lane-state § process ownership: host process reads ==="
+
+if proc_table_readable; then
+  new_case process-ownership
+  PROCESS_ROOT="$TMP_ROOT/process-root"
+  PROCESS_HARNESS="$PROCESS_ROOT/kz)harness"
+  PROCESS_ZOMBIE_FILE="$PROCESS_ROOT/zombie-pid"
+  PROCESS_FIXTURE_PIDS=""
+  mkdir -p "$PROCESS_ROOT"
+  PROCESS_REAL_BASH="$(command -v bash)" || exit 1
+  cp "$PROCESS_REAL_BASH" "$PROCESS_HARNESS"
+
+  python3 - "$PROCESS_HARNESS" "$PROCESS_ZOMBIE_FILE" <<'PY' &
+import os
+import sys
+import time
+child = os.fork()
+if child == 0:
+    os.execl(sys.argv[1], sys.argv[1], "-c", "exit 0")
+with open(sys.argv[2], "w", encoding="utf-8") as output:
+    output.write(f"{child}\n")
+time.sleep(30)
+PY
+  PROCESS_ZOMBIE_PARENT=$!
+  PROCESS_FIXTURE_PIDS="$PROCESS_ZOMBIE_PARENT"
+  (cd "$PROCESS_ROOT" && exec "$PROCESS_HARNESS" -c 'trap "exit 0" TERM; while :; do sleep 1; done') &
+  PROCESS_LIVE_ONE=$!
+  (cd "$PROCESS_ROOT" && exec "$PROCESS_HARNESS" -c 'trap "exit 0" TERM; while :; do sleep 1; done') &
+  PROCESS_LIVE_TWO=$!
+  python3 -c 'import os,time; open("/proc/self/comm","w").write("kz ) state\n"); time.sleep(30)' &
+  PROCESS_WEIRD=$!
+  PROCESS_FIXTURE_PIDS+=" $PROCESS_LIVE_ONE $PROCESS_LIVE_TWO $PROCESS_WEIRD"
+  process_fixture_cleanup() {
+    local fixture_pid
+    for fixture_pid in $PROCESS_FIXTURE_PIDS; do kill "$fixture_pid" 2>/dev/null || true; done
+    for fixture_pid in $PROCESS_FIXTURE_PIDS; do wait "$fixture_pid" 2>/dev/null || true; done
+  }
+  trap 'process_fixture_cleanup; rm -rf "$TMP_ROOT"' EXIT
+
+  PROCESS_ZOMBIE_PID=""
+  PROCESS_ZOMBIE_STATE=""
+  for _process_try in {1..100}; do
+    if [[ -s "$PROCESS_ZOMBIE_FILE" ]]; then
+      PROCESS_ZOMBIE_PID="$(<"$PROCESS_ZOMBIE_FILE")"
+      PROCESS_ZOMBIE_STATE="$(lane_process_state "$PROCESS_ZOMBIE_PID")" || PROCESS_ZOMBIE_STATE=error
+      [[ "$PROCESS_ZOMBIE_STATE" != Z ]] || break
+    fi
+    sleep 0.02
+  done
+  assert_eq "$PROCESS_ZOMBIE_STATE" Z "the state reader finds a zombie after the command name's last parenthesis"
+  assert_eq "$(lane_process_state "$PROCESS_WEIRD")" S \
+    "the state reader handles spaces and a closing parenthesis in the command name"
+
+  PROCESS_OWNED_RC=0
+  lane_owned_processes "$PROCESS_ROOT" 'kz)harness' || PROCESS_OWNED_RC=$?
+  if [[ "$PROCESS_LIVE_ONE" -lt "$PROCESS_LIVE_TWO" ]]; then
+    PROCESS_EXPECTED="$PROCESS_LIVE_ONE $PROCESS_LIVE_TWO"
+  else
+    PROCESS_EXPECTED="$PROCESS_LIVE_TWO $PROCESS_LIVE_ONE"
+  fi
+  assert_eq "$LANE_OWNED_PROCESS_PIDS rc=$PROCESS_OWNED_RC" "$PROCESS_EXPECTED rc=0" \
+    "a zombie is passed over while both live owned harnesses are returned"
+
+  PROCESS_ZOMBIE_CONTROL_RC=0
+  (
+    lane_process_state() { printf 'S\n'; }
+    lane_owned_processes "$PROCESS_ROOT" 'kz)harness'
+  ) || PROCESS_ZOMBIE_CONTROL_RC=$?
+  assert_eq "$PROCESS_ZOMBIE_CONTROL_RC" 2 \
+    "control: reading the zombie as live makes the ownership read fail"
+
+  PROCESS_FAIL_PS="$PROCESS_ROOT/fail-ps"
+  mkdir -p "$PROCESS_FAIL_PS"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 19' > "$PROCESS_FAIL_PS/ps"
+  chmod +x "$PROCESS_FAIL_PS/ps"
+  PROCESS_FAIL_PS_RC=0
+  (set +o pipefail; PATH="$PROCESS_FAIL_PS:$PATH"; lane_owned_processes "$PROCESS_ROOT" 'kz)harness') \
+    || PROCESS_FAIL_PS_RC=$?
+  assert_eq "$PROCESS_FAIL_PS_RC" 2 \
+    "a failed process-table read returns status 2 without caller pipefail"
+
+  PROCESS_MUTANT="$PROCESS_ROOT/mutant-lane-state.sh"
+  assert_eq "$(grep -cF -- '  raw="$(ps -A -o pid= -o ppid= -o comm=)" || return 2' "$SCRIPTS_DIR/lib/lane-state.sh")" 1 \
+    "control: the separate process-table read has one mutation point"
+  sed '/^  raw="$(ps -A -o pid= -o ppid= -o comm=)" || return 2$/,+2c\
+  table="$(ps -A -o pid= -o ppid= -o comm= | awk '"'"'{ pid = $1; ppid = $2; $1 = ""; $2 = ""; name = substr($0, 3); sub(/.*\\//, "", name); print pid, ppid, name }'"'"')" || return 2' \
+    "$SCRIPTS_DIR/lib/lane-state.sh" > "$PROCESS_MUTANT"
+  PROCESS_PS_CONTROL_RC=0
+  (source "$PROCESS_MUTANT"; set +o pipefail; PATH="$PROCESS_FAIL_PS:$PATH"; lane_owned_processes "$PROCESS_ROOT" 'kz)harness') \
+    || PROCESS_PS_CONTROL_RC=$?
+  assert_eq "$PROCESS_PS_CONTROL_RC" 0 \
+    "control: the pipeline hides a failed process-table read without pipefail"
+
+  process_fixture_cleanup
+  PROCESS_FIXTURE_PIDS=""
+  trap 'rm -rf "$TMP_ROOT"' EXIT
+else
+  printf '  skip  process ownership requires procfs\n'
+fi
 
 echo "=== lane-state § agreement: the watch and the wake on one screen ==="
 
