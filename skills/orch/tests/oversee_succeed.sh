@@ -821,9 +821,9 @@ claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
 NORATE="$TMP_ROOT/no-rate-trigger"
 script_copy "$NORATE"
 rm -f -- "${NORATE:?}/oversee-succeed"
-awk '$0 == "elif (( WALL_MINUTES > 0 )) && [[ \"$RATE_STATE\" == measured ]] \\" {
-       print "elif false; then"; getline; hits++; next } { print }
-     END { if (hits != 1) exit 1 }' "$SUCCEED" > "$NORATE/oversee-succeed"
+awk '{ condition=$0; sub(/^[[:space:]]*/, "", condition) }
+     condition == "elif (( WALL_MINUTES > 0 )) && [[ \"$RATE_STATE\" == measured ]] \\" { sub(/elif.*/, "elif false; then"); print; getline; hits++; next }
+     { print } END { if (hits != 1) exit 1 }' "$SUCCEED" > "$NORATE/oversee-succeed"
 chmod +x "$NORATE/oversee-succeed"
 stage_usage_pair ratecontrol 40 20 600
 new_caller "$UNDER_MARK"
@@ -992,6 +992,12 @@ run_succeed printline '' --print-launch-line -- --verbose
 check "--print-launch-line prints the caller's own line, judges no mark and launches nothing" \
   "$RC|$OUT|$(caller_open)|$(overseers)|$(recorded claude)" \
   "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --verbose '$BRIEF'|yes|0|none"
+
+new_caller "$UNDER_MARK"
+WALL_MINUTES=bad SUCCESSOR_ACCOUNTS=bad run_succeed printbadmarks '' --print-launch-line
+check "malformed trigger settings do not block a non-judging launch-line print" \
+  "$RC|$OUT|$(overseers)" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|0"
 
 # The preference names where a LATER successor goes; the printed line records
 # what THIS session runs, so it walks the caller entry whatever it says and

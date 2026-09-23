@@ -444,10 +444,6 @@ matches "$HANDOFF" '^[A-Za-z0-9._/-]+$' || die invalid-handoff "path=$HANDOFF"
 matches "$HEADROOM_TRIGGER" '^[0-9]{1,3}$' && (( 10#$HEADROOM_TRIGGER <= 100 )) \
   || die invalid-headroom-trigger "ORCH_OVERSEER_HEADROOM_PCT=$HEADROOM_TRIGGER"
 HEADROOM_TRIGGER=$((10#$HEADROOM_TRIGGER))
-matches "$WALL_MINUTES" '^[0-9]{1,9}$' || die invalid-wall-minutes "ORCH_OVERSEER_WALL_MINUTES=$WALL_MINUTES"
-matches "$SUCCESSOR_ACCOUNTS" '^[0-9]{1,9}$' || die invalid-successor-accounts "ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=$SUCCESSOR_ACCOUNTS"
-WALL_MINUTES=$((10#$WALL_MINUTES))
-SUCCESSOR_ACCOUNTS=$((10#$SUCCESSOR_ACCOUNTS))
 
 # ONE tagged mode, matched by name at every site below, so no site conjoins two
 # flags and reads a third combination as one of the two.
@@ -489,6 +485,12 @@ fi
 # it, and every read they rest on is the same read.
 JUDGES=0
 [[ "$MODE" != succeed && "$MODE" != check ]] || JUDGES=1
+if (( JUDGES )); then
+  matches "$WALL_MINUTES" '^[0-9]{1,9}$' || die invalid-wall-minutes "ORCH_OVERSEER_WALL_MINUTES=$WALL_MINUTES"
+  matches "$SUCCESSOR_ACCOUNTS" '^[0-9]{1,9}$' || die invalid-successor-accounts "ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=$SUCCESSOR_ACCOUNTS"
+  WALL_MINUTES=$((10#$WALL_MINUTES))
+  SUCCESSOR_ACCOUNTS=$((10#$SUCCESSOR_ACCOUNTS))
+fi
 # A pane of its own replaces the caller's, so only the modes reading the
 # caller's need $TMUX_PANE at all.
 [[ "$MODE" == dead || "$MODE" == walled || -n "${TMUX_PANE:-}" ]] \
@@ -635,11 +637,13 @@ fi
 # One line names one trigger. The level trigger leads when several fire on the
 # same reading because it also identifies the account that must not be reused.
 MARK_KIND=""
-if [[ "$CALLER_STATE" == at-trigger ]]; then
-  MARK_KIND=headroom
-elif (( WALL_MINUTES > 0 )) && [[ "$RATE_STATE" == measured ]] \
-     && matches "$WALL_PROJECTED" '^[0-9]+$' && (( WALL_PROJECTED <= WALL_MINUTES )); then
-  MARK_KIND=rate
+if (( JUDGES )); then
+  if [[ "$CALLER_STATE" == at-trigger ]]; then
+    MARK_KIND=headroom
+  elif (( WALL_MINUTES > 0 )) && [[ "$RATE_STATE" == measured ]] \
+       && matches "$WALL_PROJECTED" '^[0-9]+$' && (( WALL_PROJECTED <= WALL_MINUTES )); then
+    MARK_KIND=rate
+  fi
 fi
 
 # The context mark, which the account mark does not wait on: an overseer with
