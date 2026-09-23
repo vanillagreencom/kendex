@@ -171,8 +171,9 @@ ORCH_OVERSEER_LANES = "3"
 # hand.
 # ORCH_OVERSEER_SUCCESSION = "on"
 
-# How many checks in a row must find the overseer gone before it is
-# replaced. One check alone can catch a healthy session between programs.
+# How many checks in a row must find the overseer gone, or out of account
+# allowance, before it is replaced. One check alone can catch a healthy
+# session between programs.
 # ORCH_OVERSEER_DEAD_PASSES = "2"
 
 # The allowance left on an account at which the overseer hands over. No

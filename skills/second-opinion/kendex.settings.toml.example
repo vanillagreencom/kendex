@@ -8,8 +8,9 @@
 # model running this session.
 SECOND_OPINION_MODELS = "claude codex"
 
-# How many separate opinions one review collects. 2 or more sends the same
-# change to that many different models.
+# The most opinions one review collects. 2 or more sends the same change to
+# that many different models. With fewer eligible models, the review runs on
+# those it has and reports reduced coverage.
 SECOND_OPINION_COUNT = "1"
 
 # The model running this session, so a review never asks it to judge its own

@@ -3,6 +3,7 @@
 # Where this project keeps its decision records.
 
 # The folder holding the decision records and their index. Empty means the
-# skill searches the project for one. Set a path when the records sit
-# somewhere that search does not reach.
+# skill looks in the current folder and then each parent folder for
+# docs/decisions, decisions, doc/decisions or adr holding an INDEX.md. Records
+# kept anywhere else need their path set here.
 DECISIONS_DIR = ""

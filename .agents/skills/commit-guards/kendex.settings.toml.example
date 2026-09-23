@@ -68,8 +68,9 @@ COMMIT_GUARDS_MD_REFS_PATHS = "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL
 COMMIT_GUARDS_COMMENT_EXCLUDES = "tools/comments-excludes"
 
 # Which references a comment may not carry, separated by spaces. Dates and
-# bare numbers are checked as shipped. Issue ids are checked only once the
-# github package's issue-id pattern is set.
+# issue numbers written after a hash, such as #1234, are checked as shipped.
+# An ordinary number passes. Issue ids are checked only once the github
+# package's issue-id pattern is set.
 COMMIT_GUARDS_COMMENT_REFERENCE_TYPES = "issue-id issue-number date"
 
 # This project's own check, run last before a commit lands. Give the path to

@@ -164,7 +164,7 @@ ORCH_LANE_OUTPUT = "quiet"
 # SECOND_OPINION_<NAME>_MODEL (identity, when the CLI fronts another model).
 SECOND_OPINION_MODELS = "claude codex"
 
-# Opinions a review collects; 2+ unions distinct models on one diff.
+# Most opinions a review collects; 2+ unions distinct models on one diff.
 SECOND_OPINION_COUNT = "1"
 
 # Roster commands (identities claude / codex).

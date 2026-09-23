@@ -3,9 +3,10 @@
 # Which Linear team this project writes to, and how its issues are read and
 # created.
 
-# The team every Linear write targets. There is no default: while this is
-# empty, writes are refused rather than guessing which team inside the
-# workspace the key reaches.
+# The team a Linear write targets unless the command names another team.
+# Creating an issue, project, cycle or label can name one for that call.
+# There is no default: while this is empty, writes are refused rather than
+# guessing which team inside the workspace the key reaches.
 LINEAR_TEAM = "" # required
 
 # The letters in front of this team's issue numbers, as in PROJ-123. Help
