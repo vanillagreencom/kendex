@@ -169,6 +169,8 @@ step() {
     no-origin) git -C "$MAIN" remote remove origin ;;
     # A local branch beside main.
     local:*) git -C "$MAIN" branch "${1#local:}" main ;;
+    # A local branch pushed to origin and kept.
+    publish:*) git -C "$MAIN" push -q origin "${1#publish:}" ;;
     # The topic branch checked out in the main checkout itself.
     main-checkout) git -C "$MAIN" checkout -q -b topic ;;
     main-dirty)
@@ -405,6 +407,54 @@ while IFS= read -r row; do
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
 [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+
+# --- the surviving-branch advice ------------------------------------------------
+# The err column above pins the keyed record alone; the advice under it is
+# plain text, so these rows pin that tail, the script path aliased. `base` is
+# the one line --base works for; the `routes` tails name the routes for a
+# branch not on origin and carry no `pass --base` line, that row's control.
+advice_tail() {
+  sed -n '/^Inspect or monitor the existing work/,$p' "$ROOT/err" | sed -e '1d' -e "s|$WORKTREE_SCRIPT|<worktree>|g" | paste -s -d ';' -
+}
+
+advice_text() {
+  case "$1" in
+    base) printf 'To check out that branch intentionally, pass --base topic.' ;;
+    routes) printf "Branch 'topic' is not on origin, so --base cannot check it out. Either:;  push it first:            git push -u origin topic; then <worktree> create topic --base topic;  from the main checkout:   git switch topic; then <worktree> create topic --transfer topic" ;;
+    remote-routes) printf "Branch 'topic' is not on origin, so --base cannot check it out. Either:;  fetch it first:           git fetch second topic:topic;  push it first:            git push -u origin topic; then <worktree> create topic --base topic;  from the main checkout:   git switch topic; then <worktree> create topic --transfer topic" ;;
+    *) printf 'UNKNOWN-ADVICE-SPEC:%s' "$1" ;;
+  esac
+}
+
+# label|fixture|rc|advice
+ADVICE_ROWS='
+a local branch not on origin gets the push and transfer routes|local:topic|75|routes
+a local branch that is also on origin gets --base|local:topic publish:topic|75|base
+a branch only on origin gets --base|remote:topic|75|base
+a branch only on a reachable secondary remote gets the not-on-origin routes|flaky-remote second:topic|75|remote-routes
+'
+
+echo "=== the surviving-branch advice ==="
+while IFS= read -r row; do
+  [[ -n "$row" ]] || continue
+  IFS='|' read -r label fixture rc advice <<<"$row"
+  n=$((n + 1))
+  # shellcheck disable=SC2086
+  build "row-$n" $fixture
+  assert_eq "$(run "create topic" | sed 's/ out=.*//') $(advice_tail)" "rc=$rc $(advice_text "$advice")" "$label"
+done <<<"$ADVICE_ROWS"
+
+# Each not-on-origin route the advice names, followed: fetch and push from
+# the secondary remote to --base, and the main checkout to --transfer.
+build follow-push second:topic
+git -C "$MAIN" fetch -q second topic:topic
+git -C "$MAIN" push -q -u origin topic
+assert_eq "$(run "create topic --base topic")" "rc=0 out=<topic> err= main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-" \
+  "the push route from the not-on-origin advice ends in a worktree on the branch"
+build follow-transfer local:topic
+git -C "$MAIN" switch -q topic
+assert_eq "$(run "create topic --transfer topic")" "rc=0 out=<topic> err= main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-" \
+  "the main-checkout route from the not-on-origin advice ends in a worktree on the branch"
 
 # --- the concurrent claim -------------------------------------------------------
 # Two claimers both pass their read-only preliminary discovery (the gh stub
