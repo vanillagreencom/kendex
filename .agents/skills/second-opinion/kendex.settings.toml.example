@@ -1,49 +1,46 @@
 [env]
 
-# SECOND OPINION — cross-model review (second-opinion skill). Nothing below
-# is marked `# required`, so installing this skill writes nothing into
-# <project>/kendex.settings.toml. What an install writes, and when, is
-# kendex's docs/authoring/settings.md. One reviewer by default: the
-# highest-priority roster entry that is AVAILABLE and is NOT the model this
-# session runs. Full semantics: second-opinion SKILL.md.
+# Which outside models review a change, and how each one is run.
 
-# Priority-ordered roster, space/comma separated. Per entry:
-# SECOND_OPINION_<NAME>_CMD (claude and codex have defaults) and
-# SECOND_OPINION_<NAME>_MODEL (identity, when the CLI fronts another model).
+# The reviewers to try, best first, separated by spaces or commas. Each name
+# needs a command below saying how to run it. A review goes to the first
+# name that is installed and is not the model running this session.
 SECOND_OPINION_MODELS = "claude codex"
 
-# Opinions a review collects; 2+ unions distinct models on one diff.
+# How many separate opinions one review collects. 2 or more sends the same
+# change to that many different models.
 SECOND_OPINION_COUNT = "1"
 
-# The model THIS session runs — needed only where the harness cannot be
-# detected (Pi, OpenCode, Cursor, plain shells); "none" = no session model.
-# SESSION-SCOPED: leave it commented here and export it in the session — a
-# project-file value describes no single session and is refused.
+# The model running this session, so a review never asks it to judge its own
+# work. It is needed only where that cannot be detected. Set it in the
+# session itself: a value in this file describes no single session and is
+# refused.
 # SECOND_OPINION_CURRENT_MODEL = "claude"
 
-# Roster command for the claude identity.
+# The command that runs the claude reviewer.
 SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
 
-# Roster command for the codex identity.
+# The command that runs the codex reviewer.
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 
-# Example extra roster entry: add "pi-deepseek" to SECOND_OPINION_MODELS,
-# give it a command, declare the model it fronts.
+# How to add another reviewer: name it in the list above, give it a command,
+# and say which model that command reaches.
 # SECOND_OPINION_PI_DEEPSEEK_CMD = "pi -p --model deepseek/deepseek-v4-pro"
 # SECOND_OPINION_PI_DEEPSEEK_MODEL = "deepseek"
 
-# Seconds to wait for the external CLI.
+# Seconds to wait for a reviewer to answer before giving up on it.
 SECOND_OPINION_TIMEOUT = "1080"
 
-# Home for review/audit records written without --output; a directory the
-# script CREATES is seeded with a "*" .gitignore (a pre-existing one is
-# left alone — ignore it yourself).
+# Where review records are written when no output file is named. A folder
+# created here is set to stay out of git; one that already exists is left
+# alone, so keep it out of git yourself.
 SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 
-# Repo instruction files appended to the review prompt (repo-rule lens).
-# Empty disables.
+# This project's own instruction files, added to the review prompt so the
+# reviewer judges against this project's rules. Paths separated by spaces.
+# Empty sends the change with no project rules attached.
 SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
 
-# Force one target instead of walking the roster; a target running this
-# session's model is refused.
+# Always review with this one reviewer instead of working down the list. A
+# reviewer running this session's own model is refused.
 # SECOND_OPINION_TARGET = "claude"

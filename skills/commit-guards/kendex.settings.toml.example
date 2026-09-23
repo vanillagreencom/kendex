@@ -1,84 +1,75 @@
 [env]
 
-# COMMIT GUARDS — repo growth checks (commit-guards skill). Nothing below
-# is marked `# required`, so installing this skill writes nothing into
-# <project>/kendex.settings.toml. What an install writes, and when, is
-# kendex's docs/authoring/settings.md. Every COMMIT_GUARDS_* key, and the
-# default it ships, is in the skill's SKILL.md.
+# The checks that run before a commit lands, and the limit each one holds.
 
-# Which checks the batch runs, space separated. The full list and what each
-# one bans is in CHECKS.md; naming a subset is how a project takes the
-# family a lane at a time.
+# Which checks run, separated by spaces. The value shown here names every
+# check; delete a name to turn that one off for this project. What each name
+# refuses is in the skill's CHECKS.md.
 COMMIT_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names"
 
-# Kilobytes a single tracked file may reach before byte-ceiling refuses it.
-# Existing files already above it may hold or shrink, but may not grow.
-# Declared asset trees are exempted through COMMIT_GUARDS_BYTE_EXCLUDES.
+# Kilobytes one tracked file may reach before a commit carrying it is
+# refused. A file already over the limit may stay that size or shrink, but
+# never grow. Asset folders are carved out through the byte-excludes list.
 COMMIT_GUARDS_BYTE_CEILING_KB = "200"
 
-# The baseline byte-ceiling --all holds legacy oversized files to:
-# path<TAB>bytes rows, the object size each may keep. An absent file is an
-# empty baseline, so every oversized file fails the sweep.
+# The file recording which oversized files may stay, and the size each one
+# keeps. A missing file means no exemptions at all, so every oversized file
+# fails the sweep.
 COMMIT_GUARDS_BYTE_BASELINE = "tools/byte-ceiling-baseline"
 
-# The changelog-entries fragment tree: a space-separated list of shell globs
-# against the full repo-relative path (`*` crosses `/`). Each match must be
-# one Markdown list item under a Keep a Changelog section directory, within
-# COMMIT_GUARDS_CHANGELOG_CAP characters. Paths matching no tracked file are
-# a clean pass, so a project with no fragments needs no change here.
+# Where changelog fragments live, as path patterns separated by spaces. Each
+# matching file must be one short markdown list item under a changelog
+# section folder. A pattern matching nothing passes, so a project with no
+# fragments needs no change here.
 COMMIT_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md"
 
-# The collation destination. Ordinary checks permit edits to this document.
-# Empty disables collation.
+# The changelog those fragments are folded into at release time. Ordinary
+# checks allow edits to it. Empty turns the folding off.
 COMMIT_GUARDS_CHANGELOG_RECORD = "CHANGELOG.md"
 
-# Paths whose change obliges a changelog entry, checked by the commit-msg
-# lane over the staged file list: a commit touching one must also write a
-# fragment, or the record under COMMIT_GUARDS_CHANGELOG_COLLATE=1 (the
-# release commit collating them), or carry [no-changelog] in its subject.
-# Empty = rule off.
+# Which files oblige a changelog entry, as path patterns separated by
+# spaces. A commit touching one must add a fragment, fold the record, or
+# say [no-changelog] in its subject line. Empty turns the rule off.
 COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = ""
 
-# Without flags, touched runs md-format on changed documents. It runs md-refs
-# on all configured documents when any change is staged. All runs both checks
-# unconditionally. Explicit --staged retains each lane's own scope.
+# How much markdown the formatting and link checks read when nothing tells
+# them otherwise. "touched" judges only what the commit changes. "all"
+# judges every matching file in the project, every time.
+# values: touched | all
 COMMIT_GUARDS_MD_SCOPE = "touched"
 
-# The markdown md-format and md-reflow take under --all: space-separated
-# shell globs against the full repo-relative path. COMMIT_GUARDS_MD_EXCLUDES
-# (default tools/md-excludes, pattern<TAB>reason rows) excludes files from
-# these lanes and md-refs.
+# The markdown the formatting check reads in a full sweep, as path patterns
+# separated by spaces. The excludes list carves out files these patterns
+# would otherwise pull in.
 COMMIT_GUARDS_MD_PATHS = "*.md"
 
-# The documents md-refs judges: agent-loaded markdown and architecture docs.
-# Space-separated shell globs match the full repo-relative path; * crosses
-# directory separators.
+# The markdown whose links are checked, as path patterns separated by
+# spaces. The value shown here covers the documents agents load and the
+# architecture docs. A link that leads nowhere refuses the commit.
 COMMIT_GUARDS_MD_REFS_PATHS = "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
 
-# The source files md-refs reads for the same `<path>.md § Heading` citation
-# in their comment text, and in a TOML file's string literals. Same glob
-# dialect; the default is the extension list in CHECKS.md § comments.
+# The source files whose comments are checked for those same document
+# links, as path patterns separated by spaces. Empty uses the list of file
+# extensions the skill ships.
 # COMMIT_GUARDS_MD_REFS_SOURCE_PATHS = ""
 
-# The source files the comments lane reads, a space-separated list of shell
-# globs against the full repo-relative path (`*` crosses `/`), replacing the
-# default extension list in CHECKS.md § comments. Add the shapes an
-# extension cannot name (`hooks/* */scripts/*`): a file with no extension
-# takes the grammar its shebang names. Run the optional audit as described
-# in CHECKS.md § comments. Set GH_ISSUE_PATTERN (the github skill's key)
-# to the tracker's own key shape.
+# The source files the comments check reads, as path patterns separated by
+# spaces. A value replaces the list of file extensions the skill ships; add
+# the shapes an extension cannot name, such as scripts with no suffix.
 # COMMIT_GUARDS_COMMENT_PATHS = ""
 
-# The comments lane's exclusion list, pattern<TAB>reason rows naming the
-# generated and vendored trees whose comments are not this repository's.
+# The file listing the generated and vendored folders whose comments this
+# project does not own. Each row names a pattern and the reason it is
+# skipped.
 COMMIT_GUARDS_COMMENT_EXCLUDES = "tools/comments-excludes"
 
-# Reference classes the comments lane checks. Issue IDs need a configured
-# GH_ISSUE_PATTERN; dates and numeric references work without one.
+# Which references a comment may not carry, separated by spaces. Dates and
+# bare numbers are checked as shipped. Issue ids are checked only once the
+# github package's issue-id pattern is set.
 COMMIT_GUARDS_COMMENT_REFERENCE_TYPES = "issue-id issue-number date"
 
-# Repo-local check the pre-commit shim runs LAST: a repo-root-relative
-# executable following the family exit contract (0 clean, 1 violations,
-# else "could not complete"); any nonzero blocks the commit, and so does a
-# missing or non-executable value. Empty = no repo-local check.
+# This project's own check, run last before a commit lands. Give the path to
+# an executable at the project root: a non-zero result blocks the commit,
+# and so does a path that is missing or not executable. Empty runs no extra
+# check.
 COMMIT_GUARDS_PRE_COMMIT_LOCAL = ""

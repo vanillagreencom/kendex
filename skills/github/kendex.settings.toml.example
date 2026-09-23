@@ -1,36 +1,33 @@
 [env]
 
-# GITHUB — the review bot this repo trusts, its issue-id shape, and the
-# timeouts around `gh` (github skill). Nothing below is marked
-# `# required`, so installing this skill writes nothing into
-# <project>/kendex.settings.toml. What an install writes, and when, is
-# kendex's docs/authoring/settings.md. Tokens are not settings: keep
-# GH_TOKEN and friends in `.env.local`. Full reference: github README.md.
+# The review bot this project trusts, the shape of its issue ids, and how
+# long GitHub commands may take.
 
-# Bot login the sticky-verdict commands target. Empty means unconfigured:
-# the sticky-comment search still prefers review-bot[bot], but accepts a
-# review summary from any known review-bot login when that one posted none.
-# A value pins the login and turns that fallback off.
+# The login of the review bot whose verdict this project reads. Empty
+# accepts a review summary from any known review bot. A login here pins the
+# verdict to that one account and accepts no other.
 GH_BOT_USERNAME = ""
 
-# Regex extracting the issue id from a branch name. Empty leaves each reader
-# its own default, and they differ: `pr-issue` and `open-terminal` match
-# [A-Z]+-[0-9]+, `git-context` also matches issue-N. A value here replaces
-# all three, so set one only for a shape none of them covers.
+# A regular expression that pulls the issue id out of a branch name. Empty
+# lets each command use its own default, and those defaults differ. Set one
+# only for an issue id shaped like nothing they already match.
 GH_ISSUE_PATTERN = ""
 
-# Build/test command `pr-cross-check --verify` runs. Empty falls back to a
-# project-root `verify.sh`, then to auto-detected build stacks.
+# The build and test command the pull request cross-check runs. Empty makes
+# it look for a verify.sh at the project root, then fall back to whatever
+# build stack it can detect.
 GH_VERIFY_CMD = ""
 
-# Seconds a 1Password token resolution may take. Read to one decimal
-# place: 0 means no bound, and anything finer than a tenth is refused.
+# Seconds allowed for fetching a credential from 1Password. Raise it where
+# unlocking is slow. 0 removes the bound, and a step finer than a tenth of
+# a second is refused.
 KENDEX_GITHUB_OP_TIMEOUT = "10"
 
-# Seconds the `gh` auth preflight may take. Read to one decimal place:
-# 0 means no bound, and anything finer than a tenth is refused.
+# Seconds allowed for the GitHub sign-in check that runs before each
+# command. 0 removes the bound, and a step finer than a tenth of a second is
+# refused.
 KENDEX_GITHUB_AUTH_TIMEOUT = "10"
 
-# Seconds a single `pr-view` read may take. Read to one decimal place:
-# 0 means no bound, and anything finer than a tenth is refused.
+# Seconds allowed for one read of a pull request. 0 removes the bound, and a
+# step finer than a tenth of a second is refused.
 KENDEX_GITHUB_PR_VIEW_TIMEOUT = "30"
