@@ -697,12 +697,18 @@ check "--check-marks under both marks: the below-mark line, nothing launched" \
 # The projected wall is measured from the displaced cache sample. A fast burn
 # reaches the setting. A slow burn does not. Missing, close, and flat samples
 # are each reported as unmeasured rather than read as a safe rate.
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 stage_usage_pair ratefast 40 20 600
 new_caller "$UNDER_MARK"
 WALL_MINUTES=30 run_succeed ratefast '' --check-marks
 check "a sixty-point headroom burning two points a minute fires the rate trigger" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "0|oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=claude|0"
+new_caller "$UNDER_MARK"
+WALL_MINUTES=30 run_succeed ratefast ''
+check "a rate trigger moves off the caller account even when it has more headroom" \
+  "$RC|$(caller_open)|$(recorded claude)" \
+  "0|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
 stage_usage_pair rateslow 22 20 600
 new_caller "$UNDER_MARK"
 WALL_MINUTES=30 run_succeed rateslow '' --check-marks

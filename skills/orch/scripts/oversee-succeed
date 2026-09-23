@@ -857,7 +857,7 @@ pick_lane_dir() { # HARNESS [MODEL]
   local record rc=0 floor=() exclude=()
   PICKED_DIR=""
   [[ -n "$(lane_context_mark_model "$1" "${2:-}")" ]] || floor=(--binding-floor)
-  [[ "$MARK_KIND" != qualifying ]] || exclude=(--exclude-lane "$CALLER_CFG")
+  case "$MARK_KIND" in rate|qualifying) exclude=(--exclude-lane "$CALLER_CFG") ;; esac
   record="$("$SCRIPT_DIR/lanes" pick --harness "$1" --min-headroom-pct "$HEADROOM_TRIGGER" \
     ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?
   if (( rc == 3 )); then
@@ -939,7 +939,7 @@ for entry in ${ENTRIES[@]+"${ENTRIES[@]}"}; do
   # — the pane's own banner is what established the wall, and the usage figure
   # the account would be kept on was never taken.
   if [[ "$MODE" == succeed || "$MODE" == walled ]] \
-     && [[ "$entry" != caller || "$CALLER_STATE" != has-room || "$MARK_KIND" == qualifying ]]; then
+     && [[ "$entry" != caller || "$CALLER_STATE" != has-room || "$MARK_KIND" == rate || "$MARK_KIND" == qualifying ]]; then
     pick_lane_dir "$harness" "$pick_model" || rc=$?
     case "$rc" in
       0) ;;

@@ -75,7 +75,7 @@ Events, checked and reported in this order every pass:
                              naming the account and when its binding bucket
                              frees up goes to both channels and the repeat
                              stops
-  EVENT overseer-mark <pane> kind=<context|headroom> value=<N> mark=<N>
+  EVENT overseer-mark <pane> kind=<context|headroom|rate|qualifying> value=<N> mark=<N>
                              succession=<on|off>
                              the OVERSEER's own context use or account headroom
                              reached its own mark, judged by

@@ -1134,6 +1134,33 @@ table "a flat rate reports unmeasured rather than healthy|ORCH_LANE_DIRS=$H/.cla
 stage_cache 0
 table "one sample reports an unmeasured rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.projected_wall_minutes=null claude.usage_rate_state=one-sample"
 
+retain_rate_samples() { # LANES_BIN STATE
+  local bin="$1" state="$2" f
+  rm -rf -- "${state:?}"
+  claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
+    "$bin" list --harness claude --json --no-cache >/dev/null
+  f="$(find "$state/usage" -type f -name '*.json' -print -quit)"
+  jq --argjson at "$(( $(date +%s) - 600 ))" '.fetched_at = $at' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  claude_usage 40 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
+    "$bin" list --harness claude --json --no-cache >/dev/null
+  OUT="$(env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
+    "$bin" list --harness claude --json)"
+}
+
+retain_rate_samples "$LANES" "$TMP_ROOT/retained-rate"
+assert_eq "$(jq -r '.[0] | "\(.usage_rate_state) \(.usage_rate_pct_per_min) \(.projected_wall_minutes)"' <<<"$OUT")" \
+  "measured 2 30" "two real fetches retain the displaced first sample for the next cache read"
+
+lanes_mutant no-retained-rate lanes 'argjson p "$prior"' 'argjson p "null"'
+retain_rate_samples "$TMP_ROOT/no-retained-rate/lanes" "$TMP_ROOT/mutant-retained-rate"
+assert_eq "$(jq -r '.[0].usage_rate_state' <<<"$OUT")" "one-sample" \
+  "control: without persisted retention the next cache read loses the rate sample"
+
 echo "=== pick --json names the binding bucket and its reset ==="
 # claude's largest bucket is weekly, eclaude's the 5-hour session.
 standard_home home
@@ -1168,6 +1195,37 @@ table \
   "a model no scoped window names is judged on the session and weekly windows alone||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "without --model the binding bucket decides, as it always did||$MODELPICK|rc=3" \
   "--json names the shared bucket that decided and drops the chooser's working field||$MODELPICK --model claude-opus-5 --json|binding_bucket=weekly binding_resets_at=2026-08-01T06:00:00Z haswall=false"
+
+model_usage() { # FABLE OPUS
+  jq -nc --argjson f "$1" --argjson o "$2" '{
+    five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+    seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+    limits: [{kind: "weekly_scoped", percent: $f, resets_at: "2026-08-01T06:00:00Z",
+              scope: {model: {display_name: "Fable 5.1"}}},
+             {kind: "weekly_scoped", percent: $o, resets_at: "2026-08-01T06:00:00Z",
+              scope: {model: {display_name: "Opus"}}}]}'
+}
+stage_model_rate() { # CURRENT_FABLE CURRENT_OPUS PRIOR_FABLE PRIOR_OPUS
+  local f now
+  CACHE_STATE="$TMP_ROOT/model-rate-$1-$2-$3-$4"
+  model_usage "$1" "$2" > "$FIXTURE_DIR/.claude.json"
+  stage_cache 0
+  now="$(date +%s)"
+  f="$(find "$CACHE_STATE/usage" -type f -name '*.json' -print -quit)"
+  jq --argjson now "$now" --argjson current "$(model_usage "$1" "$2")" \
+    --argjson prior "$(model_usage "$3" "$4")" \
+    '.fetched_at = $now | .usage = $current
+     | .prior = {fetched_at: ($now - 600), usage: $prior}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+
+stage_model_rate 95 10 75 10
+table \
+  "a named Opus pick ignores the rising Fable bucket when it calculates rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|pick --lane $H/.claude --harness claude --model opus --json|usage_rate_state=not-increasing projected_wall_minutes=null" \
+  "a fleet Opus pick ignores the rising Fable bucket too|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|pick --harness claude --model opus --json|usage_rate_state=not-increasing projected_wall_minutes=null"
+stage_model_rate 95 80 95 60
+table \
+  "a named Opus pick reports its approaching wall when the larger Fable bucket is flat|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|pick --lane $H/.claude --harness claude --model opus --json|usage_rate_state=measured projected_wall_minutes=10" \
+  "a fleet Opus pick reports the same approaching wall|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|pick --harness claude --model opus --json|usage_rate_state=measured projected_wall_minutes=10"
 
 echo "=== pick --model judges shared and scoped buckets together ==="
 # The account-wide 5-hour and weekly windows wall every model. A model launch

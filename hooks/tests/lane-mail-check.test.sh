@@ -1129,6 +1129,8 @@ CONTEXT_MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=
 # judgement reports on its own line and this hook reads nowhere else.
 OFF_MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=500000 succession=off headroom=80"
 HEADROOM_MARK_LINE="oversee-succeed: mark-reached kind=headroom value=4 mark=10 succession=on account=eclaude resets=2026-07-27T06:00:00Z"
+RATE_MARK_LINE="oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=eclaude"
+QUALIFYING_MARK_LINE="oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on"
 BELOW_MARK_LINE="oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
 
 # An overseer session: a repository on a branch no mailbox is named for, so the
@@ -1241,6 +1243,20 @@ expect 2 "lane-mail-check: headroom=4" \
   "an overseer the judgement puts at its account mark is refused with the headroom it read"
 assert_eq "named=$(grep -cF -- 'the ORCH_OVERSEER_HEADROOM_PCT mark of 10' "$ERR_FILE") route=$(overseer_route)" \
   "named=1 route=1" "and the refusal names the judge's own setting and the succession"
+
+for mark_row in \
+  "rate|$RATE_MARK_LINE|30|ORCH_OVERSEER_WALL_MINUTES" \
+  "qualifying|$QUALIFYING_MARK_LINE|1|ORCH_OVERSEER_SUCCESSOR_ACCOUNTS"; do
+  IFS='|' read -r mark_kind mark_line mark_value mark_setting <<<"$mark_row"
+  new_overseer "overseer_$mark_kind"
+  judge_says "$mark_line"
+  # shellcheck disable=SC2046
+  stop_at "$TRANSCRIPT" false $(overseer_env)
+  expect 2 "lane-mail-check: $mark_kind=$mark_value" \
+    "an overseer at its $mark_kind mark is refused with the value it read"
+  assert_eq "setting=$(grep -cF -- "$mark_setting" "$ERR_FILE") route=$(overseer_route)" \
+    "setting=1 route=1" "and the refusal names the setting and succession route"
+done
 
 # What the marks cannot judge is reported and passed, never refused: an
 # overseer whose marks nothing could measure must still end a turn, exactly as

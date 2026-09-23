@@ -1329,20 +1329,12 @@ emit_lane() {
 		--argjson claims "$claims" --argjson age "$age" \
 		--argjson refreshable "$refreshable" \
 		--arg through "$through" --argjson b "$buckets" \
-		--argjson pb "$prior" --argjson elapsed "$elapsed" '
+		--argjson pb "$prior" --argjson elapsed "$elapsed" "$LANE_MODEL_JQ"'
 		($b // {}) as $b
 		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct] | map(select(. != null)) as $known
 		| (if ($status == "ok" and ($known | length) == 0) then "no_usage_data" else $status end) as $st
 		| ([{k: "weekly", p: $b.weekly_pct}, {k: "model", p: $b.model_pct}, {k: "session", p: $b.session_5h_pct}]
 		   | map(select(.p != null)) | sort_by(-.p) | first // null) as $bind
-		| ($bind.k // null) as $bk
-		| (if $bk == "session" then $pb.session_5h_pct
-		   elif $bk == "weekly" then $pb.weekly_pct
-		   elif $bk == "model" then $pb.model_pct else null end) as $prior_pct
-		| (if $bind == null or $prior_pct == null then null else ($bind.p - $prior_pct) end) as $delta
-		| (if $delta == null then "one-sample"
-		   elif $elapsed < 60 then "samples-too-close"
-		   elif $delta <= 0 then "not-increasing" else "measured" end) as $rate_state
 		| {
 		    alias: $alias,
 		    harness: $harness,
@@ -1361,14 +1353,14 @@ emit_lane() {
 		    binding_bucket: (if ($st == "ok") then $bind.k else null end),
 		    binding_resets_at: (if ($st == "ok") then ($b.resets[$bind.k] // null) else null end),
 		    usage_age_s: $age,
-		    usage_rate_state: $rate_state,
-		    usage_rate_pct_per_min: (if $rate_state == "measured" then ($delta * 60 / $elapsed) else null end),
-		    projected_wall_minutes: (if $rate_state == "measured" then (((100 - $bind.p) * $elapsed / ($delta * 60)) | ceil) else null end),
+		    _rate_prior: $pb,
+		    _rate_elapsed_s: $elapsed,
 		    resets: ($b.resets // {session: null, weekly: null, model: null}),
 		    detail: (if $st == "no_usage_data" and $detail == ""
 		             then "authenticated, but the usage response carried no session/weekly window"
 		             elif $detail == "" then null else $detail end)
-		  }'
+		  }
+		| with_lane_binding(""; false)'
 }
 
 
@@ -1726,6 +1718,7 @@ cmd_pick_lane() {
 	verdict="$(jq -r --argjson max "$max_pct" "$LANE_MODEL_JQ"'
 		.wall | wall_verdict($max)
 	' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
+	record="$(jq -c "$LANE_MODEL_JQ"' lane_public' <<<"$record")" || return 1
 	case "$verdict" in
 		room)
 			if [[ "$as_json" == "true" ]]; then printf '%s\n' "$record"; return 0; fi
@@ -1786,7 +1779,7 @@ cmd_pick() {
 		  | . + {verdict: (.wall | wall_verdict($max))} ]
 		| { chosen: ([ .[] | select(.verdict == "room") ]
 		              | sort_by([(.claims // 0), .wall]) | first
-		              | if . == null then null else del(.wall, .verdict) end),
+		              | if . == null then null else del(.wall, .verdict) | lane_public end),
 		    qualifying: ([ .[] | select(.verdict == "room") ] | length),
 		    walled: ([ .[] | select(.verdict == "walled") ] | length),
 		    unmeasured: ([ .[] | select(.verdict == "unmeasured") ] | length) }
@@ -2095,6 +2088,7 @@ case "$SUB" in
 				fi
 			fi
 		fi
+		out="$(jq -c "$LANE_MODEL_JQ"' map(lane_public)' <<<"$out")"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
 		;;
 	host-accounts)
@@ -2118,7 +2112,7 @@ case "$SUB" in
 		# "there is no answer to be had".
 		[[ "$accounts_rc" -eq 0 ]] || exit "$accounts_rc"
 		render_rc=0
-		out="$(jq -cs . <<<"$rows")" || render_rc=$?
+		out="$(jq -cs "$LANE_MODEL_JQ"' map(lane_public)' <<<"$rows")" || render_rc=$?
 		if [[ "$render_rc" -eq 0 && "$AS_JSON" != "true" ]]; then
 			out="$(jq -r '.[] | [.config_dir, .harness] | @tsv' <<<"$out")" || render_rc=$?
 		fi
