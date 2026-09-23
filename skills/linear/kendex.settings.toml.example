@@ -26,8 +26,11 @@ LINEAR_REQUIRE_REACH = ""
 
 # The shape read commands print in: "safe" is flat and easy to read, "table"
 # is for a person, "ids" prints identifiers alone, "compact" is a small
-# shape for routing, and "raw" prints Linear's own nesting. Each command
-# accepts its own subset and refuses the rest, so any other choice fails.
+# shape for routing, and "raw" prints Linear's own nesting. Not every
+# command prints every shape. Getting one issue, and listing an issue's
+# children or relations, refuse a shape they lack. Every other command
+# prints the safe shape in place of one it lacks, so a wrong choice here can
+# go unnoticed.
 LINEAR_FORMAT = "safe"
 
 # Seconds to wait before retrying a Linear call that was rate limited or

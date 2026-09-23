@@ -29,8 +29,9 @@ WORKTREE_RELATIVE_SYMLINKS = ""
 # spaces.
 WORKTREE_COPIES = ""
 
-# Scratch folders created in every new worktree, separated by spaces. They
-# stay out of git.
+# Scratch folders created empty in every new worktree, separated by spaces.
+# No git ignore rule is written for them, so list each one in the project's
+# .gitignore yourself.
 WORKTREE_MKDIRS = ""
 
 # The name on commits made in a worktree. Empty uses the signed-in user, and
