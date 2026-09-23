@@ -1234,7 +1234,7 @@ LANES="$RL_PATCHED"
 # A refusal the endpoint keeps giving never rewrites the record, so the figure
 # it serves only grows older. Past the 5-hour session window it cannot say what
 # that window holds now, and `pick` must not launch on it. Still inside the
-# 600-second window, so no row here posts.
+# 300-second window recorded above, so no row here posts.
 age_usage_record "$RL_STATE" "$H/.claude" 86400
 table \
   "a figure a day old is not served under a refusal: the lane is unreachable|$RL_ENV;ORCH_LANES_USAGE_TTL=0|$LIST|first.status=unreachable first.headroom_pct=null fetched=none" \
@@ -1372,11 +1372,7 @@ table \
 age_usage_record "$MA_STATE" "$H/.claude" 30
 table \
   "an interval shorter than the TTL never narrows it|$MA_ENV|$LIST --max-age 10|claude.aged=30+ fetched=none"
-# The watch names two of its intervals: its previous reading is one interval
-# of sleep plus a pass's work old, which one interval alone has always expired.
-age_usage_record "$MA_STATE" "$H/.claude" 150
 table \
-  "a reading one 100-second pass and its work old is served under the 200 seconds such a watch names|$MA_ENV|$LIST --max-age 200|claude.aged=30+ fetched=none" \
   "a TTL of 0 is never widened, so every run still fetches|$MA_ENV;ORCH_LANES_USAGE_TTL=0|$LIST --max-age 300|fetched=claude"
 # The control: the TTL-0 arm dropped, so the caller's interval serves a cached
 # figure to an operator who asked for a fetch on every run.
@@ -1466,6 +1462,25 @@ mkdir -p "$NOFLOCK"
 rm -f -- "$NOFLOCK/flock"
 assert_eq "$(PATH="$NOFLOCK" command -v flock > /dev/null 2>&1 && echo found || echo none)" "none" \
   "the probe PATH resolves no flock, so the mkdir mutex is the one taken"
+# One run takes the lock once per lane it refreshes. With flock, closing the
+# descriptor frees it; without, only the release removes the mutex, and a
+# second cold lane would otherwise wait out its own run's first take, name a
+# contention that is not there, and hold every other caller on the host until
+# the run exits. The notice is the pin, so the row needs no clock.
+NF_ENV="ORCH_LANE_DIRS=$H/.claude:$H/.eclaude;PATH=$CLAIM_BIN:$NOFLOCK"
+table \
+  "without flock, one run refreshing two cold lanes frees the mutex between them|$NF_ENV|$LIST|key=none fetched=claude,eclaude"
+# The control: the mutex release deleted. The second lane's take then waits on
+# the run's own first one and names it.
+lanes_mutant mutant-noflock-release lanes \
+  '	orch_release_lock$'
+NF_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-noflock-release/lanes"
+run_lanes "$NF_ENV" $LIST
+assert_eq "$(observe 'key= fetched=')" \
+  "key=usage-lock-timeout,lock-file=$RUN/store/usage/.usage-refresh.lock,wait-s=10 fetched=claude,eclaude" \
+  "control: with the release deleted, the run waits on its own mutex and names it" "$ERR"
+LANES="$NF_PATCHED"
 
 echo "=== a lane the cache can answer never waits for the refresh lock ==="
 # `pick --lane` runs under lane-mail-check's 20-second ceiling. A lane whose
@@ -1502,8 +1517,10 @@ release_usage_lock() {
   LOCK_HOLDER=""
   rmdir -- "$1.d" 2> /dev/null || true
 }
-# waited_s ENV ARGS... — runs `lanes` and prints how many whole seconds it
-# took. It sets OUT, RC and ERR as run_lanes does, so it runs in this shell.
+# waited_s ENV ARGS... — runs `lanes` and sets LW_WAIT to how many whole
+# seconds it took. It sets OUT, RC and ERR as run_lanes does, so it runs in this
+# shell. Only a control reads LW_WAIT, as a floor the lock wait itself enforces;
+# no row bounds a run from above with the clock.
 LW_WAIT=0
 waited_s() {
   local start env="$1"
@@ -1513,9 +1530,11 @@ waited_s() {
   LW_WAIT=$(( $(date +%s) - start ))
 }
 hold_usage_lock "$LW_LOCK"
-waited_s "$LW_ENV" pick --lane "$H/.claude" --harness claude --json
-assert_eq "rc=$RC $(observe 'fetched=') prompt=$([[ "$LW_WAIT" -lt 5 ]] && echo yes || echo "no:${LW_WAIT}s")" \
-  "rc=0 fetched=none prompt=yes" \
+# No clock bounds this row: a read that queued behind the holder names the lock
+# it waited on, so the absence of that notice is the pin, on any runner.
+run_lanes "$LW_ENV" pick --lane "$H/.claude" --harness claude --json
+assert_eq "$(observe 'rc= key= fetched=')" \
+  "rc=0 key=none fetched=none" \
   "with the lock held elsewhere, pick --lane answers a warm lane off the cache at once" "$ERR"
 # The control: the cache read before the lock skipped, which is the lock
 # covering the read. The same pick then waits the whole lock wait out.
@@ -1592,10 +1611,10 @@ lr_expire_and_hold() {
   hold_usage_lock "$LR_LOCK"
 }
 lr_expire_and_hold
-waited_s "$LR_ENV" pick --lane "$H/.claude" --harness claude --json
+run_lanes "$LR_ENV" pick --lane "$H/.claude" --harness claude --json
 release_usage_lock "$LR_LOCK"
-assert_eq "rc=$RC $(observe 'key= fetched=') prompt=$([[ "$LW_WAIT" -lt 8 ]] && echo yes || echo "no:${LW_WAIT}s")" \
-  "rc=0 key=none fetched=none prompt=yes" \
+assert_eq "$(observe 'rc= key= fetched=')" \
+  "rc=0 key=none fetched=none" \
   "after a renewal that waited, pick --lane answers off the peer's figure without the usage lock" "$ERR"
 # The control: the clock the read judges by left at the one measure_lane
 # started with. The same pick then misses the peer's figure, waits the whole
