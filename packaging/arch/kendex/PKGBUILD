@@ -44,7 +44,7 @@ depends=(
 # installed program needs.
 makedepends=('cargo' 'npm')
 source=("kendex-$pkgver.tar.gz::https://github.com/vanillagreencom/kendex/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+sha256sums=('9f4418337c828e886cf882b48a905bd58c8a0cf3944ec79134d9e3d53fc3e6d7')
 
 prepare() {
   cd "$srcdir/kendex-$pkgver"

@@ -49,6 +49,10 @@ Committing that bump to `main` is what publishes it; the workflows under § Publ
 
 Each Linux CLI `sha256` (one per architecture) is the same value in `kendex-cli.rb` and `arch/kendex-bin/PKGBUILD` — bump both together. `kendex-git` and `kendex-cli-git` need no checksum change; each `pkgver()` is computed at build time from the cloned commit.
 
+### The version restart, once
+
+Arch survives 1.0.0 following 5.0.1 on the `epoch=1` above. The formula's counterpart is `version_scheme 1`: brew compares the scheme before the number, so an installed 5.0.1 (scheme 0) shows in `brew outdated` and `brew upgrade kendex-cli` moves it; the scheme never goes down. A cask has no version scheme, and `auto_updates true` hands its upgrade to an app that renders no notice for a feed older than itself, so the cask's `caveats` block tells a 5.x install to `brew uninstall` the app, then the `kendex-cli` formula that leaves behind, and install the app again from the tap. `the_formula_declares_the_restart_as_a_new_version_scheme` and `the_cask_tells_a_5_x_install_to_reinstall_the_app_and_its_cli` in `crates/cli/tests/packaging_recipes.rs` hold both; drop the cask's block once no install is left on 5.x.
+
 ## Publishing
 
 Nothing pulls from this repository: two workflows push the recipes out, and a hand edit in the AUR or the tap is overwritten by the next run.

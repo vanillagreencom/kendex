@@ -10,7 +10,12 @@
 class KendexCli < Formula
   desc "Package manager for agents, skills, and hooks across AI coding tools"
   homepage "https://kendex.ai"
-  version "5.0.1"
+  version "1.0.0"
+  # 1.0.0 follows 5.0.1, so the version number restarts. brew compares
+  # this scheme before the number: an installed 5.x sits on scheme 0 and
+  # reads as outdated, so `brew upgrade` reaches it. The Arch recipes
+  # carry `epoch=1` for the same transition. Never lower it.
+  version_scheme 1
   license "MIT"
 
   # Materializing a catalog shells out to git, and kendex refuses on
@@ -22,22 +27,22 @@ class KendexCli < Formula
   on_macos do
     on_arm do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-aarch64-apple-darwin"
-      sha256 "e1a1d7199afc8ce08e7c9cb19ccc313f4489c3b256aa787de9310de7a3816c87"
+      sha256 "8f587d1af395f1c7952d7a80ed335ee1779e6a1f778b2e851f171badddcda192"
     end
     on_intel do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-x86_64-apple-darwin"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "66b4089fd48792ac093c04c47c958103f5c288caec15dff8f216948dd7285228"
     end
   end
 
   on_linux do
     on_intel do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-x86_64-unknown-linux-gnu"
-      sha256 "a3dee4c286614016198db72603fcf95de277ddf1a245da052dc815821f0e84c0"
+      sha256 "0d4ae9ffa82f3600d34a18e4a36009bae29ecd06ba7fa8fb0ef1d569d3a0936f"
     end
     on_arm do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-aarch64-unknown-linux-gnu"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "04e16bcc316d764c5d275d5f89689f8ba531f3c9d438e23adca24c5ad5bc6126"
     end
   end
 
@@ -46,6 +51,6 @@ class KendexCli < Formula
   end
 
   test do
-    assert_match "5.0.1", shell_output("#{bin}/kendex --version")
+    assert_match "1.0.0", shell_output("#{bin}/kendex --version")
   end
 end
