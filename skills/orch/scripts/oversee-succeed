@@ -666,7 +666,7 @@ fi
 
 # Capacity is the only fleet-wide read. Headroom, rate and context are already
 # decided, so a slow sweep cannot hide a mark this pane already reached.
-if (( JUDGES && SUCCESSOR_ACCOUNTS > 0 )) && [[ -z "$MARK_KIND" && "$CALLER_STATE" != at-trigger ]]; then
+if (( JUDGES )) && (( SUCCESSOR_ACCOUNTS > 0 )) && [[ -z "$MARK_KIND" && "$CALLER_STATE" != at-trigger ]]; then
   capacity_rc=0
   capacity_floor=()
   [[ -n "$(lane_context_mark_model "$CALLER_HARNESS" "$CALLER_MODEL")" ]] || capacity_floor=(--binding-floor)
