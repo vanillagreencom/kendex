@@ -136,16 +136,20 @@ Admin-credential route:
               <skills>/orch/scripts/approval-wait --resolve-mode, else
               approval-wait on PATH, prints approval, review or off. A mode that
               resolves to none of those three refuses with gate-mode-unreadable;
-              the route never guesses one. In approval mode the gate is met when
-              GitHub's reviewDecision is APPROVED, or an approving review stands
-              and none requests changes. In review mode reviewDecision carries
-              no verdict — such a repository requires no approval — so the gate
-              is the review-gate commit status on this exact head: its context
-              comes from REVIEW_GATE_CONTEXT through the review-gate engine's
-              settings library (default "Review gate"), state success is the met
-              gate, and any other state, an absent status, an unreadable status
-              page or an unresolvable context refuses naming what was read. In
-              off mode there is no review gate to read. --admin bypasses the
+              the route never guesses one. In every mode GitHub's own
+              reviewDecision is a gate: any value but APPROVED or empty, such
+              as REVIEW_REQUIRED on a base requiring approvals or a code-owner
+              review, refuses review-required. The mode decides only what else
+              is read. In approval mode an empty reviewDecision is met when an
+              approving review stands and none requests changes. In review
+              mode the gate is also the review-gate commit status on this
+              exact head: its context comes from REVIEW_GATE_CONTEXT through
+              the review-gate engine's settings library (default "Review
+              gate"), state success is the met gate, and any other state, an
+              absent status, an unreadable status page or an unresolvable
+              context refuses naming what was read. A base with no approval
+              rule answers an empty reviewDecision, so there the status alone
+              decides. In off mode nothing else is read. --admin bypasses the
               gate on the merge, so the route re-checks it here. A
               CHANGES_REQUESTED review blocks in every mode: the readiness check
               raises it before any of this runs.
@@ -355,7 +359,8 @@ exit_terminal_state() {
 # below gate the ref, its commits, its files or its reviews and put nothing in
 # the check rollup. `pull_request` and `copilot_code_review` are the review
 # gates among them: each demands a REVIEW, which arrives as a review and is
-# already carried by this command's approval and review-thread gates, never as
+# already carried by this command's review-thread gates and, on the
+# admin-credential route, its reviewDecision gate in every gate mode, never as
 # a check on the head. Every other type — `workflows`, `code_scanning`,
 # `code_quality`, `code_coverage` and whatever GitHub adds next — gates the
 # merge on a check result whose context the rule never names, so naming a
@@ -852,14 +857,17 @@ admin_change_class() {
     printf '%s' "${answer#change_class=}"
 }
 
-# The repository's reviewer-gate mode, from the one component that derives it.
-# A repository in review mode requires no approving review, so GitHub's
-# reviewDecision is empty on every pull request there and reading it as an
-# unmet approval would refuse each one. The mode is resolved from the checkout
-# this command runs in, not from the pull request's repository, so an admin
-# merge driven from the wrong checkout is a refusal rather than a silent
-# wrong-mode judgement. The route never guesses a mode and never defaults one:
-# an answer this function cannot produce is refused by its caller.
+# The reviewer-gate mode of the checkout this command runs in, from the one
+# component that derives it. A base with no approval rule answers an empty
+# reviewDecision on every pull request, so an approval-mode reading of that
+# emptiness would refuse each one on a repository that gates on the review-gate
+# status instead. The mode belongs to the checkout, not to the pull request's
+# repository: gh honours GH_REPO when it is set, so a run from another checkout
+# with GH_REPO set reads the right pull request and judges it under that
+# checkout's mode. Only an unset GH_REPO, the invocation oversee-events.md
+# prescribes, makes a wrong checkout refuse, at the head check. The route never
+# guesses a mode and never defaults one: an answer this function cannot
+# produce is refused by its caller.
 admin_gate_mode() {
     local resolver="$SCRIPT_DIR/../../../orch/scripts/approval-wait"
     if [ ! -x "$resolver" ]; then
@@ -890,14 +898,18 @@ admin_review_gate_context() {
     )
 }
 
-# The approval-mode review reading: GitHub's own review decision, and nothing
-# else. reviewDecision is read directly rather than inferred from run_checks'
-# not_approved warning: run_checks suppresses that warning whenever any latest
-# review is APPROVED, so a base needing two approvals with one present reports
-# reviewDecision=REVIEW_REQUIRED yet no warning. Only an empty reviewDecision
-# (no server-side review requirement) falls back to that single-approval
-# signal.
-admin_review_approval() {
+# GitHub's server-side review verdict, a gate in every mode: the classic and
+# ruleset gate readers below skip a required-approvals or code-owner rule on
+# the premise that this function re-checks it, and --admin bypasses it on the
+# merge. The mode decides only what stands in for an empty reviewDecision, the
+# answer of a base with no approval rule. reviewDecision is read directly
+# rather than inferred from run_checks' not_approved warning: run_checks
+# suppresses that warning whenever any latest review is APPROVED, so a base
+# needing two approvals with one present reports reviewDecision=REVIEW_REQUIRED
+# yet no warning. In approval mode an empty reviewDecision falls back to that
+# single-approval signal; in review and off mode it is met here, and review
+# mode then reads the review-gate status.
+admin_review_decision() {
     local warn_keys="$1" review_decision
     review_decision=$(jq -r '.review // ""' <<<"$ADMIN_CHECK_JSON") || review_decision=""
     case "$review_decision" in
@@ -905,8 +917,8 @@ admin_review_approval() {
         ADMIN_REVIEW=ok
         ;;
     "")
-        case " $warn_keys " in
-        *" not_approved "*)
+        case "$ADMIN_GATE_MODE: $warn_keys " in
+        "approval: "*" not_approved "*)
             ADMIN_REVIEW=required
             admin_refuse review-required "the review gate is not met: $(jq -r '[.warnings[] | select(startswith("not_approved:"))] | join("; ")' <<<"$ADMIN_CHECK_JSON")"
             return 1
@@ -922,14 +934,13 @@ admin_review_approval() {
     esac
 }
 
-# The review-mode review reading: the review gate's own commit status on this
-# exact head. A review-mode repository carries no approving-review requirement,
-# so reviewDecision and the not_approved warning say nothing about the gate and
-# are not read here; the gate's verdict lives in the status the review-gate
-# engine writes. The projection is the engine's documented one: the list
-# endpoint answers newest-first, so the first row carrying the context is the
-# current verdict, and a page that is not a status page is a broken read rather
-# than an empty one.
+# The review-mode reading beside GitHub's verdict: the review gate's own
+# commit status on this exact head, where the review-gate engine writes the
+# gate's verdict. The not_approved warning is not read in this mode. The
+# projection is the engine's documented one: the list endpoint answers
+# newest-first, so the first row carrying the context is the current verdict,
+# and a page that is not a status page is a broken read rather than an empty
+# one.
 admin_review_gate_status() {
     local head="$1" context pages state
     if ! context=$(admin_review_gate_context) || [ -z "$context" ]; then
@@ -1119,7 +1130,8 @@ CLASSIC_GATE_JQ='to_entries[] | ((.key | if . == "" then "-" else . end) + "\t" 
 # Eight keys are skipped, for three reasons. The route re-checks the same
 # requirement elsewhere: required_status_checks through the readiness check's
 # required contexts, required_pull_request_reviews through GitHub's
-# reviewDecision. Or the key removes the bypass rather than being bypassed:
+# reviewDecision, which admin_review_decision reads in every gate mode. Or the
+# key removes the bypass rather than being bypassed:
 # enforce_admins subjects the owner credential to the very settings --admin
 # would skip, so GitHub refuses the merge outright instead of letting one
 # through. Or the key cannot hold a pull request merge into an existing
@@ -1191,7 +1203,8 @@ admin_open_route() {
 
 # Every gate the merge itself would enforce, evaluated against the live PR:
 # the readiness check (conflicts, unresolved threads, required contexts on this
-# exact head), the review gate under the repository's own gate mode, and the
+# exact head), GitHub's review verdict plus the review gate under the
+# reviewer-gate mode of the checkout this route runs in, and the
 # base branch's ruleset gate types. Each refusal writes its own verdict field, so the record names the
 # gate that decided. Called once from the preflight, and once more from the
 # merge step when a dequeue or a disarm actually ran: those mutations take
@@ -1228,26 +1241,23 @@ admin_gates() {
     # rollup's silence is not readiness.
     local warn_keys
     warn_keys=$(jq -r '[.warnings[]? | split(":")[0]] | join(" ")' <<<"$ADMIN_CHECK_JSON") || warn_keys=""
-    # Which reading answers the review gate is the repository's gate mode, and
-    # the case below is the one judge of the resolver's answer: an absent
-    # resolver, a failed one and a word outside the three modes all land in the
-    # last arm, which refuses rather than pick a mode. Every other gate stands
-    # unchanged in all three.
+    # GitHub's review verdict gates in every mode; the reviewer-gate mode of
+    # the checkout this route runs in decides what else answers the review
+    # gate. The case below is the one judge of the resolver's answer: an
+    # absent resolver, a failed one and a word outside the three modes all
+    # land in the last arm, which refuses rather than pick a mode. Every other
+    # gate stands unchanged in all three.
     local gate_mode
     gate_mode=$(admin_gate_mode) || gate_mode=""
     case "$gate_mode" in
-    approval)
-        ADMIN_GATE_MODE=approval
-        admin_review_approval "$warn_keys" || return 1
+    approval | off)
+        ADMIN_GATE_MODE=$gate_mode
+        admin_review_decision "$warn_keys" || return 1
         ;;
     review)
         ADMIN_GATE_MODE=review
+        admin_review_decision "$warn_keys" || return 1
         admin_review_gate_status "$ADMIN_HEAD" || return 1
-        ;;
-    off)
-        # A reviewer-less repository: no review gate exists to read.
-        ADMIN_GATE_MODE=off
-        ADMIN_REVIEW=ok
         ;;
     *)
         ADMIN_REVIEW=mode-unreadable
