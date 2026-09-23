@@ -1,4 +1,4 @@
-import { type AssistantMessage, type AssistantMessageEventStream, type Context, getCurrentSystemPrompt, getCurrentTools, type Model, type SimpleStreamOptions, type Tool } from "@earendil-works/pi-ai";
+import { type AssistantMessage, type AssistantMessageEventStream, type Context, type Model, type SimpleStreamOptions, type Tool } from "@earendil-works/pi-ai";
 import * as piAi from "@earendil-works/pi-ai";
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createSdkMcpServer, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -75,7 +75,7 @@ export { resolveConfiguredEffort } from "./query-options.js";
 export { classifyClaudeExecutableBytes, preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics, wrapClaudeSpawnErrorForSdk, type ClaudeExecutableFileType, type ClaudeExecutablePreflightResult } from "./claude-executable.js";
 export { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState, INTEGRITY_CUSTOM_TYPE, appendIntegrityEntry, reportToolResultMismatch } from "./bridge-state.js";
 export { CONNECTOR_CALL_CUSTOM_TYPE, connectorResultByteSize, flushConnectorCallAudit, recordConnectorCallResult, setConnectorCallAuditSink, type ConnectorCallAuditData, type ConnectorCallAuditSink, type ConnectorCallOutcome } from "./connector-audit.js";
-export { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, connectorMcpServers, connectorDeclarationsDisabled, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, connectorBuiltinAllowlistHook, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, denyAllToolsHook, isAllowlistedConnectorSessionTool, isChildExecutedTool, isChildInternalTool, isConnectorTool, isConnectorWriteTool, settingSourcesForQuery, toolIsolationForQuery } from "./connectors.js";
+export { ALWAYS_DENIED_BUILTIN_TOOLS, CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, connectorMcpServers, connectorDeclarationsDisabled, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, SUBSTITUTED_BUILTIN_TOOLS, connectorBuiltinAllowlistHook, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, denyAllToolsHook, isAllowlistedConnectorSessionTool, isChildExecutedTool, isChildInternalTool, isConnectorTool, isConnectorWriteTool, settingSourcesForQuery, toolIsolationForQuery } from "./connectors.js";
 export { cancelScheduledSessionPersistence, conversationFingerprint, conversationFingerprintsMatch, planIncrementalPromptBatch, restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from "./session-persistence.js";
 export { NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, buildNativeProvider, claudeAuthSourceLabel, supportsNativeProvider } from "./native-provider.js";
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_BACKOFF_HINT_MS, STREAM_IDLE_TIMEOUT_ENV, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, streamIdleTimeoutMsFromEnv, type StreamIdleTimeoutInfo, type StreamIdleWatchdog, type StreamIdleWatchdogState } from "./stream-idle-watchdog.js";
@@ -107,6 +107,13 @@ const newAssistantMessageEventStream: () => AssistantMessageEventStream =
 	typeof _piAi.createAssistantMessageEventStream === "function"
 		? _piAi.createAssistantMessageEventStream
 		: () => new _piAi.AssistantMessageEventStream();
+// Read off the host namespace, never named-imported: the bundle externalizes
+// pi-ai, so a named import of an export a pre-0.86 host lacks fails module
+// linking and takes the whole extension down before anything can report it.
+// supportsNativeProvider is the check that reports it instead, and refuses to
+// register the provider when either is missing.
+const getCurrentTools = (messages: Context["messages"]): Tool[] => _piAi.getCurrentTools(messages);
+const getCurrentSystemPrompt = (messages: Context["messages"]): string => _piAi.getCurrentSystemPrompt(messages);
 
 // --- Constants ---
 
@@ -329,19 +336,27 @@ export function resolveMcpTools(context: Context, excludeToolName?: string): {
 	return { mcpTools, customToolNameToSdk, customToolNameToPi };
 }
 
-// The fail-soft notice fires at most once per process: the condition is a
-// provider-contract mismatch that holds for every turn of the run, so a
-// per-query toast would repeat on each one while telling the reader nothing new.
-let reportedMissingBridgedTools = false;
+// The notice fires at most once per process: a turn that resolves no pi tools is
+// a provider-contract or configuration mismatch that holds for every turn of the
+// run, so a per-query toast would repeat while telling the reader nothing new.
+let reportedToolBridgeGap = false;
 
-/** Announce that pi's tools did not reach the child and Claude Code's own are in use. */
-export function reportMissingBridgedTools(messageCount: number): void {
-	debug(`provider: no bridged custom-tools server for a ${messageCount}-message context; built-in isolation skipped`);
-	if (reportedMissingBridgedTools) return;
-	reportedMissingBridgedTools = true;
-	appendIntegrityEntry("bridged_tools_absent", { messageCount });
+/**
+ * Announce that a user turn resolved no pi tools, and what the child was left
+ * with. Without connectors the substitution half of the built-in denylist is
+ * dropped, so the child falls back to Claude Code's own file and shell tools;
+ * with connectors those stay denied as a security boundary and the turn has
+ * only the account's connector tools.
+ */
+export function reportToolBridgeGap(messageCount: number, builtinIsolationApplied: boolean): void {
+	debug(`provider: no bridged custom-tools server for a ${messageCount}-message context; built-in isolation ${builtinIsolationApplied ? "kept" : "dropped"}`);
+	if (reportedToolBridgeGap) return;
+	reportedToolBridgeGap = true;
+	appendIntegrityEntry("bridged_tools_absent", { messageCount, builtinIsolationApplied });
 	safeNotify(
-		"Pi Claude found no pi tools to bridge, so this session uses Claude Code's own file and shell tools. " +
+		(builtinIsolationApplied
+			? "Pi Claude found no pi tools to bridge. Claude Code's own file and shell tools stay disabled in a connectors session, so this turn has only the account's connector tools. "
+			: "Pi Claude found no pi tools to bridge, so this session uses Claude Code's own file and shell tools instead. ") +
 		"Usually a pi version whose provider contract the bridge has not adopted yet; update @vanillagreen/pi-claude-bridge.",
 		"warning",
 	);
@@ -608,6 +623,15 @@ export function onPiHistoryReplaced(event: string): void {
 	}
 }
 
+/**
+ * Whether pi drives this request itself rather than a user turn: its compaction
+ * and branch-summary one-shots, which it marks with `cacheRetention: "none"`.
+ * Such a request carries no tools by design, and nothing about it is retained.
+ */
+function isPiDrivenOneShot(options?: SimpleStreamOptions): boolean {
+	return options?.cacheRetention === "none";
+}
+
 /** Provider entry point. Pi calls this for each prompt and each tool result.
  *  Two cases: tool result delivery (active query) or fresh query. Exported for
  *  the rotation-stream unit tests, which drive it with a fake SDK factory. */
@@ -620,11 +644,11 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// The lane this request runs in, for callbacks that fire OUTSIDE it: an
 	// AbortSignal listener runs in the aborter's async context, not ours.
 	const laneId = currentRequestLaneId();
-	// Pi marks its compaction and branch-summary one-shots with cacheRetention
-	// "none" and a fresh sessionId per call; no session_shutdown ever prunes
-	// those lanes. Map the hint onto lane lifetime: nothing about this request
-	// is retained once it settles.
-	const ephemeralLane = laneId !== undefined && options?.cacheRetention === "none";
+	// Pi's compaction and branch-summary one-shots carry a fresh sessionId per
+	// call and no session_shutdown ever prunes their lanes, so the hint maps onto
+	// lane lifetime: nothing about this request is retained once it settles.
+	const piOneShot = isPiDrivenOneShot(options);
+	const ephemeralLane = laneId !== undefined && piOneShot;
 	const releaseEphemeralLane = (): void => {
 		if (!ephemeralLane) return;
 		deleteSharedSessionLane(laneId);
@@ -1071,10 +1095,11 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		resumeSessionId,
 		mcpServers,
 		claudeExecutable,
-		ephemeralOneShot: options?.cacheRetention === "none",
+		piOneShot,
 	});
 	const { queryOptions } = built;
-	if (!built.bridgedToolsPresent) reportMissingBridgedTools(context.messages.length);
+	// A one-shot has no tools by design, so its empty set is not a gap to report.
+	if (!built.bridgedToolsPresent && !piOneShot) reportToolBridgeGap(context.messages.length, built.builtinIsolationApplied);
 
 	debug("provider: fresh query",
 		`model=${queryModel.id} requested=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,

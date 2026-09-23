@@ -1,4 +1,4 @@
-// Native pi >=0.81 provider construction (bridge 2.x).
+// Native provider construction against the host pi-ai namespace.
 //
 // Bridge 1.x could not register unconditionally: pi's legacy
 // ModelRegistry.hasConfiguredAuth() treated the dummy `apiKey: "not-used"` as
@@ -25,12 +25,22 @@ import { hasClaudeCredentials } from "./auth-presence.js";
 import { PROVIDER_ID } from "./convert.js";
 
 export const NATIVE_PROVIDER_UNSUPPORTED_MESSAGE =
-	"Claude bridge 2.x requires pi >= 0.81 (native provider API). Upgrade the host pi, or pin @vanillagreen/pi-claude-bridge@1.x.";
+	"Claude bridge 4.x requires pi >= 0.86 (native provider API and the transcript prompt/tool helpers). Upgrade the host pi, or pin @vanillagreen/pi-claude-bridge@3.x.";
 
-/** pi-ai gained createProvider in 0.81 alongside the object-form
- *  registerProvider; its presence is the capability signal for both. */
+/**
+ * Whether the host pi-ai is new enough for this bridge.
+ *
+ * Named exports carry the floor: `createProvider` arrived in 0.81 with the
+ * object-form registerProvider, and `getCurrentTools` / `getCurrentSystemPrompt`
+ * in 0.86 with the normalized transcript that now carries the system prompt and
+ * the tool declarations. The bridge reads all three through the host namespace
+ * rather than a static named import, because the bundle externalizes pi-ai and a
+ * named import of a missing export fails module linking — which takes the whole
+ * extension down before this check can report anything.
+ */
 export function supportsNativeProvider(piAi: unknown): boolean {
-	return typeof (piAi as { createProvider?: unknown })?.createProvider === "function";
+	const host = piAi as Record<string, unknown> | undefined;
+	return ["createProvider", "getCurrentTools", "getCurrentSystemPrompt"].every((name) => typeof host?.[name] === "function");
 }
 
 /** Auth source label for pi's status UI, chosen by the same existence-only

@@ -16,6 +16,7 @@ import { join } from "node:path";
 import {
 	buildNativeProvider,
 	claudeAuthSourceLabel,
+	NATIVE_PROVIDER_UNSUPPORTED_MESSAGE,
 	supportsNativeProvider,
 } from "../src/native-provider.ts";
 import * as piAi from "@earendil-works/pi-ai";
@@ -38,15 +39,38 @@ const MODELS = [
 	{ id: "claude-haiku-4-5", name: "Claude Haiku 4.5", reasoning: false, input: ["text"], contextWindow: 200000, maxTokens: 64000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
 ];
 
+// A pi-ai namespace carrying every export the probe requires, so a row can
+// remove exactly one and nothing else.
+const supportedHost = () => ({ createProvider() {}, getCurrentTools() {}, getCurrentSystemPrompt() {} });
+
 describe("supportsNativeProvider", () => {
-	it("detects the installed pi-ai (>=0.81) as supported", () => {
+	it("detects the installed pi-ai as supported", () => {
 		assert.equal(supportsNativeProvider(piAi), true);
 	});
 
-	it("rejects hosts without createProvider (pi-ai 0.80.x shape)", () => {
-		for (const host of [{}, undefined, { createProvider: "nope" }]) {
+	it("rejects a host missing any export the bridge reads off the namespace", () => {
+		// Each of these is read through the namespace rather than named-imported,
+		// because a named import of a missing export fails module linking and takes
+		// the whole extension down before this probe can report anything.
+		for (const name of ["createProvider", "getCurrentTools", "getCurrentSystemPrompt"]) {
+			const host = supportedHost();
+			delete host[name];
+			assert.equal(supportsNativeProvider(host), false, `missing ${name}`);
+			assert.equal(supportsNativeProvider({ ...supportedHost(), [name]: "nope" }), false, `${name} not callable`);
+		}
+		assert.equal(supportsNativeProvider(supportedHost()), true, "the control host is otherwise accepted");
+	});
+
+	it("rejects a host that is not a namespace at all", () => {
+		for (const host of [{}, undefined]) {
 			assert.equal(supportsNativeProvider(host), false, JSON.stringify(host) ?? "undefined");
 		}
+	});
+});
+
+describe("NATIVE_PROVIDER_UNSUPPORTED_MESSAGE", () => {
+	it("names the pi floor a reader has to act on", () => {
+		assert.match(NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, /pi >= 0\.86/);
 	});
 });
 

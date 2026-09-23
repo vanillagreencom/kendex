@@ -1,17 +1,17 @@
 /**
- * The built-in isolation is a TRADE, and this is where the two halves have to
- * agree: Claude Code's own file, shell and web tools are removed only because
- * pi's arrive on the bridged `custom-tools` MCP server instead. A query that
- * carries the denylist and an empty `tools` allowlist WITHOUT that server
- * reaches the model with no tools at all, silently — the state a pi-ai contract
- * change put every session into (kendex#2749).
+ * Part of the built-in denylist is a TRADE, and this is where the two halves
+ * have to agree: Claude Code's own file, shell and web tools are removed only
+ * because pi's arrive on the bridged `custom-tools` MCP server instead. A query
+ * that carries that half WITHOUT the server reaches the model with no tools at
+ * all, silently — the state a pi-ai contract change put every session into
+ * (kendex#2749). The rest of the denylist was never traded and never comes back.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DISALLOWED_BUILTIN_TOOLS } from "../src/index.ts";
+import { ALWAYS_DENIED_BUILTIN_TOOLS, DISALLOWED_BUILTIN_TOOLS, SUBSTITUTED_BUILTIN_TOOLS } from "../src/index.ts";
 import { buildClaudeQueryOptions } from "../src/query-options.ts";
 
 const model = { id: "claude-haiku-4-5", api: "claude-bridge", provider: "pi-claude", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
@@ -39,47 +39,74 @@ const build = (input) => {
 	}
 };
 
-describe("bridge query options: the built-in isolation follows the bridged tool server", () => {
+describe("bridge query options: the substituted built-ins follow the bridged tool server", () => {
 	const rows = [
 		{
 			why: "pi's tools reached the child",
 			input: { mcpServers: bridgedServer },
+			bridgedToolsPresent: true,
 			isolated: true,
 		},
 		{
 			why: "a pi-driven one-shot (compaction, branch summary) carries no tools by design",
-			input: { ephemeralOneShot: true },
+			input: { piOneShot: true },
+			bridgedToolsPresent: false,
 			isolated: true,
 		},
 		{
-			why: "nothing replaced the built-ins this turn",
+			why: "a connectors session restricts the child as a security boundary",
+			input: { bridgeConfig: { provider: { enableConnectors: true } } },
+			bridgedToolsPresent: false,
+			isolated: true,
+		},
+		{
+			why: "nothing replaced them this turn",
 			input: {},
+			bridgedToolsPresent: false,
 			isolated: false,
 		},
 	];
 	for (const row of rows) {
-		it(`${row.isolated ? "isolates" : "keeps"} the built-ins when ${row.why}`, () => {
+		it(`${row.isolated ? "denies" : "restores"} them when ${row.why}`, () => {
 			const built = build(row.input);
 
-			assert.equal(built.bridgedToolsPresent, row.isolated);
-			assert.equal(built.queryOptions.tools !== undefined, row.isolated, "an empty tools allowlist also strips Claude Code's own tools");
-			assert.equal(built.queryOptions.disallowedTools !== undefined, row.isolated, "and the denylist removes what the bridge was going to replace");
-			if (!row.isolated) return;
-			assert.deepEqual(built.queryOptions.tools, []);
-			assert.deepEqual(built.queryOptions.disallowedTools, DISALLOWED_BUILTIN_TOOLS);
-			assert.deepEqual(built.queryOptions.allowedTools, ["mcp__custom-tools__*"]);
+			assert.equal(built.bridgedToolsPresent, row.bridgedToolsPresent, "reports whether pi's tools reached the child");
+			assert.equal(built.builtinIsolationApplied, row.isolated, "and reports what it did about the substituted built-ins, not what it inferred");
+			for (const name of SUBSTITUTED_BUILTIN_TOOLS) {
+				assert.equal(built.queryOptions.disallowedTools?.includes(name) ?? false, row.isolated, name);
+			}
 		});
 	}
 
-	it("keeps the connector session's built-in restriction, which is a boundary rather than a trade", () => {
-		// A connectors session ingests untrusted third-party content, and
-		// connectorBuiltinAllowlistHook denies everything outside three name classes
-		// at runtime. Relaxing the request-side lists there would weaken that
-		// boundary and reach nothing the model could call anyway.
+	it("keeps every never-traded built-in denied even when the substituted ones come back", () => {
+		// The denylist is not only the file, shell and web set. The child runs
+		// under permissionMode "bypassPermissions", so handing it subagents,
+		// skills, todos, teams, worktrees or scheduling is not a degraded session,
+		// it is a different one.
+		const built = build({});
+
+		assert.equal(built.builtinIsolationApplied, false);
+		assert.deepEqual(built.queryOptions.disallowedTools, ALWAYS_DENIED_BUILTIN_TOOLS);
+		assert.equal("tools" in built.queryOptions, false, "an empty tools allowlist would strip Claude Code's own tools too");
+		assert.equal("mcpServers" in built.queryOptions, false, "nothing invented a server to stand in for pi's tools");
+	});
+
+	it("isolates with the whole denylist and the bridged allowlist when pi's tools are there", () => {
+		const built = build({ mcpServers: bridgedServer });
+
+		assert.deepEqual(built.queryOptions.tools, []);
+		assert.deepEqual(built.queryOptions.disallowedTools, DISALLOWED_BUILTIN_TOOLS);
+		assert.deepEqual(built.queryOptions.allowedTools, ["mcp__custom-tools__*"]);
+	});
+
+	it("leaves the connectors boundary alone when that session resolves no pi tools", () => {
+		// connectorBuiltinAllowlistHook denies everything outside three name
+		// classes at runtime, so relaxing the request-side lists here would weaken
+		// the boundary and reach nothing the model could call anyway.
 		const built = build({ bridgeConfig: { provider: { enableConnectors: true } } });
 
-		assert.equal(built.bridgedToolsPresent, false, "the same turn that fails soft without connectors");
-		assert.ok(built.queryOptions.disallowedTools.includes("Bash"), "still denies the file and shell built-ins");
-		assert.ok(built.queryOptions.hooks.PreToolUse.length > 0, "and keeps the runtime allowlist hook wired");
+		assert.equal(built.enableCloudMcp, true);
+		assert.ok(built.queryOptions.disallowedTools.includes("Bash"), "the file and shell built-ins stay denied");
+		assert.ok(built.queryOptions.hooks.PreToolUse.length > 0, "and the runtime allowlist hook stays wired");
 	});
 });
