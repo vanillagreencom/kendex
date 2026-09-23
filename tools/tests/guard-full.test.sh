@@ -101,6 +101,7 @@ cat >"$R/fake-bin/cargo" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$CARGO_CALL_LOG"
+[ -z "${CARGO_ENV_LOG:-}" ] || printf '%s|incremental=%s\n' "$*" "${CARGO_INCREMENTAL:-unset}" >>"$CARGO_ENV_LOG"
 for t in ${CROSS_CHECK_FAIL:-}; do
   if [ "$*" = "check -p kendex-core -p kendex-cli --all-targets --target $t" ]; then
     exit 1
@@ -120,6 +121,99 @@ BOTH="$APPLE $WINDOWS"
 check_call() { # TARGET — the one cargo line guard is allowed to run for it
   printf 'check -p kendex-core -p kendex-cli --all-targets --target %s' "$1"
 }
+
+echo "=== full validation protects the cargo target volume ==="
+cat >"$R/fake-bin/df" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'call\n' >>"$DF_CALL_LOG"
+call="$(wc -l <"$DF_CALL_LOG" | tr -d ' ')"
+[ "${DF_FAIL_CALL:-0}" -ne "$call" ] || exit 1
+free="${DF_FREE_KIB_START:?}"
+[ "$call" -eq 1 ] || free="${DF_FREE_KIB_END:?}"
+printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf 'tmpfs 999999 1 %s 1%% /target\n' "$free"
+SH
+chmod +x "$R/fake-bin/df"
+DF_CALL_LOG="$TMP/df-calls"
+CARGO_ENV_LOG="$TMP/cargo-env"
+high_free_kib=$((30 * 1024 * 1024))
+
+: >"$DF_CALL_LOG"
+: >"$CARGO_CALL_LOG"
+run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
+  DF_FREE_KIB_START=1048576 DF_FREE_KIB_END="$high_free_kib" \
+  RUSTUP_INSTALLED_TARGETS="$BOTH" GUARD_MIN_FREE_GB=24 GUARD_EXHAUSTED_FREE_MB=512
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-space-start=free-kib=1048576 min-gib=24"* ]] \
+  && [ ! -s "$CARGO_CALL_LOG" ] \
+  && ok "a target volume below the start floor is named before cargo runs" \
+  || bad "a target volume below the start floor is named before cargo runs" "rc=$RC out=$OUT calls=$(cat "$CARGO_CALL_LOG")"
+[ "$(grep -cF '    cargo_space_ok=0' "$GUARD")" -eq 1 ] \
+  || { bad "control: the start-floor skip has one mutation site"; exit 2; }
+if mutant_guard 's/    cargo_space_ok=0/    : # control removes the cargo skip/'; then
+  : >"$DF_CALL_LOG"
+  : >"$CARGO_CALL_LOG"
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && env PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
+    DF_FREE_KIB_START=1048576 DF_FREE_KIB_END="$high_free_kib" RUSTUP_INSTALLED_TARGETS="$BOTH" \
+    GUARD_MIN_FREE_GB=24 GUARD_EXHAUSTED_FREE_MB=512 "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
+  [ -s "$CARGO_CALL_LOG" ] \
+    && ok "control: without the start-floor skip the under-bound row runs cargo" \
+    || bad "control: without the start-floor skip the under-bound row runs cargo" "rc=$RC out=$OUT"
+else
+  bad "control: the start-floor skip could not be removed from a guard copy"
+fi
+
+: >"$DF_CALL_LOG"
+: >"$CARGO_CALL_LOG"
+: >"$CARGO_ENV_LOG"
+run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" CARGO_ENV_LOG="$CARGO_ENV_LOG" \
+  DF_CALL_LOG="$DF_CALL_LOG" DF_FREE_KIB_START="$high_free_kib" DF_FREE_KIB_END="$high_free_kib" \
+  RUSTUP_INSTALLED_TARGETS="$BOTH" GUARD_MIN_FREE_GB=24 GUARD_EXHAUSTED_FREE_MB=512
+[ "$RC" -eq 0 ] && [ -s "$CARGO_CALL_LOG" ] \
+  && ok "a target volume above the start floor reaches the full cargo block" \
+  || bad "a target volume above the start floor reaches the full cargo block" "rc=$RC out=$OUT"
+[ -s "$CARGO_ENV_LOG" ] && ! grep -qvF '|incremental=0' "$CARGO_ENV_LOG" \
+  && [ "$(wc -l <"$CARGO_ENV_LOG" | tr -d ' ')" -eq "$(wc -l <"$CARGO_CALL_LOG" | tr -d ' ')" ] \
+  && ok "every cargo invocation inherits disabled incremental compilation" \
+  || bad "every cargo invocation inherits disabled incremental compilation" "$(cat "$CARGO_ENV_LOG")"
+
+: >"$DF_CALL_LOG"
+: >"$CARGO_CALL_LOG"
+run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
+  DF_FAIL_CALL=1 DF_FREE_KIB_START="$high_free_kib" DF_FREE_KIB_END="$high_free_kib" \
+  RUSTUP_INSTALLED_TARGETS="$BOTH" GUARD_MIN_FREE_GB=24 GUARD_EXHAUSTED_FREE_MB=512
+[ "$RC" -eq 0 ] && [[ "$OUT" == *"guard: cargo-space-unreadable=target"* ]] && [ -s "$CARGO_CALL_LOG" ] \
+  && ok "an unreadable start probe is named and the cargo block still runs" \
+  || bad "an unreadable start probe is named and the cargo block still runs" "rc=$RC out=$OUT calls=$(cat "$CARGO_CALL_LOG")"
+
+: >"$DF_CALL_LOG"
+: >"$CARGO_CALL_LOG"
+run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
+  DF_FREE_KIB_START="$high_free_kib" DF_FREE_KIB_END=0 \
+  RUSTUP_INSTALLED_TARGETS="$BOTH" GUARD_MIN_FREE_GB=24 GUARD_EXHAUSTED_FREE_MB=512
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-space-end=free-kib=0 min-mib=512"* ]] \
+  && ok "an exhausted target volume fails after zero cargo exit codes" \
+  || bad "an exhausted target volume fails after zero cargo exit codes" "rc=$RC out=$OUT"
+[ "$(grep -cF '    say cargo-space-end "free-kib=$cargo_free_end_kib min-mib=$guard_exhausted_free_mb"' "$GUARD")" -eq 1 ] \
+  || { bad "control: the exhaustion finding has one mutation site"; exit 2; }
+if mutant_guard 's/    say cargo-space-end "free-kib=$cargo_free_end_kib min-mib=$guard_exhausted_free_mb"/    : # control removes the exhaustion finding/'; then
+  : >"$DF_CALL_LOG"
+  : >"$CARGO_CALL_LOG"
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && env PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
+    DF_FREE_KIB_START="$high_free_kib" DF_FREE_KIB_END=0 RUSTUP_INSTALLED_TARGETS="$BOTH" \
+    GUARD_MIN_FREE_GB=24 GUARD_EXHAUSTED_FREE_MB=512 "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
+  [ "$RC" -eq 0 ] \
+    && ok "control: without the exhaustion finding zero cargo exits pass" \
+    || bad "control: without the exhaustion finding zero cargo exits pass" "rc=$RC out=$OUT"
+else
+  bad "control: the exhaustion finding could not be removed from a guard copy"
+fi
+rm -f "$R/fake-bin/df"
+
 : >"$CARGO_CALL_LOG"
 run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_LIST_RESULT=1
 [ "$RC" -ne 0 ] && case "$OUT" in *"guard: rustup-targets=unreadable"*) true ;; *) false ;; esac \
@@ -439,7 +533,7 @@ run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_S
 if mutant_guard 's/if \[ -n "\$death" \]; then/if false; then/'; then
   OUT=""
   RC=0
-  OUT="$(cd "$R" && PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$DEATH" "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
+  OUT="$(cd "$R" && GUARD_MIN_FREE_GB=1 GUARD_EXHAUSTED_FREE_MB=1 PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$DEATH" "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
   [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-test=workspace"* ]] && [[ "$OUT" != *"guard: test-binary-signal="* ]] \
     && ok "control: with the death check removed the same death reads as tests failed" \
     || bad "control: with the death check removed the same death reads as tests failed" "rc=$RC out=$OUT"

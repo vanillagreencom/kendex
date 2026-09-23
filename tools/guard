@@ -116,6 +116,15 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       printf 'cargo clippy failed for %s.\n' "$2" ;;
     cargo-fmt)
       echo "cargo fmt --check refused the workspace." ;;
+    cargo-space-setting)
+      printf 'the %s setting could not be read, so the cargo block did not run.\n' "$2" ;;
+    cargo-space-start)
+      echo 'the cargo target volume has less free space than one cold full run needs.'
+      echo 'Run cargo clean, or remove target/debug/incremental, before validation.' ;;
+    cargo-space-unreadable)
+      echo "free space on the cargo target volume could not be read at $2; the cargo block continued because an unreadable probe does not establish exhaustion." ;;
+    cargo-space-end)
+      echo 'the cargo target volume ended below the exhaustion floor, so validation fails regardless of the cargo exit codes.' ;;
     touched-set)
       echo "the touched-file set for the suite lane could not be read at that step." ;;
     missing-tool)
@@ -159,6 +168,25 @@ refuse() { # KEY VALUE — guard could not run at all
   printf 'guard: %s=%s\n' "$1" "$2" >&2
   finding_text "$1" "$2" >&2
   exit 2
+}
+
+cargo_free_kib() { # TARGET_PATH — available KiB on the volume that will hold it
+  local path="$1" parent output value
+  case "$path" in
+    /*) ;;
+    *) path="./$path" ;;
+  esac
+  while [ ! -e "$path" ]; do
+    parent=$(dirname "$path") || return 1
+    [ "$parent" != "$path" ] || return 1
+    path="$parent"
+  done
+  output=$(df -Pk "$path" 2>/dev/null) || return 1
+  value=$(awk 'NR == 2 { print $4 }' <<<"$output") || return 1
+  case "$value" in
+    "" | *[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "$value"
 }
 
 FULL=0
@@ -713,7 +741,28 @@ if [ "$FULL" -eq 0 ]; then
   done <"$GUARD_TMP/product.z"
 fi
 
-if [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt 0 ]; }; then
+cargo_space_ok=1
+cargo_target="${CARGO_TARGET_DIR:-target}"
+guard_min_free_gb=24
+guard_exhausted_free_mb=512
+if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
+  # The fresh Linux cargo shards in .github/workflows/skill-tests.yml explain
+  # why no later compile can reuse incremental artifacts from this run.
+  export CARGO_INCREMENTAL=0
+  ORCH_ENV="$TOOLS_DIR/../.agents/skills/orch/scripts/orch-env"
+  guard_min_free_gb=$("$ORCH_ENV" GUARD_MIN_FREE_GB "$guard_min_free_gb") ||
+    refuse cargo-space-setting GUARD_MIN_FREE_GB
+  guard_exhausted_free_mb=$("$ORCH_ENV" GUARD_EXHAUSTED_FREE_MB "$guard_exhausted_free_mb") ||
+    refuse cargo-space-setting GUARD_EXHAUSTED_FREE_MB
+  if ! cargo_free_start_kib=$(cargo_free_kib "$cargo_target"); then
+    note cargo-space-unreadable "$cargo_target"
+  elif [ "$cargo_free_start_kib" -lt "$((guard_min_free_gb * 1024 * 1024))" ]; then
+    say cargo-space-start "free-kib=$cargo_free_start_kib min-gib=$guard_min_free_gb"
+    cargo_space_ok=0
+  fi
+fi
+
+if [ "$cargo_space_ok" -eq 1 ] && [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt 0 ]; }; then
   if cargo tree -p kendex-core -e normal 2>/dev/null | grep -qE '\btauri v'; then
     say tauri-dependency crates/core
   fi
@@ -872,7 +921,7 @@ compiled_includes() {
   ' {} +
 }
 
-if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
+if [ "$FULL" -eq 1 ] && [ "$cargo_space_ok" -eq 1 ] && [ -f Cargo.toml ]; then
   # The cross-target checks and cargo doc each write a target tree of their
   # own, and CI covers both on the pull requests tools/ci-job-set selects
   # its cargo_lint, cargo_macos and cargo_windows lanes for. Here they are
@@ -954,6 +1003,13 @@ if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
     fi
   fi
   rm -f "$tests_log"
+fi
+if [ "$FULL" -eq 1 ] && [ "$cargo_space_ok" -eq 1 ] && [ -f Cargo.toml ]; then
+  if ! cargo_free_end_kib=$(cargo_free_kib "$cargo_target"); then
+    note cargo-space-unreadable "$cargo_target"
+  elif [ "$cargo_free_end_kib" -lt "$((guard_exhausted_free_mb * 1024))" ]; then
+    say cargo-space-end "free-kib=$cargo_free_end_kib min-mib=$guard_exhausted_free_mb"
+  fi
 fi
 if [ "$ui_changed" -eq 1 ] && [ -f ui/package.json ]; then
   npm run --prefix ui check:types || say ui-check check:types

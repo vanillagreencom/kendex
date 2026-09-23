@@ -195,10 +195,59 @@ assert_eq "$(sed -n 's/^guard-exit=[0-9]* at=\(.*\)$/\1/p' "$timeout_dir/exit" |
 # --- The command's output goes to the log, never into the verdict -------------
 proj_log="$(make_proj proj-log "echo first; echo second >&2; exit 0" 20)"
 run_script "$RUN" --worktree "$proj_log" --poll 1
+proj_log_out="$OUT"
 log_dir="$(run_dir_of "$OUT")"
 assert_eq "$(cat "$(log_of "$OUT")")" "$(printf 'first\nsecond')" \
   "the log the started line names holds the command's own output, both streams"
 
+
+# --- Full output devices preserve or fail the verdict protocol ---------------
+# These rows pin behavior the runner already has. No runner production edit is
+# part of this change, so no production mutation can redden this test surface.
+if [[ -e /dev/full ]]; then
+  timeout_cmd="$(command -v timeout || command -v gtimeout)"
+
+  full_log_dir="$TMP_ROOT/full-log-run"
+  mkdir -p "$full_log_dir"
+  {
+    printf 'worktree=%s\n' "$proj_log"
+    printf 'timeout-bin=%s\n' "$timeout_cmd"
+    printf 'start=%s\n' "$(( $(date +%s) - 20 ))"
+    printf 'timeout-secs=20\n'
+    printf 'poll-secs=1\n'
+    printf 'cap-secs=31\n'
+  } > "$full_log_dir/start"
+  printf '%s\n' 'for i in {1..2000}; do printf "line %s\\n" "$i"; done; exit 1' > "$full_log_dir/cmd"
+  ln -s /dev/full "$full_log_dir/log"
+  run_script "$RUN" --child --run-dir "$full_log_dir"
+  assert_eq "$RC" "0" "a failed command records its sentinel when every log write gets ENOSPC" "$ERR"
+  assert_eq "$(sed 's/ at=.*$//' "$full_log_dir/exit")" "guard-exit=1" \
+    "and the sentinel keeps the command's failing exit status"
+  run_script "$RUN" --wait --run-dir "$full_log_dir" --budget 5
+  assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=1 validate=FAILING" \
+    "the waiter reports that full-log run as failing" "$ERR"
+
+  full_sentinel_dir="$TMP_ROOT/full-sentinel-run"
+  mkdir -p "$full_sentinel_dir"
+  {
+    printf 'worktree=%s\n' "$proj_log"
+    printf 'timeout-bin=%s\n' "$timeout_cmd"
+    printf 'start=%s\n' "$(( $(date +%s) - 20 ))"
+    printf 'timeout-secs=20\n'
+    printf 'poll-secs=1\n'
+    printf 'cap-secs=31\n'
+  } > "$full_sentinel_dir/start"
+  printf '%s\n' 'exit 0' > "$full_sentinel_dir/cmd"
+  ln -s /dev/full "$full_sentinel_dir/exit.part"
+  run_script "$RUN" --child --run-dir "$full_sentinel_dir"
+  assert_eq "$RC" "1" "a sentinel write to a full device fails the child" "$ERR"
+  run_script "$RUN" --wait --run-dir "$full_sentinel_dir" --budget 5
+  assert_eq "$(verdict_of "$OUT")" "state=lost cap-secs=31 validate=FAILING" \
+    "and the missing sentinel is reported as a lost failing run" "$ERR"
+else
+  echo "  skip  /dev/full is absent; the full-output-device rows did not run"
+fi
+OUT="$proj_log_out"
 # --- Every field of the started and done lines, which the agent reads ---------
 assert_eq "$(sed -n 1p <<<"$OUT")" \
   "state=started run-dir=$log_dir log=$log_dir/log sentinel=$log_dir/exit timeout-secs=20 poll-secs=1 cap-secs=31" \

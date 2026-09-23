@@ -110,7 +110,7 @@ run_guard() { # [VAR=VALUE...] — sets OUT and RC
   RC=0
   args=()
   [ "${FULL_GUARD:-0}" -eq 0 ] || args+=(--full)
-  OUT="$(cd "$R" && env "$@" "$GUARD" ${args[@]+"${args[@]}"} 2>&1 </dev/null)" || RC=$?
+  OUT="$(cd "$R" && env GUARD_MIN_FREE_GB=1 GUARD_EXHAUSTED_FREE_MB=1 "$@" "$GUARD" ${args[@]+"${args[@]}"} 2>&1 </dev/null)" || RC=$?
 }
 
 # A mutant is a copy of guard with one edit, run in place of it: it removes

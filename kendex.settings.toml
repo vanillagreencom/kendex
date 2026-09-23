@@ -305,6 +305,14 @@ DECISIONS_DIR = "docs/decisions"
 # for the same commit; CI runs the full suites independently.
 DEV_VALIDATE_CMD = "tools/guard --full"
 
+# A cold full run's deps tree reached 20 GiB. The 24 GiB floor adds 20 percent
+# for compiler scratch data and the validation runner's own files.
+GUARD_MIN_FREE_GB = "24"
+
+# A completed cargo block keeps enough room for the validation log, sentinel,
+# and shell operations. This floor stays far above the recorded 708 KiB case.
+GUARD_EXHAUSTED_FREE_MB = "512"
+
 # The bound on that run, in whole seconds. `tools/guard --full` takes well
 # under an hour on the supported hosts; past this the run is signalled, killed
 # outright ten seconds later, and the round records a failed validation. The
