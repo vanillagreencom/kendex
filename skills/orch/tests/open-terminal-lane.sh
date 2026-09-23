@@ -213,6 +213,7 @@ n=$((n + 1)); printf '%s' "$n" > "$FLAKY_COUNT"
 [[ "$n" -le "${FLAKY_OK:-3}" ]] || exit 1
 f="$FIXTURE_DIR/$(basename "$2").json"
 [[ -f "$f" ]] || exit 1
+printf '200 \n'
 cat "$f"
 STUB
 chmod +x "$TMP_ROOT/fetch-flaky"

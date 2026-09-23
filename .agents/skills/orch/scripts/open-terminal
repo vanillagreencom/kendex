@@ -1069,9 +1069,9 @@ if [[ -n "$LANE" ]]; then
       # `lanes` reports for a credential this machine holds and cannot renew, and
       # it reaches claude lanes alone, since the expiry it reads is the claude
       # token's. A codex account whose local auth.json is dead reads
-      # `unreachable`, which an offline or rate-limited read produces too, so
-      # widening to it would print a login remedy to an operator whose network is
-      # down. --help and the message say the remedy is reported for claude lanes.
+      # `unreachable`, which an offline read produces too, so widening to it
+      # would print a login remedy to an operator whose network is down. A
+      # rate-limited read is `rate_limited`, which lands on the re-pick below. --help and the message say the remedy is reported for claude lanes.
       5)
         # A record this script cannot read names no status, which reads as the
         # unmeasured window it is rather than as any of the answers below.

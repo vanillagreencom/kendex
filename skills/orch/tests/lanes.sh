@@ -137,6 +137,29 @@ observe() {
       lines) value="$(grep -c . <<<"$OUT" || true)" ;;
       length) value="$(json length)" ;;
       aliases) value="$(json '[.[].alias] | sort | join(",")')" ;;
+      # Every listed lane's status, sorted, so a row can assert that a word
+      # reaches NO lane of a listing rather than only what one lane reads.
+      statuses) value="$(json '[.[].status] | sort | join(",")')" ;;
+      # The User-Agent the renewal handed the token stub, with the version it
+      # read replaced by `V`: the endpoint matches the `claude-cli/` prefix and
+      # does not parse the version, so the shape is the contract and this host's
+      # installed version is not. Underscored, since `expect` splits on
+      # whitespace. `UNSET` is the stub's own word for a renewal that named none.
+      ua)
+        value="$(sed -n '1p' "$UA_LOG" 2>/dev/null | sed 's#^claude-cli/[^ ][^ ]*#claude-cli/V#' || true)"
+        value="${value// /_}"; value="${value:-none}"
+        ;;
+      # The stub's argument vector. On Linux /proc/<pid>/cmdline is
+      # world-readable, and the header the endpoint gates on is what tells a
+      # reader which account is being renewed from where.
+      uaargv) value="$(sed -n '2p' "$UA_LOG" 2>/dev/null || true)"; value="${value:-none}" ;;
+      # How long the refusal this run recorded parks the lane for, read out of
+      # the record the run itself wrote, so a row pins whether the endpoint's
+      # own Retry-After or the script's default set the window.
+      refusalwindow)
+        value="$(jq -r '.refusal.expires_at - .fetched_at' "$RUN"/store/usage/*.json 2>/dev/null || true)"
+        value="${value:-none}"
+        ;;
       files) value="$(ls -1 "$STORE/claims" 2>/dev/null | sed 's/\.claim$//' | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
       fetched) value="$(fetched_lanes "$RUN/fetch.log")" ;;
       tokencalls) value="$(grep -c . "$RUN/token.log" 2>/dev/null || true)"; value="${value:-0}" ;;
@@ -290,14 +313,18 @@ TOKEN_OK="$TMP_ROOT/token-ok"
 # be the leak it is looking for.
 cat > "$TOKEN_OK" <<'STUB'
 #!/usr/bin/env bash
-# The token request body arrives on stdin; the endpoint's JSON goes to stdout.
+# The token request body arrives on stdin; the endpoint's answer goes to stdout
+# in the shape `lanes` reads: the HTTP status and any Retry-After on the first
+# line, the JSON body under it. LANES_USER_AGENT carries the header the real
+# POST would have sent, logged here so a row can assert it.
 cat >/dev/null
 [[ -z "${TOKEN_LOG:-}" ]] || printf 'refresh\n' >> "$TOKEN_LOG"
-printf '{"access_token":"renewed-token","refresh_token":"rotated-refresh","expires_in":3600}\n'
+[[ -z "${TOKEN_UA_LOG:-}" ]] || printf '%s\nargv=%s\n' "${LANES_USER_AGENT-UNSET}" "$*" >> "$TOKEN_UA_LOG"
+printf '200 \n{"access_token":"renewed-token","refresh_token":"rotated-refresh","expires_in":3600}\n'
 STUB
 chmod +x "$TOKEN_OK"
 TOKEN_BAD="$TMP_ROOT/token-bad"
-printf '#!/usr/bin/env bash\ncat >/dev/null\nprintf "{}"\n' > "$TOKEN_BAD"
+printf '#!/usr/bin/env bash\ncat >/dev/null\nprintf "200 \\n{}"\n' > "$TOKEN_BAD"
 chmod +x "$TOKEN_BAD"
 # An access token with no expires_in. The empty object above never reaches the
 # expiry refusal, because the missing access token refuses first.
@@ -305,7 +332,7 @@ TOKEN_NOEXP="$TMP_ROOT/token-noexp"
 cat > "$TOKEN_NOEXP" <<'STUB'
 #!/usr/bin/env bash
 cat >/dev/null
-printf '{"access_token":"renewed-token","refresh_token":"rotated-refresh"}\n'
+printf '200 \n{"access_token":"renewed-token","refresh_token":"rotated-refresh"}\n'
 STUB
 chmod +x "$TOKEN_NOEXP"
 # Zero is a number and not a lifetime: it dates the new expiry to this instant,
@@ -314,7 +341,7 @@ TOKEN_ZEROEXP="$TMP_ROOT/token-zeroexp"
 cat > "$TOKEN_ZEROEXP" <<'STUB'
 #!/usr/bin/env bash
 cat >/dev/null
-printf '{"access_token":"renewed-token","refresh_token":"rotated-refresh","expires_in":0}\n'
+printf '200 \n{"access_token":"renewed-token","refresh_token":"rotated-refresh","expires_in":0}\n'
 STUB
 chmod +x "$TOKEN_ZEROEXP"
 REFRESH_ENV="ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_OK"
@@ -438,6 +465,151 @@ jq -n --argjson exp "$(( ($(date +%s) - 60) * 1000 ))" \
   > "$H/.claude/.credentials.json"
 table \
   "an expired lane with no refresh token beside it names that, and never reaches the endpoint|ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_OK|$LIST|claude.status=expired claude.refreshable=false claude.cause=access_token_expired_and_could_not_be_renewed:_there_is_no_refresh_token_in_$H/.claude/.credentials.json_to_renew_with tokencalls=0"
+
+echo "=== the renewal names itself to the token endpoint ==="
+# platform.claude.com answers HTTP 429 `rate_limit_error` to a token POST
+# carrying no User-Agent, whatever the rate: it matches the `claude-cli/` prefix
+# and does not parse the version. That is why an interactive launch renews an
+# account this script could not, and it is the root cause under every row below.
+# The header reaches the injected command through its ENVIRONMENT, the way it
+# reaches curl, so the stub reads what a real POST would have sent and no local
+# user reads it off /proc/<pid>/cmdline.
+UA_LOG="$TMP_ROOT/token-ua.log"
+new_home token-ua
+make_lane "$H" claude -60
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+: > "$UA_LOG"
+table \
+  "the renewal posts a claude-cli User-Agent, and puts it on no argument vector|$REFRESH_ENV;TOKEN_UA_LOG=$UA_LOG|$LIST|claude.status=ok claude.refreshable=true ua=claude-cli/V_(external,_cli) uaargv=argv="
+
+# The must-fail control: the renewal posts with no User-Agent again, which is
+# the request the endpoint answers 429 to whatever the rate. Substituted rather
+# than deleted, because the line carries the POST itself.
+lanes_mutant mutant-ua lanes 'LANES_USER_AGENT="\$CLAUDE_TOKEN_UA"' 'LANES_USER_AGENT='
+new_home token-ua-control
+make_lane "$H" claude -60
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+: > "$UA_LOG"
+RUN="$TMP_ROOT/runs/mutant-ua"; mkdir -p "$RUN/store"
+( cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
+  LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" FIXTURE_DIR="$FIXTURE_DIR" \
+  OVERSEE_WATCH_STATE_DIR="$RUN/store" TMUX_PANES_FILE="$RUN/panes" PATH="$CLAIM_BIN:$PATH" \
+  ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_OK" TOKEN_UA_LOG="$UA_LOG" \
+  "$TMP_ROOT/mutant-ua/lanes" list --harness claude --json >/dev/null 2>&1 )
+assert_eq "$(sed -n '1p' "$UA_LOG")|$(sed -n '2p' "$UA_LOG")" "|argv=" \
+  "control: without that word the renewal still reaches the endpoint, naming no User-Agent to it"
+
+echo "=== a refused endpoint is reported by its HTTP code, never as an expired login ==="
+# `expired` means a proven-dead login downstream: open-terminal turns it into a
+# remedy line telling the operator to log in again on this machine. A rate limit
+# and a server fault are refusals the account survives, so neither may take it,
+# and a 400 or 401 still must.
+#
+# One stub for every code a row stages: TOKEN_STATUS is the status it answers,
+# TOKEN_RETRY the Retry-After beside it, and the error object is what the real
+# endpoint carries.
+TOKEN_STATUS_STUB="$TMP_ROOT/token-status"
+cat > "$TOKEN_STATUS_STUB" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+[[ -z "${TOKEN_LOG:-}" ]] || printf 'refresh\n' >> "$TOKEN_LOG"
+printf '%s %s\n' "${TOKEN_STATUS:-429}" "${TOKEN_RETRY:-}"
+printf '{"error":{"type":"%s","message":"%s"}}\n' \
+  "${TOKEN_ERR_TYPE:-rate_limit_error}" "${TOKEN_ERR_MSG:-Rate limited. Please try again later.}"
+STUB
+chmod +x "$TOKEN_STATUS_STUB"
+RL_ENV="ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_STATUS_STUB"
+RL_429_CAUSE="access_token_expired_and_could_not_be_renewed:_the_token_endpoint_refused_the_renewal_with_HTTP_429_(rate_limit_error:_Rate_limited._Please_try_again_later.)"
+
+new_home token-refused
+make_lane "$H" claude -60
+make_lane "$H" eclaude 3600
+claude_usage 10 20 5  Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 40 40 40 Opus > "$FIXTURE_DIR/.eclaude.json"
+table \
+  "a token endpoint answering 429 reads rate_limited, its detail naming the code and the endpoint's own error|$RL_ENV|$LIST|claude.status=rate_limited claude.refreshable=false claude.headroom_pct=null claude.cause=$RL_429_CAUSE" \
+  "and no account on that host reads expired, which is the reading that sends an operator to log in again|$RL_ENV|$LIST|statuses=ok,rate_limited" \
+  "a token endpoint answering 503 reads unreachable, the login left untested|$RL_ENV;TOKEN_STATUS=503;TOKEN_ERR_TYPE=api_error;TOKEN_ERR_MSG=Overloaded|$LIST|claude.status=unreachable claude.headroom_pct=null claude.cause=access_token_expired_and_could_not_be_renewed:_the_token_endpoint_refused_the_renewal_with_HTTP_503_(api_error:_Overloaded)" \
+  "a token endpoint answering 400 is still the proven-dead login expired exists for, with its code in the detail|$RL_ENV;TOKEN_STATUS=400;TOKEN_ERR_TYPE=invalid_grant;TOKEN_ERR_MSG=Refresh token not found|$LIST|claude.status=expired claude.headroom_pct=null claude.cause=access_token_expired_and_could_not_be_renewed:_the_token_endpoint_refused_the_renewal_with_HTTP_400_(invalid_grant:_Refresh_token_not_found)" \
+  "a token endpoint answering 401 reads expired too|$RL_ENV;TOKEN_STATUS=401;TOKEN_ERR_TYPE=invalid_grant;TOKEN_ERR_MSG=Refresh token not found|$LIST|claude.status=expired claude.cause=access_token_expired_and_could_not_be_renewed:_the_token_endpoint_refused_the_renewal_with_HTTP_401_(invalid_grant:_Refresh_token_not_found)" \
+  "a 200 answer carrying an error object but no token names that error beside the missing token|$RL_ENV;TOKEN_STATUS=200;TOKEN_ERR_TYPE=invalid_request;TOKEN_ERR_MSG=bad body|$LIST|claude.status=expired claude.cause=access_token_expired_and_could_not_be_renewed:_the_token_endpoint_returned_no_access_token_(invalid_request:_bad_body)"
+
+# The must-fail control for the split. With the 429 arm gone every code falls to
+# the caller's default, so the rate limit reads as the dead login again and the
+# remedy line sends the operator to a sign-in that is fine.
+lanes_mutant mutant-429 lanes "429) printf 'rate_limited'"
+RUN="$TMP_ROOT/runs/mutant-429"; mkdir -p "$RUN/store"
+MUTANT_OUT="$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
+  LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
+  OVERSEE_WATCH_STATE_DIR="$RUN/store" TMUX_PANES_FILE="$RUN/panes" PATH="$CLAIM_BIN:$PATH" \
+  ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_STATUS_STUB" \
+  "$TMP_ROOT/mutant-429/lanes" list --harness claude --json 2>/dev/null)"
+assert_eq "$(jq -r '.[] | select(.alias=="claude") | .status' <<<"$MUTANT_OUT")" "expired" \
+  "control: without the 429 arm the rate limit reads as the dead login again"
+
+new_home usage-refused
+make_lane "$H" claude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+table \
+  "a usage endpoint answering 503 reads unreachable with that code in its detail, not the fixed offline sentence|FETCH_STATUS=503|$LIST|first.status=unreachable first.headroom_pct=null claude.cause=usage_query_refused_with_HTTP_503" \
+  "a usage endpoint answering 429 reads rate_limited on the same judgement the token endpoint takes|FETCH_STATUS=429|$LIST|first.status=rate_limited claude.cause=usage_query_refused_with_HTTP_429" \
+  "a usage query that could not be run at all still reads unreachable, with no code to name|ORCH_LANES_FETCH_CMD=false|$LIST|first.status=unreachable claude.cause=usage_query_failed_(offline,_rate-limited,_or_rejected)"
+
+echo "=== a recorded refusal parks the lane for its window, and nothing re-posts inside it ==="
+# The fleet measures every thirty seconds and several overseers share one state
+# directory, so a refusal one of them met is one they all must read: re-posting
+# is what kept the limit up for fourteen hours on 2026-09-21.
+new_home refusal-window
+make_lane "$H" claude -60
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+REFUSAL_STATE="$TMP_ROOT/refusal-state"
+# stage_refusal AGE_S WINDOW_S — the refusal the first run recorded, re-dated
+# AGE_S seconds into the past and its window re-set to WINDOW_S from now, so a
+# row asserting the record's own age or a window that has passed asserts a
+# fixed number rather than whatever the clock did between two runs.
+stage_refusal() {
+  local f now
+  now="$(date +%s)"
+  for f in "$REFUSAL_STATE"/usage/*.json; do
+    [[ -f "$f" ]] || continue
+    jq --argjson at "$(( now - $1 ))" --argjson until "$(( now + $2 ))" \
+      '.fetched_at = $at | .refusal.expires_at = $until' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    return 0
+  done
+  echo "stage_refusal: the first run recorded no refusal to stage" >&2
+  exit 1
+}
+rm -rf -- "${REFUSAL_STATE:?}"
+run_lanes "$RL_ENV;OVERSEE_WATCH_STATE_DIR=$REFUSAL_STATE" $LIST
+stage_refusal 45 120
+table \
+  "a second run inside the window reports the recorded refusal with its code and its own age, and posts nothing|$RL_ENV;OVERSEE_WATCH_STATE_DIR=$REFUSAL_STATE|$LIST|claude.status=rate_limited claude.cause=$RL_429_CAUSE claude.aged=30+ tokencalls=0"
+stage_refusal 45 120
+table \
+  "--no-cache declines a cached figure, never a live refusal window: the one caller asking for a fresh reading is not the one that re-posts|$RL_ENV;OVERSEE_WATCH_STATE_DIR=$REFUSAL_STATE|$LIST --no-cache|claude.status=rate_limited tokencalls=0"
+# The must-fail control for the window: a refusal that parked a lane for good
+# would be the worse failure, so the run after it passes posts again.
+stage_refusal 45 -1
+table \
+  "once the window has passed the next run posts to the endpoint again|$RL_ENV;OVERSEE_WATCH_STATE_DIR=$REFUSAL_STATE|$LIST|claude.status=rate_limited tokencalls=1"
+
+# The window itself: the endpoint knows when it will answer again, and says so.
+new_home refusal-retry-after
+make_lane "$H" claude -60
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+table \
+  "the window is the answer's own Retry-After where it named one|$RL_ENV;TOKEN_RETRY=900|$LIST|claude.status=rate_limited refusalwindow=900" \
+  "and the script's own five minutes where the answer named none|$RL_ENV|$LIST|claude.status=rate_limited refusalwindow=300" \
+  "a Retry-After written as an HTTP date names no seconds to wait, so the default window stands|$RL_ENV;TOKEN_RETRY=Wed, 21 Oct 2026 07:28:00 GMT|$LIST|claude.status=rate_limited refusalwindow=300"
+
+new_home usage-refusal-window
+make_lane "$H" claude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+USAGE_REFUSAL_STATE="$TMP_ROOT/usage-refusal-state"
+rm -rf -- "${USAGE_REFUSAL_STATE:?}"
+run_lanes "FETCH_STATUS=503;OVERSEE_WATCH_STATE_DIR=$USAGE_REFUSAL_STATE" $LIST
+table \
+  "a recorded usage refusal is read the same way, and the second run fetches nothing even though the endpoint would now answer|OVERSEE_WATCH_STATE_DIR=$USAGE_REFUSAL_STATE|$LIST|first.status=unreachable claude.cause=usage_query_refused_with_HTTP_503 fetched=none"
 
 echo "=== codex windows route by duration, not by position ==="
 # OpenAI's primary/secondary windows do not map to session/weekly by position:
