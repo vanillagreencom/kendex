@@ -280,8 +280,8 @@ step() {
     pair) make_pair ;;
     pair-lock) make_pair_with_lock ;;
     standalone-clone) make_standalone_clone 'WORKTREE_COPIES=".kendex-lock.json local.txt"' ;;
-    # The same clone under the configured shape that destroyed FLT-145's
-    # settings: a symlink entry whose source is its own destination.
+    # The same clone under the configured shape that destroys a local settings
+    # file: a symlink entry whose source is its own destination.
     standalone-clone-link)
       make_standalone_clone 'WORKTREE_SYMLINKS="settings.local"'
       LOCAL_LINK=settings.local
@@ -459,6 +459,22 @@ step() {
       rm -f "$mutant.bak"
       grep -qF 'if :; then' "$mutant" || {
         echo "FIXTURE: the index-read edit matched nothing in $mutant" >&2
+        exit 2
+      }
+      ;;
+    # The detector's same-checkout return removed, the statement kept: the
+    # false materialization warning and its unreachable remedy come back.
+    unfixed-materialized-check)
+      step standalone
+      mutant="$ROOT/pkg/worktree/scripts/lib/links.sh"
+      [[ "$(grep -cF 'same_canonical_dir "$PROJECT_ROOT" "$wt" && return 0' "$mutant")" == 1 ]] || {
+        echo "FIXTURE: the detector's same-checkout return was not unique in $mutant" >&2
+        exit 2
+      }
+      sed -i.bak 's/same_canonical_dir "$PROJECT_ROOT" "$wt" && return 0/false \&\& return 0/' "$mutant"
+      rm -f "$mutant.bak"
+      grep -qF 'false && return 0' "$mutant" || {
+        echo "FIXTURE: the detector edit matched nothing in $mutant" >&2
         exit 2
       }
       ;;
@@ -722,8 +738,9 @@ a failed main index read refuses the copy and preserves the branch lock|pair-loc
 must-fail: without the checked index read, the failed probe overwrites the branch lock|pair-lock advance fix lock-fix index-unreadable-wt unfixed-index-read|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=base-lock:dirty map=hop:map2
 a true standalone clone ignores its stale committed-lock copy setting and pushes after rebase|standalone-clone clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean map=hop:map2
 must-fail: without the same-checkout no-op, the same clone copies its local file onto itself|standalone-clone clone-advance fix lock-fix unfixed-same-checkout|push @wt --set-upstream|1|map2|map:2+copy-failed:local.txt|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean map=hop:map2
-a main-checkout push that rebases leaves its configured local settings file a regular file|standalone-clone-link clone-advance fix lock-fix|push @wt --set-upstream|0|map2|materialized+map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=file:local-settings map=hop:map2
-must-fail: without the same-checkout no-op, that push links the settings file onto itself|standalone-clone-link clone-advance fix lock-fix unfixed-same-checkout|push @wt --set-upstream|0|map2|materialized+map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=link:<wt>/settings.local map=hop:map2
+a main-checkout push that rebases leaves its configured local settings file a regular file|standalone-clone-link clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=file:local-settings map=hop:map2
+must-fail: without the same-checkout no-op, that push links the settings file onto itself|standalone-clone-link clone-advance fix lock-fix unfixed-same-checkout|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=link:<wt>/settings.local map=hop:map2
+must-fail: without the same-checkout return in the detector, that push warns the settings file is materialized|standalone-clone-link clone-advance fix lock-fix unfixed-materialized-check|push @wt --set-upstream|0|map2|materialized+map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=file:local-settings map=hop:map2
 a linked-worktree push relinks its configured local settings file after the rebase|pair-local-link advance fix fix2|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=- local=link:<root>/main/settings.local map=hop:map2
 a setup failure after a successful rebase leaves the map durable and does not push|pair advance fix setup-fails|push @wt --set-upstream|1|map2|map:2+copy-failed:copy-parent/copied.txt|head=rebased ahead=2 tree=copy-parent:blocked,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- map=hop:map2
 must-fail: setup before map persistence leaves the successful rewrite unmapped|pair advance fix setup-fails unfixed-map-order|push @wt --set-upstream|1|-|copy-failed:copy-parent/copied.txt|head=rebased ahead=2 tree=copy-parent:blocked,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- map=end

@@ -609,6 +609,13 @@ collect_unrestored_links() {
 warn_if_links_materialized() {
   local wt="$1" path="" materialized="" rel="" child_damage=""
   [[ -n "$wt" && -d "$wt" ]] || return 0
+  # In the main checkout, and in a standalone clone, every configured entry IS
+  # its own source: a regular file or a real directory, never a link, which is
+  # the one shape this function reads as damage. Nothing is missing there, so
+  # the warning would be false, and its remedy is unreachable — the fix-links
+  # it names refuses the main checkout. `repair-links` exits 0 there on the
+  # same ground, and so does the setup pass below.
+  same_canonical_dir "$PROJECT_ROOT" "$wt" && return 0
   validate_worktree_setup_config >/dev/null 2>&1 || return 0
 
   split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
@@ -973,8 +980,16 @@ setup_worktree_links() {
   # act on its own source: a symlink entry renames a link pointing at the file
   # over that same file, leaving a self-link where the local settings were, and
   # a copy entry hands `cp` one path twice. Both destroy the data the entry
-  # exists to carry, which is why this is one guard over every shape below
-  # rather than a per-shape arm.
+  # exists to carry.
+  #
+  # The whole body is skipped, not only those two shapes, because every shape
+  # below states a fact about a worktree and the main checkout it came from,
+  # and there is no such pair here. That deliberately gives up two harmless
+  # passes on this route, which is `push --rebase` and nothing else: the
+  # WORKTREE_MKDIRS directories are not created and their exclude entries not
+  # written, and a package.json with no node_modules beside it is not warned
+  # about. Neither is push's work, and a checkout that is its own source has no
+  # worktree to provision them for.
   if same_canonical_dir "$PROJECT_ROOT" "$wt"; then
     return 0
   fi
