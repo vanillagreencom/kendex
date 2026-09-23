@@ -610,7 +610,7 @@ done
 # instead, the macOS one in the table below, which asserts what the wake does
 # rather than a count.
 REAL_TABLE_READ="$(sed -n 's/^  raw="\$(\(ps -A.*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
-REAL_TABLE_TRANSFORM="$(sed -n 's/^  table="\$(\(awk .\+\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
+REAL_TABLE_TRANSFORM="$(sed -n 's/^  table="\$(\(awk .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
 REAL_PID_MATCH="$(sed -n 's/^  candidates="\$(\(awk .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
 assert_eq "read=$(grep -c . <<<"$REAL_TABLE_READ") transform=$(grep -c . <<<"$REAL_TABLE_TRANSFORM") match=$(grep -c . <<<"$REAL_PID_MATCH")" \
   "read=1 transform=1 match=1" "the real reader, transform and matcher are each one line of the script under test"
