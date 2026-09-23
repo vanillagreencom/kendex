@@ -562,54 +562,35 @@ render_is_tracked() { # PATH — PATH itself is tracked, PATH read literally
 }
 
 # A configured instruction is visible only in the managed render: its source
-# deliberately has no copy. Read the effective source-catalog overlay and
-# require the renderer's outer block for a skill-specific entry and its inner
-# shared block for `all` or `*`. This is presence, not a byte comparison;
-# kendex verify owns the rendered bytes.
-configured_skill_instructions=""
-if [ -e kendex-local.toml ]; then
-  configured_skill_instructions=$(python3 -c '
+# deliberately has no copy. Judge the same candidate for configuration,
+# source existence, and render bytes: the index at commit time, the worktree
+# under --full. One ordered-pair reader owns both instruction block shapes;
+# kendex verify owns the rendered bytes inside them.
+render_skill_paths=$(printf '%s\n' "$render_tracked" | sort -u) ||
+  { render_skill_paths=""; say render-tracked-set unreadable; }
+instruction_hits=$(python3 -c '
 import sys
 sys.path.insert(0, sys.argv[1])
 from lib import manifest
-from lib.tree import Worktree
-table = manifest.resolve(Worktree(".")).data.get("skill-instructions", {})
-print(*table.keys(), sep="\n")
-' "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts" 2>/dev/null) ||
-    { configured_skill_instructions=""; say skill-instruction-config unreadable; }
-fi
-skill_instruction_is_configured() { # NAME — exact key, or a shared key
-  case "$NL$configured_skill_instructions$NL" in
-    *"$NL$1$NL"* | *"$NL"all"$NL"* | *"$NL*$NL"*) return 0 ;;
-  esac
-  return 1
-}
-shared_skill_instruction_is_configured() {
-  case "$NL$configured_skill_instructions$NL" in
-    *"$NL"all"$NL"* | *"$NL*$NL"*) return 0 ;;
-  esac
-  return 1
-}
-instruction_hits=""
-render_skill_paths=$(printf '%s\n' "$render_tracked" | sort -u) ||
-  { render_skill_paths=""; say render-tracked-set unreadable; }
-while IFS= read -r render; do
-  case "$render" in .agents/skills/*/SKILL.md | .agents/skills/*/SKILL.md.disabled) ;; *) continue ;; esac
-  skill="${render#.agents/skills/}"
-  skill="${skill%/SKILL.md.disabled}"
-  skill="${skill%/SKILL.md}"
-  [ -f "skills/$skill/SKILL.md" ] || continue
-  skill_instruction_is_configured "$skill" || continue
-  missing=0
-  { grep -Fxq '<!-- kendex:project-instructions:start -->' "$render" &&
-    grep -Fxq '<!-- kendex:project-instructions:end -->' "$render"; } || missing=1
-  if shared_skill_instruction_is_configured; then
-    { grep -Fxq '<!-- kendex:shared-instructions:start -->' "$render" &&
-      grep -Fxq '<!-- kendex:shared-instructions:end -->' "$render"; } || missing=1
-  fi
-  [ "$missing" -eq 0 ] || instruction_hits="$instruction_hits$render
-"
-done <<<"$render_skill_paths"
+from lib.tree import Index, Worktree
+tree = Worktree(".") if sys.argv[2] == "1" else Index(".")
+keys = manifest.resolve(tree).data.get("skill-instructions", {})
+shared = "all" in keys or "*" in keys
+def has_block(text, name):
+    start = f"<!-- kendex:{name}-instructions:start -->"
+    end = f"<!-- kendex:{name}-instructions:end -->"
+    return start in text and end in text.split(start, 1)[1]
+for render in sys.stdin.read().splitlines():
+    if not render.startswith(".agents/skills/") or not render.endswith(("/SKILL.md", "/SKILL.md.disabled")):
+        continue
+    skill = render.removeprefix(".agents/skills/").removesuffix("/SKILL.md.disabled").removesuffix("/SKILL.md")
+    text = tree.read(render)
+    if tree.read(f"skills/{skill}/SKILL.md") is None or text is None or skill not in keys and not shared:
+        continue
+    if not has_block(text, "project") or shared and not has_block(text, "shared"):
+        print(render)
+' "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts" "$FULL" 2>/dev/null <<<"$render_skill_paths") ||
+  { instruction_hits=""; say skill-instruction-config unreadable; }
 [ -n "$instruction_hits" ] && {
   say missing-skill-instructions "$(count_lines "$instruction_hits")"
   show "$instruction_hits" | sed -n '1,5p'

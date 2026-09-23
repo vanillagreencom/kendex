@@ -22,7 +22,10 @@ render_block() { # NAME SUFFIX MODE
     complete) printf '%s\n' '<!-- kendex:project-instructions:start -->' '<!-- kendex:shared-instructions:start -->' '<!-- kendex:shared-instructions:end -->' '<!-- kendex:project-instructions:end -->' ;;
     no-project-end) printf '%s\n' '<!-- kendex:project-instructions:start -->' '<!-- kendex:shared-instructions:start -->' '<!-- kendex:shared-instructions:end -->' ;;
     no-shared-end) printf '%s\n' '<!-- kendex:project-instructions:start -->' '<!-- kendex:shared-instructions:start -->' '<!-- kendex:project-instructions:end -->' ;;
+    reverse-project) printf '%s\n' '<!-- kendex:project-instructions:end -->' '<!-- kendex:project-instructions:start -->' ;;
+    reverse-shared) printf '%s\n' '<!-- kendex:project-instructions:start -->' '<!-- kendex:shared-instructions:end -->' '<!-- kendex:shared-instructions:start -->' '<!-- kendex:project-instructions:end -->' ;;
   esac >"$path"
+  [ "${4:-}" = unstaged ] || git -C "$R" add "${path#"$R"/}"
 }
 expect_red() { # LABEL [PATH]
   run_guard
@@ -34,8 +37,7 @@ echo "=== configured instructions require their render blocks ==="; while IFS='|
   reset_world; seed_skill "$skill"; configure '[skill-instructions]' "$key"
   [ "$block" != shared ] || render_block "$skill" "" project
   expect_red "$key instructions require the $block render block" ".agents/skills/$skill/SKILL.md"
-  if [ "$key" = all ] && mutant_guard '/^shared_skill_instruction_is_configured() {/,/^}/c\
-shared_skill_instruction_is_configured() { return 1; }'; then
+  if [ "$key" = all ] && mutant_guard 's/ or shared and not has_block(text, "shared")//'; then
     run_mutant; [ "$RC" -eq 0 ] && ok "control: without shared-marker enforcement the isolated missing marker passes" \
       || bad "control: without shared-marker enforcement the isolated missing marker passes" "rc=$RC out=$OUT"
   elif [ "$key" = all ]; then bad "control: shared-marker enforcement could not be disabled"
@@ -56,12 +58,18 @@ HEADERS
 reset_world; seed_skill disabled .disabled; git -C "$R" commit -q -m disabled; configure '[skill-instructions]' disabled
 expect_red "a disabled render still requires its configured block" '.agents/skills/disabled/SKILL.md.disabled'
 render_block disabled .disabled complete; expect_green "a disabled render passes with its complete block"
-echo "=== instruction blocks require both markers ==="; while IFS='|' read -r key mode label; do
+echo "=== commit checks read one staged candidate ==="
+reset_world; seed_skill split; configure '[skill-instructions]' split; render_block split "" complete unstaged
+expect_red "an unstaged repair does not hide a staged render without instructions"
+git -C "$R" add .agents/skills/split/SKILL.md; expect_green "the staged repair supplies the candidate instructions"
+echo "=== instruction blocks require ordered marker pairs ==="; while IFS='|' read -r key mode label; do
   reset_world; seed_skill half; configure '[skill-instructions]' "$key"; render_block half "" "$mode"
-  expect_red "$label closing marker is required"
+  expect_red "$label block must be complete and ordered"
 done <<'MARKERS'
 half|no-project-end|the project
 all|no-shared-end|the shared
+half|reverse-project|the project
+all|reverse-shared|the shared
 MARKERS
 printf '%s\n' '#!/bin/sh' 'exit 9' >"$MUTANT_TOOLS/sort"; chmod +x "$MUTANT_TOOLS/sort"
 run_guard PATH="$MUTANT_TOOLS:$PATH"
