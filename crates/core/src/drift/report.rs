@@ -58,8 +58,8 @@ impl CheckStatus {
 #[serde(rename_all = "kebab-case")]
 pub enum Class {
     Drift,
-    /// The source moved since this package's verdict was computed, or no
-    /// deep pass has run yet. The next background refresh settles it.
+    /// The source comparison is missing or outdated, or no deep pass has
+    /// run yet. The next background refresh settles it.
     Unevaluated,
     Unknown,
 }

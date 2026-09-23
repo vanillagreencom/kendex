@@ -10,7 +10,7 @@ import { withFake } from "./drift-fixture.ts";
 for (const row of [
 	{ code: 0, report: "", result: { kind: "clean" }, key: undefined },
 	{ code: 1, report: "outdated=orch", result: { kind: "drift" }, key: "outdated=orch" },
-	{ code: 1, report: "unevaluated=33", result: { kind: "drift" }, key: "unevaluated=33" },
+	{ code: 1, report: "source comparison needed:\n  skill 'orch': source changed since evaluation; not yet re-evaluated\nNext: kendex refresh --yes in this checkout to refresh project packages.", result: { kind: "drift" }, key: "source comparison needed:" },
 	{ code: 2, report: "could not check:\n  manifest: expected a table", result: { kind: "incomplete" }, key: "kendex-drift-incomplete: exit=2" },
 	{ code: 2, report: "could not check:\n  source: error: cannot lock ref", result: { kind: "incomplete" }, key: "kendex-drift-incomplete: exit=2" },
 	{ code: 2, report: "", result: { kind: "failed", exitCode: 2 }, key: "kendex-drift-failed: exit=2" },

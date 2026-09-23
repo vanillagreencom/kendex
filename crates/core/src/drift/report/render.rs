@@ -19,6 +19,50 @@ fn age_word(secs: u64) -> String {
     }
 }
 
+fn next_action(report: &CheckReport) -> Option<String> {
+    let mut global = false;
+    let mut project = false;
+    for remedy in report
+        .sections
+        .iter()
+        .flat_map(|section| &section.lines)
+        .filter_map(|line| line.remedy.as_ref())
+    {
+        if let Remedy::Refresh { global: is_global } = remedy {
+            global |= *is_global;
+            project |= !*is_global;
+        }
+    }
+    let command =
+        |global| match (Remedy::Refresh { global }).render(report.project_target.as_deref()) {
+            Some(Fix::Here(command)) => Some(format!("{command} --yes")),
+            Some(Fix::Elsewhere(_)) | None => None,
+        };
+    let checkout = if report.project_target.is_some() {
+        "in that checkout"
+    } else {
+        "in this checkout"
+    };
+    match (global, project) {
+        (false, false) => None,
+        (true, false) => Some(format!(
+            "Next: kendex check --global to list global packages; {} to refresh them.",
+            command(true)?
+        )),
+        (false, true) => Some(format!(
+            "Next: {} {} to refresh project packages.",
+            command(false)?,
+            checkout
+        )),
+        (true, true) => Some(format!(
+            "Next: kendex check --global to list global packages; {} for global packages; {} {} for project packages.",
+            command(true)?,
+            command(false)?,
+            checkout
+        )),
+    }
+}
+
 /// The bounded plain-text rendering for the session-start hook.
 pub fn render_plain(report: &CheckReport) -> String {
     render(report, true)
@@ -77,10 +121,14 @@ fn render(report: &CheckReport, bounded: bool) -> String {
         }
     }
     if let Some(age) = report.snapshot_age_secs {
-        lines.push(format!("(checked against sources {} ago)", age_word(age)));
+        lines.push(format!("(package evaluation: {} ago)", age_word(age)));
     }
+    let action = next_action(report);
 
     if !bounded {
+        if let Some(action) = action {
+            lines.push(action);
+        }
         return lines.join("\n") + "\n";
     }
 
@@ -102,6 +150,9 @@ fn render(report: &CheckReport, bounded: bool) -> String {
                 total - shown_lines
             );
             out.push(&note);
+        }
+        if let Some(action) = action.as_deref() {
+            out.push(action);
         }
         let text = out.join("\n");
         if out.len() <= REPORT_LINES && text.len() <= REPORT_BYTES {

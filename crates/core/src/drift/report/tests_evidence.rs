@@ -7,6 +7,54 @@ use crate::drift::snapshot::{SNAPSHOT_SCHEMA, ScopeSnapshot};
 use crate::drift::stamps;
 
 #[test]
+fn missing_remote_comparison_data_names_each_package() {
+    for (evaluated, current) in [
+        (Some("same-refs"), None),
+        (None, Some("same-refs")),
+        (None, None),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let scope = project_scope(tmp.path());
+        write_manifest(&env, &scope, &manifest_with_remote());
+        snapshot_with(
+            &env,
+            &scope,
+            vec![crate::drift::snapshot::PackageSnapshot {
+                refs_state: evaluated.map(str::to_owned),
+                ..package("orch")
+            }],
+        );
+        record_refs(&env, "owner/repo", current);
+
+        let report = check(&env, std::slice::from_ref(&scope));
+        assert_eq!(report.status.exit_code(), 1, "{evaluated:?}, {current:?}");
+        let line = &report.sections[0].lines[0];
+        assert!(
+            line.text
+                .contains("skill 'orch': could not compare source versions")
+        );
+        assert_eq!(line.remedy, Some(Remedy::Refresh { global: false }));
+    }
+}
+
+#[test]
+fn a_local_package_keeps_its_snapshot_verdict_without_remote_evidence() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    let scope = project_scope(tmp.path());
+    let mut local = package("local");
+    local.repo.clear();
+    local.refs_state = None;
+    local.update_available = true;
+    snapshot_with(&env, &scope, vec![local]);
+
+    let report = check(&env, std::slice::from_ref(&scope));
+    assert_eq!(report.sections[0].title, "stale");
+    assert!(report.sections[0].lines[0].text.contains("skill 'local'"));
+}
+
+#[test]
 fn an_old_fetch_failure_becomes_a_line_dated_from_first_failure() {
     let tmp = tempfile::tempdir().unwrap();
     let env = env_in(tmp.path());
