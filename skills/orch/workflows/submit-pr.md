@@ -220,7 +220,7 @@ Record the resolved mode as a bare word (never pre-quoted), and the head it was 
 
 For `off` and for `exempt`, skip the wait and go to § 5 — the internal review, CI, and comment-hygiene gates still apply in full. `exempt` is the review gate's own class policy waiving this change, so gate 3 below does not apply to it either; `off` keeps gate 3.
 
-`exempt` is bound to one head, not to the pull request: a later push can change the class. Every path below that pushes commits re-runs this section's two commands at the new head and records what they print. A head can also arrive from outside this lane — a person, another lane, a hosting-side branch update — which no path here would notice, so § 6.1 compares the live head against `pr_review.head_sha` before it applies the waiver rather than trusting that every mover passed through one of these paths.
+`exempt` is bound to the endpoints it was resolved over, not to the pull request: a later push changes the head, and a retarget changes the base without touching the head. Every path below that pushes commits re-runs this section's two commands and records what they print, and § 6.1 re-runs them again before it waives anything, because a mover outside this lane passes through none of these paths.
 
 1. **Wait.** Poll for the verdict and new comments together:
 
@@ -326,20 +326,16 @@ A PR merges on exactly four deterministic gates. Gates 2 and 4 **verify results 
 |---|------|-------|
 | 1 | Internal review verdict recorded | Managed: `review-pr.md` completed with verdict `pass`. Standalone: `json_paths` is non-empty |
 | 2 | CI green | The § 5 result is `status=complete` with `verdict=pass`, or `verdict=none` (satisfied with a `CI: none configured` note in the summary) |
-| 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0` AND every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`). `exempt` at the recorded head: neither term applies |
-| 4 | Reviewer-gate verdict | `approval`: § 4 ended `approved`. `review`: § 4 ended `reviewed`. Either mode is also met by a recorded `pr_approval.forced` or `pr_approval.reviewer_down`. `exempt` at the recorded head, and `off`: not applicable |
+| 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0` AND every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`). `exempt` at the live endpoints: neither term applies |
+| 4 | Reviewer-gate verdict | `approval`: § 4 ended `approved`. `review`: § 4 ended `reviewed`. Either mode is also met by a recorded `pr_approval.forced` or `pr_approval.reviewer_down`. `exempt` at the live endpoints, and `off`: not applicable |
 
-**The waiver is pinned to a head.** Read the recorded pair and the live head once, before gates 3 and 4:
+**The waiver is the live answer, never a record.** A class is measured over a base AND a head, and GitHub retargets a pull request to another base without moving its head, so no comparison against a recorded head can prove the class still holds. Re-run § 4's two commands at the live endpoints, before gates 3 and 4, and record what they print.
 
-```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{mode: (.pr_review.mode // ""), head_sha: (.pr_review.head_sha // "")}'
-```
+Gates 3 and 4 waive on that fresh answer alone: `exempt` only where this resolution printed `exempt`. Any other answer is the mode from here, and the gates read it as they read any other. The recorded pair says what the last resolution saw and gates nothing; read it for the § 7 report, never to decide a gate:
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review.mode // ""'
 ```
-
-A recorded `exempt` applies to gates 3 and 4 only while `head_sha` equals that live head. They differ where a head arrived from outside this lane, and the class that head earns is unmeasured, so re-run § 4's two commands at it and record both values before either gate reads them. Every other mode is unchanged: it gates on what § 4 recorded, and no comparison here overrides it.
 
 **Gate 1** — standalone only:
 
@@ -351,7 +347,7 @@ Empty `json_paths` means no internal review is recorded: report the unmet gate a
 
 **Gate 2** = the recorded § 5 result — do not re-run ci-wait, and raw `gh pr checks` output is never the gate. On a `pr-merge --check` refusal run `.agents/skills/github/scripts/github.sh ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `threads` → gate 3; anything else → report the cause with its printed detail (for `ci_failed` that includes the `fail:` and `superseded:` run ids) rather than forcing or abandoning the merge.
 
-**Gate 3** — final live check. `exempt` at the recorded head waives both of its terms, the unresolved count and the `pr_comment_review.replied` obligation, and goes to gate 4. Replying to every bot comment stays § 3.1's hygiene rule, which is not a gate in any mode.
+**Gate 3** — final live check. `exempt` from the resolution above waives both of its terms, the unresolved count and the `pr_comment_review.replied` obligation, and goes to gate 4. Replying to every bot comment stays § 3.1's hygiene rule, which is not a gate in any mode.
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
@@ -365,7 +361,7 @@ Empty `json_paths` means no internal review is recorded: report the unmet gate a
 
 Re-run the gate-3 command once. If threads remain and the external-round cap is below, `auto-recommended` logs `Triage again` and runs one more pass; at the cap it records `review-threads-open`. Under `ask`, present `Triage again` | `Force merge` | `Stop here`, with `Triage again` recommended.
 
-**Gate 4** — verify the recorded § 4 result, under the mode the pair above carries.
+**Gate 4** — verify the recorded § 4 result, under the mode the resolution above printed.
 
 `MERGE_READY = true` only when all four gates are met.
 

@@ -352,3 +352,21 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   done
   printf '%s' "$default"
 }
+
+# The writer's per-pull-request share of its converge step, validated here
+# because two callers must agree on what a legal value is: the writer that
+# spends it, and the configuration check a repository adopts a settings file
+# through. A shape judged in only one of those passes adoption and fails every
+# run. Prints the value, or the keyed refusal and status 2.
+rg_pr_deadline_seconds() {
+  local value
+  value="$(rg_setting REVIEW_GATE_PR_DEADLINE_SECONDS 120)" || return 2
+  case "$value" in
+    '' | *[!0-9]* | 0)
+      rg_message error writer-deadline-value "$value" \
+        "::error::REVIEW_GATE_PR_DEADLINE_SECONDS must be a positive whole number of seconds" >&2
+      return 2
+      ;;
+  esac
+  printf '%s' "$value"
+}

@@ -341,49 +341,50 @@ fi
 # beside that head in one write, so no future mode can be recorded without one.
 submit_workflow="$SKILL_DIR/workflows/submit-pr.md"
 pinned_waiver_is_closed() { # submit-doc
-  grep -Fq '`exempt` at the recorded head: neither term applies' "$1" &&
-    grep -Fq '`exempt` at the recorded head, and `off`: not applicable' "$1" &&
+  grep -Fq '`exempt` at the live endpoints: neither term applies' "$1" &&
+    grep -Fq '`exempt` at the live endpoints, and `off`: not applicable' "$1" &&
     grep -Fq 'workflow-state set [ISSUE_ID] pr_review.head_sha [HEAD_SHA]' "$1" &&
-    grep -Fq 'A recorded `exempt` applies to gates 3 and 4 only while `head_sha` equals that live head.' "$1"
+    grep -Fq 'Gates 3 and 4 waive on that fresh answer alone' "$1" &&
+    grep -Fq 'The recorded pair says what the last resolution saw and gates nothing' "$1"
 }
 
 if pinned_waiver_is_closed "$submit_workflow"; then
-  pass "submit-pr pins the exempt waiver to the head it was resolved for"
+  pass "submit-pr waives gates 3 and 4 on a live resolution, not on the recorded pair"
 else
-  fail "submit-pr must name the recorded head in the gate-3 and gate-4 exempt rows and record it with the mode"
+  fail "submit-pr must waive gates 3 and 4 on a live resolution, not on the recorded pair"
 fi
 
 waiver_mutant="$TMP_ROOT/submit-pr-unpinned.md"
-waiver_rule='A recorded `exempt` applies to gates 3 and 4 only while `head_sha` equals that live head.'
+waiver_rule='The recorded pair says what the last resolution saw and gates nothing'
 waiver_rule_count="$(grep -Fc -- "$waiver_rule" "$submit_workflow" || true)"
 assert_eq "$waiver_rule_count" "1" "control: the pinned waiver has one mutation target"
 if [[ -L "$submit_workflow" ]]; then
   fail "control: the submit workflow mutation source must not be a symlink"
 else
-  awk -v old="$waiver_rule" -v new='A recorded `exempt` applies to gates 3 and 4.' \
+  awk -v old="$waiver_rule" -v new='The recorded pair decides gates 3 and 4.' \
     '{ if (index($0, old)) sub(old, new); print }' "$submit_workflow" >"$waiver_mutant"
   assert_eq "$(cmp -s "$waiver_mutant" "$submit_workflow" && echo same || echo differs)" "differs" \
-    "control: the waiver mutant drops the head comparison"
+    "control: the waiver mutant makes the record decide"
   if pinned_waiver_is_closed "$waiver_mutant"; then
-    fail "must-fail: a waiver applied without its head must fail the pinned-waiver contract"
+    fail "must-fail: a waiver decided from the record must fail the live-answer contract"
   else
-    pass "must-fail: a waiver applied without its head fails the pinned-waiver contract"
+    pass "must-fail: a waiver decided from the record fails the live-answer contract"
   fi
 fi
 
 micro_head_is_pinned() { # merge-doc
-  grep -Fq 'A `[MICRO_ENTRY]` run continues only where `[MICRO_HEAD]` equals it' "$1" &&
-    grep -Fq 'any other head arms nothing and escapes by micro.md condition 9' "$1"
+  grep -Fq 'A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`' "$1" &&
+    grep -Fq 'Any other answer arms nothing and escapes by micro.md condition 9' "$1"
 }
 
 if micro_head_is_pinned "$merge_workflow"; then
-  pass "merge-pr uses a micro exemption only at the head it was proved over"
+  pass "merge-pr continues a micro entry only on a fresh exempt answer at the classified head"
 else
-  fail "merge-pr must refuse a prepared head that is not the classified micro head"
+  fail "merge-pr must continue a micro entry only on a fresh exempt answer at the classified head"
 fi
 
 micro_head_mutant="$TMP_ROOT/merge-pr-unpinned-micro.md"
-micro_head_rule='A `[MICRO_ENTRY]` run continues only where `[MICRO_HEAD]` equals it'
+micro_head_rule='A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`'
 micro_head_count="$(grep -Fc -- "$micro_head_rule" "$merge_workflow" || true)"
 assert_eq "$micro_head_count" "1" "control: the micro head test has one mutation target"
 if [[ -L "$merge_workflow" ]]; then
@@ -401,9 +402,9 @@ else
   assert_eq "$(cmp -s "$micro_head_mutant" "$merge_workflow" && echo same || echo differs)" "differs" \
     "control: the mutant drops the micro head test"
   if micro_head_is_pinned "$micro_head_mutant"; then
-    fail "must-fail: a micro exemption used at any head must fail the pinned-head contract"
+    fail "must-fail: a micro entry continued on a stale answer must fail the contract"
   else
-    pass "must-fail: a micro exemption used at any head fails the pinned-head contract"
+    pass "must-fail: a micro entry continued on a stale answer fails the contract"
   fi
 fi
 
@@ -416,7 +417,7 @@ micro_policy_is_closed() { # micro-doc
     grep -Fq 'an inactive policy, an unresolved class, another class, or another evidence policy escapes' "$1" &&
     grep -Fq 'Require a valid readiness object for an open pull request.' "$1" &&
     grep -Fq 'binding `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`.' "$1" &&
-    grep -Fq '9. merge-pr.md § 5 step 1 refuses because `[PREPARED_HEAD]` is not `[MICRO_HEAD]`.' "$1" &&
+    grep -Fq '9. merge-pr.md § 5 step 1 refuses: the mode it resolves over the prepared endpoints is not `exempt`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`.' "$1" &&
     ! grep -Fq 'approval-wait --resolve-mode' "$1"
 }
 

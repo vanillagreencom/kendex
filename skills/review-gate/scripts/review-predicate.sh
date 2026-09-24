@@ -449,6 +449,9 @@ case "$GATE_MODE" in
     exit 2
     ;;
 esac
+# A package setting the writer spends and this check adopts: judged by the one
+# rule both read, so a value that passes here cannot fail every writer run.
+rg_pr_deadline_seconds >/dev/null || exit 2
 case "$DOCS_ONLY_MODE" in
   bot|none) ;;
   *)

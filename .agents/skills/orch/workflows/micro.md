@@ -199,7 +199,7 @@ The tier holds only while the item and its change stay inside it. Each condition
 6. A review finding on the pull request needs a change condition 3 or 5 excludes.
 7. § 4 cannot prove both halves of its precheck. Either the review gate does not answer exactly `change_class=micro review_evidence=none policy=active` — an inactive policy, an unresolved class, another class, another evidence policy, or an unreadable result — or `pr-merge --check` returns no valid readiness object for an open pull request.
 8. merge-pr.md § 5 step 1 returns to its § 3.2.
-9. merge-pr.md § 5 step 1 refuses because `[PREPARED_HEAD]` is not `[MICRO_HEAD]`. A head arrived between § 4's classification and that step, and nothing has measured its class.
+9. merge-pr.md § 5 step 1 refuses: the mode it resolves over the prepared endpoints is not `exempt`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`. The endpoints moved between § 4's classification and that step, by a push or by a retarget that changes the class without moving the head.
 
 Ending the run leaves the branch and its commits where they stand and reports the condition in § 5. **Main checkout only**, use the route below before reporting. It owns the base-branch restore this file opens with.
 

@@ -181,11 +181,7 @@ if [ -z "${PR_NUMBER:-}" ]; then
   # still reaches several pull requests where every one of them overruns.
   # `timeout` is coreutils and this writer runs where it exists; a host with
   # neither spelling keeps the unbounded behaviour rather than lose the gate.
-  PER_PR_DEADLINE_SECONDS="$(rg_setting REVIEW_GATE_PR_DEADLINE_SECONDS 120)" || exit 2
-  case "$PER_PR_DEADLINE_SECONDS" in
-    ''|*[!0-9]*|0) rg_message error writer-deadline-value "$PER_PR_DEADLINE_SECONDS" \
-      "::error::REVIEW_GATE_PR_DEADLINE_SECONDS must be a positive whole number of seconds"; exit 2 ;;
-  esac
+  PER_PR_DEADLINE_SECONDS="$(rg_pr_deadline_seconds)" || exit 2
   pr_bound=()
   if command -v timeout >/dev/null 2>&1; then
     pr_bound=(timeout "$PER_PR_DEADLINE_SECONDS")
