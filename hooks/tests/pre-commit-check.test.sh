@@ -188,19 +188,22 @@ echo
 echo "the no-verify flag is read in the commit's own simple command"
 
 # git skips its armed hooks over that flag only where git is the program
-# reading it: in the simple command that holds the commit, or in a pipeline
-# stage feeding it, whose output xargs or parallel can turn into the commit's
-# arguments. The passing rows are the -n of another program the whole-command
-# reading refused. The unarmed column is unchanged by the scoping: what counts
-# as a commit at all is still read over the whole command.
+# reading it. Where git is the command word of the simple command holding the
+# commit, nothing outside that call can become its arguments, so the flag is
+# read there alone; the passing rows are the -n of another program the
+# whole-command reading refused. The unarmed column is unchanged by the
+# scoping: what counts as a commit at all is still read over the whole command.
 both_table '0|2|-|a read-only pipeline whose -n is head own|git log --oneline | grep commit | head -n 3
 0|2|-|-n belonging to another program beside the commit|sed -n 1,5p f && git commit -m x
 0|2|-|-n in a call before a semicolon|sed -n 1p f; git commit -m x
 0|2|-|-n in a call before an or-list|sed -n 1p f || git commit -m x
+0|2|-|a piped short flag before a later list member|sed -n 1p f | cat && git commit -m x
 0|2|-|-n in a git call that is not the commit|git log -n 3 && git commit -m x
 0|2|-|-n in a later stage of the pipeline|ps aux | grep git | grep commit | tail -n 5
 0|2|-|-n in a stage the commit pipes into|git commit -m x | tail -n 5
 0|2|-|-n in a git stage piped into a later commit word|git log -n 3 | grep commit
+0|2|-|-n beside a commit behind an assignment|X=1 git commit -m x && sed -n 1p f
+2|2|-n|the flag in a commit behind an assignment|GIT_DIR=.git git commit -n -m x
 2|2|-n|the flag in a commit that pipes into another stage|git commit -n -m x | tail -n 5
 2|2|NOVERIFY|the flag behind a separator, in the commit own call|true && git commit NOVERIFY
 2|2|-n|the flag behind a repository-moving option|git -C d commit -n
@@ -208,12 +211,29 @@ both_table '0|2|-|a read-only pipeline whose -n is head own|git log --oneline | 
 2|2|-n|the flag behind a descriptor duplication|git commit -m x 2>&1 -n
 2|2|-n|the flag behind an input duplication|git commit -m x 0<&3 -n
 2|2|-n|the flag behind a clobbering redirection|git commit -m x >|log -n
-2|2|NOVERIFY|the flag piped into xargs|echo NOVERIFY | xargs git commit -m x
+'
+
+echo
+echo "another program launches git"
+
+# Where git is not the command word of the commit's simple command, the
+# program in front of it launches git and can hand it words from a pipe, a
+# heredoc, a redirect or a file, so the flag is read over the whole command.
+# Each row is a form where the flag really reaches git commit.
+both_table '2|2|NOVERIFY|the flag piped into xargs|printf %s NOVERIFY | xargs git commit -m x
 2|2|-n|the short flag piped into xargs|printf %s -n | xargs git commit -m x
-2|2|-n|the short flag piped into parallel|echo -n | parallel git commit -m x
-2|2|NOVERIFY|the flag piped into parallel with an option|echo NOVERIFY | parallel -X git commit -m x
-2|2|-n|the flag piped into a subshell|echo -n | (xargs git commit -m x)
-2|2|-n|the flag piped across a newline|echo -n |\nxargs git commit -m x
+2|2|-n|the short flag piped into parallel|printf %s -n | parallel git commit -m x
+2|2|NOVERIFY|the flag piped into parallel with an option|printf %s NOVERIFY | parallel -X git commit -m x
+2|2|-n|the flag piped into a subshell|printf %s -n | (xargs git commit -m x)
+2|2|-n|the flag piped across a newline|printf %s -n |\nxargs git commit -m x
+2|2|NOVERIFY|the flag piped through a subshell stage|printf %s NOVERIFY | (cat) | xargs git commit -m x
+2|2|NOVERIFY|the flag piped through a brace group|printf %s NOVERIFY | { cat; } | xargs git commit -m x
+2|2|-n|the short flag in a heredoc body fed to xargs|xargs git commit -m x <<EOF\n-n\nEOF
+2|2|NOVERIFY|the flag in a heredoc body fed to xargs|xargs git commit -m x <<EOF\nNOVERIFY\nEOF
+2|2|-n|a heredoc piped into xargs|cat <<EOF | xargs git commit -m x\n-n\nEOF
+2|2|-n|a file xargs reads with an option|printf %s -n >f; xargs -a f git commit -m x
+2|2|-n|a file redirected into xargs|printf %s -n >f; xargs git commit -m x <f
+2|2|-n|a file parallel reads with an option|printf %s -n >f; parallel -a f git commit -m x
 '
 
 echo
@@ -222,8 +242,9 @@ echo "the trust gate"
 # The split is trusted only in a command free of quoting, escaping and
 # expansion, with no process substitution; every other command is read whole
 # for the flag. This table is the one place the gate's controls live: one row
-# per alternative of the SPLIT_TRUSTED case, in its order, each a form where
-# bash still hands the flag to git commit.
+# per character of the SPLIT_TRUSTED bracket class and per process
+# substitution, in its order, each a form where bash still hands the flag to
+# git commit.
 both_table '2|2|-n|a single-quoted separator in the message|git commit -m '"'"'a;b'"'"' -n
 2|2|-n|a double-quoted separator in the message|git commit -m \"a;b\" -n
 2|2|-n|a line continuation|git commit -m x \\\n -n
