@@ -338,12 +338,12 @@ spec="$(tm new-window -d -t fleet:3 -P -F '#{pane_id} #{window_id} #{pane_pid}' 
   "exec '$TMP_ROOT/in-pane' success 'claude:1:high' -- --dangerously-skip-permissions --verbose")"
 read -r CALLER_PANE CALLER_WINDOW caller_pid <<<"$spec"
 for _ in $(seq 1 100); do kill -0 "$caller_pid" 2>/dev/null || break; sleep 0.2; done
-# The run goes on past the close that ends its own window: the watch restart
-# after it answers, here that no watch runs on the fleet state
-# (oversee_succeed_watch.sh holds the restart itself).
+# Before the close that ends its own window, the run names the fleet watch it
+# hands to the successor, here that none runs on the fleet state
+# (oversee_succeed_watch.sh holds the handover itself).
 check "success in the caller's own pane: successor at the caller's index, caller window gone" \
   "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/window=@[0-9]*/window=@N/; s/pane=%[0-9]*/pane=%N/; s|path=.*/tmp/workflow-state-oversee.json$|path=STATE|' | tr '\n' ';')|$(recorded claude)" \
-  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none;${UNOBSERVED_LINE}oversee-succeed: successor-working window=@N pane=%N;oversee-succeed: watch-absent path=STATE;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;--verbose;$BRIEF;"
+  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none;${UNOBSERVED_LINE}oversee-succeed: watch-absent path=STATE;oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;--verbose;$BRIEF;"
 
 # The same launch's record, written before the window opened: the close kills
 # this script's own window, so a write placed after it may never run.

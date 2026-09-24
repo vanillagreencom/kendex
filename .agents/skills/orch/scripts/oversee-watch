@@ -314,21 +314,23 @@ Options:
                       exits 0 having reported window-gone with one stderr
                       note; later passes name it --skip-lane until tmux lists
                       it again.
-                      The repeat loop records itself in oversee-watch.pid
-                      beside the --state file: its own pid, whatever
-                      launched it, the file, the pane it serves and its
-                      command. Stop it with kill on that pid, never on a
-                      launcher's $!: TERM stops the pass it is running and
-                      removes the record. A start on a state whose recorded
-                      watch still runs is refused as watch-running naming
-                      that pid, with one exception: `oversee-succeed`, after
-                      a self-succession, stops the running watch and starts
-                      it again from the successor pane with the successor's
-                      flags and account, writing to oversee-watch.log and
-                      oversee-watch.err beside the state, and a start from
-                      that same pane stops that watch and replaces it,
-                      first printing both files under a watch-adopted note
-                      so nothing it reported is lost
+                      The repeat loop records itself beside the --state
+                      file: its own pid, whatever launched it, the state
+                      path, the pane it serves, its origin, its script and
+                      directory in oversee-watch.pid, and its arguments
+                      before -- in oversee-watch.argv. Stop it with kill on
+                      that pid, never on a launcher's $!: TERM stops the pass
+                      it is running and removes the record. A start on a
+                      state whose recorded watch still runs is refused as
+                      watch-running naming that pid, except where that watch
+                      is the one `oversee-succeed` restarted for this same
+                      pane after a self-succession, or serves a pane tmux no
+                      longer lists: that watch is stopped and replaced, under
+                      a watch-taken-over note. Every start then prints, under
+                      a watch-replayed note, and removes oversee-watch.log and
+                      oversee-watch.err beside the state: what a restarted
+                      watch printed where no session read it, and what the
+                      restart itself said
   --state PATH        the oversee workflow-state file open-terminal records
                       every lane in (`workflow-state path oversee`), re-read
                       before every loop of the run and, in repeat mode,
@@ -377,7 +379,8 @@ only on a usage error, a state file it cannot read or parse, an argument a
 pass would refuse (an item, a --hosted entry, a repeated --repo, a lane
 outside tmux or outside any resolved session, a hosted lane with no host), a
 tmux window list that fails, a watch already running on its state, a record
-it cannot write, or a repeat delay it cannot sleep. TERM ends it at 143.
+it cannot write, or a repeat delay it cannot sleep. TERM ends it at 143 and
+INT at 130, each stopping the pass it was running.
 
 Which mode fits the overseer's harness:
   repeat       a harness that delivers a detached log's lines as they are
@@ -530,9 +533,10 @@ ow_message() { # REASON FIELD=VALUE...
     host-resolve-failed) text='lane-host could not say which host the hosted lanes live on, so none of them is read. Its own words follow.' ;;
     session-resolved) text='The tmux session every bare lane window name is read in, resolved once while the pane that started this watch still exists.' ;;
     session-unresolved) text='A bare lane window name is carried and tmux named no session for this watch, so the name could resolve through whichever session tmux picks. Start the watch from the overseer pane, or record the window as SESSION:WINDOW.' ;;
-    watch-running) text='Another watch already runs on this fleet state, and two would read one overseer mailbox and each replay what the other drained. Handle its events, or stop it with kill on the named pid and start again; a watch whose pane is gone is stopped the same way.' ;;
+    watch-running) text='Another watch already runs on this fleet state, serving a pane tmux still lists, and two would read one overseer mailbox and each replay what the other drained. Handle its events, or stop it with kill on the named pid, which stops its pass too, and start again.' ;;
     watch-record-failed) text='The watch could not write its own record beside the fleet state, so a second watch could not be refused and a succession could not restart this one.' ;;
-    watch-adopted) text='The watch oversee-succeed restarted for this pane was stopped and this one runs in its place. Its output follows, stdout here and stderr on stderr, so no event it reported is lost.' ;;
+    watch-taken-over) text='A live watch on this fleet state was stopped and this one runs in its place. The reason field says why it could be: succession is the watch oversee-succeed restarted for this pane, pane-gone one whose pane tmux no longer lists.' ;;
+    watch-replayed) text='A watch oversee-succeed restarted wrote output no session read, and the restart wrote how it went. Both follow, stdout here and stderr on stderr, and are then removed, so no event it reported and no refusal it ended on is lost.' ;;
     mail-read-failed) text='The lane mailbox could not be read. Fix what lane-mail names rather than reading the lane as silent.' ;;
     mail-read-invalid) text='The lane mailbox reader did not open with its count line.' ;;
     limit-scan-failed) text='The screen could not be searched for a usage limit. The field names the lane, or the overseer pane where the overseer is the one being read.' ;;
@@ -650,12 +654,17 @@ parse_argv() {
   STATE_FILE=""
   HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
   OVERSEER_FLAGS=()
+  # How many leading words are this watch's own, before the `--` that starts
+  # the overseer's flags: what the watch records of its command, and what a
+  # restart from a successor pane runs again with the successor's flags.
+  ARGV_BASE_COUNT=$#
+  local total=$#
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       # Everything after it is the overseer's own launch flags, never a lane
       # window: the words are the harness's and this parser reads none of them.
-      --) shift; OVERSEER_FLAGS=("$@"); break ;;
+      --) ARGV_BASE_COUNT=$((total - $#)); shift; OVERSEER_FLAGS=("$@"); break ;;
       --handoff) need_val "$@"; HANDOFF="$2"; shift 2 ;;
       --handoff=*) HANDOFF="${1#--handoff=}"; need_val --handoff "$HANDOFF"; shift ;;
       --repeat) need_val "$@"; REPEAT="$2"; shift 2 ;;
@@ -1287,35 +1296,61 @@ overseer_command_record() {
     || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=write"
 }
 
+# Whether PANE, a pane id, is one the tmux server this start runs on no longer
+# lists. Only a listing that succeeded answers: a server that could not be
+# asked leaves the pane unjudged, and the watch serving it is refused, not
+# stopped. A pane on another tmux server reads as gone here; one fleet state is
+# watched from one server.
+watch_pane_gone() { # PANE
+  local panes
+  [[ -n "${TMUX:-}" && "$1" == %* ]] || return 1
+  panes="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>/dev/null)" || return 1
+  ! awk -v p="$1" '$2 == p { found = 1 } END { exit !found }' <<<"$panes"
+}
+
+# The repeat loop's pass or delay, the one child a stop has to take with it.
+REPEAT_CHILD_PID=""
+repeat_stop() { # STATUS
+  [[ -z "$REPEAT_CHILD_PID" ]] || kill -TERM "$REPEAT_CHILD_PID" 2>/dev/null || true
+  exit "$1"
+}
+
 # The watch's own record beside the fleet state (lib/watch-pid.sh), which a
 # second start is refused on and `oversee-succeed` restarts this watch from. A
-# live record refuses the start, with one exception: the watch a succession
-# restarted for THIS pane is stopped and replaced. That start is the successor
-# running its own watch, as oversee.md § 4 has every overseer do, so the two
-# never run side by side, and the replaced watch's output is replayed first,
-# since whatever it reported went to a log no session was reading. The pid
+# live record refuses the start, with two exceptions, whose watch is stopped
+# and replaced. One is the watch a succession restarted for THIS pane: that
+# start is the successor running its own watch, as oversee.md § 4 has every
+# overseer do. The other is a watch whose pane tmux no longer lists: it serves
+# an overseer that is gone, which a succession whose restart never ran leaves
+# behind. Output a restarted watch wrote where no session reads it, and what
+# the restart itself said, is printed next and removed, whether or not that
+# watch still ran, so nothing it reported or refused on is lost. The pid
 # recorded is this process's own, whatever launched it, so a stop reaches the
 # loop and never a shell that only started it.
 watch_claim() { # ARGV...
-  local adopted=""
+  local why=""
   if watch_pid_live "$STATE_FILE"; then
-    if [[ "$WATCH_ORIGIN" == succession && -n "${TMUX_PANE:-}" && "$WATCH_PANE" == "$TMUX_PANE" ]] \
-       && watch_stop "$WATCH_PID"; then
-      adopted="$WATCH_PID"
-    else
-      die watch-running "" "pid=$WATCH_PID" "pane=$WATCH_PANE" "path=$STATE_FILE"
+    if [[ "$WATCH_ORIGIN" == succession && -n "${TMUX_PANE:-}" && "$WATCH_PANE" == "$TMUX_PANE" ]]; then
+      why=succession
+    elif watch_pane_gone "$WATCH_PANE"; then
+      why=pane-gone
     fi
+    [[ -n "$why" ]] && watch_stop "$WATCH_PID" \
+      || die watch-running "" "pid=$WATCH_PID" "pane=$WATCH_PANE" "path=$STATE_FILE"
+    ow_message watch-taken-over "pid=$WATCH_PID" "pane=$WATCH_PANE" "reason=$why" >&2
   fi
   watch_pid_write "$STATE_FILE" "${TMUX_PANE:-none}" "${OVERSEE_WATCH_ORIGIN:-hand}" \
-    "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" "$@" \
+    "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" "${@:1:$ARGV_BASE_COUNT}" \
     || die watch-record-failed "" "path=${WATCH_PID_FILE:-$STATE_FILE}"
-  # Bash runs an EXIT trap on a TERM or INT exit too, so a stopped loop
-  # removes its record however it was stopped.
   trap 'watch_pid_release "$STATE_FILE"' EXIT
-  [[ -n "$adopted" ]] || return 0
-  ow_message watch-adopted "pid=$adopted" "log=$WATCH_LOG_FILE" >&2
-  [[ ! -f "$WATCH_LOG_FILE" ]] || cat -- "$WATCH_LOG_FILE"
-  [[ ! -f "$WATCH_ERR_FILE" ]] || cat -- "$WATCH_ERR_FILE" >&2
+  trap 'repeat_stop 143' TERM
+  trap 'repeat_stop 130' INT
+  if [[ -s "$WATCH_LOG_FILE" || -s "$WATCH_ERR_FILE" ]]; then
+    ow_message watch-replayed "log=$WATCH_LOG_FILE" "err=$WATCH_ERR_FILE" >&2
+    [[ ! -f "$WATCH_LOG_FILE" ]] || cat -- "$WATCH_LOG_FILE"
+    [[ ! -f "$WATCH_ERR_FILE" ]] || cat -- "$WATCH_ERR_FILE" >&2
+    rm -f -- "${WATCH_LOG_FILE:?}" "${WATCH_ERR_FILE:?}"
+  fi
 }
 
 # The pass is handed the state itself and only the entries argv gave this
@@ -1375,11 +1410,18 @@ repeat_watch() { # ARGV...
     # LAST, after every lane window: `--` ends this parser, so anything appended
     # after the overseer's flags would reach the harness instead of the watch.
     [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || args+=(-- "${OVERSEER_FLAGS[@]}")
+    # The pass and the delay run in the background and are waited on, so a
+    # TERM on this loop reaches its trap at once and the trap stops the pass:
+    # bash holds a trap until a FOREGROUND child returns, and a stopped loop
+    # would otherwise leave its pass reading the fleet for its whole run.
     pass_rc=0
     OVERSEE_WATCH_FLEET_STATE_DIR="$fleet_state_dir" \
       OVERSEE_WATCH_REPEAT_OWNER="$$" \
       OVERSEE_WATCH_SESSION="$WATCH_SESSION" \
-      "$self" "${args[@]}" || pass_rc=$?
+      "$self" "${args[@]}" &
+    REPEAT_CHILD_PID=$!
+    wait "$REPEAT_CHILD_PID" || pass_rc=$?
+    REPEAT_CHILD_PID=""
     # The overseer this watch served is gone and a successor holds its window,
     # running a watch of its own. Two watches on one fleet read one overseer
     # mailbox and each replay what the other drained, so this one ends here.
@@ -1397,7 +1439,10 @@ repeat_watch() { # ARGV...
     # Named for a test's sleep stub, which tells this delay from a pass's own
     # sleeps by the variable and never by reading the process table. A delay
     # that cannot be slept ends the watch with its cause named, never silently.
-    OVERSEE_WATCH_SLEEP=repeat sleep "$REPEAT" || die sleep-failed "" "secs=$REPEAT"
+    OVERSEE_WATCH_SLEEP=repeat sleep "$REPEAT" &
+    REPEAT_CHILD_PID=$!
+    wait "$REPEAT_CHILD_PID" || die sleep-failed "" "secs=$REPEAT"
+    REPEAT_CHILD_PID=""
   done
 }
 if [[ -n "$REPEAT" ]]; then

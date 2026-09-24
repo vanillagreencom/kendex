@@ -87,20 +87,34 @@ new_caller() {
 FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
 printf '{"issue_id": "oversee"}\n' > "$FLEET_STATE"
 
+# The fleet state the succession records its line in, and beside which the
+# watch keeps its record and a restarted watch its output.
+FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
+printf '{"issue_id": "oversee"}\n' > "$FLEET_STATE"
+WATCH_ERR="$TMP_ROOT/work/tmp/oversee-watch.err"
+fresh_output() { rm -f -- "${TMP_ROOT:?}/work/tmp/oversee-watch.log" "${TMP_ROOT:?}/work/tmp/oversee-watch.err"; }
+
 # run_succeed [SUCCEED_BIN] — the script from outside the caller's pane, under
 # a whole environment, with the flags an overseer on the claude:1 entry passes.
+# ROW_PATH, when set, goes ahead of the stubs on PATH, and ROW_LAUNCH, when
+# set, is the word the run is started under.
+ROW_PATH="" ROW_LAUNCH=""
 run_succeed() {
   RC=0
-  OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" \
+  OUT="$(cd "$TMP_ROOT/work" && ${ROW_LAUNCH:+"$ROW_LAUNCH"} env -i HOME="$H" PATH="${ROW_PATH:+$ROW_PATH:}$BIN:$PATH" \
+    TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     CLAUDE_CONFIG_DIR="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" \
     ORCH_OVERSEER_PREFERENCE=claude:1:high ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 \
     "${1:-$SUCCEED}" -- --permission-mode dontAsk --verbose 2>&1)" || RC=$?
+  # The window the caller held, which the successor holds once the close ran.
+  SUCC_PANE="$(tm list-panes -t fleet:1 -F '#{pane_id}' 2>/dev/null || true)"
 }
 
-# The stand-in watch: it records itself as the real loop does and appends one
-# `started` line, with its pane, origin, account, directory and arguments, to
-# watch.log, and one `stopped` line when it is stopped.
+# The stand-in watch: it records itself as the real loop does, with its words
+# before `--`, and appends one `started` line, with its pane, origin, account,
+# directory and arguments, to watch.log, and one `stopped` line when it is
+# stopped.
 FIXTURE_WATCH="$TMP_ROOT/fixture/oversee-watch"
 cat > "$FIXTURE_WATCH" <<EOF
 #!/usr/bin/env bash
@@ -108,10 +122,16 @@ source "$SRC_DIR/lib/watch-pid.sh"
 trap 'echo "stopped \$\$" >> "$TMP_ROOT/watch.log"; exit 143' TERM
 state=""
 prev=""
-for arg in "\$@"; do [[ "\$prev" != --state ]] || state="\$arg"; prev="\$arg"; done
+base=()
+for arg in "\$@"; do
+  [[ "\$arg" != -- ]] || break
+  base+=("\$arg")
+  [[ "\$prev" != --state ]] || state="\$arg"
+  prev="\$arg"
+done
 printf 'started %s pane=%s origin=%s lane=%s cwd=%s argv=%s\n' "\$\$" "\${TMUX_PANE:-none}" \\
   "\${OVERSEE_WATCH_ORIGIN:-hand}" "\${CLAUDE_CONFIG_DIR:-none}" "\$PWD" "\$*" >> "$TMP_ROOT/watch.log"
-watch_pid_write "\$state" "\${TMUX_PANE:-none}" "\${OVERSEE_WATCH_ORIGIN:-hand}" "\$0" "\$@"
+watch_pid_write "\$state" "\${TMUX_PANE:-none}" "\${OVERSEE_WATCH_ORIGIN:-hand}" "\$0" "\${base[@]}"
 while :; do sleep 1; done
 EOF
 chmod +x "$FIXTURE_WATCH"
@@ -133,49 +153,118 @@ start_watch() {
   exit 1
 }
 started_line() { grep "^started $1 " "$TMP_ROOT/watch.log" | sed "s/^started $1 //"; }
+# wait_restart — the pid of the watch recorded from the successor pane as a
+# succession's restart, once its outcome line is written, or empty after the
+# bound. The helper does its work after this run has returned.
+wait_restart() {
+  local i
+  NEW=""
+  for (( i = 0; i < 150; i++ )); do
+    if watch_pid_live "$FLEET_STATE" && [[ "$WATCH_ORIGIN" == succession && "$WATCH_PANE" == "$SUCC_PANE" ]] \
+       && grep -q '^oversee-succeed: watch-restarted ' "$WATCH_ERR" 2>/dev/null; then
+      NEW="$WATCH_PID"
+      return 0
+    fi
+    sleep 0.1
+  done
+}
 
 echo "=== oversee-succeed: the fleet watch ==="
 
 new_caller
+fresh_output
 start_watch
 run_succeed
-SUCC_PANE="$(sed -n 's/^oversee-succeed: successor-working window=@[0-9]* pane=\(%[0-9]*\)$/\1/p' <<<"$OUT")"
-NEW="$(sed -n 's/^oversee-succeed: watch-restarted pid=\([0-9]*\) pane=.*$/\1/p' <<<"$OUT")"
-check "the succession stops the watch serving the caller's pane, once" \
-  "$RC|$(grep -c "^stopped $OLD\$" "$TMP_ROOT/watch.log")|$(kill -0 "$OLD" 2>/dev/null && echo alive || echo gone)" \
-  "0|1|gone"
-check "and starts it again from the successor pane, with the successor's flags and account" \
-  "${SUCC_PANE:+found}|$(started_line "${NEW:-none}")" \
+wait_restart
+check "the succession names the watch it hands over before the close" \
+  "$RC|$(grep -c "^oversee-succeed: watch-handover pid=$OLD pane=$SUCC_PANE log=.*/tmp/oversee-watch.err\$" <<<"$OUT")" \
+  "0|1"
+check "the watch serving the caller's pane is stopped, once" \
+  "$(grep -c "^stopped $OLD\$" "$TMP_ROOT/watch.log")|$(kill -0 "$OLD" 2>/dev/null && echo alive || echo gone)" \
+  "1|gone"
+check "and started again from the successor pane, with the successor's flags and account" \
+  "${NEW:+found}|$(started_line "${NEW:-none}")" \
   "found|pane=$SUCC_PANE origin=succession lane=$H/.claude cwd=$TMP_ROOT/work argv=$WATCH_ARGS -- --model fable --effort high --permission-mode dontAsk --verbose"
-check "the restart is reported with the new loop's pid and the successor pane" \
-  "$(grep -c "^oversee-succeed: watch-restarted pid=$NEW pane=$SUCC_PANE\$" <<<"$OUT")|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
+check "the restart is written beside the fleet state with the new loop's pid and the successor pane" \
+  "$(grep -c "^oversee-succeed: watch-restarted pid=$NEW pane=$SUCC_PANE\$" "$WATCH_ERR")|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
   "1|2"
 watch_stop "$NEW" || true
 
 # No watch runs on the fleet state: nothing is started, and the run says so.
 new_caller
+fresh_output
 run_succeed
 check "a fleet with no running watch reports watch-absent and starts none" \
   "$RC|$(grep -c '^oversee-succeed: watch-absent path=.*/tmp/workflow-state-oversee.json$' <<<"$OUT")|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
   "0|1|2"
 
-# The must-fail control: the succession as it stood before the restart, which
+# The must-fail control: the succession as it stood before the handover, which
 # closes the caller and leaves its watch reading the pane that closed.
-UNPATCHED="$TMP_ROOT/unpatched"
-mkdir -p "$UNPATCHED"
-ln -s "$SRC_DIR"/* "$UNPATCHED/"
-rm -f -- "${UNPATCHED:?}/oversee-succeed"
-FROM='if [[ "$MODE" == succeed ]]; then' TO='if false; then' \
-  awk '$0 == ENVIRON["FROM"] { print ENVIRON["TO"]; hits++; next } { print } END { if (hits != 1) exit 1 }' \
-  "$SUCCEED" > "$UNPATCHED/oversee-succeed"
-chmod +x "$UNPATCHED/oversee-succeed"
+script_mutant() { # DIR FROM TO
+  mkdir -p "$1"
+  ln -s "$SRC_DIR"/* "$1/"
+  rm -f -- "${1:?}/oversee-succeed"
+  FROM="$2" TO="$3" \
+    awk '$0 == ENVIRON["FROM"] { print ENVIRON["TO"]; hits++; next } { print } END { if (hits != 1) exit 1 }' \
+    "$SUCCEED" > "$1/oversee-succeed"
+  chmod +x "$1/oversee-succeed"
+}
+script_mutant "$TMP_ROOT/unpatched" 'if [[ "$MODE" == succeed ]]; then' 'if false; then'
 new_caller
+fresh_output
 start_watch
-run_succeed "$UNPATCHED/oversee-succeed"
-check "control: without the restart the watch keeps serving the closed pane" \
+run_succeed "$TMP_ROOT/unpatched/oversee-succeed"
+sleep 2
+check "control: without the handover the watch keeps serving the closed pane" \
   "$RC|$(kill -0 "$OLD" 2>/dev/null && echo alive || echo gone)|$(started_line "$OLD" | sed 's/ .*//')|$(grep -c '^oversee-succeed: watch-' <<<"$OUT")" \
   "0|alive|pane=$CALLER_PANE|0"
 watch_stop "$OLD" || true
+
+# A harness that kills its tool call's whole process group once the close has
+# ended it: modelled by a tmux that, having run the close, kills the process
+# group of the run that called it, which is started as a group of its own. The
+# restart, left to a helper in a session of its own, still happens. A host
+# with no setsid has neither that session nor this row.
+if command -v setsid >/dev/null 2>&1; then
+  REAL_TMUX="$(command -v tmux)"
+  TEST_PGID="$(ps -o pgid= -p $$ | tr -d ' ')"
+  mkdir -p "$TMP_ROOT/killbin"
+  cat > "$TMP_ROOT/killbin/tmux" <<EOF
+#!/usr/bin/env bash
+"$REAL_TMUX" "\$@"
+rc=\$?
+if [ "\$1" = swap-window ]; then
+  pg=\$(ps -o pgid= -p \$\$ | tr -d ' ')
+  [ "\$pg" = "$TEST_PGID" ] || kill -KILL -- "-\$pg"
+fi
+exit \$rc
+EOF
+  chmod +x "$TMP_ROOT/killbin/tmux"
+  killed_case() { # [SUCCEED_BIN]
+    new_caller
+    fresh_output
+    start_watch
+    ROW_PATH="$TMP_ROOT/killbin" ROW_LAUNCH=setsid run_succeed "${1:-}"
+    wait_restart
+  }
+  killed_case
+  check "a run killed with its process group at the close still has the watch restarted from the successor pane" \
+    "$RC|$(tm list-windows -t fleet -F '#{window_id}' | grep -cxF -- "$CALLER_WINDOW" || true)|${NEW:+restarted}|$(kill -0 "$OLD" 2>/dev/null && echo alive || echo gone)" \
+    "137|0|restarted|gone"
+  watch_stop "$NEW" || true
+
+  # The control: the helper left in the run's own process group, which the
+  # same kill takes with it.
+  script_mutant "$TMP_ROOT/grouped" \
+    '    lane_run_detached "$WATCH_ERR_FILE" "$WATCH_ERR_FILE" "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" --watch-restart "$watch_state" "$CALLER_WINDOW" "$SUCC_PANE" "$lane_var" "$launch_home" ${SUCC_FLAGS[@]+"${SUCC_FLAGS[@]}"}' \
+    '    "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" --watch-restart "$watch_state" "$CALLER_WINDOW" "$SUCC_PANE" "$lane_var" "$launch_home" ${SUCC_FLAGS[@]+"${SUCC_FLAGS[@]}"} >>"$WATCH_ERR_FILE" 2>&1 &'
+  killed_case "$TMP_ROOT/grouped/oversee-succeed"
+  check "control: a helper in the killed group dies with it and the watch is never restarted" \
+    "$RC|${NEW:-none}" "137|none"
+  watch_stop "$OLD" || true
+else
+  printf '  skip  the process-group kill rows need setsid\n'
+fi
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
