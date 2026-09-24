@@ -259,21 +259,74 @@ assert_eq "$unread_rc" "2" "an issue absent from the cache exits 2 rather than j
 # The repository-local fallback for a branch carrying no issue id. The cache
 # here holds no such row, so a key that reached the tracker would exit 2.
 "$STATE" --state-dir "$WT/tmp" init pr-51 --worktree "$WT" --branch size >/dev/null
-capture pr_json env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS ORCH_STATE_DIR="$WT/tmp" \
-  "$CHECK_BIN" --worktree "$WT" --issue pr-51 --json
-assert_eq "$(jq -r '.verdict, .production_allowance, .test_allowance' <<<"$pr_json" | paste -sd, -)" \
-  "allowance_missing,null,null" "a pr-N key is measured under allowance_missing, with no allowance invented"
+run_pr_check() {
+  env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS ORCH_STATE_DIR="$WT/tmp" \
+    "$@" --worktree "$WT" --issue pr-51
+}
+capture pr_json run_pr_check "$CHECK_BIN" --json
+assert_eq "$(jq -r '.verdict, .production_allowance, .test_allowance, .production_lines, .test_lines' <<<"$pr_json" | paste -sd, -)" \
+  "allowance_missing,null,null,50,50" \
+  "a pr-N key is measured under allowance_missing, with no allowance invented"
+# The mirror count is not this case's subject, so it is matched loosely, the
+# way the sibling allowance_missing report line is.
+assert_eq "$([[ "$(jq -r '.reason' <<<"$pr_json")" == "'pr-51' names no issue, so no allowance was read; 50 production, 50 test and "*" render-mirror lines added, none judged" ]] && echo yes)" \
+  "yes" "the reason names the no-issue cause, not an issue that states no line"
+assert_eq "$("$STATE" --state-dir "$WT/tmp" get pr-51 '.pr.size_check.verdict')" "allowance_missing" \
+  "the pr-N verdict is recorded in the workflow state's pr object"
+
+# A near-miss key is not the fallback: it reaches the tracker and refuses.
+"$STATE" --state-dir "$WT/tmp" init pr-51x --worktree "$WT" --branch size >/dev/null
+rc_of near_miss_rc env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS ORCH_STATE_DIR="$WT/tmp" \
+  "$CHECK_BIN" --worktree "$WT" --issue pr-51x
+assert_eq "$near_miss_rc" "2" "a key outside the pr-N shape still reaches the tracker"
 
 PR_MUTANT_SCRIPTS="$(copy_scripts pr-key-mutant)"
 PR_MUTANT="$PR_MUTANT_SCRIPTS/branch-size-check"
 mutate_file "$PR_MUTANT" 'NO_ISSUE_KEY_GRAMMAR='"'"'^pr-[0-9]+$'"'"'' 'NO_ISSUE_KEY_GRAMMAR='"'"'^$'"'"''
 set +e
-pr_mutant_error="$(env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS ORCH_STATE_DIR="$WT/tmp" \
-  "$PR_MUTANT" --worktree "$WT" --issue pr-51 2>&1 >/dev/null)"
+pr_mutant_error="$(run_pr_check "$PR_MUTANT" 2>&1 >/dev/null)"
 pr_mutant_rc=$?
 set -e
 assert_eq "$pr_mutant_rc,${pr_mutant_error%%$'\n'*}" "2,branch-size-check: linear-read issue=pr-51" \
   "control: without the no-issue key the same run is a tracker-read refusal"
+
+# --- A cut retry on a pr-N key is judged against its recorded comparison -----
+# review-pr-comments keys a branch with no issue id pr-N, and a cut chosen
+# there retries through --cut-from-round. The comparison, not the key, states
+# the allowance, so the cut branch is reached first in both the source chain
+# and the allowance chain.
+CUT_ROUND="$TMP_ROOT/pr-cut-round.json"
+jq -n '{issue: "pr-51", cut: true,
+        cut_comparison: {production_lines: 9, test_lines: 9,
+                         production_allowance: 9, test_allowance: 9}}' > "$CUT_ROUND"
+capture pr_cut_json run_pr_check "$CHECK_BIN" --cut-from-round "$CUT_ROUND" --json
+assert_eq "$(jq -r '.production_allowance, .test_allowance, .verdict' <<<"$pr_cut_json" | paste -sd, -)" \
+  "9,9,over" "a pr-N cut retry is judged against the comparison's allowance, not left unjudged"
+
+# The cut branch also owns the round record's validation, which the no-issue
+# key must not skip.
+BAD_CUT_ROUND="$TMP_ROOT/pr-cut-round-bad.json"
+jq -n '{issue: "pr-51", cut: true, cut_comparison: "not an object"}' > "$BAD_CUT_ROUND"
+set +e
+bad_cut_error="$(run_pr_check "$CHECK_BIN" --cut-from-round "$BAD_CUT_ROUND" 2>&1 >/dev/null)"
+bad_cut_rc=$?
+set -e
+assert_eq "$bad_cut_rc,${bad_cut_error%%$'\n'*}" "2,branch-size-check: invalid-round path=$BAD_CUT_ROUND" \
+  "a pr-N cut retry still refuses a round record it cannot read"
+
+# Control: give the no-issue key precedence over the cut branch. Both chains
+# read the cut source, so the one mutation drops the comparison's allowance
+# and skips the round record's validation together.
+CUT_ORDER_SCRIPTS="$(copy_scripts pr-cut-order-mutant)"
+CUT_ORDER_MUTANT="$CUT_ORDER_SCRIPTS/branch-size-check"
+mutate_file "$CUT_ORDER_MUTANT" 'no_issue=false' \
+  'if [[ "$issue" =~ $NO_ISSUE_KEY_GRAMMAR ]]; then no_issue=true; cut_from_round=""; else no_issue=; fi'
+capture cut_order_json run_pr_check "$CUT_ORDER_MUTANT" --cut-from-round "$CUT_ROUND" --json
+assert_eq "$(jq -r '.verdict' <<<"$cut_order_json")" "allowance_missing" \
+  "control: the no-issue rule ahead of the cut branch drops the comparison's allowance"
+rc_of cut_order_rc run_pr_check "$CUT_ORDER_MUTANT" --cut-from-round "$BAD_CUT_ROUND"
+assert_eq "$cut_order_rc" "0" \
+  "control: the same precedence skips the round record's validation"
 
 # --- The state file is the one named, not the one the caller stands in ------
 write_issue "**Expected delta**: 50 lines"

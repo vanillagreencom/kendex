@@ -1020,10 +1020,12 @@ EOF
   remove <issue_id>             Delete the state file and its lock sidecar; absent is success
 
 Keys:
-  GitHub-issue orchestration stores state under the normalized key issue-<N>,
-  and a branch carrying no issue id under the repository-local key pr-<N>.
-  Every command resolves <issue_id> to that exact key — pass init the same
-  spelling every later command will use.
+  Three key forms: the tracker identifier (KEN-123) for a tracked issue,
+  issue-<N> for a GitHub issue, and the repository-local pr-<N> for a branch
+  carrying no issue id. The key is stored as passed and validated by its
+  callers, not here: every command interpolates <issue_id> into the state
+  filename exactly as given, so pass init the spelling every later command
+  will use.
 
 Examples:
   workflow-state init PROJ-123 --agent rust --worktree /tmp/wt

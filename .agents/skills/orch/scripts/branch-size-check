@@ -39,9 +39,11 @@
 #   **Expected delta**: 1 line, 1 test line
 #   **Expected delta**: 250 lines, 120 test lines
 # Production additions past the first count report over, as do test additions
-# past the second. With no test count the test lines are shown and not judged. With
-# no line at all nothing is judged: the verdict is allowance_missing, the
-# counts are reported for the reviewer, and the exit is 0. A line in any other
+# past the second. With no test count the test lines are shown and not judged.
+# Nothing is judged when no allowance was read at all: the verdict is
+# allowance_missing, the counts are reported for the reviewer, and the exit is
+# 0. Its two causes are named apart in the reason — an issue that was read and
+# states no line, and a key that names no issue to read. A line in any other
 # shape is a usage failure fixed on the issue.
 #
 # The verdict is recorded as workflow state pr.size_check, bound to the base
@@ -114,7 +116,7 @@ message() {
       ;;
     missing-issue)
       printf 'branch-size-check: missing-issue option=%s\n' "--issue"
-      printf '%s\n' "--issue is required (the tracker issue whose allowance governs the branch)"
+      printf '%s\n' "--issue is required (the workflow-state key whose issue states the branch's allowance)"
       ;;
     invalid-issue)
       printf 'branch-size-check: invalid-issue issue=%s\n' "$issue"
@@ -173,7 +175,13 @@ message() {
         "$verdict" "$production_lines" "$test_lines" "$mirror_lines" "${allowance:-none}" "${test_allowance:-none}"
       case "$verdict" in
         pass) printf 'The branch is within its stated allowance.\n' ;;
-        allowance_missing) printf 'No allowance was stated. Report the measured counts for review.\n' ;;
+        allowance_missing)
+          if [[ "$no_issue" == true ]]; then
+            printf 'The key names no issue, so no allowance was read. Report the measured counts for review.\n'
+          else
+            printf 'No allowance was stated. Report the measured counts for review.\n'
+          fi
+          ;;
         over) printf 'The branch exceeds its stated allowance. Report the counts for review.\n' ;;
       esac
       ;;
@@ -228,6 +236,9 @@ test_paths="${ORCH_SIZE_TEST_PATHS:-}"
 # A tracker that cannot be read leaves no allowance to judge by and no way to
 # say the issue states none, so it is an environment failure, never a verdict.
 issue_body=""
+# Set where the key names no issue to read, so the allowance_missing verdict
+# reports that cause rather than an issue that was read and states no line.
+no_issue=false
 if [[ -n "$cut_from_round" ]]; then
   jq -e --arg issue "$issue" '
     .issue == $issue and .cut == true and
@@ -237,7 +248,7 @@ if [[ -n "$cut_from_round" ]]; then
       (.test_allowance == null or (.test_allowance | type == "number")))
   ' "$cut_from_round" >/dev/null 2>&1 || die invalid-round
 elif [[ "$issue" =~ $NO_ISSUE_KEY_GRAMMAR ]]; then
-  issue_body=""
+  no_issue=true
 elif [[ "$issue" == issue-* ]]; then
   command -v gh >/dev/null 2>&1 || die missing-gh "$@"
   # gh and the Linear CLI both resolve their repository from the working
@@ -298,7 +309,12 @@ verdict="pass"
 reason=""
 if [[ -z "$allowance" ]]; then
   verdict="allowance_missing"
-  reason="'$issue' states no **Expected delta** line; $production_lines production, $test_lines test and $mirror_lines render-mirror lines added, none judged"
+  if [[ "$no_issue" == true ]]; then
+    reason="'$issue' names no issue, so no allowance was read"
+  else
+    reason="'$issue' states no **Expected delta** line"
+  fi
+  reason="$reason; $production_lines production, $test_lines test and $mirror_lines render-mirror lines added, none judged"
 elif (( production_lines > allowance )); then
   verdict="over"
   reason="$production_lines production lines added; the comparison allows $allowance"

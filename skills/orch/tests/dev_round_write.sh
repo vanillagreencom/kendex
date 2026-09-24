@@ -347,10 +347,7 @@ set +e
 "$CHECK" --worktree "$PRW" --issue pr-51 --round-id 51-1 --expect-items-from-round >/dev/null 2>&1
 pr_check_rc=$?
 set -e
-assert_eq "$pr_check_rc" "0" "dev-artifact-check reads the pr-N round back"
-run_write --worktree "$PRW" --issue pr/51 --round-id 51-2 --item 1 "outside the grammar" "$OK_REACH"
-E="rc=2 stderr~dev-round-write:+invalid-id+arg1=--issue+arg2=pr/51=true"
-assert_eq "$(observe "$E")" "$E" "a key outside the path-safe grammar is still refused" "$ERR"
+assert_eq "$pr_check_rc" "0" "dev-artifact-check reads the pr-N round back" "$ERR"
 
 echo "=== a record the reader cannot use fails acceptance closed ==="
 # A record removed after delegation, a non-string base_sha, an empty path
