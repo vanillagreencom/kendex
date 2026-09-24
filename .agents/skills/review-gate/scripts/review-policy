@@ -28,6 +28,13 @@ The live form calls the sibling harness-ci change classifier. It prints:
 
   change_class=CLASS review_evidence=none|required|current policy=active
 
+An endpoint the caller's checkout cannot resolve is NOT a class. The
+classifier answers `standard` there and says so in a `harness-note:` line
+carrying `cause=unresolved-endpoint`; this script refuses on that note rather
+than pass `standard` on, since the policy row for `standard` would read to
+every consumer as a class something measured. The caller materializes the
+range and asks again.
+
 Exit 2 prints no policy record. The caller cannot assert a class.
 USAGE
 }
@@ -79,8 +86,25 @@ if [ -z "$POLICY" ]; then
   exit 0
 fi
 [ -x "$CLASSIFIER" ] || fail policy-classifier "$CLASSIFIER" "the harness-ci change classifier is not executable"
-if ! CLASS_OUT="$("$CLASSIFIER" "$@")"; then
+CLASS_ERR="$(mktemp "${TMPDIR:-/tmp}/review-policy-class.XXXXXX")" ||
+  fail policy-scratch "${TMPDIR:-/tmp}" "a scratch file for the classifier's diagnostics could not be created"
+trap 'rm -f -- "${CLASS_ERR:?}"' EXIT
+if ! CLASS_OUT="$("$CLASSIFIER" "$@" 2>"$CLASS_ERR")"; then
+  cat -- "$CLASS_ERR" >&2
   fail policy-classifier-call "$CLASSIFIER" "the harness-ci change classifier could not answer"
+fi
+# The classifier's own log is this script's too: a caller reading the refusal
+# below needs the line that produced it.
+cat -- "$CLASS_ERR" >&2
+# An endpoint that does not resolve is a refusal to read the diff, not a
+# measurement of it. The classifier reports that as `standard` with a note,
+# and `standard` carries a real policy row, so passing it on would hand every
+# consumer a class nothing measured: under REVIEW_GATE_MODE=off that row reads
+# as no review at all. Refuse here instead, once, and let the caller
+# materialize the range and ask again.
+if grep -q '^harness-note: cause=unresolved-endpoint' "$CLASS_ERR"; then
+  ENDPOINT="$(sed -n 's/^harness-note: cause=unresolved-endpoint[[:space:]]*//p' "$CLASS_ERR" | tail -1)"
+  fail policy-endpoint "${ENDPOINT:-unnamed}" "an endpoint of the range does not resolve in this checkout, so no class was measured"
 fi
 case "$CLASS_OUT" in
   change_class=render|change_class=trivial|change_class=micro|change_class=small|change_class=standard) CLASS="${CLASS_OUT#change_class=}" ;;

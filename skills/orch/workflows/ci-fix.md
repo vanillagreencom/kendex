@@ -228,4 +228,4 @@ Under `ask`, present `Run ci-fix again` | `Stop`; continuation clears the stop.
 
 ## 6. Return
 
-**Managed**: return to the parent workflow's next section. **Standalone**: return `.post_pr_stop` when present; otherwise the CI-fix session is complete.
+**Managed**: return to the parent workflow's next section with the `GATE_MODE` § 5 resolved at the new head. That head's mode is the caller's from here: the class a policy waives belongs to one head, and a push can change it. **Standalone**: return `.post_pr_stop` when present; otherwise the CI-fix session is complete.

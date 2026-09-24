@@ -108,13 +108,17 @@ Review-thread gate:
   else review-policy on PATH, is the only owner asked, and only once a thread
   is open, since nothing else here turns on its answer: --check-config says
   whether a policy is active, and an active one is asked about this pull
-  request's own base and head. A review_evidence=none answer reports
+  request's own base and head. Those two commits must be in this checkout for
+  a class to be measured at all, and baseRefOid is the base branch's current
+  tip, so the two SHAs are fetched from origin when either is missing and the
+  range is checked again. A review_evidence=none answer reports
   unresolved_threads_waived as a warning and gates nothing; required and
   current keep the gate. No policy script and an inactive policy both keep it.
-  A policy that cannot be read blocks with review_policy_unreadable: an
-  unreadable policy is never a waiver. Conflicts, required contexts, the
-  exact-head guard and the base branch's own conversation-resolution rule are
-  untouched by every answer.
+  An unreadable policy or an endpoint still missing after the fetch blocks
+  with review_policy_unreadable and is never a waiver; the child's own
+  diagnostics reach stderr so the cause is named. Conflicts, required
+  contexts, the exact-head guard and the base branch's own
+  conversation-resolution rule are untouched by every answer.
 
   The gate is policy, not mechanism. It applies only through pr-merge. A raw
   gh pr merge call or the GitHub UI Merge button bypasses it.
@@ -438,6 +442,37 @@ required_contexts() {
     printf '%s\n%s\n' "$rules" "$classic" | jq -R -s -c 'split("\n") | map(select(startswith("ctx:")) | ltrimstr("ctx:")) | unique'
 }
 
+# Every child this command runs out of the checkout — the change classifier,
+# the reviewer-gate resolver and the review gate's class-policy owner — goes
+# through here, so the two promises those calls share are made once. First,
+# GH_CONFIG_DIR is dropped: the admin-credential route exports the owner
+# credential's directory before its readiness check, and checkout code is
+# never handed that credential. Second, the child's stderr is held and
+# replayed only when it fails, so a refusal names its own cause instead of
+# reading the same for a malformed policy, a missing classifier, an
+# unauthenticated gh and an unfetched base. Its stdout is this function's.
+run_checkout_child() { # DIR ARGV...
+    local dir="$1"
+    shift
+    local err out status=0
+    if ! err=$(mktemp "${TMPDIR:-/tmp}/pr-merge-child.XXXXXX"); then
+        echo "pr-merge: could not create a temporary file for a checkout child's diagnostics" >&2
+        return 1
+    fi
+    out=$(cd -- "$dir" && env -u GH_CONFIG_DIR "$@" 2>"$err") || status=$?
+    [ "$status" -eq 0 ] || cat -- "$err" >&2
+    rm -f -- "${err:?}"
+    [ "$status" -eq 0 ] || return "$status"
+    printf '%s' "$out"
+}
+
+# Both ends of the range, as commits this checkout holds. A classifier reads
+# the diff between them, so an endpoint that is not here is not a class.
+policy_range_present() { # ROOT BASE HEAD
+    git -C "$1" cat-file -e "$2^{commit}" 2>/dev/null &&
+        git -C "$1" cat-file -e "$3^{commit}" 2>/dev/null
+}
+
 # The review gate's class policy for one pull request, from the review-gate
 # skill's own review-policy — the single owner of the class-to-policy mapping.
 # This command asks; it never classifies a change and never maps a class. Its
@@ -460,9 +495,10 @@ review_policy_evidence() {
         return 0
     fi
     root=$(git rev-parse --show-toplevel 2>/dev/null) || root=$(pwd) || return 1
-    # Subshell with a cd because the engine resolves its settings files
-    # relative to the repository root.
-    state=$(cd -- "$root" && "$owner" --check-config 2>/dev/null) || return 1
+    # The cd is the engine's: it resolves its settings files relative to the
+    # repository root. The credential drop and the held diagnostics are
+    # run_checkout_child's.
+    state=$(run_checkout_child "$root" "$owner" --check-config) || return 1
     case "$state" in
     review-policy=inactive)
         printf 'current'
@@ -483,10 +519,20 @@ review_policy_evidence() {
     if [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
         return 1
     fi
+    # baseRefOid is the base branch's CURRENT tip, which a checkout that has
+    # not fetched since another pull request merged does not hold, and no
+    # classifier can read a diff to a commit that is not here. Fetch the two
+    # SHAs, then look again: an endpoint still missing is an unreadable range,
+    # and the caller records review_policy_unreadable rather than a class.
+    if ! policy_range_present "$root" "$base_sha" "$head_sha"; then
+        git -C "$root" fetch --quiet origin "$base_sha" "$head_sha" 2>/dev/null ||
+            echo "pr-merge: the class-policy range is not in this checkout and the fetch from origin failed" >&2
+        policy_range_present "$root" "$base_sha" "$head_sha" || return 1
+    fi
     # `--repo .` is the checkout this command runs in, which is where the two
     # SHAs resolve — the same spelling the class read above the merge uses.
-    record=$(cd -- "$root" && "$owner" \
-        --event pull_request --base "$base_sha" --head "$head_sha" --repo . 2>/dev/null) || return 1
+    record=$(run_checkout_child "$root" "$owner" \
+        --event pull_request --base "$base_sha" --head "$head_sha" --repo .) || return 1
     case "$record" in
     *$'\n'*) return 1 ;;
     "change_class="*" review_evidence=none policy=active") printf 'none' ;;
@@ -933,14 +979,14 @@ admin_change_class() {
     fi
     [ -n "$classifier" ] || return 1
     local answer
-    # Drop the owner credential's gh config directory for the child: the
-    # classifier may call gh, and the route promises the credential is never
-    # passed on. Every other gh call in the route still runs under it.
+    # run_checkout_child drops the owner credential's gh config directory for
+    # the child and holds its diagnostics; every other gh call in the route
+    # still runs under that directory.
     # A measured class needs `--event pull_request`; without it the classifier
     # refuses as a wiring error and no merge could ever be admitted. `--repo .`
     # is the checkout this route runs in, which is where the two SHAs resolve.
-    answer=$(env -u GH_CONFIG_DIR "$classifier" \
-        --event pull_request --base "$base_sha" --head "$head_sha" --repo . 2>/dev/null) || return 1
+    answer=$(run_checkout_child . "$classifier" \
+        --event pull_request --base "$base_sha" --head "$head_sha" --repo .) || return 1
     # The classifier's whole stdout is one `change_class=<class>` line. Any
     # other shape is an answer this route cannot read, so it refuses rather
     # than take a prose line or a second line for a class.
@@ -970,13 +1016,13 @@ admin_gate_mode() {
         resolver=$(command -v approval-wait 2>/dev/null) || resolver=""
     fi
     [ -n "$resolver" ] || return 1
-    # Drop the owner credential's gh config directory for the child, the same
-    # promise the classifier call keeps. --resolve-mode needs no
+    # run_checkout_child drops the owner credential's gh config directory here
+    # too. --resolve-mode needs no
     # authentication. It does need the pull request's range: where the review
     # gate's class policy is active the mode belongs to one pull request, and
     # the resolver refuses rather than guess one, which this route's last case
     # arm turns into a refusal of its own.
-    env -u GH_CONFIG_DIR "$resolver" --resolve-mode --base "$base_sha" --head "$head_sha" 2>/dev/null
+    run_checkout_child . "$resolver" --resolve-mode --base "$base_sha" --head "$head_sha"
 }
 
 # The review gate's commit-status context, from the review-gate engine's own

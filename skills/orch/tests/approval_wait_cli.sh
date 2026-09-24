@@ -39,21 +39,42 @@ cp -r "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/class/.agents/skills/review-gat
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/class/.agents/skills/github"
 cat >"$TMP_ROOT/class/.agents/skills/harness-ci/scripts/change-class" <<'CLASSIFIER'
 #!/usr/bin/env bash
+# The shipped classifier's contract as review-policy uses it: the range comes
+# from the caller, and an endpoint it cannot resolve is reported as `standard`
+# with a harness-note on stderr, never as an error.
 event="" base="" head="" prev=""
 for a in "$@"; do
   case "$prev" in --event) event="$a" ;; --base) base="$a" ;; --head) head="$a" ;; esac
   prev="$a"
 done
 [ "$event" = pull_request ] || { echo "change-class: cause=missing-event" >&2; exit 2; }
-[ "$base" = "base-oid" ] || { echo "change-class: bad --base '$base'" >&2; exit 3; }
-[ "$head" = "head-oid" ] || { echo "change-class: bad --head '$head'" >&2; exit 3; }
+[ "$base" = "${STUB_EXPECT_BASE:?}" ] || { echo "change-class: bad --base '$base'" >&2; exit 3; }
+[ "$head" = "${STUB_EXPECT_HEAD:?}" ] || { echo "change-class: bad --head '$head'" >&2; exit 3; }
+if [ -n "${STUB_ENDPOINT_NOTE:-}" ]; then
+  printf 'harness-note: cause=unresolved-endpoint endpoint=%s\n' "$base" >&2
+  printf 'change_class=standard\n'
+  exit 0
+fi
 [ -n "${STUB_CLASS:-}" ] || { echo "change-class: no class configured" >&2; exit 1; }
 printf 'change_class=%s\n' "$STUB_CLASS"
 CLASSIFIER
 chmod +x "$TMP_ROOT/class/.agents/skills/harness-ci/scripts/change-class"
 git -C "$TMP_ROOT/class" init -q
+git -C "$TMP_ROOT/class" config maintenance.auto false
 git -C "$TMP_ROOT/class" config user.email test@example.com
 git -C "$TMP_ROOT/class" config user.name Test
+# Two real commits: the resolver requires both endpoints to be commits this
+# checkout holds before it asks the owner anything, so a fabricated SHA would
+# make every row below refuse for that reason instead of the row's own.
+printf 'base\n' >"$TMP_ROOT/class/app.txt"
+git -C "$TMP_ROOT/class" add app.txt
+git -C "$TMP_ROOT/class" commit -q -m base
+printf 'head\n' >"$TMP_ROOT/class/app.txt"
+git -C "$TMP_ROOT/class" add app.txt
+git -C "$TMP_ROOT/class" commit -q -m head
+CLASS_BASE_SHA="$(git -C "$TMP_ROOT/class" rev-parse HEAD~1)"
+CLASS_HEAD_SHA="$(git -C "$TMP_ROOT/class" rev-parse HEAD)"
+ABSENT_SHA=0000000000000000000000000000000000000000
 
 GH_CALLS="$TMP_ROOT/gh.calls"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> %s\nexit 1\n' "$GH_CALLS" > "$TMP_ROOT/bin/gh"
@@ -208,6 +229,9 @@ echo "=== --resolve-mode under the review gate's class policy ==="
 # leaves that switch exactly as it was. A classifier that cannot answer
 # resolves no mode at all.
 POLICY_ENV='REVIEW_GATE_CLASS_POLICY=render:none;trivial:none;micro:none;small:bot;standard:current'
+# The range each row's stub classifier must be handed, so a resolver that
+# passes the wrong endpoints fails the row instead of answering it.
+RANGE_ENV="STUB_EXPECT_BASE=$CLASS_BASE_SHA STUB_EXPECT_HEAD=$CLASS_HEAD_SHA"
 class_table() { # label|env|args|expect
   local row label env args expect
   for row in "$@"; do
@@ -220,21 +244,24 @@ class_table() { # label|env|args|expect
   done
 }
 
-RANGE="--resolve-mode --base base-oid --head head-oid"
+RANGE="--resolve-mode --base $CLASS_BASE_SHA --head $CLASS_HEAD_SHA"
 class_table \
   "an inactive class policy leaves the chain untouched|PR_REVIEW_GATE=review|--resolve-mode|rc=0 mode=review" \
   "an active policy with no range refuses rather than guess a mode|$POLICY_ENV PR_REVIEW_GATE=review|--resolve-mode|rc=2 stdout=empty stderr_line=approval-wait:+policy-range+options=--base,--head" \
-  "a waived class answers exempt|$POLICY_ENV STUB_CLASS=render PR_REVIEW_GATE=review|$RANGE|rc=0 mode=exempt" \
-  "no reviewer key puts the gate back for a waived class|$POLICY_ENV STUB_CLASS=micro PR_REVIEW_GATE=approval|$RANGE|rc=0 mode=exempt" \
-  "the required-review inverse: a bot class keeps the reviewer keys under REVIEW_GATE_MODE=off|$POLICY_ENV STUB_CLASS=small REVIEW_GATE_MODE=off PR_REVIEW_GATE=review|$RANGE|rc=0 mode=review" \
-  "a current class still honors REVIEW_GATE_MODE=off|$POLICY_ENV STUB_CLASS=standard REVIEW_GATE_MODE=off PR_REVIEW_GATE=review|$RANGE|rc=0 mode=off" \
-  "a classifier that cannot answer resolves no mode|$POLICY_ENV PR_REVIEW_GATE=review|$RANGE|rc=2 stdout=empty stderr_line=approval-wait:+policy-resolve+range=base-oid...head-oid" \
-  "a wait on a waived class refuses instead of idling, and reaches no gh|$POLICY_ENV STUB_CLASS=render PR_REVIEW_GATE=review|123 --base base-oid --head head-oid|rc=2 gh=uncalled stderr_line=approval-wait:+gate-off+mode=exempt"
+  "a waived class answers exempt|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|$RANGE|rc=0 mode=exempt" \
+  "no reviewer key puts the gate back for a waived class|$POLICY_ENV $RANGE_ENV STUB_CLASS=micro PR_REVIEW_GATE=approval|$RANGE|rc=0 mode=exempt" \
+  "the required-review inverse: a bot class keeps the reviewer keys under REVIEW_GATE_MODE=off|$POLICY_ENV $RANGE_ENV STUB_CLASS=small REVIEW_GATE_MODE=off PR_REVIEW_GATE=review|$RANGE|rc=0 mode=review" \
+  "a current class still honors REVIEW_GATE_MODE=off|$POLICY_ENV $RANGE_ENV STUB_CLASS=standard REVIEW_GATE_MODE=off PR_REVIEW_GATE=review|$RANGE|rc=0 mode=off" \
+  "a classifier that cannot answer resolves no mode|$POLICY_ENV $RANGE_ENV PR_REVIEW_GATE=review|$RANGE|rc=2 stdout=empty stderr_line=approval-wait:+policy-resolve+range=$CLASS_BASE_SHA...$CLASS_HEAD_SHA" \
+  "an endpoint this checkout does not hold is no mode, and the owner is never asked|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|--resolve-mode --base $ABSENT_SHA --head $CLASS_HEAD_SHA|rc=2 stdout=empty stderr_line=approval-wait:+policy-endpoint+range=$ABSENT_SHA...$CLASS_HEAD_SHA" \
+  "must-fail: a class reported for an unresolvable range is no mode, never the gate-disabled off|$POLICY_ENV $RANGE_ENV STUB_ENDPOINT_NOTE=1 REVIEW_GATE_MODE=off PR_REVIEW_GATE=review|$RANGE|rc=2 stdout=empty stderr_line=approval-wait:+policy-resolve+range=$CLASS_BASE_SHA...$CLASS_HEAD_SHA" \
+  "a wait on a waived class refuses instead of idling, and reaches no gh|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|123 --base $CLASS_BASE_SHA --head $CLASS_HEAD_SHA|rc=2 gh=uncalled stderr_line=approval-wait:+gate-off+mode=exempt"
 
 # Must-fail control: the exempt verdict is what keeps a waived class from
 # picking up the evidence and thread terms downstream. Collapse it onto the
 # reviewer-less `off` and the waived row must stop answering exempt.
 CLASS_PREDICATE="$TMP_ROOT/class/.agents/skills/orch/scripts/approval-wait"
+CLASS_WAIVED_ENV="$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review"
 exempt_count="$(grep -Fc "printf 'exempt\\n'" "$CLASS_PREDICATE" || true)"
 assert_eq "$exempt_count" "1" "control: the waived-class verdict has one mutation target"
 if [[ -L "$CLASS_PREDICATE" ]]; then
@@ -247,7 +274,7 @@ else
   else
     cat "$mutant" >"$CLASS_PREDICATE"
     stage class ""
-    run class "$POLICY_ENV STUB_CLASS=render PR_REVIEW_GATE=review" --resolve-mode --base base-oid --head head-oid
+    run class "$CLASS_WAIVED_ENV" --resolve-mode --base "$CLASS_BASE_SHA" --head "$CLASS_HEAD_SHA"
     if [[ "$OUT" == exempt ]]; then
       FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "must-fail: collapsing exempt onto off must fail the waived-class contract"
     else

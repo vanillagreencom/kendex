@@ -4,7 +4,7 @@ Cross-script routing behind the gate-mode summary and the `approval-wait` / `ci-
 
 ## Gate-mode routing
 
-Read the effective reviewer-gate mode ONLY through `approval-wait --resolve-mode` — never re-derive the chain, and never auto-detect the mode from the requested-reviewer list. Pass the pull request's base and head with `--base` and `--head`: where the review gate's class policy is active the mode belongs to one pull request, and a call with no range exits 2 rather than guess one. The resolver fetches an endpoint the checkout does not hold, so no caller materializes the range itself. A non-zero exit is no mode: report it and stop rather than pick one. It prints:
+Read the effective reviewer-gate mode ONLY through `approval-wait --resolve-mode` — never re-derive the chain, and never auto-detect the mode from the requested-reviewer list. Pass the pull request's base and head with `--base` and `--head`: where the review gate's class policy is active the mode belongs to one pull request, and a call with no range exits 2 rather than guess one. An active class policy is the one path here that touches the network: both endpoints must be commits the checkout holds, so the resolver fetches a missing one from origin by SHA, and refuses when it is still missing rather than report a class for a diff nothing read. A non-zero exit is no mode: report it and stop rather than pick one. It prints:
 
 | `GATE_MODE` | Meaning | Route |
 |-------------|---------|-------|

@@ -298,9 +298,26 @@ done
 
 # Approval-wait owns gate-mode resolution for workflows that wait on a
 # reviewer. The micro route reads its class exemption from review-policy.
+#
+# Under an ACTIVE class policy the resolver refuses a call with no range, so a
+# --resolve-mode call whose endpoints nothing binds is a step that cannot run.
+# Every workflow that resolves a mode therefore reads the pull request's own
+# endpoints first, in the call below, and every --resolve-mode line it carries
+# names both flags.
 for wf in submit-pr merge-pr ci-fix; do
   doc="$SKILL_DIR/workflows/$wf.md"
   assert_file_contains "$doc" 'approval-wait --resolve-mode' "$wf resolves the gate mode through approval-wait"
+  assert_file_contains "$doc" "gh pr view [PR_NUMBER] --json baseRefOid,headRefOid --jq '[.baseRefOid,.headRefOid]|@tsv'" \
+    "$wf binds the endpoints the resolver needs"
+  # The invocation spelling carries the script path; the preamble's prose
+  # mention of the flag is not a step and is not counted.
+  resolve_lines="$(grep -c -- 'scripts/approval-wait --resolve-mode' "$doc" || true)"
+  ranged_lines="$(grep -c -- 'scripts/approval-wait --resolve-mode --base ' "$doc" || true)"
+  if [ "$resolve_lines" -gt 0 ] && [ "$resolve_lines" -eq "$ranged_lines" ]; then
+    pass "$wf passes a range on every one of its $resolve_lines --resolve-mode calls"
+  else
+    fail "$wf has $resolve_lines --resolve-mode call(s) and $ranged_lines carrying a range"
+  fi
   if grep -Fq 'orch-env PR_APPROVAL_GATE' "$doc" || grep -Fq 'orch-env PR_REVIEW_GATE' "$doc"; then
     fail "$wf re-derives the gate mode from settings instead of --resolve-mode"
   else
