@@ -102,6 +102,13 @@ cat >"$R/fake-bin/cargo" <<'SH'
 set -euo pipefail
 printf '%s\n' "$*" >>"$CARGO_CALL_LOG"
 [ -z "${CARGO_ENV_LOG:-}" ] || printf '%s|incremental=%s\n' "$*" "${CARGO_INCREMENTAL:-unset}" >>"$CARGO_ENV_LOG"
+# rustfmt's status: 1 for a diff it wrote, 0 when that write failed. A write
+# straight to the guard's own stream, FMT_FULL_STREAM, lands on a full device.
+if [ "$*" = "fmt --check" ] && [ -n "${FMT_FULL_STREAM:-}" ]; then
+  [ ! /dev/stdout -ef "$FMT_FULL_STREAM" ] || exec >/dev/full
+  printf 'Diff in src/lib.rs:\n' && exit 1
+  exit 0
+fi
 for t in ${CROSS_CHECK_FAIL:-}; do
   if [ "$*" = "check -p kendex-core -p kendex-cli --all-targets --target $t" ]; then
     exit 1
@@ -134,7 +141,13 @@ free="${DF_FREE_KIB_START:?}"
 printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
 printf 'tmpfs 999999 1 %s 1%% /target\n' "$free"
 SH
-chmod +x "$R/fake-bin/df"
+cat >"$R/fake-bin/du" <<'SH'
+#!/usr/bin/env bash
+[ -z "${DU_FAIL:-}" ] || exit 1
+printf '%s\t%s\n' "${DU_KIB:?}" "$3"
+SH
+chmod +x "$R/fake-bin/df" "$R/fake-bin/du"
+mkdir -p "$TMP/target"
 DF_CALL_LOG="$TMP/df-calls"
 CARGO_ENV_LOG="$TMP/cargo-env"
 high_free_kib=$((30 * 1024 * 1024))
@@ -144,7 +157,7 @@ high_free_kib=$((30 * 1024 * 1024))
 run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
   DF_FREE_KIB_START=1048576 DF_FREE_KIB_END="$high_free_kib" \
   RUSTUP_INSTALLED_TARGETS="$BOTH" GUARD_MIN_FREE_GB=24 GUARD_EXHAUSTED_FREE_MB=512
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-space-start=free-kib=1048576 min-gib=24"* ]] \
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-space-start=free-kib=1048576 target-kib=0 min-gib=24"* ]] \
   && [ ! -s "$CARGO_CALL_LOG" ] \
   && ok "a target volume below the start floor is named before cargo runs" \
   || bad "a target volume below the start floor is named before cargo runs" "rc=$RC out=$OUT calls=$(cat "$CARGO_CALL_LOG")"
@@ -165,6 +178,28 @@ else
   bad "control: the start-floor skip could not be removed from a guard copy"
 fi
 
+warm_target_row() { # GUARD_PATH — sets OUT and RC; 1 GiB free beside a 23 GiB target
+  : >"$DF_CALL_LOG"
+  : >"$CARGO_CALL_LOG"
+  RC=0
+  OUT="$(cd "$R" && env PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
+    CARGO_TARGET_DIR="$TMP/target" DU_KIB=$((23 * 1024 * 1024)) DF_FREE_KIB_START=1048576 \
+    DF_FREE_KIB_END="$high_free_kib" RUSTUP_INSTALLED_TARGETS="$BOTH" GUARD_MIN_FREE_GB=24 \
+    GUARD_EXHAUSTED_FREE_MB=512 "$1" --full 2>&1 </dev/null)" || RC=$?
+}
+warm_target_row "$GUARD"
+[ "$RC" -eq 0 ] && [ -s "$CARGO_CALL_LOG" ] \
+  && ok "the build already in the target directory counts toward the start floor" \
+  || bad "the build already in the target directory counts toward the start floor" "rc=$RC out=$OUT"
+if mutant_guard 's/\$((cargo_free_start_kib + cargo_target_start_kib))/$cargo_free_start_kib/'; then
+  warm_target_row "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-space-start=free-kib=1048576 target-kib=$((23 * 1024 * 1024)) min-gib=24"* ]] \
+    && ok "control: without the target size the warm-target row refuses" \
+    || bad "control: without the target size the warm-target row refuses" "rc=$RC out=$OUT"
+else
+  bad "control: the target size could not be removed from a guard copy"
+fi
+
 : >"$DF_CALL_LOG"
 : >"$CARGO_CALL_LOG"
 : >"$CARGO_ENV_LOG"
@@ -179,14 +214,19 @@ run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" CARGO_ENV_LO
   && ok "every cargo invocation inherits disabled incremental compilation" \
   || bad "every cargo invocation inherits disabled incremental compilation" "$(cat "$CARGO_ENV_LOG")"
 
-: >"$DF_CALL_LOG"
-: >"$CARGO_CALL_LOG"
-run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
-  DF_FAIL_CALL=1 DF_FREE_KIB_START="$high_free_kib" DF_FREE_KIB_END="$high_free_kib" \
-  RUSTUP_INSTALLED_TARGETS="$BOTH" GUARD_MIN_FREE_GB=24 GUARD_EXHAUSTED_FREE_MB=512
-[ "$RC" -eq 0 ] && [[ "$OUT" == *"guard: cargo-space-unreadable=target"* ]] && [ -s "$CARGO_CALL_LOG" ] \
-  && ok "an unreadable start probe is named and the cargo block still runs" \
-  || bad "an unreadable start probe is named and the cargo block still runs" "rc=$RC out=$OUT calls=$(cat "$CARGO_CALL_LOG")"
+# Probe env | the keyed note it prints; a low free figure shows no floor applied.
+for row in "DF_FAIL_CALL=1|cargo-space-unreadable=target" \
+  "DU_FAIL=1 CARGO_TARGET_DIR=$TMP/target|cargo-target-unreadable=$TMP/target"; do
+  read -ra row_env <<<"${row%%|*}"
+  : >"$DF_CALL_LOG"
+  : >"$CARGO_CALL_LOG"
+  run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
+    "${row_env[@]}" DF_FREE_KIB_START=1048576 DF_FREE_KIB_END="$high_free_kib" \
+    RUSTUP_INSTALLED_TARGETS="$BOTH" GUARD_MIN_FREE_GB=24 GUARD_EXHAUSTED_FREE_MB=512
+  [ "$RC" -eq 0 ] && [[ "$OUT" == *"guard: ${row#*|}"* ]] && [ -s "$CARGO_CALL_LOG" ] \
+    && ok "an unreadable start probe is named and the cargo block still runs: ${row#*|}" \
+    || bad "an unreadable start probe is named and the cargo block still runs: ${row#*|}" "rc=$RC out=$OUT calls=$(cat "$CARGO_CALL_LOG")"
+done
 
 : >"$DF_CALL_LOG"
 : >"$CARGO_CALL_LOG"
@@ -212,7 +252,34 @@ if mutant_guard 's/    say cargo-space-end "free-kib=$cargo_free_end_kib min-mib
 else
   bad "control: the exhaustion finding could not be removed from a guard copy"
 fi
-rm -f "$R/fake-bin/df"
+
+# Every other lane fails its own write on a full stream too, so only fmt's
+# write straight to the guard's stream lands on the device.
+if [ -e /dev/full ]; then
+  fmt_full_row() { # GUARD_PATH — sets OUT and RC
+    : >"$DF_CALL_LOG"
+    RC=0
+    (cd "$R" && env PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
+      FMT_FULL_STREAM="$TMP/guard-stream" DF_FREE_KIB_START="$high_free_kib" DF_FREE_KIB_END="$high_free_kib" \
+      RUSTUP_INSTALLED_TARGETS="$BOTH" "$1" --full >"$TMP/guard-stream" 2>&1 </dev/null) || RC=$?
+    OUT="$(cat "$TMP/guard-stream")"
+  }
+  fmt_full_row "$GUARD"
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-fmt=workspace"*"Diff in src/lib.rs:"* ]] \
+    && ok "a format diff fails validation when a write to the guard's stream would fail" \
+    || bad "a format diff fails validation when a write to the guard's stream would fail" "rc=$RC out=$OUT"
+  if mutant_guard 's/  fmt_out=$(cargo fmt --check 2>&1) || say/  fmt_out=""; cargo fmt --check || say/'; then
+    fmt_full_row "$MUTANT_TOOLS/guard"
+    [ "$RC" -eq 0 ] \
+      && ok "control: with fmt writing to the guard's stream the same diff passes" \
+      || bad "control: with fmt writing to the guard's stream the same diff passes" "rc=$RC out=$OUT"
+  else
+    bad "control: the fmt capture could not be removed from a guard copy"
+  fi
+else
+  echo "  skip  /dev/full is absent; the full-output fmt row did not run"
+fi
+rm -f "$R/fake-bin/df" "$R/fake-bin/du"
 
 : >"$CARGO_CALL_LOG"
 run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_LIST_RESULT=1

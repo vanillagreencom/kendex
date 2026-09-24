@@ -305,9 +305,9 @@ DECISIONS_DIR = "docs/decisions"
 # for the same commit; CI runs the full suites independently.
 DEV_VALIDATE_CMD = "tools/guard --full"
 
-# A cold full run's deps tree reached 20 GiB. The 24 GiB floor adds 20 percent
-# for compiler scratch data and the validation runner's own files.
-GUARD_MIN_FREE_GB = "24"
+# A full run with CARGO_INCREMENTAL=0 writes only deps: the recorded 20 GB
+# target/ held 6 to 9 GB of incremental, so deps was at most about 14 GB.
+GUARD_MIN_FREE_GB = "16"
 
 # A completed cargo block keeps enough room for the validation log, sentinel,
 # and shell operations. This floor stays far above the recorded 708 KiB case.
