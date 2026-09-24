@@ -35,7 +35,6 @@ pub use generated_paths::GeneratedPaths;
 mod holds;
 mod installed;
 mod recovery;
-pub(crate) use recovery::planned_record;
 pub use recovery::{
     Measured, RecordlessAudit, UnmanagedCopies, audit_without_record, claim_plan,
     compare_unmanaged_copies, plan_record_existing,
@@ -102,8 +101,7 @@ pub fn installed_paths(
 use desired::desired_state;
 pub use scope_writes::persists_manifest;
 use scope_writes::{
-    bundle_revisions, plan_config_edits, plan_lock_write, plan_manifest_write, resolved_revisions,
-    source_revisions, stood_in_sources,
+    plan_config_edits, plan_lock_write, plan_manifest_write, record_readings, resolved_revisions,
 };
 pub use set_change::{KeptInstall, SetChange, SetDirection};
 use set_change::{kept_members, set_changes};
@@ -120,7 +118,7 @@ pub use repo_effects::{InstalledDeclaration, installed_declaration, installed_de
 mod report_types;
 pub use report_types::{
     DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ForkEdit, Installation,
-    ItemWarning, PlanOptions, Registrations, StoodIn,
+    ItemWarning, PlanOptions, Registrations, StoodIn, StoodInRecord,
 };
 
 pub(super) struct PlanOwnership {
@@ -163,7 +161,7 @@ pub fn plan_scope(
     // planned: the rows ride out on the report beside the plan.
     let safety = scoring::run(scope, &state);
     let (mut drift, mut ops) = (Vec::new(), Vec::<PlannedOp>::new());
-    let mut new_lock = fresh_lock(&manifest, lock, &state);
+    let (mut new_lock, readings) = fresh_lock(env, &manifest, lock, &state);
     drift.extend(crate::pi_ext::record_matching_manifest(
         env,
         scope,
@@ -254,9 +252,8 @@ pub fn plan_scope(
     // Read off before the record moves into its write: a pass that
     // writes no record still says which commit each revision resolved to.
     let resolved_sources = resolved_revisions(&new_lock, &state);
-    let sources_stood_in = stood_in_sources(&manifest, &new_lock, &state);
     let installations = installations(env, scope, &manifest, &state)?;
-    plan_lock_write(env, scope, declared, lock, new_lock, &mut ops)?;
+    plan_lock_write(env, scope, declared, lock, &new_lock, &mut ops)?;
     let generated = generated_paths::plan(scope, &state, &instruction_shims, &drift, &mut ops)?;
 
     let mut report = EngineReport {
@@ -281,7 +278,8 @@ pub fn plan_scope(
         recorded_gone,
         generated,
         installations,
-        sources_stood_in,
+        stood_in: readings.stood_in(lock),
+        record: new_lock,
     };
     report.notes.extend(scope_notes);
     settled(env, scope, &manifest, lock, options, &state.items, report)
@@ -416,11 +414,18 @@ fn desired_pass<'a>(
 }
 
 /// The record this pass will write, before any of it is filled in: the
-/// per-source and per-set resolutions it just made. Nothing about seeding
-/// is recorded here — a template applies once, on the arrival, and what
-/// says an arrival happened is the manifest gaining the declaration.
-fn fresh_lock(manifest: &Manifest, lock: &Lock, state: &desired::DesiredState) -> Lock {
-    Lock {
+/// per-source and per-set resolutions it just made, beside the readings
+/// they were taken from. Nothing about seeding is recorded here — a
+/// template applies once, on the arrival, and what says an arrival
+/// happened is the manifest gaining the declaration.
+fn fresh_lock(
+    env: &Env,
+    manifest: &Manifest,
+    lock: &Lock,
+    state: &desired::DesiredState,
+) -> (Lock, scope_writes::RecordReadings) {
+    let readings = record_readings(env, manifest, state);
+    let fresh = Lock {
         version: crate::lock::LOCK_VERSION,
         entries: lock
             .entries
@@ -431,9 +436,10 @@ fn fresh_lock(manifest: &Manifest, lock: &Lock, state: &desired::DesiredState) -
             })
             .map(|(key, entry)| (key.clone(), entry.clone()))
             .collect(),
-        sources: source_revisions(manifest, lock, state),
-        bundles: bundle_revisions(manifest, lock, state),
-    }
+        sources: readings.source_revisions(lock),
+        bundles: readings.bundle_revisions(lock),
+    };
+    (fresh, readings)
 }
 
 /// Read-only audit for a scope. A scope with no manifest still reports

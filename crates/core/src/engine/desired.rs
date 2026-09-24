@@ -273,11 +273,10 @@ pub struct DesiredState {
     /// apart from one nothing could be read for. Project scope only — a
     /// global install seeds nothing.
     pub settings_templates: BTreeMap<String, crate::settings_template::TemplateSource>,
-    /// What each declared source resolved to, the ones no item names
-    /// included. One resolution per source per pass: resolving a remote
-    /// reads its checkout to confirm nothing has altered it, which is
-    /// worth doing once and wasteful to repeat for every item the source
-    /// carries.
+    /// What each source an item names resolved to. One resolution per
+    /// source per pass: resolving a remote reads its checkout to confirm
+    /// nothing has altered it, which is worth doing once and wasteful to
+    /// repeat for every item the source carries.
     pub sources: BTreeMap<String, SourceState>,
     /// Sources whose catalog resolved and then answered with less than it
     /// offers — an unusable control file, a set whose body will not read.
@@ -447,18 +446,6 @@ fn compute(
     }
     desired_kinds::desired_plugins(env, scope, manifest, &mut state);
     super::desired_custom_hooks::desired_custom_hooks(env, scope, manifest, &mut state);
-    // The sources no item named: the ones nothing uses, and the ones only
-    // a Pi extension names, which the carrier resolves on its own. The
-    // record carries an entry for each, and an entry the pass never held
-    // to a resolution would be attested against itself. Resolving one
-    // costs no declaration: a source that cannot be read is named on the
-    // record's row, never on an item's.
-    for name in manifest.sources.keys() {
-        if !state.sources.contains_key(name) {
-            let resolution = crate::source::resolve(env, scope, name, manifest)?;
-            state.sources.insert(name.clone(), resolution);
-        }
-    }
 
     if manifest_changed {
         state.manifest_update = Some(updated_manifest);

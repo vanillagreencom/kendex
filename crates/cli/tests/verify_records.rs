@@ -690,7 +690,19 @@ fn provenance_edits(catalog: &Path) -> Vec<(&'static str, Edit, Vec<Failing>)> {
                 });
             }),
             vec![record(
-                "source ghost: recorded, and the manifest declares no such source",
+                "source ghost: recorded, and the manifest declares no enabled repository source by that name",
+            )],
+        ),
+        (
+            "records a path source",
+            on_record(|lock| {
+                lock["sources"]["market"] = serde_json::json!({
+                    "repo": "market/repo",
+                    "commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+                });
+            }),
+            vec![record(
+                "source market: recorded, and the manifest declares no enabled repository source by that name",
             )],
         ),
         (
@@ -708,7 +720,7 @@ fn provenance_edits(catalog: &Path) -> Vec<(&'static str, Edit, Vec<Failing>)> {
                 });
             }),
             vec![record(
-                "set ghost: recorded, and the manifest declares no such set",
+                "set ghost: recorded, and the manifest declares no such set from an enabled repository source",
             )],
         ),
         (
@@ -1101,10 +1113,10 @@ fn a_source_served_from_the_records_own_commit_fails_the_record_row() {
 }
 
 /// A source only a Pi extension names is resolved by the carrier, off the
-/// path every other declaration's source takes to the record: served from
-/// the record's own commit, it is named in the record row all the same.
-/// The mirror is stripped as above; `picat` is the source the row has to
-/// name, beside `cat`.
+/// path every other declaration's source takes to the record: where the
+/// mirror cannot serve its revision, it is named in the record row all the
+/// same. The mirror is stripped as above; `picat` is the source the row
+/// has to name, beside `cat`.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_pi_only_source_served_from_the_records_own_commit_is_named_in_the_record_row() {
@@ -1119,68 +1131,180 @@ fn a_pi_only_source_served_from_the_records_own_commit_is_named_in_the_record_ro
     let record = row(&document, "record", RECORD, None).unwrap();
     assert_eq!(record.state, State::Failed, "{record:?}");
     assert!(
-        record.detail.as_deref().unwrap_or_default().contains(
-            "source picat: the mirror cannot serve the declared revision, and the recorded commit stood in"
-        ),
+        record
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("source picat: the mirror cannot serve the declared revision"),
         "{record:?}"
     );
 }
 
-/// A recorded source the pass resolves nothing for has its entry carried
-/// forward unread, so the record row names it by why: switched off, or
-/// declared at a repository nothing is fetched for. The inverse row of
-/// each drops the entry from the record, which leaves nothing to hold and
-/// nothing named.
+/// One row of the table below: its label, the manifest text it replaces
+/// and the replacement, the edit it makes to the record, the subject the
+/// row may name, and what the record row must say, if anything.
+type Unread<'a> = (
+    &'a str,
+    &'a str,
+    &'a str,
+    Option<Edit>,
+    &'a str,
+    Option<String>,
+);
+
+/// A recorded source or set the pass cannot read apart from the record is
+/// never compared with itself. A switched-off source is recorded for
+/// nothing, so its entry is one the pass would not write; one declared at
+/// a repository nothing is fetched for, and a set pinned at a revision the
+/// mirror cannot serve, have their entries carried forward unread, and the
+/// row names them. The inverse row of each drops the entry from the
+/// record, which leaves nothing to hold and nothing named.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_recorded_source_the_pass_resolves_nothing_for_is_named_in_the_record_row() {
+fn a_recorded_source_or_set_the_pass_cannot_read_fails_the_record_row_by_name() {
     let world = world();
-    let declared = format!(
+    let spare = format!(
         "[sources.spare]\nrepo = \"file://{}\"\n",
         world.catalog.display()
     );
-    let unfetched = "[sources.spare]\nrepo = \"file:///nowhere/fetched\"\n";
-    let disabled = format!("{declared}enabled = false\n");
-    let cases: [(&str, &str, bool, Option<&str>); 4] = [
+    let unfetched = "[sources.spare]\nrepo = \"file:///nowhere/fetched\"\n".to_owned();
+    let disabled = format!("{spare}enabled = false\n");
+    let starter = "[bundles.starter]\nsource = \"cat\"\n".to_owned();
+    let pinned = format!("{starter}rev = \"0123456789abcdef0123456789abcdef01234567\"\n");
+    let unrecorded = |table: &'static str, name: &'static str| -> Edit {
+        on_record(move |lock| {
+            lock[table].as_object_mut().unwrap().remove(name);
+        })
+    };
+    let repointed = on_record(|lock| {
+        lock["bundles"]["starter"]["commit"] = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
+    });
+    let unserved =
+        "the mirror cannot serve the declared revision, so nothing holds the record to it";
+    let undeclared =
+        "source spare: recorded, and the manifest declares no enabled repository source";
+    let cases: Vec<Unread> = vec![
         (
             "disabled, recorded",
+            &spare,
             &disabled,
-            true,
-            Some("source spare: disabled"),
+            None,
+            "source spare:",
+            Some(undeclared.to_owned()),
         ),
-        ("disabled, unrecorded", &disabled, false, None),
+        (
+            "disabled, unrecorded",
+            &spare,
+            &disabled,
+            Some(unrecorded("sources", "spare")),
+            "source spare:",
+            None,
+        ),
         (
             "not fetched, recorded",
-            unfetched,
-            true,
-            Some("source spare: not fetched"),
+            &spare,
+            &unfetched,
+            None,
+            "source spare:",
+            Some(format!("source spare: {unserved}")),
         ),
-        ("not fetched, unrecorded", unfetched, false, None),
+        (
+            "not fetched, unrecorded",
+            &spare,
+            &unfetched,
+            Some(unrecorded("sources", "spare")),
+            "source spare:",
+            None,
+        ),
+        (
+            "pinned set unserved, recorded",
+            &starter,
+            &pinned,
+            Some(repointed),
+            "set starter:",
+            Some(format!("set starter: {unserved}")),
+        ),
+        (
+            "pinned set unserved, unrecorded",
+            &starter,
+            &pinned,
+            Some(unrecorded("bundles", "starter")),
+            "set starter:",
+            None,
+        ),
     ];
-    for (label, declaration, recorded, named) in cases {
+    for (label, from, to, edit, subject, named) in cases {
         git(&world.project, &["checkout", "-q", "-B", "case", INSTALLED]);
         let manifest = world.project.join("kendex.toml");
         let text = fs::read_to_string(&manifest).unwrap();
-        assert_eq!(text.matches(&declared).count(), 1, "{label}");
-        write(&manifest, &text.replace(&declared, declaration));
-        if !recorded {
-            edit_json(&world.project.join(RECORD), |lock| {
-                lock["sources"].as_object_mut().unwrap().remove("spare");
-            });
+        assert_eq!(text.matches(from).count(), 1, "{label}");
+        write(&manifest, &text.replace(from, to));
+        if let Some(edit) = edit {
+            edit(&world);
         }
         commit(&world.project, label);
         let (output, document) = verify(&world, Some(INSTALLED));
-        let record = row(&document, "record", RECORD, None).unwrap();
+        let record = row(&document, "record", RECORD, None)
+            .unwrap_or_else(|| panic!("{label}: no record row: {}", said(&output)));
         let detail = record.detail.as_deref().unwrap_or_default();
         match named {
             Some(named) => {
                 assert!(!output.status.success(), "{label}: {}", said(&output));
                 assert_eq!(record.state, State::Failed, "{label}: {record:?}");
-                assert!(detail.contains(named), "{label}: {record:?}");
+                assert!(detail.contains(&named), "{label}: {record:?}");
             }
-            None => assert!(!detail.contains("source spare:"), "{label}: {record:?}"),
+            None => assert!(!detail.contains(subject), "{label}: {record:?}"),
         }
     }
+}
+
+/// A scope whose last package is gone keeps a record of its sources, and
+/// that record is held to what the pass reads though the plan writes no
+/// entry: a commit edited on it fails the row, and the next apply puts
+/// the record right again.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_record_with_no_entries_is_held_to_the_sources_the_pass_reads() {
+    let world = world();
+    git(&world.project, &["checkout", "-q", "-B", "case", INSTALLED]);
+    let manifest = world.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    let packages = text.find("[skills.second]").unwrap();
+    write(&manifest, &text[..packages]);
+    let apply = || {
+        let output = kendex(&world.home, &world.project, &["apply", "-y", "--leave"]);
+        assert!(output.status.success(), "apply: {}", said(&output));
+    };
+    apply();
+    let lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(world.project.join(RECORD)).unwrap()).unwrap();
+    assert!(
+        lock["entries"]
+            .as_object()
+            .is_none_or(|entries| entries.is_empty()),
+        "{lock}"
+    );
+    assert!(lock["sources"]["spare"].is_object(), "{lock}");
+    commit(&world.project, "every package removed");
+    edit_json(&world.project.join(RECORD), |lock| {
+        lock["sources"]["spare"]["commit"] = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
+    });
+    commit(&world.project, "a repointed source commit");
+    let (output, document) = verify(&world, None);
+    assert!(!output.status.success(), "{}", said(&output));
+    let record = row(&document, "record", RECORD, None).unwrap();
+    assert_eq!(record.state, State::Failed, "{record:?}");
+    assert!(
+        record.detail.as_deref().unwrap_or_default().contains(
+            "source spare: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef is not on the declared revision's history"
+        ),
+        "{record:?}"
+    );
+    apply();
+    commit(&world.project, "applied");
+    let (_, document) = verify(&world, None);
+    let record = row(&document, "record", RECORD, None).unwrap();
+    assert_eq!(record.state, State::Ok, "{record:?}");
 }
 
 /// A recorded commit the mirror cannot place is named as one to fetch,
