@@ -33,15 +33,18 @@ printf 'class: class=%s measured=%s cause=stub\n' "$STUB_CLASS" "${STUB_MEASURED
 printf 'change_class=%s\n' "$STUB_CLASS"
 CLASSIFIER
 chmod +x "$REPO/.agents/skills/harness-ci/scripts/change-class"
+# The real path classifier: it decides whether the predicate prepares sources.
+cp "$SKILL_DIR/../harness-ci/scripts/harness-only" "$REPO/.agents/skills/harness-ci/scripts/harness-only"
 cp "$TEST_DIR/lib/gh-shim.sh" "$BIN/gh"
 cat >"$BIN/kendex" <<'KENDEX'
 #!/usr/bin/env bash
 # The two calls source preparation makes, both without GitHub credentials.
 # STUB_SOURCE_COUNT is how many sources the judged manifest declares, which is
 # what the predicate caps; STUB_REFRESH_RC is the refresh's exit, 124 being the
-# status a passed deadline returns.
+# status a passed deadline returns. Every call is logged to STUB_KENDEX_LOG.
 [ -z "${GH_TOKEN+x}" ] && [ -z "${GITHUB_TOKEN+x}" ] && [ -z "${GH_CONFIG_DIR+x}" ] ||
   { echo "source preparation received GitHub credentials" >&2; exit 2; }
+printf '%s\n' "$*" >>"$STUB_KENDEX_LOG"
 case "$*" in
   "source list")
     n=0
@@ -59,7 +62,11 @@ git -C "$REPO" init -q
 git -C "$REPO" config maintenance.auto false
 git -C "$REPO" config user.name test
 git -C "$REPO" config user.email test@example.invalid
+# HEAD changes a product file; RENDER changes only a file the committed
+# inventory lists as generated.
 printf 'base\n' >"$REPO/app.txt"
+printf 'base\n' >"$REPO/gen.txt"
+printf '["gen.txt"]\n' >"$REPO/.kendex-generated.json"
 git -C "$REPO" add -A
 git -C "$REPO" commit -q -m base
 BASE="$(git -C "$REPO" rev-parse HEAD)"
@@ -67,6 +74,11 @@ printf 'head\n' >"$REPO/app.txt"
 git -C "$REPO" add app.txt
 git -C "$REPO" commit -q -m head
 HEAD="$(git -C "$REPO" rev-parse HEAD)"
+git -C "$REPO" checkout -q --detach "$BASE"
+printf 'render\n' >"$REPO/gen.txt"
+git -C "$REPO" add gen.txt
+git -C "$REPO" commit -q -m render
+RENDER="$(git -C "$REPO" rev-parse HEAD)"
 git -C "$REPO" checkout -q --detach "$BASE"
 
 # shellcheck source=lib/selftest-fixtures.sh
@@ -83,17 +95,24 @@ reset() {
   fixtures="$FIXTURES" threads >"$FIXTURES/graphql.json"
   jq -n --arg a "$AUTHOR" --arg base "$BASE" '{user:{login:$a},base:{sha:$base}}' >"$FIXTURES/pull.json"
   rm -f "$FIXTURES/.urls.log"
+  : >"$TMP/kendex.calls"
 }
 
-run_gate() { # class, mode
-  STUB_CLASS="$1" PATH="$BIN:$PATH" GH_SHIM_FIXTURES="$FIXTURES" \
-    REVIEW_GATE_SETTINGS_FILE=/dev/null REVIEW_GATE_CLASS_POLICY="$ACTIVE" REVIEW_GATE_MODE="$2" \
+run_predicate() { # head, class, [VAR=value ...]
+  local head="$1" class="$2"
+  shift 2
+  STUB_CLASS="$class" STUB_KENDEX_LOG="$TMP/kendex.calls" PATH="$BIN:$PATH" GH_SHIM_FIXTURES="$FIXTURES" \
+    REVIEW_GATE_SETTINGS_FILE=/dev/null REVIEW_GATE_CLASS_POLICY="$ACTIVE" REVIEW_GATE_MODE=enforce \
     REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="" REVIEW_GATE_COMMENT_REVIEWERS="" \
     REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="" REVIEW_GATE_CARRY_FORWARD="" \
     REVIEW_GATE_RENDER_PATHS="" REVIEW_GATE_DOCS_ONLY=bot \
     GH_TOKEN=writer-token GITHUB_TOKEN=writer-token GH_CONFIG_DIR="$TMP/gh-config" \
-    GH_REPO=owner/repo PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$AUTHOR" \
-    "$PREDICATE" 2>"$TMP/stderr"
+    GH_REPO=owner/repo PR_NUMBER=1 HEAD_SHA="$head" PR_AUTHOR="$AUTHOR" \
+    env ${@+"$@"} "$PREDICATE" 2>"$TMP/stderr"
+}
+
+run_gate() { # class, mode
+  run_predicate "$HEAD" "$1" REVIEW_GATE_MODE="$2"
 }
 
 while IFS='|' read -r class mode evidence want detail; do
@@ -124,6 +143,26 @@ standard|enforce|none|awaiting|no review evidence at $HEAD yet
 standard|off|none|approved|review gate disabled by settings (REVIEW_GATE_MODE=off)
 ROWS
 
+# Only the render proof reads prepared sources, so only a diff of generated
+# paths alone prepares them. A product diff resolves its class with no kendex
+# call even where the manifest is past the cap and the refresh would overrun;
+# a diff of generated paths alone is the inverse, and the bounds below run on it.
+while IFS='|' read -r label head stub_env want_calls; do
+  [ -n "$label" ] || continue
+  reset
+  set +e
+  # shellcheck disable=SC2086
+  out="$(run_predicate "$head" micro $stub_env)"
+  rc=$?
+  set -e
+  assert_eq "$rc:$out" "0:verdict=approved detail=change class micro requires no review evidence or thread wait" \
+    "$label resolves its class"
+  assert_eq "$(tr '\n' ',' <"$TMP/kendex.calls")" "$want_calls" "$label makes exactly these kendex calls"
+done <<PREPARE
+a product diff past both bounds|$HEAD|STUB_SOURCE_COUNT=99 STUB_REFRESH_RC=124|
+a diff of generated paths alone|$RENDER|STUB_SOURCE_COUNT=1|source list,source refresh,
+PREPARE
+
 # Must-fail inverse: removing the early approval must fail an exempt class.
 count="$(grep -Fc '    none)' "$PREDICATE" || true)"
 assert_eq "$count" "1" "control has one no-review predicate branch"
@@ -143,28 +182,22 @@ fi
 # Source preparation is bounded because the judged manifest chooses how much
 # work it asks for. Either bound refuses THIS pull request's classification and
 # writes no verdict, which leaves its status for the next pass.
-while IFS='|' read -r label stub_env key; do
+while IFS='|' read -r label stub_env key value; do
   [ -n "$label" ] || continue
   reset
   set +e
-  out="$(STUB_CLASS=render PATH="$BIN:$PATH" GH_SHIM_FIXTURES="$FIXTURES" \
-    REVIEW_GATE_SETTINGS_FILE=/dev/null REVIEW_GATE_CLASS_POLICY="$ACTIVE" REVIEW_GATE_MODE=enforce \
-    REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="" REVIEW_GATE_COMMENT_REVIEWERS="" \
-    REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="" REVIEW_GATE_CARRY_FORWARD="" \
-    REVIEW_GATE_RENDER_PATHS="" REVIEW_GATE_DOCS_ONLY=bot \
-    GH_TOKEN=writer-token GITHUB_TOKEN=writer-token GH_CONFIG_DIR="$TMP/gh-config" \
-    GH_REPO=owner/repo PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$AUTHOR" \
-    env $stub_env "$PREDICATE" 2>"$TMP/stderr")"
+  # shellcheck disable=SC2086
+  out="$(run_predicate "$RENDER" render $stub_env)"
   rc=$?
   set -e
   assert_eq "$rc" "2" "$label refuses"
   assert_eq "$([ -z "$out" ] && echo empty || echo lines)" "empty" "$label writes no verdict"
-  assert_eq "$(grep -c "review-gate-error=$key" "$TMP/stderr")" "1" "$label is named by its own key"
+  assert_eq "$(grep -Fxc "review-gate-error=$key value=$value" "$TMP/stderr")" "1" "$label is named by its own key and value"
   assert_eq "$(grep -c 'review-gate-error=predicate-policy-resolve' "$TMP/stderr")" "1" \
     "$label reaches the caller as predicate-policy-resolve"
 done <<BOUNDS
-a manifest past the source cap|STUB_SOURCE_COUNT=99|predicate-policy-sources
-a refresh past its deadline|STUB_REFRESH_RC=124|predicate-policy-refresh-deadline
+a manifest past the source cap|STUB_SOURCE_COUNT=99|predicate-policy-sources|99/12
+a refresh past its deadline|STUB_REFRESH_RC=124|predicate-policy-refresh-deadline|1/45s
 BOUNDS
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
