@@ -143,8 +143,8 @@ gg_matches_path_glob() { # PATH — 0 when some configured glob matches the full
 # git calls a blob binary when a NUL byte falls in its leading bytes, and the
 # --cached scans skip such a blob — `git grep -I` drops it with no status and
 # no stderr. A lane walking configured paths makes the same judgement here so
-# it can NAME the path as unmeasured, rather than counting an unread blob into
-# a clean total.
+# it can count the path as unmeasured, rather than fold an unread blob into a
+# clean total.
 GG_BINARY_SAMPLE=8000
 gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
   local total stripped
@@ -161,8 +161,8 @@ gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
 # not the content the lane measures — a symlink, a submodule gitlink, and a
 # blob git would call binary. Each of those is a path a `--cached` scan drops
 # with NO status and NO stderr, so a lane that let one through would print a
-# clean verdict over content it never read. Each is NAMED here and counted
-# apart from the clean total, in GG_WALK_SKIPPED.
+# clean verdict over content it never read. Each is counted here as
+# unmeasured, apart from the clean total, in GG_WALK_SKIPPED.
 #
 # Needs gg_tmpdir and the configured globs already loaded, and the excludes
 # list where the lane has one — an empty list excludes nothing. ON_FILE runs
@@ -172,9 +172,9 @@ gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
 # The tally is of PATHS, which is what the verdict line claims — and one path
 # reaches the sniff once per scan that lists it, so a check running several
 # lanes over overlapping pathspecs meets the same unreadable blob several
-# times. The paths already named are kept in $GG_TMP/skipped.z, NUL-delimited
-# so a path holding any byte but NUL round-trips exactly; a repeat is neither
-# printed again nor counted again, and the reason it carries is the first
+# times. $GG_TMP/skipped.z is the per-walk dedupe record, NUL-delimited so
+# a path holding any byte but NUL round-trips exactly; a repeat is neither
+# recorded again nor counted again, and the reason it carries is the first
 # one it was given. The file lives beside the counter and is emptied wherever
 # the counter is reset, so the two always describe the same run.
 GG_WALK_SKIPPED=0
@@ -182,42 +182,26 @@ GG_WALK_SKIPPED=0
 # A per-path notice is for somebody who asked for it. A tree tracking hundreds
 # of symlinks makes hundreds of them, none of which a passing verdict needs,
 # and they bury the one lane that did fail. So the standing answer is the
-# tally each verdict line carries, plus the per-reason counts gg_skip_counts
-# renders; the paths stay in $GG_TMP/skips.z so a lane that finds a reference
-# landing on one can name that one, and COMMIT_GUARDS_VERBOSE=1 prints them
-# all. That record is run-wide: it is never emptied where the counter is.
-case "${COMMIT_GUARDS_VERBOSE:-0}" in
-  "" | 0) GG_VERBOSE=0 ;;
-  1) GG_VERBOSE=1 ;;
-  *) gg_fail verbose "${COMMIT_GUARDS_VERBOSE}" "Set COMMIT_GUARDS_VERBOSE to 0 or 1." ;;
-esac
+# tally each verdict line carries; every skip also lands in $GG_TMP/skips.z,
+# run-wide and never emptied where the counter is, which md-refs reads for
+# its per-reason counts and for the one skipped path a reference lands on.
+# GG_VERBOSE is md-refs' --verbose.
+GG_VERBOSE=0
 
 # The reasons, as ` CODE=N` pairs for a verdict line, in first-met order.
-# A code is an identifier this family writes, so a line holds one exactly.
+# The shell splits skips.z's records: a path may hold a newline, so a line
+# reader would misalign them, and a NUL record separator is not POSIX awk.
 gg_skip_counts() {
-  [ -s "$GG_TMP/skip-codes" ] || return 0
-  LC_ALL=C awk '{ if (!($0 in n)) order[++k] = $0; n[$0]++ }
-    END { for (i = 1; i <= k; i++) printf " %s=%d", order[i], n[order[i]] }' <"$GG_TMP/skip-codes" \
+  local c
+  [ -s "$GG_TMP/skips.z" ] || return 0
+  while IFS= read -r -d '' _ && IFS= read -r -d '' c && IFS= read -r -d '' _; do
+    printf '%s\n' "$c"
+  done <"$GG_TMP/skips.z" | LC_ALL=C awk '{ if (!($0 in n)) order[++k] = $0; n[$0]++ }
+    END { for (i = 1; i <= k; i++) printf " %s=%d", order[i], n[order[i]] }' \
     || gg_fail skip-tally "$?" "The skipped-reason tally failed."
 }
 
-gg_skip_named() { # PATH — the unmeasured notice for one recorded path
-  local p c e
-  [ "$GG_VERBOSE" -eq 0 ] || return 0
-  [ -s "$GG_TMP/skips.z" ] || return 0
-  # A caller asks this once per reference target, so the shell walk below runs
-  # only where the path is in the file at all. The search reads every record,
-  # code and explanation included, so a code spelled like a path is a false
-  # hit; the walk then finds no match and says nothing, which is the answer.
-  LC_ALL=C grep -q -z -F -x -e "$1" -- "$GG_TMP/skips.z" || return 0
-  while IFS= read -r -d '' p && IFS= read -r -d '' c && IFS= read -r -d '' e; do
-    [ "$p" = "$1" ] || continue
-    gg_message unmeasured "$p:$c" "$e"
-    return 0
-  done <"$GG_TMP/skips.z"
-}
-
-gg_skip_seen() { # PATH — 0 when this path was already named unmeasured
+gg_skip_seen() { # PATH — 0 when this walk already counted this path
   local seen
   [ -s "$GG_TMP/skipped.z" ] || return 1
   while IFS= read -r -d '' seen; do
@@ -234,7 +218,6 @@ gg_note_skip() { # PATH CODE EXPLANATION — a matched path this scan cannot mea
   fi
   printf '%s\0' "$1" >>"$GG_TMP/skipped.z"
   printf '%s\0%s\0%s\0' "$1" "$2" "$3" >>"$GG_TMP/skips.z"
-  printf '%s\n' "$2" >>"$GG_TMP/skip-codes"
   [ "$GG_VERBOSE" -eq 0 ] || gg_message unmeasured "$1:$2" "$3"
   GG_WALK_SKIPPED=$((GG_WALK_SKIPPED + 1))
 }

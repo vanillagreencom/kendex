@@ -18,7 +18,6 @@ ROOT="$TMP"
 REAL_GIT="$(command -v git)"
 
 unset COMMIT_GUARDS_SETTINGS_FILE COMMIT_GUARDS_CONFLICT_EXCLUDES 2>/dev/null || true
-unset COMMIT_GUARDS_VERBOSE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -180,9 +179,6 @@ echo "=== a blob whose leading bytes carry a NUL is counted unmeasured, not scan
 fx_attrs attrs-binary logo.png "PNG\0 $MARKER: not a marker\n"
 assert_eq "the unread match is counted apart and the verdict carries the qualifier, with no path named" \
   "rc=0 todo-ban: index-count=0:1:tools/todo-ban-excludes" "$(lane "" todo-ban)"
-assert_eq "control: COMMIT_GUARDS_VERBOSE=1 names it" \
-  "rc=0 todo-ban: unmeasured=logo.png:binary;todo-ban: index-count=0:1:tools/todo-ban-excludes" \
-  "$(export COMMIT_GUARDS_VERBOSE=1; lane "" todo-ban)"
 fx_attrs attrs-text logo.png "PNG  $MARKER: not a marker\n"
 assert_eq "control: the same bytes without the NUL are scanned as text" \
   "rc=1 todo-ban: match=work marker:logo.png:1:PNG  $MARKER: not a marker;todo-ban: index-count=1:0:tools/todo-ban-excludes" "$(lane "" todo-ban)"

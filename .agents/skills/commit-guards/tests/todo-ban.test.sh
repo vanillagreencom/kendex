@@ -21,7 +21,6 @@ TB="$SKILL_DIR/scripts/todo-ban"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would mask every row below.
-unset COMMIT_GUARDS_VERBOSE 2>/dev/null || true
 unset COMMIT_GUARDS_TODO_EXCLUDES COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 TD="TO""DO"
@@ -272,10 +271,9 @@ fx_attr() { attributed attr; }
 fx_attr_clean() { attributed attr-clean; commit "the marker, now committed"; add ok.rs 'fn clean() {}\n'; git -C "$R" add ok.rs; }
 # A real asset whose bytes spell a marker: the pre-filter lists it (no -I),
 # and the content sniff — a NUL in the leading bytes, git's own test — keeps
-# it out of the verdict, named as unmeasured. The same bytes without the
+# it out of the verdict, counted as unmeasured. The same bytes without the
 # NULs are text, and text is read whatever it is called.
 fx_binary() { seeded binary; put asset.png "\\0211PNG\\r\\n\\032\\n\\0000\\0000 $TD: in the pixels\\n"; git -C "$R" add asset.png; }
-fx_binary_verbose() { seeded binary-verbose; put asset.png "\\0211PNG\\r\\n\\032\\n\\0000\\0000 $TD: in the pixels\\n"; git -C "$R" add asset.png; }
 fx_binary_control() { seeded binary-control; put asset.png "\\0211PNG\\r\\n\\032\\n $TD: in the pixels\\n"; git -C "$R" add asset.png; }
 # A violation and a skipped carrier in one run: the qualifier rides on the
 # violation summary too, in each lane.
@@ -308,10 +306,9 @@ run_rows \
   "a marker added under a non-diffable path is refused, at its own line|fx_attr|||--staged|rc=1 $(hit ok.rs 2 "// $TD: behind an attributes rule");$(stg 1)" \
   "control: a clean addition to a marker-carrying file under the same rule passes, the committed marker out of this commit's verdict|fx_attr_clean|||--staged|rc=0 $OK_STG" \
   "a genuinely binary blob whose bytes spell a marker is carried into the verdict, with no path named|fx_binary|||--staged|rc=0 $(stg 0 1)" \
-  "control: COMMIT_GUARDS_VERBOSE=1 names it|fx_binary_verbose||COMMIT_GUARDS_VERBOSE=1|--staged|rc=0 todo-ban: unmeasured=asset.png:binary;$(stg 0 1)" \
   "control: the same bytes without a NUL are text, and fire|fx_binary_control|||--staged|rc=1 $(hit asset.png 3 " $TD: in the pixels");$(stg 1)" \
-  "a skipped carrier qualifies a violation verdict too|fx_binary_beside||COMMIT_GUARDS_VERBOSE=1|--staged|rc=1 todo-ban: unmeasured=asset.png:binary;$(hit ok.rs 2 "// $TD: beside the asset");$(stg 1 1)" \
-  "and the index lane's violation verdict the same way|fx_binary_beside_index||COMMIT_GUARDS_VERBOSE=1||rc=1 todo-ban: unmeasured=asset.png:binary;$(hit ok.rs 2 "// $TD: beside the asset");$(idx 1 1)" \
+  "a skipped carrier qualifies a violation verdict too|fx_binary_beside|||--staged|rc=1 $(hit ok.rs 2 "// $TD: beside the asset");$(stg 1 1)" \
+  "and the index lane's violation verdict the same way|fx_binary_beside_index||||rc=1 $(hit ok.rs 2 "// $TD: beside the asset");$(idx 1 1)" \
   "a NUL past git's 8000-byte window leaves the blob text, and it fires|fx_late_nul|||--staged|rc=1 $(hit late-nul.rs 2 "// $TD: past the 8000-byte window");$(stg 1)" \
   "a type change to a clean regular file passes: a marker shape in the path is not content|fx_type_clean|||--staged|rc=0 $OK_STG" \
   "a marker in the new regular file fires at its own line, the section header and the clean line beside it never records|fx_type_marker|||--staged|rc=1 $(hit "a $TD: x.md" 1 "// $FX: added with the regular file");$(stg 1)" \

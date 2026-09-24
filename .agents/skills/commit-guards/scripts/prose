@@ -59,7 +59,7 @@ A history reference in agent-loaded markdown fails: a calendar date
 The scan reads index content. Ordinary words do not trigger this check.
 Only the configured paths are scanned; a reference doc, a changelog and a
 design record are out of scope by not being named. A symlink, a submodule
-gitlink and binary content at a configured path are named as unmeasured.
+gitlink and binary content at a configured path are counted as unmeasured.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -122,7 +122,7 @@ PROSE_ERE="20[0-9]{2}-[0-9]{2}-[0-9]{2}|#[0-9]{3,4}([^0-9A-Fa-f]|\$)"
 # `git grep --cached` SKIPS a symlink index entry outright, never reading
 # through it, and drops a gitlink and a binary blob the same way: with no
 # status and no stderr, so the lane would otherwise print a clean verdict
-# over content it never read. Each of the three is named as unmeasured here
+# over content it never read. Each of the three is counted as unmeasured here
 # and kept out of the scanned count instead.
 MATCHED_SPECS=()
 matched=0

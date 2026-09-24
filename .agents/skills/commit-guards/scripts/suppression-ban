@@ -305,7 +305,7 @@ while IFS="$GG_TAB" read -r kind path n b; do
   esac
 done <"$GG_TMP/violations.tsv"
 
-# A carrier the scans could not decode is named as unmeasured, never folded
+# A carrier the scans could not decode is counted as unmeasured, never folded
 # into a clean total: an OK that covers content nothing read is the silent
 # pass this family refuses.
 UNMEASURED=""

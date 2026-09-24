@@ -20,7 +20,6 @@ PROSE="$SKILL_DIR/scripts/prose"
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would mask every row below.
 unset COMMIT_GUARDS_PROSE_PATHS COMMIT_GUARDS_MD_EXCLUDES COMMIT_GUARDS_MD_SCOPE COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
-unset COMMIT_GUARDS_VERBOSE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -65,7 +64,6 @@ PATHS_CORE="SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md work
 PATHS_ALL="$PATHS_CORE docs/architecture/*.md"
 ERR="prose: "
 hit() { printf 'prose: match=history reference:%s:%s:%s' "$1" "$2" "$3"; } # PATH LINE SOURCE-TEXT
-skip() { printf 'prose: unmeasured=%s:%s' "$1" "$2"; } # PATH CODE
 unmeasured() { printf '%s' "$1"; } # N
 clean() { printf 'prose: summary=violations=0 files=%s skipped=%s' "$1" "${2:-0}"; } # SCANNED [SKIPPED]
 failed() { printf 'prose: summary=violations=%s files=%s skipped=%s;prose: paths=%s' "$1" "$2" "${4:-0}" "${3:-$PATHS_CORE}"; } # HITS SCANNED [PATHS] [SKIPPED]
@@ -192,11 +190,10 @@ fx_index_glob() { fx_index_both index-glob; rm "$R/workflows/b.md"; } # b.md sti
 run_rows \
   "control: the same content as a REGULAR file at the scoped path fails|fx_regular|||rc=1 $(hit skills/dev/SKILL.md 1 'Seeded 2026-08-12.');$(failed 1 1)" \
   "a scoped symlink is counted apart with no path named: no clean verdict, no 'nothing matched' line|fx_symlink symlink|||rc=0 $NONE$(unmeasured 1)" \
-  "control: COMMIT_GUARDS_VERBOSE=1 names it|fx_symlink symlink-verbose|COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip skills/dev/SKILL.md symlink);$NONE$(unmeasured 1)" \
-  "a repo whose CLAUDE.md links to AGENTS.md and back exits 0, naming both links|fx_chain_clean|COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip .claude/CLAUDE.md symlink);$(skip CLAUDE.md symlink);$(clean 1 "$(unmeasured 2)")" \
-  "control: a reference in the file the links point at still fails, naming it|fx_chain_seeded|COMMIT_GUARDS_VERBOSE=1||rc=1 $(skip .claude/CLAUDE.md symlink);$(skip CLAUDE.md symlink);$(hit AGENTS.md 1 'Seeded 2026-08-12.');$(failed 1 1 "$PATHS_CORE" "$(unmeasured 2)")" \
-  "a gitlink at a scoped path is named as unmeasured, not read as markdown|fx_gitlink|COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip vendor/AGENTS.md gitlink);$(clean 1 "$(unmeasured 1)")" \
-  "a binary blob at a scoped path is named as unmeasured, with no clean file count over it|fx_binary|COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip AGENTS.md binary);$NONE$(unmeasured 1)" \
+  "a repo whose CLAUDE.md links to AGENTS.md and back exits 0, counting both links|fx_chain_clean|||rc=0 $(clean 1 "$(unmeasured 2)")" \
+  "control: a reference in the file the links point at still fails, naming it|fx_chain_seeded|||rc=1 $(hit AGENTS.md 1 'Seeded 2026-08-12.');$(failed 1 1 "$PATHS_CORE" "$(unmeasured 2)")" \
+  "a gitlink at a scoped path is counted as unmeasured, not read as markdown|fx_gitlink|||rc=0 $(clean 1 "$(unmeasured 1)")" \
+  "a binary blob at a scoped path is counted as unmeasured, with no clean file count over it|fx_binary|||rc=0 $NONE$(unmeasured 1)" \
   "control: both tracked workflows are scanned while both sit in the work tree|fx_index_both index-both|||rc=1 $(hit workflows/b.md 1 'Seeded 2026-08-12.');$(failed 1 2)" \
   "a tracked file absent from the work tree is still scanned: the glob is matched against the index|fx_index_glob|||rc=1 $(hit workflows/b.md 1 'Seeded 2026-08-12.');$(failed 1 2)"
 # The premises the rows above rest on. The symlink skip: `git grep --cached`

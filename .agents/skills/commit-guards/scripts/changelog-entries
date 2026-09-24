@@ -164,7 +164,7 @@ refuse() { # KEY VALUE EXPLANATION [REMEDY]
 }
 
 # The records and the glob match are the family's walk in spirit, but not its
-# shape: lib/configured-paths.sh names a symlink, a gitlink or a binary blob
+# shape: lib/configured-paths.sh counts a symlink, a gitlink or a binary blob
 # as unmeasured and reads on, and a fragment tree cannot afford that — a path
 # nothing measures is one the collator would fold in verbatim. Every one of
 # them is a violation here.

@@ -22,7 +22,6 @@ GG="$SKILL_DIR/scripts/commit-guards"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would mask every row below.
-unset COMMIT_GUARDS_VERBOSE 2>/dev/null || true
 unset COMMIT_GUARDS_COMMENT_PATHS COMMIT_GUARDS_COMMENT_EXCLUDES \
   COMMIT_GUARDS_COMMENT_REFERENCE_TYPES GH_ISSUE_PATTERN \
   COMMIT_GUARDS_CHECKS COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
@@ -86,8 +85,7 @@ ok_idx() { printf 'comments: summary=violations=0 files=%s scope=index skipped=0
 idx() { printf 'comments: summary=violations=%s files=%s scope=index skipped=0;comments: excludes=%s' "$1" "$2" "${3:-$EXCL}"; } # HITS FILES [EXCLUDES]
 ok_stg() { printf 'comments: summary=violations=0 files=%s scope=staged skipped=%s' "$1" "${2:-0}"; } # FILES [SKIPPED]
 stg() { printf 'comments: summary=violations=%s files=1 scope=staged skipped=0;comments: excludes=%s' "$1" "${2:-$EXCL}"; } # HITS [EXCLUDES]
-skip() { printf 'comments: unmeasured=%s:%s' "$1" "$2"; } # PATH CODE
-extraction() { printf 'comments: extraction=%s:%s;comments: unmeasured=%s:extraction' "$1" "$2" "$1"; } # PATH REFUSAL
+extraction() { printf 'comments: extraction=%s:%s' "$1" "$2"; } # PATH REFUSAL
 unread() { printf '%s' "$1"; } # COUNT
 incomplete() { printf 'comments: incomplete=files=%s violations=%s scanned=%s skipped=' "$1" "$2" "$3"; } # UNSCANNED HITS FILES
 ERR="comments: "
@@ -213,7 +211,7 @@ run_files \
   "a backslash in \$'...' does escape, so the comment after the string is judged|a.sh|echo \$'a\\\\'b' # $W\n|||rc=1 $(hit "$ID" a.sh 1 " $W");$(idx 1 1)" \
   "a heredoc body is not judged; the line after its terminator is|a.sh|cat <<EOF\n# $W\nEOF\n# $W\n|||rc=1 $(hit "$ID" a.sh 4 " $W");$(idx 1 1)" \
   "a quoted <<- heredoc ends at its tab-indented terminator|a.sh|cat <<-'EOF'\n\t# $W\n\tEOF\n# $W\n|||rc=1 $(hit "$ID" a.sh 4 " $W");$(idx 1 1)" \
-  "a plain << heredoc is not ended by a tab-indented terminator: it never closes|a.sh|cat <<EOF\n# $W\n\tEOF\n# $W\n|COMMIT_GUARDS_VERBOSE=1||rc=2 $(extraction a.sh unclosed-heredoc:1:EOF);$(incomplete 1 0 0)$(unread 1)" \
+  "a plain << heredoc is not ended by a tab-indented terminator: it never closes|a.sh|cat <<EOF\n# $W\n\tEOF\n# $W\n|||rc=2 $(extraction a.sh unclosed-heredoc:1:EOF);$(incomplete 1 0 0)$(unread 1)" \
   "an unquoted heredoc word stops at an operator|a.sh|cat <<EOF;echo\n# $W\nEOF\n# $W\n|||rc=1 $(hit "$ID" a.sh 4 " $W");$(idx 1 1)" \
   "a backslash-quoted heredoc word loses its backslash|a.sh|cat <<\\\\EOF\n# $W\nEOF\n# $W\n|||rc=1 $(hit "$ID" a.sh 4 " $W");$(idx 1 1)" \
   "a shift is not a heredoc|a.sh|x=\$((1<<2)) # $W\n|||rc=1 $(hit "$ID" a.sh 1 " $W");$(idx 1 1)" \
@@ -223,7 +221,7 @@ run_files \
   "a quote inside a quoted command substitution does not hide the following comment|a.sh|out=\"\$(printf '\"')\"\n# $W\n|||rc=1 $(hit "$ID" a.sh 2 " $W");$(idx 1 1)" \
   "a comment inside a quoted command substitution is judged as shell code|a.sh|out=\"\$(\n# $W\nprintf ok\n)\"\n|||rc=1 $(hit "$ID" a.sh 2 " $W");$(idx 1 1)" \
   "a quoted command substitution stays extractable when its comments are clean|a.sh|out=\"\$(printf '\"$W\"')\"\n|||rc=0 $(ok_idx 1)" \
-  "a quoted command substitution never closed is reported at its opener|a.sh|out=\"\$(\n# $W\n|COMMIT_GUARDS_VERBOSE=1||rc=2 $(extraction a.sh unclosed-substitution:1);$(incomplete 1 0 0)$(unread 1)" \
+  "a quoted command substitution never closed is reported at its opener|a.sh|out=\"\$(\n# $W\n|||rc=2 $(extraction a.sh unclosed-substitution:1);$(incomplete 1 0 0)$(unread 1)" \
   "a heredoc token inside an embedded heredoc does not hide the following comment|a.sh|out=\"\$(python3 - <<'PY'\nprint(\"<<'MANIFEST_EOF'\")\nPY\n)\"\n# $W\n|||rc=1 $(hit "$ID" a.sh 5 " $W");$(idx 1 1)" \
   "a heredoc in a quoted command substitution stays extractable when its comments are clean|a.sh|out=\"\$(python3 - <<'PY'\nprint(\"<<'MANIFEST_EOF' $W\")\nPY\n)\"\n|||rc=0 $(ok_idx 1)" \
   "a triple-quoted Python string is one string|a.py|\"\"\"\n# $W\n\"\"\"\n# $W\n|||rc=1 $(hit "$ID" a.py 4 " $W");$(idx 1 1)" \
@@ -279,7 +277,7 @@ echo "=== an unextractable file is named, the scan goes on, and the verdict is i
 # The extractor's reason is its stderr with newlines turned to spaces, so
 # the named line ends in one; the unread count rides on the incomplete
 # verdict as on every other.
-# A path with no grammar, a symlink and a binary blob are named as unmeasured
+# A path with no grammar, a symlink and a binary blob are counted as unmeasured
 # and never counted clean; a shebang read that fails is a collection error.
 fx_unclosed_ts() { repo unclosed-ts; put a.ts "const re = /\`/g;\n// $W\n"; put b.rs "// $W\n"; stage; }
 fx_shim_head() {
@@ -291,26 +289,24 @@ fx_shim_head() {
   stage
 }
 fx_link() { repo link; put target.txt "// $W\n"; ln -s target.txt "$R/link.rs"; stage; }
-fx_link_verbose() { repo link-verbose; put target.txt "// $W\n"; ln -s target.txt "$R/link.rs"; stage; }
 fx_blob() { repo blob; put blob.rs "lead\\0000// $W\n"; stage; }
 fx_link_blob() { repo link-blob; put target.txt "// $W\n"; ln -s target.txt "$R/link.rs"; put blob.rs "lead\\0000// $W\n"; stage; }
 run_files \
-  "a block comment never closed is reported with its opener, not read to the end as one comment|a.c|int x;\n/* open\nint y; // $W\n|COMMIT_GUARDS_VERBOSE=1||rc=2 $(extraction a.c unclosed-block:2);$(incomplete 1 0 0)$(unread 1)" \
-  "a heredoc never terminated is reported, naming its word|a.sh|cat <<EOF\nbody\n# $W\n|COMMIT_GUARDS_VERBOSE=1||rc=2 $(extraction a.sh unclosed-heredoc:1:EOF);$(incomplete 1 0 0)$(unread 1)" \
+  "a block comment never closed is reported with its opener, not read to the end as one comment|a.c|int x;\n/* open\nint y; // $W\n|||rc=2 $(extraction a.c unclosed-block:2);$(incomplete 1 0 0)$(unread 1)" \
+  "a heredoc never terminated is reported, naming its word|a.sh|cat <<EOF\nbody\n# $W\n|||rc=2 $(extraction a.sh unclosed-heredoc:1:EOF);$(incomplete 1 0 0)$(unread 1)" \
   "control: a string that does close is a string, and the comment after it is judged|a.rs|let s = \"spans\nlines\";\n// $W\n|||rc=1 $(hit "$ID" a.rs 3 " $W");$(idx 1 1)" \
   "an extensionless file the list names is judged under the grammar its shebang picks|run|#!/usr/bin/env bash\n# $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=1 $(hit "$ID" run 2 " $W");$(idx 1 1)" \
   "a python shebang picks the python grammar, where a backslash escapes inside single quotes|run|#!/usr/bin/env python3\ns = 'don\\\\'t' # $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=1 $(hit "$ID" run 2 " $W");$(idx 1 1)" \
   "a node shebang picks the C family with template literals|run|#!/usr/bin/env node\n// $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=1 $(hit "$ID" run 2 " $W");$(idx 1 1)" \
-  "a first line naming a shell without #! is not a shebang|run|# start with bash\n# $W\n|COMMIT_GUARDS_COMMENT_PATHS=run,COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip run grammar);comments: unmeasured-count=$(unread 1)" \
-  "the same file with no shebang is named as unmeasured, and nothing measurable was scanned|run|# $W\necho hi\n|COMMIT_GUARDS_COMMENT_PATHS=run,COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip run grammar);comments: unmeasured-count=$(unread 1)" \
-  "an extension the table does not carry is named, not guessed at|notes.txt|# $W\n|COMMIT_GUARDS_COMMENT_PATHS=*.txt,COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip notes.txt grammar);comments: unmeasured-count=$(unread 1)"
+  "a first line naming a shell without #! is not a shebang|run|# start with bash\n# $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=0 comments: unmeasured-count=$(unread 1)" \
+  "the same file with no shebang is counted as unmeasured, and nothing measurable was scanned|run|# $W\necho hi\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=0 comments: unmeasured-count=$(unread 1)" \
+  "an extension the table does not carry is counted, not guessed at|notes.txt|# $W\n|COMMIT_GUARDS_COMMENT_PATHS=*.txt||rc=0 comments: unmeasured-count=$(unread 1)"
 run_rows \
-  "a regex literal holding a backtick opens a template literal that never closes (stated limit), and the later file's finding is kept|fx_unclosed_ts|COMMIT_GUARDS_VERBOSE=1||rc=2 $(extraction a.ts unclosed-string:1);$(hit "$ID" b.rs 1 " $W");$(incomplete 1 1 1)$(unread 1)" \
+  "a regex literal holding a backtick opens a template literal that never closes (stated limit), and the later file's finding is kept|fx_unclosed_ts|||rc=2 $(extraction a.ts unclosed-string:1);$(hit "$ID" b.rs 1 " $W");$(incomplete 1 1 1)$(unread 1)" \
   "a shebang read failure puts the stable record before head's cause|fx_shim_head|PATH=$TMP/shim-head/shim:$PATH,COMMIT_GUARDS_COMMENT_PATHS=run||rc=2 ${ERR}shebang-read=run;dependency-order-control: shebang-read" \
   "a symlink at a source path is counted, with no path named|fx_link|||rc=0 comments: unmeasured-count=$(unread 1)" \
-  "control: COMMIT_GUARDS_VERBOSE=1 names it|fx_link_verbose|COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip link.rs symlink);comments: unmeasured-count=$(unread 1)" \
-  "a binary blob at a source path is named as unmeasured|fx_blob|COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip blob.rs binary);comments: unmeasured-count=$(unread 1)" \
-  "both together are two unmeasured paths and no clean file count|fx_link_blob|COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip blob.rs binary);$(skip link.rs symlink);comments: unmeasured-count=$(unread 2)"
+  "a binary blob at a source path is counted as unmeasured|fx_blob|||rc=0 comments: unmeasured-count=$(unread 1)" \
+  "both together are two unmeasured paths and no clean file count|fx_link_blob|||rc=0 comments: unmeasured-count=$(unread 2)"
 
 SECTION=scope
 echo "=== scope: each default extension is scanned under its family, markdown and JSON are not ==="
@@ -337,7 +333,7 @@ fx_flag_unknown() { repo flag-unknown; put a.rs "// clean\n"; stage; }
 fx_flag_bare() { repo flag-bare; put a.rs "// clean\n"; stage; }
 run_rows \
   "markdown and JSON are not this lane's: no tracked file matches, and the verdict names the list|fx_not_ours|||rc=0 comments: no-match=$COMMENT_PATHS" \
-  "the override replaces the list: a.rs is no longer scanned, the named file is unmeasured|fx_override|COMMIT_GUARDS_COMMENT_PATHS=*.txt,COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip notes.txt grammar);comments: unmeasured-count=$(unread 1)" \
+  "the override replaces the list: a.rs is no longer scanned, the listed file is unmeasured|fx_override|COMMIT_GUARDS_COMMENT_PATHS=*.txt||rc=0 comments: unmeasured-count=$(unread 1)" \
   "a list matching no tracked file passes, naming the list|fx_override_none|COMMIT_GUARDS_COMMENT_PATHS=no/such/*.rs||rc=0 comments: no-match=no/such/*.rs" \
   "an empty path list is a config error naming how to switch the check off|fx_override_empty|COMMIT_GUARDS_COMMENT_PATHS= ||rc=2 ${ERR}glob-empty=COMMIT_GUARDS_COMMENT_PATHS" \
   "an unknown argument is a config error quoting it|fx_flag_unknown||--no-such-flag|rc=2 ${ERR}argument=--no-such-flag" \
@@ -389,13 +385,13 @@ run_rows \
   "control: the index scan still refuses the committed reference|fx_stg_index|||rc=1 $(hit "$ID" fixture.rs 1 " committed $W");$(idx 1 2)" \
   "staged bytes decide, whatever the work tree says now|fx_stg_bytes||--staged|rc=1 $(hit "$ID" ok.rs 1 " $W");$(stg 1)" \
   "a hit on a line the commit did not touch is not this commit's, though the file is read whole|fx_stg_untouched||--staged|rc=0 $(ok_stg 1)" \
-  "a staged file that cannot be extracted makes the staged verdict incomplete, exit 2|fx_stg_unclosed|COMMIT_GUARDS_VERBOSE=1|--staged|rc=2 $(extraction ok.rs unclosed-block:2);$(incomplete 1 0 0)$(unread 1)" \
+  "a staged file that cannot be extracted makes the staged verdict incomplete, exit 2|fx_stg_unclosed||--staged|rc=2 $(extraction ok.rs unclosed-block:2);$(incomplete 1 0 0)$(unread 1)" \
   "a pure rename adds no line and reads no file|fx_stg_rename||--staged|rc=0 $(ok_stg 0)" \
   "a file that moved and changed is read whole|fx_stg_moved||--staged|rc=1 $(hit "$ID" moved.rs 1 " committed $W");$(hit "$ID" moved.rs 2 " and $W again");$(stg 2)" \
   "on a repository's first commit the whole staged tree reads as added|fx_stg_first||--staged|rc=1 $(hit "$ID" a.rs 1 " $W");$(stg 1)" \
   "control: a clean first commit passes, not exit 2 for want of a HEAD|fx_stg_first_clean||--staged|rc=0 $(ok_stg 1)" \
   "--staged honours the path list: markdown is not read|fx_stg_md||--staged|rc=0 $(ok_stg 0)" \
-  "--staged names a path with no grammar as unmeasured, never judged|fx_stg_nogrammar|COMMIT_GUARDS_COMMENT_PATHS=run,COMMIT_GUARDS_VERBOSE=1|--staged|rc=0 $(skip run grammar);$(ok_stg 0 1)" \
+  "--staged counts a path with no grammar as unmeasured, never judged|fx_stg_nogrammar|COMMIT_GUARDS_COMMENT_PATHS=run|--staged|rc=0 $(ok_stg 0 1)" \
   "--staged honours the exclusion list|fx_stg_vendor||--staged|rc=0 $(ok_stg 0)" \
   "control: without the row the staged vendored comment fails|fx_stg_vendor_none||--staged|rc=1 $(hit "$ID" vendor/v.rs 1 " $W");$(stg 1)"
 

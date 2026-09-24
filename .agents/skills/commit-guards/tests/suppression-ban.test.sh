@@ -4,7 +4,7 @@
 # direction (new, grow, loose, stale), --update tightens only, baseline
 # hygiene is enforced, the baseline is read from the index like the scan,
 # the render inventory (.kendex-generated.json, the one check that loads
-# it) excludes its exact paths, and a carrier the sniff skips is named once
+# it) excludes its exact paths, and a carrier the sniff skips is counted once
 # and qualifies the verdict.
 # Two tables. The first builds one tracked file per row from the row's own
 # content; the second runs a fixture function per row for the cases that
@@ -21,7 +21,6 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 SB="$SKILL_DIR/scripts/suppression-ban"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
-unset COMMIT_GUARDS_VERBOSE 2>/dev/null || true
 unset COMMIT_GUARDS_SUPPRESSION_EXCLUDES COMMIT_GUARDS_SUPPRESSION_BASELINE COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
@@ -83,7 +82,6 @@ new() { printf 'suppression-ban: allow-new=%s:%s' "$1" "$2"; } # PATH COUNT
 grow() { printf 'suppression-ban: allow-growth=%s:%s:%s' "$1" "$2" "$3"; } # PATH COUNT BASE
 loose() { printf 'suppression-ban: baseline-loose=%s:%s:%s' "$1" "$2" "$3"; } # PATH BASE COUNT
 stale() { printf 'suppression-ban: baseline-stale=%s:%s' "$1" "$2"; } # PATH BASE
-skip() { printf 'suppression-ban: unmeasured=%s:binary' "$1"; } # PATH
 ERR="suppression-ban: "
 
 # The first table: label | path | content | env | args | expect.
@@ -286,12 +284,11 @@ run_rows \
   "control: a well-formed sorted baseline passes|fx_well_formed|||rc=0 $OK|-"
 
 SECTION=unmeasured
-echo "=== a carrier the sniff skips is named once, counted once, and qualifies the verdict ==="
+echo "=== a carrier the sniff skips is counted once and qualifies the verdict ==="
 # A .rs path whose bytes carry the module-wide pragma at column 0 and a NUL
 # in git's leading window: the listing forces text, so the path IS matched
 # and reaches the content sniff, which is what keeps it out of the count.
 fx_skipped() { file skipped ok.rs 'fn main() {}\n'; put blob.rs "\\0000\n${BLANKET}fn f() {}\n"; stage; }
-fx_skipped_verbose() { file skipped-verbose ok.rs 'fn main() {}\n'; put blob.rs "\\0000\n${BLANKET}fn f() {}\n"; stage; }
 fx_skipped_beside() { file skipped-beside ok.rs 'fn main() {}\n'; put blob.rs "\\0000\n${BLANKET}fn f() {}\n"; put blanket.rs "${BLANKET}fn g() {}\n"; stage; }
 fx_skipped_control() { file skipped-control ok.rs 'fn main() {}\n'; put blob.rs "\n${BLANKET}fn f() {}\n"; stage; }
 # The same unreadable blob reaches two of this check's scans: the module-wide
@@ -300,10 +297,9 @@ fx_skipped_control() { file skipped-control ok.rs 'fn main() {}\n'; put blob.rs 
 fx_skipped_twice() { file skipped-twice ok.rs 'fn main() {}\n'; put blob.rs "\\0000\n${BLANKET}${DEAD}fn x() {}\n"; stage; }
 run_rows \
   "a clean verdict says how many went unmeasured, with no path named|fx_skipped|||rc=0 $(summary "" 0 0 1)|-" \
-  "control: COMMIT_GUARDS_VERBOSE=1 names the skipped carrier|fx_skipped_verbose|COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip blob.rs);$(summary "" 0 0 1)|-" \
-  "a violation verdict carries the same qualifier|fx_skipped_beside|COMMIT_GUARDS_VERBOSE=1||rc=1 $(skip blob.rs);$(hit 'module-wide rust allow' blanket.rs 1 '#![allow(dead_code)]');$(summary '' 1 0 1)|-" \
+  "a violation verdict carries the same qualifier|fx_skipped_beside|||rc=1 $(hit 'module-wide rust allow' blanket.rs 1 '#![allow(dead_code)]');$(summary '' 1 0 1)|-" \
   "control: the same bytes without a NUL are read, fire on their own line, and nothing is unmeasured|fx_skipped_control|||rc=1 $(hit 'module-wide rust allow' blob.rs 2 '#![allow(dead_code)]');$(summary '' 1 0)|-" \
-  "a path skipped by two lanes is named once and counted once|fx_skipped_twice|COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip blob.rs);$(summary "" 0 0 1)|-"
+  "a path skipped by two lanes is counted once|fx_skipped_twice|||rc=0 $(summary "" 0 0 1)|-"
 
 echo "=== the usage is answered ==="
 repo help

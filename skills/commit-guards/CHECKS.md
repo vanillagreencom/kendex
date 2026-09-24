@@ -2,7 +2,7 @@
 
 What each check fails, its scopes and flags, the keys it reads, and the grammar a test pins. Invocation and hooks: [README.md](README.md); every key with its default: [SKILL.md](SKILL.md).
 
-Every check exits `0` clean, `1` violations, `2` usage, config or collection error. Scans read index content, and content decides what is read: an attributes rule cannot hide a path, and a symlink, a submodule gitlink, or a blob with a NUL in its leading bytes at a scanned path is counted as unmeasured, never folded into a clean count. The verdict line carries that count; the paths behind it are printed only where `COMMIT_GUARDS_VERBOSE` is `1`, so a tree tracking hundreds of symlinks does not bury the lane that failed. Excludes lists and baselines take the formats in `SKILL.md § Configuration`. A path-glob list replaces the default; an empty list is a config error; a list matching no tracked file is a clean pass.
+Every check exits `0` clean, `1` violations, `2` usage, config or collection error. Scans read index content, and content decides what is read: an attributes rule cannot hide a path, and a symlink, a submodule gitlink, or a blob with a NUL in its leading bytes at a scanned path is counted as unmeasured, never folded into a clean count. The verdict line carries that count and names no path, so a tree tracking hundreds of symlinks does not bury the lane that failed; md-refs alone names one, where a judged reference lands on it or under its `--verbose`. Excludes lists and baselines take the formats in `SKILL.md § Configuration`. A path-glob list replaces the default; an empty list is a config error; a list matching no tracked file is a clean pass.
 
 ## todo-ban
 

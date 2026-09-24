@@ -32,7 +32,7 @@
 #
 # Every scope takes the lane's path globs and COMMIT_GUARDS_MD_EXCLUDES, the
 # family's `pattern<TAB>reason` list with `!` carve-ins. A symlink, a gitlink
-# and a binary blob at a selected path are named as unmeasured, never folded
+# and a binary blob at a selected path are counted as unmeasured, never folded
 # into a clean count.
 
 GG_MD_SCOPE_DEFAULT="touched"

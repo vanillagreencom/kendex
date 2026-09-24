@@ -1,5 +1,5 @@
 # md-refs parses the verdict protocol: V<TAB>source<TAB>line<TAB>rule<TAB>value,
-# plus N<TAB>judged-count. Rule names are enums; values name the input and target.
+# T<TAB>path<TAB>code<TAB>explanation, plus N<TAB>judged-count. Rule names are enums; values name the input and target.
 # md-refs.awk — what a markdown file cites, what it defines, and whether the
 # citations land. Runs over the line stream md-blocks.awk emits in `lines`
 # mode, so fenced code, indented code and front matter never reach it. POSIX
@@ -24,15 +24,17 @@
 #       outside markdown a link, a bare path and a bare ID are prose, and a
 #       heading with prose after it is the § rule's.
 #   -v mode=resolve -v phase=targets|contents|verdict -v tracked=FILE
-#         [-v headings=FILE -v contents=FILE -v dec_dir=DIR -v dec_judge=0|1
-#          -v id_prefix=D]
+#         [-v headings=FILE -v contents=FILE -v skips=FILE -v dec_dir=DIR
+#          -v dec_judge=0|1 -v id_prefix=D]
 #       reads the refs records; `targets` prints each tracked markdown path a
 #       heading citation needs indexed, `contents` prints
 #       target<TAB>phrase for each content citation whose path resolves, and
 #       `verdict` prints V<TAB>src<TAB>line<TAB>rule<TAB>value per dead
-#       reference and a final N<TAB>count of references judged. The caller
-#       answers the `contents` pairs with P<TAB>target<TAB>phrase records for
-#       the phrases it found, which `verdict` reads back from `contents`.
+#       reference, T<TAB>path<TAB>code<TAB>explanation per `skips` path a
+#       judged reference lands on, and a final N<TAB>count of references
+#       judged. The caller answers the `contents` pairs with
+#       P<TAB>target<TAB>phrase records for the phrases it found, which
+#       `verdict` reads back from `contents`.
 #
 # Loaded beside md-slug.awk, which holds the text reductions this file calls
 # (split_spans, slugify) and reads PRINTABLE, CONTROLS and ESCAPABLE from the
@@ -312,6 +314,16 @@ function load_contents(   line, i, rest, t) {
   close(contents)
 }
 
+# The paths the source walks skipped, as path<TAB>code<TAB>explanation: the
+# code and explanation are this family's text and hold no tab, so the path is
+# everything before the last two.
+function load_skips(   line) {
+  if (skips == "") return
+  while ((getline line < skips) > 0)
+    if (match(line, /\t[^\t]*\t[^\t]*$/)) skipped[substr(line, 1, RSTART - 1)] = substr(line, RSTART + 1)
+  close(skips)
+}
+
 function load_headings(   line, f) {
   if (headings == "") return
   while ((getline line < headings) > 0) {
@@ -349,10 +361,9 @@ function fail(rule, value) { if (phase == "verdict") printf "V\t%s\t%d\t%s\t%s\n
 
 function want_target(t) { if (phase == "targets" && !(t in wanted)) { wanted[t] = 1; print t } }
 
-# Every tracked path a judged reference lands on, once. The shell names the
-# ones the source walk could not measure, which is the only per-path notice a
-# passing run keeps.
-function seen_target(t) { if (phase == "verdict" && !(t in reached)) { reached[t] = 1; printf "T\t%s\n", t } }
+# A skipped path a judged reference lands on, once, with the reason its walk
+# gave: the only per-path notice a passing run keeps.
+function seen_target(t) { if (phase == "verdict" && (t in skipped) && !(t in reached)) { reached[t] = 1; printf "T\t%s\t%s\n", t, skipped[t] } }
 
 function want_content(t, phrase,   key) {
   key = t SUBSEP phrase
@@ -374,7 +385,7 @@ BEGIN {
       exit 2
     }
     load_tracked()
-    if (phase == "verdict") { load_headings(); load_contents() }
+    if (phase == "verdict") { load_headings(); load_contents(); load_skips() }
     judged = 0
   } else if (mode == "index") {
     printf "F\t%s\n", src
@@ -479,6 +490,7 @@ mode == "resolve" {
     if (!dec_judge) next
     judged++
     if (!(f[4] in decisions)) { fail("decision-missing", f[4] ":" dec_dir "/" f[4] "-*.md"); next }
+    if (f[4] in decfile) seen_target(decfile[f[4]])
     if (f[5] == "") next
     if (!(f[4] in decfile)) {
       fail("decision-markdown", f[4] SECTION_SEP f[5] ":" dec_dir "/" f[4] "-*.md")

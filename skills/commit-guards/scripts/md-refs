@@ -91,8 +91,8 @@ resolve against the index. Exclusions apply to both sets.
 
 A matched path this lane cannot read — a symlink, a submodule gitlink, a
 binary blob — is counted by reason on the summary line rather than named.
-One is named anyway when a judged reference lands on it, and --verbose (or
-COMMIT_GUARDS_VERBOSE=1) names every one.
+One is named anyway when a judged reference lands on it, and --verbose
+names every one.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -265,7 +265,7 @@ SRC_COUNT=0
 # calls that an incomplete scan and exits 2; a carrier holds a section sign,
 # so leaving it unread and exiting 0 would pass a citation nobody judged.
 SRC_EXTRACT_ERRORS=0
-# One file carrying a section sign; 1 when the path was named as unmeasured.
+# One file carrying a section sign; 1 when the path was counted as unmeasured.
 source_file() { # PATH BLOBFILE
   local f="$1" blob="$2" want=comments status=0 fam
   if gg_blob_is_binary "$blob" "$f"; then
@@ -304,7 +304,7 @@ SRC_GLOBS_SHOWN="$GG_PATH_GLOBS_SHOWN"
 # blob-by-blob walk the other lanes take. The search runs WITHOUT `-I`,
 # which would drop a file the attributes mark undiffable and a blob holding
 # a NUL, leaving a citation inside one silently unjudged; a carrier whose
-# content really is binary is named below instead.
+# content really is binary is counted below instead.
 sig_status=0
 git grep -l -z --cached -F -e "$SECTION_SIGN" >"$GG_TMP/sig.z" || sig_status=$?
 [ "$sig_status" -le 1 ] || gg_fail citation-search "$sig_status" "Git could not search the index for citations."
@@ -423,9 +423,18 @@ while IFS="$GG_TAB" read -r target phrase; do
   esac
 done <"$GG_TMP/wanted.sorted"
 
-# Pass three: the verdict.
+# Pass three: the verdict. The skipped paths go in as path<TAB>code<TAB>
+# explanation lines, so the resolver joins them to the targets it reaches in
+# one pass; a path holding a newline is no link target and stays out.
+: >"$GG_TMP/skips.tsv"
+if [ "$GG_VERBOSE" -eq 0 ] && [ -s "$GG_TMP/skips.z" ]; then
+  while IFS= read -r -d '' skip_path && IFS= read -r -d '' skip_code && IFS= read -r -d '' skip_why; do
+    case "$skip_path" in *$'\n'*) continue ;; esac
+    printf '%s\t%s\t%s\n' "$skip_path" "$skip_code" "$skip_why"
+  done <"$GG_TMP/skips.z" >"$GG_TMP/skips.tsv"
+fi
 LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=verdict -v tracked="$GG_TMP/tracked" -v headings="$GG_TMP/headings.tsv" \
-  -v contents="$GG_TMP/contents.tsv" \
+  -v contents="$GG_TMP/contents.tsv" -v skips="$GG_TMP/skips.tsv" \
   -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/verdict" \
   || gg_fail references-exit "$?" "The reference resolver failed."
 
@@ -439,7 +448,7 @@ while IFS="$GG_TAB" read -r kind a b c detail; do
       violations=$((violations + 1))
       ;;
     N) judged="$a" ;;
-    T) gg_skip_named "$a" ;;
+    T) gg_message unmeasured "$a:$b" "$c" ;;
     *) gg_fail verdict-record "$kind" "The resolver returned an unknown verdict record." ;;
   esac
 done <"$GG_TMP/verdict"

@@ -17,7 +17,7 @@
 # (--staged), and every tracked file the configured globs name (default).
 # The excludes file names generated and vendored trees. Content comes from
 # the index; a symlink, a gitlink, binary content and a path with no
-# comment grammar are named as unmeasured, never folded into a clean count.
+# comment grammar are counted as unmeasured, never folded into a clean count.
 #
 # Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 #
@@ -196,7 +196,7 @@ classify() { # IN — records on stdout
   [ "$status" -eq 0 ] || gg_fail classify-exit "$status" "The comment classifier failed."
 }
 
-# The grammar a matched path takes, or the path named as unmeasured: a file
+# The grammar a matched path takes, or the path counted as unmeasured: a file
 # this lane cannot read is never folded into the scanned count.
 MATCHED=0
 GG_COMMENT_EXTRACT_ERRORS=0

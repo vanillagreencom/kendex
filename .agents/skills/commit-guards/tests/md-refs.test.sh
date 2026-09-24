@@ -20,7 +20,6 @@ MDR="$SKILL_DIR/scripts/md-refs"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would mask every row below.
-unset COMMIT_GUARDS_VERBOSE 2>/dev/null || true
 unset COMMIT_GUARDS_MD_REFS_PATHS COMMIT_GUARDS_MD_REFS_SOURCE_PATHS COMMIT_GUARDS_MD_EXCLUDES \
   COMMIT_GUARDS_MD_SCOPE COMMIT_GUARDS_SETTINGS_FILE \
   DECISIONS_DIR DECISION_ID_PREFIX DECISION_ID_WIDTH 2>/dev/null || true
@@ -307,6 +306,9 @@ fx_symlink_src() { world_src symlink-src; put target.sh "$SH"'# AGENTS.md \302\2
 # print one line each for, and the same tree with a document linking to one.
 fx_symlink_tree() { world_src "$1"; put target.sh "$SH"'true\n'; ln -s target.sh "$R/a.sh"; ln -s target.sh "$R/b.sh"; ln -s target.sh "$R/c.sh"; git -C "$R" add -A; }
 fx_symlink_linked() { fx_symlink_tree "$1"; put AGENTS.md '# A\n\n## Rules\n\n[helper](a.sh)\n'; }
+fx_symlink_cited() { fx_symlink_tree symlink-cited; put AGENTS.md '# A\n\n## Rules\n\n`./a.sh::target.sh`\n'; }
+# A decision record tracked as a symlink, at a document path, cited by ID.
+fx_dec_symlink() { repo dec-symlink; put docs/decisions/real.md '# D008\n'; ln -s real.md "$R/docs/decisions/D008-scope.md"; put AGENTS.md '# A\n\nSee D008.\n'; }
 fx_newline_src() { world_src newline-src; put "one"$'\n'"two.sh" "$SH"'# AGENTS.md \302\247 Gone\ntrue\n'; }
 UNCLOSED="md-refs: extraction=src/broken.c:unclosed-block:1;md-refs: incomplete=files=1 skipped=$(unmeasured 1 extraction=1)"
 run_rows \
@@ -331,8 +333,11 @@ run_rows \
   "a symlink at a source path is counted by reason, and its target still judged|fx_symlink_src||--all|rc=1 $(dead target.sh 2 "$(noprefix 'AGENTS.md § Gone' AGENTS.md Gone)");$(failed 1 1 2 1 "$DEC_NO" "$(unmeasured 1 symlink=1)")" \
   "a path holding a newline is counted, never quietly passed|fx_newline_src||--all|rc=0 $(clean 0 2 0 "$DEC_NO" "$(unmeasured 1 path-newline=1)")" \
   "a passing run over a tree of tracked symlinks names no path and carries the count|fx_symlink_tree symlink-tree||--all|rc=0 $(clean 0 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
-  "control: the same tree under COMMIT_GUARDS_VERBOSE=1 names every one|fx_symlink_tree symlink-verbose|COMMIT_GUARDS_VERBOSE=1|--all|rc=0 $(skip a.sh symlink);$(skip b.sh symlink);$(skip c.sh symlink);$(clean 0 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
+  "control: the same tree under --verbose names every one|fx_symlink_tree symlink-verbose||--all --verbose|rc=0 $(skip a.sh symlink);$(skip b.sh symlink);$(skip c.sh symlink);$(clean 0 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
   "a reference landing on a skipped source names that path and no other|fx_symlink_linked symlink-linked||--all|rc=0 $(skip a.sh symlink);$(clean 1 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
+  "a citation landing on a skipped source names that path|fx_symlink_cited||--all|rc=0 $(skip a.sh symlink);$(clean 1 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
+  "--verbose names a skipped path a reference lands on once|fx_symlink_linked symlink-linked-verbose||--all --verbose|rc=0 $(skip a.sh symlink);$(skip b.sh symlink);$(skip c.sh symlink);$(clean 1 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
+  "a decision ID landing on a skipped record names it|fx_dec_symlink|COMMIT_GUARDS_MD_REFS_PATHS=AGENTS.md docs/decisions/*.md|--all|rc=0 $(skip docs/decisions/D008-scope.md symlink);$(clean 1 2 0 "$DEC_YES" "$(unmeasured 1 symlink=1)")" \
   "an empty source path list is refused|fx_comment_ok empty-list|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=|--all|rc=2 ${ERR}glob-empty=COMMIT_GUARDS_MD_REFS_SOURCE_PATHS"
 
 echo "=== scopes: touched, --staged, --all ==="

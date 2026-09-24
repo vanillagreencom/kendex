@@ -174,10 +174,10 @@ done <"$GG_TMP/targets.z"
 
 if [ "$CHECK" -eq 1 ]; then
   if [ "$would" -gt 0 ]; then
-    gg_message check-summary "changed=$would checked=$checked" "The reflow check found files that would change."
+    gg_message check-summary "changed=$would checked=$checked skipped=$GG_WALK_SKIPPED" "The reflow check found files that would change."
     exit 1
   fi
-  gg_message check-summary "changed=0 checked=$checked" "The checked files are already in the required format."
+  gg_message check-summary "changed=0 checked=$checked skipped=$GG_WALK_SKIPPED" "The checked files are already in the required format."
   exit 0
 fi
-gg_message rewrite-summary "changed=$reflowed checked=$checked" "The reflow run is complete."
+gg_message rewrite-summary "changed=$reflowed checked=$checked skipped=$GG_WALK_SKIPPED" "The reflow run is complete."

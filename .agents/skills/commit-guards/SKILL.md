@@ -117,7 +117,6 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `COMMIT_GUARDS_COMMENT_REFERENCE_TYPES` | `issue-id issue-number date` | Reference classes the comments lane checks; name at least one type. |
 | `COMMIT_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted commit types. |
 | `COMMIT_GUARDS_SUBJECT_MAX` | `72` | Characters allowed in a hand-written commit header. |
-| `COMMIT_GUARDS_VERBOSE` | `0` | `1` prints one `unmeasured` line per path a scan could not measure; `0` leaves the verdict line's count as the answer. md-refs' `--verbose` sets it for that run. |
 | `COMMIT_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |
 
 Settings follow [README.md § Settings](README.md#settings). `COMMIT_GUARDS_SETTINGS_FILE=/dev/null` skips file sources; `COMMIT_GUARDS_CHANGELOG_COLLATE=1` is environment-only, authorizes `--collate` on a clean index and working tree, and lets `commit-msg` count a record change as the release changelog entry.
