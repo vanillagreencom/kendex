@@ -31,6 +31,10 @@ on:
         description: Show what would be pushed without pushing it
         type: boolean
         default: false
+      check_key:
+        description: Only prove AUR_SSH_PRIVATE_KEY against the AUR; publish nothing
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -61,10 +65,12 @@ jobs:
       - name: Arch recipes agree internally
         run: tools/check-aur-sync
 
-      # Skipped for a dry run: tools/publish-aur --dry-run clones over HTTPS
-      # and needs no key, so anyone can dispatch one without the secret.
+      # Skipped for a plain dry run: tools/publish-aur --dry-run clones over
+      # HTTPS and needs no key, so anyone can dispatch one without the secret.
+      # A check_key dispatch configures the key whatever dry_run says, because
+      # the proof below needs it.
       - name: Configure the AUR SSH key
-        if: ${{ inputs.dry_run != true }}
+        if: ${{ inputs.check_key == true || inputs.dry_run != true }}
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           # The aur.archlinux.org host key line, verified against the
@@ -91,7 +97,28 @@ jobs:
           # The trusted fingerprint, so a wrong host key line is visible in the log.
           ssh-keygen -lf ~/.ssh/known_hosts
 
+      # One login before any clone: a secret holding a key the AUR does not
+      # accept fails here naming the fingerprint it offered, instead of as a
+      # bare `Permission denied` from the first clone.
+      - name: Prove the AUR SSH key
+        if: ${{ inputs.check_key == true || inputs.dry_run != true }}
+        run: |
+          set -euo pipefail
+          status=0
+          output="$(tools/publish-aur --check-key ~/.ssh/aur 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          if [ "$status" -ne 0 ]; then
+            fingerprint="$(sed -n 's/^publish-aur: unregistered=//p' <<< "$output")"
+            if [ -n "$fingerprint" ]; then
+              echo "::error::AUR_SSH_PRIVATE_KEY (fingerprint $fingerprint) is not registered on the AUR account that maintains the four packages; register that public key under My Account on aur.archlinux.org, or replace the secret with the key that account holds (packaging/README.md § Publishing)"
+            else
+              echo "::error::AUR_SSH_PRIVATE_KEY failed its AUR login proof; the publish-aur line above names why"
+            fi
+            exit 1
+          fi
+
       - name: Publish packaging/arch to the AUR
+        if: ${{ inputs.check_key != true }}
         env:
           # Unset on this repository; tools/publish-aur then commits as
           # "kendex packaging <packaging@vanillagreen>".
