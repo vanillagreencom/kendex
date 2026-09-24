@@ -561,11 +561,40 @@ HANDED_PATHS="$TMP/absent-paths" run_lanes micro false $CODE
   || bad "an unreadable paths file is a finding and every lane runs" "rc=$RC got=$(lanes_ran) out=$OUT"
 # The issue's inverse: a guard that reads no class runs the whole battery on
 # the trivial row.
-lane_guard 's/"${DEV_VALIDATE_CLASS:-standard}:${DEV_VALIDATE_DOCS_ONLY:-false}" != standard:false/standard:false != standard:false/'
+lane_guard 's/"$validate_class:$validate_docs_only" != standard:false/standard:false != standard:false/'
 run_lanes trivial true $CODE
 [ "$(lanes_ran)" = "$ALL" ] \
   && ok "control: with the class unread the trivial row runs every lane" \
   || bad "control: with the class unread the trivial row runs every lane" "rc=$RC got=$(lanes_ran)"
+# A suite a lane runs inherits none of the selection: the outer run's class
+# would otherwise choose the lanes of every guard that suite starts, the way
+# this file's own rows ran under a prose-only micro selection. The touched
+# demo suite prints what reached it.
+inherited_row() { # — sets OUT and RC
+  local t
+  git -C "$R" reset -q --hard "$lanes_head"
+  git -C "$R" clean -qfd
+  for t in skills/demo/tests/demo.test.sh .agents/skills/demo/tests/demo.test.sh; do
+    printf '%s\n' '#!/usr/bin/env bash' \
+      'echo "inner=${DEV_VALIDATE_CLASS-unset}:${DEV_VALIDATE_DOCS_ONLY-unset}:${DEV_VALIDATE_PATHS-unset}"' >"$R/$t"
+  done
+  printf 'docs/guide.md\n' >"$PATHS_FILE"
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && env DEV_VALIDATE_CLASS=micro DEV_VALIDATE_DOCS_ONLY=false DEV_VALIDATE_PATHS="$PATHS_FILE" \
+    PATH="$LANE_BIN:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" NPM_CALL_LOG="$NPM_CALL_LOG" \
+    RUSTUP_INSTALLED_TARGETS="$BOTH" "$LANE_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
+}
+lane_guard
+inherited_row
+[ "$RC" -eq 0 ] && [[ "$OUT" == *"inner=unset:unset:unset"* ]] \
+  && ok "a suite run under a prose-only micro selection inherits none of it" \
+  || bad "a suite run under a prose-only micro selection inherits none of it" "rc=$RC out=$OUT"
+lane_guard '/^unset DEV_VALIDATE_CLASS DEV_VALIDATE_DOCS_ONLY DEV_VALIDATE_PATHS$/d'
+inherited_row
+[[ "$OUT" == *"inner=micro:false:$PATHS_FILE"* ]] \
+  && ok "control: with the selection left exported the suite inherits it" \
+  || bad "control: with the selection left exported the suite inherits it" "rc=$RC out=$OUT"
 lane_guard 's/lane_on cargo_linux; then/lane_on cargo_linx; then/'
 run_lanes micro false $CODE
 [ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: lane-unknown=cargo_linx"* ]] \
