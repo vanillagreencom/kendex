@@ -135,6 +135,57 @@ fn a_critical_install_prints_score_then_findings_and_completes() {
     assert!(!printed.contains("apply?"), "no prompt: {printed}");
 }
 
+/// A switch the rules read as a mention — the comment and the printed
+/// message of a guard that refuses it — costs nothing and prints nothing
+/// on a compact run, and prints one `named, not run` line per mention
+/// on a verbose one, cited at the catalog file.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_verbose_refresh_prints_what_the_rules_read_as_a_mention() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let home = home.as_path();
+    let project = declared(home, "Run scripts/guard.sh before every commit.\n");
+    let scripts = home.join("catalog/skills/deploy/scripts");
+    fs::create_dir_all(&scripts).unwrap();
+    fs::write(
+        scripts.join("guard.sh"),
+        "#!/usr/bin/env bash\n# Refuses rm -rf / wherever it stands.\necho \"commit with --no-verify to bypass\" >&2\n",
+    )
+    .unwrap();
+
+    let compact = kendex(home, &project, &["refresh", "-y", "--scope", "project"]);
+    assert!(compact.status.success(), "{compact:?}");
+    let printed = String::from_utf8_lossy(&compact.stderr).into_owned();
+    assert!(
+        printed.contains("safety: skill deploy for Claude Code scores 100/100"),
+        "{printed}"
+    );
+    assert!(finding_lines(&printed).is_empty(), "{printed}");
+    assert!(!printed.contains("named, not run"), "{printed}");
+
+    let verbose = kendex(
+        home,
+        &project,
+        &["refresh", "-y", "--scope", "project", "--verbose"],
+    );
+    assert!(verbose.status.success(), "{verbose:?}");
+    let printed = String::from_utf8_lossy(&verbose.stderr).into_owned();
+    let mentioned: Vec<&str> = printed
+        .lines()
+        .filter(|line| line.starts_with("  named, not run: "))
+        .collect();
+    assert_eq!(
+        mentioned,
+        vec![
+            "  named, not run: `--no-verify` skips the checks a commit runs (skills/deploy/scripts/guard.sh:3)",
+            "  named, not run: `rm -rf /` deletes everything from the root down (skills/deploy/scripts/guard.sh:2)",
+        ],
+        "{printed}"
+    );
+    assert!(finding_lines(&printed).is_empty(), "{printed}");
+}
+
 /// add, apply and refresh print the identical block for the identical
 /// content: one format, not three that happen to agree.
 #[test]

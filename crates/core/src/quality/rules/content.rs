@@ -48,13 +48,13 @@ impl AuditRule for PromptInjection {
     }
 
     fn check(&self, prepared: &Prepared) -> Outcome {
-        scan_docs(prepared, AUTHORED, |doc, line, findings| {
+        scan_docs(prepared, AUTHORED, |doc, line, found| {
             for phrase in INJECTION {
                 if !line.has(phrase) {
                     continue;
                 }
                 let (file, at_line) = at(doc, line);
-                findings.push(Finding {
+                found.findings.push(Finding {
                     rule: self.id().to_owned(),
                     severity: line.weigh(Severity::Critical),
                     location: file,
@@ -75,13 +75,13 @@ struct Rce;
 
 impl AuditRule for Rce {
     fn check(&self, prepared: &Prepared) -> Outcome {
-        scan_docs(prepared, AUTHORED, |doc, line, findings| {
+        scan_docs(prepared, AUTHORED, |doc, line, found| {
             let Some(what) = fetch_and_run(line) else {
                 return;
             };
             let what = what.said();
             let (file, at_line) = at(doc, line);
-            findings.push(Finding {
+            found.findings.push(Finding {
                 rule: self.id().to_owned(),
                 severity: line.weigh(Severity::Critical),
                 location: file,
@@ -135,7 +135,7 @@ impl AuditRule for CredentialTheft {
     }
 
     fn check(&self, prepared: &Prepared) -> Outcome {
-        scan_docs(prepared, AUTHORED, |doc, line, findings| {
+        scan_docs(prepared, AUTHORED, |doc, line, hits| {
             let sends = OUTBOUND.iter().find(|verb| line.has(verb));
             let Some(found) = CREDENTIAL_FILES
                 .iter()
@@ -171,7 +171,7 @@ impl AuditRule for CredentialTheft {
                 ),
             };
             let (file, at_line) = at(doc, line);
-            findings.push(Finding {
+            hits.findings.push(Finding {
                 rule: self.id().to_owned(),
                 severity: line.weigh(base),
                 location: file,

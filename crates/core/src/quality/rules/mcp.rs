@@ -11,7 +11,7 @@ use crate::model::ItemKind;
 
 use super::super::secret::redact;
 use super::super::{McpEntry, UNREAD_MCP_ENTRY};
-use super::{AuditRule, Content, Finding, Outcome, Prepared, Severity};
+use super::{AuditRule, Content, Finding, Found, Outcome, Prepared, Severity};
 
 pub(super) fn rules() -> Vec<Box<dyn AuditRule>> {
     vec![
@@ -48,7 +48,7 @@ impl AuditRule for McpCommandInjection {
             Ok(entry) => entry,
             Err(outcome) => return outcome,
         };
-        let findings = entry
+        let findings: Vec<Finding> = entry
             .command
             .iter()
             .chain(entry.args.iter())
@@ -67,7 +67,7 @@ impl AuditRule for McpCommandInjection {
                         .to_owned(),
             })
             .collect();
-        Outcome::Ran(findings)
+        Outcome::Ran(findings.into())
     }
 }
 
@@ -111,7 +111,7 @@ impl AuditRule for BroadPermissions {
                 remediation: "point it at the one project directory it needs".to_owned(),
             });
         }
-        Outcome::Ran(findings)
+        Outcome::Ran(findings.into())
     }
 }
 
@@ -170,9 +170,9 @@ impl AuditRule for SupplyChain {
             .as_deref()
             .is_some_and(|command| command == "npx" || command.ends_with("/npx"));
         let Some(package) = runs_npx.then(|| unscoped_package(entry)).flatten() else {
-            return Outcome::Ran(Vec::new());
+            return Outcome::Ran(Found::default());
         };
-        Outcome::Ran(vec![Finding {
+        Outcome::Ran(Found::from(vec![Finding {
             rule: self.id().to_owned(),
             severity: Severity::Medium,
             location: prepared.input.location.clone(),
@@ -185,7 +185,7 @@ impl AuditRule for SupplyChain {
                 "use the publisher's scoped name (`@owner/{}`) or pin an exact version you have read",
                 redact(&package)
             ),
-        }])
+        }]))
     }
 }
 

@@ -331,7 +331,7 @@ fn install_step(
     {
         for (kind, name) in &members {
             let pinned = kendex_core::package::set_rev(env, scope, *kind, name, Some(commit))?;
-            print_safety(&pinned);
+            print_safety(&pinned, false);
             wrote.scored.extend(pinned.safety.iter().cloned());
             wrote.applied += apply_report(env, &pinned)?;
         }

@@ -35,7 +35,7 @@ pub use dimensions::{AntiPattern, DimensionScore, QualityScore};
 pub use finding::Finding;
 pub use score::{Deduction, SafetyScore, safety};
 pub use secret::{fingerprint_secret, redact};
-pub use text::{Line, Normalization};
+pub use text::{Line, Normalization, Standing};
 
 /// How much of a hash stands in for the thing it names, wherever that name
 /// reaches a finding's message. Sixteen hexadecimal characters is
@@ -58,7 +58,7 @@ fn digest(material: &str) -> String {
 /// so any change to what a finding *is* must bump this — a further rule, a
 /// widened pattern, a re-calibrated severity, and equally a change to how a
 /// finding is identified.
-pub const RULESET_VERSION: u32 = 5;
+pub const RULESET_VERSION: u32 = 6;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type, Hash,
@@ -325,11 +325,42 @@ impl Prepared {
     }
 }
 
+/// What a rule that ran has to say: the findings it scores, and the
+/// mentions it read past.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Found {
+    pub findings: Vec<Finding>,
+    /// A hit standing where the file names it rather than runs it
+    /// ([`Standing::Named`]): the same shape as a finding, at no cost to
+    /// the score, so a verbose reading can show what the precision
+    /// skipped.
+    pub mentions: Vec<Finding>,
+}
+
+impl Found {
+    /// File a hit under where it stands.
+    pub fn push(&mut self, standing: Standing, finding: Finding) {
+        match standing {
+            Standing::Code => self.findings.push(finding),
+            Standing::Named => self.mentions.push(finding),
+        }
+    }
+}
+
+impl From<Vec<Finding>> for Found {
+    fn from(findings: Vec<Finding>) -> Found {
+        Found {
+            findings,
+            mentions: Vec::new(),
+        }
+    }
+}
+
 /// What one rule did with one input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     /// The rule read this input. An empty list is a pass it earned.
-    Ran(Vec<Finding>),
+    Ran(Found),
     /// Not what this rule is about — nothing to say either way.
     OutOfScope,
     /// The rule applies to this kind, but the bytes it reads are not in this
@@ -368,6 +399,10 @@ pub struct SkippedRule {
 #[serde(rename_all = "camelCase")]
 pub struct AuditResult {
     pub findings: Vec<Finding>,
+    /// Hits the rules read as the file naming a switch, not using it: a
+    /// markdown code span, a shell comment, a string a script prints.
+    /// They cost the score nothing and print only on a verbose reading.
+    pub mentions: Vec<Finding>,
     pub skipped: Vec<SkippedRule>,
     /// What every finding here costs — the advisory number every surface
     /// shows.
@@ -383,10 +418,14 @@ pub struct AuditResult {
 pub fn audit(input: AuditInput) -> AuditResult {
     let prepared = text::prepare(input);
     let mut findings = Vec::new();
+    let mut mentions = Vec::new();
     let mut skipped = Vec::new();
     for rule in rules::registry() {
         match rule.check(&prepared) {
-            Outcome::Ran(mut found) => findings.append(&mut found),
+            Outcome::Ran(mut found) => {
+                findings.append(&mut found.findings);
+                mentions.append(&mut found.mentions);
+            }
             Outcome::OutOfScope => {}
             Outcome::NotApplicable(reason) => skipped.push(SkippedRule {
                 rule: rule.id().to_owned(),
@@ -399,17 +438,20 @@ pub fn audit(input: AuditInput) -> AuditResult {
     // text, which put line 10 before line 2, and taking it out of the key
     // entirely would leave two findings from one rule in one file with
     // nothing to tell them apart.
-    findings.sort_by(|a, b| {
+    let by_place = |a: &Finding, b: &Finding| {
         b.severity
             .cmp(&a.severity)
             .then_with(|| a.location.cmp(&b.location))
             .then_with(|| a.line.cmp(&b.line))
             .then_with(|| a.rule.cmp(&b.rule))
-    });
+    };
+    findings.sort_by(by_place);
+    mentions.sort_by(by_place);
     let safety = score::safety(&findings);
     let quality = dimensions::quality(&prepared);
     AuditResult {
         findings,
+        mentions,
         skipped,
         safety,
         quality,

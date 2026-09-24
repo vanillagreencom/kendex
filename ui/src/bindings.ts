@@ -822,6 +822,12 @@ export type Ask =
  */
 export type AuditResult = {
 	findings: Finding[],
+	/**
+	 *  Hits the rules read as the file naming a switch, not using it: a
+	 *  markdown code span, a shell comment, a string a script prints.
+	 *  They cost the score nothing and print only on a verbose reading.
+	 */
+	mentions: Finding[],
 	skipped: SkippedRule[],
 	/**
 	 *  What every finding here costs — the advisory number every surface

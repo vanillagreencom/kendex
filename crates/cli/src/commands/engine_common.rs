@@ -64,7 +64,7 @@ pub fn print_report(env: &Env, report: &EngineReport) -> Vec<super::offers::Bloc
             say(&format!("  fix: {}", fix));
         }
     }
-    print_safety(report);
+    print_safety(report, false);
     let blocked = print_conflicts(env, report);
     if report.plan.is_empty() {
         // "nothing to do" directly under a conflict reads as "and nothing

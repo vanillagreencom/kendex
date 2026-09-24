@@ -45,7 +45,7 @@ pub fn run(
     // Second transaction renders the managed replacement — with its score
     // beside the write, like every other write path.
     let report = audit(env, &scope)?;
-    print_safety(&report);
+    print_safety(&report, false);
     apply_report(env, &report)?;
     say(&format!("kendex now manages {} '{}'", kind.name(), name));
     Ok(())

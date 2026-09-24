@@ -83,16 +83,18 @@ impl AuditRule for PlaintextSecrets {
                     ));
                 }
             }
-            return Outcome::Ran(findings);
+            return Outcome::Ran(findings.into());
         }
         let mut kinds = AUTHORED.to_vec();
         kinds.push(ItemKind::McpServer);
         // A credential is one wherever it sits, a hook entry's env block
         // included; this is the one rule that reads stored values.
-        scan_every_doc(prepared, &kinds, |doc, line, findings| {
+        scan_every_doc(prepared, &kinds, |doc, line, found| {
             if let Some(token) = find_secret(&line.text) {
                 let (file, at_line) = at(doc, line);
-                findings.push(self.finding(file, at_line, token, "this line"));
+                found
+                    .findings
+                    .push(self.finding(file, at_line, token, "this line"));
             }
         })
     }

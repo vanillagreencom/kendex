@@ -17,7 +17,7 @@
 use std::path::{Path, PathBuf};
 
 use kendex_core::model::ItemKind;
-use kendex_core::quality::{AuditInput, AuditResult, Severity, audit, observe};
+use kendex_core::quality::{AuditInput, AuditResult, Content, Severity, audit, observe};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills")
@@ -68,44 +68,79 @@ fn found(result: &AuditResult) -> Vec<(&str, Severity, &str)> {
 }
 
 /// The skill whose whole job is stopping the commit hook-bypass switch
-/// named it three times in documents — twice in its README, once in its
-/// SKILL.md, every one of them inside a code span — and was rated Critical
-/// for each. Those three are gone.
-///
-/// What is left is what the switch is written as code: one verdict message
-/// per lane the package ships — the helper's, the commit chain's and the
-/// push lane's. A shell string is a switch written into a file a harness
-/// loads, and the rule counts it there.
+/// spells it in its README and SKILL.md inside code spans, in the comment
+/// explaining each refusal, and in the message each lane prints when it
+/// refuses — the helper's `echo`, and the commit chain's and push lane's
+/// `gg_message`, which its library defines and whose body only prints.
+/// Every one of those is the package naming the switch, and the audit
+/// reads them as mentions: the score is clean, and the mentions are what
+/// a verbose reading shows.
 #[test]
-fn commit_guards_is_flagged_where_the_switch_stands_as_code() {
+fn commit_guards_scans_clean_and_names_the_switch_only_where_it_names_it() {
     let result = shipped("commit-guards");
+    assert_eq!(found(&result), vec![], "{:#?}", result.findings);
+    assert_eq!(result.safety.score, 100);
     let helper = "skills/commit-guards/scripts/lib/helper-body.sh";
     let commit = "skills/commit-guards/scripts/pre-commit";
     let push = "skills/commit-guards/scripts/pre-push";
+    let mentioned: Vec<(&str, &str)> = result
+        .mentions
+        .iter()
+        .map(|mention| (mention.rule.as_str(), mention.location.as_str()))
+        .filter(|(_, location)| !location.ends_with(".md"))
+        .collect();
     assert_eq!(
-        found(&result),
+        mentioned,
         vec![
-            ("safety-bypass", Severity::Critical, helper),
-            ("safety-bypass", Severity::Critical, commit),
-            ("safety-bypass", Severity::Critical, push),
+            ("safety-bypass", helper),
+            ("safety-bypass", commit),
+            ("safety-bypass", push),
         ],
         "{:#?}",
-        result.findings
+        result.mentions
     );
-    assert_eq!(result.safety.score, 73);
 }
 
-/// Thirty-two lines of this skill spell `--dangerously-skip-permissions`.
-/// Two are in the launch table's source, six are in the open-terminal fixture,
-/// twenty are in the oversee-succeed fixture and four are in the
-/// overseer-watch fixture. Every one of them is the switch written as code in
-/// a file a harness loads, and the rule counts it there rather than deciding
-/// which program the string reaches.
+/// A guard hook is one script that spells the operand it refuses in the
+/// comments explaining the refusal. Read as a hook's registration and
+/// script, each scans clean.
+#[test]
+fn the_guard_hooks_scan_clean() {
+    for hook in ["block-unsafe-rm.sh", "pre-commit-check.sh"] {
+        let path = root().join("../hooks").join(hook);
+        let script = std::fs::read_to_string(&path)
+            .unwrap_or_else(|why| panic!("{}: {why}", path.display()));
+        let result = audit(AuditInput {
+            kind: ItemKind::Hook,
+            name: hook.to_owned(),
+            harness: None,
+            location: format!("hooks/{hook}"),
+            content: Content::Hook {
+                event: "PreToolUse".to_owned(),
+                matcher: Some("Bash".to_owned()),
+                command: format!("bash hooks/{hook}"),
+                values: None,
+                script: Some(script),
+            },
+        });
+        assert_eq!(found(&result), vec![], "{hook}: {:#?}", result.findings);
+        assert!(!result.mentions.is_empty(), "{hook} names what it refuses");
+    }
+}
+
+/// Thirty-one lines of this skill spell `--dangerously-skip-permissions`
+/// as code. One is a row of the launch table's source, five are in the
+/// open-terminal fixture, twenty are in the oversee-succeed fixture and
+/// four are in the overseer-watch fixture. Every one of them is the switch
+/// written as code in a file a harness loads, and the rule counts it there
+/// rather than deciding which program the string reaches. The launch
+/// table's comment naming the switch, and the fixture line handing it to
+/// an `assert_eq` that only compares and prints, are mentions.
 ///
-/// That is the cost of the reading, pinned to a real tree: two Critical
-/// findings in production and thirty High findings in supporting files.
-/// A reading that went quiet on them would be reading an argument list again,
-/// and this is where that fails.
+/// That is the cost of the reading, pinned to a real tree: one Critical
+/// finding in production and twenty-nine High findings in supporting
+/// files. A reading that went quiet on them would be reading an argument
+/// list again, and this is where that fails.
 #[test]
 fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
     let result = shipped("orch");
@@ -116,8 +151,8 @@ fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
     assert_eq!(
         found(&result),
         [
-            vec![("safety-bypass", Severity::Critical, lane_launch); 2],
-            vec![("safety-bypass", Severity::High, open_terminal); 6],
+            vec![("safety-bypass", Severity::Critical, lane_launch); 1],
+            vec![("safety-bypass", Severity::High, open_terminal); 5],
             vec![("safety-bypass", Severity::High, oversee_succeed); 20],
             vec![("safety-bypass", Severity::High, overseer_watch); 4],
         ]
@@ -126,4 +161,16 @@ fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
         result.findings
     );
     assert_eq!(result.safety.score, 50);
+    let mentioned: Vec<(&str, Option<u32>)> = result
+        .mentions
+        .iter()
+        .filter(|mention| !mention.location.ends_with(".md"))
+        .map(|mention| (mention.location.as_str(), mention.line))
+        .collect();
+    assert_eq!(
+        mentioned,
+        vec![(lane_launch, Some(83)), (open_terminal, Some(435))],
+        "{:#?}",
+        result.mentions
+    );
 }

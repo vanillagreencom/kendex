@@ -80,6 +80,7 @@ fn lines(report: &CatalogCheck) {
             &item.name,
             ScoredAt::CatalogPath(&item.file),
             &item.advisory,
+            false,
         );
     }
     let tally = report.tally();

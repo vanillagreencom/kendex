@@ -61,8 +61,9 @@ pub struct Wrote<'a> {
 /// Both parts are read off blocks the caller has already printed and
 /// point the reader back at them, so a caller passes only what it printed:
 /// a flagged count over a block nobody printed sends the reader to lines
-/// that are not there. A verb that printed neither passes both empty and
-/// closes on its head alone.
+/// that are not there, and `safety: clean` over a scan nobody ran claims
+/// one. A verb that printed neither passes both empty and closes on its
+/// head alone.
 pub fn say_ledger(scope: &Scope, wrote: Wrote<'_>, blocked: &[Blocked], scored: &[ItemSafety]) {
     let (line, steps) = ledger(scope, wrote, blocked, scored);
     ui::ledger(&line, &steps);
@@ -98,6 +99,8 @@ fn ledger(
         ));
         steps.push(format!("skipped — {}", conflict_exit(scope, blocked)));
     }
+    // A scored run says what safety found either way: a clean scan and
+    // a scan nobody ran would otherwise close on the same line.
     if flagged > 0 {
         parts.push(format!(
             "flagged {flagged} item{} on safety",
@@ -106,6 +109,8 @@ fn ledger(
         // No verb reads these back: every surface that writes prints its
         // own advisory block, and this run's is the one printed above.
         steps.push("flagged — the safety lines above".to_owned());
+    } else if !scored.is_empty() {
+        parts.push("safety: clean".to_owned());
     }
     (
         format!("{}: {}", scope_label(scope), parts.join(" · ")),

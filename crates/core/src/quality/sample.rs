@@ -21,6 +21,14 @@ pub(crate) fn populated() -> AuditResult {
             message: "this line pipes a download straight into a shell".to_owned(),
             remediation: "download it to a file and run it as its own step".to_owned(),
         }],
+        mentions: vec![Finding {
+            rule: "safety-bypass".to_owned(),
+            severity: Severity::Critical,
+            location: "README.md".to_owned(),
+            line: Some(3),
+            message: "`--no-verify` skips the checks a commit runs".to_owned(),
+            remediation: "leave the check in place".to_owned(),
+        }],
         skipped: vec![SkippedRule {
             rule: "secret-material".to_owned(),
             reason: "this item ships no script to read".to_owned(),

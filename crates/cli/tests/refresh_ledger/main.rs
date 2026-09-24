@@ -195,11 +195,13 @@ fn a_blocked_refresh_ends_on_a_ledger_naming_every_outcome_and_its_next_step() {
     );
 }
 
-/// A run with nothing to report beyond its writes says only that. The
-/// ledger's parts are outcomes, not a fixed shape padded with zeroes.
+/// A run with nothing to report beyond its writes says that, and that
+/// the scan it ran found nothing: a clean scan and a scan nobody ran
+/// would otherwise close on the same line. The ledger's parts are
+/// outcomes, not a fixed shape padded with zeroes.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_clean_refresh_ends_on_the_count_alone() {
+fn a_clean_refresh_ends_on_the_count_and_a_clean_scan() {
     let tmp = tempfile::tempdir().unwrap();
     // Canonical once, where the fixture's root enters (invariant 17): the
     // ledger prints the root kendex resolved, and a temporary directory is
@@ -224,10 +226,14 @@ fn a_clean_refresh_ends_on_the_count_alone() {
     assert_eq!(
         ledger(&printed),
         format!(
-            "{}: refreshed 2 changes",
+            "{}: refreshed 2 changes · safety: clean",
             kendex_core::paths::slashed(&project)
         ),
-        "a clean run reports its writes and carries no outcome it does not have: {printed}"
+        "a clean run reports its writes and its clean scan, and no outcome it does not have: {printed}"
+    );
+    assert!(
+        !printed.contains("flagged — the safety lines above"),
+        "a clean scan has no next step: {printed}"
     );
 }
 

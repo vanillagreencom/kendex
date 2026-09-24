@@ -40,7 +40,7 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
         for op in &report.plan.ops {
             say(&format!("  - {}", op.line()));
         }
-        print_safety(&report);
+        print_safety(&report, false);
         confirm_and_execute(env, &report, yes)?;
     }
     say(&format!("{}: package checks installed", scope_label(scope)));

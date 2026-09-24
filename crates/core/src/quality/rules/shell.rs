@@ -3,7 +3,9 @@
 
 use crate::model::ItemKind;
 
-use super::{AUTHORED, AuditRule, Finding, Line, Outcome, Prepared, Severity, at, scan_docs};
+use super::{
+    AUTHORED, AuditRule, Finding, Line, Outcome, Prepared, Severity, Standing, at, scan_docs,
+};
 
 pub(super) fn rules() -> Vec<Box<dyn AuditRule>> {
     vec![Box::new(SafetyBypass), Box::new(DangerousCommands)]
@@ -50,34 +52,36 @@ struct SafetyBypass;
 /// worth. Destructive commands are covered by `dangerous-commands`, which
 /// looks at what is being done rather than which flag turns off a prompt.
 ///
-/// The same calibration settles where on a line a switch counts. Reading a
-/// document's every mention as a use rated the guard skill that exists to
-/// stop `--no-verify` at Critical for the sentence that warns about it.
-/// A switch a document writes inside a code span is that document naming
-/// the switch; a switch standing as code is a switch, in whatever language
-/// the file is written. Every needle goes through [`Line::counts_at`],
-/// which answers that and nothing else.
+/// The same calibration settles where on a line a switch counts.
+/// Reading a document's every mention as a use rated the guard skill that
+/// exists to stop `--no-verify` at Critical for the sentence that warns
+/// about it, and then for the comment explaining the refusal and the
+/// message it prints when refusing. A switch a document writes inside a
+/// code span, a shell comment or a printed string is that document
+/// naming the switch; a switch standing as code is a switch, in whatever
+/// language the file is written. Every needle goes through
+/// [`Line::standing`], which answers that and nothing else.
 impl AuditRule for SafetyBypass {
     fn id(&self) -> &'static str {
         "safety-bypass"
     }
 
     fn check(&self, prepared: &Prepared) -> Outcome {
-        scan_docs(prepared, AUTHORED, |doc, line, findings| {
-            let counts = |needle: &str| {
-                line.occurrences(needle)
-                    .into_iter()
-                    .any(|at| line.counts_at(at))
-            };
-            for (needle, what) in BYPASS {
-                if counts(needle) {
-                    findings.push(self.finding(doc, line, needle, what, Severity::Critical));
-                }
-            }
-            for (needle, what) in BYPASS_PROSE {
-                if counts(needle) {
-                    findings.push(self.finding(doc, line, needle, what, Severity::High));
-                }
+        scan_docs(prepared, AUTHORED, |doc, line, found| {
+            let tiers = BYPASS
+                .iter()
+                .map(|(needle, what)| (needle, what, Severity::Critical))
+                .chain(
+                    BYPASS_PROSE
+                        .iter()
+                        .map(|(needle, what)| (needle, what, Severity::High)),
+                );
+            for (needle, what, base) in tiers {
+                let Some(standing) = line.standing(needle) else {
+                    continue;
+                };
+                let finding = self.finding(doc, line, needle, what, base);
+                found.push(standing, finding);
             }
         })
     }
@@ -166,27 +170,30 @@ impl AuditRule for DangerousCommands {
             ItemKind::Hook => Severity::High,
             _ => Severity::Medium,
         };
-        scan_docs(prepared, AUTHORED, |doc, line, findings| {
+        scan_docs(prepared, AUTHORED, |doc, line, found| {
             let (file, at_line) = at(doc, line);
-            let mut hit = |needle: &str, what: &str| {
-                findings.push(Finding {
-                    rule: self.id().to_owned(),
-                    severity: line.weigh(base),
-                    location: file.clone(),
-                    line: at_line,
-                    message: format!("`{needle}` {what}"),
-                    remediation:
-                        "narrow the command to the exact path it needs, and let the user see it before it runs"
-                            .to_owned(),
-                });
+            let finding = |needle: &str, what: &str| {
+                Finding {
+                rule: self.id().to_owned(),
+                severity: line.weigh(base),
+                location: file.clone(),
+                line: at_line,
+                message: format!("`{needle}` {what}"),
+                remediation:
+                    "narrow the command to the exact path it needs, and let the user see it before it runs"
+                        .to_owned(),
+            }
             };
             for (needle, what) in DESTRUCTIVE {
-                if line.has(needle) {
-                    hit(needle, what);
+                if let Some(standing) = line.standing(needle) {
+                    found.push(standing, finding(needle, what));
                 }
             }
             if command_half(&line.lower).trim_start().starts_with("sudo ") {
-                hit("sudo", "runs the rest of the line as root");
+                found.push(
+                    Standing::Code,
+                    finding("sudo", "runs the rest of the line as root"),
+                );
             }
         })
     }
