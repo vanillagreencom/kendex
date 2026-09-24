@@ -131,9 +131,11 @@ implement_report() { # COMMIT VALIDATE QA [BRANCH] [PROPOSED] [SUMMARY]
     [[ "${line#*: }" == - ]] || printf '%s\n' "$line"
   done
 }
+# ROWS is yes for both delegated items, one for item 1 alone, no for none.
 fix_report() { # COMMITS VALIDATE [ROWS]
   printf '| # | Decision | Reasoning |\n|---|---|---|\n'
-  [[ "${3:-yes}" == no ]] || printf '| 1 | Applied | guarded the empty buffer |\n| 2 | Skipped | contradicts D010 |\n'
+  [[ "${3:-yes}" == no ]] || printf '| 1 | Applied | guarded the empty buffer |\n'
+  [[ "${3:-yes}" != yes ]] || printf '| 2 | Skipped | contradicts D010 |\n'
   printf '\n'
   [[ "$1" == - ]] || printf 'Commits: %s\n' "$1"
   printf 'Validate: %s\nProposed rule: none\n' "$2"
@@ -245,6 +247,13 @@ transcript "$TMP_ROOT/fix-none.jsonl" claude-send 5-6 "$(fix_report none pass)"
 run --worktree "$WT" --issue issue-779 --round-id 5-6 --transcript "$TMP_ROOT/fix-none.jsonl"
 assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-issue-779-5-6.json" .commit)" "rc=0 $HEAD_SHA" \
   "Commits: none records the unchanged HEAD" "$TMP_ROOT/stderr"
+# A report missing a delegated item fails dev-artifact-check's exact-set gate:
+# the written artifact is removed and the round re-delegates.
+new_fix_round fix-short 780 5-7 0
+transcript "$TMP_ROOT/fix-short.jsonl" claude-send 5-7 "$(fix_report "$HEAD_SHA" pass one)"
+run --worktree "$WT" --issue issue-780 --round-id 5-7 --transcript "$TMP_ROOT/fix-short.jsonl"
+assert_eq "rc=$RC ${OUT##* } $([[ -e "$WT/tmp/dev-return-issue-780-5-7.json" ]] && echo written || echo none)" \
+  "rc=3 reason=unparsed none" "a fix report short of the delegated set re-delegates and leaves no artifact" "$TMP_ROOT/stderr"
 
 echo "=== no report is one re-delegation under a fresh round id, then exhausted ==="
 new_round empty KEN-20 6-6 0
