@@ -56,8 +56,13 @@ rule "the Codex row names write_stdin polls" "$WATCH" "$DELIVERY" \
   '| Codex |' '`write_stdin`' 'codex-runtime.md § Standing watch'
 rule "the Pi row names bg_task output wakes" "$WATCH" "$DELIVERY" \
   '| Pi |' '`bg_task`' 'pi-runtime.md § Standing watch (Pi)'
-rule "an exit-only harness runs single passes" "$WATCH" "$DELIVERY" \
-  'Single passes' '`--repeat`' '`overseer-dead`'
+rule "the harness picks repeat or single passes before any launch" "$WATCH" \
+  "$DELIVERY" 'picks the path before any launch' '§ Single passes' \
+  'nothing in § Repeat watch applies'
+rule "an exit-only harness runs single passes with no detach" "$WATCH" \
+  "## Single passes" 'without `--repeat`' 'no detach' 'no `[RUN_DIR]`'
+rule "the watch command is conditional on the harness" "$OVERSEE" \
+  "## 4. Watch And Advance" 'single passes without `--repeat`'
 rule "the handoff names the wake in force" "$WATCH" "$DELIVERY" \
   'handoff names the mechanism in force'
 
