@@ -448,8 +448,13 @@ fn every_arch_package_ships_a_recipe_pair_under_one_epoch() {
 #[test]
 fn every_arch_package_installs_its_license() {
     for package in arch_packages() {
+        let recipe = pkgbuild(package);
         assert!(
-            pkgbuild(package).contains("\"$pkgdir/usr/share/licenses/$pkgname/LICENSE\""),
+            recipe.lines().any(|line| {
+                let line = line.trim_start();
+                !line.starts_with('#')
+                    && line.contains("\"$pkgdir/usr/share/licenses/$pkgname/LICENSE\"")
+            }),
             "{package}: installs no license file under /usr/share/licenses/{package}/"
         );
     }
