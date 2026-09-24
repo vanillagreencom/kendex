@@ -10,4 +10,4 @@ The catalog's skills, one directory per skill, each rendered under `.agents/skil
 - A package change feature-detects every dependency and never names one machine's directory layout.
 - A test that shells out to git clears `GIT_DIR`, `GIT_COMMON_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` together. Under `orch/tests/` that clearing is `skills/orch/tests/lib/git-env.sh`, sourced on the line under each suite's `set -...o pipefail`.
 - A fixture repository a test later removes disables git's background maintenance at creation, `gc.auto 0` and `maintenance.auto false` as `skills/bot-instructions/tests/lib/harness.sh` spells it, so the removal cannot race git's background writer.
-- Every skill suite runs on the pull request and in the merge queue through `.github/workflows/skill-tests.yml`.
+- Every skill suite runs on the pull request and in the merge queue through `.github/workflows/skill-tests.yml`, on both events for every change class but `render` and `trivial`, which run no shard; [`../tools/ci-job-set`](../tools/ci-job-set) states what each class runs.

@@ -396,17 +396,26 @@ done <<'FLAGS'
 FLAGS
 require_rows change-class-refused-flags "$mode_row_count"
 
-# A measured class needs the merge-base range only a pull request defines.
-# The fixture is deliberately SMALL: a diff that is standard by its own size
-# on every event would answer standard with the event gate deleted too, and
-# the rows would prove nothing. This one is micro on a pull request.
+# A measured class needs a range these rules can be read over, which is a
+# pull request's merge-base range or a merge group's base-to-head one. The
+# fixture is deliberately SMALL: a diff that is standard by its own size on
+# every event would answer standard with the event gate deleted too, and the
+# rows would prove nothing. This one is micro on both admitted events.
 reset_case
 set_verifier dirty
 write_lines "$repo" runtime/product.ts 10
 git -C "$repo" add -A
 git -C "$repo" commit -q -m "a diff small enough to be micro"
-PATH="$stub_bin:$PATH" assert_class "the gated fixture is micro on a pull request" micro \
-  --repo "$repo" --event pull_request --base "$base" --head HEAD
+measured_row_count=0
+while IFS= read -r measured_event; do
+  measured_row_count=$((measured_row_count + 1))
+  PATH="$stub_bin:$PATH" assert_class "the gated fixture is micro on $measured_event" micro \
+    --repo "$repo" --event "$measured_event" --base "$base" --head HEAD
+done <<'MEASURED'
+pull_request
+merge_group
+MEASURED
+require_rows change-class-measured-events "$measured_row_count"
 event_row_count=0
 while IFS= read -r gated_event; do
   event_row_count=$((event_row_count + 1))
@@ -414,7 +423,6 @@ while IFS= read -r gated_event; do
     --repo "$repo" --event "$gated_event" --base "$base" --head HEAD
 done <<'EVENTS'
 push
-merge_group
 EVENTS
 require_rows change-class-gated-events "$event_row_count"
 

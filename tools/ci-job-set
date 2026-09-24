@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# ci-job-set — which lanes of .github/workflows/skill-tests.yml a change class
+# runs.
+#
+# The class comes from the change-class composite action and is never decided
+# here; this script maps it, and the changed paths behind it, onto one
+# `<lane>=true|false` line per gated lane. Every lane condition in that
+# workflow reads one of those lines, so the selection is made once instead of
+# re-derived in each `if:`.
+#
+# Environment:
+#   CHANGE_CLASS   render|trivial|micro|small|standard
+#   CHANGED_PATHS  the changed paths, one per line
+#   GITHUB_OUTPUT  the step output file the selection is appended to
+#
+# The lanes, and what each is answerable to:
+#
+#   shell_shards     the skill, hook and tool suites. They read skills/,
+#                    agents/, hooks/, tools/, pi-extensions/ and the rendered
+#                    harness roots, so a diff confined to the Rust workspace
+#                    or to ui/ is the one that can stand them down.
+#   macos_legs       the second run of those suites under Bash 3.2 and the BSD
+#                    userland. Only an executable file can behave differently
+#                    there, so a diff of Markdown alone stands them down and
+#                    every other diff runs them.
+#   ui               the vitest, tsc and biome lane, which reads ui/ alone.
+#   bot_instructions the rendered review-bot instruction files.
+#   cargo_linux      the workspace tests on Linux. NOT gated on crate paths:
+#                    crates/cli/tests/catalog_render_lint.rs installs this
+#                    repository's whole catalog and lints the result, so a
+#                    change under skills/ reaches this lane with no crate path
+#                    in the diff at all.
+#   cargo_macos      the same tests on the platform the app ships on, with
+#                    cargo_lint and cargo_windows beside them. None of the
+#                    three reads the catalog — the macOS catalog lint is the
+#                    platform re-run of a lint the Linux lane already did, and
+#                    the Windows legs compile that test out under its
+#                    `cfg(unix)` — so all three answer to the workspace alone.
+#   cargo_lint       clippy, fmt and doc over the workspace.
+#   cargo_windows    the Windows compile and test lanes.
+#
+# A `render` or `trivial` diff runs none of them: the classifier proved the
+# first by re-rendering it, and the second is inside the docs path set and its
+# line ceiling.
+#
+# Every refusal starts `ci-job-set: cause=<name>` and exits 2. A class this
+# table does not name is one of those: the step goes red, every lane's status
+# function runs it, and the required contexts refuse the skip, which is the
+# loud way to learn a sixth class shipped.
+set -euo pipefail
+
+# One line per lane, in the order the rows below spell them.
+LANES="shell_shards macos_legs ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows"
+
+die() { # CAUSE MESSAGE
+  printf 'ci-job-set: cause=%s\n' "$1" >&2
+  printf 'ci-job-set: %s\n' "$2" >&2
+  exit 2
+}
+
+[ -n "${CHANGE_CLASS:-}" ] || die missing-class "CHANGE_CLASS is required"
+[ -n "${GITHUB_OUTPUT:-}" ] || die missing-output-file \
+  "GITHUB_OUTPUT is unset, so no lane could read the selection"
+
+# Present-but-empty is a state of its own, and not the same as absent.
+paths="${CHANGED_PATHS-__unset__}"
+[ "$paths" != __unset__ ] || die missing-paths "CHANGED_PATHS is required"
+
+# A row is written whole or not at all: a lane named twice, a lane the row
+# forgot, or a value that is neither boolean ends the step before any lane has
+# read a selection that a later line would have contradicted.
+emit() { # LANE=VALUE ...
+  local pair lane value given="" written=""
+  for pair in "$@"; do
+    lane="${pair%%=*}"
+    value="${pair#*=}"
+    case " $LANES " in
+      *" $lane "*) ;;
+      *) die "unknown-lane lane=$lane" "the row names a lane this file does not declare" ;;
+    esac
+    case " $given " in
+      *" $lane "*) die "lane-named-twice lane=$lane" "the row gives this lane two values" ;;
+    esac
+    case "$value" in
+      true | false) ;;
+      *) die "invalid-lane-value lane=$lane value=$value" "a lane is true or false" ;;
+    esac
+    given="$given $lane"
+    written="$written$lane=$value
+"
+  done
+  for lane in $LANES; do
+    case " $given " in
+      *" $lane "*) ;;
+      *) die "lane-unselected lane=$lane" "the row declares no value for this lane" ;;
+    esac
+  done
+  printf '%s' "$written" >>"$GITHUB_OUTPUT"
+  printf '%s' "$written" >&2
+}
+
+# `grep -c` exits 1 when nothing matched, which errexit would read as a broken
+# command; the count is the answer either way.
+any() { # REGEX — is some changed path inside it?
+  local hits
+  hits="$(printf '%s\n' "$paths" | grep -Ec -- "$1")" || hits=0
+  [ "$hits" -gt 0 ]
+}
+any_outside() { # REGEX — is some changed path NOT inside it?
+  local hits
+  hits="$(printf '%s\n' "$paths" | grep -Evc -- "$1")" || hits=0
+  [ "$hits" -gt 0 ]
+}
+
+# The trees the Rust workspace and the UI own. A diff inside them is the one
+# that cannot reach a shell suite.
+PRODUCT='^(crates/|ui/|Cargo\.toml$|Cargo\.lock$)'
+# The workspace alone, which is what the three cargo lanes below answer to.
+WORKSPACE='^(crates/|Cargo\.toml$|Cargo\.lock$)'
+# Prose. Nothing a shell or a compiler runs differently on another platform.
+PROSE='\.(md|markdown)$'
+
+case "$CHANGE_CLASS" in
+  render | trivial)
+    emit shell_shards=false macos_legs=false ui=false bot_instructions=false \
+      cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false
+    ;;
+  standard)
+    emit shell_shards=true macos_legs=true ui=true bot_instructions=true \
+      cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true
+    ;;
+  micro | small)
+    # A measured class is reached only after the classifier read a changed
+    # path, so an empty list here is a state no classifier emits. Reading it
+    # as "nothing matches" would stand every gated lane down on no evidence.
+    [ -n "$paths" ] || die "class-without-paths class=$CHANGE_CLASS" \
+      "a measured class arrived with no changed path"
+    shell=false
+    any_outside "$PRODUCT" && shell=true
+    platform=false
+    any_outside "$PROSE" && platform=true
+    workspace=false
+    any "$WORKSPACE" && workspace=true
+    uitree=false
+    any '^ui/' && uitree=true
+    emit "shell_shards=$shell" "macos_legs=$platform" "ui=$uitree" \
+      bot_instructions=true cargo_linux=true "cargo_macos=$workspace" \
+      "cargo_lint=$workspace" "cargo_windows=$workspace"
+    ;;
+  *)
+    die "unknown-class class=$CHANGE_CLASS" \
+      "no lane selection is declared for this class"
+    ;;
+esac

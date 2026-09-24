@@ -1,0 +1,82 @@
+name: Change class
+description: >-
+  The shipped change classifier's verdict for a diff, and the changed-path
+  families a workflow selects its jobs with.
+
+# The one place a workflow reads a change class from. A consumer references it
+# as `vanillagreencom/kendex/.github/actions/change-class@main` and gets this
+# repository's classifier against its own checkout, so a fix to the classifier
+# reaches every consumer with no consumer pull request. This repository
+# references it by path, and passes `classifier:` a separate default-branch
+# checkout, so the wrapper under test is the pull request's while the
+# classification that decides which lanes may skip is the default branch's.
+# A change to the classifier script itself is proved by the harness-ci suite,
+# not by this repository's live classifying job.
+#
+# NO INPUT CARRIES A CLASS. Not a label, not a branch name, not a pull request
+# title, not the class itself: the author of the diff under judgement writes
+# every one of those, so an input that asserted a verdict would fail open on
+# exactly the diffs that most want to pass. The inputs below are the event and
+# its two endpoints, which GitHub writes, and two directories: where the
+# classifier is read from and which tree it judges. A directory is a place to
+# look, never a verdict.
+
+inputs:
+  classifier:
+    description: >-
+      The checkout root holding skills/harness-ci/scripts. Defaults to this
+      action's own tree, which for a consumer calling the action at @main is
+      kendex at main. This repository passes a separate default-branch
+      checkout, so the classifier judging a pull request is never the copy
+      that pull request ships.
+    required: false
+    default: ''
+  event:
+    description: github.event_name. Any event but pull_request or merge_group answers standard.
+    required: true
+  base:
+    description: The base endpoint sha. Empty where the event carries none.
+    required: false
+    default: ''
+  head:
+    description: The head endpoint sha.
+    required: true
+  repo:
+    description: The checkout to judge. Needs its full history, so the classifier can reach both endpoints.
+    required: false
+    default: '.'
+
+outputs:
+  change_class:
+    description: render, trivial, micro, small or standard.
+    value: ${{ steps.classify.outputs.change_class }}
+  changed_skills:
+    description: Blank-separated first path segments under skills/ the diff touched.
+    value: ${{ steps.classify.outputs.changed_skills }}
+  changed_crates:
+    description: Blank-separated first path segments under crates/ the diff touched.
+    value: ${{ steps.classify.outputs.changed_crates }}
+  changed_workflows:
+    description: Blank-separated first path segments under .github/workflows/ the diff touched.
+    value: ${{ steps.classify.outputs.changed_workflows }}
+  changed_paths:
+    description: Every changed path, one per line, for a caller whose lanes answer to a tree no family names.
+    value: ${{ steps.classify.outputs.changed_paths }}
+
+runs:
+  using: composite
+  steps:
+    # The inputs reach the script through `env:` rather than as `${{ }}` inside
+    # a command line, which would be an injection surface. With no `classifier`
+    # given the script reads the shipped scripts out of its own directory, so
+    # the classifier a consumer runs is the one this action shipped with.
+    - id: classify
+      shell: bash
+      env:
+        CLASSIFIER: ${{ inputs.classifier }}
+        EVENT: ${{ inputs.event }}
+        BASE: ${{ inputs.base }}
+        HEAD: ${{ inputs.head }}
+        REPO: ${{ inputs.repo }}
+      run: |
+        "$GITHUB_ACTION_PATH/classify"
