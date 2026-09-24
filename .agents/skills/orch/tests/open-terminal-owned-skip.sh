@@ -403,6 +403,16 @@ for capture in launch-codex launch-codex-flagged resume-codex fresh; do
   assert_eq "$(occurrences "$(cat "$TMP_ROOT/$capture.cmd")" "$CODEX_SETTINGS")" "1" \
     "a codex command ($capture) carries check_for_update_on_startup=false exactly once"
 done
+# A --cmd template is the caller's whole command and gains no setting: the
+# pane runs the substituted template exactly as written.
+CMD_TEMPLATE_CODEX="codex -m gpt-6-astra -c model_reasoning_effort=high {issue}"
+OT_CAPTURE="$TMP_ROOT/launch-codex-cmd.cmd" LANES_HOME="$SESSION_HOME" run_case launch-codex-cmd -- \
+  --harness codex --cmd "$CMD_TEMPLATE_CODEX" CC-11
+for _ in {1..10000}; do [[ -f "$TMP_ROOT/launch-codex-cmd.cmd" ]] && break; done
+LAUNCH_CODEX_CMD="$(cat "$TMP_ROOT/launch-codex-cmd.cmd")"
+assert_eq "${LAUNCH_CODEX_CMD##* && }" \
+  "env CODEX_HOME='$(lane_codex_home_path "$SESSION_HOME/.codex" "$TMP_ROOT/wt/CC-11")' codex -m gpt-6-astra -c model_reasoning_effort=high CC-11" \
+  "a codex --cmd launch runs its substituted template exactly, with no update setting added"
 
 OLD_CODEX="$SESSION_HOME/.old-codex"; CROSS_CODEX=55555555-5555-5555-5555-555555555555; mkdir -p "$OLD_CODEX/sessions/2026"
 printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CROSS_CODEX\"}}" '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-2"}}' >"$OLD_CODEX/sessions/2026/cross.jsonl"
