@@ -144,6 +144,19 @@ to still be at its recorded original head, checks that branch out, clears the
 record, and re-applies worktree setup, refusing and keeping the record when the
 branch has moved or the checkout fails.
 
+Conflicted hooks: a harness re-reads its hooks on every event, and conflict
+markers in one make it fail every tool call and turn end. So when a paused
+restack's conflicts include a path that a tracked harness hook declaration
+runs (any JSON file whose top-level 'hooks' entries carry a 'command', such as
+.claude/settings.json, .codex/hooks.json or .pi/kendex/hooks.json), that path
+takes one side of the conflict, its conflicted content is saved beside it as
+<path>.restack-conflict, and one 'worktree-restack-hook-held:' line names
+every such path. Resolve the markers in the saved copy, then replace the hook
+in one step with 'mv <path>.restack-conflict <path>' and stage it. continue
+and skip refuse with 'worktree-restack-hook-unconsumed:' while a saved copy
+remains; deleting it keeps the held side. abort removes the saved copies.
+Conflicts in every other path keep their markers in place.
+
 On completion, continue and skip report one 'rebase-map: <old-sha>
 <new-sha|dropped>' line per rewritten commit on stderr and append the same
 lines, under a 'rebase-hop:' line of their own, to 'kendex-rebase-map' in the
@@ -232,7 +245,8 @@ Reuse rebase conflicts:
        conflicted.
   With no conflict, --restack completes the same rebase as --reuse. The
   guarded actions fail closed on missing, stale, or unrelated state
-  (restack --help).
+  (restack --help). A conflicted path a harness runs as a hook is held at a
+  parseable side instead of left with markers (restack --help).
 
 Rewritten commits:
   A completed --reuse/--restack rebase reports one 'rebase-map: <old-sha>
