@@ -180,32 +180,50 @@ echo "the no-verify flag is read in the commit's own simple command"
 # git skips its armed hooks over that flag only where git is the program
 # reading it, so the word is a bypass only in the simple command that holds the
 # commit. Read over the whole command it refused read-only pipelines whose sole
-# -n belonged to grep, sed or tail, which is what these rows hold shut. The
-# unarmed column is unchanged by the scoping: what counts as a commit at all is
-# still read over the whole command, so a form that is a commit there is still
-# refused where nothing is armed. A command the split cannot trust, because a
-# quote, a backslash or a substitution parenthesis may hide where bash ends
-# the commit's call, is read whole for the flag, which the rows below the
-# descriptor duplication hold shut.
+# -n belonged to grep, sed or tail, which is what the passing rows hold shut.
+# The unarmed column is unchanged by the scoping: what counts as a commit at
+# all is still read over the whole command.
 both_table '0|0|-|a read-only pipeline whose -n is grep own|git diff | grep -n x
+0|2|-|a read-only pipeline whose -n is head own|git log --oneline | grep commit | head -n 3
 0|2|-|-n belonging to another program beside the commit|sed -n 1,5p f && git commit -m x
+0|2|-|-n in a call before a semicolon|sed -n 1p f; git commit -m x
+0|2|-|-n in a git call that is not the commit|git log -n 3 && git commit -m x
 0|2|-|-n in a later stage of the pipeline|ps aux | grep git | grep commit | tail -n 5
 0|0|-|the commit verb only inside a quoted grep operand|ps aux | grep \"git commit\" | tail -n 5
 2|2|NOVERIFY|the flag behind a separator, in the commit own call|true && git commit NOVERIFY
 2|2|-n|the flag behind a repository-moving option|git -C d commit -n
+2|2|-n|the first of two flags is the one named|git commit -n NOVERIFY -m x
 2|2|-n|the flag behind a descriptor duplication|git commit -m x 2>&1 -n
-2|2|-n|the flag behind a quoted separator in the message|git commit -m \"a;b\" -n
-2|2|-n|the flag behind a command substitution in the message|git commit -m $(date) -n
-2|2|-n|the flag behind a process substitution|git commit -F <(echo x) -n
-2|2|-n|the flag behind a line continuation|git commit -m x \\\n -n
-0|2|-|-n beside a commit whose own call carries quotes|sed -n 1,5p f && git commit -m \"x\"
+2|2|-n|the flag behind an input duplication|git commit -m x 0<&3 -n
+2|2|-n|the flag behind a clobbering redirection|git commit -m x >|log -n
+'
+
+# The split is trusted only in a command free of quoting, escaping and
+# expansion, with no process substitution and no xargs. Every other command is
+# read whole for the flag, so each form below, where bash still hands the flag
+# to git commit, is refused as it was before the split, and so is -n beside a
+# commit that merely quotes its message.
+both_table '2|2|-n|a quoted separator in the message|git commit -m \"a;b\" -n
+2|2|-n|a single-quoted separator in the message|git commit -m '"'"'a;b'"'"' -n
+2|2|-n|a single quote of one kind nested in the other|git commit -m \"'"'"'\" -m '"'"'a;b'"'"' -m \"'"'"'\" -n
+2|2|NOVERIFY|escaped double quotes around a separator|git commit -m \"fix \\\"foo; bar\\\"\" NOVERIFY
+2|2|-n|a backtick substitution holding a separator|git commit -m `true;echo x` -n
+2|2|-n|a parameter expansion holding a separator|git commit -m ${X:-a;b} -n
+2|2|-n|legacy arithmetic holding a pipe|git commit -m $[1|2] -n
+2|2|-n|a process substitution|git commit -F <(echo x) -n
+2|2|-n|a line continuation|git commit -m x \\\n -n
+2|2|NOVERIFY|the flag piped into xargs|echo NOVERIFY | xargs git commit -m x
+2|2|-n|the short flag piped into xargs|printf %s -n | xargs git commit -m x
+2|2|-n|-n beside a commit whose message is quoted|sed -n 1,5p f && git commit -m \"x\"
 '
 
 echo
 echo "the two stated limits"
 
 # Reading words rather than shell costs in both directions, and both costs are
-# rows so nobody grows a tokenizer back to close either. A word the command
+# rows. Separators split simple commands only for the no-verify flag, and only
+# in a command free of quoting, escaping and expansion; everything else takes
+# the whole-command read, and nothing further is tokenized. A word the command
 # spells is read wherever it stands, prose included, and quoting spares nothing
 # by itself since the substitution runs before any word is looked at; a word the
 # shell would assemble is not read at all.
