@@ -27,13 +27,16 @@ rule "a turn without an asynchronous wake holds while a lane runs" "$WATCH" \
   "$DELIVERY" 'blocking follow' '`running`'
 rule "the repeat watch runs detached through the waiter launch" "$WATCH" \
   "$DELIVERY" '[Waiter launch](waiter-launch.md)' '`[RUN_DIR]/watch.log`'
-rule "the watch is found by one process read that cannot match itself" \
-  "$WATCH" "$DELIVERY" \
-  "\`pgrep -f '[RUN_DIR]/watch [.]agents/skills/orch/scripts/oversee-watch'\`"
+rule "a read that fails is never read as no watch" "$WATCH" "$DELIVERY" \
+  'failed read' "pgrep's stderr" 'Exit 0 is a live watch'
 rule "every delivery and expiry reads the process before the status" \
   "$WATCH" "$DELIVERY" 'run that read first' 'test -s [RUN_DIR]/watch.exit'
 rule "a stop signals only the group the read proved" "$WATCH" "$DELIVERY" \
   '`kill -TERM -- -[PID]`' 'the group it proved'
+rule "a stop marks the status file before its kill" "$WATCH" "$DELIVERY" \
+  'write `stopped` into `[RUN_DIR]/watch.exit`' 'then run the read'
+rule "the stop mark ends oversight with no restart" "$WATCH" "$DELIVERY" \
+  '`stopped` is the mark' 'no restart'
 rule "a fresh run directory restarts the line count" "$WATCH" "$DELIVERY" \
   '`[NEXT_LINE]` starts at 1'
 rule "every harness follows through the one saved follow script" "$WATCH" \
