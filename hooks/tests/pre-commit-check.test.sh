@@ -207,6 +207,8 @@ both_table '0|2|-|a read-only pipeline whose -n is head own|git log --oneline | 
 2|2|-n|the flag in a commit that pipes into another stage|git commit -n -m x | tail -n 5
 2|2|NOVERIFY|the flag behind a separator, in the commit own call|true && git commit NOVERIFY
 2|2|-n|the flag behind a repository-moving option|git -C d commit -n
+2|2|-n|the flag in a second commit|git commit -m a && git commit -m b -n
+2|2|-n|the flag in a first commit before a second|git commit -m a -n && git commit -m b
 2|2|-n|the first of two flags is the one named|git commit -n NOVERIFY -m x
 2|2|-n|the flag behind a descriptor duplication|git commit -m x 2>&1 -n
 2|2|-n|the flag behind an input duplication|git commit -m x 0<&3 -n
