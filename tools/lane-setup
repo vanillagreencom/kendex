@@ -156,3 +156,15 @@ if [ -z "${DAYTONA_SANDBOX_ID:-}" ]; then
 else
   write_lane_cargo_config
 fi
+
+# The warm snapshot: the fleet runs this with FLEET_WARM=1 in a builder
+# sandbox and snapshots it, so the snapshot should hold a built main. The
+# build is the compile step of the `cargo test --workspace` that every lane's
+# `tools/guard --full` repeats; `cargo build --workspace --all-targets` would
+# add bench units under the bench profile, which no lane step builds.
+if [ "${FLEET_WARM:-}" = 1 ]; then
+  printf 'lane-setup: warm-build=run\n'
+  cargo test --workspace --no-run --locked
+else
+  printf 'lane-setup: warm-build=skip\n'
+fi

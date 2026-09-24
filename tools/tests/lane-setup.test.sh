@@ -375,6 +375,44 @@ proof_wrapper() { # ENDPOINT-ASSIGNMENT SCCACHE EXPECT [FROM TO]
   esac
 }
 
+# A warm build links, so its PATH also holds the host's C linker driver and
+# the linkers it or a host cargo config can name.
+LINK_TOOLS=""
+for tool in cc ld ld.mold mold ld.lld; do
+  tool_path="$(command -v "$tool")" || continue
+  LINK_TOOLS="$LINK_TOOLS $tool_path"
+done
+case "$LINK_TOOLS" in */cc\ * | */cc) ;; *) bad "the host provides cc for the warm build rows" "found:$LINK_TOOLS"; exit 1 ;; esac
+
+# proof_warm WARM SOURCE EXPECT [FROM TO]: the setup with FLEET_WARM=WARM
+# on a toy crate that compiles (good) or does not (broken), with the real
+# cargo on its PATH and the build kept in the clone's own target dir.
+proof_warm() {
+  local warm=$1 source=$2 expect=$3 lock="" exe="" built=no
+  shift 3
+  lane_fixture "$@"
+  lock="$(cargo_in "$R" generate-lockfile)" || { WHY="generate-lockfile: $lock"; return 1; }
+  [ "$source" = good ] || printf 'pub fn toy( {}\n' >"$R/src/lib.rs"
+  EXTRA_BIN="$R/row-bin"
+  mkdir -p "$EXTRA_BIN"
+  ln -s "$CARGO_BIN" "$EXTRA_BIN/cargo"
+  ln -s "$CARGO_DIR/rustc" "$EXTRA_BIN/rustc"
+  for tool in $LINK_TOOLS; do
+    ln -s "$tool" "$EXTRA_BIN/${tool##*/}"
+  done
+  run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test CARGO_TARGET_DIR="$R/target" ${warm:+FLEET_WARM="$warm"}
+  for exe in "$R"/target/debug/deps/toy-*; do
+    case "${exe##*/}" in *.*) ;; *) [ ! -f "$exe" ] || [ ! -x "$exe" ] || built=yes ;; esac
+  done
+  WHY="rc=$RC built=$built out=$OUT"
+  case "$expect" in
+    built) [ "$RC" -eq 0 ] && [ "$built" = yes ] && case "$OUT" in *"lane-setup: warm-build=run"*) true ;; *) false ;; esac ;;
+    skipped) [ "$RC" -eq 0 ] && [ ! -e "$R/target" ] && case "$OUT" in *"lane-setup: warm-build=skip"*) true ;; *) false ;; esac ;;
+    failed) [ "$RC" -ne 0 ] && case "$OUT" in *"lane-setup: warm-build=run"*) true ;; *) false ;; esac ;;
+    *) WHY="unknown expectation $expect"; return 1 ;;
+  esac
+}
+
 echo "=== the lane cargo configuration ==="
 WHY=""
 proof_incremental_off && ok "a sandbox clone and its worktree write no incremental cache, and the config names no target dir" || bad "a sandbox clone and its worktree write no incremental cache, and the config names no target dir" "$WHY"
@@ -401,6 +439,14 @@ FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|present|used
 FLEET_SCCACHE_REDIS_ENDPOINT=|present|unused
 |present|unused
 FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|absent|unused
+ROWS
+
+while IFS='|' read -r warm source expect; do
+  proof_warm "$warm" "$source" "$expect" && ok "warm: FLEET_WARM=[$warm] on a $source crate is $expect" || bad "warm: FLEET_WARM=[$warm] on a $source crate is $expect" "$WHY"
+done <<'ROWS'
+1|good|built
+|good|skipped
+1|broken|failed
 ROWS
 
 echo "=== must-fail controls: each cargo proof fails against its mutant ==="
@@ -436,6 +482,16 @@ fi
 proof_wrapper FLEET_SCCACHE_REDIS_ENDPOINT= present unused '  if [ -z "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ]; then' '  if false; then' \
   && bad "control: a wrapper on an empty endpoint fails the empty-endpoint row" "$WHY" \
   || ok "control: a wrapper on an empty endpoint fails the empty-endpoint row"
+
+proof_warm 1 good built '  cargo test --workspace --no-run --locked' '  :' \
+  && bad "control: a warm run that builds nothing fails the built row" "$WHY" \
+  || ok "control: a warm run that builds nothing fails the built row"
+proof_warm '' good skipped 'if [ "${FLEET_WARM:-}" = 1 ]; then' 'if true; then' \
+  && bad "control: a build without FLEET_WARM fails the skipped row" "$WHY" \
+  || ok "control: a build without FLEET_WARM fails the skipped row"
+proof_warm 1 broken failed '  cargo test --workspace --no-run --locked' '  cargo test --workspace --no-run --locked || true' \
+  && bad "control: a swallowed build failure fails the failed row" "$WHY" \
+  || ok "control: a swallowed build failure fails the failed row"
 
 echo "=== the script starts under a real Bash 3.2 when one is reachable ==="
 RUNTIMES="$(sed -n 's/^RUNTIMES="\(.*\)"$/\1/p' "$TOOLS/bash32-parse")"
