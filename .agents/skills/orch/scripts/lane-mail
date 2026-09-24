@@ -25,7 +25,7 @@ NL='
 usage() {
   cat <<'USAGE'
 Usage: lane-mail ask|notice|wait|inbox --item ITEM [options]
-       lane-mail send|drain|pending --item ITEM [--root ROOT] [--host] [options]
+       lane-mail send|drain|pending|receipts --item ITEM [--root ROOT] [--host] [options]
        lane-mail peer ask|send --repo REPO [--host] [options]
 
 The lane-to-overseer channel. Harness-agnostic, tmux-free, and reachable
@@ -67,8 +67,18 @@ Overseer side:
               print every to-overseer.jsonl ask with no answer: for a lane
               item, what a restarted overseer owes a reply; for `--item
               overseer`, the asks this overseer SENT a peer that the peer has
-              not answered. A peer's inbound ask lands in to-lane.jsonl and is
-              read by `inbox`, so `pending` never lists it
+              not answered. Then every to-lane.jsonl directive past
+              to-lane.cursor: sent and not yet read. A peer's inbound ask
+              lands in to-lane.jsonl and is read by `inbox`, so `pending`
+              never lists it
+  receipts --item ITEM
+              print `cursor=<N> count=<complete lines> first=<id>`, N being
+              the count to-lane.cursor holds, then `<line> <id> <epoch>` for
+              every to-lane.jsonl directive: its line number, its id, and its
+              `at` in epoch seconds, empty where `at` does not parse. The
+              cursor is the receipt: a directive on a line at or below N is
+              one the lane has read. A directive whose id is outside the item
+              alphabet is not listed
 
 Peer side, one other repository's overseer mailbox per call:
   peer ask --repo REPO --file PATH [--options a,b]
@@ -267,7 +277,7 @@ if [ "$VERB" = peer ]; then
   esac
 fi
 case "$VERB" in
-  ask | notice | wait | inbox | send | drain | pending | peer) ;;
+  ask | notice | wait | inbox | send | drain | pending | receipts | peer) ;;
   *) refuse verb-invalid "$VERB" ;;
 esac
 
@@ -458,7 +468,7 @@ if [ -z "$ROOT" ]; then
     overseer:*)
       ROOT="$("$SCRIPT_DIR/git-context" common-root . 2>/dev/null)" || ROOT=""
       ;;
-    *:send | *:drain | *:pending)
+    *:send | *:drain | *:pending | *:receipts)
       WORKTREE="$SCRIPT_DIR/../../worktree/scripts/worktree"
       if [ -x "$WORKTREE" ]; then
         ROOT="$("$WORKTREE" path "$ITEM" 2>/dev/null)" || ROOT=""
@@ -774,6 +784,21 @@ lm_cursor_write() { # COUNT
   mv -- "$WORK_DIR/cursor" "$CURSOR" || refuse write-failed "$CURSOR"
 }
 
+# The count to-lane.cursor holds, read through the route every other read of
+# this mailbox takes; a mailbox the lane never read counts 0. For the readers
+# that move no cursor, so no lock: the rename above never shows them half a
+# count.
+lm_cursor_read() {
+  local seen=""
+  lm_fetch "$CURSOR" "$WORK_DIR/cursor.read"
+  seen="$(awk 'NR == 1 { print; exit }' <"$WORK_DIR/cursor.read")" || refuse file-unreadable "$CURSOR"
+  case "$seen" in
+    '') seen=0 ;;
+    *[!0-9]*) refuse cursor-invalid "$CURSOR" ;;
+  esac
+  printf '%s\n' "$seen"
+}
+
 lm_seconds() { # OPTION VALUE
   case "$2" in
     '' | *[!0-9]*) refuse seconds-invalid "$1" ;;
@@ -950,6 +975,24 @@ case "$VERB" in
     fi
     ;;
 
+  receipts)
+    lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
+    lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
+    SEEN="$(lm_cursor_read)"
+    HEADER="$(lm_header "$WORK_DIR/lane.jsonl")"
+    printf 'cursor=%s %s\n' "$SEEN" "$HEADER"
+    # Numbered over every complete line, parsing or not, as the cursor counts
+    # them, so a line number and the cursor are one scale.
+    jq -r -R -n '
+      foreach inputs as $raw (0; . + 1;
+        . as $line
+        | ($raw | try fromjson catch null)
+        | select(type == "object" and .kind == "directive")
+        | select((.id | type) == "string" and (.id | test("^[A-Za-z0-9._-]+$")))
+        | "\($line) \(.id) \((try (.at | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) catch null) // "")")' \
+      <"$WORK_DIR/lane.jsonl" || refuse file-unreadable "$TO_LANE"
+    ;;
+
   drain | pending)
     [ "$VERB" != drain ] || lm_after "$AFTER"
     lm_answered "$WORK_DIR/answered"
@@ -968,5 +1011,13 @@ case "$VERB" in
       | . as $envelope
       | select($verb == "drain" or $envelope.kind == "ask")
       | select($envelope.kind != "ask" or ($done | index($envelope.id) | not))'
+    # And what was sent the other way and not yet read: lm_answered left the
+    # terminated to-lane.jsonl in the work directory, and the cursor says how
+    # far the reader got.
+    if [ "$VERB" = pending ]; then
+      SEEN="$(lm_cursor_read)"
+      awk -v seen="$SEEN" 'NR > seen' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/unread"
+      lm_objects "$WORK_DIR/unread" | jq -c 'select(.kind == "directive")'
+    fi
     ;;
 esac

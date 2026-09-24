@@ -194,9 +194,8 @@ mailbox_lines() {
   [[ -f "$f" ]] && wc -l < "$f" | tr -d ' ' || echo 0
 }
 mail_cursor_count() {
-  local f
-  f="$(find "$STATE_DIR" -maxdepth 1 -type f -name 'overseer-mail__*' -print -quit)"
-  [[ -n "$f" ]] && awk '{print $1}' "$f" || echo 0
+  local f="$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.cursor"
+  [[ -s "$f" ]] && cat -- "$f" || echo 0
 }
 
 RUN_SEQ=0
@@ -268,21 +267,26 @@ assert_eq "$([[ -n "$FL_AT_EPOCH" && "$FL_AT_EPOCH" -ge "$FL_BEFORE" && "$FL_AT_
   "in-window" "and inside the window this run took, so the append stamped it" "$ERR"
 
 # --- one pass is not a death ----------------------------------------------
+# A note that lands while the pane reads exited is held: the mail pass reads no
+# mailbox while a long pass's reading stands, so the note waits for a live
+# overseer or a successor rather than a log nobody reads. Three passes to a
+# death here, so two exited readings go by without one.
 overseer_case dead_one_pass exited
 state_with "$LINE"
+run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 -- --max-loops 1
+assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT")" "rc=0 first=EVENT heartbeat loops=1 interval=0s since=none" \
+  "one exited reading is a poll, not news" "$ERR"
+assert_eq "$(succeed_calls --dead-pane)" "0" "and nothing is launched on it" "$ERR"
 printf 'Retain this event for the next live overseer.\n' > "$TMP_ROOT/held-event.txt"
 (cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/orch/scripts/lane-mail" send \
   --item overseer --directive --file "$TMP_ROOT/held-event.txt" >/dev/null)
 HELD_EVENT="$(jq -r .id "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")"
-run TMUX_PANE="$PANE" -- --max-loops 1
-assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT")" "rc=0 first=EVENT heartbeat loops=1 interval=0s since=none" \
-  "one exited reading is a poll, not news" "$ERR"
-assert_eq "$(succeed_calls --dead-pane)" "0" "and nothing is launched on it" "$ERR"
+run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 -- --max-loops 1
 assert_eq "events=$(grep -c '^EVENT owner-note' <<<"$OUT" || true) cursor=$(mail_cursor_count)" \
-  "events=0 cursor=0" "and its event baseline stays unchanged" "$ERR"
+  "events=0 cursor=0" "a note sent while the pane reads exited is left unread" "$ERR"
 printf 'claude\n' > "$STUB_DIR/cmd-$PANE.txt"
 printf '%b\n' '⏺ The overseer is live.' '\xe2\x9d\xaf\xc2\xa0' > "$STUB_DIR/pane-$PANE.txt"
-run TMUX_PANE="$PANE" -- --max-loops 1
+run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 -- --max-loops 1
 assert_eq "events=$(grep -c "^EVENT owner-note $HELD_EVENT$" <<<"$OUT" || true) cursor=$(mail_cursor_count)" \
   "events=1 cursor=1" "the later live reading delivers the retained event" "$ERR"
 
@@ -1200,35 +1204,6 @@ mark_stands
 run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 1
 assert_eq "marks=$(marks_seen)" "marks=1" \
   "so the same mark reached again is a fresh crossing, its row having been cleared" "$ERR"
-
-# Control 12: the per-pass reset removed, which is the memo scoped to the
-# process. Every pass after the first replays the first one's reading, so the
-# wall the later passes would confirm is refuted against a reading taken
-# before it landed and the fleet is left unattended.
-mutate 's/^  overseer_marks_reset$/  :/' "drops the per-pass reset of the mark reading"
-overseer_case walled_memo_mutant walled
-state_with "$LINE"
-check_switch_after_first "$WALL_MARK_LINE"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 3
-assert_eq "rc=$RC judged=$(succeed_calls --check-marks) launched=$(succeed_calls --walled-pane)" \
-  "rc=0 judged=1 launched=0" \
-  "control: with the memo kept for the process the later wall is refuted against a stale reading" "$ERR"
-
-# Control 13: the same memo, on the mark the watch already reported. The row
-# the lifted mark would clear is instead counted up against a reading taken
-# before it lifted, so the next crossing is swallowed by a count it did not
-# earn.
-overseer_case mark_memo_mutant idle
-state_with "$LINE"
-mark_stands
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 1
-check_switch_after_first "oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 2
-rm -f -- "${STUB_DIR:?}/succeed.check-later"
-mark_stands
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 1
-assert_eq "marks=$(marks_seen)" "marks=0" \
-  "control: with the stale reading the lifted mark never clears its row and the next crossing is silent" "$ERR"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

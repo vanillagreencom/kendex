@@ -14,6 +14,8 @@ A lane's questions arrive as `lane-question` and new tracker items as `triage`, 
 
 The owner sends the overseer a note without typing into its pane: `.agents/skills/orch/scripts/lane-mail send --item overseer --directive --file [PATH]`, run from any checkout of the project (`lane-mail --help`), and the § 4 watch reports it once as `owner-note`. A peer repository's overseer writes the same mailbox, reported as `peer-note` ([references/peer-mail.md](../references/peer-mail.md)).
 
+First in every session, before the handoff file, read that mailbox: `.agents/skills/orch/scripts/lane-mail inbox --item overseer` prints every note no reader has taken yet and moves the mailbox's own cursor past them. Act on each or record it in the fleet log. The § 4 watch reads through the same cursor, so it does not report them again; `lane-mail pending --item overseer` lists what is still unread without taking it.
+
 Then read the overseer handoff file the fleet brief names (default `tmp/handoffs/OVERSEER-HANDOFF.md`): the prior session's live lanes, sequence and standing rulings. Absent, start from the tracker. `kendex apply` ignores the default path through `/tmp/`. For a custom path inside a repository, verify before the first read and each write that Git's index has no entry for the file and Git's ignore rules cover the path. If either check fails, stop and report the path. The handoff stays local to the overseer's host, which owns its disk or snapshot persistence, including paths outside a repository. § 5 rewrites it. Then read `.agents/skills/orch/scripts/workflow-state fleet-log takeover`, the last `ORCH_TAKEOVER_ROWS` fleet log rows, and no other part of the fleet log.
 
 ## 2. Select Work
@@ -136,7 +138,7 @@ One watch command runs for the whole session, launched and read as § Watch deli
 
 The watch refuses a second start on the same state as `watch-running`, a bare window name no tmux session resolves as `session-unresolved`, and a hosted lane while `lane-host resolve` answers `local` as `hosted-without-host`. After a self-succession the successor's own start takes over the watch `oversee-succeed` restarted and first prints what it reported, under `watch-replayed`: handle those lines as events. `oversee-watch --help` states each rule.
 
-The mail pass reads each lane's mailbox, never a pane, so it runs on every surface and outside tmux.
+The watch runs two passes on one clock. The mail pass reads every lane mailbox, the overseer mailbox and the lane records every `ORCH_WATCH_MAIL_INTERVAL` seconds (default 20) and prints what it finds as it finds it. The long pass, holding pr-watch, the merged check, triage and the pane reads, runs every `--interval` seconds, the only one of the two that spends the lanes' GitHub quota. A long pass that overruns its interval holds up no mail pass. `--interval` sets the GitHub traffic alone and nothing about how soon a lane's note arrives. The mail pass reads each lane's mailbox, never a pane, so it runs on every surface and outside tmux.
 
 ### Watch delivery
 
@@ -184,6 +186,8 @@ Text crosses `--file` ([SKILL.md](../SKILL.md) § Harness-Safe Shell). A directi
 ```bash
 .agents/skills/orch/scripts/open-terminal --wake --harness [HARNESS] --state-dir [OVERSEE_STATE_DIR] [ISSUE_ID]
 ```
+
+After a directive, wait for the watch's `directive-read` for its id: the lane's own mailbox cursor passing it, whichever read path moved it, on every harness and on a hosted lane. Never read a pane to confirm a delivery. `directive-unread` is the directive still unread past `ORCH_DIRECTIVE_UNREAD_SECS`: wake the lane, reach it at its pane, or relaunch it, by the lane's state and [lane-reach.md](../references/lane-reach.md).
 
 **A refusal is a state, not a remedy.** Mail reaches a lane only through the hooks the Lane mail rule in [skill-rules.md](../references/skill-rules.md) names, so a halt or an answer lands only while the lane still takes a tool call or ends a turn. Send where the reason allows it, then reach the lane at its pane by the paste below when the refusal does not clear, or relaunch it under § Recovery relaunch.
 

@@ -541,6 +541,8 @@ shortened_ceiling_watch() {
 }
 
 # run_watch [ENV=VAL ...] -- ARGS...   (fast cadence; TMUX set unless NO_TMUX=1)
+# The mail cadence is 0 unless a case names one: a mail pass on every turn,
+# and a long pass waited for rather than polled once a second.
 # WATCH_BIN names the script under test; a suite points it at a mutant copy
 # for a must-fail control and leaves it unset otherwise. WATCH_CWD names the
 # checkout the watch runs in, for a case whose fleet is more than one
@@ -578,8 +580,9 @@ run_watch() {
   (cd "${WATCH_CWD:-$TMP_ROOT/repo}" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR \
-           -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u LINEAR_TEAM \
+           -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS \
            STUB_DIR="$STUB_DIR" TMUX="fake" OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" \
+           ORCH_WATCH_MAIL_INTERVAL=0 \
            ${team_args[@]+"${team_args[@]}"} \
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
            OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \

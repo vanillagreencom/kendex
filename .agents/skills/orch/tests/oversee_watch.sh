@@ -309,7 +309,7 @@ printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out"
 printf '1' > "$STUB_DIR/prwatch.rc"
 err="$TMP_ROOT/e1h1"
 out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(ls -1 "$STATE_DIR" 2>/dev/null | wc -l | tr -d '[:space:]')" "1" "one state file for the one repo, no temp left behind" "$err"
+assert_eq "$(find "$STATE_DIR" -maxdepth 1 -type f ! -name '*.mail' 2>/dev/null | wc -l | tr -d '[:space:]')" "1" "one state file for the one repo, no temp left behind" "$err"
 state_file="$STATE_DIR/owner_repo__none"
 assert_eq "$([[ -f "$state_file" ]] && echo yes || echo no)" "yes" "the state file is keyed on the repo and --since" "$err"
 assert_eq "$(cat "$state_file")" "$(printf '12\tthreads-open')" "the state file holds the pass's <pr> <kind> keys" "$err"
@@ -403,7 +403,7 @@ assert_contains "$out" "$(printf 'other/repo\tE_REDUCER_READ count=1')" \
   "the reducer's stderr carries its repo too" "$err"
 assert_contains "$(cat "$STUB_DIR/prwatch.repos")" "other/repo" \
   "the reducer is run for the second repo" "$err"
-assert_eq "$(ls -1 "$STATE_DIR" 2>/dev/null | wc -l | tr -d '[:space:]')" "2" \
+assert_eq "$(find "$STATE_DIR" -maxdepth 1 -type f ! -name '*.mail' 2>/dev/null | wc -l | tr -d '[:space:]')" "2" \
   "each repo keeps its own baseline file" "$err"
 assert_eq "$(cat "$STATE_DIR/other_repo__none")" "$(printf '7\tthreads-open')" \
   "the second repo's baseline holds its own keys" "$err"
@@ -570,7 +570,7 @@ assert_not_contains "$out" "EVENT pr-watch" "the newly named repo never preempts
 assert_eq "$(grep -c 'oversee-watch: reducer-baseline' "$err")" "1" "exactly one baseline note on that run"
 assert_contains "$(cat "$err")" "oversee-watch: reducer-baseline repo=other/repo exit=1 count=1" \
   "and the note names the repo that has no baseline yet"
-assert_eq "$(ls -1 "$STATE_DIR" 2>/dev/null | wc -l | tr -d '[:space:]')" "2" \
+assert_eq "$(find "$STATE_DIR" -maxdepth 1 -type f ! -name '*.mail' 2>/dev/null | wc -l | tr -d '[:space:]')" "2" \
   "the newly named repo gets its own baseline file" "$err"
 
 # 1r. the mirror ordering: a baselined repo's genuinely unseen line is still an
@@ -1458,7 +1458,9 @@ assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/
   "control: the mutant really widens the handoff"
 mid_pass_case repeat_state_departs_mid_pass_mutant departs "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$MID_ITEMS" "issue-1 KEN-10 issue-1 KEN-10 issue-1 KEN-10" "control: handed the merged fleet, the pass carries the closed lane on every loop" "$err"
-assert_eq "$MID_MAIL_READS" "3" "control: handed the merged fleet, the closed lane's mailbox is drained on every loop" "$err"
+# Four: a mail pass on each of the three loops, and the one the heartbeat
+# reads after the last long pass.
+assert_eq "$MID_MAIL_READS" "4" "control: handed the merged fleet, the closed lane's mailbox is drained on every mail pass" "$err"
 # An argument a pass would refuse ends repeat mode before any pass. The sleep
 # stub takes the state away, so a watch that ran the pass and slept anyway
 # ends too, on a second refusal.

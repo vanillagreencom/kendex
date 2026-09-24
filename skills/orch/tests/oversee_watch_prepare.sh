@@ -47,9 +47,10 @@ write_state "$(prepared issue-1 running 2026-08-15T11:00:00Z)" "$(prepared issue
 watch "$((SINCE_EPOCH + 3660))"
 assert_eq "events=$EVENTS" "events=EVENT lane-ready issue-1" "a preparation begun later is reported afresh" "$STUB_DIR/err"
 # A closed lane's preparation is over, and so is one whose sandbox a close kept:
-# stopped with no reason is lane-close's word, not the job's.
+# stopped with no reason is lane-close's word, not the job's. The clock only
+# moves forward within a case: the watch keeps the last long pass's start.
 write_state "$(prepared issue-5 "done" "$SINCE" launch-failed)" "$(prepared issue-6 stopped)"
-watch "$((SINCE_EPOCH + 60))"
+watch "$((SINCE_EPOCH + 3720))"
 assert_eq "events=$EVENTS" "events=" "a done record and a stopped one carrying no reason report nothing" "$STUB_DIR/err"
 
 echo "=== a record still preparing past the bound is reported stuck once ==="

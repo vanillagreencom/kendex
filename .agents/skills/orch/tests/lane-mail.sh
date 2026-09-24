@@ -344,7 +344,11 @@ assert_eq "$(jq -r '.id + " " + .from + " " + .kind + " " + .text' < "$PEER_B/tm
   "$PEER_ASK overseer:peer_a ask Do you own KEN-9?" \
   "peer ask lands in the peer's overseer mailbox under one id, naming the repository that sent it"
 lm pending --item overseer
-assert_eq "$(jq -r '.id' <<<"$OUT")" "$PEER_ASK" "the asker's own pending owes the peer's answer"
+assert_eq "$(jq -r 'select(.kind == "ask") | .id' <<<"$OUT")" "$PEER_ASK" "the asker's own pending owes the peer's answer"
+# The other half of pending: what was sent to this mailbox and not yet read,
+# judged by its cursor, so a read takes it off the list.
+assert_eq "$(jq -r 'select(.kind == "directive") | .text' <<<"$OUT")" "Owner note." \
+  "pending lists a directive the mailbox's cursor has not passed"
 
 # The peer answers from its own checkout, naming the asker by path.
 PEER_A="$LANE"
@@ -356,7 +360,7 @@ assert_eq "$RC=$(jq -rs 'map(select(.kind == "answer")) | .[0] | .from + " " + .
 assert_eq "${OUT%% id=*}" "lane-mail: sent item=overseer" "peer send prints the receipt send prints"
 LANE="$PEER_A"
 lm pending --item overseer
-assert_eq "$RC=$OUT" "0=" "the answered peer ask is no longer pending"
+assert_eq "$RC=$(jq -c 'select(.kind == "ask")' <<<"$OUT")" "0=" "the answered peer ask is no longer pending"
 lm wait --item overseer --id "$PEER_ASK" --timeout 5 --interval 1
 assert_eq "$RC=$OUT" "0=It is ours." "the asker's wait on the overseer mailbox returns the peer's answer"
 
@@ -365,6 +369,8 @@ assert_eq "$RC=$OUT" "0=It is ours." "the asker's wait on the overseer mailbox r
 lm inbox --item overseer
 assert_eq "$(jq -rs 'map(.kind) | join(",")' <<<"$OUT")" "directive,answer" \
   "inbox hands the overseer its own note and the peer's answer"
+lm pending --item overseer
+assert_eq "$RC=$OUT" "0=" "a directive the inbox has read is no longer pending"
 lm send --item KEN-1 --root "$PEER_A" --re some-ask --file "$(text a 'Lane answer.')"
 lm inbox --item KEN-1
 assert_eq "$RC=$(jq -rs 'map(.kind) | unique | join(",")' <<<"$OUT")" "0=directive" \

@@ -137,7 +137,7 @@ assert_contains "$(cat "$state_file")" "$(printf 'lane-asking\tgh-2\t')" \
   "the fingerprint is a row in the repo baseline" "$err"
 assert_contains "$(cat "$state_file")" "$(printf '12\tthreads-open')" \
   "the reducer key survives beside it" "$err"
-assert_eq "$(find "$STATE_DIR" -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" "1" \
+assert_eq "$(find "$STATE_DIR" -maxdepth 1 -type f ! -name '*.mail' | wc -l | tr -d '[:space:]')" "1" \
   "lane-asking creates no second state-file class" "$err"
 err="$TMP_ROOT/asking-share-c"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?

@@ -241,6 +241,16 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # before oversee-watch reports it as lane-prepare-stuck.
 # ORCH_WATCH_PREPARE_SECS = "1800"
 
+# Seconds between oversee-watch mail passes. A mail pass reads every lane
+# mailbox and the overseer's own; it runs apart from the --interval pass that
+# reads GitHub, so a lane's note arrives within this many seconds whatever
+# --interval is.
+# ORCH_WATCH_MAIL_INTERVAL = "20"
+
+# Age in seconds past which a directive a lane has not read is reported as
+# directive-unread, once, so the overseer can reach the lane.
+# ORCH_DIRECTIVE_UNREAD_SECS = "300"
+
 # Branch size measurement: branch-size-check --help.
 # Size alone never refuses work.
 # Render-mirror roots, blank separated. A path under one of
