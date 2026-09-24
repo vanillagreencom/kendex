@@ -5,8 +5,13 @@
 # declined defect re-raised or a new one at the same place. The producer is a
 # re-review or QA reviewer re-raising a finding an earlier cycle declined.
 # Each row seeds its own state and artifact and pins the exit status, the
-# complete result object and stderr's first line. The planted controls below
-# the table each name the row their mutant must turn red.
+# result object with `detail` cut to its first line, and stderr's first line
+# for the rows that expect one.
+#
+# Invariant: every rule the --issue path adds, each part of the candidate
+# match, the accepted-only read, the index, the repeats field's absence
+# without --issue and each refusal, has a row and a named control in CONTROLS
+# whose mutant turns that row red. A rule added without both is unpinned.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -30,6 +35,8 @@ artifact() { # KIND PATH
       '{verdict: "action_required", blockers: [$b], suggestions: [$s], qa_metadata: {}}' > "$2" ;;
     twin) jq -n --argjson b "$(finding "$BLK" "")" \
       '{verdict: "action_required", blockers: [$b, ($b | .id = 2)], suggestions: [], qa_metadata: {}}' > "$2" ;;
+    loose) jq -n --argjson b "$(finding "$BLK" "")" \
+      '{verdict: "action_required", blockers: ["see the thread", $b]}' > "$2" ;;
     notjson) printf 'not json' > "$2"; return 0 ;;
   esac
   review_fixture_stamp "$2"
@@ -38,7 +45,8 @@ artifact() { # KIND PATH
 # label ^ mode ^ artifact ^ declined_items (JSON) ^ key ^ exit ^ result (a jq
 # program over $path, empty for none) ^ stderr's first line. key: `self` for
 # the row's own state, `none` for no --issue, `empty` for a blank --issue,
-# `dironly` for --state-dir alone, anything else a key with no state.
+# `dironly` for --state-dir alone, `blankdir` for a blank --state-dir, anything
+# else a key with no state.
 ROWS='a re-raised declined blocker is a candidate carrying its decline (file mode)^file^std^[{"location":env.BLK,"description":"d","reason":"r1"}]^self^0^{ok:true,path:$path,reason:"valid",repeats:[{array:"blockers",index:0,location:env.BLK,declined:[{description:"d",reason:"r1"}]}]}^
 a re-raised declined suggestion is a candidate (glob mode)^glob^std^[{"location":env.SUG,"description":"d","reason":"r2"}]^self^0^{ok:true,path:$path,reason:"valid",repeats:[{array:"suggestions",index:0,location:env.SUG,declined:[{description:"d",reason:"r2"}]}]}^
 a different defect at a declined location is a candidate carrying the recorded description^file^std^[{"location":env.BLK,"description":"another defect","reason":"r3"}]^self^0^{ok:true,path:$path,reason:"valid",repeats:[{array:"blockers",index:0,location:env.BLK,declined:[{description:"another defect",reason:"r3"}]}]}^
@@ -49,7 +57,10 @@ without --issue the result carries no repeats field^file^std^[{"location":env.BL
 a malformed artifact under --issue is rejected on its parse, with no repeats^file^notjson^[{"location":env.BLK,"description":"d","reason":"r"}]^self^1^{ok:false,path:$path,reason:"invalid",detail:"review-artifact-check: gate_failed jq_exit=5"}^
 unreadable declined state refuses, never reads as none declined^file^std^[]^KEN-404^2^^review-artifact-check: declined_state issue=KEN-404
 --state-dir without --issue is a usage refusal^file^std^[]^dironly^2^^review-artifact-check: usage argc=3
-a blank --issue value is a usage refusal^file^std^[]^empty^2^^review-artifact-check: option_value option=--issue'
+a blank --issue value is a usage refusal^file^std^[]^empty^2^^review-artifact-check: option_value option=--issue
+a blank --state-dir value is a usage refusal^file^std^[]^blankdir^2^^review-artifact-check: option_value option=--state-dir
+every decline at the location rides along, in recorded order, and no other^file^std^[{"location":env.BLK,"description":"d","reason":"r5"},{"location":"src/z.rs","description":"d","reason":"r6"},{"location":env.BLK,"description":"another defect","reason":"r7"}]^self^0^{ok:true,path:$path,reason:"valid",repeats:[{array:"blockers",index:0,location:env.BLK,declined:[{description:"d",reason:"r5"},{description:"another defect",reason:"r7"}]}]}^
+a loose artifact: a string finding and no suggestions array^file^loose^[{"location":env.BLK,"description":"d","reason":"r8"}]^self^0^{ok:true,path:$path,reason:"valid",repeats:[{array:"blockers",index:1,location:env.BLK,declined:[{description:"d",reason:"r8"}]}]}^'
 
 # run_row CHECK ROW TAG — prints `GOT<TAB>WANT` for the row against that
 # script, its state keyed KEN-TAG.
@@ -68,6 +79,7 @@ run_row() {
     self) args=(--issue "KEN-$n" --state-dir "$sd") ;;
     empty) args=(--issue "") ;;
     dironly) args=(--state-dir "$sd") ;;
+    blankdir) args=(--issue "KEN-$n" --state-dir "") ;;
     *) args=(--issue "$key" --state-dir "$sd") ;;
   esac
   local rc=0 out
@@ -111,6 +123,14 @@ no-match^s/select(\.location == \$l)/select(.location == $l and false)/^a re-rai
 no-ok-guard^s/"\$ok" == true && //^a malformed artifact under --issue is rejected on its parse, with no repeats
 fixed-index^s/index: \.key/index: 0/^two findings at one declined location keep their own indexes
 no-dironly-check^/declined_state_dir" || -n "\$declined_issue/d^--state-dir without --issue is a usage refusal
+first-only^s/\[\$declined\[\] | select(\.location == \$l) | {description, reason}\]/[first($declined[] | select(.location == $l)) | {description, reason}]/^every decline at the location rides along, in recorded order, and no other
+no-hits-check^/select(\$hits != \[\])/d^a finding at an undeclined location is no candidate
+no-arrays^s/\$art\[0\]\[\$name\] | arrays |/$art[0][$name] |/^a loose artifact: a string finding and no suggestions array
+no-objects^s/(\.value | objects | \.location)/(.value | .location)/^a loose artifact: a string finding and no suggestions array
+repeats-always^s/if \$declined == null then {}/if false then {}/^without --issue the result carries no repeats field
+no-blank-issue-check^s/\[\[ -n "\${2:-}" \]\] || usage_error option_value --issue; //^a blank --issue value is a usage refusal
+no-blank-dir-check^s/\[\[ -n "\${2:-}" \]\] || usage_error option_value --state-dir; //^a blank --state-dir value is a usage refusal
+state-fail-open^/get "\$declined_issue"/s#2>/dev/null)"; then#2>/dev/null || echo "[]")"; then#^unreadable declined state refuses, never reads as none declined
 CONTROLS
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

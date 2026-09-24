@@ -221,7 +221,6 @@ emit() {
     'def at_declined($name):
        $art[0][$name] | arrays | to_entries[]
        | (.value | objects | .location) as $l
-       | select($l != null)
        | [$declined[] | select(.location == $l) | {description, reason}] as $hits
        | select($hits != [])
        | {array: $name, index: .key, location: $l, declined: $hits};
@@ -312,8 +311,7 @@ if [[ -n "$declined_issue" ]]; then
   [[ -z "$declined_state_dir" ]] || state_flags=(--state-dir "$declined_state_dir")
   # Silenced like file_mtime's probe: the keyed refusal stays stderr's first line.
   if ! declined_entries="$("$SCRIPT_DIR/workflow-state" ${state_flags[@]+"${state_flags[@]}"} \
-      get "$declined_issue" '[(.declined_items // [])[] | {location, description, reason}]' 2>/dev/null)" \
-    || ! jq -e 'type == "array"' <<<"$declined_entries" >/dev/null 2>&1; then
+      get "$declined_issue" '[(.declined_items // [])[] | {location, description, reason}]' 2>/dev/null)"; then
     artifact_detail declined_state "$declined_issue" >&2
     finish 2
   fi
