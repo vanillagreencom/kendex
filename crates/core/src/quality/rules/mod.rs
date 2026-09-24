@@ -42,7 +42,8 @@
 use crate::model::ItemKind;
 
 use super::{
-    AuditRule, Content, Doc, DocRole, Finding, Found, Line, Outcome, Prepared, Severity, Standing,
+    AuditRule, Content, Doc, DocRole, Finding, Found, Line, Outcome, Prepared, Quotation, Severity,
+    Standing,
 };
 
 mod content;

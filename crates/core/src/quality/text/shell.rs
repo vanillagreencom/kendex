@@ -17,29 +17,38 @@
 //! it is not read. Everything else on a line is a command, whichever
 //! quotes it stands in: `eval "rm -rf /"` and `bash -c 'rm -rf /'` are
 //! commands, and so is the same text inside `$( )`.
+//!
+//! Every reading errs toward the command. Past `MAX_NESTING` the rest of
+//! a line is one opaque word, a function judged past that many calls is
+//! not diagnostic, and a name defined twice is diagnostic only when every
+//! definition is.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Builtins that print what they are handed.
 const SPEAKS: &[&str] = &["echo", "printf"];
 
-/// Words that assign, test or steer and never run what they are handed. A
-/// function built from these, `SPEAKS`, and other such functions is a
-/// diagnostic function: a formatting helper that pipes through `tr` or
-/// `sed` is not one, and the strings it prints stay commands. That is the
-/// price of reading no further, and it errs toward the finding.
+/// Command words that assign, test or steer and never run what they are
+/// handed. A function built from these, `SPEAKS`, and other such functions
+/// is a diagnostic function: a formatting helper that pipes through `tr`
+/// or `sed` is not one, and the strings it prints stay commands. That is
+/// the price of reading no further, and it errs toward the finding.
 const HOLDS: &[&str] = &[
     "local", "declare", "typeset", "readonly", "export", "read", "shift", "return", "exit",
-    "continue", "break", ":", "true", "false", "[", "[[", "test", "while", "until", "if", "then",
-    "elif", "else", "fi", "do", "done", "case", "esac", "!", "{", "}",
+    "continue", "break", ":", "true", "false", "[", "[[", "test", "case", "esac", "fi", "done",
+    "}",
 ];
 
-/// Words after which the next word is still the command: the control
-/// keywords that open a command, and the `{` of a group. A closing word
-/// (`done`, `fi`, `esac`, `}`) is followed by a redirection or nothing.
+/// Words that open a command and are not its name: the next word is.
 const KEYWORDS: &[&str] = &[
     "if", "then", "else", "elif", "while", "until", "do", "!", "{", "time",
 ];
+
+/// How deep `(`, `$(` and backticks may nest before the rest of the line
+/// is read as one opaque word. The same bound `hash::MAX_DEPTH` puts on a
+/// document tree: a line built to nest past it is judged as code, never
+/// walked.
+const MAX_NESTING: usize = 32;
 
 /// One shell token, as byte ranges into the line it came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +79,7 @@ enum Until {
 struct Lexer<'a> {
     s: &'a [u8],
     i: usize,
+    depth: usize,
     toks: Vec<Tok>,
 }
 
@@ -78,10 +88,19 @@ impl<'a> Lexer<'a> {
         self.s.get(self.i + offset).copied()
     }
 
+    /// A nested command. Past the nesting bound the rest of the line is
+    /// one word, so nothing on it reads as text.
     fn open(&mut self, until: Until) {
+        if self.depth == MAX_NESTING {
+            self.toks.push(Tok::Word(self.i, self.s.len()));
+            self.i = self.s.len();
+            return;
+        }
+        self.depth += 1;
         self.toks.push(Tok::Open);
         self.commands(until);
         self.toks.push(Tok::Close);
+        self.depth -= 1;
     }
 
     /// Lex commands up to `until` (consumed) or the end of the line.
@@ -242,6 +261,7 @@ fn lex(line: &str) -> Vec<Tok> {
     let mut lexer = Lexer {
         s: line.as_bytes(),
         i: 0,
+        depth: 0,
         toks: Vec::new(),
     };
     lexer.commands(Until::End);
@@ -260,43 +280,132 @@ fn is_assignment(word: &str) -> bool {
     })
 }
 
-/// Every word in command position on this line, at any nesting: the first
-/// word of each command and of each substitution. A quoted string standing
-/// where a command goes — `"$@"` — is reported as `"`, a word no command
-/// is named by.
-fn command_words(line: &str) -> Vec<&str> {
-    let toks = lex(line);
-    let mut words = Vec::new();
-    let mut expecting = true;
-    // The string an assignment word opens is its value, not a command.
-    let mut value = false;
-    for tok in toks {
+/// What stands where a command's name goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Head {
+    /// A bare word, as a byte range into the line.
+    Named(usize, usize),
+    /// A quoted string, a substitution or text past the nesting bound:
+    /// something no command is named by.
+    Opaque,
+}
+
+/// One simple command, split off a line by the one pass that knows the
+/// keyword, assignment-prefix and assignment-value rules.
+#[derive(Debug, Default)]
+struct Simple {
+    depth: usize,
+    head: Option<Head>,
+    /// The quoted strings among its arguments.
+    strings: Vec<(usize, usize)>,
+    /// Its output reaches the next command.
+    piped: bool,
+    /// Its output is redirected somewhere that is not the terminal.
+    away: bool,
+    /// An assignment word opened a value: what follows up to the next
+    /// bare word is the value, not the head.
+    value_pending: bool,
+    /// The word after a bare `>` is the redirection's target.
+    target_pending: bool,
+}
+
+/// Whether a redirection target is still the terminal, or nowhere:
+/// `&2`, `&1`, `/dev/null`. A file is a program's input later.
+fn to_terminal(target: &str) -> bool {
+    target.starts_with('&') || target.starts_with("/dev/")
+}
+
+/// The simple commands on a line, at every nesting, in the order they end.
+fn commands(line: &str) -> Vec<Simple> {
+    let mut done = Vec::new();
+    let mut open = vec![Simple::default()];
+    for tok in lex(line) {
+        let Some(cur) = open.last_mut() else {
+            unreachable!("the lexer closes only what it opened");
+        };
         match tok {
             Tok::Word(start, end) => {
                 let word = &line[start..end];
-                value = false;
-                if expecting {
-                    words.push(word);
-                    value = is_assignment(word);
-                    expecting = KEYWORDS.contains(&word) || value;
+                if cur.target_pending {
+                    cur.target_pending = false;
+                    cur.away |= !to_terminal(word);
+                    continue;
+                }
+                cur.value_pending = false;
+                match cur.head {
+                    None if KEYWORDS.contains(&word) => {}
+                    None if is_assignment(word) => cur.value_pending = true,
+                    None => cur.head = Some(Head::Named(start, end)),
+                    Some(_) => {
+                        if let Some((_, after)) = word.split_once('>') {
+                            let after = after.trim_start_matches('>');
+                            match after.is_empty() {
+                                true => cur.target_pending = true,
+                                false => cur.away |= !to_terminal(after),
+                            }
+                        }
+                    }
                 }
             }
-            Tok::Str(..) => {
-                if expecting && !value {
-                    words.push("\"");
-                    expecting = false;
+            Tok::Str(start, end) => match cur.head {
+                // The value runs to the next bare word, however many
+                // fragments and substitutions it is made of.
+                None if cur.value_pending => {}
+                None => cur.head = Some(Head::Opaque),
+                Some(_) => {
+                    if start < end {
+                        cur.strings.push((start, end));
+                    }
+                }
+            },
+            Tok::Break | Tok::Pipe => {
+                let depth = cur.depth;
+                cur.piped = tok == Tok::Pipe;
+                done.push(std::mem::replace(
+                    cur,
+                    Simple {
+                        depth,
+                        ..Simple::default()
+                    },
+                ));
+            }
+            Tok::Open => {
+                if cur.head.is_none() && !cur.value_pending {
+                    cur.head = Some(Head::Opaque);
+                }
+                let depth = cur.depth + 1;
+                open.push(Simple {
+                    depth,
+                    ..Simple::default()
+                });
+            }
+            Tok::Close => {
+                if let Some(closed) = open.pop() {
+                    done.push(closed);
                 }
             }
-            Tok::Break | Tok::Pipe | Tok::Open => expecting = true,
-            Tok::Close => expecting = false,
         }
     }
-    words
+    done.extend(open);
+    done
 }
 
-/// The name a line defines a function under, where it does:
-/// `name() {`, `function name {` or `function name() {`.
-fn defined(line: &str) -> Option<&str> {
+/// Every command's name on this line, at any nesting. A head no command
+/// is named by is reported as `"`.
+fn command_words(line: &str) -> Vec<&str> {
+    commands(line)
+        .into_iter()
+        .filter_map(|command| match command.head? {
+            Head::Named(start, end) => Some(&line[start..end]),
+            Head::Opaque => Some("\""),
+        })
+        .collect()
+}
+
+/// The name a line defines a function under and the text after its `{`,
+/// where it defines one: `name() {`, `function name {` or
+/// `function name() {`.
+fn defined(line: &str) -> Option<(&str, &str)> {
     let line = line.trim();
     let line = line.strip_prefix("function ").map_or(line, str::trim_start);
     let (name, rest) = line.split_once(['(', ' '])?;
@@ -305,29 +414,43 @@ fn defined(line: &str) -> Option<&str> {
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
-    (named && rest.starts_with('{')).then_some(name)
+    let body = rest.strip_prefix('{')?;
+    named.then_some((name, body))
 }
 
-/// The functions these shell sources define whose bodies only print,
-/// assign, test and steer — so a string handed to one is printed, never
-/// run. A body is the lines down to the first unindented `}`; a function
-/// closed any other way is read as far as that and judged on what was
-/// read, which errs toward the command.
+/// The functions these shell sources define whose every body only prints,
+/// assigns, tests and steers — so a string handed to one is printed,
+/// never run. A body on the definition's own line is the text between
+/// its braces; any other body is the lines down to the first unindented
+/// `}`, and one closed any other way is judged on what was read, which
+/// errs toward the command. A name defined more than once, in one file
+/// or across the tree, is diagnostic only when every definition is.
 pub fn diagnostic_functions(sources: &[&str]) -> BTreeSet<String> {
-    let mut bodies: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let mut bodies: BTreeMap<&str, Vec<Vec<&str>>> = BTreeMap::new();
     for source in sources {
         let mut lines = source.lines();
         while let Some(line) = lines.next() {
-            let Some(name) = defined(line) else {
+            let Some((name, rest)) = defined(line) else {
                 continue;
             };
-            let body = lines.by_ref().take_while(|line| *line != "}").collect();
-            bodies.insert(name, body);
+            let inner = rest.trim();
+            let body = match inner.rsplit_once('}') {
+                Some((body, _)) if !inner.starts_with('#') => vec![body],
+                _ => {
+                    let mut body = Vec::new();
+                    if !inner.is_empty() && !inner.starts_with('#') {
+                        body.push(inner);
+                    }
+                    body.extend(lines.by_ref().take_while(|line| *line != "}"));
+                    body
+                }
+            };
+            bodies.entry(name).or_default().push(body);
         }
     }
     let mut judged: BTreeMap<&str, Option<bool>> = BTreeMap::new();
     for name in bodies.keys() {
-        judge(name, &bodies, &mut judged);
+        judge(name, &bodies, &mut judged, 0);
     }
     judged
         .into_iter()
@@ -336,44 +459,32 @@ pub fn diagnostic_functions(sources: &[&str]) -> BTreeSet<String> {
         .collect()
 }
 
-/// Whether `name` is diagnostic, memoized; a function in the middle of
-/// being judged (a cycle) is not.
+/// Whether `name` is diagnostic, memoized. A function in the middle of
+/// being judged (a cycle), or reached past `MAX_NESTING` calls, is not.
 fn judge<'a>(
     name: &'a str,
-    bodies: &BTreeMap<&'a str, Vec<&'a str>>,
+    bodies: &BTreeMap<&'a str, Vec<Vec<&'a str>>>,
     judged: &mut BTreeMap<&'a str, Option<bool>>,
+    depth: usize,
 ) -> bool {
     match judged.get(name) {
         Some(Some(verdict)) => return *verdict,
         Some(None) => return false,
         None => {}
     }
+    if depth > MAX_NESTING {
+        return false;
+    }
     judged.insert(name, None);
-    let verdict = bodies[name].iter().all(|line| {
+    let verdict = bodies[name].iter().flatten().all(|line| {
         command_words(line).into_iter().all(|word| {
             SPEAKS.contains(&word)
                 || HOLDS.contains(&word)
-                || is_assignment(word)
-                || (bodies.contains_key(word) && judge(word, bodies, judged))
+                || (bodies.contains_key(word) && judge(word, bodies, judged, depth + 1))
         })
     });
     judged.insert(name, Some(verdict));
     verdict
-}
-
-/// Whether a redirection word sends output somewhere that is still the
-/// terminal or nowhere: `>&2`, `2>&1`, `>/dev/null`. A file is a program's
-/// input later.
-fn redirects_to_terminal(word: &str, target: Option<&str>) -> bool {
-    let after = word
-        .split_once('>')
-        .map(|(_, after)| after.trim_start_matches('>'));
-    let target = match after {
-        Some("") => target.unwrap_or(""),
-        Some(after) => after,
-        None => return true,
-    };
-    target.starts_with('&') || target.starts_with("/dev/")
 }
 
 /// Byte ranges of this line that a shell reads as text rather than as a
@@ -385,71 +496,18 @@ pub fn named_spans(line: &str, diagnostic: &BTreeSet<String>) -> Vec<(usize, usi
     if line.trim_start().starts_with('#') {
         return vec![(0, line.len())];
     }
-    let toks = lex(line);
-    let mut spans = Vec::new();
-    let mut depth = 0usize;
-    let mut expecting = true;
-    // Strings under the current command, kept until the command ends
-    // without piping or redirecting them elsewhere.
-    let mut pending: Vec<(usize, usize)> = Vec::new();
-    let mut speaks = false;
-    let mut settle = |pending: &mut Vec<(usize, usize)>, keep: bool| {
-        if keep {
-            spans.append(pending);
-        }
-        pending.clear();
-    };
-    let mut keep = true;
-    for (index, tok) in toks.iter().enumerate() {
-        match *tok {
-            Tok::Word(start, end) if depth == 0 => {
+    commands(line)
+        .into_iter()
+        .filter(|command| command.depth == 0 && !command.piped && !command.away)
+        .filter(|command| match command.head {
+            Some(Head::Named(start, end)) => {
                 let word = &line[start..end];
-                if expecting {
-                    if !(KEYWORDS.contains(&word) || is_assignment(word)) {
-                        speaks = SPEAKS.contains(&word) || diagnostic.contains(word);
-                        expecting = false;
-                    }
-                } else if word.contains('>') {
-                    let next = toks[index + 1..].iter().find_map(|tok| match tok {
-                        Tok::Word(s, e) => Some(&line[*s..*e]),
-                        _ => None,
-                    });
-                    keep &= redirects_to_terminal(word, next);
-                }
+                SPEAKS.contains(&word) || diagnostic.contains(word)
             }
-            Tok::Str(start, end) if depth == 0 => {
-                if expecting {
-                    expecting = false;
-                } else if speaks && start < end {
-                    pending.push((start, end));
-                }
-            }
-            Tok::Word(..) | Tok::Str(..) => {}
-            Tok::Break | Tok::Pipe if depth > 0 => expecting = true,
-            Tok::Break => {
-                settle(&mut pending, keep);
-                keep = true;
-                expecting = true;
-                speaks = false;
-            }
-            Tok::Pipe => {
-                settle(&mut pending, false);
-                keep = true;
-                expecting = true;
-                speaks = false;
-            }
-            Tok::Open => {
-                depth += 1;
-                expecting = true;
-            }
-            Tok::Close => {
-                depth = depth.saturating_sub(1);
-                expecting = false;
-            }
-        }
-    }
-    settle(&mut pending, keep);
-    spans
+            Some(Head::Opaque) | None => false,
+        })
+        .flat_map(|command| command.strings)
+        .collect()
 }
 
 #[cfg(test)]
@@ -461,31 +519,66 @@ mod tests {
         assert_eq!(command_words("echo hi"), vec!["echo"]);
         assert_eq!(
             command_words("value=\"$(gg_scrubbed \"$2\")\" || return 2"),
-            vec!["value=", "gg_scrubbed", "return"]
+            vec!["gg_scrubbed", "return"]
         );
         assert_eq!(
             command_words("while IFS= read -r line || [ -n \"$line\" ]; do"),
-            vec!["while", "IFS=", "read", "[", "do"]
+            vec!["read", "["]
         );
         assert_eq!(command_words("  \"$@\""), vec!["\""]);
-        assert_eq!(
-            command_words("x=$((n + 1)); eval \"$x\""),
-            vec!["x=$((n + 1))", "eval"]
-        );
+        assert_eq!(command_words("x=$((n + 1)); eval \"$x\""), vec!["eval"]);
         assert_eq!(
             command_words("echo `rm -rf /` # comment"),
-            vec!["echo", "rm"]
+            vec!["rm", "echo"]
         );
+        assert_eq!(command_words("$(get) arg"), vec!["get", "\""]);
         assert_eq!(command_words("# only a comment"), Vec::<&str>::new());
     }
 
+    /// One row per definition shape: the source, and the names that come
+    /// out diagnostic.
     #[test]
-    fn a_function_is_diagnostic_only_when_its_body_only_prints() {
-        let lib = "say() {\n  printf '%s\\n' \"$1\" >&2\n}\nfail() {\n  say \"$@\"\n  exit 2\n}\nrun() {\n  local c=\"$1\"\n  eval \"$c\"\n}\nloop() {\n  loop \"$@\"\n}\n";
-        assert_eq!(
-            diagnostic_functions(&[lib]),
-            ["say", "fail"].into_iter().map(str::to_owned).collect()
-        );
+    fn a_function_is_diagnostic_only_when_its_every_body_only_prints() {
+        let rows: &[(&[&str], &[&str])] = &[
+            (
+                &[
+                    "say() {\n  printf '%s\\n' \"$1\" >&2\n}\nfail() {\n  say \"$@\"\n  exit 2\n}\nrun() {\n  local c=\"$1\"\n  eval \"$c\"\n}\nloop() {\n  loop \"$@\"\n}\n",
+                ],
+                &["say", "fail"],
+            ),
+            // A one-line body is judged on its own line, and the line after
+            // it is the next definition, not part of it.
+            (
+                &["run() { eval \"$1\"; }\nsay() { echo \"$1\"; }\n"],
+                &["say"],
+            ),
+            (&["run() { eval \"$1\"; }\necho hi\n}\n"], &[]),
+            (&["function say { # KEY\n  echo \"$1\"\n}\n"], &["say"]),
+            // The same name defined twice is diagnostic only when both are.
+            (&["say() { echo \"$1\"; }\nsay() { eval \"$1\"; }\n"], &[]),
+            (
+                &["say() { eval \"$1\"; }\n", "say() { echo \"$1\"; }\n"],
+                &[],
+            ),
+            (
+                &["say() { echo \"$1\"; }\n", "say() { eval \"$1\"; }\n"],
+                &[],
+            ),
+            (
+                &[
+                    "say() { echo \"$1\"; }\n",
+                    "say() { printf '%s' \"$1\"; }\n",
+                ],
+                &["say"],
+            ),
+        ];
+        for (sources, want) in rows {
+            assert_eq!(
+                diagnostic_functions(sources),
+                want.iter().map(|name| (*name).to_owned()).collect(),
+                "{sources:?}"
+            );
+        }
     }
 
     /// One row per shape: the line, and the text that must be named.
@@ -509,10 +602,12 @@ mod tests {
                 "say result 2 \"bypass with --no-verify\"",
                 &["bypass with --no-verify"],
             ),
+            ("FOO=\"x\" echo \"--no-verify\"", &["--no-verify"]),
             ("echo \"a\"; echo 'b'", &["a", "b"]),
             ("echo \"rm -rf /\" | sh", &[]),
             ("echo \"rm -rf /\" > run.sh", &[]),
             ("echo \"rm -rf /\" >> run.sh", &[]),
+            ("echo \"rm -rf /\" 2>/dev/null", &["rm -rf /"]),
             ("x=$(echo \"rm -rf /\")", &[]),
             ("echo \"$(rm -rf /)\"", &[]),
             ("eval \"rm -rf /\"", &[]),
@@ -524,5 +619,27 @@ mod tests {
         for (line, want) in rows {
             assert_eq!(named(line, &diagnostic), *want, "{line:?}");
         }
+    }
+
+    /// Past the nesting bound the rest of the line is code: a line built to
+    /// nest a million deep is judged, never walked.
+    #[test]
+    fn nesting_past_the_bound_is_read_as_code() {
+        let deep = format!(
+            "echo {}\"rm -rf /\"{}",
+            "$(".repeat(100_000),
+            ")".repeat(100_000)
+        );
+        assert_eq!(named_spans(&deep, &BTreeSet::new()), vec![]);
+        let shallow = format!(
+            "echo {}\"rm -rf /\"{}",
+            "$(".repeat(MAX_NESTING),
+            ")".repeat(MAX_NESTING)
+        );
+        assert_eq!(named_spans(&shallow, &BTreeSet::new()), vec![]);
+        let chain: String = (0..100_000)
+            .map(|n| format!("f{n}() {{ f{}; }}\n", n + 1))
+            .collect();
+        assert_eq!(diagnostic_functions(&[&chain]), BTreeSet::new());
     }
 }

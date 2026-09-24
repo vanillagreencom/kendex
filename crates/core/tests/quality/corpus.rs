@@ -129,18 +129,20 @@ fn the_guard_hooks_scan_clean() {
 }
 
 /// Thirty-one lines of this skill spell `--dangerously-skip-permissions`
-/// as code. One is a row of the launch table's source, five are in the
+/// as code. One is a row of the launch table's source, six are in the
 /// open-terminal fixture, twenty are in the oversee-succeed fixture and
 /// four are in the overseer-watch fixture. Every one of them is the switch
 /// written as code in a file a harness loads, and the rule counts it there
 /// rather than deciding which program the string reaches. The launch
-/// table's comment naming the switch, and the fixture line handing it to
-/// an `assert_eq` that only compares and prints, are mentions.
+/// table's comment naming the switch is the one mention. The fixture line
+/// handing it to `assert_eq` stays a finding: the tests define that name
+/// many times over, not every body only prints, and a name is diagnostic
+/// only when every definition is.
 ///
 /// That is the cost of the reading, pinned to a real tree: one Critical
-/// finding in production and twenty-nine High findings in supporting
-/// files. A reading that went quiet on them would be reading an argument
-/// list again, and this is where that fails.
+/// finding in production and thirty High findings in supporting files. A
+/// reading that went quiet on them would be reading an argument list
+/// again, and this is where that fails.
 #[test]
 fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
     let result = shipped("orch");
@@ -152,7 +154,7 @@ fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
         found(&result),
         [
             vec![("safety-bypass", Severity::Critical, lane_launch); 1],
-            vec![("safety-bypass", Severity::High, open_terminal); 5],
+            vec![("safety-bypass", Severity::High, open_terminal); 6],
             vec![("safety-bypass", Severity::High, oversee_succeed); 20],
             vec![("safety-bypass", Severity::High, overseer_watch); 4],
         ]
@@ -169,7 +171,7 @@ fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
         .collect();
     assert_eq!(
         mentioned,
-        vec![(lane_launch, Some(83)), (open_terminal, Some(435))],
+        vec![(lane_launch, Some(83))],
         "{:#?}",
         result.mentions
     );

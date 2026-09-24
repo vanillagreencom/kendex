@@ -4,7 +4,8 @@
 use crate::model::ItemKind;
 
 use super::{
-    AUTHORED, AuditRule, Finding, Line, Outcome, Prepared, Severity, Standing, at, scan_docs,
+    AUTHORED, AuditRule, Finding, Line, Outcome, Prepared, Quotation, Severity, Standing, at,
+    scan_docs,
 };
 
 pub(super) fn rules() -> Vec<Box<dyn AuditRule>> {
@@ -77,7 +78,9 @@ impl AuditRule for SafetyBypass {
                         .map(|(needle, what)| (needle, what, Severity::High)),
                 );
             for (needle, what, base) in tiers {
-                let Some(standing) = line.standing(needle) else {
+                let Some(standing) =
+                    line.standing(needle, &[Quotation::CodeSpan, Quotation::ShellText])
+                else {
                     continue;
                 };
                 let finding = self.finding(doc, line, needle, what, base);
@@ -184,8 +187,11 @@ impl AuditRule for DangerousCommands {
                         .to_owned(),
             }
             };
+            // A destructive command in a README's backticks is still the
+            // command a reader pastes, so only a shell's own naming — the
+            // guard's comment, the message it prints — reads as a mention.
             for (needle, what) in DESTRUCTIVE {
-                if let Some(standing) = line.standing(needle) {
+                if let Some(standing) = line.standing(needle, &[Quotation::ShellText]) {
                     found.push(standing, finding(needle, what));
                 }
             }

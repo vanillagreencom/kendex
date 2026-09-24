@@ -35,7 +35,7 @@ pub use dimensions::{AntiPattern, DimensionScore, QualityScore};
 pub use finding::Finding;
 pub use score::{Deduction, SafetyScore, safety};
 pub use secret::{fingerprint_secret, redact};
-pub use text::{Line, Normalization, Standing};
+pub use text::{Line, Normalization, Quotation, Span, Standing};
 
 /// How much of a hash stands in for the thing it names, wherever that name
 /// reaches a finding's message. Sixteen hexadecimal characters is

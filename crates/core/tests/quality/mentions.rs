@@ -5,7 +5,7 @@
 use kendex_core::model::ItemKind;
 use kendex_core::quality::{AuditInput, AuditResult, Content, audit};
 
-use crate::rules::skill;
+use crate::rules::{document, skill};
 
 fn hook(script: &str) -> AuditResult {
     audit(AuditInput {
@@ -56,6 +56,23 @@ fn a_shell_line_names_a_switch_or_uses_it() {
         ("x=$(echo \"rm -rf /\")\n", &["dangerous-commands"], &[]),
         ("run \"rm -rf /\"\n", &["dangerous-commands"], &[]),
         ("sh <<EOF\nrm -rf /\nEOF\n", &["dangerous-commands"], &[]),
+        // A one-line function is judged on its own line, not the next.
+        (
+            "run() { eval \"$1\"; }\nrun \"rm -rf /\"\n",
+            &["dangerous-commands"],
+            &[],
+        ),
+        (
+            "say() { echo \"$1\"; }\nsay \"rm -rf /\"\n",
+            &[],
+            &["dangerous-commands"],
+        ),
+        // A name redefined in the file is diagnostic only if both are.
+        (
+            "say() { echo \"$1\"; }\nsay() { eval \"$1\"; }\nsay \"rm -rf /\"\n",
+            &["dangerous-commands"],
+            &[],
+        ),
     ];
     for (body, flagged, named) in rows {
         let result = hook(&format!("#!/usr/bin/env bash\n{body}"));
@@ -74,38 +91,121 @@ fn a_shell_line_names_a_switch_or_uses_it() {
     }
 }
 
-/// A string is named only under a function the tree defines as one that
-/// only prints; the same call to a function that runs its argument is a
-/// use. The library file is read with the script that calls it.
+/// A string is named only under a function every file of the tree defines
+/// as one that only prints; the same call to a function that runs its
+/// argument, in either file and in either order, is a use. The library
+/// files are read with the script that calls them.
 #[test]
 fn a_string_handed_to_a_tree_function_is_named_only_when_that_function_only_prints() {
     let says = "say() {\n  printf '%s\\n' \"$*\" >&2\n}\n";
     let runs = "say() {\n  eval \"$*\"\n}\n";
     let script = "#!/usr/bin/env bash\n. \"$(dirname \"$0\")/lib.sh\"\nsay \"refused: rm -rf /\"\n";
-    let named = skill(&[
-        ("SKILL.md", "Run it.\n"),
-        ("scripts/lib.sh", says),
-        ("scripts/guard", script),
-    ]);
-    assert_eq!(
-        rules(&named.findings),
-        Vec::<&str>::new(),
-        "{:#?}",
-        named.findings
+    /// A case: its name, the library files, the rules that fire, the
+    /// rules that read a mention.
+    type Case<'a> = (
+        &'a str,
+        &'a [(&'a str, &'a str)],
+        &'a [&'a str],
+        &'a [&'a str],
     );
-    assert_eq!(rules(&named.mentions), vec!["dangerous-commands"]);
-    let used = skill(&[
-        ("SKILL.md", "Run it.\n"),
-        ("scripts/lib.sh", runs),
-        ("scripts/guard", script),
-    ]);
+    let rows: &[Case] = &[
+        (
+            "prints",
+            &[("scripts/lib.sh", says)],
+            &[],
+            &["dangerous-commands"],
+        ),
+        (
+            "runs",
+            &[("scripts/lib.sh", runs)],
+            &["dangerous-commands"],
+            &[],
+        ),
+        (
+            "runs then prints",
+            &[("scripts/a.sh", runs), ("scripts/b.sh", says)],
+            &["dangerous-commands"],
+            &[],
+        ),
+        (
+            "prints then runs",
+            &[("scripts/a.sh", says), ("scripts/b.sh", runs)],
+            &["dangerous-commands"],
+            &[],
+        ),
+    ];
+    for (case, libs, flagged, named) in rows {
+        let mut files = vec![("SKILL.md", "Run it.\n"), ("scripts/guard", script)];
+        files.extend_from_slice(libs);
+        let result = skill(&files);
+        assert_eq!(
+            rules(&result.findings),
+            *flagged,
+            "{case}: {:#?}",
+            result.findings
+        );
+        assert_eq!(
+            rules(&result.mentions),
+            *named,
+            "{case}: {:#?}",
+            result.mentions
+        );
+    }
+}
+
+/// A markdown code span names a switch and not a destructive command: the
+/// switch in backticks is a document describing it, the `rm -rf /` in
+/// backticks is what a reader will paste.
+#[test]
+fn a_markdown_code_span_names_a_switch_but_not_a_destructive_command() {
+    let result = document(
+        ItemKind::Agent,
+        "Never pass `--no-verify`. Clean up with `rm -rf /` first.\n",
+    );
     assert_eq!(
-        rules(&used.findings),
+        rules(&result.findings),
         vec!["dangerous-commands"],
         "{:#?}",
-        used.findings
+        result.findings
     );
-    assert_eq!(rules(&used.mentions), Vec::<&str>::new());
+    assert_eq!(
+        rules(&result.mentions),
+        vec!["safety-bypass"],
+        "{:#?}",
+        result.mentions
+    );
+}
+
+/// A line that nests substitutions a hundred thousand deep, and a chain of
+/// as many functions each calling the next, are judged as code on a small
+/// stack rather than walked: the audit returns, and nothing reads as
+/// named.
+#[test]
+fn nesting_past_the_bound_is_judged_not_walked() {
+    let deep = format!(
+        "#!/usr/bin/env bash\necho {}\"rm -rf /\"{}\n",
+        "$(".repeat(100_000),
+        ")".repeat(100_000)
+    );
+    let chain: String = (0..100_000)
+        .map(|n| format!("f{n}() {{ f{}; }}\n", n + 1))
+        .chain(["f0 \"rm -rf /\"\n".to_owned()])
+        .collect();
+    let audited = std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || (hook(&deep), hook(&chain)))
+        .expect("a thread")
+        .join()
+        .expect("the audit returns");
+    for result in [audited.0, audited.1] {
+        assert_eq!(
+            rules(&result.findings),
+            vec!["dangerous-commands"],
+            "{:#?}",
+            result.findings
+        );
+        assert_eq!(rules(&result.mentions), Vec::<&str>::new());
+    }
 }
 
 /// The shipped guard with its refused operand moved from the comment
