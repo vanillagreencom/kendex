@@ -11,7 +11,9 @@
 # Repository scans read the working tree. Bot instructions use the index at
 # commit time so their configuration, doctrine and outputs agree.
 # Every finding opens with `guard: <key>=<value>` and explains itself below
-# that line; say() and finding_text() hold the shape and the text.
+# that line; say() and finding_text() hold the shape and the text. A notice,
+# a check left unrun on purpose, opens with `guard-note: <key>=<value>` from
+# note() and leaves the verdict alone.
 #
 # The compilers, linters and suites this script runs write their own streams
 # and this script forwards them: that passthrough is its own contract and is
@@ -34,6 +36,10 @@ say() { # KEY VALUE
   printf 'guard: %s=%s\n' "$1" "$2"
   finding_text "$1" "$2"
   fail=1
+}
+note() { # KEY VALUE — the same shape for a notice, which is not a finding
+  printf 'guard-note: %s=%s\n' "$1" "$2"
+  finding_text "$1" "$2"
 }
 count_lines() { # TEXT — the non-empty lines in TEXT, a scan finding's value
   printf '%s\n' "$1" | awk 'NF { n++ } END { print n + 0 }'
@@ -118,6 +124,17 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       printf '%s has no node_modules; install its peers as its step in .github/workflows/skill-tests.yml does.\n' "$2" ;;
     suite)
       echo "that suite failed; its own output above names the case." ;;
+    cross-doc-setting)
+      echo "GUARD_FULL_CROSS_DOC is run or ci, and that value is neither or could not be read; the cross-target checks and cargo doc ran as under run." ;;
+    compiled-includes)
+      echo "the include_str! and include_bytes! paths under crates/ could not be read, so the cross-target checks and cargo doc ran whatever the branch touched." ;;
+    cross-doc-skipped)
+      case "$2" in
+        ci) echo "GUARD_FULL_CROSS_DOC=ci leaves the cross-target checks and cargo doc to CI." ;;
+        no-rust-input) echo "the branch touched no crate, no workspace compiler input and no file compiled code includes, so the cross-target checks and cargo doc did not run." ;;
+        *) echo "no explanation is defined for this value: tools/guard is broken." ;;
+      esac
+      ;;
     rustup-targets)
       echo "rustup could not list installed targets, so the cross-target checks could not run." ;;
     missing-target)
@@ -640,6 +657,12 @@ done <<<"$render_changed"
 
 # The changelog gate owns commit change collection and product-path matching.
 # Shared compiler inputs outside those product paths still affect all crates.
+workspace_rust_input() { # PATH — the workspace manifest, lock, toolchain pin or cargo configuration
+  case "$1" in
+    Cargo.toml | Cargo.lock | rust-toolchain.toml | .cargo/*) return 0 ;;
+  esac
+  return 1
+}
 rust_all="$FULL"
 rust_manifests=()
 ui_changed="$FULL"
@@ -658,9 +681,7 @@ if [ "$FULL" -eq 0 ]; then
     gg_commit_changes
     cat "$GG_TMP/product.z"
     while IFS= read -r -d '' f; do
-      case "$f" in
-        Cargo.toml | Cargo.lock | rust-toolchain.toml | .cargo/*) printf '%s\0' "$f" ;;
-      esac
+      if workspace_rust_input "$f"; then printf '%s\0' "$f"; fi
     done <"$GG_TMP/staged.z"
   ) >"$GUARD_TMP/product.z"
   classification_status=$?
@@ -671,13 +692,10 @@ if [ "$FULL" -eq 0 ]; then
   while IFS= read -r -d '' f; do
     case "$f" in
       *.md) continue ;;
-      Cargo.toml | Cargo.lock | rust-toolchain.toml | .cargo/* | crates/*.rs)
-        case "$f" in
-          crates/*/*) ;;
-          *) rust_all=1; continue ;;
-        esac
-        ;;
+      crates/*/*) ;;
+      crates/*.rs) rust_all=1; continue ;;
     esac
+    if workspace_rust_input "$f"; then rust_all=1; continue; fi
     case "$f" in
       crates/*/*.rs | crates/*/Cargo.toml)
         crate="${f#crates/}"
@@ -800,22 +818,108 @@ if [ "$FULL" -eq 1 ]; then
   done
 fi
 
+# Every repository path an include_str! or include_bytes! literal under
+# crates/ names, resolved against the including file's directory: the files
+# outside crates/ that compiled code reads at build time. A literal on the
+# line after its opening parenthesis, the shape rustfmt gives a long one,
+# counts too. A file a test reads at run time is not here; the host test run
+# below reads it on every full run.
+compiled_includes() {
+  find crates -type f -name '*.rs' -exec awk '
+    function emit(lit,   path, n, seg, i, k, out) {
+      path = FILENAME
+      sub(/[^\/]*$/, "", path)
+      n = split(path lit, seg, "/")
+      k = 0
+      for (i = 1; i <= n; i++) {
+        if (seg[i] == "" || seg[i] == ".") continue
+        if (seg[i] == "..") { if (k == 0) return; k--; continue }
+        seg[++k] = seg[i]
+      }
+      out = seg[1]
+      for (i = 2; i <= k; i++) out = out "/" seg[i]
+      print out
+    }
+    function literals(text) {
+      while (match(text, /include_(str|bytes)!\([ \t]*"[^"]*"/)) {
+        lit = substr(text, RSTART, RLENGTH)
+        sub(/^[^"]*"/, "", lit)
+        sub(/"$/, "", lit)
+        emit(lit)
+        text = substr(text, RSTART + RLENGTH)
+      }
+      return text
+    }
+    FNR == 1 { pending = 0 }
+    {
+      line = $0
+      if (pending && match(line, /^[ \t]*"[^"]*"/)) {
+        lit = substr(line, RSTART, RLENGTH)
+        sub(/^[^"]*"/, "", lit)
+        sub(/"$/, "", lit)
+        emit(lit)
+      }
+      pending = (literals(line) ~ /include_(str|bytes)!\([ \t]*$/)
+    }
+  ' {} +
+}
+
 if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
-  # The app needs each platform's C toolchain; core and CLI can cross-check.
-  cross_targets="aarch64-apple-darwin x86_64-pc-windows-msvc"
-  if ! installed_targets=$(rustup target list --installed); then
-    say rustup-targets unreadable
-  else
-    for cross_target in $cross_targets; do
-      if ! grep -Fxq "$cross_target" <<<"$installed_targets"; then
-        say missing-target "$cross_target"
-      else
-        cargo check -p kendex-core -p kendex-cli --all-targets --target "$cross_target" ||
-          say cross-check "$cross_target"
-      fi
-    done
+  # The cross-target checks and cargo doc each write a target tree of their
+  # own, and CI covers both on the pull requests tools/ci-job-set selects
+  # its cargo_lint, cargo_macos and cargo_windows lanes for. Here they run
+  # only when the branch touched a Rust input: a crate, a workspace compiler
+  # input, or a file compiled code includes. An empty touched set runs them,
+  # and a failed read of it has already red the run.
+  # GUARD_FULL_CROSS_DOC=ci leaves both to CI; run, the default, keeps them.
+  cross_doc=$(
+    guards="$TOOLS_DIR/../.agents/skills/commit-guards/scripts"
+    source "$guards/lib/common.sh" && source "$guards/lib/settings.sh" &&
+      gg_setting GUARD_FULL_CROSS_DOC run
+  ) || cross_doc=unreadable
+  case "$cross_doc" in
+    run | ci) ;;
+    *) say cross-doc-setting "$cross_doc"; cross_doc=run ;;
+  esac
+  rust_input=0
+  [ -n "$touched" ] || rust_input=1
+  while IFS= read -r f; do
+    case "$f" in
+      crates/*) rust_input=1 ;;
+      *) if workspace_rust_input "$f"; then rust_input=1; fi ;;
+    esac
+  done <<<"$touched"
+  if [ "$rust_input" -eq 0 ] && [ "$cross_doc" = run ]; then
+    if ! includes=$(compiled_includes); then
+      say compiled-includes crates
+      rust_input=1
+    fi
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      if grep -Fxq -- "$f" <<<"$includes"; then rust_input=1; fi
+    done <<<"$touched"
   fi
-  cargo doc --no-deps --document-private-items --workspace --quiet || say cargo-doc workspace
+  if [ "$cross_doc" = ci ]; then
+    note cross-doc-skipped ci
+  elif [ "$rust_input" -eq 0 ]; then
+    note cross-doc-skipped no-rust-input
+  else
+    # The app needs each platform's C toolchain; core and CLI can cross-check.
+    cross_targets="aarch64-apple-darwin x86_64-pc-windows-msvc"
+    if ! installed_targets=$(rustup target list --installed); then
+      say rustup-targets unreadable
+    else
+      for cross_target in $cross_targets; do
+        if ! grep -Fxq "$cross_target" <<<"$installed_targets"; then
+          say missing-target "$cross_target"
+        else
+          cargo check -p kendex-core -p kendex-cli --all-targets --target "$cross_target" ||
+            say cross-check "$cross_target"
+        fi
+      done
+    fi
+    cargo doc --no-deps --document-private-items --workspace --quiet || say cargo-doc workspace
+  fi
   # A test binary that dies by a signal reached no verdict: the runner
   # reports the executable's death, not an assertion. A binary whose code
   # pages come back wrong from disk dies this way, and rebuilding that

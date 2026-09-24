@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # tools/guard --full, the completion run: the working-tree bot-instructions
-# check, the cross-target compile of core and the CLI, the suites of the trees
-# the branch touched, and a test binary's death by a signal named apart from
-# a failing test. Every compiler and toolchain call is a stub in fake-bin.
+# check, the cross-target compile of core and the CLI, the Rust inputs that
+# decide whether it and cargo doc run, the suites of the trees the branch
+# touched, and a test binary's death by a signal named apart from a failing
+# test. Every compiler and toolchain call is a stub in fake-bin.
 set -euo pipefail
-unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GUARD_FULL_CROSS_DOC
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/guard-world.sh
@@ -163,6 +164,96 @@ run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTA
 FULL_GUARD=0
 git -C "$R" reset -q HEAD -- Cargo.toml
 rm -f "$R/Cargo.toml"
+
+echo "=== the cross-target checks and cargo doc run for a Rust input, and a setting leaves them to CI ==="
+pre_gated_head="$(git -C "$R" rev-parse HEAD)"
+# A crate that includes two files outside crates/: one literal on the macro's
+# own line, one on the line after it, the shape rustfmt gives a long one.
+mkdir -p "$R/crates/app/src" "$R/docs/authoring"
+printf 'const GUIDE: &str = include_str!("../../../docs/authoring/README.md");\n' >"$R/crates/app/src/mine.rs"
+printf 'const SPLIT: &str = include_str!(\n    "../../../docs/split.md"\n);\n' >"$R/crates/app/src/split.rs"
+printf '# guide\n' >"$R/docs/authoring/README.md"
+printf '# split\n' >"$R/docs/split.md"
+printf '# notes\n' >"$R/docs/notes.md"
+printf '[workspace]\n' >"$R/Cargo.toml"
+printf '# lock\n' >"$R/Cargo.lock"
+git -C "$R" add crates/app docs Cargo.toml Cargo.lock
+git -C "$R" commit -q -m "chore: a crate that includes two docs files"
+gated_head="$(git -C "$R" rev-parse HEAD)"
+git -C "$R" update-ref refs/remotes/origin/main HEAD
+DOC_CALL="doc --no-deps --document-private-items --workspace --quiet"
+gated_run() { # GUARD_PATH TOUCH [VAR=VALUE...] — the branch as TOUCH alone, run by that guard
+  local guard_path="$1" touch="$2"
+  shift 2
+  git -C "$R" reset -q --hard "$gated_head"
+  printf '// edit\n' >>"$R/$touch"
+  : >"$CARGO_CALL_LOG"
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && env PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" \
+    RUSTUP_INSTALLED_TARGETS="$BOTH" "$@" "$guard_path" --full 2>&1 </dev/null)" || RC=$?
+}
+gated_ran() { # — both cross targets and cargo doc, once each
+  [ "$(grep -cFx "$(check_call "$APPLE")" "$CARGO_CALL_LOG")" -eq 1 ] &&
+    [ "$(grep -cFx "$(check_call "$WINDOWS")" "$CARGO_CALL_LOG")" -eq 1 ] &&
+    [ "$(grep -cFx "$DOC_CALL" "$CARGO_CALL_LOG")" -eq 1 ]
+}
+gated_skipped() { # — neither a cross target nor cargo doc, and the host test run still
+  ! grep -qE -- '--target |^doc ' "$CARGO_CALL_LOG" &&
+    grep -qFx "test --workspace --quiet" "$CARGO_CALL_LOG"
+}
+gated_verdict() { # WANT — does the last run match it
+  case "$1" in
+    run) [ "$RC" -eq 0 ] && gated_ran && [[ "$OUT" != *"guard-note:"* ]] ;;
+    skip:*) [ "$RC" -eq 0 ] && gated_skipped && [[ "$OUT" == *"guard-note: cross-doc-skipped=${1#skip:}"* ]] ;;
+    refuse:*) [ "$RC" -eq 1 ] && gated_ran && [[ "$OUT" == *"guard: cross-doc-setting=${1#refuse:}"* ]] ;;
+    *) echo "gated_verdict: no verdict named $1" >&2; exit 2 ;;
+  esac
+}
+# The loop counts its own rows: an emptied table is a red, never a green.
+before=$((PASS + FAIL))
+while IFS='|' read -r touch setting want label; do
+  [ -n "$touch" ] || continue
+  env_args=()
+  [ -z "$setting" ] || env_args=("GUARD_FULL_CROSS_DOC=$setting")
+  gated_run "$GUARD" "$touch" ${env_args[@]+"${env_args[@]}"}
+  gated_verdict "$want" && ok "$label" \
+    || bad "$label" "rc=$RC out=$OUT calls=$(cat "$CARGO_CALL_LOG")"
+done <<'ROWS'
+docs/notes.md||skip:no-rust-input|a prose file compiled code does not include skips both, naming why
+crates/app/src/mine.rs||run|a crate source runs both
+Cargo.lock||run|the workspace lock runs both
+docs/authoring/README.md||run|a file an include_str! on its own line names runs both
+docs/split.md||run|a file an include_str! names on the line after it runs both
+crates/app/src/mine.rs|ci|skip:ci|the setting at ci leaves both to CI for a crate source
+crates/app/src/mine.rs|run|run|the setting at run keeps both for a crate source
+crates/app/src/mine.rs|never|refuse:never|a setting that is neither run nor ci is refused, and both still run
+ROWS
+[ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the cross-doc gate" >&2; exit 2; }
+# One control per rule: each mutant removes that rule from a guard copy, and
+# the row the rule decides turns to the verdict the rule was there to refuse.
+before=$((PASS + FAIL))
+while IFS='|' read -r edit touch setting want label; do
+  [ -n "$edit" ] || continue
+  if mutant_guard "$edit"; then
+    env_args=()
+    [ -z "$setting" ] || env_args=("GUARD_FULL_CROSS_DOC=$setting")
+    gated_run "$MUTANT_TOOLS/guard" "$touch" ${env_args[@]+"${env_args[@]}"}
+    gated_verdict "$want" && ok "control: $label" \
+      || bad "control: $label" "rc=$RC out=$OUT calls=$(cat "$CARGO_CALL_LOG")"
+  else
+    bad "control: $label" "the edit changed nothing in a guard copy: $edit"
+  fi
+done <<'ROWS'
+s/^  rust_input=0$/  rust_input=1/|docs/notes.md||run|with the touched-set gate removed a prose file runs both
+s/if ! includes=\$(compiled_includes)/if ! includes=$(true)/|docs/authoring/README.md||skip:no-rust-input|with the include derivation emptied an included file skips both
+s/if (pending \&\& match/if (0 \&\& match/|docs/split.md||skip:no-rust-input|with the next-line literal unread a file named on the line after skips both
+s/if \[ "\$cross_doc" = ci \]; then/if false; then/|crates/app/src/mine.rs|ci|run|with the ci branch removed the setting at ci runs both
+s/say cross-doc-setting "\$cross_doc"; //|crates/app/src/mine.rs|never|run|with the refusal removed an unknown setting passes
+ROWS
+[ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the cross-doc gate controls" >&2; exit 2; }
+git -C "$R" reset -q --hard "$pre_gated_head"
+git -C "$R" update-ref -d refs/remotes/origin/main
 
 echo "=== full validation runs the suites of the trees the branch touched ==="
 FULL_GUARD=1
