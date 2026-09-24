@@ -136,12 +136,12 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # session. The refusal counts the ssh lines typed in its attempts field.
 ORCH_LANE_SSH_PROMPT_SECS = "60"
 
-# Max concurrent lanes the overseer keeps in flight.
+# Max concurrent lanes the overseer keeps in flight. open-terminal refuses a
+# fleet launch past it.
 ORCH_OVERSEER_LANES = "3"
 
-# Max live lanes on one account; zero turns this cap off. A lane spends about
-# 1.5 points of a five-hour window per 10 minutes, so one account carries
-# about six lanes for a full window.
+# Max live lanes on one account. open-terminal refuses a fleet launch past it;
+# zero turns this cap off.
 ORCH_LANE_ACCOUNT_CLAIMS = "6"
 
 # `lanes pick` refuses an account at or above 95 percent used on the window it

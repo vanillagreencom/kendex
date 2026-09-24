@@ -180,3 +180,10 @@ lane_claim_write() {
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$tmp.claim" || { rm -f -- "$tmp"; return 1; }
 }
+
+# The one answer to which oversee lane records are lanes in flight, as a jq
+# definition a caller prefixes to its own program: oversee-watch carries these
+# records and open-terminal counts them against the fleet cap, so the watch and
+# the cap cannot describe two different fleets. Hand-appended entries that are
+# not objects are no lane.
+LANE_RUNNING_JQ='def running: type == "object" and .status == "running";'
