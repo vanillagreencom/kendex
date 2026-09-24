@@ -44,8 +44,9 @@ SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 # default below includes .github/instructions/code-review.md, the file the
 # bot-instructions skill renders. A pattern matching no file is reported on
 # stderr as "second-opinion: instructions-unmatched pattern=<glob>", and a
-# prompt left with no file as "second-opinion: instructions-none"; the review
-# still runs. Empty disables.
+# prompt left with no file as
+# "second-opinion: instructions-none patterns=<count>"; the review still runs.
+# Empty disables.
 SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructions/code-review.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
 
 # Force one target instead of walking the roster; a target running this
