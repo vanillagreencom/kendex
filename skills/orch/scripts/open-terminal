@@ -1960,15 +1960,22 @@ write_lane_marker() { # WT ITEM REMOTE_ROOT
 # from no pane lands beside its siblings; `//=` keeps whichever of two racing
 # first launches recorded first.
 LAUNCH_SESSION=""
+# One workflow-state call on the fleet state's tmux entry, read or write, and
+# the one refusal either failing gets. stdout is the call's own.
+session_state() { # TITLE WORKFLOW_STATE_ARG...
+  local title="$1"
+  shift
+  if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} "$@"; then
+    ot_message session-record-failed "item=$title" "state=oversee" >&2
+    return 1
+  fi
+}
 launch_session_resolve() { # TITLE
   [[ -z "$LAUNCH_SESSION" ]] || return 0
   local session="${ORCH_TMUX_SESSION:-}" source=ORCH_TMUX_SESSION consulted=ORCH_TMUX_SESSION recorded="" err pane_read=unset
   if [[ "$FLEET" == true ]]; then
     consulted+=",tmux.session"
-    if ! recorded="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.tmux.session // ""')"; then
-      ot_message session-record-failed "item=$1" "state=oversee" >&2
-      return 1
-    fi
+    recorded="$(session_state "$1" get oversee '.tmux.session // ""')" || return 1
     if [[ -z "$session" && -n "$recorded" ]]; then session="$recorded"; source=tmux.session; fi
   fi
   if [[ -z "$session" ]]; then
@@ -1994,10 +2001,8 @@ launch_session_resolve() { # TITLE
     fi
     return 1
   fi
-  if [[ "$FLEET" == true && -z "$recorded" ]] &&
-    ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update oversee --arg s "$session" '.tmux.session //= $s' >/dev/null; then
-    ot_message session-record-failed "item=$1" "state=oversee" >&2
-    return 1
+  if [[ "$FLEET" == true && -z "$recorded" ]]; then
+    session_state "$1" update oversee --arg s "$session" '.tmux.session //= $s' >/dev/null || return 1
   fi
   LAUNCH_SESSION="$session"
 }

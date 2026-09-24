@@ -47,8 +47,9 @@ assert_eq() {
 # empty name and status 0, as tmux 3.4 answers for a pane it does not hold; a session_name read with no -t is the attached client's, `client`.
 # list-windows, new-window and that read each log `OP TARGET` to STUB_TMUX_LOG,
 # TARGET being the -t value or `none`. has-session
-# answers tmux's own refusal for a session STUB_DEAD_SESSIONS names, and for an
-# empty name the error tmux 3.4 prints for `-t =`.
+# answers tmux's own refusal for a session STUB_DEAD_SESSIONS names, for an
+# empty name the error tmux 3.4 prints for `-t =`, and STUB_HAS_SESSION_ERR,
+# where set, for every name.
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/ghostty"
@@ -67,7 +68,8 @@ for a in "$@"; do [[ "$prev" != -t ]] || t="$a"; prev="$a"; done
 logged() { [[ -z "${STUB_TMUX_LOG:-}" ]] || printf '%s %s\n' "$1" "$t" >> "$STUB_TMUX_LOG"; }
 case "${1:-}" in
   list-windows) logged list-windows; echo 1 ;;
-  has-session) t="${3#=}"; [[ -n "$t" ]] || { echo 'no mouse target' >&2; exit 1; }; [[ " ${STUB_DEAD_SESSIONS:-} " != *" $t "* ]] || { echo "can't find session: $t" >&2; exit 1; } ;;
+  has-session) [[ -z "${STUB_HAS_SESSION_ERR:-}" ]] || { echo "$STUB_HAS_SESSION_ERR" >&2; exit 1; }
+    t="${3#=}"; [[ -n "$t" ]] || { echo 'no mouse target' >&2; exit 1; }; [[ " ${STUB_DEAD_SESSIONS:-} " != *" $t "* ]] || { echo "can't find session: $t" >&2; exit 1; } ;;
   new-window) logged new-window
     [[ -z "${STUB_OPENED_AT:-}" ]] || { date -u +%Y-%m-%dT%H:%M:%SZ > "$STUB_OPENED_AT"; sleep "${STUB_OPEN_DELAY:-0}"; }; echo "$$ %1" ;;
   display-message) if [[ "$*" == *session_name* ]]; then logged session-read; [[ "$t" != none ]] || { echo client; exit 0; }
@@ -148,7 +150,7 @@ run_ot() {
   OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" \
     WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" LANES_HOME="$SESSION_HOME" EXISTS_DIR="$EXISTS_DIR" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX="${RUN_TMUX:-}" ORCH_TMUX_SESSION="${RUN_SESSION-stub}" TMUX_PANE="${RUN_PANE:-}" \
-    STUB_SESSION_NAME="${STUB_SESSION_NAME:-}" STUB_TMUX_LOG="${STUB_TMUX_LOG:-}" STUB_DEAD_SESSIONS="${STUB_DEAD_SESSIONS:-}" STUB_PANE_GONE="${STUB_PANE_GONE:-}" GH_REPO="" STUB_GH_REPO="${STUB_GH_REPO:-}" \
+    STUB_SESSION_NAME="${STUB_SESSION_NAME:-}" STUB_TMUX_LOG="${STUB_TMUX_LOG:-}" STUB_DEAD_SESSIONS="${STUB_DEAD_SESSIONS:-}" STUB_PANE_GONE="${STUB_PANE_GONE:-}" STUB_HAS_SESSION_ERR="${STUB_HAS_SESSION_ERR:-}" GH_REPO="" STUB_GH_REPO="${STUB_GH_REPO:-}" \
     "$script" ${state_args[@]+"${state_args[@]}"} "$@" 2>"$TMP_ROOT/err")"
   RC=$?
   set -e
@@ -213,7 +215,7 @@ session_row() {
     "$(logged new-window)" "$(logged list-windows)" "$(logged session-read)" \
     "$("$WS" --state-dir "$state" get oversee "[.lanes[]? | select(.item == \"$2\") | .window] | first // \"none\"" 2>/dev/null || echo none)" \
     "$("$WS" --state-dir "$state" get oversee '.tmux.session // "none"' 2>/dev/null || echo none)" \
-    "$(awk '/^open-terminal: (tmux-session-|session-record-failed)/ { sub(/^open-terminal: /, ""); print; exit }' <<<"$ERR" | tr ' ' '+')"
+    "$(awk '/^open-terminal: (tmux-session-|session-record-failed|tmux-failed operation=has-session)/ { sub(/^open-terminal: /, ""); print; exit }' <<<"$ERR" | tr ' ' '+')"
 }
 assert_eq "$(RUN_SESSION=fleetx session_row sess-env CC-100)" \
   "rc=0 target==fleetx:1 list==fleetx pane= window=fleetx:CC-100 recorded=fleetx refused=" \
@@ -275,6 +277,20 @@ session_row sess-broken CC-117 >/dev/null
 assert_eq "$(RUN_SESSION=fleetx session_row sess-broken CC-118)" \
   "rc=1 target= list= pane= window=none recorded=none refused=session-record-failed+item=CC-118+state=oversee" \
   "a fleet state whose tmux entry cannot be read refuses as session-record-failed and opens nothing"
+# The write of a first launch's session: a state directory this launch can
+# read and not lock takes the same refusal.
+"$WS" --state-dir "$TMP_ROOT/sess-ro" init oversee >/dev/null
+chmod 555 "$TMP_ROOT/sess-ro"
+RUN_SESSION=fleetx session_row sess-ro CC-128 > "$TMP_ROOT/ro-row"
+chmod 755 "$TMP_ROOT/sess-ro"
+assert_eq "$(cat "$TMP_ROOT/ro-row")" \
+  "rc=1 target= list= pane= window=none recorded=none refused=session-record-failed+item=CC-128+state=oversee" \
+  "a fleet state whose tmux entry cannot be written refuses as session-record-failed and opens nothing"
+# A has-session that fails for another reason than an absent session, the
+# answer a restarted server gives a launch still carrying its $TMUX.
+assert_eq "$(RUN_SESSION=fleetx STUB_HAS_SESSION_ERR='no server running on /tmp/tmux-1000/default' session_row sess-noserver CC-127)" \
+  "rc=1 target= list= pane= window=none recorded=none refused=tmux-failed+operation=has-session+item=CC-127+detail=no+server+running+on+/tmp/tmux-1000/default" \
+  "a has-session that fails for another reason refuses as tmux-failed operation=has-session and opens nothing"
 
 echo "=== the model is read from the command the launch runs, as the harness reads it ==="
 # No --harness here, so no row judges these launches and the record is the only
@@ -613,7 +629,7 @@ assert_eq "rc=$RC harness=$(field "$(record CC-64)" harness)" 'rc=0 harness=null
 # dropped, and the recorded session ranked above ORCH_TMUX_SESSION.
 mutant unrefused '  [[ -n "$session" ]] || { ot_message tmux-session-unresolved "item=$1" "consulted=$consulted" "pane=$pane_read" >&2; return 1; }' '  :'
 assert_eq "$(OT="$TMP_ROOT/unrefused/scripts/open-terminal" RUN_SESSION= session_row unrefused-state CC-110)" \
-  "rc=1 target= list= pane= window=none recorded=none refused=" \
+  "rc=1 target= list= pane= window=none recorded=none refused=tmux-failed+operation=has-session+item=CC-110+detail=no+mouse+target" \
   "control: without the refusal a launch from no pane with no session is reported as some other tmux failure"
 mutant unchecked '  if ! err="$(tmux has-session -t "=$session" 2>&1)"; then' '  if false; then'
 assert_eq "$(OT="$TMP_ROOT/unchecked/scripts/open-terminal" RUN_SESSION=fleetz STUB_DEAD_SESSIONS=fleetz session_row unchecked-state CC-116)" \
@@ -645,7 +661,7 @@ mutant paneranked '  if [[ -z "$session" ]]; then' '  if [[ -z "$session" || "$F
 assert_eq "$(OT="$TMP_ROOT/paneranked/scripts/open-terminal" RUN_SESSION=fleetx RUN_PANE=%9 STUB_SESSION_NAME=other nofleet_row CC-121)" \
   "rc=0 target==other:1 pane=%9" \
   "control: with the pane ranked first a launch naming no fleet ignores ORCH_TMUX_SESSION"
-mutant silentread '      ot_message session-record-failed "item=$1" "state=oversee" >&2' '      :'
+mutant silentread '    ot_message session-record-failed "item=$title" "state=oversee" >&2' '    :'
 session_row silentread-state CC-122 >/dev/null
 "$WS" --state-dir "$TMP_ROOT/silentread-state" update oversee '.tmux = 42' >/dev/null
 assert_eq "$(OT="$TMP_ROOT/silentread/scripts/open-terminal" RUN_SESSION=fleetx session_row silentread-state CC-123)" \
@@ -655,6 +671,10 @@ mutant gonefailed '      pane_read=none' '      pane_read=read-failed'
 assert_eq "$(OT="$TMP_ROOT/gonefailed/scripts/open-terminal" RUN_SESSION= RUN_PANE=%9 STUB_PANE_GONE=1 session_row gonefailed-state CC-126)" \
   "rc=1 target= list= pane=%9 window=none recorded=none refused=tmux-session-unresolved+item=CC-126+consulted=ORCH_TMUX_SESSION,tmux.session,TMUX_PANE+pane=read-failed" \
   "control: with the empty answer read as a failure a pane tmux does not hold is reported as a failed read with no tmux line above"
+mutant silentcheck '      ot_message tmux-failed "operation=has-session" "item=$1" "detail=$err" >&2' '      :'
+assert_eq "$(OT="$TMP_ROOT/silentcheck/scripts/open-terminal" RUN_SESSION=fleetx STUB_HAS_SESSION_ERR='no server running on /tmp/tmux-1000/default' session_row silentcheck-state CC-129)" \
+  "rc=1 target= list= pane= window=none recorded=none refused=" \
+  "control: without the has-session tmux-failed line a failed check refuses with no key"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
