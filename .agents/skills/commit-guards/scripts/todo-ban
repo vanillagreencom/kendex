@@ -159,7 +159,7 @@ staged_lane() { # numbered violations on stdout, counted in GG_VIOLATIONS
     # The judgement is the family's single content rule, in lib: a NUL in the
     # blob's leading bytes, git's own test. A text file under a '-diff' rule
     # is still read, while an asset whose bytes happen to spell a marker is
-    # NAMED as unmeasured rather than decoded into a record of raw bytes.
+    # counted as unmeasured rather than decoded into a record of raw bytes.
     gg_read_blob "$dstsha" "$f" "work marker"
     if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
       gg_note_skip "$f" binary "binary content, not text"
@@ -184,7 +184,7 @@ staged_lane() { # numbered violations on stdout, counted in GG_VIOLATIONS
   done
 }
 
-# A carrier neither lane could decode is named as unmeasured and carried into
+# A carrier neither lane could decode is counted as unmeasured and carried into
 # the verdict, so an unread match cannot ride inside a plain OK.
 unmeasured() { # the qualifier for this run, empty when everything matched was read
   [ "$GG_WALK_SKIPPED" -eq 0 ] || printf '; %s matched path(s) not measured' "$GG_WALK_SKIPPED"

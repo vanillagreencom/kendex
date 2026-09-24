@@ -2,7 +2,7 @@
 
 What each check fails, its scopes and flags, the keys it reads, and the grammar a test pins. Invocation and hooks: [README.md](README.md); every key with its default: [SKILL.md](SKILL.md).
 
-Every check exits `0` clean, `1` violations, `2` usage, config or collection error. Scans read index content, and content decides what is read: an attributes rule cannot hide a path, and a symlink, a submodule gitlink, or a blob with a NUL in its leading bytes at a scanned path is named as unmeasured, never folded into a clean count. Excludes lists and baselines take the formats in `SKILL.md § Configuration`. A path-glob list replaces the default; an empty list is a config error; a list matching no tracked file is a clean pass.
+Every check exits `0` clean, `1` violations, `2` usage, config or collection error. Scans read index content, and content decides what is read: an attributes rule cannot hide a path, and a symlink, a submodule gitlink, or a blob with a NUL in its leading bytes at a scanned path is counted as unmeasured, never folded into a clean count. The verdict line carries that count and names no path, so a tree tracking hundreds of symlinks does not bury the lane that failed; md-refs alone names a path: the one a judged reference lands on, or every one under its `--verbose`. Excludes lists and baselines take the formats in `SKILL.md § Configuration`. A path-glob list replaces the default; an empty list is a config error; a list matching no tracked file is a clean pass.
 
 ## todo-ban
 
@@ -142,7 +142,7 @@ A source file carries the same citations outside markdown, and they are judged t
 - The `<path>.md § Heading` form in the COMMENT TEXT of any tracked file named by `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS`, and in the STRING LITERALS of a TOML file as well, a quoted key among them: a manifest's text is its content, where a program's string literals are its data. Comment text and string literals come from the comments lane's extractor, so the grammars and their limits are § comments'.
 - A decision ID there, but only where it carries a `§` heading, on the same rules.
 - Nothing else. Outside markdown a link, a bare path and a bare decision ID are prose, and only `§` points a reader at a place in a file. The heading runs to the end of the line and the prefix rule judges it, so prose may follow it.
-- One `git grep` over the index names the files this pass opens: a file whose bytes do not hold the section sign holds none of these citations, so it is counted without being read. A carrier whose content is binary is named as unmeasured, as the other lanes name theirs.
+- One `git grep` over the index names the files this pass opens: a file whose bytes do not hold the section sign holds none of these citations, so it is counted without being read. A carrier whose content is binary is counted as unmeasured, as the other lanes count theirs. md-refs breaks its count out by reason on the summary line (`skipped=503 symlink=503`) and names one skipped path anyway where a judged reference lands on it; `--verbose` names every one.
 
 `--staged` and `--all` check every tracked file named by `COMMIT_GUARDS_MD_REFS_PATHS` or `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS`, minus `COMMIT_GUARDS_MD_EXCLUDES`. `--base REF` and `--against REF` check that same set when the commit range carries any change, including a deletion, and nothing when it carries none; the dots are byte-ceiling's. With no flag, `COMMIT_GUARDS_MD_SCOPE=touched` checks the set when any change is staged, including deletions; `all` checks it unconditionally, and a range-scoped batch hands the lane `--all` under that setting rather than a range. Every scope that checks anything checks the whole set, so this includes references in unchanged documents. Callers and targets resolve against the index; a tracked path holding a newline is no link target.
 
@@ -155,7 +155,7 @@ An undefined name in a Python file fails as `py-names: undefined-name=<path>:<li
 - The lane looks for a tool only once a file is selected. With a file selected and neither tool installed, it refuses with `py-names: tool-missing=ruff,pyflakes`, exit 2, and names the remedy on the following lines. A consumer's CI installs ruff, or pyflakes for python3, in a step ahead of the commit-guards step, under no condition the commit-guards step does not also carry. A tool exit past 1, or output the lane cannot read, is exit 2.
 - Each blob is judged from a scratch copy under its own file name, so `__path__` stays defined in an `__init__.py`.
 
-The lane selects `*.py`, minus the render paths `.kendex-generated.json` lists. `--staged`, the default, judges every Python file the staged diff adds, modifies or type-changes, in full, from the index. `--base REF` and `--against REF` judge the same over a commit range, on byte-ceiling's dots. `--all` judges every tracked Python file. A symlink, a gitlink or a binary blob at a selected path is named as unmeasured. The batch hands the lane the scope it hands byte-ceiling: `--all`, `--staged`, or the range under every setting.
+The lane selects `*.py`, minus the render paths `.kendex-generated.json` lists. `--staged`, the default, judges every Python file the staged diff adds, modifies or type-changes, in full, from the index. `--base REF` and `--against REF` judge the same over a commit range, on byte-ceiling's dots. `--all` judges every tracked Python file. A symlink, a gitlink or a binary blob at a selected path is counted as unmeasured. The batch hands the lane the scope it hands byte-ceiling: `--all`, `--staged`, or the range under every setting.
 
 ## comments
 
@@ -163,7 +163,7 @@ A selected reference in the comment text of a scanned source file fails. `COMMIT
 
 Applied migrations are immutable first-party content; the exclusion policy is in [SKILL.md](SKILL.md) § Configuration.
 
-Optional audit lane: run `.agents/skills/commit-guards/scripts/commit-guards comments` directly when an audit is needed. Keep `comments` out of `COMMIT_GUARDS_CHECKS` so it does not block commits. Scopes are `todo-ban`'s: `--staged` judges only the lines the staged diff adds, comment state read from the whole staged blob; the default reads every tracked file `COMMIT_GUARDS_COMMENT_PATHS` names minus `COMMIT_GUARDS_COMMENT_EXCLUDES`, overridden by `--excludes FILE`. A matched path the table below gives no grammar is named as unmeasured.
+Optional audit lane: run `.agents/skills/commit-guards/scripts/commit-guards comments` directly when an audit is needed. Keep `comments` out of `COMMIT_GUARDS_CHECKS` so it does not block commits. Scopes are `todo-ban`'s: `--staged` judges only the lines the staged diff adds, comment state read from the whole staged blob; the default reads every tracked file `COMMIT_GUARDS_COMMENT_PATHS` names minus `COMMIT_GUARDS_COMMENT_EXCLUDES`, overridden by `--excludes FILE`. A matched path the table below gives no grammar is counted as unmeasured.
 
 Comment text is extracted per family, by extension or, for a path with none, by the interpreter its `#!` line names. The default path list is exactly these extensions, with `Makefile` and `Dockerfile` by basename at the root and below:
 

@@ -4,7 +4,7 @@
 # and glued occurrences and the seven-equals separator do not, an excludes
 # row with a reason carves a path out and the list resolves through the
 # setting and the flag, the check's own source never trips it, and a
-# carrier the sniff skips is named and qualifies the verdict. Two tables:
+# carrier the sniff skips is counted and qualifies the verdict. Two tables:
 # one file of CONTENT judged, and the runs over a built repository. A row
 # runs the scan once and pins the exit status with every line printed, so
 # the hit, its line, the remedy, the count, the excludes list named and
@@ -73,7 +73,6 @@ put() { mkdir -p "$R/$(dirname "$1")"; printf '%b' "$2" >"$R/$1"; git -C "$R" ad
 EXCL='tools/conflict-markers-excludes'
 ERR="conflict-markers: "
 hit() { printf 'conflict-markers: match=conflict marker:%s:%s:%s' "$1" "$2" "$3"; } # PATH LINE TEXT
-skip() { printf 'conflict-markers: unmeasured=%s:binary' "$1"; } # PATH
 clean() { printf 'conflict-markers: result=0:%s:%s' "${1:-0}" "${2:-$EXCL}"; } # [UNMEASURED] [EXCLUDES]
 failed() { printf 'conflict-markers: result=%s:%s:%s' "$1" "${3:-0}" "${2:-$EXCL}"; } # N [EXCLUDES] [UNMEASURED]
 
@@ -140,7 +139,7 @@ run_rows \
 assert_eq "--help emits its usage record and exits 0" "rc=0 conflict-markers: usage=conflict-markers" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
 assert_eq "-h is --help" "$(run '' --help)" "$(run '' -h)"
 
-echo "=== the check's own source does not trip it; a carrier the sniff skips is named and qualifies the verdict ==="
+echo "=== the check's own source does not trip it; a carrier the sniff skips is counted and qualifies the verdict ==="
 fx_self() { repo "$1"; mkdir -p "$R/scripts"; cp "$CM" "$R/scripts/conflict-markers"; git -C "$R" add -A; } # NAME — the shipped script, tracked
 fx_self_planted() { fx_self self-planted; put planted.txt "$OPEN HEAD\n"; }
 # An asset whose bytes spell the open marker at column 0 behind a NUL in
@@ -156,8 +155,8 @@ assert_eq "premise: the self fixture tracks the shipped script" "scripts/conflic
 run_rows \
   "the shipped script, tracked, scans clean: its patterns are interval-built|fx_self self|||rc=0 $(clean)" \
   "control: a planted marker fails while the script stays unnamed|fx_self_planted|||rc=1 $(hit planted.txt 1 "$OPEN HEAD");$(failed 1)" \
-  "a clean verdict names the skipped carrier and says how many went unmeasured|asset asset|||rc=0 $(skip asset.png);$(clean 1)" \
-  "a violation verdict carries the same qualifier, the marker elsewhere deciding the exit|fx_asset_planted|||rc=1 $(skip asset.png);$(hit planted.txt 1 "$CLOSE theirs");$(failed 1 "$EXCL" 1)" \
+  "a clean verdict says how many went unmeasured|asset asset|||rc=0 $(clean 1)" \
+  "a violation verdict carries the same qualifier, the marker elsewhere deciding the exit|fx_asset_planted|||rc=1 $(hit planted.txt 1 "$CLOSE theirs");$(failed 1 "$EXCL" 1)" \
   "control: the same bytes without a NUL are read, fire on their line, and nothing goes unmeasured|fx_asset_text|||rc=1 $(hit asset.png 4 "$OPEN HEAD");$(failed 1)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

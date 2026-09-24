@@ -245,7 +245,7 @@ gg_grep_guard() { # STATUS ERRFILE CONTEXT — returns only when the scan is com
 # matching blob binary and drop it with no status and no stderr — a whole
 # extension reading as clean. What forcing text lets through is judged on
 # content instead: a listed blob carrying a NUL in its leading bytes is a
-# genuine asset and is NAMED as unmeasured, so it never reaches a violation
+# genuine asset and is counted as unmeasured, so it never reaches a violation
 # record as raw bytes and never rides inside a clean total either. Only a path
 # the listing NAMED is read, so the sniff costs one `cat-file` per matching
 # file, never one per tracked file. That is the same answer todo-ban's commit

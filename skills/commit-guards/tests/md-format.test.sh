@@ -70,7 +70,6 @@ H_BEFORE="heading-before"
 H_AFTER="heading-after"
 F_AFTER="fence-after"
 viol() { printf 'md-format: %s=%s:%s' "$3" "$1" "$2"; } # PATH LINE RULE
-skip() { printf 'md-format: unmeasured=%s:%s' "$1" "$2"; } # PATH CODE
 unmeasured() { printf '%s' "$1"; } # N
 clean() { printf 'md-format: summary=violations=0 files=%s scope=%s skipped=%s' "$1" "${2:-all}" "${3:-0}"; } # N [SCOPE] [SKIPPED]
 failed() { printf 'md-format: summary=violations=%s files=%s scope=%s skipped=%s' "$1" "$2" "${3:-all}" "${4:-0}"; } # VIOLATIONS N [SCOPE] [SKIPPED]
@@ -229,9 +228,9 @@ echo "=== a selected path that is not markdown is named, never counted clean ===
 fx_symlink() { repo "$1"; put notes/target.md "$WRAPPED"; mkdir -p "$R/docs"; ln -s ../notes/target.md "$R/docs/link.md"; git -C "$R" add -A; }
 fx_symlink_and_binary() { fx_symlink symlink-binary; put docs/bin.md 'lead\0000Wrapped\ntext.\n'; }
 run_rows \
-  "a symlink at a selected path is named as unmeasured and counted apart, with no clean count|fx_symlink symlink-all|COMMIT_GUARDS_MD_PATHS=docs/*.md|--all|rc=0 $(skip docs/link.md symlink);$NONE$(unmeasured 1)" \
-  "the staged scope names the same link|fx_symlink symlink-staged|COMMIT_GUARDS_MD_PATHS=docs/*.md|--staged|rc=0 $(skip docs/link.md symlink);$NONE$(unmeasured 1)" \
-  "a binary blob at a selected path is named as unmeasured, in index order beside the link|fx_symlink_and_binary|COMMIT_GUARDS_MD_PATHS=docs/*.md|--all|rc=0 $(skip docs/bin.md binary);$(skip docs/link.md symlink);$NONE$(unmeasured 2)"
+  "a symlink at a selected path is counted apart, with no clean count and no path named|fx_symlink symlink-all|COMMIT_GUARDS_MD_PATHS=docs/*.md|--all|rc=0 $NONE$(unmeasured 1)" \
+  "the staged scope counts the same link|fx_symlink symlink-staged|COMMIT_GUARDS_MD_PATHS=docs/*.md|--staged|rc=0 $NONE$(unmeasured 1)" \
+  "a binary blob at a selected path is counted too, in index order beside the link|fx_symlink_and_binary|COMMIT_GUARDS_MD_PATHS=docs/*.md|--all|rc=0 $NONE$(unmeasured 2)"
 
 echo "=== the skill's own shipped markdown is in the format ==="
 fx_shipped() { # NAME — the four shipped documents

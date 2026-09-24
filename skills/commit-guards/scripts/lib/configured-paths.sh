@@ -143,8 +143,8 @@ gg_matches_path_glob() { # PATH — 0 when some configured glob matches the full
 # git calls a blob binary when a NUL byte falls in its leading bytes, and the
 # --cached scans skip such a blob — `git grep -I` drops it with no status and
 # no stderr. A lane walking configured paths makes the same judgement here so
-# it can NAME the path as unmeasured, rather than counting an unread blob into
-# a clean total.
+# it can count the path as unmeasured, rather than fold an unread blob into a
+# clean total.
 GG_BINARY_SAMPLE=8000
 gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
   local total stripped
@@ -161,8 +161,8 @@ gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
 # not the content the lane measures — a symlink, a submodule gitlink, and a
 # blob git would call binary. Each of those is a path a `--cached` scan drops
 # with NO status and NO stderr, so a lane that let one through would print a
-# clean verdict over content it never read. Each is NAMED here and counted
-# apart from the clean total, in GG_WALK_SKIPPED.
+# clean verdict over content it never read. Each is counted here as
+# unmeasured, apart from the clean total, in GG_WALK_SKIPPED.
 #
 # Needs gg_tmpdir and the configured globs already loaded, and the excludes
 # list where the lane has one — an empty list excludes nothing. ON_FILE runs
@@ -172,14 +172,19 @@ gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
 # The tally is of PATHS, which is what the verdict line claims — and one path
 # reaches the sniff once per scan that lists it, so a check running several
 # lanes over overlapping pathspecs meets the same unreadable blob several
-# times. The paths already named are kept in $GG_TMP/skipped.z, NUL-delimited
-# so a path holding any byte but NUL round-trips exactly; a repeat is neither
-# printed again nor counted again, and the reason it carries is the first
+# times. $GG_TMP/skipped.z is the per-walk dedupe record, NUL-delimited so
+# a path holding any byte but NUL round-trips exactly; a repeat is neither
+# recorded again nor counted again, and the reason it carries is the first
 # one it was given. The file lives beside the counter and is emptied wherever
 # the counter is reset, so the two always describe the same run.
 GG_WALK_SKIPPED=0
 
-gg_skip_seen() { # PATH — 0 when this path was already named unmeasured
+# A passing verdict carries the skipped count, not a line per path, which
+# would bury the lane that failed; md-refs' --verbose sets GG_VERBOSE to print
+# them. $GG_TMP/skips.z keeps every skip for the run, never emptied per walk.
+GG_VERBOSE=0
+
+gg_skip_seen() { # PATH — 0 when this walk already counted this path
   local seen
   [ -s "$GG_TMP/skipped.z" ] || return 1
   while IFS= read -r -d '' seen; do
@@ -195,7 +200,8 @@ gg_note_skip() { # PATH CODE EXPLANATION — a matched path this scan cannot mea
     return 0
   fi
   printf '%s\0' "$1" >>"$GG_TMP/skipped.z"
-  gg_message unmeasured "$1:$2" "$3"
+  printf '%s\0%s\0%s\0' "$1" "$2" "$3" >>"$GG_TMP/skips.z"
+  [ "$GG_VERBOSE" -eq 0 ] || gg_message unmeasured "$1:$2" "$3"
   GG_WALK_SKIPPED=$((GG_WALK_SKIPPED + 1))
 }
 

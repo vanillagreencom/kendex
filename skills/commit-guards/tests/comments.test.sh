@@ -85,8 +85,7 @@ ok_idx() { printf 'comments: summary=violations=0 files=%s scope=index skipped=0
 idx() { printf 'comments: summary=violations=%s files=%s scope=index skipped=0;comments: excludes=%s' "$1" "$2" "${3:-$EXCL}"; } # HITS FILES [EXCLUDES]
 ok_stg() { printf 'comments: summary=violations=0 files=%s scope=staged skipped=%s' "$1" "${2:-0}"; } # FILES [SKIPPED]
 stg() { printf 'comments: summary=violations=%s files=1 scope=staged skipped=0;comments: excludes=%s' "$1" "${2:-$EXCL}"; } # HITS [EXCLUDES]
-skip() { printf 'comments: unmeasured=%s:%s' "$1" "$2"; } # PATH CODE
-extraction() { printf 'comments: extraction=%s:%s;comments: unmeasured=%s:extraction' "$1" "$2" "$1"; } # PATH REFUSAL
+extraction() { printf 'comments: extraction=%s:%s' "$1" "$2"; } # PATH REFUSAL
 unread() { printf '%s' "$1"; } # COUNT
 incomplete() { printf 'comments: incomplete=files=%s violations=%s scanned=%s skipped=' "$1" "$2" "$3"; } # UNSCANNED HITS FILES
 ERR="comments: "
@@ -278,7 +277,7 @@ echo "=== an unextractable file is named, the scan goes on, and the verdict is i
 # The extractor's reason is its stderr with newlines turned to spaces, so
 # the named line ends in one; the unread count rides on the incomplete
 # verdict as on every other.
-# A path with no grammar, a symlink and a binary blob are named as unmeasured
+# A path with no grammar, a symlink and a binary blob are counted as unmeasured
 # and never counted clean; a shebang read that fails is a collection error.
 fx_unclosed_ts() { repo unclosed-ts; put a.ts "const re = /\`/g;\n// $W\n"; put b.rs "// $W\n"; stage; }
 fx_shim_head() {
@@ -299,15 +298,15 @@ run_files \
   "an extensionless file the list names is judged under the grammar its shebang picks|run|#!/usr/bin/env bash\n# $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=1 $(hit "$ID" run 2 " $W");$(idx 1 1)" \
   "a python shebang picks the python grammar, where a backslash escapes inside single quotes|run|#!/usr/bin/env python3\ns = 'don\\\\'t' # $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=1 $(hit "$ID" run 2 " $W");$(idx 1 1)" \
   "a node shebang picks the C family with template literals|run|#!/usr/bin/env node\n// $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=1 $(hit "$ID" run 2 " $W");$(idx 1 1)" \
-  "a first line naming a shell without #! is not a shebang|run|# start with bash\n# $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=0 $(skip run grammar);comments: unmeasured-count=$(unread 1)" \
-  "the same file with no shebang is named as unmeasured, and nothing measurable was scanned|run|# $W\necho hi\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=0 $(skip run grammar);comments: unmeasured-count=$(unread 1)" \
-  "an extension the table does not carry is named, not guessed at|notes.txt|# $W\n|COMMIT_GUARDS_COMMENT_PATHS=*.txt||rc=0 $(skip notes.txt grammar);comments: unmeasured-count=$(unread 1)"
+  "a first line naming a shell without #! is not a shebang|run|# start with bash\n# $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=0 comments: unmeasured-count=$(unread 1)" \
+  "the same file with no shebang is counted as unmeasured, and nothing measurable was scanned|run|# $W\necho hi\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=0 comments: unmeasured-count=$(unread 1)" \
+  "an extension the table does not carry is counted, not guessed at|notes.txt|# $W\n|COMMIT_GUARDS_COMMENT_PATHS=*.txt||rc=0 comments: unmeasured-count=$(unread 1)"
 run_rows \
   "a regex literal holding a backtick opens a template literal that never closes (stated limit), and the later file's finding is kept|fx_unclosed_ts|||rc=2 $(extraction a.ts unclosed-string:1);$(hit "$ID" b.rs 1 " $W");$(incomplete 1 1 1)$(unread 1)" \
   "a shebang read failure puts the stable record before head's cause|fx_shim_head|PATH=$TMP/shim-head/shim:$PATH,COMMIT_GUARDS_COMMENT_PATHS=run||rc=2 ${ERR}shebang-read=run;dependency-order-control: shebang-read" \
-  "a symlink at a source path is named as unmeasured|fx_link|||rc=0 $(skip link.rs symlink);comments: unmeasured-count=$(unread 1)" \
-  "a binary blob at a source path is named as unmeasured|fx_blob|||rc=0 $(skip blob.rs binary);comments: unmeasured-count=$(unread 1)" \
-  "both together are two unmeasured paths and no clean file count|fx_link_blob|||rc=0 $(skip blob.rs binary);$(skip link.rs symlink);comments: unmeasured-count=$(unread 2)"
+  "a symlink at a source path is counted, with no path named|fx_link|||rc=0 comments: unmeasured-count=$(unread 1)" \
+  "a binary blob at a source path is counted as unmeasured|fx_blob|||rc=0 comments: unmeasured-count=$(unread 1)" \
+  "both together are two unmeasured paths and no clean file count|fx_link_blob|||rc=0 comments: unmeasured-count=$(unread 2)"
 
 SECTION=scope
 echo "=== scope: each default extension is scanned under its family, markdown and JSON are not ==="
@@ -334,7 +333,7 @@ fx_flag_unknown() { repo flag-unknown; put a.rs "// clean\n"; stage; }
 fx_flag_bare() { repo flag-bare; put a.rs "// clean\n"; stage; }
 run_rows \
   "markdown and JSON are not this lane's: no tracked file matches, and the verdict names the list|fx_not_ours|||rc=0 comments: no-match=$COMMENT_PATHS" \
-  "the override replaces the list: a.rs is no longer scanned, the named file is unmeasured|fx_override|COMMIT_GUARDS_COMMENT_PATHS=*.txt||rc=0 $(skip notes.txt grammar);comments: unmeasured-count=$(unread 1)" \
+  "the override replaces the list: a.rs is no longer scanned, the listed file is unmeasured|fx_override|COMMIT_GUARDS_COMMENT_PATHS=*.txt||rc=0 comments: unmeasured-count=$(unread 1)" \
   "a list matching no tracked file passes, naming the list|fx_override_none|COMMIT_GUARDS_COMMENT_PATHS=no/such/*.rs||rc=0 comments: no-match=no/such/*.rs" \
   "an empty path list is a config error naming how to switch the check off|fx_override_empty|COMMIT_GUARDS_COMMENT_PATHS= ||rc=2 ${ERR}glob-empty=COMMIT_GUARDS_COMMENT_PATHS" \
   "an unknown argument is a config error quoting it|fx_flag_unknown||--no-such-flag|rc=2 ${ERR}argument=--no-such-flag" \
@@ -392,7 +391,7 @@ run_rows \
   "on a repository's first commit the whole staged tree reads as added|fx_stg_first||--staged|rc=1 $(hit "$ID" a.rs 1 " $W");$(stg 1)" \
   "control: a clean first commit passes, not exit 2 for want of a HEAD|fx_stg_first_clean||--staged|rc=0 $(ok_stg 1)" \
   "--staged honours the path list: markdown is not read|fx_stg_md||--staged|rc=0 $(ok_stg 0)" \
-  "--staged names a path with no grammar as unmeasured, never judged|fx_stg_nogrammar|COMMIT_GUARDS_COMMENT_PATHS=run|--staged|rc=0 $(skip run grammar);$(ok_stg 0 1)" \
+  "--staged counts a path with no grammar as unmeasured, never judged|fx_stg_nogrammar|COMMIT_GUARDS_COMMENT_PATHS=run|--staged|rc=0 $(ok_stg 0 1)" \
   "--staged honours the exclusion list|fx_stg_vendor||--staged|rc=0 $(ok_stg 0)" \
   "control: without the row the staged vendored comment fails|fx_stg_vendor_none||--staged|rc=1 $(hit "$ID" vendor/v.rs 1 " $W");$(stg 1)"
 

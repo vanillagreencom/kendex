@@ -104,7 +104,7 @@ PATHS_DEFAULT="AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md w
 NOTHING_STAGED="md-refs: staged-count=0"
 dead() { printf 'md-refs: %s=%s:%s:%s' "${3%%=*}" "$1" "$2" "${3#*=}"; } # PATH LINE RULE=VALUE
 skip() { printf 'md-refs: unmeasured=%s:%s' "$1" "$2"; } # PATH CODE
-unmeasured() { printf '%s' "$1"; } # N
+unmeasured() { printf '%s' "$1${2:+ $2}"; } # N [REASON-COUNTS]
 clean() { printf 'md-refs: summary=violations=0 references=%s markdown=%s sources=%s decisions=%s skipped=%s' "$1" "$2" "${3:-0}" "${4:-$DEC_NO}" "${5:-0}"; } # JUDGED MD [SRC] [DECISION] [SKIPPED]
 failed() { printf 'md-refs: summary=violations=%s references=%s markdown=%s sources=%s decisions=%s skipped=%s' "$1" "$2" "$3" "${4:-0}" "${5:-$DEC_NO}" "${6:-0}"; } # DEAD JUDGED MD [SRC] [DECISION] [SKIPPED]
 nomatch() { printf 'md-refs: no-match=%s;%s' "$1" "$2"; } # MD-GLOBS SRC-GLOBS
@@ -302,8 +302,15 @@ fx_no_scheme() { world_src no-scheme; put scripts/link.sh "$SH"'# See AGENTS.md 
 # A block comment that never closes, in a file holding a section sign.
 fx_unclosed() { world_src "$1"; put src/broken.c '/* AGENTS.md \302\247 Gone\nint main(void) { return 0; }\n'; }
 fx_symlink_src() { world_src symlink-src; put target.sh "$SH"'# AGENTS.md \302\247 Gone\ntrue\n'; ln -s target.sh "$R/link.sh"; git -C "$R" add link.sh; }
+# A tree of tracked symlinks at source paths, the shape a passing run used to
+# print one line each for, and the same tree with a document linking to one.
+fx_symlink_tree() { world_src "$1"; put target.sh "$SH"'true\n'; ln -s target.sh "$R/a.sh"; ln -s target.sh "$R/b.sh"; ln -s target.sh "$R/c.sh"; git -C "$R" add -A; }
+fx_symlink_linked() { fx_symlink_tree "$1"; put AGENTS.md '# A\n\n## Rules\n\n[helper](a.sh)\n'; }
+fx_symlink_cited() { fx_symlink_tree symlink-cited; put AGENTS.md '# A\n\n## Rules\n\n`./a.sh::target.sh`\n'; }
+# A decision record tracked as a symlink, at a document path, cited by ID.
+fx_dec_symlink() { repo dec-symlink; put docs/decisions/real.md '# D008\n'; ln -s real.md "$R/docs/decisions/D008-scope.md"; put AGENTS.md '# A\n\nSee D008.\n'; }
 fx_newline_src() { world_src newline-src; put "one"$'\n'"two.sh" "$SH"'# AGENTS.md \302\247 Gone\ntrue\n'; }
-UNCLOSED="md-refs: extraction=src/broken.c:unclosed-block:1;$(skip src/broken.c extraction);md-refs: incomplete=files=1 skipped=1"
+UNCLOSED="md-refs: extraction=src/broken.c:unclosed-block:1;md-refs: incomplete=files=1 skipped=$(unmeasured 1 extraction=1)"
 run_rows \
   "a citation in comment text resolves|fx_comment_ok comment-ok||--all|rc=0 $(clean 1 2 1)" \
   "a comment citing a heading the target does not have is dead, the heading read to the end of the line|fx_comment_dead||--all|rc=1 $(dead bin/helper.sh 2 "$(noprefix 'docs/architecture/plugins.md § Gone, not this file.' docs/architecture/plugins.md 'Gone, not this file.')");$(failed 1 1 2 1)" \
@@ -315,7 +322,7 @@ run_rows \
   "a decision citing a heading it does not have is dead|fx_dec_dead||--all|rc=1 $(dead scripts/smoke.sh 2 "$(noprefix 'D008 § Reach.' docs/decisions/D008-scope.md 'Reach.')");$(failed 1 1 2 1 "$DEC_YES")" \
   "a bare decision ID in a comment is prose, not a citation, beside the § one it is|fx_dec_bare||--all|rc=0 $(clean 1 2 1 "$DEC_YES")" \
   "a text file the attributes mark undiffable is still read|fx_undiffable||--all|rc=1 $(dead icon.svg 1 "$(noprefix 'AGENTS.md § Gone' AGENTS.md Gone)");$(failed 1 1 2 1)" \
-  "a binary blob at a source path is named, never counted clean|fx_binary||--all|rc=0 $(skip blob.h binary);$(clean 0 2 0 "$DEC_NO" "$(unmeasured 1)")" \
+  "a binary blob at a source path is counted by reason, never counted clean|fx_binary||--all|rc=0 $(clean 0 2 0 "$DEC_NO" "$(unmeasured 1 binary=1)")" \
   "a URL is prose, not a citation into this repository|fx_url||--all|rc=0 $(clean 0 2 1)" \
   "a decision ID inside a URL is prose too, with the directory tracked|fx_url_id||--all|rc=0 $(clean 0 2 1 "$DEC_YES")" \
   "a path in a URL query is prose wherever it sits in the URL|fx_url_query||--all|rc=0 $(clean 0 2 1)" \
@@ -323,8 +330,14 @@ run_rows \
   "control: the same path without the scheme is judged|fx_no_scheme||--all|rc=1 $(dead scripts/link.sh 2 "$(noprefix 'AGENTS.md § Gone for more.' AGENTS.md 'Gone for more.')");$(failed 1 1 2 1)" \
   "a carrier the extractor cannot read is exit 2, never a clean verdict|fx_unclosed unclosed||--all|rc=2 $UNCLOSED" \
   "an unreadable carrier beats the empty-set fast path|fx_unclosed unclosed-empty|COMMIT_GUARDS_MD_REFS_PATHS=no/such/*.md|--all|rc=2 $UNCLOSED" \
-  "a symlink at a source path is named, and its target still judged|fx_symlink_src||--all|rc=1 $(skip link.sh symlink);$(dead target.sh 2 "$(noprefix 'AGENTS.md § Gone' AGENTS.md Gone)");$(failed 1 1 2 1 "$DEC_NO" "$(unmeasured 1)")" \
-  "a path holding a newline is named, never quietly passed|fx_newline_src||--all|rc=0 $(skip "one?two.sh" path-newline);$(clean 0 2 0 "$DEC_NO" "$(unmeasured 1)")" \
+  "a symlink at a source path is counted by reason, and its target still judged|fx_symlink_src||--all|rc=1 $(dead target.sh 2 "$(noprefix 'AGENTS.md § Gone' AGENTS.md Gone)");$(failed 1 1 2 1 "$DEC_NO" "$(unmeasured 1 symlink=1)")" \
+  "a path holding a newline is counted, never quietly passed|fx_newline_src||--all|rc=0 $(clean 0 2 0 "$DEC_NO" "$(unmeasured 1 path-newline=1)")" \
+  "a passing run over a tree of tracked symlinks names no path and carries the count|fx_symlink_tree symlink-tree||--all|rc=0 $(clean 0 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
+  "control: the same tree under --verbose names every one|fx_symlink_tree symlink-verbose||--all --verbose|rc=0 $(skip a.sh symlink);$(skip b.sh symlink);$(skip c.sh symlink);$(clean 0 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
+  "a reference landing on a skipped source names that path and no other|fx_symlink_linked symlink-linked||--all|rc=0 $(skip a.sh symlink);$(clean 1 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
+  "a citation landing on a skipped source names that path|fx_symlink_cited||--all|rc=0 $(skip a.sh symlink);$(clean 1 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
+  "--verbose names a skipped path a reference lands on once|fx_symlink_linked symlink-linked-verbose||--all --verbose|rc=0 $(skip a.sh symlink);$(skip b.sh symlink);$(skip c.sh symlink);$(clean 1 2 1 "$DEC_NO" "$(unmeasured 3 symlink=3)")" \
+  "a decision ID landing on a skipped record names it|fx_dec_symlink|COMMIT_GUARDS_MD_REFS_PATHS=AGENTS.md docs/decisions/*.md|--all|rc=0 $(skip docs/decisions/D008-scope.md symlink);$(clean 1 2 0 "$DEC_YES" "$(unmeasured 1 symlink=1)")" \
   "an empty source path list is refused|fx_comment_ok empty-list|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=|--all|rc=2 ${ERR}glob-empty=COMMIT_GUARDS_MD_REFS_SOURCE_PATHS"
 
 echo "=== scopes: touched, --staged, --all ==="
@@ -366,7 +379,7 @@ fx_symlink_doc() { repo symlink-doc; put notes/target.md 'clean\n'; ln -s notes/
 run_rows \
   "an unterminated fence is exit 2, naming the line|fx_open_fence open-fence||--all|rc=2 ${ERR}fence-unclosed=AGENTS.md:3" \
   "an AWK exit without a refusal record reports its status before the dependency cause|fx_awk_exit awk-exit|PATH=$TMP/awk-exit/shim:$PATH|--all|rc=2 ${ERR}block-exit=AGENTS.md:7;dependency-order-control: block-exit" \
-  "a symlink at a scoped path is named as unmeasured|fx_symlink_doc||--all|rc=0 $(skip AGENTS.md symlink);md-refs: unmeasured-count=$(unmeasured 1)" \
+  "a symlink at a scoped path is counted by reason, with no path named|fx_symlink_doc||--all|rc=0 md-refs: unmeasured-count=$(unmeasured 1 symlink=1)" \
   "--staged and --all are exclusive|fx_open_fence both-flags||--staged --all|rc=2 ${ERR}scope-flags=--staged,--all" \
   "a range beside --all is refused before the range trigger can exit on an empty range|fx_committed_ref range-and-all||--all --base HEAD|rc=2 ${ERR}scope-flags=--all,--base HEAD" \
   "two range flags name two scopes, so the contradiction is refused|fx_committed_ref two-ranges||--base HEAD --against HEAD|rc=2 ${ERR}scope-flags=--base HEAD,--against HEAD" \
