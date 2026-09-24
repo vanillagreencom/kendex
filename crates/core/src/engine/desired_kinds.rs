@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use super::desired::{Artifact, Desired, DesiredState, ItemCtx};
+use super::desired::{Artifact, Desired, DesiredState, ItemCtx, Landing};
 use super::targets::{
     HookFormat, HookTarget, advisory_notice, disabled_name, hook_target, plugin_settings,
 };
@@ -32,7 +32,7 @@ pub(super) fn declared(
         source_name: ctx.decl.source.clone(),
         provenance: ctx.provenance.to_owned(),
         source_commit: ctx.source_commit.map(str::to_owned),
-        recorded_fork: ctx.recorded_fork(kind),
+        recorded_fork: ctx.manifest.recorded_fork(kind, ctx.name),
         hash: installation_hash(
             ctx.sealed,
             ctx.item_path,
@@ -66,7 +66,8 @@ pub(super) fn declared(
 ///   (`DesiredState::unreadable`);
 /// - declared for other tools: the manifest's `harnesses` on its
 ///   declaration leave the tool out (`expansion::target_harnesses`);
-/// - withheld: a hook it requires will not run there
+/// - withheld: a hook it runs with will not run there — one it requires,
+///   or every requirer a derived companion exists for
 ///   (`DesiredState::withheld`, spread by `deps::withhold_requirers`);
 /// - its own harnesses line leaves the tool out (`HookSpec::applies_to`);
 /// - undeliverable: `hook::delivery` answers `NotInstallable`, which is an
@@ -82,11 +83,15 @@ pub(super) fn declared(
 /// hold wherever the item is asked about, including the tools a set
 /// carries it to past its own declaration: the person's list is the
 /// answer for the planner as for the walk. Not offered by the catalog is
-/// decided before the question is asked, by
-/// `find_item` for the planner and `deps::resolve` for the walk, and a
-/// source that is pending, disabled or unreadable, or whose own manifest
-/// hides its content, stops the requirer with the companion, since both
-/// come from one catalog. Outside this answer, and so outside the walk's
+/// decided before the question is asked, by `find_item` for the planner
+/// and `deps::resolve` and `deps::companion` for the walk, and a source
+/// that is pending, disabled or unreadable, or whose own manifest hides
+/// its content, stops the requirer with the companion. The question is
+/// asked about the declaration the plan writes — `provenance` names its
+/// catalog, and the header is that catalog's — so where a manifest names
+/// the companion from another catalog than the requirer's, the walk reads
+/// the copy the planner will write and never the requirer's own. Outside
+/// this answer, and so outside the walk's
 /// view, are what is decided over the whole expansion or on disk after it:
 /// a name collision on a tool (`catalog::Collisions`), a rendering refusal
 /// (`DesiredState::refused`), a Gemini, Copilot or Antigravity
@@ -105,9 +110,10 @@ pub(super) enum NotWritten {
     RevConflict,
 }
 
-/// [`NotWritten`] for one hook on one tool. `header` is the hook's own
-/// header as the catalog holds it: `Ok(None)` for a kind with no header, or
-/// why it will not read.
+/// [`NotWritten`] for one hook on one tool, under the declaration the plan
+/// writes it from: `provenance` is that declaration's catalog and `header`
+/// the hook's own header as that catalog holds it — `Ok(None)` for a kind
+/// with no header, or why it will not read.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn not_written(
     env: &Env,
@@ -116,6 +122,7 @@ pub(super) fn not_written(
     state: &DesiredState,
     kind: ItemKind,
     name: &str,
+    provenance: &str,
     header: std::result::Result<Option<&HookSpec>, &str>,
     harness: HarnessId,
 ) -> Option<NotWritten> {
@@ -136,7 +143,13 @@ pub(super) fn not_written(
     {
         return Some(NotWritten::OtherTools);
     }
-    if state.withheld.contains(&(kind, name.to_owned(), harness)) {
+    let landing = Landing {
+        kind,
+        name: name.to_owned(),
+        harness,
+        provenance: provenance.to_owned(),
+    };
+    if state.withheld.contains(&landing) {
         return Some(NotWritten::Withheld);
     }
     if let Some(own) = header {
@@ -179,6 +192,7 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
             state,
             ItemKind::Hook,
             ctx.name,
+            ctx.provenance,
             Ok(Some(&hook)),
             harness,
         ) {

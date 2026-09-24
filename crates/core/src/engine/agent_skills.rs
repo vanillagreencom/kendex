@@ -48,7 +48,7 @@ pub(super) fn assigned_skills(
         ctx.scope_skills.names(),
         recorded.as_deref().filter(|_| !held),
     );
-    if ctx.recorded_fork(ItemKind::Agent)
+    if ctx.manifest.recorded_fork(ItemKind::Agent, ctx.name)
         && let Some(refusal) = skills.refusal(ctx.name, ctx.scope_skills.names())
     {
         return Err(refusal);

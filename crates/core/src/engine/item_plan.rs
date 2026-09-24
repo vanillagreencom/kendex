@@ -58,21 +58,10 @@ pub(super) fn plan_item(
     let row = row_for(item, scope);
     let existing = lock.entries.get(&item.key);
 
-    // Invariant 4: a recorded source is never silently rebound. The one
-    // sanctioned rebind is a recorded fork — remote to local, written into
-    // the manifest by the fork operation the user confirmed.
     if let Some(entry) = existing
-        && entry.source_repo != item.provenance
-        && entry.source_repo != "local"
-        && !(item.provenance == crate::manifest::LOCAL_SOURCE_NAME && item.recorded_fork)
+        && let Some(detail) = rebound(entry, &item.provenance, item.recorded_fork)
     {
-        drift.push(row(
-            DriftState::Conflict,
-            format!(
-                "installed from {} but now set to come from {} — remove it first",
-                entry.source_repo, item.provenance
-            ),
-        ));
+        drift.push(row(DriftState::Conflict, detail));
         new_lock.entries.insert(item.key.clone(), entry.clone());
         return Ok(());
     }
@@ -175,6 +164,26 @@ pub(super) fn plan_item(
         .entries
         .insert(item.key.clone(), record(item, installed_at));
     Ok(())
+}
+
+/// Invariant 4: a recorded source is never silently rebound. The one
+/// sanctioned rebind is a recorded fork — remote to local, written into
+/// the manifest by the fork operation the user confirmed. The conflict
+/// row's detail where the record is not the declaration's, and `None`
+/// where the declaration may write over the record. The one place that
+/// tells a recorded installation from the declaration now planned, asked
+/// by every pass that meets a record under a declaration's key.
+pub(super) fn rebound(entry: &LockEntry, provenance: &str, recorded_fork: bool) -> Option<String> {
+    let sanctioned = entry.source_repo == provenance
+        || entry.source_repo == crate::manifest::LOCAL_SOURCE_NAME
+        || (provenance == crate::manifest::LOCAL_SOURCE_NAME && recorded_fork);
+    if sanctioned {
+        return None;
+    }
+    Some(format!(
+        "installed from {} but now set to come from {provenance} — remove it first",
+        entry.source_repo
+    ))
 }
 
 /// What this pass records about the installation it just planned.

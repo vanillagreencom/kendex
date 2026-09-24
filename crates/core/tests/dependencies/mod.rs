@@ -375,3 +375,4 @@ fn a_reference_that_does_not_reach_every_tool_claims_no_co_install() {
 
 mod hooks;
 mod more;
+mod two_catalogs;

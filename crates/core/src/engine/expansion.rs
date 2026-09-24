@@ -249,15 +249,21 @@ impl Expansion {
     }
 }
 
+/// A catalog open for reading: the sealed root, its layout tables, the
+/// bare-name index its dependency lookups share, built once per catalog,
+/// and the provenance an installation from it is recorded under.
+pub(super) struct OpenCatalog {
+    pub(super) sealed: SealedSource,
+    pub(super) config: SourceConfig,
+    pub(super) offered: super::deps::OfferedSkills,
+    pub(super) provenance: String,
+}
+/// Which catalog: the source name and the revision it is read at.
+pub(super) type CatalogKey = (String, Option<String>);
+
 /// Every catalog read this pass, opened once. Sources that cannot be read
 /// carry nothing to derive; the declaration that names one reports that on
 /// its own, where it can say which declaration it cost.
-/// A catalog open for reading: the sealed root, its layout tables, and the
-/// bare-name index its dependency lookups share, built once per catalog.
-type OpenCatalog = (SealedSource, SourceConfig, super::deps::OfferedSkills);
-/// Which catalog: the source name and the revision it is read at.
-type CatalogKey = (String, Option<String>);
-
 pub(super) struct Catalogs<'a> {
     pub(super) env: &'a Env,
     pub(super) scope: &'a Scope,
@@ -281,6 +287,13 @@ impl Catalogs<'_> {
             self.open.insert(key.clone(), opened);
         }
         self.open.get(&key).and_then(Option::as_ref)
+    }
+
+    /// A catalog [`Catalogs::get`] already opened, or `None` where it was
+    /// never asked for or would not read. Borrows nothing mutably, so two
+    /// catalogs opened ahead can be read side by side.
+    pub(super) fn opened(&self, key: &CatalogKey) -> Option<&OpenCatalog> {
+        self.open.get(key).and_then(Option::as_ref)
     }
 
     fn read(
@@ -354,7 +367,12 @@ impl Catalogs<'_> {
         if config.hides_content() {
             state.unreadable_catalogs.insert(source.to_owned());
         }
-        Some((sealed, config, super::deps::OfferedSkills::default()))
+        Some(OpenCatalog {
+            sealed,
+            config,
+            offered: super::deps::OfferedSkills::default(),
+            provenance: ready.provenance,
+        })
     }
 }
 

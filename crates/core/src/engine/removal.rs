@@ -19,8 +19,8 @@ use super::origin::Origins;
 /// only take content they can prove is ours: every content path must hash
 /// to what apply last wrote. A record that cannot prove that holds
 /// whatever content is present, hooks included. Explicitly asked-for
-/// removals and withheld hooks are not gated here: the trash keeps what
-/// they take.
+/// removals and withheld hooks (`plan_pass::plan_withheld`) are not gated
+/// here: the trash keeps what they take.
 pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
     // A hook with no anchor is not the common stock of older installs
     // that holding would exempt from cleanup for good: a lock this build
@@ -172,6 +172,8 @@ impl TrashGuard {
     }
 }
 
+/// `decided_keys` are the records the refusal and withheld passes already
+/// planned for, kept or taken; nothing here asks about them again.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn orphans(
     env: &Env,
@@ -180,7 +182,7 @@ pub(super) fn orphans(
     lock: &Lock,
     state: &desired::DesiredState,
     options: &PlanOptions,
-    refused_keys: &BTreeSet<String>,
+    decided_keys: &BTreeSet<String>,
     guard: &mut TrashGuard,
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
@@ -193,7 +195,7 @@ pub(super) fn orphans(
     let mut origins = Origins::default();
 
     for (key, entry) in &lock.entries {
-        if desired_keys.contains(key) || refused_keys.contains(key) {
+        if desired_keys.contains(key) || decided_keys.contains(key) {
             continue;
         }
         // Declared but skipped this pass (pending/disabled source, missing
@@ -202,15 +204,6 @@ pub(super) fn orphans(
         // so an entry it did not ask for — a harness dropped from its list —
         // is stranded and must be cleaned up like any other orphan.
         let departed_harness = state.processed.contains(&(entry.kind, entry.name.clone()));
-        // A hook withheld from this tool is a removal in its own right,
-        // whatever the options: leaving it installed leaves a wrapper armed
-        // beside a judge that will not run, which is what withholding is
-        // for. The finding the walk pushed says why.
-        // A withheld hook is one the walk read, so `processed` holds it and
-        // `departed_harness` alone keeps it out of the retention below.
-        let withheld = state
-            .withheld
-            .contains(&(entry.kind, entry.name.clone(), entry.harness));
         let unreachable_source =
             manifest.declared(entry.kind).contains_key(&entry.name) && !departed_harness;
         let named = options.named_for_removal(entry.kind, &entry.name);
@@ -222,8 +215,7 @@ pub(super) fn orphans(
         // `unreachable_source` has already decided to keep this one and is
         // reported per declaration, so asking here would only count it into
         // a retention it is not part of.
-        let unreadable_origin = !withheld
-            && !unreachable_source
+        let unreadable_origin = !unreachable_source
             && derived_at_all(entry)
             && !named
             && !origins.readable(env, scope, manifest, state, &entry.source);
@@ -233,8 +225,7 @@ pub(super) fn orphans(
         }
         let unneeded = derived_only(entry);
         let unfiltered = options.removal_filter.is_none();
-        let removable = withheld
-            || (options.remove_orphans && (named || unfiltered))
+        let removable = (options.remove_orphans && (named || unfiltered))
             || (options.sweep_unneeded && (unneeded || departed_harness));
         drift.push(DriftRow {
             kind: entry.kind,
@@ -242,9 +233,7 @@ pub(super) fn orphans(
             harness: entry.harness,
             scope: scope.clone(),
             state: DriftState::Orphaned,
-            detail: if withheld {
-                "withheld: a hook it requires will not run here — will be removed".into()
-            } else if removable {
+            detail: if removable {
                 "no longer wanted — will be removed".into()
             } else {
                 "left over from an earlier setup; nothing needs it anymore".into()
@@ -262,14 +251,13 @@ pub(super) fn orphans(
         }
         // An automatic removal (a sweep, an unfiltered orphan cleanup)
         // never takes bytes a record could vouch for and does not —
-        // `edit_holds`' doc draws that line. Naming the item, discarding
-        // edits, or withholding it takes what it holds into the trash: a
-        // withheld wrapper left armed refuses every call it guards.
+        // `edit_holds`' doc draws that line. Naming the item or discarding
+        // edits takes what it holds into the trash.
         let mut removable_entry = entry.clone();
         if let Some(emitted) = &mut removable_entry.emitted {
             emitted.paths.retain(|path| !guard.keep.contains(path));
         }
-        let takes_edits = named || withheld || options.overwrite_edited;
+        let takes_edits = named || options.overwrite_edited;
         if !takes_edits && edit_holds(env, scope, &removable_entry) {
             drift.push(DriftRow {
                 kind: entry.kind,

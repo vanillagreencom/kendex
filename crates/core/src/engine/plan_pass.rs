@@ -1,12 +1,13 @@
-//! The per-item planning pass and the refusal pass — the two walks over
-//! the desired state that turn it into drift rows and ops.
+//! The per-item planning pass, the refusal pass and the withheld pass —
+//! the walks over the desired state that turn it into drift rows and ops.
 
 use std::collections::BTreeSet;
 
 use crate::apply::PlannedOp;
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::Lock;
+use crate::lock::{Lock, entry_key};
+use crate::manifest::Manifest;
 use crate::model::Scope;
 
 use super::item_plan::plan_item;
@@ -123,7 +124,7 @@ const EDITS_KEPT: &str =
 /// installation alone holds comes off: the tree a refused tool shares with
 /// a tool that still installs stays exactly where it is.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn plan_refusals(
+fn plan_refusals(
     env: &Env,
     scope: &Scope,
     lock: &Lock,
@@ -193,4 +194,103 @@ pub(super) fn plan_refusals(
         ops.append(&mut removals);
     }
     Ok(refused_keys)
+}
+
+/// The records planned for outside the item pass, because no item is
+/// written for them: what a refusal takes or keeps, then what a
+/// withholding takes or keeps. Returns their keys, so the orphan pass asks
+/// about none of them.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn plan_not_written(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+    state: &desired::DesiredState,
+    guard: &mut removal::TrashGuard,
+    drift: &mut Vec<DriftRow>,
+    ops: &mut Vec<PlannedOp>,
+    config_edits: &mut config_edits::ConfigEditPlan,
+    new_lock: &mut Lock,
+) -> Result<BTreeSet<String>> {
+    let mut decided = plan_refusals(
+        env,
+        scope,
+        lock,
+        state,
+        guard,
+        drift,
+        ops,
+        config_edits,
+        new_lock,
+    )?;
+    decided.extend(plan_withheld(
+        env,
+        scope,
+        manifest,
+        lock,
+        state,
+        guard,
+        drift,
+        ops,
+        config_edits,
+        new_lock,
+    )?);
+    Ok(decided)
+}
+
+/// The row a withheld hook's installed copy leaves as it goes.
+const WITHHELD: &str = "withheld: a hook it runs with will not run here — will be removed";
+
+/// A hook withheld from a tool is written there by nothing, and a copy
+/// already installed comes out whatever the options: leaving it would
+/// leave a wrapper armed beside a judge that will not run, which is what
+/// withholding is for, so it takes the person's edits with it into the
+/// trash, and the finding the dependency walk pushed says why. A record
+/// under the hook's key that is another declaration's — installed from one
+/// catalog, now set to come from another — is invariant 4's conflict, as
+/// it would be for a hook the plan writes: the record stays, the row says
+/// to remove it first, and nothing of it is taken. Returns the keys of the
+/// records this pass decided.
+#[allow(clippy::too_many_arguments)]
+fn plan_withheld(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+    state: &desired::DesiredState,
+    guard: &mut removal::TrashGuard,
+    drift: &mut Vec<DriftRow>,
+    ops: &mut Vec<PlannedOp>,
+    config_edits: &mut config_edits::ConfigEditPlan,
+    new_lock: &mut Lock,
+) -> Result<BTreeSet<String>> {
+    let mut decided = BTreeSet::new();
+    for landing in &state.withheld {
+        let key = entry_key(landing.kind, &landing.name, landing.harness);
+        let Some(entry) = lock.entries.get(&key) else {
+            continue;
+        };
+        decided.insert(key.clone());
+        let row = |state, detail| DriftRow {
+            kind: landing.kind,
+            name: landing.name.clone(),
+            harness: landing.harness,
+            scope: scope.clone(),
+            state,
+            detail,
+            cause: None,
+            compared: None,
+            also_in_the_way: Vec::new(),
+        };
+        let recorded_fork = manifest.recorded_fork(landing.kind, &landing.name);
+        if let Some(detail) = item_plan::rebound(entry, &landing.provenance, recorded_fork) {
+            drift.push(row(DriftState::Conflict, detail));
+            new_lock.entries.insert(key, entry.clone());
+            continue;
+        }
+        drift.push(row(DriftState::Orphaned, WITHHELD.into()));
+        guard.extend(ops, removal::removal_ops(env, scope, entry, config_edits)?);
+    }
+    Ok(decided)
 }

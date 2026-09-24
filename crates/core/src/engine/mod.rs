@@ -188,26 +188,16 @@ pub fn plan_scope(
         &mut written,
     )?;
 
-    // Notes about the scope rather than about any one item: what the
-    // settings seed found, what the reserved-name move did, what the git
-    // posture changed.
-    // The order between them is not this caller's to choose, so one entry
-    // point plans all three: `settings_write.rs` says why.
-    let (mut scope_notes, settings_drift) = plan_project_files(scope, &state, options, &mut ops)?;
-    drift.extend(settings_drift);
-    // The shims a project owes its instruction files, read off the
-    // harness list the manifest declares: committed files, never lock
-    // entries, so they are planned beside the settings file rather than
-    // through the item model.
-    let (instruction_shims, shim_drift) = instruction_shims::plan_instruction_shims(
+    let (mut scope_notes, instruction_shims) = plan_scope_files(
         env,
         scope,
-        &manifest.install.harnesses,
+        &manifest,
+        &state,
         options,
+        &mut drift,
         &mut ops,
         &mut config_edits,
     )?;
-    drift.extend(shim_drift);
 
     // Trash ops all pass one guard: writes for this pass are already
     // planned, so anything still wanted is known, and no path goes to the
@@ -216,9 +206,10 @@ pub fn plan_scope(
 
     stale::stale_emitted(lock, &new_lock, &mut guard, &mut ops)?;
 
-    let refused_keys = plan_pass::plan_refusals(
+    let decided_keys = plan_pass::plan_not_written(
         env,
         scope,
+        &manifest,
         lock,
         &state,
         &mut guard,
@@ -235,7 +226,7 @@ pub fn plan_scope(
         lock,
         &state,
         options,
-        &refused_keys,
+        &decided_keys,
         &mut guard,
         &mut drift,
         &mut ops,
@@ -283,6 +274,42 @@ pub fn plan_scope(
     };
     report.notes.extend(scope_notes);
     settled(env, scope, &manifest, lock, options, &state.items, report)
+}
+
+/// The files a scope owes beside its items: the project files, and the
+/// shims its instruction files carry. Returns the notes about the scope
+/// rather than about any one item — what the settings seed found, what the
+/// reserved-name move did, what the git posture changed — and the shims'
+/// standings.
+#[allow(clippy::too_many_arguments)]
+fn plan_scope_files(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    state: &desired::DesiredState,
+    options: &PlanOptions,
+    drift: &mut Vec<DriftRow>,
+    ops: &mut Vec<PlannedOp>,
+    config_edits: &mut config_edits::ConfigEditPlan,
+) -> Result<(Vec<String>, Vec<instruction_shims::ShimStanding>)> {
+    // The order between the project files is not this caller's to choose,
+    // so one entry point plans all three: `settings_write.rs` says why.
+    let (scope_notes, settings_drift) = plan_project_files(scope, state, options, ops)?;
+    drift.extend(settings_drift);
+    // The shims a project owes its instruction files, read off the
+    // harness list the manifest declares: committed files, never lock
+    // entries, so they are planned beside the settings file rather than
+    // through the item model.
+    let (instruction_shims, shim_drift) = instruction_shims::plan_instruction_shims(
+        env,
+        scope,
+        &manifest.install.harnesses,
+        options,
+        ops,
+        config_edits,
+    )?;
+    drift.extend(shim_drift);
+    Ok((scope_notes, instruction_shims))
 }
 
 /// The report with the rows about content nothing manages added, refused
