@@ -133,7 +133,7 @@ echo "=== a single implement record, complete by construction ==="
 init_growth_state "$STATE" "$WT" issue-776 "$RID"
 run --worktree "$WT" --kind implement --issue issue-776 --round-id "$RID" --branch issue-776 --commit "$IMPL_HEAD" --validate pass --qa-label needs-review
 assert_eq "rc=$RC $OUT" "rc=0 $WT/tmp/dev-return-issue-776-$RID.json" "the writer exits 0 and prints the round-scoped artifact path" "$ERR"
-assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"near_ceiling\":null,\"near_ceiling_error\":\"byte-ceiling not probed: no --near-ceiling-base\",\"summary_posted\":true,\"summary\":null,\"bundled\":false,\"items\":[],\"baseline_lines\":3}" \
+assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"near_ceiling\":null,\"near_ceiling_error\":\"byte-ceiling not probed: no --near-ceiling-base\",\"summary_posted\":true,\"summary\":null,\"recovered_from\":null,\"bundled\":false,\"items\":[],\"baseline_lines\":3}" \
   "the record is the schema's shape with the measured baseline, a numeric schema_version and no note" "$ERR"
 assert_eq "$(env ORCH_STATE_DIR="$WT/tmp" "$CHECK" --worktree "$WT" --issue issue-776 --round-id "$RID" | jq -r '.reason')" "valid" \
   "the record round-trips through round-mode acceptance"
@@ -141,7 +141,8 @@ assert_eq "$(env ORCH_STATE_DIR="$WT/tmp" "$CHECK" --worktree "$WT" --issue issu
 echo "=== the record's variable fields, one written artifact per row ==="
 # No labels is an empty list; --no-summary is summary_posted false; a FAILING
 # verdict is recorded verbatim; --summary-file and --summary embed the text
-# without marking it posted; a fix carries its items with numeric n and the
+# without marking it posted; --recovered-text embeds a transcript's report and
+# marks the record recovered; a fix carries its items with numeric n and the
 # three decisions; a bundled implement aggregates labels; the note is the
 # additive channel for a caveat the enumeration cannot express, present and
 # null when omitted; leading-dash prose is a value unless it is this script's
@@ -152,6 +153,7 @@ table \
   "a fix carries its items, n numeric, and round-trips through the bound round|--worktree %FW --kind fix --issue issue-776 --round-id 7-7 --branch issue-776 --commit $FIX_HEAD --validate pass --item 1 Applied fixed+nil+deref --item 2 Skipped contradicts+D010|rc=0 .kind=fix .items|length=2 .items[0].n|type=number .items[0].decision=Applied .items[1].decision=Skipped" \
   "a bundled implement aggregates its labels|--worktree $WT --kind implement --issue PROJ-100 --round-id 8-8 --branch feat/proj-100 --commit %H --validate pass --bundled --item 1 Applied sub+A+done --item 2 Applied sub+B+done --qa-label needs-safety-audit --qa-label needs-review|rc=0 .bundled=true .items|length=2 .qa_labels|tojson=[\"needs-safety-audit\",\"needs-review\"] roundtrip=valid" \
   "a Blocked decision is accepted|--worktree $WT --kind fix --issue issue-b --round-id 9-9 --branch b --commit c --validate pass --item 3 Blocked needs+API+design|rc=0 .items[0].decision=Blocked" \
+  "--recovered-text embeds the report and records recovered_from|--worktree $WT --kind implement --issue issue-rec --round-id 15-15 --branch b --commit %H --validate pass --recovered-text $SUMMARY_FILE|rc=0 .recovered_from=transcript .summary|split(\"\\n\")[0]=##+Completion+Summary roundtrip=valid" \
   "an inline --summary embeds the text|--worktree $WT --kind implement --issue issue-1236i --round-id 12-12 --branch b --commit %H --validate pass --no-summary --summary inline+completion+summary|rc=0 .summary=inline+completion+summary roundtrip=valid" \
   "a --validate-note is recorded verbatim beside a strictly enumerated pass|--worktree $WT --kind implement --issue issue-note --round-id $RID --branch b --commit %H --validate pass --validate-note 80/80+on+re-run;+first+run+flaked|rc=0 .validate=pass .validate_note=80/80+on+re-run;+first+run+flaked" \
   "a FAILING verdict carries a note too|--worktree $WT --kind implement --issue issue-failnote --round-id $RID --branch b --commit %H --validate FAILING:+lint --validate-note lint+fails+only+under+--release|rc=0 .validate=FAILING:+lint .validate_note=lint+fails+only+under+--release" \
@@ -244,6 +246,8 @@ table \
   "an unknown argument|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --frobnicate|rc=2 stderr~dev-return-write:+unknown-argument+argument=--frobnicate=true" \
   "both --summary and --summary-file|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary inline --summary-file $SUMMARY_FILE|rc=2 stderr~dev-return-write:+summary-conflict+options=--summary,--summary-file=true" \
   "--summary plus an empty --summary-file value: presence, not content|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary inline --summary-file EMPTY|rc=2 stderr~dev-return-write:+summary-conflict+options=--summary,--summary-file=true" \
+  "--recovered-text beside --summary-file: one summary source|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary-file $SUMMARY_FILE --recovered-text $SUMMARY_FILE|rc=2 stderr~dev-return-write:+summary-conflict+options=--summary,--summary-file,--recovered-text=true" \
+  "a missing --recovered-text|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --recovered-text $TMP_ROOT/gone.md|rc=2 stderr~dev-return-write:+missing-file+path=$TMP_ROOT/gone.md=true" \
   "an explicitly empty --summary-file alone|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary-file EMPTY|rc=2 stderr~dev-return-write:+required+option=--summary-file=true" \
   "a whitespace-only --summary: an empty deliverable is not a record|--worktree $WT --kind implement --issue issue-blanksum --round-id $RID --branch b --commit %H --validate pass --summary SPACES|rc=2 stderr~dev-return-write:+empty-text+option=--summary=true" \
   "--summary with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary|rc=2 stderr~dev-return-write:+missing-value+option=--summary=true" \

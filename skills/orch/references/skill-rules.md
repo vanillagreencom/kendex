@@ -46,7 +46,16 @@ The orchestrator owns round closure. Every dev/QA delegation carries three mecha
 
 The acceptance table lives in the delegating workflow (`dev-start.md` § 3, `dev-fix.md` § 2, `review-pr-comments.md` § 6.1); the return message is display-only; tracker corroboration (**B**) applies only where that table names it. `ci-fix.md` (no dev-return artifact) is accepted by its return message plus the escalation ladder.
 
-**Escalation.** Only after the 10-minute quiet window AND a confirmed stall (task status unchanged, no session-log entries for 10+ minutes, or the process exited): re-message once naming the missing step → wait 5 minutes → still inactive: shut down, re-create tasks, respawn, re-delegate. The respawn takes a fresh runtime instance and a fresh round id; the canonical agent name is the identity every record is keyed on and stays as it was.
+**Escalation.** Only after the 10-minute quiet window AND a confirmed stall (task status unchanged, no session-log entries for 10+ minutes, or the process exited): re-message once naming the missing step → wait 5 minutes → still inactive: shut down, re-create tasks, respawn, re-delegate. The respawn takes a fresh runtime instance and a fresh round id; the canonical agent name is the identity every record is keyed on and stays as it was. A round accepted on a dev-return artifact skips this ladder when it is a stalled round.
+
+**Stalled round.** The watchdog returned `wait`, the harness reports the agent idle, its transcript has not changed since the idle notice, and no process of the round is alive. Never message that agent. Run `round-recover --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id] --transcript [PATH]`, with the path from [agent-transcripts.md](agent-transcripts.md), and act on its line:
+
+| Line | Action |
+|---|---|
+| `recovered` | The report is now the round's artifact. Run the delegating workflow's acceptance table. |
+| `redelegate` | The printed `round-id` is already minted into `dev_round_id`. Re-stamp `dev_delegated_at`, keep `pre_delegate_sha`, and on a fix round run `dev-round-write` for that id with the same items. Shut the idle agent down, spawn a fresh instance, delegate under that id, and arm its watchdog. |
+| `exhausted` | The re-delegated round stalled with no report too. Stop and report it. |
+| `round-live` | Not a stall. Arm one new watchdog. |
 
 ---
 

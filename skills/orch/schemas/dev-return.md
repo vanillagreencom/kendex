@@ -32,6 +32,7 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
   "near_ceiling_error": null,
   "summary_posted": true,
   "summary": "### Proposed Rules\n- Rule the validation list is missing",
+  "recovered_from": null,
   "bundled": false,
   "items": [
     { "n": 1, "decision": "Applied", "reasoning": "Fixed nil deref in empty buffer" }
@@ -55,6 +56,7 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 | `near_ceiling_error` | Optional | set by the writer | Why `near_ceiling` is `null`: `byte-ceiling exit N:` and the lane's first stderr line, `byte-ceiling not executable:` and the lane path, `byte-ceiling broken link:` and the dangling link above the lane, or `byte-ceiling not probed: no --near-ceiling-base`; `null` otherwise. `dev-artifact-check` echoes it, and `dev-start.md` § Store Near-Ceiling Lines names it in the round's report |
 | `summary_posted` | Optional | `--no-summary` sets `false` | `true` only when the summary was posted to a tracker; GitHub and ad-hoc rounds set `false` |
 | `summary` | Optional | `--summary` or `--summary-file` | The summary content, or `null`. Every single implement round embeds it, including a Linear round that also sets `summary_posted: true`, so a consumer can read its `### Proposed Rules` |
+| `recovered_from` | Optional | `--recovered-text` sets `"transcript"` | `"transcript"` when `round-recover` wrote the artifact from a stalled agent's transcript, with that report as `summary`; otherwise `null` |
 | `bundled` | Optional | `--bundled` sets `true` | `true` for a bundled implement |
 | `items` | Conditional | `--item N DECISION REASONING` | Per kind rules below |
 

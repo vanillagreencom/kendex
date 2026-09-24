@@ -20,7 +20,8 @@
 #   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
 #     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
 #     [--qa-label LABEL]... [--near-ceiling-base REF] \
-#     [--bundled] [--no-summary] [--summary TEXT | --summary-file PATH] \
+#     [--bundled] [--no-summary] \
+#     [--summary TEXT | --summary-file PATH | --recovered-text PATH] \
 #     [--item N DECISION REASONING]...
 #
 # near_ceiling carries one byte-ceiling near-ceiling line per file within
@@ -65,6 +66,7 @@
 #     "near_ceiling_error": "…" | null,       // why near_ceiling is null
 #     "summary_posted": true,                 // false with --no-summary
 #     "summary": "…" | null,                  // --summary text or --summary-file content
+#     "recovered_from": "transcript" | null,  // --recovered-text
 #     "bundled": false,                       // true with --bundled
 #     "items": [{"n": 1, "decision": "Applied", "reasoning": "…"}]
 #   }
@@ -73,8 +75,10 @@
 #   --kind fix OR --bundled  → REQUIRES >=1 --item (a fix/bundled artifact with no
 #                              items is incomplete).
 #   --kind implement (single, no --bundled) → zero items allowed → writes "items": [].
-#   --summary and --summary-file are mutually exclusive for every kind (one
-#   summary source, no silent precedence).
+#   --summary, --summary-file and --recovered-text are mutually exclusive for
+#   every kind (one summary source, no silent precedence).
+#   --recovered-text is the report round-recover read from a stalled agent's
+#   transcript: it becomes the summary and sets recovered_from.
 #   DECISION ∈ {Applied, Skipped, Blocked}; N is a non-negative integer; REASONING
 #   must be non-empty.
 #
@@ -118,7 +122,7 @@ die() {
       invalid-validate) printf 'The validation result must be pass or start with FAILING:.\n' ;;
       empty-text) printf 'The text must contain a non-whitespace character.\n' ;;
       summary-conflict) printf 'Supply one summary source.\n' ;;
-      missing-file) printf 'The summary file does not exist.\n' ;;
+      missing-file) printf 'The summary or recovered-text file does not exist.\n' ;;
       missing-items) printf 'A fix or bundled receipt must contain an item.\n' ;;
       baseline-read) printf '%s\n' "$BRANCH_GROWTH_ERROR" ;;
     esac
@@ -132,7 +136,8 @@ Usage:
   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
     [--qa-label LABEL]... [--near-ceiling-base REF] \
-    [--bundled] [--no-summary] [--summary TEXT | --summary-file PATH] \
+    [--bundled] [--no-summary] \
+    [--summary TEXT | --summary-file PATH | --recovered-text PATH] \
     [--item N DECISION REASONING]...
 
 Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path.
@@ -145,7 +150,9 @@ test-only validation-ceiling re-run dev-implement.md section 5 names, a flake
 worth recording); it never relaxes --validate. Outside that named ceiling a
 failing validation ends the round and is never re-run into a pass.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
-content. They are mutually exclusive (one summary source, no silent precedence).
+content. --recovered-text PATH embeds the report round-recover read from a
+stalled agent's transcript and records recovered_from: transcript. The three
+are mutually exclusive (one summary source, no silent precedence).
 --near-ceiling-base REF runs the worktree's
 .agents/skills/commit-guards/scripts/byte-ceiling --base REF and records one
 near-ceiling line per file within reach of the byte ceiling on exit 0 or 1;
@@ -170,7 +177,7 @@ EOF
 is_own_flag() {
   case "$1" in
     --worktree|--kind|--issue|--round-id|--branch|--commit|--validate|\
-    --validate-note|--summary|--summary-file|--qa-label|\
+    --validate-note|--summary|--summary-file|--recovered-text|--qa-label|\
     --near-ceiling-base|--bundled|\
     --no-summary|--item|-h|--help) return 0 ;;
     *) return 1 ;;
@@ -217,6 +224,8 @@ summary_file=""
 summary_file_given=false
 summary_text=""
 summary_given=false
+recovered_text=""
+recovered_given=false
 bundled=false
 summary_posted=true
 qa_labels=()
@@ -249,6 +258,7 @@ while (( $# > 0 )); do
     --validate-note) need "$1" $# "${2:-}"; no_dup "$1" "$validate_note_given"; validate_note_given=true; validate_note="$2"; shift 2 ;;
     --summary)      need "$1" $# "${2:-}"; no_dup "$1" "$summary_given";      summary_given=true;      summary_text="$2"; shift 2 ;;
     --summary-file) need "$1" $# "${2:-}"; no_dup "$1" "$summary_file_given"; summary_file_given=true; summary_file="$2"; shift 2 ;;
+    --recovered-text) need "$1" $# "${2:-}"; no_dup "$1" "$recovered_given"; recovered_given=true; recovered_text="$2"; shift 2 ;;
     --qa-label)     need "$1" $# "${2:-}"; qa_labels+=("$2"); shift 2 ;;
     --near-ceiling-base) need "$1" $# "${2:-}"; no_dup "$1" "$near_ceiling_base_given"; near_ceiling_base_given=true; near_ceiling_base="$2"; shift 2 ;;
     --bundled)      bundled=true; shift ;;
@@ -312,8 +322,12 @@ fi
 # exists to prevent. Exclusion is by flag PRESENCE, not value: "--summary-file
 # ''" (e.g. an empty path variable) is still a supplied second source, and
 # treating it as absent would silently drop the caller's intent.
-if [[ "$summary_given" == "true" && "$summary_file_given" == "true" ]]; then
-  die summary-conflict options=--summary,--summary-file
+sources=0
+for given in "$summary_given" "$summary_file_given" "$recovered_given"; do
+  if [[ "$given" == "true" ]]; then sources=$((sources + 1)); fi
+done
+if (( sources > 1 )); then
+  die summary-conflict options=--summary,--summary-file,--recovered-text
 fi
 if [[ "$summary_given" == "true" ]]; then
   # An empty or whitespace-only summary looks like a recorded deliverable while
@@ -326,6 +340,9 @@ if [[ "$summary_file_given" == "true" ]]; then
   # unset path variable) — never a no-op.
   [[ -n "$summary_file" ]] || die required option=--summary-file
   [[ -f "$summary_file" ]] || die missing-file "path=$summary_file"
+fi
+if [[ "$recovered_given" == "true" ]]; then
+  [[ -f "$recovered_text" ]] || die missing-file "path=$recovered_text"
 fi
 
 if [[ "$near_ceiling_base_given" == "true" ]]; then
@@ -426,7 +443,11 @@ trap 'rm -f "$tmp"' EXIT
 # along for GitHub/ad-hoc recovery, where the completion summary is returned to
 # the orchestrator rather than posted to a tracker; summary_posted stays honest
 # (true only for the Linear-posted case).
-if [[ "$summary_file_given" == "true" ]]; then
+recovered_from=null
+if [[ "$recovered_given" == "true" ]]; then
+  summary_arg=(--rawfile summary "$recovered_text")
+  recovered_from='"transcript"'
+elif [[ "$summary_file_given" == "true" ]]; then
   summary_arg=(--rawfile summary "$summary_file")
 elif [[ "$summary_given" == "true" ]]; then
   summary_arg=(--arg summary "$summary_text")
@@ -449,6 +470,7 @@ jq -n \
   --arg near_ceiling_error "$near_error" \
   --argjson summary_posted "$summary_posted" \
   "${summary_arg[@]}" \
+  --argjson recovered_from "$recovered_from" \
   --argjson bundled "$bundled" \
   --argjson items "$items_json" \
   '({
@@ -465,6 +487,7 @@ jq -n \
      near_ceiling_error: (if $near_ceiling_error == "" then null else $near_ceiling_error end),
      summary_posted: $summary_posted,
      summary: $summary,
+     recovered_from: $recovered_from,
      bundled: $bundled,
      items: $items
    } + if $kind == "implement" then {baseline_lines: $baseline_lines} else {} end)' > "$tmp"

@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+# round-recover — close a stalled dev round from the agent's own transcript.
+#
+# A stalled round is one whose watchdog reached its deadline with no artifact
+# while the agent sits idle: the harness finished the agent's work but never
+# delivered its return (Claude Code issues 78313, 65423, 80489). Messaging that
+# agent does not reach it, so the report is read where the harness recorded it,
+# the agent's transcript, and the agent is never nudged.
+#
+# Usage:
+#   round-recover --worktree PATH --issue ID --round-id RID [--transcript FILE]
+#
+# The transcript is the stalled agent's JSONL record, located per harness by
+# references/agent-transcripts.md; omit --transcript when the harness kept none.
+# The last assistant text in it is the report. A fix round is one whose item
+# record tmp/dev-round-ID-RID.json exists; every other round is an implement
+# round. The report is read in the return shape the dev skill's workflow gives
+# its kind: an implement report carries Branch:, Commit:, Validate: and QA:
+# lines; a fix report carries its | N | Decision | Reasoning | rows, Commits:
+# and Validate:.
+#
+# Before the artifact is written the report is checked on disk: the reported
+# commit resolves and is HEAD (a fix report's Commits: all resolve and one of
+# them is HEAD, or it reads none), and a reported pass is the newest
+# dev-validate-run sentinel's guard-exit=0. A FAILING report needs no proof: it
+# ends the round, never passes it. A report that holds is written through
+# dev-return-write --recovered-text, so the round's artifact records
+# recovered_from: transcript and dev-artifact-check judges it like any other.
+#
+# No report, or one the disk contradicts, is one re-delegation: this script
+# mints the fresh round id (workflow-state new-round-id ID dev_round_id) and
+# records it as recovery_round_id. A round that id names is never re-delegated
+# again: its own stall with no report is exhausted.
+#
+# Output, one line on stdout, pinned by the tests:
+#   round-recover: recovered artifact=PATH                         exit 0
+#   round-recover: exhausted round-id=RID reason=KEY               exit 1
+#   round-recover: redelegate round-id=NEW from=RID reason=KEY     exit 3
+#   round-recover: round-live pid=N run-dir=PATH                   exit 4
+# round-live is a dev-validate-run child still running with no verdict: the
+# round is not stalled. Reasons: no-transcript, no-report, unparsed,
+# commit-mismatch, validate-unproven. Usage and environment errors exit 2 with
+# a keyed line on stderr.
+
+set -euo pipefail
+
+PROG="round-recover"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ID_GRAMMAR='^[A-Za-z0-9._-]+$'
+
+die() {
+  local reason="$1"
+  shift
+  {
+    printf '%s: %s' "$PROG" "$reason"
+    printf ' %s' "$@"
+    printf '\n'
+    case "$reason" in
+      missing-value) printf 'The option requires a value.\n' ;;
+      unknown-argument) printf 'The argument is not supported.\n' ;;
+      required) printf 'The required option is absent or empty.\n' ;;
+      invalid-id) printf 'The ID must be safe for a file path.\n' ;;
+      not-directory) printf 'The worktree path is not a directory.\n' ;;
+      transcript-unreadable) printf 'The transcript is not a readable file; omit --transcript only when the harness kept none.\n' ;;
+      transcript-read) printf 'jq could not read the transcript.\n' ;;
+      git-failed) printf 'git could not read the worktree.\n' ;;
+      run-unreadable) printf 'The validation run record could not be read.\n' ;;
+      state-failed) printf 'workflow-state could not read or write the round state.\n' ;;
+      write-failed) printf 'dev-return-write refused the recovered report; its own line is above.\n' ;;
+    esac
+  } >&2
+  exit 2
+}
+
+usage() {
+  sed -n '2,/^set -/p' < "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'
+}
+
+need() { # FLAG ARGC VALUE
+  (( $2 >= 2 )) || die missing-value "option=$1"
+  case "$3" in --*) die missing-value "option=$1" "value=$3" ;; esac
+}
+
+worktree=""
+issue=""
+round_id=""
+transcript=""
+transcript_given=false
+while (( $# > 0 )); do
+  case "$1" in
+    --worktree)   need "$1" $# "${2:-}"; worktree="$2"; shift 2 ;;
+    --issue)      need "$1" $# "${2:-}"; issue="$2"; shift 2 ;;
+    --round-id)   need "$1" $# "${2:-}"; round_id="$2"; shift 2 ;;
+    --transcript) need "$1" $# "${2:-}"; transcript_given=true; transcript="$2"; shift 2 ;;
+    -h|--help)    usage; exit 0 ;;
+    *)            die unknown-argument "argument=$1" ;;
+  esac
+done
+
+[[ -n "$worktree" ]] || die required option=--worktree
+[[ -d "$worktree" ]] || die not-directory "path=$worktree"
+for pair in "--issue=$issue" "--round-id=$round_id"; do
+  value="${pair#*=}"
+  [[ -n "$value" ]] || die required "option=${pair%%=*}"
+  [[ "$value" =~ $ID_GRAMMAR && "$value" != *..* ]] || die invalid-id "option=${pair%%=*}" "value=$value"
+done
+if [[ "$transcript_given" == true ]]; then
+  [[ -f "$transcript" && -r "$transcript" ]] || die transcript-unreadable "path=$transcript"
+fi
+
+# The round's one long-lived process is its validation run. A newest run with
+# no sentinel and a live pid is still working, and a working round is not
+# stalled.
+latest_run=""
+for dir in "$worktree"/tmp/dev-validate-*/; do
+  if [[ -d "$dir" ]]; then latest_run="${dir%/}"; fi
+done
+if [[ -n "$latest_run" && ! -f "$latest_run/exit" && -f "$latest_run/pid" ]]; then
+  if ! pid="$(cat "$latest_run/pid")"; then
+    die run-unreadable "path=$latest_run/pid"
+  fi
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    printf '%s: round-live pid=%s run-dir=%s\n' "$PROG" "$pid" "$latest_run"
+    exit 4
+  fi
+fi
+
+# Re-delegate once, or report the round exhausted when it is already the
+# re-delegation. Never returns.
+no_report() { # REASON
+  local recovery new
+  if ! recovery="$("$SCRIPT_DIR/workflow-state" get "$issue" '.recovery_round_id // empty')"; then
+    die state-failed "issue=$issue"
+  fi
+  if [[ "$recovery" == "$round_id" ]]; then
+    printf '%s: exhausted round-id=%s reason=%s\n' "$PROG" "$round_id" "$1"
+    exit 1
+  fi
+  if ! new="$("$SCRIPT_DIR/workflow-state" new-round-id "$issue" dev_round_id)"; then
+    die state-failed "issue=$issue"
+  fi
+  "$SCRIPT_DIR/workflow-state" set "$issue" recovery_round_id "$new" >/dev/null \
+    || die state-failed "issue=$issue"
+  printf '%s: redelegate round-id=%s from=%s reason=%s\n' "$PROG" "$new" "$round_id" "$1"
+  exit 3
+}
+
+[[ "$transcript_given" == true ]] || no_report no-transcript
+
+# Claude Code and Pi record a turn under .message, Codex under .payload; each
+# line parses alone, so a line the harness was still writing is skipped.
+report="$(jq -R -n -r '
+  [inputs | fromjson? | objects | (.message // .payload) | objects
+   | select(.role == "assistant") | .content | arrays | .[] | objects
+   | select(.type == "text" or .type == "output_text") | .text | strings
+   | select(test("\\S"))]
+  | last // empty' < "$transcript")" || die transcript-read "path=$transcript"
+[[ -n "$report" ]] || no_report no-report
+
+mkdir -p "$worktree/tmp"
+report_file="$worktree/tmp/round-recovered-$issue-$round_id.md"
+printf '%s\n' "$report" > "$report_file"
+
+# Sets FIELD to the last line carrying KEY:, backticks and trailing blanks
+# stripped.
+field() { # KEY
+  local line
+  FIELD=""
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^[[:space:]]*$1:[[:space:]]*(.*)$ ]]; then
+      FIELD="${BASH_REMATCH[1]}"
+    fi
+  done < "$report_file"
+  FIELD="${FIELD//\`/}"
+  FIELD="${FIELD%"${FIELD##*[![:space:]]}"}"
+}
+
+if ! head_sha="$(git -C "$worktree" rev-parse HEAD)"; then
+  die git-failed "path=$worktree"
+fi
+# Sets RESOLVED to REF's full SHA, or empty where REF names no commit (git's
+# exit 1); any other git failure is an unreadable worktree.
+resolve() { # REF
+  local status=0
+  RESOLVED="$(git -C "$worktree" rev-parse --verify --quiet "$1^{commit}")" || status=$?
+  case "$status" in
+    0) ;;
+    1) RESOLVED="" ;;
+    *) die git-failed "path=$worktree" ;;
+  esac
+}
+
+field Validate; validate="$FIELD"
+[[ "$validate" == pass || "$validate" == FAILING:* ]] || no_report unparsed
+
+args=()
+if [[ -f "$worktree/tmp/dev-round-$issue-$round_id.json" ]]; then
+  kind=fix
+  if ! branch="$(git -C "$worktree" branch --show-current)"; then
+    die git-failed "path=$worktree"
+  fi
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^[[:space:]]*\|[[:space:]]*([0-9]+)[[:space:]]*\|[[:space:]]*(Applied|Skipped|Blocked)[[:space:]]*\|[[:space:]]*(.*[^[:space:]])[[:space:]]*\|[[:space:]]*$ ]]; then
+      args+=(--item "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+    fi
+  done < "$report_file"
+  (( ${#args[@]} > 0 )) || no_report unparsed
+  field Commits; commits="$FIELD"
+  [[ -n "$commits" ]] || no_report unparsed
+  if [[ "$commits" != none ]]; then
+    at_head=false
+    for sha in ${commits//,/ }; do
+      resolve "$sha"
+      [[ -n "$RESOLVED" ]] || no_report commit-mismatch
+      status=0
+      git -C "$worktree" merge-base --is-ancestor "$RESOLVED" "$head_sha" || status=$?
+      case "$status" in
+        0) ;;
+        1) no_report commit-mismatch ;;
+        *) die git-failed "path=$worktree" ;;
+      esac
+      if [[ "$RESOLVED" == "$head_sha" ]]; then at_head=true; fi
+    done
+    [[ "$at_head" == true ]] || no_report commit-mismatch
+  fi
+  args+=(--no-summary)
+else
+  kind=implement
+  field Branch; branch="$FIELD"
+  field Commit; commit="$FIELD"
+  [[ -n "$branch" && -n "$commit" ]] || no_report unparsed
+  resolve "$commit"
+  [[ "$RESOLVED" == "$head_sha" ]] || no_report commit-mismatch
+  field QA; qa="$FIELD"
+  if [[ -n "$qa" && "$qa" != none ]]; then
+    for label in ${qa//,/ }; do
+      args+=(--qa-label "$label")
+    done
+  fi
+fi
+
+if [[ "$validate" == pass ]]; then
+  [[ -n "$latest_run" && -f "$latest_run/exit" ]] || no_report validate-unproven
+  [[ "$(cat "$latest_run/exit")" == guard-exit=0\ * ]] || no_report validate-unproven
+fi
+
+artifact="$("$SCRIPT_DIR/dev-return-write" --worktree "$worktree" --kind "$kind" \
+  --issue "$issue" --round-id "$round_id" --branch "$branch" --commit "$head_sha" \
+  --validate "$validate" --recovered-text "$report_file" ${args[@]+"${args[@]}"})" \
+  || die write-failed "issue=$issue" "round-id=$round_id"
+printf '%s: recovered artifact=%s\n' "$PROG" "$artifact"
