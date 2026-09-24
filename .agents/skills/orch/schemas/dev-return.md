@@ -50,7 +50,7 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 | `branch` | Yes | `--branch` | Git branch (non-empty string) |
 | `commit` | Yes | `--commit` | HEAD SHA after the commit, or the prior HEAD when no commit was needed |
 | `baseline_lines` | implement | measured by writer | Additions plus deletions against the base branch at `commit`, omitting binary rows and render mirrors whose source changed in the same diff, floored at 1. **Absent for `fix`** |
-| `validate` | Yes | `--validate` | `pass` or `FAILING: check1,check2` — a closed enumeration. With `--validate-run-dir` it must agree with the run's verdict: `pass` exactly when the run passed |
+| `validate` | Yes | `--validate` | `pass` or `FAILING: check1,check2` — a closed enumeration. With `--validate-run-dir`, `pass` needs a run that passed; `FAILING` is accepted beside any run, because it judges every gate of the round |
 | `validate_mode` | Yes | read from `--validate-run-dir` | The mode `dev-validate-run --record` reports for the run directory: `full`, the whole battery, or `range`, a fix round's changes since its base. `null` only beside a failing `validate` with no run, which omits the flag; a `pass` without the flag is refused. `dev-artifact-check` echoes it and refuses a missing key or any other value. Submit reuses only a `full` pass |
 | `validate_note` | Optional | `--validate-note` | A free-text qualifier the enumeration cannot express, or `null` |
 | `qa_labels` | Optional | `--qa-label` (repeatable) | Applied QA labels; `[]` when none |

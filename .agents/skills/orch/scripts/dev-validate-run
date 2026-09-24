@@ -54,7 +54,8 @@
 #   dev-validate-run --record --run-dir PATH
 #       Print the run's record, read-only: the mode it ran under and its
 #       verdict. The one reader of the run directory for anything outside this
-#       script; dev-return-write takes a receipt's mode and verdict from it.
+#       script; dev-return-write takes a receipt's mode from it, and a
+#       receipt's pass needs its pass.
 #   dev-validate-run --child --run-dir PATH
 #       Internal. The detached process the start path launches.
 #

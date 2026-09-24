@@ -47,10 +47,12 @@
 #
 # --validate-run-dir is the run directory the round's dev-validate-run printed.
 # `dev-validate-run --record` owns that directory's format and answers for it:
-# validate_mode is its mode, never typed by the agent, and --validate must agree
-# with its verdict, pass exactly when the run's sentinel is guard-exit=0. Submit
-# reuses only a full pass, so a range pass recorded as full, or a failed run
-# recorded as a pass, would stand in for the whole battery. A pass requires the
+# validate_mode is its mode, never typed by the agent, and a --validate pass
+# needs a run whose sentinel is guard-exit=0. A FAILING result is accepted
+# beside any run: --validate judges every gate of the round, and a passing run
+# with another gate failing is still a failed round. Submit reuses only a full
+# pass, so a range pass recorded as full, or a failed run recorded as a pass,
+# would stand in for the whole battery. A pass requires the
 # run. A failing round may omit it, because dev-validate-run refuses some
 # failures, an empty DEV_VALIDATE_CMD among them, before any run directory
 # exists; validate_mode is then null.
@@ -134,7 +136,7 @@ die() {
       invalid-kind) printf 'The kind must be implement or fix.\n' ;;
       invalid-validate) printf 'The validation result must be pass or start with FAILING:.\n' ;;
       run-record-unreadable) printf 'dev-validate-run --record could not read the run; its refusal follows.\n' ;;
-      validate-disagrees) printf 'The validation result disagrees with the verdict the run recorded.\n' ;;
+      validate-disagrees) printf 'A pass needs a run that passed; this run did not.\n' ;;
       empty-text) printf 'The text must contain a non-whitespace character.\n' ;;
       summary-conflict) printf 'Supply one summary source.\n' ;;
       missing-file) printf 'The summary or recovered-text file does not exist.\n' ;;
@@ -166,8 +168,8 @@ worth recording); it never relaxes --validate. Outside that named ceiling a
 failing validation ends the round and is never re-run into a pass.
 --validate-run-dir RUN_DIR is the run directory dev-validate-run printed;
 validate_mode is the mode dev-validate-run --record reports for it, full or
-range, and --validate must agree with the run's verdict: pass exactly when the
-run passed. A pass requires it; a FAILING round with no run omits it and
+range, and a --validate pass needs a run that passed; a FAILING result is
+accepted beside any run. A pass requires it; a FAILING round with no run omits it and
 records validate_mode null. Submit reuses only a full pass.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
 content. --recovered-text PATH embeds the report round-recover read from a
@@ -346,7 +348,7 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
   validate_mode="${validate_mode%% *}"
   run_verdict="${run_record##* verdict=}"
   case "$run_verdict:$validate" in
-    pass:pass | FAILING:FAILING* | unfinished:FAILING*) ;;
+    pass:pass | *:FAILING*) ;;
     *) die validate-disagrees "validate=$validate" "run=$run_verdict" ;;
   esac
 elif [[ "$validate" == "pass" ]]; then
