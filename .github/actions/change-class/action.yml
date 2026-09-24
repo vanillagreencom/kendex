@@ -32,7 +32,9 @@ inputs:
     required: false
     default: ''
   event:
-    description: github.event_name. Any event but pull_request or merge_group answers standard.
+    description: >-
+      github.event_name. The measured classes (trivial, micro, small) need
+      pull_request or merge_group; any other event answers render or standard.
     required: true
   base:
     description: The base endpoint sha. Empty where the event carries none.

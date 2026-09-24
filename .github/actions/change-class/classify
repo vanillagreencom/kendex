@@ -128,7 +128,7 @@ family changed_skills skills 2
 family changed_crates crates 2
 family changed_workflows .github/workflows 3
 
-sed -n 's/^changed_/family: /p' -- "$GITHUB_OUTPUT" >&2
+sed -n 's/^changed_/family: /p' <"$GITHUB_OUTPUT" >&2
 
 # The whole list, for a caller whose lanes answer to a tree no family names.
 # A multi-line output needs a delimiter no line of the value can be. The value

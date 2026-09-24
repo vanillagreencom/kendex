@@ -24,7 +24,7 @@ CLASSIFY="$ROOT/.github/actions/change-class/classify"
 
 mkdir -p "$ROOT/tmp"
 TMP="$(mktemp -d "$ROOT/tmp/change-class-action.XXXXXX")"
-trap 'chmod -R u+rwX -- "${TMP:?}" 2>/dev/null; rm -rf -- "${TMP:?}"' EXIT
+trap 'chmod -R u+rwX "${TMP:?}" 2>/dev/null; rm -rf -- "${TMP:?}"' EXIT
 
 PASS=0
 FAIL=0
