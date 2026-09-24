@@ -145,6 +145,41 @@ OUT="$(cd "$R" && env PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$GUARD" 2>&1 <
   || bad "inverse: the commit-time run, which diffs HEAD, passes the same tree" "rc=$RC out=$OUT"
 back_to_base
 
+echo "=== the render and fixture rules read the range's one changed set ==="
+# A fix round validates before it stages: a new source may be intent-added
+# while its new render is still untracked, and a new test file may be
+# untracked altogether. The compile set sees both; the rules must too.
+printf '#!/usr/bin/env bash\necho new\n' >"$R/skills/demo/scripts/new.sh"
+cp "$R/skills/demo/scripts/new.sh" "$R/.agents/skills/demo/scripts/new.sh"
+git -C "$R" add -N skills/demo/scripts/new.sh
+run_range "$BASE"
+[ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: missing-render="* ]] \
+  && ok "an intent-added source with its untracked render passes the render rule" \
+  || bad "an intent-added source with its untracked render passes the render rule" "rc=$RC out=$OUT"
+if mutant_guard 's/^  render_changed=\$touched$/  render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${diff_against[@]}")/'; then
+  run_range "$BASE" "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: missing-render=1"* ]] && [[ "$OUT" == *"skills/demo/scripts/new.sh -> .agents/skills/demo/scripts/new.sh"* ]] \
+    && ok "control: with the render rule reading the tracked-only diff the untracked render is missed" \
+    || bad "control: with the render rule reading the tracked-only diff the untracked render is missed" "rc=$RC out=$OUT"
+else
+  bad "control: the render rule could not be pointed back at the tracked-only diff in a guard copy"
+fi
+back_to_base
+printf '%s\n' 'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' drop(tmp);' '}' >"$R/crates/core/tests/untracked_temp.rs"
+run_range "$BASE"
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: unrooted-fixture=1"* ]] && [[ "$OUT" == *"untracked_temp.rs:2"* ]] \
+  && ok "an untracked test file's unrooted fixture reds the range" \
+  || bad "an untracked test file's unrooted fixture reds the range" "rc=$RC out=$OUT"
+if mutant_guard 's/^  done <<<"\$untracked_touched"$/  done <\/dev\/null/'; then
+  run_range "$BASE" "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 0 ] \
+    && ok "control: with untracked test files left out of the diff the fixture passes" \
+    || bad "control: with untracked test files left out of the diff the fixture passes" "rc=$RC out=$OUT"
+else
+  bad "control: the untracked test files could not be dropped from the fixture diff in a guard copy"
+fi
+back_to_base
+
 echo "=== the skill-instruction rule reads the working tree ==="
 # A fix round validates before it stages, so a render that lost its configured
 # instructions block in the working tree is the candidate the rule judges.

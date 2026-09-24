@@ -679,6 +679,49 @@ else
   have_head=0
 fi
 
+# What range and full validation touched: every path changed since the base,
+# plus everything the working tree and index carry, so a render-only sync
+# counts for its source and a fix not yet committed counts at all. full's base
+# is the branch's merge base with origin/main where that ref exists; range's
+# is the base it was given. This is range's one changed set: its compile and
+# suite selection and its render and fixture rules all read it. full compiles
+# everything whatever it holds. base_resolved is 0 where full found no merge
+# base with origin/main: the touched set then holds the working tree alone,
+# not what the branch committed.
+touched=""
+untracked_touched=""
+base_resolved=0
+if [ "$MODE" != default ]; then
+  if [ "$MODE" = range ]; then
+    suites_base=$range_base
+    base_resolved=1
+  else
+    suites_base=HEAD
+    if git rev-parse --verify -q origin/main >/dev/null; then
+      if suites_base=$(git merge-base HEAD origin/main); then
+        base_resolved=1
+      else
+        suites_base=HEAD
+      fi
+    fi
+  fi
+  # --no-renames: a move between two trees names its source and its
+  # destination, so the tree a file left runs its suite too. Each read checks
+  # its own status; a group's status is its last command's, which would let a
+  # failed diff pass on a good `git status`. The status read adds what the
+  # diff against the working tree cannot see: untracked files.
+  branch_touched=$(git -c core.quotePath=false diff --no-renames --name-only "$suites_base" --) ||
+    { branch_touched=""; say touched-set branch-diff; }
+  tree_status=$(git -c core.quotePath=false status --porcelain --untracked-files=all) ||
+    { tree_status=""; say touched-set working-tree; }
+  tree_touched=$(printf '%s\n' "$tree_status" | cut -c4- | sed 's/^.* -> //') ||
+    { tree_touched=""; say touched-set working-tree; }
+  untracked_touched=$(printf '%s\n' "$tree_status" | sed -n 's/^?? //p') ||
+    { untracked_touched=""; say touched-set working-tree; }
+  touched=$(printf '%s\n%s\n' "$branch_touched" "$tree_touched" | sort -u) ||
+    { touched=""; say touched-set merge; }
+fi
+
 # Integration-test temp roots take their canonical spelling immediately
 # through the shared rooted() helper, on the next source line, and that call
 # must take the root just declared — the follow-line test is built from the
@@ -686,6 +729,21 @@ fi
 # older fixtures predate the helper and are not rewritten to satisfy it.
 temp_fixture_diff=$(git diff --no-color --unified=100000 --no-ext-diff --text "${diff_against[@]}" -- 'crates/*/tests/*.rs') ||
   say fixture-diff unreadable
+# A diff against the range's base cannot show a file git does not track, so
+# each untracked test file in the range joins the diff whole, as a new file.
+# The no-index diff exits 1 when the two sides differ, which a new file always
+# does; anything above 1 is the diff's own failure.
+if [ "$MODE" = range ]; then
+  while IFS= read -r f; do
+    case "$f" in crates/*/tests/*.rs) ;; *) continue ;; esac
+    new_file_status=0
+    new_file_diff=$(git diff --no-index --no-color --unified=100000 --no-ext-diff --text -- /dev/null "$f") ||
+      new_file_status=$?
+    [ "$new_file_status" -le 1 ] || say fixture-diff unreadable
+    temp_fixture_diff="$temp_fixture_diff
+$new_file_diff"
+  done <<<"$untracked_touched"
+fi
 if ! temp_fixture_hits=$(awk '
   function flush() { if (pending) print file ":" pending ": " pending_text; pending = 0 }
   /^diff --git / { flush(); file = $4; sub(/^b\//, "", file); next }
@@ -753,8 +811,14 @@ fi
 agent_roots=(.claude/agents:md .codex/agents:toml .pi/agents:md)
 hook_roots=(.claude/hooks .codex/hooks .pi/kendex/hooks)
 render_roots=(.agents/skills "${agent_roots[@]%:*}" "${hook_roots[@]}")
-render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${diff_against[@]}") ||
-  { render_changed=""; say render-changed-set unreadable; }
+# range reads its one changed set, untracked files included, so a new source
+# and its new render are judged alike however each sits in the index.
+if [ "$MODE" = range ]; then
+  render_changed=$touched
+else
+  render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${diff_against[@]}") ||
+    { render_changed=""; say render-changed-set unreadable; }
+fi
 # Tracked is the index UNION what HEAD carries: the index alone drops a render
 # staged for deletion, which is the moment the outlives clause below exists to
 # judge, and skipping the rule there would accept the drift.
