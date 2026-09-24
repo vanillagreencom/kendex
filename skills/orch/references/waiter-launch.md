@@ -11,10 +11,8 @@ Use the harness file-write tool to save this script as `[RUN_DIR]/launch.sh`:
 ```sh
 run_path=$1
 shift
-setsid -f sh -c 'printf "%s\n" "$$" > "$0.pid"; "$@" > "$0.log" 2>&1; printf "%s\n" "$?" > "$0.exit"' "$run_path" "$@" > /dev/null 2>&1 < /dev/null
+setsid -f sh -c '"$@" > "$0.log" 2>&1; printf "%s\n" "$?" > "$0.exit"' "$run_path" "$@" > /dev/null 2>&1 < /dev/null
 ```
-
-The run path's `.pid` file, `[RUN_DIR]/wait.pid` here, holds the detached shell's pid, which also names its new process group: `kill -TERM -- -[PID]` stops the job and everything it started, and `kill -0 [PID]` fails once the job and its exit writer are gone.
 
 The script forks with `setsid -f` and not a trailing `&`, so the launcher adds no signal ignores of its own: a job that a non-interactive shell starts with `&` ignores INT and QUIT, which leaves a detached guard or waiter uninterruptible and makes its signal rows report false failures. A signal the calling process already ignores stays ignored.
 
