@@ -28,6 +28,15 @@ fn config() -> serde_json::Value {
 /// - the updater endpoints: exactly one, the release channel, so an install
 ///   that stopped overriding it falls back to full releases; a second
 ///   endpoint the install does not choose is one nothing holds to a channel.
+/// - the `.deb` and `.rpm` git dependency: the app shells out to git to
+///   materialize a catalog, and a fresh desktop install has none. The `.deb`
+///   carries the 2.41 floor the Arch recipes declare, under Debian's git
+///   epoch. The `.rpm` names git bare: tauri's rpm writer stores the whole
+///   string as the package name, so a versioned entry is one nothing
+///   provides and dnf refuses the install.
+/// - the category: the `.deb` and `.rpm` desktop entries are written from
+///   it, and without one their `Categories=` is empty.
+/// - the homepage: the `.deb` and `.rpm` carry it as the package's homepage.
 #[test]
 fn the_settings_the_window_and_the_release_path_lean_on() {
     let config = config();
@@ -46,9 +55,38 @@ fn the_settings_the_window_and_the_release_path_lean_on() {
             "/plugins/updater/endpoints",
             serde_json::Value::from(vec![kendex_core::update_channel::RELEASE_MANIFEST_URL]),
         ),
+        (
+            "/bundle/linux/deb/depends",
+            serde_json::Value::from(vec!["git (>= 1:2.41)"]),
+        ),
+        (
+            "/bundle/linux/rpm/depends",
+            serde_json::Value::from(vec!["git"]),
+        ),
+        ("/bundle/category", serde_json::Value::from("DeveloperTool")),
+        (
+            "/bundle/homepage",
+            serde_json::Value::from("https://kendex.ai"),
+        ),
     ];
     for (pointer, expected) in rows {
         assert_eq!(config.pointer(pointer), Some(&expected), "{pointer}");
+    }
+}
+
+/// The `.deb` and `.rpm` package descriptions come from these two fields;
+/// without them `apt show` prints `Description: (none)`.
+#[test]
+fn the_linux_packages_carry_a_description() {
+    let config = config();
+    for pointer in ["/bundle/shortDescription", "/bundle/longDescription"] {
+        assert!(
+            config
+                .pointer(pointer)
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|text| !text.trim().is_empty()),
+            "{pointer}: missing or empty"
+        );
     }
 }
 
