@@ -38,7 +38,13 @@ Examples:
   # Dry run
   edit-comment.sh 12345678 "New text" --dry-run
 
-Note: Get comment ID from find-comment or from GitHub URL (#issuecomment-<ID>)
+Reaches both comment kinds: a PR-level comment (#issuecomment-<ID>) and a
+comment inside a review thread (#discussion_r<ID>). The issue-comments
+endpoint is tried first; its 404 sends the id to the review-comments
+endpoint. An id neither endpoint holds is refused with one keyed line,
+`github: comment-kind=unknown id=<ID> use=find-comment`, never a bare 404.
+
+Note: Get comment ID from find-comment or from a GitHub comment URL.
 EOF
 }
 
@@ -125,13 +131,30 @@ edit_comment() {
         exit 0
     fi
 
-    # Edit comment via REST API
-    local result
+    # A comment id carries no marker of which endpoint owns it. A PR-level
+    # comment is an ISSUE comment; a comment inside a review thread is a REVIEW
+    # comment and lives under `pulls/comments`. Each endpoint answers 404 for
+    # the other's ids, so the issue endpoint is asked first and its 404 is the
+    # signal to ask the review one rather than a verdict on the id.
+    local result status=0
     result=$(gh api -X PATCH "repos/$owner/$repo/issues/comments/$comment_id" \
-        -f body="$body" 2>&1) || {
+        -f body="$body" 2>&1) || status=$?
+    if [ "$status" -ne 0 ] && gh_error_is_not_found "$result"; then
+        status=0
+        result=$(gh api -X PATCH "repos/$owner/$repo/pulls/comments/$comment_id" \
+            -f body="$body" 2>&1) || status=$?
+        # Neither endpoint holds the id, so no verb reaches it as written and
+        # a bare 404 would send the caller back to the same two guesses.
+        if [ "$status" -ne 0 ] && gh_error_is_not_found "$result"; then
+            jq -nc --arg id "$comment_id" \
+                '{error: ("github: comment-kind=unknown id=" + $id + " use=find-comment (neither the issue-comments nor the review-comments endpoint holds this id)")}' >&2
+            exit 1
+        fi
+    fi
+    if [ "$status" -ne 0 ]; then
         jq -nc --arg detail "$result" '{error: ("Failed to edit comment: " + $detail)}' >&2
         exit 1
-    }
+    fi
 
     # Extract URL from response
     local url

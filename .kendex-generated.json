@@ -234,6 +234,7 @@
   ".agents/skills/github/tests/ci-classify-refusal.test.sh",
   ".agents/skills/github/tests/ci-logs-large-log.test.sh",
   ".agents/skills/github/tests/ci-run-correlation.test.sh",
+  ".agents/skills/github/tests/edit-comment.test.sh",
   ".agents/skills/github/tests/env-first-auth.sh",
   ".agents/skills/github/tests/fixtures/claude_review_summary_comments.json",
   ".agents/skills/github/tests/fixtures/codex_own_comment.json",
