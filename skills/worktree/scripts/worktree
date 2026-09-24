@@ -311,7 +311,23 @@ prepare_restack_authorization() {
   record_pending_restack_authorization "$wt" "$remote" "$branch" "$expected_oid" "$original_head" "$base_oid"
 }
 
-remote_ref_lease_arg() {
+# Whether the local branch already carries every commit unique to the remote
+# branch, under different SHAs. Git's own patch-equivalence judge over the
+# symmetric difference answers it, so a branch a rewrite moved off the remote
+# is told from a remote that genuinely moved ahead. A rev-list that cannot
+# answer is not an answer: the caller keeps the fetch-and-rebase route, which
+# is the safe reading of an unknown.
+branch_holds_remote_commits() { # WT EXPECTED_OID -> 0 when every remote-only commit has a local twin
+  local wt="$1" expected_oid="$2" remote_only=""
+
+  remote_only="$(git -C "$wt" rev-list --count --cherry-pick --right-only "HEAD...$expected_oid" 2>/dev/null)" || return 1
+  [[ "$remote_only" == 0 ]]
+}
+
+# The remote OID a force-with-lease push of BRANCH is pinned to, empty where
+# the remote branch must not exist yet. Refuses a remote OID the local branch
+# neither contains nor holds a push authorization for.
+remote_ref_lease_oid() {
   local wt="$1" remote="$2" branch="$3"
   local remote_head_ref="refs/heads/$branch"
   local remote_tracking_ref="refs/remotes/$remote/$branch"
@@ -329,7 +345,6 @@ remote_ref_lease_arg() {
       fetch_status=$?
       if grep -qiE "couldn't find remote ref|could not find remote ref|remote ref does not exist|remote branch .* not found" "$fetch_err"; then
         rm -f "$fetch_err"
-        printf '%s\n' "--force-with-lease=${remote_head_ref}:"
         return 0
       fi
 
@@ -345,18 +360,36 @@ remote_ref_lease_arg() {
     # Empty expectation means the remote branch must not already exist. This
     # keeps first pushes safe and prevents overwriting an existing branch that
     # the local checkout has never observed.
-    printf '%s\n' "--force-with-lease=${remote_head_ref}:"
     return 0
   fi
 
   if ! git -C "$wt" merge-base --is-ancestor "$expected_oid" HEAD && \
      ! restack_push_authorization_matches "$wt" "$remote" "$branch" "$expected_oid"; then
     worktree_message push-remote-uncontained "$remote/$branch" "Error: Remote '$remote/$branch' points at $expected_oid, which is not contained in local branch '$branch'." >&2
-    echo "Fetch and rebase/merge '$remote/$branch' before using worktree push." >&2
+    # A branch that already holds the remote's work under rewritten SHAs was
+    # moved off the remote by a rewrite no recorded authorization covers, so
+    # fetching and rebasing would replay commits that rewrite superseded. No
+    # verb republishes such a branch, because a rewrite verb run on it now
+    # rewrites nothing and so records nothing, so the route is a push pinned
+    # to the OID this refusal read. The push arm refuses an unmapped rewrite
+    # before it asks this, so the route is never named for one. A remote that
+    # genuinely moved ahead carries work this branch lacks, and keeps the
+    # fetch-and-rebase route.
+    if branch_holds_remote_commits "$wt" "$expected_oid"; then
+      echo "Local branch '$branch' already holds every commit on '$remote/$branch' under rewritten SHAs, so fetching and rebasing would replay superseded work." >&2
+      echo "No recorded push authorization covers this rewrite." >&2
+      echo "Republish the branch pinned to the remote OID above:" >&2
+      # A branch or remote name may carry shell syntax Git accepts, and the
+      # branch can be one a PR author named, so every argument is quoted for
+      # the shell the operator pastes this into.
+      printf '  git -C %q push %q %q %q\n' "$wt" "--force-with-lease=refs/heads/$branch:$expected_oid" "$remote" "$branch" >&2
+    else
+      echo "Fetch and rebase/merge '$remote/$branch' before using worktree push." >&2
+    fi
     return 1
   fi
 
-  printf '%s\n' "--force-with-lease=${remote_head_ref}:${expected_oid}"
+  printf '%s\n' "$expected_oid"
 }
 
 # Which judge refused a push, read off the transcript, one predicate each.
@@ -3373,22 +3406,13 @@ case "${1:-}" in
       REMOTE="origin"
     fi
 
-    CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
-    PUSH_LEASE=()
-    if [[ "$AUTO_REBASE" == true && -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
-      if LEASE_ARG="$(remote_ref_lease_arg "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH")"; then
-        PUSH_LEASE=("$LEASE_ARG")
-      else
-        exit 1
-      fi
-    fi
-
-    # An earlier push may have rewritten this branch without deriving a map and
-    # refused. That rewrite stands, and this run would find the base already
+    # An earlier rewrite of this branch may have gone without a derivable map
+    # and refused. That rewrite stands, and this run would find the base already
     # contained, rebase nothing and derive nothing, so it must refuse too
     # rather than publish a branch no map ever described. --no-rebase is no
-    # exception: the commits are already rewritten. It sits after the lease,
-    # which judges a diverged remote on its own and says so in its own words.
+    # exception: the commits are already rewritten. It sits ahead of the lease,
+    # whose uncontained refusal names a force push that would publish exactly
+    # that unmapped rewrite.
     if ! read_unmapped_rewrite "$WT_PATH"; then
       worktree_message push-unmapped-unreadable "$WT_PATH" "Error: Could not read $WT_PATH's rebase-map record, so whether an earlier rebase left this branch unmapped is unknown; refusing to push." >&2
       exit 1
@@ -3399,6 +3423,20 @@ case "${1:-}" in
       echo "Reconcile every recorded SHA against that reflog, then remove the record to push:" >&2
       echo "  rm -f \"$(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')\"" >&2
       exit 1
+    fi
+
+    if ! CURRENT_BRANCH="$(git -C "$WT_PATH" branch --show-current 2>/dev/null)"; then
+      worktree_message push-branch-read-failed "$WT_PATH" "Error: could not read the current branch of $WT_PATH; refusing to push." >&2
+      exit 1
+    fi
+    PUSH_LEASE=()
+    LEASE_EXPECTED_OID=""
+    if [[ "$AUTO_REBASE" == true && -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
+      if LEASE_EXPECTED_OID="$(remote_ref_lease_oid "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH")"; then
+        PUSH_LEASE=("--force-with-lease=refs/heads/$CURRENT_BRANCH:$LEASE_EXPECTED_OID")
+      else
+        exit 1
+      fi
     fi
 
     if [[ "$AUTO_REBASE" == true ]]; then
@@ -3413,14 +3451,38 @@ case "${1:-}" in
           PRE_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
           # Write-ahead, before git touches a commit: see record_pending_rewrite.
           record_pending_rewrite "$WT_PATH" "$PRE_REBASE_HEAD" || exit 1
+          # The same moment carries the push authorization. The lease above was
+          # computed while the remote OID was still contained in this branch,
+          # and the rebase below ends that containment; without a record of the
+          # OID it was read at, a push the pre-push chain refuses leaves the
+          # retry recomputing the lease against a rewritten head and refusing
+          # `push-remote-uncontained` on a branch the tool itself rewrote.
+          # Refusing before the rewrite starts is why this sits here, and its
+          # own uncontained check cannot fire: the lease just passed the same
+          # one against the same remote, branch and OID.
+          if [[ -n "$LEASE_EXPECTED_OID" ]]; then
+            PUSH_REBASE_BASE_OID="$(git -C "$WT_PATH" rev-parse "origin/$DEFAULT_BRANCH")"
+            prepare_restack_authorization "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH" "$LEASE_EXPECTED_OID" "$PUSH_REBASE_BASE_OID" || exit 1
+          fi
           if ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
             git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || true
             # An abort that unwound the rewrite puts the branch back on the head
-            # the record names, so the record goes with it; one that did not
-            # leaves the branch mid-rewrite, where the record must stand.
-            rebase_in_progress "$WT_PATH" || warn_uncleared_pending_rewrite "$WT_PATH"
+            # the record names, so the record and this attempt's pending
+            # authorization go with it, leaving whatever an earlier refused push
+            # authorized for the head the branch is back on; one that did not
+            # leaves the branch mid-rewrite, where both must stand.
+            rebase_in_progress "$WT_PATH" || cancel_pending_restack_authorization "$WT_PATH"
             worktree_message push-rebase-failed "$CURRENT_BRANCH" "Error: Rebase onto origin/$DEFAULT_BRANCH failed (conflicts). Push with --no-rebase or resolve manually." >&2
             exit 1
+          fi
+          # The rewrite is done, so the authorization prepared before it
+          # becomes the head a retry's lease accepts. Every refusal below
+          # leaves this rewrite standing, which is the state a retry has to
+          # publish, and none of them is thereby waved through: an unmapped
+          # rewrite's record is still on disk, and read_unmapped_rewrite
+          # refuses every push until the map is durable or the record removed.
+          if [[ -n "$LEASE_EXPECTED_OID" ]]; then
+            finalize_pending_restack_authorization "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH" "$LEASE_EXPECTED_OID" || exit 1
           fi
           POST_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
           if ! PUSH_MAP_LINES="$(emit_rebase_map "$PRE_REBASE_COMMITS" "$POST_REBASE_COMMITS")"; then

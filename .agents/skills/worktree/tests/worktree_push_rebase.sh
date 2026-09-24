@@ -9,7 +9,8 @@
 # stderr, and what is left: the head, the commits ahead of origin/main, every
 # tracked file with its first line, each remote's branch ref, the upstream
 # the branch tracks, the shape and first line of a configured local settings
-# file when the row names one, and the push argv when a shim captured it.
+# file when the row names one, the force-with-lease authorization the worktree
+# carries, and the push argv when a shim captured it.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
@@ -62,6 +63,8 @@ END=""        # HEAD at the end of the fixture
 END1=""       # HEAD~1 at the end of the fixture
 END2=""       # HEAD~2 at the end of the fixture, where the branch has one
 EXTERNAL=""   # a commit an outsider pushed to the remote branch
+PUBLISHED=""  # the remote branch OID a completed push left the branch at
+PRE=""        # HEAD before a rewrite the fixture itself ran
 UNMAPPED=""   # the head a refusing push rewrote the branch from
 ROW_SCRIPT="" # the package copy a row runs instead of the script under test
 ROW_PATH=""   # a PATH prefix holding a row's git shim
@@ -169,7 +172,7 @@ commit_wt_subject() {
 }
 
 tool() {
-  (cd "$MAIN" && "$WORKTREE_SCRIPT" "$@" >/dev/null 2>&1) || true
+  (cd "$MAIN" && "${ROW_SCRIPT:-$WORKTREE_SCRIPT}" "$@" >/dev/null 2>&1) || true
 }
 
 remote_oid() {
@@ -195,6 +198,8 @@ external_commit() {
 # outsider's commit the first time the tool runs a rebase, after the lease
 # was captured. `capture` records the argv of the tool's push and answers
 # success without a remote (the rows with a GitHub URL for a remote).
+# `record` records the same argv and then performs the push, for a row that
+# pins the lease expectation a real push carried.
 git_shim() {
   local fail_repo=""
   mkdir -p "$ROOT/bin"
@@ -221,6 +226,19 @@ for arg in "\$@"; do
   if [[ "\$arg" == push ]]; then
     printf '%s\n' "\$*" >"$ROOT/push.args"
     exit 0
+  fi
+done
+exec "$REAL_GIT" "\$@"
+EOF
+      ;;
+    record)
+      cat >"$ROOT/bin/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "\$@"; do
+  if [[ "\$arg" == push ]]; then
+    printf '%s\n' "\$*" >"$ROOT/push.args"
+    break
   fi
 done
 exec "$REAL_GIT" "\$@"
@@ -328,6 +346,7 @@ step() {
       git -C "$WT" commit -q -m 'merge origin/main'
       ;;
     advance) commit_main main-advanced.txt advanced ;;
+    advance2) commit_main main-advanced2.txt advanced2 ;;
     clone-advance)
       printf 'advanced\n' >"$SEED/main-advanced.txt"
       git -C "$SEED" add main-advanced.txt
@@ -363,6 +382,9 @@ step() {
       UNMAPPED="$(git -C "$WT" rev-parse HEAD)"
       tool push "$ISSUE" --set-upstream
       ;;
+    # The guarded restack's own map refusal: it leaves the record standing and
+    # clears the authorization it prepared, so the rewrite carries none.
+    reuse-unmapped) tool create "$ISSUE" --reuse ;;
     # What a killed rewrite leaves: the record is written before git touches a
     # commit, so a death anywhere between that write and the map reaching disk
     # leaves exactly this. The rebase is run by hand here, because the window
@@ -373,7 +395,43 @@ step() {
         >"$(git -C "$WT" rev-parse --absolute-git-dir)/kendex-rebase-map"
       git -C "$WT" rebase origin/main >/dev/null 2>&1
       ;;
-    publish) tool push "$ISSUE" --set-upstream ;;
+    # What an unmapped push's refusal tells the operator to do once every
+    # recorded SHA is reconciled: remove the record it left.
+    remove-record)
+      record_dir="$(git -C "$WT" rev-parse --absolute-git-dir)"
+      rm -f -- "${record_dir:?}/kendex-rebase-map"
+      ;;
+    publish)
+      tool push "$ISSUE" --set-upstream
+      PUBLISHED="$(remote_oid origin)"
+      ;;
+    # The round this item is about: a push that rebases the branch and is then
+    # refused by a pre-push lane. The rewrite stands and the remote does not
+    # move, so the retry meets a lease expectation its own branch no longer
+    # contains. The hook is disarmed afterwards, as a lane disarms it by
+    # fixing what the lane named, so the retry reaches the push.
+    refused-rebase)
+      PRE="$(git -C "$WT" rev-parse HEAD)"
+      arm_pre_push_hook 'pre-push: result=1' 1
+      tool push "$ISSUE"
+      rm -f -- "${MAIN:?}/.git/hooks/pre-push"
+      ;;
+    # Main lands a file the branch also adds, so the next push's rebase
+    # conflicts; that push aborts it and refuses.
+    conflict-main) commit_main fix2.txt main-side ;;
+    conflicted-push) tool push "$ISSUE" ;;
+    # The manual resolution that conflicting push names: merge the default
+    # branch and settle the conflict, building on the head the branch holds.
+    merge-main)
+      git -C "$WT" fetch -q origin
+      git -C "$WT" merge origin/main >/dev/null 2>&1 || true
+      printf 'merged\n' >"$WT/fix2.txt"
+      git -C "$WT" add fix2.txt
+      git -C "$WT" commit -q -m 'merge origin/main'
+      ;;
+    # A rewrite made outside the tool, which authorizes nothing: the branch
+    # holds the remote's commits under new SHAs and no record says so.
+    hand-rebase) git -C "$WT" rebase origin/main >/dev/null 2>&1 ;;
     move-remote)
       EXTERNAL="$(external_commit)"
       git --git-dir="$ROOT/origin.git" update-ref "refs/heads/$ISSUE" "$EXTERNAL"
@@ -381,6 +439,7 @@ step() {
     # The main checkout fetched the remote branch after the outsider moved it.
     observe) git -C "$MAIN" fetch -q origin "+refs/heads/$ISSUE:refs/remotes/origin/$ISSUE" ;;
     race) EXTERNAL="$(external_commit)"; git_shim race ;;
+    record-push) git_shim record ;;
     index-unreadable-wt) git_shim index-unreadable-wt ;;
     index-unreadable-main) git_shim index-unreadable-main ;;
     # An outsider published the branch before this checkout ever fetched it:
@@ -437,6 +496,22 @@ step() {
       rm -f "$ROW_SCRIPT.bak"
       grep -q 'elif \[\[ ${#PUSH_LEASE\[@\]} -gt 0 \]\]; then' "$ROW_SCRIPT" || {
         echo "FIXTURE: the lease-arm edit matched nothing in $ROW_SCRIPT" >&2
+        exit 2
+      }
+      ;;
+    # The must-fail control's world for the retry: a package copy whose push
+    # auto-rebase records no authorization before it rewrites the branch, the
+    # state that left a refused lane with no route but a hand-run git push.
+    unfixed-push-authorization)
+      step standalone
+      [[ "$(grep -cF 'prepare_restack_authorization "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH" "$LEASE_EXPECTED_OID"' "$ROW_SCRIPT")" == 1 ]] || {
+        echo "FIXTURE: the push authorization call was not unique in $ROW_SCRIPT" >&2
+        exit 2
+      }
+      sed -i.bak 's/prepare_restack_authorization "\$WT_PATH" "\$REMOTE" "\$CURRENT_BRANCH" "\$LEASE_EXPECTED_OID".*/: unauthorized-push-rewrite/' "$ROW_SCRIPT"
+      rm -f "$ROW_SCRIPT.bak"
+      grep -qF ': unauthorized-push-rewrite' "$ROW_SCRIPT" || {
+        echo "FIXTURE: the push authorization edit matched nothing in $ROW_SCRIPT" >&2
         exit 2
       }
       ;;
@@ -550,7 +625,8 @@ build() {
   shift
   MAIN="$ROOT/main"
   WT="$ROOT/trees/$ISSUE"
-  BASE="" END="" END1="" END2="" EXTERNAL="" UNMAPPED="" ROW_SCRIPT="" ROW_PATH="" ROW_CWD="" SEED=""
+  BASE="" END="" END1="" END2="" EXTERNAL="" PUBLISHED="" PRE=""
+  UNMAPPED="" ROW_SCRIPT="" ROW_PATH="" ROW_CWD="" SEED=""
   LOCAL_LINK=""
   for word in "$@"; do
     step "$word"
@@ -569,6 +645,7 @@ oid_name() {
   elif [[ "$oid" == "$BASE" ]]; then printf 'base'
   elif [[ "$oid" == "$END" ]]; then printf 'end'
   elif [[ -n "$EXTERNAL" && "$oid" == "$EXTERNAL" ]]; then printf 'external'
+  elif [[ -n "$PUBLISHED" && "$oid" == "$PUBLISHED" ]]; then printf 'published'
   elif [[ "$oid" == "$(git -C "$WT" rev-parse HEAD)" ]]; then printf 'head'
   else printf '%s' "$oid"
   fi
@@ -592,6 +669,8 @@ alias_text() {
     -e "s|$head1|<head~1>|g" \
     -e "s|$head|<head>|g" \
     -e "s|${EXTERNAL:-NONE}|<external>|g" \
+    -e "s|${PUBLISHED:-NONE}|<published>|g" \
+    -e "s|${PRE:-NONE}|<pre>|g" \
     -e "s|${UNMAPPED:-NONE}|<unmapped>|g" \
     -e '/^To <root>\/[a-z]*\.git$/d' \
     -e '/^To git@github\.com/d' \
@@ -644,6 +723,28 @@ local_link_state() {
   fi
 }
 
+# The force-with-lease authorization the worktree carries: the remote branch it
+# names, the remote OID it pins the lease to, the local head it authorizes, and
+# `:pending` while a rewrite's half of it is still open, `-` where no field is
+# recorded. Every row pins it, so a push that lands and leaves its
+# authorization behind — waving through a later divergence nothing rewrote —
+# is a row that changed, and so is a refusal that leaves a cancelled rewrite's
+# pending half behind.
+auth_state() {
+  local remote branch expected authorized pending
+  remote="$(git -C "$WT" config --worktree --get kendex-restack.remote 2>/dev/null || true)"
+  branch="$(git -C "$WT" config --worktree --get kendex-restack.branch 2>/dev/null || true)"
+  expected="$(git -C "$WT" config --worktree --get kendex-restack.expectedRemoteOid 2>/dev/null || true)"
+  authorized="$(git -C "$WT" config --worktree --get kendex-restack.authorizedHead 2>/dev/null || true)"
+  pending="$(git -C "$WT" config --worktree --get kendex-restack.pending 2>/dev/null || true)"
+  if [[ -z "$remote$branch$expected$authorized$pending" ]]; then
+    printf -- '-'
+    return
+  fi
+  printf '%s/%s:%s:%s%s' "${remote:--}" "${branch:--}" "$(oid_name "$expected")" "$(oid_name "$authorized")" \
+    "${pending:+:pending}"
+}
+
 state() {
   local ahead tree remotes="" name push="-" lock_state="" lock_clean=clean
   ahead="$(git -C "$WT" rev-list --count "$BASE..HEAD" 2>/dev/null || true)"
@@ -659,10 +760,10 @@ state() {
     git -C "$WT" diff --quiet -- .kendex-lock.json || lock_clean=dirty
     lock_state=" lock=$(sed -n '1p' "$WT/.kendex-lock.json"):$lock_clean"
   fi
-  printf 'head=%s ahead=%s tree=%s remote=%s upstream=%s push=%s%s%s map=%s' \
+  printf 'head=%s ahead=%s tree=%s remote=%s upstream=%s push=%s%s%s auth=%s map=%s' \
     "$(worktree_head)" "${ahead:--}" "${tree%,}" "${remotes:-,-}" \
     "$(git -C "$WT" config "branch.$ISSUE.remote" 2>/dev/null || printf -- '-')" "$push" "$lock_state" \
-    "$(local_link_state)" "$(pending_record)"
+    "$(local_link_state)" "$(auth_state)" "$(pending_record)"
 }
 
 # The command runs from the main checkout (or the row's directory) under the
@@ -693,10 +794,13 @@ err_text() {
     ambiguous) printf 'worktree-rebase-map-ambiguous: twin subject' ;;
     unmapped) printf 'worktree-push-rebase-unmapped: <end>' ;;
     unmapped-retry) printf 'worktree-push-rebase-unmapped: <unmapped>' ;;
+    # The same refusal where the rewritten head is the published tip.
+    unmapped-published) printf 'worktree-push-rebase-unmapped: <published>' ;;
     unknown:*) printf 'worktree-push-option-unknown: %s' "${spec#unknown:}" ;;
     two:*) printf 'worktree-push-target-count: 2' ;;
     empty) printf 'worktree-push-target-empty: target' ;;
     lease-rejected) printf 'worktree-push-rejected: origin/topic' ;;
+    rebase-failed) printf 'worktree-push-rebase-failed: topic' ;;
     hook-rejected) printf 'worktree-push-hook-rejected: origin/topic' ;;
     push-failed) printf 'worktree-push-failed: origin/topic' ;;
     not-contained) printf 'worktree-push-remote-uncontained: origin/topic' ;;
@@ -710,13 +814,15 @@ err_text() {
 }
 
 # What the worktree's map file holds: either the record a rewrite leaves until
-# its map is durable, named by the head it covers, or the hop a mapped rewrite
-# wrote there, whose lines are the ones it also printed.
+# its map is durable, named by the head it covers, or the hop each mapped
+# rewrite wrote there, in order, whose lines are the ones it also printed.
 map_text() {
   case "$1" in
+    *+*) printf '%s;%s' "$(map_text "${1%%+*}")" "$(map_text "${1#*+}")" ;;
     -) printf -- '-' ;;
     end) printf 'rebase-unmapped: <end>' ;;
     unmapped) printf 'rebase-unmapped: <unmapped>' ;;
+    published) printf 'rebase-unmapped: <published>' ;;
     hop:*) printf 'rebase-hop:;%s' "$(out_text "${1#hop:}")" ;;
     *) printf 'UNKNOWN-MAP-SPEC:%s' "$1" ;;
   esac
@@ -727,6 +833,12 @@ out_text() {
     -) printf '' ;;
     usage) printf 'worktree-help: push' ;;
     map2) printf '%s' "rebase-map: <end~1> <head~1>;rebase-map: <end> <head>" ;;
+    # The map a rewrite the FIXTURE ran left behind: its old SHAs are the
+    # commits the branch carried before that rewrite, the published tip among
+    # them, and its new ones are where the row finds the branch.
+    map2-pre) printf '%s' "rebase-map: <published> <end~1>;rebase-map: <pre> <end>" ;;
+    # The same map once a merge commit has gone on top of that rewrite.
+    map2-pre-merged) printf '%s' "rebase-map: <published> <end~2>;rebase-map: <pre> <end~1>" ;;
     map-dropped) printf '%s' "rebase-map: <end~1> dropped;rebase-map: <end> <head>" ;;
     map-group) printf '%s' "rebase-map: <end~2> <head~1>;rebase-map: <end~1> <head>;rebase-map: <end> dropped" ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
@@ -735,52 +847,62 @@ out_text() {
 
 # --- the rows ---------------------------------------------------------------------
 # label|fixture|command|rc|out|err|state
-ROWS='a branch that already contains origin/main is pushed unrebased, with no map|pair merged|push @wt --set-upstream|0|-|skip-rebase|head=end ahead=2 tree=file.txt:merged remote=origin:end upstream=origin push=- map=-
-a behind branch is rebased onto the advanced base and the map pairs each rewritten commit by position|pair advance fix fix2|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=- map=hop:map2
-a configured copy leaves a linked worktree branch lock under Git ownership|pair-lock advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean map=hop:map2
-must-fail: without the ownership arm, setup overwrites the linked worktree branch lock|pair-lock advance fix lock-fix unfixed-copy-ownership|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=base-lock:dirty map=hop:map2
-a failed worktree index read refuses the copy and preserves the branch lock|pair-lock advance fix lock-fix index-unreadable-wt|push @wt --set-upstream|1|map2|map:2+index-read-wt|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean map=hop:map2
-a failed main index read refuses the copy and preserves the branch lock|pair-lock advance fix lock-fix index-unreadable-main|push @wt --set-upstream|1|map2|map:2+index-read-main|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean map=hop:map2
-must-fail: without the checked index read, the failed probe overwrites the branch lock|pair-lock advance fix lock-fix index-unreadable-wt unfixed-index-read|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=base-lock:dirty map=hop:map2
-a true standalone clone ignores its stale committed-lock copy setting and pushes after rebase|standalone-clone clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean map=hop:map2
-must-fail: without the same-checkout no-op, the same clone copies its local file onto itself|standalone-clone clone-advance fix lock-fix unfixed-same-checkout|push @wt --set-upstream|1|map2|map:2+copy-failed:local.txt|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean map=hop:map2
-a main-checkout push that rebases leaves its configured local settings file a regular file|standalone-clone-link clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=file:local-settings map=hop:map2
-must-fail: without the same-checkout no-op, that push links the settings file onto itself|standalone-clone-link clone-advance fix lock-fix unfixed-same-checkout|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=link:<wt>/settings.local map=hop:map2
-must-fail: without the same-checkout return in the detector, that push warns the settings file is materialized|standalone-clone-link clone-advance fix lock-fix unfixed-materialized-check|push @wt --set-upstream|0|map2|materialized+map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=file:local-settings map=hop:map2
-a main-checkout push that rebases leaves a configured relative-symlink path a regular file|standalone-clone-relative clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=file:local-settings map=hop:map2
-must-fail: without the same-checkout no-op, that push links the relative target over the real file|standalone-clone-relative clone-advance fix lock-fix unfixed-same-checkout|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=link:../elsewhere map=hop:map2
-a linked-worktree push relinks its configured local settings file after the rebase|pair-local-link advance fix fix2|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=- local=link:<root>/main/settings.local map=hop:map2
-a setup failure after a successful rebase leaves the map durable and does not push|pair advance fix setup-fails|push @wt --set-upstream|1|map2|map:2+copy-failed:copy-parent/copied.txt|head=rebased ahead=2 tree=copy-parent:blocked,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- map=hop:map2
-must-fail: setup before map persistence leaves the successful rewrite unmapped|pair advance fix setup-fails unfixed-map-order|push @wt --set-upstream|1|-|copy-failed:copy-parent/copied.txt|head=rebased ahead=2 tree=copy-parent:blocked,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- map=end
---no-rebase pushes the behind branch where it stands|pair advance fix|push @wt --set-upstream --no-rebase|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- map=-
-an unknown flag is a usage error that pushes and rebases nothing|pair advance fix|push @wt --no-rebse|1|-|unknown:--no-rebse|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- map=-
-flags before the target still make the trailing positional the pushed tree, not the checkout|pair advance fix|push --no-rebase --set-upstream @wt|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- map=-
-push --help, the advertised recovery, prints the push usage|pair fix|push --help|0|usage|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- map=-
-a second positional is a usage error|pair fix|push @wt topic|1|-|two:<wt>'"'"' and '"'"'topic|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- map=-
-an empty positional is refused, not resolved to the current checkout|pair fix|push @empty|1|-|empty|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- map=-
-an empty positional before a real one is still refused|pair fix|push @empty @wt|1|-|empty|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- map=-
-an empty positional after a real one is a duplicate, not a silent second target|pair fix|push @wt @empty|1|-|two:<wt>'"'"' and '"'"'|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- map=-
-a commit whose patch main already landed is dropped by the rebase and mapped as dropped|pair dup fix dup-main|push @wt --set-upstream|0|map-dropped|map:2|head=rebased ahead=1 tree=dup.txt:dup,file.txt:orig,fix.txt:fix remote=origin:head upstream=origin push=- map=hop:map-dropped
-commits sharing one subject, partly dropped, refuse the push rather than guess which survived|pair twins twins-main|push @wt --set-upstream|1|-|ambiguous+unmapped|head=rebased ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:- upstream=- push=- map=end
-a push after an unmapped rewrite refuses on its record rather than publishing it|pair twins twins-main unmapped-push|push @wt --set-upstream|1|-|unmapped-retry|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:- upstream=- push=- map=unmapped
-a rewrite killed before its map reached disk still refuses the next push|pair advance fix killed-rewrite|push @wt --set-upstream|1|-|unmapped-retry|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- map=unmapped
-a whole subject group that survives beside a dropped commit still maps|pair twins dup dup-main|push @wt --set-upstream|0|map-group|map:3|head=rebased ahead=2 tree=dup.txt:dup,file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:head upstream=origin push=- map=hop:map-group
-an issue ID names the current checkout when it is an issue worktree outside the trees base|outside fix|push TOPIC --no-rebase|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- map=-
-a first push by issue ID creates the remote branch and sets its upstream|pair fix|push TOPIC --set-upstream|0|-|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- map=-
-an unobserved remote branch is not overwritten by a first push|pair fix foreign|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:external upstream=- push=- map=-
-a rebased push over a published branch replaces the remote under its lease|pair fix publish advance fix2|push TOPIC|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=- map=hop:map2
-a remote moved after the lease was captured is not overwritten|pair fix publish advance fix2 race|push TOPIC|1|map2|map:2+lease-rejected|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:external upstream=origin push=- map=hop:map2
-a remote already observed to diverge is refused before any rebase|pair fix publish move-remote observe fix2|push TOPIC|1|-|not-contained|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2 remote=origin:external upstream=origin push=- map=-
-a lease fetch that fails for a reason other than a missing branch aborts the push|pair fix broken-remote|push TOPIC|1|-|fetch-failed|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- map=-
-the configured bot remote takes the lease and the push|pair bot-remote fix publish advance fix2|push TOPIC|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:-,bot:head upstream=bot push=- map=hop:map2
-the package alone pushes through plain git|github fix standalone|push TOPIC --no-rebase --set-upstream|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=- upstream=- push=-C <wt> push -u origin HEAD:refs/heads/topic map=-
-a sibling GitHub helper, when present, owns the git invocation|github fix with-helper|push TOPIC --no-rebase --set-upstream|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=- upstream=- push=-c kendex.test-github-helper=loaded -C <wt> push -u origin HEAD:refs/heads/topic map=-
-a pre-push hook refusal is named as one, not as a force-with-lease conflict|pair fix hook-refuses|push TOPIC --set-upstream|1|-|skip-rebase+hook-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- map=-
-must-fail: with the hook arm cut, the same refusal loses its own record|pair fix unfixed-hook|push TOPIC --set-upstream|1|-|skip-rebase+push-failed|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- map=-
-keyed lines that never reach a verdict are a refusal too, the shape a hook aborts in|pair fix hook-aborts|push TOPIC --set-upstream|1|-|skip-rebase+hook-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- map=-
-a clean hook leaves the remote its own rejection to explain, under the lease record|pair fix foreign hook-passes|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:external upstream=- push=- map=-
-a composed hook whose consumer half refuses under a clean lane verdict is not a lease conflict|pair fix hook-composed|push TOPIC --set-upstream|1|-|skip-rebase+push-failed|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- map=-
-must-fail: with the lease arm keyed on the absence of a hook verdict, it is told as one|pair fix unfixed-lease|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- map=-
+ROWS='a branch that already contains origin/main is pushed unrebased, with no map|pair merged|push @wt --set-upstream|0|-|skip-rebase|head=end ahead=2 tree=file.txt:merged remote=origin:end upstream=origin push=- auth=- map=-
+a behind branch is rebased onto the advanced base and the map pairs each rewritten commit by position|pair advance fix fix2|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=- auth=- map=hop:map2
+a configured copy leaves a linked worktree branch lock under Git ownership|pair-lock advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean auth=- map=hop:map2
+must-fail: without the ownership arm, setup overwrites the linked worktree branch lock|pair-lock advance fix lock-fix unfixed-copy-ownership|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=base-lock:dirty auth=- map=hop:map2
+a failed worktree index read refuses the copy and preserves the branch lock|pair-lock advance fix lock-fix index-unreadable-wt|push @wt --set-upstream|1|map2|map:2+index-read-wt|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean auth=- map=hop:map2
+a failed main index read refuses the copy and preserves the branch lock|pair-lock advance fix lock-fix index-unreadable-main|push @wt --set-upstream|1|map2|map:2+index-read-main|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean auth=- map=hop:map2
+must-fail: without the checked index read, the failed probe overwrites the branch lock|pair-lock advance fix lock-fix index-unreadable-wt unfixed-index-read|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=base-lock:dirty auth=- map=hop:map2
+a true standalone clone ignores its stale committed-lock copy setting and pushes after rebase|standalone-clone clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean auth=- map=hop:map2
+must-fail: without the same-checkout no-op, the same clone copies its local file onto itself|standalone-clone clone-advance fix lock-fix unfixed-same-checkout|push @wt --set-upstream|1|map2|map:2+copy-failed:local.txt|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean auth=- map=hop:map2
+a main-checkout push that rebases leaves its configured local settings file a regular file|standalone-clone-link clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=file:local-settings auth=- map=hop:map2
+must-fail: without the same-checkout no-op, that push links the settings file onto itself|standalone-clone-link clone-advance fix lock-fix unfixed-same-checkout|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=link:<wt>/settings.local auth=- map=hop:map2
+must-fail: without the same-checkout return in the detector, that push warns the settings file is materialized|standalone-clone-link clone-advance fix lock-fix unfixed-materialized-check|push @wt --set-upstream|0|map2|materialized+map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=file:local-settings auth=- map=hop:map2
+a main-checkout push that rebases leaves a configured relative-symlink path a regular file|standalone-clone-relative clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=file:local-settings auth=- map=hop:map2
+must-fail: without the same-checkout no-op, that push links the relative target over the real file|standalone-clone-relative clone-advance fix lock-fix unfixed-same-checkout|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=link:../elsewhere auth=- map=hop:map2
+a linked-worktree push relinks its configured local settings file after the rebase|pair-local-link advance fix fix2|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=- local=link:<root>/main/settings.local auth=- map=hop:map2
+a setup failure after a successful rebase leaves the map durable and does not push|pair advance fix setup-fails|push @wt --set-upstream|1|map2|map:2+copy-failed:copy-parent/copied.txt|head=rebased ahead=2 tree=copy-parent:blocked,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- auth=- map=hop:map2
+must-fail: setup before map persistence leaves the successful rewrite unmapped|pair advance fix setup-fails unfixed-map-order|push @wt --set-upstream|1|-|copy-failed:copy-parent/copied.txt|head=rebased ahead=2 tree=copy-parent:blocked,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- auth=- map=end
+--no-rebase pushes the behind branch where it stands|pair advance fix|push @wt --set-upstream --no-rebase|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
+an unknown flag is a usage error that pushes and rebases nothing|pair advance fix|push @wt --no-rebse|1|-|unknown:--no-rebse|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
+flags before the target still make the trailing positional the pushed tree, not the checkout|pair advance fix|push --no-rebase --set-upstream @wt|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
+push --help, the advertised recovery, prints the push usage|pair fix|push --help|0|usage|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
+a second positional is a usage error|pair fix|push @wt topic|1|-|two:<wt>'"'"' and '"'"'topic|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
+an empty positional is refused, not resolved to the current checkout|pair fix|push @empty|1|-|empty|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
+an empty positional before a real one is still refused|pair fix|push @empty @wt|1|-|empty|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
+an empty positional after a real one is a duplicate, not a silent second target|pair fix|push @wt @empty|1|-|two:<wt>'"'"' and '"'"'|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
+a commit whose patch main already landed is dropped by the rebase and mapped as dropped|pair dup fix dup-main|push @wt --set-upstream|0|map-dropped|map:2|head=rebased ahead=1 tree=dup.txt:dup,file.txt:orig,fix.txt:fix remote=origin:head upstream=origin push=- auth=- map=hop:map-dropped
+commits sharing one subject, partly dropped, refuse the push rather than guess which survived|pair twins twins-main|push @wt --set-upstream|1|-|ambiguous+unmapped|head=rebased ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:- upstream=- push=- auth=- map=end
+a push after an unmapped rewrite refuses on its record rather than publishing it|pair twins twins-main unmapped-push|push @wt --set-upstream|1|-|unmapped-retry|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:- upstream=- push=- auth=- map=unmapped
+a rewrite killed before its map reached disk still refuses the next push|pair advance fix killed-rewrite|push @wt --set-upstream|1|-|unmapped-retry|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- auth=- map=unmapped
+a whole subject group that survives beside a dropped commit still maps|pair twins dup dup-main|push @wt --set-upstream|0|map-group|map:3|head=rebased ahead=2 tree=dup.txt:dup,file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:head upstream=origin push=- auth=- map=hop:map-group
+an issue ID names the current checkout when it is an issue worktree outside the trees base|outside fix|push TOPIC --no-rebase|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
+a first push by issue ID creates the remote branch and sets its upstream|pair fix|push TOPIC --set-upstream|0|-|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- auth=- map=-
+an unobserved remote branch is not overwritten by a first push|pair fix foreign|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:external upstream=- push=- auth=- map=-
+a rebased push over a published branch replaces the remote under its lease|pair fix publish advance fix2|push TOPIC|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=- auth=- map=hop:map2
+a remote moved after the lease was captured is not overwritten, and the rewrite it authorized stands for the retry|pair fix publish advance fix2 race|push TOPIC|1|map2|map:2+lease-rejected|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:external upstream=origin push=- auth=origin/topic:published:head map=hop:map2
+a remote already observed to diverge is refused before any rebase|pair fix publish move-remote observe fix2|push TOPIC|1|-|not-contained|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2 remote=origin:external upstream=origin push=- auth=- map=-
+a lease fetch that fails for a reason other than a missing branch aborts the push|pair fix broken-remote|push TOPIC|1|-|fetch-failed|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
+the configured bot remote takes the lease and the push|pair bot-remote fix publish advance fix2|push TOPIC|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:-,bot:head upstream=bot push=- auth=- map=hop:map2
+the package alone pushes through plain git|github fix standalone|push TOPIC --no-rebase --set-upstream|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=- upstream=- push=-C <wt> push -u origin HEAD:refs/heads/topic auth=- map=-
+a sibling GitHub helper, when present, owns the git invocation|github fix with-helper|push TOPIC --no-rebase --set-upstream|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=- upstream=- push=-c kendex.test-github-helper=loaded -C <wt> push -u origin HEAD:refs/heads/topic auth=- map=-
+a pre-push hook refusal is named as one, not as a force-with-lease conflict|pair fix hook-refuses|push TOPIC --set-upstream|1|-|skip-rebase+hook-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
+must-fail: with the hook arm cut, the same refusal loses its own record|pair fix unfixed-hook|push TOPIC --set-upstream|1|-|skip-rebase+push-failed|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
+keyed lines that never reach a verdict are a refusal too, the shape a hook aborts in|pair fix hook-aborts|push TOPIC --set-upstream|1|-|skip-rebase+hook-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
+a clean hook leaves the remote its own rejection to explain, under the lease record|pair fix foreign hook-passes|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:external upstream=- push=- auth=- map=-
+a composed hook whose consumer half refuses under a clean lane verdict is not a lease conflict|pair fix hook-composed|push TOPIC --set-upstream|1|-|skip-rebase+push-failed|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
+must-fail: with the lease arm keyed on the absence of a hook verdict, it is told as one|pair fix unfixed-lease|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- auth=- map=-
+a push the pre-push chain refused after its rebase is retried, and publishes under the same lease with no second rebase|pair fix publish advance fix2 refused-rebase record-push|push TOPIC|0|-|skip-rebase|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:end upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=hop:map2-pre
+must-fail: with no authorization recorded before the rebase, that retry is refused as an uncontained remote|pair fix publish advance fix2 unfixed-push-authorization refused-rebase|push TOPIC|1|-|not-contained|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=hop:map2-pre
+a remote that moved between the refused push and its retry is still refused|pair fix publish advance fix2 refused-rebase move-remote observe|push TOPIC|1|-|not-contained|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:external upstream=origin push=- auth=origin/topic:published:end map=hop:map2-pre
+a default branch that advanced between the refused push and its retry is rebased onto again, and publishes under the first lease|pair fix publish advance fix2 refused-rebase advance2 record-push|push TOPIC|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced,main-advanced2.txt:advanced2 remote=origin:head upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=hop:map2-pre+hop:map2
+a rebase conflict after a refused push drops its own pending half and keeps what that push authorized|pair fix publish advance fix2 refused-rebase conflict-main|push TOPIC|1|-|rebase-failed|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=origin/topic:published:end map=hop:map2-pre
+once that conflict is resolved by a merge, the earlier authorization publishes it under the same lease|pair fix publish advance fix2 refused-rebase conflict-main conflicted-push merge-main record-push|push TOPIC|0|-|skip-rebase|head=end ahead=3 tree=file.txt:orig,fix.txt:fix,fix2.txt:merged,main-advanced.txt:advanced remote=origin:end upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=hop:map2-pre-merged
+a published branch whose rewrite went unmapped still refuses on its record, its authorization finalized|pair twins publish twins-main unmapped-push|push TOPIC|1|-|unmapped-published|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:published upstream=origin push=- auth=origin/topic:published:end map=published
+a reuse whose map was refused leaves no authorization, and its record refuses the push before the lease names a republish|pair twins publish twins-main reuse-unmapped|push TOPIC|1|-|unmapped-published|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:published upstream=origin push=- auth=- map=published
+a published branch whose rewrite went unmapped publishes under the same lease once its record is removed|pair twins publish twins-main unmapped-push remove-record record-push|push TOPIC|0|-|skip-rebase|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:end upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=-
+a rewrite made outside the tool authorizes nothing and is refused|pair fix publish advance hand-rebase|push TOPIC|1|-|not-contained|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=-
 '
 
 echo "=== worktree push ==="
@@ -805,6 +927,67 @@ while IFS= read -r row; do
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
 [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+
+echo
+echo "=== the uncontained refusal routes by what the branch actually holds ==="
+
+# The record names the refusal; the line under it names the way out, and the
+# two ways out are opposites. A branch that already carries the remote's work
+# under rewritten SHAs must not be sent to fetch and rebase, which would replay
+# commits the rewrite superseded; a remote carrying work the branch lacks must.
+# Both directions are pinned, so a predicate that answered one way for every
+# branch would fail one of them. A republish command the refusal prints is
+# then run as printed: it must move the remote to the local head, and the same
+# command must be refused by git once the remote moves under it, which is what
+# the lease in it is for. Text alone would stay green over a wrong refspec,
+# remote or OID once the expectation was edited to match.
+ROUTE_ROWS='the local branch holds the remote commits under rewritten SHAs|pair fix publish advance hand-rebase|Local branch '"'"'topic'"'"' already holds every commit on '"'"'origin/topic'"'"' under rewritten SHAs, so fetching and rebasing would replay superseded work.;No recorded push authorization covers this rewrite.;Republish the branch pinned to the remote OID above:;  git -C <wt> push --force-with-lease=refs/heads/topic:<published> origin topic
+the remote carries a commit the local branch never had|pair fix publish move-remote observe fix2|Fetch and rebase/merge '"'"'origin/topic'"'"' before using worktree push.'
+
+route_n=0
+while IFS= read -r route_row; do
+  IFS='|' read -r route_label route_fixture route_want <<<"$route_row"
+  route_n=$((route_n + 1))
+  # shellcheck disable=SC2086
+  build "route-$route_n" $route_fixture
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" push TOPIC >/dev/null 2>"$ROOT/route.err") || true
+  # Line 1 is the keyed record and line 2 the explanation worktree_message
+  # indents under it; the route is everything after them.
+  assert_eq "$(sed -n '3,$p' "$ROOT/route.err" | alias_text)" "$route_want" "$route_label"
+  route_cmd="$(sed -n 's/^  \(git -C .*\)$/\1/p' "$ROOT/route.err")"
+  [[ -n "$route_cmd" ]] || continue
+  route_rc=0
+  eval "$route_cmd" >/dev/null 2>&1 || route_rc=$?
+  assert_eq "$route_rc:$(oid_name "$(remote_oid origin)")" "0:end" "the printed republish moves the remote to the local head"
+  EXTERNAL="$(external_commit)"
+  git --git-dir="$ROOT/origin.git" update-ref "refs/heads/$ISSUE" "$EXTERNAL"
+  route_rc=0
+  eval "$route_cmd" >/dev/null 2>&1 || route_rc=$?
+  assert_eq "$([[ "$route_rc" -ne 0 ]] && printf refused || printf 'rc=%s' "$route_rc"):$(oid_name "$(remote_oid origin)")" \
+    "refused:external" "the same command is refused once the remote has moved"
+done <<<"$ROUTE_ROWS"
+
+echo
+echo "=== the printed republish quotes a branch name that carries shell syntax ==="
+
+# Git accepts a branch name holding a command substitution, and a PR author
+# names the branch `create --pr` checks out, so the command the refusal prints
+# is run here exactly as an operator would paste it: the name must reach git
+# as one argument and run nothing.
+build quoted pair fix
+quoted_branch='topic$(touch${IFS}pwned)'
+git -C "$WT" branch -m "$quoted_branch"
+(cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" --set-upstream >/dev/null 2>&1) || true
+commit_main main-advanced.txt advanced
+git -C "$WT" rebase -q origin/main
+(cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" >/dev/null 2>"$ROOT/quoted.err") || true
+quoted_cmd="$(sed -n 's/^  \(git -C .*\)$/\1/p' "$ROOT/quoted.err")"
+quoted_rc=0
+(cd "$ROOT" && eval "$quoted_cmd" >/dev/null 2>&1) || quoted_rc=$?
+assert_eq "$quoted_rc:$([[ -e "$ROOT/pwned" ]] && printf ran || printf inert)" "0:inert" \
+  "the pasted command runs nothing from the branch name"
+assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse -q --verify "refs/heads/$quoted_branch" 2>/dev/null || true)" \
+  "$(git -C "$WT" rev-parse HEAD)" "and publishes the branch under its own name"
 
 echo
 echo "=== a record that cannot be cleared stops before the push ==="
