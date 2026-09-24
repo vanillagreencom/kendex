@@ -183,7 +183,10 @@ ORCH_LANE_SSH_PROMPT_SECS = "60"
 ORCH_OVERSEER_LANES = "3"
 
 # Max live lanes on one account. open-terminal refuses a fleet launch that
-# would put the lane's account past it. Zero turns this cap off.
+# would put the lane's account past it. Zero turns this cap off. The default
+# of 6 is the measured fleet burn: a lane spends about 1.5 points of a
+# five-hour window per 10 minutes, so one account carries about six lanes for
+# a full window.
 ORCH_LANE_ACCOUNT_CLAIMS = "6"
 
 # "off" stops oversee-succeed from launching a successor overseer, and turns

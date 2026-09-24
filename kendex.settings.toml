@@ -139,8 +139,9 @@ ORCH_LANE_SSH_PROMPT_SECS = "60"
 # Max concurrent lanes the overseer keeps in flight.
 ORCH_OVERSEER_LANES = "3"
 
-# Max live lanes on one account. Six lanes carry one account through a
-# five-hour usage window.
+# Max live lanes on one account; zero turns this cap off. A lane spends about
+# 1.5 points of a five-hour window per 10 minutes, so one account carries
+# about six lanes for a full window.
 ORCH_LANE_ACCOUNT_CLAIMS = "6"
 
 # `lanes pick` refuses an account at or above 95 percent used on the window it

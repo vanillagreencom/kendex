@@ -451,9 +451,12 @@ count. The fleet cap, ORCH_OVERSEER_LANES (default 3), counts the records
 whose status is running plus the live launch claims no running record names;
 a launch that would reach it is refused as cap-reached, naming the cap, the
 running records and the claims. The account cap, ORCH_LANE_ACCOUNT_CLAIMS
-(default 6, 0 turns it off), counts the live claims on the lane the launch
-would use, as `lanes` counts its claims column; a launch that would reach it
-is refused as account-cap-reached, naming the lane, the cap and the claims.
+(0 turns it off), counts the live claims on the lane the launch would use,
+as `lanes` counts its claims column; a launch that would reach it is refused
+as account-cap-reached, naming the lane, the cap and the claims. Its default
+of 6 is the measured fleet burn: a lane spends about 1.5 points of a
+five-hour window per 10 minutes, so one account carries about six lanes for
+a full window.
 Both settings are read through orch-env. A refusal stops the batch. A store
 that cannot be read refuses as cap-unreadable, and a lock not taken as
 cap-lock-failed. --relaunch and --wake add no lane and are not judged. Both
@@ -2551,6 +2554,8 @@ CAP_GATED=false
 if [[ "$CAP_GATED" == true ]]; then
   [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; exit 1; }
   FLEET_CAP="$("$SCRIPT_DIR/orch-env" ORCH_OVERSEER_LANES 3)" || exit 1
+  # 6 is the measured fleet burn: a lane spends about 1.5 points of a five-hour
+  # window per 10 minutes, so one account carries about six lanes for a window.
   ACCOUNT_CAP="$("$SCRIPT_DIR/orch-env" ORCH_LANE_ACCOUNT_CLAIMS 6)" || exit 1
   FLEET_CAP=$((10#$FLEET_CAP))
   ACCOUNT_CAP=$((10#$ACCOUNT_CAP))
