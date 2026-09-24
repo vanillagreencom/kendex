@@ -61,6 +61,17 @@ describe("tool chrome", () => {
 		expect(lines.every((line) => visibleWidth(line) <= 39)).toBe(true);
 	});
 
+	test("unchanged input reuses the chrome lines; new content or width redraws", () => {
+		const component = toolComponent(tempCwd());
+		const first = __test.renderToolChromeLines(component, ["● Bash $ echo hi"], 40);
+		expect(__test.renderToolChromeLines(component, ["● Bash $ echo hi"], 40)).toBe(first);
+
+		const changed = __test.renderToolChromeLines(component, ["● Bash $ echo bye"], 40);
+		expect(stripAnsi(changed[1]!)).toBe("● Bash $ echo bye");
+		const narrow = __test.renderToolChromeLines(component, ["● Bash $ echo bye"], 20);
+		expect(stripAnsi(narrow[0]!)).toBe("─".repeat(19));
+	});
+
 	test("transparent chrome still trims blank self-render shell rows without rules", () => {
 		const cwd = tempCwd({ toolChrome: "transparent" });
 		const lines = __test.renderToolChromeLines(toolComponent(cwd), ["", "● Bash $ echo hi", ""], 40);
