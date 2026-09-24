@@ -4,8 +4,7 @@
 //! request, and leaves every other entry in the file as it found it.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::{rooted, source_path};
 
 use std::fs;

@@ -11,12 +11,11 @@
 //! process: a package whose install runs npm is the person's to install
 //! through `update-pi`.
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
-#[path = "support/pty.rs"]
-mod pty;
+#[cfg(unix)]
+use crate::pty;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;

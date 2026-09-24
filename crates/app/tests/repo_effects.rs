@@ -10,8 +10,7 @@
 //! `repo_effects_escaping.rs`.
 #![cfg(unix)]
 
-#[path = "repo_effects/fixture.rs"]
-mod fixture;
+pub mod fixture;
 use fixture::*;
 
 /// Installing writes the package and hands back its account — what

@@ -10,9 +10,7 @@
 //! last reviewed.
 #![cfg(unix)]
 
-#[path = "repo_effects/fixture.rs"]
-mod fixture;
-use fixture::*;
+use crate::repo_effects::fixture::*;
 
 /// A departing package's own output reaches the window escaped.
 ///

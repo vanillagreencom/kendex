@@ -1,7 +1,7 @@
 //! What kendex did not write, it does not touch — through every install
 //! path.
 
-use crate::{World, read, tree};
+use super::{World, read, tree};
 
 fn plant_version_10_lock(world: &World) {
     let lock = world.at(".kendex-lock.json");
@@ -11,7 +11,7 @@ fn plant_version_10_lock(world: &World) {
         &format!("\"version\": {}", current - 1),
     );
     assert_ne!(older, read(&lock), "the fixture must rewrite the version");
-    crate::write(&lock, &older);
+    super::write(&lock, &older);
 }
 
 fn plant_version_10_state(world: &World) {
@@ -22,7 +22,7 @@ fn plant_version_10_state(world: &World) {
         "# kendex:local-state begin\n/.kendex-lock.json\n",
     );
     assert_ne!(legacy, read(&ignore), "the fixture must plant the old rule");
-    crate::write(&ignore, &legacy);
+    super::write(&ignore, &legacy);
 }
 
 #[allow(clippy::expect_used)]
@@ -35,15 +35,15 @@ fn move_old_lock_aside(world: &World) {
 }
 
 fn declare_script_hook(world: &World, event: &str, matcher: &str) {
-    crate::write(&world.catalog.join("kendex.toml"), "[catalog]\n");
-    crate::write(
+    super::write(&world.catalog.join("kendex.toml"), "[catalog]\n");
+    super::write(
         &world.catalog.join("hooks/guard.sh"),
         &format!(
             "#!/bin/sh\n# ---\n# name: guard\n# event: {event}\n# matcher: {matcher}\n\
              # description: guards commands\n# ---\nexit 0\n"
         ),
     );
-    crate::write(
+    super::write(
         &world.at("kendex.toml"),
         &format!(
             "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\n\
@@ -71,7 +71,7 @@ fn unmanaged_neighbours_survive_install_refresh_and_remove() {
         (".claude/settings.json", "{\"env\": {\"MINE\": \"1\"}}\n"),
     ];
     for (rel, text) in neighbours {
-        crate::write(&world.at(rel), text);
+        super::write(&world.at(rel), text);
     }
     let before: Vec<String> = neighbours
         .iter()
@@ -93,12 +93,12 @@ fn unmanaged_neighbours_survive_install_refresh_and_remove() {
 fn unmanaged_content_is_reported_not_taken() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    crate::write(
+    super::write(
         &world.at(".claude/skills/hand-made/SKILL.md"),
         "---\nname: hand-made\ndescription: mine\n---\nMine.\n",
     );
     world.run(&["add", "cat", "--skill", "deploy", "-y"]);
-    let said = crate::said(&world.try_run(&["verify"]));
+    let said = super::said(&world.try_run(&["verify"]));
     assert!(said.contains("hand-made"), "{said}");
     assert!(said.contains("not managed"), "{said}");
     assert!(read(&world.at(".claude/skills/hand-made/SKILL.md")).contains("Mine."));
@@ -110,11 +110,11 @@ fn unmanaged_content_is_reported_not_taken() {
 fn a_foreign_hook_registration_is_left_alone() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    crate::write(
+    super::write(
         &world.at(".claude/settings.json"),
         r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "./scripts/mine.sh"}]}]}, "env": {"KEEP": "1"}}"#,
     );
-    crate::write(&world.at("scripts/mine.sh"), "#!/bin/sh\nexit 0\n");
+    super::write(&world.at("scripts/mine.sh"), "#!/bin/sh\nexit 0\n");
     let before = read(&world.at(".claude/settings.json"));
 
     world.run(&["add", "cat", "--skill", "deploy", "-y"]);
@@ -180,11 +180,11 @@ fn a_scope_whose_lock_cannot_be_read_fails_at_the_read() {
         read(&lock),
         "the version line must be the one rewritten"
     );
-    crate::write(&lock, &older);
+    super::write(&lock, &older);
 
     for args in [&["remove", "deploy"][..], &["apply", "--plan"][..]] {
         let out = world.try_run(args);
-        let said = crate::said(&out);
+        let said = super::said(&out);
         assert!(
             !out.status.success(),
             "work that did not happen must not exit 0: {said}"
@@ -211,7 +211,7 @@ fn a_scope_whose_lock_cannot_be_read_fails_at_the_read() {
 
 #[allow(clippy::unwrap_used)]
 fn declares_two_sources(world: &World, waiting_source: &str) {
-    crate::write(
+    super::write(
         &world.at("kendex.toml"),
         &format!(
             "schema = 6\n\n[sources.cat]\n{}\n\n[sources.waiting]\n{waiting_source}\n\n\
@@ -234,14 +234,14 @@ fn version_10_lock_recovery_completes_with_normal_apply() {
     world.declare_catalog();
     world.run(&["add", "cat", "--skill", "deploy", "-y"]);
     world.commit_all("version 10 install");
-    crate::write(
+    super::write(
         &world.catalog.join("skills/deploy/SKILL.md"),
         "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
     );
     plant_version_10_state(&world);
 
     let refused = world.try_run(&["apply", "--plan"]);
-    let said = crate::said(&refused);
+    let said = super::said(&refused);
     assert!(!refused.status.success(), "{said}");
     assert!(
         said.contains(".kendex-lock.v10.json") && said.contains("kendex apply"),
@@ -252,7 +252,7 @@ fn version_10_lock_recovery_completes_with_normal_apply() {
     let exclude = world.at(".git/info/exclude");
     let mut exclude_text = read(&exclude);
     exclude_text.push_str("/.kendex-lock.json\n");
-    crate::write(&exclude, &exclude_text);
+    super::write(&exclude, &exclude_text);
     let applied = world.run(&["apply", "-y"]);
     assert!(
         applied.contains(&exclude.display().to_string())
@@ -268,7 +268,7 @@ fn version_10_lock_recovery_completes_with_normal_apply() {
         "the managed ignore block must stop hiding the record"
     );
 
-    crate::write(&exclude, &exclude_text.replace("/.kendex-lock.json\n", ""));
+    super::write(&exclude, &exclude_text.replace("/.kendex-lock.json\n", ""));
     world.run(&["check"]);
     for (path, expected, reason) in [
         (
@@ -282,7 +282,7 @@ fn version_10_lock_recovery_completes_with_normal_apply() {
             "the portable current lock must be visible to Git",
         ),
     ] {
-        let ignored = crate::git_output(&world.project, &["check-ignore", "--no-index", path]);
+        let ignored = super::git_output(&world.project, &["check-ignore", "--no-index", path]);
         assert_eq!(ignored.status.code(), expected, "{reason}");
     }
 }
@@ -296,7 +296,7 @@ fn version_10_lock_recovery_completes_with_normal_apply() {
 fn version_10_recovery_continues_after_a_partial_apply() {
     let world = World::new(&["claude"]);
     let waiting = world.home.join("waiting-catalog");
-    crate::write(
+    super::write(
         &waiting.join("skills/wait/SKILL.md"),
         "---\nname: wait\ndescription: wait for the source\n---\nRun the wait.\n",
     );
@@ -305,11 +305,11 @@ fn version_10_recovery_continues_after_a_partial_apply() {
     world.run(&["apply", "-y"]);
     world.commit_all("version 10 two-source install");
 
-    crate::write(
+    super::write(
         &world.catalog.join("skills/deploy/SKILL.md"),
         "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
     );
-    crate::write(
+    super::write(
         &waiting.join("skills/wait/SKILL.md"),
         "---\nname: wait\ndescription: wait for the source\n---\nRun the updated wait.\n",
     );
@@ -335,10 +335,10 @@ fn version_10_recovery_continues_after_a_partial_apply() {
 
     let deploy = world.at(".agents/skills/deploy/SKILL.md");
     let recovered = read(&deploy);
-    crate::write(&deploy, "person's edit after the partial recovery\n");
-    let held = crate::said(&world.try_run(&["apply", "--plan"]));
+    super::write(&deploy, "person's edit after the partial recovery\n");
+    let held = super::said(&world.try_run(&["apply", "--plan"]));
     assert!(held.contains("conflict: skill deploy"), "{held}");
-    crate::write(&deploy, &recovered);
+    super::write(&deploy, &recovered);
 
     declares_two_sources(&world, &ready);
     world.run(&["apply", "-y"]);
@@ -362,7 +362,7 @@ fn version_10_recovery_works_outside_git() {
         !world.at(".gitignore").exists(),
         "a non-Git project must not get a Git marker"
     );
-    crate::write(
+    super::write(
         &world.catalog.join("skills/deploy/SKILL.md"),
         "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
     );
@@ -386,17 +386,17 @@ fn version_10_recovery_keeps_a_hand_edited_render_as_a_conflict() {
     world.run(&["add", "cat", "--skill", "deploy", "-y"]);
     world.commit_all("version 10 install");
     let rendered = world.at(".agents/skills/deploy/SKILL.md");
-    crate::write(&rendered, "person's edit\n");
-    crate::git(&world.project, &["add", ".agents/skills/deploy/SKILL.md"]);
-    crate::git(&world.project, &["commit", "-m", "committed hand edit"]);
-    crate::write(
+    super::write(&rendered, "person's edit\n");
+    super::git(&world.project, &["add", ".agents/skills/deploy/SKILL.md"]);
+    super::git(&world.project, &["commit", "-m", "committed hand edit"]);
+    super::write(
         &world.catalog.join("skills/deploy/SKILL.md"),
         "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
     );
     plant_version_10_state(&world);
     move_old_lock_aside(&world);
 
-    let planned = crate::said(&world.try_run(&["apply", "--plan"]));
+    let planned = super::said(&world.try_run(&["apply", "--plan"]));
     assert!(planned.contains("conflict: skill deploy"), "{planned}");
     assert_eq!(read(&rendered), "person's edit\n");
 }
@@ -433,10 +433,10 @@ fn version_10_hook_recovery_keeps_an_edited_script_and_registration() {
     plant_version_10_state(&world);
     move_old_lock_aside(&world);
     let script = world.at(".claude/hooks/guard.sh");
-    crate::write(&script, "#!/bin/sh\necho person's edit\n");
+    super::write(&script, "#!/bin/sh\necho person's edit\n");
     declare_script_hook(&world, "PostToolUse", "Edit");
 
-    let planned = crate::said(&world.try_run(&["apply", "--plan"]));
+    let planned = super::said(&world.try_run(&["apply", "--plan"]));
 
     assert!(planned.contains("conflict: hook guard"), "{planned}");
     assert_eq!(read(&script), "#!/bin/sh\necho person's edit\n");

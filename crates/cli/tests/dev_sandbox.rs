@@ -10,8 +10,7 @@
 //! guarantee asserted there fails a build that is behaving correctly.
 #![cfg(all(not(windows), debug_assertions))]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

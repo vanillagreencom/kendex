@@ -9,7 +9,7 @@
 
 use crate::test_util::{rooted, source_path};
 
-use crate::{git_ok, install_package, install_package_undeclared, repo, run, said};
+use super::{git_ok, install_package, install_package_undeclared, repo, run, said};
 
 /// Disarming removes only the helper and the package's own marked line;
 /// the hook someone else wrote survives it.

@@ -5,8 +5,7 @@
 //! whose settings still live in the file Copilot moved away from.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::source_path;
 
 use std::fs;

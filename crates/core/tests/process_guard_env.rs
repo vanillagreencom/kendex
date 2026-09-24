@@ -17,8 +17,7 @@
 use kendex_core::process::Hardened;
 use std::os::unix::fs::PermissionsExt;
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
 const INNER: &str = "KENDEX_TEST_GUARD_ENV_INNER";
@@ -80,11 +79,12 @@ fn guard_hook_preserves_hook_env_and_relays_verdict() {
     let root = rooted(&tmp);
     let proof = root.join("inner-proof");
     let status = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
+        .arg("--exact")
+        .arg(test_util::exact_test(
+            module_path!(),
             "guard_hook_preserves_hook_env_and_relays_verdict",
-            "--nocapture",
-        ])
+        ))
+        .arg("--nocapture")
         .env(INNER, "1")
         .env(INNER_PROOF, &proof)
         .env("GIT_DIR", "/nowhere/.git")

@@ -6,11 +6,9 @@
 mod desktop;
 mod icons;
 
-#[path = "../support/installer_message.rs"]
-mod installer_message;
+use crate::installer_message;
 
-#[path = "../../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::{SUDO_STUB, install_stub};
 
 use std::path::{Path, PathBuf};

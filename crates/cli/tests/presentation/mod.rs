@@ -8,12 +8,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use crate::pty;
+use crate::test_util;
+pub use crate::test_util::{rooted, source_path};
 use kendex_core::env::Env;
-#[path = "../support/pty.rs"]
-mod pty;
-#[path = "../../../test_util.rs"]
-mod test_util;
-pub use test_util::{rooted, source_path};
 
 /// The frame a terminal gets, and nothing a verb ever writes itself.
 const FRAMING: [char; 12] = ['┌', '│', '└', '├', '╮', '╯', '─', '◇', '◆', '▲', '■', '●'];

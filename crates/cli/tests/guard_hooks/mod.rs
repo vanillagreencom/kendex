@@ -10,8 +10,7 @@
 //! `arming` is putting it in place, taking it away, and reporting on it.
 #![cfg(unix)]
 
-#[path = "../../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::source_path;
 
 mod arming;

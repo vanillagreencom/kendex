@@ -11,8 +11,7 @@
 //! Regenerate the file with the command in `REGENERATE`.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::{checkout_root, rooted};
 
 use std::fs;

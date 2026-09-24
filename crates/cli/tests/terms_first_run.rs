@@ -9,17 +9,15 @@
 //! terms — a line printed there is a line printed by any run.
 #![cfg(unix)]
 
-#[path = "support/pty.rs"]
-mod pty;
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::pty;
+use crate::test_util;
 
 use std::path::Path;
 use std::process::Command;
 
+use crate::test_util::rooted;
 use kendex_core::env::Env;
 use kendex_core::legal::LEGAL;
-use test_util::rooted;
 
 fn command_with(home: &Path, arg: &str) -> Command {
     let mut run = Command::new(env!("CARGO_BIN_EXE_kendex"));

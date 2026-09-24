@@ -12,7 +12,7 @@ use kendex_core::engine::{PlanOptions, plan_apply};
 use kendex_core::error::CoreError;
 use kendex_core::model::ItemKind;
 
-use crate::{World, foreign_install, take_over, world};
+use super::{World, foreign_install, take_over, world};
 
 /// The app's per-row button: replace exactly this item, whole or not at all.
 fn named(kind: ItemKind, name: &str) -> PlanOptions {

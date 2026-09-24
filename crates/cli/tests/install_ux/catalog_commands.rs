@@ -1,6 +1,6 @@
 //! Every catalog command installs through the CLI with its prompt intact.
 
-use crate::{World, read};
+use super::{World, read};
 use kendex_core::frontmatter;
 use kendex_core::harness::{installs_here, rendered_name};
 use kendex_core::model::{HarnessId, ItemKind, Scope};

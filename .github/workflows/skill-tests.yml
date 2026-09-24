@@ -1433,12 +1433,14 @@ jobs:
           bun-version: 1.3.14
       # THE cargo twin of the shell shards' rosters. The crate guard above
       # spells the workspace MEMBERS and covers no list of test targets, so a
-      # file added under crates/cli/tests and named by neither leg would
-      # compile under --no-run and run nowhere while both required contexts
-      # stayed green. Every test target `cargo metadata` reports for
+      # [[test]] target added to crates/cli/Cargo.toml and named by neither
+      # leg would compile under --no-run and run nowhere while both required
+      # contexts stayed green. Every test target `cargo metadata` reports for
       # kendex-cli is named by exactly one leg below, and
       # tools/tests/orch-shard-partition.test.sh runs this step once per leg
-      # and reds on a target claimed by none or by two.
+      # and reds on a target claimed by none or by two. A test FILE is not a
+      # target: every file under crates/cli/tests is a module of the
+      # `integration` harness, and a tools/guard lane holds that roster.
       #
       # The seam is where the seconds are. Over seventeen macOS kendex-cli
       # runs of this workflow the one test in `catalog_render_lint` took
@@ -1464,20 +1466,7 @@ jobs:
             rest)
               doc='--doc'
               flags='--lib --bins'
-              for t in \
-                add_kinds bookmark_cli bundles_cli catalog_check cli \
-                cli_smoke collection_cli command_record commit_offer_cli \
-                compat deps_cli dev_sandbox fixture_global_root guard_hooks \
-                index_cli install_registers_project install_script \
-                install_ux installer instruction_shims_cli \
-                marketplace_author marketplace_cli missing_remedy \
-                packaging_recipes pi_declared_both_scopes \
-                pi_extension_only_lock pi_shadow_package \
-                pi_staleness presentation project_path_target \
-                refresh_fresh_clone \
-                refresh_ledger release_workflow remote_e2e safety_print \
-                template_cli terms_first_run unmanaged unmanaged_copy_check \
-                unmanaged_exits unmanaged_names update_pi verify_records; do
+              for t in cli_smoke integration; do
                 flags="$flags --test $t"
               done
               ;;

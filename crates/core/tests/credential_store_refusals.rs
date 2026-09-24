@@ -3,8 +3,9 @@
 //! The keychain is replaced through keyring's own builder seam rather than
 //! faked at the `CredentialStore` trait, so the four call sites in
 //! `credentials.rs` are the code under test. `set_default_credential_builder`
-//! is process-global, which is why this is its own test binary and why the
-//! cases hold `BACKEND` across the swap.
+//! is process-global, which is why this is its own `[[test]]` target beside
+//! the harness rather than a module of it, and why the cases hold `BACKEND`
+//! across the swap.
 
 use std::any::Any;
 use std::sync::{Mutex, MutexGuard};

@@ -4,8 +4,7 @@
 //! ours in its files untouched.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::source_path;
 
 use std::fs;

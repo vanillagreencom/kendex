@@ -1,14 +1,13 @@
 //! Fixture installs keep account records separate while honoring explicit XDG roots.
 #![cfg(target_os = "linux")]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 
+use crate::test_util::rooted;
 use kendex_core::env::Env;
 use kendex_core::lock::Lock;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use test_util::rooted;
 
 #[allow(clippy::unwrap_used)]
 fn catalog(root: &Path) -> PathBuf {

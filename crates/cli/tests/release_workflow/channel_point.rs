@@ -7,8 +7,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use super::{job, job_declaring, step, workflow};
 use crate::test_util::rooted;
-use crate::{job, job_declaring, step, workflow};
 
 const SCRIPT: &str = "tools/release-channel-point";
 const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -241,7 +241,7 @@ fn the_main_pointer_authenticates_both_builds_and_moves_only_forward() {
 #[test]
 fn the_workflow_publishes_an_immutable_main_release_before_the_pointer() {
     let release = workflow();
-    let classify = crate::run_script(&step(&release, "name: Classify the tag"));
+    let classify = super::run_script(&step(&release, "name: Classify the tag"));
     for part in ["GITHUB_RUN_NUMBER", "GITHUB_RUN_ATTEMPT", "commit"] {
         assert!(classify.contains(part), "immutable tag omits {part}");
     }

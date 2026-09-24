@@ -7,9 +7,7 @@
 //! window that closes the dialog leaves the repository as it was.
 #![cfg(unix)]
 
-#[path = "../../../test_util.rs"]
-mod test_util;
-pub use test_util::{rooted, source_path};
+pub use crate::test_util::{rooted, source_path};
 
 pub use std::fs;
 pub use std::os::unix::fs::PermissionsExt;

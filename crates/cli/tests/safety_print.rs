@@ -7,8 +7,7 @@
 //! recommendation, no prompt, and no score anywhere in the exit code.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::{rooted, source_path};
 
 use std::fs;

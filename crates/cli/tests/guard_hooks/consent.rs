@@ -12,7 +12,7 @@
 
 use crate::test_util::rooted;
 
-use crate::{git_ok, install_package, install_package_undeclared, repo, run, said};
+use super::{git_ok, install_package, install_package_undeclared, repo, run, said};
 
 /// Arm through the package's own installer.
 ///

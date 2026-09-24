@@ -11,8 +11,8 @@ use kendex_core::drift;
 use kendex_core::drift::copies;
 use kendex_core::engine::{PlanOptions, audit, plan_apply};
 
-use super::test_util::rooted;
 use super::{report, world, write_at};
+use crate::test_util::rooted;
 
 /// A second check on the same state reads the memo, never the plan: the
 /// verdict is whatever the memo says. The file is edited between the two

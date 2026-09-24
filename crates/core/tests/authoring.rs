@@ -7,8 +7,7 @@ use std::path::{Path, PathBuf};
 use kendex_core::author::{self, CreateRequest, License};
 use kendex_core::env::{Env, FakeOs};
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
 #[allow(clippy::unwrap_used)]

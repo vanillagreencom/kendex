@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+# The integration tests are one harness, tests/main.rs, and every other file
+# under tests/ is a module of it: autodiscovery off, or cargo would still
+# build each file as a test binary of its own, linking this crate and its
+# dependencies once per file.
+autotests = false
+
 [lib]
 name = "kendex_cli"
 
@@ -37,6 +43,21 @@ url = "2"
 # nothing at all unless stderr is a terminal, so its line is invisible to
 # every other test here.
 rustix = { workspace = true, features = ["pty"] }
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
+
+# The two targets workflows select by name: the macOS cargo leg of its own in
+# .github/workflows/skill-tests.yml, and the round trip own-catalog.yml runs
+# against the real CLIs.
+[[test]]
+name = "catalog_render_lint"
+path = "tests/catalog_render_lint.rs"
+
+[[test]]
+name = "cli_smoke"
+path = "tests/cli_smoke.rs"
 
 [lints]
 workspace = true

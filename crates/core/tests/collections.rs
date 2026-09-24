@@ -2,8 +2,7 @@
 //! reuse-or-refuse rule — a collection never re-pins an existing
 //! subscription as a side effect.
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
 use std::cell::RefCell;

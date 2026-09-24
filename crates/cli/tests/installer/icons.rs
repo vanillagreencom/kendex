@@ -4,7 +4,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::{
+use super::{
     ICONS, Unlocked, desktop_entry, icon_slot, repo_root, run_installer, run_installer_over,
     run_installer_serving, running_as_root, set_mode,
 };

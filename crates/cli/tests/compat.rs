@@ -7,8 +7,7 @@
 mod fixture_url;
 use fixture_url::file_url;
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
 use std::fs;

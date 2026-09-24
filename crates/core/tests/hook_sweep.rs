@@ -6,8 +6,7 @@
 //! harness alike, because the rule is the anchor and not the harness.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::source_path;
 
 use std::fs;

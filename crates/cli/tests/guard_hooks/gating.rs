@@ -1,11 +1,11 @@
 //! The chain judging commits: what an armed repository does when someone
 //! commits to it, and which copy of the package answers.
 
-use crate::test_util;
-use crate::{
+use super::{
     armed_repo, git, git_ok, install_package, path_with_binary, path_without_binary, repo, run,
     run_with, said,
 };
+use crate::test_util;
 use std::process::Command;
 
 /// A work marker for a fixture to write, spelled in halves.

@@ -3,8 +3,7 @@
 //! name, and a tree recorded by an install is ours to clear away.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::source_path;
 
 use std::fs;

@@ -6,8 +6,7 @@
 //! one that is too mean reports kendex's own output back at the user.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::source_path;
 
 use std::fs;

@@ -4,8 +4,7 @@
 //! last test pins that sentence.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 
 use std::fs;
 use std::path::Path;

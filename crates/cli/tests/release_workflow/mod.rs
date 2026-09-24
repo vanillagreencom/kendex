@@ -16,10 +16,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::OnceLock;
 
-#[path = "../../../test_util.rs"]
-mod test_util;
 #[cfg(unix)]
-use test_util::rooted;
+use crate::test_util::rooted;
 
 const TARGET_EXPR: &str = "${{ matrix.target }}";
 

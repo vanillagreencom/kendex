@@ -10,8 +10,7 @@
 //! measured at `1 checked, 1 OK` against `2 checked, 2 OK` before it.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::{rooted, source_path};
 
 use std::fs;

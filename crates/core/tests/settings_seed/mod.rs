@@ -5,9 +5,6 @@
 //! two passes a scope can take over one, are in `scope`.
 #![cfg(unix)]
 
-#[path = "../../../test_util.rs"]
-mod test_util;
-
 mod apply;
 mod notes;
 mod scope;

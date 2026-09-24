@@ -99,7 +99,10 @@ fn production_keyring_guard_blocks_across_divergent_data_roots() {
     let spawn = |role: &str, data_root: &str| {
         std::process::Command::new(&executable)
             .arg("--exact")
-            .arg("production_keyring_guard_blocks_across_divergent_data_roots")
+            .arg(crate::test_util::exact_test(
+                module_path!(),
+                "production_keyring_guard_blocks_across_divergent_data_roots",
+            ))
             .arg("--nocapture")
             .env(CHILD_ROOT, root)
             .env(CHILD_ROLE, role)

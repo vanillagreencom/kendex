@@ -9,12 +9,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::{SUDO_STUB, install_stub, rooted};
 
-#[path = "support/installer_message.rs"]
-mod installer_message;
+use crate::installer_message;
 use installer_message::value;
 
 #[allow(clippy::unwrap_used)]

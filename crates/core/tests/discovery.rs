@@ -3,8 +3,7 @@
 //! file that is present but broken makes the source unusable with a finding
 //! rather than silently reading as a different kind of repository.
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
 use std::fs;

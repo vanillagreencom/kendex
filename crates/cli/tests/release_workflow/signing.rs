@@ -15,10 +15,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 #[cfg(unix)]
-use crate::test_util::rooted;
+use super::{LANES, expand, run_script, signed_artifacts};
+use super::{step, workflow};
 #[cfg(unix)]
-use crate::{LANES, expand, run_script, signed_artifacts};
-use crate::{step, workflow};
+use crate::test_util::rooted;
 
 /// What one lane's signing step did: its exit code, what it said, the
 /// signature files left in `dist/`, and the digests document it wrote.
@@ -31,7 +31,7 @@ struct Signed {
 }
 
 #[cfg(unix)]
-fn command_name(lane: &crate::Lane) -> String {
+fn command_name(lane: &super::Lane) -> String {
     match lane.runner_os {
         "Windows" => format!("kendex-{}.exe", lane.target),
         _ => format!("kendex-{}", lane.target),
@@ -44,14 +44,14 @@ fn command_name(lane: &crate::Lane) -> String {
 /// signatures appear.
 #[cfg(unix)]
 #[allow(clippy::unwrap_used)]
-fn sign(lane: &crate::Lane, dist: &BTreeMap<String, String>, body: &str) -> Signed {
+fn sign(lane: &super::Lane, dist: &BTreeMap<String, String>, body: &str) -> Signed {
     sign_for_ref(lane, dist, body, "refs/tags/v5.1.0", "v5.1.0", None)
 }
 
 #[cfg(unix)]
 #[allow(clippy::unwrap_used)]
 fn sign_for_ref(
-    lane: &crate::Lane,
+    lane: &super::Lane,
     dist: &BTreeMap<String, String>,
     body: &str,
     git_ref: &str,
@@ -141,7 +141,7 @@ fn main_signing_binds_the_version_build_and_commit() {
     let lane = &LANES[0];
     let commit = "0123456789abcdef0123456789abcdef01234567";
     let version = format!("5.1.0+vendor.7.main.42.{commit}");
-    let mut staged = crate::stage_assets(lane);
+    let mut staged = super::stage_assets(lane);
     staged.insert(
         command_name(lane),
         format!("#!/bin/sh\nprintf 'kendex %s\\n' '{version}'\n"),
@@ -175,7 +175,7 @@ const SIGNS: &str = r#"printf 'sig' > "$3.sig""#;
 #[allow(clippy::unwrap_used)]
 fn each_lane_signs_the_command_and_the_document_it_published() {
     for lane in &LANES {
-        let staged = crate::stage_assets(lane);
+        let staged = super::stage_assets(lane);
         let signed = sign(lane, &staged, SIGNS);
         assert_eq!(signed.code, 0, "{}: {}", lane.target, signed.said);
 
@@ -223,7 +223,7 @@ fn each_lane_signs_the_command_and_the_document_it_published() {
 #[allow(clippy::unwrap_used)]
 fn the_document_measures_the_two_downloads_a_lane_publishes() {
     for lane in &LANES {
-        let staged = crate::stage_assets(lane);
+        let staged = super::stage_assets(lane);
         let app = signed_artifacts()
             .iter()
             .find(|(platform, _)| *platform == lane.platform)
@@ -272,7 +272,7 @@ fn a_download_that_went_unsigned_fails_the_job_by_name() {
         ),
     ] {
         for lane in &LANES {
-            let staged = crate::stage_assets(lane);
+            let staged = super::stage_assets(lane);
             let signed = sign(lane, &staged, shim);
             assert_ne!(signed.code, 0, "{}: {}", lane.target, signed.said);
             assert!(
@@ -290,7 +290,7 @@ fn a_download_that_went_unsigned_fails_the_job_by_name() {
 #[test]
 fn a_signer_that_fails_stops_the_lane() {
     for lane in &LANES {
-        let staged = crate::stage_assets(lane);
+        let staged = super::stage_assets(lane);
         let signed = sign(lane, &staged, "exit 3");
         assert_ne!(signed.code, 0, "{}: {}", lane.target, signed.said);
     }
@@ -324,7 +324,7 @@ fn no_platform_is_answered_by_a_command_signature() {
             "the command signature".to_owned(),
         );
     }
-    let (code, manifest, said) = crate::run_manifest(&dist);
+    let (code, manifest, said) = super::run_manifest(&dist);
     assert_ne!(code, 0, "{said}");
     assert!(manifest.is_empty(), "{manifest}");
     for lane in &LANES {
