@@ -75,11 +75,20 @@ edit_comment() {
                 show_help
                 exit 0
                 ;;
-            --body)
-                body="$2"; body_set=true; shift 2
-                ;;
-            --body-file)
-                body_file="$2"; body_file_set=true; shift 2
+            --body | --body-file)
+                # The value is read here, so its absence is refused here: with
+                # the flag last, `$2` is unset and `set -u` would end the run
+                # with a shell diagnostic no caller can parse as JSON.
+                if [ "$#" -lt 2 ]; then
+                    jq -nc --arg flag "$1" '{error: ($flag + " requires a value")}' >&2
+                    exit 1
+                fi
+                if [ "$1" = "--body" ]; then
+                    body="$2"; body_set=true
+                else
+                    body_file="$2"; body_file_set=true
+                fi
+                shift 2
                 ;;
             --dry-run)
                 dry_run="true"

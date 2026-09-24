@@ -45,6 +45,10 @@ assert_eq() {
 # directory is a repository; gh is the staged fake.
 mkdir -p "$TMP_ROOT/repo" "$TMP_ROOT/bin"
 git -C "$TMP_ROOT/repo" init -q
+# The EXIT trap removes this tree, so git's background writer is disabled at
+# creation rather than left to race the removal.
+git -C "$TMP_ROOT/repo" config gc.auto 0
+git -C "$TMP_ROOT/repo" config maintenance.auto false
 # shellcheck source=lib/gh-stub.sh
 . "$TEST_DIR/lib/gh-stub.sh"
 GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT/bin"
@@ -205,6 +209,8 @@ run_table "an id the issue-comments endpoint holds" "\
 the edit lands at the issue endpoint, and the pulls one is never asked^2633519824 Fixed^0^success=true url=$ISSUE_URL^-^repo,api:$ISSUE_PATH
 a dry run edits nothing and asks no endpoint^2633519824 Fixed --dry-run^0^dry id=2633519824^-^repo
 a non-numeric id is refused before the repository is resolved^12\"34 Fixed^1^-^Comment ID must be numeric: 12\"34^-
+--body as the last argument is refused, not left to the shell^2633519824 --body^1^-^--body requires a value^-
+--body-file as the last argument is refused, not left to the shell^2633519824 --body-file^1^-^--body-file requires a value^-
 "
 
 echo "=== the shape of an argument refusal ==="
