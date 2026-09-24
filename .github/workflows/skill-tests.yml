@@ -190,10 +190,11 @@ jobs:
       #
       # NEITHER THIS STEP NOR THE ONE AFTER IT FAILS THIS JOB. A kendex that
       # will not install, one answering no such document, and a mirror that
-      # will not fetch all cost the diff its `render` class and nothing else:
-      # the classifier then answers `standard`, which runs every lane. Turning
-      # the job red on a network blip would instead red every required context
-      # in this file and block a change nothing is wrong with. Each carries a
+      # will not fetch may leave the render proof unavailable, and nothing
+      # else: classification still runs, and the class the classify step
+      # prints is the answer, whatever these two steps did. Turning the job
+      # red on a network blip would instead red every required context in
+      # this file and block a change nothing is wrong with. Each carries a
       # deadline of its own under the job's, and the warning step after them
       # annotates the run when either did not succeed, so a pin that rotted
       # shows on every run it costs.
@@ -227,7 +228,7 @@ jobs:
           KENDEX_OUTCOME: ${{ steps.kendex.outcome }}
           MIRROR_OUTCOME: ${{ steps.mirror.outcome }}
         run: >-
-          echo "::warning title=render class unreachable::kendex install $KENDEX_OUTCOME, source refresh $MIRROR_OUTCOME (KENDEX_VERSION=$KENDEX_VERSION); this diff classifies standard"
+          echo "::warning title=render proof may be unavailable::kendex install $KENDEX_OUTCOME, source refresh $MIRROR_OUTCOME (KENDEX_VERSION=$KENDEX_VERSION); the render proof may be unavailable, and the class the classify step prints is the answer"
       - id: classify
         uses: ./.github/actions/change-class
         with:
