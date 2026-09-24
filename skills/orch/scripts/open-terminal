@@ -67,7 +67,7 @@ ot_message() { # REASON FIELD=VALUE...
     record-write-failed) text='The lane launched and its window stands, but its record could not be written to the oversee workflow state, so the watch cannot carry it. Fix what workflow-state names, then record the lane by hand per oversee.md § 3 Lane record, or close the window before relaunching the item with --relaunch.' ;;
     record-missing) text='No lane record names the item, so this launcher never launched it and the wake recorded nothing; the woken session runs. Record the lane per oversee.md § 3 Lane record, or close its window and relaunch the item with --relaunch.' ;;
     state-unwritable) text='The oversee workflow state could not be created, so no lane would be watched. Nothing launched; fix what workflow-state names.' ;;
-    cap-reached) text='A launch here would put the fleet over ORCH_OVERSEER_LANES. cap names that setting, running the lane records in the fleet state whose status is running, and claims the live launch claims no running record names, a lane launched and not yet recorded or launched outside this fleet state. Nothing was launched. Wait for a lane to close, launch with --wait-slot to wait for one here, or pass --over-cap for one deliberate exception.' ;;
+    cap-reached) text='A launch here would put the fleet over ORCH_OVERSEER_LANES. cap names that setting, running the lane records in the fleet state whose status is running, and claims the live launch claims this fleet wrote that no running record names, a lane whose record is not running while its pane still is. Nothing was launched. Wait for a lane to close, launch with --wait-slot to wait for one here, or pass --over-cap for one deliberate exception.' ;;
     account-cap-reached) text='A launch here would put the account over ORCH_LANE_ACCOUNT_CLAIMS. lane names the account, cap that setting, and claims the live launch claims on that account. Nothing was launched. Wait for a lane on that account to close, launch with --wait-slot to wait for one here (under --lane auto it moves to an account with room), name a lane on another account, or pass --over-cap for one deliberate exception. 0 turns this cap off.' ;;
     cap-unreadable) text='The lanes in flight could not be counted, so neither cap can be judged. Nothing was launched. source=state is the fleet state named by --state-dir; source=claims is the claim store, whose own keyed lane-claims line above names what failed.' ;;
     cap-lock-failed) text='The fleet launch lock was not taken inside its bound, so the count and the record write cannot be one step. Nothing was launched. Another launch holds it; the lock line above names a stale mutex where flock is absent.' ;;
@@ -450,7 +450,9 @@ worktree, under one lock beside the fleet state that is held from the count
 through the item's record write, so two launchers cannot both pass on one
 count; a launch that finds the lock held prints lock-waiting and waits for it.
 The fleet cap, ORCH_OVERSEER_LANES (default 3), counts the records whose
-status is running plus the live launch claims no running record names; a
+status is running plus the live launch claims this fleet wrote that no
+running record names (a claim store several fleets share counts each fleet's
+own claims here, and every fleet's toward an account); a
 launch that would pass it is refused as cap-reached, naming the cap, the
 running records and the claims. The account cap, ORCH_LANE_ACCOUNT_CLAIMS
 (default 3, 0 turns it off), counts the live claims on the lane the launch
@@ -2133,7 +2135,7 @@ tmux_window_open() { # DIR TITLE
   # identity — and never fatal: a launch that worked is not a failure because
   # its bookkeeping did not.
   if [[ -n "$LANE_ENV" && -n "$server" ]]; then
-    if ! lane_claim_write "$(lane_claims_dir "$CLAIM_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title"; then
+    if ! lane_claim_write "$(lane_claims_dir "$CLAIM_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title" "$CAP_FLEET"; then
       # This launch stands, but the next `auto` pick cannot see it: the batch
       # stops at the top of the next item rather than stacking blind.
       CLAIM_WRITE_FAILED=true
@@ -2582,6 +2584,10 @@ fi
 # process or the `git gc --auto` a worktree fetch daemonizes, would otherwise
 # hold the lock past cap_release.
 CAP_LOCK=""
+# The fleet a judged launch belongs to: its oversee state file, canonical, which
+# every claim it writes carries so a claim store several fleets share still
+# tells their lanes apart. Empty for a launch that is not judged.
+CAP_FLEET=""
 CAP_HELD=false
 # Long enough for one launch to reach its record, a hosted create and both ssh
 # prompt waits included.
@@ -2606,7 +2612,8 @@ cap_take() { # ITEM
   local state
   if [[ -z "$CAP_LOCK" ]]; then
     state="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} path oversee)" || return 1
-    CAP_LOCK="$state.launch.lock"
+    CAP_FLEET="$(lane_claims_canon "${state%/*}")/${state##*/}"
+    CAP_LOCK="$CAP_FLEET.launch.lock"
   fi
   exec 7>"$CAP_LOCK" || return 1
   if ! orch_take_lock 7 "$CAP_LOCK" 1 2>/dev/null; then
@@ -2617,8 +2624,8 @@ cap_take() { # ITEM
 }
 
 # Sets CAP_RUNNING (records lib/lane-claims.sh's LANE_RUNNING_JQ calls running),
-# CAP_INFLIGHT (live claims whose window no running record names: a lane
-# between its window and its record, or one launched outside this state),
+# CAP_INFLIGHT (live claims naming this fleet whose window no running record
+# names: a lane whose pane outlived its record's running status),
 # CAP_ACCOUNT (live claims on LANE, counted by the reader `lanes` counts with),
 # and CAP_ITEM_RUNNING and CAP_ITEM_ACCOUNT (whether KEY's own record is
 # running, and the account it names). Returns 1 on a store it could not read: a
@@ -2634,11 +2641,11 @@ cap_count() { # ITEM KEY LANE
       (.[] | select(running) | .window // empty)' <<<"$lanes")" || rc=1
   [[ "$rc" -eq 0 ]] || { ot_message cap-unreadable "item=$1" "source=state" >&2; return 1; }
   { read -r CAP_RUNNING; read -r CAP_ITEM_RUNNING; read -r CAP_ITEM_ACCOUNT; windows="$(cat)"; } <<<"$out"
-  claims="$(lane_claims_read "$(lane_claims_dir "$CLAIM_ROOT")")" || rc=$?
+  claims="$(lane_claims_read "$(lane_claims_dir "$CLAIM_ROOT")" fleet)" || rc=$?
   [[ "$rc" -eq 0 ]] || { ot_message cap-unreadable "item=$1" "source=claims" >&2; return 1; }
-  CAP_INFLIGHT="$(CAP_WINDOWS="$windows" awk -F'\t' '
+  CAP_INFLIGHT="$(CAP_WINDOWS="$windows" CAP_FLEET="$CAP_FLEET" awk -F'\t' '
     BEGIN { n = split(ENVIRON["CAP_WINDOWS"], w, "\n"); for (i = 1; i <= n; i++) if (w[i] != "") seen[w[i]] = 1 }
-    NF && !($2 in seen) { c++ }
+    NF && $5 == ENVIRON["CAP_FLEET"] && !($2 in seen) { c++ }
     END { print c + 0 }' <<<"$claims")"
   CAP_ACCOUNT=0
   [[ -z "$3" ]] || CAP_ACCOUNT="$(lane_claims_count "$claims" "$3")"

@@ -60,7 +60,7 @@ A launch through `open-terminal` on the tmux surface for the claude or codex har
 
 The caps refuse a launch before its worktree. A `--relaunch` meets them only where it adds a lane or moves one to another account, and `--wake` meets neither:
 
-- `cap-reached` (naming `cap`, the `running` records and the unrecorded live `claims`): the fleet is full. Launch the next item once a lane closes.
+- `cap-reached` (naming `cap`, the `running` records and this fleet's unrecorded live `claims`): the fleet is full. Launch the next item once a lane closes.
 - `account-cap-reached` (naming `lane`, `cap` and that lane's `claims`): the picked account carries its share. Launch once a lane on that account closes, or with `--wait-slot`.
 - `cap-unreadable`, `cap-lock-failed` and `claim-unrecorded`: the count could not be made as one locked step, or could not see a lane this run launched. Fix what the line names; never launch around it.
 

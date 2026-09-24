@@ -192,10 +192,13 @@ rc() { cat "$ROW/$1.rc"; }
 running() { "$WS" --state-dir "$STATE" get oversee '[(.lanes // [])[] | select(.status == "running") | .item] | join(",")'; }
 account_of() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .account // "null"'; }
 over_cap() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .over_cap // "null"'; }
-# seed_claim WINDOW LANE — a live claim nothing in the fleet state records.
+# seed_claim WINDOW LANE [FLEET] — a live claim nothing in the fleet state
+# records, written by the fleet whose oversee state file FLEET names, this
+# row's own by default.
 seed_claim() {
   mkdir -p "$CLAIMS/claims"
-  printf '%s\t%%9\t%s\t%s\t2026-01-01T00:00:00Z\n' "$$" "$2" "$1" > "$CLAIMS/claims/$1.claim"
+  printf '%s\t%%9\t%s\t%s\t2026-01-01T00:00:00Z\t%s\n' "$$" "$2" "$1" "${3-$STATE/workflow-state-oversee.json}" \
+    > "$CLAIMS/claims/$1.claim"
 }
 # seed_running ITEM — a running record for a lane this suite never launched.
 seed_running() {
@@ -219,6 +222,22 @@ seed_claim CC-8 "$LANE_B"
 launch one 1 0 --lane "$LANE_A" CC-1
 assert_eq "rc=$(rc one) $(key one)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=0 claims=1" \
   "a claim no running record names fills the fleet's only slot"
+
+echo "=== fleets sharing one claim store count only their own claims toward the fleet cap ==="
+# One store, as OVERSEE_WATCH_STATE_DIR set for every shell gives several
+# fleets. The other fleet's lane and a launch that named no fleet are claims on
+# lane A: each counts toward that account and toward no cap of this fleet's.
+row fleets
+seed_claim CC-8 "$LANE_A" "$TMP_ROOT/rows/other-fleet/state/workflow-state-oversee.json"
+seed_claim CC-7 "$LANE_A" ""
+launch one 1 3 --lane "$LANE_B" CC-1
+assert_eq "rc=$(rc one) running=$(running) $(key one)" "rc=0 running=CC-1 " \
+  "a fleet running no lane launches at a fleet cap of 1 beside another fleet's claim"
+assert_eq "$(awk -F'\t' '$4 == "CC-1" { print $6 }' "$CLAIMS/claims"/*.claim)" "$STATE/workflow-state-oversee.json" \
+  "the launch's own claim names its fleet by that fleet's state file"
+launch two 5 2 --lane "$LANE_A" CC-2
+assert_eq "rc=$(rc two) $(key two)" "rc=1 open-terminal: account-cap-reached item=CC-2 lane=$LANE_A cap=2 claims=2" \
+  "the account cap still counts the other fleet's claim and the fleetless one"
 
 echo "=== a relaunch is judged on the lane or account it adds ==="
 # The same account's claim and the item's running record are the lane being
