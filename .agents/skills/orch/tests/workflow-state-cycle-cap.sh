@@ -120,6 +120,24 @@ again="$("$WS" --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
   && ok "a second QA re-check is permitted and still spends nothing" \
   || bad "a second QA re-check is permitted and still spends nothing" "rc=$rc got=$again"
 
+# --- § 2 records the first-cycle panel -----------------------------
+# The first cycle's panel lands on its own key with its agents and its reason,
+# and spends nothing: a first cycle is not a re-review cycle.
+sd_first="$TMP_ROOT/state-first"
+"$WS" --state-dir "$sd_first" init KEN-3 --worktree "$REPO_ROOT" --branch ken-3 >/dev/null
+"$WS" --state-dir "$sd_first" set KEN-3 first_panel '{"agents": ["reviewer-doc", "reviewer-error"], "reason": "docs + shell"}' >/dev/null && rc=0 || rc=$?
+first="$("$WS" --state-dir "$sd_first" get KEN-3 '[.first_panel.agents, .first_panel.reason, .rereview_cycles] | tojson')"
+[[ "$rc" -eq 0 && "$first" == '[["reviewer-doc","reviewer-error"],"docs + shell",0]' ]] \
+  && ok "first_panel is written with its agents and its reason and spends no re-review budget" \
+  || bad "first_panel is written with its agents and its reason and spends no re-review budget" "rc=$rc got=$first"
+
+REVIEW_PR_WF="$REPO_ROOT/skills/orch/workflows/review-pr.md"
+section_2() { awk '$0 == "## 2. Prepare Reviewers" { on = 1; next } on && /^## 3[.]/ { on = 0 } on' "$1"; }
+FIRST_WRITE='workflow-state set [ISSUE_ID] first_panel'
+grep -q -F "$FIRST_WRITE" <<<"$(section_2 "$REVIEW_PR_WF")" \
+  && ok "§ 2 records its panel on first_panel" \
+  || bad "§ 2 records no first_panel"
+
 # --- § 7 states which counter governs it --------------------------
 # The doc side of the same separation. § 7 must name its own key and must not
 # read or raise the § 4 budget.
@@ -127,7 +145,6 @@ again="$("$WS" --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
 # counter it must not touch, the check it must not route through — never a
 # sentence: § 7 states the separation without naming the counter, so a token
 # scan over the whole section is the assertion.
-REVIEW_PR_WF="$REPO_ROOT/skills/orch/workflows/review-pr.md"
 section_7() { awk '$0 == "## 7. Handle QA Items" { on = 1; next } on && /^## 8[.]/ { on = 0 } on' "$1"; }
 S7="$(section_7 "$REVIEW_PR_WF")"
 grep -q -F 'qa_recheck_panel' <<<"$S7" \
@@ -280,6 +297,29 @@ elif grep -q -F 'qa_recheck_panel' <<<"$(section_7 "$CTRL_WF")"; then
   bad "the assertion MISSED § 7 writing the gated panel key"
 else
   ok "the assertion flags § 7 writing the gated panel key"
+fi
+
+# The unpatched § 2: no first_panel write, so the first cycle leaves no record.
+CTRL_WF="$TMP_ROOT/review-pr-nofirst.md"
+grep -v -F "$FIRST_WRITE" "$REVIEW_PR_WF" > "$CTRL_WF" || true
+if cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
+  bad "§ 2 first_panel control planted nothing — its filter matched no text"
+elif grep -q -F "$FIRST_WRITE" <<<"$(section_2 "$CTRL_WF")"; then
+  bad "the assertion MISSED § 2 recording no first_panel"
+else
+  ok "the assertion flags § 2 recording no first_panel"
+fi
+
+# The write kept but moved after the spawn, into § 3: the assertion's section
+# scope is what catches a panel recorded too late to precede any spawn.
+CTRL_WF="$TMP_ROOT/review-pr-latefirst.md"
+awk -v w="$FIRST_WRITE" 'index($0, w) { held = $0; next } { print } $0 == "## 3. Collect Results" { print held }' "$REVIEW_PR_WF" > "$CTRL_WF"
+if ! grep -q -F "$FIRST_WRITE" "$CTRL_WF" || cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
+  bad "§ 2 late-write control planted nothing — the write did not move"
+elif grep -q -F "$FIRST_WRITE" <<<"$(section_2 "$CTRL_WF")"; then
+  bad "the assertion MISSED the first_panel write moved out of § 2"
+else
+  ok "the assertion flags the first_panel write moved out of § 2 into § 3"
 fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

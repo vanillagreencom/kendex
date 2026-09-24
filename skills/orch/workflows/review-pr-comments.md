@@ -218,9 +218,15 @@ Read the round budget first. The cap governs what may be pushed, so it decides b
 .agents/skills/orch/scripts/workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS --issue [ISSUE_ID]
 ```
 
-It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `pr_comment_review.iterations`. An `at-cap` verdict on `REVIEW_MAX_EXTERNAL_ROUNDS` ends the ordinary fix rounds on this PR. Two rules decide the pass. **At the cap the disposition is unconditional and the fix is what stops**: every thread is analyzed and gets its reply posted and resolved, on this pass and every later one, and what the cap forbids is the fix and the push that follows it. The **fix set** is what the rest of this section groups, records and delegates: the items marked Fixing, and **at the cap only the cap-exempt ones — a defect this diff itself introduces or arms and Step 0 does not exclude**. The pass then runs three steps, in order. **File first** — run § 6.2 for every item clearing its bar, invoked with its return recorded as `→ § 6.1` rather than § 6.2's usual `→ § 6.3`. **Then the exception**, the only delegation and the only push this pass makes. **Then reply**, through the reply table below: `Tracked: [ISSUE_ID]` for a filed item, `Fixed in [SHA]` for one the exception fixed, `Declined: [REASON]` for the rest, which needs no issue. Resolve each thread as you reply, then → § 6.3 with § 6.2 already done.
+It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `pr_comment_review.iterations`. An `at-cap` verdict on `REVIEW_MAX_EXTERNAL_ROUNDS` ends the ordinary fix rounds on this PR. Two rules decide the pass. **At the cap the disposition is unconditional and the fix is what stops**: every thread is analyzed and gets its reply posted and resolved, on this pass and every later one, and what the cap forbids is the fix and the push that follows it. The **fix set** is what the rest of this section groups, records and delegates: the items marked Fixing, and **at the cap only the cap-exempt ones — a defect this diff itself introduces or arms and Step 0 does not exclude**. The pass then runs three steps, in order. **File first** — run § 6.2 for every item clearing its bar, invoked with its return recorded as `→ § 6.1` rather than § 6.2's usual `→ § 6.3`. **Then the exception**, the only fix delegation and the only push this pass makes; a fix the verification pass below triggers is part of it. **Then reply**, through the reply table below: `Tracked: [ISSUE_ID]` for a filed item, `Fixed in [SHA]` for one the exception fixed, `Declined: [REASON]` for the rest, which needs no issue. Resolve each thread as you reply, then → § 6.3 with § 6.2 already done.
 
-**Delegate the fix set.** Ensure the worktree exists (`worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing), group the `fix set` by `agent`, then stamp the round per group as separate tool calls immediately before delegating, arming the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
+**Delegate the fix set.** Ensure the worktree exists (`worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing) and record the head the verification pass below diffs against, once per fix set:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
+```
+
+Group the `fix set` by `agent`, then stamp the round per group as separate tool calls immediately before delegating, arming the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
@@ -290,6 +296,14 @@ git -C "[WORKTREE_PATH]" log -1 --oneline
 ```
 
 Apply the fix-round A×B table in [`dev-fix.md` § 2](dev-fix.md), which is canonical — including exact-commit binding on accept, the bounded git re-read on `accept` with B failing, the report-only tail-reconciliation nudge on `wait` with B passing, and the never-accept `retry` row, which never re-runs the fix. On accept: applied items are marked for reply, items the agent skipped go to the skipped list with their reason, and blocked items become issue candidates in § 6.2.
+
+**Verify before the push.** Every accepted fix round gets one focused pass over its diff, `[PRE_SHA]...HEAD`, by [review-pr.md § Bounded Re-Review](review-pr.md#bounded-re-review)'s rule for a fix diff no reviewer has seen, whatever `REVIEW_MAX_EXTERNAL_ROUNDS` reads. Its panel is the union of the domain reviewers § 2 routed the applied items to and the reviewers whose domains that diff touches by the scoped-panel rule there:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] verification_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "pr-comments fix round: [DOMAINS]"}'
+```
+
+Delegate and collect it as review-pr.md § 2.2 and § 3 do, with `Diff-range: [PRE_SHA]...HEAD`, then shut its reviewers down and clear their state with review-pr.md § 5's first write. Its blockers and `category == "fix"` suggestions re-enter § 5's disposition flow as findings of this pass; what survives joins this pass's `fix set` as a defect this diff introduces. Its `category == "issue"` suggestions go to § 6.2, as § 5 routes the triage reports' own; at the cap, where § 6.2 has already run, it runs once more for them after this pass. One verification pass runs per push: the fix it triggers joins the same push without a second pass, and the next external round reviews it.
 
 **Batch per fully-reviewed head.** Push a fix round only after every configured reviewer has reported on the current head. A pass with nothing to push skips this command:
 

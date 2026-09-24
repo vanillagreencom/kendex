@@ -953,6 +953,7 @@
   ".agents/skills/orch/tests/review_artifact_check_channels.sh",
   ".agents/skills/orch/tests/review_artifact_check_item_schema.sh",
   ".agents/skills/orch/tests/review_artifact_check_measurement.sh",
+  ".agents/skills/orch/tests/review_artifact_check_repeats.sh",
   ".agents/skills/orch/tests/review_artifact_relay.sh",
   ".agents/skills/orch/tests/run-all.sh",
   ".agents/skills/orch/tests/single-return-codex-dual-channel.test.sh",

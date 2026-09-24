@@ -60,6 +60,14 @@ Persistent state file for orch workflows. Survives context compaction.
       "source": "qa-review"
     }
   ],
+  "declined_items": [
+    {
+      "description": "Retry loop has no jitter",
+      "location": "src/net/retry.rs (`backoff`)",
+      "reason": "cannot affect real usage: one client per machine",
+      "source": "pr-review"
+    }
+  ],
   "audit_issues_created": ["PROJ-200", "PROJ-201"],
   "rebase_map": {
     "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567": "76543210f9e8d7c6b5a49382716051423344abcd"
@@ -136,7 +144,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `review_agent_runtime_types` | object | Reviewer runtime agent metadata keyed by logical reviewer name: `{name: {agent_type, task_name?, fallback}}`; records a Codex `worker` fallback and, when the runtime `task_name` schema forced a hyphens-to-underscores spelling, the translated `task_name` — without changing the logical keys |
 | `review_wave_done` | string[] | Wave mode only: reviewers whose report artifact validated (or who went unresponsive) in the current review cycle. Reset at each new cycle's first wave; the next wave launches the first budget-sized batch of `[AGENTS]` not listed here |
 | `reviewer_slots_observed` | number | Effective wave size proven by the runtime when a persistent (unlimited-budget) launch hit the thread limit. While set, `review-pr.md` § 2 enters wave mode at this size even though `REVIEWER_SLOT_BUDGET` is `0` |
-| `pre_delegate_sha` | string\|null | HEAD before delegation — scopes re-review diffs. review-pr § 2.2 sends it to a re-review re-entry as `Diff-range`, a boundary no reviewer can derive from its own delegation |
+| `pre_delegate_sha` | string\|null | HEAD before delegation — scopes re-review diffs. review-pr § 2.2 sends it to a re-review re-entry as `Diff-range`, a boundary no reviewer can derive from its own delegation. review-pr-comments § 6.1 writes it before a fix set and sends it as the verification pass's `Diff-range` |
 | `skip_qa` | boolean | Skip QA for re-cycle (cleared after routing) |
 | `cycles` | number | General fix-round tally — `dev-fix.md` increments it on every fix round (review-pr § 4 and § 7, plus pre-loop review/submit rounds). It fills review-pr § 1.2's previous-cycle block and the session summaries; it decides no cap |
 | `rereview_cycles` | number | § 4 → § 2 re-review cycles entered, counting entries already taken. `workflow-state set … rereview_panel` raises it in the same locked write it gates, so only that re-entry spends the budget `REVIEW_MAX_CYCLES` bounds — a § 7 QA re-check (`qa_recheck_panel`), a § 2 verification pass (`verification_panel`), and any fix round do not |
@@ -144,12 +152,14 @@ Persistent state file for orch workflows. Survives context compaction.
 | `review_delegated_at` | number | Epoch seconds of last review delegation — the freshness boundary `review-pr.md` § 3 passes to `review-artifact-check` |
 | `dev_delegated_at` | number | Epoch seconds of last dev/QA delegation — the watchdog deadline for stall escalation. It does not gate artifact acceptance; the round id does |
 | `dev_round_id` | string | Unique per-delegation round token, minted by `workflow-state new-round-id [ISSUE] dev_round_id` immediately before each dev/QA delegation and embedded in it. It is the completion artifact's identity ([`dev-return.md`](dev-return.md)) and, on a fix round, the delegated-item record's ([`dev-round.md`](dev-round.md)) |
+| `first_panel` | object | `{agents: string[], reason}` for review-pr § 2's first-cycle panel, recorded on a § 1 entry: the reviewers the diff and the issue's Done-when give something to read, or the caller's `agents` with reason `caller panel` |
 | `rereview_panel` | object | `{agents: string[], reason}` for a § 4 fix round re-reviewed by a scoped panel instead of the full set. Setting it is the § 4 → § 2 re-review re-entry |
 | `qa_recheck_panel` | object | `{agents: string[], reason}` for review-pr § 7's § 7 → § 6 QA re-check |
-| `verification_panel` | object | `{agents: string[], reason}` for review-pr § 7's § 7 → § 2 pass over a fix diff no reviewer has seen |
-| `json_paths` | string[] | Accumulated review JSON file paths |
+| `verification_panel` | object | `{agents: string[], reason}` for a pass over a fix diff no reviewer has seen, which no cap gates: review-pr § 7's § 7 → § 2 pass, review-pr § 4's pass once the budget is spent, and review-pr-comments § 6.1's pass before the push |
+| `json_paths` | string[] | Accumulated review JSON file paths. review-pr § 4 Bounded Re-Review reads the reviewers named in them as the domains already reviewed |
 | `fixed_items` | object[] | Blockers successfully fixed. A `commit` of the form `dropped:<sha>` marks a fix whose commit vanished in a rebase (its patch was already upstream) — publishers omit it or cite the upstream equivalent, never print it as a live SHA |
 | `escalated_items` | object[] | Items dev did not apply, plus items still outstanding when review-pr's cycle cap ends the fix loop. `outcome` records the per-item decision — `"blocked"` (could not fix; the cap path always writes this) or `"skipped"` (deliberately skipped); an entry without `outcome` is treated as blocked. The audit builder maps it to a distinct `origin`. An item is never in both buckets: every dev-fix outcome write clears the item from both, matched on (location, description), before appending its own entry |
+| `declined_items` | object[] | Findings review-pr § 4 or § 7 declined, one `{description, location, reason, source}` per (location, description), a re-raised decline replacing its entry. The re-review and QA delegations list them as Declined, `review-artifact-check --issue` reports a finding at a listed location under `repeats` as a candidate carrying each decline recorded there, and § 8 carries each one's reason |
 | `audit_issues_created` | string[] | Issue IDs created by audit |
 | `rebase_map` | object | Old→new commit SHA map accumulated by orch `worktree-push` from the worktree-private `kendex-rebase-map` file, which is the only channel it reads: it holds what a completed guarded restack recorded before the push and what the push itself recorded during it. Keys are pre-rebase SHAs; values are post-rebase SHAs, or the literal `"dropped"` when the replayed commit vanished. `worktree-push` rewrites the SHAs stored elsewhere in state at push time — `fixed_items[].commit` and `pr_comment_review.fixes[].commit` become the new SHA truncated to the recorded length, or the marked form `dropped:<recorded sha>` for a dropped mapping. The map remains for artifact-sourced references (e.g. perf QA `benchmark_commit`) — resolve through it repeatedly until no key matches |
 | `pr` | object | Pull-request size state. `size_check` initializes as null and holds the latest report from `branch-size-check` without `--cut-from-round`: `base_sha` and `head_sha`, the commits it compared; `production_lines`, `test_lines` and `mirror_lines`, the added lines in each part; `production_allowance` and `test_allowance` from the issue's optional `**Expected delta**` line, null where absent; the `verdict` (`pass`, `over`, `allowance_missing`) and its `reason`, which for `allowance_missing` names which of its two causes applied: an issue that was read and states no line, or a key such as `pr-N` that names no issue to read. Cut acceptance uses the comparison in [dev-round.md § Declared cuts](dev-round.md#declared-cuts). Cut comparisons leave the record unchanged; other measurements overwrite it. A reader binds it to a head by `head_sha`; review-gate's `pr-watch.sh` annotates its `disarmed` line with the record for the PR head and reports any other as stale |
