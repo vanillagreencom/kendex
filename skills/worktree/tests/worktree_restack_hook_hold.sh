@@ -118,6 +118,8 @@ step() {
     hooks) make_pair; edit wt "$CLAUDE_HOOK" "$CODEX_HOOK"; edit main "$CLAUDE_HOOK" "$CODEX_HOOK" ;;
     # Only the undeclared source conflicts.
     source) make_pair; edit wt "$SOURCE_HOOK"; edit main "$SOURCE_HOOK" ;;
+    # One commit conflicting in an ordinary file and a declared hook at once.
+    mixed) make_pair; edit wt file.txt "$CLAUDE_HOOK"; edit main file.txt "$CLAUDE_HOOK" ;;
     # An ordinary conflict first, then a hook conflict in the next commit.
     later) make_pair; edit wt file.txt; edit wt "$CLAUDE_HOOK"; edit main file.txt "$CLAUDE_HOOK" ;;
     # The declaration naming the hook exists only at the pre-restack head.
@@ -210,14 +212,36 @@ markers() {
   printf '%s' "${found:--}"
 }
 
+# What each declared hook holds: the side's word the fixture wrote (`main` on
+# the base, `wt` on the branch, `resolved` after a consume), `markers` for a
+# conflicted file, `-` for none.
+bodies() {
+  local path out=""
+  for path in "$CLAUDE_HOOK" "$CODEX_HOOK"; do
+    if [[ ! -e "$WT/$path" ]]; then out="$out,-"
+    elif grep -q -e '^<<<<<<< ' "$WT/$path"; then out="$out,markers"
+    else out="$out,$(sed -n 's/^echo //p' "$WT/$path")"
+    fi
+  done
+  printf '%s' "${out#,}"
+}
+
+# The paths the report tells the caller to resolve by editing out markers,
+# read off its ordinary-path step; `-` when it names none.
+ordinary() {
+  local found
+  found="$(sed -n 's/^Resolve \([^:]*\): edit out the conflict markers.*/\1/p' "$ROOT/err" | paste -s -d ';' -)"
+  printf '%s' "${found:--}"
+}
+
 run() {
   local -a argv
   local rc=0 records
   read -r -a argv <<<"$1"
   (cd "$MAIN" && "$SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   records="$(message_records <"$ROOT/err" | grep -v '^rebase-' | sed "s|$WT|<wt>|g" | paste -s -d ';' -)"
-  printf 'rc=%s err=%s paused=%s parses=%s saved=%s markers=%s' \
-    "$rc" "$records" "$(paused)" "$(parses)" "$(saved)" "$(markers)"
+  printf 'rc=%s err=%s paused=%s parses=%s saved=%s markers=%s body=%s ordinary=%s' \
+    "$rc" "$records" "$(paused)" "$(parses)" "$(saved)" "$(markers)" "$(bodies)" "$(ordinary)"
 }
 
 C=.claude/hooks/stop.sh.restack-conflict
@@ -227,20 +251,21 @@ U=.cursor/hooks/stop.sh.restack-conflict
 HELD="worktree-restack-hook-held: $CLAUDE_HOOK $CODEX_HOOK"
 
 # label|fixture|command|expected
-ROWS="a restack conflicting in declared hooks holds both at a parseable side and names them on one line|hooks|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;$HELD paused=yes parses=ok,ok saved=$C,$X markers=$C,$X
-a replay conflicting in declared hooks holds them the same way|hooks|create topic --restack --replay|rc=1 err=worktree-replay-conflicts: <wt>;$HELD paused=yes parses=ok,ok saved=$C,$X markers=$C,$X
-a conflict in an undeclared path that a hook path ends with keeps the markers in place|source|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok saved=- markers=hooks/stop.sh
-continue refuses while a saved copy remains, even with everything staged|hooks restack stage-all|restack continue topic|rc=1 err=worktree-restack-hook-unconsumed: $C $X paused=yes parses=ok,ok saved=$C,$X markers=$C,$X
-skip refuses while a saved copy remains|hooks restack|restack skip topic|rc=1 err=worktree-restack-hook-unconsumed: $C $X paused=yes parses=ok,ok saved=$C,$X markers=$C,$X
-continue completes once each saved copy is moved over its hook|hooks restack consume|restack continue topic|rc=0 err=worktree-rebase-count: 1 paused=no parses=ok,ok saved=- markers=-
-abort restores the branch's hooks and removes the saved copies|hooks restack|restack abort topic|rc=0 err= paused=no parses=ok,ok saved=- markers=-
-continue that stops again in a hook holds it too|later restack resolve-file|restack continue topic|rc=1 err=worktree-restack-conflicts: $CLAUDE_HOOK;worktree-restack-hook-held: $CLAUDE_HOOK paused=yes parses=ok,ok saved=$C markers=$C
-continue completes once each saved copy is deleted and its path staged|hooks restack discard|restack continue topic|rc=0 err=worktree-rebase-count: 1 paused=no parses=ok,ok saved=- markers=-
-declarations that cannot be read hold every conflicted path, an ordinary one included|source broken-jq|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok saved=$S markers=$S
-a hook declared only at the pre-restack head is held|branch-declared|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CURSOR_HOOK paused=yes parses=ok,ok saved=$U markers=$U
-a hook declared only on the new base is held|base-declared|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CURSOR_HOOK paused=yes parses=ok,ok saved=$U markers=$U
-a hook the base deleted is held at the branch's side|deleted|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CLAUDE_HOOK paused=yes parses=ok,ok saved=$C markers=-
-continue refuses while a deleted hook's saved copy remains|deleted restack|restack continue topic|rc=1 err=worktree-restack-hook-unconsumed: $C paused=yes parses=ok,ok saved=$C markers=-
+ROWS="a restack conflicting in declared hooks holds both at a parseable side and names them on one line|hooks|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;$HELD paused=yes parses=ok,ok saved=$C,$X markers=$C,$X body=main,main ordinary=-
+a replay conflicting in declared hooks holds them the same way|hooks|create topic --restack --replay|rc=1 err=worktree-replay-conflicts: <wt>;$HELD paused=yes parses=ok,ok saved=$C,$X markers=$C,$X body=main,main ordinary=-
+a conflict in an undeclared path that a hook path ends with keeps the markers in place|source|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok saved=- markers=hooks/stop.sh body=base,base ordinary=hooks/stop.sh
+continue refuses while a saved copy remains, even with everything staged|hooks restack stage-all|restack continue topic|rc=1 err=worktree-restack-hook-unconsumed: $C $X paused=yes parses=ok,ok saved=$C,$X markers=$C,$X body=main,main ordinary=-
+skip refuses while a saved copy remains|hooks restack|restack skip topic|rc=1 err=worktree-restack-hook-unconsumed: $C $X paused=yes parses=ok,ok saved=$C,$X markers=$C,$X body=main,main ordinary=-
+continue completes once each saved copy is moved over its hook|hooks restack consume|restack continue topic|rc=0 err=worktree-rebase-count: 1 paused=no parses=ok,ok saved=- markers=- body=resolved,resolved ordinary=-
+abort restores the branch's hooks and removes the saved copies|hooks restack|restack abort topic|rc=0 err= paused=no parses=ok,ok saved=- markers=- body=wt,wt ordinary=-
+continue that stops again in a hook holds it too|later restack resolve-file|restack continue topic|rc=1 err=worktree-restack-conflicts: $CLAUDE_HOOK;worktree-restack-hook-held: $CLAUDE_HOOK paused=yes parses=ok,ok saved=$C markers=$C body=main,base ordinary=-
+a conflict in an ordinary file and a hook at once is told to edit only the ordinary file|mixed|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CLAUDE_HOOK paused=yes parses=ok,ok saved=$C markers=$C,file.txt body=main,base ordinary=file.txt
+continue completes once each saved copy is deleted and its path staged|hooks restack discard|restack continue topic|rc=0 err=worktree-rebase-count: 1 paused=no parses=ok,ok saved=- markers=- body=main,main ordinary=-
+declarations that cannot be read hold every conflicted path, an ordinary one included|source broken-jq|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok saved=$S markers=$S body=base,base ordinary=-
+a hook declared only at the pre-restack head is held|branch-declared|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CURSOR_HOOK paused=yes parses=ok,ok saved=$U markers=$U body=base,base ordinary=-
+a hook declared only on the new base is held|base-declared|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CURSOR_HOOK paused=yes parses=ok,ok saved=$U markers=$U body=base,base ordinary=-
+a hook the base deleted is held at the branch's side|deleted|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CLAUDE_HOOK paused=yes parses=ok,ok saved=$C markers=- body=wt,base ordinary=-
+continue refuses while a deleted hook's saved copy remains|deleted restack|restack continue topic|rc=1 err=worktree-restack-hook-unconsumed: $C paused=yes parses=ok,ok saved=$C markers=- body=wt,base ordinary=-
 "
 
 echo "=== worktree restack over a conflicted harness hook ==="
@@ -262,15 +287,17 @@ echo "=== must-fail controls: each cut on a private package copy ==="
 # here contains:
 # label@file@text@its occurrences@replacement@fixture@command@expected
 HOLD_CALL='held="$(restack_hold_conflicted_hooks "$wt" "$conflicts")" || held=""'
-CONTROLS="without the hold a create restack leaves markers in both hooks@scripts/lib/restack-state.sh@$HOLD_CALL@1@held=\"\"@hooks@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=FAIL,FAIL saved=- markers=$CLAUDE_HOOK,$CODEX_HOOK
-without the hold a create replay leaves markers in both hooks@scripts/lib/restack-state.sh@$HOLD_CALL@1@held=\"\"@hooks@create topic --restack --replay@rc=1 err=worktree-replay-conflicts: <wt> paused=yes parses=FAIL,FAIL saved=- markers=$CLAUDE_HOOK,$CODEX_HOOK
-without the hold a continue that stops again leaves markers in the hook@scripts/lib/restack-state.sh@$HOLD_CALL@1@held=\"\"@later restack resolve-file@restack continue topic@rc=1 err=worktree-restack-conflicts: $CLAUDE_HOOK paused=yes parses=FAIL,ok saved=- markers=$CLAUDE_HOOK
-without the refusal continue records the saved copies in the branch@scripts/worktree@restack_refuse_unconsumed_hooks \"\$WT_PATH\" || exit 1@1@:@hooks restack stage-all@restack continue topic@rc=0 err=worktree-rebase-count: 1 paused=no parses=ok,ok saved=$C,$X markers=$C,$X
-without the cleanup abort leaves the saved copies behind@scripts/worktree@rm -f -- \"\$WT_PATH/\$HELD_COPY\"@1@:@hooks restack@restack abort topic@rc=0 err= paused=no parses=ok,ok saved=$C,$X markers=$C,$X
-without the unreadable fallback an ordinary path keeps its markers@scripts/lib/restack-state.sh@printf '%s\n' \"\$conflicts\"@1@:@source broken-jq@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok saved=- markers=$SOURCE_HOOK
-without the pre-restack head a branch-declared hook keeps its markers@scripts/lib/restack-state.sh@\"\$(restack_state_get \"\$wt\" originalHead)\" HEAD)\"@1@HEAD)\"@branch-declared@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok saved=- markers=$CURSOR_HOOK
-without the paused HEAD a base-declared hook keeps its markers@scripts/lib/restack-state.sh@originalHead)\" HEAD)\"@1@originalHead)\")\"@base-declared@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok saved=- markers=$CURSOR_HOOK
-without the fallback to the branch's side a deleted hook is not held@scripts/lib/restack-state.sh@! git -C \"\$wt\" checkout --theirs -- \"\$path\" >/dev/null 2>&1; }@1@true; }@deleted@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-hold-failed: $CLAUDE_HOOK paused=yes parses=ok,ok saved=$C markers=-
+CONTROLS="without the hold a create restack leaves markers in both hooks@scripts/lib/restack-state.sh@$HOLD_CALL@1@held=\"\"@hooks@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=FAIL,FAIL saved=- markers=$CLAUDE_HOOK,$CODEX_HOOK body=markers,markers ordinary=$CLAUDE_HOOK $CODEX_HOOK
+without the hold a create replay leaves markers in both hooks@scripts/lib/restack-state.sh@$HOLD_CALL@1@held=\"\"@hooks@create topic --restack --replay@rc=1 err=worktree-replay-conflicts: <wt> paused=yes parses=FAIL,FAIL saved=- markers=$CLAUDE_HOOK,$CODEX_HOOK body=markers,markers ordinary=$CLAUDE_HOOK $CODEX_HOOK
+without the hold a continue that stops again leaves markers in the hook@scripts/lib/restack-state.sh@$HOLD_CALL@1@held=\"\"@later restack resolve-file@restack continue topic@rc=1 err=worktree-restack-conflicts: $CLAUDE_HOOK paused=yes parses=FAIL,ok saved=- markers=$CLAUDE_HOOK body=markers,base ordinary=$CLAUDE_HOOK
+without the refusal continue records the saved copies in the branch@scripts/worktree@restack_refuse_unconsumed_hooks \"\$WT_PATH\" || exit 1@1@:@hooks restack stage-all@restack continue topic@rc=0 err=worktree-rebase-count: 1 paused=no parses=ok,ok saved=$C,$X markers=$C,$X body=main,main ordinary=-
+without the cleanup abort leaves the saved copies behind@scripts/worktree@rm -f -- \"\$WT_PATH/\$HELD_COPY\"@1@:@hooks restack@restack abort topic@rc=0 err= paused=no parses=ok,ok saved=$C,$X markers=$C,$X body=wt,wt ordinary=-
+without the unreadable fallback an ordinary path keeps its markers@scripts/lib/restack-state.sh@printf '%s\n' \"\$conflicts\"@1@:@source broken-jq@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok saved=- markers=$SOURCE_HOOK body=base,base ordinary=$SOURCE_HOOK
+without the pre-restack head a branch-declared hook keeps its markers@scripts/lib/restack-state.sh@\"\$(restack_state_get \"\$wt\" originalHead)\" HEAD)\"@1@HEAD)\"@branch-declared@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok saved=- markers=$CURSOR_HOOK body=base,base ordinary=$CURSOR_HOOK
+without the paused HEAD a base-declared hook keeps its markers@scripts/lib/restack-state.sh@originalHead)\" HEAD)\"@1@originalHead)\")\"@base-declared@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok saved=- markers=$CURSOR_HOOK body=base,base ordinary=$CURSOR_HOOK
+without the fallback to the branch's side a deleted hook is not held@scripts/lib/restack-state.sh@! git -C \"\$wt\" checkout --theirs -- \"\$path\" >/dev/null 2>&1; }@1@true; }@deleted@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-hold-failed: $CLAUDE_HOOK paused=yes parses=ok,ok saved=$C markers=- body=wt,base ordinary=$CLAUDE_HOOK
+without the held-path exclusion the report tells the caller to edit a held hook@scripts/lib/restack-state.sh@grep -F -x -q -e \"\$path\" <<<\"\$held\" || ordinary@1@true; ordinary@mixed@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CLAUDE_HOOK paused=yes parses=ok,ok saved=$C markers=$C,file.txt body=main,base ordinary=$CLAUDE_HOOK file.txt
+with the branch's side taken first the held hooks keep the branch's version@scripts/lib/restack-state.sh@checkout --ours --@1@checkout --theirs --@hooks@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;$HELD paused=yes parses=ok,ok saved=$C,$X markers=$C,$X body=wt,wt ordinary=-
 "
 m=0
 while IFS='@' read -r label target text count replacement fixture command want; do
