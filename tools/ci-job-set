@@ -15,34 +15,49 @@
 #   CHANGED_PATHS  the changed paths, one per line
 #   GITHUB_OUTPUT  the step output file the selection is appended to
 #
+# THE INVARIANT. On every measured class (`micro`, `small`, `standard`) the
+# three Linux lanes always run: shell_shards, cargo_linux and
+# bot_instructions. Between them they hold every reader of a path's CONTENT,
+# so no path list here has to name the readers of a tree for a change to it
+# to be judged. Only the platform and lint lanes (macos_legs, cargo_macos,
+# cargo_lint, cargo_windows) and ui narrow by path, and each narrows only on
+# paths whose content cannot behave differently on the platform or under the
+# tool that lane adds. A lane that reads content joins the Linux three; it
+# never gets a path family of its own.
+#
 # The lanes, and what each is answerable to:
 #
-#   shell_shards     the skill, hook and tool suites. Every measured class
-#                    runs them, because they read every tree: the shard
-#                    partition suite runs `cargo metadata` over the workspace,
-#                    the Linux `rest` shard checks the kendex it builds from
-#                    crates/, and the guards-scans shard's doc-limits and
-#                    todo-ban scan every tracked file, crates/ and ui/
-#                    included.
-#   macos_legs       the second run of those suites under Bash 3.2 and the BSD
+#   shell_shards     the skill, hook and tool suites, which read every tree:
+#                    the guards-scans shard's doc-limits and todo-ban scan
+#                    every tracked file, docs/ and root Markdown included;
+#                    the guards-tools shard's orch-shard-partition suite runs
+#                    `cargo metadata` over the workspace and checks every
+#                    shard name tracked prose cites; the Linux `rest` shard
+#                    checks the kendex it builds from crates/.
+#   bot_instructions the rendered review-bot instruction files and the root
+#                    AGENTS.md region they own.
+#   cargo_linux      the workspace tests on Linux, which read more than
+#                    crates/: crates/cli/tests/catalog_render_lint.rs installs
+#                    and lints the whole catalog, crates/core/src/legal.rs
+#                    reads docs/legal/, crates/app/src/mine.rs compiles in
+#                    docs/authoring/README.md, and the commit_offer tests run
+#                    the bot-instructions package's scripts.
+#   macos_legs       the shell suites again under Bash 3.2 and the BSD
 #                    userland. Only an executable file can behave differently
 #                    there, so a diff of Markdown alone stands them down and
 #                    every other diff runs them.
-#   ui               the vitest, tsc and biome lane, which reads ui/ alone.
-#   bot_instructions the rendered review-bot instruction files.
-#   cargo_linux      the workspace tests on Linux. NOT gated on crate paths:
-#                    crates/cli/tests/catalog_render_lint.rs installs this
-#                    repository's whole catalog and lints the result, so a
-#                    change under skills/ reaches this lane with no crate path
-#                    in the diff at all.
-#   cargo_macos      the same tests on the platform the app ships on, with
-#                    cargo_lint and cargo_windows beside them. None of the
-#                    three reads the catalog — the macOS catalog lint is the
-#                    platform re-run of a lint the Linux lane already did, and
-#                    the Windows legs compile that test out under its
-#                    `cfg(unix)` — so all three answer to the workspace alone.
+#   cargo_macos      the workspace tests on the platform the app ships on,
+#                    with cargo_lint and cargo_windows beside them. The three
+#                    narrow to the workspace: what else the tests read is
+#                    catalog and documentation content, whose rendering and
+#                    bytes do not change by platform and which cargo_linux
+#                    already judged. The one executable those tests run from
+#                    outside it, the bot-instructions package's scripts, is
+#                    never Markdown, so macos_legs runs that package's own
+#                    suites under the BSD userland whenever it changes.
 #   cargo_lint       clippy, fmt and doc over the workspace.
 #   cargo_windows    the Windows compile and test lanes.
+#   ui               the vitest, tsc and biome lane, which reads ui/ alone.
 #
 # "The workspace" is WORKSPACE below: crates/ and every root file a cargo lane
 # reads as configuration, the manifest and lockfile, clippy.toml and the
@@ -50,12 +65,12 @@
 # cargo lane belongs in that pattern; one left out stands those three lanes
 # down on the diff that changes them.
 #
-# A `render` or `trivial` diff runs none of them: the classifier proved the
-# first by re-rendering it, and the second is inside the docs path set and its
-# line ceiling. A diff `harness-only --mode docs` accepts, whatever its size
-# and so whatever its class, runs only bot_instructions: that lane's check
-# reads the root AGENTS.md the docs set admits, and nothing else here reads
-# docs/, changelog.d/ or root Markdown.
+# A `render` or `trivial` diff runs none of the lanes: the classifier proved
+# the first by re-rendering it, and the second is inside the docs path set and
+# its line ceiling. DOCS_ONLY is read and validated on every class, and it
+# changes one thing: a `standard` diff it accepts, which is documentation too
+# large to be `trivial`, takes the measured row its paths select rather than
+# every lane. Under `micro` and `small` that row is already the one taken.
 #
 # Every refusal starts `ci-job-set: cause=<name>` and exits 2. A class this
 # table does not name is one of those: the step goes red, every lane's status
@@ -123,16 +138,14 @@ case "$CHANGE_CLASS" in
       cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false
     ;;
   micro | small | standard)
-    if [ "$DOCS_ONLY" = true ]; then
-      emit shell_shards=false macos_legs=false ui=false bot_instructions=true \
-        cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false
-    elif [ "$CHANGE_CLASS" = standard ]; then
+    if [ "$CHANGE_CLASS" = standard ] && [ "$DOCS_ONLY" = false ]; then
       emit shell_shards=true macos_legs=true ui=true bot_instructions=true \
         cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true
     else
       # A measured class is reached only after the classifier read a changed
-      # path, so an empty list here is a state no classifier emits. Reading it
-      # as "nothing matches" would stand every gated lane down on no evidence.
+      # path, and so is a docs verdict of true, so an empty list here is a
+      # state no classifier emits. Reading it as "nothing matches" would
+      # stand the narrowing lanes down on no evidence.
       [ -n "$paths" ] || die "class-without-paths class=$CHANGE_CLASS" \
         "a measured class arrived with no changed path"
       platform=false

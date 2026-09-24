@@ -172,9 +172,18 @@ fi
 # --- 3. The refusals --------------------------------------------------------
 
 # CAUSE|ASSIGNMENTS (blank-separated NAME=VALUE)
+# A mode-000 file is still readable by root, so the one row that forces a
+# read failure that way cannot fail under root and is skipped there, saying so.
 refusal_rows=0
 while IFS='|' read -r cause assignments; do
   refusal_rows=$((refusal_rows + 1))
+  case "$assignments" in
+    *STUB_PATHS_UNREADABLE=*)
+      if [ "$(id -u)" -eq 0 ]; then
+        printf '  skip  refusal %s: root reads a mode-000 file\n' "$cause"
+        continue
+      fi ;;
+  esac
   # shellcheck disable=SC2086 # the assignments are blank-separated words
   status="$(run "$CLASSIFY" $assignments)"
   check "refusal $cause: exit" "2" "$status"

@@ -14,10 +14,12 @@ name: Skill Tests
 # every cargo lane — so a green PR has proven what the queue re-proves and an
 # ejection — dequeue, fix, requeue, pay the merge latency again — is rare
 # instead of routine. A `render` or `trivial` diff runs none of the gated
-# lanes, a documentation-only diff of any size runs the bot-instructions lane
-# alone, and a `micro` or `small` one runs the lanes its paths can reach;
-# `tools/ci-job-set` states each lane by lane. Their aggregators still report
-# and accept only the skips the class authorized. The push to main
+# lanes. Every other diff, a `standard` one of documentation alone included,
+# runs the shell shards, the Linux cargo lane and the bot-instructions lane,
+# which hold every reader of a path's content, and runs the macOS, lint,
+# Windows and ui lanes only where its paths reach them; `tools/ci-job-set`
+# states that invariant and each lane. Their aggregators still report and
+# accept only the skips the class authorized. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
 # so it runs only the compile steps: each cargo lane builds its targets with
@@ -128,6 +130,11 @@ jobs:
     # from the pull request's own tree, held by review rather than by this
     # split.
     env:
+      # The event and its two endpoints, spelled once: the render-reach step
+      # and the classify step must judge the same range.
+      EVENT: ${{ github.event_name }}
+      BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+      HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
       KENDEX_REPO: ${{ github.repository }}
       KENDEX_BUILD_SHA: 2ba4f18c9ba6889a190ad6f19793ac4bf089df35
       KENDEX_VERSION: main-build-133-1-2ba4f18c9ba6889a190ad6f19793ac4bf089df35
@@ -160,15 +167,12 @@ jobs:
           fetch-depth: 0
           path: subject
           persist-credentials: false
-      # Whether the render class is reachable at all. change-class reads its
-      # render branch only where this same verdict is `harness_only=true`, so
-      # on every other diff the install and the mirror below would buy
-      # nothing. Read with the default branch's copy, as the class is.
+      # Whether the render class is reachable at all. It mirrors change-class's
+      # render branch, `if [ "$harness_verdict" = "harness_only=true" ]`: that
+      # branch is the only reader of kendex and the mirror, so on every other
+      # verdict the install and the refresh below would buy nothing. Read with
+      # the default branch's copy, as the class is.
       - id: render-reach
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
         run: >-
           classifier/skills/harness-ci/scripts/harness-only
           --mode harness --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
@@ -226,9 +230,9 @@ jobs:
         with:
           classifier: classifier
           repo: subject
-          event: ${{ github.event_name }}
-          base: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          head: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          event: ${{ env.EVENT }}
+          base: ${{ env.BASE }}
+          head: ${{ env.HEAD }}
       # The class becomes a job set here and nowhere else. Each lane's `if:`
       # below reads one of these lines rather than re-deriving the selection
       # from the class and the paths, so there is one place to read what a
@@ -634,8 +638,12 @@ jobs:
           done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' | grep -vE '/(scripts|tests)/lib/|/tests/controls/')
           exit "$fail"
 
-      # Document byte ceilings run on every PR and queue event. A failure in
-      # an earlier step must not suppress this check.
+      # Document byte ceilings run on every PR and queue event whose class
+      # runs the shell shards, which is every measured class whatever its
+      # paths: a documentation diff is the one that grows a document past its
+      # ceiling. A `render` or `trivial` diff runs no shard, so this scan does
+      # not run for it here; the commit chain's doc-limits step is what judged
+      # its commits. A failure in an earlier step must not suppress this check.
       - name: doc-limits (document byte ceilings)
         if: always() && matrix.shard == 'guards-scans'
         run: skills/doc-limits/scripts/doc-limits

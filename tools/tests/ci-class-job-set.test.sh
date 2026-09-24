@@ -66,10 +66,9 @@ selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or th
 
 ALL_OFF="shell_shards=false macos_legs=false ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false"
 ALL_ON="shell_shards=true macos_legs=true ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true"
-DOCS_ROW="shell_shards=false macos_legs=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false"
-# Every measured class runs the shell suites, which read crates/ and ui/ as
-# well as the catalog; the rest follows the paths.
-SKILL_PROSE="shell_shards=true macos_legs=false ui=false bot_instructions=true cargo_linux=true cargo_macos=false cargo_lint=false cargo_windows=false"
+# Every measured class runs the three Linux lanes, which hold every content
+# reader; the platform, lint and ui lanes follow the paths.
+PROSE_ROW="shell_shards=true macos_legs=false ui=false bot_instructions=true cargo_linux=true cargo_macos=false cargo_lint=false cargo_windows=false"
 WORKSPACE_ROW="shell_shards=true macos_legs=true ui=false bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true"
 UI_ROW="shell_shards=true macos_legs=true ui=true bot_instructions=true cargo_linux=true cargo_macos=false cargo_lint=false cargo_windows=false"
 
@@ -83,20 +82,50 @@ done <<ROWS
 render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|$ALL_OFF
 trivial|true|docs/architecture/overview.md|$ALL_OFF
 standard|false|crates/core/src/lib.rs|$ALL_ON
-micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SKILL_PROSE
+micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$PROSE_ROW
 small|false|crates/cli/src/main.rs|$WORKSPACE_ROW
 micro|false|ui/src/app.tsx|$UI_ROW
 micro|false|clippy.toml|$WORKSPACE_ROW
 micro|false|rust-toolchain.toml|$WORKSPACE_ROW
-micro|true|docs/guide.md|$DOCS_ROW
-standard|true|docs/guide.md|$DOCS_ROW
+micro|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
+small|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
+standard|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
 standard|false|docs/guide.md|$ALL_ON
 enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous
 micro|false||exit=2 class-without-paths class=micro
 micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe
 ROWS
-[ "$selection_rows" -ge 14 ] ||
+[ "$selection_rows" -ge 15 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
+
+# The docs verdict narrows a `standard` diff to the row its paths select as a
+# measured class, and to nothing narrower.
+docs_paths="$(printf '%s\n' docs/architecture/overview.md docs/legal/terms.md)"
+check "standard with docs_only=true takes the small row for the same paths" \
+  "$(selection small false "$docs_paths")" "$(selection standard true "$docs_paths")"
+
+# A row that forgets a lane is refused before any lane reads it. macos_legs is
+# the lane no aggregate holds, so this refusal is what keeps a forgotten
+# platform lane from collapsing the matrix in silence. The copy drops one lane
+# from the render row.
+mkdir -p "$TMP/forgot/tools"
+forgot="$TMP/forgot/tools/ci-job-set"
+[ "$(grep -c 'cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false$' "$JOB_SET")" -eq 1 ] ||
+  { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
+awk '
+  /cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false$/ {
+    sub(/ cargo_windows=false$/, "")
+  }
+  { print }
+' "$JOB_SET" >"$forgot"
+chmod +x "$forgot"
+! cmp -s "$JOB_SET" "$forgot" || { echo "the forgotten-lane copy changed nothing" >&2; exit 1; }
+forgot_status=0
+CHANGE_CLASS=render DOCS_ONLY=false CHANGED_PATHS=CLAUDE.md GITHUB_OUTPUT="$TMP/forgot-out" \
+  "$forgot" 2>"$TMP/forgot-err" || forgot_status=$?
+check "a row that forgets a lane is refused" \
+  "exit=2 lane-unselected lane=cargo_windows" \
+  "exit=$forgot_status $(sed -n 's/^ci-job-set: cause=//p' "$TMP/forgot-err")"
 
 # --- 2. The names -----------------------------------------------------------
 # Each reader is extracted with an anchored pattern: a name is the whole run
@@ -409,13 +438,12 @@ while IFS='|' read -r sel expected; do
   check "jobs under '$sel'" "$expected" "$(running "$WORKFLOW" "$sel")"
 done <<ROWS
 $ALL_OFF|
-$DOCS_ROW|bot-instructions
 $ALL_ON|$EVERY_GATED
 $one_skill|bot-instructions cargo-linux skill-suites-shard
 $WORKSPACE_ROW|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
 $UI_ROW|bot-instructions cargo-linux skill-suites-shard ui-tests
 ROWS
-[ "$job_rows" -ge 6 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
+[ "$job_rows" -ge 5 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
 
 # A classifier that died published nothing. Every gated job runs, which is
 # what each condition's status function and result term are for.
@@ -488,8 +516,11 @@ check "a lane the class stood down may skip" "0" \
 check "a lane the class selected may not skip" "1" \
   "$(aggregate "$AGGREGATE" --lane 'true:skill-suites-shard' --lane 'true:ui-tests' \
     --lane 'true:bot-instructions')"
-check "no lane authorized means no skip is accepted" "1" \
-  "$(aggregate "$AGGREGATE" --lane 'true:skill-suites-shard' --lane 'true:ui-tests')"
+# One lane stood down turns the waiver on; the skipped lane beside it is one
+# the class selected, so the waiver must not reach it.
+check "a waiver for one lane authorizes no skip of another" "1" \
+  "$(aggregate "$AGGREGATE" --lane 'true:skill-suites-shard' --lane 'true:ui-tests' \
+    --lane 'false:bot-instructions')"
 # The second selection for one job is refused before either becomes a waiver,
 # whichever of the two comes last.
 check "a job named twice is refused, the selected one first" \

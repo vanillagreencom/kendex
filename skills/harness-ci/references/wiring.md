@@ -169,6 +169,12 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
       contents: read
     outputs:
       change_class: ${{ steps.classify.outputs.change_class }}
+    env:
+      # The event and its endpoints, spelled once for every step that reads
+      # the range, so no two steps can judge different ones.
+      EVENT: ${{ github.event_name }}
+      BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+      HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
     steps:
       - name: the classifier, from the default branch
         uses: actions/checkout@v4
@@ -180,7 +186,16 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
         with:
           fetch-depth: 0
           path: subject
+      # change-class reads kendex and the mirror only on its render branch,
+      # which it takes where harness-only answers harness_only=true. This is
+      # that same read, so the two network steps below run only where the
+      # render class is reachable.
+      - id: render-reach
+        run: >-
+          classifier/.agents/skills/harness-ci/scripts/harness-only
+          --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
       - name: kendex, for the render class
+        if: steps.render-reach.outputs.harness_only == 'true'
         env:
           # The first release whose `kendex verify --json` prints a version 1
           # document; the render proof reads that document and nothing else.
@@ -191,18 +206,16 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
           KENDEX_VERSION: main-build-<n>-<attempt>-<sha>
         run: curl -fsSL https://kendex.ai/install.sh | sh -s -- --version "$KENDEX_VERSION"
       - name: the source mirror the render proof re-renders from
+        if: steps.render-reach.outputs.harness_only == 'true'
         run: kendex source refresh
         working-directory: subject
       - id: classify
         env:
-          EVENT: ${{ github.event_name }}
           ORCH_SIZE_RENDER_ROOTS: .agents .claude .codex .pi
           # ORCH_SIZE_TEST_PATHS: <globs>
           # Uncomment where this repository's test files live outside orch's
           # default test globs; the classifier reads neither of these two out
           # of the tree it judges.
-          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
         run: >-
           classifier/.agents/skills/harness-ci/scripts/change-class
           --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
@@ -217,18 +230,23 @@ The classify step can instead call the composite action kendex publishes, which 
 ```yaml
       - id: classify
         uses: vanillagreencom/kendex/.github/actions/change-class@main
+        env:
+          # As in the step above: the classifier reads these from its own
+          # environment and never out of the tree it judges.
+          ORCH_SIZE_RENDER_ROOTS: .agents .claude .codex .pi
+          # ORCH_SIZE_TEST_PATHS: <globs>
         with:
           repo: subject
-          event: ${{ github.event_name }}
-          base: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-          head: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
+          event: ${{ env.EVENT }}
+          base: ${{ env.BASE }}
+          head: ${{ env.HEAD }}
 ```
 
-- **The classifier is kendex's, at the ref the step names.** The action reads `skills/harness-ci/scripts` out of its own tree, so a fix to the classifier reaches the consumer with no pull request of its own, and the `classifier` checkout above is not needed. A repository outside the organization pins a tag in place of `@main`.
+- **The classifier is kendex's, at the ref the step names.** The action reads `skills/harness-ci/scripts` out of its own tree, so a fix to the classifier reaches the consumer with no pull request of its own, and the class is never read out of the `classifier` checkout above. A repository outside the organization pins a tag in place of `@main`.
 - **`classifier` names another checkout root to read those scripts from.** kendex's own CI passes its default-branch checkout there, because in kendex the action's tree is the pull request's tree. No input carries a class.
 - **Its outputs** are `change_class`; `docs_only`, the `--mode docs` verdict for the same diff; `changed_skills`, `changed_crates` and `changed_workflows`, the blank-separated first path segments under `skills/`, `crates/` and `.github/workflows/`; and `changed_paths`, one changed path per line. Publish the ones the lanes read as job outputs, as with `change_class` above.
-- **The `render` class still needs the install and mirror steps above**, in the same job ahead of the action.
-- **Every refusal exits 2** with a first line starting `change-class-action: wiring-error: cause=`, so the step goes red rather than publishing an empty class.
+- **The `render` class still needs the install and mirror steps above**, in the same job ahead of the action and behind the same `render-reach` step and `if:` gates. That step reads `harness-only` out of the `classifier` checkout, so a consumer that wants the gate keeps that checkout for it; one that drops both pays the network install on every diff.
+- **Every refusal exits 2**, and stderr carries a line starting `change-class-action: wiring-error: cause=`, after anything the wrapped scripts printed, so the step goes red rather than publishing an empty class.
 
 ### What each class needs, and what it costs to leave out
 
