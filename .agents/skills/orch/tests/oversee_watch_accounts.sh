@@ -40,8 +40,6 @@ pass() {
 
 account_events() { grep -c '^EVENT account ' <<<"$OUT" || true; }
 
-epoch() { "$OVERSEE_TEST_REAL_DATE" -u -d "$1" +%s; }
-
 echo "=== oversee-watch accounts ==="
 
 # The renewal the overseer never heard about: an account read `expired` on
@@ -96,8 +94,11 @@ assert_eq "rc=$RC first=$(head -1 <<<"$OUT") events=$(account_events)" "rc=0 fir
 # moved off it, never while a cached figure still names it, and never when a
 # reset time moves while it is still ahead.
 new_case reset
-BEFORE="$(epoch 2026-09-24T11:00:00Z)"
-AFTER="$(epoch 2026-09-24T13:00:00Z)"
+# Fixed UTC epoch seconds, so no `date -d` (GNU only) runs on a BSD host:
+# BEFORE is one hour before the first reading's reset below, AFTER one hour
+# after it.
+BEFORE=1790247600
+AFTER=1790254800
 accounts 1 "$(account claude ok walled 2 2026-09-24T12:00:00Z)"
 accounts 2 "$(account claude ok walled 2 2026-09-24T12:30:00Z)"
 accounts 3 "$(account claude ok walled 2 2026-09-24T12:30:00Z)"
