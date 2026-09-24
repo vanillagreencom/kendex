@@ -41,6 +41,38 @@ assert_file_contains() {
   fi
 }
 
+# Plants one literal substitution in a copy of a workflow doc and asserts the
+# contract PREDICATE, green on the real doc, goes red on the copy. OLD must
+# occur on exactly one line, and the copy must differ from the source.
+DOC_MUTANT_SEQ=0
+assert_doc_mutant_fails() {
+  local predicate="$1" source="$2" old="$3" new="$4" label="$5" mutant count
+  DOC_MUTANT_SEQ=$((DOC_MUTANT_SEQ + 1))
+  mutant="$TMP_ROOT/doc-mutant-$DOC_MUTANT_SEQ.md"
+  count="$(grep -Fc -- "$old" "$source" || true)"
+  assert_eq "$count" "1" "control: $label has one mutation target"
+  if [[ -L "$source" ]]; then
+    fail "control: $label mutation source must not be a symlink"
+    return 0
+  fi
+  # Literal, through the environment and index/substr: sub() reads its
+  # pattern as a regex, and these rules carry brackets and backticks.
+  MUT_OLD="$old" MUT_NEW="$new" awk '
+    {
+      old = ENVIRON["MUT_OLD"]
+      at = index($0, old)
+      if (at) { $0 = substr($0, 1, at - 1) ENVIRON["MUT_NEW"] substr($0, at + length(old)) }
+      print
+    }' "$source" >"$mutant"
+  assert_eq "$(cmp -s "$mutant" "$source" && echo same || echo differs)" "differs" \
+    "control: the mutant for $label changes the file"
+  if "$predicate" "$mutant"; then
+    fail "must-fail: $label must fail its contract"
+  else
+    pass "must-fail: $label fails its contract"
+  fi
+}
+
 orch_docs() {
   printf '%s\n' "$SKILL_DIR/SKILL.md" "$SKILL_DIR/README.md" "$SKILL_DIR/DEVELOPMENT.md"
   find "$SKILL_DIR/workflows" "$SKILL_DIR/references" "$SKILL_DIR/schemas" -type f -name '*.md'
@@ -383,30 +415,10 @@ else
   fail "merge-pr must continue a micro entry only on a fresh exempt answer at the classified head"
 fi
 
-micro_head_mutant="$TMP_ROOT/merge-pr-unpinned-micro.md"
-micro_head_rule='A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`'
-micro_head_count="$(grep -Fc -- "$micro_head_rule" "$merge_workflow" || true)"
-assert_eq "$micro_head_count" "1" "control: the micro head test has one mutation target"
-if [[ -L "$merge_workflow" ]]; then
-  fail "control: the merge workflow mutation source must not be a symlink"
-else
-  # Literal, through the environment and index/substr: sub() reads its pattern
-  # as a regex and this rule carries `[MICRO_ENTRY]`, which is a bracket class.
-  MUT_OLD="$micro_head_rule" MUT_NEW='A `[MICRO_ENTRY]` run continues' awk '
-    {
-      old = ENVIRON["MUT_OLD"]
-      at = index($0, old)
-      if (at) { $0 = substr($0, 1, at - 1) ENVIRON["MUT_NEW"] substr($0, at + length(old)) }
-      print
-    }' "$merge_workflow" >"$micro_head_mutant"
-  assert_eq "$(cmp -s "$micro_head_mutant" "$merge_workflow" && echo same || echo differs)" "differs" \
-    "control: the mutant drops the micro head test"
-  if micro_head_is_pinned "$micro_head_mutant"; then
-    fail "must-fail: a micro entry continued on a stale answer must fail the contract"
-  else
-    pass "must-fail: a micro entry continued on a stale answer fails the contract"
-  fi
-fi
+assert_doc_mutant_fails micro_head_is_pinned "$merge_workflow" \
+  'A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`' \
+  'A `[MICRO_ENTRY]` run continues' \
+  "a micro entry continued on a stale answer"
 
 micro_workflow="$SKILL_DIR/workflows/micro.md"
 micro_policy_is_closed() { # micro-doc
@@ -489,53 +501,57 @@ else
 fi
 
 # On a hosted fleet the overseer's main-checkout route runs on the control VM,
-# which runs none of the toolchain the commit chain starts: the refusal stands
-# in § 1 ahead of the first tracker read, so nothing is activated or cut first.
-micro_refuses_control_host() { # micro-doc
+# which runs none of the toolchain the rest of the route starts: the refusal
+# stands in § 1, scoped to that route, ahead of the first tracker read or
+# route step, so nothing is activated or created first.
+refuses_control_host() { # FILE KEY STOP
   local head=""
-  if ! head=$(awk '
-    /^## 1\. Open The Session/ { inside = 1 }
+  if ! head=$(STOP="$3" awk '
+    /^## 1\. / { inside = 1 }
     /^## 2\./ { inside = 0 }
-    inside && /linear\.sh/ { exit }
+    inside && $0 ~ ENVIRON["STOP"] { exit }
     inside { print }
   ' "$1"); then
     return 1
   fi
   [[ -n "$head" ]] &&
-    grep -Fq '.agents/skills/orch/scripts/lane-host resolve' <<<"$head" &&
-    grep -Fq 'Any answer but `local` refuses the run here, with nothing read, activated or changed.' <<<"$head" &&
-    grep -Fq '`micro-control-host host=[HOST]`' <<<"$head" &&
-    grep -Fq 'launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive' <<<"$head"
+    grep -Fxq '**Main checkout only.** Read the lane host before anything else:' <<<"$head" &&
+    grep -Fxq '.agents/skills/orch/scripts/lane-host resolve' <<<"$head" &&
+    grep -Fq 'Any answer but `local` refuses the run here, with nothing read, activated or' <<<"$head" &&
+    grep -Fq "\`$2 host=[HOST]\`" <<<"$head" &&
+    grep -Fq 'launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement' <<<"$head"
 }
+micro_refuses_control_host() { refuses_control_host "$1" micro-control-host 'linear\.sh'; } # micro-doc
+start_workflow="$SKILL_DIR/workflows/start.md"
+start_refuses_control_host() { refuses_control_host "$1" start-control-host '^1\. '; } # start-doc
 
 if micro_refuses_control_host "$micro_workflow"; then
   pass "micro refuses the main-checkout route on a resolved remote lane host"
 else
   fail "micro must refuse the main-checkout route on a resolved remote lane host"
 fi
-
-control_host_mutant="$TMP_ROOT/micro-control-host-runs.md"
-control_host_rule='Any answer but `local` refuses the run here, with nothing read, activated or changed.'
-control_host_rule_count="$(grep -Fc -- "$control_host_rule" "$micro_workflow" || true)"
-assert_eq "$control_host_rule_count" "1" "control: the control-host refusal has one mutation target"
-if [[ -L "$micro_workflow" ]]; then
-  fail "control: the micro workflow mutation source must not be a symlink"
+if start_refuses_control_host "$start_workflow"; then
+  pass "start refuses the main-checkout route on a resolved remote lane host"
 else
-  MUT_OLD="$control_host_rule" MUT_NEW='Any answer continues the run.' awk '
-    {
-      old = ENVIRON["MUT_OLD"]
-      at = index($0, old)
-      if (at) { $0 = substr($0, 1, at - 1) ENVIRON["MUT_NEW"] substr($0, at + length(old)) }
-      print
-    }' "$micro_workflow" >"$control_host_mutant"
-  assert_eq "$(cmp -s "$control_host_mutant" "$micro_workflow" && echo same || echo differs)" "differs" \
-    "control: the control-host mutant lets the run continue"
-  if micro_refuses_control_host "$control_host_mutant"; then
-    fail "must-fail: a micro run continuing on a remote lane host must fail the refusal contract"
-  else
-    pass "must-fail: a micro run continuing on a remote lane host fails the refusal contract"
-  fi
+  fail "start must refuse the main-checkout route on a resolved remote lane host"
 fi
+
+assert_doc_mutant_fails micro_refuses_control_host "$micro_workflow" \
+  'Any answer but `local` refuses the run here, with nothing read, activated or changed;' \
+  'Any answer continues the run;' \
+  "a micro run continuing on a remote lane host"
+assert_doc_mutant_fails micro_refuses_control_host "$micro_workflow" \
+  '**Main checkout only.** Read the lane host before anything else:' \
+  'Read the lane host before anything else:' \
+  "a micro refusal that also binds a lane"
+assert_doc_mutant_fails start_refuses_control_host "$start_workflow" \
+  'Any answer but `local` refuses the run here, with nothing read, activated or created;' \
+  'Any answer continues the run;' \
+  "a start run continuing on a remote lane host"
+assert_doc_mutant_fails start_refuses_control_host "$start_workflow" \
+  '**Main checkout only.** Read the lane host before anything else:' \
+  'Read the lane host before anything else:' \
+  "a start refusal that also binds a lane"
 
 echo
 echo "=== frozen cross-skill contracts ==="

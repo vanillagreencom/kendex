@@ -25,6 +25,14 @@ That verb owns the question of whether a record stands, for this workflow and fo
 
 ## 1. Route
 
+**Main checkout only.** Read the lane host before anything else:
+
+```bash
+.agents/skills/orch/scripts/lane-host resolve
+```
+
+A worktree cwd skips this read; step 3 routes it on. Any answer but `local` refuses the run here, with nothing read, activated or created; [SKILL.md](../SKILL.md) § The Cycle, The overseer reads results, holds the reason. The report's first line is `start-control-host host=[HOST]`, and its next line is the fix: launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement, with its `/orch start [ISSUE_ID]` brief.
+
 1. Args starting with `new` → invoke `workflows/start-new.md`.
 2. Parse explicit args before checking cwd: `github` → `tracker=github`, `[OWNER/REPO]`, `ISSUE_ID=issue-[N]`; otherwise `tracker=linear` with the parsed `[ISSUE_ID]`, promoted to `github` when it starts with `issue-`.
 3. cwd is a worktree → invoke `workflows/start-worktree.md` with that context and stop.
