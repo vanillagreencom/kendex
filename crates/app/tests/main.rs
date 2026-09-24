@@ -1,8 +1,9 @@
 //! The one harness kendex-app's integration tests build as: every file
 //! beside this one is a module of it, so the crate and its dependencies link
 //! once rather than once per file. Cargo's autodiscovery is off in
-//! Cargo.toml, so a new file under `tests/` is a `mod` line here, and a
-//! `tools/guard` lane refuses one that is not.
+//! Cargo.toml, so a new file under `tests/` is a `mod` line here, and
+//! `tools/test-roster` refuses a `.rs` file or a directory holding one that
+//! no `mod` line, `#[path]` attribute or `[[test]]` path names.
 
 #[path = "../../test_util.rs"]
 mod test_util;

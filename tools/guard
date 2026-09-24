@@ -74,8 +74,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       printf 'the per-file scan behind the %s lane could not run, so its files were not judged.\n' "$2" ;;
     binary-home)
       echo "a launch in a test naming the kendex binary carries no fixture home before it runs — give its builder fixture_env() from crates/test_util.rs, or a HOME with KENDEX_REAL_HOME beside it; a release-profile test run otherwise drives the real machine." ;;
-    orphan-test-file)
-      echo "a file under a crate's tests/ that no mod line of a [[test]] root and no [[test]] path names — with autotests = false it compiles nowhere and runs nowhere; declare it in tests/main.rs." ;;
+    test-roster)
+      echo "tools/test-roster refused the tree — a file or directory under a crate's tests/ that no [[test]] root declares compiles nowhere under autotests = false, or the scan could not run; its own first line above names which." ;;
     fixture-diff)
       echo "the crates/*/tests diff the rooted() rule reads could not be produced." ;;
     fixture-scan)
@@ -454,40 +454,12 @@ fi
   show "$hits" | head -5
 }
 
-# A crate whose manifest turns cargo's test autodiscovery off builds its
-# integration tests as one harness, and a file under its tests/ that no
-# `mod` line of a [[test]] root and no [[test]] path names compiles nowhere
-# and runs nowhere, with nothing to say so. The setting is what makes that
-# silence, so the lane reads the crates that carry it and leaves the rest
-# to cargo. Judged at tests/ itself: a file directly under it and a
-# directory holding a mod.rs. A directory's own files are its mod.rs's to
-# declare, as they were before the harness.
-orphan_hits=""
-for manifest in crates/*/Cargo.toml; do
-  [ -f "$manifest" ] || continue
-  grep -qE '^autotests *= *false' "$manifest" || continue
-  crate_dir=${manifest%/Cargo.toml}
-  roots=$(sed -nE 's/^path = "(tests\/[A-Za-z0-9_]+\.rs)"$/\1/p' "$manifest")
-  declared=$(
-    printf '%s\n' "$roots" | sed -E 's#^tests/##; s#\.rs$##'
-    for root in $roots; do
-      [ -f "$crate_dir/$root" ] || continue
-      sed -nE 's/^(pub )?mod ([A-Za-z0-9_]+);$/\2/p' "$crate_dir/$root"
-    done
-  )
-  for entry in "$crate_dir"/tests/*.rs "$crate_dir"/tests/*/mod.rs; do
-    [ -e "$entry" ] || continue
-    case $entry in
-      */mod.rs) name=$(basename "$(dirname "$entry")") ;;
-      *) name=$(basename "$entry" .rs) ;;
-    esac
-    grep -qxF -- "$name" <<<"$declared" || orphan_hits="$orphan_hits$entry"$'\n'
-  done
-done
-[ -n "$orphan_hits" ] && {
-  say orphan-test-file "$(count_lines "$orphan_hits")"
-  show "$orphan_hits" | head -5
-}
+# Every file under a harness crate's tests/ is compiled by some [[test]]
+# target. The rule and what it judges are tools/test-roster's, which CI runs
+# beside the cargo compile; exit 1 is an orphan, exit 2 a scan that could
+# not run, and neither is a pass. One line on purpose: the must-fail control
+# in tools/tests/guard.test.sh removes this lane by deleting it.
+"$TOOLS_DIR/test-roster" || say test-roster "$?"
 
 # What the diff-scoped rules below diff against: HEAD, or on an unborn
 # branch the index against nothing, so the first commit is judged too.

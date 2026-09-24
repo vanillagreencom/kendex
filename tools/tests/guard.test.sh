@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tools/guard at commit time, the last lane of the pre-commit chain: the
-# rooted() rule on new temporary fixtures, the bash32-lint lane, the
-# run-scoping scan, the compile checks a staged product change schedules, and
+# rooted() rule on new temporary fixtures, the bash32-lint and test-roster
+# lanes, the run-scoping scan, the compile checks a staged product change schedules, and
 # the verdicts guard leaves to the packages that own them. The --full lanes are guard-full.test.sh and the
 # render rule is guard-render.test.sh.
 set -euo pipefail
@@ -118,42 +118,27 @@ printf '%s\n' 'fn home(home: &std::path::Path) {' '    let out = std::process::C
 rm -f "$R/crates/cli/tests/fixture_home.rs"
 git -C "$R" reset -q HEAD -- crates/cli/tests/binary_home.rs && rm -f "$R/crates/cli/tests/binary_home.rs" "$R/fake-bin/awk" && rmdir "$R/crates/cli/tests" "$R/crates/cli"
 
-echo "=== a crate with autodiscovery off declares every file under tests/ ==="
-# The manifest a crate carries once its tests are one harness: autodiscovery
-# off and the harness its one [[test]] root.
-HARNESS_MANIFEST='[package]
-name = "demo"
-autotests = false
-
-[[test]]
-name = "integration"
-path = "tests/main.rs"
-'
-mkdir -p "$R/crates/cli/tests/nested"
-printf '%s' "$HARNESS_MANIFEST" >"$R/crates/cli/Cargo.toml"
-printf 'mod declared;\nmod nested;\n' >"$R/crates/cli/tests/main.rs"
+echo "=== a file under tests/ no harness declares reds through the test-roster lane ==="
+# The rule is tools/test-roster's and its rows are tools/tests/
+# test-roster.test.sh; this proves guard runs it and forwards its verdict.
+mkdir -p "$R/crates/cli/tests"
+printf '[package]\nname = "demo"\nautotests = false\n\n[[test]]\nname = "integration"\npath = "tests/main.rs"\n' >"$R/crates/cli/Cargo.toml"
+printf 'mod declared;\n' >"$R/crates/cli/tests/main.rs"
 printf 'fn declared() {}\n' >"$R/crates/cli/tests/declared.rs"
-printf 'fn nested() {}\n' >"$R/crates/cli/tests/nested/mod.rs"
-git -C "$R" add -A && run_guard
-[ "$RC" -eq 0 ] && ok "a declared file and a declared directory pass" || bad "a declared file and a declared directory pass" "rc=$RC out=$OUT"
-mkdir -p "$R/crates/cli/tests/stray"
 printf 'fn orphan() {}\n' >"$R/crates/cli/tests/orphan.rs"
-printf 'fn stray() {}\n' >"$R/crates/cli/tests/stray/mod.rs"
 git -C "$R" add -A && run_guard
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: orphan-test-file=2"* ]] && [[ "$OUT" == *"crates/cli/tests/orphan.rs"* ]] && [[ "$OUT" == *"crates/cli/tests/stray/mod.rs"* ]] && ok "an undeclared file and an undeclared directory are refused by name" || bad "an undeclared file and an undeclared directory are refused by name" "rc=$RC out=$OUT"
-# The harness root itself is declared by its [[test]] path, not by a mod
-# line; without that path it is an orphan like any other file.
-printf '[package]\nname = "demo"\nautotests = false\n' >"$R/crates/cli/Cargo.toml"
-git -C "$R" add -A && run_guard
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: orphan-test-file=5"* ]] && [[ "$OUT" == *"crates/cli/tests/main.rs"* ]] && ok "with no [[test]] root every file under tests/ is an orphan, the harness root included" || bad "with no [[test]] root every file under tests/ is an orphan, the harness root included" "rc=$RC out=$OUT"
-# A crate that keeps autodiscovery is cargo's to judge: the same orphans
-# are its own test binaries there.
-printf '[package]\nname = "demo"\n' >"$R/crates/cli/Cargo.toml"
-git -C "$R" add -A && run_guard
-[ "$RC" -eq 0 ] && ok "a crate that keeps autodiscovery is not judged" || bad "a crate that keeps autodiscovery is not judged" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: test-roster=1"* ]] && [[ "$OUT" == *"test-roster: orphans=1"* ]] && [[ "$OUT" == *"crates/cli/tests/orphan.rs"* ]] && ok "an undeclared test file reds guard through the test-roster lane, naming the file" || bad "an undeclared test file reds guard through the test-roster lane, naming the file" "rc=$RC out=$OUT"
+if mutant_guard '/TOOLS_DIR\/test-roster/d'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the test-roster lane deleted the orphan passes" \
+    || bad "control: with the test-roster lane deleted the orphan passes" "rc=$RC out=$OUT"
+else
+  bad "control: the test-roster lane could not be deleted from a guard copy"
+fi
 git -C "$R" reset -q HEAD -- crates/cli
-rm -f "$R/crates/cli/Cargo.toml" "$R/crates/cli/tests/main.rs" "$R/crates/cli/tests/declared.rs" "$R/crates/cli/tests/orphan.rs" "$R/crates/cli/tests/nested/mod.rs" "$R/crates/cli/tests/stray/mod.rs"
-rmdir "$R/crates/cli/tests/nested" "$R/crates/cli/tests/stray" "$R/crates/cli/tests" "$R/crates/cli"
+rm -f "$R/crates/cli/Cargo.toml" "$R/crates/cli/tests/main.rs" "$R/crates/cli/tests/declared.rs" "$R/crates/cli/tests/orphan.rs"
+rmdir "$R/crates/cli/tests" "$R/crates/cli"
 echo "=== the shipped packages' verdicts are not twinned here ==="
 # Guard delegates document sizes and changelog entries to their shipped
 # checks. The preconditions run those checks on the same defects: the

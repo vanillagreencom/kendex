@@ -23,7 +23,7 @@ use kendex_core::hook::{Delivery, HookSource, HookSpec, by_name_only, delivery, 
 use kendex_core::model::{HarnessId, Scope};
 
 const REGENERATE: &str =
-    "cargo test -p kendex-core --test hooks_readme -- --ignored regenerate_hooks_readme";
+    "cargo test -p kendex-core --test integration -- --ignored regenerate_hooks_readme";
 
 /// The project every hook is judged in: a fake home whose project registers
 /// the pi-hooks carrier in its own Pi settings.

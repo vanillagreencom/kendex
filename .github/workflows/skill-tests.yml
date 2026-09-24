@@ -1334,6 +1334,13 @@ jobs:
             declared="$(printf '%s\n' "$line" | tr -d ' ' | tr ',' '\n' | sort -u)"
             diff <(printf '%s\n' "$members") <(printf '%s\n' "$declared") || { echo "crate matrix [$line] disagrees with the workspace: '<' a member no shard tests; '>' a name that is not a member"; exit 1; }
           done <<<"$lines"
+      # Its file twin: autodiscovery is off in every crate, so a file under
+      # tests/ that no [[test]] root declares compiles nowhere while the
+      # compile step below stays green. tools/test-roster holds that roster
+      # and tools/guard runs it at commit time; this step runs it where a
+      # commit made without the armed hook merges.
+      - name: every test file is compiled by a harness
+        run: tools/test-roster
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.crate }}
@@ -1439,8 +1446,10 @@ jobs:
       # kendex-cli is named by exactly one leg below, and
       # tools/tests/orch-shard-partition.test.sh runs this step once per leg
       # and reds on a target claimed by none or by two. A test FILE is not a
-      # target: every file under crates/cli/tests is a module of the
-      # `integration` harness, and a tools/guard lane holds that roster.
+      # target: every file under crates/cli/tests except the [[test]] targets
+      # Cargo.toml declares is a module of the `integration` harness, and
+      # tools/test-roster holds that roster, run by tools/guard at commit
+      # time and by the Linux cargo job above.
       #
       # The seam is where the seconds are. Over seventeen macOS kendex-cli
       # runs of this workflow the one test in `catalog_render_lint` took

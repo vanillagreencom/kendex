@@ -116,13 +116,14 @@ run_guard() { # [VAR=VALUE...] — sets OUT and RC
 # A mutant is a copy of guard with one edit, run in place of it: it removes
 # one check and expects the planted defect to pass, proving the red beside it
 # came from that check and not from a neighbour. The copy sits beside a copy
-# of bash32-lint and under a link to the package tree because guard resolves
-# its sibling tools and the packages next to itself.
+# of each sibling tool guard runs and under a link to the package tree,
+# because guard resolves its sibling tools and the packages next to itself.
 ln -s "$REPO/.agents" "$TMP/.agents"
 MUTANT_TOOLS="$TMP/mutant-tools"
 mkdir -p "$MUTANT_TOOLS"
 cp "$REPO/tools/bash32-lint" "$MUTANT_TOOLS/bash32-lint"
 cp "$REPO/tools/bash32-parse" "$MUTANT_TOOLS/bash32-parse"
+cp "$REPO/tools/test-roster" "$MUTANT_TOOLS/test-roster"
 mutant_guard() { # SED-EXPR — stage a guard copy with that edit applied
   sed "$1" "$GUARD" >"$MUTANT_TOOLS/guard"
   chmod +x "$MUTANT_TOOLS/guard"

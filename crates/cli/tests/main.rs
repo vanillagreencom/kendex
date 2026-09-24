@@ -1,12 +1,12 @@
 //! The one harness kendex-cli's integration tests build as: every file
 //! beside this one is a module of it, so the crate and its dependencies link
 //! once rather than once per file. Cargo's autodiscovery is off in
-//! Cargo.toml, so a new file under `tests/` is a `mod` line here, and a
-//! `tools/guard` lane refuses one that is not.
+//! Cargo.toml, so a new file under `tests/` is a `mod` line here, and
+//! `tools/test-roster` refuses a `.rs` file or a directory holding one that
+//! no `mod` line, `#[path]` attribute or `[[test]]` path names.
 //!
-//! Two files stay their own `[[test]]` targets because a workflow selects
-//! each by name: `catalog_render_lint.rs`, the macOS leg of its own, and
-//! `cli_smoke.rs`, which own-catalog.yml runs against the real CLIs.
+//! A file that stays its own `[[test]]` target says why beside its
+//! declaration in Cargo.toml.
 
 #[path = "../../test_util.rs"]
 mod test_util;

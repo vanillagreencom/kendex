@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Every file under a harness crate's tests/ is compiled by some test target.
+#
+# A crate whose manifest turns cargo's test autodiscovery off builds its
+# integration tests as the [[test]] targets it declares and nothing else, so
+# a file under its tests/ that no target reaches compiles nowhere and runs
+# nowhere, with nothing to say so. That setting is what makes the silence,
+# so this reads the crates that carry it and leaves the rest to cargo. It
+# runs in the commit chain through tools/guard and in CI beside the cargo
+# compile, so the roster is held where a commit made without the armed hook
+# still merges.
+#
+# Judged at tests/ itself, one name per direct child: a `<name>.rs` file by
+# its stem, and a `<name>/` directory holding a .rs file anywhere under it
+# by its own name. A name is declared when a [[test]] path's first segment
+# under tests/ spells it, or a [[test]] root file carries `mod <name>;`,
+# `pub mod <name>;`, or a `#[path = "<name>..."]` attribute. A `mod` line
+# inside any other file declares nothing here: cargo resolves `mod x;` in a
+# root to `x.rs` or `x/mod.rs`, so what sits inside a declared directory is
+# that module's to declare, as it was before the harness, and a
+# `<dir>/main.rs` with no `mod.rs` beside it is reached only by a [[test]]
+# path naming it. A directory holding no .rs file is fixture data and is not
+# judged.
+#
+# Usage: tools/test-roster [ROOT]
+#   ROOT   the checkout to judge; the current directory when omitted
+# Exit: 0 every file is declared, 1 an orphan was found, 2 the tree could
+# not be read — and a scan that did not run is never read as a clean tree.
+# Every refusal opens with `test-roster: <key>=<value>`, the offending paths
+# below it, one per line and relative to ROOT: `orphans=<count>`, or
+# `unreadable=<path>` for a root or manifest this could not read.
+set -uo pipefail
+
+case $# in
+  0) root=. ;;
+  1) root=$1 ;;
+  *) echo "test-roster: usage=tools/test-roster [ROOT]" >&2; exit 2 ;;
+esac
+cd -- "$root" 2>/dev/null || { printf 'test-roster: unreadable=%s\n' "$root"; exit 2; }
+
+# holds_rs DIR — true when a .rs file sits anywhere under DIR. A function
+# walk rather than find: this runs on every commit, and the fixture trees
+# under tests/ are a few dozen entries.
+holds_rs() {
+  local entry
+  for entry in "$1"/* "$1"/.[!.]*; do
+    if [ -f "$entry" ]; then
+      case $entry in *.rs) return 0 ;; esac
+    elif [ -d "$entry" ]; then
+      holds_rs "$entry" && return 0
+    fi
+  done
+  return 1
+}
+
+nl='
+'
+orphans=""
+count=0
+for manifest in crates/*/Cargo.toml; do
+  [ -f "$manifest" ] || continue
+  grep -qE '^autotests *= *false' -- "$manifest" || continue
+  crate_dir=${manifest%/Cargo.toml}
+  # Every [[test]] path under tests/, as the manifest spells it; a [[test]]
+  # elsewhere is cargo's to compile and not this directory's to declare.
+  roots=$(sed -nE 's/^path = "(tests\/[^"]+)"$/\1/p' -- "$manifest") ||
+    { printf 'test-roster: unreadable=%s\n' "$manifest"; exit 2; }
+  declared=""
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    name=${path#tests/}
+    name=${name%%/*}
+    declared="$declared$nl${name%.rs}"
+    [ -f "$crate_dir/$path" ] || continue
+    # The root's own declarations: mod lines by name, path attributes by
+    # first segment.
+    lines=$(sed -nE 's/^(pub )?mod ([A-Za-z0-9_]+);$/\2/p; s/^#\[path = "([^"/]+).*"\]$/\1/p' -- "$crate_dir/$path") ||
+      { printf 'test-roster: unreadable=%s\n' "$crate_dir/$path"; exit 2; }
+    while IFS= read -r name; do
+      [ -n "$name" ] || continue
+      declared="$declared$nl${name%.rs}"
+    done <<<"$lines"
+  done <<<"$roots"
+  declared="$declared$nl"
+  for entry in "$crate_dir"/tests/*; do
+    if [ -f "$entry" ]; then
+      case $entry in *.rs) ;; *) continue ;; esac
+      name=${entry##*/}
+      name=${name%.rs}
+    elif [ -d "$entry" ]; then
+      holds_rs "$entry" || continue
+      name=${entry##*/}
+    else
+      continue
+    fi
+    case $declared in
+      *"$nl$name$nl"*) ;;
+      *) orphans="$orphans$entry$nl"; count=$((count + 1)) ;;
+    esac
+  done
+done
+
+[ "$count" -gt 0 ] || exit 0
+printf 'test-roster: orphans=%s\n%s' "$count" "$orphans"
+exit 1
