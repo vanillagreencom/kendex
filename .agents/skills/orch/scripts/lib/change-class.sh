@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# change-class.sh — the one reader of harness-ci's change classifier among the
-# skill scripts: dev-validate-run and github's pr-merge.sh both call it. CI's
-# .github/actions/change-class reads the shipped scripts itself, from its own
-# trusted checkout. Sourced; it defines the functions below and sets nothing
-# until one runs.
+# change-class.sh — the reader of harness-ci's change classifier that
+# dev-validate-run and github's pr-merge.sh share. review-gate's review-policy
+# calls the classifier itself for the measured marker it reads, and CI's
+# .github/actions/change-class reads the shipped scripts from its own trusted
+# checkout. Sourced; it defines the functions below and sets nothing until one
+# runs.
 #
 # The classifier is <skills>/harness-ci/scripts/change-class beside this
 # package, else change-class on PATH. harness-only is read from the directory

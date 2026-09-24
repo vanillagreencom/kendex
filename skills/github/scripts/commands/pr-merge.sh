@@ -1025,8 +1025,8 @@ admin_emit_record() {
 # class read from one fails open on exactly the diffs that most want to pass.
 admin_change_class() {
     local base_sha="$1" head_sha="$2" lib="$SCRIPT_DIR/../../../orch/scripts/lib/change-class.sh"
-    # orch's lib is the one reader of the classifier among the skill scripts;
-    # without it no class can be read, and the route refuses.
+    # orch's lib is the classifier reader this route shares with
+    # dev-validate-run; without it no class can be read, and the route refuses.
     [ -r "$lib" ] || return 1
     # run_checkout_child drops the owner credential's gh config directory for
     # the child and holds its diagnostics, the classifier's stderr among them;

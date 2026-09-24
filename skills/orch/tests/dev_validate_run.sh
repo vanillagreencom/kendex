@@ -505,8 +505,8 @@ RUN_PATH="$TMP_ROOT/render-bin:$PATH"
 run_script "$RUN" --worktree "$proj_render" --poll 1
 RUN_PATH=""
 render_dir="$(run_dir_of "$OUT")"
-assert_eq "$(cat "$(log_of "$OUT")" 2>/dev/null) $(sed -n 's/^class: class=\([a-z]*\) \(cause=[a-z-]*\).*$/\1 \2/p' "$render_dir/class.log")" \
-  "standard standard cause=judged-tree-dirty" \
+assert_eq "$(cat "$(log_of "$OUT")" 2>/dev/null) $(sed -n 's/^class: class=\([a-z]*\) \(measured=[a-z]*\) \(cause=[a-z-]*\).*$/\1 \2 \3/p' "$render_dir/class.log")" \
+  "standard standard measured=false cause=judged-tree-dirty" \
   "an uncommitted render diff runs as standard, the classifier naming the dirty tree" "$ERR"
 
 # --- Control: the cap is not derived from the bound ---------------------------
