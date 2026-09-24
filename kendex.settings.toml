@@ -139,6 +139,10 @@ ORCH_LANE_SSH_PROMPT_SECS = "60"
 # Max concurrent lanes the overseer keeps in flight.
 ORCH_OVERSEER_LANES = "3"
 
+# Max live lanes on one account. Six lanes carry one account through a
+# five-hour usage window.
+ORCH_LANE_ACCOUNT_CLAIMS = "6"
+
 # `lanes pick` refuses an account at or above 95 percent used on the window it
 # judges, the binding bucket or with --model that model's window.
 ORCH_LANE_MAX_PCT = "95"

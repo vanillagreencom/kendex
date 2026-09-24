@@ -178,8 +178,13 @@ ORCH_LANE_SSH_PROMPT_SECS = "60"
 # Path globs that add the needs-perf-test QA signal to review routing.
 # QA_PERF_PATHS = "src/hot/* engine/src/*"
 
-# Max concurrent lanes the overseer keeps in flight.
+# Max concurrent lanes the overseer keeps in flight. open-terminal refuses a
+# fleet launch past it.
 ORCH_OVERSEER_LANES = "3"
+
+# Max live lanes on one account. open-terminal refuses a fleet launch that
+# would put the lane's account past it. Zero turns this cap off.
+ORCH_LANE_ACCOUNT_CLAIMS = "6"
 
 # "off" stops oversee-succeed from launching a successor overseer, and turns
 # off the turn-end refusal that names it. A live

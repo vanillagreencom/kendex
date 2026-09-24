@@ -69,7 +69,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` drives; empty resolves the installed worktree skill's script | resolved |
 | Review-gate settings | `REVIEW_GATE_MODE`, `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_WAIT_SECS`: [references/gates.md](references/gates.md) | |
 | `ORCH_LANE_MAX_PCT` | Usage share at or above which `lanes pick` refuses an account, read against the binding bucket or, with `--model`, against the window that walls that model. `lanes --max-pct`, `lanes --min-headroom-pct` and `open-terminal --lane-max-pct` override it. Never compared with `ORCH_HANDOFF_HEADROOM_PCT`, so a lane picked on a model window can already be at or below the handoff mark on the account's own bucket; `lanes pick --binding-floor` holds both to one bound, as `oversee-succeed` does | `95` |
-| Lane settings | `ORCH_LANE_DIRS`, `ORCH_LANE_ALIASES`, `ORCH_LANE_EXCLUDE`, `ORCH_LANE_RETIRE`, `ORCH_LANES_USAGE_TTL`, `ORCH_LANES_USAGE_MAX_AGE`, `ORCH_TMUX_VERIFY_SECS`, `ORCH_LANE_SSH_PROMPT_SECS`, `ORCH_TMUX_SESSION`: `lanes --help`, `open-terminal --help` | |
+| Lane settings | `ORCH_LANE_DIRS`, `ORCH_LANE_ALIASES`, `ORCH_LANE_EXCLUDE`, `ORCH_LANE_RETIRE`, `ORCH_LANES_USAGE_TTL`, `ORCH_LANES_USAGE_MAX_AGE`, `ORCH_TMUX_VERIFY_SECS`, `ORCH_LANE_SSH_PROMPT_SECS`, `ORCH_TMUX_SESSION`, `ORCH_LANE_ACCOUNT_CLAIMS`: `lanes --help`, `open-terminal --help` | |
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
 | `ORCH_SIZE_TEST_PATHS` | Path globs counted as test lines in size reports and cut comparisons | empty |
 

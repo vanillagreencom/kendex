@@ -18,7 +18,7 @@ Then read the overseer handoff file the fleet brief names (default `tmp/handoffs
 
 ## 2. Select Work
 
-Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gates them (ancestor chain, blocker union, container rules). A GitHub item labeled `blocked` is not a candidate. An item whose `worktree create` exits 75 belongs to another session: skip it; its siblings still launch. On the tmux surface that claim IS `open-terminal`'s own worktree create — never pre-create the worktree. A surface that creates its own worktree environment (Codex app threads) records the claim in workflow-state before launch. Oversee runs as at most one session per repo. Read the lane cap and keep at most that many items in flight:
+Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gates them (ancestor chain, blocker union, container rules). A GitHub item labeled `blocked` is not a candidate. An item whose `worktree create` exits 75 belongs to another session: skip it; its siblings still launch. On the tmux surface that claim IS `open-terminal`'s own worktree create — never pre-create the worktree. A surface that creates its own worktree environment (Codex app threads) records the claim in workflow-state before launch. Oversee runs as at most one session per repo. `open-terminal` holds a tmux fleet to two caps on every fresh launch under `--state-dir`, counted and recorded under one lock so two launchers never both pass: `ORCH_OVERSEER_LANES` for the fleet's lanes, refused as `cap-reached`, and `ORCH_LANE_ACCOUNT_CLAIMS` for the lanes on one account, refused as `account-cap-reached` (`open-terminal --help` holds what each counts). Select no more items than the fleet cap leaves room for; on the other surfaces, keep at most that many items in flight yourself:
 
 ```bash
 .agents/skills/orch/scripts/orch-env ORCH_OVERSEER_LANES 3
@@ -57,6 +57,14 @@ A launch through `open-terminal` on the tmux surface for the claude or codex har
    An unreadable in-flight claim store is not a refusal here: this gate asks for a wall, which no claim count enters, so `lanes` reports the store on stderr as `pick-lane-claims` and answers the wall anyway. Fix the claims directory, or set `OVERSEE_WATCH_STATE_DIR`, so the next `lanes pick` across the fleet can still see what is running.
 
    `host-accounts-unanswered` is a notice, not a refusal: nothing said which accounts the host holds, so the launch is judged on this machine's reading as an unhosted one is. A keyed `lanes:` line above the notice names a provider failure, with the provider's own message above that line; no line above it means the read of the answer failed on this machine. Fix what that line names, or read the launch's outcome as a local measurement.
+
+The caps refuse a fresh launch before its worktree, and `--relaunch` and `--wake` meet neither:
+
+- `cap-reached` (naming `cap`, the `running` records and the unrecorded live `claims`): the fleet is full. Launch the next item once a lane closes.
+- `account-cap-reached` (naming `lane`, `cap` and that lane's `claims`): the picked account carries its share. Re-run step 3 for another lane.
+- `cap-unreadable` and `cap-lock-failed`: the count could not be made as one locked step. Fix what the line names; never launch around it.
+
+A launch queued behind the caps, such as a chain script that launches the next item when a slot opens, is `open-terminal --wait-slot`: it waits under the same lock and launches once both caps have room, and the overseer writes no counting loop of its own. `--over-cap` admits one deliberate exception, reported as `over-cap-admitted` and recorded in the lane record's `over_cap`.
 
 Placement: before each launch, read `lane-host resolve`; any value but `local` makes a hosted fleet. There every launch this directive makes adds `--host [HOST]`, and any other surface or harness is reported, never launched locally. `start` never launches a hosted lane: only `oversee` and `handoff` launch through `open-terminal --host`. The overseer therefore never runs `/orch start [ISSUE_ID]` or `/orch micro [ISSUE_ID]` in its own session on a hosted fleet ([SKILL.md](../SKILL.md) § The Cycle, The overseer reads results): every item launches as a hosted lane through this directive, and a session with no tmux surface reports the queue once, naming that surface as the route. The credential reaches the sandbox per [schemas/lane-host.md](../schemas/lane-host.md) § Provider protocol, with no local `CLAUDE_CONFIG_DIR` prefix.
 
