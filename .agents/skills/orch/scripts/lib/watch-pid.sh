@@ -19,7 +19,9 @@
 #   oversee-watch.log   stdout of a watch a succession restarted, where no
 #   oversee-watch.err   harness is reading it, and stderr beside it, where the
 #                       restart also writes how it went. The next watch start
-#                       on the state prints both and removes them
+#                       on the state other than a succession's prints both
+#                       and removes them; the restarted watch, their writer,
+#                       never does
 #
 # A record is live only while its pid runs a process whose command line names
 # oversee-watch: a pid read back off disk may by then belong to anything.

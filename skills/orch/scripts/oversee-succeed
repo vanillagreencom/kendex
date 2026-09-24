@@ -397,10 +397,11 @@ source "$SCRIPT_DIR/lib/lane-launch.sh"
 source "$SCRIPT_DIR/lib/watch-pid.sh"
 
 # The internal `--watch-restart STATE CALLER_WINDOW PANE LANE_VAR LANE_HOME
-# [FLAG...]` run, step 6's helper, which the succession starts in a session of
-# its own before its close. Every line it prints goes to oversee-watch.err,
-# where the handover pointed its stdout and stderr, so the next watch start on
-# the state prints it. Each outcome is one keyed line, and none is a refusal
+# [FLAG...]` run, step 6's helper, which the succession starts before its
+# close, in a session of its own where setsid exists (header step 6). Every
+# line it prints goes to oversee-watch.err, where the handover pointed its
+# stdout and stderr, so the next watch start on the state other than a
+# succession's prints it. Each outcome is one keyed line, and none is a refusal
 # of anything: the succession has already committed.
 watch_restart() { # STATE CALLER_WINDOW PANE LANE_VAR LANE_HOME [FLAG...]
   local state="$1" window="$2" pane="$3" var="$4" home="$5" windows deadline
