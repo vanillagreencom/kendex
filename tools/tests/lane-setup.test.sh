@@ -315,21 +315,27 @@ linker_fixture() {
 }
 
 # A linker the setup writes adds one -fuse-ld flag on a Linux host and none
-# elsewhere; `none` leaves the toy crate's rustc line equal to the baseline's.
+# elsewhere. `none` leaves the toy crate's rustc line equal to the baseline's
+# and, since a Linux-only entry never reaches a non-Linux host's rustc line,
+# the written config without a rustflags key.
 proof_linker() { # IMAGE BINS EXPECT [FROM TO]
-  local image=$1 bins=$2 expect=$3 out="" line="" mold=0 lld=0
+  local image=$1 bins=$2 expect=$3 out="" line="" config="" mold=0 lld=0
   shift 3
   linker_fixture "$image" "$bins" "$@"
   [ "$RC" -eq 0 ] || { WHY="rc=$RC out=$OUT"; return 1; }
   out="$(cargo_in "$R" check -v)" || { WHY="$out"; return 1; }
   line="$(toy_line "$out" "$R")"
-  WHY="setup=$OUT line=$line baseline=$BASE_LINE"
+  config="$(cat "$R/../.cargo/config.toml")" || return 1
+  WHY="setup=$OUT line=$line baseline=$BASE_LINE config=$config"
   case "$OUT" in *"lane-setup: linker=$expect"*) ;; *) return 1 ;; esac
   [ -n "$line" ] || return 1
   case "$expect" in
     mold | image) mold=$LINK_DELTA ;;
     lld) lld=$LINK_DELTA ;;
-    none) [ "$line" = "$BASE_LINE" ]; return ;;
+    none)
+      [ "$line" = "$BASE_LINE" ] && case "$config" in *rustflags*) false ;; *) true ;; esac
+      return
+      ;;
     *) WHY="unknown expectation $expect"; return 1 ;;
   esac
   [ "$(count "$out" -fuse-ld=mold)" -eq $((BASE_MOLD + mold)) ] && [ "$(count "$out" -fuse-ld=lld)" -eq $((BASE_LLD + lld)) ]
