@@ -232,17 +232,18 @@ resolve_restack_worktree() {
 # A hook the calling harness runs is re-read on every event, so a paused
 # restack that leaves conflict markers in one hands back a harness that fails
 # every tool call and every turn end, and the caller can then neither resolve
-# the conflict nor report it. Bash parses a script whole before running any
-# line, so no guard inside the hook can catch this; the restack, which holds
-# the conflict list, is the one place that can.
+# the conflict nor report it. Bash parses and runs a script one command at a
+# time, and conflict markers can land anywhere in the hook, above any guard it
+# carries included, so Bash stops with a syntax error when it reaches them and
+# no check inside the hook can protect it. The restack, which holds the
+# conflict list, is the one place that can.
 #
 # A declaration is any tracked JSON file with a top-level `hooks` object whose
 # entries carry a `command` string, the shape .claude/settings.json,
 # .codex/hooks.json and .pi/kendex/hooks.json share. Print each word of those
 # commands with a leading `$VAR/`, `${VAR}/` or `./` root dropped, so a word
-# equal to a repository path names that path. A file jq cannot parse is
-# skipped: no harness can load it either. The status is non-zero only when
-# the declarations could not be read at all.
+# equal to a repository path names that path. The status is non-zero when any
+# declaration could not be read: jq missing or failing, or git grep erroring.
 restack_hook_words() {
   local wt="$1" rev="" files="" file="" rc=0
   shift
@@ -257,7 +258,7 @@ restack_hook_words() {
         jq -r '.hooks? | objects | .. | objects | .command? | strings
           | splits("[\"'"'"' ;(|)&]+")
           | sub("^[$][{]?[A-Za-z_][A-Za-z0-9_]*[}]?/"; "") | sub("^[.]/"; "")
-          | select(length > 0)' 2>/dev/null || true
+          | select(length > 0)' 2>/dev/null || return 1
     done <<<"$files"
   done
 }
@@ -297,7 +298,7 @@ restack_held_hooks_file() {
 # path takes the new base's side (the replayed commit's when the base deleted
 # it), the conflicted file is saved beside it, and the path is recorded so
 # continue and skip refuse until that saved copy is consumed. One keyed line
-# names every held path.
+# on stderr names every held path; stdout lists them, one per line.
 restack_hold_conflicted_hooks() {
   local wt="$1" conflicts="$2" held="" list="" path="" named=""
   held="$(restack_conflicted_hooks "$wt" "$conflicts")"
@@ -317,8 +318,33 @@ restack_hold_conflicted_hooks() {
     named="$named $path"
   done <<<"$held"
   worktree_message restack-hook-held "${named# }" "A harness runs these paths as hooks, so each now holds one side of the conflict and its conflicted content is saved beside it as <path>$RESTACK_HELD_SUFFIX." >&2
-  echo "Resolve the markers in each saved copy, then replace the hook in one step: mv <path>$RESTACK_HELD_SUFFIX <path> && git -C \"$wt\" add <path>" >&2
-  echo "restack continue and skip refuse while a saved copy remains. Or finish the restack from a shell the harness does not run in." >&2
+  printf '%s\n' "$held"
+}
+
+# The one conflict report every paused restack prints, whether create just
+# paused it or continue or skip stopped again: the conflicted paths, the hold
+# of the hooks among them, and the steps that resolve each kind.
+report_restack_conflicts() {
+  local wt="$1" conflicts="$2" held="" ordinary="" path=""
+  if [[ -n "$conflicts" ]]; then
+    echo "Conflicting files:" >&2
+    sed 's/^/  /' <<<"$conflicts" >&2
+    held="$(restack_hold_conflicted_hooks "$wt" "$conflicts")" || held=""
+  fi
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    grep -F -x -q -e "$path" <<<"$held" || ordinary="$ordinary $path"
+  done <<<"$conflicts"
+  if [[ -n "$ordinary" ]]; then
+    echo "Resolve${ordinary}: edit out the conflict markers, then git -C \"$wt\" add <file>." >&2
+  fi
+  if [[ -n "$held" ]]; then
+    echo "Resolve each held hook: fix the markers in <path>$RESTACK_HELD_SUFFIX, then replace the hook in one step with mv <path>$RESTACK_HELD_SUFFIX <path> && git -C \"$wt\" add <path>." >&2
+    echo "  To keep the held side instead: rm <path>$RESTACK_HELD_SUFFIX && git -C \"$wt\" add <path>." >&2
+    echo "  continue and skip refuse while a saved copy remains. Or finish the restack from a shell the harness does not run in." >&2
+  fi
+  echo "Then run: $0 restack continue \"$wt\"    (repeat if it stops again)" >&2
+  echo "If the resolved commit is empty: $0 restack skip \"$wt\"" >&2
 }
 
 # Print the saved copy of each held hook that still exists, one per line.
@@ -340,7 +366,7 @@ restack_refuse_unconsumed_hooks() {
   local wt="$1" copies=""
   copies="$(restack_unconsumed_hook_copies "$wt")"
   [[ -n "$copies" ]] || return 0
-  worktree_message restack-hook-unconsumed "$(paste -s -d ' ' - <<<"$copies")" "Error: A held hook's conflicted content is still saved beside it; move each resolved copy over its hook, or delete it to keep the held side, then retry." >&2
+  worktree_message restack-hook-unconsumed "$(paste -s -d ' ' - <<<"$copies")" "Error: A held hook's conflicted content is still saved beside it; move each resolved copy over its hook, or delete it and stage the path to keep the held side, then retry." >&2
   return 1
 }
 
@@ -351,9 +377,7 @@ report_paused_restack() {
   if [[ -n "$conflict_files" ]]; then
     worktree_message restack-conflicts "$conflict_files" "Restack stopped on conflicts:" >&2
     [[ -n "$output" ]] && sed 's/^/  git: /' <<<"$output" >&2
-    sed 's/^/  /' <<<"$conflict_files" >&2
-    restack_hold_conflicted_hooks "$wt" "$conflict_files" || true
-    echo "Resolve and stage each file, then run: $0 restack continue \"$wt\"" >&2
+    report_restack_conflicts "$wt" "$conflict_files"
   elif [[ -n "$unstaged_files" ]]; then
     # Git refuses to continue while a tracked file differs from the index and
     # names merge conflicts whatever the real cause. With nothing unmerged,

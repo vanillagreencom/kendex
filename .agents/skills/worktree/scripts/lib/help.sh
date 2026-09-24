@@ -154,7 +154,10 @@ takes one side of the conflict, its conflicted content is saved beside it as
 every such path. Resolve the markers in the saved copy, then replace the hook
 in one step with 'mv <path>.restack-conflict <path>' and stage it. continue
 and skip refuse with 'worktree-restack-hook-unconsumed:' while a saved copy
-remains; deleting it keeps the held side. abort removes the saved copies.
+remains; deleting it and staging the path keeps the held side. abort removes
+the saved copies. The held set is the paths a declaration's command names,
+not the files those hooks source. When the declarations cannot be read, for
+example with jq missing, every conflicted path is held the same way.
 Conflicts in every other path keep their markers in place.
 
 On completion, continue and skip report one 'rebase-map: <old-sha>
