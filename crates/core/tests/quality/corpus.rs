@@ -95,15 +95,15 @@ fn commit_guards_is_flagged_where_the_switch_stands_as_code() {
     assert_eq!(result.safety.score, 73);
 }
 
-/// Thirty-five lines of this skill spell `--dangerously-skip-permissions`.
+/// Twenty-six lines of this skill spell `--dangerously-skip-permissions`.
 /// Two are in the launch table's source, six are in the open-terminal fixture,
-/// twenty-three are in the oversee-succeed fixture and four are in the
+/// fourteen are in the oversee-succeed fixture and four are in the
 /// overseer-watch fixture. Every one of them is the switch written as code in
 /// a file a harness loads, and the rule counts it there rather than deciding
 /// which program the string reaches.
 ///
 /// That is the cost of the reading, pinned to a real tree: two Critical
-/// findings in production and thirty-three High findings in supporting files.
+/// findings in production and twenty-four High findings in supporting files.
 /// A reading that went quiet on them would be reading an argument list again,
 /// and this is where that fails.
 #[test]
@@ -118,7 +118,7 @@ fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
         [
             vec![("safety-bypass", Severity::Critical, lane_launch); 2],
             vec![("safety-bypass", Severity::High, open_terminal); 6],
-            vec![("safety-bypass", Severity::High, oversee_succeed); 23],
+            vec![("safety-bypass", Severity::High, oversee_succeed); 14],
             vec![("safety-bypass", Severity::High, overseer_watch); 4],
         ]
         .concat(),

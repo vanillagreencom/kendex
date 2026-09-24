@@ -69,10 +69,11 @@ lane_env_prefix() { # HARNESS DIR
 # both choices in one token. The fifth is the flag word an attached-value
 # spelling rides on when one is WRITTEN — codex's `-c` carries the whole
 # `model_reasoning_effort=` token — and `-` where the effort is a plain flag
-# word that takes its value as the next one. The sixth field is the permission
-# posture an unattended launch accepts. Its first spelling is written; a
-# `FLAG=VALUE` spelling also accepts `FLAG VALUE` when a caller supplied it.
-# `-` says the harness launch form has no permission word this table can write.
+# word that takes its value as the next one. The sixth field is every permission
+# posture an unattended launch accepts. The seventh is the subset whose full
+# bypass meaning can transfer between harnesses. Its first spelling is written;
+# a `FLAG=VALUE` spelling also accepts `FLAG VALUE` when a caller supplied it.
+# `-` says the harness launch form has no permission word in that set.
 #
 # The FIRST spelling of each list is the one written; the rest are further
 # spellings a caller may have typed, which launch_choice_value reads.
@@ -95,10 +96,10 @@ lane_env_prefix() { # HARNESS DIR
 #             launch passing it has made the effort choice and is not asked for
 #             it again.
 LAUNCH_CHOICE_FLAGS=(
-  'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk'
-  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never'
-  'opencode|-m --model|-|-|-|-'
-  'pi|--model|--thinking|:|-|-'
+  'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions'
+  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox'
+  'opencode|-m --model|-|-|-|-|-'
+  'pi|--model|--thinking|:|-|-|-'
 )
 # The row for harness $1, empty where the table names no such harness.
 launch_choice_row() { # HARNESS
@@ -121,7 +122,7 @@ launch_choice_model_spellings() { # [HARNESS]
   local row spellings word out=""
   for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
     [[ -z "$1" || "${row%%|*}" == "$1" ]] || continue
-    IFS='|' read -r _ spellings _ _ _ _ <<<"$row"
+    IFS='|' read -r _ spellings _ _ _ _ _ <<<"$row"
     for word in $spellings; do
       case " $out " in *" $word "*) ;; *) out="$out $word" ;; esac
     done
@@ -137,7 +138,7 @@ launch_choice_effort_spellings() { # HARNESS
   local row spellings
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 0
-  IFS='|' read -r _ _ spellings _ _ _ <<<"$row"
+  IFS='|' read -r _ _ spellings _ _ _ _ <<<"$row"
   [[ "$spellings" != - ]] || return 0
   printf '%s\n' "$spellings"
 }
@@ -148,7 +149,18 @@ launch_choice_permission_spellings() { # HARNESS
   local row spellings
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 0
-  IFS='|' read -r _ _ _ _ _ spellings <<<"$row"
+  IFS='|' read -r _ _ _ _ _ spellings _ <<<"$row"
+  [[ "$spellings" != - ]] || return 0
+  printf '%s\n' "$spellings"
+}
+
+# The permission spellings whose full bypass meaning transfers to another
+# harness. Empty where the row has no transfer-safe spelling.
+launch_choice_transfer_permission_spellings() { # HARNESS
+  local row spellings
+  row="$(launch_choice_row "$1")"
+  [[ -n "$row" ]] || return 0
+  IFS='|' read -r _ _ _ _ _ _ spellings <<<"$row"
   [[ "$spellings" != - ]] || return 0
   printf '%s\n' "$spellings"
 }
@@ -179,12 +191,18 @@ launch_choice_permission_match() { # SPELLINGS TOKEN [NEXT]
 }
 
 # Whether the supplied texts carry one permission posture from HARNESS's row.
-launch_choice_permission_present() { # HARNESS TEXT...
+launch_choice_permission_present() { # HARNESS [--transfer] TEXT...
   local spellings text i
   local -a tokens=()
-  spellings="$(launch_choice_permission_spellings "$1")"
-  [[ -n "$spellings" ]] || return 1
+  local harness="$1"
   shift
+  if [[ "${1:-}" == --transfer ]]; then
+    spellings="$(launch_choice_transfer_permission_spellings "$harness")"
+    shift
+  else
+    spellings="$(launch_choice_permission_spellings "$harness")"
+  fi
+  [[ -n "$spellings" ]] || return 1
   for text in "$@"; do
     tokens=()
     read -r -a tokens <<<"$text"
@@ -264,7 +282,7 @@ launch_choice_effort() { # HARNESS TEXT [TEXT]
   local row effort_spellings in_model model effort
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 0
-  IFS='|' read -r _ _ effort_spellings in_model _ _ <<<"$row"
+  IFS='|' read -r _ _ effort_spellings in_model _ _ _ <<<"$row"
   [[ "$effort_spellings" != - ]] || return 0
   effort="$(launch_choice_value "$effort_spellings" "$2" "${3:-}")"
   if [[ -z "$effort" && "$in_model" != - ]]; then
@@ -293,7 +311,7 @@ launch_choice_write() { # HARNESS MODEL EFFORT
   [[ -n "$2" ]] || return 0
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 1
-  IFS='|' read -r _ model_spellings effort_spellings _ attach _ <<<"$row"
+  IFS='|' read -r _ model_spellings effort_spellings _ attach _ _ <<<"$row"
   read -r word _ <<<"$model_spellings"
   out="$word $(printf %q "$2")"
   if [[ "$effort_spellings" != - && -n "$3" ]]; then
@@ -314,11 +332,9 @@ launch_choice_write() { # HARNESS MODEL EFFORT
 # written form. A row with no permission word and an unknown harness both
 # return status 1: neither can safely launch a named successor unattended.
 launch_choice_permission_write() { # HARNESS
-  local row spellings word flag value
-  row="$(launch_choice_row "$1")"
-  [[ -n "$row" ]] || return 1
-  IFS='|' read -r _ _ _ _ _ spellings <<<"$row"
-  [[ "$spellings" != - ]] || return 1
+  local spellings word flag value
+  spellings="$(launch_choice_transfer_permission_spellings "$1")"
+  [[ -n "$spellings" ]] || return 1
   read -r word _ <<<"$spellings"
   if [[ "$word" == *=* ]]; then
     flag="${word%%=*}"
@@ -329,9 +345,9 @@ launch_choice_permission_write() { # HARNESS
   fi
 }
 
-# The flags of a launch on HARNESS with that harness's own MODEL, EFFORT and
-# permission words taken out, left in LAUNCH_CHOICE_KEPT. What is left is every
-# other flag in the order it was given.
+# The flags of a launch on HARNESS with that harness's own MODEL and EFFORT
+# words taken out, left in LAUNCH_CHOICE_KEPT. With `--permissions`, permission
+# words are taken out too. What is left stays in its original order.
 #
 # The inverse of launch_choice_write over the same row, and the reason it
 # exists: a caller hands its flags on to a launch it did not write, and those
@@ -355,17 +371,21 @@ launch_choice_permission_write() { # HARNESS
 # word, and keeping them is the corruption this exists to stop. The caller
 # refuses rather than guessing.
 LAUNCH_CHOICE_KEPT=()
-launch_choice_strip() { # HARNESS FLAG...
-  local row attach permission_specs word tok drop i n
+launch_choice_strip() { # HARNESS [--permissions] FLAG...
+  local row attach permission_specs word tok drop i n strip_permissions=0
   local -a spellings=() rest=()
   LAUNCH_CHOICE_KEPT=()
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 1
-  IFS='|' read -r _ _ _ _ attach permission_specs <<<"$row"
+  IFS='|' read -r _ _ _ _ attach permission_specs _ <<<"$row"
   read -r -a spellings \
     <<<"$(launch_choice_model_spellings "$1") $(launch_choice_effort_spellings "$1")"
   [[ "$permission_specs" != - ]] || permission_specs=""
   shift
+  if [[ "${1:-}" == --permissions ]]; then
+    strip_permissions=1
+    shift
+  fi
   rest=("$@")
   n=${#rest[@]}
   i=0
@@ -397,7 +417,7 @@ launch_choice_strip() { # HARNESS FLAG...
         fi
       done
     fi
-    if (( drop == 0 )); then
+    if (( drop == 0 && strip_permissions == 1 )); then
       launch_choice_permission_match "$permission_specs" "$tok" "${rest[i+1]:-}"
       drop=$LAUNCH_CHOICE_PERMISSION_SPAN
     fi

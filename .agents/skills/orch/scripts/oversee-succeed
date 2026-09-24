@@ -102,11 +102,9 @@
 #        preference naming a rank that does not exist is a setting to fix, not
 #        a lane to pass over. An entry with no qualifying lane IS skipped.
 #        A named entry's LAUNCH carries the model and effort words its own row
-#        writes and, out of the flags after --, everything but that pair:
-#        those flags are the CALLER's, spelled for the caller's harness, so
-#        handing their pair on would give this successor a second model beside
-#        the one its pick was judged on, and an effort flag its own harness may
-#        not have at all.
+#        writes. A same-harness entry keeps the caller's permission words
+#        exactly. A cross-harness entry transfers only a full-bypass posture
+#        that both rows define, then writes the target row's spelling.
 #        The walk ALWAYS ends in one further entry, the caller's own
 #        harness and lane ($CLAUDE_CONFIG_DIR or $CODEX_HOME) with no model or
 #        effort flag of its own: the overseer passes its model and effort
@@ -176,15 +174,13 @@
 #                    confirming read can settle in. At 1 that floor is the whole
 #                    budget and the running-turn wait gets a single probe; at 2
 #                    and 3 each wait gets one second (default 60)
-#   -- FLAGS...      Passed to the harness word by word, each quoted: the
-#                    permission flags the overseer runs under, plus its own
-#                    model and effort. The walk always ends in the caller's own
-#                    harness, and a successor opened THERE is the only one that
-#                    takes those two words from here; a named preference entry
-#                    takes the permission flags and the model and effort its
-#                    own row writes. Print mode always needs the current model
-#                    and effort because it records this session, not the
-#                    preference.
+#   -- FLAGS...      Passed to the harness word by word, each quoted. A caller,
+#                    print or walled entry carries every word unchanged. A
+#                    named same-harness entry replaces model and effort but
+#                    keeps permission words exact. A named cross-harness entry
+#                    accepts only a transferable full-bypass posture and writes
+#                    the target harness's spelling. Print mode records this
+#                    session rather than a later preference.
 #                    Refused beside --dead-pane, whose line already holds them
 #   --check-marks    Judge the triggers of step 2 against this overseer's own
 #                    pane and account, print the one keyed line that says what
@@ -291,7 +287,7 @@ message() { # KEY FIELD=VALUE...
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     walled-lane-unknown) text='The account this walled overseer is spending could not be named, so the one account its successor must not open on is unknown and nothing was launched. A session carrying neither of the two account variables, under a harness whose default this reader cannot resolve, is the shape that reaches this.' ;;
     model-failed) text='kendex tier-model named no model for this entry.' ;;
-    launch-choice-failed) text='The launch flag table holds no row for this harness, so nothing here knows how it spells a model. Nothing was launched: a successor started with no model runs on whatever default that harness ships, and spends the account either way.' ;;
+    launch-choice-failed) text='The launch flag table cannot state a required model or an equivalent cross-harness permission posture. Nothing was launched.' ;;
     no-lane-qualifies) text='No lane walked is above the headroom trigger; nothing was launched and this overseer keeps running. The walk is every ORCH_OVERSEER_PREFERENCE entry, counted in entries, and then the fleet-wide sweep of the harness the fallback field names, which is none where the walk never reached that entry, so a preference aimed at a spent harness is not what this says. walled and unmeasured are the accounts those sweeps refused and the accounts nothing could measure, counted once per sweep. The mark field names the trigger. At mark=headroom the account and resets fields name the account that ran out and when the bucket this session spends frees up. At mark=wall the caller pane read walled and no mark was judged, so no account is named here; the caller that read that wall names it.' ;;
     launch-trust-missing) text='The folder-trust entry for the caller directory could not be made in the config this codex successor would read, so nothing was launched and the caller keeps running. The successor would open on the folder-trust question and wait there for an answer nobody at the pane gives. The reason field names what failed: trust-refused is an answer already recorded for that directory that is not trust, which this will not overwrite; config-unreadable is the account config present and unreadable, a dangling shim link being the usual cause; account-store is the account transcript directory that could not be made; home-path, home-create, home-link, home-entry, config-write and config-install are the private CODEX_HOME under the account that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; entry-unreadable is the entry written and not read back.' ;;
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
@@ -1024,22 +1020,25 @@ else
   # and the writer then names neither word.
   choice_words="$(launch_choice_write "$harness" "$model" "$effort")" || die launch-choice-failed "harness=$harness"
   [[ -z "$choice_words" ]] || cmd+=" $choice_words"
-  # One place decides the model and effort words a launch carries, and for a
-  # NAMED entry that place is the writer above. The flags after -- are the
-  # CALLER's, spelled for the caller's own harness and naming the model this
-  # pane runs, so a named entry keeps their permission flags and drops that
-  # pair: codex has no effort flag at all, so a claude caller's --effort would
-  # keep the successor from starting, and a claude entry would carry a second
-  # --model that need not be the one its own pick was judged on. The caller
-  # entry keeps them whole — same harness, same spelling, and they are what
-  # hands on the model that pick WAS judged on. Which words those are is
-  # lib/lane-launch.sh's row for the caller's harness, so no spelling is
-  # written here; a harness that row cannot answer for refuses, because keeping
-  # the pair unread is the corruption itself.
+  # A caller entry keeps every word. A same-harness named entry strips model
+  # and effort but keeps the caller's exact permission spelling. A cross-harness
+  # entry accepts only a full-bypass spelling whose meaning the shared row can
+  # prove, writes the target spelling, and strips all caller choices.
   if [[ "$chosen" == caller ]]; then
     LAUNCH_CHOICE_KEPT=(${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"})
-  else
+  elif [[ "$harness" == "$CALLER_HARNESS" ]]; then
     launch_choice_strip "$CALLER_HARNESS" ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
+      || die launch-choice-failed "harness=$CALLER_HARNESS"
+  else
+    launch_choice_permission_present "$CALLER_HARNESS" --transfer "${HARNESS_FLAGS[*]}" \
+      || die launch-choice-failed reason=permission-transfer \
+        "source=$CALLER_HARNESS" "target=$harness"
+    permission_words="$(launch_choice_permission_write "$harness")" \
+      || die launch-choice-failed reason=permission-transfer \
+        "source=$CALLER_HARNESS" "target=$harness"
+    cmd+=" $permission_words"
+    launch_choice_strip "$CALLER_HARNESS" --permissions \
+      ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
       || die launch-choice-failed "harness=$CALLER_HARNESS"
   fi
   for flag in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
