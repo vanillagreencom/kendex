@@ -138,7 +138,7 @@ launch() {
   shift 3
   (cd "$REPO" && PATH="$BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$CLAIMS" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 GH_REPO="" STUB_SERVER=$$ STUB_OPEN_MARK="$ROW/opened" STUB_TAG="$tag" \
-    STUB_WALL="$ROW/wall" STUB_PICK="$ROW/pick" TERMINAL=ghostty \
+    STUB_WALL="$ROW/wall" STUB_PICK="$ROW/pick" TERMINAL=ghostty ORCH_TMUX_SESSION=fleet \
     ORCH_OVERSEER_LANES="$fleet_cap" ORCH_LANE_ACCOUNT_CLAIMS="$account_cap" \
     "$OT" --state-dir "$STATE" "${MODE:---tmux}" --harness claude --cmd "true --model opus --effort high" "$@" \
     >"$ROW/$tag.out" 2>"$ROW/$tag.err") || rc=$?

@@ -199,7 +199,7 @@ assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-2)")" \
   "a tmux launch under a lane records its window, its account dir, the tmux surface and the model its own command names"
 RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --repo o/r --cmd true 2709
 assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surface|model|session_id|launched_at|over_cap)=[^ ]*//g')" \
-  "rc=0 item=issue-2709 tracker=github repo=o/r harness=null window=stub:gh-2709 status=running over_cap=null" \
+  "rc=0 item=issue-2709 tracker=github repo=o/r harness=null window=stub:gh-2709 status=running" \
   "a GitHub item is recorded under its workflow-state id with the window the watch reads it through"
 
 # --repo is optional on a supported GitHub launch: the resolver answers and
@@ -292,19 +292,15 @@ session_row sess-broken CC-117 >/dev/null
 assert_eq "$(RUN_SESSION=fleetx session_row sess-broken CC-118)" \
   "rc=1 target= list= pane= window=none recorded=none refused=session-record-failed+item=CC-118+state=oversee" \
   "a fleet state whose tmux entry cannot be read refuses as session-record-failed and opens nothing"
-# The write of a first launch's session: a state directory this launch can
-# read and not lock takes the same refusal. Root writes through mode 555.
-if [[ "$(id -u)" -eq 0 ]]; then
-  printf '  skip  unwritable fleet state (running as root)\n'
-else
-  "$WS" --state-dir "$TMP_ROOT/sess-ro" init oversee >/dev/null
-  chmod 555 "$TMP_ROOT/sess-ro"
-  RUN_SESSION=fleetx session_row sess-ro CC-128 > "$TMP_ROOT/ro-row"
-  chmod 755 "$TMP_ROOT/sess-ro"
-  assert_eq "$(cat "$TMP_ROOT/ro-row")" \
-    "rc=1 target= list= pane= window=none recorded=none refused=session-record-failed+item=CC-128+state=oversee" \
-    "a fleet state whose tmux entry cannot be written refuses as session-record-failed and opens nothing"
-fi
+# The write of a first launch's session: a fleet state this launch can read
+# and not lock takes the same refusal. The state's own lock path is a
+# directory, which workflow-state cannot open; the fleet launch lock beside it
+# is another file, so the launch reaches the session write.
+"$WS" --state-dir "$TMP_ROOT/sess-ro" init oversee >/dev/null
+mkdir "$TMP_ROOT/sess-ro/workflow-state-oversee.json.lock"
+assert_eq "$(RUN_SESSION=fleetx session_row sess-ro CC-128)" \
+  "rc=1 target= list= pane= window=none recorded=none refused=session-record-failed+item=CC-128+state=oversee" \
+  "a fleet state whose tmux entry cannot be written refuses as session-record-failed and opens nothing"
 # A has-session that fails for another reason than an absent session, the
 # answer a restarted server gives a launch still carrying its $TMUX.
 assert_eq "$(RUN_SESSION=fleetx STUB_HAS_SESSION_ERR='no server running on /tmp/tmux-1000/default' session_row sess-noserver CC-127)" \

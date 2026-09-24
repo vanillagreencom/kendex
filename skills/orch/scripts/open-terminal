@@ -2625,7 +2625,9 @@ cap_take() { # ITEM
 
 # Sets CAP_RUNNING (records lib/lane-claims.sh's LANE_RUNNING_JQ calls running),
 # CAP_INFLIGHT (live claims naming this fleet whose window no running record
-# names: a lane whose pane outlived its record's running status),
+# names: a lane whose pane outlived its record's running status; a record's
+# window is `SESSION:WINDOW`, or bare where written by hand, and a claim's is
+# the bare name, so the two are compared on the name),
 # CAP_ACCOUNT (live claims on LANE, counted by the reader `lanes` counts with),
 # and CAP_ITEM_RUNNING and CAP_ITEM_ACCOUNT (whether KEY's own record is
 # running, and the account it names). Returns 1 on a store it could not read: a
@@ -2638,7 +2640,7 @@ cap_count() { # ITEM KEY LANE
     | ([.[] | select(running)] | length),
       (if $own == null then "absent" elif ($own | running) then "running" else "stopped" end),
       ($own.account // ""),
-      (.[] | select(running) | .window // empty)' <<<"$lanes")" || rc=1
+      (.[] | select(running) | .window // empty | sub("^[^:]*:"; ""))' <<<"$lanes")" || rc=1
   [[ "$rc" -eq 0 ]] || { ot_message cap-unreadable "item=$1" "source=state" >&2; return 1; }
   { read -r CAP_RUNNING; read -r CAP_ITEM_RUNNING; read -r CAP_ITEM_ACCOUNT; windows="$(cat)"; } <<<"$out"
   claims="$(lane_claims_read "$(lane_claims_dir "$CLAIM_ROOT")" fleet)" || rc=$?
