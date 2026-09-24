@@ -96,13 +96,15 @@ micro|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
 small|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
 standard|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
 standard|true|AGENTS.md|$PROSE_ROW
+standard|true|CLAUDE.md|$PROSE_ROW
+standard|true|GEMINI.md|$PROSE_ROW
 standard|true|docs/legal/terms.md|$PROSE_ROW
 standard|false|docs/guide.md|$ALL_ON
 enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous
 micro|false||exit=2 class-without-paths class=micro
 micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe
 ROWS
-[ "$selection_rows" -ge 20 ] ||
+[ "$selection_rows" -ge 22 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
 
 # A row that forgets a lane is refused before any lane reads it. macos_legs is
@@ -457,6 +459,24 @@ check "the matrix runs the Linux leg alone where the class drops macOS" \
 check "the matrix runs both legs when nothing classified" \
   '["ubuntu-latest","macos-latest"]' "$(legs "$WORKFLOW" "$ALL_OFF" failure)"
 
+# The document byte ceilings and the work-marker scan run in the job a
+# `render` or `trivial` diff runs, and in no other, so every class that runs
+# any gated job runs both scans. Each `run:` line is read with the job it
+# sits in.
+job_of_run() { # WORKFLOW COMMAND — the jobs whose `run:` line names it, sorted and spaced
+  COMMAND="$2" awk '
+    /^jobs:/ { in_jobs = 1; next }
+    !in_jobs { next }
+    /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job); next }
+    /^ +run: / && index($0, ENVIRON["COMMAND"]) > 0 { print job }
+  ' "$1" | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//'
+}
+VERIFY_JOBS="$(running "$WORKFLOW" "$VERIFY_ROW")"
+[ -n "$VERIFY_JOBS" ] || { echo "the verify row runs no job, so the extractor is broken" >&2; exit 1; }
+for scan in skills/doc-limits/scripts/doc-limits skills/commit-guards/scripts/todo-ban; do
+  check "$scan runs in the verify job alone" "$VERIFY_JOBS" "$(job_of_run "$WORKFLOW" "$scan")"
+done
+
 # --- 3b. Must-fail controls -------------------------------------------------
 plant() { # FROM TO OUT — replace FROM once in the workflow, or stop
   local from="$1" to="$2" out="$3"
@@ -497,6 +517,27 @@ plant "'[\"ubuntu-latest\", \"macos-latest\"]' || '[\"ubuntu-latest\"]'" \
   "'[\"ubuntu-latest\"]' || '[\"ubuntu-latest\", \"macos-latest\"]'" "$TMP/wf-swapped.yml"
 check "must-fail: a matrix with its arms swapped expands the wrong legs" \
   '["ubuntu-latest","macos-latest"]' "$(legs "$TMP/wf-swapped.yml" "$one_skill")"
+
+# The doc-limits step moved, not deleted, into the shell shards: the scan
+# still runs, but not on the classes that run no shard.
+awk '
+  /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job) }
+  job == "bot-instructions" && $0 == "      - name: doc-limits (document byte ceilings)" {
+    skip = 1; moved++; next
+  }
+  skip && /^        / { next }
+  { skip = 0; print }
+  job == "skill-suites-shard" && $0 == "    steps:" {
+    print "      - name: doc-limits (document byte ceilings)"
+    print "        run: skills/doc-limits/scripts/doc-limits"
+    inserted++
+  }
+  END { if (moved != 1 || inserted != 1) exit 2 }
+' "$WORKFLOW" >"$TMP/wf-moved-scan.yml" ||
+  { echo "the doc-limits step could not be moved in a copy" >&2; exit 1; }
+check "must-fail: a doc-limits step moved to the shell shards is reported there" \
+  "skill-suites-shard" \
+  "$(job_of_run "$TMP/wf-moved-scan.yml" skills/doc-limits/scripts/doc-limits)"
 
 # --- 4. The aggregate -------------------------------------------------------
 

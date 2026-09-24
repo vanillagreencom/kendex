@@ -268,6 +268,20 @@ assert_eq "a composite action path is an excluded path" \
   "cause=excluded-path path=.github/actions/change-class/classify glob=.github/actions/*" \
   "$(printf '%s\n' "$action_err" | sed -n 's/^class: class=standard //p')"
 
+# A legal document is held by compiled code to the version the build asks
+# about, so an edit to one is refused the narrow classes, trivial included,
+# and the workspace tests that hold it run.
+reset_case
+set_verifier dirty
+write_lines "$repo" docs/legal/terms.md 1
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "a legal document's version line edited"
+legal_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a legal document is an excluded path" \
+  "cause=excluded-path path=docs/legal/terms.md glob=docs/legal/*" \
+  "$(printf '%s\n' "$legal_err" | sed -n 's/^class: class=standard //p')"
+
 # Ownership is read off rows in state ok alone: the same positions under a
 # failing row own nothing. A verify with a failing row closes non-zero, so
 # the refusal is the verdict's, ahead of any path being looked at.
