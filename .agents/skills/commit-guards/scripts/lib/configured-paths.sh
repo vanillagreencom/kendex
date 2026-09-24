@@ -179,27 +179,10 @@ gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
 # the counter is reset, so the two always describe the same run.
 GG_WALK_SKIPPED=0
 
-# A per-path notice is for somebody who asked for it. A tree tracking hundreds
-# of symlinks makes hundreds of them, none of which a passing verdict needs,
-# and they bury the one lane that did fail. So the standing answer is the
-# tally each verdict line carries; every skip also lands in $GG_TMP/skips.z,
-# run-wide and never emptied where the counter is, which md-refs reads for
-# its per-reason counts and for the one skipped path a reference lands on.
-# GG_VERBOSE is md-refs' --verbose.
+# A passing verdict carries the skipped count, not a line per path, which
+# would bury the lane that failed; md-refs' --verbose sets GG_VERBOSE to print
+# them. $GG_TMP/skips.z keeps every skip for the run, never emptied per walk.
 GG_VERBOSE=0
-
-# The reasons, as ` CODE=N` pairs for a verdict line, in first-met order.
-# The shell splits skips.z's records: a path may hold a newline, so a line
-# reader would misalign them, and a NUL record separator is not POSIX awk.
-gg_skip_counts() {
-  local c
-  [ -s "$GG_TMP/skips.z" ] || return 0
-  while IFS= read -r -d '' _ && IFS= read -r -d '' c && IFS= read -r -d '' _; do
-    printf '%s\n' "$c"
-  done <"$GG_TMP/skips.z" | LC_ALL=C awk '{ if (!($0 in n)) order[++k] = $0; n[$0]++ }
-    END { for (i = 1; i <= k; i++) printf " %s=%d", order[i], n[order[i]] }' \
-    || gg_fail skip-tally "$?" "The skipped-reason tally failed."
-}
 
 gg_skip_seen() { # PATH — 0 when this walk already counted this path
   local seen

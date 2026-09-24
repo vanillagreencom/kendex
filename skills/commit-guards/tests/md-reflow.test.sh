@@ -70,11 +70,13 @@ leftovers() { printf 'leftovers=%s' "$(find "$R" -maxdepth 1 -type f ! -name doc
 format_all() { git -C "$R" add -A; printf 'format:%s' "$(run '' --all "$MDF")"; } # the judge over what the row staged
 q() { local b; b="$(printf '%b' "$1"; printf x)"; printf '%q' "${b%x}"; } # CONTENT — its bytes, %q-rendered
 
-# Expected records keep the changed-file list and checked-file count.
+# Expected records keep the changed-file list and checked-file count; a
+# caller sets SKIPPED for a run that skips a path.
+SKIPPED=0
 ERR="md-reflow: "
-reflowed() { local n=$1 t=$2; shift 2; printf 'md-reflow: reflowed=%s;' "$@"; printf 'md-reflow: rewrite-summary=changed=%s checked=%s skipped=0' "$n" "$t"; } # N T PATH...
+reflowed() { local n=$1 t=$2; shift 2; printf 'md-reflow: reflowed=%s;' "$@"; printf 'md-reflow: rewrite-summary=changed=%s checked=%s skipped=%s' "$n" "$t" "$SKIPPED"; } # N T PATH...
 unchanged() { printf 'md-reflow: rewrite-summary=changed=0 checked=%s skipped=0' "$1"; } # T
-would() { local n=$1 t=$2; shift 2; printf 'md-reflow: would-reflow=%s;' "$@"; printf 'md-reflow: check-summary=changed=%s checked=%s skipped=0' "$n" "$t"; } # N T PATH...
+would() { local n=$1 t=$2; shift 2; printf 'md-reflow: would-reflow=%s;' "$@"; printf 'md-reflow: check-summary=changed=%s checked=%s skipped=%s' "$n" "$t" "$SKIPPED"; } # N T PATH...
 in_format() { printf 'md-reflow: check-summary=changed=0 checked=%s skipped=%s' "$1" "${2:-0}"; } # T [SKIPPED]
 refused() { local rule="$3"; printf 'md-reflow: %s=%s:%s' "${rule%%:*}" "$1" "$2"; case "$rule" in *:*) printf ':%s' "${rule#*:}" ;; esac; } # PATH LINE RULE
 FORMAT_OK="format:rc=0 md-format: summary=violations=0 files=1 scope=all skipped=0"
@@ -219,7 +221,8 @@ selection() { # NAME — three wrapped files, the vendored one excluded, one.md 
 }
 fx_staged_excluded() { repo staged-excluded; put doc.md "$WRAPPED"; put tools/md-excludes 'doc.md\tvendored document\n'; }
 fx_staged_included() { repo staged-included; put doc.md "$WRAPPED"; }
-fx_linked() { repo linked; put AGENTS.md 'Clean.\n'; ln -s AGENTS.md "$R/CLAUDE.md"; git -C "$R" add -A; }
+fx_linked() { repo "$1"; put AGENTS.md 'Clean.\n'; ln -s AGENTS.md "$R/CLAUDE.md"; git -C "$R" add -A; }
+fx_linked_wrapped() { fx_linked "$1"; put doc.md "$WRAPPED"; }
 st_selection() { bytes one.md; printf ' '; bytes two.md; printf ' '; bytes vendor/three.md; printf ' '; format_all; }
 st_doc() { bytes doc.md; }
 run_rows \
@@ -227,7 +230,9 @@ run_rows \
   "--all reflows every tracked markdown file minus the excludes, and md-format then passes on them|selection all||--all|st_selection|rc=0 $(reflowed 2 2 one.md two.md) / one.md=$(q 'Wrapped one more.\n') two.md=$(q 'Wrapped two.\n') vendor/three.md=$(q 'Wrapped\nthree.\n') format:rc=0 md-format: summary=violations=0 files=2 scope=all skipped=0" \
   "staged reflow leaves the excluded document unchanged|fx_staged_excluded||--staged|st_doc|rc=0 $(unchanged 0) / doc.md=$(q "$WRAPPED")" \
   "control: the same staged document reflows without its exclusion|fx_staged_included||--staged|st_doc|rc=0 $(reflowed 1 1 doc.md) / doc.md=$(q 'Wrapped text.\n')" \
-  "a tracked markdown symlink is counted on the check summary|fx_linked||--check --all||rc=0 $(in_format 1 1)"
+  "a tracked markdown symlink is counted on the check summary|fx_linked linked||--check --all||rc=0 $(in_format 1 1)" \
+  "and on the failing check summary|fx_linked_wrapped linked-check||--check --all||rc=1 $(SKIPPED=1 would 1 2 doc.md)" \
+  "and on the rewrite summary|fx_linked_wrapped linked-rewrite||--all||rc=0 $(SKIPPED=1 reflowed 1 2 doc.md)"
 
 echo "=== a failed replacement preserves the file and removes its staging file ==="
 fx_failing_mv() { # NAME — a PATH whose mv refuses, ahead of the real one

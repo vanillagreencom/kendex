@@ -354,10 +354,20 @@ while IFS= read -r -d '' rec; do
 done <"$GG_TMP/src-files.z"
 SKIPPED=$((SKIPPED + GG_WALK_SKIPPED))
 
-# Captured before every verdict line: a gg_fail inside the substitution ends
-# only the subshell, so its status is carried out here rather than read as an
-# empty tally.
-SKIP_COUNTS="$(gg_skip_counts)" || exit 2
+# One pass over the run's skips: the per-reason tally every verdict line
+# carries, and the path<TAB>code<TAB>why lines pass three joins to its targets,
+# minus a newline path, which is no link target, and all of them under
+# --verbose, which printed each already.
+: >>"$GG_TMP/skips.z"
+: >"$GG_TMP/skips.tsv"
+SKIP_COUNTS="$(
+  while IFS= read -r -d '' skip_path && IFS= read -r -d '' skip_code && IFS= read -r -d '' skip_why; do
+    printf '%s\n' "$skip_code"
+    [ "$GG_VERBOSE" -eq 1 ] || [ "${skip_path#*$'\n'}" != "$skip_path" ] \
+      || printf '%s\t%s\t%s\n' "$skip_path" "$skip_code" "$skip_why" >>"$GG_TMP/skips.tsv"
+  done <"$GG_TMP/skips.z" | LC_ALL=C awk '{ if (!($0 in n)) order[++k] = $0; n[$0]++ }
+    END { for (i = 1; i <= k; i++) printf " %s=%d", order[i], n[order[i]] }'
+)" || gg_fail skip-tally "$?" "The skipped-reason tally failed."
 
 # Before the empty-set answer below: a carrier this lane could not read is
 # what the verdict cannot speak for, and a run whose only source file was
@@ -423,16 +433,7 @@ while IFS="$GG_TAB" read -r target phrase; do
   esac
 done <"$GG_TMP/wanted.sorted"
 
-# Pass three: the verdict. The skipped paths go in as path<TAB>code<TAB>
-# explanation lines, so the resolver joins them to the targets it reaches in
-# one pass; a path holding a newline is no link target and stays out.
-: >"$GG_TMP/skips.tsv"
-if [ "$GG_VERBOSE" -eq 0 ] && [ -s "$GG_TMP/skips.z" ]; then
-  while IFS= read -r -d '' skip_path && IFS= read -r -d '' skip_code && IFS= read -r -d '' skip_why; do
-    case "$skip_path" in *$'\n'*) continue ;; esac
-    printf '%s\t%s\t%s\n' "$skip_path" "$skip_code" "$skip_why"
-  done <"$GG_TMP/skips.z" >"$GG_TMP/skips.tsv"
-fi
+# Pass three: the verdict.
 LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=verdict -v tracked="$GG_TMP/tracked" -v headings="$GG_TMP/headings.tsv" \
   -v contents="$GG_TMP/contents.tsv" -v skips="$GG_TMP/skips.tsv" \
   -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/verdict" \
