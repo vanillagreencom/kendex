@@ -30,7 +30,10 @@
 #         RENEWED first and then measured like any other, its record marked
 #         `refreshable`; one that cannot be renewed reports the status its
 #         refusal took, with the cause. Table by default, --json for the
-#         structured record.
+#         structured record. Each --json record carries `verdict`: `room`,
+#         `walled` or `unmeasured`, its binding bucket judged against
+#         ORCH_LANE_MAX_PCT by the rule `pick` refuses on, so a reader of the
+#         listing never holds a second copy of that threshold or its default.
 #         The STATUS words are `ok`; `rate_limited`, an endpoint that answered
 #         HTTP 429; `unreachable`, one that answered 5xx or that nothing could
 #         be read from at all, or a renewal another tool's credentials lock kept
@@ -2419,7 +2422,7 @@ case "$SUB" in
 				fi
 			fi
 		fi
-		out="$(jq -c "$LANE_MODEL_JQ"' map(lane_public)' <<<"$out")"
+		out="$(jq -c --argjson max "$MAX_PCT" "$LANE_MODEL_JQ"' map(. + {verdict: (.wall | wall_verdict($max))} | lane_public)' <<<"$out")"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
 		;;
 	host-accounts)

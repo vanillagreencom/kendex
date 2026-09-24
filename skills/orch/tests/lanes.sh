@@ -272,6 +272,14 @@ table \
   "every candidate dir is listed, a dir with no credentials reported, the plan read from the file, headroom 100 minus the largest bucket, the model label from the API, no live claim as 0||$LIST|length=4 openclaude.status=no_credentials claude.plan=max nclaude.headroom_pct=5 eclaude.headroom_pct=20 claude.headroom_pct=80 claude.model_label=Opus claude.claims=0" \
   "the human table renders every discovered lane under its header||list --harness claude|rc=0 lines=5"
 
+echo "=== list: each record's verdict is pick's own wall judgement ==="
+# nclaude's weekly 95 meets the default bound, eclaude's session 80 meets it
+# only once the setting lowers the bound to 80, and a lane nothing measured is
+# neither room nor a wall.
+table \
+  "under the default bound a lane at 95 is walled, one at 80 has room and one with no credentials is unmeasured||$LIST|claude.verdict=room eclaude.verdict=room nclaude.verdict=walled openclaude.verdict=unmeasured" \
+  "the verdict follows ORCH_LANE_MAX_PCT, so a lane at 80 is walled under a bound of 80|ORCH_LANE_MAX_PCT=80|$LIST|claude.verdict=room eclaude.verdict=walled"
+
 echo "=== aliases are an overlay on the discovered inventory ==="
 # Discovery keeps finding every account with no configuration at all; an
 # alias relabels one it found and can neither add nor drop a lane, nor change

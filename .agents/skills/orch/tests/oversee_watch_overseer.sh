@@ -388,7 +388,7 @@ if command -v timeout >/dev/null 2>&1; then
   mkdir -p "$CEILING_DIR/orch"
   cp -R "$REPO_ROOT/skills/orch/scripts" "$CEILING_DIR/orch/scripts"
   ln -s "$REPO_ROOT/skills/github" "$CEILING_DIR/github"
-  sed 's/^MARK_CEILING=60$/MARK_CEILING=1/' \
+  sed 's/^READ_CEILING=60$/READ_CEILING=1/' \
     "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$CEILING_DIR/orch/scripts/oversee-watch"
   chmod +x "$CEILING_DIR/orch/scripts/oversee-watch"
   assert_eq "$(cmp -s "$CEILING_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \

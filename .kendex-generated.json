@@ -929,6 +929,7 @@
   ".agents/skills/orch/tests/orch_env.sh",
   ".agents/skills/orch/tests/oversee_succeed.sh",
   ".agents/skills/orch/tests/oversee_watch.sh",
+  ".agents/skills/orch/tests/oversee_watch_accounts.sh",
   ".agents/skills/orch/tests/oversee_watch_lane_asking.sh",
   ".agents/skills/orch/tests/oversee_watch_lanes.sh",
   ".agents/skills/orch/tests/oversee_watch_mail.sh",

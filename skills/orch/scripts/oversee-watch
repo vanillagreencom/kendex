@@ -4,7 +4,7 @@
 # and re-runs it.
 #
 # Pass order: one lane snapshot, pr-watch, merged items, team triage, lane
-# mail, lane classification, heartbeat. A check that finds an event records it and the
+# mail, lane classification, accounts, heartbeat. A check that finds an event records it and the
 # pass runs on to the next check, so no kind starves another: a reducer line
 # on every pass or a lane parked on its limit banner would otherwise be the
 # only thing the watch ever said. The block carries the latest pr-watch
@@ -173,8 +173,28 @@ Events, checked and reported in this order every pass:
   EVENT idle-after-return <lane>
                              the live harness sits idle on two passes; the
                              lane's closing lines follow
+  EVENT account <alias> harness=<harness> through=<local|host> status=<status>
+                verdict=<room|walled|unmeasured> headroom_pct=<N|->
+                binding_bucket=<bucket|-> binding_resets_at=<utc|->
+                change=<status|headroom|reset>[,...] was=<status>/<verdict>
+                             an account the fleet can launch on changed since
+                             the last pass that read it, as `lanes list --json`
+                             reads it once per pass: its status word changed,
+                             its verdict against ORCH_LANE_MAX_PCT crossed in
+                             either direction, or the binding bucket reset the
+                             last reading named has passed and the reading has
+                             moved off it. `change=` names every one that
+                             applies and `was=` the status and verdict before
+                             it. The first reading of an account is its
+                             baseline and an unchanged account says nothing
   EVENT heartbeat            --max-loops passes with no event; every --repo's
-                             open PRs follow, each line prefixed with its repo
+                             open PRs follow, each line prefixed with its repo,
+                             then `account-roster accounts=<N>` and one
+                             `account <alias> harness=...` line per account,
+                             the fields the account event carries up to
+                             `change=`, from the last pass's reading.
+                             `account-roster unread` replaces them when that
+                             reading failed
 
 Every pane payload above is the lines that event's handling reads and no
 more, always taken from below the lane's last user turn and capped by
@@ -202,10 +222,10 @@ verdicts. Lane prompts use pane and turn.
 
 A line already delivered is not delivered again by a re-run: overseer-dead,
 overseer-walled, merged, lane-question, lane-notice, owner-note, peer-note,
-lane-asking, usage-limit, model-capacity, lane-exited, idle-after-return and handoff are keyed
+lane-asking, usage-limit, model-capacity, lane-exited, idle-after-return, handoff and account are keyed
 in that baseline and repeat only when what they report changes: another PR, a
 different wall or a reset gone by, a replacement pane, a different screen, a
-new record. An unchanged standing overseer-mark is the one keyed line that
+new record, another account state. An unchanged standing overseer-mark is the one keyed line that
 comes back on a timer: it is reported every ORCH_OVERSEER_MARK_REPEAT passes
 while it stands, so a repeat there is the interval and never a new crossing.
 A suppressed line still holds: a walled lane
@@ -344,6 +364,11 @@ Environment:
                               missing one exits 2 rather than dropping handoff
   OVERSEE_WATCH_LANE_MAIL     path to lane-mail; a missing one exits 2 rather
                               than dropping the mail pass
+  OVERSEE_WATCH_LANES         path to lanes, whose `list --json` is the
+                              account reading behind the account event and the
+                              heartbeat roster; a missing one exits 2. The read
+                              takes the same 60 second ceiling and usage age as
+                              the overseer's own mark judgement
   OVERSEE_WATCH_SUCCEED       path to oversee-succeed, which records the
                               overseer's launch line and relaunches a dead or
                               walled overseer. A missing one leaves the
@@ -374,8 +399,8 @@ Environment:
                               read runs unbounded
   PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
-                              triage, lane-asking, usage-limit and handoff
-                              rows — plus claims/ and usage/, both shared
+                              triage, lane-asking, usage-limit, handoff and
+                              account rows — plus claims/ and usage/, both shared
                               across the repositories that point here, and one
                               overseer mailbox read position per mailbox, so no
                               watch reads another's and replays its own mail.
@@ -464,6 +489,8 @@ ow_message() { # REASON FIELD=VALUE...
     items-omitted) text='No work items were supplied. Merged and handoff checks are skipped.' ;;
     lanes-omitted) text='No lane windows were supplied. Pane checks are skipped; the named checks continue.' ;;
     child-probe-failed) text='The child-process probe could not run. Shell panes remain watched.' ;;
+    account-unread) text='The account roster could not be read this pass, so no account event is judged and a heartbeat carries account-roster unread in place of the roster. The baseline stands for the next read. The field names the exit, or the seconds the ceiling allowed.' ;;
+    account-reset-unparsed) text='A binding_resets_at the baseline holds is not a UTC timestamp, so whether that bucket reset settles nothing this pass. Status and headroom changes on the account are still judged.' ;;
     claim-missing) text='The pane has no live lane claim. The usage event names no account.' ;;
     reducer-baseline) text='The initial PR attention is the baseline. Only new attention produces events.' ;;
     state-target-invalid) text='The watch state target is not a regular file.' ;;
@@ -635,6 +662,7 @@ WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
 LANE_MAIL="${OVERSEE_WATCH_LANE_MAIL:-$SCRIPT_DIR/lane-mail}"
 LANE_CLOSE="${OVERSEE_WATCH_LANE_CLOSE:-$SCRIPT_DIR/lane-close}"
 SUCCEED="${OVERSEE_WATCH_SUCCEED:-$SCRIPT_DIR/oversee-succeed}"
+LANES_CLI="${OVERSEE_WATCH_LANES:-$SCRIPT_DIR/lanes}"
 # Consecutive `exited` readings of the overseer pane before the death is news.
 # One is a poll that caught a live session between its harness and its shell,
 # the same reason the lane-exited check debounces.
@@ -644,14 +672,15 @@ DEAD_PASSES="${ORCH_OVERSEER_DEAD_PASSES:-2}"
 # line on each of them would bury every other event in the block; one that never
 # came back would let the mark ride out the fleet after a single reading.
 MARK_REPEAT="${ORCH_OVERSEER_MARK_REPEAT:-5}"
-# Seconds the overseer's own mark judgement is given. It reads every account
-# the fleet can launch on, which waits on a credentials lock and a usage
-# endpoint per account, and on a cache miss on the host-wide usage refresh lock
-# (up to 10 seconds) and, after a 429 with nothing cached, one sleep of up to 5
-# seconds and one more usage request, and a pass that spent its whole interval
-# there would delay every other event it carries. A read the ceiling abandons
-# leaves the mark unjudged, which is the answer a failed read already gives.
-MARK_CEILING=60
+# Seconds each account read of a pass is given: the overseer's own mark
+# judgement and the account roster. Each reads every account the fleet can
+# launch on, which waits on a credentials lock and a usage endpoint per
+# account, and on a cache miss on the host-wide usage refresh lock (up to 10
+# seconds) and, after a 429 with nothing cached, one sleep of up to 5 seconds
+# and one more usage request, and a pass that spent its whole interval there
+# would delay every other event it carries. A read the ceiling abandons leaves
+# its answer unjudged, which is the answer a failed read already gives.
+READ_CEILING=60
 STATE_DIR_SETTING="${ORCH_STATE_DIR:-tmp}"
 WORKFLOW_STATE_DIR="$STATE_DIR_SETTING"
 case "$WORKFLOW_STATE_DIR" in
@@ -715,6 +744,7 @@ watch_state_init() {
 #   clone-root<TAB><item><TAB><the hosted lane's clone, on its own host>
 #   lane-stopped<TAB><item><TAB><the provider's last reported stopped state>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
+#   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->
 # Three rows are keyed by the overseer's own pane rather than by a lane, and
 # are pruned on every pass so a pane that stops being the overseer's leaves
 # nothing behind:
@@ -798,6 +828,19 @@ parse_argv "$@"
 
 [[ "$INTERVAL" =~ ^[0-9]+$ ]] || die interval-invalid "" "value=$INTERVAL"
 [[ "$MAX_LOOPS" =~ ^[0-9]+$ && "$MAX_LOOPS" -ge 1 ]] || die max-loops-invalid "" "value=$MAX_LOOPS"
+# The age a usage figure may be served at, named to every lane reader a pass
+# runs: two of this watch's intervals. Two reads are one interval of sleep plus
+# a pass's own work apart, so a window of one interval has always expired by
+# the next pass and every pass would post for every account; two cover any
+# pass whose work is shorter than its sleep. A larger ORCH_LANES_USAGE_MAX_AGE
+# the settings already set is kept, since this variable outranks the settings
+# ladder, and a value that is not a whole number is passed on for `lanes` to
+# refuse rather than overwritten. `lanes` only ever widens its TTL with it and
+# never widens a TTL of 0.
+LANES_MAX_AGE="${ORCH_LANES_USAGE_MAX_AGE:-0}"
+if [[ "$LANES_MAX_AGE" =~ ^[0-9]+$ ]] && (( 10#$LANES_MAX_AGE < 10#$INTERVAL * 2 )); then
+  LANES_MAX_AGE=$((10#$INTERVAL * 2))
+fi
 # The same alphabet oversee-succeed refuses outside of, judged here so a repeat
 # run is refused at its start rather than at the first pass that records a line.
 [[ "$HANDOFF" =~ ^[A-Za-z0-9._/-]+$ ]] || die handoff-invalid "" "path=$HANDOFF"
@@ -1385,6 +1428,11 @@ require_item_helpers
 # notes arrive on, so a missing reader would leave them unread with nothing said.
 [[ -x "$LANE_MAIL" ]] \
   || die helper-missing "" "path=$LANE_MAIL" "setting=OVERSEE_WATCH_LANE_MAIL"
+# The account read is the only way capacity reaches the overseer between
+# events, so a missing reader stops the watch rather than leave every account
+# change unsaid.
+[[ -x "$LANES_CLI" ]] \
+  || die helper-missing "" "path=$LANES_CLI" "setting=OVERSEE_WATCH_LANES"
 # Inside tmux the pane checks are how an item's lane is watched, so a run
 # naming items and no window is told which checks it is not running, as the
 # two notes above say for the reducer and the merged check. Outside tmux there
@@ -2121,7 +2169,7 @@ overseer_marks_reset() {
 }
 
 overseer_marks_judge() {
-  local rc=0 line first field BOUND_BY max_age
+  local rc=0 line first field BOUND_BY
   local errf="$WORK_DIR/overseer-mark.err"
   [[ "$OVERSEER_MARK_READ" -eq 0 ]] || return "$OVERSEER_MARK_RC"
   OVERSEER_MARK_READ=1
@@ -2148,23 +2196,10 @@ overseer_marks_judge() {
   # pass then delays every other event it carries, which is the outcome this
   # ceiling exists to bound and not one it can prevent there.
   BOUND_BY=()
-  ! command -v timeout >/dev/null 2>&1 || BOUND_BY=(timeout "$MARK_CEILING")
-  # The age a usage figure may be served at, named to the lane reader inside
-  # that judgement: two of this watch's intervals. Two judgements are one
-  # interval of sleep plus a pass's own work apart, so a window of one interval
-  # has always expired by the next pass and every pass would post for every
-  # account; two cover any pass whose work is shorter than its sleep. A larger
-  # ORCH_LANES_USAGE_MAX_AGE the settings already set is kept, since this
-  # variable outranks the settings ladder, and a value that is not a whole
-  # number is passed on for `lanes` to refuse rather than overwritten. `lanes`
-  # only ever widens its TTL with it and never widens a TTL of 0.
-  max_age="${ORCH_LANES_USAGE_MAX_AGE:-0}"
-  if [[ "$max_age" =~ ^[0-9]+$ ]] && (( 10#$max_age < 10#$INTERVAL * 2 )); then
-    max_age=$((10#$INTERVAL * 2))
-  fi
-  line="$(ORCH_LANES_USAGE_MAX_AGE="$max_age" ${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SUCCEED" --check-marks 2>"$errf")" || rc=$?
+  ! command -v timeout >/dev/null 2>&1 || BOUND_BY=(timeout "$READ_CEILING")
+  line="$(ORCH_LANES_USAGE_MAX_AGE="$LANES_MAX_AGE" ${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SUCCEED" --check-marks 2>"$errf")" || rc=$?
   if (( rc != 0 )); then
-    [[ "$rc" -ne 124 ]] || overseer_note overseer-mark-unjudged "path=$SUCCEED" "seconds=$MARK_CEILING"
+    [[ "$rc" -ne 124 ]] || overseer_note overseer-mark-unjudged "path=$SUCCEED" "seconds=$READ_CEILING"
     [[ "$rc" -eq 124 ]] || overseer_note overseer-mark-unjudged "path=$SUCCEED" "exit=$rc"
     [[ ! -s "$errf" ]] || cat -- "$errf" >&2
     return 1
@@ -2772,9 +2807,94 @@ check_lanes() {
   [[ "$close_failed" -eq 0 ]] || exit 2
 }
 
+# One `lanes list` per pass, the whole account reading of that pass: the
+# account events below and the heartbeat's roster are both this answer, so the
+# two never describe an account differently. Each row is `<row key> TAB <row
+# value> TAB <fields>`, the key and value laid out with the rows above and
+# <fields> the text both the event and the roster print. `verdict` is
+# `lanes`'s own wall judgement against ORCH_LANE_MAX_PCT, so the threshold and
+# its default are read in one place. A read that failed or overran its ceiling
+# leaves ACCOUNT_ROSTER_RC non-zero, which the heartbeat reports rather than
+# printing no accounts.
+ACCOUNT_ROSTER=""
+ACCOUNT_ROSTER_RC=1
+account_roster_read() {
+  local errf="$WORK_DIR/accounts.err" rc=0 out BOUND_BY=()
+  ACCOUNT_ROSTER=""
+  ACCOUNT_ROSTER_RC=1
+  ! command -v timeout >/dev/null 2>&1 || BOUND_BY=(timeout "$READ_CEILING")
+  out="$(ORCH_LANES_USAGE_MAX_AGE="$LANES_MAX_AGE" ${BOUND_BY[@]+"${BOUND_BY[@]}"} "$LANES_CLI" list --json 2>"$errf")" || rc=$?
+  # `lanes` writes its own keyed notices on a listing it still answered, a
+  # provider it could not ask among them; those qualify this roster and pass
+  # through with it.
+  [[ ! -s "$errf" ]] || cat -- "$errf" >&2
+  if (( rc != 0 )); then
+    [[ "$rc" -ne 124 ]] || overseer_note account-unread "path=$LANES_CLI" "seconds=$READ_CEILING"
+    [[ "$rc" -eq 124 ]] || overseer_note account-unread "path=$LANES_CLI" "exit=$rc"
+    return 1
+  fi
+  # A record missing the fields a row is keyed and judged on is not an account
+  # this watch can compare, and refusing the read is what keeps it from
+  # reading as an unchanged one.
+  out="$(jq -r '.[]
+    | (.status // error("status missing")) as $status
+    | (.verdict // error("verdict missing")) as $verdict
+    | ["\(.harness)|\(.measured_through)|\(.config_dir)",
+       "\($status)|\($verdict)|\(.binding_resets_at // "-")",
+       "\(.alias) harness=\(.harness) through=\(.measured_through) status=\($status) verdict=\($verdict) headroom_pct=\(.headroom_pct // "-") binding_bucket=\(.binding_bucket // "-") binding_resets_at=\(.binding_resets_at // "-")"]
+    | @tsv' <<<"$out" 2>"$errf")" || {
+    overseer_note account-unread "path=$LANES_CLI" "parse=failed"
+    [[ ! -s "$errf" ]] || cat -- "$errf" >&2
+    return 1
+  }
+  ACCOUNT_ROSTER="$out"
+  ACCOUNT_ROSTER_RC=0
+}
+
+# An account row changes when its status, its verdict against
+# ORCH_LANE_MAX_PCT, or its binding bucket's reset changes. The first sighting
+# of an account is its baseline and says nothing. A reset is news only once
+# the reset the baseline holds has passed AND the reading has moved off it: a
+# cached figure still naming the old reset is the same wall until the account
+# is measured again, and the event is what carries the fresh headroom. A reset
+# time that moved while still ahead is a different bucket binding, not a reset.
+# An account the listing stops naming keeps its row, so one a provider drops
+# for a pass is compared against its last reading when it comes back.
+check_accounts() {
+  local key value fields prior state="${PW_SEEN[0]}" change
+  local was_status was_verdict was_resets status verdict resets reset_epoch
+  account_roster_read || return 0
+  while IFS=$'\t' read -r key value fields; do
+    [[ -n "$key" ]] || continue
+    if ! prior="$(lane_row_get account "$state" "$key")"; then
+      die state-read-failed "" "account=$key" "row=account"
+    fi
+    [[ "$prior" != "$value" ]] || continue
+    state="$(lane_row_set account "$state" "$key" "$value")"
+    [[ -n "$prior" ]] || continue
+    IFS='|' read -r was_status was_verdict was_resets <<<"$prior"
+    IFS='|' read -r status verdict resets <<<"$value"
+    change=""
+    [[ "$was_status" == "$status" ]] || change+=",status"
+    [[ "$was_verdict" == "$verdict" ]] || change+=",headroom"
+    if [[ "$was_resets" != - && "$was_resets" != "$resets" ]]; then
+      if reset_epoch="$(to_epoch "$was_resets")"; then
+        [[ "$reset_epoch" -gt "$PASS_NOW" ]] || change+=",reset"
+      else
+        overseer_note account-reset-unparsed "account=$key" "binding_resets_at=$was_resets"
+      fi
+    fi
+    [[ -n "$change" ]] || continue
+    echo "EVENT account $fields change=${change#,} was=$was_status/$was_verdict"
+    PASS_EVENT=1
+  done <<<"$ACCOUNT_ROSTER"
+  lane_row_commit "$state"
+}
+
 # Every --repo's open PRs, each line prefixed with its repo as the reducer's
 # are, and all of them read before the event line goes out: a repo that
-# cannot be listed is a failed pass, not a heartbeat missing a repo.
+# cannot be listed is a failed pass, not a heartbeat missing a repo. The
+# account roster follows, as the last pass read it.
 heartbeat() {
   local errf="$WORK_DIR/open.err" repo open open_all=""
   for repo in "${REPOS[@]}"; do
@@ -2785,6 +2905,12 @@ heartbeat() {
   done
   echo "EVENT heartbeat loops=$MAX_LOOPS interval=${INTERVAL}s since=${SINCE:-none}"
   [[ -z "$open_all" ]] || printf '%s' "$open_all"
+  if [[ "$ACCOUNT_ROSTER_RC" -ne 0 ]]; then
+    echo "account-roster unread"
+  else
+    echo "account-roster accounts=$(grep -c . <<<"$ACCOUNT_ROSTER" || true)"
+    [[ -z "$ACCOUNT_ROSTER" ]] || awk -F'\t' '{ print "account " $3 }' <<<"$ACCOUNT_ROSTER"
+  fi
   pr_watch_context
   exit 0
 }
@@ -2824,6 +2950,7 @@ while :; do
     check_triage
     check_mail
     check_lanes
+    check_accounts
   fi
   [[ "$OVERSEER_SUCCEEDED" -eq 0 ]] || exit 3
   [[ "$OVERSEER_STOP" -eq 0 || "$REPEAT_CHILD" -eq 0 ]] || exit 4

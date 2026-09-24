@@ -1,11 +1,12 @@
 # Shared sandbox for the oversee-watch suites: the stub binaries every case
 # drives, the assertion helpers, and one `run_watch` entry point.
 #
-# oversee-watch reads GitHub (pr-watch, `gh pr list`), Linear, and the tmux
-# panes of the lane windows. oversee_watch.sh covers GitHub and process-wide
-# failures; oversee_watch_triage.sh covers the tracker; the three lane suites
-# cover pane behavior, prompt state, and spent-account banners. They share this
-# sandbox.
+# oversee-watch reads GitHub (pr-watch, `gh pr list`), Linear, the tmux
+# panes of the lane windows, and the accounts through `lanes list`.
+# oversee_watch.sh covers GitHub and process-wide failures;
+# oversee_watch_triage.sh covers the tracker; the three lane suites cover pane
+# behavior, prompt state, and spent-account banners; oversee_watch_accounts.sh
+# covers account events and the heartbeat roster. They share this sandbox.
 #
 # Sourced, never run: the runners glob tests/*.sh, so nothing here executes on
 # its own. Sourcing it sets the shell options, builds $TMP_ROOT and the stub
@@ -440,9 +441,27 @@ rc=0
 [[ "$rc" -eq 0 ]] || exit "$rc"
 EOF
 
+# Account reader: `lanes list --json`, answered from lanes.<N>.json on the Nth
+# call of the case and lanes.json otherwise, `[]` with neither, so no case
+# reads the accounts of the machine running it. lanes.rc is the exit status and
+# every call's argv lands in lanes.args.
+cat > "$TMP_ROOT/bin/lanes-stub.sh" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+printf '%s\n' "$*" >> "$STUB_DIR/lanes.args"
+n=0; [[ -f "$STUB_DIR/lanes.calls" ]] && n="$(cat "$STUB_DIR/lanes.calls")"
+n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/lanes.calls"
+rc=0; [[ -f "$STUB_DIR/lanes.rc" ]] && rc="$(cat "$STUB_DIR/lanes.rc")"
+[[ "$rc" -eq 0 ]] || { printf 'lanes: stub-refused rc=%s\n' "$rc" >&2; exit "$rc"; }
+if [[ -f "$STUB_DIR/lanes.$n.json" ]]; then cat "$STUB_DIR/lanes.$n.json"
+elif [[ -f "$STUB_DIR/lanes.json" ]]; then cat "$STUB_DIR/lanes.json"
+else printf '[]\n'; fi
+EOF
+
 chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pgrep" \
   "$TMP_ROOT/bin/pr-watch-stub.sh" "$TMP_ROOT/bin/linear-stub.sh" "$TMP_ROOT/bin/date" \
-  "$TMP_ROOT/bin/workflow-state-stub.sh" "$TMP_ROOT/bin/lane-close-stub.sh"
+  "$TMP_ROOT/bin/workflow-state-stub.sh" "$TMP_ROOT/bin/lane-close-stub.sh" \
+  "$TMP_ROOT/bin/lanes-stub.sh"
 
 STUB_DIR=""
 STATE_DIR=""
@@ -512,6 +531,7 @@ run_watch() {
            OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \
            OVERSEE_WATCH_WORKFLOW_STATE="$TMP_ROOT/bin/workflow-state-stub.sh" \
            OVERSEE_WATCH_LANE_CLOSE="$TMP_ROOT/bin/lane-close-stub.sh" \
+           OVERSEE_WATCH_LANES="$TMP_ROOT/bin/lanes-stub.sh" \
            REAL_LANE_HOST="$REPO_ROOT/skills/orch/scripts/lane-host" \
            REAL_WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state" \
            OVERSEE_WATCH_STATE_DIR="$STATE_DIR" \

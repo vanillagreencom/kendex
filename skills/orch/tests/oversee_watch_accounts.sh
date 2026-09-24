@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# oversee-watch account events and the heartbeat's account roster: one
+# `lanes list --json` reading per pass, an `account` event only when an
+# account's status, its verdict against ORCH_LANE_MAX_PCT or its binding
+# bucket's reset changed against the baseline, and the same reading printed
+# under a heartbeat. Every run is one pass (--max-loops 1), so the Nth run
+# reads the stub's lanes.<N>.json.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+
+# shellcheck source=lib/oversee-watch-harness.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
+
+HEARTBEAT='EVENT heartbeat loops=1 interval=0s since=none'
+
+# account ALIAS STATUS VERDICT HEADROOM RESETS — one `lanes list --json`
+# record; `-` for HEADROOM or RESETS is the null an unmeasured account carries.
+account() {
+  jq -nc --arg a "$1" --arg s "$2" --arg v "$3" --arg h "$4" --arg r "$5" '{
+    alias: $a, harness: "claude", config_dir: ("/home/u/." + $a), measured_through: "local",
+    status: $s, verdict: $v,
+    headroom_pct: (if $h == "-" then null else ($h | tonumber) end),
+    binding_bucket: (if $r == "-" then null else "weekly" end),
+    binding_resets_at: (if $r == "-" then null else $r end)}'
+}
+
+# accounts N RECORD... — the listing the Nth read answers.
+accounts() {
+  local n="$1"
+  shift
+  jq -sc . <<<"$(printf '%s\n' "$@")" > "$STUB_DIR/lanes.$n.json"
+}
+
+# pass — one watch run; OUT, RC and ERR (a file) are what the assertions read.
+RUN_SEQ=0
+pass() {
+  ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
+  OUT="$(run_watch "$@" -- --max-loops 1 2>"$ERR")" && RC=0 || RC=$?
+}
+
+account_events() { grep -c '^EVENT account ' <<<"$OUT" || true; }
+
+epoch() { "$OVERSEE_TEST_REAL_DATE" -u -d "$1" +%s; }
+
+echo "=== oversee-watch accounts ==="
+
+# The renewal the overseer never heard about: an account read `expired` on
+# one pass and `ok` on the next. The unchanged account beside it says nothing.
+new_case renewal
+EXPIRED="$(account claude expired unmeasured - -)"
+RENEWED="$(account claude ok room 80 2026-10-01T00:00:00Z)"
+STEADY="$(account eclaude ok room 40 2026-10-02T00:00:00Z)"
+accounts 1 "$EXPIRED" "$STEADY"
+accounts 2 "$RENEWED" "$STEADY"
+accounts 3 "$RENEWED" "$STEADY"
+pass
+assert_eq "rc=$RC first=$(head -1 <<<"$OUT") events=$(account_events)" "rc=0 first=$HEARTBEAT events=0" \
+  "the first reading of every account is its baseline and emits nothing" "$ERR"
+assert_eq "$(grep '^account' <<<"$OUT")" "account-roster accounts=2
+account claude harness=claude through=local status=expired verdict=unmeasured headroom_pct=- binding_bucket=- binding_resets_at=-
+account eclaude harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at=2026-10-02T00:00:00Z" \
+  "the heartbeat carries one roster line per account from the pass's own reading" "$ERR"
+assert_eq "$(cat "$STUB_DIR/lanes.args")" "list --json" "the pass reads the accounts through lanes list --json" "$ERR"
+pass
+assert_eq "rc=$RC events=$(account_events)" "rc=0 events=1" "the renewal pass emits exactly one account event" "$ERR"
+assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
+  "EVENT account claude harness=claude through=local status=ok verdict=room headroom_pct=80 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=status,headroom was=expired/unmeasured" \
+  "the event names the account, its headroom and reset, and what changed from what" "$ERR"
+assert_not_contains "$OUT" "account-roster" "a pass that emits an event prints no roster with it" "$ERR"
+pass
+assert_eq "rc=$RC first=$(head -1 <<<"$OUT") events=$(account_events)" "rc=0 first=$HEARTBEAT events=0" \
+  "the pass after the renewal reads the same state and emits nothing" "$ERR"
+assert_contains "$OUT" "account claude harness=claude through=local status=ok verdict=room headroom_pct=80" \
+  "the next heartbeat's roster carries the renewed reading" "$ERR"
+
+# Headroom crossing the launch bound, as lanes judges it, in both directions.
+new_case crossing
+accounts 1 "$(account claude ok room 10 2026-10-01T00:00:00Z)"
+accounts 2 "$(account claude ok walled 3 2026-10-01T00:00:00Z)"
+accounts 3 "$(account claude ok room 30 2026-10-01T00:00:00Z)"
+accounts 4 "$(account claude ok room 50 2026-10-01T00:00:00Z)"
+pass
+pass
+assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
+  "EVENT account claude harness=claude through=local status=ok verdict=walled headroom_pct=3 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/room" \
+  "headroom falling across the bound is an account event" "$ERR"
+pass
+assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
+  "EVENT account claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled" \
+  "headroom climbing back across the bound is an account event" "$ERR"
+pass
+assert_eq "rc=$RC first=$(head -1 <<<"$OUT") events=$(account_events)" "rc=0 first=$HEARTBEAT events=0" \
+  "headroom moving within the same side of the bound emits nothing" "$ERR"
+
+# A binding bucket reset: news once the reset has passed and the reading has
+# moved off it, never while a cached figure still names it, and never when a
+# reset time moves while it is still ahead.
+new_case reset
+BEFORE="$(epoch 2026-09-24T11:00:00Z)"
+AFTER="$(epoch 2026-09-24T13:00:00Z)"
+accounts 1 "$(account claude ok walled 2 2026-09-24T12:00:00Z)"
+accounts 2 "$(account claude ok walled 2 2026-09-24T12:30:00Z)"
+accounts 3 "$(account claude ok walled 2 2026-09-24T12:30:00Z)"
+accounts 4 "$(account claude ok walled 2 2026-10-01T12:00:00Z)"
+printf '%s\n' "$BEFORE" > "$STUB_DIR/now.epoch"
+pass
+pass
+assert_eq "rc=$RC first=$(head -1 <<<"$OUT") events=$(account_events)" "rc=0 first=$HEARTBEAT events=0" \
+  "a reset time that moves while still ahead is no reset" "$ERR"
+printf '%s\n' "$AFTER" > "$STUB_DIR/now.epoch"
+pass
+assert_eq "rc=$RC first=$(head -1 <<<"$OUT") events=$(account_events)" "rc=0 first=$HEARTBEAT events=0" \
+  "a passed reset still named by the reading waits for a fresh one" "$ERR"
+pass
+assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
+  "EVENT account claude harness=claude through=local status=ok verdict=walled headroom_pct=2 binding_bucket=weekly binding_resets_at=2026-10-01T12:00:00Z change=reset was=ok/walled" \
+  "the reading moving off a passed reset is an account event naming the reset" "$ERR"
+
+# Any other event opens the block, and the roster stays with the heartbeat.
+new_case other_event
+accounts 1 "$(account claude ok room 80 2026-10-01T00:00:00Z)"
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+ERR="$TMP_ROOT/other-event.err"
+OUT="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$ERR")" && RC=0 || RC=$?
+assert_eq "rc=$RC first=$(head -1 <<<"$OUT")" "rc=0 first=EVENT lane-asking gh-2" \
+  "a lane-asking pass reports its event" "$ERR"
+assert_not_contains "$OUT" "account-roster" "a pass with another event prints no roster with it" "$ERR"
+
+# A reading that failed is said, never printed as a fleet with no accounts.
+new_case unread
+printf '1\n' > "$STUB_DIR/lanes.rc"
+pass
+assert_eq "rc=$RC first=$(head -1 <<<"$OUT") roster=$(grep '^account' <<<"$OUT" || true)" \
+  "rc=0 first=$HEARTBEAT roster=account-roster unread" \
+  "a failed read puts account-roster unread in the heartbeat" "$ERR"
+assert_eq "$(grep -c "^oversee-watch: account-unread path=$TMP_ROOT/bin/lanes-stub.sh exit=1$" "$ERR" || true)" "1" \
+  "the failed read is noted with the reader and its exit" "$ERR"
+
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]
