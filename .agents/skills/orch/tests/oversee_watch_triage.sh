@@ -163,6 +163,7 @@ done
 for row in \
   "a missing tracker CLI is named with its remedy|OVERSEE_WATCH_TRACKER=%B/absent-tracker|tracker.out=[{\"id\":\"KEN-1200\",\"created_at\":\"2026-08-15T10:00:00.000Z\"}]||rc=2 stdout=empty stderr~oversee-watch:+helper-missing+path%e%B/absent-tracker=true stderr~OVERSEE_WATCH_TRACKER=true" \
   "a missing workflow-state CLI is named with its remedy|OVERSEE_WATCH_WORKFLOW_STATE=%B/absent-workflow-state|tracker.out=[{\"id\":\"KEN-1200\",\"created_at\":\"2026-08-15T10:00:00.000Z\"}]||rc=2 stdout=empty stderr~oversee-watch:+helper-missing+path%e%B/absent-workflow-state=true stderr~OVERSEE_WATCH_WORKFLOW_STATE=true" \
+  "a missing account reader is named with its remedy|OVERSEE_WATCH_LANES=%B/absent-lanes|||rc=2 stdout=empty stderr~oversee-watch:+helper-missing+path%e%B/absent-lanes=true stderr~OVERSEE_WATCH_LANES=true" \
   "a tracker list failure keeps its real cause||tracker.rc=2;tracker.err=E_TRACKER_UNAVAILABLE||rc=2 stdout=empty stderr~oversee-watch:+tracker-list-failed+team%ekendex+exit%e2=true stderr~E_TRACKER_UNAVAILABLE=true" \
   "malformed tracker output is named||tracker.out={}||rc=2 stdout=empty stderr~tracker-type+expected%earray+actual%eobject=true" \
   "an unwritable triage baseline names the shared state file|OVERSEE_WATCH_PR_WATCH=%B/absent-pr-watch|tracker.out=[{\"id\":\"KEN-1200\",\"created_at\":\"2026-08-15T10:00:00.000Z\"}];oversee-state.json={\"triaged\":[{\"issue\":\"KEN-1200\",\"verdict\":\"kept\"}]};dir=$STATE_FILE_NAME||rc=2 stdout=empty stderr~oversee-watch:+state-target-invalid=true" \

@@ -443,12 +443,15 @@ EOF
 
 # Account reader: `lanes list --json`, answered from lanes.<N>.json on the Nth
 # call of the case and lanes.json otherwise, `[]` with neither, so no case
-# reads the accounts of the machine running it. lanes.rc is the exit status and
-# every call's argv lands in lanes.args.
+# reads the accounts of the machine running it. lanes.rc is the exit status,
+# lanes.sleep the seconds to wait before answering, every call's argv lands in
+# lanes.args and the usage age it was handed in lanes.max-age.
 cat > "$TMP_ROOT/bin/lanes-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 printf '%s\n' "$*" >> "$STUB_DIR/lanes.args"
+printf '%s\n' "${ORCH_LANES_USAGE_MAX_AGE:-unset}" >> "$STUB_DIR/lanes.max-age"
+[[ ! -f "$STUB_DIR/lanes.sleep" ]] || sleep "$(cat "$STUB_DIR/lanes.sleep")"
 n=0; [[ -f "$STUB_DIR/lanes.calls" ]] && n="$(cat "$STUB_DIR/lanes.calls")"
 n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/lanes.calls"
 rc=0; [[ -f "$STUB_DIR/lanes.rc" ]] && rc="$(cat "$STUB_DIR/lanes.rc")"

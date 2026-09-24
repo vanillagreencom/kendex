@@ -959,9 +959,9 @@ for row in \
   else
     run TMUX_PANE="$PANE" -- --max-loops 1 --interval 45
   fi
-  assert_eq "judged=$(succeed_calls --check-marks) age=$(paste -sd, "$STUB_DIR/succeed.max-age")" \
-    "judged=1 age=$want" \
-    "the judgement's usage window: $label" "$ERR"
+  assert_eq "judged=$(succeed_calls --check-marks) age=$(paste -sd, "$STUB_DIR/succeed.max-age") accounts=$(paste -sd, "$STUB_DIR/lanes.max-age")" \
+    "judged=1 age=$want accounts=$want" \
+    "the usage window of both account reads: $label" "$ERR"
 done
 
 # One reading is a poll, exactly as it is for a death.

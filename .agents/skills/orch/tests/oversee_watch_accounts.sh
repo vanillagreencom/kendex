@@ -101,7 +101,8 @@ AFTER="$(epoch 2026-09-24T13:00:00Z)"
 accounts 1 "$(account claude ok walled 2 2026-09-24T12:00:00Z)"
 accounts 2 "$(account claude ok walled 2 2026-09-24T12:30:00Z)"
 accounts 3 "$(account claude ok walled 2 2026-09-24T12:30:00Z)"
-accounts 4 "$(account claude ok walled 2 2026-10-01T12:00:00Z)"
+accounts 4 "$(account claude ok room 20 2026-09-24T12:30:00Z)"
+accounts 5 "$(account claude ok room 20 2026-10-01T12:00:00Z)"
 printf '%s\n' "$BEFORE" > "$STUB_DIR/now.epoch"
 pass
 pass
@@ -113,8 +114,40 @@ assert_eq "rc=$RC first=$(head -1 <<<"$OUT") events=$(account_events)" "rc=0 fir
   "a passed reset still named by the reading waits for a fresh one" "$ERR"
 pass
 assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
-  "EVENT account claude harness=claude through=local status=ok verdict=walled headroom_pct=2 binding_bucket=weekly binding_resets_at=2026-10-01T12:00:00Z change=reset was=ok/walled" \
+  "EVENT account claude harness=claude through=local status=ok verdict=room headroom_pct=20 binding_bucket=weekly binding_resets_at=2026-09-24T12:30:00Z change=headroom was=ok/walled" \
+  "a verdict change beside a passed reset the reading still names reports the headroom and no reset" "$ERR"
+pass
+assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
+  "EVENT account claude harness=claude through=local status=ok verdict=room headroom_pct=20 binding_bucket=weekly binding_resets_at=2026-10-01T12:00:00Z change=reset was=ok/room" \
   "the reading moving off a passed reset is an account event naming the reset" "$ERR"
+
+# An account the listing drops for a pass keeps its baseline row, so its
+# return is judged against the reading before it went missing.
+new_case dropped
+accounts 1 "$(account claude ok walled 2 2026-10-01T00:00:00Z)"
+accounts 2 "$(account eclaude ok room 40 2026-10-02T00:00:00Z)"
+accounts 3 "$(account claude ok room 30 2026-10-01T00:00:00Z)"
+pass
+pass
+assert_eq "rc=$RC first=$(head -1 <<<"$OUT") events=$(account_events)" "rc=0 first=$HEARTBEAT events=0" \
+  "a pass that does not name the account emits nothing about it" "$ERR"
+pass
+assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
+  "EVENT account claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled" \
+  "the account's return is judged against its reading before the gap" "$ERR"
+
+# A baseline reset no date can read settles no reset, is noted once, and the
+# status and headroom changes beside it are still reported.
+new_case reset_unparsed
+accounts 1 "$(account claude ok walled 2 not-a-time)"
+accounts 2 "$(account claude ok room 30 2026-10-01T00:00:00Z)"
+pass
+pass
+assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
+  "EVENT account claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled" \
+  "an unparseable baseline reset still reports the headroom change and no reset" "$ERR"
+assert_eq "$(grep -c "^oversee-watch: account-reset-unparsed account=claude|local|/home/u/.claude binding_resets_at=not-a-time$" "$ERR" || true)" "1" \
+  "the unparseable baseline reset is noted once, naming the account and the stamp" "$ERR"
 
 # Claude's usage endpoint writes a reset with fractional seconds and +00:00,
 # which the BSD date arm cannot read: the watch keeps whole-second UTC with a
@@ -161,6 +194,43 @@ assert_eq "rc=$RC first=$(head -1 <<<"$OUT") roster=$(grep '^account' <<<"$OUT" 
   "an empty listing at exit 0 puts account-roster unread in the heartbeat" "$ERR"
 assert_eq "$(grep -c "^oversee-watch: account-unread path=$TMP_ROOT/bin/lanes-stub.sh parse=failed$" "$ERR" || true)" "1" \
   "the empty listing is noted as a parse failure" "$ERR"
+
+# A record missing the status or the verdict is not an account the watch can
+# compare, and the read is refused rather than reading it as unchanged.
+for field in status verdict; do
+  new_case "missing_$field"
+  jq -c --arg f "$field" '[del(.[$f])]' <<<"$(account claude ok room 80 2026-10-01T00:00:00Z)" > "$STUB_DIR/lanes.1.json"
+  pass
+  assert_eq "rc=$RC first=$(head -1 <<<"$OUT") roster=$(grep '^account' <<<"$OUT" || true)" \
+    "rc=0 first=$HEARTBEAT roster=account-roster unread" \
+    "a record with no $field puts account-roster unread in the heartbeat" "$ERR"
+  assert_eq "$(grep -c "^oversee-watch: account-unread path=$TMP_ROOT/bin/lanes-stub.sh parse=failed$" "$ERR" || true)" "1" \
+    "a record with no $field is noted once as a parse failure" "$ERR"
+done
+
+# A reader that overruns its ceiling is noted with the seconds it was given.
+# The copy shortens the ceiling so the row need not wait out the real one.
+if command -v timeout >/dev/null 2>&1; then
+  CEILING_DIR="$TMP_ROOT/ceiling"
+  mkdir -p "$CEILING_DIR/orch"
+  cp -R "$REPO_ROOT/skills/orch/scripts" "$CEILING_DIR/orch/scripts"
+  ln -s "$REPO_ROOT/skills/github" "$CEILING_DIR/github"
+  sed 's/^READ_CEILING=60$/READ_CEILING=1/' \
+    "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$CEILING_DIR/orch/scripts/oversee-watch"
+  chmod +x "$CEILING_DIR/orch/scripts/oversee-watch"
+  assert_eq "$(cmp -s "$CEILING_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+    "differs" "the shortened-ceiling copy really differs from the watch"
+  new_case ceiling
+  printf '3\n' > "$STUB_DIR/lanes.sleep"
+  WATCH_BIN="$CEILING_DIR/orch/scripts/oversee-watch" pass
+  assert_eq "rc=$RC first=$(head -1 <<<"$OUT") roster=$(grep '^account' <<<"$OUT" || true)" \
+    "rc=0 first=$HEARTBEAT roster=account-roster unread" \
+    "a read past its ceiling puts account-roster unread in the heartbeat" "$ERR"
+  assert_eq "$(grep -c "^oversee-watch: account-unread path=$TMP_ROOT/bin/lanes-stub.sh seconds=1$" "$ERR" || true)" "1" \
+    "the overrun is noted with the seconds the ceiling allowed" "$ERR"
+else
+  printf '  skip  a read past its ceiling: this host has no timeout to bound one with\n'
+fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
