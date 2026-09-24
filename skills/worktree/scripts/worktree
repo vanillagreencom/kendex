@@ -324,7 +324,10 @@ branch_holds_remote_commits() { # WT EXPECTED_OID -> 0 when every remote-only co
   [[ "$remote_only" == 0 ]]
 }
 
-remote_ref_lease_arg() {
+# The remote OID a force-with-lease push of BRANCH is pinned to, empty where
+# the remote branch must not exist yet. Refuses a remote OID the local branch
+# neither contains nor holds a push authorization for.
+remote_ref_lease_oid() {
   local wt="$1" remote="$2" branch="$3"
   local remote_head_ref="refs/heads/$branch"
   local remote_tracking_ref="refs/remotes/$remote/$branch"
@@ -342,7 +345,6 @@ remote_ref_lease_arg() {
       fetch_status=$?
       if grep -qiE "couldn't find remote ref|could not find remote ref|remote ref does not exist|remote branch .* not found" "$fetch_err"; then
         rm -f "$fetch_err"
-        printf '%s\n' "--force-with-lease=${remote_head_ref}:"
         return 0
       fi
 
@@ -358,7 +360,6 @@ remote_ref_lease_arg() {
     # Empty expectation means the remote branch must not already exist. This
     # keeps first pushes safe and prevents overwriting an existing branch that
     # the local checkout has never observed.
-    printf '%s\n' "--force-with-lease=${remote_head_ref}:"
     return 0
   fi
 
@@ -366,22 +367,24 @@ remote_ref_lease_arg() {
      ! restack_push_authorization_matches "$wt" "$remote" "$branch" "$expected_oid"; then
     worktree_message push-remote-uncontained "$remote/$branch" "Error: Remote '$remote/$branch' points at $expected_oid, which is not contained in local branch '$branch'." >&2
     # A branch that already holds the remote's work under rewritten SHAs was
-    # moved off the remote by a rewrite no authorization covers, so fetching
-    # and rebasing would replay commits that rewrite superseded. Naming the
-    # cause is the whole route here: no verb republishes such a branch, because
-    # a rewrite verb run on it now rewrites nothing and so records nothing. A
-    # remote that genuinely moved ahead carries work this branch lacks, and
-    # keeps the fetch-and-rebase route.
+    # moved off the remote by a rewrite no recorded authorization covers, so
+    # fetching and rebasing would replay commits that rewrite superseded. No
+    # verb republishes such a branch, because a rewrite verb run on it now
+    # rewrites nothing and so records nothing, so the route is a push pinned
+    # to the OID this refusal read. A remote that genuinely moved ahead
+    # carries work this branch lacks, and keeps the fetch-and-rebase route.
     if branch_holds_remote_commits "$wt" "$expected_oid"; then
       echo "Local branch '$branch' already holds every commit on '$remote/$branch' under rewritten SHAs, so fetching and rebasing would replay superseded work." >&2
-      echo "No push authorization covers that rewrite: it was not made by 'worktree push' or the guarded restack, which record one before they rewrite." >&2
+      echo "No recorded push authorization covers this rewrite: a rewrite made outside 'worktree push' and the guarded restack, or by an earlier kendex, carries none." >&2
+      echo "Republish the branch pinned to the remote OID above:" >&2
+      echo "  git -C \"$wt\" push --force-with-lease=refs/heads/$branch:$expected_oid $remote $branch" >&2
     else
       echo "Fetch and rebase/merge '$remote/$branch' before using worktree push." >&2
     fi
     return 1
   fi
 
-  printf '%s\n' "--force-with-lease=${remote_head_ref}:${expected_oid}"
+  printf '%s\n' "$expected_oid"
 }
 
 # Which judge refused a push, read off the transcript, one predicate each.
@@ -3400,16 +3403,10 @@ case "${1:-}" in
 
     CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
     PUSH_LEASE=()
-    # The remote OID the rewrite below has to be authorized against is read off
-    # the lease the one judge above returned, never by reading the ref a second
-    # time: a Git ref name cannot hold a colon, so the tail of
-    # `--force-with-lease=refs/heads/<branch>:<oid>` is that judge's answer, and
-    # it is empty exactly where the lease expects no remote branch at all.
     LEASE_EXPECTED_OID=""
     if [[ "$AUTO_REBASE" == true && -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
-      if LEASE_ARG="$(remote_ref_lease_arg "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH")"; then
-        PUSH_LEASE=("$LEASE_ARG")
-        LEASE_EXPECTED_OID="${LEASE_ARG##*:}"
+      if LEASE_EXPECTED_OID="$(remote_ref_lease_oid "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH")"; then
+        PUSH_LEASE=("--force-with-lease=refs/heads/$CURRENT_BRANCH:$LEASE_EXPECTED_OID")
       else
         exit 1
       fi
@@ -3469,6 +3466,15 @@ case "${1:-}" in
             worktree_message push-rebase-failed "$CURRENT_BRANCH" "Error: Rebase onto origin/$DEFAULT_BRANCH failed (conflicts). Push with --no-rebase or resolve manually." >&2
             exit 1
           fi
+          # The rewrite is done, so the authorization prepared before it
+          # becomes the head a retry's lease accepts. Every refusal below
+          # leaves this rewrite standing, which is the state a retry has to
+          # publish, and none of them is thereby waved through: an unmapped
+          # rewrite's record is still on disk, and read_unmapped_rewrite
+          # refuses every push until the map is durable or the record removed.
+          if [[ -n "$LEASE_EXPECTED_OID" ]]; then
+            finalize_pending_restack_authorization "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH" "$LEASE_EXPECTED_OID" || exit 1
+          fi
           POST_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
           if ! PUSH_MAP_LINES="$(emit_rebase_map "$PRE_REBASE_COMMITS" "$POST_REBASE_COMMITS")"; then
             # The record written before the rebase stays: a retry reads it
@@ -3497,13 +3503,6 @@ case "${1:-}" in
             echo "Reconcile every recorded SHA against the worktree reflog, then remove the record:" >&2
             echo "  rm -f \"$(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')\"" >&2
             exit 1
-          fi
-          # The rewrite is mapped, so the authorization prepared before it
-          # becomes the head a retry's lease accepts. It is promoted here,
-          # ahead of setup, because a setup failure refuses this push while
-          # leaving the rewrite standing — the state the retry has to publish.
-          if [[ -n "$LEASE_EXPECTED_OID" ]]; then
-            finalize_pending_restack_authorization "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH" "$LEASE_EXPECTED_OID" || exit 1
           fi
           # Rebase can replace symlinks with tracked content. The map is
           # durable before setup runs, so a setup failure cannot turn a

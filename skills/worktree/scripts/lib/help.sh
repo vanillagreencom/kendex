@@ -434,9 +434,11 @@ local head. push accepts that rewritten head or later commits built on it,
 still pins the force-with-lease to the recorded remote OID, and consumes the
 authorization after success. Only success consumes it: a pre-push hook that
 refuses leaves the rewrite and its authorization standing, so the run that
-fixes what the hook named publishes without rebasing again and without a
-hand-run git command. A different local rewrite, remote movement while
-conflict resolution is pending, or a moved remote at push time fails closed.
+fixes what the hook named publishes without redoing that rebase and without a
+hand-run git command. A default branch that advanced since is rebased onto
+again under the same authorization. A different local rewrite, remote
+movement while conflict resolution is pending, or a moved remote at push time
+fails closed.
 Plain pushes are still used with --no-rebase.
 
 A remote OID the local branch does not contain is
@@ -444,9 +446,11 @@ A remote OID the local branch does not contain is
 branch holds. Where the remote carries work the branch lacks, it names the
 fetch and rebase. Where the branch already carries every commit on the remote
 branch under rewritten SHAs, fetching and rebasing would replay work that
-rewrite superseded, so the refusal says so and names the cause instead: no
-authorization covers a rewrite the rewrite verbs did not make, and running one
-on that branch now rewrites nothing and records nothing.
+rewrite superseded, so the refusal says so: no recorded authorization covers
+the rewrite, and a rewrite made outside push and the guarded restack, or by an
+earlier kendex, carries none. Running a rewrite verb on that branch now
+rewrites nothing and records nothing, so the refusal names the git push that
+republishes the branch, pinned to the remote OID it read.
 
 rebase-map: when the auto-rebase rewrites branch commits, push prints one
 'rebase-map: <old-sha> <new-sha>' line per rewritten commit on stdout

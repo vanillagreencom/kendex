@@ -346,6 +346,7 @@ step() {
       git -C "$WT" commit -q -m 'merge origin/main'
       ;;
     advance) commit_main main-advanced.txt advanced ;;
+    advance2) commit_main main-advanced2.txt advanced2 ;;
     clone-advance)
       printf 'advanced\n' >"$SEED/main-advanced.txt"
       git -C "$SEED" add main-advanced.txt
@@ -391,6 +392,12 @@ step() {
         >"$(git -C "$WT" rev-parse --absolute-git-dir)/kendex-rebase-map"
       git -C "$WT" rebase origin/main >/dev/null 2>&1
       ;;
+    # What an unmapped push's refusal tells the operator to do once every
+    # recorded SHA is reconciled: remove the record it left.
+    remove-record)
+      record_dir="$(git -C "$WT" rev-parse --absolute-git-dir)"
+      rm -f -- "${record_dir:?}/kendex-rebase-map"
+      ;;
     publish)
       tool push "$ISSUE" --set-upstream
       PUBLISHED="$(remote_oid origin)"
@@ -405,6 +412,19 @@ step() {
       arm_pre_push_hook 'pre-push: result=1' 1
       tool push "$ISSUE"
       rm -f -- "${MAIN:?}/.git/hooks/pre-push"
+      ;;
+    # Main lands a file the branch also adds, so the next push's rebase
+    # conflicts; that push aborts it and refuses.
+    conflict-main) commit_main fix2.txt main-side ;;
+    conflicted-push) tool push "$ISSUE" ;;
+    # The manual resolution that conflicting push names: merge the default
+    # branch and settle the conflict, building on the head the branch holds.
+    merge-main)
+      git -C "$WT" fetch -q origin
+      git -C "$WT" merge origin/main >/dev/null 2>&1 || true
+      printf 'merged\n' >"$WT/fix2.txt"
+      git -C "$WT" add fix2.txt
+      git -C "$WT" commit -q -m 'merge origin/main'
       ;;
     # A rewrite made outside the tool, which authorizes nothing: the branch
     # holds the remote's commits under new SHAs and no record says so.
@@ -701,21 +721,25 @@ local_link_state() {
 }
 
 # The force-with-lease authorization the worktree carries: the remote branch it
-# names, the remote OID it pins the lease to, and the local head it authorizes,
-# `-` where no field is recorded. Every row pins it, so a push that lands and
-# leaves its authorization behind — waving through a later divergence nothing
-# rewrote — is a row that changed.
+# names, the remote OID it pins the lease to, the local head it authorizes, and
+# `:pending` while a rewrite's half of it is still open, `-` where no field is
+# recorded. Every row pins it, so a push that lands and leaves its
+# authorization behind — waving through a later divergence nothing rewrote —
+# is a row that changed, and so is a refusal that leaves a cancelled rewrite's
+# pending half behind.
 auth_state() {
-  local remote branch expected authorized
+  local remote branch expected authorized pending
   remote="$(git -C "$WT" config --worktree --get kendex-restack.remote 2>/dev/null || true)"
   branch="$(git -C "$WT" config --worktree --get kendex-restack.branch 2>/dev/null || true)"
   expected="$(git -C "$WT" config --worktree --get kendex-restack.expectedRemoteOid 2>/dev/null || true)"
   authorized="$(git -C "$WT" config --worktree --get kendex-restack.authorizedHead 2>/dev/null || true)"
-  if [[ -z "$remote$branch$expected$authorized" ]]; then
+  pending="$(git -C "$WT" config --worktree --get kendex-restack.pending 2>/dev/null || true)"
+  if [[ -z "$remote$branch$expected$authorized$pending" ]]; then
     printf -- '-'
     return
   fi
-  printf '%s/%s:%s:%s' "${remote:--}" "${branch:--}" "$(oid_name "$expected")" "$(oid_name "$authorized")"
+  printf '%s/%s:%s:%s%s' "${remote:--}" "${branch:--}" "$(oid_name "$expected")" "$(oid_name "$authorized")" \
+    "${pending:+:pending}"
 }
 
 state() {
@@ -771,6 +795,7 @@ err_text() {
     two:*) printf 'worktree-push-target-count: 2' ;;
     empty) printf 'worktree-push-target-empty: target' ;;
     lease-rejected) printf 'worktree-push-rejected: origin/topic' ;;
+    rebase-failed) printf 'worktree-push-rebase-failed: topic' ;;
     hook-rejected) printf 'worktree-push-hook-rejected: origin/topic' ;;
     push-failed) printf 'worktree-push-failed: origin/topic' ;;
     not-contained) printf 'worktree-push-remote-uncontained: origin/topic' ;;
@@ -784,10 +809,11 @@ err_text() {
 }
 
 # What the worktree's map file holds: either the record a rewrite leaves until
-# its map is durable, named by the head it covers, or the hop a mapped rewrite
-# wrote there, whose lines are the ones it also printed.
+# its map is durable, named by the head it covers, or the hop each mapped
+# rewrite wrote there, in order, whose lines are the ones it also printed.
 map_text() {
   case "$1" in
+    *+*) printf '%s;%s' "$(map_text "${1%%+*}")" "$(map_text "${1#*+}")" ;;
     -) printf -- '-' ;;
     end) printf 'rebase-unmapped: <end>' ;;
     unmapped) printf 'rebase-unmapped: <unmapped>' ;;
@@ -805,6 +831,8 @@ out_text() {
     # commits the branch carried before that rewrite, the published tip among
     # them, and its new ones are where the row finds the branch.
     map2-pre) printf '%s' "rebase-map: <published> <end~1>;rebase-map: <pre> <end>" ;;
+    # The same map once a merge commit has gone on top of that rewrite.
+    map2-pre-merged) printf '%s' "rebase-map: <published> <end~2>;rebase-map: <pre> <end~1>" ;;
     map-dropped) printf '%s' "rebase-map: <end~1> dropped;rebase-map: <end> <head>" ;;
     map-group) printf '%s' "rebase-map: <end~2> <head~1>;rebase-map: <end~1> <head>;rebase-map: <end> dropped" ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
@@ -862,6 +890,10 @@ must-fail: with the lease arm keyed on the absence of a hook verdict, it is told
 a push the pre-push chain refused after its rebase is retried, and publishes under the same lease with no second rebase|pair fix publish advance fix2 refused-rebase record-push|push TOPIC|0|-|skip-rebase|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:end upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=hop:map2-pre
 must-fail: with no authorization recorded before the rebase, that retry is refused as an uncontained remote|pair fix publish advance fix2 unfixed-push-authorization refused-rebase|push TOPIC|1|-|not-contained|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=hop:map2-pre
 a remote that moved between the refused push and its retry is still refused|pair fix publish advance fix2 refused-rebase move-remote observe|push TOPIC|1|-|not-contained|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:external upstream=origin push=- auth=origin/topic:published:end map=hop:map2-pre
+a default branch that advanced between the refused push and its retry is rebased onto again, and publishes under the first lease|pair fix publish advance fix2 refused-rebase advance2 record-push|push TOPIC|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced,main-advanced2.txt:advanced2 remote=origin:head upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=hop:map2-pre+hop:map2
+a rebase conflict after a refused push drops its own pending half and keeps what that push authorized|pair fix publish advance fix2 refused-rebase conflict-main|push TOPIC|1|-|rebase-failed|head=end ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=origin/topic:published:end map=hop:map2-pre
+once that conflict is resolved by a merge, the earlier authorization publishes it under the same lease|pair fix publish advance fix2 refused-rebase conflict-main conflicted-push merge-main record-push|push TOPIC|0|-|skip-rebase|head=end ahead=3 tree=file.txt:orig,fix.txt:fix,fix2.txt:merged,main-advanced.txt:advanced remote=origin:end upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=hop:map2-pre-merged
+a published branch whose rewrite went unmapped publishes under the same lease once its record is removed|pair twins publish twins-main unmapped-push remove-record record-push|push TOPIC|0|-|skip-rebase|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:end upstream=origin push=-C <wt> push --force-with-lease=refs/heads/topic:<published> origin HEAD auth=- map=-
 a rewrite made outside the tool authorizes nothing and is refused|pair fix publish advance hand-rebase|push TOPIC|1|-|not-contained|head=end ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:published upstream=origin push=- auth=- map=-
 '
 
@@ -897,7 +929,7 @@ echo "=== the uncontained refusal routes by what the branch actually holds ==="
 # commits the rewrite superseded; a remote carrying work the branch lacks must.
 # Both directions are pinned, so a predicate that answered one way for every
 # branch would fail one of them.
-ROUTE_ROWS='the local branch holds the remote commits under rewritten SHAs|pair fix publish advance hand-rebase|Local branch '"'"'topic'"'"' already holds every commit on '"'"'origin/topic'"'"' under rewritten SHAs, so fetching and rebasing would replay superseded work.;No push authorization covers that rewrite: it was not made by '"'"'worktree push'"'"' or the guarded restack, which record one before they rewrite.
+ROUTE_ROWS='the local branch holds the remote commits under rewritten SHAs|pair fix publish advance hand-rebase|Local branch '"'"'topic'"'"' already holds every commit on '"'"'origin/topic'"'"' under rewritten SHAs, so fetching and rebasing would replay superseded work.;No recorded push authorization covers this rewrite: a rewrite made outside '"'"'worktree push'"'"' and the guarded restack, or by an earlier kendex, carries none.;Republish the branch pinned to the remote OID above:;  git -C "<wt>" push --force-with-lease=refs/heads/topic:<published> origin topic
 the remote carries a commit the local branch never had|pair fix publish move-remote observe fix2|Fetch and rebase/merge '"'"'origin/topic'"'"' before using worktree push.'
 
 route_n=0
@@ -909,7 +941,7 @@ while IFS= read -r route_row; do
   (cd "$MAIN" && "$WORKTREE_SCRIPT" push TOPIC >/dev/null 2>"$ROOT/route.err") || true
   # Line 1 is the keyed record and line 2 the explanation worktree_message
   # indents under it; the route is everything after them.
-  assert_eq "$(sed -n '3,$p' "$ROOT/route.err" | paste -s -d ';' -)" "$route_want" "$route_label"
+  assert_eq "$(sed -n '3,$p' "$ROOT/route.err" | alias_text)" "$route_want" "$route_label"
 done <<<"$ROUTE_ROWS"
 
 echo

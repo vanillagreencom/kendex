@@ -101,10 +101,12 @@
 #                   changing the exit code, with the transcript (its
 #                   rebase-map lines included) replayed first as the
 #                   surviving copy. A pre-push hook's refusal is this case:
-#                   the rebase already ran and its map is already reconciled,
-#                   so fixing what the hook named and re-running publishes
-#                   the branch as it stands, with no second rebase and no
-#                   hand-run git command.
+#                   any rebase the refused run made already ran and its map
+#                   was applied where possible, so fixing what the hook named
+#                   and re-running publishes the branch without redoing that
+#                   rebase and with no hand-run git command. A default branch
+#                   that advanced since is rebased onto again under the same
+#                   authorization.
 #   push ok      -> 0 when no rebase-map printed, or every mapping was
 #                   recorded and applied
 #   1 (pushed)   -> the push landed but reconciliation did not (no state file,
