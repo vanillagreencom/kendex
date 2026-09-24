@@ -128,5 +128,21 @@ else
   fi
 fi
 
+# Must-fail control: the settings library refuses with its own keyed line when
+# it cannot initialize, and this script loads it with no stderr redirect so
+# that line reaches the operator. Under a redirect the same removal leaves an
+# exit 2 naming nothing.
+MUTE="$TMP/mute"
+package "$MUTE" review-gate harness-ci orch
+MUTE_DIAGNOSTICS="$MUTE/review-gate/scripts/lib/diagnostics.sh"
+assert_eq "$([ -r "$MUTE_DIAGNOSTICS" ] && echo present || echo absent)" "present" \
+  "control: the diagnostics library is there to remove"
+rm -f -- "${MUTE_DIAGNOSTICS:?}"
+repo "$TMP/mute-repo"
+run "$MUTE/review-gate/scripts/review-policy" "$TMP/mute-repo"
+assert_eq "$RC" "2" "a settings library that cannot initialize refuses"
+assert_eq "$(diagnostic_key)" "diagnostics-load" \
+  "must-fail: and the library's own diagnostic reaches stderr"
+
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

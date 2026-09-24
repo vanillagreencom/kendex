@@ -9,7 +9,10 @@ if [ ! -r "$SETTINGS" ]; then
   printf 'review-gate-error=policy-settings-load value=%q\nCould not load review-gate settings.\n' "$SETTINGS" >&2
   exit 2
 fi
-. "$SETTINGS" 2>/dev/null || exit 2
+# No redirect, as every sibling entry point loads it: the library refuses with
+# its own keyed line when it cannot initialize, and swallowing that leaves the
+# caller an exit 2 naming nothing.
+. "$SETTINGS" || exit 2
 
 usage() {
   cat <<'USAGE'

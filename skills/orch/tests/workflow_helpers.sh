@@ -336,6 +336,41 @@ else
   fail "merge-pr must short-circuit an already-merged PR above the gate-mode resolution (short-circuit=${already_merged_line:-absent}, resolve=${resolve_line:-absent})"
 fi
 
+# A waiver is only pinned while the rows that apply it say which head it was
+# resolved for. Both gate rows name the recorded head, and the mode is written
+# beside that head in one write, so no future mode can be recorded without one.
+submit_workflow="$SKILL_DIR/workflows/submit-pr.md"
+pinned_waiver_is_closed() { # submit-doc
+  grep -Fq '`exempt` at the recorded head: neither term applies' "$1" &&
+    grep -Fq '`exempt` at the recorded head, and `off`: not applicable' "$1" &&
+    grep -Fq 'workflow-state set [ISSUE_ID] pr_review.head_sha [HEAD_SHA]' "$1" &&
+    grep -Fq 'A recorded `exempt` applies to gates 3 and 4 only while `head_sha` equals that live head.' "$1"
+}
+
+if pinned_waiver_is_closed "$submit_workflow"; then
+  pass "submit-pr pins the exempt waiver to the head it was resolved for"
+else
+  fail "submit-pr must name the recorded head in the gate-3 and gate-4 exempt rows and record it with the mode"
+fi
+
+waiver_mutant="$TMP_ROOT/submit-pr-unpinned.md"
+waiver_rule='A recorded `exempt` applies to gates 3 and 4 only while `head_sha` equals that live head.'
+waiver_rule_count="$(grep -Fc -- "$waiver_rule" "$submit_workflow" || true)"
+assert_eq "$waiver_rule_count" "1" "control: the pinned waiver has one mutation target"
+if [[ -L "$submit_workflow" ]]; then
+  fail "control: the submit workflow mutation source must not be a symlink"
+else
+  awk -v old="$waiver_rule" -v new='A recorded `exempt` applies to gates 3 and 4.' \
+    '{ if (index($0, old)) sub(old, new); print }' "$submit_workflow" >"$waiver_mutant"
+  assert_eq "$(cmp -s "$waiver_mutant" "$submit_workflow" && echo same || echo differs)" "differs" \
+    "control: the waiver mutant drops the head comparison"
+  if pinned_waiver_is_closed "$waiver_mutant"; then
+    fail "must-fail: a waiver applied without its head must fail the pinned-waiver contract"
+  else
+    pass "must-fail: a waiver applied without its head fails the pinned-waiver contract"
+  fi
+fi
+
 micro_workflow="$SKILL_DIR/workflows/micro.md"
 micro_policy_is_closed() { # micro-doc
   grep -Fq 'env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-view [PR_NUMBER] --json baseRefOid,headRefOid' "$1" &&
