@@ -278,14 +278,18 @@ assert_eq "$(RUN_SESSION=fleetx session_row sess-broken CC-118)" \
   "rc=1 target= list= pane= window=none recorded=none refused=session-record-failed+item=CC-118+state=oversee" \
   "a fleet state whose tmux entry cannot be read refuses as session-record-failed and opens nothing"
 # The write of a first launch's session: a state directory this launch can
-# read and not lock takes the same refusal.
-"$WS" --state-dir "$TMP_ROOT/sess-ro" init oversee >/dev/null
-chmod 555 "$TMP_ROOT/sess-ro"
-RUN_SESSION=fleetx session_row sess-ro CC-128 > "$TMP_ROOT/ro-row"
-chmod 755 "$TMP_ROOT/sess-ro"
-assert_eq "$(cat "$TMP_ROOT/ro-row")" \
-  "rc=1 target= list= pane= window=none recorded=none refused=session-record-failed+item=CC-128+state=oversee" \
-  "a fleet state whose tmux entry cannot be written refuses as session-record-failed and opens nothing"
+# read and not lock takes the same refusal. Root writes through mode 555.
+if [[ "$(id -u)" -eq 0 ]]; then
+  printf '  skip  unwritable fleet state (running as root)\n'
+else
+  "$WS" --state-dir "$TMP_ROOT/sess-ro" init oversee >/dev/null
+  chmod 555 "$TMP_ROOT/sess-ro"
+  RUN_SESSION=fleetx session_row sess-ro CC-128 > "$TMP_ROOT/ro-row"
+  chmod 755 "$TMP_ROOT/sess-ro"
+  assert_eq "$(cat "$TMP_ROOT/ro-row")" \
+    "rc=1 target= list= pane= window=none recorded=none refused=session-record-failed+item=CC-128+state=oversee" \
+    "a fleet state whose tmux entry cannot be written refuses as session-record-failed and opens nothing"
+fi
 # A has-session that fails for another reason than an absent session, the
 # answer a restarted server gives a launch still carrying its $TMUX.
 assert_eq "$(RUN_SESSION=fleetx STUB_HAS_SESSION_ERR='no server running on /tmp/tmux-1000/default' session_row sess-noserver CC-127)" \
