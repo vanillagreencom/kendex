@@ -256,8 +256,9 @@ mkdir -p "$AW_REPO/.agents/skills" "$TMP_ROOT/awbin"
 ln -sfn "$SKILL_DIR" "$AW_REPO/.agents/skills/orch"
 git init -q "$AW_REPO"
 
-# The smallest gh approval-wait needs: an auth probe, the repo name, the
-# approval snapshot, and the thread query whose body this case controls.
+# The smallest gh approval-wait needs: an auth probe, the repo name, the PR
+# object it reads the author login from, the approval snapshot, and the thread
+# query whose body this case controls.
 cat >"$TMP_ROOT/awbin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -265,6 +266,7 @@ case "${1:-} ${2:-}" in
   "auth status") exit 0 ;;
   "repo view")   echo "owner/repo"; exit 0 ;;
   "api graphql") printf '%s\n' "${STUB_AW_THREADS:?}"; exit 0 ;;
+  "api repos/"*"/pulls/"*) echo "pr-author"; exit 0 ;;
   "pr view")
     if [[ "$*" == *"-q .headRefOid"* ]]; then echo "headsha1"; exit 0; fi
     echo '{"reviewDecision":"APPROVED","latestReviews":[{"author":{"login":"r1"},"state":"APPROVED"}],"headRefOid":"headsha1","author":{"login":"pr-author"}}'

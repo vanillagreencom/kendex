@@ -36,11 +36,22 @@ git -C "$TMP_ROOT/repo" config user.name Test
 #   unresolved count returned by the `api graphql` reviewThreads query.
 #   STUB_APPROVAL_COUNT_FILE turns *_later modes into poll-count-driven
 #   sequences (first poll pending, second poll terminal).
-#   Review mode: `pr view --json headRefOid,author` reports head "headsha1"
-#   and author "pr-author" (STUB_HEAD_MODE=changes flips to "headsha2" after
+#   The PR is opened by a GitHub App, as every fleet PR is, so the stub spells
+#   its author the three ways GitHub does: `api repos/*/pulls/<n>` answers
+#   STUB_PR_AUTHOR ("pr-author[bot]", with STUB_PR_AUTHOR_MODE=empty/http_404
+#   answering an empty login or failing the read), `pr view --json author`
+#   answers "app/pr-author", and the approval-mode latestReviews rows spell the
+#   same account "pr-author".
+#   Review mode: `pr view --json headRefOid` reports head "headsha1"
+#   (STUB_HEAD_MODE=changes flips to "headsha2" after
 #   two calls via STUB_HEAD_COUNT_FILE); STUB_REVIEWS_MODE selects the canned
 #   REST pulls/reviews payload, with STUB_REVIEWS_COUNT_FILE driving the
-#   reviewed_later poll sequence.
+#   reviewed_later poll sequence. Reviewer reviews carry a body; the
+#   bodyless_at_head and author_bodyless modes publish the empty-bodied
+#   COMMENTED review a thread reply submits (review id 21), and
+#   STUB_REVIEW_COMMENTS_MODE then decides what `api repos/*/pulls/<n>/comments`
+#   says that review's comments are: reply_only, opener, other_review_opener
+#   (a thread opened by a different review), http_404, or none.
 #   Check-runs: `api repos/*/commits/<sha>/check-runs` answers per the sha in
 #   the URL — STUB_CHECKS_MODE=success_at_head/failure_at_head publishes a
 #   "Review Bot" run (older failure + newer terminal run, plus an unrelated
@@ -234,29 +245,61 @@ case "${1:-}" in
       fi
       case "$mode" in
         commented_at_head)
-          echo '[{"user":{"login":"reviewer1"},"state":"COMMENTED","commit_id":"headsha1"}]'
+          echo '[{"id":1,"user":{"login":"reviewer1"},"state":"COMMENTED","body":"read the diff","commit_id":"headsha1"}]'
           ;;
         commented_stale)
-          echo '[{"user":{"login":"reviewer1"},"state":"COMMENTED","commit_id":"oldsha"}]'
+          echo '[{"id":2,"user":{"login":"reviewer1"},"state":"COMMENTED","body":"read the diff","commit_id":"oldsha"}]'
           ;;
         author_only)
-          echo '[{"user":{"login":"pr-author"},"state":"COMMENTED","commit_id":"headsha1"}]'
+          echo '[{"id":3,"user":{"login":"pr-author[bot]"},"state":"COMMENTED","body":"pushed a fix","commit_id":"headsha1"}]'
           ;;
         dismissed_only)
-          echo '[{"user":{"login":"reviewer1"},"state":"DISMISSED","commit_id":"headsha1"}]'
+          echo '[{"id":4,"user":{"login":"reviewer1"},"state":"DISMISSED","body":"read the diff","commit_id":"headsha1"}]'
           ;;
         changes_standing)
-          echo '[{"user":{"login":"reviewer1"},"state":"CHANGES_REQUESTED","commit_id":"headsha1"}]'
+          echo '[{"id":5,"user":{"login":"reviewer1"},"state":"CHANGES_REQUESTED","body":"fix this","commit_id":"headsha1"}]'
           ;;
         changes_superseded)
-          echo '[{"user":{"login":"reviewer1"},"state":"CHANGES_REQUESTED","commit_id":"oldsha"},{"user":{"login":"reviewer1"},"state":"COMMENTED","commit_id":"headsha1"}]'
+          echo '[{"id":6,"user":{"login":"reviewer1"},"state":"CHANGES_REQUESTED","body":"fix this","commit_id":"oldsha"},{"id":7,"user":{"login":"reviewer1"},"state":"COMMENTED","body":"fixed","commit_id":"headsha1"}]'
           ;;
         approved_at_head)
-          echo '[{"user":{"login":"reviewer1"},"state":"APPROVED","commit_id":"headsha1"}]'
+          echo '[{"id":8,"user":{"login":"reviewer1"},"state":"APPROVED","body":"ship it","commit_id":"headsha1"}]'
+          ;;
+        bodyless_at_head)
+          echo '[{"id":21,"user":{"login":"reviewer1"},"state":"COMMENTED","body":"","commit_id":"headsha1"}]'
+          ;;
+        author_bodyless)
+          echo '[{"id":21,"user":{"login":"pr-author[bot]"},"state":"COMMENTED","body":"","commit_id":"headsha1"}]'
           ;;
         none|*)
           echo '[]'
           ;;
+      esac
+      exit 0
+    fi
+    # Review comments, read only to judge what a bodyless review at head
+    # contains: a comment with in_reply_to_id set answers an existing thread,
+    # one with it null opens a new one.
+    if [[ "${2:-}" == repos/*/pulls/*/comments ]]; then
+      _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      case "${STUB_REVIEW_COMMENTS_MODE:-none}" in
+        reply_only) echo '[{"id":41,"pull_request_review_id":21,"in_reply_to_id":7}]' ;;
+        opener) echo '[{"id":42,"pull_request_review_id":21,"in_reply_to_id":null}]' ;;
+        other_review_opener) echo '[{"id":43,"pull_request_review_id":99,"in_reply_to_id":null}]' ;;
+        http_404) echo "HTTP 404: Not Found (https://api.github.com/repos/owner/repo/pulls/1/comments)" >&2; exit 1 ;;
+        none|*) echo '[]' ;;
+      esac
+      exit 0
+    fi
+    # The PR object, read for the author login under the same spelling the
+    # reviews listing above carries. Approval-wait reads only .user.login,
+    # through gh's own -q filter, so the stub answers with the login.
+    if [[ "${2:-}" == repos/*/pulls/* ]]; then
+      _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      case "${STUB_PR_AUTHOR_MODE:-ok}" in
+        empty) printf '\n' ;;
+        http_404) echo "HTTP 404: Not Found (https://api.github.com/repos/owner/repo/pulls/1)" >&2; exit 1 ;;
+        *) printf '%s\n' "${STUB_PR_AUTHOR:-pr-author[bot]}" ;;
       esac
       exit 0
     fi
@@ -355,22 +398,25 @@ case "${1:-}" in
         fi
         case "$mode" in
           approved_decision)
-            echo '{"reviewDecision":"APPROVED","headRefOid":"headsha1","baseRefName":"'"${STUB_BASE_REF:-main}"'","latestReviews":[{"author":{"login":"reviewer1"},"state":"APPROVED"}]}'
+            echo '{"reviewDecision":"APPROVED","headRefOid":"headsha1","baseRefName":"'"${STUB_BASE_REF:-main}"'","author":{"login":"app/pr-author"},"latestReviews":[{"author":{"login":"reviewer1"},"state":"APPROVED"}]}'
             ;;
           approved_latest)
-            echo '{"reviewDecision":"","headRefOid":"headsha1","baseRefName":"'"${STUB_BASE_REF:-main}"'","latestReviews":[{"author":{"login":"reviewer1"},"state":"APPROVED"},{"author":{"login":"colleague"},"state":"COMMENTED"}]}'
+            echo '{"reviewDecision":"","headRefOid":"headsha1","baseRefName":"'"${STUB_BASE_REF:-main}"'","author":{"login":"app/pr-author"},"latestReviews":[{"author":{"login":"reviewer1"},"state":"APPROVED"},{"author":{"login":"colleague"},"state":"COMMENTED"}]}'
             ;;
           changes)
-            echo '{"reviewDecision":"","headRefOid":"headsha1","baseRefName":"'"${STUB_BASE_REF:-main}"'","latestReviews":[{"author":{"login":"reviewer1"},"state":"CHANGES_REQUESTED"},{"author":{"login":"colleague"},"state":"APPROVED"}]}'
+            echo '{"reviewDecision":"","headRefOid":"headsha1","baseRefName":"'"${STUB_BASE_REF:-main}"'","author":{"login":"app/pr-author"},"latestReviews":[{"author":{"login":"reviewer1"},"state":"CHANGES_REQUESTED"},{"author":{"login":"colleague"},"state":"APPROVED"}]}'
             ;;
           commented_only)
-            echo '{"reviewDecision":"","headRefOid":"headsha1","baseRefName":"'"${STUB_BASE_REF:-main}"'","latestReviews":[{"author":{"login":"reviewer1"},"state":"COMMENTED"}]}'
+            echo '{"reviewDecision":"","headRefOid":"headsha1","baseRefName":"'"${STUB_BASE_REF:-main}"'","author":{"login":"app/pr-author"},"latestReviews":[{"author":{"login":"reviewer1"},"state":"COMMENTED"}]}'
+            ;;
+          author_commented)
+            echo '{"reviewDecision":"","headRefOid":"headsha1","baseRefName":"'"${STUB_BASE_REF:-main}"'","author":{"login":"app/pr-author"},"latestReviews":[{"author":{"login":"pr-author"},"state":"COMMENTED"}]}'
             ;;
           required_pending)
-            echo '{"reviewDecision":"REVIEW_REQUIRED","headRefOid":"headsha1","baseRefName":"'"${STUB_BASE_REF:-main}"'","latestReviews":[{"author":{"login":"colleague"},"state":"APPROVED"}]}'
+            echo '{"reviewDecision":"REVIEW_REQUIRED","headRefOid":"headsha1","baseRefName":"'"${STUB_BASE_REF:-main}"'","author":{"login":"app/pr-author"},"latestReviews":[{"author":{"login":"colleague"},"state":"APPROVED"}]}'
             ;;
           none|*)
-            echo '{"reviewDecision":"","headRefOid":"headsha1","baseRefName":"'"${STUB_BASE_REF:-main}"'","latestReviews":[]}'
+            echo '{"reviewDecision":"","headRefOid":"headsha1","baseRefName":"'"${STUB_BASE_REF:-main}"'","author":{"login":"app/pr-author"},"latestReviews":[]}'
             ;;
         esac
         exit 0
@@ -388,7 +434,7 @@ case "${1:-}" in
             head="headsha2"
           fi
         fi
-        printf '{"headRefOid":"%s","author":{"login":"pr-author"},"baseRefName":"%s"}\n' "$head" "${STUB_BASE_REF:-main}"
+        printf '{"headRefOid":"%s","author":{"login":"app/pr-author"},"baseRefName":"%s"}\n' "$head" "${STUB_BASE_REF:-main}"
         exit 0
       fi
     fi
@@ -524,7 +570,13 @@ table "$APPROVAL" \
 
 echo "=== review mode: the evidence rule over reviews, check-runs and commit statuses at the head ==="
 # A review counts only at the current head, from someone other than the
-# author, not dismissed; the latest per reviewer stands, so a standing
+# author, not dismissed, and carrying content of its own — a body, or a
+# comment that opens a thread rather than answering one, since a thread reply
+# submits an empty-bodied COMMENTED review that proves nothing about the head.
+# The author rows are the App spelling GitHub actually serves: the PR object
+# says "pr-author[bot]" while gh pr view says "app/pr-author", so an exclusion
+# read from the wrong endpoint never matches and counts the author's own rows.
+# The latest per reviewer stands, so a standing
 # CHANGES_REQUESTED blocks and a superseded one does not. With PR_REVIEW_CHECK
 # set, a success of that name on the head is evidence too: check-runs first,
 # then the combined status, newest of the name winning and unrelated names
@@ -535,7 +587,13 @@ table "$REVIEW" \
   'a COMMENTED review at head with no open threads is reviewed||STUB_REVIEWS_MODE=commented_at_head|rc=0 status=reviewed mode=review head_sha=headsha1 reviews_at_head=1' \
   'a review at head with open threads returns comments before the deadline||STUB_REVIEWS_MODE=commented_at_head,STUB_THREADS_UNRESOLVED=2|rc=1 status=comments unresolved_count=2 early=true' \
   'a review of a superseded commit is not at head||STUB_REVIEWS_MODE=commented_stale|rc=1 status=timeout reviews_at_head=0' \
-  "the author's own review is excluded||STUB_REVIEWS_MODE=author_only|rc=1 status=timeout reviews_at_head=0" \
+  "the App author's own review is excluded||STUB_REVIEWS_MODE=author_only|rc=1 status=timeout reviews_at_head=0" \
+  "the App author's own thread reply is excluded before its comments are read||STUB_REVIEWS_MODE=author_bodyless,STUB_REVIEW_COMMENTS_MODE=opener|rc=1 status=timeout reviews_at_head=0" \
+  'a review whose only comment answers a thread is not evidence||STUB_REVIEWS_MODE=bodyless_at_head,STUB_REVIEW_COMMENTS_MODE=reply_only|rc=1 status=timeout reviews_at_head=0' \
+  'a bodyless review that opens a thread is evidence||STUB_REVIEWS_MODE=bodyless_at_head,STUB_REVIEW_COMMENTS_MODE=opener|rc=0 status=reviewed reviews_at_head=1 review_evidence=review' \
+  'a thread another review opened credits neither||STUB_REVIEWS_MODE=bodyless_at_head,STUB_REVIEW_COMMENTS_MODE=other_review_opener|rc=1 status=timeout reviews_at_head=0' \
+  'a bodyless review with no comments at all is not evidence||STUB_REVIEWS_MODE=bodyless_at_head|rc=1 status=timeout reviews_at_head=0' \
+  'a failed review-comment listing ends the wait rather than judging the review||STUB_REVIEWS_MODE=bodyless_at_head,STUB_REVIEW_COMMENTS_MODE=http_404|rc=1 status=error error_line=approval-wait:+review-comments-failed+pr=1+repo=owner/repo' \
   'a DISMISSED review is excluded||STUB_REVIEWS_MODE=dismissed_only|rc=1 status=timeout reviews_at_head=0' \
   'a standing CHANGES_REQUESTED blocks the review gate||STUB_REVIEWS_MODE=changes_standing|rc=1 status=changes_requested changes_requested=1' \
   'a CHANGES_REQUESTED superseded by the same reviewer no longer stands||STUB_REVIEWS_MODE=changes_superseded|rc=0 status=reviewed changes_requested=0' \
@@ -557,6 +615,18 @@ table "$REVIEW" \
   'a review object outranks a status success||STUB_REVIEWS_MODE=commented_at_head,STUB_CHECKS_MODE=none,STUB_STATUS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot|rc=0 review_evidence=review review_evidence_surface=null' \
   'status success with open threads returns comments||STUB_REVIEWS_MODE=none,STUB_CHECKS_MODE=none,STUB_STATUS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot,STUB_THREADS_UNRESOLVED=2|rc=1 status=comments early=true'
 
+echo "=== the PR author is resolved once, and a read that fails decides nothing ==="
+# Comparing every review row against an empty login would exclude nobody, so a
+# failed or empty author read ends the wait instead. Approval mode filters the
+# same identity under the GraphQL actor spelling its latestReviews rows carry,
+# so the author's own COMMENTED review is not the reviewer engagement that
+# suppresses the proceed degrade (the reviewer1 row in the table below is that
+# inverse).
+table "$REVIEW" \
+  'a failed author read ends the wait||STUB_PR_AUTHOR_MODE=http_404,STUB_REVIEWS_MODE=commented_at_head|rc=1 status=error early=true error_line=approval-wait:+author-failed+pr=1+repo=owner/repo' \
+  'an empty author login is a failed read, not an authorless PR||STUB_PR_AUTHOR_MODE=empty,STUB_REVIEWS_MODE=commented_at_head|rc=1 status=error error_line=approval-wait:+author-failed+pr=1+repo=owner/repo' \
+  "approval mode excludes the author's own COMMENTED review|1 1 3 --json|STUB_APPROVAL_MODE=author_commented,PR_REVIEW_ON_TIMEOUT=proceed|rc=0 status=proceeded"
+
 echo "=== PR_REVIEW_ON_TIMEOUT: a deadline degrades to proceeded only on reviewer silence over an unchanged head ==="
 # Silence is no review, no trusted check or status of any state, and no open
 # thread; the head is the one the wait started on, confirmed again at the
@@ -573,6 +643,7 @@ table "$REVIEW" \
   'open threads still return comments under proceed||STUB_REVIEWS_MODE=none,STUB_THREADS_UNRESOLVED=2,PR_REVIEW_ON_TIMEOUT=proceed|rc=1 status=comments' \
   'a standing CHANGES_REQUESTED still blocks under proceed||STUB_REVIEWS_MODE=changes_standing,PR_REVIEW_ON_TIMEOUT=proceed|rc=1 status=changes_requested' \
   'an active COMMENTED review in approval mode is engagement, not silence|1 1 3 --json|STUB_APPROVAL_MODE=commented_only,PR_REVIEW_ON_TIMEOUT=proceed|rc=1 status=timeout' \
+  "a reviewer's thread reply at head is engagement, not silence||STUB_REVIEWS_MODE=bodyless_at_head,STUB_REVIEW_COMMENTS_MODE=reply_only,PR_REVIEW_ON_TIMEOUT=proceed|rc=1 status=timeout" \
   'a failed trusted check-run at head is engagement, not silence||STUB_REVIEWS_MODE=none,STUB_CHECKS_MODE=failure_at_head,PR_REVIEW_CHECK=Review Bot,PR_REVIEW_ON_TIMEOUT=proceed|rc=1 status=timeout' \
   'a pending trusted status at head is engagement, not silence||STUB_REVIEWS_MODE=none,STUB_STATUS_MODE=pending_at_head,PR_REVIEW_CHECK=Review Bot,PR_REVIEW_ON_TIMEOUT=proceed|rc=1 status=timeout' \
   'a head that moved during the wait falls back to timeout even when the confirm agrees with the new head|1 1 5 --json --mode review|STUB_REVIEWS_MODE=none,STUB_HEAD_MODE=changes,STUB_CONFIRM_HEAD=headsha2,PR_REVIEW_ON_TIMEOUT=proceed|rc=1 status=timeout' \
