@@ -161,18 +161,12 @@ pub struct ProjectOffer {
     pub tracked: bool,
 }
 
-/// Whether a write can be shown to have done anything in a project. No
-/// reading taken before it means nothing may be attributed to it, which
-/// ends the same way as a write that changed nothing there.
-fn acted(pending: Option<&Pending>) -> bool {
-    pending.is_some_and(Pending::acted)
-}
-
 /// Who opened the offer, which decides whether one is made at all.
 #[derive(Clone, Copy)]
 enum Opened<'a> {
     /// A write reached this project, with the reading taken before it
-    /// where there was one. An offer is made only where [`acted`] holds,
+    /// where there was one. An offer is made only where [`Pending::acted`]
+    /// holds of the reading, and none where no reading was taken,
     /// and that is settled before `gh` is asked anything, so a project the
     /// write left alone costs no network call.
     ByWrite(Option<&'a Baseline>),
@@ -388,7 +382,7 @@ fn read(
     let pending = match opened {
         Opened::ByWrite(since) => {
             let pending = since.map(|since| commit_offer::pending(&scan, since));
-            if !acted(pending.as_ref()) {
+            if !pending.as_ref().is_some_and(Pending::acted) {
                 return Ok(None);
             }
             pending
@@ -1128,18 +1122,17 @@ mod tests {
     }
 
     /// With no reading taken before the write, nothing is attributed to it:
-    /// every pending change reads as older work and [`acted`] is false,
-    /// which is what `read` returns early on to make no offer about that
-    /// project. An empty baseline in its place would do
+    /// every pending change reads as older work. An empty baseline in its
+    /// place would do
     /// the opposite — every pending change would read as this action's, and
     /// "Only this action" would commit somebody else's work under this
     /// write's label.
     ///
-    /// What this pins is the attribution and the filter it feeds. The one
-    /// line joining them, `taken.remove(&root)` passed on as it is rather
-    /// than defaulted, is not covered: `commit_offer_scan` reads the
-    /// machine through `Env::detect`, and no test in this crate can hand it
-    /// one.
+    /// What this pins is the attribution; `read` making no offer from it is
+    /// `a_write_is_offered_only_where_it_acted`. The line joining the two,
+    /// `taken.remove(&root)` passed on as it is rather than defaulted, is
+    /// not covered: `commit_offer_scan` reads the machine through
+    /// `Env::detect`, and no test in this crate can hand it one.
     #[test]
     fn a_write_no_reading_was_taken_for_is_credited_with_nothing() {
         let root = PathBuf::from("/home/method/dev/site");
@@ -1169,10 +1162,6 @@ mod tests {
             },
             // No reading was taken before the write.
             None,
-        );
-        assert!(
-            !acted(None),
-            "a write with no reading behind it was reported as having acted"
         );
         assert!(unattributed.action_paths.is_empty());
         assert!(
@@ -1507,6 +1496,54 @@ mod tests {
             !root.join(".github/copilot-instructions.md").exists(),
             "the unarmed app apply executed package code"
         );
+    }
+
+    /// A write is offered about only where it can be shown to have acted,
+    /// and that is settled in `read` before `gh` is asked anything. With a
+    /// render pending, a write with no reading behind it gets no offer,
+    /// one with a reading taken before the render gets one, and a person
+    /// who asks gets one whatever was read.
+    #[test]
+    #[cfg(unix)]
+    fn a_write_is_offered_only_where_it_acted() {
+        use kendex_core::env::{Env, FakeOs};
+
+        let tmp = tempfile::tempdir().expect("a fixture directory");
+        let home = tmp.path().join("home");
+        let root = tmp.path().join("project");
+        write_bot_fixture(&root);
+        std::fs::create_dir_all(&home).expect("the fixture home is made");
+        let root = root.canonicalize().expect("the project root canonicalizes");
+        bot_fixture_repo(&root, &home);
+        let scope = Scope::Project { root: root.clone() };
+        let env = Env::fake(&home, FakeOs::Linux);
+        record_bot_package(&env, &scope, &root, true);
+        let before = commit_offer::baseline(
+            &scope,
+            &generated(&env, &scope).expect("the commit set before the write"),
+        )
+        .expect("the reading before the write");
+        crate::audit::apply_scope(&env, &scope, false).expect("the render succeeds");
+
+        let key = root.to_string_lossy().into_owned();
+        let rows = [
+            ("a write with no reading", Opened::ByWrite(None), false),
+            (
+                "a write that rendered",
+                Opened::ByWrite(Some(&before)),
+                true,
+            ),
+            ("a person asking", Opened::ByPerson, true),
+        ];
+        for (what, opened, offered) in rows {
+            let read = read(&env, &root, &key, opened).expect("the project reads");
+            assert_eq!(
+                matches!(read, Some(Ok(_))),
+                offered,
+                "{what}: {:?}",
+                read.map(|one| one.map(|offer| offer.files))
+            );
+        }
     }
 
     /// Discovery applies the package's ownership result to the app's commit

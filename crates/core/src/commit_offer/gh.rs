@@ -161,9 +161,10 @@ pub(super) fn host(remote: &str) -> Option<String> {
 /// not run, refused, or answered with something else.
 ///
 /// `gh api` has no `--repo`. It fills `{owner}` and `{repo}` from
-/// `GH_REPO`, and takes the host from `--hostname` alone, github.com
-/// where none is given, so both are passed: without the host an
-/// Enterprise remote's path would be asked of github.com.
+/// `GH_REPO` and ignores the host there, taking it from `--hostname`,
+/// else `GH_HOST`, else github.com. Both are passed, so neither fallback
+/// applies: without the host an Enterprise remote's path would be asked
+/// of whatever host the machine defaults to.
 fn api<T: serde::de::DeserializeOwned>(repo: &str, host: &str, endpoint: &str) -> Option<T> {
     let stdout = git::run(
         Hardened::gh(&["api", "--hostname", host, endpoint]).env("GH_REPO", repo),

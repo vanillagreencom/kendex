@@ -227,9 +227,13 @@ fn a_push_refused_for_want_of_a_pull_request_is_read_off_githubs_words() {
 /// printed. A remote spelling with none comes back whole.
 #[test]
 fn the_recovery_by_hand_is_the_words_it_runs_without_credentials() {
-    let rows: [(&str, &str); 3] = [
+    let rows: [(&str, &str); 4] = [
         (
             "https://u:secret@github.com/acme/site.git",
+            "https://github.com/acme/site.git",
+        ),
+        (
+            "https://ghp_secret@github.com/acme/site.git",
             "https://github.com/acme/site.git",
         ),
         (

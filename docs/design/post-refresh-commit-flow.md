@@ -115,7 +115,7 @@ Where the probe exits zero, kendex asks the same `gh` which rules apply to the c
 gh api --hostname <host> repos/{owner}/{repo}/rules/branches/<branch>
 ```
 
-`gh api` has no `--repo`. It fills `{owner}` and `{repo}` from `GH_REPO`, which carries the chosen remote's URL, and takes the host from `--hostname` alone, github.com where none is given. So `<host>` is read from the same URL, in each form `gh` takes for `--repo`: `https://`, `ssh://` and scp-style `[user@]host:path`. A URL with no host, such as a local path, gets no read. `<branch>` is percent-encoded. The endpoint needs only read access to the repository.
+`gh api` has no `--repo`. It fills `{owner}` and `{repo}` from `GH_REPO`, which carries the chosen remote's URL, and ignores the host there, taking it from `--hostname`, else `GH_HOST`, else github.com. kendex passes `--hostname`, so neither fallback applies. `<host>` is read from the same URL, in each form `gh` takes for `--repo`: `https://`, `ssh://` and scp-style `[user@]host:path`. A URL with no host, such as a local path, gets no read. `<branch>` is percent-encoded. The endpoint needs only read access to the repository.
 
 - A rule of type `pull_request` or `merge_queue` means changes reach the branch only through a pull request. kendex then reads that rule's ruleset, `gh api repos/{owner}/{repo}/rulesets/<id>`, for `current_user_can_bypass`.
 - A ruleset the person may push past (`always` or `exempt`) leaves the push on offer. Any other answer, or a ruleset read that fails, removes it with the reason named, and the pull-request choice stays.
