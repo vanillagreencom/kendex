@@ -99,9 +99,6 @@ case "${1:-}" in
     exit 0 ;;
   --dead-pane)
     printf '%s\n' "$*" >> "$STUB_DIR/succeed.launched"
-    # SUCCEED_VANISH takes the file it names away and holds the launch open,
-    # so the watch that forked this long pass meets that loss mid-launch.
-    if [[ -n "${SUCCEED_VANISH:-}" ]]; then unlink "$SUCCEED_VANISH"; sleep 3; fi
     [[ "${3:-}" != --line-file ]] || cat -- "$4" >> "$STUB_DIR/succeed.line-file"
     rc=0; [[ ! -f "$STUB_DIR/succeed.rc" ]] || rc="$(cat "$STUB_DIR/succeed.rc")"
     [[ "$rc" -eq 0 ]] || echo "oversee-succeed: pane-unreadable pane=$2" >&2
@@ -713,7 +710,9 @@ for row in \
   "ORCH_OVERSEER_DEAD_PASSES=0|dead-passes-invalid ORCH_OVERSEER_DEAD_PASSES=0|a zero pass count refuses" \
   "ORCH_OVERSEER_DEAD_PASSES=two|dead-passes-invalid ORCH_OVERSEER_DEAD_PASSES=two|a non-numeric pass count refuses" \
   "ORCH_OVERSEER_MARK_REPEAT=0|mark-repeat-invalid ORCH_OVERSEER_MARK_REPEAT=0|a zero repeat count refuses" \
-  "ORCH_OVERSEER_MARK_REPEAT=five|mark-repeat-invalid ORCH_OVERSEER_MARK_REPEAT=five|a non-numeric repeat count refuses"; do
+  "ORCH_OVERSEER_MARK_REPEAT=five|mark-repeat-invalid ORCH_OVERSEER_MARK_REPEAT=five|a non-numeric repeat count refuses" \
+  "ORCH_WATCH_MAIL_INTERVAL=020|mail-interval-invalid value=020|a mail interval with a leading zero refuses" \
+  "ORCH_DIRECTIVE_UNREAD_SECS=five|unread-secs-invalid value=five|a non-numeric unread age refuses"; do
   IFS='|' read -r row_env row_want row_label <<<"$row"
   overseer_case "setting_${row_env//[^A-Za-z0-9]/_}" idle
   run "$row_env" TMUX_PANE="$PANE" -- --max-loops 1
@@ -1246,6 +1245,24 @@ exited_between "$MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$BETWEEN" "events=1 cursor=1" \
   "control: gated on the long pass's rows alone, the mail pass hands the note to a dead pane" "$ERR"
 
+# A mutant of the watch with one exact text replaced, for the gates below
+# whose rule spans lines.
+pmutate() { # OLD NEW LABEL
+  python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MUTANT_DIR/orch/scripts/oversee-watch" "$1" "$2" <<'PY'
+import sys
+src, out, old, new = sys.argv[1:]
+s = open(src).read()
+assert s.count(old) == 1, "mutant pattern: " + old
+open(out, "w").write(s.replace(old, new))
+PY
+  chmod +x "$MUTANT_DIR/orch/scripts/oversee-watch"
+  assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+    "differs" "control: the mutant really $3"
+}
+WALL_GATE='  OVERSEER_MARK_READ=0
+  overseer_wall_confirmed "$pane" || rc=$?
+  [[ "$rc" -ne 1 ]]'
+
 # A wall row another pane left, the pane that held this fleet before: this
 # pane's screen carries a relayed banner and its own account measures room,
 # so the first mail pass reads the lane's notice rather than waiting for a
@@ -1266,31 +1283,75 @@ other_pane_wall() { # [WATCH_BIN]
 other_pane_wall
 assert_eq "first=$FIRST_DRAIN notice=$(grep -c '^EVENT lane-notice KEN-5 ' <<<"$OUT" || true)" "first=drain long=0 notice=1" \
   "another pane's wall row holds no mail pass: the first one reads the lane's notice" "$ERR"
-mutate 's/^  \[\[ -n "\$(lane_row_get overseer-walled "\$rows" "\$OV_IDENTITY")" \]\]$/  grep -q "^overseer-walled" <<<"$rows"/' \
-  "reads a wall row whatever pane it is keyed on"
+pmutate "$WALL_GATE" '  grep -q "^overseer-walled" "$(pw_state_file "${REPOS[0]}")" 2>/dev/null' \
+  "gates the mail on any wall row a long pass committed"
 other_pane_wall "$MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "first=$FIRST_DRAIN" "first=drain long=1" \
   "control: a wall row read whatever pane it names holds the mail until a long pass prunes it" "$ERR"
 
-# The watch itself dies while its long pass completes a succession: the exit
-# still says a successor holds the window, so repeat mode stops rather than
-# start a second watch beside the successor's.
-parent_dies() { # [WATCH_BIN]
-  overseer_case "dead_parent_dies${1:+_mutant}" exited
+# The account walls between two long passes: the pane reads walled, the
+# account judgement confirms it, and no long pass has committed a row yet. The
+# mail pass asks that judgement itself, so the note waits for a live overseer.
+walled_between() { # [WATCH_BIN]
+  overseer_case "walled_between_passes${1:+_mutant}" walled
+  state_with "$LINE"
+  printf '%s\n' "$WALL_MARK_LINE" > "$STUB_DIR/succeed.check"
+  printf 'Sent after the account walled.\n' > "$TMP_ROOT/walled-note.txt"
+  (cd "$CASE_REPO_ROOT" && "$REAL_LANE_MAIL" send --item overseer --directive --file "$TMP_ROOT/walled-note.txt" >/dev/null)
+  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 -- --max-loops 1
+  WALLED="events=$(grep -c '^EVENT owner-note' <<<"$OUT" || true) cursor=$(mail_cursor_count)"
+}
+walled_between
+assert_eq "$WALLED" "events=0 cursor=0" \
+  "a note sent once the account walls, before any long pass commits the wall, is left unread" "$ERR"
+pmutate "$WALL_GATE" '  grep -q "^overseer-walled	$OV_IDENTITY	" "$(pw_state_file "${REPOS[0]}")" 2>/dev/null' \
+  "gates the mail on the wall row this pane's long pass committed"
+walled_between "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$WALLED" "events=1 cursor=1" \
+  "control: gated on a committed row, the mail pass hands the note to a walled harness" "$ERR"
+
+# The watch itself dies while its long pass settles the overseer: the exit
+# still says what that pass decided, 3 for a successor holding the window and
+# 4 for a repeat pass stopping on a notice-only recovery, so repeat mode stops
+# rather than start a second watch. The boundary is staged: the notice's send
+# to the overseer mailbox takes the fleet state away and waits for the watch
+# to die on it before the long pass goes on.
+cat > "$TMP_ROOT/bin/lane-mail-vanish.sh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-} ${2:-} ${3:-}" == "send --item overseer" ]]; then
+  unlink "$VANISH"
+  n=0
+  until grep -q '^oversee-watch: state-unreadable ' "$VANISH_AWAIT" 2>/dev/null || [[ "$n" -ge 200 ]]; do
+    n=$((n + 1)); sleep 0.1
+  done
+fi
+exec "$REAL_LANE_MAIL" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/lane-mail-vanish.sh"
+parent_dies() { # on|off [WATCH_BIN]
+  overseer_case "dead_parent_dies_$1${2:+_mutant}" exited
   state_with "$LINE"
   cp "$STUB_DIR/oversee-state.json" "$STUB_DIR/fleet.json"
-  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=1 ORCH_WATCH_MAIL_INTERVAL=1 \
-    SUCCEED_VANISH="$STUB_DIR/fleet.json" -- --max-loops 2 --state "$STUB_DIR/fleet.json"
+  WATCH_BIN="${2:-}" run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=1 ORCH_WATCH_MAIL_INTERVAL=1 \
+    ORCH_OVERSEER_SUCCESSION="$1" OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-vanish.sh" \
+    REAL_LANE_MAIL="$REAL_LANE_MAIL" VANISH="$STUB_DIR/fleet.json" VANISH_AWAIT="$TMP_ROOT/run-$((RUN_SEQ + 1)).err" \
+    -- --max-loops 2 --state "$STUB_DIR/fleet.json"
   DIES="rc=$RC launched=$(succeed_calls --dead-pane) unreadable=$(grep -c '^oversee-watch: state-unreadable ' "$ERR" || true)"
 }
-parent_dies
+parent_dies on
 assert_eq "$DIES" "rc=3 launched=1 unreadable=1" \
   "a watch that dies while its long pass launches the successor still exits 3" "$ERR"
-mutate 's/^      if \[\[ "\$OVERSEER_SUCCEEDED" -ne 0 \]\]; then rc=3$/      if false; then rc=3/' \
-  "drops the long pass's status from the exit trap"
-parent_dies "$MUTANT_DIR/orch/scripts/oversee-watch"
+parent_dies off
+assert_eq "$DIES" "rc=4 launched=0 unreadable=1" \
+  "a repeat pass that dies while its long pass stops on a notice-only recovery still exits 4" "$ERR"
+pmutate '      [[ -z "$SUCCESSION" ]] || rc="$SUCCESSION"' '      :' "drops the long pass's status from the exit trap"
+parent_dies on "$MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$DIES" "rc=2 launched=1 unreadable=1" \
   "control: with the status dropped, the successor's launch reads as a failed pass to retry" "$ERR"
+pmutate '  elif [[ "$OVERSEER_STOP" -ne 0 && "$REPEAT_CHILD" -eq 1 ]]; then SUCCESSION=4; fi' '  fi' "drops the stop arm of the succession status"
+parent_dies off "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$DIES" "rc=2 launched=0 unreadable=1" \
+  "control: without the stop arm, a notice-only recovery reads as a failed pass to retry" "$ERR"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

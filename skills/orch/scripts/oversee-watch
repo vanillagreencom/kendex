@@ -249,9 +249,9 @@ The overseer mailbox is read through its own to-lane.cursor, `lane-mail inbox
 --item overseer`, which a session start reads first: a note any reader has
 taken is not reported again, whatever state directory, --since or checkout
 this watch runs with. Before every mail pass the overseer's own pane is read
-once; while it reads exited, or walled with the long pass having confirmed the
-wall against its account, no mailbox is read, so a successor finds what was
-sent in the meantime.
+once; while it reads exited, or walled with a wall its own account confirms
+or that nothing could judge, no mailbox is read, so a successor finds what was
+sent in the meantime. Off tmux there is no such pane and the mail is read.
 
 Every pane payload above is the lines that event's handling reads and no
 more, always taken from below the lane's last user turn and capped by
@@ -425,7 +425,7 @@ Exit codes:
      failure is reported and the pass reads the remaining lanes before it
      exits. An unchanged lane-local failure, a provider-reported stopped state
      among them, stays quiet after its first report until a successful read or
-     a different failure; the pass still exits 2. A
+     a different failure, and fails no run after that first one. A
      state write can fail after its event was printed. Pr-watch commits
      repository baselines in order, so earlier repository baselines may
      already have advanced when a later rename fails. Only baselines that did
@@ -525,9 +525,13 @@ Environment:
   ORCH_WATCH_MAIL_INTERVAL    seconds from one mail pass to the next, a whole
                               number, default 20, and the most --repeat waits
                               between two runs after one that did not exit 2.
-                              0 reads the mail on every turn of the loop and
-                              waits out a long pass in flight rather than
-                              polling it
+                              A lane failure already reported fails no later
+                              run, so a note lands within one interval of the
+                              pass after it, unless the overseer pane reads
+                              down (see the overseer mailbox paragraph under
+                              the mail pass's events). 0 reads the mail on
+                              every turn of the loop and waits out a long pass
+                              in flight rather than polling it
   ORCH_DIRECTIVE_UNREAD_SECS  age in seconds past which a directive the lane
                               has not read is reported directive-unread, a
                               whole number, default 300
@@ -664,7 +668,6 @@ lane_failure_set() { # REASON TOOL_DETAIL FIELD=VALUE...
 lane_failure_report() { # ITEM STATE
   local item="$1" state="$2" key stopped_state="" prior="" line token saw_kind saw_item
   local -a tokens=()
-  PASS_FAILED=1
   PASS_FAILED_ITEMS+="$item"$'\n'
   # A failure is reported once, as lane-exited is: a standing one stays quiet
   # after its first report, and a different one, or a read that succeeded and
@@ -701,7 +704,11 @@ lane_failure_report() { # ITEM STATE
     die state-read-failed "" "item=$item" "row=lane-failed"
   fi
   state="$(lane_row_set lane-failed "$state" "$item" "$key")"
+  # Only news fails the run: a failure already reported and still standing
+  # neither ends the run nor stretches the repeat delay, so the other lanes'
+  # mail keeps its interval while one lane stays broken.
   if [[ "$prior" != "$key" ]]; then
+    PASS_FAILED=1
     ow_message "$LANE_FAILURE_REASON" ${LANE_FAILURE_FIELDS[@]+"${LANE_FAILURE_FIELDS[@]}"} >&2
     [[ -z "$LANE_FAILURE_DETAIL" ]] || printf '%s\n' "$LANE_FAILURE_DETAIL" >&2
   fi
@@ -1033,7 +1040,8 @@ PREPARE_SECS="${ORCH_WATCH_PREPARE_SECS:-1800}"
 # The mail pass's own cadence, apart from --interval: mail is a file read per
 # local lane and four provider reads per hosted one (its .git, and its
 # to-overseer.jsonl, to-lane.jsonl and to-lane.cursor through one lane-mail
-# call), none of them GitHub's, so a note reaches the overseer within this many
+# call), none of them GitHub's; a run asks GitHub nothing until a long pass
+# or the heartbeat needs it. So a note reaches the overseer within this many
 # seconds of the pass after it lands, whatever --interval costs.
 MAIL_INTERVAL="${ORCH_WATCH_MAIL_INTERVAL:-20}"
 [[ "$MAIL_INTERVAL" =~ ^(0|[1-9][0-9]*)$ ]] || die mail-interval-invalid "" "value=$MAIL_INTERVAL"
@@ -1525,8 +1533,8 @@ repeat_watch() { # ARGV...
     # that cannot be slept ends the watch with its cause named, never silently.
     # Capped at the mail interval: the runs between two passes read no mail,
     # and the long-pass start row, not this delay, spaces the GitHub reads. A
-    # pass that failed waits the whole delay, so a standing failure is no hot
-    # loop.
+    # pass that exited 2 waits the whole delay, so a global failure is no hot
+    # loop; a lane failure already reported exits 2 no more.
     delay="$REPEAT"
     [[ "$pass_rc" -eq 2 || "$MAIL_INTERVAL" -ge "$delay" ]] || delay="$MAIL_INTERVAL"
     OVERSEE_WATCH_SLEEP=repeat sleep "$delay" &
@@ -1736,15 +1744,29 @@ long_drain() {
 # advanced past the events it found, and a line dropped here is lost for good.
 # A succession it completed keeps its status, 3 or 4, so repeat mode stops
 # rather than start a second watch beside the successor's.
+# The answers an ended long pass left, read into this process's globals; 1
+# where it left none.
+long_status_load() {
+  [[ -f "$LONG_STATUS" ]] || return 1
+  # shellcheck source=/dev/null
+  source "$LONG_STATUS"
+}
+# The status a succession leaves the run with, as SUCCESSION, or empty: 3 when
+# a successor holds the window, 4 when a repeat pass stops on a notice-only or
+# spent recovery. repeat_watch reads either as "do not start another watch".
+SUCCESSION=""
+succession_status() {
+  SUCCESSION=""
+  if [[ "$OVERSEER_SUCCEEDED" -ne 0 ]]; then SUCCESSION=3
+  elif [[ "$OVERSEER_STOP" -ne 0 && "$REPEAT_CHILD" -eq 1 ]]; then SUCCESSION=4; fi
+}
 on_exit() {
   local rc=$?
   if [[ -n "$LONG_PID" ]]; then
     long_drain || :
-    if [[ -f "$LONG_STATUS" ]]; then
-      # shellcheck source=/dev/null
-      source "$LONG_STATUS"
-      if [[ "$OVERSEER_SUCCEEDED" -ne 0 ]]; then rc=3
-      elif [[ "$OVERSEER_STOP" -ne 0 && "$REPEAT_CHILD" -eq 1 ]]; then rc=4; fi
+    if long_status_load; then
+      succession_status
+      [[ -z "$SUCCESSION" ]] || rc="$SUCCESSION"
     fi
   fi
   rm -rf "$WORK_DIR"
@@ -1757,14 +1779,24 @@ trap on_exit EXIT
 # GH_BOT_TOKEN can be selected — the last candidate. Never proceed
 # unauthenticated: an unauthenticated `gh pr list` would report an empty
 # fleet, not a failure.
-orch_sanitize_gh_env
-if ! orch_github_auth_status; then
-  unset GH_TOKEN GITHUB_TOKEN
-  { orch_load_env_bot_token "$PROJECT_ROOT" && orch_github_auth_status; } \
-    || die auth-failed "" "service=github"
-fi
+#
+# Asked once per run, and only when GitHub is first needed: resolving a
+# repository no --repo names, a long pass, or the heartbeat's open-PR list. A
+# run that ends on mail news before a long pass comes due makes no GitHub call.
+GH_READY=0
+github_ready() {
+  [[ "$GH_READY" -eq 0 ]] || return 0
+  orch_sanitize_gh_env
+  if ! orch_github_auth_status; then
+    unset GH_TOKEN GITHUB_TOKEN
+    { orch_load_env_bot_token "$PROJECT_ROOT" && orch_github_auth_status; } \
+      || die auth-failed "" "service=github"
+  fi
+  GH_READY=1
+}
 
 if [[ ${#REPOS[@]} -eq 0 ]]; then
+  github_ready
   # The shared resolver, so a watch launched with GH_REPO naming another
   # repository reduces that one rather than the checkout it was started in.
   # Exit 2 prints the value it rejected, which is no more usable as a `--repo`
@@ -2728,8 +2760,8 @@ overseer_marks_judge() {
 # copied. Every other answer, a judgement that could not be made included,
 # leaves the wall unconfirmed and the pane read as the working overseer it
 # looks like everywhere else.
-overseer_wall_confirmed() { # PANE
-  overseer_marks_judge || { overseer_note overseer-wall-unjudged "pane=$1"; return 1; }
+overseer_wall_confirmed() { # PANE — 0 confirmed, 1 refuted, 2 unjudged
+  overseer_marks_judge || { overseer_note overseer-wall-unjudged "pane=$1"; return 2; }
   [[ "$OVERSEER_MARK_KEY" == mark-reached && "$OVERSEER_MARK_KIND" == headroom ]] && return 0
   overseer_note overseer-wall-unconfirmed "pane=$1" "answer=$OVERSEER_MARK_KEY" \
     "kind=${OVERSEER_MARK_KIND:-none}"
@@ -3397,6 +3429,7 @@ check_accounts() {
 # account roster follows, as the last long pass read it.
 heartbeat() {
   local errf="$WORK_DIR/open.err" repo open open_all=""
+  github_ready
   for repo in "${REPOS[@]}"; do
     open="$(gh pr list --repo "$repo" --state open --limit 50 --json number,headRefName,title \
       --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>"$errf")" \
@@ -3460,6 +3493,7 @@ long_pass() {
 # run at once, and one shared would have each read the other's tool errors and
 # a die in one discard the other's staged baselines.
 long_start() {
+  github_ready
   rm -f -- "$LONG_STATUS" "$LONG_DONE"
   mkdir -p -- "$WORK_DIR/long" || die state-directory-create-failed "" "path=$WORK_DIR/long"
   ( WORK_DIR="$WORK_DIR/long"; PW_TMP_TAG="$$-long"; trap 'touch "$LONG_DONE"' EXIT; long_pass ) \
@@ -3475,27 +3509,24 @@ long_collect() { # [wait]
   [[ "${1:-}" == wait || -e "$LONG_DONE" ]] || return 0
   long_drain || rc=$?
   [[ "$rc" -eq 0 ]] || exit "$rc"
-  [[ -f "$LONG_STATUS" ]] || die long-pass-unfinished "" "path=$LONG_STATUS"
-  # shellcheck source=/dev/null
-  source "$LONG_STATUS"
+  long_status_load || die long-pass-unfinished "" "path=$LONG_STATUS"
   LONG_PASSES=$((LONG_PASSES + 1))
   [[ "$LONG_EVENT" -eq 0 ]] || PASS_EVENT=1
   [[ "$LONG_FAILED" -eq 0 ]] || PASS_FAILED=1
   MAIL_OWED=1
 }
 
-# Whether a long pass starts now: none in flight, no news from an earlier turn
-# of this run, fewer than --max-loops run, and --interval gone by since the
-# last one started, in this run or an earlier one. News from this turn's own
-# mail pass does not hold back a long pass already due, so a run ends on both
-# halves of the pass it would have made as one. The start is kept in the mail
-# pass's file, so a run that ended on mail news does not bring the next long
+# Whether a long pass starts now: none in flight, fewer than --max-loops run,
+# and --interval gone by since the last one started, in this run or an earlier
+# one. A run with news ends at run_end before a later turn reaches here, so a
+# long pass due on the turn the news came is the last one. The start is kept
+# in the mail pass's file, so a run that ended on mail news does not bring the next long
 # pass forward: how many long passes an hour holds, and so how many GitHub
 # calls, is the interval's alone.
 LONG_DUE=0
 long_due() {
   local last
-  [[ -z "$LONG_PID" && "$TURN_NEWS" -eq 0 && "$LONG_PASSES" -lt "$MAX_LOOPS" ]] || return 1
+  [[ -z "$LONG_PID" && "$LONG_PASSES" -lt "$MAX_LOOPS" ]] || return 1
   if ! last="$(lane_row_get long-pass "$MAIL_SEEN" fleet)"; then
     die state-read-failed "" "path=$MAIL_STATE_FILE" "row=long-pass"
   fi
@@ -3506,24 +3537,26 @@ long_due() {
   LONG_DUE=$((PASS_NOW + INTERVAL))
 }
 
-# Whether the overseer's pane reads down now, taken fresh before every mail
-# pass: no mailbox is read then, so the successor, or the overseer once it
-# reads live again, finds that mail rather than a log nobody reads. Down is
-# `exited` on this reading, or `walled` where the long pass has confirmed that
-# wall against the account, the overseer-walled row keyed on this pane's own
-# identity: a wall the account has not confirmed is a banner this watch
-# relayed about another lane. Off tmux, or with a pane that cannot be read,
-# nothing is judged and the mail is read, as the long pass reads on.
+# Whether the overseer's pane reads down now, judged afresh before every mail
+# pass on this pass's own reading: no mailbox is read then, so the successor,
+# or the overseer once it reads live again, finds that mail rather than a log
+# nobody reads. Down is `exited`, or `walled` with the wall confirmed by the
+# one judgement check_overseer asks, overseer_wall_confirmed; a wall its
+# account refutes is a banner this watch relayed about another lane. A wall
+# nothing could judge holds the mail for the pass: holding delays a note, and
+# reading it into a harness that takes no turn loses it. The judgement's memo
+# is cleared first, since this process keeps no pass of its own to scope it.
+# Off tmux, or with a pane that cannot be read, nothing is judged and the mail
+# is read, as the long pass reads on.
 overseer_down() {
-  local pane="${TMUX_PANE:-}" file rows
+  local pane="${TMUX_PANE:-}" rc=0
   [[ -n "${TMUX:-}" && -n "$pane" ]] || return 1
   overseer_pane_read "$pane" || return 1
   [[ "$OV_STATE" != exited ]] || return 0
   [[ "$OV_STATE" == walled ]] || return 1
-  file="$(pw_state_file "${REPOS[0]}")"
-  [[ -f "$file" ]] || return 1
-  rows="$(cat -- "$file")" || die state-read-failed "" "path=$file"
-  [[ -n "$(lane_row_get overseer-walled "$rows" "$OV_IDENTITY")" ]]
+  OVERSEER_MARK_READ=0
+  overseer_wall_confirmed "$pane" || rc=$?
+  [[ "$rc" -ne 1 ]]
 }
 
 # Until the next mail pass or long pass is due. A long pass in flight is looked
@@ -3568,7 +3601,6 @@ PASS_NOW=""
 PASS_EVENT=0
 PASS_FAILED=0
 PASS_FAILED_ITEMS=""
-TURN_NEWS=0
 MAIL_DUE=0
 # The run's end, asked at the foot of every turn and again once the wait after
 # it has taken a long pass in, so a run whose news is out never reads the mail
@@ -3578,8 +3610,8 @@ MAIL_DUE=0
 # the heartbeat's run would otherwise leave to the next.
 MAIL_OWED=0
 run_end() {
-  [[ "$OVERSEER_SUCCEEDED" -eq 0 ]] || exit 3
-  [[ "$OVERSEER_STOP" -eq 0 || "$REPEAT_CHILD" -eq 0 ]] || exit 4
+  succession_status
+  [[ -z "$SUCCESSION" ]] || exit "$SUCCESSION"
   [[ -z "$LONG_PID" ]] || return 0
   if [[ "$PASS_EVENT" -eq 0 && "$PASS_FAILED" -eq 0 && "$LONG_PASSES" -ge "$MAX_LOOPS" && "$MAIL_OWED" -eq 1 ]]; then
     MAIL_OWED=0
@@ -3602,7 +3634,6 @@ while :; do
   # produces an event and the run returns.
   [[ -z "$STATE_FILE" ]] || { fleet_merge; require_item_helpers; }
   PASS_NOW="$(date -u +%s)" || die time-failed "" "clock=UTC"
-  TURN_NEWS=$((PASS_EVENT + PASS_FAILED))
   # Mail first, so a long pass forked below starts from the clone roots and
   # removed worktrees this turn has just learned.
   if [[ "$PASS_NOW" -ge "$MAIL_DUE" ]]; then

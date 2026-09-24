@@ -551,7 +551,7 @@ for kind in mail state-fetch handoff-output; do
   [[ -z "$CONTINUE_HANDOFF" ]] || assert_eq \
     "$(grep -cxF -- "$CONTINUE_HANDOFF" <<<"$CONTINUE_OUT" || :)" "1" \
     "$kind failure does not hide the later lane's handoff" "$STUB_DIR/continue-a.err"
-  assert_eq "$CONTINUE_AGAIN_RC" "2" "$kind failure keeps the next completed pass failed"
+  assert_eq "$CONTINUE_AGAIN_RC" "0" "$kind failure, standing unchanged, fails no later pass"
   assert_eq "$(grep -cxF -- "EVENT lane-notice KEN-63 later-$kind" <<<"$CONTINUE_AGAIN" || :)" "0" \
     "$kind failure preserves the later lane's successful cursors" "$STUB_DIR/continue-b.err"
   [[ -z "$CONTINUE_HANDOFF" ]] || assert_eq \
@@ -613,10 +613,10 @@ assert_eq "$(grep -c "^EVENT owner-note $STOPPED_OWNER$" <<<"$STOPPED_OUT" || :)
   "the pass reports the owner's note" "$TMP_ROOT/stopped-a"
 assert_eq "$(grep -c "^EVENT peer-note peer-repo $STOPPED_PEER kind=directive$" <<<"$STOPPED_OUT" || :)" "1" \
   "the pass reports the peer note" "$TMP_ROOT/stopped-a"
-assert_eq "$STOPPED_AGAIN_RC" "2" "the standing stopped lane keeps the next completed pass failed"
+assert_eq "$STOPPED_AGAIN_RC" "0" "the standing stopped lane, reported once, fails no later pass"
 assert_eq "$(grep -c 'lane-stopped item=KEN-60 state=stopped' "$TMP_ROOT/stopped-b" || :)" "0" \
   "the same stopped state is not reported on every pass" "$TMP_ROOT/stopped-b"
-assert_eq "$(grep -c '^EVENT ' <<<"$STOPPED_AGAIN" || :)" "0" \
+assert_eq "$(grep -v '^EVENT heartbeat ' <<<"$STOPPED_AGAIN" | grep -c '^EVENT ' || :)" "0" \
   "the successful lane and overseer cursors suppress their events on the next pass" "$TMP_ROOT/stopped-b"
 run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
   LANE_HOST_STUB_DIR="$STOPPED_REMOTE" -- --max-loops 1 \
@@ -636,8 +636,8 @@ STOP_EARLY="$MUTANT_DIR/orch/scripts/oversee-watch-stop-early"
 python3 -c 'import sys
 src, out = sys.argv[1:]
 s = open(src).read()
-old = "  PASS_FAILED=1\n  PASS_FAILED_ITEMS+="
-new = "  exit 2\n  PASS_FAILED_ITEMS+="
+old = "    PASS_FAILED=1\n    ow_message"
+new = "    exit 2\n    ow_message"
 assert s.count(old) == 1, "deferred-exit mutant pattern"
 open(out, "w").write(s.replace(old, new))' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$STOP_EARLY"
@@ -860,13 +860,21 @@ fi
 exec "$REAL_LANE_MAIL" "$@"
 EOF
 # A pr-watch that marks its start and end in the same log, holding its first
-# call open for LONG_HOLD seconds: the long pass that overruns its interval.
+# call open, with LONG_HOLD set, until two mail passes have logged under it or
+# twenty seconds pass: the long pass that overruns its interval, staged on
+# what the mail pass does rather than on how fast the machine is.
 cat > "$TMP_ROOT/bin/pr-watch-slow.sh" <<'EOF'
 #!/usr/bin/env bash
 n=0; [[ -f "$STUB_DIR/prwatch.calls.owner_repo" ]] && n="$(cat "$STUB_DIR/prwatch.calls.owner_repo")"
 n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/prwatch.calls.owner_repo"
 printf 'long start %s\n' "$n" >> "$STUB_DIR/cadence.log"
-[[ "$n" -ne 1 || -z "${LONG_HOLD:-}" ]] || sleep "$LONG_HOLD"
+if [[ "$n" -eq 1 && -n "${LONG_HOLD:-}" ]]; then
+  waited=0
+  until [[ "$(awk '$0 == "long start 1" { on = 1; next } on && /^mail drain / { k++ } END { print k + 0 }' "$STUB_DIR/cadence.log")" -ge 2 \
+    || "$waited" -ge 200 ]]; do
+    waited=$((waited + 1)); sleep 0.1
+  done
+fi
 printf 'long end %s\n' "$n" >> "$STUB_DIR/cadence.log"
 EOF
 chmod +x "$TMP_ROOT/bin/lane-mail-logging.sh" "$TMP_ROOT/bin/pr-watch-slow.sh"
@@ -898,23 +906,24 @@ overrun_facts() {
     END { printf "mail-during=%s overlap=%d", (mail >= 2 ? "several" : mail + 0), overlap }' <<<"$CADENCE_LOG"
 }
 
-# The note lands on the second mail pass, one second into a run whose long
-# pass comes every four: reported on that pass, with no second long pass.
+# The note lands on the second mail pass, one second into a run whose next
+# long pass is an hour away: reported on that pass, by the mail cadence alone.
 new_case mail_cadence
-cadence_run "" NOTE_AT=2 -- --interval 4 --max-loops 2 --item KEN-70
+cadence_run "" NOTE_AT=2 -- --interval 3600 --max-loops 2 --item KEN-70
 assert_eq "$(cadence_facts)" "notices=1 drains=2 long=1" \
   "a lane's note is reported on the mail pass after it lands, between two long passes" "$STUB_DIR/cadence.err"
 
 # The long pass held open past its interval: mail passes go on under it, and
 # the next long pass waits for it to end.
 new_case mail_cadence_overrun
-cadence_run "" LONG_HOLD=4 -- --interval 1 --max-loops 2 --item KEN-70
+cadence_run "" LONG_HOLD=1 -- --interval 1 --max-loops 2 --item KEN-70
 assert_eq "$(overrun_facts)" "mail-during=several overlap=0" \
   "a long pass overrunning its interval holds up no mail pass and overlaps no long pass" "$STUB_DIR/cadence.err"
 
 # Must-fail inverses. Mail on the long cadence reports the note only with the
-# next long pass; a long pass run in line holds every mail pass up behind it;
-# one started without waiting for the last overlaps it.
+# next long pass: run at a four-second interval, since at the hour the row
+# above runs at that mutant would not end. A long pass run in line holds every
+# mail pass up behind it; one started without waiting for the last overlaps it.
 cadence_mutant() { # NAME OLD NEW
   python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MUTANT_DIR/orch/scripts/oversee-watch-$1" "$2" "$3" <<'PY'
 import sys
@@ -927,17 +936,17 @@ PY
 }
 cadence_mutant long-cadence 'MAIL_DUE=$((PASS_NOW + MAIL_INTERVAL))' 'MAIL_DUE=$((PASS_NOW + INTERVAL))'
 cadence_mutant in-line '>"$LONG_OUT" 2>"$LONG_ERR" &' '>"$LONG_OUT" 2>"$LONG_ERR" & wait "$!"'
-cadence_mutant overlapping '[[ -z "$LONG_PID" && "$TURN_NEWS" -eq 0' '[[ "$TURN_NEWS" -eq 0'
+cadence_mutant overlapping '[[ -z "$LONG_PID" && "$LONG_PASSES" -lt "$MAX_LOOPS" ]]' '[[ "$LONG_PASSES" -lt "$MAX_LOOPS" ]]'
 new_case mail_cadence_mutant
 cadence_run "$MUTANT_DIR/orch/scripts/oversee-watch-long-cadence" NOTE_AT=2 -- --interval 4 --max-loops 2 --item KEN-70
 assert_eq "$(cadence_facts)" "notices=1 drains=2 long=2" \
   "control: mail read on the long cadence reports the note only with the next long pass" "$STUB_DIR/cadence.err"
 new_case mail_cadence_overrun_inline
-cadence_run "$MUTANT_DIR/orch/scripts/oversee-watch-in-line" LONG_HOLD=4 -- --interval 1 --max-loops 2 --item KEN-70
+cadence_run "$MUTANT_DIR/orch/scripts/oversee-watch-in-line" LONG_HOLD=1 -- --interval 1 --max-loops 2 --item KEN-70
 assert_eq "$(overrun_facts)" "mail-during=0 overlap=0" \
   "control: a long pass run in line holds every mail pass up until it ends" "$STUB_DIR/cadence.err"
 new_case mail_cadence_overrun_overlapping
-cadence_run "$MUTANT_DIR/orch/scripts/oversee-watch-overlapping" LONG_HOLD=4 -- --interval 1 --max-loops 3 --item KEN-70
+cadence_run "$MUTANT_DIR/orch/scripts/oversee-watch-overlapping" LONG_HOLD=1 -- --interval 1 --max-loops 3 --item KEN-70
 assert_eq "$([[ "$(overrun_facts)" == *' overlap=0' ]] && echo none || echo some)" "some" \
   "control: a long pass started while the last is in flight overlaps it" "$STUB_DIR/cadence.err"
 

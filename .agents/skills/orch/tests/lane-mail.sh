@@ -256,6 +256,21 @@ assert_eq "$QUIET" "kept" "an inbox that hands nothing over leaves the cursor fi
 assert_eq "$CLAMPED" "receipts cursor=1 count=1" "drain --receipts lists the cursor no further than the lines it read"
 lm inbox --item KEN-1 --after 1
 assert_eq "$RC=$ERR" "2=lane-mail: option-unknown=--after" "inbox takes no --after: the cursor is its one position"
+lm inbox --item KEN-1 --receipts
+assert_eq "$RC=$ERR" "2=lane-mail: option-unknown=--receipts" "--receipts is drain's alone"
+
+# An answer the lane read, then a directive: the answer's line is on the
+# cursor's scale, so pending lists the directive as unread.
+answered_lane() { # NAME
+  new_lane "$1"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --re some-ask --file "$(text a 'Merge it.')"
+  LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Unread.')"
+  lm pending --item KEN-1 --root "$LANE"
+  PENDING_DIRECTIVE="$(jq -r 'select(.kind == "directive") | .text' <<<"$OUT")"
+}
+answered_lane pending_after_answer
+assert_eq "$PENDING_DIRECTIVE" "Unread." "pending lists a directive past an answer the lane read"
 
 # A Stop hook peeks, then a workflow wait point hands a later line over, then
 # the hook acknowledges its older count. ACK_CURSOR is what that leaves.
@@ -976,6 +991,10 @@ assert_eq "$(jq -r '.text' <<<"$OUT")" "twice" \
 mutant inbox-cursor-churn 's@^    \[ "\$PEEK" -eq 1 \] || \[ "\$COUNT" = "\$SEEN" \] || lm_cursor_write "\$COUNT"$@    [ "$PEEK" -eq 1 ] || lm_cursor_write "$COUNT"@'
 cursor_lane control_quiet
 assert_eq "$QUIET" "rewritten" "control: a cursor written on every inbox is replaced by a read that found nothing"
+
+mutant directives-alone 's@foreach inputs as \$raw (0; \. + 1;@foreach (inputs | select(test("directive"))) as $raw (0; . + 1;@'
+answered_lane control_pending_answer
+assert_eq "$PENDING_DIRECTIVE" "" "control: directive lines numbered alone drop an unread directive from pending"
 
 mutant receipts-unclamped 's@^      \[ "\$SEEN" -le "\$COUNT" \] || SEEN="\$COUNT"$@      :@'
 cursor_lane control_clamp

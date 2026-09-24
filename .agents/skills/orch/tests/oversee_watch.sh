@@ -922,6 +922,35 @@ for row in "1||workflow-state: unknown-command arg1=handoff-standing|an install 
     "$label: the standing row survives, so the next readable pass still owes the event" "$err"
 done
 
+# The handoff read's failure is reported once while it stands, and a read
+# that succeeded makes the next one news again: fail, fail, succeed, fail.
+handoff_flap() { # [WATCH_BIN]
+  local run
+  local -a env
+  new_case "handoff_flap${1:+_mutant}"
+  handoff_record KEN-1
+  old_state_reader "$STUB_DIR/old-workflow-state" 1 "" "workflow-state: unknown-command arg1=handoff-standing"
+  FLAP=""
+  for run in fail fail ok fail; do
+    env=()
+    [[ "$run" == ok ]] || env=(REAL_WORKFLOW_STATE="$STUB_DIR/old-workflow-state")
+    WATCH_BIN="${1:-}" run_watch ${env[@]+"${env[@]}"} -- --item KEN-1 >/dev/null 2>"$STUB_DIR/flap.err" || true
+    FLAP+="$(grep -c 'oversee-watch: handoff-read-failed item=KEN-1' "$STUB_DIR/flap.err" || :)"
+  done
+}
+handoff_flap
+assert_eq "reports=$FLAP" "reports=1001" "a handoff read failure is reported once, and again after a read that succeeded"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = '    rec="${answer#*$\'\\n\'}"\n    state="$(lane_row_clear lane-failed "$state" "$item")"\n'
+assert s.count(old) == 1, "handoff clear mutant pattern"
+open(out, "w").write(s.replace(old, '    rec="${answer#*$\'\\n\'}"\n'))
+PY
+handoff_flap "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "reports=$FLAP" "reports=1000" "control: with the stands read clearing nothing, the returning failure is silent"
+
 # The must-fail control: the clause widened to take a status in place of the
 # verdict, so an install older than the verb reads as "no record stands". The
 # row is then cleared and the lane that handed off is never reported.
@@ -1271,6 +1300,40 @@ awk -v line="$delay_cap" '$0 == line { print "    [[ \"$MAIL_INTERVAL\" -ge \"$d
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 repeat_delay_case repeat_delay_floorless failed "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$DELAYS" "5" "control: with no floor, a failing pass is retried at the mail interval" "$TMP_ROOT/e-repeat_delay_floorless"
+
+# One lane's mailbox fails and stays failed: the run that reports it exits 2
+# and waits the whole delay, and the run after it, the failure unchanged and
+# quiet, fails nothing, so the delay before the next is the mail interval and
+# another lane's note waits no longer.
+standing_delay_case() { # NAME [WATCH_BIN]
+  local root="$TMP_ROOT/standing/$1/ken-12"
+  new_case "$1"
+  mkdir -p "$root/tmp/lane-mail/KEN-12"
+  git -C "$root" init -q
+  printf '{"id":"s-1","kind":"notice","at":"t","text":"x"}\n' > "$root/tmp/lane-mail/KEN-12/to-overseer.jsonl"
+  chmod 000 "$root/tmp/lane-mail/KEN-12/to-overseer.jsonl"
+  write_state "$STUB_DIR/state.json" "$(lane_record KEN-12 '' '' "$root" running)"
+  repeat_sleep_stub 'printf "%s\n" "$1" >> "$STUB_DIR/repeat.delays"' \
+    '[[ "$(grep -c . "$STUB_DIR/repeat.delays")" -lt 2 ]] || exit 3'
+  WATCH_BIN="${2:-}" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" ORCH_WATCH_MAIL_INTERVAL=5 -- --max-loops 1 \
+    --repeat 60 --state "$STUB_DIR/state.json" >/dev/null 2>"$TMP_ROOT/e-$1" </dev/null || true
+  chmod 644 "$root/tmp/lane-mail/KEN-12/to-overseer.jsonl"
+  DELAYS="$(paste -sd ' ' - <"$STUB_DIR/repeat.delays" 2>/dev/null || echo none)"
+}
+standing_delay_case repeat_delay_standing
+assert_eq "$DELAYS" "60 5" "a lane failure still standing fails no later run, so the delay after it is the mail interval" \
+  "$TMP_ROOT/e-repeat_delay_standing"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = "  local -a tokens=()\n  PASS_FAILED_ITEMS+="
+assert s.count(old) == 1, "standing failure mutant pattern"
+open(out, "w").write(s.replace(old, "  local -a tokens=()\n  PASS_FAILED=1\n  PASS_FAILED_ITEMS+="))
+PY
+standing_delay_case repeat_delay_standing_fails "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$DELAYS" "60 60" "control: a standing failure that ends every run keeps every delay whole" \
+  "$TMP_ROOT/e-repeat_delay_standing_fails"
 
 # A local lane whose worktree sits outside the watch's own checkout (a
 # proposal sweep launched from a source repository) has its mailbox read at

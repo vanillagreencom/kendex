@@ -241,13 +241,10 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # before oversee-watch reports it as lane-prepare-stuck.
 # ORCH_WATCH_PREPARE_SECS = "1800"
 
-# Seconds between oversee-watch mail passes. A mail pass reads every lane
-# mailbox and the overseer's own: a file read for a lane on this disk, and
-# four reads through its provider for a hosted one. It runs apart from the
-# --interval pass that reads GitHub, and --repeat waits no longer than this
-# between runs, so a lane's note arrives within this many seconds whatever
-# --interval is. While the overseer's own pane reads exited, or walled, no
-# mail is read, and its successor finds it.
+# Seconds between oversee-watch mail passes, which read every lane mailbox
+# and the overseer's own apart from the --interval pass that reads GitHub.
+# When a note arrives, and the exceptions to that: oversee-watch --help,
+# section Environment.
 # ORCH_WATCH_MAIL_INTERVAL = "20"
 
 # Age in seconds past which a directive a lane has not read is reported as

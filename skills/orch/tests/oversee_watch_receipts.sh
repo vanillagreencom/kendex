@@ -112,6 +112,20 @@ PY
 }
 receipts_mutant cursorless '    lane_read="${BASH_REMATCH[1]}"' '    lane_read=0'
 receipts_mutant forgetful '          unread_at="$line"' '          :'
+receipts_mutant replacement-kept '    elif [[ -n "$to_first" && -n "$seen" && "$to_first" != "$seen" ]]; then
+      read_at=0; unread_at=0' '    elif [[ -n "$to_first" && -n "$seen" && "$to_first" != "$seen" ]]; then
+      :'
+# lane-mail numbering the directive lines alone, off the cursor's scale.
+DIRONLY="$MUTANT_DIR/orch/scripts/lane-mail-dironly"
+python3 - "$REPO_ROOT/skills/orch/scripts/lane-mail" "$DIRONLY" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = "foreach inputs as $raw (0; . + 1;"
+assert s.count(old) == 1, "dironly mutant pattern"
+open(out, "w").write(s.replace(old, 'foreach (inputs | select(test("directive"))) as $raw (0; . + 1;'))
+PY
+chmod +x "$DIRONLY"
 receipts_mutant reset-on-short '    elif [[ "$to_count" -eq 0 || "$lane_read" -lt "$read_at" ]]; then
       missed=1' '    elif [[ "$to_count" -eq 0 || "$lane_read" -lt "$read_at" ]]; then
       read_at=0; unread_at=0'
@@ -143,6 +157,45 @@ short_cursor
 assert_eq "$SHORT" "$HEARTBEAT|$HEARTBEAT|$HEARTBEAT" \
   "a cursor read that comes back short reports nothing, and the read after it nothing again" "$STUB_DIR/receipts.err"
 
+# A lane relaunched onto a fresh mailbox: its to-lane.jsonl opens on another
+# id, so the counts start over and the new mailbox's first directive is read.
+replaced_mailbox() { # [WATCH_BIN]
+  local bin="${1:-}" box="$CASE_REPO_ROOT/tmp/lane-mail/KEN-84"
+  mail_reset KEN-84
+  receipts KEN-84 "$bin"
+  direct KEN-84 'Old mailbox.' >/dev/null
+  lane_reads KEN-84
+  receipts KEN-84 "$bin"
+  rm -f -- "$box/to-lane.jsonl" "$box/to-lane.cursor"
+  REPLACED_ID="$(direct KEN-84 'New mailbox.')"
+  lane_reads KEN-84
+  receipts KEN-84 "$bin"
+  REPLACED="$RECEIPTS"
+}
+new_case receipts_replaced
+replaced_mailbox
+assert_eq "$REPLACED" "EVENT directive-read KEN-84 $REPLACED_ID" \
+  "a mailbox opening on another id starts the counts over, so its first directive is read" "$STUB_DIR/receipts.err"
+
+# An answer the lane read sits on a line the cursor counts: the directive sent
+# after it is on the line past the cursor, unread, never taken for read.
+answered_first() { # [LANE_MAIL]
+  local lane_mail="${1:-$LANE_MAIL}"
+  mail_reset KEN-85
+  receipts KEN-85 "" OVERSEE_WATCH_LANE_MAIL="$lane_mail"
+  printf 'Merge it.\n' > "$TMP_ROOT/answer.txt"
+  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item KEN-85 --root "$CASE_REPO_ROOT" --re some-ask \
+    --file "$TMP_ROOT/answer.txt" >/dev/null)
+  lane_reads KEN-85
+  ANSWERED_ID="$(direct KEN-85 'Halt after the answer.')"
+  receipts KEN-85 "" OVERSEE_WATCH_LANE_MAIL="$lane_mail" ORCH_DIRECTIVE_UNREAD_SECS=0
+  ANSWERED="$RECEIPTS"
+}
+new_case receipts_after_answer
+answered_first
+assert_eq "$ANSWERED" "EVENT directive-unread KEN-85 $ANSWERED_ID age=N" \
+  "a directive after an answer the lane read is unread, the answer's line counted by the cursor" "$STUB_DIR/receipts.err"
+
 new_case receipts_read_mutant
 read_sequence "$MUTANT_DIR/orch/scripts/oversee-watch-cursorless"
 assert_eq "$READ_AFTER" "$HEARTBEAT" "control: with the cursor unread, a directive the lane read is never reported" \
@@ -151,6 +204,15 @@ new_case receipts_unread_mutant
 unread_sequence "$MUTANT_DIR/orch/scripts/oversee-watch-forgetful"
 assert_contains "$UNREAD_AGAIN" "EVENT directive-unread KEN-81 $UNREAD_ID age=N" \
   "control: with the reported line forgotten, the unread directive is reported on every run" "$STUB_DIR/receipts.err"
+
+new_case receipts_replaced_mutant
+replaced_mailbox "$MUTANT_DIR/orch/scripts/oversee-watch-replacement-kept"
+assert_eq "$REPLACED" "$HEARTBEAT" \
+  "control: counts kept across a replacement leave its first directive unreported" "$STUB_DIR/receipts.err"
+new_case receipts_after_answer_mutant
+answered_first "$DIRONLY"
+assert_eq "$ANSWERED" "EVENT directive-read KEN-85 $ANSWERED_ID" \
+  "control: directive lines numbered alone report an unread directive as read" "$STUB_DIR/receipts.err"
 
 new_case receipts_short_cursor_mutant
 short_cursor "$MUTANT_DIR/orch/scripts/oversee-watch-reset-on-short"
