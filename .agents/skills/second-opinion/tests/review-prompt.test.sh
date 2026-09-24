@@ -3,8 +3,9 @@
 # own instruction files appended to it, chosen by the setting's globs (the
 # default set, a custom list, the empty list), with the nested AGENTS.md
 # files governing the changed paths after their parents, symlinks and
-# outside paths refused, a dash-leading directory resolved, and BSD utilities
-# that reject `--` still building the whole prompt.
+# outside paths refused, a dash-leading directory resolved, BSD utilities
+# that reject `--` still building the whole prompt, and each pattern that
+# matches no file, and a prompt left with none, reported on stderr.
 #
 # The script runs from a hermetic copy of the skill (the checkout's own
 # settings would decide the globs otherwise); a row with a `settings:` word
@@ -12,7 +13,7 @@
 #
 # A row is `label|world|argv|rc|out|err|state`; the world's words are the stub
 # world's (lib/stub-cli-world.bash) plus:
-#   layout:<full|evil|dash>  the reviewed repository's instruction files
+#   layout:<full|evil|dash|botrender>  the reviewed repository's instruction files
 #   settings:<globs>         the project settings' SECOND_OPINION_REVIEW_INSTRUCTIONS
 #   bsd                      sed, head, stat, cat, basename and dirname refusing `--`
 # The state adds:
@@ -22,6 +23,8 @@
 #   instr=<path(RULE),...> the instruction block's files in the prompt's order,
 #     each with the rule token its content carries (`?` for content under no
 #     header); `-` when the block is absent, `empty` when it holds nothing
+#   miss=<glob,...|->  the patterns reported as matching no file, in order
+#   none=<N|->  the pattern count the no-instructions report names
 #   head=<head|->  the artifact's reviewed head
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib/stub-cli-world.bash"
@@ -91,6 +94,11 @@ suite_word() {
       HEAD_SHA="$(git -C "$WORK" rev-parse HEAD)"
       printf 'y\n' >>"$WORK/-svc/code.txt"
       ;;
+    # only the file the bot-instructions skill renders
+    layout:botrender)
+      mkdir -p "$WORK/.github/instructions"
+      printf 'RULE-GOLF: rendered review rule\n' >"$WORK/.github/instructions/code-review.md"
+      ;;
     settings:*) printf '[env]\nSECOND_OPINION_REVIEW_INSTRUCTIONS = "%s"\n' "${1#settings:}" >"$PROJ/kendex.settings.toml" ;;
     bsd) W_ENV+=("PATH=$BSDBIN:$TMP_ROOT/psbin:$TMP_ROOT/bin:$PATH") ;;
     *) echo "UNKNOWN-WORD: $1" >&2; exit 2 ;;
@@ -146,11 +154,24 @@ instructions() {
   [[ -n "$out" ]] || printf 'empty'
 }
 
+# The instruction-file reports on the run's stderr: miss=<patterns> none=<N>.
+reports() {
+  local line miss="" none=""
+  while IFS= read -r line; do
+    case "$line" in
+      "second-opinion: instructions-unmatched pattern="*) miss="$miss,${line#*pattern=}" ;;
+      "second-opinion: instructions-none patterns="*) none="${line#*patterns=}" ;;
+    esac
+  done <"$ROW/stderr"
+  miss="${miss#,}"
+  printf 'miss=%s none=%s' "${miss:--}" "${none:--}"
+}
+
 extra_state() {
   local p="$ROW/prompts/prompt-1.txt" head
   head="$(jq -r '.qa_metadata.reviewed_head // "-"' "$OUT" 2>/dev/null | alias_text)"
-  [[ -f "$p" ]] || { printf ' prompt=- head=%s' "${head:--}"; return; }
-  printf ' lenses=%s skip=%s schema=%s instr=%s head=%s' "$(lenses "$p")" "$(skip_line "$p")" "$(schema_line "$p")" "$(instructions "$p")" "${head:--}"
+  [[ -f "$p" ]] || { printf ' prompt=- %s head=%s' "$(reports)" "${head:--}"; return; }
+  printf ' lenses=%s skip=%s schema=%s instr=%s %s head=%s' "$(lenses "$p")" "$(skip_line "$p")" "$(schema_line "$p")" "$(instructions "$p")" "$(reports)" "${head:--}"
 }
 
 L="Correctness,Security and fail-open behavior,Adversarial inputs,Portability,Repo-rule adherence,Docs-vs-code drift,Test adequacy+bash3.2"
@@ -158,15 +179,19 @@ SKIP="pure style/formatting preferences and minor naming opinions"
 SCHEMA="json-only:pass or action_required"
 FULL="AGENTS.md(RULE-AGENTS),review-bots.md(RULE-ALPHA),.github/instructions/shell.instructions.md(RULE-BRAVO),.github/copilot-instructions.md(RULE-CHARLIE),services/AGENTS.md(RULE-SERVICES),services/api/AGENTS.md(RULE-NESTED)"
 OK="0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=-"
+ALLMISS="AGENTS.md,review-bots.md,.github/instructions/code-review.md,.github/instructions/*.instructions.md,.github/copilot-instructions.md"
 run_table "the review prompt" "capture" "\
-the default globs: every matching file in the setting's order, the nested AGENTS.md files over a changed path parents first, the non-matching file left out|layout:full|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=$FULL head=<head>
-no instruction files: no block, the lenses and the schema still|-|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- head=<head>
-a custom glob list replaces the defaults|layout:full env:SECOND_OPINION_REVIEW_INSTRUCTIONS=docs/rules/*.md|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=docs/rules/custom.md(RULE-DELTA) head=<head>
-an empty setting drops the block|layout:full env:SECOND_OPINION_REVIEW_INSTRUCTIONS=|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- head=<head>
-the project settings' globs reach the run|layout:full settings:review-bots.md|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=review-bots.md(RULE-ALPHA) head=<head>
-the caller's empty setting beats the project's|layout:full settings:review-bots.md env:SECOND_OPINION_REVIEW_INSTRUCTIONS=|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- head=<head>
-a symlinked file and a file through a symlinked directory are refused by name, the regular file beside them appended|layout:evil|review|0|<out>|header:review skip-link:review-bots.md skip-outside:.github/instructions/leak.instructions.md written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- lenses=$L skip=$SKIP schema=$SCHEMA instr=.github/copilot-instructions.md(RULE-ECHO) head=<head>
-a changed path under a dash-leading directory finds its AGENTS.md|layout:dash|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=-svc/AGENTS.md(RULE-DASHDIR) head=<head>
-BSD utilities that refuse -- still build the whole prompt|layout:full bsd|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=$FULL head=<head>
+the default globs: every matching file in the setting's order, the nested AGENTS.md files over a changed path parents first, the non-matching file left out, the unmatched default pattern reported|layout:full|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=$FULL miss=.github/instructions/code-review.md none=- head=<head>
+no instruction files: no block, every default pattern and the empty prompt reported, the lenses and the schema still|-|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head>
+the default globs collect the bot-instructions render alone|layout:botrender|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=.github/instructions/code-review.md(RULE-GOLF) miss=AGENTS.md,review-bots.md,.github/instructions/*.instructions.md,.github/copilot-instructions.md none=- head=<head>
+a custom glob list replaces the defaults|layout:full env:SECOND_OPINION_REVIEW_INSTRUCTIONS=docs/rules/*.md|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=docs/rules/custom.md(RULE-DELTA) miss=- none=- head=<head>
+a pattern naming a missing file is reported and the review still runs|layout:full env:SECOND_OPINION_REVIEW_INSTRUCTIONS=docs/missing.md|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=docs/missing.md none=1 head=<head>
+a missing pattern beside a matching one is reported, the matching file still appended|layout:full env:SECOND_OPINION_REVIEW_INSTRUCTIONS=review-bots.md,docs/missing.md|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=review-bots.md(RULE-ALPHA) miss=docs/missing.md none=- head=<head>
+an empty setting drops the block and reports nothing|layout:full env:SECOND_OPINION_REVIEW_INSTRUCTIONS=|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=- none=- head=<head>
+the project settings' globs reach the run|layout:full settings:review-bots.md|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=review-bots.md(RULE-ALPHA) miss=- none=- head=<head>
+the caller's empty setting beats the project's|layout:full settings:review-bots.md env:SECOND_OPINION_REVIEW_INSTRUCTIONS=|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=- none=- head=<head>
+a symlinked file and a file through a symlinked directory are refused by name, the regular file beside them appended|layout:evil|review|0|<out>|header:review skip-link:review-bots.md skip-outside:.github/instructions/leak.instructions.md written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- lenses=$L skip=$SKIP schema=$SCHEMA instr=.github/copilot-instructions.md(RULE-ECHO) miss=AGENTS.md,.github/instructions/code-review.md none=- head=<head>
+a changed path under a dash-leading directory finds its AGENTS.md|layout:dash|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=-svc/AGENTS.md(RULE-DASHDIR) miss=$ALLMISS none=- head=<head>
+BSD utilities that refuse -- still build the whole prompt|layout:full bsd|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=$FULL miss=.github/instructions/code-review.md none=- head=<head>
 "
 finish

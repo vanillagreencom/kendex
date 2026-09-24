@@ -444,6 +444,8 @@ parent_log() {
     case "$line" in
       "{") in_json=1; json="{" ;;
       "["*|"→ cmd:"*|"→ Response received"*) ;;
+      # the instruction-file reports, pinned by review-prompt.test.sh alone
+      "second-opinion: instructions-"*) ;;
       # BSD rm reports every ancestor of an entry it could not remove; GNU rm
       # only the entry
       "rm: "*": Directory not empty") ;;

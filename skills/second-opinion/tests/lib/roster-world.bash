@@ -251,6 +251,8 @@ selection_log() {
     case "$line" in
       "{") in_json=1; json="{" ;;
       "["*|"→ cmd:"*|"→ Response received"*) ;;
+      # the instruction-file reports, pinned by review-prompt.test.sh alone
+      "second-opinion: instructions-"*) ;;
       "→ second-opinion:"*) printf '%s\n' "${line% cwd=*}" ;;
       *) printf '%s\n' "$line" ;;
     esac

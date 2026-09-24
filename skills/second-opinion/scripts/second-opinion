@@ -157,9 +157,15 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              Repo instruction-file globs appended to the review
                              prompt, resolved inside --cwd (default:
                              "AGENTS.md review-bots.md
+                             .github/instructions/code-review.md
                              .github/instructions/*.instructions.md
                              .github/copilot-instructions.md"; set empty to
-                             disable). When the list carries the literal
+                             disable). A pattern matching no file prints
+                             "second-opinion: instructions-unmatched
+                             pattern=<glob>" on stderr, and a prompt left with
+                             no instruction file prints "second-opinion:
+                             instructions-none patterns=<count>"; the review
+                             still runs. When the list carries the literal
                              AGENTS.md entry, nested AGENTS.md files governing
                              the changed paths are collected too
                              (ancestor-directory walk, same containment and
@@ -1572,10 +1578,13 @@ derive_review_scope() {
 # them; the local review must see the same rules or repo-rule findings are
 # structurally impossible. Globs resolve inside the reviewed repo ($CWD). A
 # set-but-empty SECOND_OPINION_REVIEW_INSTRUCTIONS disables the block; unset
-# uses the defaults. Each file is capped so one oversized instruction file
-# cannot drown the diff in the prompt.
+# uses the defaults, which include .github/instructions/code-review.md, the
+# file the bot-instructions skill renders. Each file is capped so one oversized
+# instruction file cannot drown the diff in the prompt. A pattern matching no
+# file is reported on stderr, and so is a prompt left with no instruction file,
+# but neither stops the review: the rules inform the prompt, they gate nothing.
 
-REVIEW_INSTRUCTIONS_DEFAULT="AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
+REVIEW_INSTRUCTIONS_DEFAULT="AGENTS.md review-bots.md .github/instructions/code-review.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
 REVIEW_INSTRUCTIONS_FILE_CAP=65536
 
 # Emit one instruction file (containment-checked, deduped, capped). Relies on
@@ -1632,13 +1641,20 @@ collect_review_instructions() {
   # emit_instruction_file for the checks each match must pass).
   local phys_root
   phys_root="$(cd -- "$CWD" && pwd -P)" || return 0
+  local hits
   for pattern in ${pattern_list[@]+"${pattern_list[@]}"}; do
     # compgen -G expands the glob without leaking non-matches (a bare unmatched
-    # pattern would otherwise pass through as a literal word). One path per
-    # line, so spaces in names survive; newline-in-name is not supported.
+    # pattern would otherwise pass through as a literal word) and exits 1 on
+    # no match. One path per line, so spaces in names survive; newline-in-name
+    # is not supported.
+    hits="$(cd -- "$CWD" && compgen -G "$pattern" 2>/dev/null)" || hits=""
+    if [[ -z "$hits" ]]; then
+      printf 'second-opinion: instructions-unmatched pattern=%s\n' "$pattern" >&2
+      continue
+    fi
     while IFS= read -r f; do
       emit_instruction_file "$f"
-    done < <(cd -- "$CWD" && compgen -G "$pattern" 2>/dev/null || true)
+    done <<<"$hits"
   done
 
   # Scoped instructions: when the pattern list carries the literal AGENTS.md
@@ -1676,6 +1692,12 @@ collect_review_instructions() {
         emit_instruction_file "${agents_chain[$chain_i]}"
       done
     done <<< "$REVIEW_CHANGED_FILES"
+  fi
+
+  # A non-empty pattern list that put no file into the prompt: the review runs
+  # without the repository's rules, which the caller must be able to see.
+  if [[ ${#pattern_list[@]} -gt 0 && "$matched" == $'\n' ]]; then
+    printf 'second-opinion: instructions-none patterns=%s\n' "${#pattern_list[@]}" >&2
   fi
 }
 
