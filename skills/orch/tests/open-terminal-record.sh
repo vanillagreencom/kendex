@@ -42,8 +42,9 @@ assert_eq() {
 # anything, gh answers nothing, lanes clears every lane, and tmux answers the
 # few reads a --cmd launch and a wake make; a hosted row sets STUB_PANE_CMD
 # and STUB_PANE_TEXT so the pane reads as an ssh session at its prompt. The
-# launching pane's session is STUB_SESSION_NAME, a dead pane where that is
-# empty; a session_name read with no -t is the attached client's, `client`.
+# launching pane's session is STUB_SESSION_NAME; with that empty the read
+# fails with tmux's own error line, and with STUB_PANE_GONE set it answers an
+# empty name and status 0, as tmux 3.4 answers for a pane it does not hold; a session_name read with no -t is the attached client's, `client`.
 # list-windows, new-window and that read each log `OP TARGET` to STUB_TMUX_LOG,
 # TARGET being the -t value or `none`. has-session
 # answers tmux's own refusal for a session STUB_DEAD_SESSIONS names, and for an
@@ -70,7 +71,9 @@ case "${1:-}" in
   new-window) logged new-window
     [[ -z "${STUB_OPENED_AT:-}" ]] || { date -u +%Y-%m-%dT%H:%M:%SZ > "$STUB_OPENED_AT"; sleep "${STUB_OPEN_DELAY:-0}"; }; echo "$$ %1" ;;
   display-message) if [[ "$*" == *session_name* ]]; then logged session-read; [[ "$t" != none ]] || { echo client; exit 0; }
-      [[ -n "${STUB_SESSION_NAME:-}" ]] || exit 1; echo "$STUB_SESSION_NAME"
+      [[ -z "${STUB_PANE_GONE:-}" ]] || exit 0
+      [[ -n "${STUB_SESSION_NAME:-}" ]] || { echo 'error connecting to /tmp/tmux-stub/default (No such file or directory)' >&2; exit 1; }
+      echo "$STUB_SESSION_NAME"
     elif [[ "$*" == *pane_current_command* ]]; then echo "${STUB_PANE_CMD:-0}"; else echo 0; fi ;;
   capture-pane) printf '%s\n' "${STUB_PANE_TEXT:-}" ;;
 esac
@@ -145,7 +148,7 @@ run_ot() {
   OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" \
     WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" LANES_HOME="$SESSION_HOME" EXISTS_DIR="$EXISTS_DIR" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX="${RUN_TMUX:-}" ORCH_TMUX_SESSION="${RUN_SESSION-stub}" TMUX_PANE="${RUN_PANE:-}" \
-    STUB_SESSION_NAME="${STUB_SESSION_NAME:-}" STUB_TMUX_LOG="${STUB_TMUX_LOG:-}" STUB_DEAD_SESSIONS="${STUB_DEAD_SESSIONS:-}" GH_REPO="" STUB_GH_REPO="${STUB_GH_REPO:-}" \
+    STUB_SESSION_NAME="${STUB_SESSION_NAME:-}" STUB_TMUX_LOG="${STUB_TMUX_LOG:-}" STUB_DEAD_SESSIONS="${STUB_DEAD_SESSIONS:-}" STUB_PANE_GONE="${STUB_PANE_GONE:-}" GH_REPO="" STUB_GH_REPO="${STUB_GH_REPO:-}" \
     "$script" ${state_args[@]+"${state_args[@]}"} "$@" 2>"$TMP_ROOT/err")"
   RC=$?
   set -e
@@ -216,8 +219,18 @@ assert_eq "$(RUN_SESSION=fleetx session_row sess-env CC-100)" \
   "rc=0 target==fleetx:1 list==fleetx pane= window=fleetx:CC-100 recorded=fleetx refused=" \
   "a launch from no pane with ORCH_TMUX_SESSION opens and records its window in that session"
 assert_eq "$(RUN_SESSION= session_row sess-none CC-101)" \
-  "rc=1 target= list= pane= window=none recorded=none refused=tmux-session-unresolved+item=CC-101+consulted=ORCH_TMUX_SESSION,tmux.session,TMUX_PANE" \
+  "rc=1 target= list= pane= window=none recorded=none refused=tmux-session-unresolved+item=CC-101+consulted=ORCH_TMUX_SESSION,tmux.session,TMUX_PANE+pane=unset" \
   "a launch from no pane with no session named or recorded refuses, naming the sources it read, and opens nothing"
+# What the TMUX_PANE read found, one row per value the refusal names; unset is
+# the row above. A pane tmux does not hold answers an empty name and status 0,
+# which is not a failed read, and a failed read leaves tmux's line above.
+assert_eq "$(RUN_SESSION= RUN_PANE=%9 STUB_PANE_GONE=1 session_row sess-gone CC-124)" \
+  "rc=1 target= list= pane=%9 window=none recorded=none refused=tmux-session-unresolved+item=CC-124+consulted=ORCH_TMUX_SESSION,tmux.session,TMUX_PANE+pane=none" \
+  "a launch whose TMUX_PANE names a pane tmux does not hold refuses with pane=none"
+RUN_SESSION= RUN_PANE=%9 session_row sess-unread CC-125 > "$TMP_ROOT/unread-row"
+assert_eq "$(cat "$TMP_ROOT/unread-row") above=$(awk '/^error connecting to / { e = NR } /^open-terminal: tmux-session-unresolved / { print (e && e < NR) ? 1 : 0; exit }' <<<"$ERR")" \
+  "rc=1 target= list= pane=%9 window=none recorded=none refused=tmux-session-unresolved+item=CC-125+consulted=ORCH_TMUX_SESSION,tmux.session,TMUX_PANE+pane=read-failed above=1" \
+  "a launch whose pane read fails refuses with pane=read-failed below tmux's own line"
 assert_eq "$(RUN_SESSION=fleetz STUB_DEAD_SESSIONS=fleetz session_row sess-typo CC-106)" \
   "rc=1 target= list= pane= window=none recorded=none refused=tmux-session-missing+item=CC-106+session=fleetz+source=ORCH_TMUX_SESSION" \
   "a first launch naming a session tmux does not hold refuses, naming it and its source, and records nothing"
@@ -252,7 +265,7 @@ assert_eq "$(RUN_SESSION=fleetx RUN_PANE=%9 STUB_SESSION_NAME=other nofleet_row 
   "a launch naming no fleet takes ORCH_TMUX_SESSION over a live pane in another session"
 RUN_SESSION= STUB_TMUX_LOG="$TMUX_LOG" RUN_TMUX=stub,1,0 run_ot STATE_DIR= CWD="$NOFLEET_SESSION" --tmux --cmd true CC-108
 assert_eq "rc=$RC first=$(grep '^open-terminal: tmux-session-' <<<"$ERR")" \
-  "rc=1 first=open-terminal: tmux-session-unresolved item=CC-108 consulted=ORCH_TMUX_SESSION,TMUX_PANE" \
+  "rc=1 first=open-terminal: tmux-session-unresolved item=CC-108 consulted=ORCH_TMUX_SESSION,TMUX_PANE pane=unset" \
   "a launch naming no fleet and no session lists no fleet state among the sources it read"
 
 # A fleet state whose tmux entry is no object: the session read fails, and the
@@ -598,7 +611,7 @@ assert_eq "rc=$RC harness=$(field "$(record CC-64)" harness)" 'rc=0 harness=null
 # One defect per rule of the session resolution: the refusal gone, the
 # existence check gone, the first launch's record gone, the target's session
 # dropped, and the recorded session ranked above ORCH_TMUX_SESSION.
-mutant unrefused '  [[ -n "$session" ]] || { ot_message tmux-session-unresolved "item=$1" "consulted=$consulted" >&2; return 1; }' '  :'
+mutant unrefused '  [[ -n "$session" ]] || { ot_message tmux-session-unresolved "item=$1" "consulted=$consulted" "pane=$pane_read" >&2; return 1; }' '  :'
 assert_eq "$(OT="$TMP_ROOT/unrefused/scripts/open-terminal" RUN_SESSION= session_row unrefused-state CC-110)" \
   "rc=1 target= list= pane= window=none recorded=none refused=" \
   "control: without the refusal a launch from no pane with no session is reported as some other tmux failure"
@@ -609,7 +622,7 @@ assert_eq "$(OT="$TMP_ROOT/unchecked/scripts/open-terminal" RUN_SESSION=fleetz S
 mutant unrecorded "'.tmux.session //= \$s'" "'.'"
 RUN_SESSION= RUN_PANE=%9 STUB_SESSION_NAME=fleety OT="$TMP_ROOT/unrecorded/scripts/open-terminal" session_row unrecorded-state CC-111 >/dev/null
 assert_eq "$(OT="$TMP_ROOT/unrecorded/scripts/open-terminal" RUN_SESSION= session_row unrecorded-state CC-112)" \
-  "rc=1 target= list= pane= window=none recorded=none refused=tmux-session-unresolved+item=CC-112+consulted=ORCH_TMUX_SESSION,tmux.session,TMUX_PANE" \
+  "rc=1 target= list= pane= window=none recorded=none refused=tmux-session-unresolved+item=CC-112+consulted=ORCH_TMUX_SESSION,tmux.session,TMUX_PANE+pane=unset" \
   "control: without the first launch's record a later launch from no pane has no session to open in"
 mutant untargeted 'tmux new-window -a -t "=$LAUNCH_SESSION:$last_idx"' 'tmux new-window -a -t ":$last_idx"'
 assert_eq "$(OT="$TMP_ROOT/untargeted/scripts/open-terminal" RUN_SESSION=fleetx session_row untargeted-state CC-113)" \
@@ -638,6 +651,10 @@ session_row silentread-state CC-122 >/dev/null
 assert_eq "$(OT="$TMP_ROOT/silentread/scripts/open-terminal" RUN_SESSION=fleetx session_row silentread-state CC-123)" \
   "rc=1 target= list= pane= window=none recorded=none refused=" \
   "control: without the session-record-failed line an unreadable tmux entry fails the launch with no key"
+mutant gonefailed '      pane_read=none' '      pane_read=read-failed'
+assert_eq "$(OT="$TMP_ROOT/gonefailed/scripts/open-terminal" RUN_SESSION= RUN_PANE=%9 STUB_PANE_GONE=1 session_row gonefailed-state CC-126)" \
+  "rc=1 target= list= pane=%9 window=none recorded=none refused=tmux-session-unresolved+item=CC-126+consulted=ORCH_TMUX_SESSION,tmux.session,TMUX_PANE+pane=read-failed" \
+  "control: with the empty answer read as a failure a pane tmux does not hold is reported as a failed read with no tmux line above"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
