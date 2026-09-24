@@ -64,7 +64,7 @@ Execute workflow sections in order; a "**Skip if**" condition is the workflow's 
 
 **The completion artifact is the round.** `dev-return-write` writes it after the commit; never hand-author the JSON (schema: orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)).
 
-- `--issue` is the delegation's `Artifact Key:` line, the workflow-state key whose forms `workflow-state --help` § Keys enumerates, never the tracker-native `OWNER/REPO#N` or a bare number. `--round-id` is its `Round ID:` line.
+- `--issue` is the delegation's `Artifact Key:` line, the workflow-state key where one exists or the opaque ad-hoc id, per [`dev-return.md` § Identity: the round id](../orch/schemas/dev-return.md#identity-the-round-id); never the tracker-native `OWNER/REPO#N` or a bare number. `--round-id` is its `Round ID:` line.
 - `--kind` always matches what was delegated. `--validate` matches your commit message and return. `--validate-note` carries the test-only validation-ceiling report when that route applies. Flag constraints and value shapes: `dev-return-write --help`.
 
 **Acceptance is that artifact plus git state, never your message.** Write the artifact, then return exactly once over the harness's agent-to-agent channel; a disk write is not a return. Send the `**Return exactly**` body once and go idle.

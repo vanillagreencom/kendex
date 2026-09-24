@@ -116,7 +116,7 @@ message() {
       ;;
     missing-issue)
       printf 'branch-size-check: missing-issue option=%s\n' "--issue"
-      printf '%s\n' "--issue is required (the workflow-state key whose issue states the branch's allowance)"
+      printf '%s\n' "--issue is required (the workflow-state key that decides the branch's allowance; a pr-N key names no issue)"
       ;;
     invalid-issue)
       printf 'branch-size-check: invalid-issue issue=%s\n' "$issue"
