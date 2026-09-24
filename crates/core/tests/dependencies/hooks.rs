@@ -765,82 +765,114 @@ fn the_wrappers_come_out_once_the_judge_is_switched_off() {
 /// withheld there too: the plan writes it beside no requirer, its finding
 /// names the requirer, and a copy installed while it was still asked for
 /// by name comes out with the withheld row. On the tool the requirer runs
-/// on, the companion stays.
+/// on, the companion stays. The companion itself lacks nothing, so its
+/// removal is the ordinary automatic kind: a copy the person edited is kept
+/// as the edit conflict, registration and all, and named for removal.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_companion_is_withheld_where_every_hook_that_requires_it_is() {
-    let f = hook_fixture("[hooks.boss]\nsource = \"cat\"\n\n[hooks.extra]\nsource = \"cat\"\n");
-    fs::write(f.source.join("hooks/boss.sh"), BOSS).unwrap();
-    fs::write(f.source.join("hooks/narrow.sh"), NARROW).unwrap();
-    fs::write(f.source.join("hooks/extra.sh"), EXTRA).unwrap();
-    apply_now(&f);
-    assert!(
-        hook_on_disk(&f, HarnessId::Codex, "extra.sh") && registered(&f, HarnessId::Codex, "extra"),
-        "extra asked for by name did not install on Codex"
+    /// Whether the companion's Codex copy was edited by hand; the drift
+    /// row the plan leaves on it; and whether it stays written and
+    /// registered there.
+    type Row = (
+        bool,
+        (kendex_core::engine::DriftState, &'static str),
+        (bool, bool),
     );
+    let rows: [Row; 2] = [
+        (
+            false,
+            (
+                kendex_core::engine::DriftState::Orphaned,
+                "withheld: a hook it runs with will not run here — will be removed",
+            ),
+            (false, false),
+        ),
+        (
+            true,
+            (
+                kendex_core::engine::DriftState::Conflict,
+                "no longer wanted, but its files were edited on disk — remove it by name to confirm",
+            ),
+            (true, true),
+        ),
+    ];
+    for (edited, row, codex) in rows {
+        let f = hook_fixture("[hooks.boss]\nsource = \"cat\"\n\n[hooks.extra]\nsource = \"cat\"\n");
+        fs::write(f.source.join("hooks/boss.sh"), BOSS).unwrap();
+        fs::write(f.source.join("hooks/narrow.sh"), NARROW).unwrap();
+        fs::write(f.source.join("hooks/extra.sh"), EXTRA).unwrap();
+        apply_now(&f);
+        assert!(
+            hook_on_disk(&f, HarnessId::Codex, "extra.sh")
+                && registered(&f, HarnessId::Codex, "extra"),
+            "{edited}: extra asked for by name did not install on Codex"
+        );
+        if edited {
+            let extra = f
+                .project
+                .join(hook_paths(HarnessId::Codex).0)
+                .join("extra.sh");
+            let mut script = fs::read_to_string(&extra).unwrap();
+            script.push_str("echo edited\n");
+            fs::write(&extra, script).unwrap();
+        }
 
-    declare(&f, "[hooks.boss]\nsource = \"cat\"\n");
-    let report = audit(&f.env, &f.scope).unwrap();
-    let found: Vec<(&str, &str, Option<&str>)> = report
-        .warnings
-        .iter()
-        .map(|w| {
-            (
-                w.name.as_str(),
-                w.message.as_str(),
-                w.remediation.as_deref(),
-            )
-        })
-        .collect();
-    assert_eq!(
-        found,
-        [
-            (
-                "boss",
-                "missing required dependency: Codex runs boss without narrow, whose own harnesses line leaves Codex out",
-                Some(
-                    "add Codex to narrow's harnesses line in the catalog, or list boss's harnesses in kendex.toml without Codex"
-                ),
-            ),
-            (
-                "extra",
-                "extra is wanted only by boss, which is withheld from Codex",
-                Some("settle the finding on boss"),
-            ),
-        ],
-        "{:?}",
-        messages(&report)
-    );
-    let extra_rows: Vec<(kendex_core::engine::DriftState, &str)> = report
-        .drift
-        .iter()
-        .filter(|row| row.name == "extra" && row.harness == HarnessId::Codex)
-        .map(|row| (row.state, row.detail.as_str()))
-        .collect();
-    assert_eq!(
-        extra_rows,
-        [(
-            kendex_core::engine::DriftState::Orphaned,
-            "withheld: a hook it runs with will not run here — will be removed",
-        )],
-        "{:?}",
-        drift_details(&report)
-    );
-    apply::execute(&f.env, &report.plan).unwrap();
-    for (name, on_claude, on_codex) in [
-        ("boss", true, false),
-        ("narrow", true, false),
-        ("extra", true, false),
-    ] {
-        for (harness, lands) in [(HarnessId::Claude, on_claude), (HarnessId::Codex, on_codex)] {
-            assert_eq!(
+        declare(&f, "[hooks.boss]\nsource = \"cat\"\n");
+        let report = audit(&f.env, &f.scope).unwrap();
+        let found: Vec<(&str, &str, Option<&str>)> = report
+            .warnings
+            .iter()
+            .map(|w| {
                 (
-                    hook_on_disk(&f, harness, &format!("{name}.sh")),
-                    registered(&f, harness, name)
+                    w.name.as_str(),
+                    w.message.as_str(),
+                    w.remediation.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    "boss",
+                    "missing required dependency: Codex runs boss without narrow, whose own harnesses line leaves Codex out",
+                    Some(
+                        "add Codex to narrow's harnesses line in the catalog, or list boss's harnesses in kendex.toml without Codex"
+                    ),
                 ),
-                (lands, lands),
-                "{name} on {harness:?} (written, registered)"
-            );
+                (
+                    "extra",
+                    "extra is wanted only by boss, which is withheld from Codex",
+                    Some("settle the finding on boss"),
+                ),
+            ],
+            "{edited}: {:?}",
+            messages(&report)
+        );
+        let extra_rows: Vec<(kendex_core::engine::DriftState, &str)> = report
+            .drift
+            .iter()
+            .filter(|row| row.name == "extra" && row.harness == HarnessId::Codex)
+            .map(|row| (row.state, row.detail.as_str()))
+            .collect();
+        assert_eq!(extra_rows, [row], "{edited}: {:?}", drift_details(&report));
+        apply::execute(&f.env, &report.plan).unwrap();
+        for (name, on_claude, on_codex) in [
+            ("boss", (true, true), (false, false)),
+            ("narrow", (true, true), (false, false)),
+            ("extra", (true, true), codex),
+        ] {
+            for (harness, lands) in [(HarnessId::Claude, on_claude), (HarnessId::Codex, on_codex)] {
+                assert_eq!(
+                    (
+                        hook_on_disk(&f, harness, &format!("{name}.sh")),
+                        registered(&f, harness, name)
+                    ),
+                    lands,
+                    "{edited}: {name} on {harness:?} (written, registered)"
+                );
+            }
         }
     }
 }

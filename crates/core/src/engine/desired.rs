@@ -294,28 +294,36 @@ pub struct DesiredState {
     /// Hooks not written on a tool because a hook they run with will not
     /// run there, for any reason `desired_kinds::not_written` names: a
     /// companion the hook requires, or every requirer a derived companion
-    /// exists for. A wrapper beside no judge refuses every call it guards,
-    /// so the plan leaves the wrapper out, takes one already installed out
-    /// whatever its options (`plan_pass::plan_withheld`), and the finding
-    /// the dependency walk pushed says why.
-    pub withheld: BTreeSet<Landing>,
+    /// exists for. The walk decides each about the declaration the plan
+    /// writes (`deps::wanted_by`), so the planner leaves the hook out on
+    /// that tool and the finding the walk pushed says why. What becomes of
+    /// a copy already installed there is `plan_pass::plan_withheld`'s:
+    /// taken out, or kept as invariant 4's conflict where the record is
+    /// another catalog's.
+    pub withheld: BTreeMap<(ItemKind, String, HarnessId), Withheld>,
 }
 
-/// Where one hook lands: the tool, and the declaration the plan writes it
-/// from, named by the provenance of the catalog that declaration reads.
-/// The one identity a withholding is recorded against and asked about, so
-/// the walk that withholds (`deps`), the planner that asks
-/// (`desired_kinds::not_written`) and the pass that takes an installed copy
-/// out (`plan_pass::plan_withheld`) all decide about the same declaration
-/// where a manifest names a hook from two catalogs. Whether a recorded
-/// installation is that declaration's is invariant 4's question, asked of
-/// `item_plan::rebound` and never answered here.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Landing {
-    pub kind: ItemKind,
-    pub name: String,
-    pub harness: HarnessId,
+/// What the walk recorded about one hook withheld from one tool: the
+/// provenance of the declaration it decided about, carried for invariant
+/// 4's judgement of a copy already installed (`item_plan::rebound`), and
+/// why it is withheld, which decides how that copy is taken out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Withheld {
     pub provenance: String,
+    pub because: Withholding,
+}
+
+/// Why a hook is withheld from a tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Withholding {
+    /// A hook it requires will not run there. A wrapper beside no judge
+    /// refuses every call it guards, so an installed copy comes out
+    /// whatever the plan's options, the person's edits with it.
+    Requires,
+    /// Every hook that requires it is withheld there, and nothing asks for
+    /// it by name. It lacks nothing itself, so an installed copy comes out
+    /// the way an orphan does: a copy the person edited is kept and named.
+    Orphaned,
 }
 
 impl DesiredState {

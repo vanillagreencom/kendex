@@ -166,3 +166,65 @@ fn a_withheld_rebind_reaches_the_provenance_conflict_and_not_the_trash() {
     apply::execute(&f.env, &report.plan).unwrap();
     assert_eq!(landed(&f, "deliver", HarnessId::Codex), (true, true));
 }
+
+/// The judge declared from a catalog that will not open this pass — its
+/// directory gone — while the wrapper's own catalog reads. A source that
+/// cannot be read never uninstalls a working artifact: the wrapper keeps
+/// its finding and its installed copy on every tool, as it would were both
+/// hooks from the one unreadable catalog, and the judge's record stays.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_companion_whose_catalog_will_not_open_keeps_the_wrapper_installed() {
+    let (f, other) =
+        two_catalogs("[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"other\"\n");
+    apply_now(&f);
+    assert_eq!(landed(&f, "deliver", HarnessId::Codex), (true, true));
+    fs::remove_dir_all(&other).unwrap();
+
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            remove_orphans: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
+    let found: Vec<(&str, Option<&str>)> = findings_on(&report, "deliver")
+        .iter()
+        .map(|w| (w.message.as_str(), w.remediation.as_deref()))
+        .collect();
+    assert_eq!(
+        found,
+        [(
+            "deliver requires judge, which is set to come from the catalog 'other', and that catalog cannot be read",
+            Some(
+                "settle the note on the catalog 'other', or declare judge from a catalog that reads"
+            ),
+        )],
+        "{:?}",
+        messages(&report)
+    );
+    let rows: Vec<(DriftState, &str)> = report
+        .drift
+        .iter()
+        .filter(|row| row.name == "deliver")
+        .map(|row| (row.state, row.detail.as_str()))
+        .collect();
+    assert_eq!(rows, Vec::new(), "{:?}", drift_details(&report));
+    let trashed: Vec<&PathBuf> = report
+        .plan
+        .ops
+        .iter()
+        .filter_map(|op| match &op.op {
+            Op::Trash { path, .. } if path.ends_with("hooks/deliver.sh") => Some(path),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(trashed, Vec::<&PathBuf>::new(), "the wrapper is trashed");
+    apply::execute(&f.env, &report.plan).unwrap();
+    for harness in [HarnessId::Claude, HarnessId::Codex] {
+        assert_eq!(landed(&f, "deliver", harness), (true, true), "{harness:?}");
+        assert_eq!(landed(&f, "judge", harness), (true, true), "{harness:?}");
+    }
+}

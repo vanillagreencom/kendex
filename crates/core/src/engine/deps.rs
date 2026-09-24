@@ -14,7 +14,7 @@ use crate::source::{SourceConfig, find_item, list_items};
 use crate::source_read::SealedSource;
 
 use super::ItemWarning;
-use super::desired::{DesiredState, Landing};
+use super::desired::{DesiredState, Withheld, Withholding};
 use super::desired_kinds::{NotWritten, not_written};
 use super::expansion::{CatalogKey, Catalogs, Expansion, OpenCatalog};
 
@@ -119,9 +119,8 @@ pub(super) fn expand(
         let Some(parent_decl) = expansion.decl_of(kind, &parent) else {
             continue;
         };
-        let source = parent_decl.source.clone();
         let harnesses = expansion.harnesses(kind, &parent);
-        let found = wanted_by(
+        let Some(found) = wanted_by(
             kind,
             &parent,
             &parent_decl,
@@ -130,31 +129,16 @@ pub(super) fn expand(
             expansion,
             catalogs,
             state,
-        );
+        ) else {
+            continue;
+        };
+        let decl = derived_decl(&parent_decl);
         for Dep {
             name: dep,
             on: harnesses,
             ..
         } in &found.deps
         {
-            let decl = ItemDecl {
-                source: source.clone(),
-                harnesses: None,
-                // A derived installation takes the scope's own default
-                // method: its parent's is a choice about the parent.
-                method: None,
-                // The revision is not: a pinned parent read its dependency
-                // list from the pinned catalog, and the dependency's bytes
-                // must come from the same place.
-                rev: parent_decl.rev.clone(),
-                // Nor is the switch: a companion that exists only because
-                // of its parent goes off with it, or switching a hook off
-                // would leave the wrappers it brought in armed beside a
-                // judge that no longer runs. `Expansion::add` turns it back
-                // on for any other requirer that is on.
-                enabled: parent_decl.enabled,
-                env: None,
-            };
             let mut grew = false;
             for harness in harnesses {
                 let by = InstallRef {
@@ -193,10 +177,10 @@ pub(super) fn expand(
             ((*kind, parent.clone()), deps)
         })
         .collect();
-    let withheld: BTreeMap<&Node, &BTreeSet<HarnessId>> = wanted
+    let withheld: BTreeMap<&Node, BTreeSet<HarnessId>> = wanted
         .iter()
         .filter(|(_, found)| !found.withheld.is_empty())
-        .map(|(node, found)| (node, &found.withheld))
+        .map(|(node, found)| (node, found.withheld.keys().copied().collect()))
         .collect();
     for members in cycles(&edges) {
         if let Some(note) = co_install(&members, expansion, &withheld, &state.rev_conflicts) {
@@ -206,59 +190,96 @@ pub(super) fn expand(
     record(wanted, state);
 }
 
+/// The declaration a companion is planned under when nothing else
+/// declares it: derived from its parent's. The one rule for it, read by
+/// the walk to know which catalog the plan will write the companion from
+/// and by [`expand`] to add the derivation, so the two cannot read
+/// different catalogs.
+fn derived_decl(parent_decl: &ItemDecl) -> ItemDecl {
+    ItemDecl {
+        source: parent_decl.source.clone(),
+        harnesses: None,
+        // A derived installation takes the scope's own default method:
+        // its parent's is a choice about the parent.
+        method: None,
+        // The revision is not: a pinned parent read its dependency list
+        // from the pinned catalog, and the dependency's bytes must come
+        // from the same place.
+        rev: parent_decl.rev.clone(),
+        // Nor is the switch: a companion that exists only because of its
+        // parent goes off with it, or switching a hook off would leave the
+        // wrappers it brought in armed beside a judge that no longer runs.
+        // `Expansion::add` turns it back on for any other requirer that is
+        // on.
+        enabled: parent_decl.enabled,
+        env: None,
+    }
+}
+
 /// What the walk came to, on the state the planner reads: every finding,
-/// and every withholding as the landing it is recorded against.
+/// and every withholding under the hook and tool it is asked about.
 fn record(wanted: BTreeMap<Node, Wanted>, state: &mut DesiredState) {
     if wanted.values().any(|found| !found.findings.is_empty()) {
         state.mark_incomplete();
     }
     for ((kind, name), found) in wanted {
         state.warnings.extend(found.findings);
-        if found.withheld.is_empty() {
-            continue;
-        }
-        let Some(provenance) = found.provenance else {
-            unreachable!("{name} is withheld from a tool and its catalog never opened")
-        };
         state
             .withheld
-            .extend(found.withheld.into_iter().map(|harness| Landing {
-                kind,
-                name: name.clone(),
-                harness,
-                provenance: provenance.clone(),
+            .extend(found.withheld.into_iter().map(|(harness, because)| {
+                (
+                    (kind, name.clone(), harness),
+                    Withheld {
+                        provenance: found.provenance.clone(),
+                        because,
+                    },
+                )
             }));
     }
 }
 
 /// What one parent's declarations came to: the companions it derives, each
 /// with the tools it lands on; the findings on the parent; and the tools
-/// the parent itself is withheld from, because a hook whose companion will
-/// not be written there is not written there either.
-#[derive(Default)]
+/// the parent itself is withheld from, with why, because a hook whose
+/// companion will not be written there is not written there either.
 struct Wanted {
     deps: Vec<Dep>,
     findings: Vec<ItemWarning>,
-    withheld: BTreeSet<HarnessId>,
-    /// The provenance the parent's declaration is planned under, which is
-    /// what a withholding of it is recorded against. `None` until its
-    /// catalog opened, and it derives nothing before that.
-    provenance: Option<String>,
+    withheld: BTreeMap<HarnessId, Withholding>,
+    /// The provenance the parent's declaration is planned under, carried
+    /// with a withholding for invariant 4's judgement of an installed copy.
+    provenance: String,
     /// Whether the parent is switched on: only a hook that would run is
     /// withheld, since one that is off arms nothing beside a missing judge.
     armed: bool,
 }
 
+impl Wanted {
+    /// Withhold the parent from `tools` for this reason. A missing
+    /// companion outranks being orphaned: the first says the copy comes out
+    /// whatever the options, and a tool already held for it stays so.
+    fn withhold(&mut self, tools: impl IntoIterator<Item = HarnessId>, because: Withholding) {
+        for tool in tools {
+            match because {
+                Withholding::Requires => {
+                    self.withheld.insert(tool, because);
+                }
+                Withholding::Orphaned => {
+                    self.withheld.entry(tool).or_insert(because);
+                }
+            }
+        }
+    }
+}
+
 /// One companion a parent derives: the tools it runs on beside the parent;
 /// the catalog the plan writes it from, by the name a finding repairs it
-/// under and by the provenance a landing is asked about; and its header as
-/// that catalog holds it, for the question asked again once the walk is
-/// complete ([`settle_after_walk`]).
+/// under; and its header as that catalog holds it, for the question asked
+/// again once the walk is complete ([`settle_after_walk`]).
 struct Dep {
     name: String,
     on: Vec<HarnessId>,
     source: String,
-    provenance: String,
     header: Option<HookSpec>,
 }
 
@@ -306,7 +327,7 @@ fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion
                 let tools: Vec<HarnessId> = on
                     .iter()
                     .copied()
-                    .filter(|h| theirs.withheld.contains(h) && !found.withheld.contains(h))
+                    .filter(|h| theirs.withheld.contains_key(h) && !found.withheld.contains_key(h))
                     .collect();
                 if !tools.is_empty() {
                     spread.push((
@@ -324,7 +345,7 @@ fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion
                 .harnesses(*kind, parent)
                 .into_iter()
                 .filter(|harness| {
-                    !found.withheld.contains(harness)
+                    !found.withheld.contains_key(harness)
                         && orphaned(wanted, *kind, parent, *harness, expansion, &mut requirers)
                 })
                 .collect();
@@ -344,11 +365,11 @@ fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion
             };
             let warning = match more {
                 Spread::Requires { dep, source, tools } => {
-                    found.withheld.extend(tools.iter().copied());
+                    found.withhold(tools.iter().copied(), Withholding::Requires);
                     finding(&NotWritten::Withheld, kind, &parent, &dep, &tools, &source)
                 }
                 Spread::Orphaned { requirers, tools } => {
-                    found.withheld.extend(tools.iter().copied());
+                    found.withhold(tools.iter().copied(), Withholding::Orphaned);
                     orphaned_finding(kind, &parent, &requirers, &tools)
                 }
             };
@@ -378,7 +399,7 @@ fn orphaned(
         Reason::RequiredBy { by } => {
             let theirs = wanted.get(&(by.kind, by.name.clone()));
             let held = by.kind == kind
-                && theirs.is_some_and(|theirs| theirs.withheld.contains(&by.harness));
+                && theirs.is_some_and(|theirs| theirs.withheld.contains_key(&by.harness));
             if held {
                 withheld_by.insert(by.name.clone());
             }
@@ -434,7 +455,7 @@ fn named(tools: &[HarnessId]) -> String {
 fn co_install(
     members: &[Node],
     expansion: &Expansion,
-    withheld: &BTreeMap<&Node, &BTreeSet<HarnessId>>,
+    withheld: &BTreeMap<&Node, BTreeSet<HarnessId>>,
     rev_conflicts: &BTreeSet<Node>,
 ) -> Option<String> {
     let declared = |(kind, name): &Node| {
@@ -494,42 +515,44 @@ fn co_install(
 ///
 /// A name is resolved in the parent's catalog, where its author wrote it.
 /// Which copy of the companion the plan writes is the expansion's to say:
-/// the declaration it already holds for that name — the person's, or the
-/// first requirer's — and the parent's own only for a companion nothing
-/// else declares. The companion is read from that catalog, so the walk
-/// decides on the copy the planner writes.
+/// the declaration it already holds for that name — the person's, a set's,
+/// or the first requirer's — and [`derived_decl`] of the parent's own for
+/// a companion nothing else declares. The companion is read from that
+/// catalog, so the walk decides on the copy the planner writes.
+///
+/// `None` where the parent's own catalog will not open: it derives
+/// nothing, and the declaration naming that catalog reports why.
 #[allow(clippy::too_many_arguments)]
 fn wanted_by(
     kind: ItemKind,
     parent: &str,
-    parent_decl: &crate::manifest::ItemDecl,
+    parent_decl: &ItemDecl,
     harnesses: &[HarnessId],
     manifest: &Manifest,
     expansion: &Expansion,
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
-) -> Wanted {
-    let mut wanted = Wanted {
-        armed: parent_decl.enabled,
-        ..Wanted::default()
-    };
+) -> Option<Wanted> {
     let own: CatalogKey = (parent_decl.source.clone(), parent_decl.rev.clone());
     let (env, scope) = (catalogs.env, catalogs.scope);
-    let Some(OpenCatalog {
+    let OpenCatalog {
         sealed,
         config,
         offered,
         provenance,
-    }) = catalogs.get(&own.0, own.1.as_deref(), state)
-    else {
-        return wanted;
+    } = catalogs.get(&own.0, own.1.as_deref(), state)?;
+    let mut wanted = Wanted {
+        deps: Vec::new(),
+        findings: Vec::new(),
+        withheld: BTreeMap::new(),
+        provenance: provenance.clone(),
+        armed: parent_decl.enabled,
     };
-    wanted.provenance = Some(provenance.clone());
     let Some(dir) = find_item(sealed, config, kind, parent) else {
-        return wanted;
+        return Some(wanted);
     };
     let Ok(declared) = declared_dependencies(sealed, kind, &dir) else {
-        return wanted;
+        return Some(wanted);
     };
     // A companion is needed where the parent runs, and nowhere else: a
     // tool the plan writes no parent on is a tool the companion is not
@@ -550,7 +573,6 @@ fn wanted_by(
                     state,
                     kind,
                     parent,
-                    provenance,
                     Ok(Some(&own)),
                     *harness,
                 );
@@ -583,15 +605,14 @@ fn wanted_by(
             Some(dep) => {
                 let planned = expansion
                     .decl_of(kind, &dep)
-                    .map(|decl| (decl.source, decl.rev))
-                    .unwrap_or_else(|| own.clone());
-                companions.push((dep, planned));
+                    .unwrap_or_else(|| derived_decl(parent_decl));
+                companions.push((dep, (planned.source, planned.rev)));
             }
             None => unresolved = true,
         }
     }
     if unresolved && kind == ItemKind::Hook && wanted.armed {
-        wanted.withheld.extend(harnesses.iter().copied());
+        wanted.withhold(harnesses.iter().copied(), Withholding::Requires);
     }
     derive(
         kind,
@@ -603,7 +624,7 @@ fn wanted_by(
         state,
         &mut wanted,
     );
-    wanted
+    Some(wanted)
 }
 
 /// The optional dependencies the manifest chose for this parent, each
@@ -643,7 +664,10 @@ fn chosen_extras(
 
 /// Each resolved companion derived from the catalog the plan writes it
 /// from, onto `wanted`: the companions that land, and for an armed hook the
-/// tools it is withheld from, which are every tool a companion misses.
+/// tools it is withheld from, which are every tool a companion misses. A
+/// companion whose catalog will not open this pass is a finding and
+/// nothing more: a catalog that cannot be read never uninstalls a working
+/// artifact, as one that carries both hooks does not.
 #[allow(clippy::too_many_arguments)]
 fn derive(
     kind: ItemKind,
@@ -663,45 +687,42 @@ fn derive(
         catalogs.get(&key.0, key.1.as_deref(), state);
     }
     for (dep, key) in companions {
-        let lands = match catalogs.opened(&key) {
-            Some(catalog) => companion(
-                env,
-                scope,
+        let Some(catalog) = catalogs.opened(&key) else {
+            // The declaration naming that catalog has reported why.
+            wanted.findings.push(warn(
                 kind,
-                dep,
                 parent,
-                harnesses,
-                wanted.armed,
-                manifest,
-                state,
-                catalog,
-                &key.0,
-                &mut wanted.findings,
-            ),
-            // The catalog the companion is set to come from would not
-            // read: the planner writes nothing from it, and the
-            // declaration naming it has reported why.
-            None => {
-                wanted.findings.push(warn(
-                    kind,
-                    parent,
-                    format!(
-                        "{parent} requires {dep}, which is set to come from the catalog '{}', and that catalog cannot be read",
-                        key.0
-                    ),
-                    format!(
-                        "settle the note on the catalog '{}', or declare {dep} from a catalog that reads",
-                        key.0
-                    ),
-                ));
-                None
-            }
+                format!(
+                    "{parent} requires {dep}, which is set to come from the catalog '{}', and that catalog cannot be read",
+                    key.0
+                ),
+                format!(
+                    "settle the note on the catalog '{}', or declare {dep} from a catalog that reads",
+                    key.0
+                ),
+            ));
+            continue;
         };
+        let lands = companion(
+            env,
+            scope,
+            kind,
+            dep,
+            parent,
+            harnesses,
+            wanted.armed,
+            manifest,
+            state,
+            catalog,
+            &key.0,
+            &mut wanted.findings,
+        );
         if withholds {
             let on = lands.as_ref().map(|dep| dep.on.as_slice()).unwrap_or(&[]);
-            wanted
-                .withheld
-                .extend(harnesses.iter().filter(|h| !on.contains(h)));
+            wanted.withhold(
+                harnesses.iter().copied().filter(|h| !on.contains(h)),
+                Withholding::Requires,
+            );
         }
         if let Some(landed) = lands {
             wanted.deps.push(landed);
@@ -756,7 +777,6 @@ fn companion(
             state,
             kind,
             &dep,
-            &catalog.provenance,
             header.as_ref().map(Option::as_ref).map_err(String::as_str),
             *harness,
         );
@@ -786,7 +806,6 @@ fn companion(
         name: dep,
         on,
         source: source.to_owned(),
-        provenance: catalog.provenance.clone(),
         header: header.ok().flatten(),
     })
 }
@@ -892,7 +911,6 @@ fn settle_after_walk(
                     state,
                     *kind,
                     &dep.name,
-                    &dep.provenance,
                     Ok(dep.header.as_ref()),
                     *harness,
                 );
@@ -904,7 +922,7 @@ fn settle_after_walk(
         }
         for (refused, dep, source) in settled {
             for (reason, tools) in refused {
-                found.withheld.extend(tools.iter().copied());
+                found.withhold(tools.iter().copied(), Withholding::Requires);
                 found
                     .findings
                     .push(finding(&reason, *kind, parent, &dep, &tools, &source));

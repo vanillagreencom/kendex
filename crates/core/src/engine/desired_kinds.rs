@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use super::desired::{Artifact, Desired, DesiredState, ItemCtx, Landing};
+use super::desired::{Artifact, Desired, DesiredState, ItemCtx};
 use super::targets::{
     HookFormat, HookTarget, advisory_notice, disabled_name, hook_target, plugin_settings,
 };
@@ -87,11 +87,11 @@ pub(super) fn declared(
 /// and `deps::resolve` and `deps::companion` for the walk, and a source
 /// that is pending, disabled or unreadable, or whose own manifest hides
 /// its content, stops the requirer with the companion. The question is
-/// asked about the declaration the plan writes — `provenance` names its
-/// catalog, and the header is that catalog's — so where a manifest names
-/// the companion from another catalog than the requirer's, the walk reads
-/// the copy the planner will write and never the requirer's own. Outside
-/// this answer, and so outside the walk's
+/// asked about the declaration the plan writes, the header being that
+/// declaration's catalog's, so where a manifest names the companion from
+/// another catalog than the requirer's, the walk reads the copy the
+/// planner will write and never the requirer's own. Outside this answer,
+/// and so outside the walk's
 /// view, are what is decided over the whole expansion or on disk after it:
 /// a name collision on a tool (`catalog::Collisions`), a rendering refusal
 /// (`DesiredState::refused`), a Gemini, Copilot or Antigravity
@@ -110,10 +110,9 @@ pub(super) enum NotWritten {
     RevConflict,
 }
 
-/// [`NotWritten`] for one hook on one tool, under the declaration the plan
-/// writes it from: `provenance` is that declaration's catalog and `header`
-/// the hook's own header as that catalog holds it — `Ok(None)` for a kind
-/// with no header, or why it will not read.
+/// [`NotWritten`] for one hook on one tool. `header` is the hook's own
+/// header as the catalog of the declaration the plan writes holds it:
+/// `Ok(None)` for a kind with no header, or why it will not read.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn not_written(
     env: &Env,
@@ -122,7 +121,6 @@ pub(super) fn not_written(
     state: &DesiredState,
     kind: ItemKind,
     name: &str,
-    provenance: &str,
     header: std::result::Result<Option<&HookSpec>, &str>,
     harness: HarnessId,
 ) -> Option<NotWritten> {
@@ -143,13 +141,10 @@ pub(super) fn not_written(
     {
         return Some(NotWritten::OtherTools);
     }
-    let landing = Landing {
-        kind,
-        name: name.to_owned(),
-        harness,
-        provenance: provenance.to_owned(),
-    };
-    if state.withheld.contains(&landing) {
+    if state
+        .withheld
+        .contains_key(&(kind, name.to_owned(), harness))
+    {
         return Some(NotWritten::Withheld);
     }
     if let Some(own) = header {
@@ -192,7 +187,6 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
             state,
             ItemKind::Hook,
             ctx.name,
-            ctx.provenance,
             Ok(Some(&hook)),
             harness,
         ) {
