@@ -223,6 +223,8 @@ assert_jq "a successful create reports the created issue and one requested attac
     and .url == "https://linear.app/x/issue/TEAM-1" and .attachments_requested == 1'
 assert_jq "a successful create returns the uploaded asset URL and attachment title" \
   "$OUT" '.attachments == [{url: "https://uploads.linear.app/asset/notes.pdf", repo_path: "notes.pdf"}]'
+assert_eq "an attach create keeps the pretty JSON shape every create response has" \
+  "$OUT" "$(jq . <<<"$OUT")"
 
 run_linear issues create --title "Verify two" \
   --attach "$TMP_ROOT/notes.pdf" --attach "$TMP_ROOT/second.pdf"

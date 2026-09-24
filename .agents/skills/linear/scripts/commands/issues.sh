@@ -95,9 +95,11 @@ Create Options:
                         issue. Composes with --description/--description-file.
                         Missing/unreadable paths refuse before any API call;
                         an attachment failure after the create reports the
-                        created identifier and exits non-zero. On success
-                        the JSON response adds attachments_requested and
-                        attachments ({url, repo_path} per record).
+                        created identifier and exits non-zero. The JSON
+                        response carries attachments_requested whenever
+                        records were requested; attachments lists them as
+                        {url, repo_path} only when every attachmentCreate
+                        succeeded, and stays empty on a partial failure.
   --format=ids          Print ONLY the created issue identifier (for capture;
                         default output is the full JSON create response)
   --no-agent-label      Permit a deliberate bare create (e.g. intake
@@ -141,7 +143,10 @@ Update Options:
                         this update, appended to the existing description);
                         other files become Linear attachments. --attach alone
                         is a valid update. Partial failures after the update
-                        report the identifier and exit non-zero.
+                        report the identifier and exit non-zero. An
+                        attach-only update answers with the same
+                        attachments_requested and attachments fields as
+                        issues create.
   --sort-order <float>  Manual sort position (lower = higher; parent/standalone only)
   --format <fmt>        Output format for the updated issue: safe | compact | ids |
                         raw. When omitted, emits the mutation summary
@@ -1503,12 +1508,15 @@ create_issue() {
     # that each non-image record landed. Report the requested count and, when
     # every attachmentCreate succeeded, the records themselves; a partial
     # failure leaves the list empty rather than claiming a missing record.
-    if [ ${#attach_pending[@]} -gt 0 ]; then
+    local attach_record_count=${#attach_pending[@]}
+    if [ "$attach_record_count" -gt 0 ]; then
         local created_attachments='[]'
         if [ "$attach_failed" = "0" ]; then
             created_attachments=$(pending_attachments_json "${attach_pending[@]}") || return 1
         fi
-        normalized=$(echo "$normalized" | jq -c --argjson count "${#attach_pending[@]}" \
+        # Pretty, like normalize_mutation_response: the create response has one
+        # shape whether or not --attach was passed.
+        normalized=$(echo "$normalized" | jq --argjson count "$attach_record_count" \
             --argjson attachments "$created_attachments" \
             '. + {attachments_requested: $count, attachments: $attachments}') || return 1
     fi
