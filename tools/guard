@@ -247,8 +247,9 @@ case "${1:-}" in
       '--range BASE: the default rules over the changes since BASE, working tree included,' \
       '        cargo check and clippy for the crates they touch (the workspace for a shared' \
       '        input), the UI checks and suite when they touch ui/, and the suites of the' \
-      '        skill, hook, tool and Pi-package trees they touch. No workspace test run,' \
-      '        cross-target check or documentation build: submit and CI run those.' \
+      '        skill, hook, tool and Pi-package trees they touch. None of what --full adds' \
+      '        beyond that: the workspace test run, cross-target checks, the documentation' \
+      '        build, the Bash 3.2 parse and the working-tree bot-instructions check.' \
       '--full: full Rust and UI validation for development completion and submit,' \
       '        plus the suites of the skill, hook, tool and Pi-package trees the branch touched.' \
       '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \

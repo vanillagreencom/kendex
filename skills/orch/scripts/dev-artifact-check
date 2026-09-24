@@ -20,7 +20,8 @@
 #   { "schema_version": 1, "round_id": "…", "kind": "implement"|"fix",
 #     "issue": "…", "branch": "…", "commit": "…", "validate": "pass"|"FAILING: …",
 #     "baseline_lines": 138 (implement only),
-#     "validate_mode": "full"|"range" (the validation mode that ran),
+#     "validate_mode": "full"|"range"|null (the validation mode that ran;
+#       null only beside a failing validate),
 #     "validate_note": "…"|null (optional free-text qualifier),
 #     "qa_labels": […], "near_ceiling": […]|null (byte-ceiling near-ceiling lines,
 #     null when the probe did not answer), "near_ceiling_error": "…"|null,
@@ -184,7 +185,9 @@ reason meanings when ok=false:
   invalid     round_id != expected, OR not parseable JSON, OR a required field is
               wrong-typed/empty: .kind ∈ {implement,fix}; .issue/.branch
               non-empty strings; .round_id non-empty string; .schema_version a
-              number; .commit/.validate non-empty strings; implement requires
+              number; .commit/.validate non-empty strings; .validate_mode
+              present and full or range, or null beside a failing .validate;
+              implement requires
               integer .baseline_lines >= 1, and fix forbids that field
   commit_unresolvable
               the artifact's .commit names no object in the worktree's repo
@@ -469,7 +472,8 @@ round_id_matches() {
 # Type-strict required scalars: .kind ∈ {implement,fix}; .issue/.branch
 # non-empty STRINGS (arrays/objects/bools/numbers fail, not just ""); .round_id a
 # non-empty string; .schema_version a number; .commit/.validate non-empty
-# strings. A truncated or half-written receipt fails this gate → reason=invalid.
+# strings; .validate_mode present and full or range, or null beside a failing
+# .validate. A truncated or half-written receipt fails this gate → reason=invalid.
 has_required_fields() {
   jq -e '
     (.kind? // "") as $k
@@ -480,6 +484,9 @@ has_required_fields() {
       and ((.schema_version? | type) == "number")
       and ((.commit? | type) == "string") and (.commit != "")
       and ((.validate? | type) == "string") and (.validate != "")
+      and has("validate_mode")
+      and (.validate_mode == "full" or .validate_mode == "range"
+           or (.validate_mode == null and .validate != "pass"))
       and ((.validate_note? | type) as $t | $t == "null" or $t == null
            or ($t == "string" and (.validate_note != "")))
       and (if $k == "implement"

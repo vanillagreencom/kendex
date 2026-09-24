@@ -928,6 +928,7 @@
   ".agents/skills/orch/tests/lib/review-artifact-fixture.sh",
   ".agents/skills/orch/tests/lib/sealed-bin.sh",
   ".agents/skills/orch/tests/lib/shared-skill-libs.sh",
+  ".agents/skills/orch/tests/lib/validate-run.sh",
   ".agents/skills/orch/tests/lib/virtual-clock.sh",
   ".agents/skills/orch/tests/lib/waiter-assertions.sh",
   ".agents/skills/orch/tests/open-terminal-cap.sh",

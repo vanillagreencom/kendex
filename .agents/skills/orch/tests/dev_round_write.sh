@@ -24,6 +24,8 @@ source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+source "$(dirname "${BASH_SOURCE[0]}")/lib/validate-run.sh"
+VRUN="$(validate_run_dir "$TMP_ROOT/validate-run" full)"
 mkdir -p "$TMP_ROOT/linear/scripts" "$TMP_ROOT/bin"
 # The size owner reads the issue through its sibling Linear CLI. This stand-in
 # supplies the same raw cache row on Bash 3.2 test runners.
@@ -342,7 +344,7 @@ run_write --worktree "$PRW" --issue pr-51 --round-id 51-1 --item 1 "pr key round
 E="rc=0 written=yes .issue=pr-51 .size_check.verdict=allowance_missing .size_check.production_allowance=null"
 assert_eq "$(observe "$E")" "$E" "a round under a pr-N key stamps with the measured allowance_missing verdict" "$ERR"
 "$RETURN_WRITE" --worktree "$PRW" --kind fix --issue pr-51 --round-id 51-1 --branch main \
-  --commit "$(git -C "$PRW" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+  --commit "$(git -C "$PRW" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
 set +e
 "$CHECK" --worktree "$PRW" --issue pr-51 --round-id 51-1 --expect-items-from-round >/dev/null 2>&1
 pr_check_rc=$?

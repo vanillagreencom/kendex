@@ -2,9 +2,10 @@
 # tools/guard --range BASE, a fix round's validation: the default rules read
 # over the changes since BASE, cargo check and clippy for the crates those
 # changes touch, the UI checks and suite for a UI change, and the suites of
-# the trees they touch, with no workspace test run, cross-target check or
-# documentation build. Every compiler and toolchain call is a stub in
-# fake-bin that logs what it was asked.
+# the trees they touch, and none of what --full adds beyond that: the
+# workspace test run, cross-target checks, the documentation build, the Bash
+# 3.2 parse and the working-tree bot-instructions check. Every compiler and
+# toolchain call is a stub in fake-bin that logs what it was asked.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -94,7 +95,7 @@ ROWS=(
   "a crate change committed after the base is in the range too|commit|crates/core/src/lib.rs|$CORE_CALLS"
   "an untracked shared compiler input checks and lints the workspace|worktree|Cargo.lock|$WORKSPACE_CALLS"
   "a UI file runs the UI checks and the UI suite|worktree|ui/src/main.ts|$UI_CALLS"
-  "a markdown file inside a crate compiles nothing|worktree|crates/core/README.md|"
+  "a markdown file under ui/ runs no UI check|worktree|ui/README.md|"
 )
 before=$((PASS + FAIL))
 for row in "${ROWS[@]}"; do
@@ -112,6 +113,18 @@ for row in "${ROWS[@]}"; do
   back_to_base
 done
 [ "$((PASS + FAIL))" -eq "$((before + ${#ROWS[@]}))" ] || { echo "a compile-set row asserted nothing" >&2; exit 2; }
+# The markdown row above is the one a missing exclusion would widen: ui/
+# matches the UI arm once markdown is no longer turned away first.
+printf 'x\n' >>"$R/ui/README.md"
+if mutant_guard '/^    \*\.md) return 0 ;;$/d'; then
+  run_range "$BASE" "$MUTANT_TOOLS/guard"
+  grep -qFx "npm run --prefix ui check:types" <<<"$LOG" \
+    && ok "control: without the markdown exclusion the ui/ markdown file runs the UI checks" \
+    || bad "control: without the markdown exclusion the ui/ markdown file runs the UI checks" "rc=$RC log=$LOG"
+else
+  bad "control: the markdown exclusion could not be deleted from a guard copy"
+fi
+back_to_base
 
 echo "=== the default rules read the range, not only the last commit ==="
 # A fix round may commit before it validates: an unrooted fixture committed
@@ -130,6 +143,35 @@ OUT="$(cd "$R" && env PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$GUARD" 2>&1 <
 [ "$RC" -eq 0 ] \
   && ok "inverse: the commit-time run, which diffs HEAD, passes the same tree" \
   || bad "inverse: the commit-time run, which diffs HEAD, passes the same tree" "rc=$RC out=$OUT"
+back_to_base
+
+echo "=== the skill-instruction rule reads the working tree ==="
+# A fix round validates before it stages, so a render that lost its configured
+# instructions block in the working tree is the candidate the rule judges.
+mkdir -p "$R/skills/demo" "$R/.agents/skills/demo"
+printf '%s\n' '---' 'name: demo' '---' '# Skill' >"$R/skills/demo/SKILL.md"
+{
+  cat "$R/skills/demo/SKILL.md"
+  printf '%s\n' '<!-- kendex:project-instructions:start -->' '<!-- kendex:project-instructions:end -->'
+} >"$R/.agents/skills/demo/SKILL.md"
+printf '%s\n' 'schema = 6' 'is_source_catalog = true' >"$R/kendex.toml"
+printf '%s\n' '[skill-instructions]' 'demo = "Rule."' >"$R/kendex-local.toml"
+git -C "$R" add -A
+git -C "$R" commit -q -m "chore: a configured skill instruction"
+instructions_base="$(git -C "$R" rev-parse HEAD)"
+cp "$R/skills/demo/SKILL.md" "$R/.agents/skills/demo/SKILL.md"
+run_range "$instructions_base"
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: missing-skill-instructions=1"* ]] && [[ "$OUT" == *".agents/skills/demo/SKILL.md"* ]] \
+  && ok "an unstaged render without its configured block reds the range" \
+  || bad "an unstaged render without its configured block reds the range" "rc=$RC out=$OUT"
+if mutant_guard 's/^\[ "\$MODE" != default \] || worktree_reads=0$/worktree_reads=0/'; then
+  run_range "$instructions_base" "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the range reading the index the unstaged render passes" \
+    || bad "control: with the range reading the index the unstaged render passes" "rc=$RC out=$OUT"
+else
+  bad "control: the range's working-tree read could not be turned into an index read in a guard copy"
+fi
 back_to_base
 
 echo "=== a range with no usable base is refused before anything runs ==="

@@ -323,7 +323,10 @@ GUARD_EXHAUSTED_FREE_MB = "512"
 
 # A review-fix round validates its own changes: the default rules, cargo check
 # and clippy for the crates they touch, the UI checks, and the suites of the
-# trees they touch. Submit reuses only the full run; CI runs everything.
+# trees they touch, and none of what --full adds beyond that: the workspace
+# test run, cross-target checks, the documentation build, the Bash 3.2 parse
+# and the working-tree bot-instructions check. Submit reuses only the full
+# run; CI runs everything.
 DEV_VALIDATE_RANGE_CMD = "tools/guard --range $DEV_VALIDATE_BASE"
 
 # The bound on either run, in whole seconds. `tools/guard --full` takes well
