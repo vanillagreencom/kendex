@@ -1020,9 +1020,11 @@ EOF
   remove <issue_id>             Delete the state file and its lock sidecar; absent is success
 
 Keys:
-  Three key forms: the tracker identifier (KEN-123) for a tracked issue,
-  issue-<N> for a GitHub issue, and the repository-local pr-<N> for a branch
-  carrying no issue id. The key is stored as passed and validated by its
+  Three per-item key forms: the tracker identifier (KEN-123) for a tracked
+  issue, issue-<N> for a GitHub issue, and the repository-local pr-<N> for a
+  branch carrying no issue id. Beside them stands one fixed key, oversee,
+  holding the fleet session state that schemas/workflow-state.md section
+  Oversee state describes. The key is stored as passed and validated by its
   callers, not here: every command interpolates <issue_id> into the state
   filename exactly as given, so pass init the spelling every later command
   will use.
