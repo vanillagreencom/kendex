@@ -809,6 +809,7 @@
   ".agents/skills/orch/scripts/lane-marker",
   ".agents/skills/orch/scripts/lanes",
   ".agents/skills/orch/scripts/lib/branch-growth.sh",
+  ".agents/skills/orch/scripts/lib/change-class.sh",
   ".agents/skills/orch/scripts/lib/date-ladder.sh",
   ".agents/skills/orch/scripts/lib/file-lock.sh",
   ".agents/skills/orch/scripts/lib/gh-auth.sh",

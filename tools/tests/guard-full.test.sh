@@ -449,8 +449,9 @@ fi
 rm -f "$R/Cargo.toml"
 
 echo "=== full validation runs the lanes the change class selects ==="
-# dev-validate-run hands the class over as DEV_VALIDATE_CLASS. Each lane is
-# read off the call it makes: cargo and npm log their calls, and the parse
+# dev-validate-run hands over the class, the docs verdict and the changed
+# paths as DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and a DEV_VALIDATE_PATHS
+# file. Each lane is read off the call it makes: cargo and npm log their calls, and the parse
 # lane is a stub here because its real pass needs a Bash 3.2 this row does not
 # judge. A guard copy runs beside that stub under the same package link the
 # mutants use.
@@ -465,6 +466,8 @@ chmod +x "$LANE_TOOLS/bash32-parse"
 lane_guard() { # [SED-EXPR] — the guard copy the rows run, edited when given
   sed "${1:-}" "$GUARD" >"$LANE_TOOLS/guard"
   chmod +x "$LANE_TOOLS/guard"
+  [ -z "${1:-}" ] || ! cmp -s "$GUARD" "$LANE_TOOLS/guard" ||
+    { echo "lane_guard: the edit '$1' changed nothing" >&2; exit 2; }
 }
 cat >"$LANE_BIN/cargo" <<'SH'
 #!/usr/bin/env bash
@@ -499,58 +502,72 @@ lanes_ran() {
   done
   printf '%s' "${seen# }"
 }
-run_lanes() { # CLASS PATH... — guard --full with PATHs touched; sets OUT and RC
-  local class="$1" p
-  shift
+PATHS_FILE="$TMP/changed-paths"
+run_lanes() { # CLASS DOCS PATH... — guard --full with PATHs touched and handed over; sets OUT and RC
+  local class="$1" docs="$2" p
+  local handed=()
+  shift 2
   git -C "$R" reset -q --hard "$lanes_head"
   git -C "$R" clean -qfd
+  : >"$PATHS_FILE"
   for p in "$@"; do
     mkdir -p "$R/$(dirname "$p")"
     printf 'touched\n' >>"$R/$p"
+    printf '%s\n' "$p" >>"$PATHS_FILE"
   done
+  [ -z "$class" ] ||
+    handed=("DEV_VALIDATE_CLASS=$class" "DEV_VALIDATE_DOCS_ONLY=$docs" "DEV_VALIDATE_PATHS=${HANDED_PATHS:-$PATHS_FILE}")
   : >"$CARGO_CALL_LOG"
   : >"$NPM_CALL_LOG"
   OUT=""
   RC=0
-  OUT="$(cd "$R" && env -u DEV_VALIDATE_CLASS ${class:+DEV_VALIDATE_CLASS=$class} \
+  OUT="$(cd "$R" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
+    ${handed[@]+"${handed[@]}"} \
     PATH="$LANE_BIN:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" NPM_CALL_LOG="$NPM_CALL_LOG" \
     RUSTUP_INSTALLED_TARGETS="$BOTH" "$LANE_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
 }
 # Path lists are blank-separated and split unquoted on purpose.
 CODE="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh"
 ALL="suites parse lint apple windows test ui"
-# class|touched paths|the lanes that run
+# class|docs verdict|changed paths|the lanes that run
 LANE_ROWS=(
-  "|$CODE|$ALL"
-  "standard|$CODE|$ALL"
-  "render|$CODE|"
-  "trivial|$CODE|"
-  "micro|$CODE|suites parse lint apple windows test"
-  "small|$CODE ui/app.ts|$ALL"
-  "micro|docs/guide.md|test"
+  "||$CODE|$ALL"
+  "standard|false|$CODE|$ALL"
+  "standard|true|docs/guide.md|parse test"
+  "render|false|$CODE|"
+  "trivial|true|$CODE|"
+  "micro|false|$CODE|suites parse lint apple windows test"
+  "small|false|$CODE ui/app.ts|$ALL"
+  "micro|false|docs/guide.md|parse test"
 )
 lane_guard
 for row in "${LANE_ROWS[@]}"; do
-  IFS='|' read -r class paths want <<<"$row"
-    run_lanes "$class" $paths
+  IFS='|' read -r class docs paths want <<<"$row"
+  run_lanes "$class" "$docs" $paths
   got="$(lanes_ran)"
   [ "$RC" -eq 0 ] && [ "$got" = "$want" ] \
-    && ok "class '${class:-unset}' over $paths runs: ${want:-no heavy lane}" \
-    || bad "class '${class:-unset}' over $paths runs: ${want:-no heavy lane}" "rc=$RC got=$got out=$OUT"
+    && ok "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" \
+    || bad "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" "rc=$RC got=$got out=$OUT"
 done
-run_lanes stale $CODE
+run_lanes stale false $CODE
 [ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: validate-class=stale"* ]] && [ "$(lanes_ran)" = "" ] \
-  && ok "a class the classifier never names is refused before any lane runs" \
-  || bad "a class the classifier never names is refused before any lane runs" "rc=$RC out=$OUT"
+  && ok "a class ci-job-set has no selection for is refused before any lane runs" \
+  || bad "a class ci-job-set has no selection for is refused before any lane runs" "rc=$RC out=$OUT"
+# A narrow class whose paths file cannot be read selects nothing: every lane
+# runs and the run is red, never a stand-down on no paths.
+HANDED_PATHS="$TMP/absent-paths" run_lanes micro false $CODE
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: lane-selection=paths-unreadable"* ]] && [ "$(lanes_ran)" = "$ALL" ] \
+  && ok "an unreadable paths file is a finding and every lane runs" \
+  || bad "an unreadable paths file is a finding and every lane runs" "rc=$RC got=$(lanes_ran) out=$OUT"
 # The issue's inverse: a guard that reads no class runs the whole battery on
 # the trivial row.
-lane_guard 's/case "${DEV_VALIDATE_CLASS:-standard}" in/case standard in/'
-run_lanes trivial $CODE
+lane_guard 's/"${DEV_VALIDATE_CLASS:-standard}:${DEV_VALIDATE_DOCS_ONLY:-false}" != standard:false/standard:false != standard:false/'
+run_lanes trivial true $CODE
 [ "$(lanes_ran)" = "$ALL" ] \
   && ok "control: with the class unread the trivial row runs every lane" \
   || bad "control: with the class unread the trivial row runs every lane" "rc=$RC got=$(lanes_ran)"
 lane_guard 's/lane_on cargo_linux; then/lane_on cargo_linx; then/'
-run_lanes micro $CODE
+run_lanes micro false $CODE
 [ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: lane-unknown=cargo_linx"* ]] \
   && ok "a lane name the selection does not carry is refused, never read as stood down" \
   || bad "a lane name the selection does not carry is refused, never read as stood down" "rc=$RC out=$OUT"

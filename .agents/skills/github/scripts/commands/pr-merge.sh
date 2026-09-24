@@ -144,11 +144,11 @@ Admin-credential route:
               classifier names: render, trivial, micro, small and standard.
               The class comes from the change classifier, never from a flag, a
               label, a branch name or any other author-writable field. The
-              classifier is <skills>/harness-ci/scripts/change-class, else
-              change-class on PATH, called with --event pull_request and the
-              base and head SHAs; a classifier that resolves to nothing, exits
-              nonzero or answers anything but one change_class= line refuses
-              the merge with class-unreadable. An empty list is every class, not
+              classifier is read through orch's scripts/lib/change-class.sh
+              beside this package, with the base and head SHAs; a missing lib,
+              a classifier that resolves to nothing, exits nonzero or answers
+              anything but one change_class= line refuses the merge with
+              class-unreadable. An empty list is every class, not
               the route off — only an empty config directory turns the route off.
     head      the live head equals --expected-head
     review    the review gate is met, judged under the reviewer-gate mode of the
@@ -1024,29 +1024,19 @@ admin_emit_record() {
 # a branch name and a PR title are writable by the pull request's author, so a
 # class read from one fails open on exactly the diffs that most want to pass.
 admin_change_class() {
-    local base_sha="$1" head_sha="$2" classifier="$SCRIPT_DIR/../../../harness-ci/scripts/change-class"
-    if [ ! -x "$classifier" ]; then
-        classifier=$(command -v change-class 2>/dev/null) || classifier=""
-    fi
-    [ -n "$classifier" ] || return 1
-    local answer
+    local base_sha="$1" head_sha="$2" lib="$SCRIPT_DIR/../../../orch/scripts/lib/change-class.sh"
+    # orch's lib is the one reader of the classifier among the skill scripts;
+    # without it no class can be read, and the route refuses.
+    [ -r "$lib" ] || return 1
     # run_checkout_child drops the owner credential's gh config directory for
-    # the child and holds its diagnostics; every other gh call in the route
-    # still runs under that directory.
-    # A measured class needs `--event pull_request`; without it the classifier
-    # refuses as a wiring error and no merge could ever be admitted. `--repo .`
-    # is the checkout this route runs in, which is where the two SHAs resolve.
-    answer=$(run_checkout_child . "$classifier" \
-        --event pull_request --base "$base_sha" --head "$head_sha" --repo .) || return 1
-    # The classifier's whole stdout is one `change_class=<class>` line. Any
-    # other shape is an answer this route cannot read, so it refuses rather
-    # than take a prose line or a second line for a class.
-    case "$answer" in
-    *$'\n'*) return 1 ;;
-    change_class=?*) ;;
-    *) return 1 ;;
-    esac
-    printf '%s' "${answer#change_class=}"
+    # the child and holds its diagnostics, the classifier's stderr among them;
+    # every other gh call in the route still runs under that directory. `.` is the checkout this route runs in, which is
+    # where the two SHAs resolve.
+    # shellcheck disable=SC2016 # the child expands its own positional arguments
+    run_checkout_child . bash -c '
+        . "$1" || exit 1
+        change_class_read "$2" "$3" . /dev/stderr || exit 1
+        printf "%s" "$CHANGE_CLASS"' _ "$lib" "$base_sha" "$head_sha"
 }
 
 # The reviewer-gate mode of the checkout this command runs in, from the one
