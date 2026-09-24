@@ -37,9 +37,12 @@ git -C "$TMP_ROOT/repo" config user.name Test
 #   STUB_APPROVAL_COUNT_FILE turns *_later modes into poll-count-driven
 #   sequences (first poll pending, second poll terminal).
 #   The PR is opened by a GitHub App, as every fleet PR is, so the stub spells
-#   its author the three ways GitHub does: `api repos/*/pulls/<n>` answers
-#   STUB_PR_AUTHOR ("pr-author[bot]", with STUB_PR_AUTHOR_MODE=empty/http_404
-#   answering an empty login or failing the read), `pr view --json author`
+#   its author the three ways GitHub does: `api repos/*/pulls/<n>` answers a
+#   PR object whose .user.login is "pr-author[bot]" and whose
+#   .head.user.login is a fork owner, filtered through the call's -q as gh
+#   does (STUB_PR_AUTHOR_MODE=empty/http_404/flaky_503 answering an empty
+#   login, failing the read, or failing it twice with a 503 counted in
+#   STUB_AUTHOR_COUNT_FILE), `pr view --json author`
 #   answers "app/pr-author", and the approval-mode latestReviews rows spell the
 #   same account "pr-author".
 #   Review mode: `pr view --json headRefOid` reports head "headsha1"
@@ -51,7 +54,11 @@ git -C "$TMP_ROOT/repo" config user.name Test
 #   COMMENTED review a thread reply submits (review id 21), and
 #   STUB_REVIEW_COMMENTS_MODE then decides what `api repos/*/pulls/<n>/comments`
 #   says that review's comments are: reply_only, opener, other_review_opener
-#   (a thread opened by a different review), http_404, or none. The
+#   (a thread opened by a different review), reply_only_large (reply_only
+#   padded past 128 KiB with other reviews' replies), zero_byte (exit 0, no
+#   output), flaky_503 (503 twice, counted in STUB_COMMENTS_COUNT_FILE, then
+#   opener), http_404, or none. whitespace_body_at_head publishes a COMMENTED
+#   review whose body is only whitespace. The
 #   approved_bodyless_at_head and changes_bodyless_at_head modes publish an
 #   empty-bodied formal verdict, as the Approve button with no comment does.
 #   Check-runs: `api repos/*/commits/<sha>/check-runs` answers per the sha in
@@ -105,6 +112,19 @@ _stub_json_array() { # WORDS
 _stub_copilot_ruleset() { # ID INCLUDE_WORDS EXCLUDE_WORDS
   printf '{"id":%s,"target":"branch","enforcement":"active","conditions":{"ref_name":{"include":%s,"exclude":%s}},"rules":[{"type":"deletion"},{"type":"copilot_code_review","parameters":{"review_on_push":true,"review_draft_pull_requests":false}}]}\n' \
     "$1" "$(_stub_json_array "$2")" "$(_stub_json_array "$3")"
+}
+
+# Fail the first two calls counted in COUNT_FILE with a 503, as a flaky
+# service does, and return on every later call.
+_stub_flaky_503() { # COUNT_FILE
+  local count=0
+  [[ -f "$1" ]] && count="$(cat "$1")"
+  count=$((count + 1))
+  printf '%s' "$count" > "$1"
+  if [[ "$count" -le 2 ]]; then
+    echo "HTTP 503: No server is currently available to service your request." >&2
+    exit 1
+  fi
 }
 
 _bump_count() {
@@ -276,6 +296,9 @@ case "${1:-}" in
         changes_bodyless_at_head)
           echo '[{"id":23,"user":{"login":"reviewer1"},"state":"CHANGES_REQUESTED","body":"","commit_id":"headsha1"}]'
           ;;
+        whitespace_body_at_head)
+          echo '[{"id":24,"user":{"login":"reviewer1"},"state":"COMMENTED","body":" \n","commit_id":"headsha1"}]'
+          ;;
         author_bodyless)
           echo '[{"id":21,"user":{"login":"pr-author[bot]"},"state":"COMMENTED","body":"","commit_id":"headsha1"}]'
           ;;
@@ -290,8 +313,19 @@ case "${1:-}" in
     # one with it null opens a new one.
     if [[ "${2:-}" == repos/*/pulls/*/comments ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
-      case "${STUB_REVIEW_COMMENTS_MODE:-none}" in
+      mode="${STUB_REVIEW_COMMENTS_MODE:-none}"
+      if [[ "$mode" == "flaky_503" ]]; then
+        _stub_flaky_503 "${STUB_COMMENTS_COUNT_FILE:?}"
+        mode="opener"
+      fi
+      case "$mode" in
         reply_only) echo '[{"id":41,"pull_request_review_id":21,"in_reply_to_id":7}]' ;;
+        reply_only_large)
+          jq -nc '[{"id":41,"pull_request_review_id":21,"in_reply_to_id":7}]
+            + [range(2000) | {id: (1000 + .), pull_request_review_id: 99, in_reply_to_id: 7,
+                              body: "a reply from another review, padding the listing past one argv string"}]'
+          ;;
+        zero_byte) ;;
         opener) echo '[{"id":42,"pull_request_review_id":21,"in_reply_to_id":null}]' ;;
         other_review_opener) echo '[{"id":43,"pull_request_review_id":99,"in_reply_to_id":null}]' ;;
         http_404) echo "HTTP 404: Not Found (https://api.github.com/repos/owner/repo/pulls/1/comments)" >&2; exit 1 ;;
@@ -300,15 +334,25 @@ case "${1:-}" in
       exit 0
     fi
     # The PR object, read for the author login under the same spelling the
-    # reviews listing above carries. Approval-wait reads only .user.login,
-    # through gh's own -q filter, so the stub answers with the login.
+    # reviews listing above carries. The head carries a different login, so
+    # a filter reading the wrong field answers the fork owner, not the author.
     if [[ "${2:-}" == repos/*/pulls/* ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      filter="."
+      for ((i = 3; i <= $#; i++)); do
+        if [[ "${!i}" == "-q" ]]; then
+          next=$((i + 1))
+          filter="${!next}"
+        fi
+      done
+      login="pr-author[bot]"
       case "${STUB_PR_AUTHOR_MODE:-ok}" in
-        empty) printf '\n' ;;
+        empty) login="" ;;
         http_404) echo "HTTP 404: Not Found (https://api.github.com/repos/owner/repo/pulls/1)" >&2; exit 1 ;;
-        *) printf '%s\n' "${STUB_PR_AUTHOR:-pr-author[bot]}" ;;
+        flaky_503) _stub_flaky_503 "${STUB_AUTHOR_COUNT_FILE:?}" ;;
       esac
+      jq -nc --arg login "$login" '{user: {login: $login}, head: {user: {login: "fork-owner"}}}' \
+        | jq -r "$filter"
       exit 0
     fi
     if [[ "${2:-}" == repos/*/commits/*/check-runs ]]; then
@@ -484,6 +528,8 @@ run_wait() {
         STUB_APPROVAL_COUNT_FILE="$RUN/approval-polls" \
         STUB_REVIEWS_COUNT_FILE="$RUN/review-polls" \
         STUB_HEAD_COUNT_FILE="$RUN/head-polls" \
+        STUB_AUTHOR_COUNT_FILE="$RUN/author-reads" \
+        STUB_COMMENTS_COUNT_FILE="$RUN/comments-reads" \
         STUB_STATUS_LOG="$RUN/status-queries" \
         STUB_MARKER_LOG="$RUN/marker-posts" \
         .agents/skills/orch/scripts/approval-wait "$@" 2>"$RUN/stderr")
@@ -604,6 +650,9 @@ table "$REVIEW" \
   'a thread another review opened credits neither||STUB_REVIEWS_MODE=bodyless_at_head,STUB_REVIEW_COMMENTS_MODE=other_review_opener|rc=1 status=timeout reviews_at_head=0' \
   'a bodyless review with no comments at all is not evidence||STUB_REVIEWS_MODE=bodyless_at_head|rc=1 status=timeout reviews_at_head=0' \
   'a failed review-comment listing ends the wait rather than judging the review||STUB_REVIEWS_MODE=bodyless_at_head,STUB_REVIEW_COMMENTS_MODE=http_404|rc=1 status=error error_line=approval-wait:+review-comments-failed+pr=1+repo=owner/repo' \
+  'a zero-byte review-comment listing is a failed read, not an empty one||STUB_REVIEWS_MODE=bodyless_at_head,STUB_REVIEW_COMMENTS_MODE=zero_byte|rc=1 status=error error_line=approval-wait:+review-comments-failed+pr=1+repo=owner/repo' \
+  'a reply-only review is judged against a listing past 128 KiB||STUB_REVIEWS_MODE=bodyless_at_head,STUB_REVIEW_COMMENTS_MODE=reply_only_large|rc=1 status=timeout reviews_at_head=0' \
+  'a whitespace-only body is not content||STUB_REVIEWS_MODE=whitespace_body_at_head|rc=1 status=timeout reviews_at_head=0' \
   'a DISMISSED review is excluded||STUB_REVIEWS_MODE=dismissed_only|rc=1 status=timeout reviews_at_head=0' \
   'a standing CHANGES_REQUESTED blocks the review gate||STUB_REVIEWS_MODE=changes_standing|rc=1 status=changes_requested changes_requested=1' \
   'a CHANGES_REQUESTED superseded by the same reviewer no longer stands||STUB_REVIEWS_MODE=changes_superseded|rc=0 status=reviewed changes_requested=0' \
@@ -628,7 +677,7 @@ table "$REVIEW" \
   'a review object outranks a status success||STUB_REVIEWS_MODE=commented_at_head,STUB_CHECKS_MODE=none,STUB_STATUS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot|rc=0 review_evidence=review review_evidence_surface=null' \
   'status success with open threads returns comments||STUB_REVIEWS_MODE=none,STUB_CHECKS_MODE=none,STUB_STATUS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot,STUB_THREADS_UNRESOLVED=2|rc=1 status=comments early=true'
 
-echo "=== the PR author is resolved once, and a read that fails decides nothing ==="
+echo "=== the PR author read that fails decides nothing ==="
 # Comparing every review row against an empty login would exclude nobody, so a
 # failed or empty author read ends the wait instead. Approval mode filters the
 # same identity under the GraphQL actor spelling its latestReviews rows carry,
@@ -704,6 +753,8 @@ echo "=== transient GitHub API failures are retried inside the budget and counte
 # spent. A 404 is terminal at once and carries no count.
 table "$REVIEW" \
   '503 twice then a review at head is reviewed with the count||STUB_REVIEWS_MODE=flaky_503|rc=0 status=reviewed transient_api_errors=2 review_polls=3' \
+  'an author read that 503s twice retries, then the review at head counts||STUB_PR_AUTHOR_MODE=flaky_503,STUB_REVIEWS_MODE=commented_at_head|rc=0 status=reviewed transient_api_errors=2' \
+  'a review-comment listing that 503s twice retries, then the opener counts||STUB_REVIEWS_MODE=bodyless_at_head,STUB_REVIEW_COMMENTS_MODE=flaky_503|rc=0 status=reviewed transient_api_errors=2' \
   '429 twice then a review at head is reviewed with the count||STUB_REVIEWS_MODE=flaky_429|rc=0 status=reviewed transient_api_errors=2' \
   'a persistent 503 is an error only once the budget is spent||STUB_REVIEWS_MODE=http_503|rc=1 status=error transient_errors_seen=true spent=true' \
   'a 404 is terminal at once with no transient count||STUB_REVIEWS_MODE=http_404|rc=1 status=error transient_api_errors=null early=true' \

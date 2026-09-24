@@ -193,10 +193,11 @@ review — for repos whose reviewers post COMMENTED reviews and never
           bodyless COMMENTED review reads the review-comment listing; a
           transient failure of that read retries inside the wait budget,
           and a terminal one ends the wait (review-comments-failed, exit 1).
-          The merge-blocking Review gate status (review-gate's
-          review-predicate.sh) still counts a reply-only non-author review,
-          so the wait can keep waiting on a head that status already
-          passed; or
+          Under review-gate's default review-object settings (any state,
+          no trusted-login list), the merge-blocking Review gate status
+          (review-predicate.sh) still counts a reply-only non-author
+          review, so the wait can keep waiting on a head that status
+          already passed; or
       (b) PR_REVIEW_CHECK is non-empty and the current head carries a
           successful signal of exactly that name on EITHER evidence
           surface (kendex#654, kendex#681): the newest check-run with that
@@ -1176,11 +1177,15 @@ while true; do
         exit 1
       fi
     fi
-    last_reviews_at_head=$(jq --argjson comments "$comments_json" "$review_content_defs"'
-      [.[] | select(verdict or has_body
-                    or (.id as $id | any($comments[];
-                          .pull_request_review_id == $id and .in_reply_to_id == null)))]
-      | length' <<<"$reviews_at_head_json")
+    # Both documents go in on stdin: the comment listing grows with the PR, and
+    # an argv string past the kernel's per-argument cap fails exec outright.
+    last_reviews_at_head=$(jq -n "$review_content_defs"'
+      input as $reviews | input as $comments
+      | [$reviews[] | select(verdict or has_body
+                             or (.id as $id | any($comments[];
+                                   .pull_request_review_id == $id and .in_reply_to_id == null)))]
+      | length' <<<"$reviews_at_head_json
+$comments_json")
     # A CHANGES_REQUESTED verdict stands until the reviewer re-reviews or it
     # is dismissed — judge each non-author reviewer by their latest submitted
     # review (the REST listing is in submission order).
