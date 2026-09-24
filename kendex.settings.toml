@@ -302,7 +302,9 @@ BOT_REMOTE_NAME = ""
 DECISIONS_DIR = "docs/decisions"
 
 # Full validation runs at development completion. Submit reuses that result
-# for the same commit; CI runs the full suites independently.
+# for the same commit; CI runs the full suites independently. dev-validate-run
+# sets DEV_VALIDATE_CLASS, and tools/guard --full runs the lanes that class
+# selects.
 DEV_VALIDATE_CMD = "tools/guard --full"
 
 # The bound on that run, in whole seconds. `tools/guard --full` takes well

@@ -448,5 +448,115 @@ else
 fi
 rm -f "$R/Cargo.toml"
 
+echo "=== full validation runs the lanes the change class selects ==="
+# dev-validate-run hands the class over as DEV_VALIDATE_CLASS. Each lane is
+# read off the call it makes: cargo and npm log their calls, and the parse
+# lane is a stub here because its real pass needs a Bash 3.2 this row does not
+# judge. A guard copy runs beside that stub under the same package link the
+# mutants use.
+LANE_TOOLS="$TMP/lane-tools"
+# Outside the world, which each row cleans; rustup is the stub above.
+LANE_BIN="$TMP/lane-bin"
+mkdir -p "$LANE_TOOLS" "$LANE_BIN"
+cp "$R/fake-bin/rustup" "$LANE_BIN/rustup"
+cp "$REPO/tools/bash32-lint" "$REPO/tools/ci-job-set" "$LANE_TOOLS/"
+printf '#!/usr/bin/env bash\necho "stub: bash32-parse"\n' >"$LANE_TOOLS/bash32-parse"
+chmod +x "$LANE_TOOLS/bash32-parse"
+lane_guard() { # [SED-EXPR] — the guard copy the rows run, edited when given
+  sed "${1:-}" "$GUARD" >"$LANE_TOOLS/guard"
+  chmod +x "$LANE_TOOLS/guard"
+}
+cat >"$LANE_BIN/cargo" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$CARGO_CALL_LOG"
+SH
+cat >"$LANE_BIN/npm" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$NPM_CALL_LOG"
+SH
+chmod +x "$LANE_BIN/cargo" "$LANE_BIN/npm"
+NPM_CALL_LOG="$TMP/npm-calls"
+mkdir -p "$R/ui"
+printf '[workspace]\n' >"$R/Cargo.toml"
+printf '{}\n' >"$R/ui/package.json"
+git -C "$R" add Cargo.toml ui/package.json
+git -C "$R" commit -q -m "chore: a workspace and a ui package"
+lanes_head="$(git -C "$R" rev-parse HEAD)"
+git -C "$R" update-ref refs/remotes/origin/main HEAD
+# The lanes one guard run reached, in a fixed order.
+lanes_ran() {
+  local seen="" lane
+  for lane in suites parse lint apple windows test ui; do
+    case "$lane" in
+      suites) [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] ;;
+      parse) [[ "$OUT" == *"stub: bash32-parse"* ]] ;;
+      lint) grep -qFx "check --workspace --all-targets" "$CARGO_CALL_LOG" ;;
+      apple) grep -qF -- "--target aarch64-apple-darwin" "$CARGO_CALL_LOG" ;;
+      windows) grep -qF -- "--target x86_64-pc-windows-msvc" "$CARGO_CALL_LOG" ;;
+      test) grep -qFx "test --workspace --quiet" "$CARGO_CALL_LOG" ;;
+      ui) [ -s "$NPM_CALL_LOG" ] ;;
+    esac && seen="$seen $lane"
+  done
+  printf '%s' "${seen# }"
+}
+run_lanes() { # CLASS PATH... — guard --full with PATHs touched; sets OUT and RC
+  local class="$1" p
+  shift
+  git -C "$R" reset -q --hard "$lanes_head"
+  git -C "$R" clean -qfd
+  for p in "$@"; do
+    mkdir -p "$R/$(dirname "$p")"
+    printf 'touched\n' >>"$R/$p"
+  done
+  : >"$CARGO_CALL_LOG"
+  : >"$NPM_CALL_LOG"
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && env -u DEV_VALIDATE_CLASS ${class:+DEV_VALIDATE_CLASS=$class} \
+    PATH="$LANE_BIN:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" NPM_CALL_LOG="$NPM_CALL_LOG" \
+    RUSTUP_INSTALLED_TARGETS="$BOTH" "$LANE_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
+}
+# Path lists are blank-separated and split unquoted on purpose.
+CODE="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh"
+ALL="suites parse lint apple windows test ui"
+# class|touched paths|the lanes that run
+LANE_ROWS=(
+  "|$CODE|$ALL"
+  "standard|$CODE|$ALL"
+  "render|$CODE|"
+  "trivial|$CODE|"
+  "micro|$CODE|suites parse lint apple windows test"
+  "small|$CODE ui/app.ts|$ALL"
+  "micro|docs/guide.md|test"
+)
+lane_guard
+for row in "${LANE_ROWS[@]}"; do
+  IFS='|' read -r class paths want <<<"$row"
+    run_lanes "$class" $paths
+  got="$(lanes_ran)"
+  [ "$RC" -eq 0 ] && [ "$got" = "$want" ] \
+    && ok "class '${class:-unset}' over $paths runs: ${want:-no heavy lane}" \
+    || bad "class '${class:-unset}' over $paths runs: ${want:-no heavy lane}" "rc=$RC got=$got out=$OUT"
+done
+run_lanes stale $CODE
+[ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: validate-class=stale"* ]] && [ "$(lanes_ran)" = "" ] \
+  && ok "a class the classifier never names is refused before any lane runs" \
+  || bad "a class the classifier never names is refused before any lane runs" "rc=$RC out=$OUT"
+# The issue's inverse: a guard that reads no class runs the whole battery on
+# the trivial row.
+lane_guard 's/case "${DEV_VALIDATE_CLASS:-standard}" in/case standard in/'
+run_lanes trivial $CODE
+[ "$(lanes_ran)" = "$ALL" ] \
+  && ok "control: with the class unread the trivial row runs every lane" \
+  || bad "control: with the class unread the trivial row runs every lane" "rc=$RC got=$(lanes_ran)"
+lane_guard 's/lane_on cargo_linux; then/lane_on cargo_linx; then/'
+run_lanes micro $CODE
+[ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: lane-unknown=cargo_linx"* ]] \
+  && ok "a lane name the selection does not carry is refused, never read as stood down" \
+  || bad "a lane name the selection does not carry is refused, never read as stood down" "rc=$RC out=$OUT"
+git -C "$R" reset -q --hard "$SEED"
+git -C "$R" clean -qfd
+git -C "$R" update-ref -d refs/remotes/origin/main
+
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

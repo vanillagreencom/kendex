@@ -11,6 +11,15 @@
 # command, and the wait's cap is that value plus the kill grace plus one poll
 # interval. Neither is chosen at the call site.
 #
+# The command runs the lanes the diff's change class needs, never more. The
+# class is the shipped change classifier's (harness-ci's change-class) verdict
+# on the base branch to the worktree as it stands, committed or not, and it
+# reaches the command as DEV_VALIDATE_CLASS: render, trivial, micro, small or
+# standard. The command reads it to stand lanes down; standard is the whole
+# battery. No flag and no inherited value asserts a class. A classifier that is
+# absent, fails or answers no class reads as standard, named on the started
+# line as class-fallback=CAUSE.
+#
 # Usage:
 #   dev-validate-run --worktree PATH [--poll SECS]
 #       Start the run detached, then block until it ends. Prints the run
@@ -22,12 +31,12 @@
 #   dev-validate-run --child --run-dir PATH
 #       Internal. The detached process the start path launches.
 #
-# The run directory holds cmd (the command text), start (the run's bounds), pid
-# (the detached child's process id), log (the command's output) and exit (the
-# sentinel).
+# The run directory holds cmd (the command text), start (the run's bounds and
+# class), class.log (the classifier's own account), pid (the detached child's
+# process id), log (the command's output) and exit (the sentinel).
 #
 # Output protocol — the agent reads these lines and the tests pin them:
-#   state=started run-dir=… log=… sentinel=… timeout-secs=N poll-secs=N cap-secs=N
+#   state=started run-dir=… log=… sentinel=… timeout-secs=N poll-secs=N cap-secs=N class=… [class-fallback=…]
 #   state=done guard-exit=N at=TIME validate=pass|FAILING run-dir=… log=…
 #   state=running elapsed-secs=N cap-secs=N run-dir=…
 #   state=timeout elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
@@ -87,6 +96,7 @@ die() {
       missing-command) printf 'Install it: without it the run carries no bound and no waiter can end.\n' ;;
       no-run) printf 'Start a run with --worktree before polling it.\n' ;;
       sentinel-unreadable) printf 'The sentinel does not carry a guard-exit value.\n' ;;
+      scratch-unavailable) printf 'A scratch directory for reading the change class could not be created.\n' ;;
     esac
   } >&2
   exit 2
@@ -109,6 +119,53 @@ check_seconds() { # LABEL VALUE
 
 start_field() { # FILE KEY
   sed -n "s/^$2=\\(.*\\)\$/\\1/p" < "$1"
+}
+
+# The class of the worktree's diff against the base branch, set in class and,
+# where it fell back to standard, the cause in class_fallback. The worktree is
+# judged as it stands: dev-implement validates before it commits, so HEAD alone
+# would be a diff missing the round's own edit. Its contents are written to one
+# unreferenced commit through a copy of the index, so HEAD, the index and the
+# tree are left as they were. A class that cannot be read is standard: a
+# narrow class on no evidence would skip lanes the diff needs.
+class=standard
+class_fallback=""
+class_scratch=""
+classify() {
+  local classifier base index tree head answer status=0
+  class_scratch="$(mktemp -d)" || die scratch-unavailable
+  trap 'rm -rf -- "$class_scratch"' EXIT
+  : > "$class_scratch/class.log"
+  classifier="$SCRIPT_DIR/../../harness-ci/scripts/change-class"
+  if [[ ! -x "$classifier" ]]; then
+    classifier="$(command -v change-class 2>/dev/null)" || classifier=""
+  fi
+  [[ -n "$classifier" ]] || { class_fallback=classifier-absent; return 0; }
+  base="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>>"$class_scratch/class.log")" \
+    || { class_fallback=base-unresolved; return 0; }
+  index="$(git -C "$worktree" rev-parse --path-format=absolute --git-path index 2>/dev/null)" \
+    || { class_fallback=worktree-unrecorded; return 0; }
+  [[ ! -f "$index" ]] || cp -- "$index" "$class_scratch/index" \
+    || { class_fallback=worktree-unrecorded; return 0; }
+  if ! tree="$(GIT_INDEX_FILE="$class_scratch/index" git -C "$worktree" add -A 2>/dev/null \
+      && GIT_INDEX_FILE="$class_scratch/index" git -C "$worktree" write-tree 2>/dev/null)" \
+    || ! head="$(GIT_AUTHOR_NAME="$PROG" GIT_AUTHOR_EMAIL="$PROG@localhost" \
+      GIT_COMMITTER_NAME="$PROG" GIT_COMMITTER_EMAIL="$PROG@localhost" \
+      git -C "$worktree" commit-tree "$tree" -p HEAD -m "$PROG: worktree" 2>/dev/null)"; then
+    class_fallback=worktree-unrecorded
+    return 0
+  fi
+  answer="$("$classifier" --event pull_request --base "origin/$base" --head "$head" \
+    --repo "$worktree" 2>>"$class_scratch/class.log")" || status=$?
+  if (( status != 0 )); then
+    class_fallback="classifier-exit-$status"
+    return 0
+  fi
+  case "$answer" in
+    change_class=render | change_class=trivial | change_class=micro | \
+      change_class=small | change_class=standard) class="${answer#change_class=}" ;;
+    *) class_fallback=classifier-unreadable ;;
+  esac
 }
 
 worktree=""
@@ -192,10 +249,15 @@ if [[ "$mode" == start ]]; then
   # exactly this launch (references/waiter-launch.md).
   command -v setsid >/dev/null 2>&1 || die missing-command commands=setsid
 
+  # Read before the run directory exists, since that directory sits inside the
+  # worktree the class judges.
+  classify
+
   # A fresh directory per start, so a poll can never read the previous round's
   # verdict as this one's.
   run_dir="$worktree/tmp/dev-validate-$(date -u +%Y%m%dT%H%M%SZ)-$$"
   mkdir -p "$run_dir"
+  mv -- "$class_scratch/class.log" "$run_dir/class.log"
   printf '%s' "$cmd" > "$run_dir/cmd"
   cap_secs=$(( 10#$timeout_secs + KILL_GRACE + 10#$poll ))
   {
@@ -205,12 +267,14 @@ if [[ "$mode" == start ]]; then
     printf 'timeout-secs=%s\n' "$timeout_secs"
     printf 'poll-secs=%s\n' "$poll"
     printf 'cap-secs=%s\n' "$cap_secs"
+    printf 'class=%s\n' "$class"
   } > "$run_dir/start"
 
   setsid -f "$SCRIPT_PATH" --child --run-dir "$run_dir" </dev/null >/dev/null 2>&1
 
-  printf 'state=started run-dir=%s log=%s sentinel=%s timeout-secs=%s poll-secs=%s cap-secs=%s\n' \
-    "$run_dir" "$run_dir/log" "$run_dir/exit" "$timeout_secs" "$poll" "$cap_secs"
+  printf 'state=started run-dir=%s log=%s sentinel=%s timeout-secs=%s poll-secs=%s cap-secs=%s class=%s%s\n' \
+    "$run_dir" "$run_dir/log" "$run_dir/exit" "$timeout_secs" "$poll" "$cap_secs" \
+    "$class" "${class_fallback:+ class-fallback=$class_fallback}"
   # Blocking form: the same poll --wait runs, with no per-call budget, so a
   # foreground caller returns only with the verdict.
   mode=wait
@@ -221,10 +285,11 @@ fi
 if [[ "$mode" == child ]]; then
   if ! child_worktree="$(start_field "$run_dir/start" worktree)" \
     || ! child_timeout_bin="$(start_field "$run_dir/start" timeout-bin)" \
-    || ! child_timeout_secs="$(start_field "$run_dir/start" timeout-secs)"; then
+    || ! child_timeout_secs="$(start_field "$run_dir/start" timeout-secs)" \
+    || ! child_class="$(start_field "$run_dir/start" class)"; then
     die no-run "path=$run_dir/start"
   fi
-  [[ -n "$child_worktree" && -n "$child_timeout_bin" && -n "$child_timeout_secs" ]] \
+  [[ -n "$child_worktree" && -n "$child_timeout_bin" && -n "$child_timeout_secs" && -n "$child_class" ]] \
     || die no-run "path=$run_dir/start"
   child_cmd="$(cat "$run_dir/cmd")"
   # Recorded before the command starts, so a waiter that finds no sentinel can
@@ -239,8 +304,9 @@ if [[ "$mode" == child ]]; then
   # on Debian and Ubuntu sh is dash, where source, [[ ]] and set -o pipefail are
   # errors that would record a false failing verdict. post-merge and
   # open-terminal run a configured command the same way. -k turns the bound from
-  # one ignorable signal into one the command cannot survive.
-  "$child_timeout_bin" -k "$KILL_GRACE" "$child_timeout_secs" bash -c "$child_cmd" > "$run_dir/log" 2>&1 || status=$?
+  # one ignorable signal into one the command cannot survive. The class is set
+  # over whatever value the launching shell exported.
+  DEV_VALIDATE_CLASS="$child_class" "$child_timeout_bin" -k "$KILL_GRACE" "$child_timeout_secs" bash -c "$child_cmd" > "$run_dir/log" 2>&1 || status=$?
   # Written whole or not at all: a poll that caught a half-written sentinel
   # would read a verdict that is not one.
   printf 'guard-exit=%s at=%s\n' "$status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$run_dir/exit.part"

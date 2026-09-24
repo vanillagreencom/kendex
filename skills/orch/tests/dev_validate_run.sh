@@ -200,9 +200,11 @@ assert_eq "$(cat "$(log_of "$OUT")")" "$(printf 'first\nsecond')" \
   "the log the started line names holds the command's own output, both streams"
 
 # --- Every field of the started and done lines, which the agent reads ---------
+# The fixture has no commit, so no worktree commit can be written to classify
+# and the class falls back to standard, naming why.
 assert_eq "$(sed -n 1p <<<"$OUT")" \
-  "state=started run-dir=$log_dir log=$log_dir/log sentinel=$log_dir/exit timeout-secs=20 poll-secs=1 cap-secs=31" \
-  "the started line names the run directory, its log and sentinel, and all three bounds"
+  "state=started run-dir=$log_dir log=$log_dir/log sentinel=$log_dir/exit timeout-secs=20 poll-secs=1 cap-secs=31 class=standard class-fallback=worktree-unrecorded" \
+  "the started line names the run directory, its log and sentinel, all three bounds and the class"
 assert_eq "$(sed -n 2p <<<"$OUT")" \
   "state=done guard-exit=0 at=$(sed -n 's/^guard-exit=[0-9]* at=//p' "$log_dir/exit") validate=pass run-dir=$log_dir log=$log_dir/log" \
   "and the done line carries the sentinel's own text beside those same two paths"
@@ -380,6 +382,86 @@ run_script "$RUN" --poll 1
 assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: required options=--worktree,--wait,--child" \
   "a call naming no mode is refused"
 assert_eq "$RC" "2" "and exits 2"
+
+# --- The command learns the change class, and only from the classifier --------
+# The classifier is a stub beside a copy of the scripts, laid out as the
+# installed packages are: orch/scripts next to harness-ci/scripts. It records
+# its arguments and answers what the row names. The command prints the class
+# it was handed, so each row reads the battery's selector straight off the log.
+LAYOUT="$TMP_ROOT/layout"
+mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/harness-ci/scripts"
+cp "$SCRIPTS_DIR/dev-validate-run" "$SCRIPTS_DIR/orch-env" "$SCRIPTS_DIR/resolve-base-branch" "$LAYOUT/orch/scripts/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$LAYOUT/orch/scripts/lib/"
+cat > "$LAYOUT/harness-ci/scripts/change-class" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$STUB_ARGS"
+case "$STUB_ANSWER" in
+  exit-2) echo "wiring-error: cause=stub" >&2; exit 2 ;;
+  *) printf '%s\n' "$STUB_ANSWER" ;;
+esac
+SH
+chmod +x "$LAYOUT/harness-ci/scripts/change-class"
+export STUB_ARGS="$TMP_ROOT/stub-args"
+proj_class="$(make_proj proj-class 'printf %s ${DEV_VALIDATE_CLASS-unset}' 20)"
+# The run directories land under tmp/, which an orch project ignores.
+printf 'tmp/\n' > "$proj_class/.gitignore"
+git -C "$proj_class" add kendex.settings.toml .gitignore
+git -C "$proj_class" -c user.name=t -c user.email=t@example.com commit -q -m base
+git -C "$proj_class" update-ref refs/remotes/origin/main HEAD
+# stub answer|the class the command runs under|the started line's class fields
+CLASS_ROWS=(
+  "change_class=render|render|class=render"
+  "change_class=trivial|trivial|class=trivial"
+  "change_class=micro|micro|class=micro"
+  "change_class=small|small|class=small"
+  "change_class=standard|standard|class=standard"
+  "exit-2|standard|class=standard class-fallback=classifier-exit-2"
+  "change_class=tiny|standard|class=standard class-fallback=classifier-unreadable"
+)
+for row in "${CLASS_ROWS[@]}"; do
+  IFS='|' read -r answer want_class want_fields <<<"$row"
+  export STUB_ANSWER="$answer"
+  # An inherited class is what a lane asserting its own would look like.
+  DEV_VALIDATE_CLASS=trivial run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
+  assert_eq "$(cat "$(log_of "$OUT")" 2>/dev/null)" "$want_class" \
+    "classifier answer '$answer' runs the command under class $want_class" "$ERR"
+  assert_eq "$(sed -n 's/^state=started .* cap-secs=[0-9]* //p' <<<"$OUT")" "$want_fields" \
+    "and the started line reports $want_fields" "$ERR"
+done
+
+# The diff classified is the worktree as it stands: a file no commit holds yet
+# is in the head the classifier is handed, and HEAD and the index are not moved.
+printf 'draft\n' > "$proj_class/draft.md"
+export STUB_ANSWER=change_class=trivial
+run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
+judged="$(sed -n '/^--head$/{n;p;}' "$STUB_ARGS")"
+assert_eq "$(sed -n '/^--event$/{n;p;}' "$STUB_ARGS") $(sed -n '/^--base$/{n;p;}' "$STUB_ARGS")" \
+  "pull_request origin/main" "the classifier judges a pull request against the base branch" "$ERR"
+assert_eq "$(git -C "$proj_class" show --name-only --format= "$judged" 2>&1)" "draft.md" \
+  "the head it judges carries the uncommitted file" "$ERR"
+assert_eq "$(git -C "$proj_class" rev-parse "$judged^") $(git -C "$proj_class" status --porcelain)" \
+  "$(git -C "$proj_class" rev-parse HEAD) ?? draft.md" \
+  "and sits on HEAD while HEAD, the index and the tree stay as they were" "$ERR"
+rm -f "$proj_class/draft.md"
+
+# With no classifier installed the class is standard, and says why.
+mv "$LAYOUT/harness-ci" "$LAYOUT/harness-ci.off"
+run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
+assert_eq "$(cat "$(log_of "$OUT")" 2>/dev/null) $(sed -n 's/^state=started .* cap-secs=[0-9]* //p' <<<"$OUT")" \
+  "standard class=standard class-fallback=classifier-absent" \
+  "no classifier runs the whole battery, naming the absence" "$ERR"
+mv "$LAYOUT/harness-ci.off" "$LAYOUT/harness-ci"
+
+# Control: the class is read but never handed to the command, which is the
+# runner before this contract: the trivial row's command sees no class and
+# runs its whole battery.
+mutant mutant-no-class 'DEV_VALIDATE_CLASS="$child_class" "$child_timeout_bin"' '"$child_timeout_bin"'
+cp "$MUTANT" "$LAYOUT/orch/scripts/dev-validate-run"
+export STUB_ANSWER=change_class=trivial
+run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
+assert_eq "$(cat "$(log_of "$OUT")" 2>/dev/null)" "unset" \
+  "control: with the class not handed over the trivial row's command runs with no class" "$ERR"
+cp "$SCRIPTS_DIR/dev-validate-run" "$LAYOUT/orch/scripts/dev-validate-run"
 
 # --- Control: the cap is not derived from the bound ---------------------------
 # The reported failure: the wait ended before the guard did, so the round had no

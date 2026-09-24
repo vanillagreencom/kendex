@@ -49,7 +49,7 @@ The rail carries one change from a consumer pull request to the default branch, 
 | `REVIEW_GATE_*` and `ORCH_MERGE_BYPASS` values | the repository | `kendex.settings.toml` | KEN-1638, KEN-1602 |
 | The merge route and the consumer train | kendex, `skills/orch/workflows/` | `kendex refresh` | KEN-1601, KEN-1602 |
 
-The classifier answers one five-class verdict, `change_class`, beside the two narrow questions `harness_only` and `docs_only`. `.github/actions/change-class` is the composite action that publishes the class and the changed-path families to a workflow; it wraps the shipped scripts and classifies nothing itself. In this repository `tools/ci-job-set` turns the class into one selection per lane of `skill-tests.yml`, and `tools/ci-aggregate` holds each required context to those selections.
+The classifier answers one five-class verdict, `change_class`, beside the two narrow questions `harness_only` and `docs_only`. `.github/actions/change-class` is the composite action that publishes the class and the changed-path families to a workflow; it wraps the shipped scripts and classifies nothing itself. In this repository `tools/ci-job-set` turns the class into one selection per lane of `skill-tests.yml`, and `tools/ci-aggregate` holds each required context to those selections. A lane reads the same class before it opens a pull request: orch's `dev-validate-run` classifies the worktree and exports the class to `DEV_VALIDATE_CMD`, and `tools/guard --full` runs the lanes `tools/ci-job-set` selects for it. A wrong local class costs a red CI check, since CI classifies the branch again.
 
 ## Boundaries
 
