@@ -25,9 +25,12 @@
 //! So the file a harness loads is scanned at full weight whatever it puts
 //! inside a fence. What weighs one severity less is content that is plainly
 //! quoting rather than instructing: a blockquote, and every line of a
-//! skill's supporting files. The one exception is `plaintext-secrets`: a
-//! credential in a code block is exactly as leaked as one in prose, so it
-//! never downgrades anywhere.
+//! skill's supporting files. What weighs nothing is a switch the file
+//! only names — a markdown code span, a shell comment, a string a script
+//! prints — which [`Line::standing`] tells from a use and the audit keeps
+//! as a mention. The one exception is `plaintext-secrets`: a credential
+//! in a code block is exactly as leaked as one in prose, so it never
+//! downgrades anywhere.
 //!
 //! Every message says what the rule fired *on*, never where it was found:
 //! a sentence that describes only the kind of problem makes two different
@@ -38,7 +41,10 @@
 
 use crate::model::ItemKind;
 
-use super::{AuditRule, Content, Doc, DocRole, Finding, Line, Outcome, Prepared, Severity};
+use super::{
+    AuditRule, Content, Doc, DocRole, Finding, Found, Line, Outcome, Prepared, Quotation, Severity,
+    Standing,
+};
 
 mod content;
 mod mcp;
@@ -90,7 +96,7 @@ pub(super) fn at(doc: &Doc, line: &Line) -> (String, Option<u32>) {
 pub(super) fn scan_docs(
     prepared: &Prepared,
     kinds: &[ItemKind],
-    check: impl FnMut(&Doc, &Line, &mut Vec<Finding>),
+    check: impl FnMut(&Doc, &Line, &mut Found),
 ) -> Outcome {
     scan_docs_where(prepared, kinds, |role| role == DocRole::Text, check)
 }
@@ -101,7 +107,7 @@ pub(super) fn scan_docs(
 pub(super) fn scan_every_doc(
     prepared: &Prepared,
     kinds: &[ItemKind],
-    check: impl FnMut(&Doc, &Line, &mut Vec<Finding>),
+    check: impl FnMut(&Doc, &Line, &mut Found),
 ) -> Outcome {
     scan_docs_where(prepared, kinds, |_| true, check)
 }
@@ -110,7 +116,7 @@ fn scan_docs_where(
     prepared: &Prepared,
     kinds: &[ItemKind],
     reads: impl Fn(DocRole) -> bool,
-    mut check: impl FnMut(&Doc, &Line, &mut Vec<Finding>),
+    mut check: impl FnMut(&Doc, &Line, &mut Found),
 ) -> Outcome {
     if !kinds.contains(&prepared.input.kind) {
         return Outcome::OutOfScope;
@@ -118,13 +124,13 @@ fn scan_docs_where(
     if let Content::Unread { why } = &prepared.input.content {
         return Outcome::NotApplicable(why);
     }
-    let mut findings = Vec::new();
+    let mut found = Found::default();
     for doc in prepared.docs.iter().filter(|doc| reads(doc.role)) {
         for line in &doc.lines {
-            check(doc, line, &mut findings);
+            check(doc, line, &mut found);
         }
     }
-    Outcome::Ran(findings)
+    Outcome::Ran(found)
 }
 
 /// Content that had to be deobfuscated before it could be read plainly.
@@ -184,7 +190,8 @@ impl AuditRule for ObfuscatedContent {
                                 .to_owned(),
                     }
                 })
-                .collect(),
+                .collect::<Vec<Finding>>()
+                .into(),
         )
     }
 }
@@ -257,7 +264,8 @@ impl AuditRule for UndecodableContent {
                             .to_owned(),
                     })
                 })
-                .collect(),
+                .collect::<Vec<Finding>>()
+                .into(),
         )
     }
 }

@@ -69,6 +69,7 @@ const view: PackageView = {
     findings: [],
     safety: { score: 100, deductions: [] },
     quality: null,
+    mentions: [],
     skipped: [],
     notes: [],
     contentHash: "abc",

@@ -95,6 +95,7 @@ const scored = (score: number, findings: Finding[] = []): PackageSafety => ({
   findings,
   safety: { score, deductions: [] },
   quality: null,
+  mentions: [],
   skipped: [],
   notes: [],
   contentHash: "abc",

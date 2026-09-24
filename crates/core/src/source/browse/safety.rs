@@ -26,12 +26,12 @@ use input::input_for;
 /// The shape of one cached record — the scanner/parser half of the cache
 /// key, beside the rule-set and discovery-table versions. Bump it when what
 /// the record holds, or how the input is read into it, changes.
-const CACHE_FORMAT: u32 = 3;
+const CACHE_FORMAT: u32 = 4;
 
 /// What one scoring pass produced, exactly as it is cached. The advisory
 /// payload flattens into the record, so the cached JSON keeps `findings`,
-/// `safety`, `quality`, `skipped` and `ruleset` at the top level beside the
-/// cache-key fields.
+/// `mentions`, `safety`, `quality`, `skipped` and `ruleset` at the top
+/// level beside the cache-key fields.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CachedScore {

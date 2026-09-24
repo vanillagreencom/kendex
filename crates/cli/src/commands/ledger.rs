@@ -26,9 +26,20 @@ use crate::ui;
 /// one block and can print two blocks for one item, so a count over items
 /// is the only one that matches what "flagged N items" claims.
 fn flagged(scored: &[ItemSafety]) -> usize {
+    items(scored, |row| !row.advisory.findings.is_empty())
+}
+
+/// Items a rule that applies to could not read: a declared plugin, a tree
+/// past the memory bound, an unreadable hook. Their score is not a clean
+/// one, because nobody earned it.
+fn unread(scored: &[ItemSafety]) -> usize {
+    items(scored, |row| !row.advisory.skipped.is_empty())
+}
+
+fn items(scored: &[ItemSafety], has: impl Fn(&ItemSafety) -> bool) -> usize {
     scored
         .iter()
-        .filter(|row| !row.advisory.findings.is_empty())
+        .filter(|row| has(row))
         .map(|row| (row.kind, row.name.clone()))
         .collect::<BTreeSet<(ItemKind, String)>>()
         .len()
@@ -61,8 +72,9 @@ pub struct Wrote<'a> {
 /// Both parts are read off blocks the caller has already printed and
 /// point the reader back at them, so a caller passes only what it printed:
 /// a flagged count over a block nobody printed sends the reader to lines
-/// that are not there. A verb that printed neither passes both empty and
-/// closes on its head alone.
+/// that are not there, and `safety: clean` over a scan nobody ran claims
+/// one. A verb that printed neither passes both empty and closes on its
+/// head alone.
 pub fn say_ledger(scope: &Scope, wrote: Wrote<'_>, blocked: &[Blocked], scored: &[ItemSafety]) {
     let (line, steps) = ledger(scope, wrote, blocked, scored);
     ui::ledger(&line, &steps);
@@ -85,6 +97,7 @@ fn ledger(
 ) -> (String, Vec<String>) {
     let skipped = blocked.len();
     let flagged = flagged(scored);
+    let unread = unread(scored);
     let mut parts = vec![wrote(said.verb, said.count, skipped)];
     let mut steps: Vec<String> = Vec::new();
     // What this run's commit offer did in this project, read back off the
@@ -98,6 +111,12 @@ fn ledger(
         ));
         steps.push(format!("skipped — {}", conflict_exit(scope, blocked)));
     }
+    // A scored run says what safety found either way: a clean scan and
+    // a scan nobody ran would otherwise close on the same line. Clean is
+    // claimed only when every rule read every item: an item some rule
+    // had no bytes for scores with no findings, and closing clean under
+    // its own `not fully checked` line is the confusion this part exists
+    // to prevent.
     if flagged > 0 {
         parts.push(format!(
             "flagged {flagged} item{} on safety",
@@ -106,6 +125,14 @@ fn ledger(
         // No verb reads these back: every surface that writes prints its
         // own advisory block, and this run's is the one printed above.
         steps.push("flagged — the safety lines above".to_owned());
+    }
+    if unread > 0 {
+        parts.push(format!(
+            "not fully checked on safety: {unread} item{}",
+            plural(unread)
+        ));
+    } else if flagged == 0 && !scored.is_empty() {
+        parts.push("safety: clean".to_owned());
     }
     (
         format!("{}: {}", scope_label(scope), parts.join(" · ")),
@@ -138,5 +165,107 @@ fn plural(n: usize) -> &'static str {
     match n {
         1 => "",
         _ => "s",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use kendex_core::engine::{ItemSafety, SafetyTarget};
+    use kendex_core::model::{HarnessId, ItemKind, Scope};
+    use kendex_core::quality::{AuditResult, Finding, SafetyScore, Severity, SkippedRule};
+
+    use super::*;
+
+    fn row(name: &str, findings: Vec<Finding>, skipped: Vec<SkippedRule>) -> ItemSafety {
+        ItemSafety {
+            kind: ItemKind::Skill,
+            name: name.to_owned(),
+            targets: vec![SafetyTarget {
+                harness: HarnessId::Claude,
+                location: format!("/home/one/.claude/skills/{name}"),
+            }],
+            scope: Scope::Global,
+            source: None,
+            advisory: AuditResult {
+                safety: SafetyScore {
+                    score: match findings.is_empty() {
+                        true => 100,
+                        false => 75,
+                    },
+                    deductions: Vec::new(),
+                },
+                findings,
+                mentions: Vec::new(),
+                skipped,
+                quality: None,
+                ruleset: kendex_core::quality::RULESET_VERSION,
+            },
+        }
+    }
+
+    fn finding() -> Finding {
+        Finding {
+            rule: "rce".to_owned(),
+            severity: Severity::Critical,
+            location: "SKILL.md".to_owned(),
+            line: Some(1),
+            message: "pipes a download into a shell".to_owned(),
+            remediation: "download it first".to_owned(),
+        }
+    }
+
+    fn unread_rule() -> SkippedRule {
+        SkippedRule {
+            rule: "rce".to_owned(),
+            reason: "the plugin's own files are not readable here".to_owned(),
+        }
+    }
+
+    /// One row per scored set: what the safety part of the closing line
+    /// says. Clean is claimed only when every item was read in full.
+    #[test]
+    fn the_safety_part_claims_clean_only_when_every_item_was_read() {
+        let wrote = || Wrote {
+            verb: "refreshed",
+            count: Some(1),
+        };
+        let rows: &[(&str, Vec<ItemSafety>, &str)] = &[
+            ("nothing scored", vec![], "refreshed 1 change"),
+            (
+                "clean",
+                vec![row("a", vec![], vec![])],
+                "refreshed 1 change · safety: clean",
+            ),
+            (
+                "flagged",
+                vec![row("a", vec![finding()], vec![])],
+                "refreshed 1 change · flagged 1 item on safety",
+            ),
+            (
+                "unread only",
+                vec![row("a", vec![], vec![unread_rule()])],
+                "refreshed 1 change · not fully checked on safety: 1 item",
+            ),
+            (
+                "clean beside unread",
+                vec![
+                    row("a", vec![], vec![]),
+                    row("b", vec![], vec![unread_rule()]),
+                ],
+                "refreshed 1 change · not fully checked on safety: 1 item",
+            ),
+            (
+                "flagged beside unread",
+                vec![
+                    row("a", vec![finding()], vec![]),
+                    row("b", vec![], vec![unread_rule()]),
+                ],
+                "refreshed 1 change · flagged 1 item on safety · not fully checked on safety: 1 item",
+            ),
+        ];
+        for (case, scored, want) in rows {
+            let (line, _) = ledger(&Scope::Global, wrote(), &[], scored);
+            assert_eq!(line, format!("global: {want}"), "{case}");
+        }
     }
 }

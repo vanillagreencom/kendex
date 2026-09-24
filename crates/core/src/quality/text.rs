@@ -12,6 +12,7 @@
 use std::collections::BTreeSet;
 
 mod normalize;
+mod shell;
 pub use normalize::deobfuscate;
 
 use super::phrase::find_phrase;
@@ -78,12 +79,46 @@ pub struct Line {
     /// skill's supporting files. A code fence is not one of these: see
     /// `lines`.
     pub describing: bool,
-    /// This line's inline code spans, as byte ranges into `lower`. Only a
-    /// prose line has any — inside a code block, and in a file that is not
-    /// markdown at all, a backtick is the code's own character. A span may
-    /// open on one line and close on a later one, so these are read for the
-    /// whole document at once: see `lines`.
-    pub spans: Vec<(usize, usize)>,
+    /// Byte ranges into `lower` where the file names text rather than
+    /// running it, each with which quotation names it. In markdown these
+    /// are the inline code spans, read for the whole document at once
+    /// because a span may open on one line and close on a later one (see
+    /// `lines`); in a shell file they are a full-line comment and the
+    /// strings a diagnostic command prints (see [`shell::named_spans`]).
+    /// Any other file has none.
+    pub spans: Vec<Span>,
+}
+
+/// One range of a line that names its text, and the quotation that says
+/// so. A rule chooses which quotations it reads as naming: a destructive
+/// command in a README's backticks is still the command a reader will
+/// paste, while the same words in a guard's own comment are the guard
+/// describing what it refuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+    pub by: Quotation,
+}
+
+/// What marks a range of a line as named rather than run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quotation {
+    /// A markdown inline code span.
+    CodeSpan,
+    /// A shell comment, or a string a shell script prints to the
+    /// terminal.
+    ShellText,
+}
+
+/// Where a needle stands on a line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Standing {
+    /// At least one occurrence is code: a finding.
+    Code,
+    /// Every occurrence is inside a span that names it: a mention, kept
+    /// for a verbose reading and costing the score nothing.
+    Named,
 }
 
 impl Line {
@@ -137,27 +172,52 @@ impl Line {
         }
     }
 
-    /// Whether what stands at `at` counts as code, or is a document naming
-    /// it.
+    /// Whether what stands at `at` counts as code, or is the file naming
+    /// it under one of the quotations `reads`.
     ///
-    /// A markdown code span is the one quotation read here. A README
-    /// writing `--no-verify` in backticks is naming the switch; the same
-    /// characters standing in the open are the switch. Everything else
-    /// counts — a `#` comment, a `case` arm's pattern, a string in a
+    /// Two quotations exist. A markdown code span: a README writing
+    /// `--no-verify` in backticks is naming the switch, and the same
+    /// characters standing in the open are the switch. And, in a shell
+    /// file, a full-line comment or a string that `echo`, `printf` or a
+    /// function that only prints hands to the terminal: a guard that
+    /// refuses the switch spells it in exactly those two places, and
+    /// nowhere the shell would run it. Everything else counts — a `case`
+    /// arm's pattern, a string handed to any other command, a string in a
     /// language this does not parse — because each of those is a switch
     /// written into a file a harness loads, and no reading of what the
     /// file would then do with it holds for every shape a file takes.
-    ///
-    /// The spans are markdown's own, already read into `spans`: a run of
-    /// backticks closes only on a run of its own length, one that never
-    /// meets its match quotes nothing, and a run reaches no further than
-    /// the block it opened in.
-    pub fn counts_at(&self, at: usize) -> bool {
+    fn counts_at(&self, at: usize, reads: &[Quotation]) -> bool {
         !self
             .spans
             .iter()
-            .any(|(start, end)| at >= *start && at < *end)
+            .any(|span| reads.contains(&span.by) && at >= span.start && at < span.end)
     }
+
+    /// Where `needle` stands on this line, if anywhere: one occurrence
+    /// that counts makes it code, and a line that only names it under a
+    /// quotation in `reads` is a mention. Every rule that reads a switch
+    /// off a line reads it through here, so the shapes of naming are told
+    /// apart in one place and each rule says which it honours.
+    pub fn standing(&self, needle: &str, reads: &[Quotation]) -> Option<Standing> {
+        let occurrences = self.occurrences(needle);
+        match occurrences.iter().any(|at| self.counts_at(*at, reads)) {
+            true => Some(Standing::Code),
+            false => (!occurrences.is_empty()).then_some(Standing::Named),
+        }
+    }
+}
+
+/// Which language's quotation marks a document is read with.
+#[derive(Debug, Clone, Copy)]
+pub enum Reading<'a> {
+    /// Markdown: inline code spans name their text.
+    Markdown,
+    /// A shell script: comments and the strings a diagnostic command
+    /// prints name their text. The set is the tree's diagnostic functions
+    /// (see [`shell::diagnostic_functions`]).
+    Shell(&'a BTreeSet<String>),
+    /// Every other file is code from its first byte and quotes nothing.
+    Plain,
 }
 
 /// Deobfuscate every text this input carries and split it into lines.
@@ -177,7 +237,10 @@ pub fn prepare(input: AuditInput) -> Prepared {
             docs.push(Doc {
                 location: input.location.clone(),
                 role: super::DocRole::Text,
-                lines: lines(&text, is_markdown(&input.location)),
+                lines: lines(
+                    &text,
+                    language(&input.location, &text).reading(&BTreeSet::new()),
+                ),
             });
             Content::Document { text }
         }
@@ -227,28 +290,47 @@ fn tree_docs(
     clean: &mut impl FnMut(String, &str) -> String,
     docs: &mut Vec<Doc>,
 ) -> Vec<TreeFile> {
-    files
+    // The location a deobfuscation report is filed under is the one every
+    // line rule cites, spelled once here for both.
+    let placed: Vec<(TreeFile, String)> = files
         .into_iter()
         .map(|file| {
-            let Some(text) = file.text else {
-                return TreeFile { text: None, ..file };
-            };
             let location = format!("{root}/{}", crate::paths::slashed(&file.path));
-            let supporting = is_supporting(&file.path);
-            let text = clean(location.clone(), &text);
-            let split = lines(&text, is_markdown(&location));
-            docs.push(Doc {
-                lines: match supporting {
-                    true => split.into_iter().map(Line::as_description).collect(),
-                    false => split,
-                },
-                role: super::DocRole::Text,
-                location,
-            });
-            TreeFile {
-                text: Some(text),
-                ..file
+            let text = file.text.map(|text| clean(location.clone(), &text));
+            (TreeFile { text, ..file }, location)
+        })
+        .collect();
+    // A script calls the message helpers its tree's library files define,
+    // so the diagnostic functions are read off every shell file of the
+    // tree before any one of them is split into lines. Each file's
+    // language is decided once, here, for both passes.
+    let languages: Vec<Option<Language>> = placed
+        .iter()
+        .map(|(file, location)| file.text.as_deref().map(|text| language(location, text)))
+        .collect();
+    let shell: Vec<&str> = placed
+        .iter()
+        .zip(&languages)
+        .filter(|(_, language)| **language == Some(Language::Shell))
+        .filter_map(|((file, _), _)| file.text.as_deref())
+        .collect();
+    let diagnostic = shell::diagnostic_functions(&shell);
+    placed
+        .into_iter()
+        .zip(languages)
+        .map(|((file, location), language)| {
+            if let (Some(text), Some(language)) = (&file.text, language) {
+                let split = lines(text, language.reading(&diagnostic));
+                docs.push(Doc {
+                    lines: match is_supporting(&file.path) {
+                        true => split.into_iter().map(Line::as_description).collect(),
+                        false => split,
+                    },
+                    role: super::DocRole::Text,
+                    location,
+                });
             }
+            file
         })
         .collect()
 }
@@ -296,11 +378,13 @@ fn hook_docs(
     clean: &mut impl FnMut(String, &str) -> String,
     docs: &mut Vec<Doc>,
 ) -> (String, Option<String>, Option<String>) {
+    // The command line is run by a shell, and its script defines nothing
+    // the command line can call.
     let command = clean(format!("{root} (command)"), &command);
     docs.push(Doc {
         location: format!("{root} (command)"),
         role: super::DocRole::Text,
-        lines: lines(&command, false),
+        lines: lines(&command, Reading::Shell(&BTreeSet::new())),
     });
     // What the harness stores beside the command, not what it runs: one
     // value per line, one document, for the rules about values.
@@ -309,16 +393,21 @@ fn hook_docs(
         docs.push(Doc {
             location: format!("{root} (entry)"),
             role: super::DocRole::Values,
-            lines: lines(&values, false),
+            lines: lines(&values, Reading::Plain),
         });
         values
     });
     let script = script.map(|body| {
         let body = clean(root.to_owned(), &body);
+        let language = language(root, &body);
+        let diagnostic = match language {
+            Language::Shell => shell::diagnostic_functions(&[&body]),
+            Language::Markdown | Language::Plain => BTreeSet::new(),
+        };
         docs.push(Doc {
             location: root.to_owned(),
             role: super::DocRole::Text,
-            lines: lines(&body, false),
+            lines: lines(&body, language.reading(&diagnostic)),
         });
         body
     });
@@ -337,21 +426,38 @@ fn hook_docs(
 /// words".
 ///
 /// What a fence does decide is which marks quote *inside* the line. A
-/// markdown document has prose to tell from its blocks at all; every other
-/// file is code from its first byte, and `markdown` says which this is.
+/// markdown document has prose to tell from its blocks at all; a shell
+/// file has comments and the strings it prints; every other file is code
+/// from its first byte, and `reading` says which this is.
 ///
 /// The code spans come from here rather than from a line: a run of
 /// backticks may close on a later line, so only something holding the
 /// whole document can say which of them ever meet a match.
-pub fn lines(text: &str, markdown: bool) -> Vec<Line> {
+pub fn lines(text: &str, reading: Reading<'_>) -> Vec<Line> {
     let raw: Vec<&str> = text.lines().collect();
     let lower: Vec<String> = raw.iter().map(|line| flatten(line)).collect();
     // The spans come off the document's own bytes, and index the flattened
     // copy just as well: flattening rewrites whitespace and case one byte
     // for one, and touches neither a backtick nor the backslash escaping it.
-    let spans = match markdown {
-        true => crate::render::code_by_line(text).spans,
-        false => vec![Vec::new(); raw.len()],
+    let marked = |by: Quotation| {
+        move |ranges: Vec<(usize, usize)>| -> Vec<Span> {
+            ranges
+                .into_iter()
+                .map(|(start, end)| Span { start, end, by })
+                .collect()
+        }
+    };
+    let spans: Vec<Vec<Span>> = match reading {
+        Reading::Markdown => crate::render::code_by_line(text)
+            .spans
+            .into_iter()
+            .map(marked(Quotation::CodeSpan))
+            .collect(),
+        Reading::Shell(diagnostic) => lower
+            .iter()
+            .map(|line| marked(Quotation::ShellText)(shell::named_spans(line, diagnostic)))
+            .collect(),
+        Reading::Plain => vec![Vec::new(); raw.len()],
     };
     raw.iter()
         .zip(lower)
@@ -378,6 +484,49 @@ fn is_markdown(location: &str) -> bool {
     let lower = location.to_ascii_lowercase();
     let base = lower.strip_suffix(".disabled").unwrap_or(&lower);
     base.ends_with(".md") || base.ends_with(".markdown")
+}
+
+/// Whether this document is a shell script: by its extension, or by the
+/// interpreter line a script with no extension carries — every guard
+/// script in the catalog is `#!/usr/bin/env bash` under a bare name.
+fn is_shell(location: &str, text: &str) -> bool {
+    let lower = location.to_ascii_lowercase();
+    lower.ends_with(".sh")
+        || lower.ends_with(".bash")
+        || text
+            .lines()
+            .next()
+            .is_some_and(|first| first.starts_with("#!") && first.contains("sh"))
+}
+
+/// The language a document is read in, decided once per document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Language {
+    Markdown,
+    Shell,
+    Plain,
+}
+
+impl Language {
+    /// How to read a document of this language, given the tree's
+    /// diagnostic functions.
+    fn reading(self, diagnostic: &BTreeSet<String>) -> Reading<'_> {
+        match self {
+            Language::Markdown => Reading::Markdown,
+            Language::Shell => Reading::Shell(diagnostic),
+            Language::Plain => Reading::Plain,
+        }
+    }
+}
+
+fn language(location: &str, text: &str) -> Language {
+    if is_markdown(location) {
+        Language::Markdown
+    } else if is_shell(location, text) {
+        Language::Shell
+    } else {
+        Language::Plain
+    }
 }
 
 /// ASCII-lowercase with every whitespace byte turned into a space. Both

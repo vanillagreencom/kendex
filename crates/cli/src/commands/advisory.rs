@@ -8,9 +8,10 @@ use kendex_core::quality::Finding;
 use super::say;
 
 /// What the safety rules found in the content this plan would write —
-/// advisory, printed beside the plan.
-pub fn print_safety(report: &EngineReport) {
-    for (row, targets) in grouped_safety(&report.safety) {
+/// advisory, printed beside the plan. A verbose run also prints what the
+/// rules read past as a mention.
+pub fn print_safety(report: &EngineReport, verbose: bool) {
+    for (row, targets) in grouped_safety(&report.safety, verbose) {
         print_advisory(
             row.kind,
             &row.name,
@@ -19,6 +20,7 @@ pub fn print_safety(report: &EngineReport) {
                 source: row.source.as_ref(),
             },
             &row.advisory,
+            verbose,
         );
     }
 }
@@ -27,10 +29,10 @@ pub fn print_safety(report: &EngineReport) {
 /// harness it covers. The same rendering installed for four tools is one
 /// reading of one set of bytes, and four identical blocks read as four
 /// separate problems.
-fn grouped_safety(rows: &[ItemSafety]) -> Vec<(&ItemSafety, Vec<SafetyTarget>)> {
+fn grouped_safety(rows: &[ItemSafety], verbose: bool) -> Vec<(&ItemSafety, Vec<SafetyTarget>)> {
     let mut blocks: Vec<(SafetyBlock, &ItemSafety, Vec<SafetyTarget>)> = Vec::new();
     for row in rows {
-        let block = safety_block(row);
+        let block = safety_block(row, verbose);
         let same = blocks.iter_mut().find(|(seen, first, _)| {
             *seen == block && first.kind == row.kind && first.name == row.name
         });
@@ -60,6 +62,9 @@ struct SafetyBlock {
     /// split a block: `quality::safety` derives it from the findings.
     score: u32,
     findings: Vec<PrintedFinding>,
+    /// The mention lines a verbose run prints; empty otherwise, so a
+    /// difference no line shows splits no block.
+    mentions: Vec<PrintedFinding>,
     /// The count and reason [`print_skipped`] puts on its line, `None`
     /// where it prints no line at all.
     skipped: Option<(usize, String)>,
@@ -74,28 +79,28 @@ struct PrintedFinding {
     line: Option<u32>,
 }
 
-fn safety_block(row: &ItemSafety) -> SafetyBlock {
+fn safety_block(row: &ItemSafety, verbose: bool) -> SafetyBlock {
     let advisory = &row.advisory;
+    // Exactly what the line will say. Two renderings of one item can
+    // agree on every finding and still be cited differently — one a
+    // verbatim copy, the other rewritten — and folding those would let
+    // the first row decide whether the other's line prints.
+    let printed = |finding: &Finding| {
+        let (location, line) = cited(finding, &row.targets, row.source.as_ref());
+        PrintedFinding {
+            severity: finding.severity.name(),
+            message: finding.message.clone(),
+            location,
+            line,
+        }
+    };
     SafetyBlock {
         score: advisory.safety.score,
-        findings: advisory
-            .findings
-            .iter()
-            .map(|finding| {
-                // Exactly what the line will say. Two renderings of one
-                // item can agree on every finding and still be cited
-                // differently — one a verbatim copy, the other rewritten
-                // — and folding those would let the first row decide
-                // whether the other's line prints.
-                let (location, line) = cited(finding, &row.targets, row.source.as_ref());
-                PrintedFinding {
-                    severity: finding.severity.name(),
-                    message: finding.message.clone(),
-                    location,
-                    line,
-                }
-            })
-            .collect(),
+        findings: advisory.findings.iter().map(printed).collect(),
+        mentions: match verbose {
+            true => advisory.mentions.iter().map(printed).collect(),
+            false => Vec::new(),
+        },
         skipped: advisory
             .skipped
             .first()
@@ -171,6 +176,11 @@ pub enum ScoredAt<'a> {
 /// beside every package; a clean one going silent would make "scored 100"
 /// and "never scored" read alike.
 ///
+/// A verbose run adds one line per mention: a switch the rules read as
+/// the file naming it rather than using it, which costs the score
+/// nothing. It is what the precision skipped, printed so a reader can
+/// check the reading against the file.
+///
 /// Severity leads the finding as a word, never as a colour: the line has
 /// to carry it for a reader who has no colour, and this printer emits
 /// none.
@@ -179,6 +189,7 @@ pub fn print_advisory(
     name: &str,
     at: ScoredAt<'_>,
     advisory: &kendex_core::quality::AuditResult,
+    verbose: bool,
 ) {
     let (targets, source, at) = match at {
         ScoredAt::Planned { targets, source } => (
@@ -202,24 +213,36 @@ pub fn print_advisory(
         name,
         advisory.safety.score
     ));
-    for finding in &advisory.findings {
-        // A finding whose rule reads a config entry rather than a file has
-        // no place to name; the claim still prints, without empty parens.
-        // `PATH:LINE` is composed here and nowhere earlier: this is the end
-        // of the line, where nothing has to read it back.
+    // A finding whose rule reads a config entry rather than a file has
+    // no place to name; the claim still prints, without empty parens.
+    // `PATH:LINE` is composed here and nowhere earlier: this is the end
+    // of the line, where nothing has to read it back.
+    let where_at = |finding: &Finding| {
         let (place, line) = cited(finding, targets, source);
-        let at = match (place.is_empty(), line) {
+        match (place.is_empty(), line) {
             (true, _) => String::new(),
             (false, None) => format!(" ({})", place),
             (false, Some(line)) => format!(" ({}:{line})", place),
-        };
+        }
+    };
+    for finding in &advisory.findings {
         say(&format!(
-            "  [{}] {}{at}",
+            "  [{}] {}{}",
             finding.severity.name(),
-            finding.message
+            finding.message,
+            where_at(finding)
         ));
         for place in also_at(finding, targets) {
             say(&format!("  also at {}", place));
+        }
+    }
+    if verbose {
+        for mention in &advisory.mentions {
+            say(&format!(
+                "  named, not run: {}{}",
+                mention.message,
+                where_at(mention)
+            ));
         }
     }
     print_skipped(advisory);
@@ -302,7 +325,8 @@ mod tests {
     use kendex_core::model::HarnessId::{Claude, Codex, Cursor, Gemini};
     use kendex_core::model::{HarnessId, Scope};
     use kendex_core::quality::{
-        AuditResult, Deduction, Finding, QualityScore, SafetyScore, Severity, SkippedRule,
+        AuditResult, Deduction, Finding, QualityScore, RULESET_VERSION, SafetyScore, Severity,
+        SkippedRule,
     };
 
     use super::*;
@@ -342,6 +366,7 @@ mod tests {
                     message: message.to_owned(),
                     remediation: "download it to a file and run it as its own step".to_owned(),
                 }],
+                mentions: Vec::new(),
                 skipped: skipped
                     .iter()
                     .map(|reason| SkippedRule {
@@ -354,14 +379,14 @@ mod tests {
                     deductions: Vec::new(),
                 },
                 quality: None,
-                ruleset: 5,
+                ruleset: RULESET_VERSION,
             },
         }
     }
 
     /// The harnesses each block would name, in the order they print.
     fn blocks(rows: &[ItemSafety]) -> Vec<Vec<HarnessId>> {
-        grouped_safety(rows)
+        grouped_safety(rows, false)
             .iter()
             .map(|(_, targets)| targets.iter().map(|target| target.harness).collect())
             .collect()

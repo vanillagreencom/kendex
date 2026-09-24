@@ -38,6 +38,7 @@ function row(
     scope: GLOBAL,
     source: null,
     findings,
+    mentions: [],
     skipped: [],
     safety: { score, deductions: [] },
     quality: null,

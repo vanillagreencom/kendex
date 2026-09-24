@@ -25,6 +25,7 @@ const finding = (severity: Severity, location: string): Finding => ({
 
 const result = (over: Partial<AuditResult> = {}): AuditResult => ({
   findings: [],
+  mentions: [],
   skipped: [],
   safety: { score: 100, deductions: [] },
   quality: null,

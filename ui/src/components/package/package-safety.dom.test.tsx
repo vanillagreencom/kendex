@@ -79,6 +79,7 @@ const gh: ItemSafety = {
       remediation: "scope the command to a specific path, or drop it",
     },
   ],
+  mentions: [],
   skipped: [],
   safety: { score: 58, deductions: [] },
   quality: null,

@@ -266,7 +266,7 @@ fn prepare_scopes(
 
 fn print_diagnostics(env: &Env, report: &EngineReport, verbose: bool) -> Vec<Blocked> {
     print_notes(report);
-    print_safety(report);
+    print_safety(report, verbose);
     match verbose {
         true => print_drift(env, report),
         false => print_conflicts(env, report),

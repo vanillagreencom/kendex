@@ -8,7 +8,7 @@
 use crate::model::ItemKind;
 
 use super::super::{PluginSources, UNREADABLE_PLUGIN};
-use super::{AuditRule, Content, Finding, Outcome, Prepared, Severity};
+use super::{AuditRule, Content, Finding, Found, Outcome, Prepared, Severity};
 
 pub(super) fn rules() -> Vec<Box<dyn AuditRule>> {
     vec![
@@ -62,7 +62,7 @@ impl AuditRule for PluginSourceTrust {
                 remediation: "install it from its published repository instead of a loose copy".to_owned(),
             });
         }
-        Outcome::Ran(findings)
+        Outcome::Ran(findings.into())
     }
 }
 
@@ -85,9 +85,9 @@ impl AuditRule for PluginLifecycleScripts {
             Err(outcome) => return outcome,
         };
         let Some(scripts) = sources.package_json.as_deref().and_then(script_table) else {
-            return Outcome::Ran(Vec::new());
+            return Outcome::Ran(Found::default());
         };
-        let findings = LIFECYCLE
+        let findings: Vec<Finding> = LIFECYCLE
             .iter()
             .filter_map(|name| scripts.get(*name).and_then(|v| v.as_str()).map(|body| (name, body)))
             .map(|(name, body)| {
@@ -113,7 +113,7 @@ impl AuditRule for PluginLifecycleScripts {
                 }
             })
             .collect();
-        Outcome::Ran(findings)
+        Outcome::Ran(findings.into())
     }
 }
 

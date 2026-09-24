@@ -85,6 +85,7 @@ export function installedSafety(
     quality: worst.row.quality,
     ruleset: worst.row.ruleset,
     findings: dedupe(worst.row.findings, findingKey),
+    mentions: dedupe(worst.row.mentions, findingKey),
     skipped: dedupe(worst.row.skipped, (skip) => `${skip.rule}:${skip.reason}`),
   };
 }

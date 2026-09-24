@@ -71,7 +71,7 @@ pub fn run(env: &Env, args: ForkArgs) -> CliResult {
         )?,
         None => audit(env, &scope)?,
     };
-    print_safety(&report);
+    print_safety(&report, false);
     apply_report(env, &report)?;
     match args.rename {
         Some(new) => say(&format!("your own copy is renamed to {}", new)),

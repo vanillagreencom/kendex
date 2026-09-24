@@ -10,6 +10,7 @@ mod advisory;
 mod corpus;
 mod fixture;
 mod kinds;
+mod mentions;
 mod reading;
 mod rules;
 mod rules_blocks;
