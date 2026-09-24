@@ -294,7 +294,7 @@ action_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "a composite action path is an excluded path" \
   "cause=excluded-path path=.github/actions/change-class/classify glob=.github/actions/*" \
-  "$(printf '%s\n' "$action_err" | sed -n 's/^class: class=standard //p')"
+  "$(printf '%s\n' "$action_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
 
 # Ownership is read off rows in state ok alone: the same positions under a
 # failing row own nothing. A verify with a failing row closes non-zero, so
