@@ -164,17 +164,17 @@ high_free_kib=$((30 * G))
 # CARGO_TARGET_DIR is the world's absent target/; $TMP/cold/target is absent
 # below an existing directory.
 SPACE_ROWS=(
-  "a cold target below the start floor refuses before cargo|CARGO_TARGET_DIR=$TMP/cold/target DF_FREE_KIB_START=$G|1|cargo-space-start=free-kib=$G target-kib=0 min-gib=24|0"
+  "a cold target below the start floor refuses before cargo|CARGO_TARGET_DIR=$TMP/cold/target DF_FREE_KIB_START=$G|1|guard: cargo-space-start=free-kib=$G target-kib=0 min-gib=24|0"
   "the build in a warm target counts toward the start floor|CARGO_TARGET_DIR=$TMP/warm DU_KIB=$((23 * G)) DF_FREE_KIB_START=$G|0||1"
-  "free space below the exhaustion floor refuses before the target is measured|DU_FAIL=1 CARGO_TARGET_DIR=$TMP/inc DF_FREE_KIB_START=708|1|cargo-space-free=free-kib=708 min-free-mib=512|0"
-  "an incremental directory is not room|CARGO_TARGET_DIR=$TMP/inc DU_KIB=$((30 * G)) DU_INCREMENTAL_KIB=$((8 * G)) DF_FREE_KIB_START=$G|1|cargo-space-start=free-kib=$G target-kib=$((22 * G)) min-gib=24|0"
+  "free space below the exhaustion floor refuses before the target is measured|DU_FAIL=1 CARGO_TARGET_DIR=$TMP/inc DF_FREE_KIB_START=708|1|guard: cargo-space-free=free-kib=708 min-free-mib=512|0"
+  "an incremental directory is not room|CARGO_TARGET_DIR=$TMP/inc DU_KIB=$((30 * G)) DU_INCREMENTAL_KIB=$((8 * G)) DF_FREE_KIB_START=$G|1|guard: cargo-space-start=free-kib=$G target-kib=$((22 * G)) min-gib=24|0"
   "a volume above the start floor reaches the cargo block|DF_FREE_KIB_START=$high_free_kib|0||1"
-  "an unreadable start probe is named and the block still runs|DF_FAIL_CALL=1 DF_FREE_KIB_START=$G|0|cargo-space-unreadable=target|1"
-  "an unreadable target size is named and the block still runs|DU_FAIL=1 CARGO_TARGET_DIR=$TMP/warm DF_FREE_KIB_START=$G|0|cargo-target-unreadable=$TMP/warm|1"
-  "an exhausted volume fails after zero cargo exit codes|DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|1|cargo-space-end=free-kib=0 min-mib=512|1"
-  "an unreadable end probe fails the run|DF_FAIL_CALL=2 DF_FREE_KIB_START=$high_free_kib|1|cargo-space-end-unreadable=target|1"
-  "a start floor that is not a whole number refuses|GUARD_MIN_FREE_GB=16GiB DF_FREE_KIB_START=$high_free_kib|2|cargo-space-setting=GUARD_MIN_FREE_GB|0"
-  "an exhaustion floor that is not a whole number refuses|GUARD_EXHAUSTED_FREE_MB=512MB DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|2|cargo-space-setting=GUARD_EXHAUSTED_FREE_MB|0"
+  "an unreadable start probe is named and the block still runs|DF_FAIL_CALL=1 DF_FREE_KIB_START=$G|0|guard-note: cargo-space-unreadable=target|1"
+  "an unreadable target size is named and the block still runs|DU_FAIL=1 CARGO_TARGET_DIR=$TMP/warm DF_FREE_KIB_START=$G|0|guard-note: cargo-target-unreadable=$TMP/warm|1"
+  "an exhausted volume fails after zero cargo exit codes, with cross-target checks left to CI|GUARD_FULL_CROSS_DOC=ci DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|1|guard: cargo-space-end=free-kib=0 min-mib=512|1"
+  "an unreadable end probe fails the run|DF_FAIL_CALL=2 DF_FREE_KIB_START=$high_free_kib|1|guard: cargo-space-end-unreadable=target|1"
+  "a start floor that is not a whole number refuses|GUARD_MIN_FREE_GB=16GiB DF_FREE_KIB_START=$high_free_kib|2|guard: cargo-space-setting=GUARD_MIN_FREE_GB|0"
+  "an exhaustion floor that is not a whole number refuses|GUARD_EXHAUSTED_FREE_MB=512MB DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|2|guard: cargo-space-setting=GUARD_EXHAUSTED_FREE_MB|0"
 )
 space_row_holds() { # N — run row N under $GUARD; succeed when every expectation holds
   local env rc key ran did=0
@@ -188,7 +188,7 @@ space_row_holds() { # N — run row N under $GUARD; succeed when every expectati
     GUARD_MIN_FREE_GB=24 GUARD_EXHAUSTED_FREE_MB=512 CARGO_INCREMENTAL=1 "${row_env[@]}"
   [ ! -s "$CARGO_CALL_LOG" ] || did=1
   # Every cargo call that ran inherited the guard's CARGO_INCREMENTAL=0.
-  [ "$RC" -eq "$rc" ] && [ "$did" -eq "$ran" ] && { [ -z "$key" ] || [[ "$OUT" == *"guard: $key"$'\n'* ]]; } &&
+  [ "$RC" -eq "$rc" ] && [ "$did" -eq "$ran" ] && { [ -z "$key" ] || [[ "$OUT" == *"$key"$'\n'* ]]; } &&
     ! grep -qvF '|incremental=0' "$CARGO_ENV_LOG" &&
     [ "$(wc -l <"$CARGO_ENV_LOG")" -eq "$(wc -l <"$CARGO_CALL_LOG")" ]
 }

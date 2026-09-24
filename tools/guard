@@ -12,8 +12,8 @@
 # commit time so their configuration, doctrine and outputs agree.
 # Every finding opens with `guard: <key>=<value>` and explains itself below
 # that line; say() and finding_text() hold the shape and the text. A notice,
-# a check left unrun on purpose, opens with `guard-note: <key>=<value>` from
-# note() and leaves the verdict alone.
+# a check left unrun on purpose or a probe that could not answer, opens with
+# `guard-note: <key>=<value>` from note() and leaves the verdict alone.
 #
 # The compilers, linters and suites this script runs write their own streams
 # and this script forwards them: that passthrough is its own contract and is
