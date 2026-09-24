@@ -36091,7 +36091,7 @@ function errorText(error51) {
 }
 
 // src/connectors.ts
-var DISALLOWED_BUILTIN_TOOLS = [
+var SUBSTITUTED_BUILTIN_TOOLS = [
   "Read",
   "Write",
   "Edit",
@@ -36099,9 +36099,13 @@ var DISALLOWED_BUILTIN_TOOLS = [
   "Glob",
   "Grep",
   "Bash",
+  "NotebookEdit",
+  "WebFetch",
+  "WebSearch"
+];
+var ALWAYS_DENIED_BUILTIN_TOOLS = [
   "Agent",
   "Task",
-  "NotebookEdit",
   "EnterWorktree",
   "ExitWorktree",
   "CronList",
@@ -36117,14 +36121,13 @@ var DISALLOWED_BUILTIN_TOOLS = [
   "TodoWrite",
   "ListMcpResources",
   "ReadMcpResource",
-  "WebFetch",
-  "WebSearch",
   "AskUserQuestion",
   "EnterPlanMode",
   "ExitPlanMode",
   "ToolSearch",
   "ScheduleWakeup"
 ];
+var DISALLOWED_BUILTIN_TOOLS = [...SUBSTITUTED_BUILTIN_TOOLS, ...ALWAYS_DENIED_BUILTIN_TOOLS];
 var CLAUDE_BRIDGE_TOOL_ISOLATION = {
   tools: [],
   disallowedTools: DISALLOWED_BUILTIN_TOOLS,
@@ -36426,14 +36429,16 @@ function denyAllOutput(toolName) {
     }
   };
 }
-function connectorQueryOptions(connectorsEnabled, writeMode = "deny") {
-  const isolation = toolIsolationForQuery(connectorsEnabled, writeMode);
+function connectorQueryOptions(connectorsEnabled, writeMode = "deny", applyBuiltinIsolation = true) {
+  const isolation = toolIsolationForQuery(connectorsEnabled, writeMode, applyBuiltinIsolation);
   if (!connectorsEnabled) return isolation;
   const hooks = writeMode === "allow" ? [connectorBuiltinAllowlistHook()] : [connectorBuiltinAllowlistHook(), connectorWriteDenyHook()];
   return { ...isolation, hooks: { PreToolUse: [{ hooks }] } };
 }
-function toolIsolationForQuery(connectorsEnabled, writeMode = "deny") {
-  if (!connectorsEnabled) return CLAUDE_BRIDGE_TOOL_ISOLATION;
+function toolIsolationForQuery(connectorsEnabled, writeMode = "deny", applyBuiltinIsolation = true) {
+  if (!connectorsEnabled) {
+    return applyBuiltinIsolation ? CLAUDE_BRIDGE_TOOL_ISOLATION : { disallowedTools: ALWAYS_DENIED_BUILTIN_TOOLS };
+  }
   const disallowedTools = DISALLOWED_BUILTIN_TOOLS.filter((t) => !CONNECTOR_DISCOVERY_TOOL_NAMES.has(t));
   if (writeMode !== "allow") disallowedTools.push(...CONNECTOR_WRITE_TOOLS);
   return {
@@ -37740,9 +37745,10 @@ function hasClaudeCredentials(env = process.env, platform = osPlatform()) {
 }
 
 // src/native-provider.ts
-var NATIVE_PROVIDER_UNSUPPORTED_MESSAGE = "Claude bridge 2.x requires pi >= 0.81 (native provider API). Upgrade the host pi, or pin @vanillagreen/pi-claude-bridge@1.x.";
+var NATIVE_PROVIDER_UNSUPPORTED_MESSAGE = "Claude bridge 4.x requires pi >= 0.86 (native provider API and the transcript prompt/tool helpers). Upgrade the host pi.";
 function supportsNativeProvider(piAi2) {
-  return typeof piAi2?.createProvider === "function";
+  const host = piAi2;
+  return ["createProvider", "getCurrentTools", "getCurrentSystemPrompt"].every((name) => typeof host?.[name] === "function");
 }
 function claudeAuthSourceLabel(env = process.env) {
   if (env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) return "CLAUDE_CODE_OAUTH_TOKEN";
@@ -53649,10 +53655,10 @@ function schedulePersistSharedSession(ctxLike) {
   timers.set(sessionManager, timer);
   timer.unref?.();
 }
-function convertAndImportMessages(session, messages, customToolNameToSdk, cwd) {
+function convertMessagesForImport(messages, customToolNameToSdk) {
   const { anthropicMessages, sanitizedIds } = convertPiMessages(messages, customToolNameToSdk);
-  debug(`convertAndImportMessages: ${messages.length} pi msgs \u2192 ${anthropicMessages.length} anthropic msgs`);
-  debug(`convertAndImportMessages: imported roles:`, anthropicMessages.map((m, i) => {
+  debug(`convertMessagesForImport: ${messages.length} pi msgs \u2192 ${anthropicMessages.length} anthropic msgs`);
+  debug(`convertMessagesForImport: imported roles:`, anthropicMessages.map((m, i) => {
     const c = m.content;
     if (typeof c === "string") return `[${i}]${m.role}:text`;
     if (Array.isArray(c)) return `[${i}]${m.role}:${c.map((b2) => b2.type).join("+")}`;
@@ -53660,33 +53666,36 @@ function convertAndImportMessages(session, messages, customToolNameToSdk, cwd) {
   }).join(" "));
   if (sanitizedIds.size > 0) {
     debug(
-      `convertAndImportMessages: sanitized ${sanitizedIds.size} tool IDs:`,
+      `convertMessagesForImport: sanitized ${sanitizedIds.size} tool IDs:`,
       [...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}\u2192${clean}`).join(", ")
     );
   }
   const recoveredToolResults = recoverLaterToolResults(anthropicMessages);
   if (recoveredToolResults.length > 0) {
     debug(
-      `convertAndImportMessages: recovered ${recoveredToolResults.length} later tool result(s) for original parallel batch`,
+      `convertMessagesForImport: recovered ${recoveredToolResults.length} later tool result(s) for original parallel batch`,
       recoveredToolResults.map((item) => item.id).join(", ")
     );
   }
   const missingToolResults = findUnpairedToolUses(anthropicMessages);
   if (missingToolResults.length > 0) insertLostToolResultPlaceholders(anthropicMessages, missingToolResults);
   const repaired = repairToolPairing(anthropicMessages);
-  if (missingToolResults.length > 0) {
-    reportSyntheticToolResultRepair(missingToolResults, {
+  if (repaired.length !== anthropicMessages.length) {
+    debug(`convertMessagesForImport: repairToolPairing ${anthropicMessages.length} \u2192 ${repaired.length} msgs`);
+  }
+  return { records: repaired, anthropicMessageCount: anthropicMessages.length, missingToolResults };
+}
+function importConvertedMessages(session, converted, messageCount, cwd) {
+  if (converted.missingToolResults.length > 0) {
+    reportSyntheticToolResultRepair(converted.missingToolResults, {
       cwd,
-      messageCount: messages.length,
-      anthropicMessageCount: anthropicMessages.length,
+      messageCount,
+      anthropicMessageCount: converted.anthropicMessageCount,
       sessionId: session.sessionId,
       jsonlPath: session.jsonlPath
     });
   }
-  if (repaired.length !== anthropicMessages.length) {
-    debug(`convertAndImportMessages: repairToolPairing ${anthropicMessages.length} \u2192 ${repaired.length} msgs`);
-  }
-  if (repaired.length) session.importMessages(repaired);
+  session.importMessages(converted.records);
 }
 function planIncrementalPromptBatch(messages, cursor) {
   const lastIndex = messages.length - 1;
@@ -53781,8 +53790,9 @@ function syncSharedSession(messages, cwd, customToolNameToSdk, modelId, account)
       };
     }
   }
-  if (priorMessages.length === 0) {
-    debug(`Case 1: clean start, ${messages.length} total messages, account=${accountProfileId ?? "default"}`);
+  const converted = convertMessagesForImport(priorMessages, customToolNameToSdk);
+  if (converted.records.length === 0) {
+    debug(`Case 1: clean start, ${messages.length} total messages (${priorMessages.length} prior message(s) carry no Claude record), account=${accountProfileId ?? "default"}`);
     debug(`syncResult: path=clean-start`);
     return { sessionId: null, promptStart: messages.length - 1 };
   }
@@ -53799,7 +53809,7 @@ function syncSharedSession(messages, cwd, customToolNameToSdk, modelId, account)
     ...preserveId ? { sessionId: previousSessionId } : {},
     ...modelId ? { model: modelId } : {}
   });
-  convertAndImportMessages(session, priorMessages, customToolNameToSdk, cwd);
+  importConvertedMessages(session, converted, priorMessages.length, cwd);
   session.save();
   verifyWrittenSession2(session.jsonlPath, session.sessionId, session.messages.length, cwd, claudeDir);
   setSharedSession({
@@ -55046,11 +55056,13 @@ function resolveConfiguredEffort(modelId, reasoningEffort, providerConfig) {
   return normalizeEffortLevel(providerConfig?.forceEffort) ?? reasoningEffort;
 }
 function buildClaudeQueryOptions(input) {
-  const { cwd, requestedModel, queryModel, account, bridgeConfig, systemPrompt, reasoning, resumeSessionId, mcpServers, claudeExecutable } = input;
+  const { cwd, requestedModel, queryModel, account, bridgeConfig, systemPrompt, reasoning, resumeSessionId, mcpServers, claudeExecutable, piOneShot } = input;
   const providerSettings = bridgeConfig.provider ?? {};
   const accountScope = accountSessionScope(account);
   const enableCloudMcp = connectorsEnabledFor(bridgeConfig);
   const connectorWriteMode = connectorWriteModeFor(bridgeConfig);
+  const bridgedToolsPresent = Boolean(mcpServers?.[MCP_SERVER_NAME]);
+  const builtinIsolationApplied = bridgedToolsPresent || piOneShot === true || enableCloudMcp;
   const connectorServers = enableCloudMcp ? connectorServersSnapshot(accountScope.claudeConfigDir) : {};
   const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
   const agentsAppend = appendSystemPrompt ? extractAgentsAppend() : void 0;
@@ -55078,7 +55090,7 @@ function buildClaudeQueryOptions(input) {
     cwd,
     model: queryModel.id,
     env: childEnv,
-    ...connectorQueryOptions(enableCloudMcp, connectorWriteMode),
+    ...connectorQueryOptions(enableCloudMcp, connectorWriteMode, builtinIsolationApplied),
     permissionMode: "bypassPermissions",
     includePartialMessages: true,
     ...fallbackModel ? { fallbackModel } : {},
@@ -55100,6 +55112,8 @@ function buildClaudeQueryOptions(input) {
   };
   return {
     queryOptions,
+    bridgedToolsPresent,
+    builtinIsolationApplied,
     enableCloudMcp,
     appendSystemPrompt,
     promptContextLabels: promptContextAppend.labels,
@@ -55113,6 +55127,8 @@ function buildClaudeQueryOptions(input) {
 var _piAi = piAi;
 var getModels = await resolveGetModels(_piAi);
 var newAssistantMessageEventStream = typeof _piAi.createAssistantMessageEventStream === "function" ? _piAi.createAssistantMessageEventStream : () => new _piAi.AssistantMessageEventStream();
+var getCurrentTools = (messages) => _piAi.getCurrentTools(messages);
+var getCurrentSystemPrompt = (messages) => _piAi.getCurrentSystemPrompt(messages);
 var PRIMARY_INSTANCE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:primaryInstance");
 var ACTIVE_STREAM_SIMPLE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:activeStreamSimple");
 var ROTATION_STATE_KEY = /* @__PURE__ */ Symbol("claude-bridge:rotationState");
@@ -55192,8 +55208,7 @@ function resolveMcpTools(context, excludeToolName) {
   const mcpTools = [];
   const customToolNameToSdk = /* @__PURE__ */ new Map();
   const customToolNameToPi = /* @__PURE__ */ new Map();
-  if (!context.tools) return { mcpTools, customToolNameToSdk, customToolNameToPi };
-  for (const tool of context.tools) {
+  for (const tool of getCurrentTools(context.messages ?? [])) {
     if (tool.name === excludeToolName) continue;
     if (isChildExecutedTool(tool.name)) {
       debug(`resolveMcpTools: not re-offering child-native tool ${tool.name}`);
@@ -55212,6 +55227,17 @@ function resolveMcpTools(context, excludeToolName) {
     customToolNameToPi.set(sdkName.toLowerCase(), tool.name);
   }
   return { mcpTools, customToolNameToSdk, customToolNameToPi };
+}
+var reportedToolBridgeGap = false;
+function reportToolBridgeGap(messageCount, builtinIsolationApplied) {
+  debug(`provider: no bridged custom-tools server for a ${messageCount}-message context; built-in isolation ${builtinIsolationApplied ? "kept" : "dropped"}`);
+  if (reportedToolBridgeGap) return;
+  reportedToolBridgeGap = true;
+  appendIntegrityEntry("bridged_tools_absent", { messageCount, builtinIsolationApplied });
+  safeNotify(
+    (builtinIsolationApplied ? "Pi Claude found no pi tools to bridge. Claude Code's own file and shell tools stay disabled in a connectors session, so this turn has only the account's connector tools. " : "Pi Claude found no pi tools to bridge, so this session uses Claude Code's own file and shell tools instead. ") + "Usually a pi version whose provider contract the bridge has not adopted yet; update @vanillagreen/pi-claude-bridge.",
+    "warning"
+  );
 }
 function buildMcpServers(tools, queryCtx) {
   if (!tools.length) return void 0;
@@ -55361,13 +55387,17 @@ function onPiHistoryReplaced(event) {
     markSessionForRebuild({ forceRotate: restarts });
   }
 }
+function isPiDrivenOneShot(options) {
+  return options?.cacheRetention === "none";
+}
 function streamClaudeAgentSdk(model, context, options) {
   return runInRequestLane(options?.sessionId, () => streamClaudeAgentSdkInLane(model, context, options));
 }
 function streamClaudeAgentSdkInLane(model, context, options) {
   const stream = newAssistantMessageEventStream();
   const laneId = currentRequestLaneId();
-  const ephemeralLane = laneId !== void 0 && options?.cacheRetention === "none";
+  const piOneShot = isPiDrivenOneShot(options);
+  const ephemeralLane = laneId !== void 0 && piOneShot;
   const releaseEphemeralLane = () => {
     if (!ephemeralLane) return;
     deleteSharedSessionLane(laneId);
@@ -55607,6 +55637,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   const attemptBuffer = account ? new RetryEventBuffer(stream, () => attemptCtx.markOutputCommitted()) : void 0;
   if (attemptBuffer) attemptCtx.currentPiStream = attemptBuffer;
   const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context);
+  const resolvedSystemPrompt = getCurrentSystemPrompt(context.messages ?? []) || void 0;
   const bridgeConfig = loadConfig(cwd);
   const providerSettings = bridgeConfig.provider ?? {};
   const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
@@ -55647,13 +55678,15 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     queryModel,
     account,
     bridgeConfig,
-    systemPrompt: context.systemPrompt,
+    systemPrompt: resolvedSystemPrompt,
     reasoning: options?.reasoning,
     resumeSessionId,
     mcpServers,
-    claudeExecutable
+    claudeExecutable,
+    piOneShot
   });
   const { queryOptions } = built;
+  if (!built.bridgedToolsPresent && !piOneShot) reportToolBridgeGap(context.messages.length, built.builtinIsolationApplied);
   debug(
     "provider: fresh query",
     `model=${queryModel.id} requested=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
@@ -56044,6 +56077,7 @@ function index_default(pi2) {
 }
 export {
   ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD,
+  ALWAYS_DENIED_BUILTIN_TOOLS,
   CLAUDE_ACCOUNT_ROUTER_SYMBOL,
   CLAUDE_AI_CONNECTOR_TOOL_PATTERNS,
   CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL,
@@ -56059,6 +56093,7 @@ export {
   RetryEventBuffer,
   STREAM_IDLE_BACKOFF_HINT_MS,
   STREAM_IDLE_TIMEOUT_ENV,
+  SUBSTITUTED_BUILTIN_TOOLS,
   __testGetBridgeIntegrityState,
   __testSetBridgeIntegrityState,
   __testSetSdkQueryFactory,
@@ -56126,6 +56161,7 @@ export {
   readCachedConnectors,
   reapStaleQueuedResults,
   recordConnectorCallResult,
+  reportToolBridgeGap,
   reportToolResultMismatch,
   resetTimestampMs,
   resolveClaudeExecutable,

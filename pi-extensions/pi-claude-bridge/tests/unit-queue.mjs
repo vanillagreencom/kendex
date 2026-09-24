@@ -9,6 +9,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { __testSetBridgeIntegrityState, __testSetSdkQueryFactory, streamClaudeAgentSdk } from "../src/index.ts";
 import { ctx, resetStack } from "../src/query-state.ts";
 import { cancelScheduledToolUseEnd } from "../src/assistant-stream.ts";
+import { piContext } from "./lib/transcript.mjs";
 
 const model = { id: "claude-haiku-4-5", api: "claude-bridge", provider: "pi-claude", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 const tool = { name: "echo", description: "Return a supplied value", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } };
@@ -43,7 +44,7 @@ async function withBridge(ids, run) {
 		};
 	});
 	try {
-		const initial = await collect(streamClaudeAgentSdk(model, { messages: [{ role: "user", content: "run" }], tools: [tool] }, { cwd: root, signal: abort.signal }));
+		const initial = await collect(streamClaudeAgentSdk(model, piContext({ messages: [{ role: "user", content: "run" }], tools: [tool] }), { cwd: root, signal: abort.signal }));
 		assert.deepEqual(initial.find((event) => event.type === "done").message.content.map((block) => block.id), ids);
 		const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 		client = new Client({ name: "queue-test", version: "1.0.0" });
@@ -62,10 +63,10 @@ async function withBridge(ids, run) {
 				return { result };
 			},
 			deliver(results) {
-				streamClaudeAgentSdk(model, { messages: [
+				streamClaudeAgentSdk(model, piContext({ tools: [tool], messages: [
 					{ role: "assistant", content: ids.map((id) => ({ type: "toolCall", id, name: "echo", arguments: { id } })) },
 					...results.map(({ id, text = id, isError = false }) => ({ role: "toolResult", toolCallId: id, content: [{ type: "text", text }], isError })),
-				] }, { cwd: root });
+				] }), { cwd: root });
 			},
 			counts(waiting, queued) {
 				assert.deepEqual([ctx().pendingToolCalls.size, ctx().pendingResults.size], [waiting, queued]);

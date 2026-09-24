@@ -11,13 +11,17 @@
  */
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { conversationFingerprint, syncSharedSession } from "../src/session-persistence.js";
 import { __testGetBridgeIntegrityState, setSharedSession } from "../src/bridge-state.js";
 
 const user = (text) => ({ role: "user", content: text });
+// Since Pi 0.86 every provider call opens with a `system` entry carrying the
+// prompt and the tool declarations. convertPiMessages drops it, so priors made
+// only of these convert to no Claude record at all.
+const system = (content = "") => ({ role: "system", content, timestamp: 0 });
 const assistant = () => ({ role: "assistant", content: [] });
 const assistantText = (text) => ({ role: "assistant", content: [{ type: "text", text }] });
 const CWD = "/repo";
@@ -36,6 +40,21 @@ const withTempClaudeDir = (fn) => {
 		rmSync(claudeDir, { recursive: true, force: true });
 	}
 };
+
+// Every file under a throwaway CLAUDE_CONFIG_DIR, so a test can assert both
+// that a rebuild wrote its session and that a clean start wrote nothing.
+const sessionFiles = (dir) => {
+	const out = [];
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		const path = join(dir, entry.name);
+		if (entry.isDirectory()) out.push(...sessionFiles(path));
+		else if (entry.name.endsWith(".jsonl")) out.push(path);
+	}
+	return out;
+};
+
+const recordRoles = (path) =>
+	readFileSync(path, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line).message.role);
 
 const promptContents = (messages, promptStart) =>
 	messages.slice(promptStart).map((message) => message.content);
@@ -77,6 +96,81 @@ describe("syncSharedSession clean start", () => {
 		assert.equal(result.sessionId, null);
 		assert.equal(result.promptStart, 0);
 		assert.deepEqual(promptContents(messages, result.promptStart), ["hello"]);
+	});
+});
+
+describe("syncSharedSession clean start on priors that carry no Claude record", () => {
+	// A first turn on Pi 0.86 arrives as [system, user]. Deciding the rebuild on
+	// the pi message count made that a REBUILD: it minted a session id, imported
+	// zero records, wrote no file, and recorded the id anyway — so turn 2 resumed
+	// a session Claude Code had never seen ("No conversation found").
+	const firstTurn = () => [system(), user("hello")];
+
+	it("returns no resume id and prompts the user message", () => {
+		const messages = firstTurn();
+
+		const result = syncSharedSession(messages, CWD);
+
+		assert.equal(result.sessionId, null);
+		assert.equal(result.promptStart, 1);
+		assert.deepEqual(promptContents(messages, result.promptStart), ["hello"]);
+	});
+
+	it("writes no session file and leaves the shared record null", () => {
+		withTempClaudeDir((claudeDir) => {
+			const result = syncSharedSession(firstTurn(), CWD);
+
+			assert.equal(result.sessionId, null);
+			assert.deepEqual(sessionFiles(claudeDir), [], "a clean start creates no session");
+			assert.equal(__testGetBridgeIntegrityState().sharedSession, null);
+		});
+	});
+
+	it("deletes and creates nothing when a needsRebuild record is already in place", () => {
+		withTempClaudeDir((claudeDir) => {
+			const record = { sessionId: "44444444-4444-4444-8444-444444444444", cursor: 6, cwd: CWD, needsRebuild: true };
+			setSharedSession({ ...record });
+
+			const result = syncSharedSession(firstTurn(), CWD);
+
+			assert.equal(result.sessionId, null);
+			assert.equal(result.promptStart, 1);
+			assert.deepEqual(sessionFiles(claudeDir), [], "the rebuild neither rewrote nor replaced a session");
+			assert.deepEqual(__testGetBridgeIntegrityState().sharedSession, record, "and the existing record is untouched");
+		});
+	});
+
+	it("still REBUILDs when the same system-led history carries real priors", () => {
+		withTempClaudeDir((claudeDir) => {
+			const cwd = mkdtempSync(join(tmpdir(), "bridge-sync-cwd-"));
+			try {
+				const messages = [system(), user("u1"), assistantText("a1"), user("u2")];
+
+				const result = syncSharedSession(messages, cwd);
+
+				assert.equal(result.promptStart, 3);
+				const files = sessionFiles(claudeDir);
+				assert.equal(files.length, 1, "the rebuild wrote its session");
+				assert.ok(files[0].endsWith(`${result.sessionId}.jsonl`), "under the id it returned");
+				assert.deepEqual(recordRoles(files[0]), ["user", "assistant"], "the system entry stays out of the transcript");
+			} finally {
+				rmSync(cwd, { recursive: true, force: true });
+			}
+		});
+	});
+
+	it("resumes the session turn 1 created once the clean start has been recorded", () => {
+		// The cursor a completed clean start persists is the turn-1 message count,
+		// system entry included, because it indexes pi's own messages array.
+		const sessionId = "55555555-5555-4555-8555-555555555555";
+		setSharedSession({ sessionId, cursor: firstTurn().length, cwd: CWD, conversationFingerprint: conversationFingerprint(firstTurn()) });
+		const messages = [system(), user("hello"), assistantText("first answer"), user("second turn")];
+
+		const result = syncSharedSession(messages, CWD);
+
+		assert.equal(result.sessionId, sessionId, "turn 2 resumes rather than rebuilding");
+		assert.equal(result.promptStart, 3);
+		assert.deepEqual(promptContents(messages, result.promptStart), ["second turn"]);
 	});
 });
 

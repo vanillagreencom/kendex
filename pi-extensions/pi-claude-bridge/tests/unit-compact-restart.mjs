@@ -31,6 +31,7 @@ import {
 import { cancelScheduledToolUseEnd } from "../src/assistant-stream.ts";
 import { ctx, resetStack } from "../src/query-state.ts";
 import { waitFor } from "./lib/wait-for.mjs";
+import { piContext } from "./lib/transcript.mjs";
 
 const model = { id: "claude-haiku-4-5", api: "claude-bridge", provider: "pi-claude", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 const tool = { name: "echo", description: "Return a supplied value", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } };
@@ -140,7 +141,7 @@ function answerQuery(text, sessionId = SESSION_ID) {
 
 /** Pi's context when it calls the provider back with the tool result. After a
  *  compaction the summary stands in place of the earlier turns. */
-const toolResultDelivery = () => ({
+const toolResultDelivery = () => piContext({
 	messages: [user(SUMMARY), assistantToolCall("t0"), toolResult("t0", TOOL_OUTPUT)],
 	tools: [tool],
 });
@@ -172,7 +173,7 @@ async function withBridge(run, openingQuery = toolCallQuery) {
 		return (queued.shift() ?? (() => answerQuery("restarted", options.resume ?? SESSION_ID)))();
 	});
 	try {
-		const preCompaction = { messages: [user("earlier prompt"), assistantText("earlier reply"), user("run the tool")], tools: [tool] };
+		const preCompaction = piContext({ messages: [user("earlier prompt"), assistantText("earlier reply"), user("run the tool")], tools: [tool] });
 		const opened = await collect(streamClaudeAgentSdk(model, preCompaction, { cwd: root, signal: abort.signal }));
 		assert.equal(opened.filter((event) => event.type === "done").length, 1, "the tool-call turn reached pi");
 		assert.notEqual(ctx().activeQuery, null, "the query stays active, waiting for the tool result");
@@ -257,7 +258,7 @@ describe("compaction while a bridge query waits for a tool result", () => {
 			onPiHistoryReplaced("session_compact"); // a later compaction, nothing running
 			assert.equal(__testGetBridgeIntegrityState().sharedSession?.forceRotate, undefined, "which kills no child and rotates nothing");
 
-			const next = { messages: [user(SUMMARY), user("the next prompt")], tools: [tool] };
+			const next = piContext({ messages: [user(SUMMARY), user("the next prompt")], tools: [tool] });
 			const events = await collect(streamClaudeAgentSdk(model, next, { cwd: root }));
 
 			assert.equal(calls.length, 2, "the prompt opens the next query");
@@ -275,18 +276,18 @@ describe("compaction while a bridge query waits for a tool result", () => {
 			// A steer arrives while the first query runs, so it replays as a
 			// continuation query once that query ends.
 			const steered = [user(SUMMARY), assistantToolCall("t0"), toolResult("t0", TOOL_OUTPUT), user("steer one")];
-			streamClaudeAgentSdk(model, { messages: steered, tools: [tool] }, { cwd: root });
-			streamClaudeAgentSdk(model, { messages: [...steered, user("steer two")], tools: [tool] }, { cwd: root });
+			streamClaudeAgentSdk(model, piContext({ messages: steered, tools: [tool] }), { cwd: root });
+			streamClaudeAgentSdk(model, piContext({ messages: [...steered, user("steer two")], tools: [tool] }), { cwd: root });
 			firstQuery.release();
 			assert.equal(await waitFor(() => calls.length === 2), true, "the steer replays as a continuation query");
 			assert.equal(calls[1].prompt, "steer one");
 
 			// Pi compacts while THAT query waits for its own tool result.
 			onPiHistoryReplaced("session_compact");
-			const events = await collect(streamClaudeAgentSdk(model, {
+			const events = await collect(streamClaudeAgentSdk(model, piContext({
 				messages: [user(SUMMARY), assistantToolCall("t1"), toolResult("t1", TOOL_OUTPUT)],
 				tools: [tool],
-			}, { cwd: root }));
+			}), { cwd: root }));
 
 			assert.equal(continuation.closed, true, "the continuation query is stopped for the restart");
 			assert.equal(calls.length, 3, "the second steer does not open another query on the replaced history");
@@ -334,16 +335,16 @@ describe("compaction while a bridge query waits for a tool result", () => {
 			queued.push(() => throwingQuery(continuation));
 
 			const steered = [user(SUMMARY), assistantToolCall("t0"), toolResult("t0", TOOL_OUTPUT), user("steer one")];
-			streamClaudeAgentSdk(model, { messages: steered, tools: [tool] }, { cwd: root });
-			streamClaudeAgentSdk(model, { messages: [...steered, user("steer two")], tools: [tool] }, { cwd: root });
+			streamClaudeAgentSdk(model, piContext({ messages: steered, tools: [tool] }), { cwd: root });
+			streamClaudeAgentSdk(model, piContext({ messages: [...steered, user("steer two")], tools: [tool] }), { cwd: root });
 			firstQuery.release();
 			assert.equal(await waitFor(() => calls.length === 2), true, "the steer replays as a continuation query");
 
 			onPiHistoryReplaced("session_compact");
-			await collect(streamClaudeAgentSdk(model, {
+			await collect(streamClaudeAgentSdk(model, piContext({
 				messages: [user(SUMMARY), assistantToolCall("t1"), toolResult("t1", TOOL_OUTPUT), user("steer two")],
 				tools: [tool],
-			}, { cwd: root }));
+			}), { cwd: root }));
 
 			assert.equal(calls.length, 3, "the replacement still runs after the child throws");
 			assert.equal(calls[2].prompt, HISTORY_REPLACED_PROMPT);
@@ -381,7 +382,7 @@ describe("compaction while a bridge query waits for a tool result", () => {
 
 			const second = {};
 			queued.push(() => toolCallQuery(second));
-			await collect(streamClaudeAgentSdk(model, { messages: [user(SUMMARY), user("a turn with no connector")], tools: [tool] }, { cwd: root }));
+			await collect(streamClaudeAgentSdk(model, piContext({ messages: [user(SUMMARY), user("a turn with no connector")], tools: [tool] }), { cwd: root }));
 			onPiHistoryReplaced("session_compact");
 
 			// The refused path leaves the callback stream open on the stale query, so
