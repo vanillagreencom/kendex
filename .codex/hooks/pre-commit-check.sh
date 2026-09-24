@@ -3,9 +3,9 @@
 # name: pre-commit-check
 # event: PreToolUse
 # matcher: Bash
-# description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command carrying a word that would skip it is refused: the no-verify flag, a short-option cluster holding that letter, or a word carrying a core.hooksPath key (an attached -c value, the value after a bare -c, a --config-env, a git config argument, a GIT_CONFIG_* assignment). Git would skip the commit-msg hook too, and nothing here can check the message. A commit is a `git` word with a later `commit` word, both read as whitespace-separated words of the command with bash's non-whitespace metacharacters (`| & ; ( ) < >`) turned into spaces, which is where bash would have separated words of its own; a leading path, backtick or `$(` comes off the git word, and nothing comes off the commit word. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
+# description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command carrying a word that would skip it is refused: the no-verify flag or a short-option cluster holding that letter, read in the simple command that holds the commit, or over the whole command where a quote, a trailing backslash or a substitution parenthesis leaves that call's end unknown, so that word as an argument of another program in the same pipeline or list is not a finding; or a word carrying a core.hooksPath key (an attached -c value, the value after a bare -c, a --config-env, a git config argument, a GIT_CONFIG_* assignment), read wherever it stands in the command, since a config write disarms the hook from a call of its own. Git would skip the commit-msg hook too, and nothing here can check the message. A commit is a `git` word with a later `commit` word, both read as whitespace-separated words of the command with bash's non-whitespace metacharacters (`| & ; ( ) < >`) turned into separators, the five that end a simple command into newlines and the two that redirect into spaces, which is where bash would have separated commands and words of its own; a leading path, backtick or `$(` comes off the git word, and nothing comes off the commit word. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
 # summary: Makes a commit go through the repository's own git hooks where they are armed, and refuses a commit carrying a word that would skip them.
-# safety: Reads no shell. One rewrite runs before the words are read: every metacharacter bash(1) lists that is not whitespace (`| & ; ( ) < >`) becomes a space, because one left attached hides a word bash would have separated, and `true;git commit -m x` then ran unchecked where nothing was armed. The whitespace ones bash lists are IFS below. Nothing is deleted, so a quote character, a backslash, a line continuation and the braces of a brace expansion all stay in the word. A word is seen only where the command already spells it, so a bypass the shell would join, unquote or expand into the word is not seen here and reaches git, which then skips its armed hooks; where nothing is armed the commit is still refused whenever the `git` and `commit` words are themselves in the command, and the suite's two columns are where each form is named. The same reading runs the other way: a `git` word, a `commit` word and a bypass word the split leaves standing each count wherever they stand, a message, a heredoc body and a comment tail included, so a read-only command spelling them out is refused as the commit it is not. Quoting does not change that on its own, because the substitution runs before any word is looked at. Git's own armed hooks are the control, and this hook only decides whether to defer to them. Every refusal opens with `pre-commit-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads no shell. One rewrite runs before the words are read: every metacharacter bash(1) lists that is not whitespace (`| & ; ( ) < >`) becomes a separator, because one left attached hides a word bash would have separated, and `true;git commit -m x` then ran unchecked where nothing was armed. The five that end a simple command become newlines and the two that redirect become spaces, which is what lets the no-verify flag be read in the commit's own call alone. The whitespace ones bash lists are IFS below. Nothing is deleted, so a quote character, a backslash, a line continuation and the braces of a brace expansion all stay in the word. A word is seen only where the command already spells it, so a bypass the shell would join, unquote or expand into the word is not seen here and reaches git, which then skips its armed hooks; where nothing is armed the commit is still refused whenever the `git` and `commit` words are themselves in the command, and the suite's two columns are where each form is named. The same reading runs the other way: a `git` word, a `commit` word and a core.hooksPath key the split leaves standing each count wherever they stand, a message, a heredoc body and a comment tail included, so a read-only command spelling them out is refused as the commit it is not. Quoting does not change that on its own, because the substitution runs before any word is looked at. Git's own armed hooks are the control, and this hook only decides whether to defer to them. Every refusal opens with `pre-commit-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 60
 # ---
 
@@ -92,15 +92,41 @@ COMMAND=$(printf '%s' "$INPUT" \
 # them: | & ; ( ) < > space tab newline. The whitespace ones are IFS below and
 # the rest are substituted here, because one left attached hides a word bash
 # would have separated, so `true;git` was no git word and `commit&` no commit
-# word and the commit ran unchecked where nothing was armed. Turning them into
-# spaces separates where bash separates, and it deletes nothing.
+# word and the commit ran unchecked where nothing was armed. The substitution
+# deletes nothing, and it separates in two grades, because bash separates in
+# two grades:
+#
+#   `| & ; ( )` end one simple command and begin the next, so each becomes a
+#   newline and every line below is one simple command. `< >` only separate
+#   words inside a simple command, so each becomes a space and the command
+#   stays on its line. The word list the whole-command rule reads is the same
+#   either way, since newline is one of its separators too.
+#
+# A redirection that glues an ampersand or a pipe to its arrow is still one
+# redirection: the glued character redirects rather than ends a command, so
+# each of those pairs is rewritten to a plain arrow before the ending ones are
+# read. Otherwise the command duplicating one descriptor onto another would be
+# cut in two and a flag behind it would fall outside the commit that takes it.
+#
+# A parenthesis that opens a command or process substitution does not end the
+# command around it: the words after its closing one are still that command's
+# arguments. The split cannot tell it from a subshell's, so a command holding
+# one is not split for the flag, which is then read over the whole command.
+SPLIT_TRUSTED=1
+case "$COMMAND" in *\$\(* | *\<\(* | *\>\(*) SPLIT_TRUSTED="" ;; esac
+COMMAND=${COMMAND//&>/ > }
+COMMAND=${COMMAND//>&/ > }
+COMMAND=${COMMAND//<&/ < }
+COMMAND=${COMMAND//>\|/ > }
 COMMAND=${COMMAND//>/ }
 COMMAND=${COMMAND//</ }
-COMMAND=${COMMAND//;/ }
-COMMAND=${COMMAND//&/ }
-COMMAND=${COMMAND//\|/ }
-COMMAND=${COMMAND//\(/ }
-COMMAND=${COMMAND//\)/ }
+NEWLINE='
+'
+COMMAND=${COMMAND//;/$NEWLINE}
+COMMAND=${COMMAND//&/$NEWLINE}
+COMMAND=${COMMAND//\|/$NEWLINE}
+COMMAND=${COMMAND//\(/$NEWLINE}
+COMMAND=${COMMAND//\)/$NEWLINE}
 
 # Deleting characters is the other half of word assembly, and this hook does
 # none of it. Rewrites that dropped a quote, a backslash, a line continuation
@@ -110,14 +136,16 @@ COMMAND=${COMMAND//\)/ }
 # against this file is declined, not patched.
 #
 # The whole rule over the command, and it reads no shell. Split on whitespace,
-# then a `git` word with a later `commit` word is the commit and a word that is
-# --no-verify or a cluster holding -n is the bypass. A word is seen only where
-# the command already spells it, so a bypass the shell would join, unquote or
+# then a `git` word with a later `commit` word is the commit, a word carrying a
+# core.hooksPath key is a bypass wherever it stands, and --no-verify or a
+# cluster holding -n is a bypass in the simple command that holds the commit.
+# A word is seen only where the command already spells it, so a bypass the shell would join, unquote or
 # expand into the word is not seen here and reaches git, which skips its armed
 # hooks; where nothing is armed the commit is still refused whenever the `git`
 # and `commit` words are in the command. The reading runs the other way too:
-# each of those three words counts wherever it stands, a message, a heredoc
-# body and a comment tail included. Quoting does not change that on its own,
+# the `git` word, the `commit` word and a core.hooksPath key count wherever
+# they stand, a message, a heredoc body and a comment tail included, and the
+# no-verify flag counts wherever it stands in the commit's own simple command. Quoting does not change that on its own,
 # since the substitution above runs before any word is looked at; which form
 # falls where is pinned in the suite. Git's armed hooks are the judge; this
 # hook only decides whether to defer to them.
@@ -134,6 +162,16 @@ set +f
 # not "simplify" it into expanding the array first.
 [ "${#WORDS[@]}" -gt 0 ] || exit 0
 
+# What makes a word the git word, in one place, because the whole command and
+# each simple command both ask it. A command name can carry a prefix that is
+# not part of it: a path, an opening backtick, or the `$(` a substitution glues
+# to the word in front of it. Dropping everything through the last of those
+# characters is what makes each a `git` word.
+# The commit word takes no such strip, so `--grep=commit` stays prose.
+is_git_word() { # WORD
+  [ "${1##*[\`\$\(/]}" = git ]
+}
+
 COMMIT=""
 GIT=""
 MOVES=""
@@ -145,48 +183,103 @@ for word in "${WORDS[@]}"; do
     -C | cd | --git-dir* | --work-tree* | GIT_DIR=* | GIT_WORK_TREE=*) MOVES=1 ;;
   esac
   if [ -z "$GIT" ]; then
-    # A command name can carry a prefix that is not part of it: a path, an
-    # opening backtick, or the `$(` a substitution glues to the word in front
-    # of it. Dropping everything through the last of those characters is what
-    # makes each a `git` word.
-    # The commit word takes no such strip, so `--grep=commit` stays prose.
-    [ "${word##*[\`\$\(/]}" = git ] && GIT=1
+    is_git_word "$word" && GIT=1
   elif [ -z "$COMMIT" ] && [ "$word" = commit ]; then
     COMMIT=1
   fi
 done
 
+# A core.hooksPath key switches the armed hook off, so it skips the same two
+# gates the flag does: the premise of this whole hook is that git's armed hook
+# is the judge, and that key is what removes the judge. It is read over the
+# whole command, not one simple command, because that is where it is written:
+# `git config core.hooksPath /dev/null && git commit -m x` disarms the judge
+# from a call of its own. The key is in the word whatever carries it — an
+# attached -c value, the value word after a bare -c, a --config-env, a `git
+# config` argument, or a GIT_CONFIG_* assignment — so the word is the rule and
+# no option is modelled. Nothing else about -c is read: `git commit -c HEAD`
+# reuses a message and is not configuration. An include.path pulling in a file
+# that sets the key is not reachable from the word and is not read.
 if [ -n "$COMMIT" ]; then
   for word in "${WORDS[@]}"; do
     case "$word" in
-      # git accepts an unambiguous abbreviation, so the prefix is the flag.
-      --no-veri*) BYPASS="$word"; break ;;
-      # A core.hooksPath key switches the armed hook off, so it skips the same
-      # two gates the flag does: the premise of this whole hook is that git's
-      # armed hook is the judge, and that key is what removes the judge. The
-      # key is in the word whatever carries it — an attached -c value, the
-      # value word after a bare -c, a --config-env, a `git config` argument, or
-      # a GIT_CONFIG_* assignment — so the word is the rule and no option is
-      # modelled. Nothing else about -c is read: `git commit -c HEAD` reuses a
-      # message and is not configuration. An include.path pulling in a file
-      # that sets the key is not reachable from the word and is not read.
       *[Hh][Oo][Oo][Kk][Ss][Pp][Aa][Tt][Hh]* | GIT_CONFIG_*) BYPASS="$word"; break ;;
-      -[A-Za-z]*)
-        # A cluster reads left to right: from the first value-taking option the
-        # rest of the word is its value, so `-mnote` is a message and `-nm` is
-        # not. git commit's value-taking short options are m, F, c, C and t.
-        rest="${word#-}"
-        while [ -n "$rest" ]; do
-          case "${rest%"${rest#?}"}" in
-            [mFcCt]) break ;;
-            n) BYPASS="$word"; break ;;
-          esac
-          rest="${rest#?}"
-        done
-        [ -n "$BYPASS" ] && break
-        ;;
     esac
   done
+fi
+
+# The no-verify flag skips the armed hooks only where git is the program that
+# reads it, so it is a bypass only as a word of the simple command that holds
+# the commit. Read over the whole command it refused `sed -n 1,5p f && git
+# commit -m x`, which commits through the armed hooks, and pipelines whose only
+# -n belongs to grep, sed, head, sort or tail, which commit nothing at all:
+# that refusal taught agents to avoid a flag instead of protecting a commit.
+# The git and commit words themselves are still read over the whole command,
+# above, so what counts as a commit at all has not moved.
+flag_bypass() { # WORD...
+  local word rest seg_git="" seg_commit="" found=""
+  for word in "$@"; do
+    if [ -z "$seg_git" ]; then
+      is_git_word "$word" && seg_git=1
+    elif [ -z "$seg_commit" ] && [ "$word" = commit ]; then
+      seg_commit=1
+    fi
+    if [ -z "$found" ]; then
+      case "$word" in
+        # git accepts an unambiguous abbreviation, so the prefix is the flag.
+        --no-veri*) found="$word" ;;
+        -[A-Za-z]*)
+          # A cluster reads left to right: from the first value-taking option
+          # the rest of the word is its value, so `-mnote` is a message and
+          # `-nm` is not. git commit's value-taking short options are m, F, c,
+          # C and t.
+          rest="${word#-}"
+          while [ -n "$rest" ]; do
+            case "${rest%"${rest#?}"}" in
+              [mFcCt]) break ;;
+              n) found="$word"; break ;;
+            esac
+            rest="${rest#?}"
+          done
+          ;;
+      esac
+    fi
+  done
+  [ -n "$seg_git" ] && [ -n "$seg_commit" ] && [ -n "$found" ] || return 1
+  printf '%s' "$found"
+}
+
+# The split reads no quoting, so a separator inside quotes or behind a
+# backslash cuts a simple command bash keeps whole, and a line continuation
+# joins two lines bash reads as one. Either leaves a line with an odd count of
+# one quote character or a trailing backslash, and a command holding such a
+# line is read over the whole command for the flag: a command this split cannot
+# trust is refused as it was before the split, never waved through.
+if [ -n "$SPLIT_TRUSTED" ]; then
+  while IFS= read -r line; do
+    squotes=${line//[!\']/}
+    dquotes=${line//[!\"]/}
+    if [ $((${#squotes} % 2)) -ne 0 ] || [ $((${#dquotes} % 2)) -ne 0 ] \
+      || [[ "$line" == *\\ ]]; then
+      SPLIT_TRUSTED=""
+      break
+    fi
+  done <<<"$COMMAND"
+fi
+
+if [ -n "$COMMIT" ] && [ -z "$BYPASS" ] && [ -z "$SPLIT_TRUSTED" ]; then
+  BYPASS=$(flag_bypass "${WORDS[@]}") || true
+elif [ -n "$COMMIT" ] && [ -z "$BYPASS" ]; then
+  while IFS= read -r line; do
+    set -f
+    IFS=$' \t\r'
+    # shellcheck disable=SC2206
+    SIMPLE=($line)
+    set +f
+    IFS=$' \t\n\r'
+    [ "${#SIMPLE[@]}" -gt 0 ] || continue
+    BYPASS=$(flag_bypass "${SIMPLE[@]}") && break
+  done <<<"$COMMAND"
 fi
 
 [ -n "$COMMIT" ] || exit 0

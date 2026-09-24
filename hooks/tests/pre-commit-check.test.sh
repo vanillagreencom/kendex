@@ -6,14 +6,16 @@
 # a word carrying a core.hooksPath key.
 #
 # One rewrite runs first: every metacharacter bash(1) lists that is not
-# whitespace (| & ; ( ) < >) becomes a space, so a word bash would have
-# separated is separated here too. Nothing is deleted. A word is therefore seen
-# only where the command already spells it, so a bypass the shell would join,
-# unquote or expand into the word is not seen here and reaches git. The reading
-# runs the other way too, so a `git` word, a `commit` word and a bypass word the
+# whitespace (| & ; ( ) < >) separates here as it separates in bash, the five
+# that end a simple command becoming newlines and the two that redirect
+# becoming spaces. Nothing is deleted. A word is therefore seen only where the
+# command already spells it, so a bypass the shell would join, unquote or
+# expand into the word is not seen here and reaches git. The reading runs the
+# other way too, so a `git` word, a `commit` word and a core.hooksPath key the
 # split leaves standing count wherever they stand, a message and a comment tail
-# included. Both directions are pinned below; the two expectation columns are
-# where the armed and unarmed answers differ.
+# included; the no-verify flag counts in the commit's own simple command alone,
+# which is its own section below. Both directions are pinned below; the two
+# expectation columns are where the armed and unarmed answers differ.
 #
 # Every refusal opens with `pre-commit-check: <key>=<value>`, the fixed set
 # hooks/AGENTS.md names, and a row pins that line whole in both fixtures beside
@@ -170,6 +172,33 @@ both_table '2|2|NOVERIFY|a semicolon in front of the git word|true;git commit NO
 0|0|-|a commit word before the git word, across a separator|echo commit;git status
 0|2|-|a redirection-in glued to the subcommand|git commit</dev/null -m x
 0|2|-|a subshell whose closing paren ends the commit word|(git commit)
+'
+
+echo
+echo "the no-verify flag is read in the commit's own simple command"
+
+# git skips its armed hooks over that flag only where git is the program
+# reading it, so the word is a bypass only in the simple command that holds the
+# commit. Read over the whole command it refused read-only pipelines whose sole
+# -n belonged to grep, sed or tail, which is what these rows hold shut. The
+# unarmed column is unchanged by the scoping: what counts as a commit at all is
+# still read over the whole command, so a form that is a commit there is still
+# refused where nothing is armed. A command the split cannot trust, because a
+# quote, a backslash or a substitution parenthesis may hide where bash ends
+# the commit's call, is read whole for the flag, which the rows below the
+# descriptor duplication hold shut.
+both_table '0|0|-|a read-only pipeline whose -n is grep own|git diff | grep -n x
+0|2|-|-n belonging to another program beside the commit|sed -n 1,5p f && git commit -m x
+0|2|-|-n in a later stage of the pipeline|ps aux | grep git | grep commit | tail -n 5
+0|0|-|the commit verb only inside a quoted grep operand|ps aux | grep \"git commit\" | tail -n 5
+2|2|NOVERIFY|the flag behind a separator, in the commit own call|true && git commit NOVERIFY
+2|2|-n|the flag behind a repository-moving option|git -C d commit -n
+2|2|-n|the flag behind a descriptor duplication|git commit -m x 2>&1 -n
+2|2|-n|the flag behind a quoted separator in the message|git commit -m \"a;b\" -n
+2|2|-n|the flag behind a command substitution in the message|git commit -m $(date) -n
+2|2|-n|the flag behind a process substitution|git commit -F <(echo x) -n
+2|2|-n|the flag behind a line continuation|git commit -m x \\\n -n
+0|2|-|-n beside a commit whose own call carries quotes|sed -n 1,5p f && git commit -m \"x\"
 '
 
 echo
