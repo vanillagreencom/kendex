@@ -1028,6 +1028,48 @@ out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "gh auth failure exits 2" "$err"
 assert_contains "$(cat "$err")" "oversee-watch: auth-failed service=github" "auth failure is named on stderr"
 assert_eq "$out" "" "auth failure prints no EVENT" "$err"
+assert_eq "prwatch=$([[ -f "$STUB_DIR/prwatch.repos" ]] && echo called || echo none)" "prwatch=none" \
+  "a dead credential stops the run before its long pass reads GitHub unauthenticated" "$err"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = "long_start() {\n  github_ready\n"
+assert s.count(old) == 1, "long-start auth mutant pattern"
+open(out, "w").write(s.replace(old, "long_start() {\n"))
+PY
+new_case auth_fail_unasked
+touch "$STUB_DIR/auth-fail"
+WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- >/dev/null 2>"$TMP_ROOT/e6a-mutant" || true
+assert_eq "prwatch=$([[ -f "$STUB_DIR/prwatch.repos" ]] && echo called || echo none)" "prwatch=called" \
+  "control: with no credential check before it, the long pass reads GitHub on a dead token" "$TMP_ROOT/e6a-mutant"
+
+# A run that ends on a lane's notice before any long pass is due asks GitHub
+# nothing, not even its credential.
+mail_only_case() { # NAME [WATCH_BIN]
+  new_case "$1"
+  mkdir -p "$STATE_DIR" "$TMP_ROOT/repo/tmp/lane-mail/KEN-96"
+  printf 'long-pass\tfleet\t%s\n' "$(date -u +%s)" > "$STATE_DIR/owner_repo__none.mail"
+  printf '{"id":"only-1","kind":"notice","at":"t","text":"Rebased."}\n' \
+    > "$TMP_ROOT/repo/tmp/lane-mail/KEN-96/to-overseer.jsonl"
+  MAIL_ONLY_OUT="$(WATCH_BIN="${2:-}" run_watch -- --interval 3600 --item KEN-96 2>"$TMP_ROOT/e-$1")" || true
+  MAIL_ONLY="notice=$(grep -c '^EVENT lane-notice KEN-96 only-1$' <<<"$MAIL_ONLY_OUT" || :) auth=$(grep -c '^auth status' < <(cat -- "$STUB_DIR/gh.calls" 2>/dev/null) || true)"
+  rm -rf -- "${TMP_ROOT:?}/repo/tmp/lane-mail/KEN-96"
+}
+mail_only_case mail_only_no_github
+assert_eq "$MAIL_ONLY" "notice=1 auth=0" "a run ending on mail news before its long pass is due makes no GitHub call" \
+  "$TMP_ROOT/e-mail_only_no_github"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = "if [[ ${#REPOS[@]} -eq 0 ]]; then\n  github_ready\n"
+assert s.count(old) == 1, "eager auth mutant pattern"
+open(out, "w").write(s.replace(old, "github_ready\nif [[ ${#REPOS[@]} -eq 0 ]]; then\n"))
+PY
+mail_only_case mail_only_eager "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$MAIL_ONLY" "notice=1 auth=1" "control: a credential check at startup asks GitHub on every mail-only run" \
+  "$TMP_ROOT/e-mail_only_eager"
 
 # a stale env token with no keyring falls through to the project GH_BOT_TOKEN
 new_case auth_bot_fallback

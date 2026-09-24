@@ -203,10 +203,10 @@ The long pass's events, checked and reported in this order:
                              unchanged account says nothing
   EVENT heartbeat            --max-loops long passes with no event. A line
                              `  failing <item> <key>` follows for every lane
-                             failure still standing, reported once and quiet
-                             since, then every --repo's open PRs, each line
-                             prefixed with its repo, then
-                             `account-roster accounts=<N>` and one
+                             of the current fleet whose failure still stands,
+                             reported once and quiet since, then every
+                             --repo's open PRs, each line prefixed with its
+                             repo, then `account-roster accounts=<N>` and one
                              `account <alias> config_dir=...` line per
                              account, the fields the account event carries up
                              to `change=`, from the last long pass's reading.
@@ -252,9 +252,11 @@ The overseer mailbox is read through its own to-lane.cursor, `lane-mail inbox
 --item overseer`, which a session start reads first: a note any reader has
 taken is not reported again, whatever state directory, --since or checkout
 this watch runs with. Before every mail pass the overseer's own pane is read
-once; while it reads exited, or walled with a wall its own account confirms
-or that nothing could judge, no mailbox is read, so a successor finds what was
-sent in the meantime. Off tmux there is no such pane and the mail is read.
+once; while it reads exited, or walled with a wall its own account confirms,
+no mailbox is read, so a successor finds what was sent in the meantime. A wall
+the account refutes, or one no judgement could settle, reads live: its mail
+is read, and the long pass starts no successor for it. Off tmux there is no
+such pane and the mail is read.
 
 Every pane payload above is the lines that event's handling reads and no
 more, always taken from below the lane's last user turn and capped by
@@ -3462,7 +3464,11 @@ heartbeat() {
       || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=open"
     [[ -z "$open" ]] || open_all+="$(pw_prefix "$repo" "$open")"$'\n'
   done
-  if ! failing="$(awk -F'\t' 'NF == 3 && $1 == "lane-failed" { print "  failing " $2 " " $3 }' \
+  # The current fleet's alone: a row clears on the item's next good read,
+  # and an item that left the fleet is read no more.
+  if ! failing="$(ow_items="$(printf '%s\n' overseer ${ITEMS[@]+"${ITEMS[@]}"})" awk -F'\t' '
+      BEGIN { n = split(ENVIRON["ow_items"], a, "\n"); for (i = 1; i <= n; i++) watched[a[i]] = 1 }
+      NF == 3 && $1 == "lane-failed" && ($2 in watched) { print "  failing " $2 " " $3 }' \
     <<<"$MAIL_SEEN"$'\n'"$baseline")"; then
     die state-read-failed "" "path=$MAIL_STATE_FILE" "row=lane-failed"
   fi

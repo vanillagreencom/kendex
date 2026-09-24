@@ -1090,6 +1090,16 @@ BEAT="$(run_watch -- --max-loops 1 --item KEN-94 2>"$STUB_DIR/beat-b.err")" || t
 chmod 644 "$CASE_REPO_ROOT/tmp/lane-mail/KEN-94/to-overseer.jsonl"
 assert_eq "$(sed -n 2p <<<"$BEAT" | cut -d' ' -f1-6)" "  failing KEN-94 mail-read-failed item=KEN-94" \
   "a later quiet run's heartbeat names the lane whose failure still stands" "$STUB_DIR/beat-b.err"
+# The item leaves the fleet with its failure standing: a later heartbeat
+# names only the current fleet's channels.
+BEAT="$(run_watch -- --max-loops 1 --item KEN-95 2>"$STUB_DIR/beat-c.err")" || true
+assert_eq "$(grep -c '^  failing KEN-94 ' <<<"$BEAT" || :)" "0" \
+  "a lane that left the fleet with its failure standing is not named in a later heartbeat" "$STUB_DIR/beat-c.err"
+cadence_mutant fleetless '      NF == 3 && $1 == "lane-failed" && ($2 in watched) { print "  failing " $2 " " $3 }'"'"' \' \
+  '      NF == 3 && $1 == "lane-failed" { print "  failing " $2 " " $3 }'"'"' \'
+BEAT="$(WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch-fleetless" run_watch -- --max-loops 1 --item KEN-95 2>/dev/null)" || true
+assert_eq "$(grep -c '^  failing KEN-94 ' <<<"$BEAT" || :)" "1" \
+  "control: rows read whatever the fleet is name a departed lane in every heartbeat"
 cadence_mutant beatless '  [[ -z "$failing" ]] || printf '"'"'%s\n'"'"' "$failing"' '  :'
 new_case mail_standing_failure_heartbeat_mutant
 mail_reset KEN-94

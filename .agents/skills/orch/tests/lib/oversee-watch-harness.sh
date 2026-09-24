@@ -99,6 +99,7 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
 #   auth-fail     present → keyring `auth status` fails
 #   list-fail     present → every `pr list` fails
 #   noisy         present → every successful `pr list` also writes to stderr
+# Every `auth status` and `pr list` call is logged to gh.calls.
 # `api user` (env-token preflight) succeeds for any token except one
 # starting with ghp_stale.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
@@ -106,6 +107,7 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 set -uo pipefail
 case "${1:-} ${2:-}" in
   "auth status")
+    printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
     [[ -f "$STUB_DIR/auth-fail" ]] && { echo "You are not logged into any GitHub hosts." >&2; exit 1; }
     echo "Logged in"; exit 0 ;;
   "api user")
