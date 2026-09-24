@@ -9,12 +9,14 @@ name: Skill Tests
 # alike, so the second pass shrinks with the first. The `changes` job below
 # reads the class once through the change-class composite action, `tools/
 # ci-job-set` turns it into one `<lane>=true|false` line per gated lane, and
-# every `if:` in this file reads one of those lines. A `standard` diff runs
-# the full battery — every shard, the aggregators over them, the ui lane and
-# every cargo lane — so a green PR has proven what the queue re-proves and an
-# ejection — dequeue, fix, requeue, pay the merge latency again — is rare
-# instead of routine. Of the gated jobs, a `render` or `trivial` diff runs
-# the bot-instructions job alone, which also carries the document byte
+# every `if:` in this file reads one of those lines. A `standard` diff that
+# is not documentation alone runs the full battery — every shard, the
+# aggregators over them, the ui lane and every cargo lane — so a green PR has
+# proven what the queue re-proves and an ejection — dequeue, fix, requeue,
+# pay the merge latency again — is rare instead of routine; one of
+# documentation alone takes the narrower selection below. Of the gated jobs,
+# a `render` or `trivial` diff runs the bot-instructions job alone, which
+# also carries the document byte
 # ceilings and the work-marker scan. Every other diff, a `standard` one of documentation alone
 # included, runs the shell shards, the Linux cargo lane and that job; the
 # macOS, lint and Windows lanes stand down only where every changed path is
