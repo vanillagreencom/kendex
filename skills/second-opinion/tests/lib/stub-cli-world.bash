@@ -427,6 +427,8 @@ record_log() {
       "{"*"}") printf '%s\n' "$line" | jq -r 'to_entries | map("\(.key)=\(.value)") | join(" ")' 2>/dev/null || printf '%s\n' "$line" ;;
       # the plumbing, and the lane relays the dual-model suites pin
       "→ cmd:"*|"→ Response received"*|"["*"] "*) ;;
+      # the instruction-file reports, pinned by review-prompt.test.sh alone
+      "second-opinion: instructions-"*) ;;
       "→ second-opinion:"*) printf '%s\n' "${line% cwd=*}" ;;
       *) printf '%s\n' "$line" ;;
     esac
