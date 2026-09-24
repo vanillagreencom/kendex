@@ -194,7 +194,6 @@ missing-event|EVENT=
 missing-head|HEAD=
 missing-repo|REPO=
 missing-output-file|GITHUB_OUTPUT=
-mktemp-failed|TMPDIR=$TMP/absent
 classifier-failed status=2|STUB_CLASS_EXIT=2
 verdict-unreadable class-line=change_class=enormous|STUB_CLASS=enormous
 path-reader-failed status=2|STUB_PATHS_EXIT=2 STUB_PATHS=a
@@ -203,8 +202,19 @@ class-without-paths class=micro|STUB_CLASS=micro STUB_PATHS=
 family-read-failed prefix=skills|STUB_PATHS=skills/orch/SKILL.md STUB_PATHS_UNREADABLE=1
 delimiter-collides path=__change_class_changed_paths_end__|STUB_PATHS=__change_class_changed_paths_end__
 ROWS
-[ "$refusal_rows" -eq 13 ] ||
+[ "$refusal_rows" -eq 12 ] ||
   { echo "the refusal table read $refusal_rows rows" >&2; exit 1; }
+
+# mktemp's failure is planted as a mktemp first on PATH that exits 1. A
+# TMPDIR naming no directory fails GNU mktemp but not the macOS runner's BSD
+# mktemp, which still creates the directory, and a PATH is not a word the
+# table's NAME=VALUE list can carry intact.
+mkdir -p "$TMP/no-mktemp"
+printf '#!/bin/sh\nexit 1\n' >"$TMP/no-mktemp/mktemp"
+chmod +x "$TMP/no-mktemp/mktemp"
+status="$(run "$CLASSIFY" PATH="$TMP/no-mktemp:$PATH")"
+check "refusal mktemp-failed: exit" "2" "$status"
+check "refusal mktemp-failed: key" "mktemp-failed" "$(refusal)"
 
 # A refusal carries no verdict to a caller: nothing after the refused step
 # reaches the output file.
