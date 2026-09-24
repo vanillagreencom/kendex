@@ -339,23 +339,29 @@ report_restack_conflicts() {
     echo "Resolve${ordinary}: edit out the conflict markers, then git -C \"$wt\" add <file>." >&2
   fi
   if [[ -n "$held" ]]; then
-    echo "Resolve each held hook: fix the markers in <path>$RESTACK_HELD_SUFFIX, then replace the hook in one step with mv <path>$RESTACK_HELD_SUFFIX <path> && git -C \"$wt\" add <path>." >&2
-    echo "  To keep the held side instead: rm <path>$RESTACK_HELD_SUFFIX && git -C \"$wt\" add <path>." >&2
+    echo "Resolve each held hook: fix the markers in <path>$RESTACK_HELD_SUFFIX, then replace the hook in one step with mv <path>$RESTACK_HELD_SUFFIX <path> && git -C \"$wt\" add <path> && git -C \"$wt\" rm -q --cached --ignore-unmatch -- <path>$RESTACK_HELD_SUFFIX." >&2
+    echo "  To keep the held side instead: rm <path>$RESTACK_HELD_SUFFIX && git -C \"$wt\" add <path> && git -C \"$wt\" rm -q --cached --ignore-unmatch -- <path>$RESTACK_HELD_SUFFIX." >&2
     echo "  continue and skip refuse while a saved copy remains. Or finish the restack from a shell the harness does not run in." >&2
   fi
   echo "Then run: $0 restack continue \"$wt\"    (repeat if it stops again)" >&2
   echo "If the resolved commit is empty: $0 restack skip \"$wt\"" >&2
 }
 
-# Print the saved copy of each held hook that still exists, one per line.
+# Print the saved copy of each held hook that is still in the worktree or in
+# the index, one per line. A staged copy counts: the replay engine's
+# cherry-pick --continue commits the index whatever the worktree holds, so a
+# copy moved away on disk but still staged would land in the branch. A copy
+# whose index entry cannot be read counts too.
 restack_unconsumed_hook_copies() {
-  local wt="$1" list="" path=""
+  local wt="$1" list="" path="" copy="" staged=""
   list="$(restack_held_hooks_file "$wt")" || return 0
   [[ -f "$list" ]] || return 0
   while IFS= read -r path; do
     [[ -n "$path" ]] || continue
-    if [[ -e "$wt/$path$RESTACK_HELD_SUFFIX" || -L "$wt/$path$RESTACK_HELD_SUFFIX" ]]; then
-      printf '%s\n' "$path$RESTACK_HELD_SUFFIX"
+    copy="$path$RESTACK_HELD_SUFFIX"
+    if [[ -e "$wt/$copy" || -L "$wt/$copy" ]] || \
+       ! staged="$(git -C "$wt" ls-files -- "$copy")" || [[ -n "$staged" ]]; then
+      printf '%s\n' "$copy"
     fi
   done <"$list"
 }
@@ -366,7 +372,7 @@ restack_refuse_unconsumed_hooks() {
   local wt="$1" copies=""
   copies="$(restack_unconsumed_hook_copies "$wt")"
   [[ -n "$copies" ]] || return 0
-  worktree_message restack-hook-unconsumed "$(paste -s -d ' ' - <<<"$copies")" "Error: A held hook's conflicted content is still saved beside it; move each resolved copy over its hook, or delete it and stage the path to keep the held side, then retry." >&2
+  worktree_message restack-hook-unconsumed "$(paste -s -d ' ' - <<<"$copies")" "Error: A held hook's conflicted content is still saved beside it or staged; move each resolved copy over its hook, or delete it to keep the held side, then stage the hook and unstage the copy with git rm -q --cached --ignore-unmatch -- <copy>, then retry." >&2
   return 1
 }
 

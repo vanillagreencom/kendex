@@ -143,6 +143,7 @@ step() {
       PATH="$ROOT/stub:$PATH"
       ;;
     restack) (cd "$MAIN" && "$SCRIPT" create "$ISSUE" --restack >/dev/null 2>&1) || true ;;
+    restack-replay) (cd "$MAIN" && "$SCRIPT" create "$ISSUE" --restack --replay >/dev/null 2>&1) || true ;;
     resolve-file) printf 'resolved\n' >"$WT/file.txt"; git -C "$WT" add file.txt ;;
     continue) (cd "$MAIN" && "$SCRIPT" restack continue "$ISSUE" >/dev/null 2>&1) || true ;;
     stage-all) git -C "$WT" add -A ;;
@@ -154,17 +155,21 @@ step() {
         [[ -e "$WT/$held.restack-conflict" ]] || continue
         rm "$WT/$held.restack-conflict"
         git -C "$WT" add "$held"
+        git -C "$WT" rm -q --cached --ignore-unmatch -- "$held.restack-conflict"
       done
       ;;
     # The documented resolution: fix the saved copy, then move it over the
     # hook in one step.
-    consume)
+    consume|consume-staged)
       local path
       for path in "$CLAUDE_HOOK" "$CODEX_HOOK"; do
         [[ -e "$WT/$path.restack-conflict" ]] || continue
         write_hook "$WT/$path.restack-conflict" resolved
         mv "$WT/$path.restack-conflict" "$WT/$path"
         git -C "$WT" add "$path"
+        # consume-staged skips the unstage, leaving a copy an earlier
+        # `git add -A` staged in the index.
+        [[ "$1" == consume-staged ]] || git -C "$WT" rm -q --cached --ignore-unmatch -- "$path.restack-conflict"
       done
       ;;
     *) echo "UNKNOWN-STEP: $1" >&2; exit 2 ;;
@@ -200,9 +205,11 @@ parses() {
   printf '%s' "${out#,}"
 }
 
+# Saved copies in the worktree or in the index: a staged copy is one a
+# continue would record in the branch.
 saved() {
   local found
-  found="$(cd "$WT" && find . -name '*.restack-conflict' | sed 's|^\./||' | LC_ALL=C sort | paste -s -d ',' -)"
+  found="$(cd "$WT" && { find . -name '*.restack-conflict' | sed 's|^\./||'; git ls-files -- '*.restack-conflict'; } | LC_ALL=C sort -u | paste -s -d ',' -)"
   printf '%s' "${found:--}"
 }
 
@@ -260,6 +267,8 @@ continue completes once each saved copy is moved over its hook|hooks restack con
 abort restores the branch's hooks and removes the saved copies|hooks restack|restack abort topic|rc=0 err= paused=no parses=ok,ok saved=- markers=- body=wt,wt ordinary=-
 continue that stops again in a hook holds it too|later restack resolve-file|restack continue topic|rc=1 err=worktree-restack-conflicts: $CLAUDE_HOOK;worktree-restack-hook-held: $CLAUDE_HOOK paused=yes parses=ok,ok saved=$C markers=$C body=main,base ordinary=-
 a conflict in an ordinary file and a hook at once is told to edit only the ordinary file|mixed|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CLAUDE_HOOK paused=yes parses=ok,ok saved=$C markers=$C,file.txt body=main,base ordinary=file.txt
+a replay continue refuses while a copy moved off disk is still staged|hooks restack-replay stage-all consume-staged|restack continue topic|rc=1 err=worktree-restack-hook-unconsumed: $C $X paused=yes parses=ok,ok saved=$C,$X markers=- body=resolved,resolved ordinary=-
+a replay continue completes once each moved copy is also unstaged|hooks restack-replay stage-all consume|restack continue topic|rc=0 err=worktree-rebase-count: 1 paused=no parses=ok,ok saved=- markers=- body=resolved,resolved ordinary=-
 continue completes once each saved copy is deleted and its path staged|hooks restack discard|restack continue topic|rc=0 err=worktree-rebase-count: 1 paused=no parses=ok,ok saved=- markers=- body=main,main ordinary=-
 declarations that cannot be read hold every conflicted path, an ordinary one included|source broken-jq|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok saved=$S markers=$S body=base,base ordinary=-
 a hook declared only at the pre-restack head is held|branch-declared|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CURSOR_HOOK paused=yes parses=ok,ok saved=$U markers=$U body=base,base ordinary=-
@@ -298,6 +307,7 @@ without the paused HEAD a base-declared hook keeps its markers@scripts/lib/resta
 without the fallback to the branch's side a deleted hook is not held@scripts/lib/restack-state.sh@! git -C \"\$wt\" checkout --theirs -- \"\$path\" >/dev/null 2>&1; }@1@true; }@deleted@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-hold-failed: $CLAUDE_HOOK paused=yes parses=ok,ok saved=$C markers=- body=wt,base ordinary=$CLAUDE_HOOK
 without the held-path exclusion the report tells the caller to edit a held hook@scripts/lib/restack-state.sh@grep -F -x -q -e \"\$path\" <<<\"\$held\" || ordinary@1@true; ordinary@mixed@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CLAUDE_HOOK paused=yes parses=ok,ok saved=$C markers=$C,file.txt body=main,base ordinary=$CLAUDE_HOOK file.txt
 with the branch's side taken first the held hooks keep the branch's version@scripts/lib/restack-state.sh@checkout --ours --@1@checkout --theirs --@hooks@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;$HELD paused=yes parses=ok,ok saved=$C,$X markers=$C,$X body=wt,wt ordinary=-
+without the index check a replay continue records a staged copy in the branch@scripts/lib/restack-state.sh@! staged=\"\$(git -C \"\$wt\" ls-files -- \"\$copy\")\" || [[ -n \"\$staged\" ]]@1@false@hooks restack-replay stage-all consume-staged@restack continue topic@rc=0 err=worktree-rebase-count: 1 paused=no parses=ok,ok saved=$C,$X markers=- body=resolved,resolved ordinary=-
 "
 m=0
 while IFS='@' read -r label target text count replacement fixture command want; do
