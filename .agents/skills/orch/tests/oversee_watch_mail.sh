@@ -1079,6 +1079,28 @@ standing_failure
 assert_eq "reports=$STANDING" "reports=1001" \
   "an unchanged lane read failure is reported once, and again after a read that succeeded" "$STUB_DIR/standing-4.err"
 cadence_mutant loud '  if [[ "$prior" != "$key" ]]; then' '  if true; then'
+# The standing failure is quiet but not forgotten: a later quiet run's
+# heartbeat names the channel still broken.
+new_case mail_standing_failure_heartbeat
+mail_reset KEN-94
+say KEN-94 notice 'Standing by.' >/dev/null
+chmod 000 "$CASE_REPO_ROOT/tmp/lane-mail/KEN-94/to-overseer.jsonl"
+run_watch -- --max-loops 1 --item KEN-94 >/dev/null 2>"$STUB_DIR/beat-a.err" || true
+BEAT="$(run_watch -- --max-loops 1 --item KEN-94 2>"$STUB_DIR/beat-b.err")" || true
+chmod 644 "$CASE_REPO_ROOT/tmp/lane-mail/KEN-94/to-overseer.jsonl"
+assert_eq "$(sed -n 2p <<<"$BEAT" | cut -d' ' -f1-6)" "  failing KEN-94 mail-read-failed item=KEN-94" \
+  "a later quiet run's heartbeat names the lane whose failure still stands" "$STUB_DIR/beat-b.err"
+cadence_mutant beatless '  [[ -z "$failing" ]] || printf '"'"'%s\n'"'"' "$failing"' '  :'
+new_case mail_standing_failure_heartbeat_mutant
+mail_reset KEN-94
+say KEN-94 notice 'Standing by.' >/dev/null
+chmod 000 "$CASE_REPO_ROOT/tmp/lane-mail/KEN-94/to-overseer.jsonl"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch-beatless" run_watch -- --max-loops 1 --item KEN-94 >/dev/null 2>&1 || true
+BEAT="$(WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch-beatless" run_watch -- --max-loops 1 --item KEN-94 2>/dev/null)" || true
+chmod 644 "$CASE_REPO_ROOT/tmp/lane-mail/KEN-94/to-overseer.jsonl"
+assert_eq "$(grep -c '^  failing ' <<<"$BEAT" || :)" "0" \
+  "control: a heartbeat listing only PRs says nothing of the broken mailbox"
+
 new_case mail_standing_failure_mutant
 standing_failure "$MUTANT_DIR/orch/scripts/oversee-watch-loud"
 assert_eq "reports=$STANDING" "reports=1101" "control: with no failure row every run reports the same failure again" \

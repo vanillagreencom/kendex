@@ -201,10 +201,13 @@ The long pass's events, checked and reported in this order:
                              two accounts can share an alias. The first
                              reading of an account is its baseline and an
                              unchanged account says nothing
-  EVENT heartbeat            --max-loops long passes with no event; every
-                             --repo's open PRs follow, each line prefixed with
-                             its repo, then `account-roster accounts=<N>` and
-                             one `account <alias> config_dir=...` line per
+  EVENT heartbeat            --max-loops long passes with no event. A line
+                             `  failing <item> <key>` follows for every lane
+                             failure still standing, reported once and quiet
+                             since, then every --repo's open PRs, each line
+                             prefixed with its repo, then
+                             `account-roster accounts=<N>` and one
+                             `account <alias> config_dir=...` line per
                              account, the fields the account event carries up
                              to `change=`, from the last long pass's reading.
                              `account-roster unread` replaces them when that
@@ -525,11 +528,14 @@ Environment:
   ORCH_WATCH_MAIL_INTERVAL    seconds from one mail pass to the next, a whole
                               number, default 20, and the most --repeat waits
                               between two runs after one that did not exit 2.
-                              A lane failure already reported fails no later
-                              run, so a note lands within one interval of the
-                              pass after it, unless the overseer pane reads
-                              down (see the overseer mailbox paragraph under
-                              the mail pass's events). 0 reads the mail on
+                              A run exits 2 on the first report of a lane read
+                              failure, on a hosted lane close that fails (each
+                              long pass until it succeeds) and on any global
+                              failure; after those runs --repeat waits in
+                              full, and otherwise a note lands within one
+                              interval of the pass after it, unless the
+                              overseer pane reads down (see the overseer
+                              mailbox paragraph under the mail pass's events). 0 reads the mail on
                               every turn of the loop and waits out a long pass
                               in flight rather than polling it
   ORCH_DIRECTIVE_UNREAD_SECS  age in seconds past which a directive the lane
@@ -1004,10 +1010,11 @@ parse_argv "$@"
 [[ "$INTERVAL" =~ ^[0-9]+$ ]] || die interval-invalid "" "value=$INTERVAL"
 [[ "$MAX_LOOPS" =~ ^[0-9]+$ && "$MAX_LOOPS" -ge 1 ]] || die max-loops-invalid "" "value=$MAX_LOOPS"
 # The age a usage figure may be served at, named to every lane reader a pass
-# runs: two of this watch's intervals. Two reads are one --interval apart,
-# counted start to start, or longer where a long pass overruns, so a window of
-# one interval has always expired by the next pass and every pass would post
-# for every account; two cover that. A larger ORCH_LANES_USAGE_MAX_AGE
+# runs: two of this watch's intervals. A long pass reads once an --interval,
+# counted start to start, or longer where one overruns, and the mail pass
+# judges a standing wall at most once an interval too, so a window of one
+# interval has always expired by the next read and every one would post for
+# every account; two cover that. A larger ORCH_LANES_USAGE_MAX_AGE
 # the settings already set is kept, since this variable outranks the settings
 # ladder, and a value that is not a whole number is passed on for `lanes` to
 # refuse rather than overwritten. `lanes` only ever widens its TTL with it and
@@ -2640,12 +2647,13 @@ overseer_relaunch_failed() { # ROW ROWS IDENTITY PANE WINDOW ATTEMPT STEP
 # Memoised FOR ONE PASS because both arms can ask inside it — a wall the
 # account refutes falls through to the live arm — and the judgement reads
 # every account the fleet can launch on. Two readings there would pay that
-# twice and could answer differently within one pass. Every long pass is a
-# fork of the loop, which never judges the marks itself, so each pass starts
-# with the memo unset and none outlives its pass: one invocation runs up to
-# --max-loops passes an --interval apart, and a memo that outlived the pass
-# would answer all of them with the first one's reading, leaving the fleet
-# unattended — a wall landing after pass 1 refuted against the stale
+# twice and could answer differently within one pass. overseer_marks_reset
+# clears it at the two sites that begin a judgement: the top of every long
+# pass, and overseer_down before a mail pass judges a wall itself, since the
+# long pass is forked from the loop that mail pass runs in. One invocation
+# runs up to --max-loops passes an --interval apart, and a memo that outlived
+# the pass would answer all of them with the first one's reading, leaving the
+# fleet unattended — a wall landing after pass 1 refuted against the stale
 # below-mark reading, a stale mark-reached closing a live window, a failed
 # judgement disabling both arms, a lifted mark never clearing its row.
 #
@@ -2663,6 +2671,10 @@ OVERSEER_MARK_ACCOUNT=""
 OVERSEER_MARK_RESETS=""
 OVERSEER_MARK_READ=0
 OVERSEER_MARK_RC=1
+overseer_marks_reset() {
+  OVERSEER_MARK_READ=0
+  OVERSEER_MARK_RC=1
+}
 
 # bounded_account_read REASON ERR_FILE COMMAND... — one account reader of a
 # pass: COMMAND runs under READ_CEILING with the usage age LANES_MAX_AGE names,
@@ -2760,8 +2772,8 @@ overseer_marks_judge() {
 # copied. Every other answer, a judgement that could not be made included,
 # leaves the wall unconfirmed and the pane read as the working overseer it
 # looks like everywhere else.
-overseer_wall_confirmed() { # PANE — 0 confirmed, 1 refuted, 2 unjudged
-  overseer_marks_judge || { overseer_note overseer-wall-unjudged "pane=$1"; return 2; }
+overseer_wall_confirmed() { # PANE
+  overseer_marks_judge || { overseer_note overseer-wall-unjudged "pane=$1"; return 1; }
   [[ "$OVERSEER_MARK_KEY" == mark-reached && "$OVERSEER_MARK_KIND" == headroom ]] && return 0
   overseer_note overseer-wall-unconfirmed "pane=$1" "answer=$OVERSEER_MARK_KEY" \
     "kind=${OVERSEER_MARK_KIND:-none}"
@@ -2878,8 +2890,28 @@ overseer_pane_read() { # PANE
   [[ "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$pane"
 }
 
+# The overseer's verdict from the reading overseer_pane_read left, as
+# OV_VERDICT: the one answer the long pass acts on and the mail pass gates on.
+# `exited` is the harness gone; `walled` is the account spent under a harness
+# still running, which takes no turn, so it answers no lane, reads no mail and
+# cannot hand itself over — the same unattended fleet a death leaves, reached
+# by the other road. The screen's wall is one reading, and over THIS pane it is
+# not enough on its own: overseer_wall_confirmed says why, and asks the
+# account judgement that settles it. A wall the account refutes, or one no
+# judgement could be made on, is `live`, as is every other reading: nothing
+# here holds an overseer that may be working.
+OV_VERDICT=live
+overseer_judge() { # PANE
+  OV_VERDICT=live
+  case "$OV_STATE" in
+    exited) OV_VERDICT=exited ;;
+    walled) if overseer_wall_confirmed "$1"; then OV_VERDICT=walled; fi ;;
+    *) ;;
+  esac
+}
+
 check_overseer() {
-  local pane="${TMUX_PANE:-}" window screen state prior count succession plan
+  local pane="${TMUX_PANE:-}" window screen prior count succession plan
   local ov_line identity rows attempt completed
   local ov_case row other succeed_rc below banner banner_rc
   local errf="$WORK_DIR/overseer.err"
@@ -2898,29 +2930,18 @@ check_overseer() {
   window="$OV_WINDOW"
   identity="$OV_IDENTITY"
   screen="$OV_SCREEN"
-  state="$OV_STATE"
   # The watch invocation recorded this current session's command before its
   # first pass. Once the pane is dead, that last live-owned record is the only
   # source that still knows its account, model and permission flags.
   OVERSEER_LINE="$ov_line"
 
-  # The two readings this check acts on, named once and matched by name below.
-  # `exited` is the harness gone; `walled` is the account spent under a harness
-  # still running, which takes no turn, so it answers no lane, reads no mail
-  # and cannot hand itself over — the same unattended fleet a death leaves,
-  # reached by the other road. Every other reading is an overseer still
-  # working, and nothing here touches it.
+  overseer_judge "$pane"
   ov_case=""
-  case "$state" in
+  case "$OV_VERDICT" in
     exited) ov_case=dead ;;
     walled) ov_case=walled ;;
+    live) ;;
   esac
-  # The screen's wall is one reading, and over THIS pane it is not enough on
-  # its own: overseer_wall_confirmed says why, and asks the account judgement
-  # that settles it. A wall the account refutes leaves the pane exactly where
-  # a healthy reading leaves it, below — mark reported, rows cleared, the pass
-  # carrying on — because that is what the pane is.
-  [[ "$ov_case" != walled ]] || overseer_wall_confirmed "$pane" || ov_case=""
   # One row per case, keyed by server plus pane: `<count>` while readings
   # accumulate, `pending:N` after a failed launch, and `reported` after
   # notice-only or the bounded recovery attempts are spent.
@@ -3428,15 +3449,25 @@ check_accounts() {
 # cannot be listed is a failed pass, not a heartbeat missing a repo. The
 # account roster follows, as the last long pass read it.
 heartbeat() {
-  local errf="$WORK_DIR/open.err" repo open open_all=""
+  local errf="$WORK_DIR/open.err" repo open open_all="" failing baseline="" file
   github_ready
+  # The standing lane failures, each reported once and quiet since: a quiet
+  # run still names every channel that stays broken. The long pass's are in
+  # the baseline it committed, read here since this process never holds it.
+  file="$(pw_state_file "${REPOS[0]}")"
+  [[ ! -f "$file" ]] || baseline="$(cat -- "$file")" || die state-read-failed "" "path=$file"
   for repo in "${REPOS[@]}"; do
     open="$(gh pr list --repo "$repo" --state open --limit 50 --json number,headRefName,title \
       --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>"$errf")" \
       || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=open"
     [[ -z "$open" ]] || open_all+="$(pw_prefix "$repo" "$open")"$'\n'
   done
+  if ! failing="$(awk -F'\t' 'NF == 3 && $1 == "lane-failed" { print "  failing " $2 " " $3 }' \
+    <<<"$MAIL_SEEN"$'\n'"$baseline")"; then
+    die state-read-failed "" "path=$MAIL_STATE_FILE" "row=lane-failed"
+  fi
   echo "EVENT heartbeat loops=$MAX_LOOPS interval=${INTERVAL}s since=${SINCE:-none}"
+  [[ -z "$failing" ]] || printf '%s\n' "$failing"
   [[ -z "$open_all" ]] || printf '%s' "$open_all"
   if [[ "$ACCOUNT_ROSTER_RC" -ne 0 ]]; then
     echo "account-roster unread"
@@ -3470,6 +3501,7 @@ long_pass() {
     [[ ! -f "$state_file" ]] || PW_SEEN[$i]="$(cat -- "$state_file")" \
       || die state-read-failed "" "path=$state_file"
   done
+  overseer_marks_reset
   # No event consumer advances its baseline after this pass observes the
   # overseer exited or walled. A later live pass or the successor receives
   # that work.
@@ -3537,26 +3569,38 @@ long_due() {
   LONG_DUE=$((PASS_NOW + INTERVAL))
 }
 
-# Whether the overseer's pane reads down now, judged afresh before every mail
-# pass on this pass's own reading: no mailbox is read then, so the successor,
-# or the overseer once it reads live again, finds that mail rather than a log
-# nobody reads. Down is `exited`, or `walled` with the wall confirmed by the
-# one judgement check_overseer asks, overseer_wall_confirmed; a wall its
-# account refutes is a banner this watch relayed about another lane. A wall
-# nothing could judge holds the mail for the pass: holding delays a note, and
-# reading it into a harness that takes no turn loses it. The judgement's memo
-# is cleared first, since this process keeps no pass of its own to scope it.
-# Off tmux, or with a pane that cannot be read, nothing is judged and the mail
-# is read, as the long pass reads on.
+# Whether the overseer's pane reads down now, before every mail pass: no
+# mailbox is read then, so the successor, or the overseer once it reads live
+# again, finds that mail rather than a log nobody reads. Down is the verdict
+# overseer_judge gives the long pass, on this pass's own pane reading. A
+# walled screen's account judgement is reused while the banner stays the one
+# it judged and --interval has not gone by, so a banner that stands costs one
+# judgement an interval, as it does the long pass; a new banner, or an older
+# answer, is judged afresh with the memo cleared first. Off tmux, or with a
+# pane that cannot be read, nothing is judged and the mail is read, as the
+# long pass reads on.
+OV_WALL_BANNER=""
+OV_WALL_AT=""
+OV_WALL_VERDICT=live
 overseer_down() {
-  local pane="${TMUX_PANE:-}" rc=0
+  local pane="${TMUX_PANE:-}" banner=""
   [[ -n "${TMUX:-}" && -n "$pane" ]] || return 1
   overseer_pane_read "$pane" || return 1
-  [[ "$OV_STATE" != exited ]] || return 0
-  [[ "$OV_STATE" == walled ]] || return 1
-  OVERSEER_MARK_READ=0
-  overseer_wall_confirmed "$pane" || rc=$?
-  [[ "$rc" -ne 1 ]]
+  if [[ "$OV_STATE" == walled ]]; then
+    banner="$(lane_limit_banner "$(pane_below_last_turn "$OV_SCREEN")")" || banner=""
+    if [[ -n "$OV_WALL_AT" && "$banner" == "$OV_WALL_BANNER" && $((PASS_NOW - OV_WALL_AT)) -lt "$INTERVAL" ]]; then
+      [[ "$OV_WALL_VERDICT" == walled ]]
+      return
+    fi
+    overseer_marks_reset
+  fi
+  overseer_judge "$pane"
+  if [[ "$OV_STATE" == walled ]]; then
+    OV_WALL_BANNER="$banner"
+    OV_WALL_AT="$PASS_NOW"
+    OV_WALL_VERDICT="$OV_VERDICT"
+  fi
+  [[ "$OV_VERDICT" != live ]]
 }
 
 # Until the next mail pass or long pass is due. A long pass in flight is looked
