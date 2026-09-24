@@ -132,16 +132,15 @@ its receipt always names item `overseer` rather than the repository it reached.
 Silence is not a success: a send that printed no receipt appended nothing.
 
 A send repeating an envelope the mailbox already holds is a retry of a delivery
-that landed, not a second message. What is compared is the whole envelope and
-never its words alone: the text, the kind, the ask a `--re` answers, the halt
-`--halt` sets, the sender and an ask's choices must every one agree with a line
-already in the mailbox, stamped within the minute before this send. One field
-differing makes a message of its own, so the same words answering two asks both
-land, a `--halt` after an identical plain directive lands and halts the lane,
-and two overseers writing one mailbox never silence each other. A repeat is
-refused before the append as `lane-mail: duplicate id=<id>`, naming the line
-already there; another item, or more than a minute later, appends as any send
-does.
+that landed, not a second message. What is compared is the envelope whole,
+every field of it but the id it is minted with and the stamp, which the window
+judges instead, against a line already in the mailbox stamped within the minute
+before this send. Any one field differing makes a message of its own, so the
+same words answering two asks both land, a `--halt` after an identical plain
+directive lands and halts the lane, and two overseers writing one mailbox never
+silence each other. A repeat is refused before the append as
+`lane-mail: duplicate id=<id>`, naming the line already there; another item, or
+more than a minute later, appends as any send does.
 
 The mailbox is read through the route the append writes, `lane-host cat` for a
 hosted send, so the file judged is the file the line would join. A hosted
@@ -236,7 +235,7 @@ lm_message() { # KEY VALUE
     host-unreachable) text='The lane host could not be reached, so the mailbox state is unknown: a read is refused rather than reported as empty, and a write rather than reported as delivered. A stopped host is started; a gone one is relaunched.' ;;
     mail-read-failed) text='The hosted mailbox could not be read and its host answers, so the read is refused rather than reported as empty. A send stopped here appended nothing: a mailbox no read could judge is one no send can be judged against.' ;;
     timeout) text='No answer to this ask arrived before --timeout.' ;;
-    duplicate) sep=' id='; text='This envelope was sent to this item less than a minute ago: its text, its kind, the ask it answers, its halt, its sender and its choices all match the envelope the id above names, so the send is a retry of a delivery that already landed rather than a second message. Change any of those, or wait out the minute, to send it again.' ;;
+    duplicate) sep=' id='; text='This envelope was sent to this item less than a minute ago: every field of it but its own id and its stamp matches the envelope the id above names, so the send is a retry of a delivery that already landed rather than a second message. Change any field of the message, or wait out the minute, to send it again.' ;;
     *) printf 'lane-mail: message-invalid key=%s\n' "$1" >&2; return 2 ;;
   esac
   printf 'lane-mail: %s%s%s%s\n%s\n' "$1" "$sep" "$2" "${REFUSE_EXTRA:+ $REFUSE_EXTRA}" "$text"
