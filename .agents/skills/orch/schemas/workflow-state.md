@@ -4,7 +4,7 @@ Persistent state file for orch workflows. Survives context compaction.
 
 **Location**: `<state-dir>/workflow-state-[ISSUE_ID].json` — `<state-dir>` resolves to the global `--state-dir <path>` flag, then `$ORCH_STATE_DIR`, then `tmp/`.
 
-**Key**: `[ISSUE_ID]` is the normalized workflow-state key — `issue-N` for GitHub issues, `PROJ-123` for Linear — never the bare GitHub issue number. Every `workflow-state` action, `init` included, uses the key exactly as given, so the spelling passed to `init` is the spelling every later command must use.
+**Key**: `[ISSUE_ID]` is the workflow-state key whose forms `workflow-state --help` § Keys enumerates, never the bare GitHub issue number. Every `workflow-state` action, `init` included, uses the key exactly as given, so the spelling passed to `init` is the spelling every later command must use.
 
 ## Schema
 

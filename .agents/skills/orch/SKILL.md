@@ -112,7 +112,7 @@ Every script takes `--help` bar `pr-view-json` and `resolve-base-branch`, whose 
 
 **Multi-PR watching.** Never hand-roll a monitor. When `.agents/skills/review-gate/scripts/pr-watch.sh` exists, run it (oversee: through `oversee-watch`); otherwise per-PR `approval-wait`/`queue-wait`.
 
-**`workflow-state`.** Run it with no arguments for the action reference. State keys are normalized issue IDs: `issue-N` for GitHub, `PROJ-123` for Linear.
+**`workflow-state`.** Run it with no arguments for the action reference, and read `workflow-state --help` § Keys for the state-key forms.
 
 **A queued merge is waited out in the lane**: `merge-pr.md` § 5 step 1 uses [Waiter launch](references/waiter-launch.md) and routes the recorded verdict (`queue-wait --help` § Verdicts). The lane stays active until it can finish the post-merge work.
 
