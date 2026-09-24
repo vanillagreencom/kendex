@@ -542,11 +542,13 @@ git -C "$VERB_REPO" init -q
 # The provider, reduced to the one answer the probe reads: `touch` exits with
 # LANE_HOST_TOUCH_RC, which is how a reachable host and an unreachable one
 # differ to the caller, and writes the message a real provider writes when it
-# cannot reach the host, so the forwarding can be asserted.
+# cannot reach the host, so the forwarding can be asserted. It records the item
+# it was asked about in LANE_HOST_TOUCH_LOG.
 PROBE_STDERR='lane-host: ssh: connect to host build-7 port 22: Connection refused'
 cat > "$VERB_REPO/scripts/lane-host" <<EOF
 #!/usr/bin/env bash
 [[ "\${1:-}" == touch ]] || exit 0
+[[ "\${2:-}" != --item || -z "\${LANE_HOST_TOUCH_LOG:-}" ]] || printf '%s\n' "\${3:-}" > "\$LANE_HOST_TOUCH_LOG"
 [[ "\${LANE_HOST_TOUCH_RC:-0}" -eq 0 ]] || printf '%s\n' '$PROBE_STDERR' >&2
 exit "\${LANE_HOST_TOUCH_RC:-0}"
 EOF
@@ -557,6 +559,7 @@ export STUB_DIR
 printf '4242\n' > "$STUB_DIR/kids-100.txt"
 
 VERB_ERR="$TMP_ROOT/verb.err"
+VERB_TOUCH_LOG="$TMP_ROOT/verb.touch"
 
 # verb_state ITEM SCREEN HOST TOUCH_RC [EXTRA_PATH] — what `lanes state` printed
 # for ITEM, as `<word> rc=<status> note=<stderr key>`. The state comes off
@@ -565,20 +568,23 @@ VERB_ERR="$TMP_ROOT/verb.err"
 # folded them could not tell a note from a verdict. A refusal prints no state,
 # and its key stands in the state slot. SCREEN `none` stages no pane for the
 # item at all, which is the observation a closed window and a duplicated name
-# both leave.
+# both leave. The pane is staged in session kendex under ITEM's window part,
+# so a session-qualified ITEM names it the way a lane record does. VERB_RUN_REPO
+# names the checkout whose `lanes` runs, the fixture's unless a control swaps it.
+VERB_RUN_REPO="$VERB_REPO"
 verb_state() {
   local item="$1" screen="$2" host="$3" touch_rc="$4" extra="${5:-}" out note word rc=0
   if [[ "$screen" == none ]]; then
     : > "$PANE_FIELDS"
   else
     screen_for "$screen" > "$STUB_DIR/pane-%3.txt"
-    printf 'kendex\t%s\t%%3\t100\tclaude\n' "$item" > "$PANE_FIELDS"
+    printf 'kendex\t%s\t%%3\t100\tclaude\n' "${item#*:}" > "$PANE_FIELDS"
   fi
   : > "$VERB_ERR"
-  out="$(cd "$VERB_REPO" && PATH="${extra:+$extra:}$OBS_BIN:$PATH" \
+  out="$(cd "$VERB_RUN_REPO" && PATH="${extra:+$extra:}$OBS_BIN:$PATH" \
     env STUB_DIR="$STUB_DIR" PANE_FIELDS="$PANE_FIELDS" \
         ORCH_LANE_HOST="$host" LANE_HOST_TOUCH_RC="$touch_rc" \
-        LANE_STATE_GREP_FAIL="${VERB_GREP_FAIL:-}" \
+        LANE_STATE_GREP_FAIL="${VERB_GREP_FAIL:-}" LANE_HOST_TOUCH_LOG="$VERB_TOUCH_LOG" \
         ./scripts/lanes state "$item" 2>"$VERB_ERR")" || rc=$?
   # The first keyed line only, read from the file: a pipe into an early-closing
   # reader is what the shell rules forbid here.
@@ -597,8 +603,10 @@ verb_state() {
 # non-zero `touch` is a probe that failed — schemas/lane-host.md gives the verb
 # no "no such lane" reply — so exits 1 and 2 answer alike and neither says
 # `gone`, which would send an overseer down the window-gone path onto an item
-# whose remote session is still running. The last row is the inverse: a pane
-# that answered leaves the provider unasked.
+# whose remote session is still running. The `CC-1|idle|ssh` row is the
+# inverse: a pane that answered leaves the provider unasked. The
+# `kendex:` rows are the SESSION:WINDOW form a lane record carries, which
+# selects the pane under that session and answers as the bare name does.
 while IFS='|' read -r item screen host touch_rc want; do
   [[ -n "$item" ]] || continue
   assert_eq "$(verb_state "$item" "$screen" "$host" "$touch_rc")" "$want" \
@@ -614,7 +622,22 @@ CC-404|none|ssh|0|unjudged rc=0 note=none
 CC-404|none|ssh|1|unjudged rc=0 note=host-unreachable
 CC-404|none|ssh|2|unjudged rc=0 note=host-unreachable
 CC-1|idle|ssh|1|idle rc=0 note=none
+kendex:CC-1|idle|local|0|idle rc=0 note=none
+fleet:CC-1|idle|local|0|unjudged rc=0 note=none
+kendex:CC-404|none|ssh|1|unjudged rc=0 note=host-unreachable
 ROWS
+
+# The hosted probe names the item, which is the window part of a
+# session-qualified name: the provider knows items and never tmux sessions.
+# probed NAME [REPO] — the item the provider was asked about for NAME.
+probed() {
+  : > "$VERB_TOUCH_LOG"
+  VERB_RUN_REPO="${2:-$VERB_REPO}" verb_state "$1" none ssh 1 >/dev/null
+  cat "$VERB_TOUCH_LOG"
+}
+for name in kendex:CC-404 CC-404; do
+  assert_eq "$(probed "$name")" "CC-404" "lanes state $name probes the provider with the bare item"
+done
 
 # The provider's own bytes reach the operator: a note naming only the key would
 # leave the reason for the failed probe on the far side of the dispatcher.
@@ -661,6 +684,21 @@ no_item_out="$(cd "$VERB_REPO" && PATH="$OBS_BIN:$PATH" ./scripts/lanes state 2>
 assert_eq "$(head -1 <<<"$no_item_out") rc=$no_item_rc" \
   "lanes: missing-value arg1=state rc=1" \
   "lanes state with no item refuses before it reads a pane"
+
+# Control: the probe handed the whole argument again asks the provider about
+# an item named after a tmux session.
+PROBE_MUTANT_REPO="$TMP_ROOT/verb-probe-mutant"
+cp -a "$VERB_REPO" "$PROBE_MUTANT_REPO"
+python3 - "$PROBE_MUTANT_REPO/scripts/lanes" <<'PY2'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = 'touch --item "${LANE_ARG#*:}"'
+assert s.count(old) == 1
+open(p, "w").write(s.replace(old, 'touch --item "$LANE_ARG"'))
+PY2
+assert_eq "$(probed kendex:CC-404 "$PROBE_MUTANT_REPO")" "kendex:CC-404" \
+  "control: probing with the whole argument names the session to the provider"
 
 echo "=== lane-state § control: the judge that reads the process and not the pane ==="
 

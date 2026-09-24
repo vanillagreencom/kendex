@@ -141,7 +141,7 @@ run() {
   local -a launch_env=(env)
   [[ -n "$RUN_TERMINAL" ]] || launch_env+=(-u TERMINAL)
   case "$where" in
-    in)  launch_env+=(TMUX=stub,1,0 TMUX_PANE=%7) ;;
+    in)  launch_env+=(TMUX=stub,1,0 TMUX_PANE=%7 ORCH_TMUX_SESSION=stub) ;;
     out) launch_env+=(-u TMUX -u TMUX_PANE) ;;
     *) echo "run: WHERE must be in or out, got '$where'" >&2; exit 2 ;;
   esac

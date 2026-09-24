@@ -41,7 +41,9 @@ assert_eq() {
 # Stubs: the GUI terminal and the harness binaries exit 0 without running
 # anything, gh answers nothing, lanes clears every lane, and tmux answers the
 # few reads a --cmd launch and a wake make; a hosted row sets STUB_PANE_CMD
-# and STUB_PANE_TEXT so the pane reads as an ssh session at its prompt.
+# and STUB_PANE_TEXT so the pane reads as an ssh session at its prompt. The
+# launching pane's session is STUB_SESSION_NAME, a dead pane where that is
+# empty, and each new-window's target is logged to STUB_TMUX_LOG.
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/ghostty"
@@ -57,8 +59,10 @@ cat > "$BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
   list-windows) echo 1 ;;
-  new-window) [[ -z "${STUB_OPENED_AT:-}" ]] || { date -u +%Y-%m-%dT%H:%M:%SZ > "$STUB_OPENED_AT"; sleep "${STUB_OPEN_DELAY:-0}"; }; echo "$$ %1" ;;
-  display-message) if [[ "$*" == *pane_current_command* ]]; then echo "${STUB_PANE_CMD:-0}"; else echo 0; fi ;;
+  new-window) [[ -z "${STUB_TMUX_LOG:-}" ]] || printf '%s\n' "$4" >> "$STUB_TMUX_LOG"
+    [[ -z "${STUB_OPENED_AT:-}" ]] || { date -u +%Y-%m-%dT%H:%M:%SZ > "$STUB_OPENED_AT"; sleep "${STUB_OPEN_DELAY:-0}"; }; echo "$$ %1" ;;
+  display-message) if [[ "$*" == *session_name* ]]; then [[ -n "${STUB_SESSION_NAME:-}" ]] || exit 1; echo "$STUB_SESSION_NAME"
+    elif [[ "$*" == *pane_current_command* ]]; then echo "${STUB_PANE_CMD:-0}"; else echo 0; fi ;;
   capture-pane) printf '%s\n' "${STUB_PANE_TEXT:-}" ;;
 esac
 exit 0
@@ -131,7 +135,8 @@ run_ot() {
   set +e
   OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" \
     WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" LANES_HOME="$SESSION_HOME" EXISTS_DIR="$EXISTS_DIR" \
-    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX="${RUN_TMUX:-}" GH_REPO="" STUB_GH_REPO="${STUB_GH_REPO:-}" \
+    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX="${RUN_TMUX:-}" ORCH_TMUX_SESSION="${RUN_SESSION-stub}" TMUX_PANE="${RUN_PANE:-}" \
+    STUB_SESSION_NAME="${STUB_SESSION_NAME:-}" STUB_TMUX_LOG="${STUB_TMUX_LOG:-}" GH_REPO="" STUB_GH_REPO="${STUB_GH_REPO:-}" \
     "$script" ${state_args[@]+"${state_args[@]}"} "$@" 2>"$TMP_ROOT/err")"
   RC=$?
   set -e
@@ -161,11 +166,11 @@ LAUNCHED_AT="$(field "$REC" launched_at)"
 # it, so the model recorded here is the model the harness was started with.
 RUN_TMUX=stub,1,0 run_ot --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high" CC-2
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-2)")" \
-  "rc=0 item=CC-2 tracker=linear repo=null harness=claude window=CC-2 account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=opus session_id=null status=running" \
+  "rc=0 item=CC-2 tracker=linear repo=null harness=claude window=stub:CC-2 account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=opus session_id=null status=running" \
   "a tmux launch under a lane records its window, its account dir, the tmux surface and the model its own command names"
 RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --repo o/r --cmd true 2709
 assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surface|model|session_id|launched_at)=[^ ]*//g')" \
-  "rc=0 item=issue-2709 tracker=github repo=o/r harness=null window=gh-2709 status=running" \
+  "rc=0 item=issue-2709 tracker=github repo=o/r harness=null window=stub:gh-2709 status=running" \
   "a GitHub item is recorded under its workflow-state id with the window the watch reads it through"
 
 # --repo is optional on a supported GitHub launch: the resolver answers and
@@ -174,6 +179,47 @@ assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surfa
 STUB_GH_REPO=o/resolved RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --cmd true 2711
 assert_eq "rc=$RC repo=$(field "$(record issue-2711)" repo)" "rc=0 repo=o/resolved" \
   "a GitHub launch with no --repo records the repository its resolver answered"
+
+echo "=== a tmux launch opens its window in the fleet's named session ==="
+# A window target with no session is the client's current session, and a
+# launch from no pane has none of its own: tmux then picks whichever session it
+# calls current. Every row reads the session the window was opened in off the
+# new-window target, and the recorded one off the state's tmux.session.
+# session_row NAME STATE ITEM — runs the launch with the row's own environment
+# already set, then prints `rc= target= window= recorded= refused=`.
+TMUX_LOG="$TMP_ROOT/tmux-targets"
+session_row() {
+  local state="$TMP_ROOT/$1"
+  : > "$TMUX_LOG"
+  STUB_TMUX_LOG="$TMUX_LOG" RUN_TMUX=stub,1,0 run_ot STATE_DIR="$state" --tmux --cmd true "$2"
+  printf 'rc=%s target=%s window=%s recorded=%s refused=%s' "$RC" "$(tail -1 "$TMUX_LOG")" \
+    "$("$WS" --state-dir "$state" get oversee "[.lanes[]? | select(.item == \"$2\") | .window] | first // \"none\"" 2>/dev/null || echo none)" \
+    "$("$WS" --state-dir "$state" get oversee '.tmux.session // "none"' 2>/dev/null || echo none)" \
+    "$(grep -c "^open-terminal: tmux-session-unresolved item=$2\$" <<<"$ERR" || true)"
+}
+assert_eq "$(RUN_SESSION=fleetx session_row sess-env CC-100)" \
+  "rc=0 target==fleetx:1 window=fleetx:CC-100 recorded=fleetx refused=0" \
+  "a launch from no pane with ORCH_TMUX_SESSION opens and records its window in that session"
+assert_eq "$(RUN_SESSION= session_row sess-none CC-101)" \
+  "rc=1 target= window=none recorded=none refused=1" \
+  "a launch from no pane with no session named or recorded refuses and opens nothing"
+assert_eq "$(RUN_SESSION= RUN_PANE=%9 STUB_SESSION_NAME=fleety session_row sess-pane CC-102)" \
+  "rc=0 target==fleety:1 window=fleety:CC-102 recorded=fleety refused=0" \
+  "the fleet's first launch from a pane opens in that pane's session and records it"
+assert_eq "$(RUN_SESSION= session_row sess-pane CC-103)" \
+  "rc=0 target==fleety:1 window=fleety:CC-103 recorded=fleety refused=0" \
+  "a later launch from no pane opens in the session the fleet recorded"
+assert_eq "$(RUN_SESSION=fleetx session_row sess-pane CC-104)" \
+  "rc=0 target==fleetx:1 window=fleetx:CC-104 recorded=fleety refused=0" \
+  "ORCH_TMUX_SESSION outranks the recorded session and leaves the record as it was"
+NOFLEET_SESSION="$TMP_ROOT/nofleet-session"
+mkdir -p "$NOFLEET_SESSION"
+git -C "$NOFLEET_SESSION" init -q
+: > "$TMUX_LOG"
+RUN_SESSION= RUN_PANE=%9 STUB_SESSION_NAME=own STUB_TMUX_LOG="$TMUX_LOG" RUN_TMUX=stub,1,0 \
+  run_ot STATE_DIR= CWD="$NOFLEET_SESSION" --tmux --cmd true CC-105
+assert_eq "rc=$RC target=$(tail -1 "$TMUX_LOG")" "rc=0 target==own:1" \
+  "a launch naming no fleet opens in the launching pane's session"
 
 echo "=== the model is read from the command the launch runs, as the harness reads it ==="
 # No --harness here, so no row judges these launches and the record is the only
@@ -233,7 +279,7 @@ printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$HOSTED_DISK/srv/lane/.git"
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
   run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-60
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-60)")" \
-  "rc=0 item=CC-60 tracker=linear repo=o/r harness=claude window=CC-60 account=$LANE_DIR host=$HOST_STUB mail_root=/srv/lane surface=tmux model=opus session_id=null status=running" \
+  "rc=0 item=CC-60 tracker=linear repo=o/r harness=claude window=stub:CC-60 account=$LANE_DIR host=$HOST_STUB mail_root=/srv/lane surface=tmux model=opus session_id=null status=running" \
   "a hosted record carries the host spec and the remote path create named, never the local tree"
 
 echo "=== a hosted launch writes its lane's marker on the host and reads it back ==="
@@ -506,6 +552,28 @@ mutant harnessless '--arg harness "$LAUNCH_HARNESS"' '--arg harness ""'
 run_ot SCRIPT="$TMP_ROOT/harnessless/scripts/open-terminal" --ghostty --harness claude --cmd true CC-64
 assert_eq "rc=$RC harness=$(field "$(record CC-64)" harness)" 'rc=0 harness=null' \
   'control: with harness output dropped a harness launch reports success with no close-out path'
+
+# One defect per rule of the session resolution: the refusal gone, the first
+# launch's record gone, the target's session dropped, and the recorded session
+# ranked above ORCH_TMUX_SESSION.
+mutant unrefused '  [[ -n "$session" ]] || { ot_message tmux-session-unresolved "item=$1" >&2; return 1; }' '  :'
+assert_eq "$(OT="$TMP_ROOT/unrefused/scripts/open-terminal" RUN_SESSION= session_row unrefused-state CC-110)" \
+  "rc=0 target==:1 window=:CC-110 recorded=none refused=0" \
+  "control: without the refusal a launch from no pane opens into whichever session tmux calls current"
+mutant unrecorded 'then .tmux.session = $s else . end' 'then . else . end'
+RUN_SESSION= RUN_PANE=%9 STUB_SESSION_NAME=fleety OT="$TMP_ROOT/unrecorded/scripts/open-terminal" session_row unrecorded-state CC-111 >/dev/null
+assert_eq "$(OT="$TMP_ROOT/unrecorded/scripts/open-terminal" RUN_SESSION= session_row unrecorded-state CC-112)" \
+  "rc=1 target= window=none recorded=none refused=1" \
+  "control: without the first launch's record a later launch from no pane has no session to open in"
+mutant untargeted 'tmux new-window -a -t "=$LAUNCH_SESSION:$last_idx"' 'tmux new-window -a -t ":$last_idx"'
+assert_eq "$(OT="$TMP_ROOT/untargeted/scripts/open-terminal" RUN_SESSION=fleetx session_row untargeted-state CC-113)" \
+  "rc=0 target=:1 window=fleetx:CC-113 recorded=fleetx refused=0" \
+  "control: with the session dropped from the target the window opens in the client's session while the record names another"
+mutant outranked '[$set, $r, $own]' '[$r, $set, $own]'
+RUN_SESSION= RUN_PANE=%9 STUB_SESSION_NAME=fleety OT="$TMP_ROOT/outranked/scripts/open-terminal" session_row outranked-state CC-114 >/dev/null
+assert_eq "$(OT="$TMP_ROOT/outranked/scripts/open-terminal" RUN_SESSION=fleetx session_row outranked-state CC-115)" \
+  "rc=0 target==fleety:1 window=fleety:CC-115 recorded=fleety refused=0" \
+  "control: with the record ranked first ORCH_TMUX_SESSION no longer moves a fleet's windows"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
