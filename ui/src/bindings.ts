@@ -423,7 +423,7 @@ export const commands = {
 	 *  `commit_offer_open_pull_request` run with these values, the remote URL
 	 *  printed without its credentials.
 	 */
-	commitOfferByHand: (remote: string, repo: string, branch: string, base: string, title: string, files: number) => typedError<string[], string>(__TAURI_INVOKE("commit_offer_by_hand", { remote, repo, branch, base, title, files })),
+	commitOfferByHand: (root: string, remote: string, repo: string, branch: string, base: string, title: string, files: number) => typedError<string[], string>(__TAURI_INVOKE("commit_offer_by_hand", { root, remote, repo, branch, base, title, files })),
 	commitOfferStartBranch: (root: string, branch: string) => typedError<StepResult, string>(__TAURI_INVOKE("commit_offer_start_branch", { root, branch })),
 	/**
 	 *  Put the checkout back and remove the empty branch kendex made, after a

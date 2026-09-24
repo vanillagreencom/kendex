@@ -741,7 +741,7 @@ const RULES_ROWS: [RulesRow; 9] = [
             "the commit is on main in this checkout; kendex did not undo it",
             RULES_LINE,
             "to open one from this commit yourself:",
-            "    git 'push' 'origin' 'HEAD:refs/heads/kendex/renders'",
+            "'push' 'origin' 'HEAD:refs/heads/kendex/renders'",
             "'--repo' 'https://github.com/acme/plain-origin.git' '--head' 'kendex/renders' '--base' 'main' '--title' 'chore: kendex apply'",
         ],
         not: &["secret"],
@@ -755,7 +755,7 @@ const RULES_ROWS: [RulesRow; 9] = [
         exit: 1,
         committed: true,
         says: &["GITHUB PUSH PROTECTION"],
-        not: &[RULES_LINE, "git 'push'"],
+        not: &[RULES_LINE, "'push' 'origin'"],
     },
 ];
 
@@ -788,6 +788,12 @@ fn the_branch_rules_are_read_before_a_push_and_a_refusal_under_them_names_the_wa
         }
         for line in row.not {
             assert!(!text.contains(line), "{}: {line}: {text}", row.what);
+        }
+        // The printed push names the project it pushes from, so a line
+        // pasted into a terminal standing elsewhere pushes this commit.
+        if row.refuses == PR_RULE {
+            let from = format!("    git '-C' '{}' 'push' 'origin'", project.display());
+            assert!(text.contains(&from), "{}: {from}: {text}", row.what);
         }
         assert_eq!(
             head_subject(&project) != "files",

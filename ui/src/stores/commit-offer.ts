@@ -698,6 +698,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
         let byHand: string[] | null = null;
         if (recovers && refused.pullRequestRequired && offer.repo !== null) {
           const lines = await commands.commitOfferByHand(
+            offer.root,
             remote,
             offer.repo,
             offer.newBranch,

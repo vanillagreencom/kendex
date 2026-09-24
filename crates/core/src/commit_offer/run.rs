@@ -314,11 +314,15 @@ fn pull_request_words(
 /// through [`crate::names::quoted`], since git allows a branch name a
 /// shell would run.
 ///
-/// One change from the words run: the remote's URL is printed without the
-/// user name and password a URL can carry, so a token in it does not
-/// reach a terminal, a CI log, or a copy button. gh is still handed the
-/// URL whole.
+/// Two changes from the words run. The git line names the project with
+/// `-C <root>`: [`push_head`] runs in the root, and a line pasted into a
+/// terminal standing anywhere else would push that folder's checkout, or
+/// none. The gh line locates itself through `--repo` and `--head`. And the
+/// remote's URL is printed without the user name and password a URL can
+/// carry, so a token in it does not reach a terminal, a CI log, or a copy
+/// button. gh is still handed the URL whole.
 pub fn by_hand(
+    root: &Path,
     remote: &str,
     repo: &str,
     branch: &str,
@@ -332,8 +336,10 @@ pub fn by_hand(
             .collect::<Vec<_>>()
             .join(" ")
     };
+    let mut git = vec!["-C".to_owned(), crate::paths::slashed(root)];
+    git.extend(push_head_words(remote, branch));
     vec![
-        line("git", push_head_words(remote, branch)),
+        line("git", git),
         line(
             "gh",
             pull_request_words(&without_credentials(repo), branch, base, title, files),

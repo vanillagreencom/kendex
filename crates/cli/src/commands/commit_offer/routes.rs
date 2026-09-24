@@ -132,6 +132,7 @@ fn pushed(
                     &offer.branch,
                     &remote.name,
                     &commit_offer::by_hand(
+                        &offer.scan.root,
                         &remote.name,
                         &remote.url,
                         &offer.new_branch,

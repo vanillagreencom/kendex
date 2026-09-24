@@ -247,6 +247,7 @@ fn the_recovery_by_hand_is_the_words_it_runs_without_credentials() {
     ];
     for (repo, shown) in rows {
         let lines = by_hand(
+            Path::new("/home/method/dev/it's site"),
             "origin",
             repo,
             "kendex/renders",
@@ -257,7 +258,7 @@ fn the_recovery_by_hand_is_the_words_it_runs_without_credentials() {
         assert_eq!(
             lines,
             [
-                "git 'push' 'origin' 'HEAD:refs/heads/kendex/renders'".to_owned(),
+                "git '-C' '/home/method/dev/it'\\''s site' 'push' 'origin' 'HEAD:refs/heads/kendex/renders'".to_owned(),
                 format!(
                     "gh 'pr' 'create' '--repo' '{shown}' '--head' 'kendex/renders' '--base' 'it'\\''s-main' '--title' 'chore: kendex refresh' '--body' 'kendex wrote these files. Files: 12'"
                 ),

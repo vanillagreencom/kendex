@@ -1036,6 +1036,7 @@ pub fn commit_offer_push_head(
 #[tauri::command]
 #[specta::specta]
 pub fn commit_offer_by_hand(
+    root: String,
     remote: String,
     repo: String,
     branch: String,
@@ -1044,6 +1045,7 @@ pub fn commit_offer_by_hand(
     files: u32,
 ) -> Result<Vec<String>, String> {
     Ok(commit_offer::by_hand(
+        &PathBuf::from(root),
         &remote,
         &repo,
         &branch,

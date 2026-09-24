@@ -326,12 +326,12 @@ A refused push names what landed and what did not, and offers the way on:
 1-2, or Enter to leave it here:
 ```
 
-Where GitHub refused the push for want of a pull request, as **Surfacing a refusal** reads it, two lines and the commands follow `kendex did not undo it`, before the choices. The commands are the words choice 1 runs, from `commit_offer::by_hand`, each quoted, for a run with no one to ask. The remote's URL is printed without the user name and password a URL can carry, while `gh` is handed it whole:
+Where GitHub refused the push for want of a pull request, as **Surfacing a refusal** reads it, two lines and the commands follow `kendex did not undo it`, before the choices. The commands are the words choice 1 runs, from `commit_offer::by_hand`, each quoted, for a run with no one to ask. The git line adds `-C <project root>`: choice 1 runs in the project, and a pasted line runs wherever the terminal stands. The remote's URL is printed without the user name and password a URL can carry, while `gh` is handed it whole:
 
 ```
   main on origin accepts changes only through a pull request
   to open one from this commit yourself:
-    git 'push' 'origin' 'HEAD:refs/heads/kendex/renders'
+    git '-C' '/home/method/dev/site' 'push' 'origin' 'HEAD:refs/heads/kendex/renders'
     gh 'pr' 'create' '--repo' 'https://github.com/acme/site.git' '--head' 'kendex/renders' '--base' 'main' '--title' 'chore: kendex refresh' '--body' 'kendex wrote these files. Files: 12'
 ```
 

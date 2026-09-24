@@ -513,6 +513,7 @@ describe("answering an offer", () => {
     expect(stage.byHand).toEqual(row.shown ? lines : null);
     if (row.shown)
       expect(commands.commitOfferByHand).toHaveBeenCalledWith(
+        "/home/method/dev/site",
         "origin",
         "acme/site",
         "kendex/renders",
