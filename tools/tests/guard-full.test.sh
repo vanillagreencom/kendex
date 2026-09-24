@@ -173,7 +173,8 @@ SPACE_ROWS=(
   "an unreadable target size is named and the block still runs|DU_FAIL=1 CARGO_TARGET_DIR=$TMP/warm DF_FREE_KIB_START=$G|0|cargo-target-unreadable=$TMP/warm|1"
   "an exhausted volume fails after zero cargo exit codes|DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|1|cargo-space-end=free-kib=0 min-mib=512|1"
   "an unreadable end probe fails the run|DF_FAIL_CALL=2 DF_FREE_KIB_START=$high_free_kib|1|cargo-space-end-unreadable=target|1"
-  "a bound that is not a whole number refuses|GUARD_MIN_FREE_GB=16GiB DF_FREE_KIB_START=$high_free_kib|2|cargo-space-setting=GUARD_MIN_FREE_GB|0"
+  "a start floor that is not a whole number refuses|GUARD_MIN_FREE_GB=16GiB DF_FREE_KIB_START=$high_free_kib|2|cargo-space-setting=GUARD_MIN_FREE_GB|0"
+  "an exhaustion floor that is not a whole number refuses|GUARD_EXHAUSTED_FREE_MB=512MB DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|2|cargo-space-setting=GUARD_EXHAUSTED_FREE_MB|0"
 )
 space_row_holds() { # N — run row N under $GUARD; succeed when every expectation holds
   local env rc key ran did=0
@@ -215,6 +216,7 @@ done <<'EDITS'
 7|s/^    say cargo-space-end "free-kib/    note cargo-space-end "free-kib/
 8|s/^    say cargo-space-end-unreadable/    note cargo-space-end-unreadable/
 9|s/"" | \*\[!0-9\]\*) refuse cargo-space-setting/"") refuse cargo-space-setting/
+10|/^  whole_setting GUARD_EXHAUSTED_FREE_MB/d
 EDITS
 
 # Every other lane fails its own write on a full stream too, so only fmt's
