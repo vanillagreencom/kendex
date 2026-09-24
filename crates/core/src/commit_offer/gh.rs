@@ -75,11 +75,12 @@ const THROUGH_A_PULL_REQUEST: &[&str] = &["pull_request", "merge_queue"];
 /// two let them push to the branch directly.
 const MAY_PUSH_PAST: &[&str] = &["always", "exempt"];
 
-#[derive(serde::Deserialize)]
-struct Rule {
+/// One rule GitHub applies to the branch, as far as the offer reads it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub(super) struct Rule {
     #[serde(rename = "type")]
-    kind: String,
-    ruleset_id: Option<u64>,
+    pub(super) kind: String,
+    pub(super) ruleset_id: Option<u64>,
 }
 
 #[derive(serde::Deserialize)]
@@ -90,48 +91,82 @@ struct Ruleset {
 /// Whether the branch's rules on GitHub take changes only through a pull
 /// request, for the person `gh` is signed in as.
 ///
-/// `true` only where the rules were read and one of them says so. A read
-/// that fails or answers with something this cannot parse is not known,
-/// and not known leaves the push on offer: the push's own refusal then
-/// names the rule, and [`super::Failed::refused_by_branch_rules`] adds the
-/// way on. Branch protection is not read here: its endpoint needs a
-/// permission most people pushing to a branch do not hold.
-///
-/// A person the ruleset lets past keeps the push. Where that cannot be
-/// read, the rule stands: it was read to apply here, and the exception is
-/// the part not known.
-///
-/// `GH_REPO` binds the call to the remote the offer chose, the way
-/// `--repo` binds the others: `gh api` has no `--repo`, and fills
-/// `{owner}` and `{repo}` from that variable.
+/// `true` only where the rules were read and [`requires`] says so. A read
+/// that fails, answers with something this cannot parse, or cannot be
+/// bound to the remote's host is not known, and not known leaves the push
+/// on offer: the push's own refusal then names the rule, and
+/// [`super::Failed::pull_request_required`] adds the way on. Branch
+/// protection is not read here: its endpoint needs a permission most
+/// people pushing to a branch do not hold.
 pub fn through_a_pull_request(repo: &str, branch: &str) -> bool {
+    let Some(host) = host(repo) else {
+        return false;
+    };
     let endpoint = format!(
         "repos/{{owner}}/{{repo}}/rules/branches/{}",
         crate::names::urlencoded(branch)
     );
-    let Some(rules) = api::<Vec<Rule>>(repo, &endpoint) else {
+    let Some(rules) = api::<Vec<Rule>>(repo, &host, &endpoint) else {
         return false;
     };
+    requires(&rules, |id| {
+        api::<Ruleset>(
+            repo,
+            &host,
+            &format!("repos/{{owner}}/{{repo}}/rulesets/{id}"),
+        )
+        .and_then(|ruleset| ruleset.current_user_can_bypass)
+    })
+}
+
+/// The decision over what was read: a `pull_request` or `merge_queue` rule
+/// takes changes only through a pull request, unless the person may push
+/// past its ruleset. `bypass` answers GitHub's `current_user_can_bypass`
+/// for a ruleset, or `None` where that could not be read — and there the
+/// rule stands: it was read to apply here, and the exception is the part
+/// not known.
+pub(super) fn requires(rules: &[Rule], bypass: impl Fn(u64) -> Option<String>) -> bool {
     let mut rulesets: Vec<Option<u64>> = rules
-        .into_iter()
+        .iter()
         .filter(|rule| THROUGH_A_PULL_REQUEST.contains(&rule.kind.as_str()))
         .map(|rule| rule.ruleset_id)
         .collect();
     rulesets.sort_unstable();
     rulesets.dedup();
     rulesets.into_iter().any(|id| {
-        let bypass = id
-            .and_then(|id| api::<Ruleset>(repo, &format!("repos/{{owner}}/{{repo}}/rulesets/{id}")))
-            .and_then(|ruleset| ruleset.current_user_can_bypass);
-        !bypass.is_some_and(|bypass| MAY_PUSH_PAST.contains(&bypass.as_str()))
+        !id.and_then(&bypass)
+            .is_some_and(|bypass| MAY_PUSH_PAST.contains(&bypass.as_str()))
     })
 }
 
-/// One `gh api` read bound to `repo`, parsed, or `None` where it did not
-/// run, refused, or answered with something else.
-fn api<T: serde::de::DeserializeOwned>(repo: &str, endpoint: &str) -> Option<T> {
+/// The host a remote URL names, in the forms `gh` takes for `--repo`: a
+/// URL with an authority (`https://`, `ssh://`) or scp-style
+/// `[user@]host:path`. `None` for anything else, such as a local path.
+pub(super) fn host(remote: &str) -> Option<String> {
+    let host = match remote.contains("://") {
+        true => url::Url::parse(remote).ok()?.host_str()?.to_owned(),
+        false => {
+            let (before, _) = remote.split_once(':')?;
+            let host = before.rsplit_once('@').map_or(before, |(_, host)| host);
+            if host.contains(['/', '\\']) {
+                return None;
+            }
+            host.to_owned()
+        }
+    };
+    (!host.is_empty()).then_some(host)
+}
+
+/// One `gh api` read bound to the remote, parsed, or `None` where it did
+/// not run, refused, or answered with something else.
+///
+/// `gh api` has no `--repo`. It fills `{owner}` and `{repo}` from
+/// `GH_REPO`, and takes the host from `--hostname` alone, github.com
+/// where none is given, so both are passed: without the host an
+/// Enterprise remote's path would be asked of github.com.
+fn api<T: serde::de::DeserializeOwned>(repo: &str, host: &str, endpoint: &str) -> Option<T> {
     let stdout = git::run(
-        Hardened::gh(&["api", endpoint]).env("GH_REPO", repo),
+        Hardened::gh(&["api", "--hostname", host, endpoint]).env("GH_REPO", repo),
         Step::Probe,
     )
     .ok()?;

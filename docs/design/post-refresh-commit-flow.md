@@ -96,7 +96,7 @@ The pull-request choice needs three things at once: `gh` on the machine, a crede
 gh pr list --repo <url> --head <branch> --state open --json number,url
 ```
 
-`<url>` is the chosen remote's URL from `git remote get-url`, and every `gh` call carries it as `--repo`: the probe, the open-pull-request lookup and the create. Without it `gh` resolves the repository from the remotes itself, so a project whose `origin` is GitLab and whose second remote is GitHub would be probed against a repository the push never reaches.
+`<url>` is the chosen remote's URL from `git remote get-url`, and the probe, the open-pull-request lookup and the create carry it as `--repo`. The branch-rules reads below carry it as `GH_REPO` with its host as `--hostname`. Without it `gh` resolves the repository from the remotes itself, so a project whose `origin` is GitLab and whose second remote is GitHub would be probed against a repository the push never reaches.
 
 - It fails to spawn: `gh` is not installed.
 - It exits non-zero saying it is not authenticated: `gh` is not signed in.
@@ -112,10 +112,10 @@ kendex runs no separate credential check. `gh auth token` would print the token 
 Where the probe exits zero, kendex asks the same `gh` which rules apply to the current branch:
 
 ```
-gh api repos/{owner}/{repo}/rules/branches/<branch>
+gh api --hostname <host> repos/{owner}/{repo}/rules/branches/<branch>
 ```
 
-`gh api` has no `--repo`, so the call carries the chosen remote's URL as `GH_REPO`, which `gh` fills `{owner}` and `{repo}` from. `<branch>` is percent-encoded. The endpoint needs only read access to the repository.
+`gh api` has no `--repo`. It fills `{owner}` and `{repo}` from `GH_REPO`, which carries the chosen remote's URL, and takes the host from `--hostname` alone, github.com where none is given. So `<host>` is read from the same URL, in each form `gh` takes for `--repo`: `https://`, `ssh://` and scp-style `[user@]host:path`. A URL with no host, such as a local path, gets no read. `<branch>` is percent-encoded. The endpoint needs only read access to the repository.
 
 - A rule of type `pull_request` or `merge_queue` means changes reach the branch only through a pull request. kendex then reads that rule's ruleset, `gh api repos/{owner}/{repo}/rulesets/<id>`, for `current_user_can_bypass`.
 - A ruleset the person may push past (`always` or `exempt`) leaves the push on offer. Any other answer, or a ruleset read that fails, removes it with the reason named, and the pull-request choice stays.
@@ -123,7 +123,7 @@ gh api repos/{owner}/{repo}/rules/branches/<branch>
 
 Branch protection is not read: its endpoint needs admin access, which most people pushing to a branch do not hold. A protected branch is named by the remote's own refusal when the push runs, and that refusal carries the way on in § CLI.
 
-A `--commit` flag skips the probe and this read. Every other flag runs both, so `--push` onto a branch whose rules require a pull request refuses before anything is committed.
+A `--commit` flag skips the probe and this read. Every other flag runs both. Where `gh` could read the branch's rules, `--push` onto a branch that requires a pull request refuses before anything is committed. Otherwise the push's own refusal names the rule after the commit.
 
 ## The four choices
 
@@ -194,7 +194,7 @@ The rule is the command, not a list, so no enumeration can fall out of date as t
 
 The message is editable on both surfaces before the commit runs, because a repository's commit-msg hook decides what it will accept and kendex cannot know that rule.
 
-The pull request's title is the message. Its body is two lines: `kendex wrote these files.` and `Files: <n>`.
+The pull request's title is the message. Its body is one line, `kendex wrote these files. Files: <n>`, so the command printed for it by hand stays one line.
 
 ## Timeouts
 
@@ -213,7 +213,7 @@ A step that times out is reported as that step's failure, naming the step and th
 
 - Both halves are shown whole, one line at a time, in order: stdout first, then stderr, so the block ends on the refusal itself. git and gh both write their refusal to stderr. stdout carries whatever ran and passed on the way, such as a pre-push hook's own report, which git keeps there.
 - Each line goes through the surface's escaping: `ui::say` on the CLI, React text on the app. A control character in a hook's output must not move a cursor or colour a line.
-- Nothing is summarised, reworded, or truncated to a first line. The one pattern read from the words is GitHub's code for a push the branch's rules refused: a `remote: ` line carrying `GH013` (a ruleset) or `GH006` (branch protection). It adds a way on and takes none of the words away.
+- Nothing is summarised, reworded, or truncated to a first line. The one pattern read from the words is GitHub refusing a push for want of a pull request: a `remote: ` line carrying `GH013` (a ruleset) or `GH006` (branch protection), and a `remote: ` line naming the rule, `Changes must be made through a pull request` or `Changes must be made through the merge queue`. Both codes also cover refusals a pull request does not get past, such as a secret in the push or an unsigned commit, so the code alone is not read as the rule. The reading adds a way on and takes none of the words away.
 - No output cap. `Hardened::max_output` refuses the whole call when the cap is passed, and its error carries none of what the program said, which would lose exactly the words the contract promises. A hook's output is bounded by the hook, and no cap is worth a refusal that says nothing.
 
 ## CLI
@@ -255,12 +255,12 @@ A precondition that removed a choice prints its reason as a detail line under th
 ```
   no push: this repository has no remote
   no push: this branch tracks no remote and the repository has more than one
+  no push: this branch's rules on GitHub accept changes only through a pull request
   no pull request: this repository has no remote
   no pull request: this branch tracks no remote and the repository has more than one
   no pull request: gh is not installed
   no pull request: gh said: To get started with GitHub CLI, please run:  gh auth login
   no pull request: gh said: expected the "[HOST/]OWNER/REPO" format, got "/srv/git/site.git"
-  no push: this branch's rules on GitHub accept changes only through a pull request
 ```
 
 The last two are `gh`'s own first line for the repository it was bound to, whatever it turns out to be; the lines above show the shape, not a fixed list.
@@ -326,13 +326,13 @@ A refused push names what landed and what did not, and offers the way on:
 1-2, or Enter to leave it here:
 ```
 
-Where GitHub's code names the branch's rules, two lines and the commands follow `kendex did not undo it`, before the choices. The commands are the ones choice 1 runs, for a run with no one to ask:
+Where GitHub refused the push for want of a pull request, as **Surfacing a refusal** reads it, two lines and the commands follow `kendex did not undo it`, before the choices. The commands are the words choice 1 runs, from `commit_offer::by_hand`, each quoted, for a run with no one to ask. The remote's URL is printed without the user name and password a URL can carry, while `gh` is handed it whole:
 
 ```
   main on origin accepts changes only through a pull request
   to open one from this commit yourself:
-    git push 'origin' 'HEAD:refs/heads/kendex/renders'
-    gh pr create --repo 'https://github.com/acme/site.git' --head 'kendex/renders' --base 'main' --fill
+    git 'push' 'origin' 'HEAD:refs/heads/kendex/renders'
+    gh 'pr' 'create' '--repo' 'https://github.com/acme/site.git' '--head' 'kendex/renders' '--base' 'main' '--title' 'chore: kendex refresh' '--body' 'kendex wrote these files. Files: 12'
 ```
 
 That block is the `commit` and `push` routes. On the `pr` route the commit is already on the branch kendex made, so a refused push there offers only `leave it here`: the recovery below is to put the commit on a branch, and it is there.
@@ -476,7 +476,7 @@ No next-step line is added under any of them: the block above already carries th
 
 `--commit`, `--push`, `--pull-request` and `--leave` are one mutually exclusive group on every verb that offers, flattened from one shared clap `Args`. `--message <text>` sets the message. Two of the group together is refused before the verb writes anything, naming both.
 
-A flag answers the offer without asking. A precondition that removed the choice a flag names refuses with that precondition's reason, and the verb's writes still stand. `--push` refused under the branch's rules adds `run again with --pull-request to commit on a new branch and open one`.
+A flag answers the offer without asking. A precondition that removed the choice a flag names refuses with that precondition's reason, and the verb's writes still stand. `--push` refused under the branch's rules adds `run again with --pull-request to commit on a new branch and open one` where the pull-request choice is on offer, and nothing where a pull request is already open for the branch.
 
 | Outcome | Exit |
 | --- | --- |
@@ -608,7 +608,7 @@ Push refused:
 | Section body | git's words as **Surfacing a refusal** fixes them, monospace, in a scroll area |
 | Line | `The commit is on main in this checkout. kendex did not undo it.` |
 | Footer, outline | `Leave it here` |
-| Line, only where GitHub's code names the branch's rules | `main on origin accepts changes only through a pull request.` |
+| Line, only on the `commit` or `push` route where GitHub refused the push for want of a pull request | `main on origin accepts changes only through a pull request.` |
 | Row label, row values, same condition | `To open one yourself`, the two commands of the CLI block, monospace, each with a copy button |
 | Footer, primary, only where a pull request is available | `Open a pull request` |
 
@@ -704,7 +704,7 @@ Every state, its detection, and where its words are.
 | Commit refused, `pr` route | `git commit` exits non-zero after the switch | The same, plus the line naming the switch back and the removed branch | The same, plus that line |
 | The checkout could not be put back | `git switch -` or `git branch -d` exits non-zero after that | The refusal, then `the checkout could not be put back` and git's words, no further choice | The refusal, then that line and git's words, `Leave as diffs` only |
 | Push refused, `pr` route | `git push` exits non-zero after the switch | git's words, the commit named on the new branch, no further choice | `Committed, not pushed`, no `Open a pull request` |
-| Push refused under the branch's rules | `git push` exits non-zero on the `commit` or `push` route, with `GH013` or `GH006` behind `remote: ` | git's words, the commit named, the rules line and the commands, then two choices | `Committed, not pushed`, with the rules line and the commands |
+| Push refused for want of a pull request | `git push` exits non-zero on the `commit` or `push` route, GitHub's `GH013` or `GH006` and the pull-request rule behind `remote: ` | git's words, the commit named, the rules line and the commands, then two choices | `Committed, not pushed`, with the rules line and the commands |
 | Push refused otherwise | `git push` exits non-zero on the `commit` or `push` route | git's words, the commit named, then two choices | `Committed, not pushed` |
 | Pull request refused | `gh pr create` exits non-zero | gh's words, the commit and branch named | `Committed and pushed, no pull request` |
 | A step timed out | The bound in the timeouts table | The CLI's **Timed out** block | The app's **Timed out** state |

@@ -49,7 +49,7 @@ const refused = (over: Partial<Refused> = {}): Refused => ({
   timedOut: false,
   seconds: SECONDS,
   gh: false,
-  branchRules: false,
+  pullRequestRequired: false,
   ...over,
 });
 

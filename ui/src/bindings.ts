@@ -417,6 +417,13 @@ export const commands = {
 	 *  moving the branch it is on — the recovery a refused push offers.
 	 */
 	commitOfferPushHead: (root: string, remote: string, branch: string) => typedError<StepResult, string>(__TAURI_INVOKE("commit_offer_push_head", { root, remote, branch })),
+	/**
+	 *  The recovery a refused push offers, as the commands a person runs
+	 *  themselves: what `commit_offer_push_head` and
+	 *  `commit_offer_open_pull_request` run with these values, the remote URL
+	 *  printed without its credentials.
+	 */
+	commitOfferByHand: (remote: string, repo: string, branch: string, base: string, title: string, files: number) => typedError<string[], string>(__TAURI_INVOKE("commit_offer_by_hand", { remote, repo, branch, base, title, files })),
 	commitOfferStartBranch: (root: string, branch: string) => typedError<StepResult, string>(__TAURI_INVOKE("commit_offer_start_branch", { root, branch })),
 	/**
 	 *  Put the checkout back and remove the empty branch kendex made, after a
@@ -3948,12 +3955,6 @@ export type ProjectOffer = {
 	 *  `--set-upstream`.
 	 */
 	tracked: boolean,
-	/**
-	 *  The commands that put the commit on [`ProjectOffer::new_branch`]
-	 *  and open the pull request by hand, shown where GitHub refused a push
-	 *  under the branch's rules. Empty with no remote.
-	 */
-	byHand: string[],
 };
 
 /**
@@ -4061,8 +4062,11 @@ export type Refused = {
 	seconds: number,
 	/**  Whether the words are `gh`'s rather than git's. */
 	gh: boolean,
-	/**  GitHub refused this push under the branch's rules. */
-	branchRules: boolean,
+	/**
+	 *  GitHub refused this push because the branch takes changes only
+	 *  through a pull request.
+	 */
+	pullRequestRequired: boolean,
 };
 
 /**

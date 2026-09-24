@@ -59,8 +59,8 @@ pub use pending::{
 pub use regions::OwnedRegion;
 pub use restore::{RestoreFailure, RestorePlan, restore, restore_plan};
 pub use run::{
-    CommitFailure, Committed, Opened, Pushed, abandon_branch, body, commit, open_pull_request,
-    push, push_head, start_branch,
+    CommitFailure, Committed, Opened, Pushed, abandon_branch, body, by_hand, commit,
+    open_pull_request, push, push_head, start_branch,
 };
 
 #[cfg(test)]
@@ -153,9 +153,10 @@ pub enum Refusal {
     /// report.
     ///
     /// Nothing is summarised, reworded or truncated to a first line. The
-    /// one pattern read from them is GitHub's code for a push the branch's
-    /// rules refused, [`Failed::refused_by_branch_rules`], which adds a way
-    /// on and takes none of the words away.
+    /// one pattern read from them is GitHub refusing a push because the
+    /// branch takes changes only through a pull request,
+    /// [`Failed::pull_request_required`], which adds a way on and takes none
+    /// of the words away.
     Said(Vec<String>),
     /// The step ran past its bound. Whether it finished is not known here.
     TimedOut,
@@ -183,21 +184,44 @@ impl Failed {
         self.refusal == Refusal::TimedOut
     }
 
-    /// Whether GitHub refused this push under the branch's rules: a
-    /// ruleset (`GH013`) or branch protection (`GH006`).
+    /// Whether GitHub refused this push because the branch takes changes
+    /// only through a pull request.
+    ///
+    /// Two things GitHub says together decide it: its code for a refusal
+    /// under a ruleset (`GH013`) or branch protection (`GH006`), and the
+    /// rule it names. Both codes also cover refusals a pull request does not
+    /// get past — a secret in the push, an unsigned commit, a status check
+    /// — so the code alone is not the answer. git prints what the remote
+    /// said behind `remote: `, so a local hook's words cannot pass for
+    /// either.
     ///
     /// The one reading made of a refusal's words, and it adds a way on
-    /// without replacing them: the words are still shown whole. The codes
-    /// are GitHub's own, and git prints what the remote said behind
-    /// `remote: `, so a local hook's words cannot pass for them.
-    pub fn refused_by_branch_rules(&self) -> bool {
-        self.step == Step::Push
-            && self.said().iter().any(|line| {
-                line.strip_prefix("remote: ")
-                    .map(str::trim_start)
-                    .map(|said| said.strip_prefix("error: ").unwrap_or(said))
-                    .is_some_and(|said| said.starts_with("GH013:") || said.starts_with("GH006:"))
+    /// without replacing them: the words are still shown whole.
+    pub fn pull_request_required(&self) -> bool {
+        let remote: Vec<&str> = self
+            .said()
+            .iter()
+            .filter_map(|line| line.strip_prefix("remote: "))
+            .map(str::trim_start)
+            .collect();
+        let told = |prefixes: &[&str], starts: &[&str]| {
+            remote.iter().any(|said| {
+                let said = prefixes
+                    .iter()
+                    .find_map(|prefix| said.strip_prefix(prefix))
+                    .unwrap_or(said);
+                starts.iter().any(|start| said.starts_with(start))
             })
+        };
+        self.step == Step::Push
+            && told(&["error: "], &["GH013:", "GH006:"])
+            && told(
+                &["error: ", "- "],
+                &[
+                    "Changes must be made through a pull request",
+                    "Changes must be made through the merge queue",
+                ],
+            )
     }
 }
 
@@ -384,36 +408,6 @@ pub struct Offer {
     /// The branch the `pr` route would make, and the branch the
     /// refused-push recovery would push to. Picked by the first-free rule.
     pub new_branch: String,
-}
-
-impl Offer {
-    /// The commands that do the refused-push recovery by hand: push the
-    /// commit on this branch to [`Offer::new_branch`], then open the pull
-    /// request from it. Empty with no remote, where there is nowhere to
-    /// push.
-    ///
-    /// Every value the repository chose goes through
-    /// [`crate::names::quoted`]: git allows a branch name a shell would
-    /// run.
-    pub fn by_hand(&self) -> Vec<String> {
-        use crate::names::quoted;
-        let Some(remote) = &self.remote else {
-            return Vec::new();
-        };
-        vec![
-            format!(
-                "git push {} {}",
-                quoted(&remote.name),
-                quoted(&format!("HEAD:refs/heads/{}", self.new_branch))
-            ),
-            format!(
-                "gh pr create --repo {} --head {} --base {} --fill",
-                quoted(&remote.url),
-                quoted(&self.new_branch),
-                quoted(&self.branch)
-            ),
-        ]
-    }
 }
 
 /// Whether building the offer asks `gh` about the repository.

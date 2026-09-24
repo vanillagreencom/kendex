@@ -39,7 +39,6 @@ const offer: ProjectOffer = {
   newBranch: "kendex/renders",
   repo: "acme/site",
   tracked: true,
-  byHand: [],
 };
 
 const refused = (step: string, said: string): Refused => ({
@@ -48,7 +47,7 @@ const refused = (step: string, said: string): Refused => ({
   timedOut: false,
   seconds: 30,
   gh: false,
-  branchRules: false,
+  pullRequestRequired: false,
 });
 
 const buttons = () =>
@@ -66,37 +65,26 @@ beforeEach(() => {
 });
 
 describe("the push-refused state", () => {
-  // A push GitHub refused under the branch's rules names them and the
-  // commands that open the pull request by hand; any other refusal, and a
-  // refused push on the `pr` route, whose commit is already on a branch of
-  // its own, do not.
+  // The store settles whether the refusal carries the way on by hand; the
+  // state draws the rules line and the commands exactly where it does.
   const byHand = [
-    "git push 'origin' 'HEAD:refs/heads/kendex/renders'",
-    "gh pr create --repo 'acme/site' --head 'kendex/renders' --base 'main' --fill",
+    "git 'push' 'origin' 'HEAD:refs/heads/kendex/renders'",
+    "gh 'pr' 'create' '--repo' 'acme/site' '--head' 'kendex/renders' '--base' 'main'",
   ];
   it.each([
-    { name: "the rules refused it", rules: true, branch: "main", shown: true },
-    { name: "another refusal", rules: false, branch: "main", shown: false },
-    {
-      name: "the pr route",
-      rules: true,
-      branch: "kendex/renders",
-      shown: false,
-    },
+    { name: "the way on is carried", byHand, shown: true },
+    { name: "none is carried", byHand: null, shown: false },
   ])("names the branch's rules: $name", async (row) => {
     useCommitOfferStore.setState({
-      queue: [{ ...offer, byHand }],
       stage: {
         at: "pushRefused",
-        refused: {
-          ...refused("the push", "remote: error: GH013: rule violations"),
-          branchRules: row.rules,
-        },
+        refused: refused("the push", "remote: error: GH013: rule violations"),
         sha: "9fbb1a2",
-        branch: row.branch,
+        branch: "main",
         files: 1,
         canOpen: true,
         before: "4c1d90e",
+        byHand: row.byHand,
       },
     });
     mount(<CommitOfferDialog />);

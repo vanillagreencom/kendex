@@ -17,6 +17,9 @@ vi.mock("@/bindings", () => ({
     commitOfferCommit: vi.fn(),
     commitOfferPreviousHead: vi.fn(),
     commitOfferOpen: vi.fn(),
+    commitOfferPush: vi.fn(),
+    commitOfferStartBranch: vi.fn(),
+    commitOfferByHand: vi.fn(),
     projectChangesScan: vi.fn(),
   },
 }));
@@ -55,7 +58,6 @@ const offer = (over: Partial<ProjectOffer> = {}): ProjectOffer => ({
   newBranch: "kendex/renders",
   repo: "acme/site",
   tracked: true,
-  byHand: [],
   ...over,
 });
 
@@ -463,6 +465,61 @@ describe("answering an offer", () => {
       status: "ok",
       data: { kind: "made", sha: "def5678", files: 1, dropped: [] },
     });
+  });
+
+  // A push GitHub refused for want of a pull request carries the commands
+  // that open one by hand, built from what the recovery runs. Any other
+  // refusal carries none, and neither does the `pr` route, whose commit is
+  // already on a branch of its own.
+  it.each([
+    { name: "the rules refused it", route: "push", rule: true, shown: true },
+    { name: "another refusal", route: "push", rule: false, shown: false },
+    { name: "the pr route", route: "pr", rule: true, shown: false },
+  ] as const)("carries the way on by hand: $name", async (row) => {
+    const lines = ["git 'push' 'origin' 'HEAD:refs/heads/kendex/renders'"];
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "ok",
+      data: [offer()],
+    });
+    vi.mocked(commands.commitOfferStartBranch).mockResolvedValue({
+      status: "ok",
+      data: { kind: "done" },
+    });
+    vi.mocked(commands.commitOfferPush).mockResolvedValue({
+      status: "ok",
+      data: {
+        kind: "refused",
+        refused: {
+          step: "the push",
+          said: ["remote: error: GH013: Repository rule violations found"],
+          timedOut: false,
+          seconds: 120,
+          gh: false,
+          pullRequestRequired: row.rule,
+        },
+      },
+    });
+    vi.mocked(commands.commitOfferByHand).mockResolvedValue({
+      status: "ok",
+      data: lines,
+    });
+    await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
+    useCommitOfferStore.setState({ route: row.route });
+    await useCommitOfferStore.getState().run();
+
+    const stage = useCommitOfferStore.getState().stage;
+    expect(stage.at).toBe("pushRefused");
+    if (stage.at !== "pushRefused") return;
+    expect(stage.byHand).toEqual(row.shown ? lines : null);
+    if (row.shown)
+      expect(commands.commitOfferByHand).toHaveBeenCalledWith(
+        "origin",
+        "acme/site",
+        "kendex/renders",
+        "main",
+        "chore: kendex refresh",
+        1,
+      );
   });
 
   // Every path the reader picked changed back before the commit ran, so

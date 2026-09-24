@@ -30,7 +30,7 @@ fn the_message_is_the_command_and_nothing_else() {
     ] {
         assert_eq!(default_message(typed), expected, "{typed:?}");
     }
-    assert_eq!(body(12), "kendex wrote these files.\nFiles: 12");
+    assert_eq!(body(12), "kendex wrote these files. Files: 12");
 }
 
 /// The timeouts table: each step's bound and the name its timeout line
@@ -118,98 +118,246 @@ fn the_probe_maps_its_failure_structurally() {
     );
 }
 
-/// A push the branch's rules refused is read off GitHub's code, and only
-/// where the remote said it about a push. One row per way a line can look
-/// like one.
+/// A push refused for want of a pull request is read off what GitHub says:
+/// its code and the rule it names, both behind `remote: `, on a push. One
+/// row per way a refusal can look like one.
 #[test]
-fn a_push_the_branch_rules_refused_is_read_off_githubs_code() {
-    let rows: [(&str, Step, Refusal, bool); 6] = [
+fn a_push_refused_for_want_of_a_pull_request_is_read_off_githubs_words() {
+    const GH013: &str =
+        "remote: error: GH013: Repository rule violations found for refs/heads/main.";
+    const GH006: &str = "remote: error: GH006: Protected branch update failed for refs/heads/main.";
+    let rows: [(&str, Step, &[&str], bool); 10] = [
         (
-            "a ruleset",
+            "a ruleset's pull request rule",
             Step::Push,
-            Refusal::Said(vec![
-                "remote: error: GH013: Repository rule violations found for refs/heads/main."
-                    .to_owned(),
-                " ! [remote rejected] main -> main (push declined due to repository rule violations)"
-                    .to_owned(),
-            ]),
+            &[
+                GH013,
+                "remote: Review all repository rules at https://github.com/acme/site/rules?ref=refs%2Fheads%2Fmain",
+                "remote: ",
+                "remote: - Changes must be made through a pull request.",
+                " ! [remote rejected] main -> main (push declined due to repository rule violations)",
+            ],
             true,
         ),
         (
-            "branch protection",
+            "a ruleset's merge queue",
             Step::Push,
-            Refusal::Said(vec![
-                "remote: error: GH006: Protected branch update failed for refs/heads/main."
-                    .to_owned(),
-            ]),
+            &[
+                GH013,
+                "remote: - Changes must be made through the merge queue",
+            ],
             true,
+        ),
+        (
+            "branch protection's pull request rule",
+            Step::Push,
+            &[
+                GH006,
+                "remote: error: Changes must be made through a pull request.",
+            ],
+            true,
+        ),
+        (
+            "branch protection's code without error:",
+            Step::Push,
+            &[
+                "remote: GH006: Protected branch update failed for refs/heads/main.",
+                "remote: error: Changes must be made through a pull request.",
+            ],
+            true,
+        ),
+        (
+            "a ruleset's push protection",
+            Step::Push,
+            &[
+                GH013,
+                "remote: - GITHUB PUSH PROTECTION",
+                "remote:     Resolve the following violations before pushing again",
+                "remote:     - Push cannot contain secrets",
+            ],
+            false,
+        ),
+        (
+            "branch protection's signatures",
+            Step::Push,
+            &[
+                GH006,
+                "remote: error: Commits must have verified signatures.",
+            ],
+            false,
+        ),
+        (
+            "the rule without GitHub's code",
+            Step::Push,
+            &["remote: error: Changes must be made through a pull request."],
+            false,
         ),
         (
             "a local hook's words",
             Step::Push,
-            Refusal::Said(vec![
-                "GH013: Repository rule violations found for refs/heads/main.".to_owned(),
-            ]),
-            false,
-        ),
-        (
-            "another refusal from the remote",
-            Step::Push,
-            Refusal::Said(vec!["remote: error: File too large".to_owned()]),
+            &[
+                "error: GH013: Repository rule violations found for refs/heads/main.",
+                "- Changes must be made through a pull request.",
+            ],
             false,
         ),
         (
             "not a push",
             Step::Commit,
-            Refusal::Said(vec![
-                "remote: error: GH013: Repository rule violations found for refs/heads/main."
-                    .to_owned(),
-            ]),
+            &[
+                GH013,
+                "remote: - Changes must be made through a pull request.",
+            ],
             false,
         ),
-        ("a push that ran out of time", Step::Push, Refusal::TimedOut, false),
+        ("a push that ran out of time", Step::Push, &[], false),
     ];
-    for (what, step, refusal, want) in rows {
+    for (what, step, said, want) in rows {
+        let refusal = match said.is_empty() {
+            true => Refusal::TimedOut,
+            false => Refusal::Said(said.iter().map(|line| (*line).to_owned()).collect()),
+        };
         let failed = Failed { step, refusal };
-        assert_eq!(failed.refused_by_branch_rules(), want, "{what}");
+        assert_eq!(failed.pull_request_required(), want, "{what}");
     }
 }
 
-/// The recovery by hand: the push of this commit to the new branch, then
-/// the pull request from it, every value the repository chose quoted.
-/// Nothing without a remote.
+/// The recovery by hand is the words the recovery runs, every one quoted,
+/// with the credentials a remote URL can carry left out of what is
+/// printed. A remote spelling with none comes back whole.
 #[test]
-fn the_recovery_by_hand_names_the_remote_and_both_branches() {
-    let mut offer = Offer {
-        scan: Scan {
-            root: PathBuf::from("/site"),
-            owned: Vec::new(),
-            shared: Vec::new(),
-            manifest: None,
-            others: 0,
-            branch: Branch::On("it's-main".to_owned()),
-        },
-        branch: "it's-main".to_owned(),
-        remote: Some(Remote {
-            name: "origin".to_owned(),
-            url: "https://github.com/acme/site.git".to_owned(),
-            tracked: true,
-        }),
-        push: Ok(()),
-        pull_request: Ok(()),
-        open: None,
-        message: String::new(),
-        new_branch: "kendex/renders".to_owned(),
+fn the_recovery_by_hand_is_the_words_it_runs_without_credentials() {
+    let rows: [(&str, &str); 3] = [
+        (
+            "https://u:secret@github.com/acme/site.git",
+            "https://github.com/acme/site.git",
+        ),
+        (
+            "https://github.com/acme/site.git",
+            "https://github.com/acme/site.git",
+        ),
+        (
+            "git@github.com:acme/site.git",
+            "git@github.com:acme/site.git",
+        ),
+    ];
+    for (repo, shown) in rows {
+        let lines = by_hand(
+            "origin",
+            repo,
+            "kendex/renders",
+            "it's-main",
+            "chore: kendex refresh",
+            12,
+        );
+        assert_eq!(
+            lines,
+            [
+                "git 'push' 'origin' 'HEAD:refs/heads/kendex/renders'".to_owned(),
+                format!(
+                    "gh 'pr' 'create' '--repo' '{shown}' '--head' 'kendex/renders' '--base' 'it'\\''s-main' '--title' 'chore: kendex refresh' '--body' 'kendex wrote these files. Files: 12'"
+                ),
+            ],
+            "{repo}"
+        );
+        assert!(!lines.concat().contains("secret"), "{repo}");
+    }
+}
+
+/// The rules decision over what was read. One row per rule type and per
+/// answer the bypass read can give.
+#[test]
+fn the_branch_rules_require_a_pull_request_unless_the_person_may_push_past() {
+    let rule = |kind: &str, ruleset_id: Option<u64>| gh::Rule {
+        kind: kind.to_owned(),
+        ruleset_id,
     };
-    assert_eq!(
-        offer.by_hand(),
-        [
-            "git push 'origin' 'HEAD:refs/heads/kendex/renders'",
-            "gh pr create --repo 'https://github.com/acme/site.git' --head 'kendex/renders' --base 'it'\\''s-main' --fill",
-        ]
-    );
-    offer.remote = None;
-    assert!(offer.by_hand().is_empty());
+    type Bypass = Option<&'static str>;
+    let rows: [(&str, Vec<gh::Rule>, Bypass, bool); 9] = [
+        ("no rules", vec![], None, false),
+        (
+            "only rules a push gets past",
+            vec![rule("deletion", Some(7)), rule("non_fast_forward", Some(7))],
+            Some("never"),
+            false,
+        ),
+        (
+            "a pull request rule",
+            vec![rule("pull_request", Some(7))],
+            Some("never"),
+            true,
+        ),
+        (
+            "a merge queue",
+            vec![rule("merge_queue", Some(7))],
+            Some("never"),
+            true,
+        ),
+        (
+            "a bypass through pull requests only",
+            vec![rule("pull_request", Some(7))],
+            Some("pull_requests_only"),
+            true,
+        ),
+        (
+            "a bypass always",
+            vec![rule("pull_request", Some(7))],
+            Some("always"),
+            false,
+        ),
+        (
+            "an exempt person",
+            vec![rule("pull_request", Some(7))],
+            Some("exempt"),
+            false,
+        ),
+        (
+            "a bypass that cannot be read",
+            vec![rule("pull_request", Some(7))],
+            None,
+            true,
+        ),
+        (
+            "a rule with no ruleset",
+            vec![rule("pull_request", None)],
+            Some("always"),
+            true,
+        ),
+    ];
+    for (what, rules, bypass, want) in rows {
+        let asked = |id: u64| {
+            assert_eq!(id, 7, "{what}: asked about a ruleset no rule named");
+            bypass.map(str::to_owned)
+        };
+        assert_eq!(gh::requires(&rules, asked), want, "{what}");
+    }
+}
+
+/// The host a rules read is bound to, from each remote spelling gh takes,
+/// and none from a spelling that names no host.
+#[test]
+fn the_rules_read_is_bound_to_the_remotes_host() {
+    let rows: [(&str, Option<&str>); 7] = [
+        ("https://github.com/acme/site.git", Some("github.com")),
+        (
+            "https://u:secret@ghe.example.test/acme/site.git",
+            Some("ghe.example.test"),
+        ),
+        (
+            "ssh://git@ghe.example.test:2222/acme/site.git",
+            Some("ghe.example.test"),
+        ),
+        (
+            "git@ghe.example.test:acme/site.git",
+            Some("ghe.example.test"),
+        ),
+        ("ghe.example.test:acme/site.git", Some("ghe.example.test")),
+        ("/srv/git/site.git", None),
+        ("file:///srv/git/site.git", None),
+    ];
+    for (remote, want) in rows {
+        assert_eq!(gh::host(remote).as_deref(), want, "{remote}");
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -985,7 +1133,7 @@ fn a_push_lands_or_is_refused_in_the_remotes_words() {
         let hook = bare.join("hooks/pre-receive");
         fs::write(
             &hook,
-            "#!/bin/sh\necho 'GH006: Protected branch update failed for refs/heads/main.' >&2\nexit 1\n",
+            "#!/bin/sh\necho 'error: GH006: Protected branch update failed for refs/heads/main.' >&2\necho 'error: Changes must be made through a pull request.' >&2\nexit 1\n",
         )
         .unwrap();
         fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
@@ -1002,9 +1150,9 @@ fn a_push_lands_or_is_refused_in_the_remotes_words() {
         "{:?}",
         refused.said()
     );
-    // git puts the remote's words behind `remote: `, which is what the
-    // rule refusal is read from.
-    assert!(refused.refused_by_branch_rules(), "{:?}", refused.said());
+    // git puts the remote's words behind `remote: `, which is what a
+    // refusal for want of a pull request is read from.
+    assert!(refused.pull_request_required(), "{:?}", refused.said());
 }
 
 /// A refused push ends on git's own words, with the hook's kept above

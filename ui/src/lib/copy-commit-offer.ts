@@ -197,7 +197,7 @@ export const pushRefusedTitle = (refused: Refused) =>
   refused.timedOut ? "The push did not finish" : PUSH_REFUSED_TITLE;
 export const commitIsOn = (branch: string) =>
   `The commit is on ${branch} in this checkout. kendex did not undo it.`;
-/** GitHub refused the push under the branch's rules. The commands under it
+/** GitHub refused the push for want of a pull request. The commands under it
  *  are the ones `Open a pull request` runs, for a person who opens it
  *  themselves. */
 export const branchRulesLine = (branch: string, remote: string) =>

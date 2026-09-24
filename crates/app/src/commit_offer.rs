@@ -159,20 +159,26 @@ pub struct ProjectOffer {
     /// The branch already tracks the chosen remote, so a push needs no
     /// `--set-upstream`.
     pub tracked: bool,
-    /// The commands that put the commit on [`ProjectOffer::new_branch`]
-    /// and open the pull request by hand, shown where GitHub refused a push
-    /// under the branch's rules. Empty with no remote.
-    pub by_hand: Vec<String>,
 }
 
-impl ProjectOffer {
-    /// Whether this write can be shown to have done anything in this
-    /// project. Every file reading as older work means one of two things,
-    /// and both end the same way: the write changed nothing here, or no
-    /// reading was taken before it and nothing may be attributed to it.
-    fn acted(&self) -> bool {
-        self.files.iter().any(|file| file.did != DidWhat::Older)
-    }
+/// Whether a write can be shown to have done anything in a project. No
+/// reading taken before it means nothing may be attributed to it, which
+/// ends the same way as a write that changed nothing there.
+fn acted(pending: Option<&Pending>) -> bool {
+    pending.is_some_and(Pending::acted)
+}
+
+/// Who opened the offer, which decides whether one is made at all.
+#[derive(Clone, Copy)]
+enum Opened<'a> {
+    /// A write reached this project, with the reading taken before it
+    /// where there was one. An offer is made only where [`acted`] holds,
+    /// and that is settled before `gh` is asked anything, so a project the
+    /// write left alone costs no network call.
+    ByWrite(Option<&'a Baseline>),
+    /// A person asked for this project's offer. Nothing is attributed to
+    /// an action, since there is none.
+    ByPerson,
 }
 
 /// A project where kendex owns changed files and the offer cannot be made.
@@ -215,8 +221,9 @@ pub struct Refused {
     pub seconds: u32,
     /// Whether the words are `gh`'s rather than git's.
     pub gh: bool,
-    /// GitHub refused this push under the branch's rules.
-    pub branch_rules: bool,
+    /// GitHub refused this push because the branch takes changes only
+    /// through a pull request.
+    pub pull_request_required: bool,
 }
 
 impl From<&Failed> for Refused {
@@ -227,7 +234,7 @@ impl From<&Failed> for Refused {
             timed_out: failed.timed_out(),
             seconds: whole(failed.step.seconds()),
             gh: matches!(failed.step, Step::Probe | Step::PullRequest),
-            branch_rules: failed.refused_by_branch_rules(),
+            pull_request_required: failed.pull_request_required(),
         }
     }
 }
@@ -344,7 +351,7 @@ fn read(
     env: &Env,
     root: &Path,
     key: &str,
-    since: Option<&Baseline>,
+    opened: Opened,
 ) -> Result<Option<Result<ProjectOffer, ProjectFlag>>, String> {
     let scope = Scope::Project {
         root: root.to_owned(),
@@ -378,7 +385,16 @@ fn read(
     // Read against the state the action found, where an action opened this.
     // A person who opened the review themselves has no action to scope to,
     // and every pending change is theirs to choose from.
-    let pending = since.map(|since| commit_offer::pending(&scan, since));
+    let pending = match opened {
+        Opened::ByWrite(since) => {
+            let pending = since.map(|since| commit_offer::pending(&scan, since));
+            if !acted(pending.as_ref()) {
+                return Ok(None);
+            }
+            pending
+        }
+        Opened::ByPerson => None,
+    };
     // The window's write is not a typed command, so the message names the
     // shell the person is in rather than a verb they typed.
     match commit_offer::offer(scan, COMMAND, Probe::Gh) {
@@ -460,7 +476,6 @@ fn drawn(root: &Path, key: &str, offer: Offer, pending: Option<&Pending>) -> Pro
         new_branch: offer.new_branch.clone(),
         repo: offer.remote.as_ref().map(|remote| remote.url.clone()),
         tracked: offer.remote.as_ref().is_some_and(|remote| remote.tracked),
-        by_hand: offer.by_hand(),
         remote: offer.remote.as_ref().map(|remote| remote.name.clone()),
         branch: offer.branch,
     }
@@ -626,18 +641,22 @@ pub fn commit_offer_scan(
         // report every pending change as this action's, putting somebody
         // else's work in a dialog headed by this write and committing it
         // under that label. Passed on as `None`, nothing is attributed to
-        // an action, and the filter below then makes no offer at all: a
+        // an action, and `read` then makes no offer at all: a
         // write that cannot be shown to have done anything here says
         // nothing. What is waiting still reaches the person through
         // `project_changes_scan` and the review page.
         let before = taken.remove(&root);
-        match read(&env, &PathBuf::from(&root), &root, before.as_ref()) {
-            Ok(None) | Err(_) => {}
+        match read(
+            &env,
+            &PathBuf::from(&root),
+            &root,
+            Opened::ByWrite(before.as_ref()),
+        ) {
             // An offer is made about what the write did. A project where it
-            // did nothing is left alone: its pending changes are on the
-            // project's card and in its own review, which is where deferred
-            // work belongs.
-            Ok(Some(Ok(offer))) if !offer.acted() => {}
+            // did nothing reads as `None` and is left alone: its pending
+            // changes are on the project's card and in its own review,
+            // which is where deferred work belongs.
+            Ok(None) | Err(_) => {}
             Ok(Some(Ok(offer))) => offers.push(offer),
             // A project whose state allows no offer is not flagged from
             // here. `project_changes_scan` reads that state on the ordinary
@@ -661,13 +680,15 @@ pub fn commit_offer_scan(
 #[specta::specta]
 pub fn commit_offer_open(root: String) -> Result<OpenOffer, String> {
     let env = env()?;
-    Ok(match read(&env, &PathBuf::from(&root), &root, None)? {
-        Some(Ok(offer)) => OpenOffer::Offer {
-            offer: Box::new(offer),
+    Ok(
+        match read(&env, &PathBuf::from(&root), &root, Opened::ByPerson)? {
+            Some(Ok(offer)) => OpenOffer::Offer {
+                offer: Box::new(offer),
+            },
+            Some(Err(flag)) => OpenOffer::Blocked { flag },
+            None => OpenOffer::Nothing,
         },
-        Some(Err(flag)) => OpenOffer::Blocked { flag },
-        None => OpenOffer::Nothing,
-    })
+    )
 }
 
 /// What asking for one project's offer answered with.
@@ -1014,6 +1035,30 @@ pub fn commit_offer_push_head(
     )
 }
 
+/// The recovery a refused push offers, as the commands a person runs
+/// themselves: what `commit_offer_push_head` and
+/// `commit_offer_open_pull_request` run with these values, the remote URL
+/// printed without its credentials.
+#[tauri::command]
+#[specta::specta]
+pub fn commit_offer_by_hand(
+    remote: String,
+    repo: String,
+    branch: String,
+    base: String,
+    title: String,
+    files: u32,
+) -> Result<Vec<String>, String> {
+    Ok(commit_offer::by_hand(
+        &remote,
+        &repo,
+        &branch,
+        &base,
+        &title,
+        files as usize,
+    ))
+}
+
 #[tauri::command(async)]
 #[specta::specta]
 pub fn commit_offer_start_branch(root: String, branch: String) -> Result<StepResult, String> {
@@ -1083,9 +1128,9 @@ mod tests {
     }
 
     /// With no reading taken before the write, nothing is attributed to it:
-    /// every pending change reads as older work and [`ProjectOffer::acted`]
-    /// is false, which is what `commit_offer_scan` filters on to make no
-    /// offer about that project. An empty baseline in its place would do
+    /// every pending change reads as older work and [`acted`] is false,
+    /// which is what `read` returns early on to make no offer about that
+    /// project. An empty baseline in its place would do
     /// the opposite — every pending change would read as this action's, and
     /// "Only this action" would commit somebody else's work under this
     /// write's label.
@@ -1126,7 +1171,7 @@ mod tests {
             None,
         );
         assert!(
-            !unattributed.acted(),
+            !acted(None),
             "a write with no reading behind it was reported as having acted"
         );
         assert!(unattributed.action_paths.is_empty());
@@ -1165,17 +1210,18 @@ mod tests {
         assert!(timed_out.gh, "gh's step read as git's");
         assert_eq!(timed_out.seconds, 120);
 
-        // A push GitHub refused under the branch's rules travels marked,
+        // A push GitHub refused for want of a pull request travels marked,
         // so the window can offer the way on; the commit above does not.
-        assert!(!refused.branch_rules);
+        assert!(!refused.pull_request_required);
         let ruled = Refused::from(&Failed {
             step: Step::Push,
             refusal: Refusal::Said(vec![
                 "remote: error: GH013: Repository rule violations found for refs/heads/main."
                     .to_owned(),
+                "remote: - Changes must be made through a pull request.".to_owned(),
             ]),
         });
-        assert!(ruled.branch_rules);
+        assert!(ruled.pull_request_required);
     }
 
     /// A commit hook can print every passing check before the check that

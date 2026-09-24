@@ -172,11 +172,12 @@ function Body({ offer, stage }: { offer: ProjectOffer; stage: Stage }) {
     case "pushRefused":
       return (
         <PushRefusedState
-          offer={offer}
+          remote={offer.remote ?? ""}
           refused={stage.refused}
           sha={stage.sha}
           branch={stage.branch}
           canOpen={stage.canOpen}
+          byHand={stage.byHand}
         />
       );
     case "pullRequestRefused":
@@ -680,17 +681,19 @@ function BranchRefusedState({
 }
 
 function PushRefusedState({
-  offer,
+  remote,
   refused,
   sha,
   branch,
   canOpen,
+  byHand,
 }: {
-  offer: ProjectOffer;
+  remote: string;
   refused: Refused;
   sha: string;
   branch: string;
   canOpen: boolean;
+  byHand: string[] | null;
 }) {
   const leave = useCommitOfferStore((s) => s.leave);
   const openPullRequest = useCommitOfferStore((s) => s.openPullRequest);
@@ -703,15 +706,12 @@ function PushRefusedState({
         <Row label={COMMIT_ROW_LABEL}>{commitOn(sha, branch)}</Row>
         <Said refused={refused} />
         <p>{commitIsOn(branch)}</p>
-        {/* On the `pr` route the commit is already on a branch of its own,
-            so the way on the rules leave is only for a push to the branch
-            the offer was made on. */}
-        {refused.branchRules && branch === offer.branch ? (
+        {byHand !== null ? (
           <>
-            <p>{branchRulesLine(branch, offer.remote ?? "")}</p>
+            <p>{branchRulesLine(branch, remote)}</p>
             <Row label={BY_HAND_ROW_LABEL}>
               <span className="inline-flex flex-col items-end gap-1">
-                {offer.byHand.map((command) => (
+                {byHand.map((command) => (
                   <Copyable key={command} text={command} />
                 ))}
               </span>
