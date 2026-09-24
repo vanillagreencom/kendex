@@ -1,13 +1,14 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { CONFIG_ID, readPackageConfig, recordProjectTrust } from "../tool-renderer/settings.js";
+import { CONFIG_ID, readPackageConfig, recordProjectTrust, SETTINGS_RECHECK_MS } from "../tool-renderer/settings.js";
 
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 
 afterEach(() => {
+	setSystemTime();
 	if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 });
@@ -49,8 +50,14 @@ describe("readPackageConfig memoization", () => {
 		utimesSync(settingsPath, new Date(1000), new Date(1000));
 		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(100);
 
-		// A real edit moves the fingerprint and the next lookup re-merges.
+		// A real edit moves the fingerprint; lookups inside the recheck window
+		// still serve the cache, the first one after it re-merges.
+		const now = Date.now();
+		setSystemTime(now);
+		readPackageConfig(CONFIG_ID, a);
 		utimesSync(settingsPath, new Date(2000), new Date(2000));
+		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(100);
+		setSystemTime(now + SETTINGS_RECHECK_MS);
 		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(300);
 	});
 });

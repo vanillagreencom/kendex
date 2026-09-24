@@ -50,6 +50,7 @@ export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () =>
 	const registry = projectTrustRegistry();
 	if (!registry.projectSettings) registry.projectSettings = new Map();
 	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
+	clearPackageConfigCache();
 }
 
 function projectSettingsTrusted(settingsPath: string): boolean {
@@ -70,7 +71,17 @@ function piSettingsPaths(cwd = process.cwd()): string[] {
 	return projectSettingsTrusted(project) ? [user, project] : [user];
 }
 
-let cachedPackageConfig: { packageId: string; fingerprint: string; merged: Record<string, unknown> } | undefined;
+/** How long a merged config is served before the settings files are stat'ed again.
+ * Renderers read settings many times per frame; checking the disk on each read
+ * kept a long session's render loop busy. */
+export const SETTINGS_RECHECK_MS = 1000;
+
+const packageConfigCache = new Map<string, { checkedAt: number; fingerprint: string; merged: Record<string, unknown> }>();
+
+/** Drops memoized configs so the next read goes back to disk. */
+export function clearPackageConfigCache(): void {
+	packageConfigCache.clear();
+}
 
 /** Per candidate: path + stat stamp, so two roots can never share a cache entry. */
 function settingsFingerprint(packageId: string, settingsPaths: string[]): string {
@@ -79,10 +90,17 @@ function settingsFingerprint(packageId: string, settingsPaths: string[]): string
 	})]);
 }
 
-export function readPackageConfig(packageId: string, cwd?: string): Record<string, unknown> {
+export function readPackageConfig(packageId: string, cwd = process.cwd()): Record<string, unknown> {
+	const cacheKey = `${packageId}\0${cwd}`;
+	const cached = packageConfigCache.get(cacheKey);
+	const now = Date.now();
+	if (cached && now - cached.checkedAt < SETTINGS_RECHECK_MS) return cached.merged;
 	const settingsPaths = piSettingsPaths(cwd);
 	const fingerprint = settingsFingerprint(packageId, settingsPaths);
-	if (cachedPackageConfig && cachedPackageConfig.packageId === packageId && cachedPackageConfig.fingerprint === fingerprint) return cachedPackageConfig.merged;
+	if (cached?.fingerprint === fingerprint) {
+		cached.checkedAt = now;
+		return cached.merged;
+	}
 	const merged: Record<string, unknown> = {};
 	for (const settingsPath of settingsPaths) {
 		if (!existsSync(settingsPath)) continue;
@@ -94,7 +112,7 @@ export function readPackageConfig(packageId: string, cwd?: string): Record<strin
 			// Ignore malformed optional manager config.
 		}
 	}
-	cachedPackageConfig = { packageId, fingerprint, merged };
+	packageConfigCache.set(cacheKey, { checkedAt: now, fingerprint, merged });
 	return merged;
 }
 
