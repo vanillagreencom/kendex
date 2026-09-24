@@ -58,6 +58,8 @@ bi_new_repo() {
   rm -rf -- "${repo:?}"
   mkdir -p "$repo/.bot-instructions" "$repo/.agents/skills/dev" "$repo/.claude/agents" "$repo/src/tests"
   git -C "$repo" init -q .
+  git -C "$repo" config gc.auto 0
+  git -C "$repo" config maintenance.auto false
   git -C "$repo" config user.email fixture@example.invalid
   git -C "$repo" config user.name fixture
   cp "$BI_FIXTURES/coderabbit-schema.json" "$repo/.bot-instructions/coderabbit-schema.json"
@@ -93,6 +95,13 @@ EOF
 }
 
 # A repo already rendered and staged, so `drift` and `orphan` have a baseline.
+# The one removal a no-git world goes through. `.git` still standing after it
+# fails here, naming the fixture, never as a row that could not be built.
+bi_remove_git() {
+  rm -rf -- "${1:?}/.git"
+  [ ! -e "$1/.git" ] || { printf 'bi_remove_git: .git survives under %s\n' "$1" >&2; return 1; }
+}
+
 bi_rendered_repo() {
   local repo
   repo="$(bi_new_repo "$1")"

@@ -29,7 +29,7 @@ bi_world() {
   for word in "$@"; do
     case "$word" in
       stale-copilot) printf '\nstale\n' >> "$repo/.github/copilot-instructions.md" ;;
-      no-git) rm -rf -- "${repo:?}/.git" ;;
+      no-git) bi_remove_git "$repo" || return 1 ;;
       spec:no-doctrine)
         BI_SPEC="$BI_TMP/spec-no-doctrine"
         rm -rf -- "${BI_SPEC:?}"
@@ -54,7 +54,7 @@ an unknown verb exits 2 from the parser under the usage key|rendered|bogus|2|usa
 # A row renders the key, so the value beside it is asserted here, on a world
 # whose paths this case knows. One record, one line, key and value.
 repo="$(bi_rendered_repo exit-record)" || exit 1
-rm -rf -- "${repo:?}/.git"
+bi_remove_git "$repo" || exit 1
 record="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
   && python3 -m lib.main check --repo "$repo" ) 2>&1 >/dev/null || : )"
 first="$(printf '%s\n' "$record" | sed -n '1p')"
@@ -69,6 +69,11 @@ if [ "$count" = 1 ]; then
 else
   bad 'one condition prints one record' "printed $count"
 fi
+# The must-fail control for the helper: its removal stubbed out, the tree
+# checks clean, which is the no-git row above gone red.
+ctrl="$(bi_remove_git() { :; }; repo="$(bi_rendered_repo exit-ctrl)" && bi_remove_git "$repo" && bi_run check --repo "$repo" && printf '%s' "$bi_status")"
+if [ "$ctrl" = 0 ]; then ok 'control: the removal stubbed out, the no-git row goes red'
+else bad 'control: the removal stubbed out, the no-git row goes red' "status=$ctrl"; fi
 
 # Each branch below computes its own value, so each is pinned exactly:
 # the whole first line and the status, not a fragment.

@@ -37,6 +37,8 @@ new_tree() { # NAME [LINKED_TMP]
   WT="$TMP_ROOT/$1"
   mkdir -p "$WT"
   git -C "$WT" init -q
+  git -C "$WT" config gc.auto 0
+  git -C "$WT" config maintenance.auto false
   git -C "$WT" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
   if [[ -n "${2:-}" ]]; then
     mkdir -p "$TMP_ROOT/$1-scratch"
