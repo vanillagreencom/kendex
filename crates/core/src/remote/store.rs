@@ -17,7 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::env::Env;
+use crate::env::{Env, SourceCacheWait};
 use crate::error::{CoreError, Result};
 use crate::fs::atomic_write;
 use crate::process::Hardened;
@@ -120,25 +120,102 @@ impl CacheGuard {
     }
 }
 
-/// How long a resolver waits for the lock before calling the cache busy.
-/// Long enough to ride out a neighbour holding it for one quick step — a
-/// fetch stamp, publishing an already-materialized checkout — and far too
-/// short to leave anyone waiting on someone else's download.
-const LOCK_WAIT: Duration = Duration::from_millis(500);
+/// A detached refresh waits only for a neighbour's quick local step. A
+/// foreground operation covers a detached cold clone and its fetch.
+const BACKGROUND_LOCK_WAIT: Duration = Duration::from_millis(500);
+const FIXTURE_FOREGROUND_LOCK_WAIT: Duration = Duration::from_secs(1);
 const LOCK_POLL: Duration = Duration::from_millis(10);
 
-pub fn lock_repo(env: &Env, key: &str) -> Result<CacheGuard> {
+#[cfg(not(test))]
+const DETACHED_OPERATION_LIMIT: Duration =
+    crate::process::DEFAULT_TIMEOUT.saturating_add(crate::drift::refresh::FETCH_DEADLINE);
+#[cfg(not(test))]
+const FOREGROUND_LOCK_WAIT: Duration =
+    DETACHED_OPERATION_LIMIT.saturating_add(BACKGROUND_LOCK_WAIT);
+#[cfg(test)]
+const FOREGROUND_LOCK_WAIT: Duration = Duration::from_secs(1);
+
+pub fn lock_repo(env: &Env, key: &str, repo: &str) -> Result<CacheGuard> {
+    let wait = cache_wait(env);
+    match env.source_cache_wait() {
+        SourceCacheWait::Foreground | SourceCacheWait::FixtureForeground => {
+            lock_repo_for(env, key, wait, || waiting(repo))
+        }
+        SourceCacheWait::Background => lock_repo_for(env, key, wait, || {}),
+    }
+}
+
+#[allow(
+    clippy::print_stderr,
+    reason = "a source-lock wait must stay off stdout so machine output remains valid"
+)]
+fn waiting(repo: &str) {
+    #[cfg(test)]
+    WAIT_NOTICES.with(|notices| notices.borrow_mut().push(repo.to_owned()));
+    eprintln!("{repo}: waiting for another kendex process to finish downloading it");
+}
+
+fn cache_wait(env: &Env) -> Duration {
+    #[cfg(test)]
+    WAIT_COUNTS.with(|cell| {
+        let mut counts = cell.get();
+        match env.source_cache_wait() {
+            SourceCacheWait::Foreground | SourceCacheWait::FixtureForeground => counts.0 += 1,
+            SourceCacheWait::Background => counts.1 += 1,
+        }
+        cell.set(counts);
+    });
+    match env.source_cache_wait() {
+        SourceCacheWait::Foreground => FOREGROUND_LOCK_WAIT,
+        SourceCacheWait::FixtureForeground => FIXTURE_FOREGROUND_LOCK_WAIT,
+        SourceCacheWait::Background => BACKGROUND_LOCK_WAIT,
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static WAIT_COUNTS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    static WAIT_NOTICES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_wait_counts() {
+    WAIT_COUNTS.set((0, 0));
+}
+
+#[cfg(test)]
+pub(crate) fn wait_counts() -> (usize, usize) {
+    WAIT_COUNTS.get()
+}
+
+#[cfg(test)]
+pub(crate) fn take_wait_notices() -> Vec<String> {
+    WAIT_NOTICES.take()
+}
+
+fn lock_repo_for(
+    env: &Env,
+    key: &str,
+    wait: Duration,
+    on_wait: impl FnOnce(),
+) -> Result<CacheGuard> {
     let dir = env.source_cache_dir().join(LOCKS);
     fs::create_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))?;
     let path = dir.join(format!("{key}.lock"));
-    let deadline = Instant::now() + LOCK_WAIT;
+    let deadline = Instant::now() + wait;
+    let mut on_wait = Some(on_wait);
     loop {
         match crate::fs::LockedFile::try_exclusive(&path) {
             Ok(Some(file)) => return Ok(CacheGuard { _file: file }),
             Ok(None) if Instant::now() >= deadline => {
                 return Err(CoreError::CacheBusy { lock: path });
             }
-            Ok(None) => std::thread::sleep(LOCK_POLL),
+            Ok(None) => {
+                if let Some(on_wait) = on_wait.take() {
+                    on_wait();
+                }
+                std::thread::sleep(LOCK_POLL);
+            }
             // A filesystem that cannot lock at all is its own failure;
             // waiting out the deadline would misname it "busy".
             Err(error) => return Err(CoreError::io(&path, error)),

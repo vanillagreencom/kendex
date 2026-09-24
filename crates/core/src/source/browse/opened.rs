@@ -129,10 +129,7 @@ pub(crate) fn open(env: &Env, catalog: &Catalog) -> Result<Browsed> {
             let key = browsable(repo)?;
             // The store answers without the network when it already holds
             // the repository; otherwise this is the one fetch.
-            let resolution = match crate::remote::cached(env, &key, None)? {
-                Some(resolution) => resolution,
-                None => crate::remote::sync(env, &key, None)?,
-            };
+            let resolution = crate::remote::cached_or_sync(env, &key, None)?;
             open_repo(env, key, resolution)
         }
     }

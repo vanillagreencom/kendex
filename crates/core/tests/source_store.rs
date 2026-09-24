@@ -9,6 +9,7 @@ use test_util::source_path;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use kendex_core::apply;
 use kendex_core::engine::{DriftState, audit};
@@ -266,9 +267,14 @@ fn a_busy_cache_costs_only_its_own_source() {
         .clone();
     fs::remove_dir_all(remote::store::checkout_dir(&w.env, &key, &commit)).unwrap();
     fs::remove_dir_all(w.home.join("app").join(".agents/skills/local-gh")).unwrap();
-    let guard = remote::store::lock_repo(&w.env, &key).unwrap();
+    let guard = remote::store::lock_repo(&w.env, &key, REPO).unwrap();
 
+    let started = Instant::now();
     let report = audit(&w.env, &scope).unwrap();
+    assert!(
+        started.elapsed() < kendex_core::process::INTERACTIVE_TIMEOUT,
+        "a fake environment used the production cache wait"
+    );
     assert!(
         report.notes.iter().any(|note| note.starts_with("gh:")),
         "the busy source should be noted, not fatal: {:?}",

@@ -222,9 +222,12 @@ fn prepare_scope(
         plan_apply(env, &scope, &options)
     };
     let planned = match report {
-        Ok(report) => super::update_pi::pending_settle(env, &scope)
-            .map(|pending| (report, pending))
-            .map_err(|error| error.to_string()),
+        Ok(mut report) => {
+            synced.suppress_busy_pending(&mut report.notes);
+            super::update_pi::pending_settle(env, &scope)
+                .map(|pending| (report, pending))
+                .map_err(|error| error.to_string())
+        }
         Err(error) => Err(error.to_string()),
     };
     PreparedScope {
@@ -277,6 +280,7 @@ fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
     let mut failures = Vec::new();
     for scope in prepared {
         print_synced(&scope.synced);
+        failures.extend(scope.synced.failures.iter().cloned());
         match &scope.planned {
             Ok((report, pending)) => {
                 if pending.is_empty() {
@@ -314,7 +318,7 @@ fn write_scope(
     pending: &[String],
     options: &PlanOptions,
     yes: bool,
-    report_after_settle: impl FnOnce(&kendex_core::engine::EngineReport),
+    report_after_settle: impl FnOnce(&mut kendex_core::engine::EngineReport),
 ) -> Result<Written, Box<dyn std::error::Error>> {
     if pending.is_empty() {
         let count = match (report.plan.is_empty(), report.set_changes.is_empty()) {
@@ -341,13 +345,13 @@ fn write_scope(
         yes,
     )?;
     let settled = super::update_pi::settle_scope(env, scope, pending)?;
-    let after = {
+    let mut after = {
         let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
         plan_apply(env, scope, options)?
     };
     // The carrier can make hooks enforceable. Show their diagnostics
     // before confirming the final writes, using this plan for the ledger.
-    report_after_settle(&after);
+    report_after_settle(&mut after);
     let approved: std::collections::BTreeSet<String> =
         report.plan.ops.iter().map(|op| op.line()).collect();
     let added_changes: Vec<_> = after
@@ -420,6 +424,7 @@ pub fn run(
         // An unreachable catalog is reported, not fatal: what came from
         // every other catalog still refreshes.
         print_synced(&prepared.synced);
+        failures.extend(prepared.synced.failures.iter().cloned());
         let (report, pending) = match prepared.planned {
             Ok(planned) => planned,
             Err(error) => {
@@ -445,7 +450,7 @@ pub fn run(
         if pending.is_empty() {
             blocked = print_diagnostics(env, &report, verbose);
             let reported = refresh_failures(&report);
-            let failed = !reported.is_empty();
+            let failed = !prepared.synced.failures.is_empty() || !reported.is_empty();
             failures.extend(reported);
             if lock.entries.is_empty() && report.plan.is_empty() && blocked.is_empty() {
                 // Nothing left to write is not a reason to leave the
@@ -471,6 +476,7 @@ pub fn run(
             &prepared.options,
             yes,
             |after| {
+                prepared.synced.suppress_busy_pending(&mut after.notes);
                 blocked = print_diagnostics(env, after, verbose);
             },
         ) {

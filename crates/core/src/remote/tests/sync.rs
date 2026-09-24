@@ -99,3 +99,41 @@ fn a_refresh_reports_an_unreachable_catalog_and_resolves_the_rest() {
     // The reachable catalog resolved despite the other one failing first.
     assert_eq!(cache_head(&f.env, REPO, None).unwrap().len(), 7);
 }
+
+/// A lock held through the foreground bound is one source failure. The
+/// packages behind it do not repeat the same timing failure as pending rows.
+#[test]
+fn a_busy_source_is_one_failure_instead_of_one_pending_note_per_package() {
+    let f = fixture();
+    let mut manifest = manifest::seed(&Scope::Global, &[]);
+    manifest.sources.insert(
+        "cat".to_owned(),
+        manifest::SourceDecl {
+            repo: Some(REPO.to_owned()),
+            path: None,
+            rev: None,
+            enabled: true,
+        },
+    );
+    manifest.sources.remove(manifest::DEFAULT_SOURCE_NAME);
+    for name in ["one", "two"] {
+        manifest
+            .skills
+            .insert(name.to_owned(), manifest::ItemDecl::from_source("cat"));
+    }
+    let guard = super::store::lock_repo(&f.env, &super::key_for(&f.env), super::REPO).unwrap();
+    let synced = sync_declared_sources(&f.env, &manifest);
+    drop(guard);
+
+    assert_eq!(synced.failures.len(), 1, "{:?}", synced.failures);
+    assert!(synced.failures[0].contains("run the command again"));
+    let mut notes = vec![
+        "one: source 'cat' (owner/repo) not fetched yet — skipped".to_owned(),
+        "other: source 'dog' (owner/dog) not fetched yet — skipped".to_owned(),
+    ];
+    synced.suppress_busy_pending(&mut notes);
+    assert_eq!(
+        notes,
+        ["other: source 'dog' (owner/dog) not fetched yet — skipped"]
+    );
+}

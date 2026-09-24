@@ -167,7 +167,7 @@ fn commit_tree(env: &Env, scope: &Scope, kind: ItemKind, name: &str, commit: &st
                     reason: "not in the local mirror — refresh the source first".to_owned(),
                 });
             }
-            let _guard = crate::remote::store::lock_repo(env, &key)?;
+            let _guard = crate::remote::store::lock_repo(env, &key, &repo)?;
             crate::remote::store::publish(env, &key, &mirror, commit)?.root
         }
     };

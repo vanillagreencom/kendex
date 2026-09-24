@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use super::*;
 use crate::env::FakeOs;
@@ -604,21 +604,181 @@ fn a_checkout_published_under_older_rules_is_rebuilt() {
     );
 }
 
-/// Two resolvers must not materialize one repository at once. A refresh is
-/// told the cache is busy rather than sitting on someone else's download,
-/// while a read — which never has to write anything — answers what it can
-/// without failing the whole scope over a neighbour.
+/// A foreground resolver waits because the lock holder can be the detached
+/// download that kendex itself started during the preceding check. The hold
+/// is longer than the background path waits, so using that path here makes
+/// both calls fail this test.
 #[test]
-fn a_busy_repository_cache_is_reported_not_waited_on() {
+fn foreground_sync_and_cached_wait_for_the_active_download() {
     let f = fixture();
-    let guard = store::lock_repo(&f.env, &key_for(&f.env)).unwrap();
-    assert!(matches!(
-        sync(&f.env, REPO, None),
-        Err(CoreError::CacheBusy { .. })
-    ));
-    assert!(cached(&f.env, REPO, None).unwrap().is_none());
+    let key = key_for(&f.env);
+    let guard = store::lock_repo(&f.env, &key, REPO).unwrap();
+    let env = f.env.clone();
+    let syncing = std::thread::spawn(move || sync(&env, REPO, None));
+    std::thread::sleep(Duration::from_millis(700));
     drop(guard);
-    sync(&f.env, REPO, None).unwrap();
+    let synced = syncing.join().unwrap().unwrap();
+
+    fs::remove_dir_all(&synced.root).unwrap();
+    fs::remove_file(store::receipt_path(&f.env, &key, &synced.commit)).unwrap();
+    let guard = store::lock_repo(&f.env, &key, REPO).unwrap();
+    let env = f.env.clone();
+    let reading = std::thread::spawn(move || cached(&env, REPO, None));
+    std::thread::sleep(Duration::from_millis(700));
+    drop(guard);
+    reading.join().unwrap().unwrap().unwrap();
+}
+
+/// A foreground wait still has a bound. The unit-test bound is short so
+/// this reaches the same deadline branch without paying a production wait.
+#[test]
+fn foreground_sync_reports_a_lock_held_past_its_bound() {
+    let f = fixture();
+    let guard = store::lock_repo(&f.env, &key_for(&f.env), REPO).unwrap();
+    let error = sync(&f.env, REPO, None).unwrap_err();
+    drop(guard);
+    assert!(matches!(error, CoreError::CacheBusy { .. }));
+
+    let synced = sync(&f.env, REPO, None).unwrap();
+    fs::remove_dir_all(&synced.root).unwrap();
+    fs::remove_file(store::receipt_path(
+        &f.env,
+        &key_for(&f.env),
+        &synced.commit,
+    ))
+    .unwrap();
+    let guard = store::lock_repo(&f.env, &key_for(&f.env), REPO).unwrap();
+    store::reset_wait_counts();
+    let error = cached_or_sync(&f.env, REPO, None).unwrap_err();
+    let waits = store::wait_counts();
+    drop(guard);
+
+    assert!(matches!(error, CoreError::CacheBusy { .. }));
+    assert_eq!(
+        waits,
+        (1, 0),
+        "cache miss retried the busy source: {waits:?}"
+    );
+}
+
+/// Detached refreshes use the short acquisition path, so two session starts
+/// do not queue their downloads behind each other.
+#[test]
+fn background_refresh_still_skips_a_busy_source_without_the_foreground_wait() {
+    let f = fixture();
+    let scope = crate::model::Scope::Global;
+    let mut manifest = crate::manifest::seed(&scope, &[]);
+    manifest.sources.insert(
+        "cat".to_owned(),
+        SourceDecl {
+            repo: Some(REPO.to_owned()),
+            path: None,
+            rev: None,
+            enabled: true,
+        },
+    );
+    manifest
+        .sources
+        .remove(crate::manifest::DEFAULT_SOURCE_NAME);
+    crate::manifest::save(&crate::manifest::manifest_path(&f.env, &scope), &manifest).unwrap();
+    let guard = store::lock_repo(&f.env, &key_for(&f.env), REPO).unwrap();
+
+    let started = Instant::now();
+    let notes = crate::drift::refresh::refresh_stale(&f.env, &[scope]);
+    drop(guard);
+
+    assert!(started.elapsed() < Duration::from_secs(1), "{notes:?}");
+    assert!(notes.iter().any(|note| note == "owner/repo: busy, skipped"));
+}
+
+fn remote_skill_scope(f: &Fixture) -> (crate::model::Scope, Resolution) {
+    let root = f.env.home.join("project");
+    fs::create_dir_all(&root).unwrap();
+    let scope = crate::model::Scope::Project { root };
+    let mut manifest = crate::manifest::seed(&scope, &[crate::model::HarnessId::Claude]);
+    manifest.sources.insert(
+        "cat".to_owned(),
+        SourceDecl {
+            repo: Some(REPO.to_owned()),
+            path: None,
+            rev: None,
+            enabled: true,
+        },
+    );
+    manifest.skills.insert(
+        "gh".to_owned(),
+        crate::manifest::ItemDecl::from_source("cat"),
+    );
+    crate::manifest::save(&crate::manifest::manifest_path(&f.env, &scope), &manifest).unwrap();
+    (scope, sync(&f.env, REPO, None).unwrap())
+}
+
+fn remove_checkout(f: &Fixture, published: &Resolution) {
+    fs::remove_dir_all(&published.root).unwrap();
+    fs::remove_file(store::receipt_path(
+        &f.env,
+        &key_for(&f.env),
+        &published.commit,
+    ))
+    .unwrap();
+}
+
+/// Snapshot derivation is part of the detached refresh. Its nested cache
+/// publication keeps the short wait instead of turning back into foreground
+/// work after the fetch lock has been released.
+#[test]
+fn background_snapshot_derivation_skips_a_busy_cached_checkout() {
+    let f = fixture();
+    let (scope, published) = remote_skill_scope(&f);
+    remove_checkout(&f, &published);
+    let guard = store::lock_repo(&f.env, &key_for(&f.env), REPO).unwrap();
+    store::reset_wait_counts();
+
+    crate::drift::refresh::refresh_stale(&f.env, &[scope]);
+    let waits = store::wait_counts();
+    drop(guard);
+
+    assert_eq!(waits.0, 0, "foreground cache waits: {waits:?}");
+    assert!(waits.1 > 0, "no background cache wait: {waits:?}");
+    assert!(store::published(&f.env, &key_for(&f.env), &published.commit).is_none());
+}
+
+/// Copy derivation is the other deep read after a detached refresh. A current
+/// snapshot isolates this path, and the occupied skill makes it resolve the
+/// source while another process owns the cache lock.
+#[test]
+fn background_copy_derivation_skips_a_busy_cached_checkout() {
+    let f = fixture();
+    let (scope, published) = remote_skill_scope(&f);
+    crate::drift::snapshot::store(
+        &f.env,
+        &scope,
+        &crate::drift::snapshot::ScopeSnapshot {
+            schema: crate::drift::snapshot::SNAPSHOT_SCHEMA,
+            taken_at: crate::clock::unix_now(),
+            scope: scope.label(),
+            packages: Vec::new(),
+            unreadable: Vec::new(),
+        },
+    )
+    .unwrap();
+    let crate::model::Scope::Project { root } = &scope else {
+        unreachable!("the fixture creates a project scope");
+    };
+    let occupied = root.join(".agents/skills/gh");
+    fs::create_dir_all(&occupied).unwrap();
+    fs::write(occupied.join("SKILL.md"), "unmanaged\n").unwrap();
+    remove_checkout(&f, &published);
+    let guard = store::lock_repo(&f.env, &key_for(&f.env), REPO).unwrap();
+    store::reset_wait_counts();
+
+    crate::drift::refresh::refresh_stale(&f.env, &[scope]);
+    let waits = store::wait_counts();
+    drop(guard);
+
+    assert_eq!(waits.0, 0, "foreground cache waits: {waits:?}");
+    assert!(waits.1 > 0, "no background cache wait: {waits:?}");
+    assert!(store::published(&f.env, &key_for(&f.env), &published.commit).is_none());
 }
 
 /// One repository written three ways is one repository: the endings that
@@ -638,16 +798,38 @@ fn one_repository_spelled_three_ways_keeps_one_cache_entry() {
 fn the_cache_lock_is_released_with_its_guard() {
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let guard = store::lock_repo(&env, "catalog").unwrap();
-    assert!(store::lock_repo(&env, "catalog").is_err());
+    let guard = store::lock_repo(&env, "catalog", "owner/catalog").unwrap();
+    assert!(store::lock_repo(&env, "catalog", "owner/catalog").is_err());
     drop(guard);
-    store::lock_repo(&env, "catalog").expect("the lock releases with its guard");
+    store::lock_repo(&env, "catalog", "owner/catalog").expect("the lock releases with its guard");
+}
+
+/// Every repository lock enters through one policy: foreground contention
+/// names the repository once, while detached work keeps its short silent skip.
+#[test]
+fn the_common_cache_lock_notices_only_foreground_waits() {
+    let f = fixture();
+    let key = key_for(&f.env);
+    let guard = store::lock_repo(&f.env, &key, REPO).unwrap();
+    store::take_wait_notices();
+
+    let error = store::lock_repo(&f.env, &key, REPO).err().unwrap();
+    assert!(matches!(error, CoreError::CacheBusy { .. }));
+    assert_eq!(store::take_wait_notices(), [REPO]);
+
+    let background = f
+        .env
+        .clone()
+        .with_source_cache_wait(crate::env::SourceCacheWait::Background);
+    let error = store::lock_repo(&background, &key, REPO).err().unwrap();
+    assert!(matches!(error, CoreError::CacheBusy { .. }));
+    assert!(store::take_wait_notices().is_empty());
+    drop(guard);
 }
 
 /// As with the scope lock: a child forked by any thread holds a copy of
 /// this fd's open file description until it execs, so a release relying on
-/// close alone stays held for the length of that spawn window — here paid
-/// as the full LOCK_WAIT and then a false CacheBusy. The try_clone is that
+/// close alone stays held for the length of that spawn window. The try_clone is that
 /// fork copy at the description level: dropping the guard must release the
 /// lock while the copy still exists.
 #[cfg(unix)]
@@ -655,10 +837,10 @@ fn the_cache_lock_is_released_with_its_guard() {
 fn the_cache_lock_releases_while_a_description_copy_exists() {
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let guard = store::lock_repo(&env, "catalog").unwrap();
+    let guard = store::lock_repo(&env, "catalog", "owner/catalog").unwrap();
     let copy = guard.file().try_clone().unwrap();
     drop(guard);
-    let relock = store::lock_repo(&env, "catalog");
+    let relock = store::lock_repo(&env, "catalog", "owner/catalog");
     drop(copy);
     relock.expect("drop released the lock despite the live description copy");
 }
