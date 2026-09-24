@@ -116,6 +116,21 @@ assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
   "EVENT account claude harness=claude through=local status=ok verdict=walled headroom_pct=2 binding_bucket=weekly binding_resets_at=2026-10-01T12:00:00Z change=reset was=ok/walled" \
   "the reading moving off a passed reset is an account event naming the reset" "$ERR"
 
+# Claude's usage endpoint writes a reset with fractional seconds and +00:00,
+# which the BSD date arm cannot read: the watch keeps whole-second UTC with a
+# Z, so the reset is judged and printed the same way on every host.
+new_case reset_fractional
+accounts 1 "$(account claude ok walled 2 2026-09-24T12:00:00.123456+00:00)"
+accounts 2 "$(account claude ok walled 2 2026-10-01T12:00:00.654321+00:00)"
+printf '%s\n' "$BEFORE" > "$STUB_DIR/now.epoch"
+pass
+printf '%s\n' "$AFTER" > "$STUB_DIR/now.epoch"
+pass
+assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
+  "EVENT account claude harness=claude through=local status=ok verdict=walled headroom_pct=2 binding_bucket=weekly binding_resets_at=2026-10-01T12:00:00Z change=reset was=ok/walled" \
+  "a fractional +00:00 reset is judged and printed as whole-second UTC" "$ERR"
+assert_not_contains "$(cat "$ERR")" "account-reset-unparsed" "the fractional reset parses" "$ERR"
+
 # Any other event opens the block, and the roster stays with the heartbeat.
 new_case other_event
 accounts 1 "$(account claude ok room 80 2026-10-01T00:00:00Z)"
@@ -135,6 +150,17 @@ assert_eq "rc=$RC first=$(head -1 <<<"$OUT") roster=$(grep '^account' <<<"$OUT" 
   "a failed read puts account-roster unread in the heartbeat" "$ERR"
 assert_eq "$(grep -c "^oversee-watch: account-unread path=$TMP_ROOT/bin/lanes-stub.sh exit=1$" "$ERR" || true)" "1" \
   "the failed read is noted with the reader and its exit" "$ERR"
+
+# A listing that exits 0 with nothing on stdout failed to render; it is not a
+# fleet with no accounts.
+new_case empty_listing
+: > "$STUB_DIR/lanes.1.json"
+pass
+assert_eq "rc=$RC first=$(head -1 <<<"$OUT") roster=$(grep '^account' <<<"$OUT" || true)" \
+  "rc=0 first=$HEARTBEAT roster=account-roster unread" \
+  "an empty listing at exit 0 puts account-roster unread in the heartbeat" "$ERR"
+assert_eq "$(grep -c "^oversee-watch: account-unread path=$TMP_ROOT/bin/lanes-stub.sh parse=failed$" "$ERR" || true)" "1" \
+  "the empty listing is noted as a parse failure" "$ERR"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -32,8 +32,9 @@
 #         refusal took, with the cause. Table by default, --json for the
 #         structured record. Each --json record carries `verdict`: `room`,
 #         `walled` or `unmeasured`, its binding bucket judged against
-#         ORCH_LANE_MAX_PCT by the rule `pick` refuses on, so a reader of the
-#         listing never holds a second copy of that threshold or its default.
+#         ORCH_LANE_MAX_PCT by the rule `pick` with no --model refuses on, so
+#         a reader of the listing never holds a second copy of that threshold
+#         or its default.
 #         The STATUS words are `ok`; `rate_limited`, an endpoint that answered
 #         HTTP 429; `unreachable`, one that answered 5xx or that nothing could
 #         be read from at all, or a renewal another tool's credentials lock kept
@@ -1532,6 +1533,17 @@ refresh_claude_token() {
 	body=$(LANES_RT="$rt" jq -nc --arg ci "$client_id" \
 		'{grant_type:"refresh_token", client_id:$ci, refresh_token:env.LANES_RT}') \
 		|| { token_refusal error '' '' 'the token request body could not be built'; exec 9>&-; return 1; }
+	# From the POST to the rename, the endpoint may already have rotated the
+	# refresh token the credentials file holds, and an interrupt anywhere in
+	# that window leaves the account on a retired one that only a fresh login
+	# recovers. A caller's ceiling is such an interrupt: `timeout` signals the
+	# whole process group, this subshell and the request included. So INT and
+	# TERM are ignored across the window, and the request inherits the ignore
+	# and completes; curl's --max-time bounds it. KILL is not held off, and no
+	# caller of this script sends it. Every return below ends this subshell,
+	# whose EXIT trap releases the mutex, so only the success path puts the
+	# lock's own handlers back.
+	trap '' INT TERM
 	# The User-Agent reaches the injected command through its ENVIRONMENT, never
 	# argv, which is where the real POST carries it too: a stub asserting the
 	# header asserts what curl would send.
@@ -1571,12 +1583,9 @@ refresh_claude_token() {
 	new_rt=$(jq -r 'try (.refresh_token // empty) catch empty' <<<"$HTTP_BODY")
 	tmp="$(mktemp "$dir/.credentials.XXXXXX")" || { token_refusal error '' '' "no temporary file could be created in $dir"; exec 9>&-; return 1; }
 	# Between here and the rename this file holds a live rotated refresh token.
-	# An interrupt that left it in the config directory would park that token
-	# where a backup or a dotfile sync carries it off the machine. This replaces
-	# the INT and TERM handlers orch_take_lock armed for its mutex, and ends in
-	# `exit` for that reason: the EXIT trap then runs and the mutex is released
-	# as well as the file removed.
-	trap 'rm -f -- "${tmp:?}"; exit 1' INT TERM
+	# The ignore set before the POST keeps an interrupt from leaving it in the
+	# config directory, where a backup or a dotfile sync would carry it off the
+	# machine.
 	LANES_AT="$new_at" LANES_RT="${new_rt:-$rt}" jq --argjson exp "$new_exp" \
 		'.claudeAiOauth.accessToken = env.LANES_AT
 		 | .claudeAiOauth.refreshToken = env.LANES_RT
@@ -1864,10 +1873,9 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 		return 1
 	fi
 	err="$(mktemp)" || { message host-accounts-unreadable "$host" mktemp >&2; return 1; }
-	# `exit 1`, the same as the credential-refresh trap above: without it the
-	# handler returns and execution falls through to the `cat` below, which reads
-	# the file the handler has just deleted and prints its own error where the
-	# keyed line belongs.
+	# The handler ends in `exit 1`: without it the handler returns and execution
+	# falls through to the `cat` below, which reads the file the handler has
+	# just deleted and prints its own error where the keyed line belongs.
 	trap 'rm -f -- "${err:?}"; exit 1' INT TERM
 	rows="$(${bound[@]+"${bound[@]}"} "$SCRIPT_DIR/lane-host" accounts 2>"$err")" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then

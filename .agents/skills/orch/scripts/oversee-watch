@@ -489,8 +489,8 @@ ow_message() { # REASON FIELD=VALUE...
     items-omitted) text='No work items were supplied. Merged and handoff checks are skipped.' ;;
     lanes-omitted) text='No lane windows were supplied. Pane checks are skipped; the named checks continue.' ;;
     child-probe-failed) text='The child-process probe could not run. Shell panes remain watched.' ;;
-    account-unread) text='The account roster could not be read this pass, so no account event is judged and a heartbeat carries account-roster unread in place of the roster. The baseline stands for the next read. The field names the exit, or the seconds the ceiling allowed.' ;;
-    account-reset-unparsed) text='A binding_resets_at the baseline holds is not a UTC timestamp, so whether that bucket reset settles nothing this pass. Status and headroom changes on the account are still judged.' ;;
+    account-unread) text='The account roster could not be read this pass, so no account event is judged and a heartbeat carries account-roster unread in place of the roster. The baseline stands for the next read. The field names the exit, the seconds the ceiling allowed, or parse=failed when the listing or a record in it could not be read.' ;;
+    account-reset-unparsed) text='The binding_resets_at the baseline held could not be parsed into a time, so whether that bucket reset settles nothing, and the baseline has already moved to the new reading: that reset is not reported. Status and headroom changes on the account are still judged.' ;;
     claim-missing) text='The pane has no live lane claim. The usage event names no account.' ;;
     reducer-baseline) text='The initial PR attention is the baseline. Only new attention produces events.' ;;
     state-target-invalid) text='The watch state target is not a regular file.' ;;
@@ -678,8 +678,9 @@ MARK_REPEAT="${ORCH_OVERSEER_MARK_REPEAT:-5}"
 # account, and on a cache miss on the host-wide usage refresh lock (up to 10
 # seconds) and, after a 429 with nothing cached, one sleep of up to 5 seconds
 # and one more usage request, and a pass that spent its whole interval there
-# would delay every other event it carries. A read the ceiling abandons leaves
-# its answer unjudged, which is the answer a failed read already gives.
+# would delay every other event it carries. The ceiling is per read, so a pass
+# can spend it once for each reader. A read the ceiling abandons leaves its
+# answer unjudged, which is the answer a failed read already gives.
 READ_CEILING=60
 STATE_DIR_SETTING="${ORCH_STATE_DIR:-tmp}"
 WORKFLOW_STATE_DIR="$STATE_DIR_SETTING"
@@ -2168,8 +2169,34 @@ overseer_marks_reset() {
   OVERSEER_MARK_RC=1
 }
 
+# bounded_account_read REASON ERR_FILE COMMAND... — one account reader of a
+# pass: COMMAND runs under READ_CEILING with the usage age LANES_MAX_AGE names,
+# its stdout lands in BOUNDED_OUT and its stderr in ERR_FILE, which the caller
+# weighs. A failure or an overrun is noted once under REASON, naming the reader
+# and its exit or the seconds it was given, and returns that status.
+# Stock macOS ships no `timeout`, and without it the read runs unbounded: the
+# pass then delays every other event it carries, which is the outcome this
+# ceiling exists to bound and not one it can prevent there. The ceiling sends
+# TERM alone, never KILL, which `lanes` relies on to finish a token renewal it
+# has already posted.
+BOUNDED_OUT=""
+bounded_account_read() {
+  local reason="$1" errf="$2" rc=0 BOUND_BY=()
+  shift 2
+  BOUNDED_OUT=""
+  ! command -v timeout >/dev/null 2>&1 || BOUND_BY=(timeout "$READ_CEILING")
+  BOUNDED_OUT="$(ORCH_LANES_USAGE_MAX_AGE="$LANES_MAX_AGE" ${BOUND_BY[@]+"${BOUND_BY[@]}"} "$@" 2>"$errf")" || rc=$?
+  (( rc != 0 )) || return 0
+  if [[ "$rc" -eq 124 ]]; then
+    overseer_note "$reason" "path=$1" "seconds=$READ_CEILING"
+  else
+    overseer_note "$reason" "path=$1" "exit=$rc"
+  fi
+  return "$rc"
+}
+
 overseer_marks_judge() {
-  local rc=0 line first field BOUND_BY
+  local line first field
   local errf="$WORK_DIR/overseer-mark.err"
   [[ "$OVERSEER_MARK_READ" -eq 0 ]] || return "$OVERSEER_MARK_RC"
   OVERSEER_MARK_READ=1
@@ -2192,18 +2219,11 @@ overseer_marks_judge() {
   # usage endpoint per account, and on a cache miss on the host-wide usage
   # refresh lock and a 429 retry's sleep and second request, which together can
   # outlast the pass interval.
-  # Stock macOS ships no `timeout`, and without it the read runs unbounded: the
-  # pass then delays every other event it carries, which is the outcome this
-  # ceiling exists to bound and not one it can prevent there.
-  BOUND_BY=()
-  ! command -v timeout >/dev/null 2>&1 || BOUND_BY=(timeout "$READ_CEILING")
-  line="$(ORCH_LANES_USAGE_MAX_AGE="$LANES_MAX_AGE" ${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SUCCEED" --check-marks 2>"$errf")" || rc=$?
-  if (( rc != 0 )); then
-    [[ "$rc" -ne 124 ]] || overseer_note overseer-mark-unjudged "path=$SUCCEED" "seconds=$READ_CEILING"
-    [[ "$rc" -eq 124 ]] || overseer_note overseer-mark-unjudged "path=$SUCCEED" "exit=$rc"
+  if ! bounded_account_read overseer-mark-unjudged "$errf" "$SUCCEED" --check-marks; then
     [[ ! -s "$errf" ]] || cat -- "$errf" >&2
     return 1
   fi
+  line="$BOUNDED_OUT"
   first="${line%%$'\n'*}"
   case "$first" in
     'oversee-succeed: mark-reached '*) OVERSEER_MARK_KEY=mark-reached ;;
@@ -2807,9 +2827,9 @@ check_lanes() {
   [[ "$close_failed" -eq 0 ]] || exit 2
 }
 
-# One `lanes list` per pass, the whole account reading of that pass: the
-# account events below and the heartbeat's roster are both this answer, so the
-# two never describe an account differently. Each row is `<row key> TAB <row
+# One `lanes list` per pass, read by the account events below and the
+# heartbeat's roster alike, so those two never describe an account
+# differently. The overseer's own mark judgement is a separate read. Each row is `<row key> TAB <row
 # value> TAB <fields>`, the key and value laid out with the rows above and
 # <fields> the text both the event and the roster print. `verdict` is
 # `lanes`'s own wall judgement against ORCH_LANE_MAX_PCT, so the threshold and
@@ -2819,30 +2839,32 @@ check_lanes() {
 ACCOUNT_ROSTER=""
 ACCOUNT_ROSTER_RC=1
 account_roster_read() {
-  local errf="$WORK_DIR/accounts.err" rc=0 out BOUND_BY=()
+  local errf="$WORK_DIR/accounts.err" rc=0 out
   ACCOUNT_ROSTER=""
   ACCOUNT_ROSTER_RC=1
-  ! command -v timeout >/dev/null 2>&1 || BOUND_BY=(timeout "$READ_CEILING")
-  out="$(ORCH_LANES_USAGE_MAX_AGE="$LANES_MAX_AGE" ${BOUND_BY[@]+"${BOUND_BY[@]}"} "$LANES_CLI" list --json 2>"$errf")" || rc=$?
+  bounded_account_read account-unread "$errf" "$LANES_CLI" list --json || rc=$?
   # `lanes` writes its own keyed notices on a listing it still answered, a
   # provider it could not ask among them; those qualify this roster and pass
   # through with it.
   [[ ! -s "$errf" ]] || cat -- "$errf" >&2
-  if (( rc != 0 )); then
-    [[ "$rc" -ne 124 ]] || overseer_note account-unread "path=$LANES_CLI" "seconds=$READ_CEILING"
-    [[ "$rc" -eq 124 ]] || overseer_note account-unread "path=$LANES_CLI" "exit=$rc"
-    return 1
-  fi
+  (( rc == 0 )) || return 1
+  # The listing is read as one JSON array or not at all: an empty answer at
+  # exit 0 is a listing that failed to render, never a fleet with no accounts.
   # A record missing the fields a row is keyed and judged on is not an account
   # this watch can compare, and refusing the read is what keeps it from
-  # reading as an unchanged one.
-  out="$(jq -r '.[]
+  # reading as an unchanged one. A reset stamp is normalized to whole-second
+  # UTC with a Z, as the merged and triage filters normalize theirs: Claude's
+  # usage endpoint writes fractional seconds and `+00:00`, which the BSD arm
+  # of to_epoch cannot read.
+  out="$(jq -rn 'input
+    | if type != "array" then error("listing is not an array") else .[] end
     | (.status // error("status missing")) as $status
     | (.verdict // error("verdict missing")) as $verdict
+    | ((.binding_resets_at // "-") | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z")) as $resets
     | ["\(.harness)|\(.measured_through)|\(.config_dir)",
-       "\($status)|\($verdict)|\(.binding_resets_at // "-")",
-       "\(.alias) harness=\(.harness) through=\(.measured_through) status=\($status) verdict=\($verdict) headroom_pct=\(.headroom_pct // "-") binding_bucket=\(.binding_bucket // "-") binding_resets_at=\(.binding_resets_at // "-")"]
-    | @tsv' <<<"$out" 2>"$errf")" || {
+       "\($status)|\($verdict)|\($resets)",
+       "\(.alias) harness=\(.harness) through=\(.measured_through) status=\($status) verdict=\($verdict) headroom_pct=\(.headroom_pct // "-") binding_bucket=\(.binding_bucket // "-") binding_resets_at=\($resets)"]
+    | @tsv' <<<"$BOUNDED_OUT" 2>"$errf")" || {
     overseer_note account-unread "path=$LANES_CLI" "parse=failed"
     [[ ! -s "$errf" ]] || cat -- "$errf" >&2
     return 1

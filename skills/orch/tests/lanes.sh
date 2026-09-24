@@ -2389,9 +2389,12 @@ table \
 run_lanes "$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv" host-accounts --harness claude
 assert_eq "$OUT" "$H/.claude"$'\t'"claude" \
   "the printed row names the config dir the provider was given and that row's harness"
-echo "=== a ceiling that reaps a renewal releases the credentials mutex ==="
+echo "=== a renewal a ceiling lands on finishes, keeps the rotated token and releases the mutex ==="
 # `refresh_claude_token` takes that mutex inside a command substitution, which
-# a ceiling reaps along with the shell that called it. Left behind, the mutex
+# a ceiling signals along with the shell that called it: `timeout` signals the
+# whole process group. Once the POST is out the endpoint may already have
+# rotated the refresh token, so the renewal ignores the ceiling's TERM until
+# the rename and a credentials file never keeps a retired token. Left behind, the mutex
 # makes every later renewal on that account wait out its whole timeout and
 # fail with "another tool holds the credentials lock". Only the mkdir mutex
 # can outlive its holder — under flock the kernel releases it — so the probe
@@ -2410,11 +2413,11 @@ echo "=== a ceiling that reaps a renewal releases the credentials mutex ==="
 # a renewal that never started.
 #
 # The library rule has its own rows in file-lock-messages.sh; what those cannot
-# reach is whether the SHIPPED caller takes it. The ceiling row below hangs at
-# the token POST, before the rename, so no run of this suite executes the line
-# that restores the handlers. The change under test is the word itself, so it
-# is pinned as source: `trap -` on those signals is what the revert would put
-# back.
+# reach is whether the SHIPPED caller takes it. The ceiling row below lands
+# while the token POST is in flight and the renewal then runs to its end, so
+# it executes the line that restores the handlers but no signal reaches that
+# line. The change under test is the word itself, so it is pinned as source:
+# `trap -` on those signals is what the revert would put back.
 #
 # The invariant is the renewal's alone — no clearing to the default disposition
 # while it holds the mkdir mutex — so the pin reads that function's body and no
@@ -2438,27 +2441,33 @@ assert_eq "$(grep -c -E '^[[:space:]]*trap - INT TERM' <<<"$RENEWAL_BODY")" "0" 
   "and clears them nowhere inside that renewal, which is what would leave a held mutex at the default disposition"
 
 if command -v timeout > /dev/null 2>&1; then
-  # A token POST that never answers, so the ceiling lands while the mutex is
-  # held and before the write-back arms any handler of its own.
-  TOKEN_HANG="$TMP_ROOT/token-hang"
-  printf '#!/usr/bin/env bash\ncat >/dev/null\nsleep 30\n' > "$TOKEN_HANG"
-  chmod +x "$TOKEN_HANG"
+  # A token endpoint that answers after the ceiling, as a slow one does: the
+  # ceiling lands while the mutex is held and the POST is in flight, which is
+  # after the endpoint has rotated the refresh token.
+  TOKEN_SLOW="$TMP_ROOT/token-slow"
+  printf '#!/usr/bin/env bash\ncat >/dev/null\nsleep 3\nprintf %s\n' \
+    "'200 \\n{\"access_token\":\"renewed-token\",\"refresh_token\":\"rotated-refresh\",\"expires_in\":3600}\\n'" \
+    > "$TOKEN_SLOW"
+  chmod +x "$TOKEN_SLOW"
   new_home ceiling
   make_lane "$H" claude -60
   claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
   CEILING_RC=0
   PATH="$NOFLOCK" LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
     OVERSEE_WATCH_STATE_DIR="$H/state" \
-    ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_HANG" \
+    ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_SLOW" \
     timeout 2 "$LANES" pick --lane "$H/.claude" --harness claude --json > /dev/null 2>&1 ||
     CEILING_RC=$?
   assert_eq "rc=$CEILING_RC mutex=$(settled_mutex "$H/.claude/.lanes-refresh.lock.d")" \
     "rc=124 mutex=released" \
-    "a renewal the ceiling reaps leaves no mutex for the next one to wait on"
+    "a renewal the ceiling lands on leaves no mutex for the next one to wait on"
+  assert_eq "$(jq -r '.claudeAiOauth.refreshToken + " " + .claudeAiOauth.accessToken' "$H/.claude/.credentials.json" 2>/dev/null || echo UNREADABLE)" \
+    "rotated-refresh renewed-token" \
+    "and the credentials file holds the rotated refresh token the endpoint answered with"
 
   # The must-fail control: every handler orch_take_lock arms dropped and the
   # renewal left as it was, so the mutex is taken and nothing runs to give it
-  # back. A control that removed the lock instead would prove the assertion
+  # back once the renewal ends. A control that removed the lock instead would prove the assertion
   # runs rather than that the release does.
   CEILCTL="$TMP_ROOT/mutant-ceiling"
   mkdir -p "$CEILCTL/lib"
@@ -2480,10 +2489,10 @@ if command -v timeout > /dev/null 2>&1; then
   claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
   PATH="$NOFLOCK" LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
     OVERSEE_WATCH_STATE_DIR="$H/state" \
-    ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_HANG" \
+    ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_SLOW" \
     timeout 2 "$CEILCTL/lanes" pick --lane "$H/.claude" --harness claude --json > /dev/null 2>&1 || true
-  assert_eq "$(settled_mutex "$H/.claude/.lanes-refresh.lock.d" 10)" "held" \
-    "control: without those handlers the reaped renewal leaves the mutex behind"
+  assert_eq "$(settled_mutex "$H/.claude/.lanes-refresh.lock.d" 50)" "held" \
+    "control: without those handlers the renewal leaves the mutex behind"
 else
   printf '  skip  a reaped renewal: this host has no timeout to bound one with\n'
 fi

@@ -146,7 +146,7 @@
 <tr><td>The overseer's own inbox</td><td colspan="2">The file in its checkout</td><td><code>owner-note</code>, <code>peer-note</code></td></tr>
 <tr><td>Every open pull request, where the review-gate skill is installed</td><td colspan="2">The review-gate reducer; without that skill the pass skips this step and each PR is waited on by its own waiter</td><td>One attention line per finding</td></tr>
 <tr><td>Each live item's pull request, merged since the fleet start</td><td colspan="2">A query per item branch in every watched repository</td><td><code>merged</code></td></tr>
-<tr><td>Every account the fleet can launch on, once per pass</td><td colspan="2"><code>lanes list --json</code> on the overseer's host</td><td><code>account</code> when a status, the headroom verdict against <code>ORCH_LANE_MAX_PCT</code> or a binding bucket reset changes</td></tr>
+<tr><td>Every account the fleet can launch on, once per pass</td><td colspan="2"><code>lanes list --json</code> on the overseer's host</td><td><code>account</code> when a status or the headroom verdict against <code>ORCH_LANE_MAX_PCT</code> changes, or the binding bucket's reset has passed</td></tr>
 <tr><td>A merged hosted lane that has exited and whose worktree is gone</td><td>—</td><td><code>lane-close</code></td><td><code>lane-closed</code> with the archive path, or <code>kept=none</code> when the close archived nothing</td></tr>
 </table>
 
