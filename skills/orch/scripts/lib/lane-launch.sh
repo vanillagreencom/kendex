@@ -191,18 +191,12 @@ launch_choice_permission_match() { # SPELLINGS TOKEN [NEXT]
 }
 
 # Whether the supplied texts carry one permission posture from HARNESS's row.
-launch_choice_permission_present() { # HARNESS [--transfer] TEXT...
+launch_choice_permission_present() { # HARNESS TEXT...
   local spellings text i
   local -a tokens=()
-  local harness="$1"
-  shift
-  if [[ "${1:-}" == --transfer ]]; then
-    spellings="$(launch_choice_transfer_permission_spellings "$harness")"
-    shift
-  else
-    spellings="$(launch_choice_permission_spellings "$harness")"
-  fi
+  spellings="$(launch_choice_permission_spellings "$1")"
   [[ -n "$spellings" ]] || return 1
+  shift
   for text in "$@"; do
     tokens=()
     read -r -a tokens <<<"$text"
@@ -214,6 +208,50 @@ launch_choice_permission_present() { # HARNESS [--transfer] TEXT...
     done
   done
   return 1
+}
+
+# Whether the supplied texts carry exactly one permission word from HARNESS's
+# row and that word is in its transfer set. A second permission word, in the
+# row or a value the row does not name on one of its flags, is a posture this
+# reader cannot translate: which of the two the caller's harness honors is that
+# harness's rule, and the strip that follows a transfer would drop the one it
+# knows and forward the one it does not. Status 1 for every such mix, for no
+# permission word, and for a row with no transfer set.
+launch_choice_permission_transferable() { # HARNESS TEXT...
+  local spellings transfer flags spec text i span postures=0 transferable=0
+  local -a tokens=()
+  spellings="$(launch_choice_permission_spellings "$1")"
+  transfer="$(launch_choice_transfer_permission_spellings "$1")"
+  [[ -n "$spellings" && -n "$transfer" ]] || return 1
+  flags=""
+  for spec in $spellings; do
+    [[ "$spec" == *=* ]] || continue
+    flags="$flags ${spec%%=*}"
+  done
+  shift
+  for text in "$@"; do
+    tokens=()
+    read -r -a tokens <<<"$text"
+    i=0
+    while (( i < ${#tokens[@]} )); do
+      launch_choice_permission_match "$spellings" "${tokens[i]}" "${tokens[i+1]:-}"
+      if (( LAUNCH_CHOICE_PERMISSION_SPAN > 0 )); then
+        postures=$((postures + 1))
+        span=$LAUNCH_CHOICE_PERMISSION_SPAN
+        launch_choice_permission_match "$transfer" "${tokens[i]}" "${tokens[i+1]:-}"
+        (( LAUNCH_CHOICE_PERMISSION_SPAN == 0 )) || transferable=$((transferable + 1))
+        i=$((i + span))
+        continue
+      fi
+      for spec in $flags; do
+        [[ "${tokens[i]}" == "$spec" || "${tokens[i]}" == "$spec="* ]] || continue
+        postures=$((postures + 1))
+        break
+      done
+      i=$((i + 1))
+    done
+  done
+  (( postures == 1 && transferable == 1 ))
 }
 
 # The value one launch names for one choice, empty where it names none, over as

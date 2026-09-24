@@ -465,6 +465,12 @@ cross_permission_refuses() { # NAME FLAGS...
 cross_permission_refuses restricted --permission-mode dontAsk
 cross_permission_refuses absent
 cross_permission_refuses unknown --permission-mode plan
+# A full bypass beside a second permission word is a mix this reader cannot
+# translate: which word the caller's harness honors is that harness's rule.
+cross_permission_refuses mixed-restricted --dangerously-skip-permissions --permission-mode dontAsk
+cross_permission_refuses mixed-unknown --dangerously-skip-permissions --permission-mode plan
+cross_permission_refuses mixed-attached --dangerously-skip-permissions --permission-mode=plan
+cross_permission_refuses mixed-double --dangerously-skip-permissions --permission-mode bypassPermissions
 
 new_caller "$CODEX_SCREEN" 'Context 48% left'
 fleet_state
@@ -483,7 +489,40 @@ CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-never 'claude:1:high' -- \
 check "codex ask-for-approval never refuses before cross-harness launch" \
   "$RC|$(keyed launch-choice-failed "$OUT" | sed -n 1p)|$(overseers)|$(recorded claude)" \
   "1|oversee-succeed: launch-choice-failed reason=permission-transfer source=codex target=claude|0|none"
+
+new_caller "$CODEX_SCREEN" 'Context 48% left'
+fleet_state
+CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-mixed 'claude:1:high' -- \
+  -m caller-model -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox -a never
+check "codex full bypass beside ask-for-approval never refuses before cross-harness launch" \
+  "$RC|$(keyed launch-choice-failed "$OUT" | sed -n 1p)|$(overseers)|$(recorded claude)" \
+  "1|oversee-succeed: launch-choice-failed reason=permission-transfer source=codex target=claude|0|none"
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+
+# The must-fail inverse: with the one-posture count dropped from the judge, the
+# same mixed caller is admitted and the successor opens under codex full bypass
+# with the restricted word stripped away.
+MIXED="$TMP_ROOT/mixed-admit"
+script_copy "$MIXED"
+rm -f -- "${MIXED:?}/lib/lane-launch.sh"
+awk -v line='  (( postures == 1 && transferable == 1 ))' \
+    -v repl='  (( transferable >= 1 ))' \
+  '$0 == line { print repl; hits++; next } { print }
+   END { if (hits != 1) exit 1 }' "$SRC_DIR/lib/lane-launch.sh" > "$MIXED/lib/lane-launch.sh"
+check "control: the mutant really drops the one-posture count from the transfer judge" \
+  "$(cmp -s "$MIXED/lib/lane-launch.sh" "$SRC_DIR/lib/lane-launch.sh" && echo same || echo differs)" "differs"
+new_caller "$MARK"
+fleet_state
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+MIXED_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+MIXED_HOME="$(lane_codex_home_path "$H/.codex" "$MIXED_CWD")"
+SUCCEED_BIN="$MIXED/oversee-succeed" run_succeed mixed-admit 'codex:1:high' -- \
+  --model fable --effort high --dangerously-skip-permissions --permission-mode dontAsk
+check "control: without the count the mixed caller launches codex under full bypass" \
+  "$RC|$(overseers)|$(recorded codex)" \
+  "0|1|lane=$MIXED_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;$BRIEF;"
+claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 # The same must-fail control in the reverse direction. Without the named-entry
 # strip and permission writer, claude receives codex's model, effort and
@@ -515,10 +554,11 @@ script_copy "$STRIP_ALL"
 rm -f -- "${STRIP_ALL:?}/oversee-succeed"
 check "control locates the caller-entry branch" \
   "$(grep -cF '  if [[ "$chosen" == caller ]]; then' "$SUCCEED")" "1"
-sed 's/^  if \[\[ "\$chosen" == caller \]\]; then$/  if false; then/' \
+check "control locates the same-harness branch" \
+  "$(grep -cF '  elif [[ "$harness" == "$CALLER_HARNESS" ]]; then' "$SUCCEED")" "1"
+sed -e 's/^  if \[\[ "\$chosen" == caller \]\]; then$/  if false; then/' \
+  -e 's/^  elif \[\[ "\$harness" == "\$CALLER_HARNESS" \]\]; then$/  elif false; then/' \
   "$SUCCEED" > "$STRIP_ALL/oversee-succeed"
-sed -i 's/^  elif \[\[ "\$harness" == "\$CALLER_HARNESS" \]\]; then$/  elif false; then/' \
-  "$STRIP_ALL/oversee-succeed"
 chmod +x "$STRIP_ALL/oversee-succeed"
 check "control: the strip-all mutant rewrites the caller-entry branch" \
   "$(cmp -s "$STRIP_ALL/oversee-succeed" "$SUCCEED" && echo same || echo differs)" "differs"
@@ -590,6 +630,14 @@ check "the permission writer answers required rows and refuses sentinel and unkn
 check "the transfer set excludes restricted unattended modes" \
   "$(launch_choice_transfer_permission_spellings claude)|$(launch_choice_transfer_permission_spellings codex)" \
   "--dangerously-skip-permissions --permission-mode=bypassPermissions|--dangerously-bypass-approvals-and-sandbox"
+transferable_status() { # HARNESS TEXT
+  local rc=0
+  launch_choice_permission_transferable "$1" "$2" || rc=$?
+  printf '%s\n' "$rc"
+}
+check "the transfer judge admits one full bypass alone and refuses a mix, a restricted word, and nothing" \
+  "$(transferable_status claude '--model fable --dangerously-skip-permissions --verbose')|$(transferable_status claude '--permission-mode bypassPermissions')|$(transferable_status claude '--dangerously-skip-permissions --permission-mode dontAsk')|$(transferable_status claude '--dangerously-skip-permissions --permission-mode plan')|$(transferable_status claude '--permission-mode dontAsk')|$(transferable_status claude '--model fable')|$(transferable_status codex '--dangerously-bypass-approvals-and-sandbox -a never')|$(transferable_status opencode '--model x')" \
+  "0|0|1|1|1|1|1|1"
 
 # The account mark, with the context well under the context mark: the caller's
 # own account is at headroom 5 and the successor goes to the claude lane

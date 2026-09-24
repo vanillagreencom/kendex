@@ -178,8 +178,9 @@
 #                    print or walled entry carries every word unchanged. A
 #                    named same-harness entry replaces model and effort but
 #                    keeps permission words exact. A named cross-harness entry
-#                    accepts only a transferable full-bypass posture and writes
-#                    the target harness's spelling. Print mode records this
+#                    accepts one transferable full-bypass posture, and no other
+#                    permission word, and writes the target harness's spelling.
+#                    A mix refuses before launch. Print mode records this
 #                    session rather than a later preference.
 #                    Refused beside --dead-pane, whose line already holds them
 #   --check-marks    Judge the triggers of step 2 against this overseer's own
@@ -1022,15 +1023,16 @@ else
   [[ -z "$choice_words" ]] || cmd+=" $choice_words"
   # A caller entry keeps every word. A same-harness named entry strips model
   # and effort but keeps the caller's exact permission spelling. A cross-harness
-  # entry accepts only a full-bypass spelling whose meaning the shared row can
-  # prove, writes the target spelling, and strips all caller choices.
+  # entry accepts one full-bypass spelling whose meaning the shared row can
+  # prove and no other permission word, writes the target spelling, and strips
+  # all caller choices.
   if [[ "$chosen" == caller ]]; then
     LAUNCH_CHOICE_KEPT=(${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"})
   elif [[ "$harness" == "$CALLER_HARNESS" ]]; then
     launch_choice_strip "$CALLER_HARNESS" ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
       || die launch-choice-failed "harness=$CALLER_HARNESS"
   else
-    launch_choice_permission_present "$CALLER_HARNESS" --transfer "${HARNESS_FLAGS[*]}" \
+    launch_choice_permission_transferable "$CALLER_HARNESS" "${HARNESS_FLAGS[*]}" \
       || die launch-choice-failed reason=permission-transfer \
         "source=$CALLER_HARNESS" "target=$harness"
     permission_words="$(launch_choice_permission_write "$harness")" \
