@@ -2,7 +2,8 @@
 # The proof for tools/test-roster: a checkout holding one harness crate, a
 # pass row spelling every way a name is declared, one refusal row per way a
 # file or directory goes undeclared, the crate with no [[test]] root at all,
-# and the crate that keeps autodiscovery. Every row runs the real script
+# the crate that keeps autodiscovery, the pass world under BSD sed's argv
+# rules, and the reads that cannot happen. Every row runs the real script
 # over a fixture tree under tmp/ and reads its exit status and its keyed
 # first line; no result is read out of an empty string.
 set -euo pipefail
@@ -75,6 +76,37 @@ run_roster
 [ "$RC" -eq 0 ] && [ -z "$OUT" ] && ok "a mod line, a pub mod line, a #[path] attribute, a [[test]] path and a directory root all declare; a fixture directory is not judged" || bad "a mod line, a pub mod line, a #[path] attribute, a [[test]] path and a directory root all declare; a fixture directory is not judged" "rc=$RC out=$OUT"
 run_roster .
 [ "$RC" -eq 0 ] && ok "an explicit root argument judges the same tree" || bad "an explicit root argument judges the same tree" "rc=$RC out=$OUT"
+# The BSD argv shape: a `--` after sed's script is a file operand there,
+# which the shim from skills/commit-guards/tests/bsd-argv-install.test.sh
+# fails the way BSD sed does after handing the rest to the real one.
+SHIM="$TMP/shim"
+mkdir -p "$SHIM"
+REAL_SED="$(command -v sed)"
+cat >"$SHIM/sed" <<SHIM
+#!/bin/sh
+n=\$#; i=0; seen=0; bad=0
+while [ "\$i" -lt "\$n" ]; do
+  arg=\$1; shift; i=\$((i + 1))
+  if [ "\$seen" -eq 0 ]; then
+    case "\$arg" in -*) ;; *) seen=1 ;; esac
+    set -- "\$@" "\$arg"; continue
+  fi
+  if [ "\$arg" = "--" ]; then bad=1; echo "sed: --: No such file or directory" >&2; continue; fi
+  set -- "\$@" "\$arg"
+done
+$REAL_SED "\$@"; rc=\$?
+[ "\$bad" -eq 0 ] || exit 1
+exit "\$rc"
+SHIM
+chmod 0755 "$SHIM/sed"
+printf 'a\nb\n' >"$TMP/sed-probe"
+probe_rc=0
+PATH="$SHIM:$PATH" sed -n '2p' -- "$TMP/sed-probe" >/dev/null 2>&1 || probe_rc=$?
+[ "$probe_rc" -eq 1 ] && ok "premise: the shim fails a -- operand after sed's script" || bad "premise: the shim fails a -- operand after sed's script" "rc=$probe_rc"
+OUT=""
+RC=0
+OUT="$(cd "$W" && PATH="$SHIM:$PATH" "$ROSTER" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && [ -z "$OUT" ] && ok "the passing world passes under BSD sed's argv rules" || bad "the passing world passes under BSD sed's argv rules" "rc=$RC out=$OUT"
 
 echo "=== one undeclared entry per shape is refused by name ==="
 # Each row plants one entry over the passing world and expects exactly that
@@ -118,6 +150,24 @@ run_roster
 [ "$RC" -eq 0 ] && [ -z "$OUT" ] && ok "an undeclared file in a crate with autodiscovery on is not an orphan" || bad "an undeclared file in a crate with autodiscovery on is not an orphan" "rc=$RC out=$OUT"
 
 echo "=== a tree that cannot be read is never a pass ==="
+seed_world
+chmod 0000 "$CRATE/Cargo.toml"
+run_roster
+chmod 0644 "$CRATE/Cargo.toml"
+if [ "$(id -u)" -eq 0 ]; then
+  printf '  skip  an unreadable manifest exits 2 naming it: root reads every file\n'
+else
+  [ "$RC" -eq 2 ] && [ "$OUT" = "test-roster: unreadable=crates/demo/Cargo.toml" ] && ok "an unreadable manifest exits 2 naming it" || bad "an unreadable manifest exits 2 naming it" "rc=$RC out=$OUT"
+fi
+seed_world
+chmod 0000 "$T/main.rs"
+run_roster
+chmod 0644 "$T/main.rs"
+if [ "$(id -u)" -eq 0 ]; then
+  printf '  skip  an unreadable harness root exits 2 naming it: root reads every file\n'
+else
+  [ "$RC" -eq 2 ] && [ "$OUT" = "test-roster: unreadable=crates/demo/tests/main.rs" ] && ok "an unreadable harness root exits 2 naming it" || bad "an unreadable harness root exits 2 naming it" "rc=$RC out=$OUT"
+fi
 run_roster "$TMP/absent"
 [ "$RC" -eq 2 ] && [[ "$OUT" == "test-roster: unreadable=$TMP/absent"* ]] && ok "an absent root exits 2 naming it" || bad "an absent root exits 2 naming it" "rc=$RC out=$OUT"
 run_roster one two

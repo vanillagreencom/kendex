@@ -59,11 +59,24 @@ orphans=""
 count=0
 for manifest in crates/*/Cargo.toml; do
   [ -f "$manifest" ] || continue
-  grep -qE '^autotests *= *false' -- "$manifest" || continue
+  # Every file is read through a redirection, never as an operand: BSD sed
+  # takes a `--` after the script as a file name. A file this cannot open
+  # is asked before the read, because a redirection the shell refuses
+  # exits 1 like a grep that matched nothing; after it, a status other than
+  # 0 or 1 from grep is a read that did not happen, not a manifest that
+  # keeps autodiscovery.
+  [ -r "$manifest" ] || { printf 'test-roster: unreadable=%s\n' "$manifest"; exit 2; }
+  harness=0
+  grep -qE '^autotests *= *false' <"$manifest" || harness=$?
+  case $harness in
+    0) ;;
+    1) continue ;;
+    *) printf 'test-roster: unreadable=%s\n' "$manifest"; exit 2 ;;
+  esac
   crate_dir=${manifest%/Cargo.toml}
   # Every [[test]] path under tests/, as the manifest spells it; a [[test]]
   # elsewhere is cargo's to compile and not this directory's to declare.
-  roots=$(sed -nE 's/^path = "(tests\/[^"]+)"$/\1/p' -- "$manifest") ||
+  roots=$(sed -nE 's/^path = "(tests\/[^"]+)"$/\1/p' <"$manifest") ||
     { printf 'test-roster: unreadable=%s\n' "$manifest"; exit 2; }
   declared=""
   while IFS= read -r path; do
@@ -72,9 +85,10 @@ for manifest in crates/*/Cargo.toml; do
     name=${name%%/*}
     declared="$declared$nl${name%.rs}"
     [ -f "$crate_dir/$path" ] || continue
+    [ -r "$crate_dir/$path" ] || { printf 'test-roster: unreadable=%s\n' "$crate_dir/$path"; exit 2; }
     # The root's own declarations: mod lines by name, path attributes by
     # first segment.
-    lines=$(sed -nE 's/^(pub )?mod ([A-Za-z0-9_]+);$/\2/p; s/^#\[path = "([^"/]+).*"\]$/\1/p' -- "$crate_dir/$path") ||
+    lines=$(sed -nE 's/^(pub )?mod ([A-Za-z0-9_]+);$/\2/p; s/^#\[path = "([^"/]+).*"\]$/\1/p' <"$crate_dir/$path") ||
       { printf 'test-roster: unreadable=%s\n' "$crate_dir/$path"; exit 2; }
     while IFS= read -r name; do
       [ -n "$name" ] || continue
