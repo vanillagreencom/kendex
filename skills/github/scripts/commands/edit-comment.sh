@@ -40,11 +40,21 @@ Examples:
 
 Reaches both comment kinds: a PR-level comment (#issuecomment-<ID>) and a
 comment inside a review thread (#discussion_r<ID>). The issue-comments
-endpoint is tried first; its 404 sends the id to the review-comments
-endpoint. An id neither endpoint holds is refused with one keyed line,
-`github: comment-kind=unknown id=<ID> use=find-comment`, never a bare 404.
+endpoint is asked first; a 404 there sends the id to the review-comments
+endpoint, and any other failure is reported as that endpoint gave it.
 
-Note: Get comment ID from find-comment or from a GitHub comment URL.
+A 404 from both endpoints is refused with one keyed line, never a bare 404:
+
+  github: comment-kind=unknown id=<ID> use=find-comment|comment-url
+    (both endpoints answered 404 for <owner>/<repo>: no such comment, or
+     the token cannot see the repository)
+
+Both responses are carried in the error's `detail` array, one entry per
+endpoint asked, so gh's own text survives the refusal.
+
+Note: a PR-level comment ID comes from find-comment. A review-thread comment
+ID comes from its comment URL, the number after #discussion_r; pr-threads
+returns PRRT_ thread IDs, which post-reply takes and this command does not.
 EOF
 }
 
@@ -134,24 +144,39 @@ edit_comment() {
     # A comment id carries no marker of which endpoint owns it. A PR-level
     # comment is an ISSUE comment; a comment inside a review thread is a REVIEW
     # comment and lives under `pulls/comments`. Each endpoint answers 404 for
-    # the other's ids, so the issue endpoint is asked first and its 404 is the
-    # signal to ask the review one rather than a verdict on the id.
-    local result status=0
-    result=$(gh api -X PATCH "repos/$owner/$repo/issues/comments/$comment_id" \
-        -f body="$body" 2>&1) || status=$?
-    if [ "$status" -ne 0 ] && gh_error_is_not_found "$result"; then
+    # the other's ids, so a 404 is the signal to ask the next endpoint rather
+    # than a verdict on the id. Every other failure is that endpoint's own
+    # answer about an id it owns, and is reported instead of retried.
+    local kind result status=0 attempts='[]'
+    for kind in issues pulls; do
         status=0
-        result=$(gh api -X PATCH "repos/$owner/$repo/pulls/comments/$comment_id" \
+        result=$(gh api -X PATCH "repos/$owner/$repo/$kind/comments/$comment_id" \
             -f body="$body" 2>&1) || status=$?
-        # Neither endpoint holds the id, so no verb reaches it as written and
-        # a bare 404 would send the caller back to the same two guesses.
-        if [ "$status" -ne 0 ] && gh_error_is_not_found "$result"; then
-            jq -nc --arg id "$comment_id" \
-                '{error: ("github: comment-kind=unknown id=" + $id + " use=find-comment (neither the issue-comments nor the review-comments endpoint holds this id)")}' >&2
+        if [ "$status" -eq 0 ]; then
+            break
+        fi
+        attempts=$(jq -c --arg endpoint "$kind" --arg response "$result" \
+            '. + [{endpoint: $endpoint, response: $response}]' <<<"$attempts")
+        if ! gh_error_is_not_found "$result"; then
+            break
+        fi
+    done
+
+    if [ "$status" -ne 0 ]; then
+        # A 404 from both endpoints does not say the comment is absent: GitHub
+        # answers 404 for a resource the token cannot see and for a repository
+        # that is not the one the caller meant. The refusal names what the two
+        # answers prove, hands back both responses, and names where each kind
+        # of id is read, because a bare 404 sent the caller back to guessing.
+        if gh_error_is_not_found "$result"; then
+            jq -nc --arg id "$comment_id" --arg slug "$owner/$repo" \
+                --argjson attempts "$attempts" \
+                '{error: ("github: comment-kind=unknown id=" + $id
+                    + " use=find-comment|comment-url (both endpoints answered 404 for "
+                    + $slug + ": no such comment, or the token cannot see the repository)"),
+                  detail: $attempts}' >&2
             exit 1
         fi
-    fi
-    if [ "$status" -ne 0 ]; then
         jq -nc --arg detail "$result" '{error: ("Failed to edit comment: " + $detail)}' >&2
         exit 1
     fi
