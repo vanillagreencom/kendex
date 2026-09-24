@@ -276,12 +276,29 @@ pub struct EngineReport {
     /// this set is one nothing declares; a key here with no entry is one
     /// the record does not hold.
     pub installations: BTreeMap<String, Installation>,
-    /// The sources whose root this pass reached through the commit the
-    /// record last resolved, because the mirror could not serve the
-    /// declared revision. Everything rendered from one was measured
-    /// against a commit the record chose, so a proof over that record
-    /// refuses them by name.
-    pub sources_from_record: BTreeSet<String>,
+    /// Each source the planned record carries that this pass could not
+    /// hold to a resolution, and why. Every declared source is resolved
+    /// once a pass, the ones no item names included, so that the record's
+    /// entry for it is measured against a resolution and never against
+    /// itself carried forward; one that resolved to no fresh commit is
+    /// named here, and a proof over the record refuses it by name.
+    pub sources_stood_in: BTreeMap<String, StoodIn>,
+}
+
+/// Why a recorded source's entry was not held to a fresh
+/// resolution this pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoodIn {
+    /// The mirror could not serve the declared revision, and the root was
+    /// reached through the commit the record last resolved: everything
+    /// rendered from it was measured against a commit the record chose.
+    RecordedCommit,
+    /// Nothing is fetched for the source, so the pass resolved nothing and
+    /// the record's entry was carried forward unread.
+    NotFetched,
+    /// The declaration is switched off, so the pass resolved nothing and
+    /// the record's entry was carried forward unread.
+    Disabled,
 }
 
 impl EngineReport {
@@ -311,7 +328,7 @@ impl EngineReport {
             generated: super::GeneratedPaths::default(),
             registrations: Registrations::default(),
             installations: BTreeMap::new(),
-            sources_from_record: BTreeSet::new(),
+            sources_stood_in: BTreeMap::new(),
         }
     }
 }

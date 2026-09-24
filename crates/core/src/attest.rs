@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::apply::Op;
-use crate::engine::{EngineReport, planned_record};
+use crate::engine::{EngineReport, StoodIn, planned_record};
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{BundleRev, LOCK_FILE, Lock, LockEntry, SourceRev};
@@ -186,12 +186,14 @@ pub fn inventory(scope: &Scope, report: &EngineReport) -> Result<Option<Standing
 /// a hand-laid layout or a field this build does not carry is a
 /// difference. A source served from the record's own commit is named,
 /// because everything rendered from it was measured against a commit the
-/// record chose. Each entry the pass also records is compared with the
-/// entry it would write, this machine's half aside. The sources and sets
-/// are compared both ways: one recorded that the manifest does not
-/// declare, and one the pass would record that the record does not carry,
-/// are each named, so a provenance entry deleted by hand fails the row
-/// as a planted one does. Each recorded commit
+/// record chose; so is one the pass resolved nothing for, because its
+/// entry was carried forward unread and a comparison with the record
+/// would be the record against itself. Each entry the pass also records
+/// is compared with the entry it would write, this machine's half aside.
+/// The sources and sets are compared both ways: one recorded that the
+/// manifest does not declare, and one the pass would record that the
+/// record does not carry, are each named, so a provenance entry deleted
+/// by hand fails the row as a planted one does. Each recorded commit
 /// — an entry's source commit, a source's, a set's — must be the one the
 /// declaration resolves to or on that commit's history in the mirror: an
 /// honest record is behind a moving branch and stays honest, and a commit
@@ -212,10 +214,18 @@ pub fn record(
     if text != crate::lock::committed_text(&path, lock)? {
         problems.push("not laid out as kendex writes it".to_owned());
     }
-    for name in &report.sources_from_record {
-        problems.push(format!(
-            "source {name}: the mirror cannot serve the declared revision, and the recorded commit stood in"
-        ));
+    for (name, stood_in) in &report.sources_stood_in {
+        problems.push(match stood_in {
+            StoodIn::RecordedCommit => format!(
+                "source {name}: the mirror cannot serve the declared revision, and the recorded commit stood in"
+            ),
+            StoodIn::NotFetched => format!(
+                "source {name}: not fetched, so nothing holds the record to it — fetch it with kendex source refresh"
+            ),
+            StoodIn::Disabled => {
+                format!("source {name}: disabled, so nothing holds the record to it")
+            }
+        });
     }
     let planned = planned_record(report).unwrap_or_else(|| lock.clone());
     for (key, entry) in &lock.entries {

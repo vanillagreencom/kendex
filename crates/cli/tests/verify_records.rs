@@ -103,7 +103,10 @@ struct World {
 /// URL, so the record carries a source commit; the plugin registry is a
 /// path source beside it. The catalog also publishes one set, installed on
 /// the harness its member already sits on, so the record carries a set
-/// without a row of its own. Installed, committed and tagged.
+/// without a row of its own. The catalog's repository is declared three
+/// times, under one mirror: `cat` for the items, `picat` for the Pi
+/// extension alone, and `spare` for nothing, the state a source is in
+/// after its last package is removed. Installed, committed and tagged.
 #[allow(clippy::unwrap_used)]
 fn world() -> World {
     let tmp = tempfile::tempdir().unwrap();
@@ -177,9 +180,9 @@ fn world() -> World {
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"file://{}\"\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"opencode\", \"pi\", \"gemini\"]\nmethod = \"copy\"\n\n[skills.second]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n[skills.\"data-science/eda\"]\nsource = \"market\"\nharnesses = [\"claude\", \"opencode\"]\n\n[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[hooks.guard]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[commands.second]\nsource = \"cat\"\nharnesses = [\"codex\"]\n\n[mcp-servers.gh]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[pi-extensions.\"@scope/widgets\"]\nsource = \"cat\"\n\n[plugins.\"fmt@market\"]\nenabled = true\nharness = \"claude\"\n\n[bundles.starter]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
-            catalog.display(),
+            "schema = 6\n\n[sources.cat]\nrepo = \"file://{catalog}\"\n\n[sources.picat]\nrepo = \"file://{catalog}\"\n\n[sources.spare]\nrepo = \"file://{catalog}\"\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"opencode\", \"pi\", \"gemini\"]\nmethod = \"copy\"\n\n[skills.second]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n[skills.\"data-science/eda\"]\nsource = \"market\"\nharnesses = [\"claude\", \"opencode\"]\n\n[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[hooks.guard]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[commands.second]\nsource = \"cat\"\nharnesses = [\"codex\"]\n\n[mcp-servers.gh]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[pi-extensions.\"@scope/widgets\"]\nsource = \"picat\"\n\n[plugins.\"fmt@market\"]\nenabled = true\nharness = \"claude\"\n\n[bundles.starter]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
             source_path(&market),
+            catalog = catalog.display(),
         ),
     );
     write(&project.join("AGENTS.md"), "# app\n");
@@ -536,11 +539,11 @@ fn every_key_unknown() -> Vec<(&'static str, Option<Foreign>)> {
 /// fail it. The revision-expression rows plant a name the mirror resolves
 /// to the declared tip itself, so only a refusal to ask git about a value
 /// that is not a pin can fail them.
-fn bookkeeping_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
+fn bookkeeping_edits(world: &World) -> Vec<(&'static str, Edit, Vec<Failing>)> {
     let mut edits = narrowing_edits();
     edits.extend(moving_edits());
     edits.extend(field_edits());
-    edits.extend(provenance_edits());
+    edits.extend(provenance_edits(&world.catalog));
     edits.extend(inventory_edits());
     edits
 }
@@ -647,10 +650,37 @@ fn field_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
 /// set the manifest does not declare, one recorded for another repository
 /// or from another source, and a set's commit off the declared revision's
 /// history. The source's off-history commit is the `repoints a source
-/// commit` row above.
-fn provenance_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
+/// commit` row above. The `spare` rows plant the same edits on the source
+/// nothing uses: the pass resolves it for no item, so only a resolution
+/// made for the record's sake can hold the entry to the declaration.
+fn provenance_edits(catalog: &Path) -> Vec<(&'static str, Edit, Vec<Failing>)> {
     let record = record_fails;
+    let catalog = format!("file://{}", catalog.display());
     vec![
+        (
+            "records an unused source for another repository",
+            on_record(|lock| lock["sources"]["spare"]["repo"] = "other/repo".into()),
+            vec![record(&format!(
+                "source spare: recorded for other/repo at the source's own revision, declared as {catalog} at the source's own revision"
+            ))],
+        ),
+        (
+            "records an unused source at another revision",
+            on_record(|lock| lock["sources"]["spare"]["rev"] = "v1".into()),
+            vec![record(&format!(
+                "source spare: recorded for {catalog} at v1, declared as {catalog} at the source's own revision"
+            ))],
+        ),
+        (
+            "repoints an unused source's commit",
+            on_record(|lock| {
+                lock["sources"]["spare"]["commit"] =
+                    "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
+            }),
+            vec![record(
+                "source spare: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef is not on the declared revision's history",
+            )],
+        ),
         (
             "records a source the manifest does not declare",
             on_record(|lock| {
@@ -940,7 +970,7 @@ fn moving_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
 #[allow(clippy::unwrap_used)]
 fn every_bookkeeping_edit_is_a_failed_row_and_a_non_zero_close() {
     let world = world();
-    for (label, edit, failing) in bookkeeping_edits() {
+    for (label, edit, failing) in bookkeeping_edits(&world) {
         git(&world.project, &["checkout", "-q", "-B", "case", INSTALLED]);
         edit(&world);
         commit(&world.project, label);
@@ -1068,6 +1098,89 @@ fn a_source_served_from_the_records_own_commit_fails_the_record_row() {
         "{record:?}"
     );
     assert_eq!((document.checked, document.failed), (10, 0), "{document:?}");
+}
+
+/// A source only a Pi extension names is resolved by the carrier, off the
+/// path every other declaration's source takes to the record: served from
+/// the record's own commit, it is named in the record row all the same.
+/// The mirror is stripped as above; `picat` is the source the row has to
+/// name, beside `cat`.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pi_only_source_served_from_the_records_own_commit_is_named_in_the_record_row() {
+    let world = world();
+    let mirror = mirror(&world);
+    let refs = git(&mirror, &["for-each-ref", "--format=%(refname)"]);
+    for name in refs.lines().filter(|line| !line.is_empty()) {
+        git(&mirror, &["update-ref", "-d", name]);
+    }
+    let (output, document) = verify(&world, Some(INSTALLED));
+    assert!(!output.status.success(), "{}", said(&output));
+    let record = row(&document, "record", RECORD, None).unwrap();
+    assert_eq!(record.state, State::Failed, "{record:?}");
+    assert!(
+        record.detail.as_deref().unwrap_or_default().contains(
+            "source picat: the mirror cannot serve the declared revision, and the recorded commit stood in"
+        ),
+        "{record:?}"
+    );
+}
+
+/// A recorded source the pass resolves nothing for has its entry carried
+/// forward unread, so the record row names it by why: switched off, or
+/// declared at a repository nothing is fetched for. The inverse row of
+/// each drops the entry from the record, which leaves nothing to hold and
+/// nothing named.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_recorded_source_the_pass_resolves_nothing_for_is_named_in_the_record_row() {
+    let world = world();
+    let declared = format!(
+        "[sources.spare]\nrepo = \"file://{}\"\n",
+        world.catalog.display()
+    );
+    let unfetched = "[sources.spare]\nrepo = \"file:///nowhere/fetched\"\n";
+    let disabled = format!("{declared}enabled = false\n");
+    let cases: [(&str, &str, bool, Option<&str>); 4] = [
+        (
+            "disabled, recorded",
+            &disabled,
+            true,
+            Some("source spare: disabled"),
+        ),
+        ("disabled, unrecorded", &disabled, false, None),
+        (
+            "not fetched, recorded",
+            unfetched,
+            true,
+            Some("source spare: not fetched"),
+        ),
+        ("not fetched, unrecorded", unfetched, false, None),
+    ];
+    for (label, declaration, recorded, named) in cases {
+        git(&world.project, &["checkout", "-q", "-B", "case", INSTALLED]);
+        let manifest = world.project.join("kendex.toml");
+        let text = fs::read_to_string(&manifest).unwrap();
+        assert_eq!(text.matches(&declared).count(), 1, "{label}");
+        write(&manifest, &text.replace(&declared, declaration));
+        if !recorded {
+            edit_json(&world.project.join(RECORD), |lock| {
+                lock["sources"].as_object_mut().unwrap().remove("spare");
+            });
+        }
+        commit(&world.project, label);
+        let (output, document) = verify(&world, Some(INSTALLED));
+        let record = row(&document, "record", RECORD, None).unwrap();
+        let detail = record.detail.as_deref().unwrap_or_default();
+        match named {
+            Some(named) => {
+                assert!(!output.status.success(), "{label}: {}", said(&output));
+                assert_eq!(record.state, State::Failed, "{label}: {record:?}");
+                assert!(detail.contains(named), "{label}: {record:?}");
+            }
+            None => assert!(!detail.contains("source spare:"), "{label}: {record:?}"),
+        }
+    }
 }
 
 /// A recorded commit the mirror cannot place is named as one to fetch,

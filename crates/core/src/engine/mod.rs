@@ -4,7 +4,6 @@ use crate::error::Result;
 use crate::lock::{Lock, LockFile, lock_path};
 use crate::manifest::{self, Manifest, ManifestFile};
 use crate::model::Scope;
-use crate::source::SourceState;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub mod adopt;
@@ -104,7 +103,7 @@ use desired::desired_state;
 pub use scope_writes::persists_manifest;
 use scope_writes::{
     bundle_revisions, plan_config_edits, plan_lock_write, plan_manifest_write, resolved_revisions,
-    source_revisions,
+    source_revisions, stood_in_sources,
 };
 pub use set_change::{KeptInstall, SetChange, SetDirection};
 use set_change::{kept_members, set_changes};
@@ -121,7 +120,7 @@ pub use repo_effects::{InstalledDeclaration, installed_declaration, installed_de
 mod report_types;
 pub use report_types::{
     DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ForkEdit, Installation,
-    ItemWarning, PlanOptions, Registrations,
+    ItemWarning, PlanOptions, Registrations, StoodIn,
 };
 
 pub(super) struct PlanOwnership {
@@ -255,7 +254,8 @@ pub fn plan_scope(
     // Read off before the record moves into its write: a pass that
     // writes no record still says which commit each revision resolved to.
     let resolved_sources = resolved_revisions(&new_lock, &state);
-    let (installations, sources_from_record) = derived(env, scope, &manifest, &state)?;
+    let sources_stood_in = stood_in_sources(&manifest, &new_lock, &state);
+    let installations = installations(env, scope, &manifest, &state)?;
     plan_lock_write(env, scope, declared, lock, new_lock, &mut ops)?;
     let generated = generated_paths::plan(scope, &state, &instruction_shims, &drift, &mut ops)?;
 
@@ -281,7 +281,7 @@ pub fn plan_scope(
         recorded_gone,
         generated,
         installations,
-        sources_from_record,
+        sources_stood_in,
     };
     report.notes.extend(scope_notes);
     settled(env, scope, &manifest, lock, options, &state.items, report)
@@ -324,26 +324,6 @@ fn registrations(state: &desired::DesiredState) -> Registrations {
             desired::Artifact::File { .. } | desired::Artifact::Tree { .. } => None,
         })
         .collect()
-}
-
-/// What the report says about this pass's own derivation: every
-/// installation with its positions, and the sources reached through the
-/// record's last-resolved commit rather than through the declared revision.
-fn derived(
-    env: &Env,
-    scope: &Scope,
-    manifest: &Manifest,
-    state: &desired::DesiredState,
-) -> Result<(BTreeMap<String, Installation>, BTreeSet<String>)> {
-    let from_record = state
-        .sources
-        .iter()
-        .filter(
-            |(_, resolution)| matches!(resolution, SourceState::Ready(ready) if ready.from_record),
-        )
-        .map(|(name, _)| name.clone())
-        .collect();
-    Ok((installations(env, scope, manifest, state)?, from_record))
 }
 
 /// Every installation this pass derived, with its positions, by entry

@@ -16,6 +16,7 @@ use crate::source::SourceState;
 
 use super::config_edits;
 use super::desired::DesiredState;
+use super::report_types::StoodIn;
 
 /// Whether a plan already persists the manifest. A caller about to insert
 /// its own save must know: a second write to the same file binds to bytes
@@ -147,7 +148,8 @@ pub(super) fn bundle_revisions(
 /// Which commit each source resolved to, for the lock to record. What
 /// earlier passes resolved is carried forward — a source that is offline
 /// today should not lose the commit it was reading yesterday — and a source
-/// the manifest does not declare drops out.
+/// the manifest does not declare drops out. Every declared source is in
+/// `state.sources`, whether or not an item names it.
 pub(super) fn source_revisions(
     manifest: &Manifest,
     lock: &Lock,
@@ -160,22 +162,67 @@ pub(super) fn source_revisions(
         .map(|(name, revision)| (name.clone(), revision.clone()))
         .collect();
     for (name, resolution) in &state.sources {
-        let SourceState::Ready(ready) = resolution else {
+        let (Some(revision), _) = resolved(manifest, name, resolution) else {
             continue;
         };
-        let Some(commit) = ready.commit.clone() else {
-            continue;
-        };
-        revisions.insert(
-            name.clone(),
-            SourceRev {
-                repo: ready.provenance.clone(),
-                rev: manifest.sources.get(name).and_then(|decl| decl.rev.clone()),
-                commit,
-            },
-        );
+        revisions.insert(name.clone(), revision);
     }
     revisions
+}
+
+/// Each source the planned record carries that this pass cannot hold to
+/// a resolution, by name: the ones [`source_revisions`] carried forward
+/// unread, and the ones it recorded from the record's own commit. Read
+/// from the same resolutions and by the same reading, so a source is
+/// never fresh to the record and stood-in to the proof. A source the
+/// record does not carry has no entry to hold, so it is never named.
+pub(super) fn stood_in_sources(
+    manifest: &Manifest,
+    planned: &Lock,
+    state: &DesiredState,
+) -> BTreeMap<String, StoodIn> {
+    state
+        .sources
+        .iter()
+        .filter(|(name, _)| planned.sources.contains_key(*name))
+        .filter_map(|(name, resolution)| {
+            let (_, stood_in) = resolved(manifest, name, resolution);
+            stood_in.map(|stood_in| (name.clone(), stood_in))
+        })
+        .collect()
+}
+
+/// The one reading of a source's resolution for the record: the revision
+/// to record, when the source resolved to a commit, and why the record
+/// cannot be held to it, when it cannot. A path or reserved source has no
+/// commit and nothing recorded, so nothing stands in for it; a repository
+/// source that is switched off or not fetched leaves its record entry
+/// carried forward unread, which is the reading a proof has to refuse.
+fn resolved(
+    manifest: &Manifest,
+    name: &str,
+    resolution: &SourceState,
+) -> (Option<SourceRev>, Option<StoodIn>) {
+    let declares_repository = manifest
+        .sources
+        .get(name)
+        .is_some_and(|decl| decl.repo.is_some());
+    match resolution {
+        SourceState::Ready(ready) => match ready.commit.clone() {
+            Some(commit) => (
+                Some(SourceRev {
+                    repo: ready.provenance.clone(),
+                    rev: manifest.sources.get(name).and_then(|decl| decl.rev.clone()),
+                    commit,
+                }),
+                ready.from_record.then_some(StoodIn::RecordedCommit),
+            ),
+            None => (None, None),
+        },
+        SourceState::Pending { .. } => (None, Some(StoodIn::NotFetched)),
+        SourceState::Disabled { .. } => (None, declares_repository.then_some(StoodIn::Disabled)),
+        SourceState::Missing { .. } => (None, None),
+    }
 }
 
 /// Which commit each declared revision resolved to this pass, by source
