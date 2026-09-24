@@ -941,7 +941,7 @@ echo "=== the uncontained refusal routes by what the branch actually holds ==="
 # command must be refused by git once the remote moves under it, which is what
 # the lease in it is for. Text alone would stay green over a wrong refspec,
 # remote or OID once the expectation was edited to match.
-ROUTE_ROWS='the local branch holds the remote commits under rewritten SHAs|pair fix publish advance hand-rebase|Local branch '"'"'topic'"'"' already holds every commit on '"'"'origin/topic'"'"' under rewritten SHAs, so fetching and rebasing would replay superseded work.;No recorded push authorization covers this rewrite.;Republish the branch pinned to the remote OID above:;  git -C "<wt>" push --force-with-lease=refs/heads/topic:<published> origin topic
+ROUTE_ROWS='the local branch holds the remote commits under rewritten SHAs|pair fix publish advance hand-rebase|Local branch '"'"'topic'"'"' already holds every commit on '"'"'origin/topic'"'"' under rewritten SHAs, so fetching and rebasing would replay superseded work.;No recorded push authorization covers this rewrite.;Republish the branch pinned to the remote OID above:;  git -C <wt> push --force-with-lease=refs/heads/topic:<published> origin topic
 the remote carries a commit the local branch never had|pair fix publish move-remote observe fix2|Fetch and rebase/merge '"'"'origin/topic'"'"' before using worktree push.'
 
 route_n=0
@@ -966,6 +966,28 @@ while IFS= read -r route_row; do
   assert_eq "$([[ "$route_rc" -ne 0 ]] && printf refused || printf 'rc=%s' "$route_rc"):$(oid_name "$(remote_oid origin)")" \
     "refused:external" "the same command is refused once the remote has moved"
 done <<<"$ROUTE_ROWS"
+
+echo
+echo "=== the printed republish quotes a branch name that carries shell syntax ==="
+
+# Git accepts a branch name holding a command substitution, and a PR author
+# names the branch `create --pr` checks out, so the command the refusal prints
+# is run here exactly as an operator would paste it: the name must reach git
+# as one argument and run nothing.
+build quoted pair fix
+quoted_branch='topic$(touch${IFS}pwned)'
+git -C "$WT" branch -m "$quoted_branch"
+(cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" --set-upstream >/dev/null 2>&1) || true
+commit_main main-advanced.txt advanced
+git -C "$WT" rebase -q origin/main
+(cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" >/dev/null 2>"$ROOT/quoted.err") || true
+quoted_cmd="$(sed -n 's/^  \(git -C .*\)$/\1/p' "$ROOT/quoted.err")"
+quoted_rc=0
+(cd "$ROOT" && eval "$quoted_cmd" >/dev/null 2>&1) || quoted_rc=$?
+assert_eq "$quoted_rc:$([[ -e "$ROOT/pwned" ]] && printf ran || printf inert)" "0:inert" \
+  "the pasted command runs nothing from the branch name"
+assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse -q --verify "refs/heads/$quoted_branch" 2>/dev/null || true)" \
+  "$(git -C "$WT" rev-parse HEAD)" "and publishes the branch under its own name"
 
 echo
 echo "=== a record that cannot be cleared stops before the push ==="

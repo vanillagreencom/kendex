@@ -379,7 +379,10 @@ remote_ref_lease_oid() {
       echo "Local branch '$branch' already holds every commit on '$remote/$branch' under rewritten SHAs, so fetching and rebasing would replay superseded work." >&2
       echo "No recorded push authorization covers this rewrite." >&2
       echo "Republish the branch pinned to the remote OID above:" >&2
-      echo "  git -C \"$wt\" push --force-with-lease=refs/heads/$branch:$expected_oid $remote $branch" >&2
+      # A branch or remote name may carry shell syntax Git accepts, and the
+      # branch can be one a PR author named, so every argument is quoted for
+      # the shell the operator pastes this into.
+      printf '  git -C %q push %q %q %q\n' "$wt" "--force-with-lease=refs/heads/$branch:$expected_oid" "$remote" "$branch" >&2
     else
       echo "Fetch and rebase/merge '$remote/$branch' before using worktree push." >&2
     fi
