@@ -264,7 +264,7 @@ run() {
   # the account LANES_HOME points at. Pinned to the fixture before a row's own
   # pairs are appended, so nothing derives that account from the developer's
   # HOME and writes a private launch home into their live codex account.
-  envs+=(LANES_HOME="$FLEET_HOME")
+  envs+=(LANES_HOME="$FLEET_HOME" ORCH_TMUX_SESSION=stub)
   if [[ "$envspec" != - ]]; then
     IFS=',' read -ra pairs <<<"$envspec"
     for pair in "${pairs[@]}"; do envs+=("$pair"); done

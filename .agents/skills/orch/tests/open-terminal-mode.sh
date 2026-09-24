@@ -67,6 +67,8 @@ gui_stub "$GHOSTTY_BIN/ghostty"
 cat > "$BIN/tmux" <<'STUB'
 #!/usr/bin/env bash
 printf 'tmux %s\n' "$*" >> "$OT_TMUX_LOG"
+# The named session exists, so a launch reaches the window calls, which fail.
+[[ "${1:-}" != has-session ]] || exit 0
 exit 1
 STUB
 cat > "$BIN/gh" <<'STUB'
@@ -141,7 +143,7 @@ run() {
   local -a launch_env=(env)
   [[ -n "$RUN_TERMINAL" ]] || launch_env+=(-u TERMINAL)
   case "$where" in
-    in)  launch_env+=(TMUX=stub,1,0 TMUX_PANE=%7) ;;
+    in)  launch_env+=(TMUX=stub,1,0 TMUX_PANE=%7 ORCH_TMUX_SESSION=stub) ;;
     out) launch_env+=(-u TMUX -u TMUX_PANE) ;;
     *) echo "run: WHERE must be in or out, got '$where'" >&2; exit 2 ;;
   esac

@@ -60,6 +60,9 @@ ot_message() { # REASON FIELD=VALUE...
     directory-missing) text='The working directory does not exist. No window was opened.' ;;
     tmux-missing) text='This launch requires an active tmux session.' ;;
     tmux-failed) text='The tmux operation failed.' ;;
+    session-record-failed) text='The tmux session this fleet opens lane windows in could not be read from or recorded into the oversee workflow state. Nothing was opened; fix what workflow-state names.' ;;
+    tmux-session-unresolved) text='No tmux session is named for the lane window. consulted lists the sources this launch read, in order, and none of them named a session. pane is what the TMUX_PANE read found: unset is no TMUX_PANE; none is an empty answer, which is how tmux answers for a pane it does not hold; read-failed is the read itself failing, and tmux names that failure on the line above. Nothing was opened: a window with no named session lands in whichever session tmux calls current, where the watch does not look for it. Set ORCH_TMUX_SESSION, or launch from a pane in the fleet session.' ;;
+    tmux-session-missing) text='The tmux session this launch resolved does not exist on this server. Nothing was opened and nothing was recorded. source says where the name came from: ORCH_TMUX_SESSION is the setting, so correct it; tmux.session is the fleet state, which a renamed session or a restarted server leaves stale, so set ORCH_TMUX_SESSION to the live fleet session, or clear the record with .agents/skills/orch/scripts/workflow-state --state-dir [OVERSEE_STATE_DIR] update oversee '\''del(.tmux)'\'' and launch from a pane in that session; pane is the launching pane, whose session closed during the launch.' ;;
     claim-write-failed) text='The lane launched, but its claim could not be recorded. Check OVERSEE_WATCH_STATE_DIR.' ;;
     record-write-failed) text='The lane launched and its window stands, but its record could not be written to the oversee workflow state, so the watch cannot carry it. Fix what workflow-state names, then record the lane by hand per oversee.md § 3 Lane record, or close the window before relaunching the item with --relaunch.' ;;
     record-missing) text='No lane record names the item, so this launcher never launched it and the wake recorded nothing; the woken session runs. Record the lane per oversee.md § 3 Lane record, or close its window and relaunch the item with --relaunch.' ;;
@@ -118,7 +121,19 @@ Usage: open-terminal [--tracker linear|github] [--repo OWNER/REPO] ITEM... [opti
 
 Options:
   --harness <name>  claude, codex, opencode, pi
-  --tmux            Open tmux windows in the current session
+  --tmux            Open tmux windows in the fleet's tmux session: the
+                    session ORCH_TMUX_SESSION names; else, under --state-dir,
+                    the session the fleet state records as tmux.session;
+                    else the session of the pane $TMUX_PANE names. The
+                    fleet's first tmux launch records the session it
+                    resolved, once tmux confirms it exists. A launch that
+                    resolves none of the three, one with $TMUX set, no live
+                    pane and no recorded session among them, refuses as
+                    tmux-session-unresolved; a resolved session tmux does
+                    not hold refuses as tmux-session-missing, naming it and
+                    its source. Either opens nothing, and a launch with no
+                    $TMUX at all refuses as tmux-missing. The lane record's
+                    window is SESSION:WINDOW.
   --ghostty         Open GUI terminals ($TERMINAL, xdg-terminal-exec, ghostty)
                     With neither mode flag the mode is auto-detected: tmux
                     when $TMUX is set, otherwise a GUI terminal. Both flags
@@ -1929,6 +1944,69 @@ write_lane_marker() { # WT ITEM REMOTE_ROOT
   "$SCRIPT_DIR/lane-marker" "$1" "$2"
 }
 
+# The tmux session every lane window of this invocation opens in, resolved on
+# the first tmux launch. A window target with no session is the CLIENT's current
+# session, and a launch that has $TMUX but no live pane of its own (a setsid
+# chain or a run-shell job started inside tmux, a watch-driven relaunch after
+# its pane closed) gets whichever session the server calls current: the lane
+# then opens where neither the watch nor `lanes state` looks for it. A launch
+# with no $TMUX at all never gets here; open_tmux refuses it as tmux-missing.
+# So the session is always named: ORCH_TMUX_SESSION, then the fleet state's
+# tmux.session, then the session of the launching pane, and none of them is a
+# refusal. The session must exist before anything uses or records it: a
+# mistyped name, or a recorded one a server restart lost, is refused naming it
+# and where it came from, never recorded and never handed to new-window. The
+# fleet's first tmux launch records the session it proved, so a later launch
+# from no pane lands beside its siblings; `//=` keeps whichever of two racing
+# first launches recorded first.
+LAUNCH_SESSION=""
+# One workflow-state call on the fleet state's tmux entry, read or write, and
+# the one refusal either failing gets. stdout is the call's own.
+session_state() { # TITLE WORKFLOW_STATE_ARG...
+  local title="$1"
+  shift
+  if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} "$@"; then
+    ot_message session-record-failed "item=$title" "state=oversee" >&2
+    return 1
+  fi
+}
+launch_session_resolve() { # TITLE
+  [[ -z "$LAUNCH_SESSION" ]] || return 0
+  local session="${ORCH_TMUX_SESSION:-}" source=ORCH_TMUX_SESSION consulted=ORCH_TMUX_SESSION recorded="" err pane_read=unset
+  if [[ "$FLEET" == true ]]; then
+    consulted+=",tmux.session"
+    recorded="$(session_state "$1" get oversee '.tmux.session // ""')" || return 1
+    if [[ -z "$session" && -n "$recorded" ]]; then session="$recorded"; source=tmux.session; fi
+  fi
+  if [[ -z "$session" ]]; then
+    consulted+=",TMUX_PANE"
+    # tmux's own diagnostic stays on stderr: a failed read is not an absent
+    # pane, which tmux answers with an empty name and status 0.
+    if [[ -z "${TMUX_PANE:-}" ]]; then
+      :
+    elif ! session="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}')"; then
+      session=""; pane_read=read-failed
+    elif [[ -z "$session" ]]; then
+      pane_read=none
+    else
+      source=pane
+    fi
+  fi
+  [[ -n "$session" ]] || { ot_message tmux-session-unresolved "item=$1" "consulted=$consulted" "pane=$pane_read" >&2; return 1; }
+  if ! err="$(tmux has-session -t "=$session" 2>&1)"; then
+    if [[ "$err" == "can't find session"* ]]; then
+      ot_message tmux-session-missing "item=$1" "session=$session" "source=$source" >&2
+    else
+      ot_message tmux-failed "operation=has-session" "item=$1" "detail=$err" >&2
+    fi
+    return 1
+  fi
+  if [[ "$FLEET" == true && -z "$recorded" ]]; then
+    session_state "$1" update oversee --arg s "$session" '.tmux.session //= $s' >/dev/null || return 1
+  fi
+  LAUNCH_SESSION="$session"
+}
+
 open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   local dir="$1" title="$2" cmd="$3" brief="${4:-}" target="${5:-}" line="clear; $3"
   # Called on the left of `||` at the launch loop, which suspends errexit for
@@ -1938,15 +2016,17 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   # otherwise count a broken window as launched).
   [[ -n "${TMUX:-}" ]] || { ot_message tmux-missing "item=$title" >&2; return 1; }
   launchable_dir "$dir" "$title" || return 1
+  launch_session_resolve "$title" || return 1
   local last_idx pane spec server
-  if ! last_idx=$(tmux list-windows -F '#{window_index}' | tail -1) || [[ -z "$last_idx" ]]; then
+  # Exact (`=`): tmux otherwise takes a prefix match for a session name.
+  if ! last_idx=$(tmux list-windows -t "=$LAUNCH_SESSION" -F '#{window_index}' | tail -1) || [[ -z "$last_idx" ]]; then
     ot_message tmux-failed "operation=list-windows" "item=$title" >&2
     return 1
   fi
   # The server pid rides along with the pane id: it is the other half of a
   # lane claim's liveness key, and taking both from the creating call means no
   # second tmux round trip and no window between them.
-  if ! spec=$(tmux new-window -a -t ":${last_idx}" -n "$title" -c "$dir" -P -F '#{pid} #{pane_id}') || [[ -z "$spec" ]]; then
+  if ! spec=$(tmux new-window -a -t "=$LAUNCH_SESSION:$last_idx" -n "$title" -c "$dir" -P -F '#{pid} #{pane_id}') || [[ -z "$spec" ]]; then
     ot_message tmux-failed "operation=new-window" "item=$title" >&2
     return 1
   fi
@@ -2482,7 +2562,7 @@ for raw in "${ITEMS[@]}"; do
   [[ "$RELAUNCH" != true ]] || record_mode=relaunch
   [[ "$WAKE" != true ]] || record_mode=wake
   record_window=""
-  [[ "$TERMINAL_MODE" != tmux ]] || record_window="$title"
+  [[ "$TERMINAL_MODE" != tmux ]] || record_window="$LAUNCH_SESSION:$title"
   record_root="$wt"
   [[ "$LANE_HOST" == local ]] || record_root="$remote_path"
   if [[ "$FLEET" == true ]]; then

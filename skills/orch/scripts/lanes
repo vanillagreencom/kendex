@@ -139,8 +139,10 @@
 #          lib/lane-state.sh judges it to be: working, idle, asking, walled,
 #          exited or unjudged. <item> is the lane's tmux window name, which is
 #          the tracker id (TEAM-N) or gh-N; the SESSION:WINDOW form a lane
-#          record carries is accepted too, and names that window under exactly
-#          that session. The lane's pane on this tmux server
+#          record's `window` carries is accepted too, and names that window
+#          under exactly that session. Pass the record's `window` as it stands:
+#          the whole name selects the pane, and its window part alone is the
+#          item the hosted probe below names. The lane's pane on this tmux server
 #          is the whole reading, so this answers exactly as oversee-watch does
 #          about the same lane. A name no pane on this server carries is
 #          `unjudged`: a window that closed and a name two windows share are
@@ -2504,7 +2506,8 @@ case "$SUB" in
 		# either.
 		if [[ "$LANE_STATE_ANSWER" == unjudged && "${ORCH_LANE_HOST:-local}" != local && -z "$LANE_PANE_SCREEN" ]]; then
 			probe_rc=0
-			probe_err="$("$SCRIPT_DIR/lane-host" touch --item "$LANE_ARG" 2>&1 >/dev/null)" || probe_rc=$?
+			# The provider knows the item, never the session a window sits in.
+			probe_err="$("$SCRIPT_DIR/lane-host" touch --item "${LANE_ARG#*:}" 2>&1 >/dev/null)" || probe_rc=$?
 			[[ "$probe_rc" -eq 0 ]] || message host-unreachable "$LANE_ARG" "$LANE_STATE_ANSWER" "$probe_err" >&2
 		fi
 		if [[ "$AS_JSON" == "true" ]]; then

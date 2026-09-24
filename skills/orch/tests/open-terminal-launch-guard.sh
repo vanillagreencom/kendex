@@ -52,6 +52,8 @@ EOF
 cat > "$BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf 'tmux %s\n' "$*" >> "$OT_TMUX_LOG"
+# The named session exists, so a launch reaches the window calls, which fail.
+[[ "${1:-}" != has-session ]] || exit 0
 exit 1
 EOF
 cat > "$BIN/gh" <<'EOF'
@@ -101,7 +103,7 @@ run() {
   set +e
   PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$STUB" STUB_MODE="$mode" \
     OT_TERM_LOG="$term_log" OT_TMUX_LOG="$tmux_log" \
-    TMUX="${OT_TMUX_VALUE:-}" TERMINAL=term \
+    TMUX="${OT_TMUX_VALUE:-}" ORCH_TMUX_SESSION=stub TERMINAL=term \
     "$ot" --cmd 'echo {item}' "$@" >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"
   RC=$?
   set -e

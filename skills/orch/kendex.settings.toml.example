@@ -119,6 +119,14 @@ ORCH_ADMIN_MERGE_CLASSES = ""
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
 
+# The tmux session every lane window opens in. Unset, a fleet launch uses the
+# session its oversee state records as tmux.session, else the launching pane's.
+# The fleet's first tmux launch records the session it opened in, this one when
+# set, once tmux confirms it exists. A launch with no live pane and no recorded
+# session refuses as tmux-session-unresolved; a session tmux does not hold
+# refuses as tmux-session-missing. A launch needs $TMUX set either way.
+# ORCH_TMUX_SESSION = "kendex"
+
 # Seconds a hosted lane waits for its remote shell prompt after the ssh line is
 # typed. Its own bound, not the one above: it measures a route coming up and
 # another machine's login. A bound spent with ssh still on the pane interrupts
