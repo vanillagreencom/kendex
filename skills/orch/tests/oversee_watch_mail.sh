@@ -369,7 +369,7 @@ import sys
 src, out = sys.argv[1:]
 s = open(src).read()
 for old, new in (
-    ('mail_read "$item" inbox "${args[@]}";', 'mail_read "$item" inbox "${args[@]}" --after 0;'),
+    ('mail_read "$item" inbox "${args[@]}";', 'mail_read "$item" inbox "${args[@]}" --peek;'),
     ('      envelopes="$MAIL_OUT"\n', '      envelopes="$(tail -n +2 <<<"$MAIL_OUT")"\n'),
 ):
     assert s.count(old) == 1, "peeking mutant pattern: " + old
@@ -964,7 +964,7 @@ assert_eq "$FRESH_SEEN" "1" "an owner note is reported once across three runs th
   "$STUB_DIR/fresh-3.err"
 new_case mail_owner_note_fresh_state_mutant
 fresh_state_fleet "$PEEKING"
-assert_eq "$FRESH_SEEN" "3" "control: read past a position of the watch's own, every fresh state replays the note" \
+assert_eq "$FRESH_SEEN" "3" "control: an overseer read that moves no cursor replays the note in every fresh state" \
   "$STUB_DIR/fresh-3.err"
 
 # A session start reads its own mailbox before anything else; the watch it
@@ -980,10 +980,22 @@ new_case mail_session_start
 session_start
 assert_eq "read=$START_READ first=$(head -1 <<<"$START_OUT")" "read=Merge KEN-7 once CI is green. first=$HEARTBEAT" \
   "the session start's inbox read lists the note, and the watch after it does not report it again" "$STUB_DIR/start.err"
+# The session start's own read taken past: a watch reading the mailbox file
+# whole, through no cursor.
+WHOLE="$MUTANT_DIR/orch/scripts/oversee-watch-whole"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$WHOLE" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = 'if ! mail_read "$item" inbox "${args[@]}"; then'
+assert s.count(old) == 1, "whole mutant pattern"
+open(out, "w").write(s.replace(old, 'if ! MAIL_OUT="$(cat -- "$PROJECT_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")"; then'))
+PY
+chmod +x "$WHOLE"
 new_case mail_session_start_mutant
-session_start "$PEEKING"
+session_start "$WHOLE"
 assert_contains "$START_OUT" "EVENT owner-note " \
-  "control: a watch reading past its own position reports the note the session start already read" "$STUB_DIR/start.err"
+  "control: a watch reading the mailbox through no cursor reports the note the session start already read" "$STUB_DIR/start.err"
 
 # --- a hosted mailbox read that misses lines --------------------------------
 # The first notice is drained; the next read of the mailbox comes back empty,
@@ -1062,6 +1074,38 @@ new_case mail_standing_failure_mutant
 standing_failure "$MUTANT_DIR/orch/scripts/oversee-watch-loud"
 assert_eq "reports=$STANDING" "reports=1101" "control: with no failure row every run reports the same failure again" \
   "$STUB_DIR/standing-2.err"
+
+# Two refusals from lane-mail under one exit status are two failures: the key
+# carries the tool's own keyed line, so the second cause is reported too.
+cat > "$TMP_ROOT/bin/lane-mail-refusing.sh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == drain ]]; then
+  printf 'lane-mail: %s=/srv/box\nThe refusal.\n' "$(cat "$STUB_DIR/refusal")" >&2
+  exit 2
+fi
+exec "$REAL_LANE_MAIL" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/lane-mail-refusing.sh"
+two_causes() { # [WATCH_BIN]
+  local key
+  mail_reset KEN-93
+  CAUSES=""
+  for key in lock-failed file-unreadable; do
+    printf '%s' "$key" > "$STUB_DIR/refusal"
+    WATCH_BIN="${1:-}" run_watch OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-refusing.sh" \
+      REAL_LANE_MAIL="$LANE_MAIL" -- --max-loops 1 --item KEN-93 >/dev/null 2>"$STUB_DIR/causes-$key.err" || true
+    CAUSES+="$(grep -c '^oversee-watch: mail-read-failed item=KEN-93 ' "$STUB_DIR/causes-$key.err" || :)"
+  done
+}
+new_case mail_two_causes
+two_causes
+assert_eq "reports=$CAUSES" "reports=11" "a second refusal under the same exit status is reported as the new failure it is" \
+  "$STUB_DIR/causes-file-unreadable.err"
+cadence_mutant causeless '      awk '"'"'/^[A-Za-z0-9._-]+: [A-Za-z0-9._-]+([= ]|$)/ { print; exit }'"'"' <<<"$LANE_FAILURE_DETAIL")"' '      :)"'
+new_case mail_two_causes_mutant
+two_causes "$MUTANT_DIR/orch/scripts/oversee-watch-causeless"
+assert_eq "reports=$CAUSES" "reports=10" "control: keyed on the reason alone, the second cause passes in silence" \
+  "$STUB_DIR/causes-file-unreadable.err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

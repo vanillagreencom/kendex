@@ -25,6 +25,10 @@ PW_HAD_STATE=()
 # outlives the process: one file per repo, keyed on that repo and the --since
 # value every run of that fleet passes. Loaded as pass 1's baseline, rewritten
 # after every complete pass.
+# The tag in every temp name this process stages, the pid by default. The
+# forked long pass and the mail pass run at once under one $$, so the fork
+# sets a tag of its own, and neither discards a temp the other staged.
+PW_TMP_TAG="$$"
 pw_slug() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_'; }
 pw_state_file() { printf '%s/%s__%s' "$PW_STATE_DIR" "$(pw_slug "$1")" "$(pw_slug "${SINCE:-none}")"; }
 
@@ -36,7 +40,7 @@ pw_state_file() { printf '%s/%s__%s' "$PW_STATE_DIR" "$(pw_slug "$1")" "$(pw_slu
 # ahead of it advanced and the rest not; it drops the temps it can and dies,
 # and nothing recovers the split.
 pw_stage_state() {
-  local file="$1" tmp="$1.$$.tmp"
+  local file="$1" tmp="$1.$PW_TMP_TAG.tmp"
   [[ ! -e "$file" || -f "$file" ]] \
     || { pw_discard_temps; die state-target-invalid "" "path=$file"; }
   printf '%s' "$2" > "$tmp" \
@@ -44,18 +48,20 @@ pw_stage_state() {
 }
 
 pw_commit_state() {
-  mv -f "$1.$$.tmp" "$1" \
+  mv -f "$1.$PW_TMP_TAG.tmp" "$1" \
     || { pw_discard_temps; die state-replace-failed "" "path=$1"; }
 }
 
-# Every temp this pass may have staged. Sweeping the whole fleet is right from
-# either caller: a repo already renamed has no temp left for rm -f to remove,
-# and the names carry this pid, so no later run would clean one up.
+# Every temp this process may have staged. Sweeping the whole fleet is right
+# from either caller: a repo already renamed has no temp left for rm -f to
+# remove, and the names carry this process's tag, so no later run would clean
+# one up and no other process's temp is touched.
 pw_discard_temps() {
   local repo
   for repo in "${REPOS[@]}"; do
-    rm -f "$(pw_state_file "$repo").$$.tmp"
+    rm -f "$(pw_state_file "$repo").$PW_TMP_TAG.tmp"
   done
+  [[ -z "${MAIL_STATE_FILE:-}" ]] || rm -f "${MAIL_STATE_FILE:?}.$PW_TMP_TAG.tmp"
 }
 
 # The repo a reducer line came from, ahead of the line's own tab-separated

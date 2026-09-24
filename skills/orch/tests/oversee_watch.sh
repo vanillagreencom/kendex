@@ -1233,7 +1233,7 @@ out="$(run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --rep
 assert_eq "rc=$rc named=$(grep -c '^oversee-watch: sleep-failed secs=0$' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" \
   "rc=2 named=1 events=heartbeat" "a failed repeat delay ends the watch as sleep-failed after the pass it followed" "$err"
 # The must-fail control: the bare sleep, whose failure is the watch's own exit.
-sleep_line='    wait "$REPEAT_CHILD_PID" || die sleep-failed "" "secs=$REPEAT"'
+sleep_line='    wait "$REPEAT_CHILD_PID" || die sleep-failed "" "secs=$delay"'
 assert_eq "$(grep -cxF -- "$sleep_line" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the guarded delay is one line to strip"
 awk -v line="$sleep_line" '$0 == line { print "    wait \"$REPEAT_CHILD_PID\""; next } { print }' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
@@ -1243,6 +1243,35 @@ repeat_sleep_stub 'exit 3'
 err="$TMP_ROOT/e-repeat_sleep_fails_unguarded"
 WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" >/dev/null 2>"$err" </dev/null && rc=0 || rc=$?
 assert_eq "rc=$rc named=$(grep -c '^oversee-watch: sleep-failed' "$err")" "rc=3 named=0" "control: unguarded, the failed delay is a silent exit with the stub's status" "$err"
+# The delay between two passes is the mail interval where that is shorter,
+# so a note sent right after a run ends is read within one interval; a pass
+# that failed waits the whole delay. DELAYS is the one delay the stub was
+# asked for, after a pass that ended quietly or, with every PR list failing,
+# exited 2.
+repeat_delay_case() { # NAME ok|failed [WATCH_BIN]
+  new_case "$1"
+  write_state "$STUB_DIR/state.json" "$(lane_record issue-1 '' '' /w/issue-1 running)"
+  [[ "$2" == ok ]] || touch "$STUB_DIR/list-fail"
+  repeat_sleep_stub 'printf "%s\n" "$1" >> "$STUB_DIR/repeat.delays"' 'exit 3'
+  WATCH_BIN="${3:-}" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" ORCH_WATCH_MAIL_INTERVAL=5 -- --max-loops 1 \
+    --repeat 60 --state "$STUB_DIR/state.json" >/dev/null 2>"$TMP_ROOT/e-$1" </dev/null || true
+  DELAYS="$(paste -sd ' ' - <"$STUB_DIR/repeat.delays" 2>/dev/null || echo none)"
+}
+repeat_delay_case repeat_delay_mail ok
+assert_eq "$DELAYS" "5" "the repeat delay after a pass is the mail interval where that is shorter" "$TMP_ROOT/e-repeat_delay_mail"
+repeat_delay_case repeat_delay_failed failed
+assert_eq "$DELAYS" "60" "a pass that exited 2 waits the whole repeat delay" "$TMP_ROOT/e-repeat_delay_failed"
+delay_cap='    [[ "$pass_rc" -eq 2 || "$MAIL_INTERVAL" -ge "$delay" ]] || delay="$MAIL_INTERVAL"'
+assert_eq "$(grep -cxF -- "$delay_cap" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the delay cap is one line to change"
+awk -v line="$delay_cap" '$0 == line { print "    :"; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+repeat_delay_case repeat_delay_uncapped ok "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$DELAYS" "60" "control: uncapped, the whole repeat delay passes with no mail read" "$TMP_ROOT/e-repeat_delay_uncapped"
+awk -v line="$delay_cap" '$0 == line { print "    [[ \"$MAIL_INTERVAL\" -ge \"$delay\" ]] || delay=\"$MAIL_INTERVAL\""; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+repeat_delay_case repeat_delay_floorless failed "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$DELAYS" "5" "control: with no floor, a failing pass is retried at the mail interval" "$TMP_ROOT/e-repeat_delay_floorless"
+
 # A local lane whose worktree sits outside the watch's own checkout (a
 # proposal sweep launched from a source repository) has its mailbox read at
 # the root its record carries, never in this checkout.

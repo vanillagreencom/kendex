@@ -5,7 +5,7 @@
 # tests/fixtures/lane-host in its directory-backed mode. The peer cases build a
 # second checkout, the overseer of another repository. The must-fail controls
 # close the file, one per surface: the partial last line, the inbox cursor,
-# inbox --after, the already-answered drain filter, the ownership rule, the
+# the receipts cursor, the already-answered drain filter, the ownership rule, the
 # overseer inbox's answer exception, the one-spelling rule, the self-target
 # rule, the hosted append, and the lock and terminator that `scripts/lib` owns,
 # whose controls run a library copy with one of those rules removed.
@@ -58,7 +58,7 @@ lm() { # ARGS...
   ERR="$(head -n 1 "$TMP_ROOT/err")"
 }
 
-# The count field of the header drain and inbox --after open with; the header's
+# The count field of the header drain and inbox --peek open with; the header's
 # first= field has its own row.
 count_line() {
   local header
@@ -235,21 +235,27 @@ lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')
 assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=later" \
   "the refusal names the most recent copy, never an older one behind it"
 
-# --after is the caller's own cursor: a file cursor unlike both it and the count
-# is neither read nor moved.
-after_lane() { # NAME
+# The cursor moves only past what an inbox hands over. A read that finds
+# nothing new leaves the file as it was, and a --receipts read lists the
+# cursor no further than the lines it listed. QUIET is whether the second
+# inbox left the cursor file's inode alone; CLAMPED the receipts line under a
+# cursor planted past the file's end.
+cursor_lane() { # NAME
   new_lane "$1"
   LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'First.')"
-  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Second.')"
-  printf '0\n' > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
-  cp "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" "$TMP_ROOT/cursor.before"
-  lm inbox --item KEN-1 --after 1
-  AFTER_READ="$RC=$(count_line)=$(tail -n +2 <<<"$OUT" | jq -r '.text')"
-  CURSOR_KEPT="$(cmp -s "$TMP_ROOT/cursor.before" "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" && echo kept || echo rewritten)"
+  LANE_MAIL_BIN="${LANE_MAIL_BIN:-$LANE_MAIL}" lm inbox --item KEN-1
+  ls -i "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" > "$TMP_ROOT/inode.before"
+  lm inbox --item KEN-1
+  QUIET="$(ls -i "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" | cmp -s - "$TMP_ROOT/inode.before" && echo kept || echo rewritten)"
+  printf '5\n' > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
+  lm drain --item KEN-1 --root "$LANE" --after 0 --receipts
+  CLAMPED="$(grep '^receipts ' <<<"$OUT" | sed 's/ first=.*//')"
 }
-after_lane inbox_after
-assert_eq "$AFTER_READ" "0=count=2=Second." "inbox --after prints the count and only the envelopes after line N"
-assert_eq "$CURSOR_KEPT" "kept" "inbox --after leaves the file cursor byte-identical"
+cursor_lane inbox_quiet
+assert_eq "$QUIET" "kept" "an inbox that hands nothing over leaves the cursor file alone"
+assert_eq "$CLAMPED" "receipts cursor=1 count=1" "drain --receipts lists the cursor no further than the lines it read"
+lm inbox --item KEN-1 --after 1
+assert_eq "$RC=$ERR" "2=lane-mail: option-unknown=--after" "inbox takes no --after: the cursor is its one position"
 
 # A Stop hook peeks, then a workflow wait point hands a later line over, then
 # the hook acknowledges its older count. ACK_CURSOR is what that leaves.
@@ -967,14 +973,13 @@ LANE_MAIL_BIN="$MUTANT_DIR/inbox-cursor-frozen" lm inbox --item KEN-1
 assert_eq "$(jq -r '.text' <<<"$OUT")" "twice" \
   "control: without the cursor advance a second inbox hands the same line over again"
 
-mutant inbox-after-cursor 's@^    if \[ -n "\$AFTER" \]; then$@    if false; then@'
-after_lane control_after
-assert_eq "$AFTER_READ" "0=count=2=First.
-Second." "control: an --after that reads the file cursor hands over what line 1 already covers"
+mutant inbox-cursor-churn 's@^    \[ "\$PEEK" -eq 1 \] || \[ "\$COUNT" = "\$SEEN" \] || lm_cursor_write "\$COUNT"$@    [ "$PEEK" -eq 1 ] || lm_cursor_write "$COUNT"@'
+cursor_lane control_quiet
+assert_eq "$QUIET" "rewritten" "control: a cursor written on every inbox is replaced by a read that found nothing"
 
-mutant inbox-after-cursor-write 's@^    if \[ -z "\$AFTER" \]; then$@    if true; then@'
-after_lane control_after_write
-assert_eq "$CURSOR_KEPT" "rewritten" "control: an --after that writes the file cursor changes it"
+mutant receipts-unclamped 's@^      \[ "\$SEEN" -le "\$COUNT" \] || SEEN="\$COUNT"$@      :@'
+cursor_lane control_clamp
+assert_eq "$CLAMPED" "receipts cursor=5 count=1" "control: an unclamped cursor claims lines the read never listed"
 
 mutant ack-backward 's@^      \[ "\$ACK" -le "\$SEEN" \] || lm_cursor_write "\$ACK"$@      lm_cursor_write "$ACK"@'
 stale_ack control_ack

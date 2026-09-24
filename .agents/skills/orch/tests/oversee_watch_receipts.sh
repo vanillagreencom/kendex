@@ -11,6 +11,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
 
 LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
+FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
 HEARTBEAT='EVENT heartbeat loops=1 interval=0s since=none'
 
 echo "=== oversee-watch directive receipts ==="
@@ -30,12 +31,14 @@ lane_reads() { # ITEM
   (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" inbox --item "$1" >/dev/null)
 }
 # One run's receipt lines for ITEM, their event words joined, or the first
-# line when there are none.
+# line when there are none. RECEIPT_ARGS are further watch arguments.
+RECEIPT_ARGS=()
 receipts() { # ITEM [WATCH_BIN] [ENV...]
   local item="$1" bin="${2:-}" out
   shift
   [[ $# -eq 0 ]] || shift
-  out="$(WATCH_BIN="$bin" run_watch "$@" -- --max-loops 1 --item "$item" 2>"$STUB_DIR/receipts.err")"
+  out="$(WATCH_BIN="$bin" run_watch "$@" -- --max-loops 1 --item "$item" ${RECEIPT_ARGS[@]+"${RECEIPT_ARGS[@]}"} \
+    2>"$STUB_DIR/receipts.err")"
   RECEIPTS="$(grep -E "^EVENT directive-(read|unread) $item " <<<"$out" | sed -E 's/ age=[0-9]+$/ age=N/' | paste -sd '|' -)" \
     || RECEIPTS="$(head -1 <<<"$out")"
 }
@@ -108,15 +111,51 @@ PY
   chmod +x "$MUTANT_DIR/orch/scripts/oversee-watch-$1"
 }
 receipts_mutant cursorless '    lane_read="${BASH_REMATCH[1]}"' '    lane_read=0'
-receipts_mutant forgetful '        unread_at="$line"' '        :'
+receipts_mutant forgetful '          unread_at="$line"' '          :'
+receipts_mutant reset-on-short '    elif [[ "$to_count" -eq 0 || "$lane_read" -lt "$read_at" ]]; then
+      missed=1' '    elif [[ "$to_count" -eq 0 || "$lane_read" -lt "$read_at" ]]; then
+      read_at=0; unread_at=0'
+# A hosted lane whose cursor read comes back short once: the provider's read
+# of to-lane.cursor exits as a file not there while its probe answers, which
+# reads as 0. That pass is a read that missed, not a cursor moved back, so the
+# directive the lane read long ago is neither unread then nor read again after.
+short_cursor() { # [WATCH_BIN]
+  local bin="${1:-}" box="$STUB_DIR/remote/srv/lane/KEN-83/tmp/lane-mail/KEN-83"
+  local -a host_env=(ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log"
+    LANE_HOST_STUB_DIR="$STUB_DIR/remote")
+  mkdir -p "$box"
+  printf 'gitdir: /srv/clone/.git/worktrees/ken-83\n' > "$STUB_DIR/remote/srv/lane/KEN-83/.git"
+  printf '{"id":"old-1","kind":"directive","at":"2026-01-01T00:00:00Z","from":"overseer:repo","text":"Rebase."}\n' \
+    > "$box/to-lane.jsonl"
+  printf '1\n' > "$box/to-lane.cursor"
+  RECEIPT_ARGS=(--hosted KEN-83=/srv/lane/KEN-83)
+  receipts KEN-83 "$bin" "${host_env[@]}"
+  SHORT="$RECEIPTS|"
+  receipts KEN-83 "$bin" "${host_env[@]}" LANE_HOST_STUB_CAT_STATUS=2 \
+    LANE_HOST_STUB_CAT_PATH=/srv/lane/KEN-83/tmp/lane-mail/KEN-83/to-lane.cursor
+  SHORT+="$RECEIPTS|"
+  receipts KEN-83 "$bin" "${host_env[@]}"
+  SHORT+="$RECEIPTS"
+  RECEIPT_ARGS=()
+}
+new_case receipts_short_cursor
+short_cursor
+assert_eq "$SHORT" "$HEARTBEAT|$HEARTBEAT|$HEARTBEAT" \
+  "a cursor read that comes back short reports nothing, and the read after it nothing again" "$STUB_DIR/receipts.err"
+
 new_case receipts_read_mutant
 read_sequence "$MUTANT_DIR/orch/scripts/oversee-watch-cursorless"
 assert_eq "$READ_AFTER" "$HEARTBEAT" "control: with the cursor unread, a directive the lane read is never reported" \
   "$STUB_DIR/receipts.err"
 new_case receipts_unread_mutant
 unread_sequence "$MUTANT_DIR/orch/scripts/oversee-watch-forgetful"
-assert_eq "$UNREAD_AGAIN" "EVENT directive-unread KEN-81 $UNREAD_ID age=N" \
+assert_contains "$UNREAD_AGAIN" "EVENT directive-unread KEN-81 $UNREAD_ID age=N" \
   "control: with the reported line forgotten, the unread directive is reported on every run" "$STUB_DIR/receipts.err"
+
+new_case receipts_short_cursor_mutant
+short_cursor "$MUTANT_DIR/orch/scripts/oversee-watch-reset-on-short"
+assert_eq "${SHORT##*|}" "EVENT directive-read KEN-83 old-1" \
+  "control: a short cursor read taken as a replacement reports the old directive read again" "$STUB_DIR/receipts.err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

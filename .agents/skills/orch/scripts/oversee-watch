@@ -248,9 +248,10 @@ mailbox last:
 The overseer mailbox is read through its own to-lane.cursor, `lane-mail inbox
 --item overseer`, which a session start reads first: a note any reader has
 taken is not reported again, whatever state directory, --since or checkout
-this watch runs with. While the long pass reads the overseer pane dead or
-walled, no mailbox is read, so a successor finds what was sent in the
-meantime.
+this watch runs with. Before every mail pass the overseer's own pane is read
+once; while it reads exited, or walled with the long pass having confirmed the
+wall against its account, no mailbox is read, so a successor finds what was
+sent in the meantime.
 
 Every pane payload above is the lines that event's handling reads and no
 more, always taken from below the lane's last user turn and capped by
@@ -353,8 +354,9 @@ Options:
                       no permission flags, and the successor it relaunches
                       stops at the first prompt nobody is there to answer
   --repeat SECS       the watch for a session: run one watch per pass with
-                      the other options, sleep SECS after it exits with any
-                      status, and run the next. A successor launch, a
+                      the other options, sleep SECS after it exits, or
+                      ORCH_WATCH_MAIL_INTERVAL where that is shorter and the
+                      pass did not exit 2, and run the next. A successor launch, a
                       notice-only recovery or an exhausted retry stops the
                       repeat command with status 0. Requires --state. A
                       window that tmux does not list is carried until a pass
@@ -521,9 +523,11 @@ Environment:
                               plus claims/ and usage/, both shared across the
                               repositories that point here
   ORCH_WATCH_MAIL_INTERVAL    seconds from one mail pass to the next, a whole
-                              number, default 20. 0 reads the mail on every
-                              turn of the loop and waits out a long pass in
-                              flight rather than polling it
+                              number, default 20, and the most --repeat waits
+                              between two runs after one that did not exit 2.
+                              0 reads the mail on every turn of the loop and
+                              waits out a long pass in flight rather than
+                              polling it
   ORCH_DIRECTIVE_UNREAD_SECS  age in seconds past which a directive the lane
                               has not read is reported directive-unread, a
                               whole number, default 300
@@ -666,7 +670,8 @@ lane_failure_report() { # ITEM STATE
   # after its first report, and a different one, or a read that succeeded and
   # cleared the row, is news again. The key is the stopped state a hosted
   # provider names in its own keyed line, whose other words change from read
-  # to read, and the reason with its fields otherwise.
+  # to read, and otherwise the reason with its fields and the failing tool's
+  # first keyed line.
   while IFS= read -r line; do
     saw_kind=0; saw_item=0; stopped_state=""
     tokens=()
@@ -683,7 +688,11 @@ lane_failure_report() { # ITEM STATE
   if [[ -n "$stopped_state" ]]; then
     key="stopped $stopped_state"
   else
-    key="$LANE_FAILURE_REASON ${LANE_FAILURE_FIELDS[*]+"${LANE_FAILURE_FIELDS[*]}"}"
+    # The tool's own first keyed line: lane-mail and the hosts exit 2 for
+    # every refusal, so the reason and its fields alone would make every
+    # cause one failure and a new one would pass in silence.
+    key="$LANE_FAILURE_REASON ${LANE_FAILURE_FIELDS[*]+"${LANE_FAILURE_FIELDS[*]}"} $(
+      awk '/^[A-Za-z0-9._-]+: [A-Za-z0-9._-]+([= ]|$)/ { print; exit }' <<<"$LANE_FAILURE_DETAIL")"
   fi
   # A row value is one line with no tab in it.
   key="${key//$'\t'/ }"
@@ -900,11 +909,14 @@ lane_row_clear() {
   awk -F'\t' -v kind="$1" -v lane="$3" 'NF && !($1 == kind && NF == 3 && $2 == lane)' <<<"$2"
 }
 
+# In place, so a pass that sets a row to the value it already holds leaves
+# the blob as it was and commits nothing. The value crosses in the
+# environment, as lane_row_prune's list does: awk would read escapes in a -v.
 lane_row_set() {
-  local rest
-  rest="$(lane_row_clear "$1" "$2" "$3")"
-  [[ -z "$rest" ]] || printf '%s\n' "$rest"
-  printf '%s\t%s\t%s\n' "$1" "$3" "$4"
+  ow_value="$4" awk -F'\t' -v kind="$1" -v lane="$3" '
+    NF && $1 == kind && NF == 3 && $2 == lane { if (!set) print kind "\t" lane "\t" ENVIRON["ow_value"]; set = 1; next }
+    NF { print }
+    END { if (!set) print kind "\t" lane "\t" ENVIRON["ow_value"] }' <<<"$2"
 }
 
 # The same two-phase flush triage uses, on the same file: nothing is written
@@ -985,10 +997,10 @@ parse_argv "$@"
 [[ "$INTERVAL" =~ ^[0-9]+$ ]] || die interval-invalid "" "value=$INTERVAL"
 [[ "$MAX_LOOPS" =~ ^[0-9]+$ && "$MAX_LOOPS" -ge 1 ]] || die max-loops-invalid "" "value=$MAX_LOOPS"
 # The age a usage figure may be served at, named to every lane reader a pass
-# runs: two of this watch's intervals. Two reads are one interval of sleep plus
-# a pass's own work apart, so a window of one interval has always expired by
-# the next pass and every pass would post for every account; two cover any
-# pass whose work is shorter than its sleep. A larger ORCH_LANES_USAGE_MAX_AGE
+# runs: two of this watch's intervals. Two reads are one --interval apart,
+# counted start to start, or longer where a long pass overruns, so a window of
+# one interval has always expired by the next pass and every pass would post
+# for every account; two cover that. A larger ORCH_LANES_USAGE_MAX_AGE
 # the settings already set is kept, since this variable outranks the settings
 # ladder, and a value that is not a whole number is passed on for `lanes` to
 # refuse rather than overwritten. `lanes` only ever widens its TTL with it and
@@ -1019,8 +1031,10 @@ WATCH_TAIL_LINES="${ORCH_WATCH_TAIL_LINES:-12}"
 PREPARE_SECS="${ORCH_WATCH_PREPARE_SECS:-1800}"
 [[ "$PREPARE_SECS" =~ ^[1-9][0-9]*$ ]] || die prepare-secs-invalid "" "value=$PREPARE_SECS"
 # The mail pass's own cadence, apart from --interval: mail is a file read per
-# lane, and the long pass's reads share the lanes' GitHub quota, so a note
-# reaches the overseer within this many seconds whatever --interval costs.
+# local lane and four provider reads per hosted one (its .git, and its
+# to-overseer.jsonl, to-lane.jsonl and to-lane.cursor through one lane-mail
+# call), none of them GitHub's, so a note reaches the overseer within this many
+# seconds of the pass after it lands, whatever --interval costs.
 MAIL_INTERVAL="${ORCH_WATCH_MAIL_INTERVAL:-20}"
 [[ "$MAIL_INTERVAL" =~ ^(0|[1-9][0-9]*)$ ]] || die mail-interval-invalid "" "value=$MAIL_INTERVAL"
 UNREAD_SECS="${ORCH_DIRECTIVE_UNREAD_SECS:-300}"
@@ -1429,7 +1443,7 @@ watch_claim() { # ARGV...
 # every sleep, since the pass would refuse it too.
 REPEAT_FIRST=1
 repeat_watch() { # ARGV...
-  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args line noted="" gone="" pending pass_rc fleet_state_dir
+  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args line noted="" gone="" pending pass_rc fleet_state_dir delay
   fleet_state_dir="${STATE_FILE%/*}"
   [[ "$fleet_state_dir" != "$STATE_FILE" ]] || fleet_state_dir=.
   check_repo_set
@@ -1493,7 +1507,8 @@ repeat_watch() { # ARGV...
     REPEAT_CHILD_PID=""
     # The overseer this watch served is gone and a successor holds its window,
     # running a watch of its own. Two watches on one fleet read one overseer
-    # mailbox and each replay what the other drained, so this one ends here.
+    # mailbox through one cursor, each taking notes the other then never
+    # reports, so this one ends here.
     if [[ "$pass_rc" -eq 3 ]]; then
       ow_message overseer-succeeded "pane=${TMUX_PANE:-none}" >&2
       exit 0
@@ -1508,9 +1523,15 @@ repeat_watch() { # ARGV...
     # Named for a test's sleep stub, which tells this delay from a pass's own
     # sleeps by the variable and never by reading the process table. A delay
     # that cannot be slept ends the watch with its cause named, never silently.
-    OVERSEE_WATCH_SLEEP=repeat sleep "$REPEAT" &
+    # Capped at the mail interval: the runs between two passes read no mail,
+    # and the long-pass start row, not this delay, spaces the GitHub reads. A
+    # pass that failed waits the whole delay, so a standing failure is no hot
+    # loop.
+    delay="$REPEAT"
+    [[ "$pass_rc" -eq 2 || "$MAIL_INTERVAL" -ge "$delay" ]] || delay="$MAIL_INTERVAL"
+    OVERSEE_WATCH_SLEEP=repeat sleep "$delay" &
     REPEAT_CHILD_PID=$!
-    wait "$REPEAT_CHILD_PID" || die sleep-failed "" "secs=$REPEAT"
+    wait "$REPEAT_CHILD_PID" || die sleep-failed "" "secs=$delay"
     REPEAT_CHILD_PID=""
   done
 }
@@ -1713,7 +1734,23 @@ long_drain() {
 # A long pass still in flight when this process exits, on a die in a mail pass
 # among other ways, is waited for and its lines printed: its baselines may have
 # advanced past the events it found, and a line dropped here is lost for good.
-trap 'long_drain || :; rm -rf "$WORK_DIR"' EXIT
+# A succession it completed keeps its status, 3 or 4, so repeat mode stops
+# rather than start a second watch beside the successor's.
+on_exit() {
+  local rc=$?
+  if [[ -n "$LONG_PID" ]]; then
+    long_drain || :
+    if [[ -f "$LONG_STATUS" ]]; then
+      # shellcheck source=/dev/null
+      source "$LONG_STATUS"
+      if [[ "$OVERSEER_SUCCEEDED" -ne 0 ]]; then rc=3
+      elif [[ "$OVERSEER_STOP" -ne 0 && "$REPEAT_CHILD" -eq 1 ]]; then rc=4; fi
+    fi
+  fi
+  rm -rf "$WORK_DIR"
+  exit "$rc"
+}
+trap on_exit EXIT
 
 # Auth ladder (gates.md § Waiter auth ladder): a stale env token yields to the
 # keyring; when neither works, the env token is dropped so the project's
@@ -1996,15 +2033,15 @@ mail_read() { # ITEM LANE_MAIL_ARGS...
 # opened with, and `drain` reports the file's own count and first id, so a
 # message is reported once. An ask already answered is dropped by `drain`
 # rather than by a row, so a restarted overseer with no rows re-reports only
-# what it still owes a reply. Beside it, `receipts` reads the lane's
-# to-lane.cursor, which every read path the lane has advances: the cursor is
-# the lane's receipt for each directive it has passed. The overseer's own
+# what it still owes a reply. The same call's `--receipts` section reads the
+# lane's to-lane.cursor, which every read path the lane has advances: the
+# cursor is the lane's receipt for each directive it has passed. The overseer's own
 # mailbox is read last, items or not, with `inbox`, which advances its own
 # to-lane.cursor: the reader a session start runs as well, so a note is
 # reported by whichever reads it first and by nothing after.
 check_mail() {
   local item stored prior seen header count first line fields id kind options text rest root cursor from re
-  local envelopes replaced lane_read to_first read_at unread_at at
+  local envelopes receipts replaced missed lane_read to_count to_first read_at unread_at at
   local mail_items host_flag args
   local state="$MAIL_SEEN"
   HOSTED_GONE_ITEMS=""
@@ -2059,7 +2096,7 @@ check_mail() {
       read -r prior seen <<<"$stored"
       [[ "$prior" =~ ^[0-9]+$ ]] || { prior=0; seen=""; }
       while :; do
-        if ! mail_read "$item" drain "${args[@]}" --after "$prior"; then
+        if ! mail_read "$item" drain "${args[@]}" --after "$prior" --receipts; then
           lane_failure_report "$item" "$state"
           mail_row_commit "$LANE_FAILURE_STATE"
           state="$MAIL_SEEN"
@@ -2087,7 +2124,10 @@ check_mail() {
         replaced=1
         prior=0
       done
-      envelopes="$(tail -n +2 <<<"$MAIL_OUT")"
+      # The drain's envelopes, then its receipts section: the lane's
+      # to-lane.cursor and the directives it holds.
+      envelopes="$(awk 'NR == 1 { next } /^receipts / { exit } { print }' <<<"$MAIL_OUT")"
+      receipts="$(awk 'found { print } /^receipts / { found = 1; print }' <<<"$MAIL_OUT")"
     fi
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
@@ -2141,55 +2181,57 @@ check_mail() {
     # A read shorter than what was already drained moves no position, since
     # lowering it would report the lines between again once the file reads
     # whole.
-    [[ "$replaced" -eq 0 && "$count" -lt "$prior" ]] \
-      || state="$(lane_row_set lane-mail "$state" "$cursor" "$count $first")"
-    # Committed here, per item and after its lines are out: a later mailbox
-    # can fail without discarding this read, and a row left uncommitted would
-    # re-report this item's messages on the re-run that follows.
     #
     # No prune, unlike every other row kind: those hold a pane key a pane
     # replaces, this one how far the overseer has read a lane's mailbox. An
     # item out of --item for one run and back in the next would otherwise
     # drain from zero and report every message that lane ever sent.
-    mail_row_commit "$state"
-    if ! mail_read "$item" receipts "${args[@]}"; then
-      lane_failure_report "$item" "$state"
-      mail_row_commit "$LANE_FAILURE_STATE"
-      state="$MAIL_SEEN"
-      continue
-    fi
-    header="${MAIL_OUT%%$'\n'*}"
-    [[ "$header" =~ ^cursor=([0-9]+)\ count=[0-9]+\ first=([A-Za-z0-9._-]*)$ ]] \
+    [[ "$replaced" -eq 0 && "$count" -lt "$prior" ]] \
+      || state="$(lane_row_set lane-mail "$state" "$cursor" "$count $first")"
+    header="${receipts%%$'\n'*}"
+    [[ "$header" =~ ^receipts\ cursor=([0-9]+)\ count=([0-9]+)\ first=([A-Za-z0-9._-]*)$ ]] \
       || die mail-read-invalid "" "item=$item" "value=${header:-<empty>}"
     lane_read="${BASH_REMATCH[1]}"
-    to_first="${BASH_REMATCH[2]}"
+    to_count="${BASH_REMATCH[2]}"
+    to_first="${BASH_REMATCH[3]}"
     # `<read> <unread> <first>`: the cursor directive-read was last reported
     # up to, the last line reported directive-unread, and the id to-lane.jsonl
     # opened with. A lane with no row yet is taken as having read up to its
-    # cursor, so a first pass does not replay every directive it ever read; a
-    # replacement mailbox, or a cursor moved back, starts both counts over.
+    # cursor, so a first pass does not replay every directive it ever read.
+    # The drain's rule for a mailbox holds here too: only one opening with
+    # another envelope is a replacement, and starts both counts over; an empty
+    # read, or a cursor reading lower than the one reported, is a read that
+    # missed, and this pass reports nothing and moves nothing.
     if ! stored="$(lane_row_get directive "$state" "$cursor")"; then
       die state-read-failed "" "item=$item" "row=directive"
     fi
     read -r read_at unread_at seen <<<"$stored"
+    missed=0
     if ! [[ "$read_at" =~ ^[0-9]+$ && "$unread_at" =~ ^[0-9]+$ ]]; then
       read_at="$lane_read"; unread_at=0
-    elif [[ ( -n "$seen" && "$to_first" != "$seen" ) || "$lane_read" -lt "$read_at" ]]; then
+    elif [[ -n "$to_first" && -n "$seen" && "$to_first" != "$seen" ]]; then
       read_at=0; unread_at=0
+    elif [[ "$to_count" -eq 0 || "$lane_read" -lt "$read_at" ]]; then
+      missed=1
     fi
-    while read -r line id at; do
-      [[ -n "$line" ]] || continue
-      if [[ "$line" -le "$lane_read" ]]; then
-        [[ "$line" -gt "$read_at" ]] || continue
-        echo "EVENT directive-read $item $id"
-        PASS_EVENT=1
-      elif [[ "$line" -gt "$unread_at" && -n "$at" ]] && (( PASS_NOW - at >= UNREAD_SECS )); then
-        echo "EVENT directive-unread $item $id age=$((PASS_NOW - at))"
-        unread_at="$line"
-        PASS_EVENT=1
-      fi
-    done <<<"$(tail -n +2 <<<"$MAIL_OUT")"
-    state="$(lane_row_set directive "$state" "$cursor" "$lane_read $unread_at $to_first")"
+    if [[ "$missed" -eq 0 ]]; then
+      while read -r line id at; do
+        [[ -n "$line" ]] || continue
+        if [[ "$line" -le "$lane_read" ]]; then
+          [[ "$line" -gt "$read_at" ]] || continue
+          echo "EVENT directive-read $item $id"
+          PASS_EVENT=1
+        elif [[ "$line" -gt "$unread_at" && -n "$at" ]] && (( PASS_NOW - at >= UNREAD_SECS )); then
+          echo "EVENT directive-unread $item $id age=$((PASS_NOW - at))"
+          unread_at="$line"
+          PASS_EVENT=1
+        fi
+      done <<<"$(tail -n +2 <<<"$receipts")"
+      state="$(lane_row_set directive "$state" "$cursor" "$lane_read $unread_at ${to_first:-$seen}")"
+    fi
+    # Committed here, per item and after its lines are out: a later mailbox
+    # can fail without discarding this read, and a row left uncommitted would
+    # re-report this item's messages on the re-run that follows.
     state="$(lane_row_clear lane-failed "$state" "$item")"
     mail_row_commit "$state"
   done
@@ -2761,9 +2803,52 @@ overseer_mark_check() { # ROWS IDENTITY PANE
   OVERSEER_MARK_ROWS="$(lane_row_set overseer-mark "$rows" "$identity" "$kind|$passes")"
 }
 
+# The overseer's own pane as one reading: OV_WINDOW, OV_IDENTITY (`<server>
+# <pane>`, the key its rows are kept under), OV_SCREEN and OV_STATE, the shared
+# judge's word for it. The long pass reads it before its checks and the mail
+# pass before it takes any mail, so both read one pane the one way. A pane that
+# cannot be read is noted once and returns 1: its state settles nothing.
+OV_WINDOW=""
+OV_IDENTITY=""
+OV_SCREEN=""
+OV_STATE=""
+overseer_pane_read() { # PANE
+  local pane="$1" pane_identity server actual_pane obs pid cmd
+  local errf="$WORK_DIR/overseer.err"
+  OV_WINDOW="$(tmux display-message -p -t "$pane" '#{window_id}' 2>"$errf")" \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=window_id"; return 1; }
+  if ! pane_identity="$(tmux display-message -p -t "$pane" '#{pid} #{pane_id}' 2>"$errf")"; then
+    overseer_note overseer-unreadable "pane=$pane" "field=identity"
+    return 1
+  fi
+  [[ "$pane_identity" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)$ ]] \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=identity" "value=${pane_identity:-<empty>}"; return 1; }
+  server="${BASH_REMATCH[1]}"
+  actual_pane="${BASH_REMATCH[2]}"
+  [[ "$actual_pane" == "$pane" ]] \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=identity" "value=$pane_identity"; return 1; }
+  OV_IDENTITY="$server $pane"
+  if ! obs="$(tmux display-message -p -t "$pane" '#{pane_pid} #{pane_current_command}' 2>"$errf")"; then
+    overseer_note overseer-unreadable "pane=$pane" "field=pane_pid"
+    return 1
+  fi
+  [[ "$obs" =~ ^[0-9]+[[:blank:]]+[^[:space:]] ]] \
+    || { overseer_note overseer-unreadable "pane=$pane" "value=${obs:-<empty>}"; return 1; }
+  OV_SCREEN="$(tmux capture-pane -pJ -t "$pane" 2>"$errf")" \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=capture"; return 1; }
+  pid="${obs%%[[:blank:]]*}"
+  cmd="${obs#*[[:blank:]]}"
+  # The sixth argument is empty for the reason check_lanes gives: this watch's
+  # vantage point is the pane, and a screen the pane rungs cannot settle is
+  # `unjudged`, never `exited`.
+  lane_state OV_STATE listed "$cmd" "$pid" "$OV_SCREEN" \
+    || { overseer_note overseer-unreadable "pane=$pane" "scan=usage-limit"; return 1; }
+  [[ "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$pane"
+}
+
 check_overseer() {
-  local pane="${TMUX_PANE:-}" window obs pid cmd screen state prior count succession plan
-  local ov_line pane_identity server actual_pane identity rows attempt completed
+  local pane="${TMUX_PANE:-}" window screen state prior count succession plan
+  local ov_line identity rows attempt completed
   local ov_case row other succeed_rc below banner banner_rc
   local errf="$WORK_DIR/overseer.err"
   # Off tmux there is no overseer pane to read, and with no workflow-state
@@ -2777,41 +2862,15 @@ check_overseer() {
     get oversee '.overseer.launch_line // ""' 2>"$errf")" \
     || { overseer_note overseer-unwatched "state=oversee"; return 0; }
 
-  window="$(tmux display-message -p -t "$pane" '#{window_id}' 2>"$errf")" \
-    || { overseer_note overseer-unreadable "pane=$pane" "field=window_id"; return 0; }
-  if ! pane_identity="$(tmux display-message -p -t "$pane" '#{pid} #{pane_id}' 2>"$errf")"; then
-    overseer_note overseer-unreadable "pane=$pane" "field=identity"
-    return 0
-  fi
-  [[ "$pane_identity" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)$ ]] \
-    || { overseer_note overseer-unreadable "pane=$pane" "field=identity" "value=${pane_identity:-<empty>}"; return 0; }
-  server="${BASH_REMATCH[1]}"
-  actual_pane="${BASH_REMATCH[2]}"
-  [[ "$actual_pane" == "$pane" ]] \
-    || { overseer_note overseer-unreadable "pane=$pane" "field=identity" "value=$pane_identity"; return 0; }
-  identity="$server $pane"
-  if ! obs="$(tmux display-message -p -t "$pane" '#{pane_pid} #{pane_current_command}' 2>"$errf")"; then
-    overseer_note overseer-unreadable "pane=$pane" "field=pane_pid"
-    return 0
-  fi
-  [[ "$obs" =~ ^[0-9]+[[:blank:]]+[^[:space:]] ]] \
-    || { overseer_note overseer-unreadable "pane=$pane" "value=${obs:-<empty>}"; return 0; }
-  screen="$(tmux capture-pane -pJ -t "$pane" 2>"$errf")" \
-    || { overseer_note overseer-unreadable "pane=$pane" "field=capture"; return 0; }
-
+  overseer_pane_read "$pane" || return 0
+  window="$OV_WINDOW"
+  identity="$OV_IDENTITY"
+  screen="$OV_SCREEN"
+  state="$OV_STATE"
   # The watch invocation recorded this current session's command before its
   # first pass. Once the pane is dead, that last live-owned record is the only
   # source that still knows its account, model and permission flags.
   OVERSEER_LINE="$ov_line"
-
-  pid="${obs%%[[:blank:]]*}"
-  cmd="${obs#*[[:blank:]]}"
-  # The sixth argument is empty for the reason check_lanes gives: this watch's
-  # vantage point is the pane, and a screen the pane rungs cannot settle is
-  # `unjudged`, never `exited`.
-  lane_state state listed "$cmd" "$pid" "$screen" \
-    || { overseer_note overseer-unreadable "pane=$pane" "scan=usage-limit"; return 0; }
-  [[ "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$pane"
 
   # The two readings this check acts on, named once and matched by name below.
   # `exited` is the harness gone; `walled` is the account spent under a harness
@@ -3358,13 +3417,16 @@ heartbeat() {
 
 # The long pass: the overseer's own pane, one lane snapshot, pr-watch, merged
 # items, triage, lane preparation, the lane checks and the accounts, in a
-# forked process. Mail passes go on
-# while it runs, so it spools its stdout and stderr and this process prints
-# them whole once it ends, staying the one writer of the event protocol. The
-# fork has its own copy of every global: what the loop below needs back
-# crosses LONG_STATUS, and the baselines it committed are what the next long
-# pass reads, never this process's copy of them.
+# forked process. Mail passes go on while it runs, so it spools its stdout and
+# stderr and this process prints them whole once it ends, staying the one
+# writer of the event protocol. The
+# fork has its own copy of every global: the ones the loop below needs back
+# are LONG_RETURNS, written to LONG_STATUS, and a global a long-pass check
+# sets for this process belongs there. The baselines it committed are what the
+# next long pass reads, never this process's copy of them.
 LONG_PASSES=0
+LONG_RETURNS=(LONG_EVENT LONG_FAILED OVERSEER_SUCCEEDED OVERSEER_STOP PW_PASSES PW_RC PW_EVENT
+  PW_OUT PW_ERR LANE_PROBE_NOTED OVERSEER_NOTED ACCOUNT_ROSTER ACCOUNT_ROSTER_RC)
 long_pass() {
   local i state_file
   PASS_EVENT=0
@@ -3387,16 +3449,21 @@ long_pass() {
     check_lanes
     check_accounts
   fi
-  printf 'LONG_EVENT=%q\nLONG_FAILED=%q\nOVERSEER_SUCCEEDED=%q\nOVERSEER_STOP=%q\n' \
-    "$PASS_EVENT" "$PASS_FAILED" "$OVERSEER_SUCCEEDED" "$OVERSEER_STOP" >"$LONG_STATUS"
-  printf 'PW_PASSES=%q\nPW_RC=%q\nPW_EVENT=%q\nPW_OUT=%q\nPW_ERR=%q\nLANE_PROBE_NOTED=%q\nOVERSEER_NOTED=%q\n' \
-    "$PW_PASSES" "$PW_RC" "$PW_EVENT" "$PW_OUT" "$PW_ERR" "$LANE_PROBE_NOTED" "$OVERSEER_NOTED" >>"$LONG_STATUS"
-  printf 'ACCOUNT_ROSTER=%q\nACCOUNT_ROSTER_RC=%q\n' \
-    "$ACCOUNT_ROSTER" "$ACCOUNT_ROSTER_RC" >>"$LONG_STATUS"
+  # Under names of their own, so sourcing them cannot overwrite the news this
+  # process's mail passes found.
+  LONG_EVENT="$PASS_EVENT"
+  LONG_FAILED="$PASS_FAILED"
+  local name
+  for name in "${LONG_RETURNS[@]}"; do printf '%s=%q\n' "$name" "${!name}"; done >"$LONG_STATUS"
 }
+# The fork gets a scratch directory and temp-file tag of its own: both passes
+# run at once, and one shared would have each read the other's tool errors and
+# a die in one discard the other's staged baselines.
 long_start() {
   rm -f -- "$LONG_STATUS" "$LONG_DONE"
-  ( trap 'touch "$LONG_DONE"' EXIT; long_pass ) >"$LONG_OUT" 2>"$LONG_ERR" &
+  mkdir -p -- "$WORK_DIR/long" || die state-directory-create-failed "" "path=$WORK_DIR/long"
+  ( WORK_DIR="$WORK_DIR/long"; PW_TMP_TAG="$$-long"; trap 'touch "$LONG_DONE"' EXIT; long_pass ) \
+    >"$LONG_OUT" 2>"$LONG_ERR" &
   LONG_PID=$!
 }
 # Takes an ended long pass in: its lines out, its answers back; `wait` blocks
@@ -3439,15 +3506,24 @@ long_due() {
   LONG_DUE=$((PASS_NOW + INTERVAL))
 }
 
-# The overseer pane read dead or walled by a long pass, as the rows it
-# committed say. No mailbox is read then, so the successor, or the overseer
-# once it reads live again, finds that mail rather than a log nobody reads.
+# Whether the overseer's pane reads down now, taken fresh before every mail
+# pass: no mailbox is read then, so the successor, or the overseer once it
+# reads live again, finds that mail rather than a log nobody reads. Down is
+# `exited` on this reading, or `walled` where the long pass has confirmed that
+# wall against the account, the overseer-walled row keyed on this pane's own
+# identity: a wall the account has not confirmed is a banner this watch
+# relayed about another lane. Off tmux, or with a pane that cannot be read,
+# nothing is judged and the mail is read, as the long pass reads on.
 overseer_down() {
-  local file rows
+  local pane="${TMUX_PANE:-}" file rows
+  [[ -n "${TMUX:-}" && -n "$pane" ]] || return 1
+  overseer_pane_read "$pane" || return 1
+  [[ "$OV_STATE" != exited ]] || return 0
+  [[ "$OV_STATE" == walled ]] || return 1
   file="$(pw_state_file "${REPOS[0]}")"
   [[ -f "$file" ]] || return 1
   rows="$(cat -- "$file")" || die state-read-failed "" "path=$file"
-  awk -F'\t' 'NF == 3 && ($1 == "overseer-dead" || $1 == "overseer-walled") { found = 1 } END { exit !found }' <<<"$rows"
+  [[ -n "$(lane_row_get overseer-walled "$rows" "$OV_IDENTITY")" ]]
 }
 
 # Until the next mail pass or long pass is due. A long pass in flight is looked
@@ -3505,6 +3581,10 @@ run_end() {
   [[ "$OVERSEER_SUCCEEDED" -eq 0 ]] || exit 3
   [[ "$OVERSEER_STOP" -eq 0 || "$REPEAT_CHILD" -eq 0 ]] || exit 4
   [[ -z "$LONG_PID" ]] || return 0
+  if [[ "$PASS_EVENT" -eq 0 && "$PASS_FAILED" -eq 0 && "$LONG_PASSES" -ge "$MAX_LOOPS" && "$MAIL_OWED" -eq 1 ]]; then
+    MAIL_OWED=0
+    overseer_down || check_mail
+  fi
   if [[ "$PASS_FAILED" -eq 1 ]]; then
     pr_watch_context
     exit 2
@@ -3513,13 +3593,7 @@ run_end() {
     pr_watch_context
     exit 0
   fi
-  [[ "$LONG_PASSES" -ge "$MAX_LOOPS" ]] || return 0
-  if [[ "$MAIL_OWED" -eq 1 ]]; then
-    MAIL_OWED=0
-    overseer_down || check_mail
-    run_end
-  fi
-  heartbeat
+  [[ "$LONG_PASSES" -lt "$MAX_LOOPS" ]] || heartbeat
 }
 while :; do
   # The fleet before the checks that read it, every turn and not only the
