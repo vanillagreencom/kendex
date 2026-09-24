@@ -1172,6 +1172,7 @@
   ".agents/skills/worktree/tests/worktree_path_safety.sh",
   ".agents/skills/worktree/tests/worktree_push_rebase.sh",
   ".agents/skills/worktree/tests/worktree_remove.sh",
+  ".agents/skills/worktree/tests/worktree_restack_hook_hold.sh",
   ".agents/skills/worktree/tests/worktree_restack_replay.sh",
   ".agents/skills/worktree/tests/worktree_session_guard_lifecycle.sh",
   ".agents/skills/worktree/tests/worktree_symlink_shadows_tracked.sh",

@@ -2268,6 +2268,10 @@ case "${1:-}" in
 
     if [[ "$ACTION" == abort ]]; then
       RESTACK_ORIGINAL_HEAD="$(restack_state_get "$WT_PATH" originalHead)"
+      # The abort restores the branch's own version of every held hook, so
+      # the saved conflicted copies are stale; their list goes with Git's
+      # paused state, so read it first.
+      HELD_COPIES="$(restack_unconsumed_hook_copies "$WT_PATH")"
       if [[ "$RESTACK_MODE" == replay ]]; then
         # The replay never moved the branch ref, so aborting the cherry-pick
         # restores the detach point and reattaching restores everything.
@@ -2296,10 +2300,14 @@ case "${1:-}" in
           exit 1
         fi
       fi
+      while IFS= read -r HELD_COPY; do
+        [[ -z "$HELD_COPY" ]] || rm -f -- "$WT_PATH/$HELD_COPY"
+      done <<<"$HELD_COPIES"
       finish_guarded_restack_abort "$WT_PATH" aborted
       exit 0
     fi
 
+    restack_refuse_unconsumed_hooks "$WT_PATH" || exit 1
     validate_worktree_setup_config || exit 1
     validate_pending_restack_remote "$WT_PATH" || exit 1
     RESTACK_BASE_OID="$(restack_state_get "$WT_PATH" baseOid)"
@@ -2602,15 +2610,8 @@ case "${1:-}" in
               fi
               if [[ "$RESTACK" == true ]]; then
                 worktree_message replay-conflicts "$WT_PATH" "Error: Cherry-pick replay onto origin/$DEFAULT_BRANCH stopped on conflicts in $WT_PATH." >&2
-                if [[ -n "$CONFLICT_FILES" ]]; then
-                  echo "Conflicting files:" >&2
-                  sed 's/^/  /' <<<"$CONFLICT_FILES" >&2
-                fi
-                echo "The replay is paused in the worktree so the conflicts can be resolved:" >&2
-                echo "  1. Edit each conflicting file to remove the conflict markers." >&2
-                echo "  2. git -C \"$WT_PATH\" add <file>    (each resolved file)" >&2
-                echo "  3. $0 restack continue \"$WT_PATH\"    (repeat if it stops again)" >&2
-                echo "     If the resolved commit is empty: $0 restack skip \"$WT_PATH\"" >&2
+                echo "The replay is paused in the worktree so the conflicts can be resolved." >&2
+                report_restack_conflicts "$WT_PATH" "$CONFLICT_FILES"
                 echo "To back out instead: $0 restack abort \"$WT_PATH\"" >&2
                 exit 1
               fi
@@ -2685,15 +2686,8 @@ case "${1:-}" in
             fi
             if [[ "$RESTACK" == true ]]; then
               worktree_message rebase-conflicts "$WT_PATH" "Error: Rebase onto origin/$DEFAULT_BRANCH stopped on conflicts in $WT_PATH." >&2
-              if [[ -n "$CONFLICT_FILES" ]]; then
-                echo "Conflicting files:" >&2
-                sed 's/^/  /' <<<"$CONFLICT_FILES" >&2
-              fi
-              echo "The rebase is paused in the worktree so the conflicts can be resolved:" >&2
-              echo "  1. Edit each conflicting file to remove the conflict markers." >&2
-              echo "  2. git -C \"$WT_PATH\" add <file>    (each resolved file)" >&2
-              echo "  3. $0 restack continue \"$WT_PATH\"    (repeat if it stops again)" >&2
-              echo "     If the resolved commit is empty: $0 restack skip \"$WT_PATH\"" >&2
+              echo "The rebase is paused in the worktree so the conflicts can be resolved." >&2
+              report_restack_conflicts "$WT_PATH" "$CONFLICT_FILES"
               echo "To back out instead: $0 restack abort \"$WT_PATH\"" >&2
               exit 1
             fi
