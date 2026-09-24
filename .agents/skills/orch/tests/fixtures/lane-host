@@ -28,7 +28,9 @@ fi
 # accounts verb, answering exit 2 with its own line, and _ACCOUNTS_STATUS is one
 # that implements the verb and fails it, which is the other case entirely.
 # _APPEND_DELAY holds append at its write, further down.
+# _CREATE_OWNED names the one item whose create exits 75, another session's.
 case "$1" in
+  create) [[ "${LANE_HOST_STUB_CREATE_OWNED:-}" != "$3" ]] || exit 75 ;;
   close) [[ "${LANE_HOST_STUB_CLOSE_STATUS:-0}" -eq 0 || "${LANE_HOST_STUB_CLOSE_ITEM:-$3}" != "$3" ]] \
     || { printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2; exit "$LANE_HOST_STUB_CLOSE_STATUS"; } ;;
   cat)

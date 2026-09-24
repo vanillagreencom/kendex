@@ -127,7 +127,8 @@ Events, checked and reported in this order every pass:
                              lane-close closes
   EVENT lane-prepare-stuck <item> age=<secs>s log=<path>
                              that record has read preparing for longer than
-                             ORCH_WATCH_PREPARE_SECS with no outcome written.
+                             ORCH_WATCH_PREPARE_SECS with no outcome written;
+                             lane-close closes it.
                              These three are read from --state records and
                              reported once per preparation
   EVENT window-gone <lane>   the tmux window no longer exists. Nothing follows
@@ -1050,12 +1051,15 @@ LANE_ROWS_FILTER='
   | [.item, (.window // ""), (if .host == null then "local" else "hosted" end), (.mail_root // "")] | join("\u001f"))'
 
 # The preparation records of lanes open-terminal handed to a background job,
-# one line each: item, state, the preparation's start in epoch seconds, the
-# job's log and the failure reason, joined by the unit separator. A done
-# record's preparation is over and is not read.
+# one line each: item, outcome, the preparation's start in epoch seconds, the
+# job's log and the failure reason, joined by the unit separator. The record's
+# status is the outcome: preparing is pending, running is ready, and stopped
+# carrying the job's reason is failed. Any other record's preparation is over,
+# a close or a kept sandbox included, and is not read.
 PREPARE_ROWS_FILTER='
-  (.lanes // [])[] | select(type == "object" and (.prepare | type) == "object" and .status != "done")
-  | [.item, .prepare.state, (.prepare.since | fromdateiso8601 | tostring), .prepare.log, (.prepare.reason // "")] | join("\u001f")'
+  (.lanes // [])[] | select(type == "object" and (.prepare | type) == "object")
+  | ({preparing: "pending", running: "ready"}[.status // ""] // (if .status == "stopped" and .prepare.reason != null then "failed" else empty end)) as $outcome
+  | [.item, $outcome, (.prepare.since | fromdateiso8601 | tostring), .prepare.log, (.prepare.reason // "")] | join("\u001f")'
 PREPARE_ROWS=""
 
 # The one reader of the state, asked by the repeat wrapper before every pass
@@ -1662,19 +1666,19 @@ check_handoff() {
 # still preparing past PREPARE_SECS, once. The row is keyed by the
 # preparation's start, so a relaunch that prepares again is reported afresh.
 check_prepare() {
-  local item state since log reason key age rows="${PW_SEEN[0]}" items=()
-  while IFS=$'\x1f' read -r item state since log reason; do
+  local item outcome since log reason key age rows="${PW_SEEN[0]}" items=()
+  while IFS=$'\x1f' read -r item outcome since log reason; do
     [[ -n "$item" ]] || continue
     items+=("$item")
     age=$((PASS_NOW - since))
-    case "$state" in
+    case "$outcome" in
       pending) [[ "$age" -gt "$PREPARE_SECS" ]] || continue; key="$since|stuck" ;;
-      ready|failed) key="$since|$state" ;;
-      *) die state-invalid "" "option=--state" "path=$STATE_FILE" "item=$item" "prepare=$state" ;;
+      ready|failed) key="$since|$outcome" ;;
+      *) die state-invalid "" "option=--state" "path=$STATE_FILE" "item=$item" "prepare=$outcome" ;;
     esac
     [[ "$key" != "$(lane_row_get lane-prepare "$rows" "$item")" ]] || continue
     rows="$(lane_row_set lane-prepare "$rows" "$item" "$key")"
-    case "$state" in
+    case "$outcome" in
       pending) echo "EVENT lane-prepare-stuck $item age=${age}s log=$log" ;;
       ready) echo "EVENT lane-ready $item" ;;
       failed) echo "EVENT lane-prepare-failed $item reason=$reason log=$log" ;;

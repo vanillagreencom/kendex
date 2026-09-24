@@ -92,8 +92,9 @@ ot_message() { # REASON FIELD=VALUE...
     host-line-invalid) text='The lane host create output lacks ssh-target, path or remote-prefix on one line, or names a state other than preparing.' ;;
     host-prepare-failed) text='The lane host accepted this item and its wait reported the preparation failed; the provider says why above. No lane was started. The host keeps what it made until lane-host close or a --relaunch.' ;;
     lane-preparing) text='The lane host accepted this item and is still preparing it. A background job waits for the host, launches the lane in the window opened for it and records the outcome, which oversee-watch reports as lane-ready or lane-prepare-failed. log is the job output.' ;;
-    lane-prepare-failed) text='The background launch of this lane failed and its window is closed. reason wait-failed is the host wait, which says why above; launch-failed is a launch step, whose keyed line is above. The record is stopped, so lane-close closes the host and the record.' ;;
-    prepare-unrecorded) text='The record of a lane handed to a background job could not be written to the oversee workflow state. At the hand-off nothing was started and the window was closed; the host holds the item until a --relaunch or lane-host close. In the job, the record still reads preparing, which oversee-watch reports as lane-prepare-stuck.' ;;
+    lane-prepare-failed) text='The background launch of this lane failed and its window is closed, so no remedy above that names the window applies. reason wait-failed is the host wait, which says why above; launch-failed is a launch step, whose keyed line is above. The record is stopped: lane-close closes the host and the record, or relaunch the item.' ;;
+    prepare-unrecorded) text='The record of a lane handed to a background job could not be written to the oversee workflow state. At the hand-off the job was stopped and the window closed, and the host holds the item. In the job, the record still reads preparing, which oversee-watch reports as lane-prepare-stuck. Either way lane-close closes the lane once the state can be written.' ;;
+    prepare-stop-failed) text='The background job the hand-off started could not be stopped after its record failed. Stop the process group pid names by hand.' ;;
     remote-prompt-missing) text='The ssh session showed no shell prompt in time. Attach to the window and start the lane manually. The reason says which pane state the spent bound ended on: prompt-silent is ssh still holding the pane, session-gone is the pane running no ssh, a session that died or never started. The ssh lines this launcher typed are counted in attempts.' ;;
     host-gitfile-unread) text='The .git of the lane worktree could not be read on the host, so the clone its launch marker belongs under is unknown. The item was not launched.' ;;
     host-gitfile-invalid) text='The .git of the lane worktree does not name a linked worktree git directory, so the clone its launch marker belongs under is unknown. The item was not launched.' ;;
@@ -215,8 +216,9 @@ Options:
                     rest of the launch, and records the lane running, or
                     stopped with its reason, logging to
                     lane-prepare-ITEM.log in the state directory; the summary
-                    counts it as preparing. Without --state-dir the launch
-                    runs `lane-host wait` itself. With
+                    counts it as preparing. Without --state-dir, and for a
+                    codex --relaunch, the launch runs `lane-host wait` itself.
+                    lane-close closes a record still preparing. With
                     --relaunch the provider keeps its tree and the harness
                     continues natively: claude --continue, codex resume
                     --last, pi -c. The claude and pi forms carry the
@@ -1366,15 +1368,14 @@ session_id_of() { # HARNESS SESSION_FILE
 # window, so no write here inits by hand; a wake creates nothing and writes
 # into the state a launch already made. Every field the launch does not know is
 # null, never "": a reader tests presence, and a hosted lane is one whose host
-# is set. LAUNCH_PREPARE, set only for a launch handed to a background job,
-# is recorded as `prepare` and decides the status: preparing while the host
-# prepares, running once the job's launch stands, stopped when it failed. Any
-# other launch or relaunch drops an earlier launch's `prepare`.
-lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT
+# is set. STATUS is running unless a launch handed to a background job names
+# preparing or stopped; that launch's LAUNCH_PREPARE is recorded as `prepare`,
+# and any other launch or relaunch drops an earlier one.
+lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATUS]
   # LAUNCHED_AT was read before the terminal opened: the first record's value
   # is the floor the watch applies to merges and new issues, and the model is
   # the one LAUNCH_MODEL judged the lane on, so the record names what ran.
-  local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" launched_at="$6" rec host="" account="" surface=gui report record_repo
+  local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" launched_at="$6" status="${7:-running}" rec host="" account="" surface=gui report record_repo
   [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"
   [[ -z "$LANE_ENV" ]] || account="${LANE_ENV#*=}"
   [[ "$TERMINAL_MODE" != tmux ]] || surface=tmux
@@ -1389,9 +1390,8 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT
   rec="$(jq -cn --arg item "$item" --arg tracker "$TRACKER" --arg repo "$record_repo" --arg harness "$LAUNCH_HARNESS" \
     --arg window "$window" --arg account "$account" --arg host "$host" \
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" \
-    --arg session_id "$session_id" --arg launched_at "$launched_at" --argjson prepare "${LAUNCH_PREPARE:-null}" \
-    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, launched_at: $launched_at,
-      status: {pending: "preparing", ready: "running", failed: "stopped"}[($prepare // {state: "ready"}).state]}
+    --arg session_id "$session_id" --arg launched_at "$launched_at" --arg status "$status" --argjson prepare "${LAUNCH_PREPARE:-null}" \
+    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, launched_at: $launched_at, status: $status}
      | map_values(if . == "" then null else . end) + (if $prepare == null then {} else {prepare: $prepare} end)')" || return 1
   # update-report, so the refusal and the write are one locked step: a wake
   # that names no entry leaves the state as it was and reports so.
@@ -2074,6 +2074,13 @@ tmux_window_open() { # DIR TITLE
   LAUNCH_PANE="$pane"
 }
 
+# Closes the item's window, which retires its lane claim. A pane tmux no longer
+# lists was closed by an earlier step of the same launch and needs nothing.
+tmux_window_close() { # PANE TITLE
+  tmux list-panes -t "$1" >/dev/null 2>&1 || return 0
+  tmux kill-window -t "$1" || { ot_message tmux-failed "operation=kill-window" "item=$2" >&2; return 1; }
+}
+
 open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   local dir="$1" title="$2" cmd="$3" brief="${4:-}" target="${5:-}" line="clear; $3" pane
   # Called on the left of `||` at the launch loop, which suspends errexit for
@@ -2177,7 +2184,7 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   # and one found on an account nobody picked is closed after that
   # announcement, which is what the lane-mismatch line says; closing it also
   # retires the claim written above, live only while its pane is.
-  lane_account_ok "$pane" "$title" "$premise" || { tmux kill-window -t "$pane" || ot_message tmux-failed "operation=kill-window" "item=$title" >&2; return 1; }
+  lane_account_ok "$pane" "$title" "$premise" || { tmux_window_close "$pane" "$title" || true; return 1; }
   return "$launch_rc"
 }
 
@@ -2409,52 +2416,71 @@ launch_finish() {
   fi
 }
 
-# The preparation record a lane handed to a background job carries: its state,
-# the launch time that began it and the job's log, plus the reason it failed.
-prepare_record() { # STATE LOG [REASON]
-  jq -cn --arg state "$1" --arg since "$launched_at" --arg log "$2" --arg reason "${3:-}" \
-    '{state: $state, since: $since, log: $log} + (if $reason == "" then {} else {reason: $reason} end)'
+# The preparation record a lane handed to a background job carries: the launch
+# time that began it and the job's log, plus the reason it failed. Whether it
+# is pending, ready or failed is the record's status and nothing here.
+prepare_record() { # LOG [REASON]
+  jq -cn --arg since "$launched_at" --arg log "$1" --arg reason "${2:-}" \
+    '{since: $since, log: $log} + (if $reason == "" then {} else {reason: $reason} end)'
+}
+
+# The record of a lane handed to a background job, written under STATUS. A
+# write that fails is reported here, once, for every caller.
+prepare_record_write() { # STATUS LOG [REASON]
+  if LAUNCH_PREPARE="$(prepare_record "$2" "${3:-}")" \
+    && lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$remote_path" "" "$launched_at" "$1"; then
+    return 0
+  fi
+  ot_message prepare-unrecorded "item=$item" "state=oversee" >&2
+  return 1
 }
 
 # A hosted item whose host accepted it and is still preparing it, under a
 # fleet. The window and its claim open here and the record names the lane
 # preparing, so the caller is free once this returns: a background job waits
 # for the host, finishes the launch in that window and records the outcome,
-# which oversee-watch reports. The job ignores the hangup this script's exit
-# would deliver, as nohup does, and holds none of the caller's descriptors.
+# which oversee-watch reports.
+#
+# The job outlives this script the way run_detached's children do, and for the
+# same reason: a harness kills the process group of the command it ran, on
+# return or on timeout. run_detached execs a command, and this job is this
+# script's own functions over the item it resolved, so job control puts it in
+# a process group of its own instead, with the hangup ignored and none of the
+# caller's descriptors held. Its pid, that group's id, goes into the record for
+# lane-close to stop it by; a record that cannot carry it stops the job here.
 launch_handoff() {
-  local log
+  local log job
   log="$(cd -- "$STATE_DIR" && pwd -P)/lane-prepare-$wt_id.log" || return 1
   tmux_window_open "$CLAIM_ROOT" "$title" || return 1
-  if ! LAUNCH_PREPARE="$(prepare_record pending "$log")" \
-    || ! lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$remote_path" "" "$launched_at"; then
+  prepare_record_write preparing "$log" || { tmux_window_close "$LAUNCH_PANE" "$title"; return 1; }
+  set -m
+  (trap '' HUP; launch_prepared "$log") </dev/null >>"$log" 2>&1 &
+  job=$!
+  set +m
+  if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update oversee \
+    --arg item "$wt_id" --arg since "$launched_at" --argjson pid "$job" \
+    '(.lanes[]? | select(.item == $item and .status == "preparing" and .prepare.since == $since) | .prepare.pid) = $pid' >/dev/null; then
+    kill -TERM -- "-$job" || ot_message prepare-stop-failed "item=$item" "pid=$job" >&2
     ot_message prepare-unrecorded "item=$item" "state=oversee" >&2
-    tmux kill-window -t "$LAUNCH_PANE" || ot_message tmux-failed "operation=kill-window" "item=$title" >&2
+    tmux_window_close "$LAUNCH_PANE" "$title"
     return 1
   fi
-  (trap '' HUP; launch_prepared "$log") </dev/null >>"$log" 2>&1 &
   ot_message lane-preparing "item=$item" "log=$log"
 }
 
 # The background job launch_handoff starts. Its record is the outcome: running
 # once launch_finish stands, stopped with the reason when the host's wait or
 # the launch after it failed, the window closed so its claim goes with it and
-# lane-close has a stopped record to close.
+# lane-close has a stopped record to close. lane-prepare-failed is printed
+# only over a stopped record, which is what it says the record is.
 launch_prepared() { # LOG
   local reason=wait-failed
   if host_transport wait --item "$wt_id"; then
     reason=launch-failed
-    LAUNCH_PREPARE="$(prepare_record ready "$1")" || return 1
-    launch_finish && return 0
+    if LAUNCH_PREPARE="$(prepare_record "$1")"; then launch_finish && return 0; fi
   fi
-  # A launch whose account check failed has closed the window already.
-  if tmux list-panes -t "$LAUNCH_PANE" >/dev/null 2>&1; then
-    tmux kill-window -t "$LAUNCH_PANE" || ot_message tmux-failed "operation=kill-window" "item=$title" >&2
-  fi
-  if ! LAUNCH_PREPARE="$(prepare_record failed "$1" "$reason")" \
-    || ! lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$remote_path" "" "$launched_at"; then
-    ot_message prepare-unrecorded "item=$item" "state=oversee" >&2
-  fi
+  tmux_window_close "$LAUNCH_PANE" "$title" || true
+  prepare_record_write stopped "$1" "$reason" || return 1
   ot_message lane-prepare-failed "item=$item" "reason=$reason" >&2
 }
 
@@ -2674,7 +2700,9 @@ for raw in "${ITEMS[@]}"; do
   # A host still preparing the item it accepted answers through `wait`. Under a
   # fleet a background job waits and the watch reports what it recorded;
   # without one there is no record to report through, so the launch waits here.
-  if [[ "$host_state" == preparing && "$FLEET" == true ]]; then
+  # A hosted codex relaunch is the exception: it resumes with no continuation
+  # line and says so as resume-lineless, which must reach the caller, not a log.
+  if [[ "$host_state" == preparing && "$FLEET" == true && ( "$HOST_RELAUNCH" != true || "$HARNESS" != codex ) ]]; then
     launch_handoff || { failed=$((failed + 1)); continue; }
     preparing=$((preparing + 1))
   else

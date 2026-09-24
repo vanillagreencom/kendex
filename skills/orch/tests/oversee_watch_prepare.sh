@@ -12,14 +12,14 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.
 SINCE=2026-08-15T10:00:00Z
 SINCE_EPOCH="$(date -u -d "$SINCE" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$SINCE" +%s)"
 
-# prepared ITEM STATUS STATE [SINCE] [REASON] — one lane record carrying the
-# preparation a background job writes. No window and a local root, so the
-# pass reads no pane and no host for it.
+# prepared ITEM STATUS [SINCE] [REASON] — one lane record carrying the
+# preparation a background job writes; its status is the outcome. No window
+# and a local root, so the pass reads no pane and no host for it.
 prepared() {
-  jq -cn --arg item "$1" --arg status "$2" --arg state "$3" --arg since "${4:-$SINCE}" --arg reason "${5:-}" \
+  jq -cn --arg item "$1" --arg status "$2" --arg since "${3:-$SINCE}" --arg reason "${4:-}" \
     '{item: $item, window: null, host: null, mail_root: "/w/\($item)", account: null, surface: "tmux", model: null,
       session_id: null, launched_at: "2026-08-15T09:00:00Z", status: $status,
-      prepare: ({state: $state, since: $since, log: "/fleet/lane-prepare-\($item).log"} + (if $reason == "" then {} else {reason: $reason} end))}'
+      prepare: ({since: $since, log: "/fleet/lane-prepare-\($item).log"} + (if $reason == "" then {} else {reason: $reason} end))}'
 }
 write_state() { # RECORD...
   printf '%s\n' "$@" | jq -s '{issue_id: "oversee", triaged: [], lanes: .}' > "$STUB_DIR/state.json"
@@ -35,7 +35,7 @@ watch() {
 
 echo "=== each outcome the job recorded is reported once ==="
 new_case prepare_outcomes
-write_state "$(prepared issue-1 running ready)" "$(prepared issue-2 stopped failed "$SINCE" wait-failed)"
+write_state "$(prepared issue-1 running)" "$(prepared issue-2 stopped "$SINCE" wait-failed)"
 watch "$((SINCE_EPOCH + 60))"
 assert_eq "$EVENTS" \
   "EVENT lane-ready issue-1|EVENT lane-prepare-failed issue-2 reason=wait-failed log=/fleet/lane-prepare-issue-2.log" \
@@ -43,28 +43,29 @@ assert_eq "$EVENTS" \
 watch "$((SINCE_EPOCH + 120))"
 assert_eq "events=$EVENTS" "events=" "a second pass over the same records reports neither again" "$STUB_DIR/err"
 # A relaunch that prepares again starts a new preparation, which is news.
-write_state "$(prepared issue-1 running ready 2026-08-15T11:00:00Z)" "$(prepared issue-2 stopped failed "$SINCE" wait-failed)"
+write_state "$(prepared issue-1 running 2026-08-15T11:00:00Z)" "$(prepared issue-2 stopped "$SINCE" wait-failed)"
 watch "$((SINCE_EPOCH + 3660))"
 assert_eq "events=$EVENTS" "events=EVENT lane-ready issue-1" "a preparation begun later is reported afresh" "$STUB_DIR/err"
-# A closed lane's preparation is over.
-write_state "$(prepared issue-5 "done" failed "$SINCE" launch-failed)"
+# A closed lane's preparation is over, and so is one whose sandbox a close kept:
+# stopped with no reason is lane-close's word, not the job's.
+write_state "$(prepared issue-5 "done" "$SINCE" launch-failed)" "$(prepared issue-6 stopped)"
 watch "$((SINCE_EPOCH + 60))"
-assert_eq "events=$EVENTS" "events=" "a done record's preparation is not reported" "$STUB_DIR/err"
+assert_eq "events=$EVENTS" "events=" "a done record and a stopped one carrying no reason report nothing" "$STUB_DIR/err"
 
 echo "=== a record still preparing past the bound is reported stuck once ==="
 new_case prepare_stuck
-write_state "$(prepared issue-3 preparing pending)"
+write_state "$(prepared issue-3 preparing)"
 for row in "1800|" "1801|EVENT lane-prepare-stuck issue-3 age=1801s log=/fleet/lane-prepare-issue-3.log" "1900|"; do
   IFS='|' read -r age want <<<"$row"
   watch "$((SINCE_EPOCH + age))"
   assert_eq "events=$EVENTS" "events=$want" "a preparation ${age}s old at the default bound of 1800 reports '${want:-nothing}'" "$STUB_DIR/err"
 done
 # The job finishing after the stuck report is still news.
-write_state "$(prepared issue-3 running ready)"
+write_state "$(prepared issue-3 running)"
 watch "$((SINCE_EPOCH + 2000))"
 assert_eq "events=$EVENTS" "events=EVENT lane-ready issue-3" "a stuck lane that later comes up is reported ready" "$STUB_DIR/err"
 new_case prepare_bound
-write_state "$(prepared issue-4 preparing pending)"
+write_state "$(prepared issue-4 preparing)"
 printf '%s\n' "$((SINCE_EPOCH + 61))" > "$STUB_DIR/now.epoch"
 EVENTS="$(run_watch ORCH_WATCH_PREPARE_SECS=60 -- --max-loops 1 --state "$STUB_DIR/state.json" 2>"$STUB_DIR/err" </dev/null | grep -c '^EVENT lane-prepare-stuck issue-4 age=61s ' || true)"
 assert_eq "stuck=$EVENTS" "stuck=1" "ORCH_WATCH_PREPARE_SECS sets the bound" "$STUB_DIR/err"
@@ -83,7 +84,7 @@ assert_eq "$(grep -cxF -- "$once" "$REPO_ROOT/skills/orch/scripts/oversee-watch"
 awk -v line="$once" '$0 == line { print "    :"; next } { print }' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
 new_case prepare_outcomes_mutant
-write_state "$(prepared issue-1 running ready)"
+write_state "$(prepared issue-1 running)"
 watch "$((SINCE_EPOCH + 60))" "$MUTANT_DIR/orch/scripts/oversee-watch"
 watch "$((SINCE_EPOCH + 120))" "$MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "events=$EVENTS" "events=EVENT lane-ready issue-1" "control: without the once key the second pass reports the ready lane again" "$STUB_DIR/err"

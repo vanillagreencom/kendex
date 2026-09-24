@@ -19,6 +19,8 @@
 - Backgrounding a synchronous `create` was rejected. The launcher would record the lane before the provider had judged ownership, so an item another session owns (`create` exit 75) would have its live record overwritten.
 - The window and claim open before the hand-off, so the next item in a batch picks its account knowing this one is in flight.
 - A provider that keeps the synchronous `create` prints no `state` and needs no `wait`, so no existing provider breaks.
+- The job leaves the caller's process group for the reason `run_detached` in `open-terminal` and `references/waiter-launch.md` detach their children: a harness kills the group of the command it ran. `run_detached` execs a command, and the job runs the launcher's own functions, so job control gives it a group of its own. The record carries that group's id, and `lane-close` stops it when it closes a `preparing` lane.
+- A hosted codex relaunch waits in the foreground. It resumes with no continuation line, and the `resume-lineless` notice must reach the caller rather than a job log.
 
 **Revisit When**: a provider cannot claim ownership before preparing, or the launcher must return before `create` answers at all.
 
