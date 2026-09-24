@@ -426,14 +426,27 @@ worktrees).
 
 Force-with-lease authorization: after the auto-rebase, the push uses a scoped
 --force-with-lease pinned to the target branch OID known before the rebase.
-'create --reuse' and the supported 'create --restack' conflict-recovery flow
-persist the same narrowly scoped authorization in the worktree: it records
-the exact observed remote OID and the exact successfully restacked local
-head. push accepts that rewritten head or later commits built on it, still
-pins the force-with-lease to the recorded remote OID, and consumes the
-authorization after success. A different local rewrite, remote movement while
+Every verb that rewrites the branch persists the same narrowly scoped
+authorization in the worktree before it rewrites: this auto-rebase, 'create
+--reuse' and the supported 'create --restack' conflict-recovery flow. It
+records the exact observed remote OID and the exact successfully rewritten
+local head. push accepts that rewritten head or later commits built on it,
+still pins the force-with-lease to the recorded remote OID, and consumes the
+authorization after success. Only success consumes it: a pre-push hook that
+refuses leaves the rewrite and its authorization standing, so the run that
+fixes what the hook named publishes without rebasing again and without a
+hand-run git command. A different local rewrite, remote movement while
 conflict resolution is pending, or a moved remote at push time fails closed.
 Plain pushes are still used with --no-rebase.
+
+A remote OID the local branch does not contain is
+'worktree-push-remote-uncontained', and the route it names follows what the
+branch holds. Where the remote carries work the branch lacks, it names the
+fetch and rebase. Where the branch already carries every commit on the remote
+branch under rewritten SHAs, fetching and rebasing would replay work that
+rewrite superseded, so the refusal says so and names the cause instead: no
+authorization covers a rewrite the rewrite verbs did not make, and running one
+on that branch now rewrites nothing and records nothing.
 
 rebase-map: when the auto-rebase rewrites branch commits, push prints one
 'rebase-map: <old-sha> <new-sha>' line per rewritten commit on stdout
