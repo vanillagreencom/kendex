@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use super::compared::Comparison;
@@ -44,7 +43,7 @@ pub(super) fn plan_item(
     item: &Desired,
     scope: &Scope,
     lock: &Lock,
-    owned: &BTreeSet<PathBuf>,
+    ownership: &super::PlanOwnership,
     replace_unmanaged: bool,
     sink: &mut PlanSink,
 ) -> Result<()> {
@@ -86,17 +85,26 @@ pub(super) fn plan_item(
     let staged = ops.len();
     written.start_item();
     let planned = match &item.artifact {
-        Artifact::File { .. } => plan_file(env, scope, item, replace_unmanaged, owned, ops),
-        Artifact::Tree { .. } => {
-            plan_tree(env, scope, item, replace_unmanaged, owned, written, ops)
+        Artifact::File { .. } => {
+            plan_file(env, scope, item, replace_unmanaged, &ownership.paths, ops)
         }
+        Artifact::Tree { .. } => plan_tree(
+            env,
+            scope,
+            item,
+            replace_unmanaged,
+            &ownership.paths,
+            written,
+            ops,
+        ),
         Artifact::Registration { .. } => plan_registration(
             env,
             scope,
             item,
             existing,
+            ownership.recovered_registrations.get(&item.key),
             replace_unmanaged,
-            owned,
+            &ownership.paths,
             ops,
             config_edits,
         ),
@@ -297,8 +305,9 @@ fn plan_registration(
     scope: &Scope,
     item: &Desired,
     existing: Option<&LockEntry>,
+    recovered_registration: Option<&crate::lock::HookRegistration>,
     replace_unmanaged: bool,
-    owned: &BTreeSet<PathBuf>,
+    owned: &std::collections::BTreeSet<PathBuf>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut ConfigEditPlan,
 ) -> Result<Planned> {
@@ -312,7 +321,9 @@ fn plan_registration(
     // read off the record and the file as they are now.
     let edits: Vec<(PathBuf, ConfigEdit)> = super::item_record::edit_sequence(
         edits,
-        existing.and_then(|entry| entry.registration.as_ref()),
+        existing
+            .and_then(|entry| entry.registration.as_ref())
+            .or(recovered_registration),
         &|path| crate::fs::read_if_exists(path).ok().flatten(),
     );
     let edits = &edits;

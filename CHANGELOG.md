@@ -295,7 +295,7 @@ change came from an outside contributor.
 - bot-instructions: an `AGENTS.md` § Code Review Rules region longer than its directive line is a finding — `adopt` reports it under `agents-region`, `check` under `drift`, `render` replaces it.
 - bot-instructions: `.github/copilot-instructions.md` points at `.github/instructions/code-review.md` rather than restating five blocks, and CodeRabbit reads it through `code_guidelines`.
 - bot-instructions: the review doctrine renders to one file per repository, `.github/instructions/code-review.md` by default, and the `AGENTS.md` § Code Review Rules region is one line pointing at it.
-- **Breaking:** the install record is version 11. Commit `.kendex-lock.json`; machine fields move to `.cache/kendex/lock-local.json`. Move an old lock, then run `kendex apply --record-existing`.
+- **Breaking:** the install record is version 11. Commit `.kendex-lock.json`; machine fields move to `.cache/kendex/lock-local.json`. Move a version 10 project lock to `.kendex-lock.v10.json`, then run `kendex apply`; renders matching that old record are updated, while every mismatch remains a conflict.
 - An older record is refused by name, never upgraded in place.
 - A clone or a cleared cache must run `kendex apply` before forking an agent that requires skills.
 - `kendex check` records a matching committed render silently and reports a differing one as stale, once per state under one session-hook deadline; a copy whose file vanished is never recorded.

@@ -106,6 +106,7 @@ fn recording(path: &Path, key: &str, emitted: &Path) {
 enum Gate {
     Loads,
     Corrupt(String),
+    LegacyProject,
     TooNew(i64),
 }
 
@@ -146,7 +147,7 @@ fn only_a_record_naming_this_builds_version_loads() {
         (r#"{"version":2,"entries":{}}"#.to_owned(), older(2)),
         (
             format!(r#"{{"version":{},"root":ROOT,"entries":{{}}}}"#, LOCK_VERSION - 1),
-            older(i64::from(LOCK_VERSION - 1)),
+            Gate::LegacyProject,
         ),
         (
             r#"{"entries":{}}"#.to_owned(),
@@ -179,6 +180,15 @@ fn only_a_record_naming_this_builds_version_loads() {
                     }
                 }
             }
+            Gate::LegacyProject => {
+                for refused in [load_file(&path).unwrap_err(), load(&path).unwrap_err()] {
+                    assert!(
+                        matches!(&refused, CoreError::LegacyProjectLock { path: at, aside }
+                            if at == &path && aside == &path.with_file_name(VERSION_10_LOCK_FILE)),
+                        "{label}: {refused:?}"
+                    );
+                }
+            }
             Gate::TooNew(found) => {
                 for refused in [load_file(&path).unwrap_err(), load(&path).unwrap_err()] {
                     assert!(
@@ -191,8 +201,8 @@ fn only_a_record_naming_this_builds_version_loads() {
     }
 }
 
-/// What the corrupt-lock refusal must keep saying, and what it must not.
-/// It asks for a fresh install. It names the pi files beside a scope
+/// What the generic corrupt-lock refusal must keep saying, and what it must
+/// not. It asks for a fresh install. It names the pi files beside a scope
 /// root, because this record is the only thing naming them and nothing
 /// in this build looks there — a person who threw the lock away alone
 /// would be left with the hook registered twice. And it asks for them to
@@ -214,6 +224,7 @@ fn the_corrupt_lock_refusal_asks_for_a_move_and_names_no_path_of_its_own() {
     std::fs::write(&path, "{not json").unwrap();
     let said = load_file(&path).unwrap_err().to_string();
     assert!(said.contains("install fresh"), "{said}");
+    assert!(!said.contains("kendex apply"), "{said}");
     assert!(said.contains("hooks.json"), "{said}");
     assert!(
         !said.contains("delet"),

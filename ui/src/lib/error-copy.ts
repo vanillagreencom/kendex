@@ -35,11 +35,10 @@ export const PROBLEM_HEADLINES: Record<ProblemKind, string> = {
 };
 
 export const PROBLEM_STEPS: Record<ProblemKind, string[]> = {
-  "lock-corrupt": [
-    "Scan again",
-    "If it still fails, the file named above is damaged or from an older version of kendex. Move it to another folder, then run kendex apply in a terminal to write a new one",
-    "Keep the file you moved. It is the only record of a Pi hooks.json file or hooks/ folder in the same place, so move those to the other folder too",
-  ],
+  // The engine message owns both recovery sequences. The generic damaged
+  // lock and the project-only version 10 recovery share this problem kind,
+  // so repeating either sequence here would give the other one wrong steps.
+  "lock-corrupt": ["Follow the recovery steps in the message above"],
   "manifest-outdated": [
     "Move the file named above to another folder. kendex does not convert it or change it",
     "Write what you want installed into a new file with the same name, then run kendex apply in a terminal. Copy what you need from the file you moved",

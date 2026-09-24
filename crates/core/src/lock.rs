@@ -11,7 +11,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// Current lock version, the number every write stamps, and the only one
 /// a read accepts. Nothing converts a record from another format: an older
 /// one is refused as damaged and a newer one as written by a newer build,
-/// and either way the way out is to move it aside and install fresh.
+/// and either way the way out is to move it aside and apply again.
 ///
 /// The floor is not ceremony. Every field a version introduced is a fact this
 /// build reads and an older record does not carry — which bytes are whose,
@@ -47,15 +47,20 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// [`MachineRecord`], in a file under the project's cache
 /// ([`machine_path`]). A version 10 record spells every
 /// position absolute, which read as a remainder is a claim outside the
-/// project; the version gate refuses it by name instead, and the way out
-/// is the one every bump has: move it aside and install fresh, with
-/// `--record-existing` where the renders on disk are already current.
+/// project; the version gate refuses it by name instead. For a project the
+/// way out is to move it to [`.kendex-lock.v10.json`](VERSION_10_LOCK_FILE)
+/// and run `kendex apply`. The old managed ignore rule enables that recovery,
+/// and the moved record proves ownership only where its `renderedHash`
+/// matches the destination. Every other destination remains a conflict.
 pub const LOCK_VERSION: u32 = 11;
 
 /// The lock file a project scope carries, committed with the renders it
 /// records. The global lock is `lock.json` under the app's own directory
 /// ([`Env::global_lock_file`]).
 pub const LOCK_FILE: &str = ".kendex-lock.json";
+
+/// The read-only ownership proof used by the version 10 project recovery.
+pub const VERSION_10_LOCK_FILE: &str = ".kendex-lock.v10.json";
 
 /// This machine's half of a project record, under the cache directory the
 /// managed ignore block keeps out of git (`engine::posture`). Beside the

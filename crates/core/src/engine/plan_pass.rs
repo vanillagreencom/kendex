@@ -2,7 +2,6 @@
 //! the desired state that turn it into drift rows and ops.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 
 use crate::apply::PlannedOp;
 use crate::env::Env;
@@ -30,13 +29,13 @@ pub(super) fn plan_items(
     lock: &Lock,
     manifest: &crate::manifest::Manifest,
     options: &PlanOptions,
-    owned_paths: &BTreeSet<PathBuf>,
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
     written: &mut written::Written,
 ) -> Result<(Vec<super::ForkEdit>, Vec<super::report_types::RecordedGone>)> {
+    let ownership = super::ownership_for_plan(env, scope, lock, &state.items)?;
     let mut absorbed = std::collections::BTreeMap::new();
     let mut fork_edits = Vec::new();
     let mut recorded_gone = Vec::new();
@@ -67,7 +66,7 @@ pub(super) fn plan_items(
             options.replace_unmanaged,
             &options.replace_unmanaged_names,
         );
-        plan_item(env, item, scope, lock, owned_paths, replace, &mut sink)?;
+        plan_item(env, item, scope, lock, &ownership, replace, &mut sink)?;
         let missing = drift[before..]
             .iter()
             .any(|row| row.state == DriftState::Missing);

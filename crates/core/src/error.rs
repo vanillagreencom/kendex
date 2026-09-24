@@ -113,6 +113,11 @@ pub enum CoreError {
     )]
     LockCorrupt { path: PathBuf, message: String },
 
+    #[error(
+        "{path}: this project lock is a version 10 record; move it to {aside}, then run `kendex apply` in this project. That apply replaces only renders whose current bytes match the version 10 record; other files remain conflicts. Keep it: it is the only record naming a pi hooks.json or hooks/ beside the project root, so move those aside as well"
+    )]
+    LegacyProjectLock { path: PathBuf, aside: PathBuf },
+
     #[error("{path}: the existing install was not recorded — {reason}")]
     RecordExistingRefused { path: PathBuf, reason: String },
 

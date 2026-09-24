@@ -1,14 +1,110 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+
+use serde::Deserialize;
 
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::Lock;
+use crate::lock::{HookRegistration, Lock};
 use crate::manifest::{ItemDecl, Manifest};
 use crate::model::{ItemKind, Scope};
 
-use super::desired::{self, Desired};
+use super::desired::{self, Artifact, Desired};
 use super::{DriftRow, DriftState};
+
+#[derive(Deserialize)]
+struct Version10Record {
+    version: u32,
+    #[serde(default)]
+    entries: BTreeMap<String, Version10Entry>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Version10Entry {
+    name: String,
+    kind: ItemKind,
+    harness: crate::model::HarnessId,
+    #[serde(default)]
+    rendered_hash: Option<String>,
+    #[serde(default)]
+    registration: Option<HookRegistration>,
+}
+
+#[derive(Default)]
+pub(super) struct Version10Proof {
+    pub(super) render_paths: BTreeSet<PathBuf>,
+    pub(super) registrations: BTreeMap<String, HookRegistration>,
+}
+
+/// Render roots whose current bytes the moved version 10 record proves
+/// kendex wrote. This is an upgrade-only, read-only ownership proof. It stays
+/// available across partial applies and outside Git because the sidecar is
+/// the proof. It deliberately ignores that record's machine-specific
+/// positions and never loads it as the scope's working lock.
+pub(super) fn version_10_proof(
+    scope: &Scope,
+    lock: &Lock,
+    desired: &[Desired],
+) -> Result<Version10Proof> {
+    let Scope::Project { root } = scope else {
+        return Ok(Version10Proof::default());
+    };
+    let sidecar = root.join(crate::lock::VERSION_10_LOCK_FILE);
+    let Some(text) = crate::fs::read_if_exists(&sidecar)? else {
+        return Ok(Version10Proof::default());
+    };
+    let Ok(record) = serde_json::from_str::<Version10Record>(&text) else {
+        return Ok(Version10Proof::default());
+    };
+    if record.version != 10 {
+        return Ok(Version10Proof::default());
+    }
+
+    let mut proof = Version10Proof::default();
+    for item in desired {
+        // A current entry already has the ordinary ownership and edit checks.
+        // The sidecar fills only the entries a partial upgrade has not reached.
+        if lock.entries.contains_key(&item.key) {
+            continue;
+        }
+        let Some(entry) = record.entries.get(&item.key).filter(|entry| {
+            entry.name == item.name
+                && entry.kind == item.kind
+                && entry.harness == item.harness
+                && crate::lock::entry_key(entry.kind, &entry.name, entry.harness) == item.key
+        }) else {
+            continue;
+        };
+        let Some(rendered_hash) = entry.rendered_hash.as_deref() else {
+            continue;
+        };
+        let path = match &item.artifact {
+            Artifact::File { path, .. } => Some(path),
+            Artifact::Tree { canonical, .. } => Some(canonical),
+            Artifact::Registration { script, .. } => script.as_ref().map(|(path, _)| path),
+        };
+        let Some(path) = path.filter(|path| path.exists()) else {
+            continue;
+        };
+        if crate::hash::RenderedIdentity::from_path(path, false)?.matches(rendered_hash) {
+            proof.render_paths.insert(path.clone());
+            if matches!(
+                &item.artifact,
+                Artifact::Registration {
+                    script: Some(_),
+                    ..
+                }
+            ) && let Some(registration) = &entry.registration
+            {
+                proof
+                    .registrations
+                    .insert(item.key.clone(), registration.clone());
+            }
+        }
+    }
+    Ok(proof)
+}
 
 /// What this scope holds that nothing here manages: the skills, agents and
 /// hooks already on disk that no declaration and no lock claims.

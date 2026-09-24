@@ -65,19 +65,25 @@ pub fn said(output: &Output) -> String {
 /// git with the caller's environment dropped: run from a commit hook, the
 /// inherited `GIT_DIR` would send every command at the repository being
 /// committed to instead of the fixture.
-#[allow(clippy::unwrap_used)]
-pub fn git(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
+#[allow(clippy::expect_used)]
+pub fn git_output(dir: &Path, args: &[&str]) -> Output {
+    Command::new("git")
         .args(["-c", "user.email=t@t", "-c", "user.name=t"])
         .args(args)
         .current_dir(dir)
         .env_remove("GIT_DIR")
+        .env_remove("GIT_COMMON_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
         .env_remove("GIT_OBJECT_DIRECTORY")
         .env_remove("GIT_PREFIX")
         .output()
-        .unwrap();
+        .expect("git runs")
+}
+
+/// A successful fixture Git command, using the same isolated process owner.
+pub fn git(dir: &Path, args: &[&str]) -> String {
+    let output = git_output(dir, args);
     assert!(
         output.status.success(),
         "git {args:?} failed: {}",

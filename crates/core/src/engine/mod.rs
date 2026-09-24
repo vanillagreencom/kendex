@@ -124,6 +124,26 @@ pub use report_types::{
     ItemWarning, PlanOptions, Registrations,
 };
 
+pub(super) struct PlanOwnership {
+    paths: BTreeSet<std::path::PathBuf>,
+    recovered_registrations: BTreeMap<String, crate::lock::HookRegistration>,
+}
+
+fn ownership_for_plan(
+    env: &Env,
+    scope: &Scope,
+    lock: &Lock,
+    desired: &[desired::Desired],
+) -> Result<PlanOwnership> {
+    let mut paths = owned::paths(env, scope, lock);
+    let proof = unmanaged::version_10_proof(scope, lock, desired)?;
+    paths.extend(proof.render_paths);
+    Ok(PlanOwnership {
+        paths,
+        recovered_registrations: proof.registrations,
+    })
+}
+
 /// Compute drift and the plan that would fix it — the Audit page and
 /// `apply` both consume this.
 pub fn plan_scope(
@@ -164,7 +184,6 @@ pub fn plan_scope(
         lock,
         &manifest,
         options,
-        &owned::paths(env, scope, lock),
         &mut drift,
         &mut ops,
         &mut config_edits,
