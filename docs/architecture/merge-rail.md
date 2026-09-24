@@ -41,6 +41,7 @@ The rail carries one change from a consumer pull request to the default branch, 
 | Part | Owner | Reaches a consumer by | Program issue |
 | --- | --- | --- | --- |
 | The classifier and the aggregate helper | kendex, `skills/harness-ci/scripts/` | `kendex refresh` vendors them under `.agents/` | KEN-1637, KEN-1600 |
+| The `change-class` composite action | kendex, `.github/actions/change-class/` | referenced from a workflow at `@main` or a pinned tag; no refresh, and it runs kendex's own classifier at that ref | KEN-1596 |
 | Which jobs read the verdict | the repository | copied once from `skills/harness-ci/references/wiring.md` | KEN-1596 |
 | The gate engine and its predicate | kendex, `skills/review-gate/scripts/` | `kendex refresh` | KEN-1638 |
 | The gate writer workflow | kendex ships a template; the copy is the repository's | copied verbatim at adoption, re-copied on each template update | none |
