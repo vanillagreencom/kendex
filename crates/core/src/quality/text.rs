@@ -237,7 +237,10 @@ pub fn prepare(input: AuditInput) -> Prepared {
             docs.push(Doc {
                 location: input.location.clone(),
                 role: super::DocRole::Text,
-                lines: lines(&text, reading(&input.location, &text, &BTreeSet::new())),
+                lines: lines(
+                    &text,
+                    language(&input.location, &text).reading(&BTreeSet::new()),
+                ),
             });
             Content::Document { text }
         }
@@ -396,14 +399,15 @@ fn hook_docs(
     });
     let script = script.map(|body| {
         let body = clean(root.to_owned(), &body);
-        let diagnostic = match is_shell(root, &body) {
-            true => shell::diagnostic_functions(&[&body]),
-            false => BTreeSet::new(),
+        let language = language(root, &body);
+        let diagnostic = match language {
+            Language::Shell => shell::diagnostic_functions(&[&body]),
+            Language::Markdown | Language::Plain => BTreeSet::new(),
         };
         docs.push(Doc {
             location: root.to_owned(),
             role: super::DocRole::Text,
-            lines: lines(&body, reading(root, &body, &diagnostic)),
+            lines: lines(&body, language.reading(&diagnostic)),
         });
         body
     });
@@ -523,10 +527,6 @@ fn language(location: &str, text: &str) -> Language {
     } else {
         Language::Plain
     }
-}
-
-fn reading<'a>(location: &str, text: &str, diagnostic: &'a BTreeSet<String>) -> Reading<'a> {
-    language(location, text).reading(diagnostic)
 }
 
 /// ASCII-lowercase with every whitespace byte turned into a space. Both

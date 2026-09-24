@@ -347,6 +347,12 @@ fn commands(line: &str) -> Vec<Simple> {
                     }
                 }
             }
+            // A quoted target is the ordinary way to name a file to write:
+            // it is the redirection's, never one of the strings printed.
+            Tok::Str(start, end) if cur.target_pending => {
+                cur.target_pending = false;
+                cur.away |= !to_terminal(&line[start..end]);
+            }
             Tok::Str(start, end) => match cur.head {
                 // The value runs to the next bare word, however many
                 // fragments and substitutions it is made of.
@@ -370,6 +376,12 @@ fn commands(line: &str) -> Vec<Simple> {
                 ));
             }
             Tok::Open => {
+                // A target a substitution names, `> "$(mktemp)"`, is a
+                // file whatever it turns out to be.
+                if cur.target_pending {
+                    cur.target_pending = false;
+                    cur.away = true;
+                }
                 if cur.head.is_none() && !cur.value_pending {
                     cur.head = Some(Head::Opaque);
                 }
@@ -607,6 +619,10 @@ mod tests {
             ("echo \"rm -rf /\" | sh", &[]),
             ("echo \"rm -rf /\" > run.sh", &[]),
             ("echo \"rm -rf /\" >> run.sh", &[]),
+            ("echo \"rm -rf /\" > \"$out\"", &[]),
+            ("echo \"rm -rf /\" >\"run.sh\"", &[]),
+            ("echo \"rm -rf /\" > \"$(mktemp)\"", &[]),
+            ("echo \"rm -rf /\" > \"/dev/null\"", &["rm -rf /"]),
             ("echo \"rm -rf /\" 2>/dev/null", &["rm -rf /"]),
             ("x=$(echo \"rm -rf /\")", &[]),
             ("echo \"$(rm -rf /)\"", &[]),
@@ -631,12 +647,14 @@ mod tests {
             ")".repeat(100_000)
         );
         assert_eq!(named_spans(&deep, &BTreeSet::new()), vec![]);
-        let shallow = format!(
-            "echo {}\"rm -rf /\"{}",
-            "$(".repeat(MAX_NESTING),
-            ")".repeat(MAX_NESTING)
-        );
-        assert_eq!(named_spans(&shallow, &BTreeSet::new()), vec![]);
+        // At the bound the innermost command is still read; one deeper,
+        // the rest of the line is one opaque word and no command in it is.
+        // The bound is the one a document tree gets, so a line is never
+        // read deeper than the tree it sits in.
+        assert_eq!(MAX_NESTING, crate::hash::MAX_DEPTH);
+        let nested = |depth: usize| format!("{}eval x{}", "$(".repeat(depth), ")".repeat(depth));
+        assert!(command_words(&nested(MAX_NESTING)).contains(&"eval"));
+        assert!(!command_words(&nested(MAX_NESTING + 1)).contains(&"eval"));
         let chain: String = (0..100_000)
             .map(|n| format!("f{n}() {{ f{}; }}\n", n + 1))
             .collect();

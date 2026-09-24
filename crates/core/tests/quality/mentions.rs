@@ -53,6 +53,16 @@ fn a_shell_line_names_a_switch_or_uses_it() {
         ("eval \"rm -rf /\"\n", &["dangerous-commands"], &[]),
         ("echo \"rm -rf /\" | sh\n", &["dangerous-commands"], &[]),
         ("echo \"rm -rf /\" > run.sh\n", &["dangerous-commands"], &[]),
+        (
+            "echo \"rm -rf /\" > \"$out\"\n",
+            &["dangerous-commands"],
+            &[],
+        ),
+        (
+            "echo \"rm -rf /\" >\"run.sh\"\n",
+            &["dangerous-commands"],
+            &[],
+        ),
         ("x=$(echo \"rm -rf /\")\n", &["dangerous-commands"], &[]),
         ("run \"rm -rf /\"\n", &["dangerous-commands"], &[]),
         ("sh <<EOF\nrm -rf /\nEOF\n", &["dangerous-commands"], &[]),
