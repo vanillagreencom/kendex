@@ -67,8 +67,10 @@
 #   dry-run=<package>     nothing was pushed for this package
 #   pushed=<package>      the commit reached the AUR
 # and under --check-key:
-#   keyfile=<path>        no public key derives from the file: it is not a
-#                         private key, or it needs a passphrase (exit 1)
+#   keyfile=<path>        ssh-keygen could not load the file or fingerprint
+#                         its public key; its message above names why:
+#                         missing, unreadable, bad permissions, not a
+#                         private key, passphrase-protected (exit 1)
 #   fingerprint=<sha256>  the key offered to the AUR
 #   unregistered=<sha256> the AUR refused the key (exit 1)
 #   account=<name>        the AUR greeted the key as this account; a name
@@ -98,7 +100,7 @@ check_key() { # KEYFILE
   # -P '' so a passphrase-protected key refuses here instead of prompting:
   # CI cannot type a passphrase either.
   if ! public="$(ssh-keygen -y -P '' -f "$key")"; then
-    say keyfile "$key" "no public key derives from it: it is not a private key, or it needs a passphrase" >&2
+    say keyfile "$key" "ssh-keygen could not load it; its message above names why: missing, unreadable, bad permissions, not a private key, or passphrase-protected" >&2
     return 1
   fi
   if ! fingerprint="$(ssh-keygen -l -f - <<< "$public")"; then

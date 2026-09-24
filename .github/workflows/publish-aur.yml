@@ -65,8 +65,10 @@ jobs:
       - name: Arch recipes agree internally
         run: tools/check-aur-sync
 
-      # Skipped for a dry run: tools/publish-aur --dry-run clones over HTTPS
-      # and needs no key, so anyone can dispatch one without the secret.
+      # Skipped for a plain dry run: tools/publish-aur --dry-run clones over
+      # HTTPS and needs no key, so anyone can dispatch one without the secret.
+      # A check_key dispatch configures the key whatever dry_run says, because
+      # the proof below needs it.
       - name: Configure the AUR SSH key
         if: ${{ inputs.check_key == true || inputs.dry_run != true }}
         env:
