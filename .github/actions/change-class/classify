@@ -2,13 +2,14 @@
 # classify — the shipped classifier's verdict for a diff, and the changed-path
 # families a workflow selects its jobs with.
 #
-# Nothing here decides a class. `change-class` prints one and writes it to the
-# step's output file itself; this script adds the path families beside it, and
-# the families are a grouping of the path list `harness-only` prints, never a
-# second reading of the diff. That second call is what keeps the grouping on
-# the shipped reader: `change-class` repeats those same paths on its stderr in
-# a shell-quoted form whose only decoder is `eval`, and a path list out of the
-# judged tree is not something to hand a shell.
+# Nothing here decides a class or a docs verdict. `change-class` prints one
+# and writes it to the step's output file itself, and `harness-only --mode
+# docs` does the same for docs_only; this script adds the path families beside
+# them, and the families are a grouping of the path list that docs-mode call
+# prints, never a second reading of the diff. Taking the list from that call
+# is what keeps the grouping on the shipped reader: `change-class` repeats the
+# same paths on its stderr in a shell-quoted form whose only decoder is `eval`,
+# and a path list out of the judged tree is not something to hand a shell.
 #
 # Environment, all required but BASE and CLASSIFIER:
 #   EVENT  github.event_name
@@ -22,6 +23,8 @@
 # Outputs appended to GITHUB_OUTPUT:
 #   change_class       render|trivial|micro|small|standard, written by the
 #                      shipped classifier itself
+#   docs_only          true|false, written by the shipped `harness-only --mode
+#                      docs` itself. Every refusal it reports answers false.
 #   changed_skills     blank-separated first path segments under skills/
 #   changed_crates     blank-separated first path segments under crates/
 #   changed_workflows  blank-separated first path segments under
@@ -41,25 +44,21 @@
 # fail-open that exit code closes.
 set -euo pipefail
 
+die() { # CAUSE MESSAGE
+  printf 'change-class-action: wiring-error: cause=%s\n' "$1" >&2
+  printf 'change-class-action: %s\n' "$2" >&2
+  exit 2
+}
+
 # Where the shipped scripts are read from. A caller that judges a tree whose
 # author could edit the classifier names a separate checkout here; with none
 # named it is this action's own tree, which a consumer referencing the action
 # at a tag or branch gets from that same revision.
 scripts_root="${CLASSIFIER:-}"
 [ -n "$scripts_root" ] || scripts_root="$(dirname "$0")/../../.."
-if ! SCRIPTS="$(cd "$scripts_root/skills/harness-ci/scripts" && pwd)"; then
-  printf 'change-class-action: wiring-error: cause=classifier-unreadable root=%s\n' \
-    "$scripts_root" >&2
-  printf 'change-class-action: %s\n' \
-    "no skills/harness-ci/scripts under the classifier root" >&2
-  exit 2
-fi
-
-die() { # CAUSE MESSAGE
-  printf 'change-class-action: wiring-error: cause=%s\n' "$1" >&2
-  printf 'change-class-action: %s\n' "$2" >&2
-  exit 2
-}
+SCRIPTS="$(cd "$scripts_root/skills/harness-ci/scripts" 2>/dev/null && pwd)" ||
+  die "classifier-unreadable root=$scripts_root" \
+    "no skills/harness-ci/scripts under the classifier root"
 
 [ -n "${EVENT:-}" ] || die missing-event "the event input is required"
 [ -n "${HEAD:-}" ] || die missing-head "the head input is required"
@@ -74,17 +73,32 @@ args=(--event "$EVENT" --head "$HEAD" --repo "$REPO")
 [ -z "${BASE:-}" ] || args=("${args[@]}" --base "$BASE")
 
 # The verdict. `change-class` appends `change_class=` to GITHUB_OUTPUT on its
-# own; its exit 2 is a wiring error and ends this script with it.
-"$SCRIPTS/change-class" "${args[@]}"
-if ! class="$(sed -n 's/^change_class=//p' -- "$GITHUB_OUTPUT" | tail -1)"; then
-  die verdict-unreadable "the step output file could not be read back"
-fi
-[ -n "$class" ] || die verdict-unreadable \
-  "the classifier appended no change_class line to the step output"
+# own and prints that same line, and nothing else, on stdout, which is where
+# it is read back. Any other exit is a wiring error that carries no verdict.
+verdict="$("$SCRIPTS/change-class" "${args[@]}")" || {
+  status=$?
+  die "classifier-failed status=$status" "change-class exited $status"
+}
+case "$verdict" in
+  change_class=render | change_class=trivial | change_class=micro | \
+    change_class=small | change_class=standard) class="${verdict#change_class=}" ;;
+  *) die "verdict-unreadable class-line=$verdict" \
+    "the classifier printed no change_class line this action knows" ;;
+esac
 
-# The paths, from the reader that owns the diff range for every event.
-"$SCRIPTS/harness-only" --mode harness "${args[@]}" \
-  --output /dev/null --paths-output "${work:?}/paths" >/dev/null
+# The docs verdict and the paths, from the reader that owns the diff range for
+# every event. It appends `docs_only=` to GITHUB_OUTPUT on its own, as the
+# classifier does its class.
+docs="$("$SCRIPTS/harness-only" --mode docs "${args[@]}" \
+  --paths-output "${work:?}/paths")" || {
+  status=$?
+  die "path-reader-failed status=$status" "harness-only exited $status"
+}
+case "$docs" in
+  docs_only=true | docs_only=false) ;;
+  *) die "docs-verdict-unreadable docs-line=$docs" \
+    "harness-only printed no docs_only line" ;;
+esac
 
 # Every class but `standard` is reached only after the classifier read a
 # changed path, so an empty list under one of them is a state neither script
@@ -117,11 +131,13 @@ family changed_workflows .github/workflows 3
 sed -n 's/^changed_/family: /p' -- "$GITHUB_OUTPUT" >&2
 
 # The whole list, for a caller whose lanes answer to a tree no family names.
-# A multi-line output needs a delimiter no line of the value can be, and the
-# value is a path list, so a random one is refused rather than escaped.
-delimiter="changed-paths-$RANDOM$RANDOM$RANDOM"
+# A multi-line output needs a delimiter no line of the value can be. The value
+# is a path list the pull request's author writes, so a path spelling the
+# delimiter would end the value early and write the lines after it as outputs
+# of their own; that path is refused rather than escaped.
+delimiter=__change_class_changed_paths_end__
 if grep -qxF -- "$delimiter" "${work:?}/paths"; then
-  die delimiter-collides \
+  die "delimiter-collides path=$delimiter" \
     "a changed path is exactly the heredoc delimiter this output needs"
 fi
 {

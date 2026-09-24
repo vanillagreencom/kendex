@@ -210,6 +210,26 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
 
 Publish `change_class` as the job output in place of `harness_only`, and feed it to `aggregate-needs` as the waiver by naming the authorizing class where the waiver is computed, as `needs.changes.outputs.change_class == 'render'`. `aggregate-needs` keeps its rule unchanged: a skipped job is accepted only against the class that authorized it.
 
+### Through the composite action
+
+The classify step can instead call the composite action kendex publishes, which wraps the same shipped `change-class` and decides nothing itself:
+
+```yaml
+      - id: classify
+        uses: vanillagreencom/kendex/.github/actions/change-class@main
+        with:
+          repo: subject
+          event: ${{ github.event_name }}
+          base: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          head: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
+```
+
+- **The classifier is kendex's, at the ref the step names.** The action reads `skills/harness-ci/scripts` out of its own tree, so a fix to the classifier reaches the consumer with no pull request of its own, and the `classifier` checkout above is not needed. A repository outside the organization pins a tag in place of `@main`.
+- **`classifier` names another checkout root to read those scripts from.** kendex's own CI passes its default-branch checkout there, because in kendex the action's tree is the pull request's tree. No input carries a class.
+- **Its outputs** are `change_class`; `docs_only`, the `--mode docs` verdict for the same diff; `changed_skills`, `changed_crates` and `changed_workflows`, the blank-separated first path segments under `skills/`, `crates/` and `.github/workflows/`; and `changed_paths`, one changed path per line. Publish the ones the lanes read as job outputs, as with `change_class` above.
+- **The `render` class still needs the install and mirror steps above**, in the same job ahead of the action.
+- **Every refusal exits 2** with a first line starting `change-class-action: wiring-error: cause=`, so the step goes red rather than publishing an empty class.
+
 ### What each class needs, and what it costs to leave out
 
 `standard` needs nothing and is what every unproven diff answers, so a consumer reading `standard` on every pull request is reading a missing prerequisite, not a judgement about its code.

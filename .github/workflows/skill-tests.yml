@@ -14,9 +14,10 @@ name: Skill Tests
 # every cargo lane — so a green PR has proven what the queue re-proves and an
 # ejection — dequeue, fix, requeue, pay the merge latency again — is rare
 # instead of routine. A `render` or `trivial` diff runs none of the gated
-# lanes; a `micro` or `small` one runs the lanes its paths can reach, which
-# `tools/ci-job-set` states lane by lane. Their aggregators still report and
-# accept only the skips the class authorized. The push to main
+# lanes, a documentation-only diff of any size runs the bot-instructions lane
+# alone, and a `micro` or `small` one runs the lanes its paths can reach;
+# `tools/ci-job-set` states each lane by lane. Their aggregators still report
+# and accept only the skips the class authorized. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
 # so it runs only the compile steps: each cargo lane builds its targets with
@@ -110,6 +111,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       change_class: ${{ steps.classify.outputs.change_class }}
+      docs_only: ${{ steps.classify.outputs.docs_only }}
       shell_shards: ${{ steps.select.outputs.shell_shards }}
       macos_legs: ${{ steps.select.outputs.macos_legs }}
       ui: ${{ steps.select.outputs.ui }}
@@ -118,10 +120,13 @@ jobs:
       cargo_macos: ${{ steps.select.outputs.cargo_macos }}
       cargo_lint: ${{ steps.select.outputs.cargo_lint }}
       cargo_windows: ${{ steps.select.outputs.cargo_windows }}
-    # THE PINNED BUILD, and the whole trust boundary of this job. The tag is a
-    # published main build, immutable, and both the installer and the binary
-    # are read at that one revision: nothing the pull request wrote decides
-    # what runs here.
+    # THE PINNED BUILD. The tag is a published main build, immutable, and
+    # both the installer and the binary are read at that one revision. It is
+    # one part of this workflow's trust boundary: the classifier and the orch
+    # contract it measures by come from the default-branch checkout below,
+    # while the action wrapper, tools/ci-job-set and tools/ci-aggregate run
+    # from the pull request's own tree, held by review rather than by this
+    # split.
     env:
       KENDEX_REPO: ${{ github.repository }}
       KENDEX_BUILD_SHA: 2ba4f18c9ba6889a190ad6f19793ac4bf089df35
@@ -130,10 +135,11 @@ jobs:
       # THREE CHECKOUTS, and the split is the point. The classifier is the
       # DEFAULT BRANCH's copy, where the pull request's author cannot change
       # it; `subject` is the tree under judgement; and the workspace root
-      # carries the action wrapper and `tools/ci-job-set`, which this
-      # repository is proving on this pull request. A consumer calling the
-      # action at `@main` gets the same split with one checkout, because
-      # there the action's own tree IS kendex at main.
+      # carries the action wrapper, `tools/ci-job-set` and the
+      # `tools/ci-aggregate` the aggregators run, which this repository is
+      # proving on this pull request and which review holds. A consumer
+      # calling the action at `@main` gets the same split with one checkout,
+      # because there the action's own tree IS kendex at main.
       #
       # `classifier` and `subject` are siblings under the root checkout rather
       # than nested inside the judged tree: the classifier refuses a `subject`
@@ -154,6 +160,18 @@ jobs:
           fetch-depth: 0
           path: subject
           persist-credentials: false
+      # Whether the render class is reachable at all. change-class reads its
+      # render branch only where this same verdict is `harness_only=true`, so
+      # on every other diff the install and the mirror below would buy
+      # nothing. Read with the default branch's copy, as the class is.
+      - id: render-reach
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+        run: >-
+          classifier/skills/harness-ci/scripts/harness-only
+          --mode harness --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
       # The `render` class is proved by re-rendering, which needs a kendex
       # whose `verify --json` prints the document version change-class pins.
       # A RELEASE, not a build from this checkout: the Linux `rest` shard
@@ -168,9 +186,16 @@ jobs:
       # will not fetch all cost the diff its `render` class and nothing else:
       # the classifier then answers `standard`, which runs every lane. Turning
       # the job red on a network blip would instead red every required context
-      # in this file and block a change nothing is wrong with.
-      - name: kendex, for the render class
+      # in this file and block a change nothing is wrong with. Each carries a
+      # deadline of its own under the job's, and the warning step after them
+      # annotates the run when either did not succeed, so a pin that rotted
+      # shows on every run it costs.
+      - id: kendex
+        name: kendex, for the render class
+        if: steps.render-reach.outputs.harness_only == 'true'
         continue-on-error: true
+        timeout-minutes: 3
+        shell: bash
         run: >-
           curl -fsSL
           "https://raw.githubusercontent.com/$KENDEX_REPO/$KENDEX_BUILD_SHA/install.sh"
@@ -182,10 +207,20 @@ jobs:
       # which the classifier requires: it refuses a tree that differs from its
       # own HEAD, so a step writing renders back would have the proof attest
       # to its own repair.
-      - name: the source mirror the render proof re-renders from
+      - id: mirror
+        name: the source mirror the render proof re-renders from
+        if: steps.render-reach.outputs.harness_only == 'true'
         continue-on-error: true
+        timeout-minutes: 5
         working-directory: subject
         run: kendex source refresh
+      - name: warn when the render proof lost a prerequisite
+        if: steps.render-reach.outputs.harness_only == 'true' && (steps.kendex.outcome != 'success' || steps.mirror.outcome != 'success')
+        env:
+          KENDEX_OUTCOME: ${{ steps.kendex.outcome }}
+          MIRROR_OUTCOME: ${{ steps.mirror.outcome }}
+        run: >-
+          echo "::warning title=render class unreachable::kendex install $KENDEX_OUTCOME, source refresh $MIRROR_OUTCOME (KENDEX_VERSION=$KENDEX_VERSION); this diff classifies standard"
       - id: classify
         uses: ./.github/actions/change-class
         with:
@@ -201,6 +236,7 @@ jobs:
       - id: select
         env:
           CHANGE_CLASS: ${{ steps.classify.outputs.change_class }}
+          DOCS_ONLY: ${{ steps.classify.outputs.docs_only }}
           CHANGED_PATHS: ${{ steps.classify.outputs.changed_paths }}
         run: tools/ci-job-set
 
@@ -1132,10 +1168,10 @@ jobs:
   # skipped required context would satisfy the ruleset without any suite having
   # run (the fail-open this line exists to close).
   #
-  # The helper judges `toJSON(needs)` as a set. It requires the classifier to
-  # succeed. A skipped shell shard is accepted only when that classifier
-  # reported docs-only; UI and bot-instructions must always succeed. Failure,
-  # cancellation and every other skip fail this required context.
+  # tools/ci-aggregate judges `toJSON(needs)` as a set. It requires the
+  # classifier to succeed, and accepts a skipped lane only where the changes
+  # job published `false` for that lane's selection. Failure, cancellation and
+  # every other skip fail this required context.
   skill-suites:
     name: Skill suites (shell + node)
     needs: [changes, skill-suites-shard, ui-tests, bot-instructions]
@@ -1252,11 +1288,7 @@ jobs:
   cargo-linux:
     name: Cargo ${{ matrix.crate }} (Linux)
     needs: changes
-    # NOT gated on the crate paths a diff touched. catalog_render_lint in
-    # crates/cli/tests installs this repository's whole catalog and lints the
-    # result, so a change under skills/ reaches this lane carrying no crate
-    # path at all, and a selection keyed to crates/ would skip the one lane
-    # that judges the catalog.
+    # What selects this lane, and why: tools/ci-job-set, cargo_linux.
     if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true') }}
     strategy:
       fail-fast: false
@@ -1331,10 +1363,7 @@ jobs:
   cargo-macos:
     name: macOS cargo ${{ matrix.crate }}${{ matrix.leg != 'whole' && format(' ({0})', matrix.leg) || '' }}
     needs: changes
-    # The workspace alone, unlike the Linux lane above. The macOS catalog lint
-    # is the platform re-run of a lint that lane already did, and rendering a
-    # catalog does not answer differently on another platform, so a diff that
-    # touches no crate leaves this lane nothing of its own to prove.
+    # What selects this lane, and why: tools/ci-job-set, cargo_macos.
     if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true') }}
     strategy:
       fail-fast: false
@@ -1531,9 +1560,10 @@ jobs:
         run: cargo doc --no-deps --document-private-items --workspace --locked
 
   # AGGREGATORS for the two required cargo contexts; the shape and the
-  # reasons are the Skill suites aggregator's. Each accepts its cargo skips
-  # only on a successful docs-only verdict. Not on push: the shards ran
-  # compile-only there and nothing requires a context on that event.
+  # reasons are the Skill suites aggregator's. Each accepts a skipped cargo
+  # lane only through tools/ci-aggregate, against the selection the changes
+  # job published for it. Not on push: the shards ran compile-only there and
+  # nothing requires a context on that event.
   cargo-tests:
     name: Cargo (workspace tests)
     # The two Windows lanes aggregate here rather than standing as contexts of

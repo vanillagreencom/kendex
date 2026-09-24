@@ -50,6 +50,12 @@ outputs:
   change_class:
     description: render, trivial, micro, small or standard.
     value: ${{ steps.classify.outputs.change_class }}
+  docs_only:
+    description: >-
+      true where the shipped harness-only --mode docs accepts every changed
+      path (docs/, changelog.d/, root Markdown), whatever the class; false on
+      every other diff and on every refusal.
+    value: ${{ steps.classify.outputs.docs_only }}
   changed_skills:
     description: Blank-separated first path segments under skills/ the diff touched.
     value: ${{ steps.classify.outputs.changed_skills }}
