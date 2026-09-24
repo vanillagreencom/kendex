@@ -254,10 +254,11 @@ Options:
                     are refused as launch-flags-unreachable. Plain
                     flag words only — the string is interpolated into a
                     shell-executed launch command. Nothing is hardcoded here or
-                    in settings; a claude lane whose flags carry no
-                    permission-bypass warns, because handoff is unattended and
-                    a prompting mode stalls the lane at its first tool call; a
-                    --cmd launch carries its own argv and is not warned about.
+                    in settings. A harness row that names an unattended
+                    permission posture warns when the flags carry none of its
+                    spellings, because a prompting mode stalls the lane at its
+                    first tool call. A --cmd launch carries its own argv and is
+                    not warned about.
                     A LANE LAUNCH NAMES A MODEL, AND AN EFFORT WHERE ITS HARNESS
                     HAS AN EFFORT FLAG, in the one text the launch runs: here
                     where there is no --cmd, and inside the --cmd command where
@@ -824,16 +825,16 @@ if [[ -n "$LANE" && -n "$(launch_choice_row "$LAUNCH_HARNESS")" ]]; then
   [[ "$launch_choice_missing" != true ]] || exit 1
 fi
 
-# Handoff is unattended: a claude lane whose flags carry no permission bypass
-# stalls at its first tool call with nobody there to answer. Warn loudly, but
-# launch — the flags are the caller's explicit per-task decision.
-if [[ "$HARNESS" == "claude" && -z "$CMD_TEMPLATE" ]]; then
-  case "$LAUNCH_FLAGS" in
-    *dangerously-skip-permissions*|*bypassPermissions*|*dontAsk*) ;;
-    *)
-      ot_message permission-prompt "flags=$LAUNCH_FLAGS" >&2
-      ;;
-  esac
+# Handoff is unattended. A harness whose row names a permission posture stalls
+# at its first approval prompt when the caller supplies none. Rows carrying the
+# `-` sentinel have no permission word to require here. Warn loudly, but launch:
+# the flags are the caller's explicit per-task decision.
+LAUNCH_PERMISSION_SPELLINGS=""
+if LAUNCH_PERMISSION_SPELLINGS="$(launch_choice_permission_spellings "$LAUNCH_HARNESS")"; then
+  if [[ -z "$CMD_TEMPLATE" && -n "$LAUNCH_PERMISSION_SPELLINGS" ]] \
+     && ! launch_choice_permission_present "$LAUNCH_HARNESS" "$LAUNCH_FLAGS"; then
+    ot_message permission-prompt "flags=$LAUNCH_FLAGS" >&2
+  fi
 fi
 
 # Resolve the launch lane BEFORE creating any worktree. A fleet launch that

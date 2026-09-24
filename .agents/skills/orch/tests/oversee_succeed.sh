@@ -335,18 +335,18 @@ printf '%s\n' "$MARK" > "$TMP_ROOT/caller.screen"
 tm kill-window -a -t fleet:0
 rm -f "${TMP_ROOT:?}"/argv.*
 spec="$(tm new-window -d -t fleet:3 -P -F '#{pane_id} #{window_id} #{pane_pid}' \
-  "exec '$TMP_ROOT/in-pane' success 'claude:1:high' -- --verbose")"
+  "exec '$TMP_ROOT/in-pane' success 'claude:1:high' -- --dangerously-skip-permissions --verbose")"
 read -r CALLER_PANE CALLER_WINDOW caller_pid <<<"$spec"
 for _ in $(seq 1 100); do kill -0 "$caller_pid" 2>/dev/null || break; sleep 0.2; done
 check "success in the caller's own pane: successor at the caller's index, caller window gone" \
   "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/window=@[0-9]*/window=@N/; s/pane=%[0-9]*/pane=%N/' | tr '\n' ';')|$(recorded claude)" \
-  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none;${UNOBSERVED_LINE}oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--verbose;$BRIEF;"
+  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none;${UNOBSERVED_LINE}oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;--verbose;$BRIEF;"
 
 # The same launch's record, written before the window opened: the close kills
 # this script's own window, so a write placed after it may never run.
 check "a succession records the line it launched, for a later dead-overseer relaunch" \
   "$(recorded_line)" \
-  "env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high --verbose '$BRIEF'"
+  "env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high --dangerously-skip-permissions --verbose '$BRIEF'"
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 # A codex successor opens into the caller's own directory, which the account's
@@ -356,10 +356,10 @@ claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 # the route it took is on the launch line.
 CALLER_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 CODEX_LAUNCH_HOME="$(lane_codex_home_path "$H/.codex" "$CALLER_CWD")"
-run_succeed walled 'claude:1:high,codex:1:high'
+run_succeed walled 'claude:1:high,codex:1:high' -- --dangerously-skip-permissions
 check "walled claude entry: codex entry picked, under a home that trusts the caller directory" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(lane_codex_trusted "$CODEX_LAUNCH_HOME/config.toml" "$CALLER_CWD" && echo trusted || echo untrusted)" \
-  "0|1 overseer;|no|none|lane=$CODEX_LAUNCH_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;|oversee-succeed: successor-launch form=prefix lane=$H/.codex trust=launch-home|trusted"
+  "0|1 overseer;|no|none|lane=$CODEX_LAUNCH_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;$BRIEF;|oversee-succeed: successor-launch form=prefix lane=$H/.codex trust=launch-home|trusted"
 # The other side of that preparation: an account config that exists and cannot
 # be read refuses the successor rather than launching it onto a config with
 # every table the account was approved for gone. The caller keeps running and
@@ -368,7 +368,7 @@ new_caller "$MARK"
 TRUSTFAIL_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 CODEX_CONFIG_SAVED="$(cat "$H/.codex/config.toml" 2>/dev/null || true)"
 ln -sfn "$H/no-such-render.toml" "${H:?}/.codex/config.toml"
-run_succeed trustfail 'claude:1:high,codex:1:high'
+run_succeed trustfail 'claude:1:high,codex:1:high' -- --dangerously-skip-permissions
 printf '%s\n' "$CODEX_CONFIG_SAVED" > "$H/.codex/config.toml"
 check "an unreadable account config refuses the successor and keeps the caller" \
   "$RC|$(caller_open)|$(overseers)|$(recorded codex)|$(keyed launch-trust-missing "$OUT" | sed -n 1p)" \
@@ -387,10 +387,20 @@ check "an unreadable account config refuses the successor and keeps the caller" 
 new_caller "$MARK"
 STRIP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 STRIP_HOME="$(lane_codex_home_path "$H/.codex" "$STRIP_CWD")"
-run_succeed stripflags 'codex:1:high' -- --model fable --effort high --verbose
-check "a named entry keeps the caller's other words and drops its model and effort" \
+run_succeed stripflags 'codex:1:high' -- --model fable --effort high --dangerously-skip-permissions --verbose
+check "a named entry keeps unrelated words and replaces the caller's model, effort and permission posture" \
   "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
-  "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--verbose;$BRIEF;"
+  "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;--verbose;$BRIEF;"
+
+new_caller "$MARK"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed same-harness-restricted 'claude:1:high' -- \
+  --model caller-model --effort low --permission-mode dontAsk --verbose
+check "a same-harness named entry preserves the restricted permission spelling" \
+  "$RC|$(overseers)|$(recorded claude)" \
+  "0|1|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;--permission-mode;dontAsk;--verbose;$BRIEF;"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 
 # The must-fail inverse on the same fixture: with the entry test at the filter
 # gone, every entry takes the caller's flags whole, and the codex successor is
@@ -409,10 +419,156 @@ new_caller "$MARK"
 UNSTRIP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 UNSTRIP_HOME="$(lane_codex_home_path "$H/.codex" "$UNSTRIP_CWD")"
 SUCCEED_BIN="$UNSTRIPPED/oversee-succeed" run_succeed unstripped 'codex:1:high' \
-  -- --model fable --effort high --verbose
-check "control: unfiltered, the codex entry is launched with a second model and an effort flag it has none of" \
+  -- --model fable --effort high --dangerously-skip-permissions --verbose
+check "control: unfiltered, the codex entry carries every caller choice in the claude spelling" \
   "$RC|$(overseers)|$(recorded codex)" \
-  "0|1|lane=$UNSTRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--model;fable;--effort;high;--verbose;$BRIEF;"
+  "0|1|lane=$UNSTRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--model;fable;--effort;high;--dangerously-skip-permissions;--verbose;$BRIEF;"
+
+# The reverse crossing reads the same table in the other direction. A codex
+# caller's permission word is removed with its model and effort, and the claude
+# entry writes the one its own launch accepts.
+new_caller "$CODEX_SCREEN" 'Context 48% left'
+codex_usage 95 > "$FIXTURE_DIR/.codex.json"
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-to-claude 'claude:1:high' -- \
+  -m caller-model -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox --verbose
+codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+check "a codex caller picking claude carries claude's permission word and none of codex's" \
+  "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
+  "0|1|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;--verbose;$BRIEF;|none"
+
+# An alternate full-bypass spelling has the same meaning across harnesses.
+new_caller "$MARK"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+ALT_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+ALT_HOME="$(lane_codex_home_path "$H/.codex" "$ALT_CWD")"
+CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.claude" run_succeed alternate-bypass 'codex:1:high' -- \
+  --model fable --effort high --permission-mode bypassPermissions --verbose
+check "an alternate claude full-bypass spelling transfers to codex" \
+  "$RC|$(overseers)|$(recorded codex)" \
+  "0|1|lane=$ALT_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;--verbose;$BRIEF;"
+
+# Permission modes without exact full-bypass equivalence refuse before launch.
+cross_permission_refuses() { # NAME FLAGS...
+  local name="$1"
+  shift
+  new_caller "$MARK"
+  fleet_state
+  claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+  run_succeed "$name" 'codex:1:high' -- --model fable --effort high "$@"
+  check "$name refuses before cross-harness launch" \
+    "$RC|$(keyed launch-choice-failed "$OUT" | sed -n 1p)|$(overseers)|$(recorded codex)" \
+    "1|oversee-succeed: launch-choice-failed reason=permission-transfer source=claude target=codex|0|none"
+}
+cross_permission_refuses restricted --permission-mode dontAsk
+cross_permission_refuses absent
+cross_permission_refuses unknown --permission-mode plan
+# A full bypass beside a second permission word is a mix this reader cannot
+# translate: which word the caller's harness honors is that harness's rule.
+cross_permission_refuses mixed-restricted --dangerously-skip-permissions --permission-mode dontAsk
+cross_permission_refuses mixed-unknown --dangerously-skip-permissions --permission-mode plan
+cross_permission_refuses mixed-attached --dangerously-skip-permissions --permission-mode=plan
+cross_permission_refuses mixed-double --dangerously-skip-permissions --permission-mode bypassPermissions
+
+new_caller "$CODEX_SCREEN" 'Context 48% left'
+fleet_state
+codex_usage 95 > "$FIXTURE_DIR/.codex.json"
+claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-restricted 'claude:1:high' -- \
+  -m caller-model -c model_reasoning_effort=high --approve-for-me
+check "codex approve-for-me refuses before cross-harness launch" \
+  "$RC|$(keyed launch-choice-failed "$OUT" | sed -n 1p)|$(overseers)|$(recorded claude)" \
+  "1|oversee-succeed: launch-choice-failed reason=permission-transfer source=codex target=claude|0|none"
+
+new_caller "$CODEX_SCREEN" 'Context 48% left'
+fleet_state
+CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-never 'claude:1:high' -- \
+  -m caller-model -c model_reasoning_effort=high -a never
+check "codex ask-for-approval never refuses before cross-harness launch" \
+  "$RC|$(keyed launch-choice-failed "$OUT" | sed -n 1p)|$(overseers)|$(recorded claude)" \
+  "1|oversee-succeed: launch-choice-failed reason=permission-transfer source=codex target=claude|0|none"
+
+new_caller "$CODEX_SCREEN" 'Context 48% left'
+fleet_state
+CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-mixed 'claude:1:high' -- \
+  -m caller-model -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox -a never
+check "codex full bypass beside ask-for-approval never refuses before cross-harness launch" \
+  "$RC|$(keyed launch-choice-failed "$OUT" | sed -n 1p)|$(overseers)|$(recorded claude)" \
+  "1|oversee-succeed: launch-choice-failed reason=permission-transfer source=codex target=claude|0|none"
+codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+
+# The must-fail inverse: with the one-posture count dropped from the judge, the
+# same mixed caller is admitted and the successor opens under codex full bypass
+# with the restricted word stripped away.
+MIXED="$TMP_ROOT/mixed-admit"
+script_copy "$MIXED"
+rm -f -- "${MIXED:?}/lib/lane-launch.sh"
+awk -v line='  (( postures == 1 && transferable == 1 ))' \
+    -v repl='  (( transferable >= 1 ))' \
+  '$0 == line { print repl; hits++; next } { print }
+   END { if (hits != 1) exit 1 }' "$SRC_DIR/lib/lane-launch.sh" > "$MIXED/lib/lane-launch.sh"
+check "control: the mutant really drops the one-posture count from the transfer judge" \
+  "$(cmp -s "$MIXED/lib/lane-launch.sh" "$SRC_DIR/lib/lane-launch.sh" && echo same || echo differs)" "differs"
+new_caller "$MARK"
+fleet_state
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+MIXED_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+MIXED_HOME="$(lane_codex_home_path "$H/.codex" "$MIXED_CWD")"
+SUCCEED_BIN="$MIXED/oversee-succeed" run_succeed mixed-admit 'codex:1:high' -- \
+  --model fable --effort high --dangerously-skip-permissions --permission-mode dontAsk
+check "control: without the count the mixed caller launches codex under full bypass" \
+  "$RC|$(overseers)|$(recorded codex)" \
+  "0|1|lane=$MIXED_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;$BRIEF;"
+claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+
+# The same must-fail control in the reverse direction. Without the named-entry
+# strip and permission writer, claude receives codex's model, effort and
+# permission words after its own model and effort.
+new_caller "$CODEX_SCREEN" 'Context 48% left'
+codex_usage 95 > "$FIXTURE_DIR/.codex.json"
+CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$UNSTRIPPED/oversee-succeed" \
+  run_succeed codex-to-claude-unstripped 'claude:1:high' -- \
+  -m caller-model -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox --verbose
+codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+check "control: unfiltered, the claude entry carries every caller choice in the codex spelling" \
+  "$RC|$(overseers)|$(recorded claude)" \
+  "0|1|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;-m;caller-model;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;--verbose;$BRIEF;"
+
+# The caller entry is the inverse contract. It names no choices of its own and
+# carries this session's words whole, including an alternate accepted
+# permission spelling.
+new_caller "$MARK"
+run_succeed callerflags '' -- --model fable --effort high --permission-mode bypassPermissions --verbose
+check "the caller entry carries the caller's model, effort and permission words whole" \
+  "$RC|$(overseers)|$(recorded claude)" \
+  "0|1|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--permission-mode;bypassPermissions;--verbose;$BRIEF;"
+
+# Must-fail control for the caller and walled rows. Forcing every entry through
+# the named branch replaces the caller's flags with the row's canonical
+# permission word and drops its model and effort.
+STRIP_ALL="$TMP_ROOT/strip-all"
+script_copy "$STRIP_ALL"
+rm -f -- "${STRIP_ALL:?}/oversee-succeed"
+check "control locates the caller-entry branch" \
+  "$(grep -cF '  if [[ "$chosen" == caller ]]; then' "$SUCCEED")" "1"
+check "control locates the same-harness branch" \
+  "$(grep -cF '  elif [[ "$harness" == "$CALLER_HARNESS" ]]; then' "$SUCCEED")" "1"
+sed -e 's/^  if \[\[ "\$chosen" == caller \]\]; then$/  if false; then/' \
+  -e 's/^  elif \[\[ "\$harness" == "\$CALLER_HARNESS" \]\]; then$/  elif false; then/' \
+  "$SUCCEED" > "$STRIP_ALL/oversee-succeed"
+chmod +x "$STRIP_ALL/oversee-succeed"
+check "control: the strip-all mutant rewrites the caller-entry branch" \
+  "$(cmp -s "$STRIP_ALL/oversee-succeed" "$SUCCEED" && echo same || echo differs)" "differs"
+new_caller "$MARK"
+SUCCEED_BIN="$STRIP_ALL/oversee-succeed" run_succeed callerflags-stripped '' -- \
+  --model fable --effort high --permission-mode bypassPermissions --verbose
+check "control: stripping a caller entry loses its model, effort and exact permission spelling" \
+  "$RC|$(recorded claude)" \
+  "0|lane=$H/.claude;-n;overseer;--dangerously-skip-permissions;--verbose;$BRIEF;"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 # The table's two halves, pinned against each other rather than against the argv
 # above: this script WRITES a successor's flags with launch_choice_write, and
@@ -462,6 +618,26 @@ check "control: those words spelt as ones no row names read back neither choice"
 check "the effort spellings accessor answers each row's list, and nothing for a flagless or unnamed harness" \
   "$(launch_choice_effort_spellings claude)|$(launch_choice_effort_spellings codex)|$(launch_choice_effort_spellings pi)|$(launch_choice_effort_spellings opencode)|$(launch_choice_effort_spellings nosuch)|$(launch_choice_effort_spellings '')" \
   "--effort|model_reasoning_effort=|--thinking|||"
+
+permission_write_status() {
+  local rc=0
+  launch_choice_permission_write "$1" >/dev/null 2>&1 || rc=$?
+  printf '%s\n' "$rc"
+}
+check "the permission writer answers required rows and refuses sentinel and unknown rows" \
+  "$(launch_choice_permission_write claude)|$(launch_choice_permission_write codex)|$(permission_write_status opencode)|$(permission_write_status nosuch)" \
+  "--dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|1|1"
+check "the transfer set excludes restricted unattended modes" \
+  "$(launch_choice_transfer_permission_spellings claude)|$(launch_choice_transfer_permission_spellings codex)" \
+  "--dangerously-skip-permissions --permission-mode=bypassPermissions|--dangerously-bypass-approvals-and-sandbox"
+transferable_status() { # HARNESS TEXT
+  local rc=0
+  launch_choice_permission_transferable "$1" "$2" || rc=$?
+  printf '%s\n' "$rc"
+}
+check "the transfer judge admits one full bypass alone and refuses a mix, a restricted word, and nothing" \
+  "$(transferable_status claude '--model fable --dangerously-skip-permissions --verbose')|$(transferable_status claude '--permission-mode bypassPermissions')|$(transferable_status claude '--dangerously-skip-permissions --permission-mode dontAsk')|$(transferable_status claude '--dangerously-skip-permissions --permission-mode plan')|$(transferable_status claude '--permission-mode dontAsk')|$(transferable_status claude '--model fable')|$(transferable_status codex '--dangerously-bypass-approvals-and-sandbox -a never')|$(transferable_status opencode '--model x')" \
+  "0|0|1|1|1|1|1|1"
 
 # The account mark, with the context well under the context mark: the caller's
 # own account is at headroom 5 and the successor goes to the claude lane
@@ -1550,10 +1726,11 @@ check "control: the mutant really drops the binding floor from the pick" \
 new_caller "$MARK"
 FLOORDROP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 FLOORDROP_HOME="$(lane_codex_home_path "$H/.codex" "$FLOORDROP_CWD")"
-SUCCEED_BIN="$FLOORDROP/oversee-succeed" run_succeed floordrop 'codex:1:high'
+SUCCEED_BIN="$FLOORDROP/oversee-succeed" run_succeed floordrop 'codex:1:high' -- \
+  --dangerously-skip-permissions
 check "control: without the floor the same account is picked and the successor opens on it" \
   "$RC|$(overseers)|$(recorded codex)" \
-  "0|1|lane=$FLOORDROP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;"
+  "0|1|lane=$FLOORDROP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;$BRIEF;"
 
 new_caller "$NO_WINDOW_1M"
 SUCCEED_BIN="$UNPATCHED/oversee-succeed" run_succeed control 'claude:1:high'
@@ -1580,7 +1757,6 @@ SUCCEED_BIN="$ROWLESS/oversee-succeed" run_succeed rowless 'claude:1:high'
 check "control: with the table holding no row the successor is refused, and none is launched" \
   "$RC|$(keyed launch-choice-failed "$OUT" | sed -n 1p)|$(overseers)|$(recorded claude)" \
   "1|oversee-succeed: launch-choice-failed harness=claude|0|none"
-
 
 # ── One command builder: the launcher form, and the trust dialog ─────────────
 #
@@ -1987,10 +2163,18 @@ check "no account above the trigger: the walled recovery refuses at exit 3 under
 # is a model no pick judged.
 new_caller "$MARK"
 walled_world
-run_succeed walledflags 'codex:1:high' --walled-pane "$CALLER_PANE" -- --model fable --effort high --verbose
-check "--walled-pane keeps this session's own model and effort, and the preference writes none beside them" \
+run_succeed walledflags 'codex:1:high' --walled-pane "$CALLER_PANE" -- --model fable --effort high --permission-mode bypassPermissions --verbose
+check "--walled-pane keeps this session's own model, effort and permission words" \
   "$RC|$(recorded claude)|$(recorded codex)" \
-  "0|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;--verbose;$BRIEF;|none"
+  "0|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;--permission-mode;bypassPermissions;--verbose;$BRIEF;|none"
+
+new_caller "$MARK"
+walled_world
+SUCCEED_BIN="$STRIP_ALL/oversee-succeed" run_succeed walledflags-stripped 'codex:1:high' \
+  --walled-pane "$CALLER_PANE" -- --model fable --effort high --permission-mode bypassPermissions --verbose
+check "control: stripping a walled caller changes its permission spelling and loses model and effort" \
+  "$RC|$(recorded claude)|$(recorded codex)" \
+  "0|lane=$H/.eclaude;-n;overseer;--dangerously-skip-permissions;--verbose;$BRIEF;|none"
 
 # The one account this recovery may never open on is the one it is recovering
 # from. The caller's own lane is given the MOST room here, so the pick names
