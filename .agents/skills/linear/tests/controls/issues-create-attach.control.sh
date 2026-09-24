@@ -70,3 +70,23 @@ control_expect "an angle markdown comment URL excludes its closing bracket"
 control_replace scripts/lib/attachments.sh 1 \
     '            .body | capture("(?<url>https://uploads\\.linear\\.app/[^\\s)>\"]+)"; "g") |' \
     '            .body | capture("(?<url>https://uploads\\.linear\\.app/[^\\s)\"]+)"; "g") |'
+
+control_expect "a successful create returns the uploaded asset URL and attachment title"
+control_replace scripts/commands/issues.sh 1 \
+    '            created_attachments=$(pending_attachments_json "${attach_pending[@]}") || return 1' \
+    "            created_attachments='[]'"
+
+control_expect "a partial failure claims no attachment record"
+control_replace scripts/commands/issues.sh 1 \
+    '        if [ "$attach_failed" = "0" ]; then' \
+    '        if true; then'
+
+control_expect "a create with no attachments keeps the plain normalized response"
+control_replace scripts/commands/issues.sh 1 \
+    '    if [ "$attach_record_count" -gt 0 ]; then' \
+    '    if true; then'
+
+control_expect "an attach create keeps the pretty JSON shape every create response has"
+control_replace scripts/commands/issues.sh 1 \
+    '        normalized=$(echo "$normalized" | jq --argjson count "$attach_record_count" \' \
+    '        normalized=$(echo "$normalized" | jq -c --argjson count "$attach_record_count" \'

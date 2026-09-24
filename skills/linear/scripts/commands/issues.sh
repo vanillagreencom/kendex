@@ -95,7 +95,11 @@ Create Options:
                         issue. Composes with --description/--description-file.
                         Missing/unreadable paths refuse before any API call;
                         an attachment failure after the create reports the
-                        created identifier and exits non-zero.
+                        created identifier and exits non-zero. The JSON
+                        response carries attachments_requested whenever
+                        records were requested; attachments lists them as
+                        {url, repo_path} only when every attachmentCreate
+                        succeeded, and stays empty on a partial failure.
   --format=ids          Print ONLY the created issue identifier (for capture;
                         default output is the full JSON create response)
   --no-agent-label      Permit a deliberate bare create (e.g. intake
@@ -139,11 +143,17 @@ Update Options:
                         this update, appended to the existing description);
                         other files become Linear attachments. --attach alone
                         is a valid update. Partial failures after the update
-                        report the identifier and exit non-zero.
+                        report the identifier and exit non-zero. An
+                        attach-only update answers with the same
+                        attachments_requested and attachments fields as
+                        issues create.
   --sort-order <float>  Manual sort position (lower = higher; parent/standalone only)
   --format <fmt>        Output format for the updated issue: safe | compact | ids |
                         raw. When omitted, emits the mutation summary
-                        ({success, identifier, url, data}) as before.
+                        ({success, identifier, url, data}) as before. An
+                        attach-only update runs no issueUpdate and ignores
+                        this flag: it answers with its own object, which has
+                        the attachment fields and no data key.
 
 Relation Options (add-relation):
   --blocks <id>         This issue blocks another
@@ -1010,6 +1020,20 @@ apply_pending_attachments() {
     return "$failed"
 }
 
+# Render pending attachment entries as the {url, repo_path} array that both
+# the create response and the attach-only update response publish. Entries are
+# the "assetUrl<TAB>title" strings from the upload loop, kept in request order.
+# Usage: pending_attachments_json <entry>...
+pending_attachments_json() {
+    local rendered='[]' entry
+    for entry in "$@"; do
+        rendered=$(jq -cn --argjson prior "$rendered" \
+            --arg url "${entry%%$'\t'*}" --arg repo_path "${entry#*$'\t'}" \
+            '$prior + [{url: $url, repo_path: $repo_path}]') || return 1
+    done
+    printf '%s' "$rendered"
+}
+
 # Upload every --attach path, embedding images into the description variable
 # of the caller and queueing non-images for apply_pending_attachments.
 # Usage: upload_attach_paths <path>...
@@ -1482,6 +1506,23 @@ create_issue() {
     fi
     local normalized
     normalized=$(normalize_mutation_response "$result" "issueCreate" "issue")
+    # The attachment cache is a synchronized read view that this write path
+    # never touches, so the create response is the only immediate local proof
+    # that each non-image record landed. Report the requested count and, when
+    # every attachmentCreate succeeded, the records themselves; a partial
+    # failure leaves the list empty rather than claiming a missing record.
+    local attach_record_count=${#attach_pending[@]}
+    if [ "$attach_record_count" -gt 0 ]; then
+        local created_attachments='[]'
+        if [ "$attach_failed" = "0" ]; then
+            created_attachments=$(pending_attachments_json "${attach_pending[@]}") || return 1
+        fi
+        # Pretty, like normalize_mutation_response: the create response has one
+        # shape whether or not --attach was passed.
+        normalized=$(echo "$normalized" | jq --argjson count "$attach_record_count" \
+            --argjson attachments "$created_attachments" \
+            '. + {attachments_requested: $count, attachments: $attachments}') || return 1
+    fi
     # --format=ids mirrors the query-command contract: print ONLY the created
     # identifier (one per line, nothing else) so workflows can capture it
     # deterministically. Any other/absent format keeps the default JSON output.
@@ -1925,15 +1966,9 @@ update_issue() {
         local attach_only_failed=0
         apply_pending_attachments "$attach_only_uuid" "$attach_only_identifier" \
             "${attach_pending[@]}" || attach_only_failed=1
-        local attachments_json='[]' entry pending_url pending_title
+        local attachments_json='[]'
         if [ "$attach_only_failed" = "0" ]; then
-            for entry in "${attach_pending[@]}"; do
-                pending_url="${entry%%$'\t'*}"
-                pending_title="${entry#*$'\t'}"
-                attachments_json=$(jq -cn --argjson prior "$attachments_json" \
-                    --arg url "$pending_url" --arg repo_path "$pending_title" \
-                    '$prior + [{url: $url, repo_path: $repo_path}]')
-            done
+            attachments_json=$(pending_attachments_json "${attach_pending[@]}") || return 1
         fi
         jq -cn --arg identifier "$attach_only_identifier" --arg url "$attach_only_url" \
             --argjson ok "$([ "$attach_only_failed" = "0" ] && echo true || echo false)" \
