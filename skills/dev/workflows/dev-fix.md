@@ -88,14 +88,16 @@ Write the artifact first, per [dev SKILL.md § Round Contract](../SKILL.md#round
 
 If the validation list misses a rule, write `tmp/proposed-rule-[ISSUE_ID].md` with a `### Proposed Rules` heading and the proposal as one bullet. Append `--summary-file tmp/proposed-rule-[ISSUE_ID].md` to the command below. Omit the file and flag when there is no proposal.
 
+Derive the near-ceiling lines rather than remembering them from hook output, when the lane is installed (`test -x .agents/skills/commit-guards/scripts/byte-ceiling`). Run it once over the branch: every line it prints that begins `byte-ceiling: near-ceiling=` is one `--near-ceiling` value, verbatim and whole, and the indented explanation and remedy lines beneath each of them are not part of the value. `[BASE_BRANCH]` is what `.agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]` reports, qualified as `origin/[BASE_BRANCH]`, the spelling every other consumer of that script uses: the local branch may sit behind the remote, and in a fresh clone may not exist at all, which makes the lane exit 2. `--base` writes nothing into the worktree. The lines describe the branch at this moment, so run it after the commit.
+
 ```bash
-.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind fix --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --no-summary [--summary-file tmp/proposed-rule-[ISSUE_ID].md] --item [N] [DECISION] [REASONING] [--item ...] [--near-ceiling [LINE]]...
+.agents/skills/commit-guards/scripts/byte-ceiling --base origin/[BASE_BRANCH]
 ```
 
-Derive the near-ceiling lines rather than remembering them from hook output, when the lane is installed (`test -x .agents/skills/commit-guards/scripts/byte-ceiling`): run the lane once over the branch and pass each `near-ceiling` record it prints as one `--near-ceiling` value, verbatim. The base branch is what `resolve-base-branch [WORKTREE_PATH]` reports, and `--base` writes nothing into the worktree. The lines describe the branch at this moment, so run it after the commit.
+Exit 0 and exit 1 both mean the printed records are this round's list; exit 1 only says the branch also carries a file over the ceiling. Any other exit is a probe that failed: report it in the return and pass no `--near-ceiling`, rather than recording an empty list that reads as a branch with nothing near the wall.
 
 ```bash
-.agents/skills/commit-guards/scripts/byte-ceiling --base [BASE_BRANCH]
+.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind fix --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --no-summary [--summary-file tmp/proposed-rule-[ISSUE_ID].md] --item [N] [DECISION] [REASONING] [--item ...] [--near-ceiling [LINE]]...
 ```
 
 One `--item N DECISION REASONING` per **delegated** item — Applied, Skipped, and Blocked alike; the artifact must cover exactly the delegated set, `N` being the item's `#[N]` number (value shapes: `dev-return-write --help`; keep `REASONING` free of backticks). `--commit` is HEAD after the commit, or the prior HEAD when no commit was needed.

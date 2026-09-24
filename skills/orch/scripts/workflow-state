@@ -282,6 +282,7 @@ cmd_init() {
         worktree: $worktree,
         branch: $branch,
         qa_labels: $qa_labels,
+        near_ceiling: [],
         child_sessions: {},
         review_agents: [],
         review_agent_ids: {},

@@ -455,8 +455,10 @@ echo "=== the validation note reaches the orchestrator ==="
 NOTE="80/80-on-rerun,first-run-flaked-on-release-tests"
 # A real note carries spaces, a semicolon and parentheses; the echo is by-value
 # through jq --arg, asserted outside the table since expect tokens split on
-# whitespace.
-REAL_NOTE="80/80 on re-run; first run flaked on Rust Tests (release)"
+# whitespace. It also carries a literal TAB, which is what emit() joins its
+# surfaced fields with: `tojson` escapes the tab inside the value, so the split
+# stays exact and the note comes back whole.
+REAL_NOTE="$(printf '80/80 on re-run;\tfirst run flaked on Rust Tests (release)')"
 printf '%s' "$VALID_IMPL" | jq -c --arg n "$REAL_NOTE" '.validate_note=$n' > "$ARTIFACT"
 run_check --file "$ARTIFACT"
 assert_eq "$(json .validate_note)" "$REAL_NOTE" "a note with spaces and punctuation is echoed verbatim" "$ERR"
@@ -472,7 +474,9 @@ echo "=== the near-ceiling lines reach the orchestrator ==="
 # artifact is echoed verbatim; a receipt that carries none, or carries the key
 # with a shape the writer never produces, reads as an empty list rather than a
 # missing key the caller must special-case.
-NEAR_LINE="byte-ceiling: near-ceiling=crates/core/src/engine/deps.rs:189000:204800:92"
+# A tab here too, on the other side of the join: a value carrying the join
+# character must not split the field that follows it.
+NEAR_LINE="$(printf 'byte-ceiling: near-ceiling=crates/core/src/engine/deps.rs:189000:204800:92\tfrom the pre-commit run')"
 printf '%s' "$VALID_IMPL" | jq -c --arg l "$NEAR_LINE" '.near_ceiling=[$l]' > "$ARTIFACT"
 run_check --file "$ARTIFACT"
 assert_eq "$(json '.near_ceiling[0]')" "$NEAR_LINE" "a near-ceiling line with spaces and punctuation is echoed verbatim" "$ERR"
