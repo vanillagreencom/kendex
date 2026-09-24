@@ -1691,8 +1691,9 @@ CALL_DIR=""
 CALL_ENV=()
 
 # A root its launch marker binds with no mailbox directory: every arm refuses
-# it, naming the marker, and the one command that restores the directory
-# passes. Other lanes' markers beside it are never read.
+# the lead, naming the marker, and the one command that restores the directory
+# passes; a subagent is refused before its call. Other lanes' markers beside it
+# are never read.
 new_lane marked_no_mailbox ken-96
 install_arms
 MARKER_96="$LANE/.git/lane-mail/ken-96"

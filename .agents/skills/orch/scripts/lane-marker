@@ -59,9 +59,9 @@ Write a lane's launch record, both halves of it:
 resolves the item by the second, so a launch writes both or the lane is never
 handed its mail and never judged on its handoff marks. A root the first half
 binds with no `tmp/lane-mail` directory is refused as `lane-mail-check:
-mailbox-missing=<path>` at every tool call and turn end until that directory
-stands. Each launcher calls this: `open-terminal` locally, `lane-host create`
-over its transport.
+mailbox-missing=<path>` before every tool call and at every turn end until
+that directory stands. Each launcher calls this: `open-terminal` locally,
+`lane-host create` over its transport.
 
 `--marker-path` prints the marker half's path under the common git directory
 it is given and writes nothing. A launcher whose lane is on another machine
