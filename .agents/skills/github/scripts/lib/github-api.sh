@@ -211,9 +211,11 @@ gh_graphql() {
 }
 
 # True when a captured `gh api` failure is GitHub answering "no such resource".
-# The one home for that judgment; `gh_rest`'s own ladder below answers a wider
-# question and keeps its own arm. A caller that must tell "the resource is not
-# at this endpoint" from "the call failed" asks here.
+# The home for a caller that ACTS on not-found, telling "the resource is not at
+# this endpoint" from "the call failed". `gh_rest`'s ladder below matches the
+# same 404 more loosely to pick its own routing message, where a false match
+# costs a word in a diagnostic; it is not a substitute here, where one decides
+# whether to send a request somewhere else.
 #
 # Both spellings a 404 reaches a caller by are read, and nothing else: gh
 # prints `gh: Not Found (HTTP 404)` to stderr, and the API's own JSON body

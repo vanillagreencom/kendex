@@ -59,6 +59,7 @@ REVIEW_URL='https://github.com/owner/repo/pull/23#discussion_r2633519824'
 # the stub's stderr channel carries whatever a scenario says that text is.
 # BODY_404 is the API's own body, verbatim but for the elided doc URL.
 STDERR_404='gh: Not Found (HTTP 404)'
+BROKEN_422='gh: Validation Failed (HTTP 422)'
 BODY_404='{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}'
 PAIR_404="$BODY_404
 $STDERR_404"
@@ -100,7 +101,14 @@ build() {
   issue-endpoint-broken)
     # A failure that is not a 404 is the issue endpoint's own answer about an
     # id it owns, so it is reported rather than retried elsewhere.
-    gh_stub_fail "api:$ISSUE_PATH" 1 'gh: Validation Failed (HTTP 422)'
+    gh_stub_fail "api:$ISSUE_PATH" 1 "$BROKEN_422"
+    ;;
+  pulls-endpoint-broken)
+    # The id is not at the issue endpoint, and the review one then fails some
+    # other way: an oversized body, or a token that may not write review
+    # comments. The first endpoint's 404 must not be lost behind that answer.
+    gh_stub_fail "api:$ISSUE_PATH" 1 "$STDERR_404"
+    gh_stub_fail "api:$PULLS_PATH" 1 "$BROKEN_422"
     ;;
   *)
     printf 'unknown scenario: %s\n' "$SCENARIO" >&2
@@ -218,9 +226,24 @@ run_table "an id neither endpoint holds" "\
 both 404s are refused with the keyed line and both responses, not a bare 404^2633519824 Fixed^1^-^$REFUSAL detail=issues=$STDERR_404 pulls=$STDERR_404^repo,api:$ISSUE_PATH,api:$PULLS_PATH
 "
 
+echo "=== the refusal's whole sentence ==="
+# The table's err field stops at the first parenthesis, so the clause that
+# says what two 404s prove, and the slug it names, are pinned here.
+SCENARIO="no-such-comment"
+build
+run '2633519824 Fixed' >/dev/null
+assert_eq "$(jq -r '.error' <"$TMP_ROOT/stderr")" \
+  "$REFUSAL (both endpoints answered 404 for owner/repo: no such comment, or the token cannot see the repository)" \
+  "the refusal names the resolved repository and only what the two answers prove"
+
 SCENARIO="issue-endpoint-broken"
 run_table "a failure that is not a 404" "\
-the issue endpoint's own error is reported and the pulls endpoint is not asked^2633519824 Fixed^1^-^Failed to edit comment: gh: Validation Failed^repo,api:$ISSUE_PATH
+the issue endpoint's own error is reported and the pulls endpoint is not asked^2633519824 Fixed^1^-^Failed to edit comment at $ISSUE_PATH: gh: Validation Failed detail=issues=$BROKEN_422^repo,api:$ISSUE_PATH
+"
+
+SCENARIO="pulls-endpoint-broken"
+run_table "a 404 at the issue endpoint and another failure at the review one" "\
+the review endpoint's own error is reported, and the issue endpoint's 404 is carried beside it^2633519824 Fixed^1^-^Failed to edit comment at $PULLS_PATH: gh: Validation Failed detail=issues=$STDERR_404 pulls=$BROKEN_422^repo,api:$ISSUE_PATH,api:$PULLS_PATH
 "
 
 # mutate LABEL FROM TO — a copy of edit-comment.sh beside a copy of the lib,
@@ -253,36 +276,75 @@ SCENARIO="review-comment"
 build
 GOT="$(run '2633519824 Fixed')"
 assert_eq "$GOT" \
-  "rc=1 out=- err=Failed to edit comment: gh: Not Found calls=repo,api:$ISSUE_PATH" \
+  "rc=1 out=- err=Failed to edit comment at $ISSUE_PATH: gh: Not Found detail=issues=$STDERR_404 calls=repo,api:$ISSUE_PATH" \
   "must-fail control: without the fallback a review comment id answers a bare 404"
 SCENARIO="no-such-comment"
 build
 GOT="$(run '2633519824 Fixed')"
 SUBJECT=""
 assert_eq "$GOT" \
-  "rc=1 out=- err=Failed to edit comment: gh: Not Found calls=repo,api:$ISSUE_PATH" \
+  "rc=1 out=- err=Failed to edit comment at $ISSUE_PATH: gh: Not Found detail=issues=$STDERR_404 calls=repo,api:$ISSUE_PATH" \
   "must-fail control: without the predicate an unknown id answers a bare 404, not the keyed line"
 
 echo "=== must-fail control: the predicate always fires ==="
 # `true` where the predicate stood makes every failure look like a 404, so the
-# 422 the issue endpoint owns is retried at the pulls endpoint and then
-# reported as an unknown id — a named cause replaced by a wrong one.
+# 422 the review endpoint gave is read as the id being absent and reported as
+# an unknown comment — a named cause replaced by a wrong one.
 mutate always "$PREDICATE" 'true'
-SCENARIO="issue-endpoint-broken"
+SCENARIO="pulls-endpoint-broken"
 build
 GOT="$(run '2633519824 Fixed')"
 SUBJECT=""
 assert_eq "$GOT" \
-  "rc=1 out=- err=$REFUSAL detail=issues=gh: Validation Failed (HTTP 422) pulls=gh-stub: nothing staged for api (argv: api -X PATCH $PULLS_PATH -f body=Fixed) calls=repo,api:$ISSUE_PATH,api:$PULLS_PATH" \
-  "must-fail control: treating every failure as a 404 retries a 422 and renames its cause"
+  "rc=1 out=- err=$REFUSAL detail=issues=$STDERR_404 pulls=$BROKEN_422 calls=repo,api:$ISSUE_PATH,api:$PULLS_PATH" \
+  "must-fail control: treating every failure as a 404 reports the review endpoint's 422 as an unknown id"
 
 echo "=== the predicate's own reach ==="
-# The lib is the one home for the judgment, and label-add's repository-label
-# lookup asks it too; a second inline spelling of it is the defect the helper
-# exists to prevent.
-assert_eq "$(grep -rlF 'HTTP 404|"status"' "$REPO_ROOT/skills/github/scripts" | sed "s|$REPO_ROOT/||" | sort | paste -s -d ' ' -)" \
-  "skills/github/scripts/commands/label-add.sh skills/github/scripts/lib/github-api.sh" \
-  "the 404 pattern is written in the lib and in label-add's wider permission question, nowhere else"
+# The lib holds the judgment once and label-add's repository-label lookup calls
+# it rather than respelling it. label-add's one remaining copy belongs to
+# is_label_write_permission_denial, the wider question this round left alone.
+#
+# The census counts PER FILE, not a set of file names: a file already on the
+# list would otherwise be free to grow further copies unseen. NEEDLE is the
+# fragment of the pattern no prose or neighbouring regex carries, so editing
+# the alternation's other branches does not move this assertion.
+NEEDLE='"status"[[:space:]]*:'
+pattern_census() {
+  local root="$1" file count out=""
+  while IFS= read -r file; do
+    [[ "$file" != "" ]] || continue
+    count="$(grep -cF -- "$NEEDLE" "$file")"
+    out="$out ${file#"$root"/}=$count"
+  done < <(grep -rlF -- "$NEEDLE" "$root" | sort)
+  [[ "$out" != "" ]] && printf '%s' "${out# }" || printf -- '-'
+}
+
+SCRIPTS="$REPO_ROOT/skills/github/scripts"
+assert_eq "$(pattern_census "$SCRIPTS")" \
+  "commands/label-add.sh=1 lib/github-api.sh=1" \
+  "the 404 pattern is written once in the lib and once in label-add's wider permission question"
+
+# Two planted defects, two trees, two rows. Each copies the scripts, plants one
+# further spelling of the pattern, and asserts the census counts it.
+plant() { # LABEL FILE -> the tree's path
+  local label="$1" target="$2" dir
+  dir="$TMP_ROOT/census/$label"
+  rm -rf -- "${dir:?}"
+  mkdir -p "$TMP_ROOT/census"
+  cp -R "$SCRIPTS" "$dir"
+  printf '%s\n' "    grep -Eq 'HTTP 404|$NEEDLE' <<<\"\$out\" && :" >>"$dir/$target"
+  printf '%s' "$dir"
+}
+
+CENSUS_TREE="$(plant readopted commands/label-add.sh)"
+assert_eq "$(pattern_census "$CENSUS_TREE")" \
+  "commands/label-add.sh=2 lib/github-api.sh=1" \
+  "must-fail control: the inline spelling back in label-add is counted, not absorbed by its file name"
+
+CENSUS_TREE="$(plant third-file commands/post-comment.sh)"
+assert_eq "$(pattern_census "$CENSUS_TREE")" \
+  "commands/label-add.sh=1 commands/post-comment.sh=1 lib/github-api.sh=1" \
+  "must-fail control: a third file spelling the pattern is named by the census"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

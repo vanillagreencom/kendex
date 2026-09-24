@@ -49,8 +49,9 @@ A 404 from both endpoints is refused with one keyed line, never a bare 404:
     (both endpoints answered 404 for <owner>/<repo>: no such comment, or
      the token cannot see the repository)
 
-Both responses are carried in the error's `detail` array, one entry per
-endpoint asked, so gh's own text survives the refusal.
+Every refusal is one JSON shape on stderr, {error, detail}: `detail` is one
+entry per endpoint asked, carrying that endpoint and gh's own text, so no
+response is lost behind the message.
 
 Note: a PR-level comment ID comes from find-comment. A review-thread comment
 ID comes from its comment URL, the number after #discussion_r; pr-threads
@@ -147,11 +148,11 @@ edit_comment() {
     # the other's ids, so a 404 is the signal to ask the next endpoint rather
     # than a verdict on the id. Every other failure is that endpoint's own
     # answer about an id it owns, and is reported instead of retried.
-    local kind result status=0 attempts='[]'
+    local kind path result status=0 attempts='[]'
     for kind in issues pulls; do
         status=0
-        result=$(gh api -X PATCH "repos/$owner/$repo/$kind/comments/$comment_id" \
-            -f body="$body" 2>&1) || status=$?
+        path="repos/$owner/$repo/$kind/comments/$comment_id"
+        result=$(gh api -X PATCH "$path" -f body="$body" 2>&1) || status=$?
         if [ "$status" -eq 0 ]; then
             break
         fi
@@ -177,7 +178,13 @@ edit_comment() {
                   detail: $attempts}' >&2
             exit 1
         fi
-        jq -nc --arg detail "$result" '{error: ("Failed to edit comment: " + $detail)}' >&2
+        # Every refusal is one shape, {error, detail}: the endpoint that gave
+        # this answer is named in the message, and every response collected on
+        # the way here is in detail, so a 404 at the first endpoint is not lost
+        # when the second fails some other way.
+        jq -nc --arg path "$path" --arg detail "$result" --argjson attempts "$attempts" \
+            '{error: ("Failed to edit comment at " + $path + ": " + $detail),
+              detail: $attempts}' >&2
         exit 1
     fi
 
