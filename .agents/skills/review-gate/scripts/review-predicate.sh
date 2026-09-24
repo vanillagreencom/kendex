@@ -812,12 +812,10 @@ materialize_docs_commits() { # REPO BASE HEAD
 # checkout. The pull-request checkout is judged data. Source preparation and
 # classification run without the writer's GitHub credentials.
 #
-# Only the render class reads prepared sources: change-class runs its render
-# proof, `kendex verify`, only where harness-only answers harness_only=true for
-# the range, and every other diff is classified from the path set, the
-# committed inventory and the trusted classifier with no network. So the
-# same harness-only call change-class makes decides here whether the sources
-# are prepared at all, and a diff with one product path skips the refresh.
+# Sources are prepared on the condition change-class's header states for its
+# one kendex read: harness-only answering harness_only=true for the range,
+# asked here with the arguments change-class passes it. Any other diff skips
+# the refresh.
 #
 # Source preparation reads the JUDGED pull request's manifest, so how much work
 # it asks for is the pull request's to choose. The writer converges every open

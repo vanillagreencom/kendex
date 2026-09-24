@@ -33,8 +33,16 @@ printf 'class: class=%s measured=%s cause=stub\n' "$STUB_CLASS" "${STUB_MEASURED
 printf 'change_class=%s\n' "$STUB_CLASS"
 CLASSIFIER
 chmod +x "$REPO/.agents/skills/harness-ci/scripts/change-class"
-# The real path classifier: it decides whether the predicate prepares sources.
-cp "$SKILL_DIR/../harness-ci/scripts/harness-only" "$REPO/.agents/skills/harness-ci/scripts/harness-only"
+# The real path classifier decides whether the predicate prepares sources. It
+# runs behind a wrapper that refuses GitHub credentials, as the stubs do.
+cp "$SKILL_DIR/../harness-ci/scripts/harness-only" "$REPO/.agents/skills/harness-ci/scripts/harness-only.real"
+cat >"$REPO/.agents/skills/harness-ci/scripts/harness-only" <<'PATHS'
+#!/usr/bin/env bash
+[ -z "${GH_TOKEN+x}" ] && [ -z "${GITHUB_TOKEN+x}" ] && [ -z "${GH_CONFIG_DIR+x}" ] ||
+  { echo "path classifier received GitHub credentials" >&2; exit 2; }
+exec "$(dirname "$0")/harness-only.real" "$@"
+PATHS
+chmod +x "$REPO/.agents/skills/harness-ci/scripts/harness-only"
 cp "$TEST_DIR/lib/gh-shim.sh" "$BIN/gh"
 cat >"$BIN/kendex" <<'KENDEX'
 #!/usr/bin/env bash

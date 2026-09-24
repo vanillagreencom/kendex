@@ -42,6 +42,7 @@ echo "=== a broken read is an error, never health ==="
 # never runs, so one failed-read row is all the stub can drive there.
 table \
   "predicate failure||STUB_OPEN_PRS=$P7;STUB_PREDICATE_RC=2;STUB_VERDICT_LINE=unused|rc=2 kinds=error protocol=7~aaaaaaaa~error~predicate+evaluation+failed+(exit+2+—+read+failure+or+invalid+config)" \
+  "a predicate failure names the first keyed line it printed||STUB_OPEN_PRS=$P7;STUB_PREDICATE_RC=2;STUB_PREDICATE_STDERR=review-gate-error=predicate-policy-refresh-deadline value=7/45s\n::error::refresh overran\nreview-gate-error=predicate-policy-resolve value=a...b;STUB_VERDICT_LINE=unused|rc=2 kinds=error protocol=7~aaaaaaaa~error~predicate+evaluation+failed+(exit+2+—+review-gate-error=predicate-policy-refresh-deadline+value=7/45s)" \
   "a zero-exit predicate with no recognizable verdict||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_GARBAGE|rc=2 kinds=error protocol=7~aaaaaaaa~error~predicate+produced+no+recognizable+verdict+(broken+output)" \
   "a zero-byte PR listing||STUB_OPEN_PRS=emptybytes;STUB_VERDICT_LINE=unused|rc=2 kinds=none diagnostic=review-gate-error=watch-list-empty+value=acme/widgets" \
   "a non-object listing element||STUB_OPEN_PRS=[42];STUB_VERDICT_LINE=unused|rc=2 kinds=none diagnostic=review-gate-error=watch-list-malformed+value=acme/widgets" \

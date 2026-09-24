@@ -119,7 +119,9 @@ Attention kinds:
                      re-run. Attention, not an error: the race is
                      ordinary, the response is one more poll
   error              this PR could not be evaluated (predicate exit 2 /
-                     read failure) — fail LOUD, never silently skipped
+                     read failure) — fail LOUD, never silently skipped. A
+                     predicate failure carries the first
+                     review-gate-error=KEY value=VALUE line it printed
 
 A verdict of awaiting inside the quiet period, and approved+success with
 auto-merge armed or queued, are healthy states and emit NOTHING — silence
@@ -409,6 +411,18 @@ else
   }
 fi
 
+# The predicate's stderr for the PR under evaluation: a failed evaluation
+# names the first keyed line the predicate printed, which is its own cause,
+# rather than a generic read failure.
+PREDICATE_ERR=""
+if [ "$EVALUATE" = "1" ]; then
+  PREDICATE_ERR="$(mktemp "${TMPDIR:-/tmp}/pr-watch-predicate.XXXXXX")" || {
+    rg_message error watch-scratch "${TMPDIR:-/tmp}" "::error::pr-watch: a scratch file for the predicate's diagnostics could not be created" >&2
+    exit 2
+  }
+  trap 'rm -f -- "${PREDICATE_ERR:?}"' EXIT
+fi
+
 # --- per-PR reduction ---------------------------------------------------
 for number in $pr_numbers; do
   emitted_this_pr=0
@@ -600,8 +614,13 @@ for number in $pr_numbers; do
       continue
     fi
     verdict_line="$(GH_REPO="$GH_REPO" PR_NUMBER="$number" HEAD_SHA="$head" PR_AUTHOR="$author" \
-        "$script_dir/review-predicate.sh" 2>/dev/null)" || {
-      emit "$number" "$head" error "predicate evaluation failed (exit 2 — read failure or invalid config)"
+        "$script_dir/review-predicate.sh" 2>"$PREDICATE_ERR")" || {
+      predicate_cause="$(sed -n '/^review-gate-error=[^ ]* value=/{p;q;}' "$PREDICATE_ERR")" || predicate_cause=""
+      if [ -n "$predicate_cause" ]; then
+        emit "$number" "$head" error "predicate evaluation failed (exit 2 — $predicate_cause)"
+      else
+        emit "$number" "$head" error "predicate evaluation failed (exit 2 — read failure or invalid config)"
+      fi
       errored=1
       continue
     }
