@@ -23,13 +23,17 @@
 #     cargo_windows) stand down only on a diff whose every path is prose,
 #     whose content no platform and no lint tool reads differently, and run
 #     on any other diff.
-#   - ui is the one lane that narrows to a tree, because its job runs every
-#     step with `working-directory: ui` and so reads nothing outside it.
+#   - ui is the one lane that narrows to a tree: every ui step runs a
+#     ui/package.json script, and nothing under ui/ imports or configures a
+#     path outside ui/.
 #   - A `render` or `trivial` diff runs bot_instructions alone, the one
 #     seconds-long verify job: its check, the document byte ceilings and the
-#     work-marker scan. The classifier proved a `render` diff by re-rendering
-#     it, and a `trivial` one is inside the docs path set and its line
-#     ceiling.
+#     work-marker scan. It runs no shell shard and no cargo lane, cargo_linux
+#     included. The classifier proved a `render` diff by re-rendering it; a
+#     `trivial` one is inside the docs path set and its line ceiling, and a
+#     document compiled code holds to a constant is kept out of `trivial` by
+#     orch's references/narrow-change.conf, so an edit to one runs the
+#     measured row with cargo_linux on.
 #
 # The lanes:
 #
@@ -46,11 +50,10 @@
 #   ui               the vitest, tsc and biome lane.
 #
 # DOCS_ONLY is read and validated on every class, and it changes one thing: a
-# `standard` diff it accepts takes the measured row its paths select rather
-# than every lane. Two diffs reach that arm: documentation past the trivial
-# line ceiling, and a root or nested AGENTS.md change the classifier refused
-# as a configuration source ahead of its size rules. Under `micro` and `small`
-# that row is already the one taken.
+# `standard` diff whose every path the docs verdict accepts (docs/,
+# changelog.d/, root Markdown) takes the measured row its paths select rather
+# than every lane, whatever cause made it `standard`. Under `micro` and
+# `small` that row is already the one taken.
 #
 # Every refusal starts `ci-job-set: cause=<name>` and exits 2. A class this
 # table does not name is one of those: the step goes red, every lane's status

@@ -13,9 +13,9 @@ name: Skill Tests
 # the full battery — every shard, the aggregators over them, the ui lane and
 # every cargo lane — so a green PR has proven what the queue re-proves and an
 # ejection — dequeue, fix, requeue, pay the merge latency again — is rare
-# instead of routine. A `render` or `trivial` diff runs the bot-instructions
-# job alone, which also carries the document byte ceilings and the
-# work-marker scan. Every other diff, a `standard` one of documentation alone
+# instead of routine. Of the gated jobs, a `render` or `trivial` diff runs
+# the bot-instructions job alone, which also carries the document byte
+# ceilings and the work-marker scan. Every other diff, a `standard` one of documentation alone
 # included, runs the shell shards, the Linux cargo lane and that job; the
 # macOS, lint and Windows lanes stand down only where every changed path is
 # prose, and the ui lane only where no path is under ui/. `tools/ci-job-set`
@@ -299,7 +299,8 @@ jobs:
   # the time and not half the files; every figure below is a per-suite sum over
   # the macOS leg of run 35467869265, and the comment above each step carries
   # its own. `guards` held five repository-wide scans and 68 suite files, and
-  # splits into `guards-scans` (the scans, 65s), `guards-commit` (34 files,
+  # splits into `guards-scans` (the scans, 65s when it held all five; two have
+  # since moved to the bot-instructions job), `guards-commit` (34 files,
   # 499s, and the ruff its py-names lane needs) and `guards-tools` (34 files,
   # 475s). `rest` ran 780s over 79 files and gave the worktree roster alone to
   # `worktree`, 382s over 22 files, keeping 57 files at 398s. `orch-rest` ran
@@ -615,11 +616,10 @@ jobs:
       # repository-wide scans and the guard packages' own suites, in three.
       # One `guards` shard held all of it and ran 901-1061s on the macOS leg
       # against roughly a third of that on Linux. `guards-scans` is the scans
-      # below, each one pass over the whole index or the whole shell roster;
+      # below, each one pass over a tracked-file roster or the shell roster;
       # the document-set and work-marker scans run in the bot-instructions
       # job instead, which every class runs. The 68 suite files after them are
-      # the other two shards'
-      # work, and the ruff install rides with `guards-commit` because the suite
+      # the other two shards' work, and the ruff install rides with `guards-commit` because the suite
       # that needs it, commit-guards' own py-names.test.sh, runs there.
       #
       # THE SEAM BETWEEN THOSE TWO is the package boundary — commit-guards' own
