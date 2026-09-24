@@ -384,20 +384,12 @@ assert_eq "marks=$(marks_seen)" "marks=0" \
 # spent its whole interval there would delay every other event it carries.
 if command -v timeout >/dev/null 2>&1; then
   # The copy shortens the ceiling so the row need not wait out the real one.
-  CEILING_DIR="$TMP_ROOT/ceiling"
-  mkdir -p "$CEILING_DIR/orch"
-  cp -R "$REPO_ROOT/skills/orch/scripts" "$CEILING_DIR/orch/scripts"
-  ln -s "$REPO_ROOT/skills/github" "$CEILING_DIR/github"
-  sed 's/^MARK_CEILING=60$/MARK_CEILING=1/' \
-    "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$CEILING_DIR/orch/scripts/oversee-watch"
-  chmod +x "$CEILING_DIR/orch/scripts/oversee-watch"
-  assert_eq "$(cmp -s "$CEILING_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
-    "differs" "the shortened-ceiling copy really differs from the watch"
+  shortened_ceiling_watch
   overseer_case mark_ceiling idle
   state_with "$LINE"
   mark_stands
   touch "$STUB_DIR/succeed.check-hang"
-  WATCH_BIN="$CEILING_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
+  WATCH_BIN="$CEILING_WATCH" run TMUX_PANE="$PANE" -- --max-loops 1
   assert_eq "rc=$RC marks=$(marks_seen)" "rc=0 marks=0" \
     "a judgement the ceiling abandoned reports no mark and ends no pass" "$ERR"
   assert_contains "$(cat "$ERR")" "oversee-watch: overseer-mark-unjudged path=" \
@@ -959,9 +951,9 @@ for row in \
   else
     run TMUX_PANE="$PANE" -- --max-loops 1 --interval 45
   fi
-  assert_eq "judged=$(succeed_calls --check-marks) age=$(paste -sd, "$STUB_DIR/succeed.max-age")" \
-    "judged=1 age=$want" \
-    "the judgement's usage window: $label" "$ERR"
+  assert_eq "judged=$(succeed_calls --check-marks) age=$(paste -sd, "$STUB_DIR/succeed.max-age") accounts=$(paste -sd, "$STUB_DIR/lanes.max-age")" \
+    "judged=1 age=$want accounts=$want" \
+    "the usage window of both account reads: $label" "$ERR"
 done
 
 # One reading is a poll, exactly as it is for a death.

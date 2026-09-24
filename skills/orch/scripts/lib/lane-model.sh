@@ -178,6 +178,20 @@ def with_lane_binding($model; $binding_floor):
 
 def lane_public: del(._rate_prior, ._rate_elapsed_s);
 
+# One spelling for every reset a lane record carries: whole-second UTC with a
+# Z, the form Codex resets are rendered in. The Claude usage endpoint writes
+# fractional seconds and +00:00, and a provider row carries whatever its
+# timestamp is; a reader parsing the stamp (the BSD `date` arm cannot read the
+# fraction) or comparing two of them by equality, as with_lane_binding does
+# with the prior sample, needs one form. emit_lane applies it to the current
+# windows and to the prior sample alike, so the comparison stays like with like.
+def utc_stamp: if type == "string" then sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") else . end;
+def utc_resets:
+  (if (.resets | type) == "object" then .resets |= map_values(utc_stamp) else . end)
+  | (if (.model_buckets | type) == "array"
+     then .model_buckets |= map(if type == "object" then .resets_at |= utc_stamp else . end)
+     else . end);
+
 # wall_verdict($max) over ONE percentage from lane_binding above: the
 # one word both pick forms answer with. Room, walled, or unmeasured.
 #

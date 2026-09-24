@@ -1,11 +1,12 @@
 # Shared sandbox for the oversee-watch suites: the stub binaries every case
 # drives, the assertion helpers, and one `run_watch` entry point.
 #
-# oversee-watch reads GitHub (pr-watch, `gh pr list`), Linear, and the tmux
-# panes of the lane windows. oversee_watch.sh covers GitHub and process-wide
-# failures; oversee_watch_triage.sh covers the tracker; the three lane suites
-# cover pane behavior, prompt state, and spent-account banners. They share this
-# sandbox.
+# oversee-watch reads GitHub (pr-watch, `gh pr list`), Linear, the tmux
+# panes of the lane windows, and the accounts through `lanes list`.
+# oversee_watch.sh covers GitHub and process-wide failures;
+# oversee_watch_triage.sh covers the tracker; the three lane suites cover pane
+# behavior, prompt state, and spent-account banners; oversee_watch_accounts.sh
+# covers account events and the heartbeat roster. They share this sandbox.
 #
 # Sourced, never run: the runners glob tests/*.sh, so nothing here executes on
 # its own. Sourcing it sets the shell options, builds $TMP_ROOT and the stub
@@ -440,9 +441,30 @@ rc=0
 [[ "$rc" -eq 0 ]] || exit "$rc"
 EOF
 
+# Account reader: `lanes list --json`, answered from lanes.<N>.json on the Nth
+# call of the case and lanes.json otherwise, `[]` with neither, so no case
+# reads the accounts of the machine running it. lanes.rc is the exit status,
+# lanes.sleep the seconds to wait before answering, every call's argv lands in
+# lanes.args and the usage age it was handed in lanes.max-age.
+cat > "$TMP_ROOT/bin/lanes-stub.sh" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+printf '%s\n' "$*" >> "$STUB_DIR/lanes.args"
+printf '%s\n' "${ORCH_LANES_USAGE_MAX_AGE:-unset}" >> "$STUB_DIR/lanes.max-age"
+[[ ! -f "$STUB_DIR/lanes.sleep" ]] || sleep "$(cat "$STUB_DIR/lanes.sleep")"
+n=0; [[ -f "$STUB_DIR/lanes.calls" ]] && n="$(cat "$STUB_DIR/lanes.calls")"
+n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/lanes.calls"
+rc=0; [[ -f "$STUB_DIR/lanes.rc" ]] && rc="$(cat "$STUB_DIR/lanes.rc")"
+[[ "$rc" -eq 0 ]] || { printf 'lanes: stub-refused rc=%s\n' "$rc" >&2; exit "$rc"; }
+if [[ -f "$STUB_DIR/lanes.$n.json" ]]; then cat "$STUB_DIR/lanes.$n.json"
+elif [[ -f "$STUB_DIR/lanes.json" ]]; then cat "$STUB_DIR/lanes.json"
+else printf '[]\n'; fi
+EOF
+
 chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pgrep" \
   "$TMP_ROOT/bin/pr-watch-stub.sh" "$TMP_ROOT/bin/linear-stub.sh" "$TMP_ROOT/bin/date" \
-  "$TMP_ROOT/bin/workflow-state-stub.sh" "$TMP_ROOT/bin/lane-close-stub.sh"
+  "$TMP_ROOT/bin/workflow-state-stub.sh" "$TMP_ROOT/bin/lane-close-stub.sh" \
+  "$TMP_ROOT/bin/lanes-stub.sh"
 
 STUB_DIR=""
 STATE_DIR=""
@@ -465,6 +487,26 @@ new_case() {
   printf '9001\n' > "$STUB_DIR/panepid-gh-1.txt"
   printf '9002\n' > "$STUB_DIR/panepid-gh-2.txt"
   printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
+}
+
+# shortened_ceiling_watch — a copy of the scripts whose oversee-watch gives
+# each account read a one-second ceiling, so a row can overrun it without
+# waiting out the real one. Sets CEILING_WATCH to that copy, and asserts the
+# copy really differs, so a ceiling line that stopped matching reddens here
+# rather than leaving a row that waits the full ceiling. It sets a variable
+# rather than printing the path because the assertion must count in the suite.
+CEILING_WATCH=""
+shortened_ceiling_watch() {
+  local dir="$TMP_ROOT/ceiling"
+  mkdir -p "$dir/orch"
+  cp -R "$REPO_ROOT/skills/orch/scripts" "$dir/orch/scripts"
+  ln -s "$REPO_ROOT/skills/github" "$dir/github"
+  sed 's/^READ_CEILING=60$/READ_CEILING=1/' \
+    "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$dir/orch/scripts/oversee-watch"
+  chmod +x "$dir/orch/scripts/oversee-watch"
+  assert_eq "$(cmp -s "$dir/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+    "differs" "the shortened-ceiling copy really differs from the watch"
+  CEILING_WATCH="$dir/orch/scripts/oversee-watch"
 }
 
 # run_watch [ENV=VAL ...] -- ARGS...   (fast cadence; TMUX set unless NO_TMUX=1)
@@ -512,6 +554,7 @@ run_watch() {
            OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \
            OVERSEE_WATCH_WORKFLOW_STATE="$TMP_ROOT/bin/workflow-state-stub.sh" \
            OVERSEE_WATCH_LANE_CLOSE="$TMP_ROOT/bin/lane-close-stub.sh" \
+           OVERSEE_WATCH_LANES="$TMP_ROOT/bin/lanes-stub.sh" \
            REAL_LANE_HOST="$REPO_ROOT/skills/orch/scripts/lane-host" \
            REAL_WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state" \
            OVERSEE_WATCH_STATE_DIR="$STATE_DIR" \
