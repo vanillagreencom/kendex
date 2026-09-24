@@ -55,9 +55,9 @@ git -C "$R" reset -q --hard HEAD
 rm -rf -- "$R/.github"
 
 echo "=== a decision ID two INDEX rows share reds full validation, and only full validation ==="
-# The world's kendex.settings.toml names docs/decisions; the world has no
-# remote, so the check's base half prints its notice and the duplicate half
-# alone decides.
+# The world's kendex.settings.toml names docs/decisions. The world has no
+# remote, so its local main is the base; that commit has no INDEX.md, the base
+# half passes with its index-absent notice, and the duplicate half decides.
 mkdir -p "$R/docs/decisions"
 printf '%s\n' \
   '| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |' \

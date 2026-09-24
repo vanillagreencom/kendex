@@ -14,6 +14,9 @@ FAIL=0
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
+# The fixtures are never inside a repository, wherever TMPDIR points, so no
+# row reads or fetches a base branch.
+export GIT_CEILING_DIRECTORIES="$TMP_ROOT"
 
 pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
@@ -115,6 +118,7 @@ record_row() {
 evaluate_next_id_rows() {
   local script="$1" mode="$2" only_row="${3:-}" name repo_name environment expected_status
   local stdout_rule expected_stdout stderr_rule repo actual_stdout actual_stderr actual expected guard first_line
+  local error_line line
   local executed_rows=0
   table_failures=""
   while IFS='~' read -r name repo_name environment expected_status stdout_rule expected_stdout stderr_rule; do
@@ -130,6 +134,15 @@ evaluate_next_id_rows() {
       *) fail "unknown stdout rule: $stdout_rule"; continue ;;
     esac
     first_line="${err%%$'\n'*}"
+    # The base read reports before the scheme is inferred, so a refusal is the
+    # first error= record rather than the first line.
+    error_line=""
+    while IFS= read -r line; do
+      if [[ "$line" == error=* ]]; then
+        error_line="$line"
+        break
+      fi
+    done <<<"$err"
     case "$stderr_rule" in
       ignore)
         actual_stderr=ignored
@@ -138,13 +151,13 @@ evaluate_next_id_rows() {
       no-repository)
         # The fixtures sit outside any repository, so the base read's notice
         # is the whole of stderr on a clean answer.
-        actual_stderr="$first_line"
-        expected="notice=base-unverified ref=none reason=not-a-repository"
+        actual_stderr="$err"
+        expected="notice=base-unverified ref=none reason=not-a-repository"$'\n'"The decisions directory is not inside a git repository, so no base branch was read."
         ;;
       bad-id-prefix)
         actual_stderr=0,0
-        [[ "$first_line" == *"error=id-suffix-missing"* ]] && actual_stderr=1,0
-        [[ "$first_line" == *"error=id-suffix-missing"* && "$first_line" == *"value=ADR-current"* ]] && actual_stderr=1,1
+        [[ "$error_line" == *"error=id-suffix-missing"* ]] && actual_stderr=1,0
+        [[ "$error_line" == *"error=id-suffix-missing"* && "$error_line" == *"value=ADR-current"* ]] && actual_stderr=1,1
         expected=1,1
         ;;
       width)
@@ -197,7 +210,7 @@ if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
     fail "wrong next ID did not fail the inferred scheme row"
   fi
 
-  diagnostic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/id-diagnostic-key/decisions" '    emit_error id-suffix-missing "value=$1"' '    emit_error id-suffix-invalid "value=$1"' 1)"
+  diagnostic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/id-diagnostic-key/decisions" '        emit_error id-suffix-missing "value=$last_id"' '        emit_error id-suffix-invalid "value=$last_id"' 1)"
   failures="$(evaluate_next_id_rows "$diagnostic_mutant" control unparseable-last-id)"
   if [[ "$failures" == *'|unparseable-last-id|'* ]]; then
     pass "a changed ID diagnostic key fails its row"

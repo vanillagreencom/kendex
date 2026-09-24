@@ -10,7 +10,7 @@ Inputs: summary, reasons, and revisit conditions (required); research reference 
 .agents/skills/decider/scripts/decisions next-id
 ```
 
-`next-id` also reads the base branch's INDEX, so it skips a number another branch already merged. A `notice=base-unverified` line means the base was not read or not fetched, and the number is checked against this branch alone.
+`next-id` also reads the base branch's INDEX, so it skips a number another branch already merged. A `notice=base-unverified` line says the base was not fully read. With `reason=fetch-failed`, the number is checked against the base's local copy, which may be behind the remote. With any other reason, it is checked against this branch alone.
 
 Without the script: take the last populated INDEX ID value and increment its numeric suffix. If it has none, ask for the project's scheme.
 
@@ -49,13 +49,15 @@ Path: [DECISIONS_DIR]/[DECISION_ID]-[DESCRIPTOR].md
 
 ## Renumber a record
 
-`decisions check` refuses an ID the base branch records for another decision, and `check` or `get` refuses an ID two rows or two documents share. The base keeps the number, and the branch's record takes a new one from `next-id`. Change every place the old ID appears on the branch's record, per `schemas/decision-format.md`:
+`decisions check` refuses an ID the base branch records for another decision, and an ID two rows or two documents share. `decisions get` refuses an ID two rows share. The base keeps the number, and the branch's record takes a new one from `next-id`. Change every `DECISION_ID` occurrence `schemas/decision-format.md` defines for the branch's record, including:
 
 - the file name, `[DECISION_ID]-[DESCRIPTOR].md`
 - the `# [DECISION_ID]: Title` line
 - the INDEX row's ID and Link cells
 - the `[DECISION_ID](DECISION_ID-descriptor.md)` links other records carry
+- the Status values that name it, `Superseded by [DECISION_ID]` and `Active ([COMPONENTS] → [DECISION_ID])`, in INDEX Status cells and `**Status**:` lines
+- the `**Refines**:` lines that name it
 - the `REVISIT([DECISION_ID])` markers in code
 - the `**Decision [DECISION_ID]**:` reference in the prompting issue
 
-Check the citations by reading them: the commit-guards `md-refs` lane passes a citation left at the old number, because that number still names the base's record.
+The commit-guards `md-refs` lane catches a link whose target file was renamed. It does not judge a bare decision ID in prose, a Status cell, a link label or a code marker, so check those by reading them.

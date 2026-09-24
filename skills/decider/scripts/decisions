@@ -2,10 +2,11 @@
 # Decision lookup tool — search and query architectural decision documents.
 # Run `decisions help` for usage.
 #
-# Read-only lookups (search, list, check) treat an absent decisions directory
-# as "no decisions recorded": empty JSON array or no finding, note on stderr,
-# exit 0. Commands that feed the creation workflow (next-id, get) require an
-# initialized directory.
+# search, list and check treat an absent decisions directory as "no decisions
+# recorded": empty JSON array or no finding, note on stderr, exit 0. Commands
+# that feed the creation workflow (next-id, get) require an initialized
+# directory. next-id and check fetch the base branch, which updates its
+# remote-tracking ref.
 # Diagnostic protocol: a refusal starts with `error=KEY` and one or more
 # `FIELD=VALUE` pairs; a notice starts with `notice=KEY` and the same field
 # form. English guidance follows on later lines.
@@ -44,17 +45,20 @@ Actions:
   list                 Active decisions
   next-id              Next decision ID, scheme inferred from the ID column.
                        The maximum is taken over this INDEX.md and the base
-                       branch's copy of it, fetched first, so a number the
-                       base already holds is never returned
+                       branch's copy of it, so a number the base holds is
+                       skipped (see DECISIONS_BASE_REF for when the base
+                       cannot be read)
   get <DECISION_ID>    Decision details (status, date, path). An ID on more
                        than one INDEX row is refused, naming every row
   check                Refuse duplicate decision IDs: an ID on more than one
-                       INDEX row, an ID matching more than one
-                       <ID>-*.md file in the decisions directory, and an ID
-                       this INDEX.md records for a different document than
-                       the base branch's INDEX.md does. The base is read at
-                       its fetched tip, not at the merge base. Exits 0 with
-                       no output when nothing is found
+                       INDEX row, an ID on an INDEX row that matches more
+                       than one <ID>-*.md file in the decisions directory,
+                       and an ID this INDEX.md records for a different
+                       document than the base branch's INDEX.md does. The
+                       base is read at its fetched tip, not at the merge
+                       base. A base that could not be judged is refused too
+                       (see DECISIONS_BASE_REF). Exits 0 with no finding;
+                       a notice= line may still print on stderr
 
 Options:
   --limit N            Max search results (default: 5)
@@ -63,7 +67,9 @@ Output (JSON):
   search:  [{id, decision, path}] (keyword mode adds score)
   list:    [{id, decision, path}]
   get:     {id, decision, status, date, path}
-  check:   nothing; each finding is an error= record on stderr, exit 1
+  check:   nothing on stdout; each finding is an error= record on
+           stderr, exit 1; a notice= record (base-unverified,
+           decisions-dir-absent) leaves exit 0
 
 Scoring per term: decision 3, id 3, rationale 1, body 0.5.
 
@@ -84,9 +90,14 @@ Environment:
                        working tree (default: origin/HEAD, else origin/main,
                        else main). A <remote>/<branch> ref is fetched first;
                        a local branch is read as it stands. A base that
-                       cannot be fetched or read prints
-                       notice=base-unverified with a reason, and next-id
-                       answers from what it could read, exit 0
+                       cannot be fetched or read prints base-unverified with
+                       a reason: not-a-repository, unresolved, fetch-failed
+                       (the local copy was read), index-absent or
+                       unreadable. next-id prints it as a notice and answers
+                       from what it could read, exit 0. check prints
+                       unresolved and unreadable as an error, exit 1, and
+                       index-absent as a notice; the others are errors when
+                       this variable is set and notices when it is not
 
 Examples:
   decisions search "FFI error handling"
@@ -286,17 +297,23 @@ parse_rows() { # TEXT LABEL PATH_PREFIX — LABEL names the INDEX in notices
     ]' <<<"$text"
 }
 
-# The base branch's INDEX.md, parsed into BASE_ROWS. Every way the base can
-# fail to be read ends in one notice=base-unverified naming the reason, and
-# BASE_ROWS keeps what could be read: nothing, or the local copy of a ref
-# whose fetch failed. The caller then answers from the working tree.
+# The base branch's INDEX.md, parsed into BASE_ROWS. Nothing is printed here:
+# the outcome is left in BASE_REASON (empty when the base was read whole) and
+# BASE_FETCH_FAILED, and report_base turns it into records, because next-id
+# and check judge the same outcome differently. BASE_ROWS keeps what could be
+# read: nothing, or the local copy of a ref whose fetch failed.
 BASE_ROWS='[]'
+BASE_REF=""
+BASE_PATH=""
+BASE_REASON=""
+BASE_FETCH_FAILED=0
 read_base_index() {
-  local prefix ref="" cand short remote branch remotes r fetched tried
-  local candidates=() text path
+  local prefix cand short remote branch remotes r text
+  local candidates=()
 
   if ! prefix="$(git -C "$DECISIONS_DIR" rev-parse --show-prefix 2>/dev/null)"; then
-    emit_notice base-unverified "ref=none reason=not-a-repository" "The decisions directory is not inside a git repository, so no base branch was read."
+    BASE_REF=none
+    BASE_REASON=not-a-repository
     return 0
   fi
 
@@ -311,7 +328,6 @@ read_base_index() {
   fi
 
   remotes="$(git -C "$DECISIONS_DIR" remote)" || remotes=""
-  fetched=""
   for cand in "${candidates[@]}"; do
     short="${cand#refs/remotes/}"
     remote=""
@@ -324,40 +340,100 @@ read_base_index() {
     if [[ -n "$remote" ]]; then
       branch="${short#"$remote/"}"
       # No prompt: a credential or passphrase request would hang the caller
-      # instead of degrading to the notice below.
-      if GIT_TERMINAL_PROMPT=0 git -C "$DECISIONS_DIR" fetch --quiet --no-tags "$remote" "+refs/heads/$branch:refs/remotes/$remote/$branch" </dev/null >/dev/null 2>&1; then
-        fetched=1
-      else
-        fetched=0
+      # instead of degrading to a reported outcome. A failure stays recorded
+      # for every later candidate, which may be a stale local branch.
+      if ! GIT_TERMINAL_PROMPT=0 git -C "$DECISIONS_DIR" fetch --quiet --no-tags "$remote" "+refs/heads/$branch:refs/remotes/$remote/$branch" </dev/null >/dev/null 2>&1; then
+        BASE_FETCH_FAILED=1
       fi
-    else
-      fetched=""
     fi
     if git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$cand^{commit}" >/dev/null; then
-      ref="$cand"
+      BASE_REF="$cand"
       break
     fi
   done
 
-  if [[ -z "$ref" ]]; then
-    tried="$(IFS=,; printf '%s' "${candidates[*]}")"
-    emit_notice base-unverified "ref=$tried reason=unresolved" "No base branch resolved, so only the working tree was read. Set DECISIONS_BASE_REF to name one."
+  if [[ -z "$BASE_REF" ]]; then
+    BASE_REF="$(IFS=,; printf '%s' "${candidates[*]}")"
+    BASE_REASON=unresolved
     return 0
-  fi
-  if [[ "$fetched" == 0 ]]; then
-    emit_notice base-unverified "ref=$ref reason=fetch-failed" "The base branch could not be fetched, so its local copy was read and may be behind the remote."
   fi
 
-  path="${prefix}INDEX.md"
-  if ! git -C "$DECISIONS_DIR" cat-file -e "$ref:$path" 2>/dev/null; then
-    emit_notice base-unverified "ref=$ref reason=index-absent" "The base branch has no $path, so no base number was read."
+  # Presence is read from the tree, which a blob-filtered clone holds locally;
+  # only the read below needs the blob, and may fetch it.
+  BASE_PATH="${prefix}INDEX.md"
+  if ! git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$BASE_REF:$BASE_PATH" >/dev/null; then
+    BASE_REASON=index-absent
     return 0
   fi
-  if ! text="$(git -C "$DECISIONS_DIR" show "$ref:$path")"; then
-    emit_notice base-unverified "ref=$ref reason=unreadable" "The base branch's $path could not be read, so no base number was read."
+  if ! text="$(GIT_TERMINAL_PROMPT=0 git -C "$DECISIONS_DIR" show "$BASE_REF:$BASE_PATH" </dev/null 2>/dev/null)"; then
+    BASE_REASON=unreadable
     return 0
   fi
-  BASE_ROWS="$(parse_rows "$text" "$ref:$path" "$ref:$prefix")"
+  BASE_ROWS="$(parse_rows "$text" "$BASE_REF:$BASE_PATH" "$BASE_REF:$prefix")"
+}
+
+# Print the outcome of read_base_index. Under check, a base that was not
+# judged is a refusal: its only job beyond the working-tree checks is the base
+# comparison. That holds for a base that did not resolve or could not be read,
+# and for every outcome but index-absent when DECISIONS_BASE_REF names the
+# base. A base with no INDEX.md holds no number to collide with, so it passes.
+# Returns 1 when a refusal was printed.
+report_base() { # MODE — next-id or check
+  local mode="$1" configured=0 kind text
+  [[ -z "${DECISIONS_BASE_REF:-}" ]] || configured=1
+
+  if [[ "$BASE_FETCH_FAILED" -eq 1 && -z "$BASE_REASON" ]]; then
+    kind=notice
+    if [[ "$mode" == check && "$configured" -eq 1 ]]; then
+      kind=error
+    fi
+    base_record "$kind" "ref=$BASE_REF reason=fetch-failed" "The base branch could not be fetched, so its local copy was read and may be behind the remote."
+    [[ "$kind" == notice ]] || return 1
+  fi
+
+  case "$BASE_REASON" in
+    "") return 0 ;;
+    not-a-repository)
+      kind=notice
+      [[ "$mode" != check || "$configured" -eq 0 ]] || kind=error
+      text="The decisions directory is not inside a git repository, so no base branch was read."
+      ;;
+    unresolved)
+      kind=notice
+      [[ "$mode" != check ]] || kind=error
+      if [[ "$configured" -eq 1 ]]; then
+        text="DECISIONS_BASE_REF does not resolve to a commit, so no base branch was read."
+      else
+        text="None of these resolved to a commit, so no base branch was read. Set DECISIONS_BASE_REF to name the base branch."
+      fi
+      ;;
+    index-absent)
+      kind=notice
+      text="The base branch has no $BASE_PATH, so it holds no decision number."
+      ;;
+    unreadable)
+      kind=notice
+      [[ "$mode" != check ]] || kind=error
+      text="The base branch's $BASE_PATH exists but could not be read, so no base number was read."
+      ;;
+    *)
+      emit_error base-reason-unknown "reason=$BASE_REASON" "read_base_index set a reason report_base does not know: the script is broken."
+      return 1
+      ;;
+  esac
+  if [[ "$BASE_FETCH_FAILED" -eq 1 ]]; then
+    text="$text The fetch of the base branch also failed."
+  fi
+  base_record "$kind" "ref=$BASE_REF reason=$BASE_REASON" "$text"
+  [[ "$kind" == notice ]]
+}
+
+base_record() { # notice|error FIELD EXPLANATION
+  if [[ "$1" == error ]]; then
+    emit_error base-unverified "$2" "$3"
+  else
+    emit_notice base-unverified "$2" "$3"
+  fi
 }
 
 
@@ -540,16 +616,6 @@ list_decisions() {
   parse_index | jq '[.[] | select(.status | startswith("Active")) | {id, decision, path}]'
 }
 
-# Infer the scheme from the last populated ID-column value. If it is not
-# incrementable, fail loudly instead of falling back to an older row and
-# returning a plausible but wrong ID. Sets PARSED_ID_PREFIX and PARSED_ID_NUM.
-infer_id_scheme() { # LAST_ID
-  if ! split_decision_id "$1"; then
-    emit_error id-suffix-missing "value=$1" "The last decision ID in INDEX.md has no numeric suffix. Set DECISION_ID_PREFIX and DECISION_ID_WIDTH to select a scheme explicitly."
-    return 1
-  fi
-}
-
 cmd_next_id() {
   local ids=() base_ids=() id id_list
   id_list="$(parse_index | jq -r '.[].id // empty')"
@@ -578,16 +644,8 @@ cmd_next_id() {
     width_configured=1
   fi
 
-  # The working tree is judged before the base is read, so a refusal the
-  # working tree alone decides costs no fetch.
-  local inferred_prefix="" inferred_width=""
-  if [[ "$prefix_configured" -eq 0 && "${#ids[@]}" -gt 0 ]]; then
-    infer_id_scheme "${ids[${#ids[@]} - 1]}" || return 1
-    inferred_prefix="$PARSED_ID_PREFIX"
-    inferred_width="${#PARSED_ID_NUM}"
-  fi
-
   read_base_index
+  report_base next-id
   id_list="$(jq -r '.[].id // empty' <<<"$BASE_ROWS")"
   while IFS= read -r id; do
     if [[ -n "$id" ]]; then
@@ -596,16 +654,23 @@ cmd_next_id() {
   done <<<"$id_list"
 
   if [[ "$prefix_configured" -eq 0 ]]; then
-    # An empty working-tree INDEX takes its scheme from the base's last row.
-    if [[ -z "$inferred_width" && "${#base_ids[@]}" -gt 0 ]]; then
-      infer_id_scheme "${base_ids[${#base_ids[@]} - 1]}" || return 1
-      inferred_prefix="$PARSED_ID_PREFIX"
-      inferred_width="${#PARSED_ID_NUM}"
+    # Infer the scheme from the last populated ID-column value: the working
+    # tree's, else the base's. If it is not incrementable, fail loudly instead
+    # of falling back to an older row and returning a plausible but wrong ID.
+    local last_id=""
+    if [[ "${#ids[@]}" -gt 0 ]]; then
+      last_id="${ids[${#ids[@]} - 1]}"
+    elif [[ "${#base_ids[@]}" -gt 0 ]]; then
+      last_id="${base_ids[${#base_ids[@]} - 1]}"
     fi
-    if [[ -n "$inferred_width" ]]; then
-      prefix="$inferred_prefix"
+    if [[ -n "$last_id" ]]; then
+      if ! split_decision_id "$last_id"; then
+        emit_error id-suffix-missing "value=$last_id" "The last decision ID in INDEX.md has no numeric suffix. Set DECISION_ID_PREFIX and DECISION_ID_WIDTH to select a scheme explicitly."
+        return 1
+      fi
+      prefix="$PARSED_ID_PREFIX"
       if [[ "$width_configured" -eq 0 ]]; then
-        width="$inferred_width"
+        width="${#PARSED_ID_NUM}"
       fi
     fi
   elif [[ "$width_configured" -eq 0 ]]; then
@@ -717,6 +782,7 @@ cmd_check() {
   # A row the base records under the same link is the same record, edited or
   # not. The same ID under another link is a second decision.
   read_base_index
+  report_base check || found=1
   local collisions collision
   collisions="$(jq -c --argjson base "$BASE_ROWS" '
     .[] | . as $row
