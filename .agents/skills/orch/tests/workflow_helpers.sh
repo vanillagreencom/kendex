@@ -488,6 +488,55 @@ else
   fi
 fi
 
+# On a hosted fleet the overseer's main-checkout route runs on the control VM,
+# which runs none of the toolchain the commit chain starts: the refusal stands
+# in § 1 ahead of the first tracker read, so nothing is activated or cut first.
+micro_refuses_control_host() { # micro-doc
+  local head=""
+  if ! head=$(awk '
+    /^## 1\. Open The Session/ { inside = 1 }
+    /^## 2\./ { inside = 0 }
+    inside && /linear\.sh/ { exit }
+    inside { print }
+  ' "$1"); then
+    return 1
+  fi
+  [[ -n "$head" ]] &&
+    grep -Fq '.agents/skills/orch/scripts/lane-host resolve' <<<"$head" &&
+    grep -Fq 'Any answer but `local` refuses the run here, with nothing read, activated or changed.' <<<"$head" &&
+    grep -Fq '`micro-control-host host=[HOST]`' <<<"$head" &&
+    grep -Fq 'launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive' <<<"$head"
+}
+
+if micro_refuses_control_host "$micro_workflow"; then
+  pass "micro refuses the main-checkout route on a resolved remote lane host"
+else
+  fail "micro must refuse the main-checkout route on a resolved remote lane host"
+fi
+
+control_host_mutant="$TMP_ROOT/micro-control-host-runs.md"
+control_host_rule='Any answer but `local` refuses the run here, with nothing read, activated or changed.'
+control_host_rule_count="$(grep -Fc -- "$control_host_rule" "$micro_workflow" || true)"
+assert_eq "$control_host_rule_count" "1" "control: the control-host refusal has one mutation target"
+if [[ -L "$micro_workflow" ]]; then
+  fail "control: the micro workflow mutation source must not be a symlink"
+else
+  MUT_OLD="$control_host_rule" MUT_NEW='Any answer continues the run.' awk '
+    {
+      old = ENVIRON["MUT_OLD"]
+      at = index($0, old)
+      if (at) { $0 = substr($0, 1, at - 1) ENVIRON["MUT_NEW"] substr($0, at + length(old)) }
+      print
+    }' "$micro_workflow" >"$control_host_mutant"
+  assert_eq "$(cmp -s "$control_host_mutant" "$micro_workflow" && echo same || echo differs)" "differs" \
+    "control: the control-host mutant lets the run continue"
+  if micro_refuses_control_host "$control_host_mutant"; then
+    fail "must-fail: a micro run continuing on a remote lane host must fail the refusal contract"
+  else
+    pass "must-fail: a micro run continuing on a remote lane host fails the refusal contract"
+  fi
+fi
+
 echo
 echo "=== frozen cross-skill contracts ==="
 

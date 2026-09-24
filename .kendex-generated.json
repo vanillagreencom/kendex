@@ -777,6 +777,7 @@
   ".agents/skills/orch/references/artifact-checks.md",
   ".agents/skills/orch/references/codex-runtime.md",
   ".agents/skills/orch/references/communication-modes.md",
+  ".agents/skills/orch/references/control-host-toolchain.conf",
   ".agents/skills/orch/references/finding-disposition.md",
   ".agents/skills/orch/references/gates.md",
   ".agents/skills/orch/references/narrow-change.conf",
