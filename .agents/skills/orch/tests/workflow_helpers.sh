@@ -328,8 +328,8 @@ done
 # The merged short-circuit is only a short-circuit while it precedes the reads
 # it skips: below them, a resolution that refuses for want of an orphaned head
 # stands between a completed merge and its cleanup.
-already_merged_line="$(grep -n -F '`[ALREADY_MERGED]=true` skips the mutation and the wait for step 2' "$merge_workflow" | cut -d: -f1)"
-resolve_line="$(grep -n -F 'approval-wait --resolve-mode --base [PREPARED_BASE]' "$merge_workflow" | cut -d: -f1)"
+already_merged_line="$(grep -n -F '`[ALREADY_MERGED]=true` skips to step 2' "$merge_workflow" | cut -d: -f1 || true)"
+resolve_line="$(grep -n -F 'approval-wait --resolve-mode --base [PREPARED_BASE]' "$merge_workflow" | cut -d: -f1 || true)"
 if [[ -n "$already_merged_line" && -n "$resolve_line" && "$already_merged_line" -lt "$resolve_line" ]]; then
   pass "merge-pr sends an already-merged PR to step 2 before it resolves a mode"
 else
@@ -371,6 +371,42 @@ else
   fi
 fi
 
+micro_head_is_pinned() { # merge-doc
+  grep -Fq 'A `[MICRO_ENTRY]` run continues only where `[MICRO_HEAD]` equals it' "$1" &&
+    grep -Fq 'any other head arms nothing and escapes by micro.md condition 9' "$1"
+}
+
+if micro_head_is_pinned "$merge_workflow"; then
+  pass "merge-pr uses a micro exemption only at the head it was proved over"
+else
+  fail "merge-pr must refuse a prepared head that is not the classified micro head"
+fi
+
+micro_head_mutant="$TMP_ROOT/merge-pr-unpinned-micro.md"
+micro_head_rule='A `[MICRO_ENTRY]` run continues only where `[MICRO_HEAD]` equals it'
+micro_head_count="$(grep -Fc -- "$micro_head_rule" "$merge_workflow" || true)"
+assert_eq "$micro_head_count" "1" "control: the micro head test has one mutation target"
+if [[ -L "$merge_workflow" ]]; then
+  fail "control: the merge workflow mutation source must not be a symlink"
+else
+  # Literal, through the environment and index/substr: sub() reads its pattern
+  # as a regex and this rule carries `[MICRO_ENTRY]`, which is a bracket class.
+  MUT_OLD="$micro_head_rule" MUT_NEW='A `[MICRO_ENTRY]` run continues' awk '
+    {
+      old = ENVIRON["MUT_OLD"]
+      at = index($0, old)
+      if (at) { $0 = substr($0, 1, at - 1) ENVIRON["MUT_NEW"] substr($0, at + length(old)) }
+      print
+    }' "$merge_workflow" >"$micro_head_mutant"
+  assert_eq "$(cmp -s "$micro_head_mutant" "$merge_workflow" && echo same || echo differs)" "differs" \
+    "control: the mutant drops the micro head test"
+  if micro_head_is_pinned "$micro_head_mutant"; then
+    fail "must-fail: a micro exemption used at any head must fail the pinned-head contract"
+  else
+    pass "must-fail: a micro exemption used at any head fails the pinned-head contract"
+  fi
+fi
+
 micro_workflow="$SKILL_DIR/workflows/micro.md"
 micro_policy_is_closed() { # micro-doc
   grep -Fq 'env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-view [PR_NUMBER] --json baseRefOid,headRefOid' "$1" &&
@@ -379,7 +415,8 @@ micro_policy_is_closed() { # micro-doc
     grep -Fq 'independent of the repository'"'"'s `approval` or `review` gate mode' "$1" &&
     grep -Fq 'an inactive policy, an unresolved class, another class, or another evidence policy escapes' "$1" &&
     grep -Fq 'Require a valid readiness object for an open pull request.' "$1" &&
-    grep -Fq 'binding `[MICRO_ENTRY]` to `true`.' "$1" &&
+    grep -Fq 'binding `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`.' "$1" &&
+    grep -Fq '9. merge-pr.md § 5 step 1 refuses because `[PREPARED_HEAD]` is not `[MICRO_HEAD]`.' "$1" &&
     ! grep -Fq 'approval-wait --resolve-mode' "$1"
 }
 

@@ -784,6 +784,7 @@
   ".agents/skills/orch/references/peer-mail.md",
   ".agents/skills/orch/references/pi-runtime.md",
   ".agents/skills/orch/references/skill-rules.md",
+  ".agents/skills/orch/references/suppressed-findings.md",
   ".agents/skills/orch/references/waiter-launch.md",
   ".agents/skills/orch/schemas/dev-return.md",
   ".agents/skills/orch/schemas/dev-round.md",

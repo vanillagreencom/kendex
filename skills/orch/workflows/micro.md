@@ -162,7 +162,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scrip
 
 Its JSON stdout is `[CHECK]`. Require a valid readiness object for an open pull request. A command failure, an unreadable object, or a non-open pull request escapes (§ Escape condition 7). A red required check or a merge conflict never reaches a merge: `pr-merge` refuses both, and § 5 step 1 routes that refusal.
 
-**Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]`, and `[STATE_KEY]` as `[ISSUE_ID]`, binding `[MICRO_ENTRY]` to `true`.
+**Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]`, and `[STATE_KEY]` as `[ISSUE_ID]`, binding `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`. The exemption was proved over that head alone, so the head is what carries it across the handoff: § 5 step 1 refuses a prepared head that is not this one.
 
 Its § 3 is skipped, so nothing waits on CI or on a reviewer before the arm. § 5 step 1 attempts the prepared head and owns the queue wait to a terminal verdict. A refusal returns to its § 3.2, which reads the `[CHECK]` object only the skipped § 3 produces. That return escapes (§ Escape condition 8).
 
@@ -199,6 +199,7 @@ The tier holds only while the item and its change stay inside it. Each condition
 6. A review finding on the pull request needs a change condition 3 or 5 excludes.
 7. § 4 cannot prove both halves of its precheck. Either the review gate does not answer exactly `change_class=micro review_evidence=none policy=active` — an inactive policy, an unresolved class, another class, another evidence policy, or an unreadable result — or `pr-merge --check` returns no valid readiness object for an open pull request.
 8. merge-pr.md § 5 step 1 returns to its § 3.2.
+9. merge-pr.md § 5 step 1 refuses because `[PREPARED_HEAD]` is not `[MICRO_HEAD]`. A head arrived between § 4's classification and that step, and nothing has measured its class.
 
 Ending the run leaves the branch and its commits where they stand and reports the condition in § 5. **Main checkout only**, use the route below before reporting. It owns the base-branch restore this file opens with.
 

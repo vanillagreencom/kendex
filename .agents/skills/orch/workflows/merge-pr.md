@@ -113,7 +113,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 Three warnings are merge gates, not advice:
 
 - **`unresolved_threads`** — zero unresolved review threads is required at merge time. Its sibling `unresolved_threads_waived` carries the same count where the class policy waives the thread term, is not a gate, and needs no action. Route to `review-pr-comments` to reply and resolve first. `auto-recommended` keeps triaging within `REVIEW_MAX_EXTERNAL_ROUNDS`, then records `review-threads-open`; merge past them only on explicit user override.
-- **`suppressed-findings`** — not a `CHECK` warning. `pr-merge --check` reduces the red gate to `ci_failed`, and `ci-classify-refusal` prints a `fail:` line naming the `Review gate` check; the state is that check's commit-status description, which opens `N suppressed finding(s) in a review body`. `pr-watch` reports the same state as a `suppressed-findings` attention line. Those entries are findings a reviewer wrote into its review body, so no thread carries them: `unresolved_threads` reads zero and `review-pr-comments` reaches none of them. Disposition and answer every entry under [references/finding-disposition.md](../references/finding-disposition.md), which owns the complete-list rule, the one-comment `Dispositions at <sha>` shape and what a reply may say; the gate subtracts only what that comment answers. Never an admin merge, an empty commit, or a restack to earn a fresh head — a code change is only ever the fix itself. Only the PR AUTHOR's comment counts: the gate reads the comment's login, and one posted under any other identity is ignored while the gate stays red. Resolve the posting identity with `gh api user --jq .login` against the PR author. Equal, `auto-recommended` posts the comment once and re-checks, recording `review-suppressed-findings` if a term still blocks. Not equal, it records `review-suppressed-findings` naming the author who must post it, and never reports the findings as answered.
+- **`suppressed-findings`** — not a `CHECK` warning, and a merge gate. `pr-merge --check` reduces the red gate to `ci_failed`, `ci-classify-refusal` prints a `fail:` line naming the `Review gate` check, and that check's status description opens `N suppressed finding(s) in a review body`; `pr-watch` reports the same state as a `suppressed-findings` attention line. Those entries are findings a reviewer wrote into its review body, so no thread carries them: `unresolved_threads` reads zero and `review-pr-comments` reaches none of them. Answer them by [references/suppressed-findings.md](../references/suppressed-findings.md), which owns the whole route.
 - **`not_approved`** — bind this pull request's endpoints as `[BASE_SHA]` and `[HEAD_SHA]`:
 
   ```bash
@@ -132,7 +132,7 @@ Three warnings are merge gates, not advice:
   - `review` — `not_approved` is expected. Poll `approval-wait [PR_NUMBER] 30 --json --mode review --item [STATE_KEY]` and treat `reviewed` as the met gate.
   - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `approval-wait [PR_NUMBER] 30 --json --mode approval --item [STATE_KEY]`; after its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
 
-  With `PR_REVIEW_ON_TIMEOUT=proceed`, a deadline reached with zero unresolved threads and no reviewer evidence returns `proceeded` (exit 0) instead of `timeout` in both modes — treat it as a met gate and record it in the § 6 report. An open thread or a `changes_requested` still blocks. The proceed is a LOCAL verdict — orch posts no status.
+  With `PR_REVIEW_ON_TIMEOUT=proceed`, a deadline reached with zero unresolved threads and no reviewer evidence returns `proceeded` (exit 0) instead of `timeout` in both modes — treat it as a met gate and record it in the § 6 report. An open thread still blocks it; a `changes_requested` blocked earlier, at § 3.2's readiness check. The proceed is a LOCAL verdict — orch posts no status.
 
   An `unreviewable` status is never a met gate: no automatic reviewer targets this PR's base, so the silence is structural. Follow [references/gates.md](../references/gates.md) § Stacked pull requests, then re-run the wait. If it repeats, `auto-recommended` records `review-gate-unreviewable`, while `ask` presents the wait or stop choice.
 
@@ -214,7 +214,7 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner
    ```
 
-   `[ALREADY_MERGED]=true` skips the mutation and the wait for step 2 HERE, ahead of both reads below: the squash orphans a merged head, a resumed lane may not hold it, and a resolution refusing for want of it must not block that merge's cleanup.
+   `[ALREADY_MERGED]=true` skips to step 2 HERE, ahead of both reads: the squash orphans a merged head, a resumed lane may not hold it, and a refusal for want of it must not block that merge's cleanup.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefOid,headRefOid --jq '[.baseRefOid,.headRefOid]|@tsv'
@@ -226,7 +226,7 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait --resolve-mode --base [PREPARED_BASE] --head [PREPARED_HEAD]
    ```
 
-   Read workflow state `pr.size_check` for `[STATE_KEY]`. Use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.
+   Two records are bound to a head, and both take the same test against `[PREPARED_HEAD]`. A `[MICRO_ENTRY]` run continues only where `[MICRO_HEAD]` equals it: that exemption skipped § 3 and was proved over that head alone, so any other head arms nothing and escapes by micro.md condition 9. Read workflow state `pr.size_check` for `[STATE_KEY]`, and use it only when its `head_sha` equals it, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.
 
    **Merge route.** One of three, read once. Only the exact value `fast-path` selects the second; every other value, unset or unrecognized, is `off`:
 
@@ -306,7 +306,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Exit `0` merged the prepared head immediately — continue to step 2. Exit `1` with first line `arm: no-merge-gate=<condition>` means the repository has nothing for auto-merge to wait on: on Queue first that is a repository with no queue, so take the direct attempt above; on every other route record the named stop `no-merge-gate`, hand back with the remedy its second line names, and never fall back to a raw `gh pr merge --auto`. Any other exit but `0` or `75` is an exact-head arm failure: surface it and return to § 3.2.
 
-   Exit `75` means queued or armed. Run the command below through [Waiter launch](../references/waiter-launch.md), appending `--no-guard` under `exempt`. Keep the lane active while polling the completion file, then route the recorded exit and result.
+   Exit `75` means queued or armed. Run the command below through [Waiter launch](../references/waiter-launch.md), appending `--no-guard` under `exempt`. Keep the lane active while polling the completion file, then route the recorded exit and result. A changes-requested review blocked at § 3.2's readiness check, before this arm; past it no mode reads review state, and `exempt` waives the thread guard alone.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] 180 540 --json --item [STATE_KEY]
