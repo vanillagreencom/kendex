@@ -30,7 +30,7 @@ rule "the repeat watch runs detached through the waiter launch" "$WATCH" \
 rule "a read that fails is never read as no watch" "$WATCH" "$DELIVERY" \
   'failed read' "pgrep's stderr" 'Exit 0 is a live watch'
 rule "every delivery and expiry reads the process before the status" \
-  "$WATCH" "$DELIVERY" 'run that read first' 'test -s [RUN_DIR]/watch.exit'
+  "$WATCH" "$DELIVERY" 'run that read first' 'test -s "[RUN_DIR]/watch.exit"'
 rule "a stop signals only the group the read proved" "$WATCH" "$DELIVERY" \
   '`kill -TERM -- -[PID]`' 'the group it proved'
 rule "a stop marks the status file before its kill" "$WATCH" "$DELIVERY" \
@@ -158,6 +158,7 @@ while IFS='|' read -r span want; do
   esac
 done <<'ROWS'
 notifyBogus: true|notifyBogus
+notifyMode: "never-a-mode"|notifyMode never-a-mode
 bg_status action: "bogus"|bg_status action bogus
 ROWS
 

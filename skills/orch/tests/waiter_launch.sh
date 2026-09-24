@@ -32,7 +32,7 @@ cleanup() {
   local leader
   # Every process group the read case launched leads with a shell naming a
   # run path under it, so a failed case leaves no job behind.
-  for leader in $(pgrep -f "$TMP_ROOT/read/" || :); do
+  for leader in $(pgrep -f "$TMP_ROOT/read dir[+]x/" || :); do
     kill -TERM -- "-$leader" 2>/dev/null || true
   done
   if [[ -n "$parent_pid" ]]; then
@@ -146,18 +146,22 @@ bare|launch|bare|0|control: the caller's own ignore reaches the detached job
 ROWS
 # The watch read and stop in watch-delivery.md, run as a harness runs them:
 # the read inside a shell whose own argv carries the pattern, against a job this
-# fence launched under an `env -u` prefix beside a follower of its log. With no
+# fence launched under an `env -u` prefix beside a follower of its log, in a run
+# directory made as waiter-launch.md makes one, under a parent path holding a
+# space and a `+`, the characters a checkout path may carry. With no
 # job the read exits 1, never finding its own shell; with the job it prints one
 # pid, the job group's leader; the stop's `stopped` mark survives the group kill;
 # and the read then exits 1. The pid's group is compared before any kill, so a
 # read naming another process fails here and signals nothing.
 watch_read_case() {
-  local read_span read_cmd case_dir="$TMP_ROOT/read" read_rc read_out read_group attempt follow_leader
+  local read_span read_cmd case_dir run_id read_rc read_out read_group attempt follow_leader
   read_span="$(awk 'match($0, /`pgrep -f [^`]*`/) { print substr($0, RSTART + 1, RLENGTH - 2); exit }' \
     "$SKILL_DIR/references/watch-delivery.md")"
-  mkdir -p "$case_dir"
-  read_cmd="${read_span//\[RUN_DIR\]/$case_dir}"
-  assert_eq "${read_cmd:0:$((10 + ${#case_dir}))}" "pgrep -f '$case_dir" 'the documented watch read is keyed on the run path' "$case_dir/watch.log"
+  mkdir -p "$TMP_ROOT/read dir+x"
+  case_dir="$(mktemp -d "$TMP_ROOT/read dir+x/waiter.XXXXXX")"
+  run_id="${case_dir##*/waiter.}"
+  read_cmd="${read_span//\[RUN_ID\]/$run_id}"
+  assert_eq "$read_cmd" "pgrep -f 'waiter[.]$run_id/watc[h] '" 'the documented watch read is keyed on the run name' "$case_dir/watch.log"
   # A trailing command keeps the shell from exec'ing pgrep, as a harness tool
   # shell running a longer command line never does.
   harness_read() { sh -c "$read_cmd; exit \$?"; }
@@ -188,7 +192,7 @@ watch_read_case() {
   harness_read >/dev/null || read_rc=$?
   assert_eq "$read_rc" 1 'the read exits 1 once the group stop ends the job' "$case_dir/watch.log"
   assert_eq "$(<"$case_dir/watch.exit")" stopped 'the stop mark written before the group kill survives it' "$case_dir/watch.log"
-  follow_leader="$(pgrep -f "$case_dir/follo[w] ")" || follow_leader=""
+  follow_leader="$(pgrep -f "waiter[.]$run_id/follo[w] ")" || follow_leader=""
   [[ -z "$follow_leader" || "$follow_leader" == *$'\n'* ]] || kill -TERM -- "-$follow_leader" 2>/dev/null || true
 }
 if command -v pgrep >/dev/null; then
