@@ -19,20 +19,22 @@
 # Usage:
 #   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
 #     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
-#     [--qa-label LABEL]... [--near-ceiling LINE... | --near-ceiling-base REF] \
+#     [--qa-label LABEL]... [--near-ceiling-base REF] \
 #     [--bundled] [--no-summary] [--summary TEXT | --summary-file PATH] \
 #     [--item N DECISION REASONING]...
 #
 # near_ceiling carries one byte-ceiling near-ceiling line per file within
 # reach of the byte ceiling, as that lane reports the branch at artifact time,
 # so the orchestrator's next round brief plans the split before a later commit
-# meets the wall. --near-ceiling-base REF makes this writer the one runner of
-# the probe: it runs the worktree's installed lane with --base REF and keeps
-# every stdout line beginning "byte-ceiling: near-ceiling=" on exit 0 or 1
-# (exit 1 only adds a file already over the ceiling). A probe that cannot
-# answer (lane absent, any other exit) records near_ceiling: null and the
-# cause in near_ceiling_error: an empty list would claim nothing is near the
-# wall, and the orchestrator replaces its carried list with whatever it reads.
+# meets the wall. --near-ceiling-base REF is the field's one producer: this
+# writer runs the worktree's installed lane with --base REF and keeps every
+# stdout line beginning "byte-ceiling: near-ceiling=" on exit 0 or 1 (exit 1
+# only adds a file already over the ceiling). A repository without the lane has
+# no byte ceiling and so no file near one: []. A round that did not probe (no
+# --near-ceiling-base) or a lane that exits otherwise records near_ceiling:
+# null and the cause in near_ceiling_error: an empty list would claim nothing is
+# near the wall, and the orchestrator replaces its carried list with whatever
+# it reads.
 #
 # --validate stays strictly enumerated ("pass" or "FAILING:…") so it remains
 # machine-checkable. --validate-note is the additive channel for a QUALIFIED
@@ -58,7 +60,7 @@
 #     "qa_labels": ["needs-review"],          // [] when no --qa-label given
 #     "near_ceiling": ["…"] | null,           // byte-ceiling near-ceiling lines
 #                                             // for the branch at this moment; [];
-#                                             // null when the probe could not run
+#                                             // null when the probe did not answer
 #     "near_ceiling_error": "…" | null,       // why near_ceiling is null
 #     "summary_posted": true,                 // false with --no-summary
 #     "summary": "…" | null,                  // --summary text or --summary-file content
@@ -117,7 +119,6 @@ die() {
       summary-conflict) printf 'Supply one summary source.\n' ;;
       missing-file) printf 'The summary file does not exist.\n' ;;
       missing-items) printf 'A fix or bundled receipt must contain an item.\n' ;;
-      near-ceiling-conflict) printf 'Supply the near-ceiling lines or the base to probe, not both.\n' ;;
       baseline-read) printf '%s\n' "$BRANCH_GROWTH_ERROR" ;;
     esac
   } >&2
@@ -129,7 +130,7 @@ usage() {
 Usage:
   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
-    [--qa-label LABEL]... [--near-ceiling LINE... | --near-ceiling-base REF] \
+    [--qa-label LABEL]... [--near-ceiling-base REF] \
     [--bundled] [--no-summary] [--summary TEXT | --summary-file PATH] \
     [--item N DECISION REASONING]...
 
@@ -144,15 +145,15 @@ worth recording); it never relaxes --validate. Outside that named ceiling a
 failing validation ends the round and is never re-run into a pass.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
 content. They are mutually exclusive (one summary source, no silent precedence).
---near-ceiling records one byte-ceiling near-ceiling line per file within reach
-of the byte ceiling, as that lane reports the branch at artifact time; the next
-round's brief plans the split from it. --near-ceiling-base REF runs the
-worktree's .agents/skills/commit-guards/scripts/byte-ceiling --base REF instead
-and records its near-ceiling lines on exit 0 or 1; a lane that is absent or
-exits otherwise records near_ceiling null and the cause in near_ceiling_error,
-so the orchestrator keeps the list it carries. The two are mutually exclusive.
+--near-ceiling-base REF runs the worktree's
+.agents/skills/commit-guards/scripts/byte-ceiling --base REF and records one
+near-ceiling line per file within reach of the byte ceiling on exit 0 or 1;
+the next round's brief plans the split from it. A repository without that lane
+records []. An omitted --near-ceiling-base, or a lane that exits otherwise,
+records near_ceiling null and the cause in near_ceiling_error, so the
+orchestrator keeps the list it carries.
 Every single-valued flag may be supplied at most once
-(no silent last-wins); only --qa-label, --near-ceiling and --item repeat.
+(no silent last-wins); only --qa-label and --item repeat.
 --issue / --round-id must match ^[A-Za-z0-9._-]+$. Canonical schema:
 skills/orch/schemas/dev-return.md. Validated by dev-artifact-check.
 Exit 0 on success; every usage/validation error exits 2.
@@ -167,7 +168,7 @@ EOF
 is_own_flag() {
   case "$1" in
     --worktree|--kind|--issue|--round-id|--branch|--commit|--validate|\
-    --validate-note|--summary|--summary-file|--qa-label|--near-ceiling|\
+    --validate-note|--summary|--summary-file|--qa-label|\
     --near-ceiling-base|--bundled|\
     --no-summary|--item|-h|--help) return 0 ;;
     *) return 1 ;;
@@ -248,7 +249,6 @@ while (( $# > 0 )); do
     --summary-file) need "$1" $# "${2:-}"; no_dup "$1" "$summary_file_given"; summary_file_given=true; summary_file="$2"; shift 2 ;;
     --qa-label)     need "$1" $# "${2:-}"; qa_labels+=("$2"); shift 2 ;;
     --near-ceiling-base) need "$1" $# "${2:-}"; no_dup "$1" "$near_ceiling_base_given"; near_ceiling_base_given=true; near_ceiling_base="$2"; shift 2 ;;
-    --near-ceiling) need "$1" $# "${2:-}"; [[ -n "${2//[[:space:]]/}" ]] || die empty-text option=--near-ceiling; near_ceiling+=("$2"); shift 2 ;;
     --bundled)      bundled=true; shift ;;
     --no-summary)   summary_posted=false; shift ;;
     --item)
@@ -327,7 +327,6 @@ if [[ "$summary_file_given" == "true" ]]; then
 fi
 
 if [[ "$near_ceiling_base_given" == "true" ]]; then
-  (( ${#near_ceiling[@]} == 0 )) || die near-ceiling-conflict options=--near-ceiling,--near-ceiling-base
   [[ -n "$near_ceiling_base" ]] || die required option=--near-ceiling-base
 fi
 
@@ -352,29 +351,28 @@ fi
 
 # The probe runs the worktree's own installed lane, so it measures under the
 # settings that repository's commits are held to.
+# A repository without the lane has no byte ceiling, so the list stays empty.
 near_error=""
-if [[ "$near_ceiling_base_given" == "true" ]]; then
-  lane="$worktree/.agents/skills/commit-guards/scripts/byte-ceiling"
-  if [[ -x "$lane" ]]; then
-    lane_err="$(mktemp)"
-    trap 'rm -f -- "${lane_err:?}"' EXIT
-    lane_rc=0
-    lane_out="$(cd -- "$worktree" && "$lane" --base "$near_ceiling_base" 2>"$lane_err")" || lane_rc=$?
-    case "$lane_rc" in
-      0|1)
-        while IFS= read -r line; do
-          [[ "$line" == "byte-ceiling: near-ceiling="* ]] && near_ceiling+=("$line")
-        done <<<"$lane_out"
-        ;;
-      *)
-        near_error="byte-ceiling exit $lane_rc: $(head -n1 -- "$lane_err")"
-        ;;
-    esac
-    rm -f -- "${lane_err:?}"
-    trap - EXIT
-  else
-    near_error="byte-ceiling absent: $lane"
-  fi
+lane="$worktree/.agents/skills/commit-guards/scripts/byte-ceiling"
+if [[ "$near_ceiling_base_given" != "true" ]]; then
+  near_error="byte-ceiling not probed: no --near-ceiling-base"
+elif [[ -x "$lane" ]]; then
+  lane_err="$(mktemp)"
+  trap 'rm -f -- "${lane_err:?}"' EXIT
+  lane_rc=0
+  lane_out="$(cd -- "$worktree" && "$lane" --base "$near_ceiling_base" 2>"$lane_err")" || lane_rc=$?
+  case "$lane_rc" in
+    0|1)
+      while IFS= read -r line; do
+        [[ "$line" == "byte-ceiling: near-ceiling="* ]] && near_ceiling+=("$line")
+      done <<<"$lane_out"
+      ;;
+    *)
+      near_error="byte-ceiling exit $lane_rc: $(head -n1 -- "$lane_err")"
+      ;;
+  esac
+  rm -f -- "${lane_err:?}"
+  trap - EXIT
 fi
 
 if [[ -n "$near_error" ]]; then

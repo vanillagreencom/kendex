@@ -484,7 +484,7 @@ receipt_table \
   "two near-ceiling lines are echoed in order^impl^.near_ceiling=[\"a:1:2:91\",\"b:3:4:95\"]^$FILE_ARGS^reason=valid near_ceiling=[\"a:1:2:91\",\"b:3:4:95\"]" \
   "a receipt with no near_ceiling key echoes an empty list^impl^^$FILE_ARGS^reason=valid near_ceiling=[]" \
   "a non-array near_ceiling echoes an empty list rather than the wrong shape^impl^.near_ceiling=\"one\"^$FILE_ARGS^reason=valid near_ceiling=[]" \
-  "a null near_ceiling, a probe that could not run, echoes null and its cause rather than an empty list^impl^.near_ceiling=null | .near_ceiling_error=\"byte-ceiling-exit-2\"^$FILE_ARGS^reason=valid near_ceiling=null near_ceiling_error=byte-ceiling-exit-2"
+  "a null near_ceiling, a probe that did not answer, echoes null and its cause rather than an empty list^impl^.near_ceiling=null | .near_ceiling_error=\"byte-ceiling-exit-2\"^$FILE_ARGS^reason=valid near_ceiling=null near_ceiling_error=byte-ceiling-exit-2"
 
 echo "=== --wait blocks until an artifact lands or the deadline ==="
 # An (invalid) receipt landing after about two seconds ends a 20-second wait
