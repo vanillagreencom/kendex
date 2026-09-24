@@ -41,7 +41,7 @@ Lane side, rooted at the lane's own git worktree:
               print its text; exit 124 at --timeout. The whole file is
               searched, so a restarted lane still finds an answer that arrived
               while it was gone
-  inbox --item ITEM [--after N | --peek | --ack N]
+  inbox --item ITEM [--root ROOT] [--after N | --peek | --ack N]
               print every unread to-lane.jsonl envelope that is not an answer,
               then advance to-lane.cursor past every complete line. An answer
               belongs to the `wait` that asked for it; `--item overseer` is
@@ -91,7 +91,10 @@ Options:
                 Without it, `worktree path ITEM` answers where that worktree
                 exists, and the project root otherwise. `--item overseer`
                 is the overseer's own mailbox, rooted at the project's main
-                checkout from any of its checkouts
+                checkout from any of its checkouts. On `inbox` it names the
+                lane's worktree from a shell in another checkout, as the
+                lane-mail-check hook does for a lane working from the main
+                clone; without it `inbox` reads the caller's own checkout
   --repo REPO   peer only: ANOTHER repository's main checkout. A value
                 holding `/` is a path; a bare name is a checkout beside the
                 caller's own. A value resolving to this checkout is refused as
