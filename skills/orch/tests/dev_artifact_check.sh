@@ -222,7 +222,7 @@ receipt_table \
   "a valid implement at an explicit path, no validate_note key reads null^impl^^$FILE_ARGS^rc=0 reason=valid validate_note=null" \
   "a matching --round-id in file mode^impl^^$FILE_ARGS --round-id $R^reason=valid" \
   "a mismatched --round-id in file mode^impl^^$FILE_ARGS --round-id NOPE-1^reason=invalid" \
-  "a missing file reports the stable shape with null qualifiers and an empty near-ceiling list^none^^--file $WT/tmp/nope.json^rc=1 reason=missing validate=null validate_note=null near_ceiling=[]"
+  "a missing file reports the stable shape with null qualifiers and an empty near-ceiling list^none^^--file $WT/tmp/nope.json^rc=1 reason=missing validate=null validate_note=null near_ceiling=[] near_ceiling_error=null"
 
 echo "=== usage errors end in the parser ==="
 receipt_table \
@@ -483,7 +483,8 @@ assert_eq "$(json '.near_ceiling[0]')" "$NEAR_LINE" "a near-ceiling line with sp
 receipt_table \
   "two near-ceiling lines are echoed in order^impl^.near_ceiling=[\"a:1:2:91\",\"b:3:4:95\"]^$FILE_ARGS^reason=valid near_ceiling=[\"a:1:2:91\",\"b:3:4:95\"]" \
   "a receipt with no near_ceiling key echoes an empty list^impl^^$FILE_ARGS^reason=valid near_ceiling=[]" \
-  "a non-array near_ceiling echoes an empty list rather than the wrong shape^impl^.near_ceiling=\"one\"^$FILE_ARGS^reason=valid near_ceiling=[]"
+  "a non-array near_ceiling echoes an empty list rather than the wrong shape^impl^.near_ceiling=\"one\"^$FILE_ARGS^reason=valid near_ceiling=[]" \
+  "a null near_ceiling, a probe that could not run, echoes null and its cause rather than an empty list^impl^.near_ceiling=null | .near_ceiling_error=\"byte-ceiling-exit-2\"^$FILE_ARGS^reason=valid near_ceiling=null near_ceiling_error=byte-ceiling-exit-2"
 
 echo "=== --wait blocks until an artifact lands or the deadline ==="
 # An (invalid) receipt landing after about two seconds ends a 20-second wait

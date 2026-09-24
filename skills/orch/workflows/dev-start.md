@@ -74,18 +74,18 @@ Before EVERY implementation delegation, including each group's delegation in bun
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
+Then read the near-ceiling lines. Both templates below render one `Near-ceiling:` line per entry of this read, which the round-id stamp does not disturb; a first round on a fresh key reads `[]` and renders none.
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.near_ceiling // []'
+```
+
 Embed the round token as `[DEV_ROUND_ID]` in the delegation's `Round ID:` line and arm the watchdog (backgrounded `dev-artifact-check --wait 600 …`) per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
 
 After each spawn, persist the session:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions["[AGENT_TYPE]"] = {"status": "active", "agent_id": "[AGENT_OR_TASK_ID]", "runtime_agent_type": "[RUNTIME_AGENT_TYPE]", "agent_type_fallback": [FALLBACK_REASON_JSON_OR_NULL]}'
-```
-
-Both templates below render one `Near-ceiling:` line per entry of this read, which the round-id stamp does not disturb; a first round on a fresh key reads `[]` and renders none.
-
-```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.near_ceiling // []'
 ```
 
 ### Single issue
@@ -177,6 +177,8 @@ git -C "[WORKTREE_PATH]" status --porcelain
 
 Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-checks.md](../references/artifact-checks.md)).
 
+Each Store subsection below runs whatever the one before it did. `status: no_pr` in Store Proposed Rules ends that subsection, not the accept path.
+
 ### Store Proposed Rules
 
 Read the structurally valid artifact passed by the caller, including a failing-validation artifact, and get its `summary`. For each bullet under `### Proposed Rules`, use the harness file tool to write the rule as one JSON string in `tmp/proposed-rule-[ISSUE_ID].json`. Append each rule to workflow state through this deduplicating update. Skip this step when the summary has no such bullet.
@@ -207,9 +209,9 @@ Do not rebuild the body from the local worktree or push a commit from this step.
 
 ### Store Near-Ceiling Lines
 
-Every accept path runs this subsection, implement and fix alike, and it is the one writer of `.near_ceiling`. It runs whatever ### Store Proposed Rules did, including that subsection's `status: no_pr` exit.
+The accept paths, implement and fix alike, and the retry path for a structurally valid artifact with a failing `validate` run this subsection. It is the one writer of `.near_ceiling`.
 
-`[NEAR_CEILING_ARRAY]` is the artifact's `near_ceiling` list as `dev-artifact-check` echoed it, a JSON array of strings and `[]` when the round recorded none. Each entry names a file that round left within reach of the byte ceiling, and the next round's delegation renders one `Near-ceiling:` line per entry, so the receiving round owns the split rather than the commit the ceiling refuses. The write REPLACES the key: state then describes the branch as the last accepted round left it, so a file that round split stops being carried and a file it pushed into the warn band starts being carried.
+`[NEAR_CEILING_ARRAY]` is the artifact's `near_ceiling` as `dev-artifact-check` echoed it: a JSON array of strings, `[]` when the round recorded none, or `null` when the dev's writer could not run the byte-ceiling probe. On `null`, skip the write and name the echoed `near_ceiling_error` in the round's report; an empty list there would tell the next round no file is near the ceiling. Each entry names a file that round left within reach of the byte ceiling, and the next round's delegation renders one `Near-ceiling:` line per entry, so the receiving round owns the split rather than the commit the ceiling refuses. The write REPLACES the key: state then describes the branch as the last recorded round left it, so a file that round split stops being carried and a file it pushed into the warn band starts being carried.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.near_ceiling = [NEAR_CEILING_ARRAY]'

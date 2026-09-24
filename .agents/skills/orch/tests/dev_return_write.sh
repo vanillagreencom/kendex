@@ -133,7 +133,7 @@ echo "=== a single implement record, complete by construction ==="
 init_growth_state "$STATE" "$WT" issue-776 "$RID"
 run --worktree "$WT" --kind implement --issue issue-776 --round-id "$RID" --branch issue-776 --commit "$IMPL_HEAD" --validate pass --qa-label needs-review
 assert_eq "rc=$RC $OUT" "rc=0 $WT/tmp/dev-return-issue-776-$RID.json" "the writer exits 0 and prints the round-scoped artifact path" "$ERR"
-assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"near_ceiling\":[],\"summary_posted\":true,\"summary\":null,\"bundled\":false,\"items\":[],\"baseline_lines\":3}" \
+assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"near_ceiling\":[],\"near_ceiling_error\":null,\"summary_posted\":true,\"summary\":null,\"bundled\":false,\"items\":[],\"baseline_lines\":3}" \
   "the record is the schema's shape with the measured baseline, a numeric schema_version and no note" "$ERR"
 assert_eq "$(env ORCH_STATE_DIR="$WT/tmp" "$CHECK" --worktree "$WT" --issue issue-776 --round-id "$RID" | jq -r '.reason')" "valid" \
   "the record round-trips through round-mode acceptance"
@@ -163,6 +163,42 @@ table \
   "double-dash prose is accepted as --item REASONING|--worktree $WT --kind fix --issue issue-ddash2 --round-id 14-15 --branch b --commit c --validate pass --item 1 Skipped --force+would+be+needed|rc=0 .items[0].reasoning=--force+would+be+needed"
 assert_eq "$(find "$WT/tmp" -maxdepth 1 -name '.dev-return-*' | wc -l | tr -d ' ')" "0" "a successful write leaves no temp file behind"
 assert_eq "$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 7-7 --expect-items-from-round | jq -r '.reason')" "valid" "the fix record round-trips through the bound round's authorization"
+
+echo "=== --near-ceiling-base runs the installed lane and records what it could answer ==="
+# probe_wt NAME SIZE... — a worktree on branch `work` over `main` that adds one
+# file per SIZE in bytes, with the real byte-ceiling lane installed where a
+# consumer repository renders it. Under a 1 KB ceiling a 950-byte file is 92
+# percent of it and a 2000-byte file is over it, which makes the lane exit 1.
+probe_wt() {
+  local dir size
+  dir="$(new_repo "$1")"
+  shift
+  git -C "$dir" switch -q -c work
+  for size in "$@"; do
+    printf "%${size}s" '' > "$dir/f$size.txt"
+  done
+  git -C "$dir" add .
+  git -C "$dir" commit -q -m work
+  mkdir -p "$dir/.agents/skills/commit-guards"
+  ln -s "$REPO_ROOT/skills/commit-guards/scripts" "$dir/.agents/skills/commit-guards/scripts"
+  printf '%s' "$dir"
+}
+NEAR_WT="$(probe_wt probe-near 950)"
+OVER_WT="$(probe_wt probe-over 950 2000)"
+NEAR_LINE="byte-ceiling: near-ceiling=f950.txt:950:1024:92"
+export COMMIT_GUARDS_BYTE_CEILING_KB=1 COMMIT_GUARDS_BYTE_WARN_PCT=90
+PROBE_ARGS="--kind fix --round-id 17-17 --branch work --commit c --validate pass --item 1 Applied probed"
+for row in \
+  "exit 0 records the near-ceiling line|$NEAR_WT|main|[\"$NEAR_LINE\"]|null" \
+  "exit 1 records the near-ceiling line and not the oversized one|$OVER_WT|main|[\"$NEAR_LINE\"]|null" \
+  "exit 2 on a ref that names no commit records null and the lane's key|$NEAR_WT|nope|null|\"byte-ceiling exit 2: byte-ceiling: base-ref=nope\"" \
+  "an absent lane records null and the path it looked for|$WT|main|null|\"byte-ceiling absent: $WT/.agents/skills/commit-guards/scripts/byte-ceiling\""; do
+  IFS='|' read -r label wt ref near error <<<"$row"
+  # shellcheck disable=SC2086
+  run --worktree "$wt" --issue issue-probe $PROBE_ARGS --near-ceiling-base "$ref"
+  assert_eq "rc=$RC $(rec -c '[.near_ceiling, .near_ceiling_error]')" "rc=0 [$near,$error]" "$label" "$ERR"
+done
+unset COMMIT_GUARDS_BYTE_CEILING_KB COMMIT_GUARDS_BYTE_WARN_PCT
 
 echo "=== every refusal exits 2 on its own guard and writes nothing ==="
 # Every value-taking flag refuses a missing value and an option token in its
@@ -212,7 +248,8 @@ table \
   "--validate-note with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-note|rc=2 stderr~dev-return-write:+missing-value+option=--validate-note=true" \
   "a whitespace-only --near-ceiling: a blank line names no file|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --near-ceiling SPACES|rc=2 stderr~dev-return-write:+empty-text+option=--near-ceiling=true" \
   "--near-ceiling followed by another flag|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --near-ceiling --qa-label needs-review|rc=2 stderr~dev-return-write:+flag-value+option=--near-ceiling+value=--qa-label=true" \
-  "--near-ceiling with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --near-ceiling|rc=2 stderr~dev-return-write:+missing-value+option=--near-ceiling=true"
+  "--near-ceiling with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --near-ceiling|rc=2 stderr~dev-return-write:+missing-value+option=--near-ceiling=true" \
+  "--near-ceiling beside --near-ceiling-base: one source of the lines|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item 1 Applied x --near-ceiling a.rs:1:2:91 --near-ceiling-base main|rc=2 stderr~dev-return-write:+near-ceiling-conflict+options=--near-ceiling,--near-ceiling-base=true"
 assert_eq "$([[ -f "$WT/tmp/dev-return-issue-noitems-$RID.json" ]] && echo yes || echo no)" "no" "a rejected invocation writes no artifact at the target path"
 
 echo

@@ -279,16 +279,10 @@ Read `.blocks` from `linear.sh cache issues get [ISSUE_ID]`. Post to a downstrea
 
 With every applicable section above complete, write the artifact per [dev SKILL.md § Round Contract](../SKILL.md#round-contract):
 
-Derive the near-ceiling lines rather than remembering them from hook output, when the lane is installed (`test -x .agents/skills/commit-guards/scripts/byte-ceiling`). Run it once over the branch: every line it prints that begins `byte-ceiling: near-ceiling=` is one `--near-ceiling` value, verbatim and whole, and the indented explanation and remedy lines beneath each of them are not part of the value. `[BASE_BRANCH]` is what § 1's `resolve-base-branch` reported, qualified as `origin/[BASE_BRANCH]` because § 1 fetched that remote ref and left the local branch where it was. `--base` writes nothing into the worktree. The lines describe the branch at this moment, so run it after the commit. One run covers every commit of the round, bundled sub-issues included.
+`[BASE_BRANCH]` is what § 1's `resolve-base-branch` reported; `--near-ceiling-base` takes it as `origin/[BASE_BRANCH]` because § 1 fetched that remote ref and left the local branch where it was.
 
 ```bash
-.agents/skills/commit-guards/scripts/byte-ceiling --base origin/[BASE_BRANCH]
-```
-
-Exit 0 and exit 1 both mean the printed records are this round's list; exit 1 only says the branch also carries a file over the ceiling. Any other exit is a probe that failed: report it in the return and pass no `--near-ceiling`, rather than recording an empty list that reads as a branch with nothing near the wall.
-
-```bash
-.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] [--qa-label [LABEL]]... [--near-ceiling [LINE]]...
+.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
 ```
 
 One `--qa-label` per § 8 signal, none if nothing triggered.
@@ -303,7 +297,6 @@ Every single round appends `--summary-file tmp/completion-summary-[ISSUE_ID].md`
 Branch: [BRANCH_NAME]
 Commit: [SHA]
 QA: [signals or "none"]
-Near-ceiling: [one near-ceiling line per file, or "none"]
 Validate: [pass or "FAILING: check1, check2"]
 Proposed rule: [proposal or "none"]
 Summary: [ISSUE_ID] ✓
@@ -317,7 +310,7 @@ Summary: [ISSUE_ID] ✓
 
 **Skip if** single — you returned at § 10.
 
-1. **Aggregate QA signals across sub-issues** (including nested ones) into the bundle artifact's `--qa-label` flags — the union of every sub-issue's § 8 signals. No tracker mutation. The near-ceiling lines need no union: § 10's one run over the branch already covers every sub-issue's commits.
+1. **Aggregate QA signals across sub-issues** (including nested ones) into the bundle artifact's `--qa-label` flags — the union of every sub-issue's § 8 signals. No tracker mutation. The near-ceiling lines need no union: the writer's probe measures the whole branch, every sub-issue's commits included.
 
 2. **Post the parent summary** (Linear only): write `tmp/bundle-summary-[PARENT_ID].md`, then `linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md`.
 
@@ -338,7 +331,7 @@ Summary: [ISSUE_ID] ✓
 3. **Write the artifact**, keyed to the Parent ID, with that group's `Round ID:` when the bundle was delegated in groups:
 
    ```bash
-   .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --summary-file tmp/bundle-summary-[PARENT_ID].md --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]... [--near-ceiling [LINE]]...
+   .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --summary-file tmp/bundle-summary-[PARENT_ID].md --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
    ```
 
    `--bundled` requires one `--item` per sub-issue result — `DECISION` is Applied, Skipped, or Blocked and `REASONING` non-empty plain text with no backticks — populated from the sub-issue tree. `--commit` is the last sub-issue's HEAD.
@@ -351,7 +344,6 @@ Summary: [ISSUE_ID] ✓
    Branch: [BRANCH]
    Commits: [COUNT] ([SHAS])
    QA: [AGGREGATED_SIGNALS or "none"]
-   Near-ceiling: [one near-ceiling line per file across the sub-issues, or "none"]
    Proposed rule: [proposal or "none"]
    Summaries: [all issue IDs ✓]
    </output_format>
