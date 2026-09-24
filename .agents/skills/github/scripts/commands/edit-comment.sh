@@ -49,9 +49,10 @@ A 404 from both endpoints is refused with one keyed line, never a bare 404:
     (both endpoints answered 404 for <owner>/<repo>: no such comment, or
      the token cannot see the repository)
 
-Every refusal is one JSON shape on stderr, {error, detail}: `detail` is one
-entry per endpoint asked, carrying that endpoint and gh's own text, so no
-response is lost behind the message.
+A refusal from an endpoint is {error, detail} on stderr: `detail` is one entry
+per endpoint asked, carrying that endpoint and gh's own text, so no response is
+lost behind the message. An argument error is refused before any endpoint is
+asked and carries {error} alone.
 
 Note: a PR-level comment ID comes from find-comment. A review-thread comment
 ID comes from its comment URL, the number after #discussion_r; pr-threads
@@ -178,10 +179,10 @@ edit_comment() {
                   detail: $attempts}' >&2
             exit 1
         fi
-        # Every refusal is one shape, {error, detail}: the endpoint that gave
-        # this answer is named in the message, and every response collected on
-        # the way here is in detail, so a 404 at the first endpoint is not lost
-        # when the second fails some other way.
+        # The endpoint that gave this answer owns it, so the message names
+        # its path, and every response collected on the way here is in detail:
+        # a 404 at the first endpoint is not lost when the second fails some
+        # other way.
         jq -nc --arg path "$path" --arg detail "$result" --argjson attempts "$attempts" \
             '{error: ("Failed to edit comment at " + $path + ": " + $detail),
               detail: $attempts}' >&2

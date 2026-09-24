@@ -100,8 +100,12 @@ build() {
     ;;
   issue-endpoint-broken)
     # A failure that is not a 404 is the issue endpoint's own answer about an
-    # id it owns, so it is reported rather than retried elsewhere.
+    # id it owns, so it is reported rather than retried elsewhere. The review
+    # endpoint answers too, so the row asserting it is never asked holds on the
+    # call list rather than on the stub refusing an unstaged call, and the
+    # mutant that does ask it reads a real response.
     gh_stub_fail "api:$ISSUE_PATH" 1 "$BROKEN_422"
+    gh_stub_fail "api:$PULLS_PATH" 1 "$BROKEN_422"
     ;;
   pulls-endpoint-broken)
     # The id is not at the issue endpoint, and the review one then fails some
@@ -203,6 +207,16 @@ a dry run edits nothing and asks no endpoint^2633519824 Fixed --dry-run^0^dry id
 a non-numeric id is refused before the repository is resolved^r2633519824 Fixed^1^-^Comment ID must be numeric: r2633519824^-
 "
 
+echo "=== the shape of an argument refusal ==="
+# The help says an argument error carries {error} alone, while a refusal from
+# an endpoint carries {error, detail}. The row above reads only .error, so the
+# KEYS are pinned here: a wrapper iterating .detail[] on this output fails.
+build
+run 'r2633519824 Fixed' >/dev/null
+assert_eq "$(jq -Sc . <"$TMP_ROOT/stderr")" \
+  '{"error":"Comment ID must be numeric: r2633519824"}' \
+  "an argument refusal is {error} alone, with no detail key"
+
 # One row per shape a 404 reaches the caller by, so the alternative that
 # matches each is the only thing holding its row green.
 SCENARIO="review-comment"
@@ -294,10 +308,18 @@ mutate always "$PREDICATE" 'true'
 SCENARIO="pulls-endpoint-broken"
 build
 GOT="$(run '2633519824 Fixed')"
-SUBJECT=""
 assert_eq "$GOT" \
   "rc=1 out=- err=$REFUSAL detail=issues=$STDERR_404 pulls=$BROKEN_422 calls=repo,api:$ISSUE_PATH,api:$PULLS_PATH" \
   "must-fail control: treating every failure as a 404 reports the review endpoint's 422 as an unknown id"
+# The other rule the predicate carries: a non-404 at the FIRST endpoint stops
+# the loop, so the review endpoint is never asked. Under the mutant it is.
+SCENARIO="issue-endpoint-broken"
+build
+GOT="$(run '2633519824 Fixed')"
+SUBJECT=""
+assert_eq "$GOT" \
+  "rc=1 out=- err=$REFUSAL detail=issues=$BROKEN_422 pulls=$BROKEN_422 calls=repo,api:$ISSUE_PATH,api:$PULLS_PATH" \
+  "must-fail control: treating every failure as a 404 asks the review endpoint after a 422 that stops the loop"
 
 echo "=== the predicate's own reach ==="
 # The lib holds the judgment once and label-add's repository-label lookup calls
