@@ -309,6 +309,12 @@ word() {
     admin-dir:missing) W_ENV+=("ORCH_ADMIN_MERGE_GH_CONFIG_DIR=$TMPDIR/absent-config") ;;
     admin-classes:*) W_ENV+=("ORCH_ADMIN_MERGE_CLASSES=$(printf '%s' "$v" | tr '+' ' ')") ;;
     class:*) W_ENV+=("STUB_CLASS=$v" "STUB_EXPECT_HEAD=$AHEAD" "STUB_EXPECT_BASE=base-oid") ;;
+    # An ACTIVE review-gate class policy on an ordinary (non-admin) head. The
+    # value is the supported table; `-` leaves the classifier with no class to
+    # answer, which is the unreadable-policy shape.
+    class-policy:-) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_EXPECT_HEAD=test-head" "STUB_EXPECT_BASE=base-oid") ;;
+    class-policy:range-fail) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_POLICY_RANGE_FAIL=true") ;;
+    class-policy:*) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_CLASS=$v" "STUB_EXPECT_HEAD=test-head" "STUB_EXPECT_BASE=base-oid") ;;
     class-bare:*) W_ENV+=("STUB_CLASS=$v" "STUB_CLASS_SHAPE=bare" "STUB_EXPECT_HEAD=$AHEAD" "STUB_EXPECT_BASE=base-oid") ;;
     review:none) W_ENV+=("STUB_REVIEW_DECISION=" "STUB_REVIEW_LATEST=[]") ;;
     review:none+approved) W_ENV+=("STUB_REVIEW_DECISION=" 'STUB_REVIEW_LATEST=[{"state":"APPROVED"}]') ;;
@@ -360,6 +366,11 @@ build() {
 argv_for() {
   case "$1" in
     check) printf '%s\n' "$PR_MERGE" 123 --check ;;
+    # The mirrored tree, where the change classifier is the stub: a row whose
+    # verdict turns on the review gate's class policy runs here so the class
+    # is the row's own and not this repository's diff.
+    check-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --check ;;
+    auto-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --keep-branch ;;
     auto) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch ;;
     immediate) printf '%s\n' "$PR_MERGE" 123 --keep-branch ;;
     force) printf '%s\n' "$PR_MERGE" 123 --force --keep-branch ;;
@@ -397,6 +408,7 @@ calls() {
       "pr view 123 --json state,mergedAt"*) out="$out,view:state" ;;
       "pr view 123 --json mergeable"*) out="$out,view:mergeable" ;;
       "pr view 123 --json reviewDecision"*) out="$out,view:reviews" ;;
+      "pr view 123 --json baseRefOid,headRefOid"*) out="$out,view:policy-range" ;;
       "pr view 123 --json headRefOid"*) out="$out,view:head" ;;
       "pr view 123 --json state,headRefOid"*) out="$out,view:post" ;;
       "pr view 123 --json baseRefName,baseRefOid"*) out="$out,view:base" ;;
@@ -433,7 +445,7 @@ check_text() {
   jq -r '"merge=\(.can_merge) transient=\(.transient) state=\(.state) mergeable=\(.mergeable) at=\(if .merged_at == "" then "-" else .merged_at end) runs=\(if (.head_runs | length) == 0 then "-" else (.head_runs | join(",")) end) issues=[\(.issues | join(";"))] warnings=[\(.warnings | join(";"))]"' 2>/dev/null || printf 'unparseable'
 }
 stdout_text() {
-  if [[ "$1" == check ]]; then check_text <"$TMPDIR/stdout"; return; fi
+  if [[ "$1" == check || "$1" == check-classified ]]; then check_text <"$TMPDIR/stdout"; return; fi
   [[ -s "$TMPDIR/stdout" ]] || { printf -- '-'; return; }
   sed 's/;/\\;/g' "$TMPDIR/stdout" | paste -s -d ';' -
 }
@@ -450,7 +462,7 @@ run() {
   (cd "$REPO" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO \
     -u ORCH_ADMIN_MERGE_GH_CONFIG_DIR -u ORCH_ADMIN_MERGE_CLASSES -u GH_CONFIG_DIR \
     -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u REVIEW_GATE_CONTEXT \
-    -u REVIEW_GATE_SETTINGS_FILE \
+    -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY \
     STUB_CALL_LOG="$CALL_LOG" STUB_AUTH_LOG="$AUTH_LOG" STUB_QUEUE_CLEARED_FILE="$QUEUE_CLEARED" \
     ${W_ENV[@]+"${W_ENV[@]}"} "${argv[@]}" >"$TMPDIR/stdout" 2>"$TMPDIR/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=%s auth=%s' "$rc" "$(stdout_text "$1")" "$(err_lines)" "$(calls)" "$(auth)"
@@ -513,6 +525,11 @@ run_table() {
 
 # The calls a --check makes on an open PR, and a merge's calls before the mutation.
 CHECK="view:state,view:mergeable,checks,graphql:threads,view:reviews"
+# The supported class policy, the one value the review-gate README documents.
+CLASS_POLICY="render:none;trivial:none;micro:none;small:bot;standard:current"
+# Its extra call: with a thread open, an active policy reads the pull request's
+# own endpoints once. A clean PR asks nothing and the trace is unchanged.
+CHECK_POLICY="view:state,view:mergeable,checks,graphql:threads,view:policy-range,view:reviews"
 PRE="view:state,view:mergeable,checks,graphql:threads,view:reviews,view:head"
 OPEN="state=OPEN mergeable=MERGEABLE at=-"
 
@@ -543,6 +560,10 @@ the current run's own cancellation is a failure|checks:current-cancel checks-exi
 a clean run: the verdict is mergeable and head-run names the scoped run|checks:clean-run|check|0|merge=true transient=false $OPEN runs=29099680623 issues=[] warnings=[]|mergeable;head-run: 29099680623|calls=$CHECK auth=<unset>
 a commit status with no workflow supplies its own run id|checks:status-only checks-exit:8|check|0|merge=false transient=true $OPEN runs=29099700000 issues=[ci_pending: CI Required (PENDING)] warnings=[]|blocked;head-run: 29099700000|calls=$CHECK auth=<unset>
 an actionable unresolved thread blocks permanently, never a warning|checks:ci-required threads:actionable|check|0|merge=false transient=false $OPEN runs=- issues=[unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|blocked;head-run: none|calls=$CHECK auth=<unset>
+a class the policy sends for review keeps the thread gate|checks:ci-required threads:actionable class-policy:standard|check-classified|0|merge=false transient=false $OPEN runs=- issues=[unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
+a class the policy waives keeps the count and gates nothing with it|checks:ci-required threads:actionable class-policy:render|check-classified|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[unresolved_threads_waived: 1 actionable thread(s) open, waived by the review gate's class policy for this change]|mergeable;head-run: none|calls=$CHECK_POLICY auth=<unset>
+a class policy the classifier cannot answer blocks rather than waive|checks:ci-required threads:actionable class-policy:-|check-classified|0|merge=false transient=false $OPEN runs=- issues=[review_policy_unreadable: The review gate's class policy could not be resolved for this pull request;unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
+an unreadable pull request range blocks rather than waive|checks:ci-required threads:actionable class-policy:range-fail|check-classified|0|merge=false transient=false $OPEN runs=- issues=[review_policy_unreadable: The review gate's class policy could not be resolved for this pull request;unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
 an outdated unresolved thread is not actionable|checks:ci-required threads:outdated|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[]|mergeable;head-run: none|calls=$CHECK auth=<unset>
 a malformed thread state blocks at the trust boundary|checks:ci-required threads:malformed|check|0|merge=false transient=false $OPEN runs=- issues=[review_threads_fetch_failed: GitHub returned malformed review thread data] warnings=[]|blocked;head-run: none|calls=$CHECK auth=<unset>
 a page past ARG_MAX is streamed, not passed as an argument|checks:ci-required threads:large|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[]|mergeable;head-run: none|calls=$CHECK auth=<unset>
@@ -559,6 +580,7 @@ a live PR is still gated on its open thread|checks:ci-required threads:bot|check
 
 run_table "the merge path" "\
 --auto cannot bypass an actionable thread: no mutation, no queue query|checks:ci-required threads:actionable|auto|1|-|{blocked};{permanent};✗ {threads:1};{hint-threads}|calls=$CHECK auth=<unset>
+a waived class lets --auto arm past an open thread, with no override flag|checks:ci-required threads:actionable class-policy:render post-entry|auto-classified|75|-|Warnings:;⚠ unresolved_threads_waived: 1 actionable thread(s) open, waived by the review gate's class policy for this change;Warning: GH_BOT_TOKEN not configured, using current user;QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=view:state,view:mergeable,checks,graphql:threads,view:policy-range,view:reviews,view:head,merge:auto,graphql:queue auth=<unset>
 the immediate merge fails closed on it too|checks:ci-required threads:actionable|immediate|1|-|{blocked};{permanent};✗ {threads:1};{hint-threads}|calls=$CHECK auth=<unset>
 a malformed thread state blocks --auto|checks:ci-required threads:malformed|auto|1|-|{blocked};{permanent};✗ {malformed};{hint-threads}|calls=$CHECK auth=<unset>
 a second-page fetch failure blocks --auto|checks:ci-required threads:resolved100 threads:page2-fail|auto|1|-|{blocked};{permanent};✗ {fetch-failed};{hint-threads}|calls=view:state,view:mergeable,checks,graphql:threads,graphql:threads,view:reviews auth=<unset>

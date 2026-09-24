@@ -160,9 +160,9 @@ Ask the canonical merge gate for its readiness object before any merge attempt:
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --check
 ```
 
-Its JSON stdout is `[CHECK]`. A red required check, a merge conflict, or an unreadable result cannot reach a merge attempt.
+Its JSON stdout is `[CHECK]`. Require a valid readiness object for an open pull request. A command failure, an unreadable object, or a non-open pull request escapes (§ Escape condition 7). A red required check or a merge conflict never reaches a merge: `pr-merge` refuses both, and § 5 step 1 routes that refusal.
 
-**Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]`, and `[STATE_KEY]` as `[ISSUE_ID]`. Leave `[MICRO_REVIEW_STATE]` unset.
+**Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]`, and `[STATE_KEY]` as `[ISSUE_ID]`, binding `[MICRO_ENTRY]` to `true`.
 
 Its § 3 is skipped, so nothing waits on CI or on a reviewer before the arm. § 5 step 1 attempts the prepared head and owns the queue wait to a terminal verdict. A refusal returns to its § 3.2, which reads the `[CHECK]` object only the skipped § 3 produces. That return escapes (§ Escape condition 8).
 
@@ -197,7 +197,7 @@ The tier holds only while the item and its change stay inside it. Each condition
 4. The commit chain refuses the commit over a repository rule. A missing changelog fragment and a rejected commit message are this workflow's own to fix and are not escapes.
 5. `branch-size-check` reports `over`.
 6. A review finding on the pull request needs a change condition 3 or 5 excludes.
-7. § 4 cannot resolve the exact answer `change_class=micro review_evidence=none policy=active` from the review gate. This includes an inactive policy, an unresolved class, another class, another evidence policy, and any unreadable result.
+7. § 4 cannot prove both halves of its precheck. Either the review gate does not answer exactly `change_class=micro review_evidence=none policy=active` — an inactive policy, an unresolved class, another class, another evidence policy, or an unreadable result — or `pr-merge --check` returns no valid readiness object for an open pull request.
 8. merge-pr.md § 5 step 1 returns to its § 3.2.
 
 Ending the run leaves the branch and its commits where they stand and reports the condition in § 5. **Main checkout only**, use the route below before reporting. It owns the base-branch restore this file opens with.

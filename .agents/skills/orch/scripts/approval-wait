@@ -3,8 +3,9 @@
 # effective gate mode with --resolve-mode. The authoritative contract —
 # modes, mode resolution, settings, JSON output, auth, exit codes — is
 # print_usage below: run with --help.
-# --resolve-mode stdout is the approval|review|off enum consumed by submit-pr
-# and ci-fix. --json stdout is the result object consumed by their gate routing.
+# --resolve-mode stdout is the approval|review|exempt|off enum consumed by
+# submit-pr, merge-pr and ci-fix. --json stdout is the result object consumed
+# by their gate routing.
 # The error field contains a diagnostic key/value first line and English below.
 set -euo pipefail
 
@@ -81,6 +82,14 @@ approval_message() {
       printf 'approval-wait: missing-mode option=%s\n' "--mode"
       printf '%s\n' "approval-wait: --mode requires a value: approval or review"
       ;;
+    missing-base)
+      printf 'approval-wait: missing-base option=%s\n' "--base"
+      printf '%s\n' "approval-wait: --base requires a value: the pull request's base commit"
+      ;;
+    missing-head)
+      printf 'approval-wait: missing-head option=%s\n' "--head"
+      printf '%s\n' "approval-wait: --head requires a value: the pull request's head commit"
+      ;;
     missing-item)
       printf 'approval-wait: missing-item option=%s\n' "--item"
       printf '%s\n' "approval-wait: --item requires a value: the lane's item"
@@ -88,6 +97,26 @@ approval_message() {
     missing-timeout)
       printf 'approval-wait: missing-timeout option=%s\n' "--on-timeout"
       printf '%s\n' "approval-wait: --on-timeout requires a value: block or proceed"
+      ;;
+    policy-config)
+      printf 'approval-wait: policy-config setting=%s\n' "REVIEW_GATE_CLASS_POLICY"
+      printf '%s\n' "approval-wait: the review-gate class policy owner could not report its configuration (see error above)"
+      ;;
+    policy-fetch)
+      printf 'approval-wait: policy-fetch remote=%s\n' "origin"
+      printf '%s\n' "approval-wait: the class-policy range is not in this checkout and the fetch from origin failed; the class policy owner below decides on what is here"
+      ;;
+    policy-range)
+      printf 'approval-wait: policy-range options=%s\n' "--base,--head"
+      printf '%s\n' "approval-wait: REVIEW_GATE_CLASS_POLICY is active, so the mode is per pull request: pass --base and --head. No range, no guess."
+      ;;
+    policy-resolve)
+      printf 'approval-wait: policy-resolve range=%q\n' "$POLICY_REJECTED"
+      printf '%s\n' "approval-wait: the review-gate class policy owner could not resolve '$POLICY_REJECTED' (see error above)"
+      ;;
+    policy-protocol)
+      printf 'approval-wait: policy-protocol record=%q\n' "$POLICY_REJECTED"
+      printf '%s\n' "approval-wait: the review-gate class policy owner returned a record this caller cannot read: '$POLICY_REJECTED'"
       ;;
     mode-resolution)
       printf 'approval-wait: mode-resolution setting=%s\n' "REVIEW_GATE_MODE"
@@ -103,7 +132,7 @@ approval_message() {
       ;;
     gate-off)
       printf 'approval-wait: gate-off mode=%s\n' "$MODE"
-      printf '%s\n' "approval-wait: the reviewer gate is off; no verdict is available to wait for"
+      printf '%s\n' "approval-wait: the reviewer gate does not apply in mode '$MODE'; no verdict is available to wait for"
       ;;
     timeout-fallback)
       printf 'approval-wait: timeout-fallback value=%q fallback=%s\n' "$ON_TIMEOUT" "block"
@@ -136,6 +165,7 @@ source "$SCRIPT_DIR/lib/lane-mail-nap.sh"
 # name, never in REPO, so no consumer reads it as one that resolved.
 REPO=""
 REPO_REJECTED=""
+POLICY_REJECTED=""
 # shellcheck source=lib/review-threads.sh
 source "$SCRIPT_DIR/lib/review-threads.sh"
 
@@ -145,7 +175,7 @@ print_usage() {
 Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]
                      [--mode approval|review] [--on-timeout block|proceed]
                      [--item ID]
-       approval-wait --resolve-mode
+       approval-wait --resolve-mode [--base REF --head REF]
 
 Wait for the reviewer-gate verdict on a PR. Every exit path but 5 emits a final
 result on stdout: a stable status line with English below, or a JSON object
@@ -163,8 +193,13 @@ vs proceeded deterministically (kendex#538, kendex#642).
   --on-timeout   block | proceed — overrides the PR_REVIEW_ON_TIMEOUT
                  setting
   --item ID      the lane whose new mail exits 5; no mail check without it
-  --resolve-mode print the project's effective reviewer-gate mode
-                 (approval | review | off) and exit — see Mode resolution
+  --resolve-mode print the effective reviewer-gate mode
+                 (approval | review | exempt | off) and exit — see Mode
+                 resolution
+  --base REF     the pull request's base commit, and
+  --head REF     its head commit — the range an ACTIVE review-gate class
+                 policy needs to answer per pull request. Required with such
+                 a policy, ignored without one
 
 Modes:
 
@@ -220,8 +255,24 @@ instead of idling out the full timeout.
 Mode resolution: a wait without --mode uses the same resolver as
 --resolve-mode, which prints the effective mode and exits without auth or
 a PR argument. A default wait exits 2 with a diagnostic if resolution fails
-or returns off. An explicit --mode overrides resolution.
-Resolved FIRST is REVIEW_GATE_MODE, the
+or returns off or exempt. An explicit --mode overrides resolution.
+Deciding FIRST is the review-gate skill's CLASS POLICY, the per-pull-request
+question, through its own scripts/review-policy — the single owner of the
+class-to-policy mapping. Orch never classifies a change and never maps a
+class itself. Without that script the policy is inactive. With it,
+--check-config says active or inactive; an active policy needs --base and
+--head and exits 2 without them, since the answer belongs to one pull
+request and no range can be guessed. An endpoint this checkout does not
+hold is fetched from origin once before the owner is asked, so a caller
+never has to materialize the range itself. The owner's live record decides:
+review_evidence=none prints "exempt" — this change needs no review evidence
+and no thread wait, so every caller skips the wait and records the gate
+not-applicable; review_evidence=required keeps the reviewer keys
+authoritative even where REVIEW_GATE_MODE says off; review_evidence=current
+leaves the chain below untouched. Any other record, or an owner that cannot
+answer, exits 2.
+Deciding after it, though read before it so a malformed settings file is
+reported against the key that is malformed, is REVIEW_GATE_MODE, the
 ENGINE's per-repo gate disable, read through the review-gate engine's own
 resolver (rg_setting) when that skill is installed: set-even-empty process
 env, then the COMMITTED kendex.settings.toml (REVIEW_GATE_SETTINGS_FILE
@@ -240,8 +291,9 @@ approval. PR_REVIEW_GATE and
 the legacy key read with the full Settings ladder below.
 This is the single implementation of the derivation: callers read the mode
 only through it, and never auto-detect the mode from the
-requested-reviewer list. Mode "off" means a reviewer-less repo — the
-caller skips the wait and records the gate not-applicable.
+requested-reviewer list. Mode "off" means a reviewer-less repo, mode
+"exempt" one change class an active policy waives — the caller skips the
+wait and records the gate not-applicable for both.
 
 Settings (orch-env ladder: parent env > .env.local > .kendex/settings.toml /
   kendex.settings.toml [env] > default; REVIEW_GATE_MODE skips dotenv):
@@ -391,6 +443,8 @@ USAGE
 JSON_OUTPUT=false
 MODE=""
 RESOLVE_MODE=false
+CLASS_BASE=""
+CLASS_HEAD=""
 ON_TIMEOUT_FLAG=""
 ITEM=""
 POSITIONAL=()
@@ -402,6 +456,16 @@ while [[ $# -gt 0 ]]; do
     -h|--help|help) print_usage; exit 0 ;;
     --json) JSON_OUTPUT=true; shift ;;
     --resolve-mode) RESOLVE_MODE=true; shift ;;
+    --base)
+      [[ -n "${2:-}" ]] || { approval_message missing-base >&2; exit 2; }
+      CLASS_BASE="$2"
+      shift 2
+      ;;
+    --head)
+      [[ -n "${2:-}" ]] || { approval_message missing-head >&2; exit 2; }
+      CLASS_HEAD="$2"
+      shift 2
+      ;;
     --mode)
       [[ -n "${2:-}" ]] || { approval_message missing-mode >&2; exit 2; }
       MODE="$2"
@@ -475,7 +539,84 @@ resolve_gate_mode() {
       printf '%s' "${REVIEW_GATE_MODE:-enforce}"
     )" || return 1
   fi
-  if [[ "$engine_gate_mode" == "off" ]]; then
+  # The review gate's class policy, the only per-pull-request term in this
+  # chain and the one that DECIDES first. Its owner is the review-gate
+  # skill's own review-policy, which calls the shared change classifier and
+  # maps the class to one evidence policy. Orch asks; it never classifies and
+  # never re-maps. That single owner is why the waiter, the merge gate and
+  # the CI predicate cannot split on which changes need a review.
+  #
+  # It is READ after the engine key above so a malformed settings file is
+  # still reported against the key that is malformed. No review-policy script
+  # means no class policy: the whole term is absent, not defaulted, and the
+  # chain is the answer as it always was.
+  class_evidence=""
+  policy_owner="$SCRIPT_DIR/../../review-gate/scripts/review-policy"
+  if [[ -x "$policy_owner" ]]; then
+    # Subshell with a cd because the engine resolves its settings files
+    # relative to the repository root, exactly as the REVIEW_GATE_MODE read
+    # above does.
+    if ! policy_state="$(cd "$PROJECT_ROOT" && "$policy_owner" --check-config)"; then
+      approval_message policy-config >&2
+      return 2
+    fi
+    case "$policy_state" in
+      review-policy=inactive) ;;
+      review-policy=active)
+        # An active policy answers for ONE pull request. A caller that names
+        # no range gets a diagnostic, never a mode: guessing here would
+        # either waive a review the policy requires or hold one it waives.
+        if [[ -z "$CLASS_BASE" || -z "$CLASS_HEAD" ]]; then
+          approval_message policy-range >&2
+          return 2
+        fi
+        POLICY_REJECTED="$CLASS_BASE...$CLASS_HEAD"
+        # The classifier reads the diff between the two endpoints, so both
+        # objects have to be in this checkout. A base tip newer than its last
+        # fetch is not, and no caller can be asked to remember that, so fetch
+        # once when something is missing and there is an origin to fetch from.
+        # A failed fetch is reported and not acted on: the owner below is what
+        # answers, and it fails loud on an endpoint it still cannot resolve.
+        if { ! git -C "$PROJECT_ROOT" cat-file -e "$CLASS_BASE^{commit}" 2>/dev/null ||
+             ! git -C "$PROJECT_ROOT" cat-file -e "$CLASS_HEAD^{commit}" 2>/dev/null; } &&
+           git -C "$PROJECT_ROOT" remote get-url origin >/dev/null 2>&1; then
+          if ! git -C "$PROJECT_ROOT" fetch --quiet origin 2>/dev/null; then
+            approval_message policy-fetch >&2
+          fi
+        fi
+        if ! policy_record="$(cd "$PROJECT_ROOT" && "$policy_owner" \
+          --event pull_request --base "$CLASS_BASE" --head "$CLASS_HEAD" --repo "$PROJECT_ROOT")"; then
+          approval_message policy-resolve >&2
+          return 2
+        fi
+        case "$policy_record" in
+          "change_class="*" review_evidence=none policy=active") class_evidence="none" ;;
+          "change_class="*" review_evidence=required policy=active") class_evidence="required" ;;
+          "change_class="*" review_evidence=current policy=active") class_evidence="current" ;;
+          *)
+            POLICY_REJECTED="$policy_record"
+            approval_message policy-protocol >&2
+            return 2
+            ;;
+        esac
+        ;;
+      *)
+        POLICY_REJECTED="$policy_state"
+        approval_message policy-protocol >&2
+        return 2
+        ;;
+    esac
+  fi
+  # A waived class is the whole answer: no evidence term, no thread term, no
+  # reviewer key below can put either back.
+  if [[ "$class_evidence" == "none" ]]; then
+    printf 'exempt\n'
+    return 0
+  fi
+  # A class the policy sends for review outranks the one-switch disable: the
+  # policy's `bot` row is the inverse of its `none` row and says this change
+  # needs its review round even in a repository that turned the engine off.
+  if [[ "$engine_gate_mode" == "off" && "$class_evidence" != "required" ]]; then
     printf 'off\n'
     return 0
   fi
@@ -508,10 +649,12 @@ if $RESOLVE_MODE; then
 fi
 if [[ -z "$MODE" ]]; then
   MODE="$(resolve_gate_mode)" || exit 2
-  if [[ "$MODE" == "off" ]]; then
-    approval_message gate-off >&2
-    exit 2
-  fi
+  case "$MODE" in
+    off|exempt)
+      approval_message gate-off >&2
+      exit 2
+      ;;
+  esac
 fi
 
 case "$MODE" in

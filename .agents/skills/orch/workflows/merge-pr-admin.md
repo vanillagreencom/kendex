@@ -5,7 +5,7 @@
 **Skip if** any of these holds; then `merge-pr.md` § 5 runs unchanged from step 1:
 
 - `[ALREADY_MERGED]` is true, `merge_mode: admin`, or a `merge-pr.md` § 3.2 `Force merge` was answered.
-- `[MICRO_REVIEW_STATE]` is set. A [micro.md](micro.md) entry reaches § 4 without running § 3, so the premise below does not hold for it.
+- `[MICRO_ENTRY]` is true. Only [micro.md](micro.md) binds it; it is unset for every other caller. A micro entry reaches § 4 without running § 3, so the premise below does not hold for it.
 - The route is off:
 
   ```bash

@@ -103,6 +103,19 @@ Review-thread gate:
   This is narrower than required_conversation_resolution, which requires every
   conversation resolved and does not exclude outdated threads.
 
+  The review gate's class policy is the one thing that waives it, because this
+  gate is that gate's thread term. <skills>/review-gate/scripts/review-policy,
+  else review-policy on PATH, is the only owner asked, and only once a thread
+  is open, since nothing else here turns on its answer: --check-config says
+  whether a policy is active, and an active one is asked about this pull
+  request's own base and head. A review_evidence=none answer reports
+  unresolved_threads_waived as a warning and gates nothing; required and
+  current keep the gate. No policy script and an inactive policy both keep it.
+  A policy that cannot be read blocks with review_policy_unreadable: an
+  unreadable policy is never a waiver. Conflicts, required contexts, the
+  exact-head guard and the base branch's own conversation-resolution rule are
+  untouched by every answer.
+
   The gate is policy, not mechanism. It applies only through pr-merge. A raw
   gh pr merge call or the GitHub UI Merge button bypasses it.
 
@@ -134,9 +147,11 @@ Admin-credential route:
     review    the review gate is met, judged under the reviewer-gate mode of the
               CHECKOUT this command runs in, not the pull request's repository:
               <skills>/orch/scripts/approval-wait --resolve-mode, else
-              approval-wait on PATH, prints approval, review or off. A mode that
-              resolves to none of those three refuses with gate-mode-unreadable;
-              the route never guesses one. In every mode GitHub's own
+              approval-wait on PATH, called with this pull request's base and
+              head, prints approval, review, exempt or off. A mode that
+              resolves to none of those four refuses with gate-mode-unreadable;
+              the route never guesses one, and a resolver that refuses for want
+              of a range lands there too. In every mode GitHub's own
               reviewDecision is a gate: any value but APPROVED or empty, such
               as REVIEW_REQUIRED on a base requiring approvals or a code-owner
               review, refuses review-required. The mode decides only what else
@@ -149,8 +164,8 @@ Admin-credential route:
               absent status, an unreadable status page or an unresolvable
               context refuses naming what was read. A base with no approval
               rule answers an empty reviewDecision, so there the status alone
-              decides. In off mode nothing else is read. --admin bypasses the
-              gate on the merge, so the route re-checks it here. A
+              decides. In off and exempt mode nothing else is read. --admin
+              bypasses the gate on the merge, so the route re-checks it here. A
               CHANGES_REQUESTED review blocks in every mode: the readiness check
               raises it before any of this runs.
     checks    no conflict, zero actionable unresolved threads, status checks
@@ -423,6 +438,64 @@ required_contexts() {
     printf '%s\n%s\n' "$rules" "$classic" | jq -R -s -c 'split("\n") | map(select(startswith("ctx:")) | ltrimstr("ctx:")) | unique'
 }
 
+# The review gate's class policy for one pull request, from the review-gate
+# skill's own review-policy — the single owner of the class-to-policy mapping.
+# This command asks; it never classifies a change and never maps a class. Its
+# stdout is one word: none, required or current. "none" is the class the
+# policy waives, and the review-thread gate below is waived with it, because
+# that gate is the review gate's thread term rather than a GitHub rule. A
+# repository with no review-policy script has no class policy, which is the
+# inactive answer, not a failure. Every other failure returns nonzero and the
+# caller refuses: an unreadable policy must never resolve to a waiver, and it
+# must not silently hold a pull request either.
+review_policy_evidence() {
+    local pr_num="$1"
+    local owner="$SCRIPT_DIR/../../../review-gate/scripts/review-policy" root state record
+    local range_json base_sha head_sha
+    if [ ! -x "$owner" ]; then
+        owner=$(command -v review-policy 2>/dev/null) || owner=""
+    fi
+    if [ -z "$owner" ]; then
+        printf 'current'
+        return 0
+    fi
+    root=$(git rev-parse --show-toplevel 2>/dev/null) || root=$(pwd) || return 1
+    # Subshell with a cd because the engine resolves its settings files
+    # relative to the repository root.
+    state=$(cd -- "$root" && "$owner" --check-config 2>/dev/null) || return 1
+    case "$state" in
+    review-policy=inactive)
+        printf 'current'
+        return 0
+        ;;
+    review-policy=active) ;;
+    *) return 1 ;;
+    esac
+    # An active policy answers for one pull request, so the endpoints are read
+    # HERE — no repository without a class policy pays for a call it has no
+    # question for. No range is no answer: it reaches the caller as a refusal,
+    # never as a waiver. The merge itself is still pinned by
+    # --match-head-commit and by the caller's --expected-head; this range only
+    # names the diff the policy is asked about.
+    range_json=$(gh pr view "$pr_num" --json baseRefOid,headRefOid 2>/dev/null) || return 1
+    base_sha=$(jq -r '.baseRefOid // ""' <<<"$range_json") || return 1
+    head_sha=$(jq -r '.headRefOid // ""' <<<"$range_json") || return 1
+    if [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
+        return 1
+    fi
+    # `--repo .` is the checkout this command runs in, which is where the two
+    # SHAs resolve — the same spelling the class read above the merge uses.
+    record=$(cd -- "$root" && "$owner" \
+        --event pull_request --base "$base_sha" --head "$head_sha" --repo . 2>/dev/null) || return 1
+    case "$record" in
+    *$'\n'*) return 1 ;;
+    "change_class="*" review_evidence=none policy=active") printf 'none' ;;
+    "change_class="*" review_evidence=required policy=active") printf 'required' ;;
+    "change_class="*" review_evidence=current policy=active") printf 'current' ;;
+    *) return 1 ;;
+    esac
+}
+
 run_checks() {
     local pr_num="$1"
     local can_merge=true
@@ -502,9 +575,17 @@ run_checks() {
 
     # 3. Check actionable review threads. GitHub does not protect merges on
     # unresolved conversations by default, so this is a local hard gate rather
-# than a warning. Outdated threads do not refer to the current diff and
+    # than a warning. Outdated threads do not refer to the current diff and
     # are not actionable. A failed or malformed lookup also blocks: treating an
     # unknown review state as clean would recreate the unsafe merge path.
+    #
+    # The one exception is the review gate's own class policy. Where it waives
+    # review for this change class it waives the thread term with the evidence
+    # term, so the count is still read and still reported, as a warning that
+    # gates nothing. It is asked only once a thread is actually open, because
+    # that is the only thing its answer can change here. An unreadable policy
+    # is not a waiver: it blocks and says so.
+    local class_evidence
     local threads_json unresolved
     # Every unresolved thread, outdated included. GitHub's conversation-
     # resolution rule holds a merge on all of them, and the admin-credential
@@ -532,8 +613,17 @@ run_checks() {
         unresolved=$(jq '[.threads[] | select(.is_resolved == false and .is_outdated == false)] | length' <<<"$threads_json")
         unresolved_all=$(jq '[.threads[] | select(.is_resolved == false)] | length' <<<"$threads_json")
         if [ "$unresolved" -gt 0 ]; then
-            can_merge=false
-            issues+=("unresolved_threads: $unresolved actionable thread(s) need attention")
+            if ! class_evidence=$(review_policy_evidence "$pr_num"); then
+                can_merge=false
+                issues+=("review_policy_unreadable: The review gate's class policy could not be resolved for this pull request")
+                class_evidence=current
+            fi
+            if [ "$class_evidence" = none ]; then
+                warnings+=("unresolved_threads_waived: $unresolved actionable thread(s) open, waived by the review gate's class policy for this change")
+            else
+                can_merge=false
+                issues+=("unresolved_threads: $unresolved actionable thread(s) need attention")
+            fi
         fi
     fi
 
@@ -874,15 +964,19 @@ admin_change_class() {
 # guesses a mode and never defaults one: an answer this function cannot
 # produce is refused by its caller.
 admin_gate_mode() {
+    local base_sha="$1" head_sha="$2"
     local resolver="$SCRIPT_DIR/../../../orch/scripts/approval-wait"
     if [ ! -x "$resolver" ]; then
         resolver=$(command -v approval-wait 2>/dev/null) || resolver=""
     fi
     [ -n "$resolver" ] || return 1
     # Drop the owner credential's gh config directory for the child, the same
-    # promise the classifier call keeps. --resolve-mode needs neither
-    # authentication nor a pull request argument.
-    env -u GH_CONFIG_DIR "$resolver" --resolve-mode 2>/dev/null
+    # promise the classifier call keeps. --resolve-mode needs no
+    # authentication. It does need the pull request's range: where the review
+    # gate's class policy is active the mode belongs to one pull request, and
+    # the resolver refuses rather than guess one, which this route's last case
+    # arm turns into a refusal of its own.
+    env -u GH_CONFIG_DIR "$resolver" --resolve-mode --base "$base_sha" --head "$head_sha" 2>/dev/null
 }
 
 # The review gate's commit-status context, from the review-gate engine's own
@@ -1227,7 +1321,7 @@ admin_open_route() {
 # head and the base unchanged, and --admin bypasses enforcement on the merge
 # that follows, so nothing downstream would catch it.
 admin_gates() {
-    local pr_num="$1" base_branch="$2"
+    local pr_num="$1" base_branch="$2" base_sha="$3"
     local issues state
     ADMIN_CHECK_JSON=$(run_checks "$pr_num")
     if [ "$(jq -r '.can_merge' <<<"$ADMIN_CHECK_JSON")" != true ]; then
@@ -1263,9 +1357,9 @@ admin_gates() {
     # land in the last arm, which refuses rather than pick a mode. Every other
     # gate stands unchanged in all three.
     local gate_mode
-    gate_mode=$(admin_gate_mode) || gate_mode=""
+    gate_mode=$(admin_gate_mode "$base_sha" "$ADMIN_HEAD") || gate_mode=""
     case "$gate_mode" in
-    approval | off)
+    approval | off | exempt)
         ADMIN_GATE_MODE=$gate_mode
         admin_review_decision "$warn_keys" || return 1
         ;;
@@ -1423,7 +1517,7 @@ admin_preflight() {
         esac
     fi
 
-    admin_gates "$pr_num" "$base_branch" || return 1
+    admin_gates "$pr_num" "$base_branch" "$base_sha" || return 1
 
     # `--match-head-commit` pins the PR head alone, and GitHub's `mergeable`
     # field never reports a branch behind its base, so base containment is its
@@ -1672,7 +1766,7 @@ main() {
         # inside the window refuses here. Where nothing was dequeued or
         # disarmed there is no window, and the preflight's evaluation stands.
         if [ "$ADMIN_DEQUEUE" = done ] || [ "$ADMIN_DEQUEUE" = disarmed ]; then
-            admin_gates "$pr_num" "$ADMIN_BASE_BRANCH" || exit 1
+            admin_gates "$pr_num" "$ADMIN_BASE_BRANCH" "$ADMIN_BASE_SHA" || exit 1
         fi
     fi
 

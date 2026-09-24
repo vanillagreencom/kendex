@@ -314,8 +314,8 @@ micro_policy_is_closed() { # micro-doc
     grep -Fq 'The exact answer `change_class=micro review_evidence=none policy=active` continues.' "$1" &&
     grep -Fq 'independent of the repository'"'"'s `approval` or `review` gate mode' "$1" &&
     grep -Fq 'an inactive policy, an unresolved class, another class, or another evidence policy escapes' "$1" &&
-    grep -Fq 'A red required check, a merge conflict, or an unreadable result cannot reach a merge attempt.' "$1" &&
-    grep -Fq 'Leave `[MICRO_REVIEW_STATE]` unset.' "$1" &&
+    grep -Fq 'Require a valid readiness object for an open pull request.' "$1" &&
+    grep -Fq 'binding `[MICRO_ENTRY]` to `true`.' "$1" &&
     ! grep -Fq 'approval-wait --resolve-mode' "$1"
 }
 

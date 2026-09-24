@@ -40,7 +40,7 @@ Set `REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;s
 | `small` | One normal bot round | Enforced |
 | `standard` | Current review-gate behavior | Current review-gate behavior |
 
-The empty default disables this table and preserves the existing gate behavior. The `render`, `trivial`, and `micro` rows exempt only the review-gate status. Required CI checks, commit guards, and merge conflicts keep their existing enforcement.
+The empty default disables this table and preserves the existing gate behavior. The `render`, `trivial`, and `micro` rows exempt the review-gate status, and every consumer of `scripts/review-policy` applies the same answer: the orch skill's reviewer wait and thread gates, and the `pr-merge` review-thread gate. Required CI checks, commit guards, and merge conflicts keep their existing enforcement.
 
 - `REVIEW_GATE_CONTEXT` names the required commit status.
 - Select trusted reviewer logins and check names using [references/settings.md](references/settings.md).

@@ -8,7 +8,7 @@ Paths as installed in a consuming repo, under `.agents/skills/review-gate/`.
 
 | File | What it is |
 |------|------------|
-| `scripts/review-policy` | Calls the trusted `harness-ci` classifier and maps its class to one review evidence policy. |
+| `scripts/review-policy` | Calls the trusted `harness-ci` classifier and maps its class to one review evidence policy. The single owner of that mapping: the predicate, the orch skill's `approval-wait --resolve-mode` and the github skill's `pr-merge` all read the answer from here. |
 | `scripts/review-predicate.sh` | Answers "is this head reviewed?": verdict on stdout, exit 2 means no verdict, take no action. `--check-config` runs its settings-validation phase alone. |
 | `scripts/review-writer.sh` | Posts that answer as the commit status. The whole writer. |
 | `scripts/validate.sh` | The consumer-facing tool: is this repo's install sound? Runtime, settings, carry-forward exclusions, then the workflow half below, whose verdicts it relays and counts. |

@@ -619,14 +619,22 @@ jobs:
 
       - name: Install kendex for change classification
         env:
-          # Do not give the remote installer the writer token.
+          # The installer runs in the writer job, before the credentialed step
+          # below. It never sees the writer token, and pinning it is what keeps
+          # it from rewriting that step's code or environment: a mutable script
+          # fetched here would run before, and persist into, the step that
+          # holds the credential.
           GH_TOKEN: ""
+          # <run>-<attempt>-<commit>. The last field is the kendex commit this
+          # build came from, so the installer is fetched from the same commit
+          # the release tag below pins. Same installer, no second one.
           KENDEX_VERSION: main-build-131-1-07ab0fdf2efff60a4be7a2c93ac26f320b55f8f3
+          KENDEX_INSTALLER_REPO: vanillagreencom/kendex
         run: |
           set -euo pipefail
           policy="$(skills/review-gate/scripts/review-policy --check-config)"
           if [ "$policy" = "review-policy=active" ]; then
-            curl -fsSL https://kendex.ai/install.sh | sh -s -- --version "$KENDEX_VERSION"
+            curl -fsSL "https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/${KENDEX_VERSION##*-}/install.sh" | sh -s -- --version "$KENDEX_VERSION"
           fi
 
       - name: Evaluate and converge the gate

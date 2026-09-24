@@ -191,11 +191,12 @@ while IFS='|' read -r shape target check value; do
       commit "$DIR" ;;
     syntax) printf 'if [ then\n' >>"$path" ;;
   esac
-  expect_fail "$shape" "$DIR" "$check" "$value"
+  expect_fail "$shape $target" "$DIR" "$check" "$value"
 done <<'ROWS'
 mode|scripts/review-writer.sh|runtime-mode|scripts/review-writer.sh
 missing|scripts/pr-watch.sh|runtime-missing|scripts/pr-watch.sh
 untracked|scripts/pr-watch.sh|runtime-untracked|scripts/pr-watch.sh
+untracked|scripts/review-policy|runtime-untracked|scripts/review-policy
 symlink|scripts/pr-watch.sh|runtime-symlink|scripts/pr-watch.sh
 untracked-target|scripts/review-writer.sh|workflow-target-untracked|.agents/skills/review-gate/scripts/review-writer.sh
 symlink-target|scripts/review-writer.sh|workflow-target-symlink|.agents/skills/review-gate/scripts/review-writer.sh

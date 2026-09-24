@@ -112,12 +112,12 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 
 Three warnings are merge gates, not advice:
 
-- **`unresolved_threads`** — zero unresolved review threads is required at merge time. Route to `review-pr-comments` to reply and resolve first. `auto-recommended` keeps triaging within `REVIEW_MAX_EXTERNAL_ROUNDS`, then records `review-threads-open`; merge past them only on explicit user override.
+- **`unresolved_threads`** — zero unresolved review threads is required at merge time; `exempt` makes it informational. Route to `review-pr-comments` to reply and resolve first. `auto-recommended` keeps triaging within `REVIEW_MAX_EXTERNAL_ROUNDS`, then records `review-threads-open`; merge past them only on explicit user override.
 - **`suppressed-findings`** — not a `CHECK` warning. `pr-merge --check` reduces the red gate to `ci_failed`, and `ci-classify-refusal` prints a `fail:` line naming the `Review gate` check; the state is that check's commit-status description, which opens `N suppressed finding(s) in a review body`. `pr-watch` reports the same state as a `suppressed-findings` attention line. Those entries are findings a reviewer wrote into its review body, so no thread carries them: `unresolved_threads` reads zero and `review-pr-comments` reaches none of them. Take the complete entry list from the review body's `Suppressed comments (N)` or `Previously missed (N)` block, since the status detail is bounded at 140 characters and says how many entries it dropped; every entry needs an answer. Disposition each under [references/finding-disposition.md](../references/finding-disposition.md), then answer them in ONE PR comment. The comment opens with the line `Dispositions at <sha>` naming this head, the only thing that binds it; each entry takes one line opening with its `file:line` exactly as the status names it, followed by `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <ID>`. The gate subtracts what that comment answers; a label, a tracking claim naming no issue, and a comment carrying no `Dispositions at <sha>` line for this head all leave the entry blocking. Never an admin merge, an empty commit, or a restack to earn a fresh head — a code change is only ever the fix itself. Only the PR AUTHOR's comment counts: the gate reads the comment's login, and one posted under any other identity is ignored while the gate stays red. Resolve the posting identity with `gh api user --jq .login` against the PR author. Equal, `auto-recommended` posts the comment once and re-checks, recording `review-suppressed-findings` if a term still blocks. Not equal, it records `review-suppressed-findings` naming the author who must post it, and never reports the findings as answered.
-- **`not_approved`** — resolve the project's gate mode first with `.agents/skills/orch/scripts/approval-wait --resolve-mode` ([references/gates.md](../references/gates.md)) and route on the printed `GATE_MODE`:
-  - `off` — informational only; do not gate on it.
+- **`not_approved`** — resolve the gate mode with `.agents/skills/orch/scripts/approval-wait --resolve-mode --base [BASE_SHA] --head [HEAD_SHA]`, `CHECK`'s own endpoints ([references/gates.md](../references/gates.md)), and route on the printed `GATE_MODE`:
+  - `exempt`, `off` — informational; never gate or wait.
   - `review` — `not_approved` is expected. Poll `approval-wait [PR_NUMBER] 30 --json --mode review --item [STATE_KEY]` and treat `reviewed` as the met gate.
-  - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `approval-wait [PR_NUMBER] 30 --json --item [STATE_KEY]`; after its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
+  - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `approval-wait [PR_NUMBER] 30 --json --mode approval --item [STATE_KEY]`; after its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
 
   With `PR_REVIEW_ON_TIMEOUT=proceed`, a deadline reached with zero unresolved threads and no reviewer evidence returns `proceeded` (exit 0) instead of `timeout` in both modes — treat it as a met gate and record it in the § 6 report. An open thread or a `changes_requested` still blocks. The proceed is a LOCAL verdict — orch posts no status.
 
@@ -195,23 +195,23 @@ Use the output as `MAIN_REPO_ROOT`.
 
 1. **Merge**, before any cleanup:
 
-   Resolve the repository, gate mode, and exact head before any merge attempt. `[RECOVERY_COUNT]` is `0` initially and one more per recovery cycle taken in this run. Nothing persists it: a run resumed after a compaction, or relaunched by oversee's `window-gone` rule, starts a fresh budget. Read a run that keeps returning to ci-fix as the signal the cap is there for, whatever the count says. `[MICRO_REVIEW_STATE]` is unset for every caller except [micro.md](micro.md), which binds the exact safe review state from its canonical precheck.
+   Resolve the repository, gate mode, and exact head before any merge attempt. `[RECOVERY_COUNT]` is `0` initially and one more per recovery cycle taken in this run. Nothing persists it: a run resumed after a compaction, or relaunched by oversee's `window-gone` rule, starts a fresh budget. Read a run that keeps returning to ci-fix as the signal the cap is there for, whatever the count says.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner
    ```
 
-   Resolve the gate mode below, except `merge_mode: admin` sets it to `off`:
-
    ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait --resolve-mode
+   env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefOid,headRefOid --jq '[.baseRefOid,.headRefOid]|@tsv'
    ```
 
+   That head is `[PREPARED_HEAD]` and that base is `[PREPARED_BASE]`. Resolve the gate mode from them, except `merge_mode: admin` sets it to `off`:
+
    ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
+   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait --resolve-mode --base [PREPARED_BASE] --head [PREPARED_HEAD]
    ```
 
-   That head is `[PREPARED_HEAD]`. `[ALREADY_MERGED]=true` skips the mutation and the wait and continues to step 2.
+   `[ALREADY_MERGED]=true` skips the mutation and the wait for step 2.
 
    Read workflow state `pr.size_check` for `[STATE_KEY]`. Use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.
 
@@ -283,7 +283,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Exit `1` from `--admin` records the named stop `merge-blocked` and hands back. It never enters the classification or arms `--auto`; the authorization covers only this head and reason.
 
-   Exit `1` BLOCKED on any other path → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]`. Its `cause: ci_pending` takes the `--auto` arm below. `cause: none` takes it only when the merge output names a queue-requiring base or `[MICRO_REVIEW_STATE]` is exactly `REVIEW_REQUIRED`; the saved state proves a required review still pending. `APPROVED` grants no exception. Any other state or cause returns to § 3.2 with its detail. Record the table row before arming.
+   Exit `1` BLOCKED on any other path → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]`. Its `cause: ci_pending` takes the `--auto` arm below. `cause: none` takes it only when the merge output names a queue-requiring base; the class policy waives no GitHub branch rule. Any other state or cause returns to § 3.2 with its detail. Record the table row before arming.
 
    **The `--auto` arm** takes only that same head:
 
@@ -293,7 +293,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Exit `0` merged the prepared head immediately — continue to step 2. Exit `1` with first line `arm: no-merge-gate=<condition>` means the repository has nothing for auto-merge to wait on: on Queue first that is a repository with no queue, so take the direct attempt above; on every other route record the named stop `no-merge-gate`, hand back with the remedy its second line names, and never fall back to a raw `gh pr merge --auto`. Any other exit but `0` or `75` is an exact-head arm failure: surface it and return to § 3.2.
 
-   Exit `75` means queued or armed. Run the command below through [Waiter launch](../references/waiter-launch.md). Keep the lane active while polling the completion file, then route the recorded exit and result.
+   Exit `75` means queued or armed. Run the command below through [Waiter launch](../references/waiter-launch.md), appending `--no-guard` under `exempt`. Keep the lane active while polling the completion file, then route the recorded exit and result.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] 180 540 --json --item [STATE_KEY]
@@ -332,7 +332,7 @@ Use the output as `MAIN_REPO_ROOT`.
    Max `[MAX_CYCLES]` recovery cycles per merge-pr run. At the cap, report the failing check names, ci-fix's last error summary, and what each cycle attempted — never a bare "persistent failure" — then skip steps 2-6 and hand back. Use rerun-in-place only for flakes; gate or CI behavior changes need a fresh head.
 
    1. `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → § 5 step 1` with context `worktree`, `lifecycle: "managed"`, `issue_id`. For a queue ejection the failing run is the **merge-group** run (event `merge_group`), not necessarily the PR-head run — locate it via the failing check's run link or `gh run list --event merge_group --limit 10` and point ci-fix at it.
-   2. Re-confirm the gate at the head about to be re-armed (skip when `GATE_MODE` is `off`):
+   2. Re-confirm the gate at the head about to be re-armed (skip under `exempt` or `off`):
 
       ```bash
       env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE] --item [STATE_KEY]

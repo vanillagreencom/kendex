@@ -4,13 +4,18 @@ Cross-script routing behind the gate-mode summary and the `approval-wait` / `ci-
 
 ## Gate-mode routing
 
-Read the effective reviewer-gate mode ONLY through `approval-wait --resolve-mode` — never re-derive the chain, and never auto-detect the mode from the requested-reviewer list. It prints:
+Read the effective reviewer-gate mode ONLY through `approval-wait --resolve-mode` — never re-derive the chain, and never auto-detect the mode from the requested-reviewer list. Pass the pull request's base and head with `--base` and `--head`: where the review gate's class policy is active the mode belongs to one pull request, and a call with no range exits 2 rather than guess one. The resolver fetches an endpoint the checkout does not hold, so no caller materializes the range itself. A non-zero exit is no mode: report it and stop rather than pick one. It prints:
 
 | `GATE_MODE` | Meaning | Route |
 |-------------|---------|-------|
 | `approval` | GitHub-native approval verdict required | `approval-wait` |
 | `review` | a non-author review of the current head that is APPROVED or CHANGES_REQUESTED, or COMMENTED with a body or a thread it opened, plus zero unresolved threads; under review-gate's default review-object settings (any state, no trusted-login list), the merge-blocking Review gate status still counts a reply-only non-author review, so the wait can keep waiting on a head that status already passed | `approval-wait --mode review` |
-| `off` | reviewer-less repo, or the engine's `REVIEW_GATE_MODE=off` disable (resolved first) | skip the wait; record the gate not-applicable |
+| `exempt` | the review gate's class policy waives review for this change class (resolved first) | skip the wait; record the gate not-applicable; no thread term applies either |
+| `off` | reviewer-less repo, or the engine's `REVIEW_GATE_MODE=off` disable | skip the wait; record the gate not-applicable |
+
+`exempt` and `off` both skip the wait, and they are not the same thing. `off` is a repository with no reviewer gate, where unresolved review threads still gate the merge. `exempt` is one change the review gate's own policy waives, so the thread terms downstream — submit-pr's gate 3, merge-pr's `unresolved_threads` warning, `queue-wait`'s late-findings guard and `pr-merge`'s review-thread gate — do not apply to it either. Required CI checks, commit guards, exact-head checks and conflict refusal are untouched in both.
+
+The class policy is the review-gate skill's, and `review-policy` is its only owner: it calls the shared `harness-ci` change classifier and maps the class to one evidence policy. Orch never classifies a change and never re-maps a class. A `bot` row is the `none` row's inverse — it keeps the reviewer keys authoritative even under `REVIEW_GATE_MODE=off`. The per-class table is [`../../review-gate/README.md` § Class policy](../../review-gate/README.md#class-policy).
 
 The reviewer-gate settings — `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_WAIT_SECS` — live in `kendex.settings.toml` `[env]`; semantics and defaults are in `approval-wait --help`. The gate predicate, writer, and engine-side `REVIEW_GATE_*` keys belong to the review-gate skill (its SKILL.md and `.agents/skills/review-gate/references/settings.md`).
 
