@@ -960,6 +960,7 @@
   ".agents/skills/orch/tests/workflow-state-cycle-cap.sh",
   ".agents/skills/orch/tests/workflow-state-flockless.sh",
   ".agents/skills/orch/tests/workflow-state-handoff-standing.sh",
+  ".agents/skills/orch/tests/workflow-state-init-guard-lint.test.sh",
   ".agents/skills/orch/tests/workflow-state-set-handoff.sh",
   ".agents/skills/orch/tests/workflow-state-set-string-semantics.sh",
   ".agents/skills/orch/tests/workflow-state-state-dir-flag.sh",
