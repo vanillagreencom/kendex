@@ -52,11 +52,13 @@ Usage:
 
 --issue KEY (file and glob modes): read KEY's `declined_items` through
 workflow-state, once, before any artifact (--state-dir is passed through), and
-add `repeats` to every accepted result: one {array, index, location} per
-blockers[] or suggestions[] item whose `location` equals a declined item's.
-Such a finding is one review-pr § 4 already declined, re-raised, not a new
-finding. State that cannot be read is a status 2 refusal keyed
-`declined_state`, never an empty list.
+add `repeats` to every accepted result: one {array, index, location, declined}
+per blockers[] or suggestions[] item whose `location` equals a declined item's,
+`declined` listing the {description, reason} of every decline recorded there.
+Each is a CANDIDATE repeat of a decline review-pr § 4 or § 7 recorded: the
+location matches, and whether the defect is the same one is the caller's to
+judge. State that cannot be read is a status 2 refusal keyed `declined_state`,
+never an empty list.
 
 --wait SECS (glob mode): blocking — poll every --interval seconds (default 5)
 until a FRESH artifact lands (valid returns immediately; a fresh rejection is
@@ -210,17 +212,19 @@ emit() {
   local measurement_suppressed="${review_artifact_measurement_suppressed:-}"
   # Only an accepted artifact is read for repeats: a rejected one may not be JSON.
   local repeat_args=(--argjson declined null --argjson art null)
-  if [[ "$ok" == true && -n "${declined_locations:-}" ]]; then
-    repeat_args=(--argjson declined "$declined_locations" --slurpfile art "$path")
+  if [[ "$ok" == true && -n "${declined_entries:-}" ]]; then
+    repeat_args=(--argjson declined "$declined_entries" --slurpfile art "$path")
   fi
   if out="$(jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" \
     --arg detail "$detail" --arg measurement_failed "$measurement_failed" \
     --arg measurement_suppressed "$measurement_suppressed" "${repeat_args[@]}" \
     'def at_declined($name):
        $art[0][$name] | arrays | to_entries[]
-       | select(.value | objects | .location as $l
-           | $l != null and any($declined[]; . == $l))
-       | {array: $name, index: .key, location: .value.location};
+       | (.value | objects | .location) as $l
+       | select($l != null)
+       | [$declined[] | select(.location == $l) | {description, reason}] as $hits
+       | select($hits != [])
+       | {array: $name, index: .key, location: $l, declined: $hits};
      {ok: $ok, path: (if $path == "" then null else $path end), reason: $reason}
      + (if $detail == "" then {} else {detail: $detail} end)
      + (if $measurement_failed == "" then {}
@@ -292,7 +296,7 @@ fi
 # --- File and glob modes: --issue, with --state-dir, names the declined items ---
 declined_issue=""
 declined_state_dir=""
-declined_locations=""
+declined_entries=""
 positional=()
 while (( $# > 0 )); do
   case "$1" in
@@ -307,9 +311,9 @@ if [[ -n "$declined_issue" ]]; then
   state_flags=()
   [[ -z "$declined_state_dir" ]] || state_flags=(--state-dir "$declined_state_dir")
   # Silenced like file_mtime's probe: the keyed refusal stays stderr's first line.
-  if ! declined_locations="$("$SCRIPT_DIR/workflow-state" ${state_flags[@]+"${state_flags[@]}"} \
-      get "$declined_issue" '[(.declined_items // [])[].location]' 2>/dev/null)" \
-    || ! jq -e 'type == "array"' <<<"$declined_locations" >/dev/null 2>&1; then
+  if ! declined_entries="$("$SCRIPT_DIR/workflow-state" ${state_flags[@]+"${state_flags[@]}"} \
+      get "$declined_issue" '[(.declined_items // [])[] | {location, description, reason}]' 2>/dev/null)" \
+    || ! jq -e 'type == "array"' <<<"$declined_entries" >/dev/null 2>&1; then
     artifact_detail declined_state "$declined_issue" >&2
     finish 2
   fi

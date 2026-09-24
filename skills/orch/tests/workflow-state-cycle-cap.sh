@@ -310,5 +310,17 @@ else
   ok "the assertion flags § 2 recording no first_panel"
 fi
 
+# The write kept but moved after the spawn, into § 3: the assertion's section
+# scope is what catches a panel recorded too late to precede any spawn.
+CTRL_WF="$TMP_ROOT/review-pr-latefirst.md"
+awk -v w="$FIRST_WRITE" 'index($0, w) { held = $0; next } { print } $0 == "## 3. Collect Results" { print held }' "$REVIEW_PR_WF" > "$CTRL_WF"
+if ! grep -q -F "$FIRST_WRITE" "$CTRL_WF" || cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
+  bad "§ 2 late-write control planted nothing — the write did not move"
+elif grep -q -F "$FIRST_WRITE" <<<"$(section_2 "$CTRL_WF")"; then
+  bad "the assertion MISSED the first_panel write moved out of § 2"
+else
+  ok "the assertion flags the first_panel write moved out of § 2 into § 3"
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
