@@ -2,12 +2,21 @@
 # Publish this repository's Arch recipes to their AUR repositories.
 #
 # Usage: tools/publish-aur [--dry-run | --publishable] [package...]
+#        tools/publish-aur --check-key KEYFILE
 #
 # --dry-run: show what would be pushed without committing or pushing.
 # --publishable: decide only; print the name of each package whose release
 #   is ready, one per line on stdout and nothing else there, and clone
 #   nothing. The weekly drift job expands that output as the packages to
 #   compare against the AUR, since a deferred package is expected to differ.
+# --check-key KEYFILE: prove a private key against the AUR and publish
+#   nothing. Prints the key's SHA256 fingerprint, then logs in once as
+#   aur@aur.archlinux.org with that key alone, no agent and no ssh config,
+#   under BatchMode; the AUR's `Welcome to AUR, <account>!` greeting proves
+#   the key and names the account holding it, which must be the account
+#   that maintains the four packages (vanillagreen). The publish workflow
+#   runs this before any clone, so a wrong secret fails with its
+#   fingerprint instead of a bare `Permission denied` from the first clone.
 # -h, --help: print this help.
 #
 # Packages: kendex, kendex-bin, kendex-git, kendex-cli-git (all four when
@@ -57,6 +66,15 @@
 #   changed=<package>     a diff follows (the stat, and under --dry-run the diff)
 #   dry-run=<package>     nothing was pushed for this package
 #   pushed=<package>      the commit reached the AUR
+# and under --check-key:
+#   keyfile=<path>        no public key derives from the file: it is not a
+#                         private key, or it needs a passphrase (exit 1)
+#   fingerprint=<sha256>  the key offered to the AUR
+#   unregistered=<sha256> the AUR refused the key (exit 1)
+#   account=<name>        the AUR greeted the key as this account; a name
+#                         other than the maintaining account exits 1
+#   login=<exit>          the login ended without a greeting or a refusal:
+#                         a host key, a network or a server fault (exit 1)
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -68,6 +86,67 @@ say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line
   for line in "$@"; do printf '%s\n' "$line"; done
 }
 
+# The AUR account that maintains the four packages; packaging/README.md
+# § Publishing records it beside the fingerprint of the key it holds.
+aur_account=vanillagreen
+
+# --check-key: whether the AUR accepts KEYFILE, and as which account. The
+# AUR's shell answers a login with no command by greeting the account and
+# exiting nonzero, so the greeting, not the exit status, is the proof.
+check_key() { # KEYFILE
+  local key="$1" public fingerprint rc output account
+  # -P '' so a passphrase-protected key refuses here instead of prompting:
+  # CI cannot type a passphrase either.
+  if ! public="$(ssh-keygen -y -P '' -f "$key")"; then
+    say keyfile "$key" "no public key derives from it: it is not a private key, or it needs a passphrase" >&2
+    return 1
+  fi
+  if ! fingerprint="$(ssh-keygen -l -f - <<< "$public")"; then
+    say keyfile "$key" "ssh-keygen could not fingerprint its public key" >&2
+    return 1
+  fi
+  fingerprint="${fingerprint#* }"
+  fingerprint="${fingerprint%% *}"
+  say fingerprint "$fingerprint" "the key offered to aur@aur.archlinux.org"
+
+  # No ssh config and no agent keys: only KEYFILE is offered, so a pass
+  # cannot come from some other key the machine holds.
+  rc=0
+  output="$(ssh -F /dev/null -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes \
+    -o ConnectTimeout=30 -T aur@aur.archlinux.org </dev/null 2>&1)" || rc=$?
+  if [[ -n "$output" ]]; then printf '%s\n' "$output" >&2; fi
+  case "$output" in
+    *'Welcome to AUR, '*'!'*)
+      account="${output#*Welcome to AUR, }"
+      account="${account%%!*}"
+      if [[ "$account" != "$aur_account" ]]; then
+        say account "$account" "the AUR holds this key for $account, not for $aur_account, which maintains the four packages; every push would be refused" >&2
+        return 1
+      fi
+      say account "$account" "the AUR accepts this key"
+      ;;
+    *'Permission denied'*)
+      say unregistered "$fingerprint" "the key with fingerprint $fingerprint is not registered on the AUR account that maintains the four packages ($aur_account)" \
+        "register that public key under My Account on aur.archlinux.org, or use the key that account holds" >&2
+      return 1
+      ;;
+    *)
+      say login "$rc" "ssh ended with neither the AUR's greeting nor a key refusal; its output is above" \
+        "a host key mismatch, a network fault or an AUR outage says nothing about the key" >&2
+      return 1
+      ;;
+  esac
+}
+
+if [[ "${1:-}" == --check-key ]]; then
+  if [[ $# -ne 2 ]]; then
+    say option --check-key "usage: tools/publish-aur --check-key KEYFILE" >&2
+    exit 2
+  fi
+  check_key "$2" || exit 1
+  exit 0
+fi
+
 dry_run=0
 publishable=0
 packages=()
@@ -75,8 +154,8 @@ for argument in "$@"; do
   case "$argument" in
     --dry-run) dry_run=1 ;;
     --publishable) publishable=1 ;;
-    -h|--help) sed -n '2,42p' "${BASH_SOURCE[0]}"; exit 0 ;;
-    -*) say option "$argument" "usage: tools/publish-aur [--dry-run | --publishable] [package...]" >&2; exit 2 ;;
+    -h|--help) sed -n '2,51p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -*) say option "$argument" "usage: tools/publish-aur [--dry-run | --publishable] [package...] | --check-key KEYFILE" >&2; exit 2 ;;
     kendex|kendex-bin|kendex-git|kendex-cli-git) packages+=("$argument") ;;
     *) say package "$argument" "the packages are kendex, kendex-bin, kendex-git and kendex-cli-git" >&2; exit 2 ;;
   esac
