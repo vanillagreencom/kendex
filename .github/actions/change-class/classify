@@ -24,7 +24,12 @@
 #   change_class       render|trivial|micro|small|standard, written by the
 #                      shipped classifier itself
 #   docs_only          true|false, written by the shipped `harness-only --mode
-#                      docs` itself. Every refusal it reports answers false.
+#                      docs` itself. It answers false where harness-only
+#                      cannot read the diff (an unsupported event, a missing
+#                      or unresolvable endpoint, an unreadable or empty diff).
+#                      A wiring error from harness-only or from this script
+#                      fails the step with exit 2 instead, and the failed
+#                      step, not this output, is the answer.
 #   changed_skills     blank-separated first path segments under skills/
 #   changed_crates     blank-separated first path segments under crates/
 #   changed_workflows  blank-separated first path segments under

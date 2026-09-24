@@ -56,7 +56,11 @@ outputs:
     description: >-
       true where the shipped harness-only --mode docs accepts every changed
       path (docs/, changelog.d/, root Markdown), whatever the class; false on
-      every other diff and on every refusal.
+      every other diff and where harness-only cannot read the diff (an
+      unsupported event, a missing or unresolvable endpoint, an unreadable or
+      empty diff). A wiring error from harness-only or from the action itself
+      fails the action with exit 2 instead, and the failed step, not this
+      output, is the answer.
     value: ${{ steps.classify.outputs.docs_only }}
   changed_skills:
     description: Blank-separated first path segments under skills/ the diff touched.
