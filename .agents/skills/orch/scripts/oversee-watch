@@ -4,7 +4,7 @@
 # and re-runs it.
 #
 # Pass order: one lane snapshot, pr-watch, merged items, team triage, lane
-# mail, lane classification, accounts, heartbeat. A check that finds an event records it and the
+# mail, lane preparation, lane classification, accounts, heartbeat. A check that finds an event records it and the
 # pass runs on to the next check, so no kind starves another: a reducer line
 # on every pass or a lane parked on its limit banner would otherwise be the
 # only thing the watch ever said. The block carries the latest pr-watch
@@ -116,6 +116,20 @@ Events, checked and reported in this order every pass:
                              Every text and `options:` line of these kinds
                              is indented two spaces, so a message line never
                              begins with EVENT
+  EVENT lane-ready <item>    a lane open-terminal handed to a background job
+                             while its host prepared it is launched: its
+                             record reads running, and the watch carries it
+  EVENT lane-prepare-failed <item> reason=<reason> log=<path>
+                             that job failed and closed its window: reason
+                             wait-failed is the host's preparation,
+                             launch-failed a launch step, each named in the
+                             job's log. The record reads stopped, which
+                             lane-close closes
+  EVENT lane-prepare-stuck <item> age=<secs>s log=<path>
+                             that record has read preparing for longer than
+                             ORCH_WATCH_PREPARE_SECS with no outcome written.
+                             These three are read from --state records and
+                             reported once per preparation
   EVENT window-gone <lane>   the tmux window no longer exists. Nothing follows
                              the line: the remedy is one relaunch, which
                              reads the item's worktree and PR, not a screen
@@ -370,6 +384,10 @@ Environment:
                               dialog arrive whole; the Codex model picker's
                               slice is 19 lines, so it keeps its bottom 12 and
                               loses the startup box above them
+  ORCH_WATCH_PREPARE_SECS     seconds a lane handed to a background launch
+                              job may read preparing before
+                              lane-prepare-stuck goes out, a positive whole
+                              number, default 1800
   OVERSEE_WATCH_PR_WATCH      path to pr-watch.sh
   OVERSEE_WATCH_TRACKER       path to the Linear CLI
   OVERSEE_WATCH_WORKFLOW_STATE path to workflow-state; with an --item a
@@ -456,6 +474,7 @@ ow_message() { # REASON FIELD=VALUE...
     sleep-failed) text='The repeat delay could not be slept. Repeat mode stops rather than run passes back to back.' ;;
     fleet-read) text='The fleet this watch carries, as the last state read gave it; printed again when a re-read changes it. dropped counts records whose status is not running, which the watch does not carry.' ;;
     max-loops-invalid) text='The loop limit must be a positive integer.' ;;
+    prepare-secs-invalid) text='ORCH_WATCH_PREPARE_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     tail-lines-invalid) text='ORCH_WATCH_TAIL_LINES takes a positive whole number of lines, with no leading zero.' ;;
     limit-banner-missing) text='The pane was classified walled but its screen yields no limit banner to report. The classifier and the payload disagree, so the pass stops rather than send an event with nothing its handling can read. The field names the lane, or the overseer pane where the overseer is the one classified.' ;;
     tmux-missing) text='Run in the tmux session that owns these lanes, or omit the lanes.' ;;
@@ -753,6 +772,7 @@ watch_state_init() {
 #   lane-exited<TAB><lane><TAB><pane key>[|reported]
 #   lane-idle<TAB><lane><TAB><pane key>|<screen key>[|reported]
 #   handoff<TAB><item><TAB><record checksum>
+#   lane-prepare<TAB><item><TAB><preparation start epoch>|<ready|failed|stuck>
 #   lane-mail<TAB><item>[@clone]<TAB><to-overseer.jsonl lines already drained> <first id>
 #   clone-root<TAB><item><TAB><the hosted lane's clone, on its own host>
 #   lane-stopped<TAB><item><TAB><the provider's last reported stopped state>
@@ -870,6 +890,11 @@ fi
 # and only a larger cap brings it back.
 WATCH_TAIL_LINES="${ORCH_WATCH_TAIL_LINES:-12}"
 [[ "$WATCH_TAIL_LINES" =~ ^[1-9][0-9]*$ ]] || die tail-lines-invalid "" "value=$WATCH_TAIL_LINES"
+# How long a lane handed to a background launch job may read preparing before
+# it is reported stuck. The host's own preparation takes minutes; the default
+# leaves it several times that before a record nothing finished is named.
+PREPARE_SECS="${ORCH_WATCH_PREPARE_SECS:-1800}"
+[[ "$PREPARE_SECS" =~ ^[1-9][0-9]*$ ]] || die prepare-secs-invalid "" "value=$PREPARE_SECS"
 # What argv itself gave, kept before the first state read rebuilds the four
 # arrays: every merge adds the command line's own entries to the records the
 # state names, so the baseline has to outlive the set a loop carries.
@@ -1024,6 +1049,15 @@ LANE_ROWS_FILTER='
   | if ((.item? | type) == "string" and (.item | length) > 0) then . else error("lane-field field=item value=\(.item | tojson)") end
   | [.item, (.window // ""), (if .host == null then "local" else "hosted" end), (.mail_root // "")] | join("\u001f"))'
 
+# The preparation records of lanes open-terminal handed to a background job,
+# one line each: item, state, the preparation's start in epoch seconds, the
+# job's log and the failure reason, joined by the unit separator. A done
+# record's preparation is over and is not read.
+PREPARE_ROWS_FILTER='
+  (.lanes // [])[] | select(type == "object" and (.prepare | type) == "object" and .status != "done")
+  | [.item, .prepare.state, (.prepare.since | fromdateiso8601 | tostring), .prepare.log, (.prepare.reason // "")] | join("\u001f")'
+PREPARE_ROWS=""
+
 # The one reader of the state, asked by the repeat wrapper before every pass
 # and by the pass itself before every loop: the live set changes on every
 # launch, relaunch and close, and a hosted lane's root rides in its record, so
@@ -1042,6 +1076,7 @@ fleet_merge() { # [quiet]
   local state rows dropped line item window where root kept carried
   state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
   rows="$(jq -r "$LANE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$rows" "option=--state" "path=$STATE_FILE"
+  PREPARE_ROWS="$(jq -r "$PREPARE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$PREPARE_ROWS" "option=--state" "path=$STATE_FILE"
   # The count is the first line; a fleet of no running lane has no second.
   dropped="${rows%%$'\n'*}"
   if [[ "$rows" == *$'\n'* ]]; then rows="${rows#*$'\n'}"; else rows=""; fi
@@ -1620,6 +1655,34 @@ check_handoff() {
   done
   state="$(lane_row_prune handoff "$state" "${ITEMS[@]}")"
   lane_row_commit "$state"
+}
+
+# A lane open-terminal handed to a background job while its host prepared it
+# is reported from its record: the outcome the job wrote, once, and a record
+# still preparing past PREPARE_SECS, once. The row is keyed by the
+# preparation's start, so a relaunch that prepares again is reported afresh.
+check_prepare() {
+  local item state since log reason key age rows="${PW_SEEN[0]}" items=()
+  while IFS=$'\x1f' read -r item state since log reason; do
+    [[ -n "$item" ]] || continue
+    items+=("$item")
+    age=$((PASS_NOW - since))
+    case "$state" in
+      pending) [[ "$age" -gt "$PREPARE_SECS" ]] || continue; key="$since|stuck" ;;
+      ready|failed) key="$since|$state" ;;
+      *) die state-invalid "" "option=--state" "path=$STATE_FILE" "item=$item" "prepare=$state" ;;
+    esac
+    [[ "$key" != "$(lane_row_get lane-prepare "$rows" "$item")" ]] || continue
+    rows="$(lane_row_set lane-prepare "$rows" "$item" "$key")"
+    case "$state" in
+      pending) echo "EVENT lane-prepare-stuck $item age=${age}s log=$log" ;;
+      ready) echo "EVENT lane-ready $item" ;;
+      failed) echo "EVENT lane-prepare-failed $item reason=$reason log=$log" ;;
+    esac
+    PASS_EVENT=1
+  done <<<"$PREPARE_ROWS"
+  rows="$(lane_row_prune lane-prepare "$rows" ${items[@]+"${items[@]}"})"
+  lane_row_commit "$rows"
 }
 
 # Every --item's lane mailbox, read from disk or through `lane-host`, so the
@@ -2981,6 +3044,7 @@ while :; do
     check_merged
     check_triage
     check_mail
+    check_prepare
     check_lanes
     check_accounts
   fi

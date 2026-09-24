@@ -89,7 +89,11 @@ ot_message() { # REASON FIELD=VALUE...
     host-resolve-failed) text='The lane-host helper could not resolve the host.' ;;
     host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex or pi. Nothing was created.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
-    host-line-invalid) text='The lane host create output lacks ssh-target, path or remote-prefix on one line.' ;;
+    host-line-invalid) text='The lane host create output lacks ssh-target, path or remote-prefix on one line, or names a state other than preparing.' ;;
+    host-prepare-failed) text='The lane host accepted this item and its wait reported the preparation failed; the provider says why above. No lane was started. The host keeps what it made until lane-host close or a --relaunch.' ;;
+    lane-preparing) text='The lane host accepted this item and is still preparing it. A background job waits for the host, launches the lane in the window opened for it and records the outcome, which oversee-watch reports as lane-ready or lane-prepare-failed. log is the job output.' ;;
+    lane-prepare-failed) text='The background launch of this lane failed and its window is closed. reason wait-failed is the host wait, which says why above; launch-failed is a launch step, whose keyed line is above. The record is stopped, so lane-close closes the host and the record.' ;;
+    prepare-unrecorded) text='The record of a lane handed to a background job could not be written to the oversee workflow state. At the hand-off nothing was started and the window was closed; the host holds the item until a --relaunch or lane-host close. In the job, the record still reads preparing, which oversee-watch reports as lane-prepare-stuck.' ;;
     remote-prompt-missing) text='The ssh session showed no shell prompt in time. Attach to the window and start the lane manually. The reason says which pane state the spent bound ended on: prompt-silent is ssh still holding the pane, session-gone is the pane running no ssh, a session that died or never started. The ssh lines this launcher typed are counted in attempts.' ;;
     host-gitfile-unread) text='The .git of the lane worktree could not be read on the host, so the clone its launch marker belongs under is unknown. The item was not launched.' ;;
     host-gitfile-invalid) text='The .git of the lane worktree does not name a linked worktree git directory, so the clone its launch marker belongs under is unknown. The item was not launched.' ;;
@@ -203,7 +207,16 @@ Options:
                     receives the lane's config dir as --account, the window
                     types `ssh` to the returned target, waits for the remote
                     prompt, then types the remote prefix running the harness
-                    in the remote worktree, with no lane env prefix. With
+                    in the remote worktree, with no lane env prefix. A create
+                    line carrying state=preparing is a host still preparing
+                    the item it accepted. Under --state-dir the window and its
+                    claim open, the record reads preparing and the launch
+                    moves on: a background job runs `lane-host wait`, then the
+                    rest of the launch, and records the lane running, or
+                    stopped with its reason, logging to
+                    lane-prepare-ITEM.log in the state directory; the summary
+                    counts it as preparing. Without --state-dir the launch
+                    runs `lane-host wait` itself. With
                     --relaunch the provider keeps its tree and the harness
                     continues natively: claude --continue, codex resume
                     --last, pi -c. The claude and pi forms carry the
@@ -395,7 +408,7 @@ under --relaunch when the item's tree already exists). An item whose worktree
 is owned by another session (create exit 75) is skipped and the remaining
 items still launch. A hosted item takes the same skip on lane-host create
 exit 75; any other create failure is host-create-failed. The final summary line reports launched, skipped, and
-failed counts.
+failed counts, and preparing where a hosted launch was handed to a background job.
 
 Every launch that stands under --state-dir is recorded in the oversee
 workflow state that flag names (`workflow-state get oversee .lanes`, created
@@ -404,7 +417,8 @@ and creates no state. A record is one entry per
 item, keyed by its workflow-state id, the Linear id for a Linear item and
 issue-N for a GitHub item, carrying the tracker, repository, harness, window,
 account dir, host, mail_root, surface, model, session_id, launched_at and
-status `running`;
+status `running`, or `preparing` with its `prepare` record for a hosted lane
+handed to a background job (see --host);
 schemas/workflow-state.md § Oversee state is the shape. `oversee-watch
 --state` reads the live fleet from it. A launch rewrites every field of an
 entry that already names the item; --relaunch rewrites every field but item
@@ -420,7 +434,8 @@ and the watch will not carry it until the record is written, by hand per
 oversee.md § 3 Lane record or by a relaunch once the window is closed.
 
 Exit codes:
-  0   at least one lane launched and none failed (skipped items allowed)
+  0   at least one lane launched or handed to a background job and none
+      failed (skipped items allowed)
   75  every item was skipped as owned by another session; nothing launched
   1   any lane failed (worktree create error, launch error), or usage error
 USAGE
@@ -601,6 +616,10 @@ fi
 # copy again.
 HOST_RELAUNCH=false
 [[ "$LANE_HOST" == local || "$RELAUNCH" != true ]] || HOST_RELAUNCH=true
+# How lane_record_write treats an entry that already names the item.
+RECORD_MODE=launch
+[[ "$RELAUNCH" != true ]] || RECORD_MODE=relaunch
+[[ "$WAKE" != true ]] || RECORD_MODE=wake
 # A wake only ever resumes a session the harness already holds: a custom
 # command or a relaunch could start a fresh one, and a hosted lane's sessions
 # are on its host, not in the local store a wake scans.
@@ -867,6 +886,10 @@ fi
 LANE_AUTO=false
 LANE_HARNESS=""
 CLAIM_WRITE_FAILED=false
+# The item's pane once its window is open, and the preparation a hosted launch
+# handed to a background job records with it; both empty for any other launch.
+LAUNCH_PANE=""
+LAUNCH_PREPARE=""
 
 # One home for what a lane value may not contain, applied to the lane resolved
 # up front AND to every one a batch re-picks. Prints the reason and returns 0
@@ -1343,7 +1366,10 @@ session_id_of() { # HARNESS SESSION_FILE
 # window, so no write here inits by hand; a wake creates nothing and writes
 # into the state a launch already made. Every field the launch does not know is
 # null, never "": a reader tests presence, and a hosted lane is one whose host
-# is set.
+# is set. LAUNCH_PREPARE, set only for a launch handed to a background job,
+# is recorded as `prepare` and decides the status: preparing while the host
+# prepares, running once the job's launch stands, stopped when it failed. Any
+# other launch or relaunch drops an earlier launch's `prepare`.
 lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT
   # LAUNCHED_AT was read before the terminal opened: the first record's value
   # is the floor the watch applies to merges and new issues, and the model is
@@ -1363,15 +1389,17 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT
   rec="$(jq -cn --arg item "$item" --arg tracker "$TRACKER" --arg repo "$record_repo" --arg harness "$LAUNCH_HARNESS" \
     --arg window "$window" --arg account "$account" --arg host "$host" \
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" \
-    --arg session_id "$session_id" --arg launched_at "$launched_at" \
-    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, launched_at: $launched_at, status: "running"} | map_values(if . == "" then null else . end)')" || return 1
+    --arg session_id "$session_id" --arg launched_at "$launched_at" --argjson prepare "${LAUNCH_PREPARE:-null}" \
+    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, launched_at: $launched_at,
+      status: {pending: "preparing", ready: "running", failed: "stopped"}[($prepare // {state: "ready"}).state]}
+     | map_values(if . == "" then null else . end) + (if $prepare == null then {} else {prepare: $prepare} end)')" || return 1
   # update-report, so the refusal and the write are one locked step: a wake
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
     '(.lanes // []) as $l
      | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at) else . end) as $patch
      | if any($l[]; .item == $rec.item)
-       then {state: (.lanes = ($l | map(if .item == $rec.item then . + $patch else . end))), report: "rewritten"}
+       then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) end) + $patch else . end))), report: "rewritten"}
        elif $mode == "wake" then {state: ., report: "unrecorded"}
        else {state: (.lanes = $l + [$rec]), report: "appended"} end' --argjson rec "$rec" --arg mode "$mode")" || return 1
   [[ "$report" != '"unrecorded"' ]] || return 2
@@ -2007,17 +2035,14 @@ launch_session_resolve() { # TITLE
   LAUNCH_SESSION="$session"
 }
 
-open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
-  local dir="$1" title="$2" cmd="$3" brief="${4:-}" target="${5:-}" line="clear; $3"
-  # Called on the left of `||` at the launch loop, which suspends errexit for
-  # this whole function body — every tmux step is checked explicitly so a
-  # failed window creation or keystroke cannot fall through to a success
-  # return (most visibly on briefless lanes, whose early return would
-  # otherwise count a broken window as launched).
+# The item's window and its lane claim, the pane left in LAUNCH_PANE. A hosted
+# launch handed to a background job opens it before the hand-off, so the next
+# item's pick counts this account while the host is still preparing.
+tmux_window_open() { # DIR TITLE
+  local dir="$1" title="$2" last_idx pane spec server
   [[ -n "${TMUX:-}" ]] || { ot_message tmux-missing "item=$title" >&2; return 1; }
   launchable_dir "$dir" "$title" || return 1
   launch_session_resolve "$title" || return 1
-  local last_idx pane spec server
   # Exact (`=`): tmux otherwise takes a prefix match for a session name.
   if ! last_idx=$(tmux list-windows -t "=$LAUNCH_SESSION" -F '#{window_index}' | tail -1) || [[ -z "$last_idx" ]]; then
     ot_message tmux-failed "operation=list-windows" "item=$title" >&2
@@ -2046,6 +2071,18 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
       ot_message claim-write-failed "item=$title" >&2
     fi
   fi
+  LAUNCH_PANE="$pane"
+}
+
+open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
+  local dir="$1" title="$2" cmd="$3" brief="${4:-}" target="${5:-}" line="clear; $3" pane
+  # Called on the left of `||` at the launch loop, which suspends errexit for
+  # this whole function body — every tmux step is checked explicitly so a
+  # failed window creation or keystroke cannot fall through to a success
+  # return (most visibly on briefless lanes, whose early return would
+  # otherwise count a broken window as launched).
+  [[ -n "$LAUNCH_PANE" ]] || tmux_window_open "$dir" "$title" || return 1
+  pane="$LAUNCH_PANE"
   if [[ -n "$target" ]]; then
     local ssh_line attempts=1
     ssh_line="clear; ssh $(lane_single_quote "$target")"
@@ -2264,8 +2301,166 @@ open_wake() { # DIR TITLE CMD
   ot_message lane-woken "item=$2" "harness=$HARNESS" "log=$log"
 }
 
+# The launch from the lane marker to the lane record, for the item the loop
+# below has resolved: its worktree, command and host fields are the loop's own
+# variables. Returns 1 on any failure, its keyed line already printed. Every
+# caller checks it, which suspends errexit for this whole body, so every
+# substitution here is checked explicitly.
+launch_finish() {
+  # A launch makes a lane: lane-mail-check reads a mailbox only where this marker binds the item to the root its own session opens in. That root is the tree just made, or the provider's path for a hosted lane, which is what the empty remote root tells apart.
+  if [[ "$WAKE" != true && -d "$wt" ]] && ! write_lane_marker "$wt" "$wt_id" "$remote_path"; then ot_message "$LANE_MARKER_REASON" "item=$item" ${LANE_MARKER_FIELDS[@]+"${LANE_MARKER_FIELDS[@]}"} >&2; return 1; fi
+  session_file=""
+  wake_args=()
+  if [[ "$WAKE" == true ]]; then wake_args=("$wt"); fi
+  # A Pi wake goes to the live session through pi-bridge and reads no store.
+  if [[ "$RELAUNCH" == true && "$HOST_RELAUNCH" == false && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
+    resume_rc=0
+    session_file="$(find_relaunch_session "$HARNESS" "$item" "$wt")" || resume_rc=$?
+    [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1; }
+    [[ "$WAKE" != true || -n "$session_file" ]] || { ot_message session-missing "item=$item" "harness=$HARNESS" >&2; return 1; }
+  fi
+  # The matched transcript is read once, here: the resumed command and the
+  # lane record below carry the same id.
+  record_session=""
+  if [[ -n "$session_file" ]] && ! record_session="$(session_id_of "$HARNESS" "$session_file")"; then
+    ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1
+  fi
+  cmd="$(start_cmd "$item" "$wt_id" "$repo" "$record_session" ${wake_args[@]+"${wake_args[@]}"})" || return 1
+  # The brief the claude arms pass as the initial CLI prompt, restated for the
+  # tmux delivery check (and its one re-send). Empty for other harnesses and
+  # custom --cmd templates, which disables the check.
+  brief=""
+  if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" && -z "$session_file" && "$HOST_RELAUNCH" == false ]]; then
+    if [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item"; else brief="/orch start github $repo#$item"; fi
+  fi
+  # A quote-bearing lane dir was refused at lane resolution, before any
+  # worktree. A hosted lane's credential is already on its host; the claim alone
+  # records the config dir.
+  if [[ "$LANE_HOST" != local ]]; then
+    cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
+  elif [[ -n "$LANE_ENV" || "$HARNESS" == codex ]]; then
+    # Folder trust belongs to the DIRECTORY the harness opens into, not to the
+    # account a launch was aimed at, so the preparation runs for every local
+    # codex launch and not only for one under --lane. A launch with no lane
+    # opens into a worktree nothing has trusted just the same, and the command
+    # shape workflows/handoff.md § 2 documents passes no --lane at all.
+    #
+    # Which variable, and which directory it starts from: the resolved lane
+    # where one was picked, otherwise the account the pane would have opened on
+    # by itself. A launch that ends on a home of its own reaches it by the
+    # variable that names it, so the prefix is rendered either way, while every
+    # other consumer keeps naming the ACCOUNT — the claim, the lane record and
+    # the transcript scan ask which account this lane spends, and a private home
+    # is a place to read a config from, not another account.
+    if [[ -n "$LANE_ENV" ]]; then
+      launch_var="${LANE_ENV%%=*}"; launch_home="${LANE_ENV#*=}"
+    else
+      launch_var=CODEX_HOME; launch_home="$(launch_ambient_codex_home)" || return 1
+    fi
+    if lane_codex_trust_prepare "$HARNESS" "$launch_home" "$wt"; then
+      launch_home="$LANE_TRUST_HOME"
+      [[ "$LANE_TRUST_ROUTE" == none ]] ||
+        ot_message launch-trusted "item=$item" "route=$LANE_TRUST_ROUTE" "home=$launch_home"
+    else
+      ot_message launch-trust-missing "item=$item" "lane=$launch_home" "dir=$wt" \
+        "reason=$LANE_TRUST_REASON" >&2
+      return 1
+    fi
+    launch_form="$(lane_launch_form "$cmd" "$HARNESS" "$launch_home" "$CMD_TEMPLATE")" || return 1
+    # The account check reads LANE_FORM, and it is about a lane that was PICKED.
+    # A launch with none has no account to check and keeps the `unchecked` the
+    # check reads as skip, whatever prefix the line below carries.
+    [[ -z "$LANE_ENV" ]] || LANE_FORM="$launch_form"
+    cmd="$(lane_launch_line "$cmd" "$HARNESS" "$launch_var" "$launch_home" "$launch_form")" || return 1
+  fi
+  if [[ "$WAKE" == true ]]; then
+    open_wake "$wt" "$title" "$cmd" || return 1
+  elif [[ "$TERMINAL_MODE" == "tmux" ]]; then
+    open_tmux "$wt" "$title" "$cmd" "$brief" "$ssh_target" "$remote_path" || return 1
+  else
+    open_gui "$wt" "$title" "$cmd" || return 1
+  fi
+  [[ -z "$session_file" || "$WAKE" == true ]] || ot_message session-resumed "item=$item" "harness=$HARNESS" "transcript=$session_file"
+  # The one launch that leaves work owed. Every other resumed lane carries its
+  # continuation line in the command itself; this one cannot, so the lane comes
+  # up idle and runs no turn until the line is pasted. session-resumed cannot
+  # carry this: it is gated on a matched transcript, which a hosted relaunch
+  # never has.
+  [[ "$HOST_RELAUNCH" != true || "$HARNESS" != codex ]] || ot_message resume-lineless "item=$item" "harness=$HARNESS" >&2
+  # Recorded once the launch stands, under the workflow-state id the watch
+  # names the item by (issue-N for a GitHub item), with the window the watch
+  # reads its pane through and the root its mailbox is read under. A record
+  # that cannot be written fails the item loudly: the window is open, but a
+  # lane the watch does not carry is a lane nobody hears from.
+  record_window=""
+  [[ "$TERMINAL_MODE" != tmux ]] || record_window="$LAUNCH_SESSION:$title"
+  record_root="$wt"
+  [[ "$LANE_HOST" == local ]] || record_root="$remote_path"
+  if [[ "$FLEET" == true ]]; then
+    record_rc=0
+    lane_record_write "$RECORD_MODE" "$wt_id" "$record_window" "$record_root" "$record_session" "$launched_at" || record_rc=$?
+    if [[ "$record_rc" -eq 2 ]]; then
+      ot_message record-missing "item=$item" "state=oversee" >&2
+      return 1
+    elif [[ "$record_rc" -ne 0 ]]; then
+      ot_message record-write-failed "item=$item" "state=oversee" >&2
+      return 1
+    fi
+  fi
+}
+
+# The preparation record a lane handed to a background job carries: its state,
+# the launch time that began it and the job's log, plus the reason it failed.
+prepare_record() { # STATE LOG [REASON]
+  jq -cn --arg state "$1" --arg since "$launched_at" --arg log "$2" --arg reason "${3:-}" \
+    '{state: $state, since: $since, log: $log} + (if $reason == "" then {} else {reason: $reason} end)'
+}
+
+# A hosted item whose host accepted it and is still preparing it, under a
+# fleet. The window and its claim open here and the record names the lane
+# preparing, so the caller is free once this returns: a background job waits
+# for the host, finishes the launch in that window and records the outcome,
+# which oversee-watch reports. The job ignores the hangup this script's exit
+# would deliver, as nohup does, and holds none of the caller's descriptors.
+launch_handoff() {
+  local log
+  log="$(cd -- "$STATE_DIR" && pwd -P)/lane-prepare-$wt_id.log" || return 1
+  tmux_window_open "$CLAIM_ROOT" "$title" || return 1
+  if ! LAUNCH_PREPARE="$(prepare_record pending "$log")" \
+    || ! lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$remote_path" "" "$launched_at"; then
+    ot_message prepare-unrecorded "item=$item" "state=oversee" >&2
+    tmux kill-window -t "$LAUNCH_PANE" || ot_message tmux-failed "operation=kill-window" "item=$title" >&2
+    return 1
+  fi
+  (trap '' HUP; launch_prepared "$log") </dev/null >>"$log" 2>&1 &
+  ot_message lane-preparing "item=$item" "log=$log"
+}
+
+# The background job launch_handoff starts. Its record is the outcome: running
+# once launch_finish stands, stopped with the reason when the host's wait or
+# the launch after it failed, the window closed so its claim goes with it and
+# lane-close has a stopped record to close.
+launch_prepared() { # LOG
+  local reason=wait-failed
+  if host_transport wait --item "$wt_id"; then
+    reason=launch-failed
+    LAUNCH_PREPARE="$(prepare_record ready "$1")" || return 1
+    launch_finish && return 0
+  fi
+  # A launch whose account check failed has closed the window already.
+  if tmux list-panes -t "$LAUNCH_PANE" >/dev/null 2>&1; then
+    tmux kill-window -t "$LAUNCH_PANE" || ot_message tmux-failed "operation=kill-window" "item=$title" >&2
+  fi
+  if ! LAUNCH_PREPARE="$(prepare_record failed "$1" "$reason")" \
+    || ! lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$remote_path" "" "$launched_at"; then
+    ot_message prepare-unrecorded "item=$item" "state=oversee" >&2
+  fi
+  ot_message lane-prepare-failed "item=$item" "reason=$reason" >&2
+}
+
 repo="$(resolve_repo)"
 launched=0
+preparing=0
 failed=0
 skipped=0
 attempted=0
@@ -2407,7 +2602,7 @@ for raw in "${ITEMS[@]}"; do
   [[ "$WAKE" != true && -z "$reuse_merged" ]] || keep_tree=true
   # A hosted item's provider creates the host and its worktree, and its create
   # exit 75 is the same ownership claim.
-  create_rc=0 ssh_target="" remote_path="" remote_prefix=""
+  create_rc=0 ssh_target="" remote_path="" remote_prefix="" host_state=""
   host_args=(create --item "$wt_id" --repo "$repo" --harness "$HARNESS" --account "${LANE_ENV#*=}")
   [[ "$RELAUNCH" != true ]] || host_args+=(--relaunch)
   if [[ "$LANE_HOST" != local ]]; then host_line="$(host_transport "${host_args[@]}")" || create_rc=$?
@@ -2459,126 +2654,38 @@ for raw in "${ITEMS[@]}"; do
         ssh-target=*) ssh_target="${field#ssh-target=}" ;;
         path=*) remote_path="${field#path=}" ;;
         remote-prefix=*) remote_prefix="${field#remote-prefix=}" ;;
+        state=*) host_state="${field#state=}" ;;
       esac
     done
-    if [[ -z "$ssh_target" || -z "$remote_path" || -z "$remote_prefix" || "$host_line" == *$'\n'* ]]; then
+    if [[ -z "$ssh_target" || -z "$remote_path" || -z "$remote_prefix" || "$host_line" == *$'\n'* \
+      || -n "$host_state" && "$host_state" != preparing ]]; then
       ot_message host-line-invalid "item=$item" >&2
       failed=$((failed + 1))
       continue
     fi
     wt="$CLAIM_ROOT"
   fi
-  # A launch makes a lane: lane-mail-check reads a mailbox only where this marker binds the item to the root its own session opens in. That root is the tree just made, or the provider's path for a hosted lane, which is what the empty remote root tells apart.
-  if [[ "$WAKE" != true && -d "$wt" ]] && ! write_lane_marker "$wt" "$wt_id" "$remote_path"; then ot_message "$LANE_MARKER_REASON" "item=$item" ${LANE_MARKER_FIELDS[@]+"${LANE_MARKER_FIELDS[@]}"} >&2; failed=$((failed + 1)); continue; fi
-  session_file=""
-  wake_args=()
-  if [[ "$WAKE" == true ]]; then wake_args=("$wt"); fi
-  # A Pi wake goes to the live session through pi-bridge and reads no store.
-  if [[ "$RELAUNCH" == true && "$HOST_RELAUNCH" == false && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
-    resume_rc=0
-    session_file="$(find_relaunch_session "$HARNESS" "$item" "$wt")" || resume_rc=$?
-    [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
-    [[ "$WAKE" != true || -n "$session_file" ]] || { ot_message session-missing "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
-  fi
-  # The matched transcript is read once, here: the resumed command and the
-  # lane record below carry the same id.
-  record_session=""
-  if [[ -n "$session_file" ]] && ! record_session="$(session_id_of "$HARNESS" "$session_file")"; then
-    ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue
-  fi
-  cmd="$(start_cmd "$item" "$wt_id" "$repo" "$record_session" ${wake_args[@]+"${wake_args[@]}"})"
-  # The brief the claude arms pass as the initial CLI prompt, restated for the
-  # tmux delivery check (and its one re-send). Empty for other harnesses and
-  # custom --cmd templates, which disables the check.
-  brief=""
-  if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" && -z "$session_file" && "$HOST_RELAUNCH" == false ]]; then
-    if [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item"; else brief="/orch start github $repo#$item"; fi
-  fi
-  # A quote-bearing lane dir was refused at lane resolution, before any
-  # worktree. A hosted lane's credential is already on its host; the claim alone
-  # records the config dir.
-  if [[ "$LANE_HOST" != local ]]; then
-    cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
-  elif [[ -n "$LANE_ENV" || "$HARNESS" == codex ]]; then
-    # Folder trust belongs to the DIRECTORY the harness opens into, not to the
-    # account a launch was aimed at, so the preparation runs for every local
-    # codex launch and not only for one under --lane. A launch with no lane
-    # opens into a worktree nothing has trusted just the same, and the command
-    # shape workflows/handoff.md § 2 documents passes no --lane at all.
-    #
-    # Which variable, and which directory it starts from: the resolved lane
-    # where one was picked, otherwise the account the pane would have opened on
-    # by itself. A launch that ends on a home of its own reaches it by the
-    # variable that names it, so the prefix is rendered either way, while every
-    # other consumer keeps naming the ACCOUNT — the claim, the lane record and
-    # the transcript scan ask which account this lane spends, and a private home
-    # is a place to read a config from, not another account.
-    if [[ -n "$LANE_ENV" ]]; then
-      launch_var="${LANE_ENV%%=*}"; launch_home="${LANE_ENV#*=}"
-    else
-      launch_var=CODEX_HOME; launch_home="$(launch_ambient_codex_home)"
-    fi
-    if lane_codex_trust_prepare "$HARNESS" "$launch_home" "$wt"; then
-      launch_home="$LANE_TRUST_HOME"
-      [[ "$LANE_TRUST_ROUTE" == none ]] ||
-        ot_message launch-trusted "item=$item" "route=$LANE_TRUST_ROUTE" "home=$launch_home"
-    else
-      ot_message launch-trust-missing "item=$item" "lane=$launch_home" "dir=$wt" \
-        "reason=$LANE_TRUST_REASON" >&2
-      failed=$((failed + 1)); continue
-    fi
-    launch_form="$(lane_launch_form "$cmd" "$HARNESS" "$launch_home" "$CMD_TEMPLATE")"
-    # The account check reads LANE_FORM, and it is about a lane that was PICKED.
-    # A launch with none has no account to check and keeps the `unchecked` the
-    # check reads as skip, whatever prefix the line below carries.
-    [[ -z "$LANE_ENV" ]] || LANE_FORM="$launch_form"
-    cmd="$(lane_launch_line "$cmd" "$HARNESS" "$launch_var" "$launch_home" "$launch_form")"
-  fi
+  LAUNCH_PANE="" LAUNCH_PREPARE=""
   # The launch time is read before the terminal opens. The first record's
   # launched_at is the floor the watch applies to merges and new issues, so a
   # stamp taken after the open and its verification would leave anything that
   # landed meanwhile below the floor for the life of the fleet.
   launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  if [[ "$WAKE" == true ]]; then
-    open_wake "$wt" "$title" "$cmd" || { failed=$((failed + 1)); continue; }
-  elif [[ "$TERMINAL_MODE" == "tmux" ]]; then
-    open_tmux "$wt" "$title" "$cmd" "$brief" "$ssh_target" "$remote_path" || { failed=$((failed + 1)); continue; }
+  # A host still preparing the item it accepted answers through `wait`. Under a
+  # fleet a background job waits and the watch reports what it recorded;
+  # without one there is no record to report through, so the launch waits here.
+  if [[ "$host_state" == preparing && "$FLEET" == true ]]; then
+    launch_handoff || { failed=$((failed + 1)); continue; }
+    preparing=$((preparing + 1))
   else
-    open_gui "$wt" "$title" "$cmd" || { failed=$((failed + 1)); continue; }
-  fi
-  [[ -z "$session_file" || "$WAKE" == true ]] || ot_message session-resumed "item=$item" "harness=$HARNESS" "transcript=$session_file"
-  # The one launch that leaves work owed. Every other resumed lane carries its
-  # continuation line in the command itself; this one cannot, so the lane comes
-  # up idle and runs no turn until the line is pasted. session-resumed cannot
-  # carry this: it is gated on a matched transcript, which a hosted relaunch
-  # never has.
-  [[ "$HOST_RELAUNCH" != true || "$HARNESS" != codex ]] || ot_message resume-lineless "item=$item" "harness=$HARNESS" >&2
-  # Recorded once the launch stands, under the workflow-state id the watch
-  # names the item by (issue-N for a GitHub item), with the window the watch
-  # reads its pane through and the root its mailbox is read under. A record
-  # that cannot be written fails the item loudly: the window is open, but a
-  # lane the watch does not carry is a lane nobody hears from.
-  record_mode=launch
-  [[ "$RELAUNCH" != true ]] || record_mode=relaunch
-  [[ "$WAKE" != true ]] || record_mode=wake
-  record_window=""
-  [[ "$TERMINAL_MODE" != tmux ]] || record_window="$LAUNCH_SESSION:$title"
-  record_root="$wt"
-  [[ "$LANE_HOST" == local ]] || record_root="$remote_path"
-  if [[ "$FLEET" == true ]]; then
-    record_rc=0
-    lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" "$launched_at" || record_rc=$?
-    if [[ "$record_rc" -eq 2 ]]; then
-      ot_message record-missing "item=$item" "state=oversee" >&2
-      failed=$((failed + 1))
-      continue
-    elif [[ "$record_rc" -ne 0 ]]; then
-      ot_message record-write-failed "item=$item" "state=oversee" >&2
+    if [[ "$host_state" == preparing ]] && ! host_transport wait --item "$wt_id"; then
+      ot_message host-prepare-failed "item=$item" >&2
       failed=$((failed + 1))
       continue
     fi
+    launch_finish || { failed=$((failed + 1)); continue; }
+    launched=$((launched + 1))
   fi
-  launched=$((launched + 1))
   # Recorded here, after the window exists: a lane picked for an item that
   # turned out to be owned elsewhere never carried a session.
   [[ -z "$LANE_ENV" ]] || grep -qxF -- "$LANE_ENV" <<<"$lanes_seen" || lanes_seen+="$LANE_ENV"$'\n'
@@ -2587,7 +2694,9 @@ done
 # Every recorded lane ends with a newline. Lane paths cannot contain one.
 lanes_used="${lanes_seen//[!$'\n']/}"
 lanes_used="${#lanes_used}"
-summary_fields=("launched=$launched" "skipped=$skipped" "failed=$failed" "lanes=$lanes_used")
+summary_fields=("launched=$launched")
+[[ "$preparing" -eq 0 ]] || summary_fields+=("preparing=$preparing")
+summary_fields+=("skipped=$skipped" "failed=$failed" "lanes=$lanes_used")
 if [[ "$lanes_used" -eq 1 ]]; then
   summary_fields+=("lane=${lanes_seen%$'\n'}")
 elif [[ "$lanes_used" -eq 0 && -n "$LANE_ENV" ]]; then
@@ -2597,7 +2706,7 @@ if [[ "$failed" -gt 0 ]]; then
   ot_message summary "${summary_fields[@]}" >&2
   exit 1
 fi
-if [[ "$launched" -eq 0 && "$skipped" -gt 0 ]]; then
+if [[ "$launched" -eq 0 && "$preparing" -eq 0 && "$skipped" -gt 0 ]]; then
   ot_message summary "${summary_fields[@]}" >&2
   exit 75
 fi

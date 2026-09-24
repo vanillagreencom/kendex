@@ -552,7 +552,7 @@ open(p, "w").write(s.replace(old, new))
 PY
   assert_eq "$(grep -cF -- "$2" "$dir/scripts/open-terminal")" "0" "control $1 applied its mutation"
 }
-mutant unwritten '    lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" "$launched_at" || record_rc=$?' '    :'
+mutant unwritten '    lane_record_write "$RECORD_MODE" "$wt_id" "$record_window" "$record_root" "$record_session" "$launched_at" || record_rc=$?' '    :'
 run_ot SCRIPT="$TMP_ROOT/unwritten/scripts/open-terminal" STATE_DIR="$TMP_ROOT/unwritten-state" --ghostty --cmd true CC-30
 assert_eq "rc=$RC records=$("$WS" --state-dir "$TMP_ROOT/unwritten-state" get oversee '(.lanes // []) | length')" "rc=0 records=0" \
   "control: without the write a launch leaves the created state with no record and reports success"
@@ -572,7 +572,7 @@ run_ot SCRIPT="$TMP_ROOT/stateless/scripts/open-terminal" STATE_DIR= CWD="$ELSEW
 assert_eq "rc=$RC named=$([[ -e "$TMP_ROOT/named-control/workflow-state-oversee.json" ]] && echo written || echo none) launch_dir=$([[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" \
   "rc=0 named=none launch_dir=written" \
   "control: with --state-dir dropped the record lands in the launch directory's checkout and reports success"
-mutant restamped '    lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" "$launched_at" || record_rc=$?' '    lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || record_rc=$?'
+mutant restamped '    lane_record_write "$RECORD_MODE" "$wt_id" "$record_window" "$record_root" "$record_session" "$launched_at" || record_rc=$?' '    lane_record_write "$RECORD_MODE" "$wt_id" "$record_window" "$record_root" "$record_session" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || record_rc=$?'
 STUB_OPENED_AT="$OPENED_AT" STUB_OPEN_DELAY=2 RUN_TMUX=stub,1,0 run_ot SCRIPT="$TMP_ROOT/restamped/scripts/open-terminal" --tmux --cmd true CC-96
 assert_eq "rc=$RC order=$([[ "$(field "$(record CC-96)" launched_at)" > "$(cat "$OPENED_AT")" ]] && echo later || echo not-later)" "rc=0 order=later" \
   "control: stamped after the open, launched_at is later than the moment the window opened"
@@ -679,6 +679,68 @@ mutant silentcheck '      ot_message tmux-failed "operation=has-session" "item=$
 assert_eq "$(OT="$TMP_ROOT/silentcheck/scripts/open-terminal" RUN_SESSION=fleetx STUB_HAS_SESSION_ERR='no server running on /tmp/tmux-1000/default' session_row silentcheck-state CC-129)" \
   "rc=1 target= list= pane= window=none recorded=none refused=" \
   "control: without the has-session tmux-failed line a failed check refuses with no key"
+
+echo "=== a host still preparing the item hands the launch to a background job ==="
+# The provider accepts the item with state=preparing and holds wait shut until
+# its gate file exists. The launch returns with the gate shut: the record names
+# the lane preparing and no launch step has reached the host yet. The job it
+# left finishes the launch once the gate opens and records the outcome.
+PREPARING_LINE=$'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc\tstate=preparing'
+# prepared ITEM — the record's status, prepare state and failure reason.
+prepared() {
+  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | "\(.status) \(.prepare.state // "none") \(.prepare.reason // "none")"' | tr -d '"'
+}
+# settled ITEM — the same once the job has left pending, 20 seconds at most.
+settled() {
+  local now=""
+  for _ in $(seq 80); do
+    now="$(prepared "$1")"
+    [[ "$now" == preparing* ]] || break
+    sleep 0.25
+  done
+  printf '%s' "$now"
+}
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" \
+  LANE_HOST_STUB_CREATE_LINE="$PREPARING_LINE" LANE_HOST_STUB_WAIT_GATE="$TMP_ROOT/gate-73" RUN_TMUX=stub,1,0 \
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-73
+assert_eq "rc=$RC summary=$(grep -c '^open-terminal: summary launched=0 preparing=1 skipped=0 failed=0 ' <<<"$OUT" || true) handed=$(grep -c "^open-terminal: lane-preparing item=CC-73 log=$STATE/lane-prepare-CC-73.log$" <<<"$OUT" || true) record=$(prepared CC-73) marker=$(marker_at cc-73)" \
+  "rc=0 summary=1 handed=1 record=preparing pending none marker=none" \
+  "a launch whose host is still preparing returns at once with the lane recorded preparing and nothing launched on the host"
+touch "$TMP_ROOT/gate-73"
+assert_eq "record=$(settled CC-73) marker=$(marker_at cc-73) window=$(field "$(record CC-73)" window) root=$(field "$(record CC-73)" mail_root)" \
+  "record=running ready none marker=root window=stub:CC-73 root=/srv/lane" \
+  "once the host is ready the job launches the lane in its window and records it running and ready"
+
+# The host's preparation fails: the job closes the window and records the lane
+# stopped with the reason, the record lane-close takes.
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" \
+  LANE_HOST_STUB_CREATE_LINE="$PREPARING_LINE" LANE_HOST_STUB_WAIT_STATUS=1 RUN_TMUX=stub,1,0 \
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-74
+assert_eq "rc=$RC record=$(settled CC-74) marker=$(marker_at cc-74) logged=$(grep -c '^open-terminal: lane-prepare-failed item=CC-74 reason=wait-failed$' "$STATE/lane-prepare-CC-74.log" || true)" \
+  "rc=0 record=stopped failed wait-failed marker=none logged=1" \
+  "a preparation the host reports failed leaves a stopped record naming the failed wait, and the job log says so"
+
+# With no fleet there is no record to report the outcome through, so the
+# launch waits for the host itself and launches as a ready host's would.
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" \
+  LANE_HOST_STUB_CREATE_LINE="$PREPARING_LINE" RUN_TMUX=stub,1,0 \
+  run_ot STATE_DIR= --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-75
+assert_eq "rc=$RC waited=$(grep -c '^wait --item CC-75 $' "$TMP_ROOT/host.log" || true) marker=$(marker_at cc-75) summary=$(grep -c '^open-terminal: summary launched=1 skipped=0 ' <<<"$OUT" || true)" \
+  "rc=0 waited=1 marker=root summary=1" \
+  "a launch naming no fleet waits for a preparing host in the foreground"
+
+# The must-fail inverse: with the hand-off gone the launch waits for the host
+# itself, so it returns only once the gate a background writer opens a second
+# later has let the preparation finish, with the lane already running.
+mutant waiting '  if [[ "$host_state" == preparing && "$FLEET" == true ]]; then' '  if false; then'
+(sleep 1; touch "$TMP_ROOT/gate-76") &
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" \
+  LANE_HOST_STUB_CREATE_LINE="$PREPARING_LINE" LANE_HOST_STUB_WAIT_GATE="$TMP_ROOT/gate-76" RUN_TMUX=stub,1,0 \
+  run_ot SCRIPT="$TMP_ROOT/waiting/scripts/open-terminal" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-76
+wait
+assert_eq "rc=$RC record=$(prepared CC-76) marker=$(marker_at cc-76)" \
+  "rc=0 record=running none none marker=root" \
+  "control: without the hand-off the launch blocks until the host is prepared"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

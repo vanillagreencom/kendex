@@ -138,6 +138,18 @@ case "$1" in
       printf 'lane-host-fixture: append-failed path=%s reason=%s\n' "$dest" "$why" >&2
       exit 1
     fi ;;
+  # A host still preparing the item it accepted: LANE_HOST_STUB_WAIT_GATE holds
+  # wait until that file exists, and LANE_HOST_STUB_WAIT_STATUS fails it, the
+  # preparation that failed.
+  wait)
+    waited=0
+    while [ -n "${LANE_HOST_STUB_WAIT_GATE:-}" ] && [ ! -e "$LANE_HOST_STUB_WAIT_GATE" ]; do
+      [ "$waited" -lt 120 ] || { printf 'lane-host-fixture: wait-timeout item=%s\n' "$3" >&2; exit 1; }
+      sleep 0.25
+      waited=$((waited + 1))
+    done
+    [ "${LANE_HOST_STUB_WAIT_STATUS:-0}" -eq 0 ] \
+      || { printf 'lane-host-fixture: prepare-failed item=%s\n' "$3" >&2; exit "$LANE_HOST_STUB_WAIT_STATUS"; } ;;
   touch) ;;
   stop) ;;
   # LANE_HOST_STUB_CLOSE_EMPTY is a close that archived nothing: no kept= line.
