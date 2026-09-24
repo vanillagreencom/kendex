@@ -447,10 +447,11 @@ branch holds. Where the remote carries work the branch lacks, it names the
 fetch and rebase. Where the branch already carries every commit on the remote
 branch under rewritten SHAs, fetching and rebasing would replay work that
 rewrite superseded, so the refusal says so: no recorded authorization covers
-the rewrite, and a rewrite made outside push and the guarded restack, or by an
-earlier kendex, carries none. Running a rewrite verb on that branch now
-rewrites nothing and records nothing, so the refusal names the git push that
-republishes the branch, pinned to the remote OID it read.
+the rewrite. Running a rewrite verb on that branch now rewrites nothing and
+records nothing, so the refusal names the git push that republishes the
+branch, pinned to the remote OID it read. A rewrite whose map was never
+derived is refused on its record before this check, so that route is never
+named for it.
 
 rebase-map: when the auto-rebase rewrites branch commits, push prints one
 'rebase-map: <old-sha> <new-sha>' line per rewritten commit on stdout
