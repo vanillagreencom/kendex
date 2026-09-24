@@ -55,20 +55,20 @@ pass
 assert_eq "rc=$RC first=$(head -1 <<<"$OUT") events=$(account_events)" "rc=0 first=$HEARTBEAT events=0" \
   "the first reading of every account is its baseline and emits nothing" "$ERR"
 assert_eq "$(grep '^account' <<<"$OUT")" "account-roster accounts=2
-account claude harness=claude through=local status=expired verdict=unmeasured headroom_pct=- binding_bucket=- binding_resets_at=-
-account eclaude harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at=2026-10-02T00:00:00Z" \
+account claude config_dir=/home/u/.claude harness=claude through=local status=expired verdict=unmeasured headroom_pct=- binding_bucket=- binding_resets_at=-
+account eclaude config_dir=/home/u/.eclaude harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at=2026-10-02T00:00:00Z" \
   "the heartbeat carries one roster line per account from the pass's own reading" "$ERR"
 assert_eq "$(cat "$STUB_DIR/lanes.args")" "list --json" "the pass reads the accounts through lanes list --json" "$ERR"
 pass
 assert_eq "rc=$RC events=$(account_events)" "rc=0 events=1" "the renewal pass emits exactly one account event" "$ERR"
 assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
-  "EVENT account claude harness=claude through=local status=ok verdict=room headroom_pct=80 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=status,headroom was=expired/unmeasured" \
+  "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=80 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=status,headroom was=expired/unmeasured" \
   "the event names the account, its headroom and reset, and what changed from what" "$ERR"
 assert_not_contains "$OUT" "account-roster" "a pass that emits an event prints no roster with it" "$ERR"
 pass
 assert_eq "rc=$RC first=$(head -1 <<<"$OUT") events=$(account_events)" "rc=0 first=$HEARTBEAT events=0" \
   "the pass after the renewal reads the same state and emits nothing" "$ERR"
-assert_contains "$OUT" "account claude harness=claude through=local status=ok verdict=room headroom_pct=80" \
+assert_contains "$OUT" "account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=80" \
   "the next heartbeat's roster carries the renewed reading" "$ERR"
 
 # Headroom crossing the launch bound, as lanes judges it, in both directions.
@@ -80,11 +80,11 @@ accounts 4 "$(account claude ok room 50 2026-10-01T00:00:00Z)"
 pass
 pass
 assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
-  "EVENT account claude harness=claude through=local status=ok verdict=walled headroom_pct=3 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/room" \
+  "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=walled headroom_pct=3 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/room" \
   "headroom falling across the bound is an account event" "$ERR"
 pass
 assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
-  "EVENT account claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled" \
+  "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled" \
   "headroom climbing back across the bound is an account event" "$ERR"
 pass
 assert_eq "rc=$RC first=$(head -1 <<<"$OUT") events=$(account_events)" "rc=0 first=$HEARTBEAT events=0" \
@@ -115,11 +115,11 @@ assert_eq "rc=$RC first=$(head -1 <<<"$OUT") events=$(account_events)" "rc=0 fir
   "a passed reset still named by the reading waits for a fresh one" "$ERR"
 pass
 assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
-  "EVENT account claude harness=claude through=local status=ok verdict=room headroom_pct=20 binding_bucket=weekly binding_resets_at=2026-09-24T12:30:00Z change=headroom was=ok/walled" \
+  "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=20 binding_bucket=weekly binding_resets_at=2026-09-24T12:30:00Z change=headroom was=ok/walled" \
   "a verdict change beside a passed reset the reading still names reports the headroom and no reset" "$ERR"
 pass
 assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
-  "EVENT account claude harness=claude through=local status=ok verdict=room headroom_pct=20 binding_bucket=weekly binding_resets_at=2026-10-01T12:00:00Z change=reset was=ok/room" \
+  "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=20 binding_bucket=weekly binding_resets_at=2026-10-01T12:00:00Z change=reset was=ok/room" \
   "the reading moving off a passed reset is an account event naming the reset" "$ERR"
 
 # An account the listing drops for a pass keeps its baseline row, so its
@@ -134,7 +134,7 @@ assert_eq "rc=$RC first=$(head -1 <<<"$OUT") events=$(account_events)" "rc=0 fir
   "a pass that does not name the account emits nothing about it" "$ERR"
 pass
 assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
-  "EVENT account claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled" \
+  "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled" \
   "the account's return is judged against its reading before the gap" "$ERR"
 
 # A baseline reset no date can read settles no reset, is noted once, and the
@@ -145,10 +145,28 @@ accounts 2 "$(account claude ok room 30 2026-10-01T00:00:00Z)"
 pass
 pass
 assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
-  "EVENT account claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled" \
+  "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled" \
   "an unparseable baseline reset still reports the headroom change and no reset" "$ERR"
 assert_eq "$(grep -c "^oversee-watch: account-reset-unparsed account=claude|local|/home/u/.claude binding_resets_at=not-a-time$" "$ERR" || true)" "1" \
   "the unparseable baseline reset is noted once, naming the account and the stamp" "$ERR"
+
+# Two accounts can share an alias: config dirs in different parents with one
+# basename, or an alias setting naming two dirs. Only config_dir tells their
+# lines apart.
+new_case shared_alias
+FIRST="$(account claude ok room 80 2026-10-01T00:00:00Z)"
+SECOND="$(jq -c '.config_dir = "/srv/u/.claude"' <<<"$(account claude ok room 70 2026-10-01T00:00:00Z)")"
+SECOND_WALLED="$(jq -c '.config_dir = "/srv/u/.claude"' <<<"$(account claude ok walled 2 2026-10-01T00:00:00Z)")"
+accounts 1 "$FIRST" "$SECOND"
+accounts 2 "$FIRST" "$SECOND_WALLED"
+pass
+assert_eq "$(grep '^account ' <<<"$OUT")" "account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=80 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z
+account claude config_dir=/srv/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=70 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z" \
+  "two accounts sharing an alias are two roster lines told apart by config_dir" "$ERR"
+pass
+assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
+  "EVENT account claude config_dir=/srv/u/.claude harness=claude through=local status=ok verdict=walled headroom_pct=2 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/room" \
+  "the event names the config dir whose account changed" "$ERR"
 
 # Any other event opens the block, and the roster stays with the heartbeat.
 new_case other_event

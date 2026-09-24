@@ -173,8 +173,8 @@ Events, checked and reported in this order every pass:
   EVENT idle-after-return <lane>
                              the live harness sits idle on two passes; the
                              lane's closing lines follow
-  EVENT account <alias> harness=<harness> through=<local|host> status=<status>
-                verdict=<room|walled|unmeasured> headroom_pct=<N|->
+  EVENT account <alias> config_dir=<dir> harness=<harness> through=<local|host>
+                status=<status> verdict=<room|walled|unmeasured> headroom_pct=<N|->
                 binding_bucket=<bucket|-> binding_resets_at=<utc|->
                 change=<status|headroom|reset>[,...] was=<status>/<verdict>
                              an account the fleet can launch on changed since
@@ -185,12 +185,14 @@ Events, checked and reported in this order every pass:
                              last reading named has passed and the reading has
                              moved off it. `change=` names every one that
                              applies and `was=` the status and verdict before
-                             it. The first reading of an account is its
-                             baseline and an unchanged account says nothing
+                             it. `config_dir` names the credentials, since
+                             two accounts can share an alias. The first
+                             reading of an account is its baseline and an
+                             unchanged account says nothing
   EVENT heartbeat            --max-loops passes with no event; every --repo's
                              open PRs follow, each line prefixed with its repo,
                              then `account-roster accounts=<N>` and one
-                             `account <alias> harness=...` line per account,
+                             `account <alias> config_dir=...` line per account,
                              the fields the account event carries up to
                              `change=`, from the last pass's reading.
                              `account-roster unread` replaces them when that
@@ -2861,7 +2863,7 @@ account_roster_read() {
     | (.binding_resets_at // "-") as $resets
     | ["\(.harness)|\(.measured_through)|\(.config_dir)",
        "\($status)|\($verdict)|\($resets)",
-       "\(.alias) harness=\(.harness) through=\(.measured_through) status=\($status) verdict=\($verdict) headroom_pct=\(.headroom_pct // "-") binding_bucket=\(.binding_bucket // "-") binding_resets_at=\($resets)"]
+       "\(.alias) config_dir=\(.config_dir) harness=\(.harness) through=\(.measured_through) status=\($status) verdict=\($verdict) headroom_pct=\(.headroom_pct // "-") binding_bucket=\(.binding_bucket // "-") binding_resets_at=\($resets)"]
     | @tsv' <<<"$BOUNDED_OUT" 2>"$errf")" || {
     overseer_note account-unread "path=$LANES_CLI" "parse=failed"
     [[ ! -s "$errf" ]] || cat -- "$errf" >&2
