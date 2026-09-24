@@ -1,0 +1,1 @@
+- Build the desktop app in the Arch `kendex` and `kendex-git` packages with its interface inside, so it opens instead of showing a connection error for `localhost:5273`.
