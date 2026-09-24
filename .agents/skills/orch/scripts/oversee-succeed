@@ -209,7 +209,10 @@
 #                    successor goes. A codex line still carries the folder-trust
 #                    preparation of step 4, because the pane that replays it is
 #                    as unattended as the one a live succession opens, and the
-#                    home that trust was made in is part of the line.
+#                    home that trust was made in is part of the line. It also
+#                    carries -c check_for_update_on_startup=false once, ahead of
+#                    the flags, so the replayed pane never opens on the Codex
+#                    update prompt.
 #                    Exit 0 with the line on stdout
 #   --dead-pane PANE The tmux pane of an overseer that has already died, in
 #                    place of the caller's own: no mark is judged, no lane is
@@ -1015,6 +1018,16 @@ else
     cmd="codex"
     lane_var=CODEX_HOME
   fi
+  # The harness's launch settings lead, where open-terminal's start_cmd puts
+  # them: a codex successor otherwise opens on the startup update prompt in a
+  # pane nobody is at and never reaches its brief. Every branch below takes the
+  # caller's own copy out of the flags it keeps, so the line carries them once.
+  settings="$(launch_choice_settings "$harness")" || die launch-choice-failed "harness=$harness"
+  settings_words=()
+  read -r -a settings_words <<<"$settings"
+  for flag in ${settings_words[@]+"${settings_words[@]}"}; do
+    cmd+=" $(printf %q "$flag")"
+  done
   # The model and effort words come from lib/lane-launch.sh's table, the same row
   # open-terminal reads a launch's flags against, so a successor is never given a
   # spelling that launcher would refuse. A caller-entry successor passes no model,
@@ -1027,7 +1040,8 @@ else
   # prove and no other permission word, writes the target spelling, and strips
   # all caller choices.
   if [[ "$chosen" == caller ]]; then
-    LAUNCH_CHOICE_KEPT=(${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"})
+    launch_choice_settings_strip "$harness" ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
+      || die launch-choice-failed "harness=$harness"
   elif [[ "$harness" == "$CALLER_HARNESS" ]]; then
     launch_choice_strip "$CALLER_HARNESS" ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
       || die launch-choice-failed "harness=$CALLER_HARNESS"

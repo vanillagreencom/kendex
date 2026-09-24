@@ -58,7 +58,8 @@ lane_env_prefix() { # HARNESS DIR
 # the builder writes the old word.
 #
 # One row per harness,
-# `HARNESS|MODEL SPELLINGS|EFFORT SPELLINGS|EFFORT-IN-MODEL|ATTACH WORD`, each
+# `HARNESS|MODEL SPELLINGS|EFFORT SPELLINGS|EFFORT-IN-MODEL|ATTACH WORD|
+# PERMISSION SPELLINGS|TRANSFER PERMISSION SPELLINGS|LAUNCH SETTINGS`, each
 # spelling list space-separated, so a consumer's harness or a new flag spelling
 # is one row rather than a code path. A spelling that ends in `=` is a whole
 # token with its value attached; any other is a flag word taking the next token
@@ -93,8 +94,9 @@ lane_env_prefix() { # HARNESS DIR
 #             config override, `-c, --config <key=value>` carrying the
 #             `model_reasoning_effort` key, so the whole token is the spelling;
 #             `--dangerously-bypass-approvals-and-sandbox`, `--approve-for-me`
-#             and `-a, --ask-for-approval` name unattended permission modes;
-#             `check_for_update_on_startup` is a top-level config key.
+#             and `-a, --ask-for-approval` name unattended permission modes.
+#             `check_for_update_on_startup` is not in `codex --help`: it is a
+#             top-level key in the Codex config reference, which `-c` sets.
 #   opencode  the flags table of `opencode [project]`, the form start_cmd
 #             renders: `--model, -m`, and no effort flag at all. `--variant`
 #             belongs to `opencode run`, which this script never launches.
@@ -402,9 +404,48 @@ launch_choice_permission_write() { # HARNESS
   fi
 }
 
+# The flags of a launch on HARNESS with that harness's launch settings taken
+# out, left in LAUNCH_CHOICE_KEPT in their original order. A settings sequence
+# is taken only where it stands whole, token for token as the row writes it.
+#
+# A launcher writes the settings of the harness it builds for, so a caller's
+# flags handed on to such a launch keep none of their own: the same harness
+# would carry them twice, and another harness would be handed a config word
+# its own launch form may not have at all.
+launch_choice_settings_strip() { # HARNESS FLAG...
+  local settings i j n m whole
+  local -a words=() rest=() kept=()
+  settings="$(launch_choice_settings "$1")" || return 1
+  read -r -a words <<<"$settings"
+  shift
+  rest=("$@")
+  n=${#rest[@]}
+  m=${#words[@]}
+  i=0
+  while (( i < n )); do
+    whole=0
+    if (( m > 0 && i + m <= n )); then
+      whole=1
+      j=0
+      while (( j < m )); do
+        [[ "${rest[i+j]}" == "${words[j]}" ]] || { whole=0; break; }
+        j=$((j + 1))
+      done
+    fi
+    if (( whole == 1 )); then
+      i=$((i + m))
+      continue
+    fi
+    kept+=("${rest[i]}")
+    i=$((i + 1))
+  done
+  LAUNCH_CHOICE_KEPT=(${kept[@]+"${kept[@]}"})
+}
+
 # The flags of a launch on HARNESS with that harness's own MODEL and EFFORT
-# words taken out, left in LAUNCH_CHOICE_KEPT. With `--permissions`, permission
-# words are taken out too. What is left stays in its original order.
+# words and its launch settings taken out, left in LAUNCH_CHOICE_KEPT. With
+# `--permissions`, permission words are taken out too. What is left stays in
+# its original order.
 #
 # The inverse of launch_choice_write over the same row, and the reason it
 # exists: a caller hands its flags on to a launch it did not write, and those
@@ -429,7 +470,7 @@ launch_choice_permission_write() { # HARNESS
 # refuses rather than guessing.
 LAUNCH_CHOICE_KEPT=()
 launch_choice_strip() { # HARNESS [--permissions] FLAG...
-  local row attach permission_specs word tok drop i n strip_permissions=0
+  local harness="$1" row attach permission_specs word tok drop i n strip_permissions=0
   local -a spellings=() rest=()
   LAUNCH_CHOICE_KEPT=()
   row="$(launch_choice_row "$1")"
@@ -484,6 +525,7 @@ launch_choice_strip() { # HARNESS [--permissions] FLAG...
     fi
     i=$((i + drop))
   done
+  launch_choice_settings_strip "$harness" ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}
 }
 
 # A value the pane's own shell reads back as itself.
