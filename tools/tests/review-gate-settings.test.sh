@@ -41,7 +41,14 @@ bad() {
 # exporting one of these would otherwise mask a committed value.
 silent_env=(env -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u PR_REVIEW_ON_TIMEOUT -u ORCH_DECISION_MODE)
 
-gate=$(cd "$REPO_ROOT" && "${silent_env[@]}" "$SCRIPTS/approval-wait" --resolve-mode 2>"$TMP/gate.err")
+# REVIEW_GATE_CLASS_POLICY is silenced for this one call, set-but-empty, which
+# is what the engine reads as no class policy. An ACTIVE one makes the mode a
+# per-pull-request question and the resolver refuses a call that names no
+# range — the right answer to "what mode does this pull request get?" and no
+# answer at all to the one asked here, which is what the committed reviewer
+# keys resolve to for the repository. Silencing it narrows this read, never
+# the resolver: a caller that does ask per pull request still passes a range.
+gate=$(cd "$REPO_ROOT" && "${silent_env[@]}" REVIEW_GATE_CLASS_POLICY= "$SCRIPTS/approval-wait" --resolve-mode 2>"$TMP/gate.err")
 if [[ "$gate" == "review" ]]; then
   ok "committed PR_REVIEW_GATE resolves to review"
 else
