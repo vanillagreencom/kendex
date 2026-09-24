@@ -160,15 +160,14 @@ DF_CALL_LOG="$TMP/df-calls"
 CARGO_ENV_LOG="$TMP/cargo-env"
 G=$((1024 * 1024))
 high_free_kib=$((30 * G))
-floors="min-gib=24 min-free-mib=512"
 # label | env | exit | keyed line, empty for none | 1 when cargo ran. Unset
 # CARGO_TARGET_DIR is the world's absent target/; $TMP/cold/target is absent
 # below an existing directory.
 SPACE_ROWS=(
-  "a cold target below the start floor refuses before cargo|CARGO_TARGET_DIR=$TMP/cold/target DF_FREE_KIB_START=$G|1|cargo-space-start=free-kib=$G target-kib=0 $floors|0"
+  "a cold target below the start floor refuses before cargo|CARGO_TARGET_DIR=$TMP/cold/target DF_FREE_KIB_START=$G|1|cargo-space-start=free-kib=$G target-kib=0 min-gib=24|0"
   "the build in a warm target counts toward the start floor|CARGO_TARGET_DIR=$TMP/warm DU_KIB=$((23 * G)) DF_FREE_KIB_START=$G|0||1"
-  "free space below the exhaustion floor refuses whatever the target holds|CARGO_TARGET_DIR=$TMP/inc DU_KIB=$((30 * G)) DU_INCREMENTAL_KIB=$G DF_FREE_KIB_START=708|1|cargo-space-start=free-kib=708 target-kib=$((29 * G)) $floors|0"
-  "an incremental directory is not room|CARGO_TARGET_DIR=$TMP/inc DU_KIB=$((30 * G)) DU_INCREMENTAL_KIB=$((8 * G)) DF_FREE_KIB_START=$G|1|cargo-space-start=free-kib=$G target-kib=$((22 * G)) $floors|0"
+  "free space below the exhaustion floor refuses before the target is measured|DU_FAIL=1 CARGO_TARGET_DIR=$TMP/inc DF_FREE_KIB_START=708|1|cargo-space-free=free-kib=708 min-free-mib=512|0"
+  "an incremental directory is not room|CARGO_TARGET_DIR=$TMP/inc DU_KIB=$((30 * G)) DU_INCREMENTAL_KIB=$((8 * G)) DF_FREE_KIB_START=$G|1|cargo-space-start=free-kib=$G target-kib=$((22 * G)) min-gib=24|0"
   "a volume above the start floor reaches the cargo block|DF_FREE_KIB_START=$high_free_kib|0||1"
   "an unreadable start probe is named and the block still runs|DF_FAIL_CALL=1 DF_FREE_KIB_START=$G|0|cargo-space-unreadable=target|1"
   "an unreadable target size is named and the block still runs|DU_FAIL=1 CARGO_TARGET_DIR=$TMP/warm DF_FREE_KIB_START=$G|0|cargo-target-unreadable=$TMP/warm|1"
@@ -210,7 +209,8 @@ done <<'EDITS'
 0|s/^    cargo_space_ok=0$/    :/
 0|/^  while \[ ! -e "\$path" \]; do$/,/^  done$/d
 1|s/"\$((cargo_free_start_kib + cargo_target_start_kib))"/"$cargo_free_start_kib"/
-2|s/\[ "\$cargo_free_start_kib" -lt "\$((10#\$guard_exhausted_free_mb \* 1024))" \] ||/false ||/
+2|s/^  elif \[ "\$cargo_free_start_kib" -lt/  elif false \&\& [ "$cargo_free_start_kib" -lt/
+2|s/^  elif \[ "\$cargo_free_start_kib" -lt/  elif cargo_target_kib "$cargo_target_path" >\/dev\/null \&\& [ "$cargo_free_start_kib" -lt/
 3|s/{ kib -= \$1 }/{ }/
 7|s/^    say cargo-space-end "free-kib/    note cargo-space-end "free-kib/
 8|s/^    say cargo-space-end-unreadable/    note cargo-space-end-unreadable/

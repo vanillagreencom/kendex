@@ -118,9 +118,12 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "cargo fmt --check refused the workspace." ;;
     cargo-space-setting)
       printf 'the %s setting is unset, is not a whole number, or could not be read, so the cargo block did not run.\n' "$2" ;;
+    cargo-space-free)
+      echo "free space on the volume holding $cargo_target is below the exhaustion floor, so the run would fail at its end."
+      echo "Run cargo clean, or free space elsewhere on that volume, for example another checkout's target/." ;;
     cargo-space-start)
-      echo 'the cargo target volume has less room than one full run needs: free space is below the exhaustion floor, or free space plus the target directory outside its incremental directories is below the start floor.'
-      echo 'Run cargo clean, or remove target/debug/incremental, before validation.' ;;
+      echo "free space plus $cargo_target outside its incremental directories is less than one full run needs."
+      echo "Free space on that volume outside $cargo_target, for example another checkout's target/, or remove an incremental directory under it." ;;
     cargo-space-unreadable)
       echo "free space on the cargo target volume could not be read at $2; the cargo block continued because an unreadable probe does not establish exhaustion." ;;
     cargo-target-unreadable)
@@ -176,10 +179,6 @@ refuse() { # KEY VALUE — guard could not run at all
 
 cargo_free_kib() { # TARGET_PATH — available KiB on the volume that will hold it
   local path="$1" parent output value
-  case "$path" in
-    /*) ;;
-    *) path="./$path" ;;
-  esac
   while [ ! -e "$path" ]; do
     parent=$(dirname "$path") || return 1
     [ "$parent" != "$path" ] || return 1
@@ -196,10 +195,6 @@ cargo_free_kib() { # TARGET_PATH — available KiB on the volume that will hold 
 cargo_target_kib() { # TARGET_PATH — KiB it holds outside any incremental directory, 0 when absent
   local path="$1" output
   [ -e "$path" ] || { echo 0; return 0; }
-  case "$path" in
-    /*) ;;
-    *) path="./$path" ;;
-  esac
   output=$({ du -sk "$path" && find "$path" -type d -name incremental -prune -exec du -sk {} +; } 2>/dev/null) ||
     return 1
   # The first line is the whole target; each later one is an incremental
@@ -768,6 +763,12 @@ fi
 
 cargo_space_ok=1
 cargo_target="${CARGO_TARGET_DIR:-target}"
+# The path df, du and find read: a relative target never reaches them as an
+# option.
+case "$cargo_target" in
+  /*) cargo_target_path="$cargo_target" ;;
+  *) cargo_target_path="./$cargo_target" ;;
+esac
 if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
   # The fresh Linux cargo shards in .github/workflows/skill-tests.yml explain
   # why no later compile can reuse incremental artifacts from this run.
@@ -781,17 +782,19 @@ if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
   guard_exhausted_free_mb=$("$ORCH_ENV" GUARD_EXHAUSTED_FREE_MB "") ||
     refuse cargo-space-setting GUARD_EXHAUSTED_FREE_MB
   whole_setting GUARD_EXHAUSTED_FREE_MB "$guard_exhausted_free_mb"
-  # Room is free space plus the target outside its incremental directories,
-  # which a run without incremental compilation never rewrites. A start below
-  # the exhaustion floor refuses whatever the target holds: the end probe
-  # would fail that run anyway.
-  if ! cargo_free_start_kib=$(cargo_free_kib "$cargo_target"); then
+  # A start below the exhaustion floor would fail the end probe, so it
+  # refuses on the free figure alone, before the target is measured. Room is
+  # free space plus the target outside its incremental directories, which a
+  # run without incremental compilation never rewrites.
+  if ! cargo_free_start_kib=$(cargo_free_kib "$cargo_target_path"); then
     note cargo-space-unreadable "$cargo_target"
-  elif ! cargo_target_start_kib=$(cargo_target_kib "$cargo_target"); then
+  elif [ "$cargo_free_start_kib" -lt "$((10#$guard_exhausted_free_mb * 1024))" ]; then
+    say cargo-space-free "free-kib=$cargo_free_start_kib min-free-mib=$guard_exhausted_free_mb"
+    cargo_space_ok=0
+  elif ! cargo_target_start_kib=$(cargo_target_kib "$cargo_target_path"); then
     note cargo-target-unreadable "$cargo_target"
-  elif [ "$cargo_free_start_kib" -lt "$((10#$guard_exhausted_free_mb * 1024))" ] ||
-    [ "$((cargo_free_start_kib + cargo_target_start_kib))" -lt "$((10#$guard_min_free_gb * 1024 * 1024))" ]; then
-    say cargo-space-start "free-kib=$cargo_free_start_kib target-kib=$cargo_target_start_kib min-gib=$guard_min_free_gb min-free-mib=$guard_exhausted_free_mb"
+  elif [ "$((cargo_free_start_kib + cargo_target_start_kib))" -lt "$((10#$guard_min_free_gb * 1024 * 1024))" ]; then
+    say cargo-space-start "free-kib=$cargo_free_start_kib target-kib=$cargo_target_start_kib min-gib=$guard_min_free_gb"
     cargo_space_ok=0
   fi
 fi
@@ -1040,7 +1043,7 @@ if [ "$FULL" -eq 1 ] && [ "$cargo_space_ok" -eq 1 ] && [ -f Cargo.toml ]; then
     fi
   fi
   rm -f "$tests_log"
-  if ! cargo_free_end_kib=$(cargo_free_kib "$cargo_target"); then
+  if ! cargo_free_end_kib=$(cargo_free_kib "$cargo_target_path"); then
     say cargo-space-end-unreadable "$cargo_target"
   elif [ "$cargo_free_end_kib" -lt "$((10#$guard_exhausted_free_mb * 1024))" ]; then
     say cargo-space-end "free-kib=$cargo_free_end_kib min-mib=$guard_exhausted_free_mb"
