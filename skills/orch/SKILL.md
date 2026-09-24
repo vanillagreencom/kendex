@@ -26,7 +26,7 @@ Load `github` and `worktree` before anything else; a Linear work item also needs
 
 Get the issue → dev implements → review → dev fixes blockers → re-review → push PR → review gate → shepherd to merge.
 
-- **Bounded loops.** A fix round addresses blockers only; re-review narrows to the fix diff and the domains it touched; two consecutive rounds with no new blocker end the review.
+- **Bounded loops.** A fix round addresses blockers only; re-review narrows to the fix diff, the domains it touched, and the class of every defect it fixed ([reviewer/SKILL.md](../reviewer/SKILL.md) § Re-Review Rounds); two consecutive rounds with no new blocker end the review.
 - **No edge-case churn.** A finding that cannot affect real usage is declined with a one-line reason, not fixed, not filed.
 - **Review must converge**, by [references/finding-disposition.md](references/finding-disposition.md):
   - Every finding runs its [§ Decision flow](references/finding-disposition.md#decision-flow), Step 0 first, and ends as one of the reply forms that section sets out.

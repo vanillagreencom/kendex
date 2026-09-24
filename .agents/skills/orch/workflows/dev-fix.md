@@ -171,7 +171,7 @@ Cancel ends the workflow; a selection goes to § 2.
    {"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}
    ```
 
-   Escalated, `[OUTCOME]` carrying the item's accepted decision — Blocked → `"blocked"`, Skipped → `"skipped"`:
+   Escalated, `[OUTCOME]` carrying the item's accepted decision — Blocked → `"blocked"`, Skipped → `"skipped"`; a Skipped item whose disposition is introduced-or-armed, the fix having introduced or armed the defect it names, lands here with outcome `"skipped"` and the orchestrator re-delegates it in the next fix round instead of ending the review on it:
 
    ```json
    {"description":"[DESC]","location":"[LOC]","reason":"[REASON]","outcome":"[OUTCOME]","source":"[SOURCE]"}
