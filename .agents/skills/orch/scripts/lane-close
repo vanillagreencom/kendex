@@ -264,6 +264,36 @@ close_host() {
   return "$rc"
 }
 
+pane_still_exists() {
+  local listed
+  listed="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)" || return 2
+  awk -v pane="$pane_id" '$0 == pane { found=1 } END { exit !found }' <<<"$listed"
+}
+
+# The end of every close-out: the host closed unless --keep-sandbox, the
+# window closed where pane_id names one tmux still lists, then the record and
+# the line naming the outcome, pane= carried where the close had a pane.
+pane_id=""
+finish_close() {
+  local next_status=done pane_rc=0 fields=("item=$ITEM")
+  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || exit $?; fi
+  if [[ -n "$pane_id" ]]; then
+    pane_still_exists || pane_rc=$?
+    case "$pane_rc" in
+      0) tmux kill-window -t "$pane_id" \
+           || { message tmux-failed "item=$ITEM" "operation=kill-window" "pane=$pane_id" >&2; exit 1; } ;;
+      1) ;;
+      *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
+    esac
+    fields+=("pane=$pane_id")
+  fi
+  update_status "$next_status" \
+    || { message state-write-failed "item=$ITEM" "status=$next_status" >&2; exit 1; }
+  if [[ "$next_status" == stopped ]]; then message stopped "${fields[@]}" "status=stopped"
+  else message closed "${fields[@]}" "status=done"; fi
+  exit 0
+}
+
 # A stopped record means an earlier --keep-sandbox call already exited the
 # harness and removed its window. Only the kept sandbox and the record remain.
 if [[ "$status" == stopped ]]; then
@@ -274,10 +304,7 @@ if [[ "$status" == stopped ]]; then
     message stopped "item=$ITEM" "status=stopped"
     exit 0
   fi
-  close_host || exit $?
-  update_status done || { message state-write-failed "item=$ITEM" "status=done" >&2; exit 1; }
-  message closed "item=$ITEM" "status=done"
-  exit 0
+  finish_close
 fi
 
 # The recorded window resolves through the shared owner, which accepts the
@@ -306,21 +333,12 @@ resolve_window() {
 if [[ "$status" == preparing ]]; then
   refuse_unanswered_ask
   [[ -z "$window_name" ]] || resolve_window
-  prepare_pane="$RESOLVED_PANE"
   job="$(jq -r '.prepare.pid // empty' <<<"$record")"
   if [[ "$job" =~ ^[1-9][0-9]*$ ]] && job_cmd="$(ps -o command= -p "$job")" && [[ "$job_cmd" == *open-terminal* ]]; then
     kill -TERM -- "-$job" || { message prepare-stop-failed "item=$ITEM" "pid=$job" >&2; exit 1; }
   fi
-  if [[ -n "$prepare_pane" ]]; then
-    tmux kill-window -t "$prepare_pane" \
-      || { message tmux-failed "item=$ITEM" "operation=kill-window" "pane=$prepare_pane" >&2; exit 1; }
-  fi
-  next_status=done
-  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || exit $?; fi
-  update_status "$next_status" || { message state-write-failed "item=$ITEM" "status=$next_status" >&2; exit 1; }
-  if [[ "$next_status" == stopped ]]; then message stopped "item=$ITEM" "status=stopped"
-  else message closed "item=$ITEM" "status=done"; fi
-  exit 0
+  pane_id="$RESOLVED_PANE"
+  finish_close
 fi
 
 [[ -n "$window_name" ]] || { message record-invalid "item=$ITEM" "field=window" >&2; exit 1; }
@@ -417,12 +435,6 @@ mode_read() {
     mode="$(tmux display-message -p -t "$pane_id" '#{pane_in_mode}' 2>/dev/null)" || return 1
   fi
   [[ "$mode" == 0 ]]
-}
-
-pane_still_exists() {
-  local listed
-  listed="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)" || return 2
-  awk -v pane="$pane_id" '$0 == pane { found=1 } END { exit !found }' <<<"$listed"
 }
 
 pane_now_exited() {
@@ -522,21 +534,4 @@ if [[ "$state" == idle ]]; then
   esac
 fi
 
-if [[ "$KEEP_SANDBOX" != true ]]; then close_host || exit $?; fi
-pane_rc=0
-pane_still_exists || pane_rc=$?
-case "$pane_rc" in
-  0) tmux kill-window -t "$pane_id" \
-       || { message tmux-failed "item=$ITEM" "operation=kill-window" "pane=$pane_id" >&2; exit 1; } ;;
-  1) ;;
-  *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
-esac
-next_status=done
-[[ "$KEEP_SANDBOX" != true ]] || next_status=stopped
-update_status "$next_status" \
-  || { message state-write-failed "item=$ITEM" "status=$next_status" >&2; exit 1; }
-if [[ "$next_status" == stopped ]]; then
-  message stopped "item=$ITEM" "pane=$pane_id" "status=stopped"
-else
-  message closed "item=$ITEM" "pane=$pane_id" "status=done"
-fi
+finish_close

@@ -520,15 +520,27 @@ assert_eq "rc=$RC ask=$(grep -c '^lane-close: ask-unanswered ' <<<"$ERR" || true
 
 # A preparing record: a hosted launch whose background job has written no
 # outcome. The job stands in as a process group leader running a script named
-# open-terminal; the close stops that group, closes the window, closes or keeps
-# the host, and records done or stopped. A pid naming anything else is left
-# alone. prepare_close SCRIPT JOB_PATH [ARGS...] runs one close and sets JOB_RC
-# to the job's own exit status, 143 when the close stopped it.
+# open-terminal that blocks until the test ends it; the close stops that group,
+# closes the window, closes or keeps the host, and records done or stopped. A
+# pid naming anything else is left alone. prepare_close SCRIPT JOB_PATH
+# [ARGS...] runs one close and sets JOB to `stopped` or `running`, read after
+# the close returns, then ends the job itself.
 JOB_DIR="$TMP_ROOT/job"
 mkdir -p "$JOB_DIR"
-printf '#!/usr/bin/env bash\nsleep 3\n' >"$JOB_DIR/open-terminal"
-printf '#!/usr/bin/env bash\nsleep 3\n' >"$JOB_DIR/other-job"
+printf '#!/usr/bin/env bash\nsleep 300\n' >"$JOB_DIR/open-terminal"
+printf '#!/usr/bin/env bash\nsleep 300\n' >"$JOB_DIR/other-job"
 chmod +x "$JOB_DIR/open-terminal" "$JOB_DIR/other-job"
+# A process the close signalled is gone, or a zombie until this shell reaps
+# it, within two seconds; a live one is neither.
+job_state() { # PID
+  local stat
+  for _ in $(seq 20); do
+    stat="$(ps -o stat= -p "$1" 2>/dev/null)" || { printf stopped; return; }
+    [[ "$stat" != Z* ]] || { printf stopped; return; }
+    sleep 0.1
+  done
+  printf running
+}
 prepare_close() {
   local script="$1" job
   shift
@@ -542,22 +554,26 @@ prepare_close() {
   mv -- "$STATE.next" "$STATE"
   write_panes bash
   run_close "$script" "$@"
-  JOB_RC=0
-  wait "$job" || JOB_RC=$?
+  JOB="$(job_state "$job")"
+  kill -TERM -- "-$job" 2>/dev/null || true
+  wait "$job" || true
 }
 prepare_close "$SCRIPT" "$JOB_DIR/open-terminal"
-assert_eq "rc=$RC job=$JOB_RC kill=$(grep -c '^kill-window ' "$CALLS" || true) host=$(grep -c '^close ' "$HOST_CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=0 job=143 kill=1 host=1 status=done' 'a preparing record closes by stopping its launch job, its window and its host'
+assert_eq "rc=$RC job=$JOB kill=$(grep -c '^kill-window ' "$CALLS" || true) host=$(grep -c '^close ' "$HOST_CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 job=stopped kill=1 host=1 status=done' 'a preparing record closes by stopping its launch job, its window and its host'
 prepare_close "$SCRIPT" "$JOB_DIR/open-terminal" --keep-sandbox
-assert_eq "rc=$RC job=$JOB_RC kill=$(grep -c '^kill-window ' "$CALLS" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=0 job=143 kill=1 host=0 status=stopped' 'keep-sandbox on a preparing record stops the job and the window and keeps the host'
+assert_eq "rc=$RC job=$JOB kill=$(grep -c '^kill-window ' "$CALLS" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 job=stopped kill=1 host=0 status=stopped' 'keep-sandbox on a preparing record stops the job and the window and keeps the host'
 prepare_close "$SCRIPT" "$JOB_DIR/other-job"
-assert_eq "rc=$RC job=$JOB_RC status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=0 job=0 status=done' 'a recorded pid that runs anything but open-terminal is left running'
+assert_eq "rc=$RC job=$JOB status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 job=running status=done' 'a recorded pid that runs anything but open-terminal is left running'
 MUTANT="$(mutant lane-close-unstopped '    kill -TERM -- "-$job" || { message prepare-stop-failed "item=$ITEM" "pid=$job" >&2; exit 1; }' '    :')"
 prepare_close "$MUTANT" "$JOB_DIR/open-terminal"
-assert_eq "rc=$RC job=$JOB_RC status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=0 job=0 status=done' 'control: without the stop a closed preparing record leaves its launch job running'
+assert_eq "rc=$RC job=$JOB status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 job=running status=done' 'control: without the stop a closed preparing record leaves its launch job running'
+MUTANT="$(mutant lane-close-any-pid '[[ "$job_cmd" == *open-terminal* ]]' 'true')"
+prepare_close "$MUTANT" "$JOB_DIR/other-job"
+assert_eq "rc=$RC job=$JOB" 'rc=0 job=stopped' 'control: without the name check the close stops a process that is not the launch job'
 
 run_boundary() { # RULE SCRIPT
   local rule="$1" script="$2"
@@ -669,10 +685,10 @@ assert_eq "ambiguous=$(grep -c '^lane-close: pane-ambiguous ' <<<"$ERR" || true)
 MUTANT="$(mutant live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) ;;')"
 write_state running codex /host; write_panes python; printf '› run\n  press to interrupt\n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' 'control: removing the live-state refusal closes a working lane'
-MUTANT="$(mutant provider 'if [[ "$KEEP_SANDBOX" != true ]]; then close_host || exit $?; fi' 'if [[ "$KEEP_SANDBOX" != true ]]; then close_host || :; fi')"
+MUTANT="$(mutant provider '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || exit $?; fi' '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || :; fi')"
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; LANE_CLOSE_HOST_STATUS=3 run_close "$MUTANT"
 assert_eq "rc=$RC kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true)" 'rc=0 kill=1' 'control: ignoring provider exit 3 destroys the window'
-MUTANT="$(mutant pane-id '  0) tmux kill-window -t "$pane_id" \' '  0) tmux kill-window -t "$window_name" \')"
+MUTANT="$(mutant pane-id '      0) tmux kill-window -t "$pane_id" \' '      0) tmux kill-window -t "$window_name" \')"
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "pane=$(grep -c '^kill-window -t %7$' "$CALLS" || true) name=$(grep -c '^kill-window -t KEN-1$' "$CALLS" || true)" \
   'pane=0 name=1' 'control: replacing the pane id makes the test observe the unsafe window-name target'
@@ -719,11 +735,11 @@ MUTANT="$(mutant exit-timeout '    1) message exit-timeout "item=$ITEM" "harness
 write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_NO_EXIT=1 run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: removing the exit timeout closes a lane whose harness still runs'
-MUTANT="$(mutant stopped-provider '  close_host || exit $?' '  close_host || :')"
+MUTANT="$(mutant stopped-provider '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || exit $?; fi' '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || :; fi')"
 write_state stopped claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; LANE_CLOSE_HOST_STATUS=9 run_close "$MUTANT"
 assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 status=done' \
   'control: ignoring a stopped provider failure records the sandbox done'
-MUTANT="$(mutant state-write '  || { message state-write-failed "item=$ITEM" "status=$next_status" >&2; exit 1; }' '  || :')"
+MUTANT="$(mutant state-write '    || { message state-write-failed "item=$ITEM" "status=$next_status" >&2; exit 1; }' '    || :')"
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; LANE_CLOSE_STATE_WRITE_FAIL=6 run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: ignoring the state write failure reports a done record that was never written'

@@ -618,6 +618,11 @@ fi
 # copy again.
 HOST_RELAUNCH=false
 [[ "$LANE_HOST" == local || "$RELAUNCH" != true ]] || HOST_RELAUNCH=true
+# A hosted codex relaunch resumes with no continuation line (`codex resume`
+# refuses a prompt beside --last), which resume-lineless tells the caller, and
+# which keeps that relaunch off the background hand-off whose output is a log.
+RESUME_LINELESS=false
+[[ "$HOST_RELAUNCH" != true || "$HARNESS" != codex ]] || RESUME_LINELESS=true
 # How lane_record_write treats an entry that already names the item.
 RECORD_MODE=launch
 [[ "$RELAUNCH" != true ]] || RECORD_MODE=relaunch
@@ -2393,7 +2398,7 @@ launch_finish() {
   # up idle and runs no turn until the line is pasted. session-resumed cannot
   # carry this: it is gated on a matched transcript, which a hosted relaunch
   # never has.
-  [[ "$HOST_RELAUNCH" != true || "$HARNESS" != codex ]] || ot_message resume-lineless "item=$item" "harness=$HARNESS" >&2
+  [[ "$RESUME_LINELESS" != true ]] || ot_message resume-lineless "item=$item" "harness=$HARNESS" >&2
   # Recorded once the launch stands, under the workflow-state id the watch
   # names the item by (issue-N for a GitHub item), with the window the watch
   # reads its pane through and the root its mailbox is read under. A record
@@ -2702,7 +2707,7 @@ for raw in "${ITEMS[@]}"; do
   # without one there is no record to report through, so the launch waits here.
   # A hosted codex relaunch is the exception: it resumes with no continuation
   # line and says so as resume-lineless, which must reach the caller, not a log.
-  if [[ "$host_state" == preparing && "$FLEET" == true && ( "$HOST_RELAUNCH" != true || "$HARNESS" != codex ) ]]; then
+  if [[ "$host_state" == preparing && "$FLEET" == true && "$RESUME_LINELESS" != true ]]; then
     launch_handoff || { failed=$((failed + 1)); continue; }
     preparing=$((preparing + 1))
   else

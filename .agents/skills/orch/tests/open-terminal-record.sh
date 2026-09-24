@@ -822,7 +822,7 @@ assert_eq "record=$(group_killed "$OT" CC-84)" "record=running prepare none" \
 # has let the preparation finish, with the lane already running. With the job
 # left in the caller's group, the group kill ends it and the lane never leaves
 # preparing.
-mutant waiting '  if [[ "$host_state" == preparing && "$FLEET" == true && ( "$HOST_RELAUNCH" != true || "$HARNESS" != codex ) ]]; then' '  if false; then'
+mutant waiting '  if [[ "$host_state" == preparing && "$FLEET" == true && "$RESUME_LINELESS" != true ]]; then' '  if false; then'
 (sleep 1; touch "$TMP_ROOT/gate-76") &
 hand_off CC-76 LANE_HOST_STUB_WAIT_GATE="$TMP_ROOT/gate-76" -- SCRIPT="$TMP_ROOT/waiting/scripts/open-terminal"
 wait

@@ -8,7 +8,7 @@
 
 **Research**: —
 
-**Applies to**: `skills/orch/scripts/open-terminal`, `skills/orch/scripts/oversee-watch`, `skills/orch/schemas/lane-host.md`
+**Applies to**: `skills/orch/scripts/open-terminal`, `skills/orch/scripts/oversee-watch`, `skills/orch/scripts/lane-close`, `skills/orch/schemas/lane-host.md`
 
 **Context**: A hosted `open-terminal` launch blocked its caller, the overseer's own session, for the whole provider `create`, about five minutes per lane, because the protocol defined `create` as synchronous.
 
@@ -24,6 +24,6 @@
 
 **Revisit When**: a provider cannot claim ownership before preparing, or the launcher must return before `create` answers at all.
 
-**Verification**: `skills/orch/tests/open-terminal-record.sh` § a host still preparing the item hands the launch to a background job; `skills/orch/tests/oversee_watch_prepare.sh`.
+**Verification**: `skills/orch/tests/open-terminal-record.sh` § a host still preparing the item hands the launch to a background job; `skills/orch/tests/oversee_watch_prepare.sh`; the `prepare_close` rows in `skills/orch/tests/lane_close.sh`.
 
 **References**: KEN-1644, KEN-1553

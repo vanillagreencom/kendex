@@ -1674,7 +1674,6 @@ check_prepare() {
     case "$outcome" in
       pending) [[ "$age" -gt "$PREPARE_SECS" ]] || continue; key="$since|stuck" ;;
       ready|failed) key="$since|$outcome" ;;
-      *) die state-invalid "" "option=--state" "path=$STATE_FILE" "item=$item" "prepare=$outcome" ;;
     esac
     [[ "$key" != "$(lane_row_get lane-prepare "$rows" "$item")" ]] || continue
     rows="$(lane_row_set lane-prepare "$rows" "$item" "$key")"
