@@ -53,7 +53,7 @@ ot_message() { # REASON FIELD=VALUE...
     lane-judge-failed) text='The lane judge refused before it answered for this lane. Nothing was launched. The keyed lanes: line above names the cause.' ;;
     lane-premise-unmet) text='The pane never drew either harness at its own screen inside the verification timeout, so nothing places the account read after the harness started. The launch stands and that read is reported as unobserved rather than as a verified account.' ;;
     lane-verified) text='The pane runs the account that was picked.' ;;
-    lane-mismatch) text='The pane runs another account than the one picked, so a wrapper on PATH replaced the selection. The item failed. The window is closed unless a tmux-failed operation=kill-window line follows.' ;;
+    lane-mismatch) text='The pane runs another account than the one picked, so a wrapper on PATH replaced the selection. The item failed. The window is closed unless a tmux-failed line follows.' ;;
     lane-unobserved) text='The account the pane runs on could not be established. The launch stands: this check refuses on a disagreement it observed, never on an observation it could not make.' ;;
     lane-result-unknown) text='The account check returned an outcome this script does not know. The window is closed: an unreadable verdict is not a pass.' ;;
     harness-unsupported) text='This terminal harness is not supported.' ;;
@@ -92,7 +92,7 @@ ot_message() { # REASON FIELD=VALUE...
     host-line-invalid) text='The lane host create output lacks ssh-target, path or remote-prefix on one line, or names a state other than preparing.' ;;
     host-prepare-failed) text='The lane host accepted this item and its wait reported the preparation failed; the provider says why above. No lane was started. The host keeps what it made until lane-host close or a --relaunch.' ;;
     lane-preparing) text='The lane host accepted this item and is still preparing it. A background job waits for the host, launches the lane in the window opened for it and records the outcome, which oversee-watch reports as lane-ready or lane-prepare-failed. log is the job output.' ;;
-    lane-prepare-failed) text='The background launch of this lane failed and its window is closed, so no remedy above that names the window applies. reason wait-failed is the host wait, which says why above; launch-failed is a launch step, whose keyed line is above. The record is stopped: lane-close closes the host and the record, or relaunch the item.' ;;
+    lane-prepare-failed) text='The background launch of this lane failed and its window is closed unless a tmux-failed line precedes this one, so no remedy above that names the window applies. reason wait-failed is the host wait, which says why above; launch-failed is a launch step, whose keyed line is above. The record is stopped: lane-close closes the host and the record, or relaunch the item.' ;;
     prepare-unrecorded) text='The record of a lane handed to a background job could not be written to the oversee workflow state. At the hand-off the job was stopped and the window closed, and the host holds the item. In the job, the record still reads preparing, which oversee-watch reports as lane-prepare-stuck. Either way lane-close closes the lane once the state can be written.' ;;
     prepare-stop-failed) text='The background job the hand-off started could not be stopped after its record failed. Stop the process group pid names by hand.' ;;
     remote-prompt-missing) text='The ssh session showed no shell prompt in time. Attach to the window and start the lane manually. The reason says which pane state the spent bound ended on: prompt-silent is ssh still holding the pane, session-gone is the pane running no ssh, a session that died or never started. The ssh lines this launcher typed are counted in attempts.' ;;
@@ -2079,10 +2079,14 @@ tmux_window_open() { # DIR TITLE
   LAUNCH_PANE="$pane"
 }
 
-# Closes the item's window, which retires its lane claim. A pane tmux no longer
-# lists was closed by an earlier step of the same launch and needs nothing.
+# Closes the item's window, which retires its lane claim. A pane a successful
+# read of the server's panes does not list was closed by an earlier step of the
+# same launch and needs nothing; a read that fails is a failure, never an
+# absent pane.
 tmux_window_close() { # PANE TITLE
-  tmux list-panes -t "$1" >/dev/null 2>&1 || return 0
+  local panes
+  panes="$(tmux list-panes -a -F '#{pane_id}')" || { ot_message tmux-failed "operation=list-panes" "item=$2" >&2; return 1; }
+  grep -qxF -- "$1" <<<"$panes" || return 0
   tmux kill-window -t "$1" || { ot_message tmux-failed "operation=kill-window" "item=$2" >&2; return 1; }
 }
 

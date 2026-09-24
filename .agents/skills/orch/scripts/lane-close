@@ -326,12 +326,12 @@ resolve_window() {
 
 # A preparing record is a hosted launch open-terminal handed to a background
 # job that has written no outcome, so no session was started and no harness is
-# exited. The job is stopped by the process group the record names, where
+# exited. A lane with no session cannot hold an ask, and the host need not have
+# its mailbox until its preparation ends, so no mailbox is read. The job is stopped by the process group the record names, where
 # that group still runs open-terminal, a pid since reused being left alone; the
 # window it holds is closed with its claim; the host is closed or kept as for a
 # stopped record.
 if [[ "$status" == preparing ]]; then
-  refuse_unanswered_ask
   [[ -z "$window_name" ]] || resolve_window
   job="$(jq -r '.prepare.pid // empty' <<<"$record")"
   if [[ "$job" =~ ^[1-9][0-9]*$ ]] && job_cmd="$(ps -o command= -p "$job")" && [[ "$job_cmd" == *open-terminal* ]]; then

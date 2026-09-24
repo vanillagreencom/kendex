@@ -49,7 +49,8 @@ assert_eq() {
 # TARGET being the -t value or `none`. has-session
 # answers tmux's own refusal for a session STUB_DEAD_SESSIONS names, for an
 # empty name the error tmux 3.4 prints for `-t =`, and STUB_HAS_SESSION_ERR,
-# where set, for every name.
+# where set, for every name. list-panes lists the one pane new-window makes,
+# and fails with tmux's own line where STUB_LIST_PANES_FAIL is set.
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/ghostty"
@@ -78,6 +79,7 @@ case "${1:-}" in
       echo "$STUB_SESSION_NAME"
     elif [[ "$*" == *pane_current_command* ]]; then echo "${STUB_PANE_CMD:-0}"; else echo 0; fi ;;
   kill-window) logged kill-window ;;
+  list-panes) [[ -z "${STUB_LIST_PANES_FAIL:-}" ]] || { echo 'no server running on /tmp/tmux-stub/default' >&2; exit 1; }; echo %1 ;;
   capture-pane) printf '%s\n' "${STUB_PANE_TEXT:-}" ;;
 esac
 exit 0
@@ -755,6 +757,12 @@ hand_off CC-74 LANE_HOST_STUB_WAIT_STATUS=1
 assert_eq "rc=$RC logged=$(log_line "$STATE/lane-prepare-CC-74.log" 'open-terminal: lane-prepare-failed item=CC-74 reason=wait-failed') record=$(prepared CC-74) closed=$(grep -c '^kill-window %1$' "$TMUX_LOG" || true) marker=$(marker_at cc-74)" \
   "rc=0 logged=1 record=stopped prepare wait-failed closed=1 marker=none" \
   "a preparation the host reports failed closes the window and leaves a stopped record naming the failed wait"
+# A pane read that fails is a tmux failure, never a closed window: the job
+# names it, kills nothing it cannot see, and still records its outcome.
+hand_off CC-89 LANE_HOST_STUB_WAIT_STATUS=1 STUB_LIST_PANES_FAIL=1
+assert_eq "rc=$RC logged=$(log_line "$STATE/lane-prepare-CC-89.log" 'open-terminal: lane-prepare-failed item=CC-89 reason=wait-failed') read=$(grep -c '^open-terminal: tmux-failed operation=list-panes item=CC-89$' "$STATE/lane-prepare-CC-89.log" || true) closed=$(grep -c '^kill-window ' "$TMUX_LOG" || true) record=$(prepared CC-89)" \
+  "rc=0 logged=1 read=1 closed=0 record=stopped prepare wait-failed" \
+  "a window close whose pane read fails reports tmux-failed operation=list-panes and kills nothing"
 # A ready host whose launch step fails: the marker write here.
 hand_off CC-77 LANE_HOST_STUB_PUT_STATUS=1
 assert_eq "rc=$RC logged=$(log_line "$STATE/lane-prepare-CC-77.log" 'open-terminal: lane-prepare-failed item=CC-77 reason=launch-failed') record=$(prepared CC-77) step=$(grep -c '^open-terminal: marker-failed item=CC-77 ' "$STATE/lane-prepare-CC-77.log" || true)" \
@@ -832,6 +840,10 @@ assert_eq "rc=$RC record=$(prepared CC-76) marker=$(marker_at cc-76)" \
 mutant grouped '  set -m' '  :'
 assert_eq "record=$(group_killed "$TMP_ROOT/grouped/scripts/open-terminal" CC-85)" "record=preparing prepare none" \
   "control: a job left in the caller's process group dies with it and its lane stays preparing"
+mutant swallowed "  panes=\"\$(tmux list-panes -a -F '#{pane_id}')\" || { ot_message tmux-failed \"operation=list-panes\" \"item=\$2\" >&2; return 1; }" "  panes=\"\$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)\" || return 0"
+hand_off CC-90 LANE_HOST_STUB_WAIT_STATUS=1 STUB_LIST_PANES_FAIL=1 -- SCRIPT="$TMP_ROOT/swallowed/scripts/open-terminal"
+assert_eq "logged=$(log_line "$STATE/lane-prepare-CC-90.log" 'open-terminal: lane-prepare-failed item=CC-90 reason=wait-failed') read=$(grep -c '^open-terminal: tmux-failed operation=list-panes ' "$STATE/lane-prepare-CC-90.log" || true)" \
+  "logged=1 read=0" "control: a pane read failure taken as a closed window reports nothing"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

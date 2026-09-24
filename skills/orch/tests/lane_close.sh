@@ -564,6 +564,11 @@ assert_eq "rc=$RC job=$JOB kill=$(grep -c '^kill-window ' "$CALLS" || true) host
 prepare_close "$SCRIPT" "$JOB_DIR/open-terminal" --keep-sandbox
 assert_eq "rc=$RC job=$JOB kill=$(grep -c '^kill-window ' "$CALLS" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=0 job=stopped kill=1 host=0 status=stopped' 'keep-sandbox on a preparing record stops the job and the window and keeps the host'
+# A lane with no session holds no ask, and its host need not answer a mailbox
+# read while it prepares: a failing read changes nothing and none is made.
+LANE_CLOSE_MAIL_STATUS=2 prepare_close "$SCRIPT" "$JOB_DIR/open-terminal"
+assert_eq "rc=$RC job=$JOB kill=$(grep -c '^kill-window ' "$CALLS" || true) host=$(grep -c '^close ' "$HOST_CALLS" || true) mail=$(awk 'END { print NR + 0 }' "$MAIL_CALLS") status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 job=stopped kill=1 host=1 mail=0 status=done' 'a preparing record closes with its mailbox unreadable, reading none'
 prepare_close "$SCRIPT" "$JOB_DIR/other-job"
 assert_eq "rc=$RC job=$JOB status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=0 job=running status=done' 'a recorded pid that runs anything but open-terminal is left running'
@@ -571,6 +576,10 @@ MUTANT="$(mutant lane-close-unstopped '    kill -TERM -- "-$job" || { message pr
 prepare_close "$MUTANT" "$JOB_DIR/open-terminal"
 assert_eq "rc=$RC job=$JOB status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=0 job=running status=done' 'control: without the stop a closed preparing record leaves its launch job running'
+MUTANT="$(mutant lane-close-reads-mail 'if [[ "$status" == preparing ]]; then' 'if [[ "$status" == preparing ]]; then refuse_unanswered_ask')"
+LANE_CLOSE_MAIL_STATUS=2 prepare_close "$MUTANT" "$JOB_DIR/open-terminal"
+assert_eq "rc=$RC read=$(grep -c '^lane-close: mail-read-failed ' <<<"$ERR" || true) job=$JOB status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 read=1 job=running status=preparing' 'control: a preparing close that reads the mailbox stops at a read the preparing host cannot answer'
 MUTANT="$(mutant lane-close-any-pid '[[ "$job_cmd" == *open-terminal* ]]' 'true')"
 prepare_close "$MUTANT" "$JOB_DIR/other-job"
 assert_eq "rc=$RC job=$JOB" 'rc=0 job=stopped' 'control: without the name check the close stops a process that is not the launch job'
