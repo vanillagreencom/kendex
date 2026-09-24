@@ -29,12 +29,13 @@
 # meets the wall. --near-ceiling-base REF is the field's one producer: this
 # writer runs the worktree's installed lane with --base REF and keeps every
 # stdout line beginning "byte-ceiling: near-ceiling=" on exit 0 or 1 (exit 1
-# only adds a file already over the ceiling). A repository without the lane has
-# no byte ceiling and so no file near one: []. A round that did not probe (no
-# --near-ceiling-base) or a lane that exits otherwise records near_ceiling:
-# null and the cause in near_ceiling_error: an empty list would claim nothing is
-# near the wall, and the orchestrator replaces its carried list with whatever
-# it reads.
+# only adds a file already over the ceiling). A repository with nothing at the
+# lane path has no byte ceiling and so no file near one: []. A round that did
+# not probe (no --near-ceiling-base), a broken link on the way to the lane, a
+# lane that is not executable, or a lane that exits otherwise records
+# near_ceiling: null and the cause in near_ceiling_error: an empty list would
+# claim nothing is near the wall, and the orchestrator replaces its carried list
+# with whatever it reads.
 #
 # --validate stays strictly enumerated ("pass" or "FAILING:…") so it remains
 # machine-checkable. --validate-note is the additive channel for a QUALIFIED
@@ -148,8 +149,9 @@ content. They are mutually exclusive (one summary source, no silent precedence).
 --near-ceiling-base REF runs the worktree's
 .agents/skills/commit-guards/scripts/byte-ceiling --base REF and records one
 near-ceiling line per file within reach of the byte ceiling on exit 0 or 1;
-the next round's brief plans the split from it. A repository without that lane
-records []. An omitted --near-ceiling-base, or a lane that exits otherwise,
+the next round's brief plans the split from it. A repository with nothing at
+that path records []. An omitted --near-ceiling-base, a broken link on the way
+to the lane, a lane that is not executable, or a lane that exits otherwise
 records near_ceiling null and the cause in near_ceiling_error, so the
 orchestrator keeps the list it carries.
 Every single-valued flag may be supplied at most once
@@ -351,11 +353,21 @@ fi
 
 # The probe runs the worktree's own installed lane, so it measures under the
 # settings that repository's commits are held to.
-# A repository without the lane has no byte ceiling, so the list stays empty.
+# Nothing at the lane path means no byte ceiling, so the list stays empty. A
+# worktree's untracked .agents children are links to the main checkout, so a
+# dangling link at or above the lane is a broken install, not an absent lane.
 near_error=""
 lane="$worktree/.agents/skills/commit-guards/scripts/byte-ceiling"
+lane_broken=""
+ancestor="${lane%/*}"
+while [[ "$ancestor" != "$worktree" && "$ancestor" == "$worktree"/* ]]; do
+  [[ -L "$ancestor" && ! -e "$ancestor" ]] && lane_broken="$ancestor"
+  ancestor="${ancestor%/*}"
+done
 if [[ "$near_ceiling_base_given" != "true" ]]; then
   near_error="byte-ceiling not probed: no --near-ceiling-base"
+elif [[ -n "$lane_broken" ]]; then
+  near_error="byte-ceiling broken link: $lane_broken"
 elif [[ -x "$lane" ]]; then
   lane_err="$(mktemp)"
   trap 'rm -f -- "${lane_err:?}"' EXIT
@@ -373,6 +385,8 @@ elif [[ -x "$lane" ]]; then
   esac
   rm -f -- "${lane_err:?}"
   trap - EXIT
+elif [[ -e "$lane" || -L "$lane" ]]; then
+  near_error="byte-ceiling not executable: $lane"
 fi
 
 if [[ -n "$near_error" ]]; then

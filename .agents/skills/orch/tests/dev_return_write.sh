@@ -185,13 +185,27 @@ probe_wt() {
 NEAR_WT="$(probe_wt probe-near 950)"
 OVER_WT="$(probe_wt probe-over 950 2000)"
 NEAR_LINE="byte-ceiling: near-ceiling=f950.txt:950:1024:92"
+# A lane present but not runnable, and a dangling link at or above it, are
+# broken installs: each records null, never the empty list an absent lane gets.
+NOEXEC_WT="$(new_repo probe-noexec)"
+mkdir -p "$NOEXEC_WT/.agents/skills/commit-guards/scripts"
+printf '#!/bin/sh\n' > "$NOEXEC_WT/.agents/skills/commit-guards/scripts/byte-ceiling"
+DANGLE_WT="$(new_repo probe-dangle)"
+mkdir -p "$DANGLE_WT/.agents/skills/commit-guards/scripts"
+ln -s "$TMP_ROOT/nowhere" "$DANGLE_WT/.agents/skills/commit-guards/scripts/byte-ceiling"
+PARENT_WT="$(new_repo probe-parent)"
+mkdir -p "$PARENT_WT/.agents/skills"
+ln -s "$TMP_ROOT/nowhere" "$PARENT_WT/.agents/skills/commit-guards"
 export COMMIT_GUARDS_BYTE_CEILING_KB=1 COMMIT_GUARDS_BYTE_WARN_PCT=90
 PROBE_ARGS="--kind fix --round-id 17-17 --branch work --commit c --validate pass --item 1 Applied probed"
 for row in \
   "exit 0 records the near-ceiling line|$NEAR_WT|main|[\"$NEAR_LINE\"]|null" \
   "exit 1 records the near-ceiling line and not the oversized one|$OVER_WT|main|[\"$NEAR_LINE\"]|null" \
   "exit 2 on a ref that names no commit records null and the lane's key|$NEAR_WT|nope|null|\"byte-ceiling exit 2: byte-ceiling: base-ref=nope\"" \
-  "an absent lane is a repository with no byte ceiling: an empty list and no error|$WT|main|[]|null"; do
+  "an absent lane is a repository with no byte ceiling: an empty list and no error|$WT|main|[]|null" \
+  "a lane without the execute bit records null and the path|$NOEXEC_WT|main|null|\"byte-ceiling not executable: $NOEXEC_WT/.agents/skills/commit-guards/scripts/byte-ceiling\"" \
+  "a dangling link at the lane records null and the path|$DANGLE_WT|main|null|\"byte-ceiling not executable: $DANGLE_WT/.agents/skills/commit-guards/scripts/byte-ceiling\"" \
+  "a dangling link above the lane records null and the link|$PARENT_WT|main|null|\"byte-ceiling broken link: $PARENT_WT/.agents/skills/commit-guards\""; do
   IFS='|' read -r label wt ref near error <<<"$row"
   # shellcheck disable=SC2086
   run --worktree "$wt" --issue issue-probe $PROBE_ARGS --near-ceiling-base "$ref"
