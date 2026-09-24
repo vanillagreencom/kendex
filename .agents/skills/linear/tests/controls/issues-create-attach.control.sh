@@ -70,3 +70,8 @@ control_expect "an angle markdown comment URL excludes its closing bracket"
 control_replace scripts/lib/attachments.sh 1 \
     '            .body | capture("(?<url>https://uploads\\.linear\\.app/[^\\s)>\"]+)"; "g") |' \
     '            .body | capture("(?<url>https://uploads\\.linear\\.app/[^\\s)\"]+)"; "g") |'
+
+control_expect "a successful create returns the uploaded asset URL and attachment title"
+control_replace scripts/commands/issues.sh 1 \
+    '            created_attachments=$(pending_attachments_json "${attach_pending[@]}") || return 1' \
+    "            created_attachments='[]'"

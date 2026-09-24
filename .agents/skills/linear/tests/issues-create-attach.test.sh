@@ -123,6 +123,7 @@ printf '[env]\nLINEAR_TEAM = "Configured"\n' >"$PROJECT/kendex.settings.toml"
 
 printf 'PNGDATA' >"$TMP_ROOT/shot.png" # 7 bytes, image/png
 printf '%%PDF-1.4' >"$TMP_ROOT/notes.pdf"
+printf '%%PDF-1.4' >"$TMP_ROOT/second.pdf"
 printf 'x' >"$TMP_ROOT/boom.pdf"
 printf 'x' >"$TMP_ROOT/put-fail.png"
 printf 'Body from file.' >"$TMP_ROOT/desc.md"
@@ -213,6 +214,44 @@ assert_log "a non-image attach injects no description" \
   'any(.[]; (.query? // "" | contains("issueCreate"))
     and (.variables.input | has("description") | not))'
 
+echo "=== the create response carries the attachment records for verification ==="
+
+run_linear issues create --title "Verify one" --attach "$TMP_ROOT/notes.pdf"
+assert_eq "a single non-image attach create exits zero" "$RC" 0
+assert_jq "a successful create reports the created issue and one requested attachment" \
+  "$OUT" '.success == true and .identifier == "TEAM-1"
+    and .url == "https://linear.app/x/issue/TEAM-1" and .attachments_requested == 1'
+assert_jq "a successful create returns the uploaded asset URL and attachment title" \
+  "$OUT" '.attachments == [{url: "https://uploads.linear.app/asset/notes.pdf", repo_path: "notes.pdf"}]'
+
+run_linear issues create --title "Verify two" \
+  --attach "$TMP_ROOT/notes.pdf" --attach "$TMP_ROOT/second.pdf"
+assert_eq "a two-file attach create exits zero" "$RC" 0
+assert_jq "two non-image attachments are counted and listed in request order" \
+  "$OUT" '.attachments_requested == 2 and .attachments == [
+    {url: "https://uploads.linear.app/asset/notes.pdf", repo_path: "notes.pdf"},
+    {url: "https://uploads.linear.app/asset/second.pdf", repo_path: "second.pdf"}]'
+
+run_linear issues create --title "Verify mixed" \
+  --attach "$TMP_ROOT/shot.png" --attach "$TMP_ROOT/notes.pdf"
+assert_eq "a mixed image and file create exits zero" "$RC" 0
+assert_log "the image of a mixed create still embeds in the description" \
+  'any(.[]; (.query? // "" | contains("issueCreate"))
+    and .variables.input.description == "![shot.png](https://uploads.linear.app/asset/shot.png)")'
+assert_jq "a mixed create reports only the non-image record" \
+  "$OUT" '.attachments_requested == 1
+    and .attachments == [{url: "https://uploads.linear.app/asset/notes.pdf", repo_path: "notes.pdf"}]'
+
+run_linear issues create --title "No attach"
+assert_eq "a create with no attachments exits zero" "$RC" 0
+assert_jq "a create with no attachments keeps the plain normalized response" \
+  "$OUT" 'has("attachments_requested") == false and has("attachments") == false
+    and .success == true and .identifier == "TEAM-1"'
+
+run_linear issues create --title "Ids format" --format ids --attach "$TMP_ROOT/notes.pdf"
+assert_eq "a --format=ids create with an attachment exits zero" "$RC" 0
+assert_eq "--format=ids prints only the created identifier" "$OUT" "TEAM-1"
+
 echo "=== --attach composes with --description-file ==="
 
 run_linear issues create --title "Compose" \
@@ -248,6 +287,8 @@ assert_log "the issue is created before the attachment failure" \
 assert_contains "the partial failure names the created issue" "$ERR" "TEAM-1"
 assert_contains "the partial failure is reported as partial" "$ERR" '"partial":true'
 assert_contains "the created identifier reaches stdout" "$OUT" "TEAM-1"
+assert_jq "a partial failure claims no attachment record" \
+  "$OUT" '.attachments_requested == 1 and .attachments == []'
 
 echo "=== agent-label guard still refuses BEFORE any upload ==="
 
