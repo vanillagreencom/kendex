@@ -502,13 +502,13 @@ fi
 
 # On a hosted fleet the overseer's main-checkout route runs on the control VM,
 # which runs none of the toolchain the rest of the route starts: the refusal
-# stands in § 1, scoped to that route, ahead of the first tracker read or
-# route step, so nothing is activated or created first.
-refuses_control_host() { # FILE KEY STOP
+# stands between START and STOP, scoped to that route, ahead of the first
+# tracker read, handoff resume or route step, so nothing is resumed,
+# activated or created first.
+refuses_control_host() { # FILE KEY START STOP
   local head=""
-  if ! head=$(STOP="$3" awk '
-    /^## 1\. / { inside = 1 }
-    /^## 2\./ { inside = 0 }
+  if ! head=$(START="$3" STOP="$4" awk '
+    !inside && $0 ~ ENVIRON["START"] { inside = 1; print; next }
     inside && $0 ~ ENVIRON["STOP"] { exit }
     inside { print }
   ' "$1"); then
@@ -517,13 +517,15 @@ refuses_control_host() { # FILE KEY STOP
   [[ -n "$head" ]] &&
     grep -Fxq '**Main checkout only.** Read the lane host before anything else:' <<<"$head" &&
     grep -Fxq '.agents/skills/orch/scripts/lane-host resolve' <<<"$head" &&
-    grep -Fq 'Any answer but `local` refuses the run here, with nothing read, activated or' <<<"$head" &&
+    grep -Fq 'Any answer but `local` refuses the run here' <<<"$head" &&
     grep -Fq "\`$2 host=[HOST]\`" <<<"$head" &&
     grep -Fq 'launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement' <<<"$head"
 }
-micro_refuses_control_host() { refuses_control_host "$1" micro-control-host 'linear\.sh'; } # micro-doc
+micro_refuses_control_host() { refuses_control_host "$1" micro-control-host '^## 1\. ' 'linear\.sh|^## 2\.'; } # micro-doc
 start_workflow="$SKILL_DIR/workflows/start.md"
-start_refuses_control_host() { refuses_control_host "$1" start-control-host '^1\. '; } # start-doc
+# start.md's head runs to its first section, so the refusal precedes § 0's
+# handoff resume and its `handoff.resumed_at` stamp.
+start_refuses_control_host() { refuses_control_host "$1" start-control-host '^# ' '^## '; } # start-doc
 
 if micro_refuses_control_host "$micro_workflow"; then
   pass "micro refuses the main-checkout route on a resolved remote lane host"
@@ -545,13 +547,36 @@ assert_doc_mutant_fails micro_refuses_control_host "$micro_workflow" \
   'Read the lane host before anything else:' \
   "a micro refusal that also binds a lane"
 assert_doc_mutant_fails start_refuses_control_host "$start_workflow" \
-  'Any answer but `local` refuses the run here, with nothing read, activated or created;' \
+  'Any answer but `local` refuses the run here, with no handoff resumed and nothing read, activated or created;' \
   'Any answer continues the run;' \
   "a start run continuing on a remote lane host"
 assert_doc_mutant_fails start_refuses_control_host "$start_workflow" \
   '**Main checkout only.** Read the lane host before anything else:' \
   'Read the lane host before anything else:' \
   "a start refusal that also binds a lane"
+
+# The refusal moved back below § 0 keeps every pinned line and lets a handoff
+# resume first.
+start_move_mutant="$TMP_ROOT/start-refusal-after-resume.md"
+start_marker='**Main checkout only.** Read the lane host before anything else:'
+assert_eq "$(grep -Fxc -- "$start_marker" "$start_workflow" || true)" "1" \
+  "control: the start refusal has one block to move"
+MARKER="$start_marker" awk '
+  $0 == ENVIRON["MARKER"] { held = 1 }
+  held && /^## 0\. / { held = 0 }
+  held { block = block $0 "\n"; next }
+  /^## 1\. / { printf "%s", block }
+  { print }
+' "$start_workflow" >"$start_move_mutant"
+assert_eq "$(grep -Fxc -- "$start_marker" "$start_move_mutant" || true)" "1" \
+  "control: the moved start refusal keeps its marker"
+assert_eq "$(cmp -s "$start_move_mutant" "$start_workflow" && echo same || echo differs)" "differs" \
+  "control: the mutant moves the start refusal below § 0"
+if start_refuses_control_host "$start_move_mutant"; then
+  fail "must-fail: a start refusal after the handoff resume must fail its contract"
+else
+  pass "must-fail: a start refusal after the handoff resume fails its contract"
+fi
 
 echo
 echo "=== frozen cross-skill contracts ==="

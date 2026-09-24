@@ -4,8 +4,6 @@ Run this workflow from the package repository's base checkout. It refreshes ever
 
 ## 1. Resolve the train
 
-On a hosted fleet ([SKILL.md](../SKILL.md) § The Cycle, The overseer reads results) the control host runs no § 3 step: once § 1.1 selects the consumers, the overseer sends each consumer's own overseer the train by `lane-mail peer send --repo [CONSUMER]` ([references/peer-mail.md](../references/peer-mail.md)), that overseer runs refresh, verify and its own PR path in its own checkout, and § 4 records the consumer with `fleet-owned` as its `not_committed_reason`.
-
 Every command this workflow runs must exit 0, unless a section states how it reads that command's failure; § 3 does so for refresh, verify and `kendex check --quiet`, and no other section does. Any other non-zero exit, and any command that does not run, stops the train before consumer writes. Record the command and its output in § 4's record under `not_committed_reason` for a consumer step, or report it from the run for a § 1 step.
 
 Bind the package root, its Git remote identity, the fleet state directory, and the candidate paths before entering a consumer checkout:
