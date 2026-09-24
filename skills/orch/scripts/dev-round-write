@@ -256,8 +256,7 @@ target across retries.
 lists in `workflow-state --help` § Keys: a tracker identifier, `issue-N` for a
 GitHub issue, and the repository-local `pr-N` for a branch carrying no issue
 id, which names no issue and so measures under the allowance_missing verdict.
-workflow-state stores the key as passed and validates none of it; the path-safe
-grammar below is this command's own and is the only one enforced.
+workflow-state stores the key as passed and validates none of it.
 --issue / --round-id must match
 ^[A-Za-z0-9._-]+$ with no '..'. Canonical schema:
 skills/orch/schemas/dev-round.md.
