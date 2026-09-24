@@ -253,6 +253,21 @@ assert_eq "the gemini settings file is a configuration source" \
   "cause=configuration-source path=.gemini/settings.json glob=.gemini/settings.json" \
   "$(printf '%s\n' "$gemini_err" | sed -n 's/^class: class=standard //p')"
 
+# A composite action under .github/actions/ publishes the class a workflow
+# gates its lanes on, so a change to one is refused the narrow classes by the
+# same list that refuses a workflow: a pull request must not select its own
+# battery through the wrapper that reports its class.
+reset_case
+set_verifier dirty
+write_lines "$repo" .github/actions/change-class/classify 3
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "a composite action's script edited"
+action_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a composite action path is an excluded path" \
+  "cause=excluded-path path=.github/actions/change-class/classify glob=.github/actions/*" \
+  "$(printf '%s\n' "$action_err" | sed -n 's/^class: class=standard //p')"
+
 # Ownership is read off rows in state ok alone: the same positions under a
 # failing row own nothing. A verify with a failing row closes non-zero, so
 # the refusal is the verdict's, ahead of any path being looked at.
@@ -423,6 +438,8 @@ while IFS= read -r gated_event; do
     --repo "$repo" --event "$gated_event" --base "$base" --head HEAD
 done <<'EVENTS'
 push
+workflow_dispatch
+schedule
 EVENTS
 require_rows change-class-gated-events "$event_row_count"
 

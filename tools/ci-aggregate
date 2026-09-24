@@ -21,17 +21,24 @@
 # `aggregate-needs` with the waiver off and is rejected there, naming the dead
 # classifier rather than a parse failure here.
 #
-# Every refusal starts `ci-aggregate: cause=<name>` and exits 2. Exit 1 is the
-# helper's own rejection, passed through unchanged.
+# Every refusal starts `ci-aggregate: cause=<name>` and exits 2, a helper this
+# script cannot find included. Exit 1 is the helper's own rejection, passed
+# through unchanged.
 set -euo pipefail
-
-HELPER="$(cd "$(dirname "$0")/../skills/harness-ci/scripts" && pwd)/aggregate-needs"
 
 die() { # CAUSE MESSAGE
   printf 'ci-aggregate: cause=%s\n' "$1" >&2
   printf 'ci-aggregate: %s\n' "$2" >&2
   exit 2
 }
+
+helper_rel="$(dirname "$0")/../skills/harness-ci/scripts"
+helper_dir="$(cd "$helper_rel" 2>/dev/null && pwd)" ||
+  die "helper-unreadable dir=$helper_rel" \
+    "the harness-ci scripts directory beside this repository is unreadable"
+HELPER="$helper_dir/aggregate-needs"
+[ -x "$HELPER" ] || die "helper-missing path=$HELPER" \
+  "aggregate-needs is absent or not executable"
 
 results=""
 classifier=""
@@ -67,6 +74,13 @@ for lane in $lanes; do
   selection="${lane%%:*}"
   [ "$job" != "$lane" ] && [ -n "$job" ] || die "malformed-lane lane=$lane" \
     "a lane is SELECTION:JOB"
+  # Two selections for one job would leave the verdict to whichever the
+  # helper read last, so a lane the class selected could skip under the
+  # other's `false`.
+  case "$declared --skippable " in
+    *" --skippable $job "*) die "duplicate-lane job=$job" \
+      "this job is named by more than one --lane" ;;
+  esac
   declared="$declared --skippable $job"
   case "$selection" in
     false) authorized="$authorized --skippable $job" ;;
