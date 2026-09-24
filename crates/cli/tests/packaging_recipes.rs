@@ -460,6 +460,31 @@ fn every_arch_package_installs_its_license() {
     }
 }
 
+/// A package whose source is the git repository builds main, and names the
+/// commit it built so its version is not the tag it sits after; a package
+/// built from a release has no checkout to name and sets nothing.
+#[test]
+fn the_packages_built_from_main_name_their_commit() {
+    let export = "export KENDEX_SOURCE_COMMIT=\"$(git rev-parse HEAD)\"";
+    let mut from_main = 0;
+    for package in arch_packages() {
+        let recipe = pkgbuild(package);
+        let builds_main = pkgbuild_field(&recipe, "source")
+            .iter()
+            .any(|source| source.starts_with("git+"));
+        let exports = recipe.lines().any(|line| line.trim_start() == export);
+        from_main += usize::from(builds_main);
+        assert_eq!(
+            exports, builds_main,
+            "{package}: builds main is {builds_main}, names its commit is {exports}"
+        );
+    }
+    assert!(
+        from_main >= 2,
+        "the source extractor found {from_main} packages building main; it is broken"
+    );
+}
+
 /// makepkg LTO makes ring's C objects fail to link with rust-lld. Every
 /// package that compiles kendex disables LTO, and records the option in the
 /// generated metadata that AUR clients read.

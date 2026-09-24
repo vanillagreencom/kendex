@@ -3,6 +3,9 @@ name = "kendex-app"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+# The .deb bundler writes this as the package's Maintainer, which Debian
+# requires as a name and an address.
+authors = ["VanillaGreen <ai1@vanillagreen.com>"]
 
 # The integration tests are one harness, tests/main.rs, and every other file
 # under tests/ is a module of it: autodiscovery off, or cargo would still

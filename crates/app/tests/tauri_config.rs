@@ -74,6 +74,17 @@ fn the_settings_the_window_and_the_release_path_lean_on() {
     }
 }
 
+/// The `.deb` bundler writes the crate's authors as the package Maintainer
+/// (falling back to the bare publisher name without them), and Debian
+/// requires a name and an address there.
+#[test]
+fn the_deb_maintainer_is_a_name_and_an_address() {
+    assert_eq!(
+        env!("CARGO_PKG_AUTHORS"),
+        "VanillaGreen <ai1@vanillagreen.com>"
+    );
+}
+
 /// The `.deb` and `.rpm` package descriptions come from these two fields;
 /// without them `apt show` prints `Description: (none)`.
 #[test]
