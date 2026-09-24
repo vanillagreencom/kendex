@@ -265,6 +265,7 @@ describe("the files a commit would carry", () => {
         timedOut: false,
         seconds: 30,
         gh: false,
+        pullRequestRequired: false,
       },
     });
     render();
@@ -285,6 +286,7 @@ describe("the files a commit would carry", () => {
         timedOut: true,
         seconds: 30,
         gh: false,
+        pullRequestRequired: false,
       },
     });
     render();

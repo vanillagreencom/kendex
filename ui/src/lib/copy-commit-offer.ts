@@ -113,6 +113,8 @@ export function unavailableReason(why: Why): string {
       return "gh is not installed.";
     case "ghSaid":
       return why.line;
+    case "pullRequestRequired":
+      return "This branch's rules on GitHub accept changes only through a pull request.";
   }
 }
 
@@ -195,6 +197,12 @@ export const pushRefusedTitle = (refused: Refused) =>
   refused.timedOut ? "The push did not finish" : PUSH_REFUSED_TITLE;
 export const commitIsOn = (branch: string) =>
   `The commit is on ${branch} in this checkout. kendex did not undo it.`;
+/** GitHub refused the push for want of a pull request. The commands under it
+ *  are the ones `Open a pull request` runs, for a person who opens it
+ *  themselves. */
+export const branchRulesLine = (branch: string, remote: string) =>
+  `${branch} on ${remote} accepts changes only through a pull request.`;
+export const BY_HAND_ROW_LABEL = "To open one yourself";
 export const stillCarries = (from: string) =>
   `${from} in this checkout still carries the commit.`;
 export const resetCommand = (before: string) => `git reset --mixed ${before}`;

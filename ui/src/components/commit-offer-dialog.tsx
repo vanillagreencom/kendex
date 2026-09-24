@@ -29,8 +29,10 @@ import {
   BRANCH_REFUSED_LINE,
   BRANCH_REFUSED_TITLE,
   BRANCH_ROW_LABEL,
+  BY_HAND_ROW_LABEL,
   backOn,
   branchIsOn,
+  branchRulesLine,
   COMMIT_AGAIN_LABEL,
   COMMIT_LABEL,
   COMMIT_OFFER_STANDING,
@@ -170,10 +172,12 @@ function Body({ offer, stage }: { offer: ProjectOffer; stage: Stage }) {
     case "pushRefused":
       return (
         <PushRefusedState
+          remote={offer.remote ?? ""}
           refused={stage.refused}
           sha={stage.sha}
           branch={stage.branch}
           canOpen={stage.canOpen}
+          byHand={stage.byHand}
         />
       );
     case "pullRequestRefused":
@@ -677,15 +681,19 @@ function BranchRefusedState({
 }
 
 function PushRefusedState({
+  remote,
   refused,
   sha,
   branch,
   canOpen,
+  byHand,
 }: {
+  remote: string;
   refused: Refused;
   sha: string;
   branch: string;
   canOpen: boolean;
+  byHand: string[] | null;
 }) {
   const leave = useCommitOfferStore((s) => s.leave);
   const openPullRequest = useCommitOfferStore((s) => s.openPullRequest);
@@ -698,6 +706,18 @@ function PushRefusedState({
         <Row label={COMMIT_ROW_LABEL}>{commitOn(sha, branch)}</Row>
         <Said refused={refused} />
         <p>{commitIsOn(branch)}</p>
+        {byHand !== null ? (
+          <>
+            <p>{branchRulesLine(branch, remote)}</p>
+            <Row label={BY_HAND_ROW_LABEL}>
+              <span className="inline-flex flex-col items-end gap-1">
+                {byHand.map((command) => (
+                  <Copyable key={command} text={command} />
+                ))}
+              </span>
+            </Row>
+          </>
+        ) : null}
       </div>
       <DialogFooter>
         <Button variant="outline" onClick={leave}>

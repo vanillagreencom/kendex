@@ -59,8 +59,8 @@ pub use pending::{
 pub use regions::OwnedRegion;
 pub use restore::{RestoreFailure, RestorePlan, restore, restore_plan};
 pub use run::{
-    CommitFailure, Committed, Opened, Pushed, abandon_branch, body, commit, open_pull_request,
-    push, push_head, start_branch,
+    CommitFailure, Committed, Opened, Pushed, abandon_branch, body, by_hand, commit,
+    open_pull_request, push, push_head, start_branch,
 };
 
 #[cfg(test)]
@@ -152,8 +152,11 @@ pub enum Refusal {
     /// whatever ran and passed on the way, such as a pre-push hook's own
     /// report.
     ///
-    /// Nothing is summarised, reworded, truncated to a first line, or
-    /// matched against a pattern to decide what it means.
+    /// Nothing is summarised, reworded or truncated to a first line. The
+    /// one pattern read from them is GitHub refusing a push because the
+    /// branch takes changes only through a pull request,
+    /// [`Failed::pull_request_required`], which adds a way on and takes none
+    /// of the words away.
     Said(Vec<String>),
     /// The step ran past its bound. Whether it finished is not known here.
     TimedOut,
@@ -179,6 +182,46 @@ impl Failed {
 
     pub fn timed_out(&self) -> bool {
         self.refusal == Refusal::TimedOut
+    }
+
+    /// Whether GitHub refused this push because the branch takes changes
+    /// only through a pull request.
+    ///
+    /// Two things GitHub says together decide it: its code for a refusal
+    /// under a ruleset (`GH013`) or branch protection (`GH006`), and the
+    /// rule it names. Both codes also cover refusals a pull request does not
+    /// get past — a secret in the push, an unsigned commit, a status check
+    /// — so the code alone is not the answer. git prints what the remote
+    /// said behind `remote: `, so a local hook's words cannot pass for
+    /// either.
+    ///
+    /// The one reading made of a refusal's words, and it adds a way on
+    /// without replacing them: the words are still shown whole.
+    pub fn pull_request_required(&self) -> bool {
+        let remote: Vec<&str> = self
+            .said()
+            .iter()
+            .filter_map(|line| line.strip_prefix("remote: "))
+            .map(str::trim_start)
+            .collect();
+        let told = |prefixes: &[&str], starts: &[&str]| {
+            remote.iter().any(|said| {
+                let said = prefixes
+                    .iter()
+                    .find_map(|prefix| said.strip_prefix(prefix))
+                    .unwrap_or(said);
+                starts.iter().any(|start| said.starts_with(start))
+            })
+        };
+        self.step == Step::Push
+            && told(&["error: "], &["GH013:", "GH006:"])
+            && told(
+                &["error: ", "- "],
+                &[
+                    "Changes must be made through a pull request",
+                    "Changes must be made through the merge queue",
+                ],
+            )
     }
 }
 
@@ -321,11 +364,19 @@ pub fn asking(env: &Env) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Remote {
     pub name: String,
-    /// The remote's URL. Every `gh` call is bound to it with `--repo`, so
+    /// The remote's URL. Every `gh` call but the branch-rules read is bound
+    /// to it with `--repo`, so
     /// a project whose `origin` is one host and whose second remote is
     /// GitHub cannot have `gh` answer about a repository the push would
     /// never reach.
     pub url: String,
+    /// The one URL a push to this remote reaches, as git resolves it:
+    /// `remote.<name>.pushurl` where set, else [`Remote::url`], rewrites
+    /// applied. `None` where git names more than one. The branch-rules read
+    /// is bound to this and nothing else: the rules that refuse a push are
+    /// those of the repository it reaches, which a fork's `pushurl` makes a
+    /// different one from the repository the fetch URL names.
+    pub push_url: Option<String>,
     /// The current branch already tracks this remote, so a push needs no
     /// `--set-upstream`.
     pub tracked: bool,
@@ -340,6 +391,9 @@ pub enum Unavailable {
     /// gh's own first line, so a case nobody anticipated still names
     /// itself rather than reading as one kendex knows.
     GhSaid(String),
+    /// The branch's rules on GitHub take changes only through a pull
+    /// request, so a push straight to it would be refused.
+    PullRequestRequired,
 }
 
 /// The offer, built and ready to draw: the paths, the choices that stand,
@@ -366,11 +420,10 @@ pub struct Offer {
 
 /// Whether building the offer asks `gh` about the repository.
 ///
-/// `Skip` leaves the pull-request choice standing unprobed, and only a
-/// caller that will never take that choice may pass it: a flag that
-/// already answered `commit` or `push` needs the remote and nothing from
-/// `gh`, and should not wait on the network or on a sign-in it does not
-/// use.
+/// `Skip` leaves the push and pull-request choices standing unprobed, and
+/// only a caller that will take neither may pass it: a flag that already
+/// answered `commit` needs the remote and nothing from `gh`, and should
+/// not wait on the network or on a sign-in it does not use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Probe {
     Gh,
@@ -380,8 +433,10 @@ pub enum Probe {
 /// Build the whole offer from a scan: choose the remote, probe `gh` where
 /// [`Probe::Gh`] asks for it, and pick the branch a pull request would use.
 ///
-/// The probe is the one network call, and it runs only where a remote was
-/// chosen, so a project with no remote pays nothing for it.
+/// The probe and the branch-rules read are the network calls, and they
+/// run only where a remote was chosen, so a project with no remote pays
+/// nothing for them. The rules are read only where the probe found a `gh`
+/// that works, since the read goes through the same `gh`.
 pub fn offer(scan: Scan, command: &str, probe: Probe) -> std::result::Result<Offer, Failed> {
     let Some(branch) = scan.on_branch().map(str::to_owned) else {
         // Both callers check the branch state before they reach here: the
@@ -400,7 +455,14 @@ pub fn offer(scan: Scan, command: &str, probe: Probe) -> std::result::Result<Off
         }
         Some(_) if probe == Probe::Skip => (Ok(()), Ok(()), None),
         Some(remote) => match gh::probe(&remote.url, &branch) {
-            Ok(open) => (Ok(()), Ok(()), open),
+            Ok(open) => match remote
+                .push_url
+                .as_deref()
+                .is_some_and(|to| gh::through_a_pull_request(to, &branch))
+            {
+                true => (Err(Unavailable::PullRequestRequired), Ok(()), open),
+                false => (Ok(()), Ok(()), open),
+            },
             Err(why) => (Ok(()), Err(why), None),
         },
     };

@@ -161,10 +161,18 @@ pub fn not_on_offer(offer: &Offer, choice: Choice) -> Option<String> {
 }
 
 /// A flag named a choice that is not on offer: the head line, then the
-/// reason, and nothing is asked.
-pub fn flag_refused(offer: &Offer, reason: &str) {
+/// reason, and nothing is asked. A push the branch's rules would refuse
+/// names the flag that takes the route they allow, where that route is on
+/// offer.
+pub fn flag_refused(offer: &Offer, choice: Choice, reason: &str) {
     say(&head(&offer.scan.root, offer.scan.count()));
     detail(reason);
+    if choice == Choice::Push
+        && offer.push == Err(Unavailable::PullRequestRequired)
+        && not_on_offer(offer, Choice::Pr).is_none()
+    {
+        detail("run again with --pull-request to commit on a new branch and open one");
+    }
 }
 
 fn said(why: &Unavailable) -> String {
@@ -175,6 +183,9 @@ fn said(why: &Unavailable) -> String {
         }
         Unavailable::GhMissing => "gh is not installed".to_owned(),
         Unavailable::GhSaid(line) => format!("gh said: {line}"),
+        Unavailable::PullRequestRequired => {
+            "this branch's rules on GitHub accept changes only through a pull request".to_owned()
+        }
     }
 }
 
@@ -354,6 +365,20 @@ pub fn commit_is_on(branch: &str) {
     detail(&format!(
         "the commit is on {branch} in this checkout; kendex did not undo it"
     ));
+}
+
+/// GitHub refused the push because the branch takes changes only through a
+/// pull request: say so, and print the commands that put the commit on a
+/// branch of its own and open the pull request, the words the recovery
+/// below runs, from `commit_offer::by_hand`.
+pub fn branch_rules(branch: &str, remote: &str, by_hand: &[String]) {
+    detail(&format!(
+        "{branch} on {remote} accepts changes only through a pull request"
+    ));
+    detail("to open one from this commit yourself:");
+    for command in by_hand {
+        quoted(command);
+    }
 }
 
 pub fn branch_is_on(remote: &str, branch: &str) {

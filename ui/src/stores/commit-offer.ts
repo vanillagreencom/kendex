@@ -66,6 +66,11 @@ export type Stage =
        *  the commit is not already on such a branch. */
       canOpen: boolean;
       before: string | null;
+      /** GitHub refused the push for want of a pull request: the commands
+       *  that open one from this commit by hand, the words the recovery
+       *  runs. `null` for any other refusal, and on the `pr` route, where
+       *  the commit is already on a branch of its own. */
+      byHand: string[] | null;
     }
   | { at: "pullRequestRefused"; refused: Refused; sha: string; branch: string }
   | {
@@ -686,17 +691,34 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
       );
       if (pushed.status === "error") return transport(pushed.error);
       if (pushed.data.kind === "refused") {
+        const refused = pushed.data.refused;
+        // On the `pr` route the commit is already on a branch of its own,
+        // which is what the recovery would have made.
+        const recovers = route !== "pr";
+        let byHand: string[] | null = null;
+        if (recovers && refused.pullRequestRequired && offer.repo !== null) {
+          const lines = await commands.commitOfferByHand(
+            offer.root,
+            remote,
+            offer.repo,
+            offer.newBranch,
+            offer.branch,
+            message,
+            files,
+          );
+          if (lines.status === "error") return transport(lines.error);
+          byHand = lines.data;
+        }
         set({
           stage: {
             at: "pushRefused",
-            refused: pushed.data.refused,
+            refused,
             sha,
             branch,
             files,
-            // On the `pr` route the commit is already on a branch of its
-            // own, which is what the recovery would have made.
-            canOpen: route !== "pr" && offer.pullRequest === null,
+            canOpen: recovers && offer.pullRequest === null,
             before,
+            byHand,
           },
         });
         return;

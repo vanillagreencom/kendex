@@ -316,11 +316,13 @@ fn make(
             return Ok(Some(Outcome::Nothing));
         }
     }
-    // A flag that already chose `commit` or `push` never takes the
-    // pull-request choice, so `gh` is not asked about it.
+    // A flag that already chose `commit` never pushes, so `gh` is not
+    // asked about the branch's rules or a pull request. One that chose
+    // `push` is, so a push the rules would refuse is refused before the
+    // commit rather than after it.
     let probe = match answered {
-        Some(Choice::Commit) | Some(Choice::Push) => Probe::Skip,
-        Some(Choice::Pr) | Some(Choice::Leave) | None => Probe::Gh,
+        Some(Choice::Commit) => Probe::Skip,
+        Some(Choice::Push) | Some(Choice::Pr) | Some(Choice::Leave) | None => Probe::Gh,
     };
     let offer = match commit_offer::offer(scan, &session.command, probe) {
         Ok(offer) => offer,
@@ -335,7 +337,7 @@ fn make(
             // with that precondition's reason, and the verb's writes still
             // stand. Nothing was committed, which is what the ledger says.
             if let Some(reason) = block::not_on_offer(&offer, choice) {
-                block::flag_refused(&offer, &reason);
+                block::flag_refused(&offer, choice, &reason);
                 return Ok(Some(Outcome::CommitRefused));
             }
             routes::take(

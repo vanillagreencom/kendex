@@ -49,6 +49,7 @@ const refused = (over: Partial<Refused> = {}): Refused => ({
   timedOut: false,
   seconds: SECONDS,
   gh: false,
+  pullRequestRequired: false,
   ...over,
 });
 
@@ -96,6 +97,9 @@ describe("the rows for a segment a precondition removed", () => {
         line: "To get started with GitHub CLI, please run:  gh auth login",
       }),
     ).toBe("To get started with GitHub CLI, please run:  gh auth login");
+    expect(unavailableReason({ kind: "pullRequestRequired" })).toBe(
+      "This branch's rules on GitHub accept changes only through a pull request.",
+    );
   });
 });
 

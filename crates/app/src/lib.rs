@@ -173,6 +173,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         commit_offer::commit_offer_commit,
         commit_offer::commit_offer_push,
         commit_offer::commit_offer_push_head,
+        commit_offer::commit_offer_by_hand,
         commit_offer::commit_offer_start_branch,
         commit_offer::commit_offer_abandon_branch,
         commit_offer::commit_offer_previous_head,

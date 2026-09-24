@@ -47,6 +47,7 @@ const refused = (step: string, said: string): Refused => ({
   timedOut: false,
   seconds: 30,
   gh: false,
+  pullRequestRequired: false,
 });
 
 const buttons = () =>
@@ -60,6 +61,42 @@ beforeEach(() => {
     scoped: "action",
     accepted: false,
     message: offer.message,
+  });
+});
+
+describe("the push-refused state", () => {
+  // The store settles whether the refusal carries the way on by hand; the
+  // state draws the rules line and the commands exactly where it does.
+  const byHand = [
+    "git 'push' 'origin' 'HEAD:refs/heads/kendex/renders'",
+    "gh 'pr' 'create' '--repo' 'acme/site' '--head' 'kendex/renders' '--base' 'main'",
+  ];
+  it.each([
+    { name: "the way on is carried", byHand, shown: true },
+    { name: "none is carried", byHand: null, shown: false },
+  ])("names the branch's rules: $name", async (row) => {
+    useCommitOfferStore.setState({
+      stage: {
+        at: "pushRefused",
+        refused: refused("the push", "remote: error: GH013: rule violations"),
+        sha: "9fbb1a2",
+        branch: "main",
+        files: 1,
+        canOpen: true,
+        before: "4c1d90e",
+        byHand: row.byHand,
+      },
+    });
+    mount(<CommitOfferDialog />);
+    await settle();
+
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Committed, not pushed");
+    for (const said of [
+      "main on origin accepts changes only through a pull request.",
+      ...byHand,
+    ])
+      expect(text.includes(said), said).toBe(row.shown);
   });
 });
 

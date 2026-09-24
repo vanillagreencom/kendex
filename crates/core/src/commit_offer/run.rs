@@ -203,16 +203,22 @@ pub fn push(root: &Path, remote: &str, branch: &str, tracked: bool) -> Result<Pu
 /// the remote knows about surfaces as a second refused push.
 pub fn push_head(root: &Path, remote: &str, branch: &str) -> Result<Pushed, Failed> {
     git::run(
-        Hardened::git(
-            &["push", remote, &format!("HEAD:refs/heads/{branch}")],
-            Some(root),
-        ),
+        Hardened::git(&borrowed(&push_head_words(remote, branch)), Some(root)),
         Step::Push,
     )?;
     Ok(Pushed {
         remote: remote.to_owned(),
         branch: branch.to_owned(),
     })
+}
+
+/// What [`push_head`] hands git, and what [`by_hand`] prints for it.
+fn push_head_words(remote: &str, branch: &str) -> Vec<String> {
+    vec![
+        "push".to_owned(),
+        remote.to_owned(),
+        format!("HEAD:refs/heads/{branch}"),
+    ]
 }
 
 /// Move the checkout to the branch a pull request will be opened from,
@@ -245,9 +251,10 @@ pub fn abandon_branch(root: &Path, branch: &str) -> Result<(), Failed> {
     Ok(())
 }
 
-/// The pull request's body: two lines, no more.
+/// The pull request's body: one line, so the command [`by_hand`] prints
+/// for it stays one line a person can paste.
 pub fn body(files: usize) -> String {
-    format!("kendex wrote these files.\nFiles: {files}")
+    format!("kendex wrote these files. Files: {files}")
 }
 
 /// Open the pull request. `--repo` binds it to the remote the offer chose,
@@ -263,20 +270,9 @@ pub fn open_pull_request(
     files: usize,
 ) -> Result<Opened, Failed> {
     let stdout = git::run(
-        Hardened::gh(&[
-            "pr",
-            "create",
-            "--repo",
-            repo,
-            "--head",
-            head,
-            "--base",
-            base,
-            "--title",
-            title,
-            "--body",
-            &body(files),
-        ]),
+        Hardened::gh(&borrowed(&pull_request_words(
+            repo, head, base, title, files,
+        ))),
         Step::PullRequest,
     )?;
     // `gh` prints the pull request's URL on stdout. A `gh` that exits zero
@@ -293,6 +289,79 @@ pub fn open_pull_request(
             step: Step::PullRequest,
             refusal: Refusal::Said(vec!["gh reported no pull request address".to_owned()]),
         }),
+    }
+}
+
+/// What [`open_pull_request`] hands gh, and what [`by_hand`] prints for it.
+fn pull_request_words(
+    repo: &str,
+    head: &str,
+    base: &str,
+    title: &str,
+    files: usize,
+) -> Vec<String> {
+    [
+        "pr", "create", "--repo", repo, "--head", head, "--base", base, "--title", title, "--body",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .chain(std::iter::once(body(files)))
+    .collect()
+}
+
+/// The refused-push recovery as the commands a person runs themselves:
+/// the words [`push_head`] and [`open_pull_request`] run, each quoted
+/// through [`crate::names::quoted`], since git allows a branch name a
+/// shell would run.
+///
+/// Two changes from the words run. The git line names the project with
+/// `-C <root>`: [`push_head`] runs in the root, and a line pasted into a
+/// terminal standing anywhere else would push that folder's checkout, or
+/// none. The gh line locates itself through `--repo` and `--head`. And the
+/// remote's URL is printed without the user name and password a URL can
+/// carry, so a token in it does not reach a terminal, a CI log, or a copy
+/// button. gh is still handed the URL whole.
+pub fn by_hand(
+    root: &Path,
+    remote: &str,
+    repo: &str,
+    branch: &str,
+    base: &str,
+    title: &str,
+    files: usize,
+) -> Vec<String> {
+    let line = |program: &str, words: Vec<String>| {
+        std::iter::once(program.to_owned())
+            .chain(words.iter().map(|word| crate::names::quoted(word)))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let mut git = vec!["-C".to_owned(), crate::paths::slashed(root)];
+    git.extend(push_head_words(remote, branch));
+    vec![
+        line("git", git),
+        line(
+            "gh",
+            pull_request_words(&without_credentials(repo), branch, base, title, files),
+        ),
+    ]
+}
+
+/// A remote URL with its user name and password taken out. A URL with
+/// neither, and a spelling that is not a URL with an authority — an
+/// scp-style `git@host:path`, a local path — comes back as it is.
+fn without_credentials(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(mut parsed)
+            if parsed.has_host()
+                && (!parsed.username().is_empty() || parsed.password().is_some()) =>
+        {
+            // Both refuse only a URL with no host, which the guard rules out.
+            let _ = parsed.set_username("");
+            let _ = parsed.set_password(None);
+            parsed.to_string()
+        }
+        _ => url.to_owned(),
     }
 }
 

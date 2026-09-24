@@ -417,6 +417,13 @@ export const commands = {
 	 *  moving the branch it is on — the recovery a refused push offers.
 	 */
 	commitOfferPushHead: (root: string, remote: string, branch: string) => typedError<StepResult, string>(__TAURI_INVOKE("commit_offer_push_head", { root, remote, branch })),
+	/**
+	 *  The recovery a refused push offers, as the commands a person runs
+	 *  themselves: what `commit_offer_push_head` and
+	 *  `commit_offer_open_pull_request` run with these values, the remote URL
+	 *  printed without its credentials.
+	 */
+	commitOfferByHand: (root: string, remote: string, repo: string, branch: string, base: string, title: string, files: number) => typedError<string[], string>(__TAURI_INVOKE("commit_offer_by_hand", { root, remote, repo, branch, base, title, files })),
 	commitOfferStartBranch: (root: string, branch: string) => typedError<StepResult, string>(__TAURI_INVOKE("commit_offer_start_branch", { root, branch })),
 	/**
 	 *  Put the checkout back and remove the empty branch kendex made, after a
@@ -4055,6 +4062,11 @@ export type Refused = {
 	seconds: number,
 	/**  Whether the words are `gh`'s rather than git's. */
 	gh: boolean,
+	/**
+	 *  GitHub refused this push because the branch takes changes only
+	 *  through a pull request.
+	 */
+	pullRequestRequired: boolean,
 };
 
 /**
@@ -5570,7 +5582,12 @@ export type Why = { kind: "noRemote" } | { kind: "remoteNotDecidable" } | { kind
  *  gh's own first line, so a case nobody anticipated still names
  *  itself rather than reading as one kendex knows.
  */
-{ kind: "ghSaid"; line: string };
+{ kind: "ghSaid"; line: string } | 
+/**
+ *  The branch's rules on GitHub take changes only through a pull
+ *  request.
+ */
+{ kind: "pullRequestRequired" };
 
 /**  An effect that was neither shown nor offered, and why. */
 export type Withheld = {

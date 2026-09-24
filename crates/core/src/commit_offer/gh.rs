@@ -1,5 +1,5 @@
-//! The one `gh` question the offer asks before it draws, and the one it
-//! asks after a push.
+//! The `gh` questions the offer asks before it draws, and the one it asks
+//! after a push.
 
 use crate::process::Hardened;
 
@@ -64,6 +64,114 @@ pub fn probe(repo: &str, branch: &str) -> Result<Option<OpenPullRequest>, Unavai
             number: row.number,
             url: row.url,
         }))
+}
+
+/// The rule types that take changes to a branch only through a pull
+/// request: a push of a fresh commit straight to the branch is refused
+/// under either.
+const THROUGH_A_PULL_REQUEST: &[&str] = &["pull_request", "merge_queue"];
+
+/// What a person may do past a ruleset, in GitHub's own spelling. These
+/// two let them push to the branch directly.
+const MAY_PUSH_PAST: &[&str] = &["always", "exempt"];
+
+/// One rule GitHub applies to the branch, as far as the offer reads it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub(super) struct Rule {
+    #[serde(rename = "type")]
+    pub(super) kind: String,
+    pub(super) ruleset_id: Option<u64>,
+}
+
+#[derive(serde::Deserialize)]
+struct Ruleset {
+    current_user_can_bypass: Option<String>,
+}
+
+/// Whether the branch's rules on GitHub take changes only through a pull
+/// request, for the person `gh` is signed in as.
+///
+/// `true` only where the rules were read and [`requires`] says so. A read
+/// that fails, answers with something this cannot parse, or cannot be
+/// bound to the remote's host is not known, and not known leaves the push
+/// on offer: the push's own refusal then names the rule, and
+/// [`super::Failed::pull_request_required`] adds the way on. Branch
+/// protection is not read here: its endpoint needs a permission most
+/// people pushing to a branch do not hold.
+pub fn through_a_pull_request(repo: &str, branch: &str) -> bool {
+    let Some(host) = host(repo) else {
+        return false;
+    };
+    let endpoint = format!(
+        "repos/{{owner}}/{{repo}}/rules/branches/{}",
+        crate::names::urlencoded(branch)
+    );
+    let Some(rules) = api::<Vec<Rule>>(repo, &host, &endpoint) else {
+        return false;
+    };
+    requires(&rules, |id| {
+        api::<Ruleset>(
+            repo,
+            &host,
+            &format!("repos/{{owner}}/{{repo}}/rulesets/{id}"),
+        )
+        .and_then(|ruleset| ruleset.current_user_can_bypass)
+    })
+}
+
+/// The decision over what was read: a `pull_request` or `merge_queue` rule
+/// takes changes only through a pull request, unless the person may push
+/// past its ruleset. `bypass` answers GitHub's `current_user_can_bypass`
+/// for a ruleset, or `None` where that could not be read — and there the
+/// rule stands: it was read to apply here, and the exception is the part
+/// not known.
+pub(super) fn requires(rules: &[Rule], bypass: impl Fn(u64) -> Option<String>) -> bool {
+    let mut rulesets: Vec<Option<u64>> = rules
+        .iter()
+        .filter(|rule| THROUGH_A_PULL_REQUEST.contains(&rule.kind.as_str()))
+        .map(|rule| rule.ruleset_id)
+        .collect();
+    rulesets.sort_unstable();
+    rulesets.dedup();
+    rulesets.into_iter().any(|id| {
+        !id.and_then(&bypass)
+            .is_some_and(|bypass| MAY_PUSH_PAST.contains(&bypass.as_str()))
+    })
+}
+
+/// The host a remote URL names, in the forms `gh` takes for `--repo`: a
+/// URL with an authority (`https://`, `ssh://`) or scp-style
+/// `[user@]host:path`. `None` for anything else, such as a local path.
+pub(super) fn host(remote: &str) -> Option<String> {
+    let host = match remote.contains("://") {
+        true => url::Url::parse(remote).ok()?.host_str()?.to_owned(),
+        false => {
+            let (before, _) = remote.split_once(':')?;
+            let host = before.rsplit_once('@').map_or(before, |(_, host)| host);
+            if host.contains(['/', '\\']) {
+                return None;
+            }
+            host.to_owned()
+        }
+    };
+    (!host.is_empty()).then_some(host)
+}
+
+/// One `gh api` read bound to the remote, parsed, or `None` where it did
+/// not run, refused, or answered with something else.
+///
+/// `gh api` has no `--repo`. It fills `{owner}` and `{repo}` from
+/// `GH_REPO` and ignores the host there, taking it from `--hostname`,
+/// else `GH_HOST`, else github.com. Both are passed, so neither fallback
+/// applies: without the host an Enterprise remote's path would be asked
+/// of whatever host the machine defaults to.
+fn api<T: serde::de::DeserializeOwned>(repo: &str, host: &str, endpoint: &str) -> Option<T> {
+    let stdout = git::run(
+        Hardened::gh(&["api", "--hostname", host, endpoint]).env("GH_REPO", repo),
+        Step::Probe,
+    )
+    .ok()?;
+    serde_json::from_slice(&stdout).ok()
 }
 
 /// Why the pull-request choice is not on offer.
