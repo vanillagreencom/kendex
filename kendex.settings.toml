@@ -312,11 +312,11 @@ DEV_VALIDATE_CMD = "tools/guard --full"
 DEV_VALIDATE_TIMEOUT_SECS = "3600"
 
 # Whether `tools/guard --full` runs the macOS and Windows cross-target checks
-# and cargo doc: "run" runs them when the branch touched a crate, a workspace
-# compiler input or a file compiled code includes; "ci" leaves them to CI,
-# whose cargo_lint, cargo_macos and cargo_windows lanes tools/ci-job-set
-# selects. A lane short on disk or time sets "ci" in .env.local or its
-# environment.
+# and cargo doc: "run" runs them unless the branch provably touched no crate,
+# no workspace compiler input and no file compiled code includes; "ci" leaves
+# them to CI, whose cargo_lint, cargo_macos and cargo_windows lanes
+# tools/ci-job-set selects. A lane short on disk or time sets
+# GUARD_FULL_CROSS_DOC=ci in .env.local or its environment.
 GUARD_FULL_CROSS_DOC = "run"
 
 # The repo-root executable the guard chain runs last, after doc-limits, preflight,

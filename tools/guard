@@ -752,9 +752,17 @@ pi_suite_failed() { # DIR
   say suite "$1"
 }
 if [ "$FULL" -eq 1 ]; then
+  # base_resolved is 0 where no merge base with origin/main was found: the
+  # touched set then holds the working tree alone, not what the branch
+  # committed.
   suites_base=HEAD
+  base_resolved=0
   if git rev-parse --verify -q origin/main >/dev/null; then
-    suites_base=$(git merge-base HEAD origin/main) || suites_base=HEAD
+    if suites_base=$(git merge-base HEAD origin/main); then
+      base_resolved=1
+    else
+      suites_base=HEAD
+    fi
   fi
   # --no-renames: a move between two trees names its source and its
   # destination, so the tree a file left runs its suite too. Each read checks
@@ -867,10 +875,12 @@ compiled_includes() {
 if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
   # The cross-target checks and cargo doc each write a target tree of their
   # own, and CI covers both on the pull requests tools/ci-job-set selects
-  # its cargo_lint, cargo_macos and cargo_windows lanes for. Here they run
-  # only when the branch touched a Rust input: a crate, a workspace compiler
-  # input, or a file compiled code includes. An empty touched set runs them,
-  # and a failed read of it has already red the run.
+  # its cargo_lint, cargo_macos and cargo_windows lanes for. Here they are
+  # skipped only when the touched set shows the branch changed no Rust
+  # input: no crate, no workspace compiler input, no file compiled code
+  # includes. A touched set that cannot show that runs them: an empty one,
+  # one read without a branch base, or one the include derivation could not
+  # be matched against. A failed read of it has already red the run.
   # GUARD_FULL_CROSS_DOC=ci leaves both to CI; run, the default, keeps them.
   cross_doc=$(
     guards="$TOOLS_DIR/../.agents/skills/commit-guards/scripts"
@@ -883,6 +893,7 @@ if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
   esac
   rust_input=0
   [ -n "$touched" ] || rust_input=1
+  [ "$base_resolved" -eq 1 ] || rust_input=1
   while IFS= read -r f; do
     case "$f" in
       crates/*) rust_input=1 ;;

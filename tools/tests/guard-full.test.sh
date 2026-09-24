@@ -167,6 +167,22 @@ rm -f "$R/Cargo.toml"
 
 echo "=== the cross-target checks and cargo doc run for a Rust input, and a setting leaves them to CI ==="
 pre_gated_head="$(git -C "$R" rev-parse HEAD)"
+# The stubs stay out of every touched set here, so a row with nothing edited
+# reads an empty one.
+cp "$R/.git/info/exclude" "$TMP/exclude.saved"
+printf 'fake-bin/\n' >>"$R/.git/info/exclude"
+# A find that fails the include derivation's walk under FAIL_FIND=1 and is
+# the real find for every other caller.
+REAL_FIND="$(command -v find)"
+cat >"$R/fake-bin/find" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${FAIL_FIND:-0}" -eq 1 ] && [ "${1:-}" = crates ] && [ "${4:-}" = -name ] && [ "${5:-}" = '*.rs' ]; then
+  exit 1
+fi
+exec "$REAL_FIND" "$@"
+SH
+chmod +x "$R/fake-bin/find"
 # A crate that includes two files outside crates/: one literal on the macro's
 # own line, one on the line after it, the shape rustfmt gives a long one.
 mkdir -p "$R/crates/app/src" "$R/docs/authoring"
@@ -180,17 +196,24 @@ printf '# lock\n' >"$R/Cargo.lock"
 git -C "$R" add crates/app docs Cargo.toml Cargo.lock
 git -C "$R" commit -q -m "chore: a crate that includes two docs files"
 gated_head="$(git -C "$R" rev-parse HEAD)"
-git -C "$R" update-ref refs/remotes/origin/main HEAD
 DOC_CALL="doc --no-deps --document-private-items --workspace --quiet"
-gated_run() { # GUARD_PATH TOUCH [VAR=VALUE...] — the branch as TOUCH alone, run by that guard
-  local guard_path="$1" touch="$2"
-  shift 2
+# GUARD_PATH TOUCH BASE [VAR=VALUE...] — the world at the crate commit with
+# TOUCH edited (- edits nothing), origin/main at that commit under BASE=main
+# and absent under BASE=none, run by that guard.
+gated_run() {
+  local guard_path="$1" touch="$2" base="$3"
+  shift 3
   git -C "$R" reset -q --hard "$gated_head"
-  printf '// edit\n' >>"$R/$touch"
+  case "$base" in
+    main) git -C "$R" update-ref refs/remotes/origin/main "$gated_head" ;;
+    none) git -C "$R" update-ref -d refs/remotes/origin/main ;;
+    *) echo "gated_run: no base named $base" >&2; exit 2 ;;
+  esac
+  [ "$touch" = - ] || printf '// edit\n' >>"$R/$touch"
   : >"$CARGO_CALL_LOG"
   OUT=""
   RC=0
-  OUT="$(cd "$R" && env PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" \
+  OUT="$(cd "$R" && env PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" REAL_FIND="$REAL_FIND" \
     RUSTUP_INSTALLED_TARGETS="$BOTH" "$@" "$guard_path" --full 2>&1 </dev/null)" || RC=$?
 }
 gated_ran() { # — both cross targets and cargo doc, once each
@@ -202,56 +225,75 @@ gated_skipped() { # — neither a cross target nor cargo doc, and the host test 
   ! grep -qE -- '--target |^doc ' "$CARGO_CALL_LOG" &&
     grep -qFx "test --workspace --quiet" "$CARGO_CALL_LOG"
 }
-gated_verdict() { # WANT — does the last run match it
-  case "$1" in
-    run) [ "$RC" -eq 0 ] && gated_ran && [[ "$OUT" != *"guard-note:"* ]] ;;
-    skip:*) [ "$RC" -eq 0 ] && gated_skipped && [[ "$OUT" == *"guard-note: cross-doc-skipped=${1#skip:}"* ]] ;;
-    refuse:*) [ "$RC" -eq 1 ] && gated_ran && [[ "$OUT" == *"guard: cross-doc-setting=${1#refuse:}"* ]] ;;
-    *) echo "gated_verdict: no verdict named $1" >&2; exit 2 ;;
-  esac
+# RC CALLS TEXT — the last run exited RC, ran (run) or skipped (skip) both
+# checks, and printed TEXT; a run with no TEXT printed no notice.
+gated_verdict() {
+  [ "$RC" -eq "$1" ] || return 1
+  case "$2" in
+    run) gated_ran ;;
+    skip) gated_skipped ;;
+    *) echo "gated_verdict: no call verdict named $2" >&2; exit 2 ;;
+  esac || return 1
+  if [ -n "$3" ]; then
+    [[ "$OUT" == *"$3"* ]]
+  else
+    [[ "$OUT" != *"guard-note:"* ]]
+  fi
 }
+# One row per input the gate decides on: TOUCH|SETTING|BASE|ENV|RC|CALLS|TEXT|LABEL.
 # The loop counts its own rows: an emptied table is a red, never a green.
 before=$((PASS + FAIL))
-while IFS='|' read -r touch setting want label; do
+while IFS='|' read -r touch setting base extra rc calls text label; do
   [ -n "$touch" ] || continue
   env_args=()
-  [ -z "$setting" ] || env_args=("GUARD_FULL_CROSS_DOC=$setting")
-  gated_run "$GUARD" "$touch" ${env_args[@]+"${env_args[@]}"}
-  gated_verdict "$want" && ok "$label" \
+  [ -z "$setting" ] || env_args+=("GUARD_FULL_CROSS_DOC=$setting")
+  [ -z "$extra" ] || env_args+=("$extra")
+  gated_run "$GUARD" "$touch" "$base" ${env_args[@]+"${env_args[@]}"}
+  gated_verdict "$rc" "$calls" "$text" && ok "$label" \
     || bad "$label" "rc=$RC out=$OUT calls=$(cat "$CARGO_CALL_LOG")"
 done <<'ROWS'
-docs/notes.md||skip:no-rust-input|a prose file compiled code does not include skips both, naming why
-crates/app/src/mine.rs||run|a crate source runs both
-Cargo.lock||run|the workspace lock runs both
-docs/authoring/README.md||run|a file an include_str! on its own line names runs both
-docs/split.md||run|a file an include_str! names on the line after it runs both
-crates/app/src/mine.rs|ci|skip:ci|the setting at ci leaves both to CI for a crate source
-crates/app/src/mine.rs|run|run|the setting at run keeps both for a crate source
-crates/app/src/mine.rs|never|refuse:never|a setting that is neither run nor ci is refused, and both still run
+docs/notes.md||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|a prose file compiled code does not include skips both, naming why
+crates/app/src/mine.rs||main||0|run||a crate source runs both
+Cargo.lock||main||0|run||the workspace lock runs both
+docs/authoring/README.md||main||0|run||a file an include_str! on its own line names runs both
+docs/split.md||main||0|run||a file an include_str! names on the line after it runs both
+crates/app/src/mine.rs|ci|main||0|skip|guard-note: cross-doc-skipped=ci|the setting at ci leaves both to CI for a crate source
+crates/app/src/mine.rs|run|main||0|run||the setting at run keeps both for a crate source
+crates/app/src/mine.rs|never|main||1|run|guard: cross-doc-setting=never|a setting that is neither run nor ci is refused, and both still run
+-||main||0|run||a branch at its base with a clean tree touches nothing, and both run
+docs/notes.md||main|FAIL_FIND=1|1|run|guard: compiled-includes=crates|a failed include read is refused, and both still run
+docs/notes.md||none||0|run||a committed crate change with no origin/main to diff against runs both
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the cross-doc gate" >&2; exit 2; }
 # One control per rule: each mutant removes that rule from a guard copy, and
 # the row the rule decides turns to the verdict the rule was there to refuse.
+# An edit carries no |, the column separator. EDIT|TOUCH|SETTING|BASE|ENV|RC|CALLS|TEXT|LABEL.
 before=$((PASS + FAIL))
-while IFS='|' read -r edit touch setting want label; do
+while IFS='|' read -r edit touch setting base extra rc calls text label; do
   [ -n "$edit" ] || continue
   if mutant_guard "$edit"; then
     env_args=()
-    [ -z "$setting" ] || env_args=("GUARD_FULL_CROSS_DOC=$setting")
-    gated_run "$MUTANT_TOOLS/guard" "$touch" ${env_args[@]+"${env_args[@]}"}
-    gated_verdict "$want" && ok "control: $label" \
+    [ -z "$setting" ] || env_args+=("GUARD_FULL_CROSS_DOC=$setting")
+    [ -z "$extra" ] || env_args+=("$extra")
+    gated_run "$MUTANT_TOOLS/guard" "$touch" "$base" ${env_args[@]+"${env_args[@]}"}
+    gated_verdict "$rc" "$calls" "$text" && ok "control: $label" \
       || bad "control: $label" "rc=$RC out=$OUT calls=$(cat "$CARGO_CALL_LOG")"
   else
     bad "control: $label" "the edit changed nothing in a guard copy: $edit"
   fi
 done <<'ROWS'
-s/^  rust_input=0$/  rust_input=1/|docs/notes.md||run|with the touched-set gate removed a prose file runs both
-s/if ! includes=\$(compiled_includes)/if ! includes=$(true)/|docs/authoring/README.md||skip:no-rust-input|with the include derivation emptied an included file skips both
-s/if (pending \&\& match/if (0 \&\& match/|docs/split.md||skip:no-rust-input|with the next-line literal unread a file named on the line after skips both
-s/if \[ "\$cross_doc" = ci \]; then/if false; then/|crates/app/src/mine.rs|ci|run|with the ci branch removed the setting at ci runs both
-s/say cross-doc-setting "\$cross_doc"; //|crates/app/src/mine.rs|never|run|with the refusal removed an unknown setting passes
+s/^  rust_input=0$/  rust_input=1/|docs/notes.md||main||0|run||with the touched-set gate removed a prose file runs both
+s/if ! includes=\$(compiled_includes)/if ! includes=$(true)/|docs/authoring/README.md||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the include derivation emptied an included file skips both
+s/if (pending \&\& match/if (0 \&\& match/|docs/split.md||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the next-line literal unread a file named on the line after skips both
+s/if \[ "\$cross_doc" = ci \]; then/if false; then/|crates/app/src/mine.rs|ci|main||0|run||with the ci branch removed the setting at ci runs both
+s/say cross-doc-setting "\$cross_doc"; //|crates/app/src/mine.rs|never|main||0|run||with the refusal removed an unknown setting passes
+/\[ -n "\$touched" \]/d|-||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the empty-set rule removed a branch that touches nothing skips both
+/say compiled-includes crates/{n;d;}|docs/notes.md||main|FAIL_FIND=1|1|skip|guard: compiled-includes=crates|with the failed read left undecided a prose file skips both
+/\[ "\$base_resolved" -eq 1 \]/d|docs/notes.md||none||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the base rule removed a committed crate change with no origin/main skips both
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the cross-doc gate controls" >&2; exit 2; }
+rm -f "$R/fake-bin/find"
+cp "$TMP/exclude.saved" "$R/.git/info/exclude"
 git -C "$R" reset -q --hard "$pre_gated_head"
 git -C "$R" update-ref -d refs/remotes/origin/main
 
