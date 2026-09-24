@@ -200,17 +200,15 @@ assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-KEN-3-3-3.json" '.qa_labels
 
 echo "=== the recovered implement record ==="
 # QA: none is no labels and a list is every label; a backticked commit
-# resolves; a proposed rule becomes the section Store Proposed Rules reads; a
-# GitHub key or a Summary: line with no check mark posted no summary.
+# resolves; a proposed rule becomes the section Store Proposed Rules reads;
+# recovery never verifies a tracker post, so no summary is recorded as posted.
 row=0
 for case in \
   "QA none^KEN-10^%H^none^none^KEN-10 ✓^.qa_labels|tojson^[]" \
   "a QA list^KEN-11^%H^needs-review, needs-safety-audit^none^KEN-11 ✓^.qa_labels|join(\",\")^needs-review,needs-safety-audit" \
   "a backticked commit^KEN-12^\`%H\`^none^none^KEN-12 ✓^.commit^%H" \
   "a proposed rule^KEN-13^%H^none^Name the reach^KEN-13 ✓^.summary|split(\"### Proposed Rules\")[1]|ltrimstr(\"\\n\\n\")^- Name the reach" \
-  "a Linear summary with a check mark^KEN-14^%H^none^none^KEN-14 ✓^.summary_posted^true" \
-  "a GitHub key^issue-15^%H^none^none^issue-15 ✓^.summary_posted^false" \
-  "a Summary line with no check mark^KEN-16^%H^none^none^KEN-16^.summary_posted^false"; do
+  "a Summary line with a check mark posts nothing^KEN-14^%H^none^none^KEN-14 ✓^.summary_posted^false"; do
   row=$((row + 1))
   IFS='^' read -r label key commit qa proposed summary filter want <<<"$case"
   new_round "rec-$row" "$key" 4-4 0

@@ -8,7 +8,7 @@ Pane agents (`pane: true` in agent frontmatter) live in a persistent tmux pane k
 
 ## Bg agents (Pi)
 
-Bg agents (no `pane: true`) are background one-shot processes, ephemeral by default (no persisted session). When the same `reviewer-*` (or other bg agent) must retain conversation context across delegations, pass `sessionKey: "<workflow-scoped-stable-id>"` (e.g. `review-issue-PROJ-123`); the same `agent + sessionKey` resumes the prior pi session, and omitting it keeps the call stateless. Bg agents complete by the final assistant message captured by `subagent`; do not instruct them to call `complete_subagent`.
+Bg agents (no `pane: true`) are background one-shot processes. A run without `sessionKey` starts a fresh session file that later calls do not resume; [agent-transcripts.md](agent-transcripts.md) says where round recovery finds it. When the same `reviewer-*` (or other bg agent) must retain conversation context across delegations, pass `sessionKey: "<workflow-scoped-stable-id>"` (e.g. `review-issue-PROJ-123`); the same `agent + sessionKey` resumes the prior pi session, and omitting it keeps the call stateless. Bg agents complete by the final assistant message captured by `subagent`; do not instruct them to call `complete_subagent`.
 
 ## Steering and completion recovery (Pi)
 
