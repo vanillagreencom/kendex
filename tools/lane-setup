@@ -46,25 +46,24 @@ fi
 # daemon and the fleet's login profile both export and a developer machine
 # does not. This script runs as a child process at lane create, so an export
 # here never reaches a later lane shell; what later cargo runs need is
-# persisted in files instead, each rewritten whole on every run.
+# persisted in files instead. write_owned replaces each file whole when its
+# content changes and refuses one this script did not write.
 #
 # The cargo file is .cargo/config.toml in the directory holding this clone.
 # Cargo reads the config of every ancestor of its working directory, so that
 # one file reaches the clone and every worktree created beside it under
 # <parent>/.worktrees/; a worktree placed elsewhere by WORKTREE_BASE_DIR does
-# not read it. ~/.cargo/config.toml is left to the lane image, whose linker
-# entry lives there and whose tables TOML would refuse to see defined twice.
+# not read it. ~/.cargo/config.toml belongs to the lane image, and cargo
+# merges the two files.
 #
-# - incremental off: a sandbox never reuses the caches it would write.
-# - one target dir for every checkout: CARGO_TARGET_DIR when the fleet set
-#   it, else <parent>/.cargo/target. Registry dependency artifacts are shared
-#   across checkouts. Workspace crates are not keyed by checkout path: cargo
-#   hashes a workspace member by its path inside the workspace, so every
-#   checkout writes the same unit files and freshness is judged by source
-#   mtimes; a build in a checkout whose sources are older than another
-#   checkout's last build reuses that build. Two concurrent cargo runs
-#   serialize on the target dir's lock.
-# - linker: mold, else lld, when the image has it, for Linux targets only.
+# - incremental off: incremental caches cost gigabytes of sandbox disk, and
+#   sccache does not cache an incremental compilation.
+# - no target dir: each checkout keeps its own target/, because cargo keys a
+#   workspace crate by its path inside the workspace and judges freshness by
+#   source mtimes, so a shared target dir lets one checkout run another's
+#   build. A CARGO_TARGET_DIR the fleet exports still wins.
+# - linker: the image's, when its cargo config already passes -fuse-ld;
+#   otherwise mold, else lld, when installed, for Linux targets only.
 # - rustc wrapper: sccache, when it is installed and the fleet's shared cache
 #   endpoint FLEET_SCCACHE_REDIS_ENDPOINT is non-empty. The endpoint goes to
 #   sccache's own config file, which every sccache server reads whoever
@@ -101,14 +100,11 @@ write_owned() {
 }
 
 write_lane_cargo_config() {
-  local lanes_dir="" target_dir="" cargo_config="" sccache_path="" linker=none
+  local lanes_dir="" cargo_config="" sccache_path="" image_config="" linker="" status=0
   lanes_dir="$(cd .. && pwd -P)" || exit $?
-  target_dir="${CARGO_TARGET_DIR:-$lanes_dir/.cargo/target}"
   printf 'lane-setup: incremental=off\n'
-  printf 'lane-setup: target-dir=%s\n' "$target_dir"
   cargo_config="[build]
-incremental = false
-target-dir = $(toml_string "$target_dir")"
+incremental = false"
 
   if [ -z "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ]; then
     printf 'lane-setup: rustc-wrapper=none:endpoint-unset\n'
@@ -122,18 +118,35 @@ rustc-wrapper = $(toml_string "$sccache_path")"
 endpoint = $(toml_string "$FLEET_SCCACHE_REDIS_ENDPOINT")"
   fi
 
-  if command -v mold >/dev/null; then
-    linker=mold
-  elif command -v ld.lld >/dev/null; then
-    linker=lld
+  image_config="${CARGO_HOME:-$HOME/.cargo}/config.toml"
+  if [ -e "$image_config" ]; then
+    grep -q -e '-fuse-ld=' -- "$image_config" || status=$?
+    case "$status" in
+      0) linker=image ;;
+      1) ;;
+      *) exit "$status" ;;
+    esac
+  fi
+  if [ -z "$linker" ]; then
+    if command -v mold >/dev/null; then
+      linker=mold
+    elif command -v ld.lld >/dev/null; then
+      linker=lld
+    else
+      linker=none
+    fi
   fi
   printf 'lane-setup: linker=%s\n' "$linker"
-  if [ "$linker" != none ]; then
-    cargo_config="$cargo_config
+  case "$linker" in
+    mold | lld)
+      cargo_config="$cargo_config
 
 [target.'cfg(target_os = \"linux\")']
 rustflags = [\"-C\", \"link-arg=-fuse-ld=$linker\"]"
-  fi
+      ;;
+    image | none) ;;
+    *) printf 'lane-setup: linker=invalid value=%s\n' "$linker"; exit 70 ;;
+  esac
 
   write_owned cargo-config "$lanes_dir/.cargo/config.toml" "$cargo_config"
 }

@@ -160,17 +160,20 @@ NPM_FAIL=23 run_setup ./tools/lane-setup
 CARGO_BIN="$(cd / && rustup which cargo 2>/dev/null)" || CARGO_BIN="$(command -v cargo)" || CARGO_BIN=""
 [ -n "$CARGO_BIN" ] || { bad "a cargo toolchain is reachable" "neither rustup nor cargo answered"; exit 1; }
 CARGO_DIR="${CARGO_BIN%/*}"
+SYSROOT="$(env -i PATH="$CARGO_DIR:/usr/bin:/bin" rustc --print sysroot 2>&1)" || { bad "the toolchain names its sysroot" "$SYSROOT"; exit 1; }
+
+# Cargo reads the config of every ancestor of its working directory, and on a
+# fleet sandbox this tree sits under a lanes dir the setup configured. This
+# file sits between that ancestor and every fixture and turns incremental
+# back on, so only a fixture's own lanes config can turn it off. Each run
+# names its own target dir for the same reason.
+mkdir -p "$TMP/.cargo"
+printf '[build]\nincremental = true\n' >"$TMP/.cargo/config.toml"
 
 cargo_in() { # DIR ARGS...
   local dir=$1
   shift
-  (cd "$dir" && env -i HOME="$R/home" PATH="$CARGO_DIR:/usr/bin:/bin" CARGO_HOME="$R/home/.cargo" CARGO_NET_OFFLINE=true "$CARGO_BIN" "$@" 2>&1)
-}
-
-target_of() { # DIR
-  local meta=""
-  meta="$(cargo_in "$1" metadata --format-version 1 --no-deps)" || { printf 'metadata-failed:%s' "$meta"; return 0; }
-  sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p' <<<"$meta"
+  (cd "$dir" && env -i HOME="$R/home" PATH="$CARGO_DIR:/usr/bin:/bin" CARGO_HOME="$R/home/.cargo" CARGO_TARGET_DIR="$dir/target" CARGO_NET_OFFLINE=true "$CARGO_BIN" "$@" 2>&1)
 }
 
 count() { # TEXT NEEDLE
@@ -180,6 +183,16 @@ count() { # TEXT NEEDLE
     n=$((n + 1))
   done
   printf '%s' "$n"
+}
+
+# toy_line OUTPUT CLONE: the toy crate's rustc line from `cargo check -v`,
+# with the clone's path, the incremental session dir and the unit hashes the
+# profile's incremental setting feeds taken out, so two fixtures' lines
+# compare equal exactly when their other flags do.
+toy_line() {
+  local line=""
+  line="$(sed -n 's/ -C incremental=[^ ]*//; s/ -C metadata=[^ ]*//; s/ -C extra-filename=[^ ]*//; /--crate-name toy/p' <<<"$1")"
+  printf '%s' "${line//"$2"/<clone>}"
 }
 
 lanes_of() { (cd "$R/.." && pwd -P); }
@@ -192,25 +205,53 @@ lane_fixture() {
   fixture "lanes-$LANES/clone" "$@"
 }
 
+# The non-Linux target a row checks against: the host itself when it is not
+# Linux, else a pinned cross target the toolchain has installed.
+FOREIGN_TARGET=""
+FOREIGN_ARGS=""
+if [ "$(uname -s)" != Linux ]; then
+  FOREIGN_TARGET=host
+else
+  for target in aarch64-apple-darwin x86_64-pc-windows-msvc; do
+    if [ -d "$SYSROOT/lib/rustlib/$target" ]; then
+      FOREIGN_TARGET=$target
+      FOREIGN_ARGS="--target $target"
+      break
+    fi
+  done
+fi
+
+LINK_DELTA=0
+[ "$(uname -s)" != Linux ] || LINK_DELTA=1
+fixture baseline/clone
+BASE="$(cargo_in "$R" check -v)" || { bad "the baseline check runs" "$BASE"; exit 1; }
+case "$BASE" in *"--crate-name toy"*) ;; *) bad "the baseline check compiles the toy crate" "$BASE"; exit 1 ;; esac
+BASE_LINE="$(toy_line "$BASE" "$R")"
+BASE_MOLD="$(count "$BASE" -fuse-ld=mold)"
+BASE_LLD="$(count "$BASE" -fuse-ld=lld)"
+BASE_FOREIGN=""
+if [ -n "$FOREIGN_TARGET" ]; then
+  # shellcheck disable=SC2086 # FOREIGN_ARGS is empty or one flag and its value
+  BASE_FOREIGN="$(cargo_in "$R" check -v $FOREIGN_ARGS)" || { bad "the baseline check runs for $FOREIGN_TARGET" "$BASE_FOREIGN"; exit 1; }
+fi
+
 # Every proof takes the fixture's optional mutation, so its control reruns
 # the same proof against a mutant and expects it to fail.
-proof_shared_target() {
-  local lanes="" wt="" clone_target="" wt_target="" incremental=""
+proof_incremental_off() {
+  local wt="" clone_cache="" wt_cache=""
   lane_fixture "$@"
-  lanes="$(lanes_of)" || return 1
   run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test
   [ "$RC" -eq 0 ] || { WHY="rc=$RC out=$OUT"; return 1; }
-  wt="$lanes/.worktrees/clone/wt"
+  wt="$(lanes_of)/.worktrees/clone/wt" || return 1
   git -C "$R" worktree add -q "$wt" || return 1
-  clone_target="$(target_of "$R")"
-  wt_target="$(target_of "$wt")"
   cargo_in "$R" check -q >/dev/null || return 1
   cargo_in "$wt" check -q >/dev/null || return 1
   # Cargo lays out debug/incremental whatever the setting; a session writes
   # a directory inside it.
-  incremental="$(ls -A "$clone_target/debug/incremental" 2>&1)" || incremental="unreadable: $incremental"
-  WHY="clone=$clone_target worktree=$wt_target incremental=$incremental"
-  [ "$clone_target" = "$lanes/.cargo/target" ] && [ "$wt_target" = "$clone_target" ] && [ -z "$incremental" ]
+  clone_cache="$(ls -A "$R/target/debug/incremental" 2>&1)" || clone_cache="unreadable: $clone_cache"
+  wt_cache="$(ls -A "$wt/target/debug/incremental" 2>&1)" || wt_cache="unreadable: $wt_cache"
+  WHY="clone incremental=[$clone_cache] worktree incremental=[$wt_cache]"
+  [ -z "$clone_cache" ] && [ -z "$wt_cache" ]
 }
 
 proof_rerun_skips() {
@@ -225,46 +266,32 @@ proof_rerun_skips() {
 }
 
 proof_developer_untouched() {
+  local lanes_config=absent
   lane_fixture "$@"
   run_setup ./.fleet-setup
-  WHY="rc=$RC out=$OUT"
-  [ "$RC" -eq 0 ] && [ ! -e "$R/../.cargo" ] && [ "$(target_of "$R")" = "$(lanes_of)/clone/target" ] \
+  [ ! -e "$R/../.cargo" ] || lanes_config=present
+  WHY="rc=$RC lanes-config=$lanes_config out=$OUT"
+  [ "$RC" -eq 0 ] && [ "$lanes_config" = absent ] \
     && case "$OUT" in *"lane-setup: cargo-config=not-sandbox"*) true ;; *) false ;; esac
-}
-
-proof_fleet_target_kept() {
-  local fleet_target=""
-  lane_fixture "$@"
-  fleet_target="$(lanes_of)/fleet-target" || return 1
-  run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test CARGO_TARGET_DIR="$fleet_target"
-  WHY="rc=$RC target=$(target_of "$R") out=$OUT"
-  [ "$RC" -eq 0 ] && [ "$(target_of "$R")" = "$fleet_target" ]
 }
 
 proof_foreign_refused() {
   local foreign='[build]
-jobs = 1'
+jobs = 1' after=""
   lane_fixture "$@"
   mkdir -p "$R/../.cargo"
   printf '%s\n' "$foreign" >"$R/../.cargo/config.toml"
   run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test
-  WHY="rc=$RC out=$OUT"
-  [ "$RC" -eq 1 ] && [ "$(cat "$R/../.cargo/config.toml")" = "$foreign" ] \
+  after="$(cat "$R/../.cargo/config.toml")" || return 1
+  WHY="rc=$RC config=[$after] out=$OUT"
+  [ "$RC" -eq 1 ] && [ "$after" = "$foreign" ] \
     && case "$OUT" in *"lane-setup: cargo-config=foreign path=$(lanes_of)/.cargo/config.toml"*) true ;; *) false ;; esac
 }
 
-# The rustc line of a fresh `cargo check -v` carries the resolved rustflags;
-# a host whose own config adds a linker flag shows it in the baseline too.
-LINK_DELTA=0
-[ "$(uname -s)" != Linux ] || LINK_DELTA=1
-fixture baseline/clone
-BASE="$(cargo_in "$R" check -v)" || { bad "the baseline check runs" "$BASE"; exit 1; }
-case "$BASE" in *"--crate-name toy"*) ;; *) bad "the baseline check compiles the toy crate" "$BASE"; exit 1 ;; esac
-BASE_MOLD="$(count "$BASE" -fuse-ld=mold)"
-BASE_LLD="$(count "$BASE" -fuse-ld=lld)"
-
-proof_linker() { # BINS EXPECT [FROM TO]
-  local bins=$1 expect=$2 bin="" out="" mold=0 lld=0
+# linker_fixture IMAGE BINS [FROM TO]: a sandbox setup whose PATH holds BINS
+# and whose image cargo config passes -fuse-ld=IMAGE when IMAGE is set.
+linker_fixture() {
+  local image=$1 bins=$2 bin=""
   shift 2
   lane_fixture "$@"
   EXTRA_BIN="$R/row-bin"
@@ -273,19 +300,44 @@ proof_linker() { # BINS EXPECT [FROM TO]
     printf '#!/bin/sh\nexit 0\n' >"$EXTRA_BIN/$bin"
     chmod +x "$EXTRA_BIN/$bin"
   done
+  if [ -n "$image" ]; then
+    mkdir -p "$R/home/.cargo"
+    printf '[target.%s]\nrustflags = ["-C", "link-arg=-fuse-ld=%s"]\n' "'cfg(target_os = \"linux\")'" "$image" >"$R/home/.cargo/config.toml"
+  fi
   run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test
+}
+
+# A linker the setup writes adds one -fuse-ld flag on a Linux host and none
+# elsewhere; `none` leaves the toy crate's rustc line equal to the baseline's.
+proof_linker() { # IMAGE BINS EXPECT [FROM TO]
+  local image=$1 bins=$2 expect=$3 out="" line="" mold=0 lld=0
+  shift 3
+  linker_fixture "$image" "$bins" "$@"
   [ "$RC" -eq 0 ] || { WHY="rc=$RC out=$OUT"; return 1; }
   out="$(cargo_in "$R" check -v)" || { WHY="$out"; return 1; }
+  line="$(toy_line "$out" "$R")"
+  WHY="setup=$OUT line=$line baseline=$BASE_LINE"
+  case "$OUT" in *"lane-setup: linker=$expect"*) ;; *) return 1 ;; esac
+  [ -n "$line" ] || return 1
   case "$expect" in
-    mold) mold=$LINK_DELTA ;;
+    mold | image) mold=$LINK_DELTA ;;
     lld) lld=$LINK_DELTA ;;
-    none) ;;
+    none) [ "$line" = "$BASE_LINE" ]; return ;;
     *) WHY="unknown expectation $expect"; return 1 ;;
   esac
-  WHY="bins=$bins setup=$OUT check=$out"
-  case "$out" in *"--crate-name toy"*) ;; *) return 1 ;; esac
-  case "$OUT" in *"lane-setup: linker=$expect"*) ;; *) return 1 ;; esac
   [ "$(count "$out" -fuse-ld=mold)" -eq $((BASE_MOLD + mold)) ] && [ "$(count "$out" -fuse-ld=lld)" -eq $((BASE_LLD + lld)) ]
+}
+
+proof_linux_only() { # [FROM TO]
+  local out=""
+  linker_fixture "" mold "$@"
+  [ "$RC" -eq 0 ] || { WHY="rc=$RC out=$OUT"; return 1; }
+  # shellcheck disable=SC2086 # FOREIGN_ARGS is empty or one flag and its value
+  out="$(cargo_in "$R" check -v $FOREIGN_ARGS)" || { WHY="$out"; return 1; }
+  WHY="target=$FOREIGN_TARGET check=$out"
+  case "$OUT" in *"lane-setup: linker=mold"*) ;; *) return 1 ;; esac
+  case "$out" in *"--crate-name toy"*) ;; *) return 1 ;; esac
+  [ "$(count "$out" -fuse-ld=)" -eq "$(count "$BASE_FOREIGN" -fuse-ld=)" ]
 }
 
 proof_wrapper() { # ENDPOINT-ASSIGNMENT SCCACHE EXPECT [FROM TO]
@@ -318,18 +370,23 @@ proof_wrapper() { # ENDPOINT-ASSIGNMENT SCCACHE EXPECT [FROM TO]
 
 echo "=== the lane cargo configuration ==="
 WHY=""
-proof_shared_target && ok "a sandbox clone and its worktree resolve one target dir and write no incremental cache" || bad "a sandbox clone and its worktree share one target dir, incremental off" "$WHY"
+proof_incremental_off && ok "a sandbox clone and its worktree write no incremental cache" || bad "a sandbox clone and its worktree write no incremental cache" "$WHY"
 proof_rerun_skips && ok "a rerun leaves the written config as it was and says skip" || bad "a rerun skips an unchanged config" "$WHY"
-proof_developer_untouched && ok "a developer checkout gets no lane config and keeps its own target dir" || bad "a developer checkout gets no lane config" "$WHY"
-proof_fleet_target_kept && ok "the fleet's CARGO_TARGET_DIR is the target dir the config names" || bad "the fleet's CARGO_TARGET_DIR is kept" "$WHY"
+proof_developer_untouched && ok "a developer checkout gets no lane config" || bad "a developer checkout gets no lane config" "$WHY"
 proof_foreign_refused && ok "a config the script did not write is refused by name and left intact" || bad "a foreign config is refused and left intact" "$WHY"
-while IFS='|' read -r bins expect; do
-  proof_linker "$bins" "$expect" && ok "linker: bins [$bins] resolve $expect" || bad "linker: bins [$bins] resolve $expect" "$WHY"
+while IFS='|' read -r image bins expect; do
+  proof_linker "$image" "$bins" "$expect" && ok "linker: image [$image] bins [$bins] resolve $expect" || bad "linker: image [$image] bins [$bins] resolve $expect" "$WHY"
 done <<'ROWS'
-mold ld.lld|mold
-ld.lld|lld
-|none
+|mold ld.lld|mold
+|ld.lld|lld
+||none
+mold|mold ld.lld|image
 ROWS
+if [ -n "$FOREIGN_TARGET" ]; then
+  proof_linux_only && ok "linker: a non-Linux target ($FOREIGN_TARGET) gets no -fuse-ld flag" || bad "linker: a non-Linux target ($FOREIGN_TARGET) gets no -fuse-ld flag" "$WHY"
+else
+  ok "linker: non-Linux target row skipped, no aarch64-apple-darwin or x86_64-pc-windows-msvc in $SYSROOT"
+fi
 while IFS='|' read -r assignment sccache expect; do
   proof_wrapper "$assignment" "$sccache" "$expect" && ok "wrapper: [$assignment] with sccache $sccache is $expect" || bad "wrapper: [$assignment] with sccache $sccache is $expect" "$WHY"
 done <<'ROWS'
@@ -340,24 +397,32 @@ FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|absent|unused
 ROWS
 
 echo "=== must-fail controls: each cargo proof fails against its mutant ==="
-proof_shared_target '  write_lane_cargo_config' '  :' \
-  && bad "control: the unpatched script leaves two target dirs and incremental caches" "$WHY" \
-  || ok "control: the unpatched script leaves two target dirs and incremental caches"
+proof_incremental_off '  write_lane_cargo_config' '  :' \
+  && bad "control: the unpatched script leaves incremental caches" "$WHY" \
+  || ok "control: the unpatched script leaves incremental caches"
 proof_rerun_skips '  if [ "$current" = "$content" ]; then' '  if false; then' \
   && bad "control: a rewrite of an unchanged config fails the rerun proof" "$WHY" \
   || ok "control: a rewrite of an unchanged config fails the rerun proof"
 proof_developer_untouched 'if [ -z "${DAYTONA_SANDBOX_ID:-}" ]; then' 'if false; then' \
   && bad "control: writing on a developer checkout fails its proof" "$WHY" \
   || ok "control: writing on a developer checkout fails its proof"
-proof_fleet_target_kept '  target_dir="${CARGO_TARGET_DIR:-$lanes_dir/.cargo/target}"' '  target_dir="$lanes_dir/.cargo/target"' \
-  && bad "control: ignoring the fleet's CARGO_TARGET_DIR fails its proof" "$WHY" \
-  || ok "control: ignoring the fleet's CARGO_TARGET_DIR fails its proof"
 proof_foreign_refused '      exit 1' '      true' \
   && bad "control: overwriting a foreign config fails the refusal proof" "$WHY" \
   || ok "control: overwriting a foreign config fails the refusal proof"
-proof_linker 'mold ld.lld' mold '  if command -v mold >/dev/null; then' '  if false; then' \
+proof_linker '' 'mold ld.lld' mold '    if command -v mold >/dev/null; then' '    if false; then' \
   && bad "control: skipping mold fails the mold row" "$WHY" \
   || ok "control: skipping mold fails the mold row"
+proof_linker '' '' none '    mold | lld)' '    mold | lld | none)' \
+  && bad "control: a linker entry written anyway fails the none row" "$WHY" \
+  || ok "control: a linker entry written anyway fails the none row"
+proof_linker mold 'mold ld.lld' image '      0) linker=image ;;' '      0) ;;' \
+  && bad "control: a second mold entry beside the image's fails the image row" "$WHY" \
+  || ok "control: a second mold entry beside the image's fails the image row"
+if [ -n "$FOREIGN_TARGET" ]; then
+  proof_linux_only "[target.'cfg(target_os = \\\"linux\\\")']" "[target.'cfg(all())']" \
+    && bad "control: a linker entry for every target fails the non-Linux row" "$WHY" \
+    || ok "control: a linker entry for every target fails the non-Linux row"
+fi
 proof_wrapper FLEET_SCCACHE_REDIS_ENDPOINT= present unused '  if [ -z "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ]; then' '  if false; then' \
   && bad "control: a wrapper on an empty endpoint fails the empty-endpoint row" "$WHY" \
   || ok "control: a wrapper on an empty endpoint fails the empty-endpoint row"
