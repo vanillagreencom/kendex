@@ -117,16 +117,18 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     cargo-fmt)
       echo "cargo fmt --check refused the workspace." ;;
     cargo-space-setting)
-      printf 'the %s setting could not be read, so the cargo block did not run.\n' "$2" ;;
+      printf 'the %s setting is unset, is not a whole number, or could not be read, so the cargo block did not run.\n' "$2" ;;
     cargo-space-start)
-      echo 'free space on the cargo target volume plus the build the target directory holds is less than one full run needs.'
-      echo 'Free space on that volume outside the target directory before validation; cargo clean does not help, because the build it removes is already counted.' ;;
+      echo 'the cargo target volume has less room than one full run needs: free space is below the exhaustion floor, or free space plus the target directory outside its incremental directories is below the start floor.'
+      echo 'Run cargo clean, or remove target/debug/incremental, before validation.' ;;
     cargo-space-unreadable)
       echo "free space on the cargo target volume could not be read at $2; the cargo block continued because an unreadable probe does not establish exhaustion." ;;
     cargo-target-unreadable)
       echo "the size of the cargo target directory could not be read at $2; the cargo block continued because an unreadable probe does not establish exhaustion." ;;
     cargo-space-end)
       echo 'the cargo target volume ended below the exhaustion floor, so validation fails regardless of the cargo exit codes.' ;;
+    cargo-space-end-unreadable)
+      echo "free space on the cargo target volume could not be read at $2 after the cargo block, so the exhaustion check did not run and validation fails." ;;
     touched-set)
       echo "the touched-file set for the suite lane could not be read at that step." ;;
     missing-tool)
@@ -191,15 +193,25 @@ cargo_free_kib() { # TARGET_PATH — available KiB on the volume that will hold 
   printf '%s\n' "$value"
 }
 
-cargo_target_kib() { # TARGET_PATH — KiB the build already holds there, 0 when absent
-  local output value
-  [ -e "$1" ] || { echo 0; return 0; }
-  output=$(du -sk -- "$1" 2>/dev/null) || return 1
-  value=${output%%[[:space:]]*}
-  case "$value" in
-    "" | *[!0-9]*) return 1 ;;
+cargo_target_kib() { # TARGET_PATH — KiB it holds outside any incremental directory, 0 when absent
+  local path="$1" output
+  [ -e "$path" ] || { echo 0; return 0; }
+  case "$path" in
+    /*) ;;
+    *) path="./$path" ;;
   esac
-  printf '%s\n' "$value"
+  output=$({ du -sk "$path" && find "$path" -type d -name incremental -prune -exec du -sk {} +; } 2>/dev/null) ||
+    return 1
+  # The first line is the whole target; each later one is an incremental
+  # directory inside it.
+  awk '$1 !~ /^[0-9]+$/ { bad = 1 } NR == 1 { kib = $1; next } { kib -= $1 }
+    END { if (bad || NR == 0) exit 1; print kib }' <<<"$output"
+}
+
+whole_setting() { # NAME VALUE — refuse a space bound that is not a whole number
+  case "$2" in
+    "" | *[!0-9]*) refuse cargo-space-setting "$1" ;;
+  esac
 }
 
 FULL=0
@@ -756,24 +768,30 @@ fi
 
 cargo_space_ok=1
 cargo_target="${CARGO_TARGET_DIR:-target}"
-guard_min_free_gb=16
-guard_exhausted_free_mb=512
 if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
   # The fresh Linux cargo shards in .github/workflows/skill-tests.yml explain
   # why no later compile can reuse incremental artifacts from this run.
   export CARGO_INCREMENTAL=0
   ORCH_ENV="$TOOLS_DIR/../.agents/skills/orch/scripts/orch-env"
-  guard_min_free_gb=$("$ORCH_ENV" GUARD_MIN_FREE_GB "$guard_min_free_gb") ||
+  # An empty default, because orch-env replaces a malformed value with the
+  # default it is given and whole_setting would never see it.
+  guard_min_free_gb=$("$ORCH_ENV" GUARD_MIN_FREE_GB "") ||
     refuse cargo-space-setting GUARD_MIN_FREE_GB
-  guard_exhausted_free_mb=$("$ORCH_ENV" GUARD_EXHAUSTED_FREE_MB "$guard_exhausted_free_mb") ||
+  whole_setting GUARD_MIN_FREE_GB "$guard_min_free_gb"
+  guard_exhausted_free_mb=$("$ORCH_ENV" GUARD_EXHAUSTED_FREE_MB "") ||
     refuse cargo-space-setting GUARD_EXHAUSTED_FREE_MB
-  # A warm target directory is room: the run rebuilds its artifacts in place.
+  whole_setting GUARD_EXHAUSTED_FREE_MB "$guard_exhausted_free_mb"
+  # Room is free space plus the target outside its incremental directories,
+  # which a run without incremental compilation never rewrites. A start below
+  # the exhaustion floor refuses whatever the target holds: the end probe
+  # would fail that run anyway.
   if ! cargo_free_start_kib=$(cargo_free_kib "$cargo_target"); then
     note cargo-space-unreadable "$cargo_target"
   elif ! cargo_target_start_kib=$(cargo_target_kib "$cargo_target"); then
     note cargo-target-unreadable "$cargo_target"
-  elif [ "$((cargo_free_start_kib + cargo_target_start_kib))" -lt "$((guard_min_free_gb * 1024 * 1024))" ]; then
-    say cargo-space-start "free-kib=$cargo_free_start_kib target-kib=$cargo_target_start_kib min-gib=$guard_min_free_gb"
+  elif [ "$cargo_free_start_kib" -lt "$((10#$guard_exhausted_free_mb * 1024))" ] ||
+    [ "$((cargo_free_start_kib + cargo_target_start_kib))" -lt "$((10#$guard_min_free_gb * 1024 * 1024))" ]; then
+    say cargo-space-start "free-kib=$cargo_free_start_kib target-kib=$cargo_target_start_kib min-gib=$guard_min_free_gb min-free-mib=$guard_exhausted_free_mb"
     cargo_space_ok=0
   fi
 fi
@@ -1022,11 +1040,9 @@ if [ "$FULL" -eq 1 ] && [ "$cargo_space_ok" -eq 1 ] && [ -f Cargo.toml ]; then
     fi
   fi
   rm -f "$tests_log"
-fi
-if [ "$FULL" -eq 1 ] && [ "$cargo_space_ok" -eq 1 ] && [ -f Cargo.toml ]; then
   if ! cargo_free_end_kib=$(cargo_free_kib "$cargo_target"); then
-    note cargo-space-unreadable "$cargo_target"
-  elif [ "$cargo_free_end_kib" -lt "$((guard_exhausted_free_mb * 1024))" ]; then
+    say cargo-space-end-unreadable "$cargo_target"
+  elif [ "$cargo_free_end_kib" -lt "$((10#$guard_exhausted_free_mb * 1024))" ]; then
     say cargo-space-end "free-kib=$cargo_free_end_kib min-mib=$guard_exhausted_free_mb"
   fi
 fi

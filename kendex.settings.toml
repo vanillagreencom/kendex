@@ -309,8 +309,9 @@ DEV_VALIDATE_CMD = "tools/guard --full"
 # target/ held 6 to 9 GB of incremental, so deps was at most about 14 GB.
 GUARD_MIN_FREE_GB = "16"
 
-# A completed cargo block keeps enough room for the validation log, sentinel,
-# and shell operations. This floor stays far above the recorded 708 KiB case.
+# The free space a full run needs at its start and has left at its end, for the
+# validation log, sentinel, and shell operations. This floor stays far above
+# the recorded 708 KiB case.
 GUARD_EXHAUSTED_FREE_MB = "512"
 
 # The bound on that run, in whole seconds. `tools/guard --full` takes well
