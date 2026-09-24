@@ -163,9 +163,10 @@ CARGO_DIR="${CARGO_BIN%/*}"
 SYSROOT="$(env -i PATH="$CARGO_DIR:/usr/bin:/bin" rustc --print sysroot 2>&1)" || { bad "the toolchain names its sysroot" "$SYSROOT"; exit 1; }
 
 # Cargo reads the config of every ancestor of its working directory, and on a
-# fleet sandbox this tree sits under a lanes dir the setup configured. This
-# file sits between that ancestor and every fixture and turns incremental
-# back on, so only a fixture's own lanes config can turn it off. Each run
+# fleet sandbox this tree sits under a lanes dir the setup configured.
+# $TMP/.cargo/config.toml sits between that ancestor and every fixture and
+# turns incremental back on, so only a fixture's own lanes config can turn it
+# off. Each run
 # names its own target dir for the same reason.
 mkdir -p "$TMP/.cargo"
 printf '[build]\nincremental = true\n' >"$TMP/.cargo/config.toml"
@@ -237,8 +238,10 @@ fi
 
 # Every proof takes the fixture's optional mutation, so its control reruns
 # the same proof against a mutant and expects it to fail.
+# Every run sets its own CARGO_TARGET_DIR, which outranks the config, so the
+# config's lack of a target-dir key is read from the file itself.
 proof_incremental_off() {
-  local wt="" clone_cache="" wt_cache=""
+  local wt="" clone_cache="" wt_cache="" config="" target_key=absent
   lane_fixture "$@"
   run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test
   [ "$RC" -eq 0 ] || { WHY="rc=$RC out=$OUT"; return 1; }
@@ -250,8 +253,12 @@ proof_incremental_off() {
   # a directory inside it.
   clone_cache="$(ls -A "$R/target/debug/incremental" 2>&1)" || clone_cache="unreadable: $clone_cache"
   wt_cache="$(ls -A "$wt/target/debug/incremental" 2>&1)" || wt_cache="unreadable: $wt_cache"
-  WHY="clone incremental=[$clone_cache] worktree incremental=[$wt_cache]"
-  [ -z "$clone_cache" ] && [ -z "$wt_cache" ]
+  if [ -e "$R/../.cargo/config.toml" ]; then
+    config="$(cat "$R/../.cargo/config.toml")" || return 1
+  fi
+  case $'\n'"$config" in *$'\n'target-dir*) target_key=present ;; esac
+  WHY="clone incremental=[$clone_cache] worktree incremental=[$wt_cache] target-dir=$target_key"
+  [ -z "$clone_cache" ] && [ -z "$wt_cache" ] && [ "$target_key" = absent ]
 }
 
 proof_rerun_skips() {
@@ -370,7 +377,7 @@ proof_wrapper() { # ENDPOINT-ASSIGNMENT SCCACHE EXPECT [FROM TO]
 
 echo "=== the lane cargo configuration ==="
 WHY=""
-proof_incremental_off && ok "a sandbox clone and its worktree write no incremental cache" || bad "a sandbox clone and its worktree write no incremental cache" "$WHY"
+proof_incremental_off && ok "a sandbox clone and its worktree write no incremental cache, and the config names no target dir" || bad "a sandbox clone and its worktree write no incremental cache, and the config names no target dir" "$WHY"
 proof_rerun_skips && ok "a rerun leaves the written config as it was and says skip" || bad "a rerun skips an unchanged config" "$WHY"
 proof_developer_untouched && ok "a developer checkout gets no lane config" || bad "a developer checkout gets no lane config" "$WHY"
 proof_foreign_refused && ok "a config the script did not write is refused by name and left intact" || bad "a foreign config is refused and left intact" "$WHY"
@@ -400,6 +407,9 @@ echo "=== must-fail controls: each cargo proof fails against its mutant ==="
 proof_incremental_off '  write_lane_cargo_config' '  :' \
   && bad "control: the unpatched script leaves incremental caches" "$WHY" \
   || ok "control: the unpatched script leaves incremental caches"
+proof_incremental_off 'incremental = false"' $'incremental = false\ntarget-dir = $(toml_string "$lanes_dir/.cargo/target")"' \
+  && bad "control: a target-dir entry in the lane config fails the incremental row" "$WHY" \
+  || ok "control: a target-dir entry in the lane config fails the incremental row"
 proof_rerun_skips '  if [ "$current" = "$content" ]; then' '  if false; then' \
   && bad "control: a rewrite of an unchanged config fails the rerun proof" "$WHY" \
   || ok "control: a rewrite of an unchanged config fails the rerun proof"
