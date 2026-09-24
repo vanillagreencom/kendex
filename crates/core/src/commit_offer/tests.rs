@@ -762,6 +762,57 @@ fn the_remote_is_chosen_by_rule_and_never_by_a_prompt() {
     assert_eq!((upstream.name.as_str(), upstream.tracked), ("beta", true));
 }
 
+/// The push destination the rules read is bound to is where git pushes:
+/// the fetch URL with a push rewrite applied, a fork's `pushurl` where one
+/// is set (which git does not rewrite), and none where git would push to
+/// more than one. Each step adds one setting to the last.
+#[test]
+fn the_push_destination_is_where_git_pushes() {
+    let repo = Repo::new(&[(OWNED[0], "one\n")]);
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/acme/site.git",
+    ]);
+    let steps: [(&str, &[&str], Option<&str>); 4] = [
+        (
+            "the fetch URL",
+            &[],
+            Some("https://github.com/acme/site.git"),
+        ),
+        (
+            "a push rewrite",
+            &["url.git@github.com:.pushInsteadOf", "https://github.com/"],
+            Some("git@github.com:acme/site.git"),
+        ),
+        (
+            "a fork's pushurl",
+            &["remote.origin.pushurl", "https://github.com/me/site.git"],
+            Some("https://github.com/me/site.git"),
+        ),
+        (
+            "a second pushurl",
+            &[
+                "--add",
+                "remote.origin.pushurl",
+                "https://github.com/other/site.git",
+            ],
+            None,
+        ),
+    ];
+    for (what, setting, want) in steps {
+        if !setting.is_empty() {
+            let mut args = vec!["config"];
+            args.extend_from_slice(setting);
+            repo.git(&args);
+        }
+        let remote = git::choose_remote(&repo.root, "main").unwrap().unwrap();
+        assert_eq!(remote.push_url.as_deref(), want, "{what}");
+        assert_eq!(remote.url, "https://github.com/acme/site.git", "{what}");
+    }
+}
+
 /// Without a remote the offer stands with push and pull request off, and
 /// says which of the two rules failed.
 #[test]
@@ -807,6 +858,7 @@ fn the_new_branch_is_the_first_free_name() {
     let origin = Remote {
         name: "origin".to_owned(),
         url: String::new(),
+        push_url: None,
         tracked: false,
     };
     assert_eq!(

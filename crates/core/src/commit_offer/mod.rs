@@ -364,11 +364,19 @@ pub fn asking(env: &Env) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Remote {
     pub name: String,
-    /// The remote's URL. Every `gh` call is bound to it with `--repo`, so
+    /// The remote's URL. Every `gh` call but the branch-rules read is bound
+    /// to it with `--repo`, so
     /// a project whose `origin` is one host and whose second remote is
     /// GitHub cannot have `gh` answer about a repository the push would
     /// never reach.
     pub url: String,
+    /// The one URL a push to this remote reaches, as git resolves it:
+    /// `remote.<name>.pushurl` where set, else [`Remote::url`], rewrites
+    /// applied. `None` where git names more than one. The branch-rules read
+    /// is bound to this and nothing else: the rules that refuse a push are
+    /// those of the repository it reaches, which a fork's `pushurl` makes a
+    /// different one from the repository the fetch URL names.
+    pub push_url: Option<String>,
     /// The current branch already tracks this remote, so a push needs no
     /// `--set-upstream`.
     pub tracked: bool,
@@ -447,7 +455,11 @@ pub fn offer(scan: Scan, command: &str, probe: Probe) -> std::result::Result<Off
         }
         Some(_) if probe == Probe::Skip => (Ok(()), Ok(()), None),
         Some(remote) => match gh::probe(&remote.url, &branch) {
-            Ok(open) => match gh::through_a_pull_request(&remote.url, &branch) {
+            Ok(open) => match remote
+                .push_url
+                .as_deref()
+                .is_some_and(|to| gh::through_a_pull_request(to, &branch))
+            {
                 true => (Err(Unavailable::PullRequestRequired), Ok(()), open),
                 false => (Ok(()), Ok(()), open),
             },

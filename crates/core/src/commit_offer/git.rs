@@ -178,7 +178,27 @@ pub fn choose_remote(root: &Path, branch: &str) -> Result<Option<Remote>, Failed
         )?
         .map(line)
         .is_some_and(|value| !value.is_empty());
-    Ok(Some(Remote { name, url, tracked }))
+    // Every URL a push goes to, rewrites applied; one is a destination the
+    // rules can be read for, and several are not one answer.
+    let push_url = read(root, &["remote", "get-url", "--push", "--all", &name])?
+        .map(|bytes| {
+            String::from_utf8_lossy(&bytes)
+                .lines()
+                .map(str::trim)
+                .filter(|url| !url.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .and_then(|urls| match urls.as_slice() {
+            [only] => Some(only.clone()),
+            _ => None,
+        });
+    Ok(Some(Remote {
+        name,
+        url,
+        push_url,
+        tracked,
+    }))
 }
 
 /// The first free `kendex/renders`, `kendex/renders-2`, `kendex/renders-3`

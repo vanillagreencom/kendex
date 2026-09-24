@@ -34,6 +34,7 @@ fn origin() -> Remote {
     Remote {
         name: "origin".to_owned(),
         url: "https://github.com/acme/site.git".to_owned(),
+        push_url: Some("https://github.com/acme/site.git".to_owned()),
         tracked: true,
     }
 }

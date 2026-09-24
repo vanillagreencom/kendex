@@ -26,6 +26,9 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .envs(test_util::fixture_env(home))
         .env("KENDEX_BACKGROUND_REFRESH", "off")
         .env("PATH", path_with_fake_gh(home))
+        // The ssh `hosted_origin` writes; kendex's git keeps an inherited
+        // ssh command, and no other fixture pushes over ssh.
+        .env("GIT_SSH_COMMAND", home.join("dev/fake-ssh"))
         .output()
         .expect("kendex binary runs")
 }
@@ -138,7 +141,7 @@ fn path_with_fake_gh(home: &Path) -> String {
 }
 
 const FAKE_GH: &str = r#"#!/bin/sh
-echo "$@" >> "$(dirname "$0")/calls"
+if [ "$1" = api ]; then echo "GH_REPO=$GH_REPO $*" >> "$(dirname "$0")/calls"; else echo "$@" >> "$(dirname "$0")/calls"; fi
 repo=""
 prev=""
 for a in "$@"; do
@@ -162,6 +165,7 @@ if [ "$1" = api ]; then
       *bypass*/rulesets/7) echo '{"current_user_can_bypass":"always"}'; exit 0;;
       *ruled*/rulesets/7) echo '{"current_user_can_bypass":"never"}'; exit 0;;
       *ruled*/rules/branches/main) echo '[{"type":"deletion","ruleset_id":7},{"type":"pull_request","ruleset_id":7}]'; exit 0;;
+      *fork*/rules/branches/main) echo '[{"type":"deletion","ruleset_id":7}]'; exit 0;;
     esac
   fi
   echo 'gh: Not Found (HTTP 404)' >&2; exit 1
@@ -582,21 +586,39 @@ fn the_push_flag_pushes_or_reports_the_remotes_refusal() {
     );
 }
 
-/// A bare repository the project calls `origin` under a hosted URL:
-/// `git remote get-url` answers `url`, which every `gh` call is bound to,
-/// and the push reaches the bare repository through `pushInsteadOf`.
+/// A bare repository the project calls `origin`, fetched from `url` and
+/// pushed to at `push`, an `ssh://` URL. `url` is what every `gh` call but
+/// the rules read is bound to, and `push` is what the rules read is bound
+/// to; kendex's git runs the push through a fake ssh, handed to it as
+/// `GIT_SSH_COMMAND`, that serves the host's `/acme/<name>.git` from the
+/// bare repository beside the project.
 #[allow(clippy::unwrap_used)]
-fn hosted_origin(project: &Path, url: &str) -> PathBuf {
-    let name = url.rsplit('/').next().unwrap();
-    let bare = project.parent().unwrap().join(name);
-    let path = bare.to_string_lossy();
-    git(project, &["init", "-q", "--bare", "-b", "main", &path]);
-    git(project, &["remote", "add", "origin", url]);
+fn hosted_origin(project: &Path, url: &str, push: &str) -> PathBuf {
+    let dir = project.parent().unwrap();
+    let bare = dir.join(push.rsplit('/').next().unwrap());
     git(
         project,
-        &["config", &format!("url.{path}.pushInsteadOf"), url],
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            &bare.to_string_lossy(),
+        ],
     );
-    git(project, &["push", "-q", "-u", "origin", "main"]);
+    let ssh = dir.join("fake-ssh");
+    executable(
+        &ssh,
+        &format!(
+            "#!/bin/sh\nfor a in \"$@\"; do last=\"$a\"; done\nexec sh -c \"$(printf '%s' \"$last\" | sed \"s#'/acme/#'{}/#\")\"\n",
+            dir.display()
+        ),
+    );
+    git(project, &["config", "ssh.variant", "simple"]);
+    git(project, &["remote", "add", "origin", url]);
+    git(project, &["config", "remote.origin.pushurl", push]);
+    git(project, &["push", "-q", &bare.to_string_lossy(), "main"]);
     bare
 }
 
@@ -605,6 +627,8 @@ fn hosted_origin(project: &Path, url: &str) -> PathBuf {
 struct RulesRow {
     what: &'static str,
     remote: &'static str,
+    /// Where the push goes, and what the branch-rules read is bound to.
+    push: &'static str,
     /// A pre-receive hook on the remote, refusing the way GitHub does.
     refuses: &'static str,
     flag: &'static str,
@@ -619,120 +643,138 @@ const PUSH_PROTECTION: &str = "echo 'error: GH013: Repository rule violations fo
 const HINT: &str = "run again with --pull-request to commit on a new branch and open one";
 const RULES_LINE: &str = "main on origin accepts changes only through a pull request";
 
-fn rules_rows() -> [RulesRow; 8] {
-    [
-        RulesRow {
-            what: "rules that take a pull request",
-            remote: "https://github.com/acme/ruled-origin.git",
-            refuses: "",
-            flag: "--push",
-            exit: 1,
-            committed: false,
-            says: &[
-                "no push: this branch's rules on GitHub accept changes only through a pull request",
-                HINT,
-            ],
-            not: &[],
-        },
-        RulesRow {
-            what: "the same rules with a pull request already open",
-            remote: "https://github.com/acme/open-ruled-origin.git",
-            refuses: "",
-            flag: "--push",
-            exit: 1,
-            committed: false,
-            says: &[
-                "no push: this branch's rules on GitHub accept changes only through a pull request",
-            ],
-            not: &[HINT],
-        },
-        RulesRow {
-            what: "the route those rules allow",
-            remote: "https://github.com/acme/ruled-origin.git",
-            refuses: "",
-            flag: "--pull-request",
-            exit: 0,
-            committed: true,
-            says: &["opened https://github.com/acme/site/pull/41"],
-            not: &[],
-        },
-        RulesRow {
-            what: "rules on an Enterprise host",
-            remote: "https://ghe.example.test/acme/ruled-origin.git",
-            refuses: "",
-            flag: "--push",
-            exit: 1,
-            committed: false,
-            says: &[
-                "no push: this branch's rules on GitHub accept changes only through a pull request",
-            ],
-            not: &[],
-        },
-        RulesRow {
-            what: "a person the ruleset lets past",
-            remote: "https://github.com/acme/bypass-ruled-origin.git",
-            refuses: "",
-            flag: "--push",
-            exit: 0,
-            committed: true,
-            says: &["pushed to origin/main"],
-            not: &[],
-        },
-        RulesRow {
-            what: "rules that cannot be read",
-            remote: "https://github.com/acme/plain-origin.git",
-            refuses: "",
-            flag: "--push",
-            exit: 0,
-            committed: true,
-            says: &["pushed to origin/main"],
-            not: &[],
-        },
-        RulesRow {
-            what: "GitHub refusing the push for want of a pull request",
-            remote: "https://u:secret@github.com/acme/plain-origin.git",
-            refuses: PR_RULE,
-            flag: "--push",
-            exit: 1,
-            committed: true,
-            says: &[
-                "remote: error: GH013: Repository rule violations found for refs/heads/main.",
-                "the commit is on main in this checkout; kendex did not undo it",
-                RULES_LINE,
-                "to open one from this commit yourself:",
-                "    git 'push' 'origin' 'HEAD:refs/heads/kendex/renders'",
-                "'--repo' 'https://github.com/acme/plain-origin.git' '--head' 'kendex/renders' '--base' 'main' '--title' 'chore: kendex apply'",
-            ],
-            not: &["secret"],
-        },
-        RulesRow {
-            what: "GitHub refusing the push for another rule",
-            remote: "https://github.com/acme/plain-origin.git",
-            refuses: PUSH_PROTECTION,
-            flag: "--push",
-            exit: 1,
-            committed: true,
-            says: &["GITHUB PUSH PROTECTION"],
-            not: &[RULES_LINE, "git 'push'"],
-        },
-    ]
-}
+const RULES_ROWS: [RulesRow; 9] = [
+    RulesRow {
+        what: "rules that take a pull request",
+        remote: "https://github.com/acme/ruled-origin.git",
+        push: "ssh://git@github.com/acme/ruled-origin.git",
+        refuses: "",
+        flag: "--push",
+        exit: 1,
+        committed: false,
+        says: &[
+            "no push: this branch's rules on GitHub accept changes only through a pull request",
+            HINT,
+        ],
+        not: &[],
+    },
+    RulesRow {
+        what: "the same rules with a pull request already open",
+        remote: "https://github.com/acme/open-ruled-origin.git",
+        push: "ssh://git@github.com/acme/open-ruled-origin.git",
+        refuses: "",
+        flag: "--push",
+        exit: 1,
+        committed: false,
+        says: &[
+            "no push: this branch's rules on GitHub accept changes only through a pull request",
+        ],
+        not: &[HINT],
+    },
+    RulesRow {
+        what: "the route those rules allow",
+        remote: "https://github.com/acme/ruled-origin.git",
+        push: "ssh://git@github.com/acme/ruled-origin.git",
+        refuses: "",
+        flag: "--pull-request",
+        exit: 0,
+        committed: true,
+        says: &["opened https://github.com/acme/site/pull/41"],
+        not: &[],
+    },
+    RulesRow {
+        what: "rules on an Enterprise host",
+        remote: "https://ghe.example.test/acme/ruled-origin.git",
+        push: "ssh://git@ghe.example.test/acme/ruled-origin.git",
+        refuses: "",
+        flag: "--push",
+        exit: 1,
+        committed: false,
+        says: &[
+            "no push: this branch's rules on GitHub accept changes only through a pull request",
+        ],
+        not: &[],
+    },
+    RulesRow {
+        what: "a push to a fork whose upstream takes a pull request",
+        remote: "https://github.com/acme/ruled-origin.git",
+        push: "ssh://git@github.com/acme/fork-origin.git",
+        refuses: "",
+        flag: "--push",
+        exit: 0,
+        committed: true,
+        says: &["pushed to origin/main"],
+        not: &["no push:"],
+    },
+    RulesRow {
+        what: "a person the ruleset lets past",
+        remote: "https://github.com/acme/bypass-ruled-origin.git",
+        push: "ssh://git@github.com/acme/bypass-ruled-origin.git",
+        refuses: "",
+        flag: "--push",
+        exit: 0,
+        committed: true,
+        says: &["pushed to origin/main"],
+        not: &[],
+    },
+    RulesRow {
+        what: "rules that cannot be read",
+        remote: "https://github.com/acme/plain-origin.git",
+        push: "ssh://git@github.com/acme/plain-origin.git",
+        refuses: "",
+        flag: "--push",
+        exit: 0,
+        committed: true,
+        says: &["pushed to origin/main"],
+        not: &[],
+    },
+    RulesRow {
+        what: "GitHub refusing the push for want of a pull request",
+        remote: "https://u:secret@github.com/acme/plain-origin.git",
+        push: "ssh://git@github.com/acme/plain-origin.git",
+        refuses: PR_RULE,
+        flag: "--push",
+        exit: 1,
+        committed: true,
+        says: &[
+            "remote: error: GH013: Repository rule violations found for refs/heads/main.",
+            "the commit is on main in this checkout; kendex did not undo it",
+            RULES_LINE,
+            "to open one from this commit yourself:",
+            "    git 'push' 'origin' 'HEAD:refs/heads/kendex/renders'",
+            "'--repo' 'https://github.com/acme/plain-origin.git' '--head' 'kendex/renders' '--base' 'main' '--title' 'chore: kendex apply'",
+        ],
+        not: &["secret"],
+    },
+    RulesRow {
+        what: "GitHub refusing the push for another rule",
+        remote: "https://github.com/acme/plain-origin.git",
+        push: "ssh://git@github.com/acme/plain-origin.git",
+        refuses: PUSH_PROTECTION,
+        flag: "--push",
+        exit: 1,
+        committed: true,
+        says: &["GITHUB PUSH PROTECTION"],
+        not: &[RULES_LINE, "git 'push'"],
+    },
+];
 
 /// The branch's rules decide the push before anything is committed. Rules
 /// that take changes only through a pull request refuse `--push`, naming
 /// the flag for the route they allow where it is on offer, and that route
 /// opens one; a person the ruleset lets past pushes; rules that cannot be
-/// read leave the push as it was. The read is bound to the remote's host.
+/// read leave the push as it was. The read is bound to where the push
+/// goes, its host included, so a fork's rules decide a push to the fork.
 /// A push GitHub then refuses for want of a pull request prints the
 /// commands that open one from the commit, without the remote's
 /// credentials; any other refusal prints neither.
 #[test]
 fn the_branch_rules_are_read_before_a_push_and_a_refusal_under_them_names_the_way_on() {
-    for row in rules_rows() {
+    for row in RULES_ROWS {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = project(&tmp);
-        let bare = hosted_origin(&project, row.remote);
+        let bare = hosted_origin(&project, row.remote, row.push);
         if !row.refuses.is_empty() {
             executable(
                 &bare.join("hooks/pre-receive"),
@@ -753,16 +795,19 @@ fn the_branch_rules_are_read_before_a_push_and_a_refusal_under_them_names_the_wa
             "{}: {text}",
             row.what
         );
-        let host = row.remote.rsplit('@').next().unwrap();
-        let host = host
-            .trim_start_matches("https://")
+        let host = row
+            .push
+            .rsplit('@')
+            .next()
+            .unwrap()
             .split('/')
             .next()
             .unwrap();
         let asked = fs::read_to_string(home.join("fake-bin/calls")).unwrap_or_default();
         assert!(
             asked.contains(&format!(
-                "api --hostname {host} repos/{{owner}}/{{repo}}/rules/branches/main"
+                "GH_REPO={} api --hostname {host} repos/{{owner}}/{{repo}}/rules/branches/main",
+                row.push
             )),
             "{}: the rules were not read from {host}: {asked}",
             row.what

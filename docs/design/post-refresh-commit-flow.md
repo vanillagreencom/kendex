@@ -96,7 +96,7 @@ The pull-request choice needs three things at once: `gh` on the machine, a crede
 gh pr list --repo <url> --head <branch> --state open --json number,url
 ```
 
-`<url>` is the chosen remote's URL from `git remote get-url`, and the probe, the open-pull-request lookup and the create carry it as `--repo`. The branch-rules reads below carry it as `GH_REPO` with its host as `--hostname`. Without it `gh` resolves the repository from the remotes itself, so a project whose `origin` is GitLab and whose second remote is GitHub would be probed against a repository the push never reaches.
+`<url>` is the chosen remote's URL from `git remote get-url`, and the probe, the open-pull-request lookup and the create carry it as `--repo`. The branch-rules reads below are bound to where the push goes instead. Without it `gh` resolves the repository from the remotes itself, so a project whose `origin` is GitLab and whose second remote is GitHub would be probed against a repository the push never reaches.
 
 - It fails to spawn: `gh` is not installed.
 - It exits non-zero saying it is not authenticated: `gh` is not signed in.
@@ -115,7 +115,7 @@ Where the probe exits zero, kendex asks the same `gh` which rules apply to the c
 gh api --hostname <host> repos/{owner}/{repo}/rules/branches/<branch>
 ```
 
-`gh api` has no `--repo`. It fills `{owner}` and `{repo}` from `GH_REPO`, which carries the chosen remote's URL, and ignores the host there, taking it from `--hostname`, else `GH_HOST`, else github.com. kendex passes `--hostname`, so neither fallback applies. `<host>` is read from the same URL, in each form `gh` takes for `--repo`: `https://`, `ssh://` and scp-style `[user@]host:path`. A URL with no host, such as a local path, gets no read. `<branch>` is percent-encoded. The endpoint needs only read access to the repository.
+`gh api` has no `--repo`. It fills `{owner}` and `{repo}` from `GH_REPO`, which carries the push destination: the one URL `git remote get-url --push --all` names for the chosen remote, which is its `pushurl` where one is set, so a fork's rules decide a push to the fork. Where git names more than one push URL there is no read. `gh api` ignores the host in `GH_REPO`, taking it from `--hostname`, else `GH_HOST`, else github.com. kendex passes `--hostname`, so neither fallback applies. `<host>` is read from the push destination, in each form `gh` takes for `--repo`: `https://`, `ssh://` and scp-style `[user@]host:path`. A URL with no host, such as a local path, gets no read. `<branch>` is percent-encoded. The endpoint needs only read access to the repository.
 
 - A rule of type `pull_request` or `merge_queue` means changes reach the branch only through a pull request. kendex then reads that rule's ruleset, `gh api repos/{owner}/{repo}/rulesets/<id>`, for `current_user_can_bypass`.
 - A ruleset the person may push past (`always` or `exempt`) leaves the push on offer. Any other answer, or a ruleset read that fails, removes it with the reason named, and the pull-request choice stays.
