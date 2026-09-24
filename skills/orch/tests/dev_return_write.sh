@@ -133,7 +133,7 @@ echo "=== a single implement record, complete by construction ==="
 init_growth_state "$STATE" "$WT" issue-776 "$RID"
 run --worktree "$WT" --kind implement --issue issue-776 --round-id "$RID" --branch issue-776 --commit "$IMPL_HEAD" --validate pass --qa-label needs-review
 assert_eq "rc=$RC $OUT" "rc=0 $WT/tmp/dev-return-issue-776-$RID.json" "the writer exits 0 and prints the round-scoped artifact path" "$ERR"
-assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"summary_posted\":true,\"summary\":null,\"bundled\":false,\"items\":[],\"baseline_lines\":3}" \
+assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"near_ceiling\":[],\"summary_posted\":true,\"summary\":null,\"bundled\":false,\"items\":[],\"baseline_lines\":3}" \
   "the record is the schema's shape with the measured baseline, a numeric schema_version and no note" "$ERR"
 assert_eq "$(env ORCH_STATE_DIR="$WT/tmp" "$CHECK" --worktree "$WT" --issue issue-776 --round-id "$RID" | jq -r '.reason')" "valid" \
   "the record round-trips through round-mode acceptance"
@@ -156,6 +156,8 @@ table \
   "a --validate-note is recorded verbatim beside a strictly enumerated pass|--worktree $WT --kind implement --issue issue-note --round-id $RID --branch b --commit %H --validate pass --validate-note 80/80+on+re-run;+first+run+flaked|rc=0 .validate=pass .validate_note=80/80+on+re-run;+first+run+flaked" \
   "a FAILING verdict carries a note too|--worktree $WT --kind implement --issue issue-failnote --round-id $RID --branch b --commit %H --validate FAILING:+lint --validate-note lint+fails+only+under+--release|rc=0 .validate=FAILING:+lint .validate_note=lint+fails+only+under+--release" \
   "an omitted note is present and null|--worktree $WT --kind implement --issue issue-nonote --round-id $RID --branch b --commit %H --validate pass|rc=0 has:validate_note=true .validate_note=null" \
+  "each --near-ceiling line is recorded in order, and an omitted flag is an empty list|--worktree $WT --kind implement --issue issue-near --round-id 15-15 --branch b --commit %H --validate pass --near-ceiling byte-ceiling+near-ceiling+a.rs:189000:204800:92 --near-ceiling byte-ceiling+near-ceiling+b.rs:190000:204800:92|rc=0 .near_ceiling|length=2 .near_ceiling[0]=byte-ceiling+near-ceiling+a.rs:189000:204800:92 .near_ceiling[1]=byte-ceiling+near-ceiling+b.rs:190000:204800:92 roundtrip=valid" \
+  "a round with no near-ceiling line records the empty list|--worktree $WT --kind implement --issue issue-nonear --round-id 16-16 --branch b --commit %H --validate pass|rc=0 has:near_ceiling=true .near_ceiling|tojson=[]" \
   "a leading single-dash summary is a value|--worktree $WT --kind implement --issue issue-dash --round-id 13-13 --branch b --commit %H --validate pass --summary -+close+as+duplicate+of+the+merged+fix --no-summary|rc=0 .summary=-+close+as+duplicate+of+the+merged+fix" \
   "double-dash prose that is not an own flag is a summary|--worktree $WT --kind implement --issue issue-ddash --round-id 14-14 --branch b --commit %H --validate pass --summary --foo+is+a+flag+of+the+consuming+tool --no-summary|rc=0 .summary=--foo+is+a+flag+of+the+consuming+tool" \
   "double-dash prose is accepted as --item REASONING|--worktree $WT --kind fix --issue issue-ddash2 --round-id 14-15 --branch b --commit c --validate pass --item 1 Skipped --force+would+be+needed|rc=0 .items[0].reasoning=--force+would+be+needed"
@@ -207,7 +209,10 @@ table \
   "a duplicate --validate|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate pass|rc=2 stderr~dev-return-write:+duplicate+option=--validate=true" \
   "an empty --commit|--worktree $WT --kind implement --issue i --round-id $RID --branch b --validate pass --commit EMPTY|rc=2 stderr~dev-return-write:+required+option=--commit=true" \
   "a whitespace-only --validate-note|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-note SPACES|rc=2 stderr~dev-return-write:+empty-text+option=--validate-note=true" \
-  "--validate-note with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-note|rc=2 stderr~dev-return-write:+missing-value+option=--validate-note=true"
+  "--validate-note with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-note|rc=2 stderr~dev-return-write:+missing-value+option=--validate-note=true" \
+  "a whitespace-only --near-ceiling: a blank line names no file|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --near-ceiling SPACES|rc=2 stderr~dev-return-write:+empty-text+option=--near-ceiling=true" \
+  "--near-ceiling followed by another flag|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --near-ceiling --qa-label needs-review|rc=2 stderr~dev-return-write:+flag-value+option=--near-ceiling+value=--qa-label=true" \
+  "--near-ceiling with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --near-ceiling|rc=2 stderr~dev-return-write:+missing-value+option=--near-ceiling=true"
 assert_eq "$([[ -f "$WT/tmp/dev-return-issue-noitems-$RID.json" ]] && echo yes || echo no)" "no" "a rejected invocation writes no artifact at the target path"
 
 echo

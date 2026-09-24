@@ -21,7 +21,8 @@
 #     "issue": "…", "branch": "…", "commit": "…", "validate": "pass"|"FAILING: …",
 #     "baseline_lines": 138 (implement only),
 #     "validate_note": "…"|null (optional free-text qualifier),
-#     "qa_labels": […], "summary_posted": bool, "summary": "…"|null,
+#     "qa_labels": […], "near_ceiling": […] (byte-ceiling near-ceiling lines),
+#     "summary_posted": bool, "summary": "…"|null,
 #     "bundled": bool, "items": [{"n": <number>, "decision": "Applied"|"Skipped"|"Blocked", "reasoning": "…"}] }
 
 #
@@ -387,16 +388,18 @@ check_id_token() {
     || die invalid-id "$@"
 }
 
-# `validate` and `validate_note` are surfaced here, not just stored in the file:
-# this output IS what the orchestrator reads to accept a completion, so a
-# qualified result recorded in the artifact and never echoed would be as lost as
-# one that was never recorded. Both are null when the artifact is
-# missing or unparseable.
+# `validate`, `validate_note` and `near_ceiling` are surfaced here, not just
+# stored in the file: this output IS what the orchestrator reads to accept a
+# completion, so a qualified result or a file within reach of the byte ceiling
+# recorded in the artifact and never echoed would be as lost as one that was
+# never recorded. The two scalars are null and the list empty when the artifact
+# is missing or unparseable.
 emit() {
-  local ok="$1" path="$2" reason="$3" warning="${4:-}" hint="${5:-}" files="${6:-[]}" validate=null validate_note=null
+  local ok="$1" path="$2" reason="$3" warning="${4:-}" hint="${5:-}" files="${6:-[]}" validate=null validate_note=null near_ceiling='[]'
   if [[ -n "$path" && -f "$path" ]]; then
     validate="$(jq -c 'if (.validate? | type) == "string" then .validate else null end' "$path" 2>/dev/null || printf 'null')"
     validate_note="$(jq -c 'if (.validate_note? | type) == "string" then .validate_note else null end' "$path" 2>/dev/null || printf 'null')"
+    near_ceiling="$(jq -c 'if (.near_ceiling? | type) == "array" then [.near_ceiling[] | select(type == "string")] else [] end' "$path" 2>/dev/null || printf '[]')"
   fi
   # verdict is the one-word acceptance answer the orchestrator acts on:
   #   accept — artifact valid for this round (warnings ride along)
@@ -420,11 +423,12 @@ emit() {
   jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" --arg warning "$warning" \
     --arg hint "$hint" --arg verdict "$verdict" \
     --argjson files "$files" --argjson validate "${validate:-null}" --argjson validate_note "${validate_note:-null}" \
+    --argjson near_ceiling "${near_ceiling:-[]}" \
     '{ok: $ok, verdict: $verdict, path: (if $path == "" then null else $path end), reason: $reason,
       warning: (if $warning == "" then null else $warning end),
       hint: (if $hint == "" then null else $hint end),
       files: $files,
-      validate: $validate, validate_note: $validate_note}' 2>/dev/null
+      validate: $validate, validate_note: $validate_note, near_ceiling: $near_ceiling}' 2>/dev/null
 }
 
 # The artifact's internal round_id must equal the expected token. Guards against

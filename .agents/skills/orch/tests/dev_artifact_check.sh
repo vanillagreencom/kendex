@@ -74,8 +74,9 @@ run_check() {
 json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 
 # observe EXPECT — prints the run's value of every `name=` field EXPECT names,
-# in EXPECT's order. Plain names are JSON result fields (`files` compact); a
+# in EXPECT's order. Plain names are JSON result fields; a
 # key the result does not carry reads ABSENT, so `null` means a real null.
+# `files` and `near_ceiling` read compact.
 #   rc              exit status
 #   stderr~<text>   whether stderr carries <text> (`+` reads as a space)
 #   stderr_first~<text>  whether stderr's FIRST line is exactly <text> (`+`
@@ -97,6 +98,7 @@ observe() {
     case "$name" in
       rc) value="$RC" ;;
       files) value="$(json '.files | tojson')" ;;
+      near_ceiling) value="$(json '.near_ceiling | tojson')" ;;
       help_sections)
         value=""
         grep -q '^Gates ordered:' <<<"$OUT" && value="$value,gates"
@@ -464,6 +466,20 @@ receipt_table \
   "a numeric validate_note is invalid^impl^.validate_note=42^$FILE_ARGS^reason=invalid" \
   "a boolean validate_note is invalid^impl^.validate_note=true^$FILE_ARGS^reason=invalid" \
   "an array validate_note is invalid^impl^.validate_note=[]^$FILE_ARGS^reason=invalid"
+
+echo "=== the near-ceiling lines reach the orchestrator ==="
+# The next round's brief plans the split from these, so a line stored in the
+# artifact is echoed verbatim; a receipt that carries none, or carries the key
+# with a shape the writer never produces, reads as an empty list rather than a
+# missing key the caller must special-case.
+NEAR_LINE="byte-ceiling: near-ceiling=crates/core/src/engine/deps.rs:189000:204800:92"
+printf '%s' "$VALID_IMPL" | jq -c --arg l "$NEAR_LINE" '.near_ceiling=[$l]' > "$ARTIFACT"
+run_check --file "$ARTIFACT"
+assert_eq "$(json '.near_ceiling[0]')" "$NEAR_LINE" "a near-ceiling line with spaces and punctuation is echoed verbatim" "$ERR"
+receipt_table \
+  "two near-ceiling lines are echoed in order^impl^.near_ceiling=[\"a:1:2:91\",\"b:3:4:95\"]^$FILE_ARGS^reason=valid near_ceiling=[\"a:1:2:91\",\"b:3:4:95\"]" \
+  "a receipt with no near_ceiling key echoes an empty list^impl^^$FILE_ARGS^reason=valid near_ceiling=[]" \
+  "a non-array near_ceiling echoes an empty list rather than the wrong shape^impl^.near_ceiling=\"one\"^$FILE_ARGS^reason=valid near_ceiling=[]"
 
 echo "=== --wait blocks until an artifact lands or the deadline ==="
 # An (invalid) receipt landing after about two seconds ends a 20-second wait

@@ -19,8 +19,12 @@
 # Usage:
 #   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
 #     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
-#     [--qa-label LABEL]... [--bundled] [--no-summary] \
+#     [--qa-label LABEL]... [--near-ceiling LINE]... [--bundled] [--no-summary] \
 #     [--summary TEXT | --summary-file PATH] [--item N DECISION REASONING]...
+#
+# --near-ceiling carries one byte-ceiling near-ceiling line per staged file the
+# round's commits put within reach of the byte ceiling, so the orchestrator's
+# next round brief plans the split before a later commit meets the wall.
 #
 # --validate stays strictly enumerated ("pass" or "FAILING:…") so it remains
 # machine-checkable. --validate-note is the additive channel for a QUALIFIED
@@ -44,6 +48,8 @@
 #     "validate": "pass" | "FAILING: c1,c2",  // required
 #     "validate_note": "…" | null,            // --validate-note
 #     "qa_labels": ["needs-review"],          // [] when no --qa-label given
+#     "near_ceiling": ["…"],                  // byte-ceiling near-ceiling lines
+#                                             // the round's commits printed; []
 #     "summary_posted": true,                 // false with --no-summary
 #     "summary": "…" | null,                  // --summary text or --summary-file content
 #     "bundled": false,                       // true with --bundled
@@ -112,7 +118,7 @@ usage() {
 Usage:
   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
-    [--qa-label LABEL]... [--bundled] [--no-summary] \
+    [--qa-label LABEL]... [--near-ceiling LINE]... [--bundled] [--no-summary] \
     [--summary TEXT | --summary-file PATH] [--item N DECISION REASONING]...
 
 Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path.
@@ -126,8 +132,10 @@ worth recording); it never relaxes --validate. Outside that named ceiling a
 failing validation ends the round and is never re-run into a pass.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
 content. They are mutually exclusive (one summary source, no silent precedence).
-Every single-valued flag may be supplied at most once (no silent last-wins);
-only --qa-label and --item repeat.
+--near-ceiling records one byte-ceiling near-ceiling line per staged file the
+round's commits put within reach of the byte ceiling; the next round's brief
+plans the split from it. Every single-valued flag may be supplied at most once
+(no silent last-wins); only --qa-label, --near-ceiling and --item repeat.
 --issue / --round-id must match ^[A-Za-z0-9._-]+$. Canonical schema:
 skills/orch/schemas/dev-return.md. Validated by dev-artifact-check.
 Exit 0 on success; every usage/validation error exits 2.
@@ -142,7 +150,7 @@ EOF
 is_own_flag() {
   case "$1" in
     --worktree|--kind|--issue|--round-id|--branch|--commit|--validate|\
-    --validate-note|--summary|--summary-file|--qa-label|--bundled|\
+    --validate-note|--summary|--summary-file|--qa-label|--near-ceiling|--bundled|\
     --no-summary|--item|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
@@ -191,6 +199,7 @@ summary_given=false
 bundled=false
 summary_posted=true
 qa_labels=()
+near_ceiling=()
 item_n=()
 item_decision=()
 item_reasoning=()
@@ -218,6 +227,7 @@ while (( $# > 0 )); do
     --summary)      need "$1" $# "${2:-}"; no_dup "$1" "$summary_given";      summary_given=true;      summary_text="$2"; shift 2 ;;
     --summary-file) need "$1" $# "${2:-}"; no_dup "$1" "$summary_file_given"; summary_file_given=true; summary_file="$2"; shift 2 ;;
     --qa-label)     need "$1" $# "${2:-}"; qa_labels+=("$2"); shift 2 ;;
+    --near-ceiling) need "$1" $# "${2:-}"; [[ -n "${2//[[:space:]]/}" ]] || die empty-text option=--near-ceiling; near_ceiling+=("$2"); shift 2 ;;
     --bundled)      bundled=true; shift ;;
     --no-summary)   summary_posted=false; shift ;;
     --item)
@@ -314,6 +324,12 @@ else
   qa_json='[]'
 fi
 
+if (( ${#near_ceiling[@]} > 0 )); then
+  near_json="$(jq -n '$ARGS.positional' --args "${near_ceiling[@]}")"
+else
+  near_json='[]'
+fi
+
 if (( ${#item_n[@]} > 0 )); then
   items_json="$(
     for i in "${!item_n[@]}"; do
@@ -362,6 +378,7 @@ jq -n \
   --arg validate "$validate" \
   --arg validate_note "$validate_note" \
   --argjson qa_labels "$qa_json" \
+  --argjson near_ceiling "$near_json" \
   --argjson summary_posted "$summary_posted" \
   "${summary_arg[@]}" \
   --argjson bundled "$bundled" \
@@ -376,6 +393,7 @@ jq -n \
      validate: $validate,
      validate_note: (if $validate_note == "" then null else $validate_note end),
      qa_labels: $qa_labels,
+     near_ceiling: $near_ceiling,
      summary_posted: $summary_posted,
      summary: $summary,
      bundled: $bundled,

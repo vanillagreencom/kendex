@@ -197,6 +197,8 @@ Write the remote `body` value to `[WORKTREE_PATH]/tmp/pr-body-proposed-rules-[IS
 
 Do not rebuild the body from the local worktree or push a commit from this step. This is the sole publication owner for proposed rules.
 
+**Carry the near-ceiling lines** on accept: each `near_ceiling` entry `dev-artifact-check` echoed names a file the round put within reach of the byte ceiling, and it goes on the next round's delegation as a `Near-ceiling:` line so the split is planned there rather than at the commit the ceiling refuses.
+
 **Store QA state** on accept:
 
 ```bash

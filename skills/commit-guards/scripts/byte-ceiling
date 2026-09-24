@@ -25,8 +25,14 @@
 # are detected, so moving an existing large file is not an addition; a copy
 # is one. A sweep has no second tree and so no source blob: its prior is the
 # declared baseline (path<TAB>bytes), and a row looser than its file or naming
-# no oversized file fails, so the declaration only tightens. Exit codes:
-# 0 clean; 1 violations; 2 usage/config/collection error.
+# no oversized file fails, so the declaration only tightens.
+#
+# A file under the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT percent
+# of it gets one near-ceiling notice and no violation: a refusal that arrives
+# only at the wall stops a branch of a dozen commits for a split the round
+# before could have planned.
+#
+# Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 set -euo pipefail
 
 GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
@@ -64,9 +70,15 @@ baseline (path<TAB>bytes, read from the index): a file at its row passes, one
 past it or with no row fails, and a row larger than its file or naming no
 oversized file fails. An absent baseline is empty.
 
+A file still under the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT
+percent of it prints one near-ceiling line and does not fail, so the split is
+planned by the round that comes within reach of the wall rather than by the
+round that meets it.
+
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
   COMMIT_GUARDS_BYTE_CEILING_KB   ceiling in KB        (default 200)
+  COMMIT_GUARDS_BYTE_WARN_PCT     near-ceiling percent (default 90)
   COMMIT_GUARDS_BYTE_EXCLUDES     exclusion-list path  (default tools/byte-ceiling-excludes)
   COMMIT_GUARDS_BYTE_BASELINE     --all baseline path  (default tools/byte-ceiling-baseline)
 Flags --excludes and --baseline override the path settings.
@@ -129,6 +141,9 @@ gg_repo_root_cd
 CEILING_KB="$(gg_setting COMMIT_GUARDS_BYTE_CEILING_KB 200)" || exit 2
 gg_positive_int "$CEILING_KB" "COMMIT_GUARDS_BYTE_CEILING_KB"
 CEILING_BYTES=$((CEILING_KB * 1024))
+
+WARN_PCT="$(gg_setting COMMIT_GUARDS_BYTE_WARN_PCT 90)" || exit 2
+gg_positive_int "$WARN_PCT" "COMMIT_GUARDS_BYTE_WARN_PCT"
 
 EXCLUDES_FILE="$(gg_resolve_path "$EXCLUDES_OPT" COMMIT_GUARDS_BYTE_EXCLUDES "tools/byte-ceiling-excludes" excludes)" || exit 2
 gg_load_excludes "$EXCLUDES_FILE"
@@ -303,6 +318,12 @@ while IFS= read -r -d '' sha \
     fi
     echo "  remedies: keep big artifacts out of the repo (asset store, Git LFS, build-time generation); a file that genuinely belongs gets a row in $EXCLUDES_FILE with its reason"
     violations=$((violations + 1))
+  elif [ $((size * 100)) -ge $((CEILING_BYTES * WARN_PCT)) ]; then
+    # Percent of the ceiling, truncated: the figure says how much room is
+    # left, and rounding it up would report the threshold for a file that
+    # has not reached it.
+    gg_message near-ceiling "$f:$size:$CEILING_BYTES:$((size * 100 / CEILING_BYTES))" "The file is within reach of the byte ceiling."
+    echo "  remedy: plan the split while it is still cheap; a file that crosses the ceiling stops the commit and the push"
   fi
 done <"$GG_TMP/candidates.z"
 

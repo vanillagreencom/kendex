@@ -28,6 +28,7 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
   "validate": "FAILING: cargo test",
   "validate_note": "Test-only validation ceiling: the suite failed at 34m; the failed target passed alone under load",
   "qa_labels": ["needs-review"],
+  "near_ceiling": ["byte-ceiling: near-ceiling=crates/core/src/engine/deps.rs:189000:204800:92"],
   "summary_posted": true,
   "summary": "### Proposed Rules\n- Rule the validation list is missing",
   "bundled": false,
@@ -49,6 +50,7 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 | `validate` | Yes | `--validate` | `pass` or `FAILING: check1,check2` — a closed enumeration |
 | `validate_note` | Optional | `--validate-note` | A free-text qualifier the enumeration cannot express, or `null` |
 | `qa_labels` | Optional | `--qa-label` (repeatable) | Applied QA labels; `[]` when none |
+| `near_ceiling` | Optional | `--near-ceiling` (repeatable) | One `byte-ceiling` `near-ceiling` line per staged file the round's commits put within reach of the byte ceiling; `[]` when none. `dev-artifact-check` echoes it so the next round's brief plans the split before a later commit meets the ceiling |
 | `summary_posted` | Optional | `--no-summary` sets `false` | `true` only when the summary was posted to a tracker; GitHub and ad-hoc rounds set `false` |
 | `summary` | Optional | `--summary` or `--summary-file` | The summary content, or `null`. Every single implement round embeds it, including a Linear round that also sets `summary_posted: true`, so a consumer can read its `### Proposed Rules` |
 | `bundled` | Optional | `--bundled` sets `true` | `true` for a bundled implement |

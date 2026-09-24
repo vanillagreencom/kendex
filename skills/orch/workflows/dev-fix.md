@@ -122,6 +122,7 @@ Cancel ends the workflow; a selection goes to § 2.
    Artifact Key: [ISSUE_ID]
    QA: [QA_AGENT]
    [If the round may add files: "Adds: [REPO_RELATIVE_PATHS]"]
+   [For each near_ceiling line the accepted artifact carried: "Near-ceiling: [LINE]"]
 
    Decisions:
    [For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
