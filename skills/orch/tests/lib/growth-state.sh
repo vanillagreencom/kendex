@@ -58,3 +58,13 @@ growth_round_write() {
   fi
   env ORCH_STATE_DIR="$worktree/tmp" "$writer" "$@"
 }
+
+# validate_run_dir DIR MODE — a dev-validate-run run directory as
+# dev-return-write reads it: a start record whose validate-mode= line names
+# MODE, the one field a receipt takes from the run. dev_validate_run.sh pins the
+# record a real run writes. Prints DIR.
+validate_run_dir() {
+  mkdir -p "$1"
+  printf 'validate-mode=%s\n' "$2" > "$1/start"
+  printf '%s\n' "$1"
+}

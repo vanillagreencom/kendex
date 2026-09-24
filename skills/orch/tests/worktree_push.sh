@@ -28,7 +28,6 @@ source "$TEST_DIR/lib/growth-state.sh"
 # scripts print the resolved path.
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
-source "$(dirname "${BASH_SOURCE[0]}")/lib/validate-run.sh"
 VRUN="$(validate_run_dir "$TMP_ROOT/validate-run" full)"
 mkdir -p "$TMP_ROOT/linear/scripts"
 cat > "$TMP_ROOT/linear/scripts/linear.sh" <<'SH'

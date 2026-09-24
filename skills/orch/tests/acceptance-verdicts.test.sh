@@ -10,7 +10,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS="$TEST_DIR/../scripts"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-source "$(dirname "${BASH_SOURCE[0]}")/lib/validate-run.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 VRUN="$(validate_run_dir "$TMP/validate-run" full)"
 
 PASS=0

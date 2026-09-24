@@ -24,7 +24,6 @@ source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
-source "$TEST_DIR/lib/validate-run.sh"
 VRUN="$(validate_run_dir "$TMP_ROOT/validate-run" full)"
 VRUN_RANGE="$(validate_run_dir "$TMP_ROOT/validate-run-range" range)"
 VRUN_BAD="$(validate_run_dir "$TMP_ROOT/validate-run-bad" class)"

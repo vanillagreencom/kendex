@@ -10,7 +10,6 @@ STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 source "$TEST_DIR/lib/growth-state.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
-source "$(dirname "${BASH_SOURCE[0]}")/lib/validate-run.sh"
 VRUN="$(validate_run_dir "$TMP_ROOT/validate-run" full)"
 
 # branch-size-check reads the allowance through the Linear CLI beside its own
