@@ -339,6 +339,16 @@ pass would refuse (an item, a --hosted entry, a repeated --repo, a lane
 outside tmux), a tmux window list that fails, or a repeat delay it cannot
 sleep.
 
+Which mode fits the overseer's harness:
+  repeat       a harness that delivers a detached log's lines as they are
+               written or holds a blocking follow of it inside the turn.
+               The watch runs detached and outlives the session, so it
+               reports overseer-dead
+  single pass  a harness whose only wake is a background command's exit:
+               each pass runs as that command and the next starts after
+               every line is handled. Nothing reports overseer-dead
+references/watch-delivery.md holds each harness's mechanism and re-arm rule.
+
 When pr-watch.sh is installed, oversee-watch runs it with --heal on every pass.
 Gate-stale dispatches PR_WATCH_WRITER_WORKFLOW, so its credential requires
 actions:write. When pr-watch.sh is absent, the step is skipped with one stderr note.

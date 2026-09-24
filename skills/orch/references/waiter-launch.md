@@ -1,6 +1,6 @@
 # Waiter launch
 
-Load from `submit-pr.md` or `merge-pr.md` before running `approval-wait`, `ci-wait` or `queue-wait`. Run each long waiter under `setsid`. Keep the lane active until its completion file arrives. Never start the waiter as a harness background command.
+Load from `submit-pr.md` or `merge-pr.md` before running `approval-wait`, `ci-wait` or `queue-wait`, and from `watch-delivery.md` before launching the repeat watch. Run each long waiter under `setsid`. Keep the lane active until its completion file arrives. Never start the waiter as a harness background command.
 
 ## Launch
 

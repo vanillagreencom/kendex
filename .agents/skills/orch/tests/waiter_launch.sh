@@ -29,6 +29,12 @@ mkdir -p tmp
 TMP_ROOT="$(mktemp -d "$PWD/tmp/waiter-launch.XXXXXX")"
 parent_pid=
 cleanup() {
+  local leader
+  # Every process group the read case launched leads with a shell naming a
+  # run path under it, so a failed case leaves no job behind.
+  for leader in $(pgrep -f "$TMP_ROOT/read dir[+]x/" || :); do
+    kill -TERM -- "-$leader" 2>/dev/null || true
+  done
   if [[ -n "$parent_pid" ]]; then
     kill -KILL -- "-$parent_pid" 2>/dev/null || true
     wait "$parent_pid" 2>/dev/null || true
@@ -138,5 +144,61 @@ launch|launch|prefixed|130|detached job dies on its own INT
 ignore|ignore-int|prefixed|0|control: a trailing & leaves INT ignored
 bare|launch|bare|0|control: the caller's own ignore reaches the detached job
 ROWS
+# The watch read and stop in watch-delivery.md, run as a harness runs them:
+# the read inside a shell whose own argv carries the pattern, against a job this
+# fence launched under an `env -u` prefix beside a follower of its log, in a run
+# directory made as waiter-launch.md makes one, under a parent path holding a
+# space and a `+`, the characters a checkout path may carry. With no
+# job the read exits 1, never finding its own shell; with the job it prints one
+# pid, the job group's leader; the stop's `stopped` mark survives the group kill;
+# and the read then exits 1. The pid's group is compared before any kill, so a
+# read naming another process fails here and signals nothing.
+watch_read_case() {
+  local read_span read_cmd case_dir run_id read_rc read_out read_group attempt follow_leader
+  read_span="$(awk 'match($0, /`pgrep -f [^`]*`/) { print substr($0, RSTART + 1, RLENGTH - 2); exit }' \
+    "$SKILL_DIR/references/watch-delivery.md")"
+  mkdir -p "$TMP_ROOT/read dir+x"
+  case_dir="$(mktemp -d "$TMP_ROOT/read dir+x/waiter.XXXXXX")"
+  run_id="${case_dir##*/waiter.}"
+  read_cmd="${read_span//\[RUN_ID\]/$run_id}"
+  assert_eq "$read_cmd" "pgrep -f 'waiter[.]$run_id/watc[h] '" 'the documented watch read is keyed on the run name' "$case_dir/watch.log"
+  # A trailing command keeps the shell from exec'ing pgrep, as a harness tool
+  # shell running a longer command line never does.
+  harness_read() { sh -c "$read_cmd; exit \$?"; }
+  read_rc=0
+  harness_read >/dev/null || read_rc=$?
+  assert_eq "$read_rc" 1 'with no watch the read exits 1 and finds not its own shell' "$case_dir/watch.log"
+  bash "$TMP_ROOT/launch.sh" "$case_dir/watch" env -u KENDEX_UNSET_PROBE sleep 300
+  touch "$case_dir/watch.log"
+  bash "$TMP_ROOT/launch.sh" "$case_dir/follow" tail -F "$case_dir/watch.log"
+  for ((attempt=0; attempt<500; attempt++)); do
+    harness_read >/dev/null && break
+    sleep 0.01
+  done
+  read_rc=0
+  read_out="$(harness_read)" || read_rc=$?
+  read_group=none
+  [[ "$read_rc" -ne 0 || "$read_out" == *$'\n'* ]] || read_group="$(ps -o pgid= -p "$read_out" | tr -d ' ')"
+  assert_eq "$read_rc:$read_group" "0:$read_out" 'the read prints one pid, the leader of the job group' "$case_dir/watch.log"
+  printf 'stopped\n' > "$case_dir/watch.exit"
+  if [[ "$read_group" == "$read_out" ]]; then
+    kill -TERM -- "-$read_out" 2>/dev/null || true
+    for ((attempt=0; attempt<500; attempt++)); do
+      harness_read >/dev/null || break
+      sleep 0.01
+    done
+  fi
+  read_rc=0
+  harness_read >/dev/null || read_rc=$?
+  assert_eq "$read_rc" 1 'the read exits 1 once the group stop ends the job' "$case_dir/watch.log"
+  assert_eq "$(<"$case_dir/watch.exit")" stopped 'the stop mark written before the group kill survives it' "$case_dir/watch.log"
+  follow_leader="$(pgrep -f "waiter[.]$run_id/follo[w] ")" || follow_leader=""
+  [[ -z "$follow_leader" || "$follow_leader" == *$'\n'* ]] || kill -TERM -- "-$follow_leader" 2>/dev/null || true
+}
+if command -v pgrep >/dev/null; then
+  watch_read_case
+else
+  printf 'skip: the watch read case requires pgrep\n'
+fi
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
