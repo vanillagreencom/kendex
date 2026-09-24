@@ -1641,14 +1641,22 @@ collect_review_instructions() {
   # emit_instruction_file for the checks each match must pass).
   local phys_root
   phys_root="$(cd -- "$CWD" && pwd -P)" || return 0
-  local hits
+  local hits has_file
   for pattern in ${pattern_list[@]+"${pattern_list[@]}"}; do
     # compgen -G expands the glob without leaking non-matches (a bare unmatched
     # pattern would otherwise pass through as a literal word) and exits 1 on
     # no match. One path per line, so spaces in names survive; newline-in-name
     # is not supported.
     hits="$(cd -- "$CWD" && compgen -G "$pattern" 2>/dev/null)" || hits=""
-    if [[ -z "$hits" ]]; then
+    # compgen also prints directories, which emit_instruction_file drops
+    # without a word: a pattern counts as matched only when it names a file.
+    has_file=""
+    if [[ -n "$hits" ]]; then
+      while IFS= read -r f; do
+        [[ -f "$CWD/$f" ]] && { has_file=1; break; }
+      done <<<"$hits"
+    fi
+    if [[ -z "$has_file" ]]; then
       printf 'second-opinion: instructions-unmatched pattern=%s\n' "$pattern" >&2
       continue
     fi
