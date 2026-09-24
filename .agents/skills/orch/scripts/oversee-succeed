@@ -157,10 +157,24 @@
 #        caller's window, so the successor holds the caller's index and no
 #        other window moves; with renumber-windows on, tmux renumbers as for
 #        any closed window.
-#   A failure at any step, or a TERM, INT or HUP from the launch until the
-#   close, leaves the caller's window running and closes a successor window
-#   already opened. All three are ignored during the close: it is the commit
-#   point, and it ends this script's own window.
+#     6. Restart the fleet watch from the successor pane. The repeat-mode
+#        `oversee-watch` recorded in oversee-watch.pid beside the fleet state
+#        (`workflow-state path oversee`) is stopped and started again with its
+#        recorded command and this run's environment, except that TMUX_PANE
+#        names the successor pane, the flags after its `--` are the
+#        successor's, and the account variable names the successor's account.
+#        Its output goes to oversee-watch.log and oversee-watch.err beside the
+#        fleet state, until the successor's own watch start from that pane
+#        stops it and replays both. `watch-restarted pid=<N> pane=<pane>`
+#        names the new loop, `watch-absent` says no watch ran and none was
+#        started, and `watch-restart-failed step=<step>` is a notice: the
+#        succession stands and the run still exits 0. Only this mode restarts:
+#        `--dead-pane` and `--walled-pane` are run by the watch itself, which
+#        stops once its successor holds the window.
+#   A failure at any step before the close, or a TERM, INT or HUP from the
+#   launch until the close, leaves the caller's window running and closes a
+#   successor window already opened. All three and PIPE are ignored from the
+#   close on: it is the commit point, and it ends this script's own window.
 #   Run it under a shell-tool timeout longer than --wait-secs.
 #
 # Options:
@@ -253,7 +267,8 @@
 # exit status: it is printed mid-run, before the window is opened, and names the
 # form the lane reached the harness by. `successor-working` goes to stdout only
 # after the close succeeded, and a real handoff has ended this script's window
-# by then.
+# by then, so it and the `watch-restarted` or `watch-absent` line after it are
+# written best effort; `watch-restart-failed` is on stderr, a notice.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -305,6 +320,9 @@ message() { # KEY FIELD=VALUE...
     successor-lane-unknown) text='The account check returned an outcome this script does not know; the successor was closed rather than trusted.' ;;
     successor-working) text='The successor is running in the caller window slot.' ;;
     close-failed) text='The caller window could not be closed; the caller keeps running.' ;;
+    watch-restarted) text='The fleet watch was stopped and started again from the successor pane, with the successor flags and account, so a successor that dies is reported. Its output goes to the log beside the fleet state until the successor starts its own watch, which takes it over and replays that log.' ;;
+    watch-absent) text='No watch runs on the fleet state, so none was restarted. The successor starts its own.' ;;
+    watch-restart-failed) text='The fleet watch could not be restarted from the successor pane. The succession stands; the step field names what failed. Where the old watch still runs, the successor start refuses it as watch-running with its pid: stop that pid and start the watch again.' ;;
   esac
   printf 'oversee-succeed: %s' "$key"
   printf ' %s' "$@"
@@ -357,6 +375,8 @@ source "$SCRIPT_DIR/lib/lane-state.sh"
 # script reaches for it.
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
+# shellcheck source=lib/watch-pid.sh
+source "$SCRIPT_DIR/lib/watch-pid.sh"
 
 # One account directory as its comparable identity, empty for an empty input.
 # The pairing is lib/lane-launch.sh's own, the one lane_account_check compares
@@ -1024,6 +1044,12 @@ else
   # and the writer then names neither word.
   choice_words="$(launch_choice_write "$harness" "$model" "$effort")" || die launch-choice-failed "harness=$harness"
   [[ -z "$choice_words" ]] || cmd+=" $choice_words"
+  # The same words as argv, for the fleet watch restarted from the successor
+  # pane below: it is started with the flags its overseer runs under, and those
+  # are now the successor's. The writers print printf %q words, which eval
+  # reads back as exactly the words written.
+  SUCC_FLAGS=()
+  [[ -z "$choice_words" ]] || eval "SUCC_FLAGS=($choice_words)"
   # A caller entry keeps every word. A same-harness named entry strips model
   # and effort but keeps the caller's exact permission spelling. A cross-harness
   # entry accepts one full-bypass spelling whose meaning the shared row can
@@ -1042,6 +1068,7 @@ else
       || die launch-choice-failed reason=permission-transfer \
         "source=$CALLER_HARNESS" "target=$harness"
     cmd+=" $permission_words"
+    eval "SUCC_FLAGS+=($permission_words)"
     launch_choice_strip "$CALLER_HARNESS" --permissions \
       ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
       || die launch-choice-failed "harness=$CALLER_HARNESS"
@@ -1051,6 +1078,7 @@ else
   launch_choice_lead_settings "$harness" ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}
   for flag in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
     cmd+=" $(printf %q "$flag")"
+    SUCC_FLAGS+=("$flag")
   done
   cmd+=" '$brief'"
   # The lane reaches the harness through lib/lane-launch.sh, the same judge and
@@ -1268,8 +1296,72 @@ done
 account_verdict "$(succ_budget_bound)" final
 
 # The close is the commit point and HUPs this window: no signal may undo it.
-trap '' HUP TERM INT
+# PIPE too, and every line after it is written best effort: a caller reading
+# this run through a pipe ends with its window, and the watch restart below
+# must still run once nobody reads what it says.
+trap '' HUP TERM INT PIPE
 # One client call: the successor takes the caller's slot, then that window closes.
 tmux swap-window -d -s "$SUCC_WINDOW" -t "$CALLER_WINDOW" \; kill-window -t "$CALLER_WINDOW" \; select-window -t "$SUCC_WINDOW" \
   2>"$DEP_ERR" || abandon close-failed "window=$CALLER_WINDOW"
-message successor-working "window=$SUCC_WINDOW" "pane=$SUCC_PANE"
+message successor-working "window=$SUCC_WINDOW" "pane=$SUCC_PANE" || true
+
+# The fleet watch serves the pane it was started from, and that pane is gone:
+# left alone it reads a dead pane every pass, and a successor that dies is
+# reported by nothing. So the watch the fleet state records (lib/watch-pid.sh)
+# is stopped and started again from the successor pane, with the command it
+# ran except for the flags after its `--`, which are the overseer's own and so
+# now the successor's, and with the successor's account in the variable its
+# harness reads, since the watch judges its overseer's marks on that account.
+# Its output goes beside the fleet state, where the successor's own watch start
+# takes it over. Only a self-succession restarts: a dead or walled recovery is
+# run BY the watch, which stops itself once its successor holds the window.
+# Every failure here is a notice, never an abandon: the succession has already
+# committed, and closing the successor now would leave no overseer at all.
+restart_failed() { # FIELD=VALUE...
+  message watch-restart-failed "$@" >&2 || true
+  [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2 || true
+  exit 0
+}
+if [[ "$MODE" == succeed ]]; then
+  state="$("$SCRIPT_DIR/workflow-state" path oversee 2>"$DEP_ERR")" || restart_failed step=state-path
+  # Nothing below writes a dependency's words here, so no later notice
+  # replays an earlier step's.
+  : > "$DEP_ERR"
+  if ! watch_pid_live "$state"; then
+    message watch-absent "path=$state" || true
+    exit 0
+  fi
+  old_watch="$WATCH_PID"
+  watch_argv_read "$state" || restart_failed step=argv "pid=$old_watch"
+  watch_args=()
+  for (( i = 2; i < ${#WATCH_ARGV[@]}; i++ )); do
+    [[ "${WATCH_ARGV[i]}" != -- ]] || break
+    watch_args+=("${WATCH_ARGV[i]}")
+  done
+  [[ ${#SUCC_FLAGS[@]} -eq 0 ]] || watch_args+=(-- "${SUCC_FLAGS[@]}")
+  watch_stop "$old_watch" || restart_failed step=stop "pid=$old_watch"
+  # The dispositions this run ignored since the commit are handed back first:
+  # an ignored signal survives exec, and a watch that ignores TERM can never be
+  # stopped. setsid keeps it clear of this window's hangup; macOS has none, and
+  # nohup does that there.
+  (
+    trap - HUP TERM INT PIPE
+    cd -- "${WATCH_ARGV[1]}" || exit 1
+    export TMUX_PANE="$SUCC_PANE" "$lane_var=$launch_home" OVERSEE_WATCH_ORIGIN=succession
+    if command -v setsid >/dev/null 2>&1; then exec setsid "${WATCH_ARGV[0]}" ${watch_args[@]+"${watch_args[@]}"}; fi
+    exec nohup "${WATCH_ARGV[0]}" ${watch_args[@]+"${watch_args[@]}"}
+  ) </dev/null >"$WATCH_LOG_FILE" 2>"$WATCH_ERR_FILE" &
+  # Started once it has written its own record: the pid is then the loop's, and
+  # the record is the one the successor's start will find.
+  new_watch=""
+  watch_deadline=$((SECONDS + WATCH_STOP_SECS))
+  while (( SECONDS < watch_deadline )); do
+    if watch_pid_live "$state" && [[ "$WATCH_PID" != "$old_watch" ]]; then
+      new_watch="$WATCH_PID"
+      break
+    fi
+    sleep 0.1
+  done
+  [[ -n "$new_watch" ]] || restart_failed step=start "log=$WATCH_ERR_FILE"
+  message watch-restarted "pid=$new_watch" "pane=$SUCC_PANE" || true
+fi
