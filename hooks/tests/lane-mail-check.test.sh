@@ -74,14 +74,34 @@ install_hook() { # SOURCE DEST
 
 new_lane() { # NAME BRANCH
   LANE="$TMP_ROOT/$1"
-  mkdir -p "$LANE/.agents/skills/orch" "$LANE/.claude/hooks" "$LANE/.claude/skills"
+  mkdir -p "$LANE"
   git -C "$LANE" init -q
   git -C "$LANE" checkout -q -b "$2"
   git -C "$LANE" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
+  lay_out_lane "$2"
+}
+
+# A lane in a worktree added from a main clone at MAIN, as `worktree create`
+# makes one: the two share the common git directory the claim lives in.
+MAIN=""
+new_worktree_lane() { # NAME BRANCH
+  MAIN="$TMP_ROOT/$1-main"
+  LANE="$TMP_ROOT/$1"
+  mkdir -p "$MAIN"
+  git -C "$MAIN" init -q
+  git -C "$MAIN" checkout -q -b main
+  git -C "$MAIN" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
+  git -C "$MAIN" worktree add -q -b "$2" "$LANE"
+  lay_out_lane "$2"
+}
+
+# The install and the launch record, on the repository LANE names.
+lay_out_lane() { # BRANCH
+  mkdir -p "$LANE/.agents/skills/orch" "$LANE/.claude/hooks" "$LANE/.claude/skills"
   ln -s -f -n "$REPO_ROOT/skills/orch/scripts" "$LANE/.agents/skills/orch/scripts"
   ln -s -f -n ../../.agents/skills/orch "$LANE/.claude/skills/orch"
   install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
-  mark_lane "$2"
+  mark_lane "$1"
 }
 
 # The marker a launcher writes: the lane's root, named for the item in lower
@@ -91,6 +111,13 @@ mark_lane() { # ITEM
   common="$(git -C "$LANE" rev-parse --path-format=absolute --git-common-dir)"
   mkdir -p "$common/lane-mail"
   git -C "$LANE" rev-parse --show-toplevel > "$common/lane-mail/$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+}
+
+# Every claim gone, as in a repository no launch ever reached.
+unclaim() {
+  local common
+  common="$(git -C "$LANE" rev-parse --path-format=absolute --git-common-dir)"
+  rm -rf -- "${common:?}/lane-mail"
 }
 
 # The world a case runs in unless it names another: a home with no lane in it,
@@ -111,17 +138,22 @@ GAP='lane-mail-check: account=unlisted'
 RC=0
 # The judge's argument, empty for the turn-end run the harness makes.
 ARM_ARGS=()
+# The directory the call is made from, the lane's own unless a case names
+# another: a lane runs its post-merge steps from the main clone. CALL_ENV is
+# what the harness running that call sets, such as the directory it started in.
+CALL_DIR=""
+CALL_ENV=()
 run_payload() { # RAW-JSON [ENV=VAL...]
   local payload="$1"
   shift
   RC=0
   : > "$ERR_FILE"
   printf '%s' "$payload" |
-    (cd "$LANE" && env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u LANE_MAIL_ITEM \
+    (cd "${CALL_DIR:-$LANE}" && env -u CLAUDE_CONFIG_DIR -u CLAUDE_PROJECT_DIR -u CODEX_HOME -u LANE_MAIL_ITEM \
       -u ORCH_HANDOFF_CONTEXT_TOKENS -u ORCH_HANDOFF_HEADROOM_PCT -u ORCH_STATE_DIR \
       -u ORCH_OVERSEER_HEADROOM_PCT -u ORCH_OVERSEER_SUCCESSION -u TMUX -u TMUX_PANE \
       "LANES_HOME=$OFFLINE_HOME" "ORCH_LANES_FETCH_CMD=$NO_FETCH" \
-      "$@" bash "$CASE_HOOK" ${ARM_ARGS[@]+"${ARM_ARGS[@]}"}) >"$TMP_ROOT/stdout" 2>"$ERR_FILE" || RC=$?
+      ${CALL_ENV[@]+"${CALL_ENV[@]}"} "$@" bash "$CASE_HOOK" ${ARM_ARGS[@]+"${ARM_ARGS[@]}"}) >"$TMP_ROOT/stdout" 2>"$ERR_FILE" || RC=$?
 }
 
 stop() { # [ENV=VAL...]
@@ -232,7 +264,11 @@ echo "=== lane-mail-check ==="
 
 new_lane plain ken-1
 stop
-expect 0 - "a repository with no mailbox directory passes silently"
+expect 2 "lane-mail-check: mailbox-missing=$LANE/tmp/lane-mail" \
+  "a root a launch claimed with no mailbox directory is refused, never passed"
+unclaim
+stop
+expect 0 - "a repository with no claim and no mailbox directory passes silently"
 mkdir -p "$LANE/tmp/lane-mail/KEN-2"
 stop
 expect 0 - "a mailbox naming another item is not this branch's lane and passes silently"
@@ -249,7 +285,7 @@ stop "${CEILING[@]}"
 expect 0 - "a directory git reports no repository for holds no mailbox and passes silently"
 mkdir -p "$LANE/tmp/lane-mail/KEN-1"
 stop "${CEILING[@]}"
-expect 2 "lane-mail-check: git=rev-parse --show-toplevel" \
+expect 2 "lane-mail-check: git=rev-parse --show-toplevel --git-common-dir" \
   "a mailbox git can report no repository for is refused, never passed"
 
 new_lane empty ken-3
@@ -952,13 +988,13 @@ assert_eq "RC=$RC first=$(first_line) said=$(grep -c 'is there but did not answe
 # This hook's own directory gone while the turn ends, which a refresh that
 # replaces the hooks directory does: no install can be looked for at all, so
 # the gap takes the value no path can fill. The stub removes the directory on
-# the `--git-common-dir` read `lane_launched` makes, the call immediately
-# before the reader resolves and the first of its kind on a lane whose mailbox
+# the `--git-common-dir` read that resolves the lane's root, the one call of
+# its kind a run makes, and well ahead of the reader on a lane whose mailbox
 # holds nothing; bash goes on reading this hook from the handle it already has.
 new_handoff_lane handoff_unlocatable KEN-91
 GIT_SHIM="$TMP_ROOT/git-shim"
 mkdir -p "$GIT_SHIM"
-printf '#!/usr/bin/env bash\nif [ "${2:-}" = --path-format=absolute ]; then\n  rm -f -- "%s/lane-mail-check.sh"\n  rmdir -- "%s" 2>/dev/null || :\nfi\nexec %s "$@"\n' \
+printf '#!/usr/bin/env bash\ncase " $* " in *" --git-common-dir "*)\n  rm -f -- "%s/lane-mail-check.sh"\n  rmdir -- "%s" 2>/dev/null || :\n  ;;\nesac\nexec %s "$@"\n' \
   "$LANE/.claude/hooks" "$LANE/.claude/hooks" "$(command -v git)" > "$GIT_SHIM/git"
 chmod +x "$GIT_SHIM/git"
 write_transcript "$TRANSCRIPT" 1000
@@ -1140,6 +1176,7 @@ BELOW_MARK_LINE="oversee-succeed: context-below-mark tokens=100000 mark=500000 h
 # and a fleet state whose `.overseer` names this pane.
 new_overseer() { # NAME [PANE] [SERVER]
   new_lane "$1" main
+  unclaim
   plant_judge
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
   record_overseer "${2:-$OVERSEER_PANE}" "${3:-$OVERSEER_SERVER}"
@@ -1540,7 +1577,7 @@ assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" "a finished tool cal
 
 send KEN-30 'Stop pushing.' --halt
 HALT_ID=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/KEN-30/to-lane.jsonl")
-printf -v READ_HALT '%q inbox --item %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-30
+printf -v READ_HALT '%q inbox --item %q --root %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-30 "$LANE"
 tool halt
 expect 2 "lane-mail-check: halt=$HALT_ID" "an unread halt refuses the next tool call"
 assert_eq "directive=$(grep -cF 'Stop pushing.' "$ERR_FILE") command=$(grep -cxF -- "$READ_HALT" "$ERR_FILE")" \
@@ -1588,7 +1625,7 @@ for row in agent_id:KEN-36 agent_type:KEN-37; do
     "a subagent's call marked by $field leaves the directive unread for the lead's next call"
   send "$item" 'Stop again.' --halt
   SUB_HALT=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/$item/to-lane.jsonl")
-  printf -v SUB_READ '%q inbox --item %q' "$LANE/.claude/skills/orch/scripts/lane-mail" "$item"
+  printf -v SUB_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/orch/scripts/lane-mail" "$item" "$LANE"
   tool halt "$SUB_READ" "$field"
   expect 2 "lane-mail-check: halt=$SUB_HALT" \
     "a subagent's call marked by $field carrying the acknowledging command is refused while a halt stands"
@@ -1606,6 +1643,122 @@ for name in deliver halt; do
   expect 2 "lane-mail-$name: judge=$LANE/.claude/hooks/lane-mail-check.sh" \
     "the $name hook with no judge beside it refuses, never passes"
 done
+
+# The judges read the lane's own mailbox whatever checkout a call is made
+# from: a lane runs its post-merge steps from the main clone, which has no
+# mailbox of its own. Claude Code names the directory the session started in;
+# a harness that names none reaches the lane through the claim for the item its
+# brief set. With neither the call's own checkout answers, and the main clone
+# is no lane.
+new_worktree_lane from_main ken-95
+install_arms
+send KEN-95 'Hold the merge.' --halt
+HALT_95=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/KEN-95/to-lane.jsonl")
+CALL_DIR="$MAIN"
+# Each row: the variable the harness sets, the status, the keyed line, and
+# what names the lane. `NO_LANE=` sets nothing the hook reads.
+for row in "CLAUDE_PROJECT_DIR=$LANE|2|lane-mail-check: halt=$HALT_95|the directory the harness started in" \
+  "LANE_MAIL_ITEM=KEN-95|2|lane-mail-check: halt=$HALT_95|the claim for the brief's item" \
+  "NO_LANE=|0|-|nothing, so the main clone answers and is no lane"; do
+  CALL_ENV=("${row%%|*}")
+  rest=${row#*|}
+  want_rc=${rest%%|*}
+  rest=${rest#*|}
+  tool halt
+  expect "$want_rc" "${rest%%|*}" "a halt judge run from the main clone reads the lane through ${rest#*|}"
+done
+CALL_ENV=("CLAUDE_PROJECT_DIR=$LANE")
+tool halt
+ACK_95=$(sed -n 3p "$ERR_FILE")
+printf -v READ_95 '%q inbox --item %q --root %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-95 "$LANE"
+assert_eq "$ACK_95" "$READ_95" "the halt refusal names the lane's root in the command that reads it"
+(cd "$MAIN" && env -u CLAUDE_PROJECT_DIR bash -c "$ACK_95" >/dev/null)
+tool halt
+expect 0 - "that command run from the main clone reads the halt, and the next call passes"
+send KEN-95 'Rebase first.'
+tool deliver
+assert_eq "RC=$RC context=$(context_line)" "RC=0 context=PostToolUse lane-mail-check: unread=1" \
+  "a deliver judge run from the main clone hands the lane its directive"
+tool deliver
+assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" \
+  "and acknowledges it in the lane's own mailbox, so the next call carries nothing"
+CALL_DIR=""
+CALL_ENV=()
+
+# A root a launch claimed with no mailbox directory: every arm refuses it,
+# naming the claim, and the one command that restores the directory passes.
+new_lane claimed_no_mailbox ken-96
+install_arms
+CLAIM_96="$LANE/.git/lane-mail/ken-96"
+printf -v MKDIR_96 'mkdir -p -- %q' "$LANE/tmp/lane-mail"
+tool halt
+expect 2 "lane-mail-check: mailbox-missing=$LANE/tmp/lane-mail" \
+  "a claimed root with no mailbox directory refuses the next tool call"
+assert_eq "claim=$(grep -cF -- "$CLAIM_96" "$ERR_FILE") command=$(grep -cxF -- "$MKDIR_96" "$ERR_FILE")" \
+  "claim=1 command=1" "the refusal names the claim and the one command that restores the mailbox"
+tool halt "$MKDIR_96" agent_id
+assert_eq "RC=$RC first=$(first_line) command=$(grep -cxF -- "$MKDIR_96" "$ERR_FILE")" \
+  "RC=2 first=lane-mail-check: mailbox-missing=$LANE/tmp/lane-mail command=0" \
+  "a subagent's call carrying that command is refused and is never shown it"
+stop_active
+expect 2 "lane-mail-check: mailbox-missing=$LANE/tmp/lane-mail" \
+  "the continued turn is refused too: the lane clears it with one command"
+tool halt "$MKDIR_96"
+expect 0 - "the lead's call running that command passes"
+(cd "$LANE" && bash -c "$MKDIR_96")
+tool halt
+expect 0 - "once the directory stands the next call passes"
+unclaim
+rmdir "$LANE/tmp/lane-mail"
+tool halt
+expect 0 - "a root with neither a claim nor a mailbox directory passes a tool call silently"
+
+# The directory the harness started in dropped: the judge asks the call's cwd.
+mutant no-project-dir -e 's@^LANE_DIR=\${CLAUDE_PROJECT_DIR:-\.}$@LANE_DIR=.@'
+new_worktree_lane control_from_main ken-97
+install_arms "$MUTANT_PATH"
+send KEN-97 'Hold the merge.' --halt
+CALL_DIR="$MAIN"
+CALL_ENV=("CLAUDE_PROJECT_DIR=$LANE")
+tool halt
+expect 0 - "control: without the harness's directory a halt judge run from the main clone passes the call"
+# The root dropped from the reader's peek: the reader roots itself at the call's
+# cwd and reads the main clone.
+mutant peek-no-root -e 's@inbox --item "\$ITEM" --root "\$ROOT" --peek@inbox --item "$ITEM" --peek@'
+install_arms "$MUTANT_PATH"
+tool halt
+expect 0 - "control: without the root the reader's peek from the main clone finds nothing and passes the call"
+# The claim read dropped: LANE_MAIL_ITEM no longer reaches the lane's root.
+mutant no-claim-root -e 's@|| ROOT="\$BOUND"$@|| :@'
+install_arms "$MUTANT_PATH"
+CALL_ENV=("LANE_MAIL_ITEM=KEN-97")
+tool halt
+expect 0 - "control: without the claim read a harness naming no directory passes the call"
+# The read command written without the root: run from the main clone, it
+# reads the main clone and the halt stands.
+mutant ack-no-root -e 's@'"'"'%q inbox --item %q --root %q'"'"' "\$READER" "\$ITEM" "\$ROOT"@'"'"'%q inbox --item %q'"'"' "$READER" "$ITEM"@'
+install_arms "$MUTANT_PATH"
+CALL_ENV=("CLAUDE_PROJECT_DIR=$LANE")
+tool halt
+(cd "$MAIN" && env -u CLAUDE_PROJECT_DIR bash -c "$(sed -n 3p "$ERR_FILE")" >/dev/null 2>&1) || :
+tool halt
+expect 2 "lane-mail-check: halt=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/KEN-97/to-lane.jsonl")" \
+  "control: without the root in it the command run from the main clone leaves the halt standing"
+CALL_DIR=""
+CALL_ENV=()
+
+# The refusal replaced by a pass, and the command's pass removed.
+mutant no-mailbox-missing -e 's@^    refuse mailbox-missing "\$MAIL_ROOT"$@    exit 0@'
+new_lane control_no_mailbox ken-98
+install_arms "$MUTANT_PATH"
+tool halt
+expect 0 - "control: without its refusal a claimed root with no mailbox passes the call"
+mutant no-mailbox-pass -e 's@^    lead_runs "\$MAILBOX_COMMAND" && exit 0$@    :@'
+install_arms "$MUTANT_PATH"
+printf -v MKDIR_98 'mkdir -p -- %q' "$LANE/tmp/lane-mail"
+tool halt "$MKDIR_98"
+expect 2 "lane-mail-check: mailbox-missing=$LANE/tmp/lane-mail" \
+  "control: without its pass the one command that restores the mailbox is refused"
 
 # A condition the lane cannot clear without a tool call: before a tool call
 # it is reported and the call runs, where a fresh turn end refuses it.
@@ -1637,11 +1790,11 @@ tool deliver "git status" agent_id
 tool deliver
 assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" \
   "control: without the deliver check a subagent's call consumes the lead's directive"
-mutant lead-halt -e 's@^    if \[ "\$CALLER" = lead \]; then$@    if true; then@'
+mutant lead-halt -e 's@^  { \[ "\$ARM" = halt \] && \[ "\$CALLER" = lead \]; } || return 1$@  [ "$ARM" = halt ] || return 1@'
 new_lane control_sub_halt ken-35
 install_arms "$MUTANT_PATH"
 send KEN-35 'Halt the lead.' --halt
-printf -v SUB_READ '%q inbox --item %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-35
+printf -v SUB_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-35 "$LANE"
 tool halt "$SUB_READ" agent_id
 expect 0 - "control: without the halt check a subagent's call carrying the acknowledging command passes"
 
@@ -1656,7 +1809,7 @@ tool deliver
 assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" \
   "control: without the agent_type read a subagent's call consumes the lead's directive"
 send KEN-38 'Halt the lead.' --halt
-printf -v SUB_READ '%q inbox --item %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-38
+printf -v SUB_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-38 "$LANE"
 tool halt "$SUB_READ" agent_type
 expect 0 - "control: without the agent_type read a subagent's call carrying the acknowledging command passes"
 
@@ -1675,7 +1828,7 @@ mutant no-ack-command -e 's@"\$ACK_COMMAND" "\$HALT_TEXT"@"" "$HALT_TEXT"@'
 new_lane control_ack_command ken-41
 install_arms "$MUTANT_PATH"
 send KEN-41 'Stop pushing.' --halt
-printf -v ACK_READ '%q inbox --item %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-41
+printf -v ACK_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-41 "$LANE"
 tool halt
 assert_eq "key=$(first_line | cut -d= -f1) command=$(grep -cxF -- "$ACK_READ" "$ERR_FILE")" \
   "key=lane-mail-check: halt command=0" \
@@ -1943,6 +2096,7 @@ expect 2 "lane-mail-check: context=" \
 # harness whose own install has no orch skill, writes a keyed line at every
 # turn end of every session in the checkout.
 new_lane control_not_a_lane main
+unclaim
 rm -f -- "${LANE:?}/.claude/skills/orch" "${LANE:?}/.agents/skills/orch/scripts"
 SILENT_READER="$LANE/.agents/skills/orch/scripts/lane-mail"
 # shellcheck disable=SC2046
