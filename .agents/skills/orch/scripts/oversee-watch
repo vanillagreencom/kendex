@@ -326,11 +326,13 @@ Options:
                       is the one `oversee-succeed` restarted for this same
                       pane after a self-succession, or serves a pane tmux no
                       longer lists: that watch is stopped and replaced, under
-                      a watch-taken-over note. Every start then prints, under
-                      a watch-replayed note, and removes oversee-watch.log and
-                      oversee-watch.err beside the state: what a restarted
-                      watch printed where no session read it, and what the
-                      restart itself said
+                      a watch-taken-over note. Every start but a succession's
+                      then prints, under a watch-replayed note, and removes
+                      oversee-watch.log and oversee-watch.err beside the
+                      state: what a restarted watch printed where no session
+                      read it, and what the restart itself said. A watch a
+                      succession started writes those two files, so it never
+                      prints or removes them
   --state PATH        the oversee workflow-state file open-terminal records
                       every lane in (`workflow-state path oversee`), re-read
                       before every loop of the run and, in repeat mode,
@@ -533,7 +535,8 @@ ow_message() { # REASON FIELD=VALUE...
     host-resolve-failed) text='lane-host could not say which host the hosted lanes live on, so none of them is read. Its own words follow.' ;;
     session-resolved) text='The tmux session every bare lane window name is read in, resolved once while the pane that started this watch still exists.' ;;
     session-unresolved) text='A bare lane window name is carried and tmux named no session for this watch, so the name could resolve through whichever session tmux picks. Start the watch from the overseer pane, or record the window as SESSION:WINDOW.' ;;
-    watch-running) text='Another watch already runs on this fleet state, serving a pane tmux still lists, and two would read one overseer mailbox and each replay what the other drained. Handle its events, or stop it with kill on the named pid, which stops its pass too, and start again.' ;;
+    watch-running) text='Another watch already runs on this fleet state, and this start could not show its pane gone: tmux lists it, or this start runs outside tmux, the record names no pane, or the pane list could not be read. Two watches would read one overseer mailbox and each replay what the other drained. Handle its events, or stop it with kill on the named pid, which stops its pass too, and start again.' ;;
+    watch-replay-failed) text='The output a restarted watch left beside the fleet state could not be printed or removed, so the start stops rather than lose it or print it twice. The path names the file.' ;;
     watch-record-failed) text='The watch could not write its own record beside the fleet state, so a second watch could not be refused and a succession could not restart this one.' ;;
     watch-taken-over) text='A live watch on this fleet state was stopped and this one runs in its place. The reason field says why it could be: succession is the watch oversee-succeed restarted for this pane, pane-gone one whose pane tmux no longer lists.' ;;
     watch-replayed) text='A watch oversee-succeed restarted wrote output no session read, and the restart wrote how it went. Both follow, stdout here and stderr on stderr, and are then removed, so no event it reported and no refusal it ended on is lost.' ;;
@@ -1321,12 +1324,18 @@ repeat_stop() { # STATUS
 # and replaced. One is the watch a succession restarted for THIS pane: that
 # start is the successor running its own watch, as oversee.md § 4 has every
 # overseer do. The other is a watch whose pane tmux no longer lists: it serves
-# an overseer that is gone, which a succession whose restart never ran leaves
-# behind. Output a restarted watch wrote where no session reads it, and what
-# the restart itself said, is printed next and removed, whether or not that
-# watch still ran, so nothing it reported or refused on is lost. The pid
-# recorded is this process's own, whatever launched it, so a stop reaches the
-# loop and never a shell that only started it.
+# an overseer that is gone. That is the watch a succession hands over, which
+# the restarted watch's own start stops here, and the one a successor meets
+# where that restart never ran; this function is the one place a live watch is
+# replaced. The pid recorded is this process's own, whatever launched it, so a
+# stop reaches the loop and never a shell that only started it.
+#
+# oversee-watch.log and .err have one writer: a watch a succession started,
+# through its own stdout and stderr. A start of that origin is reading files it
+# writes, so it never prints or removes them. Any other start gets here only
+# once their writer is stopped above or gone, a live one being refused, and
+# prints and removes them, so nothing a restarted watch reported where no
+# session read it, and no refusal it ended on, is lost.
 watch_claim() { # ARGV...
   local why=""
   if watch_pid_live "$STATE_FILE"; then
@@ -1345,11 +1354,17 @@ watch_claim() { # ARGV...
   trap 'watch_pid_release "$STATE_FILE"' EXIT
   trap 'repeat_stop 143' TERM
   trap 'repeat_stop 130' INT
-  if [[ -s "$WATCH_LOG_FILE" || -s "$WATCH_ERR_FILE" ]]; then
+  if [[ "${OVERSEE_WATCH_ORIGIN:-hand}" != succession ]] \
+     && [[ -s "$WATCH_LOG_FILE" || -s "$WATCH_ERR_FILE" ]]; then
     ow_message watch-replayed "log=$WATCH_LOG_FILE" "err=$WATCH_ERR_FILE" >&2
-    [[ ! -f "$WATCH_LOG_FILE" ]] || cat -- "$WATCH_LOG_FILE"
-    [[ ! -f "$WATCH_ERR_FILE" ]] || cat -- "$WATCH_ERR_FILE" >&2
-    rm -f -- "${WATCH_LOG_FILE:?}" "${WATCH_ERR_FILE:?}"
+    if [[ -f "$WATCH_LOG_FILE" ]]; then
+      cat -- "$WATCH_LOG_FILE" || die watch-replay-failed "" "path=$WATCH_LOG_FILE"
+    fi
+    if [[ -f "$WATCH_ERR_FILE" ]]; then
+      cat -- "$WATCH_ERR_FILE" >&2 || die watch-replay-failed "" "path=$WATCH_ERR_FILE"
+    fi
+    rm -f -- "${WATCH_LOG_FILE:?}" "${WATCH_ERR_FILE:?}" \
+      || die watch-replay-failed "" "path=$WATCH_LOG_FILE"
   fi
 }
 

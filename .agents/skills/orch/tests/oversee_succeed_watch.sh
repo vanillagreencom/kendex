@@ -114,7 +114,10 @@ run_succeed() {
 # The stand-in watch: it records itself as the real loop does, with its words
 # before `--`, and appends one `started` line, with its pane, origin, account,
 # directory and arguments, to watch.log, and one `stopped` line when it is
-# stopped.
+# stopped. Started by a succession, it first stops the live watch it replaces,
+# as the real start does for a watch whose pane is gone (that rule is
+# oversee_watch_lifecycle.sh's); where norecord exists, such a start ends
+# before it records anything, a restart that never comes up.
 FIXTURE_WATCH="$TMP_ROOT/fixture/oversee-watch"
 cat > "$FIXTURE_WATCH" <<EOF
 #!/usr/bin/env bash
@@ -129,6 +132,10 @@ for arg in "\$@"; do
   [[ "\$prev" != --state ]] || state="\$arg"
   prev="\$arg"
 done
+if [[ "\${OVERSEE_WATCH_ORIGIN:-hand}" == succession ]]; then
+  [[ ! -f "$TMP_ROOT/norecord" ]] || exit 0
+  ! watch_pid_live "\$state" || watch_stop "\$WATCH_PID"
+fi
 printf 'started %s pane=%s origin=%s lane=%s cwd=%s argv=%s\n' "\$\$" "\${TMUX_PANE:-none}" \\
   "\${OVERSEE_WATCH_ORIGIN:-hand}" "\${CLAUDE_CONFIG_DIR:-none}" "\$PWD" "\$*" >> "$TMP_ROOT/watch.log"
 watch_pid_write "\$state" "\${TMUX_PANE:-none}" "\${OVERSEE_WATCH_ORIGIN:-hand}" "\$0" "\${base[@]}"
@@ -265,6 +272,43 @@ EOF
 else
   printf '  skip  the process-group kill rows need setsid\n'
 fi
+
+# A restart that fails is a notice the next start prints, and the succession
+# still exits 0 and starts nothing. One row per step that can fail once the
+# close has happened: the recorded command gone, and a restarted watch that
+# never records itself.
+wait_failed() { # TRIES
+  FAILED_LINE=""
+  for _ in $(seq 1 "$1"); do
+    FAILED_LINE="$(grep '^oversee-succeed: watch-restart-failed ' "$WATCH_ERR" 2>/dev/null || true)"
+    [[ -z "$FAILED_LINE" ]] || break
+    sleep 0.1
+  done
+}
+new_caller
+fresh_output
+start_watch
+rm -f -- "${TMP_ROOT:?}/work/tmp/oversee-watch.argv"
+STARTED="$(grep -c '^started ' "$TMP_ROOT/watch.log")"
+run_succeed
+wait_failed 100
+check "a restart with no recorded command is a notice beside the fleet state, and starts nothing" \
+  "$RC|$FAILED_LINE|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
+  "0|oversee-succeed: watch-restart-failed step=argv pid=$OLD|$STARTED"
+watch_stop "$OLD" || true
+
+touch "$TMP_ROOT/norecord"
+new_caller
+fresh_output
+start_watch
+STARTED="$(grep -c '^started ' "$TMP_ROOT/watch.log")"
+run_succeed
+wait_failed 300
+rm -f -- "${TMP_ROOT:?}/norecord"
+check "a restarted watch that never records itself is a notice beside the fleet state" \
+  "$RC|$FAILED_LINE|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
+  "0|oversee-succeed: watch-restart-failed step=start log=$(cd "$TMP_ROOT/work/tmp" && pwd -P)/oversee-watch.err|$STARTED"
+watch_stop "$OLD" || true
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

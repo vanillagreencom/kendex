@@ -157,7 +157,8 @@ EOF
 # a lane's fixtures are named for the lane whichever way the watch spells it.
 # session-fail is the calling pane gone, and there a `list-windows` naming no
 # session answers the session tmux falls back to, windows-fallback.txt, empty
-# when absent;
+# when absent, and a bare lane target reads that session's fixtures, named
+# fallback-<lane>, never the recorded lane's;
 # pane-<lane>.txt is a lane's screen;
 # cmd-<lane>.txt is the pane's foreground command (#{pane_current_command}) and
 # panepid-<lane>.txt its #{pane_pid} (default 9000), returned together as the
@@ -180,6 +181,10 @@ current_session() { if [[ -f "$STUB_DIR/session.txt" ]]; then cat "$STUB_DIR/ses
 lane_name() {
   local t="${1#=}" cur
   cur="$(current_session)"
+  if [[ -f "$STUB_DIR/session-fail" && "$1" != *:* && "$1" != %* ]]; then
+    printf 'fallback-%s\n' "$1"
+    return 0
+  fi
   [[ "$t" != "$cur:"* ]] || t="${t#"$cur":}"
   printf '%s\n' "$t"
 }
