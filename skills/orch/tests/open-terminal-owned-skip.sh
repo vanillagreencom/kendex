@@ -395,7 +395,11 @@ assert_not_contains "$(cat "$TMP_ROOT/fresh.cmd")" "Resume the orch workflow" "t
 # resume form, and the fresh brief a relaunch falls back to.
 OT_CAPTURE="$TMP_ROOT/launch-codex.cmd" LANES_HOME="$SESSION_HOME" run_case launch-codex -- --harness codex CC-7
 for _ in {1..10000}; do [[ -f "$TMP_ROOT/launch-codex.cmd" ]] && break; done
-for capture in launch-codex resume-codex fresh; do
+# Launch flags that already name the setting do not add a second copy.
+OT_CAPTURE="$TMP_ROOT/launch-codex-flagged.cmd" LANES_HOME="$SESSION_HOME" run_case launch-codex-flagged -- \
+  --harness codex --launch-flags "-c check_for_update_on_startup=false" CC-10
+for _ in {1..10000}; do [[ -f "$TMP_ROOT/launch-codex-flagged.cmd" ]] && break; done
+for capture in launch-codex launch-codex-flagged resume-codex fresh; do
   assert_eq "$(occurrences "$(cat "$TMP_ROOT/$capture.cmd")" "$CODEX_SETTINGS")" "1" \
     "a codex command ($capture) carries check_for_update_on_startup=false exactly once"
 done

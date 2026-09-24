@@ -1408,21 +1408,18 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # the launch directory and the lane starts on a different model, or none.
   # Trailing space only when flags are present, so an unflagged launch renders
   # the exact command a human would type rather than a double-spaced one.
-  # The harness's launch-only settings lead, ahead of the caller's flags, on
-  # every command built here and never inside a --cmd template, which returned
-  # above as the caller's whole command.
-  local flags="" settings
-  settings="$(launch_choice_settings "$HARNESS")" || return 1
-  if [[ -n "$settings$LAUNCH_FLAGS" ]]; then
-    local -a flag_tokens=()
-    # read -a splits on IFS without globbing; a bare `for tok in $LAUNCH_FLAGS`
-    # would expand the very brackets this quoting exists to protect.
-    read -r -a flag_tokens <<<"$settings $LAUNCH_FLAGS"
-    local tok
-    for tok in ${flag_tokens[@]+"${flag_tokens[@]}"}; do
-      flags+="'$tok' "
-    done
-  fi
+  # The harness's launch-only settings lead, once, on every command built here
+  # and never inside a --cmd template, which returned above as the caller's
+  # whole command.
+  local flags="" tok
+  local -a flag_tokens=()
+  # read -a splits on IFS without globbing; a bare `for tok in $LAUNCH_FLAGS`
+  # would expand the very brackets this quoting exists to protect.
+  read -r -a flag_tokens <<<"$LAUNCH_FLAGS"
+  launch_choice_lead_settings "$HARNESS" ${flag_tokens[@]+"${flag_tokens[@]}"}
+  for tok in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
+    flags+="'$tok' "
+  done
   # Both delivered lines obey the same shell-inert rule as the codex arms above.
   # A wake runs its line in print mode and exits; a relaunch resumes an
   # interactive session that is already mid-workflow, so the resumed command

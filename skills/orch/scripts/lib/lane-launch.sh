@@ -164,17 +164,6 @@ launch_choice_permission_spellings() { # HARNESS
   printf '%s\n' "$spellings"
 }
 
-# The launch-only settings words every command built for harness $1 carries.
-# Empty where the row uses the `-` sentinel or the table names no such harness.
-launch_choice_settings() { # HARNESS
-  local row words
-  row="$(launch_choice_row "$1")"
-  [[ -n "$row" ]] || return 0
-  IFS='|' read -r _ _ _ _ _ _ _ words <<<"$row"
-  [[ "$words" != - ]] || return 0
-  printf '%s\n' "$words"
-}
-
 # The permission spellings whose full bypass meaning transfers to another
 # harness. Empty where the row has no transfer-safe spelling.
 launch_choice_transfer_permission_spellings() { # HARNESS
@@ -404,48 +393,32 @@ launch_choice_permission_write() { # HARNESS
   fi
 }
 
-# The flags of a launch on HARNESS with that harness's launch settings taken
-# out, left in LAUNCH_CHOICE_KEPT in their original order. A settings sequence
-# is taken only where it stands whole, token for token as the row writes it.
-#
-# A launcher writes the settings of the harness it builds for, so a caller's
-# flags handed on to such a launch keep none of their own: the same harness
-# would carry them twice, and another harness would be handed a config word
-# its own launch form may not have at all.
-launch_choice_settings_strip() { # HARNESS FLAG...
-  local settings i j n m whole
-  local -a words=() rest=() kept=()
-  settings="$(launch_choice_settings "$1")" || return 1
-  read -r -a words <<<"$settings"
+# The words a launcher builds for HARNESS, left in LAUNCH_CHOICE_KEPT: that
+# harness's launch settings first, then WORD... in order with every row's
+# settings run taken out wherever it stands whole. A caller's flags handed on
+# keep none of their own: the same harness would carry them twice, and another
+# would be handed a config word its launch form may not have. Runs are matched
+# newline-bounded, since a caller's flag word can hold a space.
+launch_choice_lead_settings() { # HARNESS WORD...
+  local harness="$1" nl=$'\n' lead="" row settings words line
   shift
-  rest=("$@")
-  n=${#rest[@]}
-  m=${#words[@]}
-  i=0
-  while (( i < n )); do
-    whole=0
-    if (( m > 0 && i + m <= n )); then
-      whole=1
-      j=0
-      while (( j < m )); do
-        [[ "${rest[i+j]}" == "${words[j]}" ]] || { whole=0; break; }
-        j=$((j + 1))
-      done
-    fi
-    if (( whole == 1 )); then
-      i=$((i + m))
-      continue
-    fi
-    kept+=("${rest[i]}")
-    i=$((i + 1))
+  words="$nl$(printf '%s\n' "$@")$nl"
+  for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
+    settings="${row##*|}"
+    [[ "$settings" != - ]] || continue
+    settings="${settings// /$nl}"
+    [[ "${row%%|*}" != "$harness" ]] || lead="$settings"
+    while [[ "$words" == *"$nl$settings$nl"* ]]; do words="${words/"$nl$settings$nl"/$nl}"; done
   done
-  LAUNCH_CHOICE_KEPT=(${kept[@]+"${kept[@]}"})
+  LAUNCH_CHOICE_KEPT=()
+  while IFS= read -r line; do
+    [[ -z "$line" ]] || LAUNCH_CHOICE_KEPT+=("$line")
+  done <<<"$lead$words"
 }
 
 # The flags of a launch on HARNESS with that harness's own MODEL and EFFORT
-# words and its launch settings taken out, left in LAUNCH_CHOICE_KEPT. With
-# `--permissions`, permission words are taken out too. What is left stays in
-# its original order.
+# words taken out, left in LAUNCH_CHOICE_KEPT. With `--permissions`, permission
+# words are taken out too. What is left stays in its original order.
 #
 # The inverse of launch_choice_write over the same row, and the reason it
 # exists: a caller hands its flags on to a launch it did not write, and those
@@ -470,7 +443,7 @@ launch_choice_settings_strip() { # HARNESS FLAG...
 # refuses rather than guessing.
 LAUNCH_CHOICE_KEPT=()
 launch_choice_strip() { # HARNESS [--permissions] FLAG...
-  local harness="$1" row attach permission_specs word tok drop i n strip_permissions=0
+  local row attach permission_specs word tok drop i n strip_permissions=0
   local -a spellings=() rest=()
   LAUNCH_CHOICE_KEPT=()
   row="$(launch_choice_row "$1")"
@@ -525,7 +498,6 @@ launch_choice_strip() { # HARNESS [--permissions] FLAG...
     fi
     i=$((i + drop))
   done
-  launch_choice_settings_strip "$harness" ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}
 }
 
 # A value the pane's own shell reads back as itself.
