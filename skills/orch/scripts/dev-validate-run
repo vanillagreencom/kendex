@@ -51,6 +51,10 @@
 #       process group. lane-close calls it for a local lane. Prints one line naming how
 #       many of each were still running:
 #         state=stopped units=N groups=N
+#   dev-validate-run --record --run-dir PATH
+#       Print the run's record, read-only: the mode it ran under and its
+#       verdict. The one reader of the run directory for anything outside this
+#       script; dev-return-write takes a receipt's mode and verdict from it.
 #   dev-validate-run --child --run-dir PATH
 #       Internal. The detached process the start path launches.
 #
@@ -77,6 +81,11 @@
 #   state=running elapsed-secs=N cap-secs=N run-dir=…
 #   state=timeout elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
 #   state=lost elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
+#   validate-mode=full|range verdict=pass|FAILING|unfinished      (--record)
+#
+# --record's verdict is pass only for a sentinel of guard-exit=0, FAILING for
+# any other exit, and unfinished where no sentinel exists: a run still going,
+# timed out or lost. Only pass is a passing validation.
 #
 # state=lost is the detached child gone with no verdict recorded: a host or
 # low-memory kill, or a launch that never ran. It is a failed validation, and it
@@ -129,7 +138,8 @@ die() {
       missing-value) printf 'The option requires a value.\n' ;;
       required) printf 'The required option is absent or empty.\n' ;;
       unknown-argument) printf 'The argument is not supported.\n' ;;
-      mode-conflict) printf 'Use one of --worktree, --wait, --stop or --child.\n' ;;
+      mode-conflict) printf 'Use one of --worktree, --wait, --stop, --record or --child.\n' ;;
+      record-unreadable) printf 'The start record names no validation mode of full or range.\n' ;;
       option-unused) printf 'The option has no meaning in this mode and would be silently dropped.\n' ;;
       repeated) printf 'The option was given twice, and one of its values would be silently dropped.\n' ;;
       not-directory) printf 'The path is not a directory.\n' ;;
@@ -266,6 +276,7 @@ while (( $# > 0 )); do
     --wait)     set_mode "$1" wait; shift ;;
     --stop)     set_mode "$1" stop; shift ;;
     --child)    set_mode "$1" child; shift ;;
+    --record)   set_mode "$1" record; shift ;;
     --run-dir)  need "$1" $# "${2:-}"; once "$1" "$run_dir_given"; run_dir_given=true; run_dir="$2"; shift 2 ;;
     --poll)     need "$1" $# "${2:-}"; once "$1" "$poll_given"; poll_given=true; poll="$2"; shift 2 ;;
     --budget)   need "$1" $# "${2:-}"; once "$1" "$budget_given"; budget_given=true; budget="$2"; shift 2 ;;
@@ -300,7 +311,7 @@ case "$mode" in
       esac
     fi
     ;;
-  wait|child)
+  wait|child|record)
     [[ "$worktree_given" == false ]] || die mode-conflict "option=--worktree" "mode=$mode"
     [[ "$poll_given" == false ]] || die option-unused "option=--poll" "mode=$mode"
     [[ "$validate_mode_given" == false ]] || die option-unused "option=--validate-mode" "mode=$mode"
@@ -310,7 +321,7 @@ case "$mode" in
     [[ -d "$run_dir" ]] || die not-directory "path=$run_dir"
     [[ "$mode" != wait ]] || check_seconds option=--budget "$budget"
     ;;
-  *) die required options=--worktree,--wait,--stop,--child ;;
+  *) die required options=--worktree,--wait,--stop,--record,--child ;;
 esac
 
 # --- Start: resolve the bound, record it, launch the run detached ------------
@@ -492,8 +503,38 @@ if [[ "$mode" == child ]]; then
   exit 0
 fi
 
-# --- Wait: poll the sentinel, report the verdict it carries ------------------
+# The exit status the sentinel records, in SENTINEL_EXIT, and its whole line
+# in SENTINEL_LINE. Every reader of the sentinel goes through here, so it has
+# one parse, and a refusal here ends the script rather than a subshell.
+SENTINEL_EXIT=""
+SENTINEL_LINE=""
+read_sentinel() {
+  SENTINEL_LINE="$(cat "$run_dir/exit")"
+  SENTINEL_EXIT="${SENTINEL_LINE#guard-exit=}"
+  SENTINEL_EXIT="${SENTINEL_EXIT%% *}"
+  [[ "$SENTINEL_EXIT" =~ ^[0-9]+$ ]] || die sentinel-unreadable "path=$run_dir/exit" "line=$SENTINEL_LINE"
+}
+
 [[ -f "$run_dir/start" ]] || die no-run "path=$run_dir/start"
+
+# --- Record: the run's mode and verdict, read-only ---------------------------
+if [[ "$mode" == record ]]; then
+  record_mode="$(start_field "$run_dir/start" validate-mode)"
+  case "$record_mode" in
+    full|range) ;;
+    *) die record-unreadable "path=$run_dir/start" "validate-mode=$record_mode" ;;
+  esac
+  record_verdict=unfinished
+  if [[ -s "$run_dir/exit" ]]; then
+    read_sentinel
+    record_verdict=FAILING
+    [[ "$SENTINEL_EXIT" != "0" ]] || record_verdict=pass
+  fi
+  printf 'validate-mode=%s verdict=%s\n' "$record_mode" "$record_verdict"
+  exit 0
+fi
+
+# --- Wait: poll the sentinel, report the verdict it carries ------------------
 if ! run_start="$(start_field "$run_dir/start" start)" \
   || ! cap_secs="$(start_field "$run_dir/start" cap-secs)" \
   || ! poll="$(start_field "$run_dir/start" poll-secs)"; then
@@ -535,10 +576,9 @@ call_deadline=$(( $(date +%s) + 10#$budget ))
 run_deadline=$(( 10#$run_start + 10#$cap_secs ))
 while :; do
   if [[ -s "$run_dir/exit" ]]; then
-    sentinel="$(cat "$run_dir/exit")"
-    guard_exit="${sentinel#guard-exit=}"
-    guard_exit="${guard_exit%% *}"
-    [[ "$guard_exit" =~ ^[0-9]+$ ]] || die sentinel-unreadable "path=$run_dir/exit" "line=$sentinel"
+    read_sentinel
+    sentinel="$SENTINEL_LINE"
+    guard_exit="$SENTINEL_EXIT"
     verdict=pass
     [[ "$guard_exit" == "0" ]] || verdict=FAILING
     printf 'state=done %s validate=%s run-dir=%s log=%s\n' \

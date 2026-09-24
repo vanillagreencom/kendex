@@ -285,7 +285,7 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR]] [--validate-note [TEXT]] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
 ```
 
-`[RUN_DIR]` is the `run-dir=` value `dev-validate-run` printed; omit the flag only when validation failed before any run started.
+`[RUN_DIR]` is the `run-dir=` value `dev-validate-run` printed, and `--validate` must agree with that run's verdict; omit the flag only when validation failed before any run started.
 
 One `--qa-label` per § 8 signal, none if nothing triggered.
 

@@ -217,6 +217,16 @@ assert_eq "$(sed 's/ at=.*$//' "$timeout_dir/exit")" "guard-exit=124" \
   "the sentinel file carries the guard-exit line on its own"
 assert_eq "$(sed -n 's/^guard-exit=[0-9]* at=\(.*\)$/\1/p' "$timeout_dir/exit" | grep -c -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')" "1" \
   "and one UTC timestamp beside it"
+run_script "$RUN" --record --run-dir "$timeout_dir"
+assert_eq "$OUT rc=$RC" "validate-mode=full verdict=FAILING rc=0" \
+  "the record of a run killed at its bound reads FAILING, never pass" "$ERR"
+
+# Control: a record that reads every finished run as a pass hands the receipt a
+# pass for that same killed run.
+mutant mutant-record-pass 'record_verdict=FAILING' 'record_verdict=pass'
+run_script "$MUTANT" --record --run-dir "$timeout_dir"
+assert_eq "$OUT" "validate-mode=full verdict=pass" \
+  "control: with the sentinel's status unread the killed run's record reads pass" "$ERR"
 
 # --- The command's output goes to the log, never into the verdict -------------
 proj_log="$(make_proj proj-log "echo first; echo second >&2; exit 0" 20)"
@@ -327,6 +337,8 @@ for row in "${MODE_ROWS[@]}"; do
   assert_eq "$(verdict_of "$OUT") $(cat "$mode_dir/log")" "state=done guard-exit=0 validate=pass $want_log" "$label" "$ERR"
   assert_eq "$(start_line "$mode_dir" validate-mode) base=$got_base" "$want_mode base=$want_base" \
     "$label — the start record names the mode and base that ran" "$ERR"
+  run_script "$RUN" --record --run-dir "$mode_dir"
+  assert_eq "$OUT" "validate-mode=$want_mode verdict=pass" "$label — the run's record names that mode and the pass" "$ERR"
 done
 # The last range run's started line keeps the shape every waiter reads; the
 # class fields that close it are the classifier rows' to pin.
@@ -396,6 +408,9 @@ assert_eq "$(timed_line "$OUT")" "state=running elapsed-secs=N cap-secs=90 run-d
 assert_eq "$RC" "3" "and exits 3, which is the instruction to poll again" "$ERR"
 assert_eq "$([[ "$slow_elapsed" -le 5 ]] && echo within || echo "over:$slow_elapsed")" "within" \
   "and it returns on its own budget rather than a whole poll interval past it"
+run_script "$RUN" --record --run-dir "$slow_dir"
+assert_eq "$OUT rc=$RC" "validate-mode=full verdict=unfinished rc=0" \
+  "the record of a run still going reads unfinished, never pass" "$ERR"
 kill -KILL -- "-$started" 2>/dev/null || kill -KILL "$started" 2>/dev/null || true
 wait "$started" 2>/dev/null || true
 
@@ -474,7 +489,7 @@ assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: option-unused option=--bud
 assert_eq "$RC" "2" "and exits 2"
 
 run_script "$RUN" --poll 1
-assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: required options=--worktree,--wait,--stop,--child" \
+assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: required options=--worktree,--wait,--stop,--record,--child" \
   "a call naming no mode is refused"
 assert_eq "$RC" "2" "and exits 2"
 
@@ -629,6 +644,9 @@ MODE_REFUSALS=(
   "a base that names no commit is refused, naming it|--worktree $proj_refuse --validate-mode range --base no-such-ref|dev-validate-run: invalid-base base=no-such-ref"
   "a validation mode handed to the waiter is refused|--wait --run-dir $stale --validate-mode range|dev-validate-run: option-unused option=--validate-mode mode=wait"
   "a base handed to the waiter is refused|--wait --run-dir $stale --base HEAD|dev-validate-run: option-unused option=--base mode=wait"
+  "a record of a directory no run started is refused|--record --run-dir $TMP_ROOT/unstarted|dev-validate-run: no-run path=$TMP_ROOT/unstarted/start"
+  "a record whose start names no mode is refused|--record --run-dir $stale|dev-validate-run: record-unreadable path=$stale/start validate-mode="
+  "a call budget handed to the record is refused|--record --run-dir $stale --budget 5|dev-validate-run: option-unused option=--budget mode=record"
 )
 for row in "${MODE_REFUSALS[@]}"; do
   IFS='|' read -r label args want <<<"$row"

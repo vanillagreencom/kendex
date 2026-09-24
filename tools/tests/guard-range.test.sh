@@ -165,6 +165,20 @@ else
   bad "control: the render rule could not be pointed back at the tracked-only diff in a guard copy"
 fi
 back_to_base
+printf 'echo drifted\n' >>"$R/skills/demo/scripts/demo.sh"
+run_range "$BASE"
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: missing-render=1"* ]] && [[ "$OUT" == *"skills/demo/scripts/demo.sh -> .agents/skills/demo/scripts/demo.sh"* ]] \
+  && ok "a source changed since the base without its render reds the range, naming the pair" \
+  || bad "a source changed since the base without its render reds the range, naming the pair" "rc=$RC out=$OUT"
+if mutant_guard 's/^  render_changed=\$touched$/  render_changed=""/'; then
+  run_range "$BASE" "$MUTANT_TOOLS/guard"
+  [[ "$OUT" != *"guard: missing-render="* ]] \
+    && ok "control: with the range's render rule reading nothing the unsynced source passes it" \
+    || bad "control: with the range's render rule reading nothing the unsynced source passes it" "rc=$RC out=$OUT"
+else
+  bad "control: the range's render rule could not be emptied in a guard copy"
+fi
+back_to_base
 printf '%s\n' 'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' drop(tmp);' '}' >"$R/crates/core/tests/untracked_temp.rs"
 run_range "$BASE"
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: unrooted-fixture=1"* ]] && [[ "$OUT" == *"untracked_temp.rs:2"* ]] \

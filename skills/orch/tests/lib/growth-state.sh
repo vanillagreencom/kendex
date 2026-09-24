@@ -59,12 +59,14 @@ growth_round_write() {
   env ORCH_STATE_DIR="$worktree/tmp" "$writer" "$@"
 }
 
-# validate_run_dir DIR MODE — a dev-validate-run run directory as
-# dev-return-write reads it: a start record whose validate-mode= line names
-# MODE, the one field a receipt takes from the run. dev_validate_run.sh pins the
-# record a real run writes. Prints DIR.
+# validate_run_dir DIR MODE [EXIT] — a finished dev-validate-run run directory
+# for a receipt to name: a start record under MODE and a sentinel recording
+# EXIT, 0 by default; EXIT "none" leaves the run unfinished. The receipt reads
+# it back through dev-validate-run --record, which dev_validate_run.sh pins
+# against runs the script itself wrote. Prints DIR.
 validate_run_dir() {
   mkdir -p "$1"
   printf 'validate-mode=%s\n' "$2" > "$1/start"
+  [[ "${3:-0}" == none ]] || printf 'guard-exit=%s at=2026-01-01T00:00:00Z\n' "${3:-0}" > "$1/exit"
   printf '%s\n' "$1"
 }
