@@ -36,6 +36,13 @@ pub const LOCAL_SOURCE_NAME: &str = "local";
 /// refresh keeps the links and the layout right and never rewrites a byte
 /// the person owns.
 pub const INPLACE_SOURCE_NAME: &str = "in-place";
+
+/// Whether a source name is one of the reserved ones, which read from the
+/// scope's own roots whatever a declaration under that name says.
+pub fn is_reserved_source(name: &str) -> bool {
+    name == LOCAL_SOURCE_NAME || name == INPLACE_SOURCE_NAME
+}
+
 /// The directory that source reads, inside a project.
 pub const INPLACE_SOURCE_DIR: &str = ".agents";
 /// The manifest file a scope carries.

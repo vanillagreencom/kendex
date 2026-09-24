@@ -4,7 +4,7 @@
 //! guess.
 
 use crate::error::{CoreError, Result};
-use crate::manifest::{DEFAULT_SOURCE_NAME, LOCAL_SOURCE_NAME, Manifest, SourceDecl};
+use crate::manifest::{DEFAULT_SOURCE_NAME, Manifest, SourceDecl};
 
 /// Map a CLI source argument to a declared source name, declaring it when
 /// undeclared. References parse through [`crate::source_ref::parse_typed`], and a
@@ -14,10 +14,7 @@ pub(super) fn ensure_source(manifest: &mut Manifest, requested: Option<&str>) ->
     let Some(requested) = requested else {
         return default_source(manifest);
     };
-    if requested == LOCAL_SOURCE_NAME
-        || requested == crate::manifest::INPLACE_SOURCE_NAME
-        || manifest.sources.contains_key(requested)
-    {
+    if crate::manifest::is_reserved_source(requested) || manifest.sources.contains_key(requested) {
         return Ok(requested.to_owned());
     }
     let decl = match crate::source_ref::parse_typed(requested)? {

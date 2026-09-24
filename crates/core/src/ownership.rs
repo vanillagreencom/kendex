@@ -122,9 +122,7 @@ pub fn find(
             if !matches_name(declared.kind, &declared.name, name) {
                 continue;
             }
-            if declared.decl.source == crate::manifest::LOCAL_SOURCE_NAME
-                || declared.decl.source == crate::manifest::INPLACE_SOURCE_NAME
-            {
+            if crate::manifest::is_reserved_source(&declared.decl.source) {
                 candidates.push(Evidence {
                     kind: Some(declared.kind),
                     source: declared.decl.source.clone(),

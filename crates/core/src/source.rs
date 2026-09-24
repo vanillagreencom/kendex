@@ -346,7 +346,7 @@ pub fn resolve_at(
     let Some(rev) = rev else {
         return resolve(env, scope, name, manifest);
     };
-    if name == LOCAL_SOURCE_NAME || name == INPLACE_SOURCE_NAME {
+    if crate::manifest::is_reserved_source(name) {
         return Err(CoreError::ItemRevUnsupported {
             source_name: name.to_owned(),
         });

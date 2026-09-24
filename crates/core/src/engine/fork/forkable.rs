@@ -90,9 +90,7 @@ pub fn forkable_rendering(
     let Some(decl) = manifest.declared(kind).get(name) else {
         return false;
     };
-    if decl.source == crate::manifest::LOCAL_SOURCE_NAME
-        || decl.source == crate::manifest::INPLACE_SOURCE_NAME
-    {
+    if crate::manifest::is_reserved_source(&decl.source) {
         return false;
     }
     super::capture_rendering(env, scope, kind, name, harness, &manifest, decl).is_ok()

@@ -11,7 +11,7 @@ use super::ops::manifest_for_mutation;
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::manifest::{self, INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME};
+use crate::manifest::{self, LOCAL_SOURCE_NAME};
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::local_source_root;
 
@@ -60,7 +60,7 @@ pub fn fork(
             name: name.to_owned(),
         });
     };
-    if decl.source == LOCAL_SOURCE_NAME || decl.source == INPLACE_SOURCE_NAME {
+    if manifest::is_reserved_source(&decl.source) {
         return Err(CoreError::AlreadyOwn {
             name: name.to_owned(),
             origin: decl.source.clone(),

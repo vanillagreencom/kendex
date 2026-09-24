@@ -188,8 +188,13 @@ pub(super) fn record_readings(
 }
 
 /// The repository and revision an enabled repository source is declared
-/// at, or `None` for any source the record carries nothing for.
+/// at, or `None` for any source the record carries nothing for. A reserved
+/// name reads from the scope's own roots, as resolution reads it, so a
+/// repository declared under one is never read and never recorded.
 fn repository<'a>(manifest: &'a Manifest, name: &str) -> Option<(&'a str, Option<&'a str>)> {
+    if crate::manifest::is_reserved_source(name) {
+        return None;
+    }
     let decl = manifest.sources.get(name)?;
     let repo = decl.repo.as_deref()?;
     decl.enabled.then_some((repo, decl.rev.as_deref()))

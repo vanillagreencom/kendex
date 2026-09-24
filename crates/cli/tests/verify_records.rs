@@ -1143,32 +1143,22 @@ fn a_pi_only_source_served_from_the_records_own_commit_is_named_in_the_record_ro
 /// One row of the table below: its label, the manifest text it replaces
 /// and the replacement, the edit it makes to the record, the subject the
 /// row may name, and what the record row must say, if anything.
-type Unread<'a> = (
-    &'a str,
-    &'a str,
-    &'a str,
+type Unread = (
+    &'static str,
+    String,
+    String,
     Option<Edit>,
-    &'a str,
+    &'static str,
     Option<String>,
 );
 
-/// A recorded source or set the pass cannot read apart from the record is
-/// never compared with itself. A switched-off source is recorded for
-/// nothing, so its entry is one the pass would not write; one declared at
-/// a repository nothing is fetched for, and a set pinned at a revision the
-/// mirror cannot serve, have their entries carried forward unread, and the
-/// row names them. The inverse row of each drops the entry from the
-/// record, which leaves nothing to hold and nothing named.
-#[test]
+/// The rows of the table below, against the fixture's catalog.
 #[allow(clippy::unwrap_used)]
-fn a_recorded_source_or_set_the_pass_cannot_read_fails_the_record_row_by_name() {
-    let world = world();
-    let spare = format!(
-        "[sources.spare]\nrepo = \"file://{}\"\n",
-        world.catalog.display()
-    );
+fn unread_cases(catalog: &Path) -> Vec<Unread> {
+    let spare = format!("[sources.spare]\nrepo = \"file://{}\"\n", catalog.display());
     let unfetched = "[sources.spare]\nrepo = \"file:///nowhere/fetched\"\n".to_owned();
     let disabled = format!("{spare}enabled = false\n");
+    let reserved = format!("{spare}\n{}", spare.replace("spare", "local"));
     let starter = "[bundles.starter]\nsource = \"cat\"\n".to_owned();
     let pinned = format!("{starter}rev = \"0123456789abcdef0123456789abcdef01234567\"\n");
     let unrecorded = |table: &'static str, name: &'static str| -> Edit {
@@ -1183,62 +1173,86 @@ fn a_recorded_source_or_set_the_pass_cannot_read_fails_the_record_row_by_name() 
         "the mirror cannot serve the declared revision, so nothing holds the record to it";
     let undeclared =
         "source spare: recorded, and the manifest declares no enabled repository source";
-    let cases: Vec<Unread> = vec![
+    vec![
         (
             "disabled, recorded",
-            &spare,
-            &disabled,
+            spare.clone(),
+            disabled.clone(),
             None,
             "source spare:",
             Some(undeclared.to_owned()),
         ),
         (
             "disabled, unrecorded",
-            &spare,
-            &disabled,
+            spare.clone(),
+            disabled.clone(),
             Some(unrecorded("sources", "spare")),
             "source spare:",
             None,
         ),
         (
             "not fetched, recorded",
-            &spare,
-            &unfetched,
+            spare.clone(),
+            unfetched.clone(),
             None,
             "source spare:",
             Some(format!("source spare: {unserved}")),
         ),
         (
             "not fetched, unrecorded",
-            &spare,
-            &unfetched,
+            spare.clone(),
+            unfetched.clone(),
             Some(unrecorded("sources", "spare")),
             "source spare:",
             None,
         ),
         (
+            "reserved name declared at a repository",
+            spare.clone(),
+            reserved.clone(),
+            None,
+            "source local:",
+            None,
+        ),
+        (
             "pinned set unserved, recorded",
-            &starter,
-            &pinned,
+            starter.clone(),
+            pinned.clone(),
             Some(repointed),
             "set starter:",
             Some(format!("set starter: {unserved}")),
         ),
         (
             "pinned set unserved, unrecorded",
-            &starter,
-            &pinned,
+            starter.clone(),
+            pinned.clone(),
             Some(unrecorded("bundles", "starter")),
             "set starter:",
             None,
         ),
-    ];
+    ]
+}
+
+/// A recorded source or set the pass cannot read apart from the record is
+/// never compared with itself. A switched-off source is recorded for
+/// nothing, so its entry is one the pass would not write; one declared at
+/// a repository nothing is fetched for, and a set pinned at a revision the
+/// mirror cannot serve, have their entries carried forward unread, and the
+/// row names them. The inverse row of each drops the entry from the
+/// record, which leaves nothing to hold and nothing named. A reserved name
+/// declared at a repository reads from the scope's own roots, so the pass
+/// records nothing for it and the row names nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_recorded_source_or_set_the_pass_cannot_read_fails_the_record_row_by_name() {
+    let world = world();
+    let cases = unread_cases(&world.catalog);
     for (label, from, to, edit, subject, named) in cases {
         git(&world.project, &["checkout", "-q", "-B", "case", INSTALLED]);
         let manifest = world.project.join("kendex.toml");
         let text = fs::read_to_string(&manifest).unwrap();
-        assert_eq!(text.matches(from).count(), 1, "{label}");
-        write(&manifest, &text.replace(from, to));
+        assert_eq!(text.matches(&from).count(), 1, "{label}");
+        write(&manifest, &text.replace(&from, &to));
         if let Some(edit) = edit {
             edit(&world);
         }
