@@ -60,14 +60,23 @@ Read the branch both routes now stand on and initialize the item's workflow stat
 .agents/skills/orch/scripts/git-context branch [WT_PATH]
 ```
 
-`init` overwrites, so run it only when `exists` reports false. When it reports true, keep the state and record `worktree` and `branch` into it with `workflow-state set`, as [start-worktree.md](start-worktree.md) § 1 step 4 does:
+`init` overwrites, and a restarted item's state file carries its round history, so read existence first:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
 ```
 
+`exists` false → initialize:
+
 ```bash
 .agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --worktree [WT_PATH] --branch "[BRANCH]"
+```
+
+`exists` true → keep the state and record where this run stands:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] worktree "[WT_PATH]"
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] branch "[BRANCH]"
 ```
 
 ## 2. Edit And Commit
