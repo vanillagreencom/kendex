@@ -185,8 +185,9 @@ ORCH_OVERSEER_LANES = "3"
 # Max live lanes on one account. open-terminal refuses a fleet launch that
 # would put the lane's account past it. Zero turns this cap off. The measured
 # fleet burn is about 1.5 points of a five-hour window per lane per 10
-# minutes, so at the default of 6 lanes an account walls in about 110 minutes.
-ORCH_LANE_ACCOUNT_CLAIMS = "6"
+# minutes. The default of 3 lanes spends about 4.5 points per 10 minutes, so
+# three lanes wall an account in about 3.7 hours.
+ORCH_LANE_ACCOUNT_CLAIMS = "3"
 
 # "off" stops oversee-succeed from launching a successor overseer, and turns
 # off the turn-end refusal that names it. A live

@@ -453,7 +453,7 @@ The fleet cap, ORCH_OVERSEER_LANES (default 3), counts the records whose
 status is running plus the live launch claims no running record names; a
 launch that would pass it is refused as cap-reached, naming the cap, the
 running records and the claims. The account cap, ORCH_LANE_ACCOUNT_CLAIMS
-(default 6, 0 turns it off), counts the live claims on the lane the launch
+(default 3, 0 turns it off), counts the live claims on the lane the launch
 would use, as `lanes` counts its claims column; a launch that would pass it
 is refused as account-cap-reached, naming the lane, the cap and the claims.
 Both settings are read through orch-env. A refusal stops the batch, and so
@@ -2569,7 +2569,7 @@ if [[ "$CAP_GATED" == true ]]; then
   [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; exit 1; }
   FLEET_CAP="$("$SCRIPT_DIR/orch-env" ORCH_OVERSEER_LANES 3)" || exit 1
   # The measured rate behind the default is kendex.settings.toml.example's.
-  ACCOUNT_CAP="$("$SCRIPT_DIR/orch-env" ORCH_LANE_ACCOUNT_CLAIMS 6)" || exit 1
+  ACCOUNT_CAP="$("$SCRIPT_DIR/orch-env" ORCH_LANE_ACCOUNT_CLAIMS 3)" || exit 1
   FLEET_CAP=$((10#$FLEET_CAP))
   ACCOUNT_CAP=$((10#$ACCOUNT_CAP))
 fi
