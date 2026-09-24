@@ -13,13 +13,14 @@ name: Skill Tests
 # the full battery — every shard, the aggregators over them, the ui lane and
 # every cargo lane — so a green PR has proven what the queue re-proves and an
 # ejection — dequeue, fix, requeue, pay the merge latency again — is rare
-# instead of routine. A `render` or `trivial` diff runs none of the gated
-# lanes. Every other diff, a `standard` one of documentation alone included,
-# runs the shell shards, the Linux cargo lane and the bot-instructions lane,
-# which hold every reader of a path's content, and runs the macOS, lint,
-# Windows and ui lanes only where its paths reach them; `tools/ci-job-set`
-# states that invariant and each lane. Their aggregators still report and
-# accept only the skips the class authorized. The push to main
+# instead of routine. A `render` or `trivial` diff runs the bot-instructions
+# job alone, which also carries the document byte ceilings and the
+# work-marker scan. Every other diff, a `standard` one of documentation alone
+# included, runs the shell shards, the Linux cargo lane and that job; the
+# macOS, lint and Windows lanes stand down only where every changed path is
+# prose, and the ui lane only where no path is under ui/. `tools/ci-job-set`
+# states that invariant. The aggregators still report and accept only the
+# skips the class authorized. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
 # so it runs only the compile steps: each cargo lane builds its targets with
@@ -263,6 +264,20 @@ jobs:
           persist-credentials: false
       - id: bot-instructions-check
         run: candidate/skills/bot-instructions/scripts/bot-instructions check --repo candidate --spec candidate/skills/bot-instructions
+      # The two whole-tree content scans live in this job because every class
+      # runs it, `render` and `trivial` included, and a diff small enough to
+      # be `trivial` can still push a document past its ceiling. always(): a
+      # red check above must not suppress either scan.
+      - name: doc-limits (document byte ceilings)
+        if: always()
+        working-directory: candidate
+        run: skills/doc-limits/scripts/doc-limits
+      # The commit lane runs todo-ban --staged and judges what a commit adds;
+      # this scan takes the rest, in every blob git reads as text.
+      - name: todo-ban (index-wide work-marker scan)
+        if: always()
+        working-directory: candidate
+        run: skills/commit-guards/scripts/todo-ban
 
   # SHARDED: thirteen shards bound wall time at the slowest shard and give
   # suite growth per-shard headroom instead of a shared cliff. `orch` and
@@ -599,10 +614,11 @@ jobs:
       # ---- shards: guards-scans, guards-commit, guards-tools — the
       # repository-wide scans and the guard packages' own suites, in three.
       # One `guards` shard held all of it and ran 901-1061s on the macOS leg
-      # against roughly a third of that on Linux. `guards-scans` is the five
-      # scans below, each one pass over the whole index, the whole document set
-      # or the whole shell roster; they are 65s of that macOS leg and 51s of
-      # the Linux one. The 68 suite files after them are the other two shards'
+      # against roughly a third of that on Linux. `guards-scans` is the scans
+      # below, each one pass over the whole index or the whole shell roster;
+      # the document-set and work-marker scans run in the bot-instructions
+      # job instead, which every class runs. The 68 suite files after them are
+      # the other two shards'
       # work, and the ruff install rides with `guards-commit` because the suite
       # that needs it, commit-guards' own py-names.test.sh, runs there.
       #
@@ -637,23 +653,6 @@ jobs:
             fi
           done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' | grep -vE '/(scripts|tests)/lib/|/tests/controls/')
           exit "$fail"
-
-      # Document byte ceilings run on every PR and queue event whose class
-      # runs the shell shards, which is every measured class whatever its
-      # paths: a documentation diff is the one that grows a document past its
-      # ceiling. A `render` or `trivial` diff runs no shard, so this scan does
-      # not run for it here; the commit chain's doc-limits step is what judged
-      # its commits. A failure in an earlier step must not suppress this check.
-      - name: doc-limits (document byte ceilings)
-        if: always() && matrix.shard == 'guards-scans'
-        run: skills/doc-limits/scripts/doc-limits
-
-      # Same posture, same reasons. The commit lane runs todo-ban --staged
-      # and judges what a commit adds; this scan takes the rest, in every
-      # blob git reads as text.
-      - name: todo-ban (index-wide work-marker scan)
-        if: always() && matrix.shard == 'guards-scans'
-        run: skills/commit-guards/scripts/todo-ban
 
       # One scan for Bash 4+ syntax over the roster `tools/bash32-lint --list`
       # prints. bash32-lint.test.sh proves its teeth.

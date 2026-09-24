@@ -15,62 +15,42 @@
 #   CHANGED_PATHS  the changed paths, one per line
 #   GITHUB_OUTPUT  the step output file the selection is appended to
 #
-# THE INVARIANT. On every measured class (`micro`, `small`, `standard`) the
-# three Linux lanes always run: shell_shards, cargo_linux and
-# bot_instructions. Between them they hold every reader of a path's CONTENT,
-# so no path list here has to name the readers of a tree for a change to it
-# to be judged. Only the platform and lint lanes (macos_legs, cargo_macos,
-# cargo_lint, cargo_windows) and ui narrow by path, and each narrows only on
-# paths whose content cannot behave differently on the platform or under the
-# tool that lane adds. A lane that reads content joins the Linux three; it
-# never gets a path family of its own.
+# THE INVARIANT, stated once, with no list of what any lane reads:
 #
-# The lanes, and what each is answerable to:
+#   - On every measured class (`micro`, `small`, `standard`) the three Linux
+#     lanes always run: shell_shards, cargo_linux and bot_instructions.
+#   - The platform and lint lanes (macos_legs, cargo_macos, cargo_lint,
+#     cargo_windows) stand down only on a diff whose every path is prose,
+#     whose content no platform and no lint tool reads differently, and run
+#     on any other diff.
+#   - ui is the one lane that narrows to a tree, because its job runs every
+#     step with `working-directory: ui` and so reads nothing outside it.
+#   - A `render` or `trivial` diff runs bot_instructions alone, the one
+#     seconds-long verify job: its check, the document byte ceilings and the
+#     work-marker scan. The classifier proved a `render` diff by re-rendering
+#     it, and a `trivial` one is inside the docs path set and its line
+#     ceiling.
 #
-#   shell_shards     the skill, hook and tool suites, which read every tree:
-#                    the guards-scans shard's doc-limits and todo-ban scan
-#                    every tracked file, docs/ and root Markdown included;
-#                    the guards-tools shard's orch-shard-partition suite runs
-#                    `cargo metadata` over the workspace and checks every
-#                    shard name tracked prose cites; the Linux `rest` shard
-#                    checks the kendex it builds from crates/.
+# The lanes:
+#
+#   shell_shards     the skill, hook and tool suites.
 #   bot_instructions the rendered review-bot instruction files and the root
-#                    AGENTS.md region they own.
-#   cargo_linux      the workspace tests on Linux, which read more than
-#                    crates/: crates/cli/tests/catalog_render_lint.rs installs
-#                    and lints the whole catalog, crates/core/src/legal.rs
-#                    reads docs/legal/, crates/app/src/mine.rs compiles in
-#                    docs/authoring/README.md, and the commit_offer tests run
-#                    the bot-instructions package's scripts.
+#                    AGENTS.md region they own, the document byte ceilings,
+#                    and the index-wide work-marker scan.
+#   cargo_linux      the workspace tests on Linux.
 #   macos_legs       the shell suites again under Bash 3.2 and the BSD
-#                    userland. Only an executable file can behave differently
-#                    there, so a diff of Markdown alone stands them down and
-#                    every other diff runs them.
-#   cargo_macos      the workspace tests on the platform the app ships on,
-#                    with cargo_lint and cargo_windows beside them. The three
-#                    narrow to the workspace: what else the tests read is
-#                    catalog and documentation content, whose rendering and
-#                    bytes do not change by platform and which cargo_linux
-#                    already judged. The one executable those tests run from
-#                    outside it, the bot-instructions package's scripts, is
-#                    never Markdown, so macos_legs runs that package's own
-#                    suites under the BSD userland whenever it changes.
+#                    userland.
+#   cargo_macos      the workspace tests on the platform the app ships on.
 #   cargo_lint       clippy, fmt and doc over the workspace.
 #   cargo_windows    the Windows compile and test lanes.
-#   ui               the vitest, tsc and biome lane, which reads ui/ alone.
+#   ui               the vitest, tsc and biome lane.
 #
-# "The workspace" is WORKSPACE below: crates/ and every root file a cargo lane
-# reads as configuration, the manifest and lockfile, clippy.toml and the
-# rust-toolchain.toml that pins the compiler. A root file that configures a
-# cargo lane belongs in that pattern; one left out stands those three lanes
-# down on the diff that changes them.
-#
-# A `render` or `trivial` diff runs none of the lanes: the classifier proved
-# the first by re-rendering it, and the second is inside the docs path set and
-# its line ceiling. DOCS_ONLY is read and validated on every class, and it
-# changes one thing: a `standard` diff it accepts, which is documentation too
-# large to be `trivial`, takes the measured row its paths select rather than
-# every lane. Under `micro` and `small` that row is already the one taken.
+# DOCS_ONLY is read and validated on every class, and it changes one thing: a
+# `standard` diff it accepts takes the measured row its paths select rather
+# than every lane. Two diffs reach that arm: documentation past the trivial
+# line ceiling, and a root or nested AGENTS.md change the classifier refused
+# as a configuration source ahead of its size rules. Under `micro` and `small`
+# that row is already the one taken.
 #
 # Every refusal starts `ci-job-set: cause=<name>` and exits 2. A class this
 # table does not name is one of those: the step goes red, every lane's status
@@ -127,14 +107,12 @@ any_outside() { # REGEX — is some changed path NOT inside it?
   [ "$hits" -gt 0 ]
 }
 
-# The workspace, which is what the three cargo lanes below answer to.
-WORKSPACE='^(crates/|Cargo\.toml$|Cargo\.lock$|clippy\.toml$|rust-toolchain\.toml$)'
-# Prose. Nothing a shell or a compiler runs differently on another platform.
+# Prose, the one input the platform and lint lanes stand down on.
 PROSE='\.(md|markdown)$'
 
 case "$CHANGE_CLASS" in
   render | trivial)
-    emit shell_shards=false macos_legs=false ui=false bot_instructions=false \
+    emit shell_shards=false macos_legs=false ui=false bot_instructions=true \
       cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false
     ;;
   micro | small | standard)
@@ -150,13 +128,11 @@ case "$CHANGE_CLASS" in
         "a measured class arrived with no changed path"
       platform=false
       any_outside "$PROSE" && platform=true
-      workspace=false
-      any "$WORKSPACE" && workspace=true
       uitree=false
       any '^ui/' && uitree=true
       emit shell_shards=true "macos_legs=$platform" "ui=$uitree" \
-        bot_instructions=true cargo_linux=true "cargo_macos=$workspace" \
-        "cargo_lint=$workspace" "cargo_windows=$workspace"
+        bot_instructions=true cargo_linux=true "cargo_macos=$platform" \
+        "cargo_lint=$platform" "cargo_windows=$platform"
     fi
     ;;
   *)
