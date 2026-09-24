@@ -1185,6 +1185,38 @@ retain_rate_samples "$TMP_ROOT/no-retained-rate/lanes" "$TMP_ROOT/mutant-retaine
 assert_eq "$(jq -r '.[0].usage_rate_state' <<<"$OUT")" "one-sample" \
   "control: without persisted retention the next cache read loses the rate sample"
 
+# A refresh answered after a usage 429 takes the figure kept beside that
+# refusal as its prior, under the figure's own stamp: the refusal's stamp
+# would read two samples ten minutes apart as seconds apart.
+refused_prior_rate() { # LANES_BIN STATE
+  local bin="$1" state="$2" f
+  rm -rf -- "${state:?}"
+  claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
+    "$bin" list --harness claude --json --no-cache >/dev/null
+  age_usage_record "$state" "$H/.claude" 600
+  env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
+    FETCH_STATUS=429 FETCH_RETRY_AFTER=600 \
+    "$bin" list --harness claude --json >/dev/null
+  f="$(find "$state/usage" -type f -name '*.json' -print -quit)"
+  jq '.refusal.expires_at = 0' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  claude_usage 40 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  OUT="$(env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    OVERSEE_WATCH_STATE_DIR="$state" PATH="$CLAIM_BIN:$PATH" \
+    "$bin" list --harness claude --json)"
+}
+
+refused_prior_rate "$LANES" "$TMP_ROOT/refused-prior"
+assert_eq "$(jq -r '.[0] | "\(.status) \(.usage_rate_state)"' <<<"$OUT")" "ok measured" \
+  "an answer after a 429 rates against the kept figure's own stamp"
+
+lanes_mutant refusal-stamped-prior lanes '{fetched_at: $at, usage}' '{fetched_at, usage}'
+refused_prior_rate "$TMP_ROOT/refusal-stamped-prior/lanes" "$TMP_ROOT/mutant-refused-prior"
+assert_eq "$(jq -r '.[0].usage_rate_state' <<<"$OUT")" "samples-too-close" \
+  "control: stamped with the refusal's instant, the same two samples read as seconds apart"
+
 echo "=== a refused usage refresh serves the last figures rather than walling the host ==="
 # The control VM's failure: eleven accounts answered HTTP 429 with valid
 # bearers while the shared cache held good reads seconds old, and every lane
