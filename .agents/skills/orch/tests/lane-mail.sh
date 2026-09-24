@@ -151,6 +151,27 @@ assert_eq "$RC=${OUT%% id=*}" "0=lane-mail: sent item=KEN-1" "other text to that
 lm send --item KEN-3 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
 assert_eq "$RC=${OUT%% id=*}" "0=lane-mail: sent item=KEN-3" "the same text to another item is another message"
 
+# A message longer than one execve argument, which Linux caps at 131072 bytes.
+# A diff excerpt, a log tail or a review body reaches this size, so the guard
+# takes the envelope through the work directory and no ceiling on an argument
+# decides whether a send lands.
+new_lane receipt_large
+awk 'BEGIN { for (i = 0; i < 4000; i++) printf "the quick brown fox jumps over it\n" }' \
+  > "$TMP_ROOT/large.txt"
+LARGE_BYTES="$(wc -c < "$TMP_ROOT/large.txt" | tr -d ' ')"
+assert_eq "$([ "$LARGE_BYTES" -gt 131072 ] && echo over || echo under)" "over" \
+  "the large message really passes the ceiling one argument has"
+lm send --item KEN-1 --root "$LANE" --directive --file "$TMP_ROOT/large.txt"
+LARGE_ID="${OUT#*id=}"
+LARGE_ID="${LARGE_ID%% *}"
+assert_eq "$RC=${OUT##* }" "0=bytes=$(( LARGE_BYTES - 1 ))" \
+  "a message past that ceiling lands, and its receipt counts every byte"
+assert_eq "$(jq -r '.id' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "$LARGE_ID" \
+  "and the mailbox holds the envelope the receipt names"
+lm send --item KEN-1 --root "$LANE" --directive --file "$TMP_ROOT/large.txt"
+assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=$LARGE_ID" \
+  "and the guard judged it, so its retry is refused like any other"
+
 # The judgement is the whole envelope, not its words. A field a reader acts on
 # differing makes a message of its own, so a guard reading the text alone would
 # swallow an answer to another ask or a halt after a directive of those words.
@@ -405,6 +426,14 @@ assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=$PEER_C_SENT" \
 assert_eq "$(jq -rs 'map(select(.text == "Both of us.")) | length' \
   < "$PEER_B/tmp/lane-mail/overseer/to-lane.jsonl")" "2" \
   "and the peer's mailbox still holds only the two that landed"
+
+# A peer ask lands in the same mailbox a later peer send is judged against, so
+# the kind and the choices an ask carries are what keep the two apart.
+lm peer ask --repo peer_b --file "$(text q 'Same words.')" --options a,b
+lm peer send --repo peer_b --file "$(text d 'Same words.')"
+assert_eq "$RC=$(jq -rs 'map(select(.text == "Same words.")) | map(.kind) | join(",")' \
+  < "$PEER_B/tmp/lane-mail/overseer/to-lane.jsonl")" "0=ask,directive" \
+  "an ask and a directive of the same words are two messages, and both land"
 LANE="$PEER_A"
 
 # A delivered ask the caller cannot wait on is the failure the id closes: the
@@ -1058,7 +1087,7 @@ assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=earlier" \
 
 # The identity the guard compares. A copy reading the text alone swallows the
 # answer to a second ask, which the lane then waits out to its timeout.
-mutant duplicate-text-only 's@select(identity == \$want)@select(.text == ($sent | .text))@'
+mutant duplicate-text-only 's@select(del(.id, .at) == \$want)@select(.text == ($sent[0] | .text))@'
 new_lane control_identity
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --re ask-A --file "$(text a 'ok')"
 LANE_MAIL_BIN="$MUTANT_DIR/duplicate-text-only" lm send --item KEN-1 --root "$LANE" --re ask-B --file "$(text a 'ok')"
@@ -1082,13 +1111,27 @@ unwritable_send() { # BIN — sets LOCAL_SEND to the status and the receipt
   chmod 444 "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl"
   LANE_MAIL_BIN="$1" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'never landed')"
   chmod 644 "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl"
-  LOCAL_SEND="$RC=${OUT%% id=*}"
+  LOCAL_SEND="$RC=$ERR=${OUT%% id=*}"
+  # Whether the first line an operator reads is lane-mail's own key or the
+  # shell's message about a library file.
+  case "$ERR" in
+    'lane-mail: '*) LOCAL_FIRST=keyed ;;
+    *) LOCAL_FIRST=noise ;;
+  esac
 }
 unwritable_send "$LANE_MAIL"
-assert_eq "$LOCAL_SEND" "2=" "a local send whose append could not write prints no receipt"
+assert_eq "$LOCAL_SEND" "2=lane-mail: write-failed=$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl=" \
+  "a local send whose append could not write refuses under its own key first, and prints no receipt"
 unwritable_send "$MUTANT_DIR/receipt-ahead-of-append"
-assert_eq "$LOCAL_SEND" "2=lane-mail: sent item=KEN-1" \
+assert_eq "$LOCAL_SEND" "2=lane-mail: write-failed=$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl=lane-mail: sent item=KEN-1" \
   "control: a receipt printed ahead of the local append reports a send the disk refused"
+
+# The library opens the mailbox itself, so the shell's own words on that
+# failure would stand ahead of the key unless the call site captures them.
+mutant append-words-uncaptured 's@ 2>"\$WORK_DIR/local.err" || rc=\$?@ || rc=$?@'
+unwritable_send "$MUTANT_DIR/append-words-uncaptured"
+assert_eq "${LOCAL_SEND%%=*}=$LOCAL_FIRST" "2=noise" \
+  "control: without the capture the library's own message stands where the keyed line belongs"
 
 
 STREAMING_HOST="$MUTANT_DIR/streaming-host"

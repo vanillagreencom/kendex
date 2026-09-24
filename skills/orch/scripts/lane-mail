@@ -630,7 +630,11 @@ lm_objects() { # FILE
 # words, and another overseer's line are each a message of their own, and a
 # guard reading the text alone would swallow them. The envelope this send built
 # is what it is judged by, so lm_envelope stays the one owner of the trailing
-# newline rule and nothing reads the message file twice. The mailbox is read
+# newline rule and nothing reads the message file twice. That envelope reaches
+# jq through the work directory rather than an argument: a message is as long
+# as a diff or a log tail, and a single argument has a ceiling the kernel
+# enforces, which is why text crosses a file here as everywhere else in this
+# script. The mailbox is read
 # through lm_fetch, the route the append writes, so a hosted send judges the
 # file its own line would join and a hosted read that fails refuses the send
 # there. An `at` no clock wrote, a fixture's or a hand-edited line's, parses to
@@ -642,14 +646,16 @@ lm_duplicate_id() { # LINE — prints the earlier envelope's id, or nothing
   lm_terminated "$WORK_DIR/dup.raw" "$WORK_DIR/dup.jsonl"
   lm_objects "$WORK_DIR/dup.jsonl" >"$WORK_DIR/dup.objects" ||
     refuse file-unreadable "$TO_LANE"
-  jq -r --argjson now "$now" --argjson sent "$1" '
-    # The words, what kind of message they are, the ask they answer, whether
-    # they halt the lane, who sent them, and the choices they offer. Absent is
-    # its own value, so a directive and an answer of the same words differ here
-    # rather than comparing equal on a field one of them does not carry.
-    def identity: [.text, .kind, (.re // ""), (.halt // false), .from, (.options // [])];
-    ($sent | identity) as $want
-    | select(identity == $want)
+  printf '%s\n' "$1" >"$WORK_DIR/sent.json" || refuse write-failed "$WORK_DIR/sent.json"
+  jq -r --argjson now "$now" --slurpfile sent "$WORK_DIR/sent.json" '
+    # Every field but the two a second send cannot repeat: the id, minted once
+    # per call, and the stamp, which the window below judges instead. Every
+    # line in this mailbox is one lm_envelope wrote, so comparing the objects
+    # whole is what keeps this guard from drifting away from it: a field the
+    # envelope gains later is compared the day it appears, rather than waiting
+    # for someone to add it to a list kept here by hand.
+    ($sent[0] | del(.id, .at)) as $want
+    | select(del(.id, .at) == $want)
     | (try (.at | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) catch null) as $at
     | select($at != null and ($now - $at) >= 0 and ($now - $at) <= 60)
     | .id | strings' <"$WORK_DIR/dup.objects" >"$WORK_DIR/dup.ids" ||
@@ -721,10 +727,14 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
 lm_append_local() { # FILE LINE
   local rc=0
   mkdir -p -- "$BOX" || refuse write-failed "$BOX"
-  mailbox_append_locked "$1" 30 <<<"$2" || rc=$?
+  # The library opens the file itself, so a mailbox the lane cannot write is
+  # the shell's own message on its stderr. Captured here and replayed under
+  # the key, like every other failing command this script runs, so the keyed
+  # line stays first and a reader is never met by a library path instead.
+  mailbox_append_locked "$1" 30 <<<"$2" 2>"$WORK_DIR/local.err" || rc=$?
   trap lm_cleanup EXIT
-  [ "$rc" -ne 3 ] || refuse lock-failed "$1"
-  [ "$rc" -eq 0 ] || refuse write-failed "$1"
+  [ "$rc" -ne 3 ] || refuse lock-failed "$1" "$(cat -- "$WORK_DIR/local.err")"
+  [ "$rc" -eq 0 ] || refuse write-failed "$1" "$(cat -- "$WORK_DIR/local.err")"
 }
 
 # The line alone crosses the transport, and the provider adds it under a lock
