@@ -58,7 +58,8 @@ lane_env_prefix() { # HARNESS DIR
 # the builder writes the old word.
 #
 # One row per harness,
-# `HARNESS|MODEL SPELLINGS|EFFORT SPELLINGS|EFFORT-IN-MODEL|ATTACH WORD`, each
+# `HARNESS|MODEL SPELLINGS|EFFORT SPELLINGS|EFFORT-IN-MODEL|ATTACH WORD|
+# PERMISSION SPELLINGS|TRANSFER PERMISSION SPELLINGS|LAUNCH SETTINGS`, each
 # spelling list space-separated, so a consumer's harness or a new flag spelling
 # is one row rather than a code path. A spelling that ends in `=` is a whole
 # token with its value attached; any other is a flag word taking the next token
@@ -73,7 +74,14 @@ lane_env_prefix() { # HARNESS DIR
 # posture an unattended launch accepts. The seventh is the subset whose full
 # bypass meaning can transfer between harnesses. Its first spelling is written;
 # a `FLAG=VALUE` spelling also accepts `FLAG VALUE` when a caller supplied it.
-# `-` says the harness launch form has no permission word in that set.
+# `-` says the harness launch form has no permission word in that set. The
+# eighth is the launch-only settings every command a launcher builds for that
+# harness carries, written as they stand, and `-` where it has none. Codex
+# checks for a newer CLI on startup and opens an interactive update prompt when
+# one exists; the first paste a lane receives then answers that prompt, installs
+# the update and exits the session. `check_for_update_on_startup=false` is the
+# key the Codex config reference names for centrally managed installs, passed
+# per launch so no installed config is edited.
 #
 # The FIRST spelling of each list is the one written; the rest are further
 # spellings a caller may have typed, which launch_choice_value reads.
@@ -87,6 +95,8 @@ lane_env_prefix() { # HARNESS DIR
 #             `model_reasoning_effort` key, so the whole token is the spelling;
 #             `--dangerously-bypass-approvals-and-sandbox`, `--approve-for-me`
 #             and `-a, --ask-for-approval` name unattended permission modes.
+#             `check_for_update_on_startup` is not in `codex --help`: it is a
+#             top-level key in the Codex config reference, which `-c` sets.
 #   opencode  the flags table of `opencode [project]`, the form start_cmd
 #             renders: `--model, -m`, and no effort flag at all. `--variant`
 #             belongs to `opencode run`, which this script never launches.
@@ -96,10 +106,10 @@ lane_env_prefix() { # HARNESS DIR
 #             launch passing it has made the effort choice and is not asked for
 #             it again.
 LAUNCH_CHOICE_FLAGS=(
-  'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions'
-  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox'
-  'opencode|-m --model|-|-|-|-|-'
-  'pi|--model|--thinking|:|-|-|-'
+  'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions|-'
+  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false'
+  'opencode|-m --model|-|-|-|-|-|-'
+  'pi|--model|--thinking|:|-|-|-|-'
 )
 # The row for harness $1, empty where the table names no such harness.
 launch_choice_row() { # HARNESS
@@ -122,7 +132,7 @@ launch_choice_model_spellings() { # [HARNESS]
   local row spellings word out=""
   for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
     [[ -z "$1" || "${row%%|*}" == "$1" ]] || continue
-    IFS='|' read -r _ spellings _ _ _ _ _ <<<"$row"
+    IFS='|' read -r _ spellings _ _ _ _ _ _ <<<"$row"
     for word in $spellings; do
       case " $out " in *" $word "*) ;; *) out="$out $word" ;; esac
     done
@@ -138,7 +148,7 @@ launch_choice_effort_spellings() { # HARNESS
   local row spellings
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 0
-  IFS='|' read -r _ _ spellings _ _ _ _ <<<"$row"
+  IFS='|' read -r _ _ spellings _ _ _ _ _ <<<"$row"
   [[ "$spellings" != - ]] || return 0
   printf '%s\n' "$spellings"
 }
@@ -149,7 +159,7 @@ launch_choice_permission_spellings() { # HARNESS
   local row spellings
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 0
-  IFS='|' read -r _ _ _ _ _ spellings _ <<<"$row"
+  IFS='|' read -r _ _ _ _ _ spellings _ _ <<<"$row"
   [[ "$spellings" != - ]] || return 0
   printf '%s\n' "$spellings"
 }
@@ -160,7 +170,7 @@ launch_choice_transfer_permission_spellings() { # HARNESS
   local row spellings
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 0
-  IFS='|' read -r _ _ _ _ _ _ spellings <<<"$row"
+  IFS='|' read -r _ _ _ _ _ _ spellings _ <<<"$row"
   [[ "$spellings" != - ]] || return 0
   printf '%s\n' "$spellings"
 }
@@ -320,7 +330,7 @@ launch_choice_effort() { # HARNESS TEXT [TEXT]
   local row effort_spellings in_model model effort
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 0
-  IFS='|' read -r _ _ effort_spellings in_model _ _ _ <<<"$row"
+  IFS='|' read -r _ _ effort_spellings in_model _ _ _ _ <<<"$row"
   [[ "$effort_spellings" != - ]] || return 0
   effort="$(launch_choice_value "$effort_spellings" "$2" "${3:-}")"
   if [[ -z "$effort" && "$in_model" != - ]]; then
@@ -349,7 +359,7 @@ launch_choice_write() { # HARNESS MODEL EFFORT
   [[ -n "$2" ]] || return 0
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 1
-  IFS='|' read -r _ model_spellings effort_spellings _ attach _ _ <<<"$row"
+  IFS='|' read -r _ model_spellings effort_spellings _ attach _ _ _ <<<"$row"
   read -r word _ <<<"$model_spellings"
   out="$word $(printf %q "$2")"
   if [[ "$effort_spellings" != - && -n "$3" ]]; then
@@ -381,6 +391,29 @@ launch_choice_permission_write() { # HARNESS
   else
     printf '%s\n' "$word"
   fi
+}
+
+# The words a launcher builds for HARNESS, left in LAUNCH_CHOICE_KEPT: that
+# harness's launch settings first, then WORD... in order with every row's
+# settings run taken out wherever it stands whole. A caller's flags handed on
+# keep none of their own: the same harness would carry them twice, and another
+# would be handed a config word its launch form may not have. Runs are matched
+# newline-bounded, since a caller's flag word can hold a space.
+launch_choice_lead_settings() { # HARNESS WORD...
+  local harness="$1" nl=$'\n' lead="" row settings words line
+  shift
+  words="$nl$(printf '%s\n' "$@")$nl"
+  for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
+    settings="${row##*|}"
+    [[ "$settings" != - ]] || continue
+    settings="${settings// /$nl}"
+    [[ "${row%%|*}" != "$harness" ]] || lead="$settings"
+    while [[ "$words" == *"$nl$settings$nl"* ]]; do words="${words/"$nl$settings$nl"/$nl}"; done
+  done
+  LAUNCH_CHOICE_KEPT=()
+  while IFS= read -r line; do
+    [[ -z "$line" ]] || LAUNCH_CHOICE_KEPT+=("$line")
+  done <<<"$lead$words"
 }
 
 # The flags of a launch on HARNESS with that harness's own MODEL and EFFORT
@@ -415,7 +448,7 @@ launch_choice_strip() { # HARNESS [--permissions] FLAG...
   LAUNCH_CHOICE_KEPT=()
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 1
-  IFS='|' read -r _ _ _ _ attach permission_specs _ <<<"$row"
+  IFS='|' read -r _ _ _ _ attach permission_specs _ _ <<<"$row"
   read -r -a spellings \
     <<<"$(launch_choice_model_spellings "$1") $(launch_choice_effort_spellings "$1")"
   [[ "$permission_specs" != - ]] || permission_specs=""

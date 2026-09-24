@@ -359,7 +359,7 @@ CODEX_LAUNCH_HOME="$(lane_codex_home_path "$H/.codex" "$CALLER_CWD")"
 run_succeed walled 'claude:1:high,codex:1:high' -- --dangerously-skip-permissions
 check "walled claude entry: codex entry picked, under a home that trusts the caller directory" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(lane_codex_trusted "$CODEX_LAUNCH_HOME/config.toml" "$CALLER_CWD" && echo trusted || echo untrusted)" \
-  "0|1 overseer;|no|none|lane=$CODEX_LAUNCH_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;$BRIEF;|oversee-succeed: successor-launch form=prefix lane=$H/.codex trust=launch-home|trusted"
+  "0|1 overseer;|no|none|lane=$CODEX_LAUNCH_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;$BRIEF;|oversee-succeed: successor-launch form=prefix lane=$H/.codex trust=launch-home|trusted"
 # The other side of that preparation: an account config that exists and cannot
 # be read refuses the successor rather than launching it onto a config with
 # every table the account was approved for gone. The caller keeps running and
@@ -390,7 +390,7 @@ STRIP_HOME="$(lane_codex_home_path "$H/.codex" "$STRIP_CWD")"
 run_succeed stripflags 'codex:1:high' -- --model fable --effort high --dangerously-skip-permissions --verbose
 check "a named entry keeps unrelated words and replaces the caller's model, effort and permission posture" \
   "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
-  "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;--verbose;$BRIEF;"
+  "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;--verbose;$BRIEF;"
 
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -422,7 +422,7 @@ SUCCEED_BIN="$UNSTRIPPED/oversee-succeed" run_succeed unstripped 'codex:1:high' 
   -- --model fable --effort high --dangerously-skip-permissions --verbose
 check "control: unfiltered, the codex entry carries every caller choice in the claude spelling" \
   "$RC|$(overseers)|$(recorded codex)" \
-  "0|1|lane=$UNSTRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--model;fable;--effort;high;--dangerously-skip-permissions;--verbose;$BRIEF;"
+  "0|1|lane=$UNSTRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;-c;check_for_update_on_startup=false;--model;fable;--effort;high;--dangerously-skip-permissions;--verbose;$BRIEF;"
 
 # The reverse crossing reads the same table in the other direction. A codex
 # caller's permission word is removed with its model and effort, and the claude
@@ -431,9 +431,10 @@ new_caller "$CODEX_SCREEN" 'Context 48% left'
 codex_usage 95 > "$FIXTURE_DIR/.codex.json"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-to-claude 'claude:1:high' -- \
-  -m caller-model -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox --verbose
+  -c check_for_update_on_startup=false -m caller-model -c model_reasoning_effort=high \
+  --dangerously-bypass-approvals-and-sandbox --verbose
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
-check "a codex caller picking claude carries claude's permission word and none of codex's" \
+check "a codex caller picking claude carries claude's permission word and none of codex's, its update setting included" \
   "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
   "0|1|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;--verbose;$BRIEF;|none"
 
@@ -447,7 +448,7 @@ CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.claude" run_succeed alternate-bypass 'codex:1
   --model fable --effort high --permission-mode bypassPermissions --verbose
 check "an alternate claude full-bypass spelling transfers to codex" \
   "$RC|$(overseers)|$(recorded codex)" \
-  "0|1|lane=$ALT_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;--verbose;$BRIEF;"
+  "0|1|lane=$ALT_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;--verbose;$BRIEF;"
 
 # Permission modes without exact full-bypass equivalence refuse before launch.
 cross_permission_refuses() { # NAME FLAGS...
@@ -521,7 +522,7 @@ SUCCEED_BIN="$MIXED/oversee-succeed" run_succeed mixed-admit 'codex:1:high' -- \
   --model fable --effort high --dangerously-skip-permissions --permission-mode dontAsk
 check "control: without the count the mixed caller launches codex under full bypass" \
   "$RC|$(overseers)|$(recorded codex)" \
-  "0|1|lane=$MIXED_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;$BRIEF;"
+  "0|1|lane=$MIXED_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;$BRIEF;"
 claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 # The same must-fail control in the reverse direction. Without the named-entry
@@ -1217,7 +1218,7 @@ PRINT_HOME="$(lane_codex_home_path "$H/.codex" "$PRINT_CWD")"
 CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$PRINTSKIP/oversee-succeed" \
   run_succeed printskip '' --print-launch-line
 check "control: a print that skips the preparation records the bare account, not the prepared home" \
-  "$RC|$OUT" "0|env CODEX_HOME='$H/.codex' codex '$BRIEF'"
+  "$RC|$OUT" "0|env CODEX_HOME='$H/.codex' codex -c check_for_update_on_startup=false '$BRIEF'"
 
 # Both arms of lib/lane-context.sh's answer for the caller's own lane: the
 # variable where the session carries one, and the default under LANES_HOME where
@@ -1231,8 +1232,16 @@ for row in \
   new_caller "$CODEX_SCREEN" 'Context 48% left'
   CALLER_LANE="$row_lane" run_succeed printcodex '' --print-launch-line
   check "--print-launch-line on a codex caller records the home trust was made in, under $row_what" \
-    "$RC|$OUT|$(overseers)" "0|env CODEX_HOME='$PRINT_HOME' codex '$BRIEF'|0"
+    "$RC|$OUT|$(overseers)" "0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false '$BRIEF'|0"
 done
+# A codex caller launched by this script already runs with the startup update
+# check off, and a caller entry hands its flags on whole: the line still carries
+# the setting once, where the successor build writes it.
+new_caller "$CODEX_SCREEN" 'Context 48% left'
+CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed printcodex-settings '' --print-launch-line -- \
+  --verbose -c check_for_update_on_startup=false
+check "a codex caller entry carrying the update setting keeps it exactly once" \
+  "$RC|$OUT" "0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false --verbose '$BRIEF'"
 
 # Why `print` is the only mode that records the caller's own codex lane. A
 # codex status line names no context window, so a succession that is not
@@ -1730,7 +1739,7 @@ SUCCEED_BIN="$FLOORDROP/oversee-succeed" run_succeed floordrop 'codex:1:high' --
   --dangerously-skip-permissions
 check "control: without the floor the same account is picked and the successor opens on it" \
   "$RC|$(overseers)|$(recorded codex)" \
-  "0|1|lane=$FLOORDROP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;$BRIEF;"
+  "0|1|lane=$FLOORDROP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;$BRIEF;"
 
 new_caller "$NO_WINDOW_1M"
 SUCCEED_BIN="$UNPATCHED/oversee-succeed" run_succeed control 'claude:1:high'

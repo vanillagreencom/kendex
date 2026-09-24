@@ -209,7 +209,10 @@
 #                    successor goes. A codex line still carries the folder-trust
 #                    preparation of step 4, because the pane that replays it is
 #                    as unattended as the one a live succession opens, and the
-#                    home that trust was made in is part of the line.
+#                    home that trust was made in is part of the line. It also
+#                    carries -c check_for_update_on_startup=false once, ahead of
+#                    the flags after --, so the replayed pane never opens on the
+#                    Codex update prompt.
 #                    Exit 0 with the line on stdout
 #   --dead-pane PANE The tmux pane of an overseer that has already died, in
 #                    place of the caller's own: no mark is judged, no lane is
@@ -1043,6 +1046,9 @@ else
       ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
       || die launch-choice-failed "harness=$CALLER_HARNESS"
   fi
+  # The harness's launch settings lead the flags kept, once: a codex successor
+  # otherwise opens on the startup update prompt in a pane nobody is at.
+  launch_choice_lead_settings "$harness" ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}
   for flag in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
     cmd+=" $(printf %q "$flag")"
   done
