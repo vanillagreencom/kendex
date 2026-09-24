@@ -50,10 +50,8 @@ done
 [ "$event" = pull_request ] || { echo "change-class: cause=missing-event" >&2; exit 2; }
 [ "$base" = "${STUB_EXPECT_BASE:?}" ] || { echo "change-class: bad --base '$base'" >&2; exit 3; }
 [ "$head" = "${STUB_EXPECT_HEAD:?}" ] || { echo "change-class: bad --head '$head'" >&2; exit 3; }
-if [ -n "${STUB_ENDPOINT_NOTE:-}" ]; then
-  printf 'harness-note: cause=unresolved-endpoint endpoint=%s\n' "$base" >&2
-  printf 'change_class=standard\n'
-  exit 0
+if [ -n "${STUB_NOTE:-}" ]; then
+  printf 'harness-note: %s\n' "$(printf '%s' "$STUB_NOTE" | tr '+' ' ')" >&2
 fi
 [ -n "${STUB_CLASS:-}" ] || { echo "change-class: no class configured" >&2; exit 1; }
 printf 'change_class=%s\n' "$STUB_CLASS"
@@ -75,6 +73,16 @@ git -C "$TMP_ROOT/class" commit -q -m head
 CLASS_BASE_SHA="$(git -C "$TMP_ROOT/class" rev-parse HEAD~1)"
 CLASS_HEAD_SHA="$(git -C "$TMP_ROOT/class" rev-parse HEAD)"
 ABSENT_SHA=0000000000000000000000000000000000000000
+# An unrelated history: both ends present, no ancestor between them, which is
+# the shape a shallow or grafted checkout produces and which the classifier
+# cannot take a merge-base diff of.
+git -C "$TMP_ROOT/class" checkout -q --orphan unrelated
+git -C "$TMP_ROOT/class" rm -q -rf .
+printf 'unrelated\n' >"$TMP_ROOT/class/other.txt"
+git -C "$TMP_ROOT/class" add other.txt
+git -C "$TMP_ROOT/class" commit -q -m unrelated
+UNRELATED_SHA="$(git -C "$TMP_ROOT/class" rev-parse HEAD)"
+git -C "$TMP_ROOT/class" checkout -q --detach "$CLASS_HEAD_SHA"
 
 GH_CALLS="$TMP_ROOT/gh.calls"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> %s\nexit 1\n' "$GH_CALLS" > "$TMP_ROOT/bin/gh"
@@ -253,9 +261,37 @@ class_table \
   "the required-review inverse: a bot class keeps the reviewer keys under REVIEW_GATE_MODE=off|$POLICY_ENV $RANGE_ENV STUB_CLASS=small REVIEW_GATE_MODE=off PR_REVIEW_GATE=review|$RANGE|rc=0 mode=review" \
   "a current class still honors REVIEW_GATE_MODE=off|$POLICY_ENV $RANGE_ENV STUB_CLASS=standard REVIEW_GATE_MODE=off PR_REVIEW_GATE=review|$RANGE|rc=0 mode=off" \
   "a classifier that cannot answer resolves no mode|$POLICY_ENV $RANGE_ENV PR_REVIEW_GATE=review|$RANGE|rc=2 stdout=empty stderr_line=approval-wait:+policy-resolve+range=$CLASS_BASE_SHA...$CLASS_HEAD_SHA" \
-  "an endpoint this checkout does not hold is no mode, and the owner is never asked|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|--resolve-mode --base $ABSENT_SHA --head $CLASS_HEAD_SHA|rc=2 stdout=empty stderr_line=approval-wait:+policy-endpoint+range=$ABSENT_SHA...$CLASS_HEAD_SHA" \
-  "must-fail: a class reported for an unresolvable range is no mode, never the gate-disabled off|$POLICY_ENV $RANGE_ENV STUB_ENDPOINT_NOTE=1 REVIEW_GATE_MODE=off PR_REVIEW_GATE=review|$RANGE|rc=2 stdout=empty stderr_line=approval-wait:+policy-resolve+range=$CLASS_BASE_SHA...$CLASS_HEAD_SHA" \
+  "an endpoint this checkout does not hold is no mode, and the owner is never asked|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|--resolve-mode --base $ABSENT_SHA --head $CLASS_HEAD_SHA|rc=2 stdout=empty stderr_line=approval-wait:+policy-unreadable-range+range=$ABSENT_SHA...$CLASS_HEAD_SHA" \
+  "two ends with no ancestor between them is no mode either|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|--resolve-mode --base $UNRELATED_SHA --head $CLASS_HEAD_SHA|rc=2 stdout=empty stderr_line=approval-wait:+policy-unreadable-range+range=$UNRELATED_SHA...$CLASS_HEAD_SHA" \
   "a wait on a waived class refuses instead of idling, and reaches no gh|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|123 --base $CLASS_BASE_SHA --head $CLASS_HEAD_SHA|rc=2 gh=uncalled stderr_line=approval-wait:+gate-off+mode=exempt"
+
+# The classifier answers `standard` at exit 0 for EVERY cause outside the two
+# it treats as measurable, so the owner refuses on the allowlist rather than on
+# a list of causes this suite would have to keep. One row per shape
+# harness-only raises, each under REVIEW_GATE_MODE=off, which is the answer
+# they would take if the refusal were missing.
+policy_note_rows() { # WANT LABEL-PREFIX CLASS ROWS...
+  local want="$1" prefix="$2" class="$3" row note label
+  shift 3
+  for row in "$@"; do
+    IFS='|' read -r note label <<<"$row"
+    stage class ""
+    run class "$POLICY_ENV $RANGE_ENV STUB_CLASS=$class STUB_NOTE=$note REVIEW_GATE_MODE=off PR_REVIEW_GATE=review" \
+      --resolve-mode --base "$CLASS_BASE_SHA" --head "$CLASS_HEAD_SHA"
+    assert_eq "$(observe "$want")" "$want" "$prefix: $label" "$ERR"
+  done
+}
+
+policy_note_rows "rc=2 stdout=empty" "must-fail" standard \
+  "cause=unresolved-endpoint+endpoint=$ABSENT_SHA|an unresolved endpoint is no mode, never the gate-disabled off" \
+  "cause=unreadable-diff+range=$CLASS_BASE_SHA...$CLASS_HEAD_SHA|an unreadable diff is no mode" \
+  "cause=unreadable-base-inventory|an inventory the base end cannot supply is no mode" \
+  "cause=no-verifier|a render proof with no verifier is no mode" \
+  "cause=repository-unreadable|an unreadable repository is no mode"
+
+policy_note_rows "rc=0 mode=review" "control" small \
+  "cause=generated-ownership-gain|a generated-ownership gain still answers a class" \
+  "cause=product-source-or-unreadable-ownership+path=app.rs|a product source path still answers a class"
 
 # Must-fail control: the exempt verdict is what keeps a waived class from
 # picking up the evidence and thread terms downstream. Collapse it onto the

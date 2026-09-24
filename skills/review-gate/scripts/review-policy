@@ -28,12 +28,14 @@ The live form calls the sibling harness-ci change classifier. It prints:
 
   change_class=CLASS review_evidence=none|required|current policy=active
 
-An endpoint the caller's checkout cannot resolve is NOT a class. The
-classifier answers `standard` there and says so in a `harness-note:` line
-carrying `cause=unresolved-endpoint`; this script refuses on that note rather
-than pass `standard` on, since the policy row for `standard` would read to
-every consumer as a class something measured. The caller materializes the
-range and asks again.
+A diff the classifier REFUSED TO READ is not a class. It answers `standard`
+there and names the reason in a `harness-note:` line — an unresolved
+endpoint, an unreadable diff, an inventory it cannot stand on. Only the two
+causes the classifier itself treats as measurable pass through here
+(`product-source-or-unreadable-ownership` and `generated-ownership-gain`);
+every other cause exits 2 as `policy-unmeasured` naming it, because the
+policy row for `standard` would otherwise read to every consumer as a class
+something measured. The caller fixes what the cause names and asks again.
 
 Exit 2 prints no policy record. The caller cannot assert a class.
 USAGE
@@ -96,16 +98,31 @@ fi
 # The classifier's own log is this script's too: a caller reading the refusal
 # below needs the line that produced it.
 cat -- "$CLASS_ERR" >&2
-# An endpoint that does not resolve is a refusal to read the diff, not a
-# measurement of it. The classifier reports that as `standard` with a note,
-# and `standard` carries a real policy row, so passing it on would hand every
-# consumer a class nothing measured: under REVIEW_GATE_MODE=off that row reads
-# as no review at all. Refuse here instead, once, and let the caller
-# materialize the range and ask again.
-if grep -q '^harness-note: cause=unresolved-endpoint' "$CLASS_ERR"; then
-  ENDPOINT="$(sed -n 's/^harness-note: cause=unresolved-endpoint[[:space:]]*//p' "$CLASS_ERR" | tail -1)"
-  fail policy-endpoint "${ENDPOINT:-unnamed}" "an endpoint of the range does not resolve in this checkout, so no class was measured"
-fi
+# The classifier repeats harness-only's verdict cause as a `harness-note:`
+# line and then applies ITS OWN two-entry allowlist: exactly two causes are a
+# readable product diff whose size it may measure, and EVERY other cause is a
+# refusal to read something — an inventory, a changed path, the diff itself,
+# an endpoint — which it still answers as class `standard` at exit 0.
+# `standard` carries a real policy row, so passing one of those on would hand
+# every consumer a class nothing measured; under REVIEW_GATE_MODE=off that row
+# reads as no review at all.
+#
+# So mirror the allowlist rather than name refusal causes one at a time. A
+# cause harness-only adds later refuses here until someone decides it is
+# measurable, which is the way round that cannot waive a review over a diff
+# nobody read. The caller fixes what the cause names and asks again.
+MEASURED_NOTES="$(sed -n 's/^harness-note: //p' "$CLASS_ERR")"
+while IFS= read -r note; do
+  [ -n "$note" ] || continue
+  case "$note" in
+    cause=product-source-or-unreadable-ownership | \
+      cause=product-source-or-unreadable-ownership\ * | \
+      cause=generated-ownership-gain | cause=generated-ownership-gain\ *) ;;
+    *) fail policy-unmeasured "$note" "the change classifier refused to read the diff, so no class was measured" ;;
+  esac
+done <<EOF_NOTES
+$MEASURED_NOTES
+EOF_NOTES
 case "$CLASS_OUT" in
   change_class=render|change_class=trivial|change_class=micro|change_class=small|change_class=standard) CLASS="${CLASS_OUT#change_class=}" ;;
   *) fail policy-classifier-protocol "$CLASS_OUT" "the harness-ci change classifier returned an invalid record" ;;

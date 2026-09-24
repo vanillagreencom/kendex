@@ -40,6 +40,8 @@ Set `REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;s
 | `small` | One normal bot round | Enforced |
 | `standard` | Current review-gate behavior | Current review-gate behavior |
 
+The table is applied only to a diff the shared classifier could actually read. It needs both endpoints present in the checkout, an ancestor they share, and a readable generated-file inventory at the base end. Where any of those is missing the classifier reports the reason and `review-policy` exits 2 naming it, rather than report a class nothing measured. Fix what the cause names, then ask again.
+
 The empty default disables this table and preserves the existing gate behavior. The `render`, `trivial`, and `micro` rows exempt the review-gate status, and every consumer of `scripts/review-policy` applies the same answer: the orch skill's reviewer wait and thread gates, and the `pr-merge` review-thread gate. Required CI checks, commit guards, and merge conflicts keep their existing enforcement.
 
 - `REVIEW_GATE_CONTEXT` names the required commit status.

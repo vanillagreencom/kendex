@@ -107,9 +107,9 @@ approval_message() {
       printf '%s\n' "approval-wait: the class-policy range is not in this checkout and the fetch of its two commits from origin failed:"
       printf '%s\n' "$POLICY_FETCH_ERR"
       ;;
-    policy-endpoint)
-      printf 'approval-wait: policy-endpoint range=%q\n' "$POLICY_REJECTED"
-      printf '%s\n' "approval-wait: an endpoint of '$POLICY_REJECTED' does not resolve in this checkout, so no change class can be measured and no mode is available"
+    policy-unreadable-range)
+      printf 'approval-wait: policy-unreadable-range range=%q\n' "$POLICY_REJECTED"
+      printf '%s\n' "approval-wait: '$POLICY_REJECTED' is not readable in this checkout — an end is missing, or the two share no ancestor — so no change class can be measured and no mode is available"
       ;;
     policy-range)
       printf 'approval-wait: policy-range options=%s\n' "--base,--head"
@@ -501,10 +501,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Both ends of the class-policy range, as commits this checkout holds.
+# The class-policy range, as this checkout can read it: both ends present AND
+# an ancestor they share, since the classifier takes a merge-base diff and a
+# shallow or grafted checkout can hold two commits with no reachable ancestor
+# between them. The same three clauses review-predicate.sh materializes.
 policy_endpoints_present() {
   git -C "$PROJECT_ROOT" cat-file -e "$CLASS_BASE^{commit}" 2>/dev/null &&
-    git -C "$PROJECT_ROOT" cat-file -e "$CLASS_HEAD^{commit}" 2>/dev/null
+    git -C "$PROJECT_ROOT" cat-file -e "$CLASS_HEAD^{commit}" 2>/dev/null &&
+    git -C "$PROJECT_ROOT" merge-base "$CLASS_BASE" "$CLASS_HEAD" >/dev/null 2>&1
 }
 
 # Print the effective reviewer-gate mode. An inactive class policy needs no
@@ -586,21 +590,23 @@ resolve_gate_mode() {
           return 2
         fi
         POLICY_REJECTED="$CLASS_BASE...$CLASS_HEAD"
-        # The classifier reads the diff between the two endpoints, so both
-        # commits have to be in this checkout. A base tip newer than its last
-        # fetch is not, and no caller can be asked to remember that, so the
-        # TWO SHAs are fetched — never every ref of origin, which is a far
-        # larger transfer for a two-commit question. Then look again: an
-        # endpoint still missing is an unreadable range, and this resolver
-        # refuses rather than let the owner answer `standard` for a diff
+        # The classifier takes a merge-base diff of the two endpoints, so both
+        # commits and an ancestor they share have to be in this checkout. A
+        # base tip newer than its last fetch is not, and no caller can be
+        # asked to remember that, so the TWO SHAs are fetched — never every
+        # ref of origin, which is a far larger transfer for a two-commit
+        # question. `--no-tags --no-write-fetch-head` keeps a mode resolution
+        # from downloading tags or rewriting FETCH_HEAD in a git directory
+        # other worktrees share. Then look again: a range still unreadable
+        # refuses here, rather than let the owner answer `standard` for a diff
         # nothing read.
         if ! policy_endpoints_present; then
           if git -C "$PROJECT_ROOT" remote get-url origin >/dev/null 2>&1; then
-            POLICY_FETCH_ERR="$(git -C "$PROJECT_ROOT" fetch --quiet origin "$CLASS_BASE" "$CLASS_HEAD" 2>&1)" ||
+            POLICY_FETCH_ERR="$(git -C "$PROJECT_ROOT" fetch --quiet --no-tags --no-write-fetch-head origin "$CLASS_BASE" "$CLASS_HEAD" 2>&1)" ||
               approval_message policy-fetch >&2
           fi
           if ! policy_endpoints_present; then
-            approval_message policy-endpoint >&2
+            approval_message policy-unreadable-range >&2
             return 2
           fi
         fi
