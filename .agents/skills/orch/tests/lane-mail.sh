@@ -128,6 +128,113 @@ lm inbox --item KEN-1
 assert_eq "$RC=$OUT" "0=" "an answer belongs to the wait that asked for it, never to the inbox"
 assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")" "2" "the cursor still passes the answer it did not hand over"
 
+# The receipt a send prints, and the repeat it refuses. A sender reads silence
+# as a send that did not land, and a wrapper run twice delivers nothing twice.
+new_lane receipt
+lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
+SENT_ID="${OUT#*id=}"
+SENT_ID="${SENT_ID%% *}"
+assert_eq "$RC=$OUT" "0=lane-mail: sent item=KEN-1 id=$SENT_ID bytes=12" \
+  "send prints one receipt naming the item, the envelope it appended and the text's bytes"
+assert_eq "$(jq -r '.id' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "$SENT_ID" \
+  "the receipt's id is the appended envelope's"
+lm send --item KEN-2 --root "$LANE" --directive --file "$(text d 'né')"
+assert_eq "$RC=${OUT##* }" "0=bytes=3" "the receipt counts the text in bytes, not in characters"
+
+lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
+assert_eq "$RC=$ERR=$OUT" "2=lane-mail: duplicate id=$SENT_ID=" \
+  "the same text to the same item inside a minute is refused, naming the envelope already there"
+assert_eq "$(jq -rs 'length' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "1" \
+  "and the refusal comes before the append, so the mailbox holds the one copy"
+lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold it now.')"
+assert_eq "$RC=${OUT%% id=*}" "0=lane-mail: sent item=KEN-1" "other text to that item appends as any send does"
+lm send --item KEN-3 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
+assert_eq "$RC=${OUT%% id=*}" "0=lane-mail: sent item=KEN-3" "the same text to another item is another message"
+
+# A message longer than one execve argument, which Linux caps at 131072 bytes.
+# A diff excerpt, a log tail or a review body reaches this size, so the guard
+# takes the envelope through the work directory and no ceiling on an argument
+# decides whether a send lands.
+new_lane receipt_large
+awk 'BEGIN { for (i = 0; i < 4000; i++) printf "the quick brown fox jumps over it\n" }' \
+  > "$TMP_ROOT/large.txt"
+LARGE_BYTES="$(wc -c < "$TMP_ROOT/large.txt" | tr -d ' ')"
+assert_eq "$([ "$LARGE_BYTES" -gt 131072 ] && echo over || echo under)" "over" \
+  "the large message really passes the ceiling one argument has"
+lm send --item KEN-1 --root "$LANE" --directive --file "$TMP_ROOT/large.txt"
+LARGE_ID="${OUT#*id=}"
+LARGE_ID="${LARGE_ID%% *}"
+assert_eq "$RC=${OUT##* }" "0=bytes=$(( LARGE_BYTES - 1 ))" \
+  "a message past that ceiling lands, and its receipt counts every byte"
+assert_eq "$(jq -r '.id' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "$LARGE_ID" \
+  "and the mailbox holds the envelope the receipt names"
+lm send --item KEN-1 --root "$LANE" --directive --file "$TMP_ROOT/large.txt"
+assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=$LARGE_ID" \
+  "and the guard judged it, so its retry is refused like any other"
+
+# The judgement is the whole envelope, not its words. A field a reader acts on
+# differing makes a message of its own, so a guard reading the text alone would
+# swallow an answer to another ask or a halt after a directive of those words.
+new_lane receipt_identity
+lm ask --item KEN-1 --file "$(text q 'first')"
+ASK_A="${OUT#id=}"
+lm ask --item KEN-1 --file "$(text q 'second')"
+ASK_B="${OUT#id=}"
+lm send --item KEN-1 --root "$LANE" --re "$ASK_A" --file "$(text a 'ok')"
+lm send --item KEN-1 --root "$LANE" --re "$ASK_B" --file "$(text a 'ok')"
+ANSWER_B="${OUT#*id=}"
+ANSWER_B="${ANSWER_B%% *}"
+assert_eq "$RC=$(jq -rs 'map(.re) | join(",")' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" \
+  "0=$ASK_A,$ASK_B" "the same words answering two asks are two messages, and both land"
+lm send --item KEN-1 --root "$LANE" --re "$ASK_B" --file "$(text a 'ok')"
+assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=$ANSWER_B" \
+  "the same words answering the same ask again is the retry that is refused"
+lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Stop.')"
+lm send --item KEN-1 --root "$LANE" --halt --file "$(text d 'Stop.')"
+assert_eq "$RC=$(jq -rs 'map(select(.text == "Stop.")) | map(.halt // false | tostring) | join(",")' \
+  < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "0=false,true" \
+  "a halt after an identical plain directive lands, carrying the flag the halt hook reads"
+
+# An envelope planted in a lane's mailbox carrying the identity that lane's own
+# overseer send writes, so only the field a case is about differs. `from` is
+# the repository name, which for a checkout with no kendex.toml and no origin
+# is the directory name `new_lane` built it under.
+plant_directive() { # ID AT TEXT
+  mkdir -p "$LANE/tmp/lane-mail/KEN-1"
+  jq -cn --arg id "$1" --arg at "$2" --arg from "overseer:${LANE##*/}" --arg text "$3" \
+    '{id: $id, kind: "directive", at: $at, from: $from, text: $text}' \
+    >> "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl"
+}
+stamp() { # SECONDS-FROM-NOW
+  jq -rn --argjson t "$(( $(date -u +%s) + $1 ))" '$t | todate'
+}
+
+# More than a minute apart is a second message, not a retry. The envelope is
+# planted with a stamp two minutes back, so the case costs no wall clock.
+OLD_AT="$(stamp -120)"
+new_lane receipt_window
+plant_directive older "$OLD_AT" 'Hold the PR.'
+lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
+assert_eq "$RC=${OUT%% id=*}" "0=lane-mail: sent item=KEN-1" \
+  "an envelope the mailbox has held for more than a minute is sent again"
+
+# A provider whose clock runs ahead of the sender's stamps a line in the
+# future. No send is a retry of a line written after it, so it still lands.
+new_lane receipt_future
+plant_directive ahead "$(stamp 120)" 'Hold the PR.'
+lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
+assert_eq "$RC=${OUT%% id=*}" "0=lane-mail: sent item=KEN-1" \
+  "an envelope stamped ahead of the sender's clock is no line this send repeats"
+
+# Two copies inside the window: the refusal names the one a retry would sit
+# beside, which is the later of them.
+new_lane receipt_latest
+plant_directive earlier "$(stamp -30)" 'Hold the PR.'
+plant_directive later "$(stamp -10)" 'Hold the PR.'
+lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
+assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=later" \
+  "the refusal names the most recent copy, never an older one behind it"
+
 # --after is the caller's own cursor: a file cursor unlike both it and the count
 # is neither read nor moved.
 after_lane() { # NAME
@@ -246,6 +353,7 @@ lm peer send --repo "$PEER_A" --re "$PEER_ASK" --file "$(text a 'It is ours.')"
 assert_eq "$RC=$(jq -rs 'map(select(.kind == "answer")) | .[0] | .from + " " + .re + " " + .text' \
   < "$PEER_A/tmp/lane-mail/overseer/to-lane.jsonl")" \
   "0=overseer:peer_b $PEER_ASK It is ours." "peer send --re answers the asker's ask from the peer's own checkout"
+assert_eq "${OUT%% id=*}" "lane-mail: sent item=overseer" "peer send prints the receipt send prints"
 LANE="$PEER_A"
 lm pending --item overseer
 assert_eq "$RC=$OUT" "0=" "the answered peer ask is no longer pending"
@@ -298,6 +406,35 @@ LANE="$PEER_A"
 lm peer send --repo "$PEER_B/.agents/skills/orch" --file "$(text d 'Inside the peer.')"
 assert_eq "$RC=$(jq -rs 'map(.text) | last' < "$PEER_B/tmp/lane-mail/overseer/to-lane.jsonl")" \
   "0=Inside the peer." "a path inside a peer resolves to that peer's main checkout"
+
+# The repeat rule on the peer side, and the sender field that keeps two
+# overseers writing one mailbox from silencing each other.
+new_lane peer_c
+PEER_C="$LANE"
+LANE="$PEER_A"
+lm peer send --repo peer_b --file "$(text d 'Both of us.')"
+LANE="$PEER_C"
+lm peer send --repo peer_b --file "$(text d 'Both of us.')"
+PEER_C_SENT="${OUT#*id=}"
+PEER_C_SENT="${PEER_C_SENT%% *}"
+assert_eq "$RC=$(jq -rs 'map(select(.text == "Both of us.")) | map(.from) | join(",")' \
+  < "$PEER_B/tmp/lane-mail/overseer/to-lane.jsonl")" "0=overseer:peer_a,overseer:peer_c" \
+  "two overseers writing one mailbox with the same words both land"
+lm peer send --repo peer_b --file "$(text d 'Both of us.')"
+assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=$PEER_C_SENT" \
+  "a peer send repeating its own envelope inside a minute is refused"
+assert_eq "$(jq -rs 'map(select(.text == "Both of us.")) | length' \
+  < "$PEER_B/tmp/lane-mail/overseer/to-lane.jsonl")" "2" \
+  "and the peer's mailbox still holds only the two that landed"
+
+# A peer ask lands in the same mailbox a later peer send is judged against, so
+# the kind and the choices an ask carries are what keep the two apart.
+lm peer ask --repo peer_b --file "$(text q 'Same words.')" --options a,b
+lm peer send --repo peer_b --file "$(text d 'Same words.')"
+assert_eq "$RC=$(jq -rs 'map(select(.text == "Same words.")) | map(.kind) | join(",")' \
+  < "$PEER_B/tmp/lane-mail/overseer/to-lane.jsonl")" "0=ask,directive" \
+  "an ask and a directive of the same words are two messages, and both land"
+LANE="$PEER_A"
 
 # A delivered ask the caller cannot wait on is the failure the id closes: the
 # peer holds it, so the id it was given is the only way back to the answer.
@@ -542,7 +679,7 @@ race_peer_sends() { # BIN
       LANE_HOST_STUB_DIR="$REMOTE_DISK" LANE_HOST_STUB_APPEND_DELAY=1 LANE_HOST_STUB_PUT_DELAY=1 \
       LANE_HOST_STUB_LIB="$REPO_ROOT/skills/orch/scripts/lib" \
       OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/racer_$n/state" \
-      "$1" peer send --repo "$REMOTE_ROOT" --host --file "$TMP_ROOT/$n.txt") &
+      "$1" peer send --repo "$REMOTE_ROOT" --host --file "$TMP_ROOT/$n.txt" >/dev/null) &
   done
   wait
   RACED="$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
@@ -618,12 +755,41 @@ assert_eq "$(grep -c -- "$REMOTE_ROOT/tmp/lane-mail/KEN-1/to-overseer.jsonl" "$S
   "the hosted read names the remote path in the transport's call log"
 host_lm send --item KEN-1 --root "$REMOTE_ROOT" --host --re remote-ask --file "$(text a 'Hosted answer.')"
 assert_eq "$RC" "0" "a hosted send exits 0"
+HOSTED_ID="${OUT#*id=}"
+HOSTED_ID="${HOSTED_ID%% *}"
+assert_eq "${OUT%% id=*}" "lane-mail: sent item=KEN-1" "and prints the receipt from the remote mailbox"
+assert_eq "$HOSTED_ID" "$(jq -r '.id' < "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-1/to-lane.jsonl")" \
+  "whose id is the envelope the transport appended"
 assert_eq "$(jq -r '.text' < "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-1/to-lane.jsonl")" \
   "Hosted answer." "a hosted send writes through the transport to the remote mailbox"
 host_lm drain --item KEN-1 --root "$REMOTE_ROOT" --host --after 0
 assert_eq "$(tail -n +2 <<<"$OUT")" "" "a hosted drain skips the ask its hosted answer already answers"
 assert_eq "$(grep -c -- "append --item KEN-1" "$STUB_LOG")" "1" "the hosted send crosses lane-host append once"
 assert_eq "$(grep -c -- "put --item KEN-1" "$STUB_LOG")" "0" "and never put, which would replace the whole mailbox"
+
+# The repeat is judged on the remote file, read through the transport the
+# append writes, so a hosted send judges the mailbox its own line would join.
+host_lm send --item KEN-1 --root "$REMOTE_ROOT" --host --re remote-ask --file "$(text a 'Hosted answer.')"
+assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=$HOSTED_ID" \
+  "a hosted repeat is refused against the mailbox its own transport reads"
+assert_eq "$(grep -c -- "append --item KEN-1" "$STUB_LOG")" "1" "and crosses no second append"
+
+# A send the provider refused prints no receipt, so silence and a landed send
+# are never the same screen.
+HOST_ENV=(LANE_HOST_STUB_NO_APPEND=1)
+host_lm send --item KEN-7 --root "$REMOTE_ROOT" --host --directive --file "$(text d 'never landed')"
+assert_eq "$RC=$OUT" "2=" "a hosted send the provider refused prints no receipt"
+
+# A hosted mailbox that cannot be read is one no send can be judged against,
+# so the send stops at the read rather than appending an unjudged line.
+HOST_ENV=(LANE_HOST_STUB_CAT_STATUS=1)
+host_lm send --item KEN-1 --root "$REMOTE_ROOT" --host --re remote-ask --file "$(text a 'Unjudged.')"
+assert_eq "$RC=$ERR=$OUT" "2=lane-mail: mail-read-failed=KEN-1=" \
+  "a hosted send whose mailbox read failed is refused, with no receipt"
+assert_eq "$(jq -rs 'map(select(.text == "Unjudged.")) | length' \
+  < "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-1/to-lane.jsonl")" "0" \
+  "and nothing of it reached the remote mailbox"
+assert_eq "$(grep -c -- "append --item KEN-1" "$STUB_LOG")" "1" "and it crossed no second append"
 
 # A provider predating the verb fails it. The send refuses and names the verb;
 # reading the mailbox and putting it back is what loses a line, so no write
@@ -878,6 +1044,94 @@ assert_eq "$(tail -n +2 <<<"$OUT")" "" "control: the real drain drops the settle
 LANE_MAIL_BIN="$MUTANT_DIR/answered-ignored" lm drain --item KEN-1 --root "$LANE" --after 0
 assert_eq "$(tail -n +2 <<<"$OUT" | jq -r '.text')" "settled" \
   "control: without the answered filter a settled ask is reported again"
+
+# One mutant for both call sites, applied at each in its own row: the send
+# branch calls the guard bare and the peer branch inside its `send` arm, so a
+# control covering one says nothing about the other.
+mutant duplicate-allowed 's@^    lm_no_duplicate "\$LINE"$@    :@; s@^      lm_no_duplicate "\$LINE"$@      :@'
+new_lane control_duplicate
+LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Twice over.')"
+LANE_MAIL_BIN="$MUTANT_DIR/duplicate-allowed" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Twice over.')"
+assert_eq "$RC=$(jq -rs 'map(.text) | join(",")' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" \
+  "0=Twice over.,Twice over." "control: without the repeat check the retry is delivered a second time"
+
+new_lane control_peer_target
+CONTROL_PEER="$LANE"
+new_lane control_peer_duplicate
+LANE_MAIL_BIN="$LANE_MAIL" lm peer send --repo control_peer_target --file "$(text d 'Peer twice.')"
+LANE_MAIL_BIN="$MUTANT_DIR/duplicate-allowed" lm peer send --repo control_peer_target --file "$(text d 'Peer twice.')"
+assert_eq "$RC=$(jq -rs 'map(.text) | join(",")' < "$CONTROL_PEER/tmp/lane-mail/overseer/to-lane.jsonl")" \
+  "0=Peer twice.,Peer twice." "control: without it at the peer call site the peer retry is delivered too"
+
+mutant duplicate-window-open 's@<= 60)@<= 86400)@'
+new_lane control_window
+plant_directive older "$OLD_AT" 'Hold the PR.'
+LANE_MAIL_BIN="$MUTANT_DIR/duplicate-window-open" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
+assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=older" \
+  "control: with the window wider than a minute an envelope two minutes old refuses the send"
+
+mutant duplicate-future-counted 's@(\$now - \$at) >= 0 and @@'
+new_lane control_future
+plant_directive ahead "$(stamp 120)" 'Hold the PR.'
+LANE_MAIL_BIN="$MUTANT_DIR/duplicate-future-counted" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
+assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=ahead" \
+  "control: without the floor a line stamped after this send is read as one it repeats"
+
+mutant duplicate-first-match "s@awk '{ last = \$0 } END { if (NR > 0) print last }'@awk 'NR == 1 { print; exit }'@"
+new_lane control_latest
+plant_directive earlier "$(stamp -30)" 'Hold the PR.'
+plant_directive later "$(stamp -10)" 'Hold the PR.'
+LANE_MAIL_BIN="$MUTANT_DIR/duplicate-first-match" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
+assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=earlier" \
+  "control: naming the first match sends the reader to a copy behind the one a retry sits beside"
+
+# The identity the guard compares. A copy reading the text alone swallows the
+# answer to a second ask, which the lane then waits out to its timeout.
+mutant duplicate-text-only 's@select(del(.id, .at) == \$want)@select(.text == ($sent[0] | .text))@'
+new_lane control_identity
+LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --re ask-A --file "$(text a 'ok')"
+LANE_MAIL_BIN="$MUTANT_DIR/duplicate-text-only" lm send --item KEN-1 --root "$LANE" --re ask-B --file "$(text a 'ok')"
+assert_eq "$RC=$(jq -rs 'map(.re) | join(",")' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" \
+  "2=ask-A" "control: judging the words alone refuses the answer to a second ask and never appends it"
+
+# The receipt is printed once the envelope is appended, on both routes. A copy
+# that prints it first tells a caller a send landed that the write then refused.
+mutant receipt-ahead-of-append 's@^      lm_append_host "\$TO_LANE" "\$LINE"$@      lm_sent; lm_append_host "$TO_LANE" "$LINE"@; s@^      lm_append_local "\$TO_LANE" "\$LINE"$@      lm_sent; lm_append_local "$TO_LANE" "$LINE"@'
+HOST_ENV=(LANE_HOST_STUB_NO_APPEND=1); HOST_BIN="$MUTANT_DIR/receipt-ahead-of-append"
+host_lm send --item KEN-7 --root "$REMOTE_ROOT" --host --directive --file "$(text d 'never landed')"
+assert_eq "$RC=${OUT%% id=*}" "2=lane-mail: sent item=KEN-7" \
+  "control: a receipt printed ahead of the hosted append reports a send the provider refused"
+
+# A mailbox file the lane can read and cannot write: the guard reads it, and
+# the append is what fails, so the two copies differ on the receipt alone.
+unwritable_send() { # BIN — sets LOCAL_SEND to the status and the receipt
+  new_lane control_local_receipt
+  mkdir -p "$LANE/tmp/lane-mail/KEN-1"
+  : > "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl"
+  chmod 444 "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl"
+  LANE_MAIL_BIN="$1" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'never landed')"
+  chmod 644 "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl"
+  LOCAL_SEND="$RC=$ERR=${OUT%% id=*}"
+  # Whether the first line an operator reads is lane-mail's own key or the
+  # shell's message about a library file.
+  case "$ERR" in
+    'lane-mail: '*) LOCAL_FIRST=keyed ;;
+    *) LOCAL_FIRST=noise ;;
+  esac
+}
+unwritable_send "$LANE_MAIL"
+assert_eq "$LOCAL_SEND" "2=lane-mail: write-failed=$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl=" \
+  "a local send whose append could not write refuses under its own key first, and prints no receipt"
+unwritable_send "$MUTANT_DIR/receipt-ahead-of-append"
+assert_eq "$LOCAL_SEND" "2=lane-mail: write-failed=$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl=lane-mail: sent item=KEN-1" \
+  "control: a receipt printed ahead of the local append reports a send the disk refused"
+
+# The library opens the mailbox itself, so the shell's own words on that
+# failure would stand ahead of the key unless the call site captures them.
+mutant append-words-uncaptured 's@ 2>"\$WORK_DIR/local.err" || rc=\$?@ || rc=$?@'
+unwritable_send "$MUTANT_DIR/append-words-uncaptured"
+assert_eq "${LOCAL_SEND%%=*}=$LOCAL_FIRST" "2=noise" \
+  "control: without the capture the library's own message stands where the keyed line belongs"
 
 
 STREAMING_HOST="$MUTANT_DIR/streaming-host"
