@@ -51,7 +51,9 @@ git -C "$TMP_ROOT/repo" config user.name Test
 #   COMMENTED review a thread reply submits (review id 21), and
 #   STUB_REVIEW_COMMENTS_MODE then decides what `api repos/*/pulls/<n>/comments`
 #   says that review's comments are: reply_only, opener, other_review_opener
-#   (a thread opened by a different review), http_404, or none.
+#   (a thread opened by a different review), http_404, or none. The
+#   approved_bodyless_at_head and changes_bodyless_at_head modes publish an
+#   empty-bodied formal verdict, as the Approve button with no comment does.
 #   Check-runs: `api repos/*/commits/<sha>/check-runs` answers per the sha in
 #   the URL — STUB_CHECKS_MODE=success_at_head/failure_at_head publishes a
 #   "Review Bot" run (older failure + newer terminal run, plus an unrelated
@@ -267,6 +269,12 @@ case "${1:-}" in
           ;;
         bodyless_at_head)
           echo '[{"id":21,"user":{"login":"reviewer1"},"state":"COMMENTED","body":"","commit_id":"headsha1"}]'
+          ;;
+        approved_bodyless_at_head)
+          echo '[{"id":22,"user":{"login":"reviewer1"},"state":"APPROVED","body":"","commit_id":"headsha1"}]'
+          ;;
+        changes_bodyless_at_head)
+          echo '[{"id":23,"user":{"login":"reviewer1"},"state":"CHANGES_REQUESTED","body":"","commit_id":"headsha1"}]'
           ;;
         author_bodyless)
           echo '[{"id":21,"user":{"login":"pr-author[bot]"},"state":"COMMENTED","body":"","commit_id":"headsha1"}]'
@@ -570,9 +578,11 @@ table "$APPROVAL" \
 
 echo "=== review mode: the evidence rule over reviews, check-runs and commit statuses at the head ==="
 # A review counts only at the current head, from someone other than the
-# author, not dismissed, and carrying content of its own — a body, or a
-# comment that opens a thread rather than answering one, since a thread reply
-# submits an empty-bodied COMMENTED review that proves nothing about the head.
+# author, not dismissed, and either a formal verdict whatever its body (the
+# Approve button with no comment submits an empty-bodied APPROVED review) or a
+# COMMENTED review carrying content of its own — a body, or a comment that
+# opens a thread rather than answering one, since a thread reply submits an
+# empty-bodied COMMENTED review that proves nothing about the head.
 # The author rows are the App spelling GitHub actually serves: the PR object
 # says "pr-author[bot]" while gh pr view says "app/pr-author", so an exclusion
 # read from the wrong endpoint never matches and counts the author's own rows.
@@ -598,6 +608,9 @@ table "$REVIEW" \
   'a standing CHANGES_REQUESTED blocks the review gate||STUB_REVIEWS_MODE=changes_standing|rc=1 status=changes_requested changes_requested=1' \
   'a CHANGES_REQUESTED superseded by the same reviewer no longer stands||STUB_REVIEWS_MODE=changes_superseded|rc=0 status=reviewed changes_requested=0' \
   'an APPROVED review at head is a review||STUB_REVIEWS_MODE=approved_at_head|rc=0 status=reviewed' \
+  'an empty-bodied APPROVED review at head is evidence||STUB_REVIEWS_MODE=approved_bodyless_at_head|rc=0 status=reviewed reviews_at_head=1 review_evidence=review' \
+  'an empty-bodied CHANGES_REQUESTED at head is evidence and still blocks||STUB_REVIEWS_MODE=changes_bodyless_at_head|rc=1 status=changes_requested reviews_at_head=1' \
+  'a bodyless verdict never reads the review-comment listing||STUB_REVIEWS_MODE=approved_bodyless_at_head,STUB_REVIEW_COMMENTS_MODE=http_404|rc=0 status=reviewed reviews_at_head=1' \
   'a review arriving on the second poll is picked up||STUB_REVIEWS_MODE=reviewed_later|rc=0 status=reviewed review_polls=2' \
   'a trusted check-run success at head opens the gate||STUB_REVIEWS_MODE=none,STUB_CHECKS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot|rc=0 status=reviewed review_evidence=check review_evidence_surface=check_run reviews_at_head=0 head_sha=headsha1' \
   'a check-run success on a stale sha is not evidence||STUB_REVIEWS_MODE=none,STUB_CHECKS_MODE=success_stale,PR_REVIEW_CHECK=Review Bot|rc=1 status=timeout' \

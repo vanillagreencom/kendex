@@ -183,12 +183,20 @@ review — for repos whose reviewers post COMMENTED reviews and never
   - review evidence for the CURRENT head commit, either:
       (a) a submitted review pinned to the head (REST commit_id ==
           headRefOid), not DISMISSED/PENDING, not the PR author's own, and
-          carrying content of its own — a body, or a review comment that
-          opens a thread rather than answering one. Any state counts once
-          it does; an approval is also a review. A review whose only
-          content is thread replies is engagement, not evidence: the wait
-          keeps waiting on it, and the proceed-on-timeout degrade below
-          still treats the head as one a reviewer engaged; or
+          either a formal verdict (APPROVED or CHANGES_REQUESTED, whatever
+          its body, so an Approve with no comment counts) or a COMMENTED
+          review carrying content of its own — a body, or a review comment
+          that opens a thread rather than answering one. A COMMENTED review
+          whose only content is thread replies is engagement, not evidence:
+          the wait keeps waiting on it, and the proceed-on-timeout degrade
+          below still treats the head as one a reviewer engaged. Judging a
+          bodyless COMMENTED review reads the review-comment listing; a
+          transient failure of that read retries inside the wait budget,
+          and a terminal one ends the wait (review-comments-failed, exit 1).
+          The merge-blocking Review gate status (review-gate's
+          review-predicate.sh) still counts a reply-only non-author review,
+          so the wait can keep waiting on a head that status already
+          passed; or
       (b) PR_REVIEW_CHECK is non-empty and the current head carries a
           successful signal of exactly that name on EITHER evidence
           surface (kendex#654, kendex#681): the newest check-run with that
@@ -311,7 +319,8 @@ JSON output (always when --json):
     "mode": <string>,             # review mode only
     "head_sha": <string>,         # review mode only: head at last poll
     "reviews_at_head": <int>,     # review mode only: non-author reviews
-                                  # at the head that carry content
+                                  # at the head that are evidence (a
+                                  # verdict, or content of their own)
     "review_evidence": <string>,  # review mode only, when the gate passes:
                                   # "review" (review object) or "check"
                                   # (PR_REVIEW_CHECK success)
@@ -332,8 +341,10 @@ two logins GitHub renders identically. GitHub renders one account three ways
 — "<slug>[bot]" on REST, "app/<slug>" from gh pr view --json author, and a
 bare "<slug>" on GraphQL actors — so approval mode compares its
 latestReviews[].author.login rows against that same login with the "[bot]"
-suffix removed. A failed or empty author read ends the wait (author-failed,
-exit 1) rather than comparing every review against an empty login.
+suffix removed. A transient author-read failure (5xx, 429, timeout) retries
+inside the wait budget, as the other reads do; a terminal failure or an empty
+login ends the wait (author-failed, exit 1) rather than comparing every review
+against an empty login.
 
 Repository: resolved through lib/gh-repo.sh, shared with ci-wait and
 queue-wait — GH_REPO first, then the working directory (`gh repo view`, then
@@ -987,6 +998,20 @@ read_pr_author() {
   pr_author_actor="${login%"[bot]"}"
 }
 
+# Read one paginated REST array listing (the path in $1) into rest_array_json.
+# The capture is two steps so the paginated read's own status is read before
+# jq folds the pages, and a zero-byte producer is a FAILED read (status 1),
+# never an empty page set that would read as an empty listing.
+read_rest_array() {
+  local raw status=0
+  rest_array_json=""
+  raw=$(gh api "$1" --paginate 2>"$GH_ERR_FILE") || status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  [ -n "$raw" ] || return 1
+  rest_array_json=$(jq -s 'add // []' <<<"$raw") || return $?
+  jq -e 'type == "array"' >/dev/null 2>&1 <<<"$rest_array_json" || return 1
+}
+
 # Classify the failed gh call whose stderr sits in GH_ERR_FILE.
 # Transient — retryable inside the wait budget — means the service or
 # transport hiccuped: HTTP 5xx, HTTP 429 rate limits, timeouts,
@@ -1100,23 +1125,11 @@ while true; do
     read_base_ref
 
     # --- submitted reviews snapshot (REST carries commit_id; latestReviews
-    # does not, so head pinning needs the pulls/reviews listing). Captured in
-    # two steps so the paginated read's own status is read before jq shapes it,
-    # and a zero-byte producer is a FAILED read, never an empty page set that
-    # would silently read as "nobody has reviewed this head". ---
+    # does not, so head pinning needs the pulls/reviews listing). ---
     reviews_status=0
-    set +e
-    reviews_raw=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>"$GH_ERR_FILE")
-    reviews_status=$?
-    set -e
-    if [ "$reviews_status" -eq 0 ] && [ -z "$reviews_raw" ]; then
-      reviews_status=1
-    fi
-    reviews_json=""
-    if [ "$reviews_status" -eq 0 ]; then
-      reviews_json=$(jq -s 'add // []' <<<"$reviews_raw") || reviews_status=$?
-    fi
-    if [ "$reviews_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$reviews_json"; then
+    read_rest_array "repos/$REPO/pulls/$PR_NUM/reviews" || reviews_status=$?
+    reviews_json="$rest_array_json"
+    if [ "$reviews_status" -ne 0 ]; then
       if gh_failure_is_transient "$reviews_status"; then
         transient_retry reviews-failed
         continue
@@ -1134,34 +1147,26 @@ while true; do
                      and .state != "DISMISSED" and .state != "PENDING"
                      and (.user.login // "") != $author)]' <<<"$reviews_json")
     candidates_at_head=$(jq 'length' <<<"$reviews_at_head_json")
-    # A candidate is evidence only when it carries content of its own: a body,
-    # or a review comment that opens a thread rather than answering one. Any
-    # state counts once it does — COMMENTED and APPROVED alike; an approval is
-    # also a review. Answering an existing thread submits a COMMENTED review
-    # with an empty body whose every comment is a reply (github.sh post-reply
-    # is one such producer), so counting those would end the wait the moment
-    # anyone answers a thread, on evidence that says nothing about the head.
-    last_reviews_at_head=$(jq '[.[] | select((.body // "") | test("\\S"))] | length' <<<"$reviews_at_head_json")
-    bodyless_ids=$(jq -c '[.[] | select((.body // "") | test("\\S") | not) | .id]' <<<"$reviews_at_head_json")
-    if [ "$(jq 'length' <<<"$bodyless_ids")" -gt 0 ]; then
-      # The review row carries no comments, so which threads a bodyless review
-      # opened is only readable from the review-comment listing. Read in two
-      # steps for the same reason the reviews listing is: a zero-byte producer
-      # is a FAILED read, never an empty page set that would read as "this
-      # review opened no thread".
+    # A candidate is evidence when it carries a formal verdict (APPROVED or
+    # CHANGES_REQUESTED, whatever its body: the Approve button with no comment
+    # submits an empty-bodied APPROVED review), or, for a COMMENTED review,
+    # content of its own: a body, or a review comment that opens a thread
+    # rather than answering one. Answering an existing thread submits a
+    # COMMENTED review with an empty body whose every comment is a reply
+    # (github.sh post-reply is one such producer), so counting those would end
+    # the wait the moment anyone answers a thread, on evidence that says
+    # nothing about the head.
+    review_content_defs='def verdict: .state == "APPROVED" or .state == "CHANGES_REQUESTED";
+      def has_body: (.body // "") | test("\\S");'
+    comments_json='[]'
+    if jq -e "$review_content_defs any(.[]; (verdict or has_body) | not)" >/dev/null <<<"$reviews_at_head_json"; then
+      # The review row carries no comments, so which threads a bodyless
+      # COMMENTED review opened is only readable from the review-comment
+      # listing.
       comments_status=0
-      set +e
-      comments_raw=$(gh api "repos/$REPO/pulls/$PR_NUM/comments" --paginate 2>"$GH_ERR_FILE")
-      comments_status=$?
-      set -e
-      if [ "$comments_status" -eq 0 ] && [ -z "$comments_raw" ]; then
-        comments_status=1
-      fi
-      comments_json=""
-      if [ "$comments_status" -eq 0 ]; then
-        comments_json=$(jq -s 'add // []' <<<"$comments_raw") || comments_status=$?
-      fi
-      if [ "$comments_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$comments_json"; then
+      read_rest_array "repos/$REPO/pulls/$PR_NUM/comments" || comments_status=$?
+      comments_json="$rest_array_json"
+      if [ "$comments_status" -ne 0 ]; then
         if gh_failure_is_transient "$comments_status"; then
           transient_retry review-comments-failed
           continue
@@ -1170,11 +1175,12 @@ while true; do
 
         exit 1
       fi
-      thread_openers=$(jq --argjson ids "$bodyless_ids" \
-        '[.[] | select(.in_reply_to_id == null) | .pull_request_review_id]
-         | unique | map(select(. as $id | $ids | index($id) != null)) | length' <<<"$comments_json")
-      last_reviews_at_head=$((last_reviews_at_head + thread_openers))
     fi
+    last_reviews_at_head=$(jq --argjson comments "$comments_json" "$review_content_defs"'
+      [.[] | select(verdict or has_body
+                    or (.id as $id | any($comments[];
+                          .pull_request_review_id == $id and .in_reply_to_id == null)))]
+      | length' <<<"$reviews_at_head_json")
     # A CHANGES_REQUESTED verdict stands until the reviewer re-reviews or it
     # is dismissed — judge each non-author reviewer by their latest submitted
     # review (the REST listing is in submission order).
