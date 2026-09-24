@@ -133,7 +133,7 @@ echo "=== a single implement record, complete by construction ==="
 init_growth_state "$STATE" "$WT" issue-776 "$RID"
 run --worktree "$WT" --kind implement --issue issue-776 --round-id "$RID" --branch issue-776 --commit "$IMPL_HEAD" --validate pass --qa-label needs-review
 assert_eq "rc=$RC $OUT" "rc=0 $WT/tmp/dev-return-issue-776-$RID.json" "the writer exits 0 and prints the round-scoped artifact path" "$ERR"
-assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"summary_posted\":true,\"summary\":null,\"bundled\":false,\"items\":[],\"baseline_lines\":3}" \
+assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"near_ceiling\":null,\"near_ceiling_error\":\"byte-ceiling not probed: no --near-ceiling-base\",\"summary_posted\":true,\"summary\":null,\"bundled\":false,\"items\":[],\"baseline_lines\":3}" \
   "the record is the schema's shape with the measured baseline, a numeric schema_version and no note" "$ERR"
 assert_eq "$(env ORCH_STATE_DIR="$WT/tmp" "$CHECK" --worktree "$WT" --issue issue-776 --round-id "$RID" | jq -r '.reason')" "valid" \
   "the record round-trips through round-mode acceptance"
@@ -156,11 +156,62 @@ table \
   "a --validate-note is recorded verbatim beside a strictly enumerated pass|--worktree $WT --kind implement --issue issue-note --round-id $RID --branch b --commit %H --validate pass --validate-note 80/80+on+re-run;+first+run+flaked|rc=0 .validate=pass .validate_note=80/80+on+re-run;+first+run+flaked" \
   "a FAILING verdict carries a note too|--worktree $WT --kind implement --issue issue-failnote --round-id $RID --branch b --commit %H --validate FAILING:+lint --validate-note lint+fails+only+under+--release|rc=0 .validate=FAILING:+lint .validate_note=lint+fails+only+under+--release" \
   "an omitted note is present and null|--worktree $WT --kind implement --issue issue-nonote --round-id $RID --branch b --commit %H --validate pass|rc=0 has:validate_note=true .validate_note=null" \
+  "a round that did not probe records null and the not-probed cause, never an empty list|--worktree $WT --kind implement --issue issue-nonear --round-id 16-16 --branch b --commit %H --validate pass|rc=0 has:near_ceiling=true .near_ceiling|tojson=null .near_ceiling_error=byte-ceiling+not+probed:+no+--near-ceiling-base roundtrip=valid" \
   "a leading single-dash summary is a value|--worktree $WT --kind implement --issue issue-dash --round-id 13-13 --branch b --commit %H --validate pass --summary -+close+as+duplicate+of+the+merged+fix --no-summary|rc=0 .summary=-+close+as+duplicate+of+the+merged+fix" \
   "double-dash prose that is not an own flag is a summary|--worktree $WT --kind implement --issue issue-ddash --round-id 14-14 --branch b --commit %H --validate pass --summary --foo+is+a+flag+of+the+consuming+tool --no-summary|rc=0 .summary=--foo+is+a+flag+of+the+consuming+tool" \
   "double-dash prose is accepted as --item REASONING|--worktree $WT --kind fix --issue issue-ddash2 --round-id 14-15 --branch b --commit c --validate pass --item 1 Skipped --force+would+be+needed|rc=0 .items[0].reasoning=--force+would+be+needed"
 assert_eq "$(find "$WT/tmp" -maxdepth 1 -name '.dev-return-*' | wc -l | tr -d ' ')" "0" "a successful write leaves no temp file behind"
 assert_eq "$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 7-7 --expect-items-from-round | jq -r '.reason')" "valid" "the fix record round-trips through the bound round's authorization"
+
+echo "=== --near-ceiling-base runs the installed lane and records what it could answer ==="
+# probe_wt NAME SIZE... — a worktree on branch `work` over `main` that adds one
+# file per SIZE in bytes, with the real byte-ceiling lane installed where a
+# consumer repository renders it. Under a 1 KB ceiling a 950-byte file is 92
+# percent of it and a 2000-byte file is over it, which makes the lane exit 1.
+probe_wt() {
+  local dir size
+  dir="$(new_repo "$1")"
+  shift
+  git -C "$dir" switch -q -c work
+  for size in "$@"; do
+    printf "%${size}s" '' > "$dir/f$size.txt"
+  done
+  git -C "$dir" add .
+  git -C "$dir" commit -q -m work
+  mkdir -p "$dir/.agents/skills/commit-guards"
+  ln -s "$REPO_ROOT/skills/commit-guards/scripts" "$dir/.agents/skills/commit-guards/scripts"
+  printf '%s' "$dir"
+}
+NEAR_WT="$(probe_wt probe-near 950)"
+OVER_WT="$(probe_wt probe-over 950 2000)"
+NEAR_LINE="byte-ceiling: near-ceiling=f950.txt:950:1024:92"
+# A lane present but not runnable, and a dangling link at or above it, are
+# broken installs: each records null, never the empty list an absent lane gets.
+NOEXEC_WT="$(new_repo probe-noexec)"
+mkdir -p "$NOEXEC_WT/.agents/skills/commit-guards/scripts"
+printf '#!/bin/sh\n' > "$NOEXEC_WT/.agents/skills/commit-guards/scripts/byte-ceiling"
+DANGLE_WT="$(new_repo probe-dangle)"
+mkdir -p "$DANGLE_WT/.agents/skills/commit-guards/scripts"
+ln -s "$TMP_ROOT/nowhere" "$DANGLE_WT/.agents/skills/commit-guards/scripts/byte-ceiling"
+PARENT_WT="$(new_repo probe-parent)"
+mkdir -p "$PARENT_WT/.agents/skills"
+ln -s "$TMP_ROOT/nowhere" "$PARENT_WT/.agents/skills/commit-guards"
+export COMMIT_GUARDS_BYTE_CEILING_KB=1 COMMIT_GUARDS_BYTE_WARN_PCT=90
+PROBE_ARGS="--kind fix --round-id 17-17 --branch work --commit c --validate pass --item 1 Applied probed"
+for row in \
+  "exit 0 records the near-ceiling line|$NEAR_WT|main|[\"$NEAR_LINE\"]|null" \
+  "exit 1 records the near-ceiling line and not the oversized one|$OVER_WT|main|[\"$NEAR_LINE\"]|null" \
+  "exit 2 on a ref that names no commit records null and the lane's key|$NEAR_WT|nope|null|\"byte-ceiling exit 2: byte-ceiling: base-ref=nope\"" \
+  "an absent lane is a repository with no byte ceiling: an empty list and no error|$WT|main|[]|null" \
+  "a lane without the execute bit records null and the path|$NOEXEC_WT|main|null|\"byte-ceiling not executable: $NOEXEC_WT/.agents/skills/commit-guards/scripts/byte-ceiling\"" \
+  "a dangling link at the lane records null and the path|$DANGLE_WT|main|null|\"byte-ceiling not executable: $DANGLE_WT/.agents/skills/commit-guards/scripts/byte-ceiling\"" \
+  "a dangling link above the lane records null and the link|$PARENT_WT|main|null|\"byte-ceiling broken link: $PARENT_WT/.agents/skills/commit-guards\""; do
+  IFS='|' read -r label wt ref near error <<<"$row"
+  # shellcheck disable=SC2086
+  run --worktree "$wt" --issue issue-probe $PROBE_ARGS --near-ceiling-base "$ref"
+  assert_eq "rc=$RC $(rec -c '[.near_ceiling, .near_ceiling_error]')" "rc=0 [$near,$error]" "$label" "$ERR"
+done
+unset COMMIT_GUARDS_BYTE_CEILING_KB COMMIT_GUARDS_BYTE_WARN_PCT
 
 echo "=== every refusal exits 2 on its own guard and writes nothing ==="
 # Every value-taking flag refuses a missing value and an option token in its

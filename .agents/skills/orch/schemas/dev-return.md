@@ -28,6 +28,8 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
   "validate": "FAILING: cargo test",
   "validate_note": "Test-only validation ceiling: the suite failed at 34m; the failed target passed alone under load",
   "qa_labels": ["needs-review"],
+  "near_ceiling": ["byte-ceiling: near-ceiling=crates/core/src/engine/deps.rs:189000:204800:92"],
+  "near_ceiling_error": null,
   "summary_posted": true,
   "summary": "### Proposed Rules\n- Rule the validation list is missing",
   "bundled": false,
@@ -49,6 +51,8 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 | `validate` | Yes | `--validate` | `pass` or `FAILING: check1,check2` — a closed enumeration |
 | `validate_note` | Optional | `--validate-note` | A free-text qualifier the enumeration cannot express, or `null` |
 | `qa_labels` | Optional | `--qa-label` (repeatable) | Applied QA labels; `[]` when none |
+| `near_ceiling` | Optional | `--near-ceiling-base` | One `byte-ceiling` `near-ceiling` line per file within reach of the byte ceiling, as the lane reports the branch AT ARTIFACT TIME; `[]` when none. The writer runs the worktree's installed lane with `--base REF` and keeps its near-ceiling lines on exit 0 or 1; a repository with nothing at the lane path has no byte ceiling and records `[]`. An omitted `--near-ceiling-base`, a dangling link at or above the lane, a lane that is not executable, or a lane that exits otherwise records `null`, which means unknown, never none. A file that first enters the warn band in work landed afterwards, including one the pre-push lane names on a rebased or squashed state, is not in the list, so the list is not a completeness claim about the branch as pushed. `dev-artifact-check` echoes it, and the orchestrator stores it as workflow state's `near_ceiling` so the next round's brief plans the split before a later commit meets the ceiling |
+| `near_ceiling_error` | Optional | set by the writer | Why `near_ceiling` is `null`: `byte-ceiling exit N:` and the lane's first stderr line, `byte-ceiling not executable:` and the lane path, `byte-ceiling broken link:` and the dangling link above the lane, or `byte-ceiling not probed: no --near-ceiling-base`; `null` otherwise. `dev-artifact-check` echoes it, and `dev-start.md` § Store Near-Ceiling Lines names it in the round's report |
 | `summary_posted` | Optional | `--no-summary` sets `false` | `true` only when the summary was posted to a tracker; GitHub and ad-hoc rounds set `false` |
 | `summary` | Optional | `--summary` or `--summary-file` | The summary content, or `null`. Every single implement round embeds it, including a Linear round that also sets `summary_posted: true`, so a consumer can read its `### Proposed Rules` |
 | `bundled` | Optional | `--bundled` sets `true` | `true` for a bundled implement |

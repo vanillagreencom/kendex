@@ -74,8 +74,9 @@ run_check() {
 json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 
 # observe EXPECT — prints the run's value of every `name=` field EXPECT names,
-# in EXPECT's order. Plain names are JSON result fields (`files` compact); a
+# in EXPECT's order. Plain names are JSON result fields; a
 # key the result does not carry reads ABSENT, so `null` means a real null.
+# `files` and `near_ceiling` read compact.
 #   rc              exit status
 #   stderr~<text>   whether stderr carries <text> (`+` reads as a space)
 #   stderr_first~<text>  whether stderr's FIRST line is exactly <text> (`+`
@@ -97,6 +98,7 @@ observe() {
     case "$name" in
       rc) value="$RC" ;;
       files) value="$(json '.files | tojson')" ;;
+      near_ceiling) value="$(json '.near_ceiling | tojson')" ;;
       help_sections)
         value=""
         grep -q '^Gates ordered:' <<<"$OUT" && value="$value,gates"
@@ -220,7 +222,7 @@ receipt_table \
   "a valid implement at an explicit path, no validate_note key reads null^impl^^$FILE_ARGS^rc=0 reason=valid validate_note=null" \
   "a matching --round-id in file mode^impl^^$FILE_ARGS --round-id $R^reason=valid" \
   "a mismatched --round-id in file mode^impl^^$FILE_ARGS --round-id NOPE-1^reason=invalid" \
-  "a missing file reports the stable shape with null qualifiers^none^^--file $WT/tmp/nope.json^rc=1 reason=missing validate=null validate_note=null"
+  "a missing file reports the stable shape with null qualifiers and an empty near-ceiling list^none^^--file $WT/tmp/nope.json^rc=1 reason=missing validate=null validate_note=null near_ceiling=[] near_ceiling_error=null"
 
 echo "=== usage errors end in the parser ==="
 receipt_table \
@@ -453,8 +455,10 @@ echo "=== the validation note reaches the orchestrator ==="
 NOTE="80/80-on-rerun,first-run-flaked-on-release-tests"
 # A real note carries spaces, a semicolon and parentheses; the echo is by-value
 # through jq --arg, asserted outside the table since expect tokens split on
-# whitespace.
-REAL_NOTE="80/80 on re-run; first run flaked on Rust Tests (release)"
+# whitespace. It also carries a literal TAB, which is what emit() joins its
+# surfaced fields with: `tojson` escapes the tab inside the value, so the split
+# stays exact and the note comes back whole.
+REAL_NOTE="$(printf '80/80 on re-run;\tfirst run flaked on Rust Tests (release)')"
 printf '%s' "$VALID_IMPL" | jq -c --arg n "$REAL_NOTE" '.validate_note=$n' > "$ARTIFACT"
 run_check --file "$ARTIFACT"
 assert_eq "$(json .validate_note)" "$REAL_NOTE" "a note with spaces and punctuation is echoed verbatim" "$ERR"
@@ -464,6 +468,23 @@ receipt_table \
   "a numeric validate_note is invalid^impl^.validate_note=42^$FILE_ARGS^reason=invalid" \
   "a boolean validate_note is invalid^impl^.validate_note=true^$FILE_ARGS^reason=invalid" \
   "an array validate_note is invalid^impl^.validate_note=[]^$FILE_ARGS^reason=invalid"
+
+echo "=== the near-ceiling lines reach the orchestrator ==="
+# The next round's brief plans the split from these, so a line stored in the
+# artifact is echoed verbatim; a receipt that carries none, or carries the key
+# with a shape the writer never produces, reads as an empty list rather than a
+# missing key the caller must special-case.
+# A tab here too, on the other side of the join: a value carrying the join
+# character must not split the field that follows it.
+NEAR_LINE="$(printf 'byte-ceiling: near-ceiling=crates/core/src/engine/deps.rs:189000:204800:92\tfrom the pre-commit run')"
+printf '%s' "$VALID_IMPL" | jq -c --arg l "$NEAR_LINE" '.near_ceiling=[$l]' > "$ARTIFACT"
+run_check --file "$ARTIFACT"
+assert_eq "$(json '.near_ceiling[0]')" "$NEAR_LINE" "a near-ceiling line with spaces and punctuation is echoed verbatim" "$ERR"
+receipt_table \
+  "two near-ceiling lines are echoed in order^impl^.near_ceiling=[\"a:1:2:91\",\"b:3:4:95\"]^$FILE_ARGS^reason=valid near_ceiling=[\"a:1:2:91\",\"b:3:4:95\"]" \
+  "a receipt with no near_ceiling key echoes an empty list^impl^^$FILE_ARGS^reason=valid near_ceiling=[]" \
+  "a non-array near_ceiling echoes an empty list rather than the wrong shape^impl^.near_ceiling=\"one\"^$FILE_ARGS^reason=valid near_ceiling=[]" \
+  "a null near_ceiling, a probe that did not answer, echoes null and its cause rather than an empty list^impl^.near_ceiling=null | .near_ceiling_error=\"byte-ceiling-exit-2\"^$FILE_ARGS^reason=valid near_ceiling=null near_ceiling_error=byte-ceiling-exit-2"
 
 echo "=== --wait blocks until an artifact lands or the deadline ==="
 # An (invalid) receipt landing after about two seconds ends a 20-second wait

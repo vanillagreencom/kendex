@@ -88,6 +88,7 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `COMMIT_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names` | Batch check list (`commit-msg` never batches). Under `--skip-unscoped` a caller that stages nothing withholds the checks it hands no scope whose configured scope reads only the staged diff. |
 | `COMMIT_GUARDS_TODO_EXCLUDES` | `tools/todo-ban-excludes` | todo-ban exclusion list. |
 | `COMMIT_GUARDS_BYTE_CEILING_KB` | `200` | Byte ceiling in KB. |
+| `COMMIT_GUARDS_BYTE_WARN_PCT` | `90` | Percent of the byte ceiling at which byte-ceiling prints a `near-ceiling` notice, 1-100; the exit status is unchanged. |
 | `COMMIT_GUARDS_BYTE_EXCLUDES` | `tools/byte-ceiling-excludes` | byte-ceiling exclusion list (declared asset trees). |
 | `COMMIT_GUARDS_BYTE_BASELINE` | `tools/byte-ceiling-baseline` | byte-ceiling `--all` baseline: the object size each legacy oversized file is held to. |
 | `COMMIT_GUARDS_SUPPRESSION_EXCLUDES` | `tools/suppression-ban-excludes` | suppression-ban exclusion list. |

@@ -8,7 +8,9 @@
 # every tracked file, holding an oversized one to its baseline row and failing
 # a row that is loose or names no oversized file, lockfiles and declared
 # asset trees are exempt, the
-# ceiling resolves through the settings ladder and is validated, and a
+# ceiling resolves through the settings ladder and is validated, a file under
+# the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT percent of it is
+# named without failing the run, and a
 # measurement that breaks is a collection error, never a pass. One table:
 # a fixture builds the repository, the check runs with ARGS under ENVS, and
 # a row pins the exit status with every line printed, so the hit, the
@@ -24,7 +26,7 @@ BC="$SKILL_DIR/scripts/byte-ceiling"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would move every ceiling below.
-unset COMMIT_GUARDS_BYTE_CEILING_KB COMMIT_GUARDS_BYTE_EXCLUDES COMMIT_GUARDS_BYTE_BASELINE COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
+unset COMMIT_GUARDS_BYTE_CEILING_KB COMMIT_GUARDS_BYTE_WARN_PCT COMMIT_GUARDS_BYTE_EXCLUDES COMMIT_GUARDS_BYTE_BASELINE COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -84,6 +86,7 @@ baseline() { mkdir -p "$R/tools"; printf '%b' "$1" >"$R/$BASE_FILE"; git -C "$R"
 ERR="byte-ceiling: "
 over() { printf 'byte-ceiling: oversized=%s:%s:%s:%s' "$1" "$2" "$3" "$4"; } # PATH BYTES ~KB CEILING
 grew() { printf 'byte-ceiling: grew=%s:%s:%s:%s:%s' "$1" "$2" "$3" "$4" "$5"; } # PATH PRIOR BYTES ~KB CEILING
+near() { printf 'byte-ceiling: near-ceiling=%s:%s:%s:%s' "$1" "$2" "$3" "$4"; } # PATH BYTES CEILING-BYTES PCT
 STAGED="staged:"
 SWEEP="all:"
 since() { printf 'base:%s' "$1"; } # REF
@@ -91,6 +94,7 @@ onto() { printf 'against:%s' "$1"; } # REF
 ok() { printf 'byte-ceiling: result=0:%s:%s:%s' "$1" "${3:-1}" "${2:-$STAGED}"; } # CHECKED [SCOPE] [CEILING]
 failed() { printf 'byte-ceiling: result=%s:%s:%s:%s' "$1" "$2" "${3:-1}" "${4:-$STAGED}"; } # VIOLATIONS CHECKED [CEILING] [SCOPE]
 C=COMMIT_GUARDS_BYTE_CEILING_KB
+W=COMMIT_GUARDS_BYTE_WARN_PCT
 
 run_rows() { # label | fixture | envs | args | expect
   local row label fx envs args expect words
@@ -106,8 +110,8 @@ run_rows() { # label | fixture | envs | args | expect
 echo "=== staged mode: an addition past the ceiling fails; at the ceiling passes ==="
 staged() { repo "$1"; put small.bin 1; [ -z "${2-}" ] || put "$2" "$3"; } # NAME [PATH KB] — a 1 KB file, and one more
 run_rows \
-  "a 1 KB addition at ceiling 1 KB passes: at the ceiling is not over it|staged at-ceiling|$C=1||rc=0 $(ok 1)" \
-  "a 2 KB addition at ceiling 1 KB fails naming file, bytes and ceiling, carrying the remedy and counting both staged files|staged over big.bin 2|$C=1||rc=1 $(over big.bin 2048 2 1);$(failed 1 2)" \
+  "a 1 KB addition at ceiling 1 KB passes: at the ceiling is not over it, and 100 percent of it is named near the ceiling|staged at-ceiling|$C=1||rc=0 $(near small.bin 1024 1024 100);$(ok 1)" \
+  "a 2 KB addition at ceiling 1 KB fails naming file, bytes and ceiling, carrying the remedy and counting both staged files|staged over big.bin 2|$C=1||rc=1 $(over big.bin 2048 2 1);$(near small.bin 1024 1024 100);$(failed 1 2)" \
   "a 205 KB addition fails under the built-in 200 KB|staged default-over big.bin 205|||rc=1 $(over big.bin 209920 205 200);$(failed 1 2 200)" \
   "control: a 100 KB addition passes under the built-in default|staged default-under ok.bin 100|||rc=0 $(ok 2 "$STAGED" 200)"
 
@@ -128,7 +132,7 @@ fx_typechange() { repo typechange; put payload.bin 5; ln -s payload.bin "$R/thin
 fx_to_symlink() { grown to-symlink 5; rm "$R/seed.bin"; ln -s payload "$R/seed.bin"; git -C "$R" add -A; }
 run_rows \
   "editing a tracked file past the ceiling fails: the staged lane reads A and M|fx_edit_over|$C=1||rc=1 $(over seed.bin 5120 5 1);$(failed 1 1)" \
-  "control: the same file edited under the ceiling passes|fx_edit_under|$C=1||rc=0 $(ok 1)" \
+  "control: the same file edited under the ceiling passes|fx_edit_under|$C=1||rc=0 $(near seed.bin 1024 1024 100);$(ok 1)" \
   "a committed oversized file is not re-judged while nothing stages it|fx_untouched|$C=1||rc=0 $(ok 0)" \
   "a staged oversized file may shrink toward the ceiling, and the verdict is the same on a second run|fx_shrink|$C=1||rc=0 $(ok 1)" \
   "an existing oversized file may not grow, by one byte|fx_grow|$C=1||rc=1 $(grew seed.bin 5120 5121 6 1);$(failed 1 1)" \
@@ -187,14 +191,14 @@ run_rows \
   "--base main rejects growth from the merge-base size|feature base-grow grow|$C=1|--base main|rc=1 $(grew old.bin 4096 5120 5 1);$(failed 1 1 1 "$(since main)")" \
   "--base main fails on the branch's added file|feature base-add add|$C=1|--base main|rc=1 $(over feat.bin 2048 2 1);$(failed 1 1 1 "$(since main)")" \
   "--base=REF is the same mode|feature base-eq add|$C=1|--base=main|rc=1 $(over feat.bin 2048 2 1);$(failed 1 1 1 "$(since main)")" \
-  "--base judges from the merge-base: a legacy file main shrank after the branch point is not the branch's growth|feature base-main-moves main-moves|$C=1|--base main|rc=0 $(ok 1 "$(since main)")" \
-  "--against judges the same shape against main's OWN tree, where that shrink is growth main would receive|feature against-main-moves main-moves|$C=1|--against main|rc=1 $(grew old.bin 3072 4096 4 1);$(failed 1 2 1 "$(onto main)")" \
+  "--base judges from the merge-base: a legacy file main shrank after the branch point is not the branch's growth|feature base-main-moves main-moves|$C=1|--base main|rc=0 $(near note.bin 1024 1024 100);$(ok 1 "$(since main)")" \
+  "--against judges the same shape against main's OWN tree, where that shrink is growth main would receive|feature against-main-moves main-moves|$C=1|--against main|rc=1 $(near note.bin 1024 1024 100);$(grew old.bin 3072 4096 4 1);$(failed 1 2 1 "$(onto main)")" \
   "the two agree where the ref is an ancestor: a shrink is a shrink either way|feature against-shrink shrink|$C=1|--against main|rc=0 $(ok 1 "$(onto main)")" \
   "--against=REF is the same mode|feature against-eq shrink|$C=1|--against=main|rc=0 $(ok 1 "$(onto main)")" \
   "an unknown --against ref is exit 2, naming it|legacy against-unknown|$C=1|--against no-such-ref|rc=2 ${ERR}against-ref=no-such-ref" \
   "--against without a ref is exit 2|legacy against-bare|$C=1|--against|rc=2 ${ERR}argument-missing=--against" \
-  "--all does not size a tracked symlink: one file checked beside it|fx_all_symlink|$C=1|--all|rc=0 $(ok 1 "$SWEEP")" \
-  "--all does not size a committed gitlink either: it carries a commit id, not content|gitlink gitlink-all committed|$C=1|--all|rc=0 $(ok 1 "$SWEEP")" \
+  "--all does not size a tracked symlink: one file checked beside it|fx_all_symlink|$C=1|--all|rc=0 $(near old.bin 1024 1024 100);$(ok 1 "$SWEEP")" \
+  "--all does not size a committed gitlink either: it carries a commit id, not content|gitlink gitlink-all committed|$C=1|--all|rc=0 $(near ok.bin 1024 1024 100);$(ok 1 "$SWEEP")" \
   "a staged gitlink is not sized content|gitlink gitlink-staged staged|$C=1||rc=0 $(ok 0)" \
   "control: --base main on main itself has no additions|legacy base-self|$C=1|--base main|rc=0 $(ok 0 "$(since main)")" \
   "an unknown --base ref is exit 2, naming it|legacy base-unknown|$C=1|--base no-such-ref|rc=2 ${ERR}base-ref=no-such-ref" \
@@ -221,6 +225,27 @@ run_rows \
   "--excludes FILE names the list, and the remedy names it too|fx_excludes_flag excludes-flag|$C=1|--excludes conf/excludes|rc=0 $(ok 1)" \
   "the equals form of --excludes names the same list|fx_excludes_flag excludes-eq|$C=1|--excludes=conf/excludes|rc=0 $(ok 1)" \
   "control: without the flag the same repository fails on the asset, and the remedy names the default list|fx_excludes_flag excludes-default|$C=1||rc=1 $(over assets/demo.gif 2048 2 1);$(failed 1 2)"
+
+echo "=== a file under the ceiling but within reach of it is named, and the run still passes ==="
+# 1000 bytes against a 1024-byte ceiling is 97 percent; 900 is 87. The warn
+# threshold is a percent of the ceiling in bytes, so a row states the bytes it
+# stages rather than a kibibyte count.
+near_fx() { repo "$1"; mkdir -p "$R"; head -c "$2" /dev/zero | tr '\0' 'x' >"$R/near.txt"; git -C "$R" add -A; } # NAME BYTES
+run_rows \
+  "a staged file at 97 percent of the ceiling is named, with its bytes, the ceiling and the percent, and the run still passes|near_fx warn-over 1000|$C=1||rc=0 $(near near.txt 1000 1024 97);$(ok 1)" \
+  "control: the same file at 87 percent is silent|near_fx warn-under 900|$C=1||rc=0 $(ok 1)" \
+  "the smallest file the default threshold holds is named: 922 bytes is the first at or above 90 percent of 1024|near_fx warn-exact 922|$C=1||rc=0 $(near near.txt 922 1024 90);$(ok 1)" \
+  "control: one byte below that is silent|near_fx warn-just-under 921|$C=1||rc=0 $(ok 1)" \
+  "the threshold is inclusive: a file at exactly the percent, 512 bytes against 50 percent of 1024, is named|near_fx warn-inclusive 512|$C=1,$W=50||rc=0 $(near near.txt 512 1024 50);$(ok 1)" \
+  "control: one byte under exactly the percent is silent|near_fx warn-exclusive 511|$C=1,$W=50||rc=0 $(ok 1)" \
+  "COMMIT_GUARDS_BYTE_WARN_PCT moves the threshold: at 95 the 87-percent file stays silent while a lower setting names it|near_fx warn-setting 900|$C=1,$W=95||rc=0 $(ok 1)" \
+  "the same file at a warn percent of 80 is named|near_fx warn-setting-low 900|$C=1,$W=80||rc=0 $(near near.txt 900 1024 87);$(ok 1)" \
+  "a file past the ceiling still fails and is not doubly reported as near it|near_fx warn-over-ceiling 2000|$C=1||rc=1 $(over near.txt 2000 2 1);$(failed 1 1)" \
+  "a non-numeric warn percent is exit 2, quoting it|near_fx warn-bad 100|$C=1,$W=abc||rc=2 ${ERR}positive-integer=COMMIT_GUARDS_BYTE_WARN_PCT:abc" \
+  "a zero warn percent is exit 2: every file is at or above nothing|near_fx warn-zero 100|$C=1,$W=0||rc=2 ${ERR}positive-integer=COMMIT_GUARDS_BYTE_WARN_PCT:0" \
+  "control: 100 is the top of the range and is accepted|near_fx warn-hundred 1024|$C=1,$W=100||rc=0 $(near near.txt 1024 1024 100);$(ok 1)" \
+  "a warn percent above the range is exit 2: past the ceiling the notice would be off with no word|near_fx warn-101 100|$C=1,$W=101||rc=2 ${ERR}warn-percent-range=COMMIT_GUARDS_BYTE_WARN_PCT:101" \
+  "a warn percent large enough to overflow the comparison is refused by the same bound, not measured|near_fx warn-overflow 10|$C=1,$W=9007199254740993||rc=2 ${ERR}warn-percent-range=COMMIT_GUARDS_BYTE_WARN_PCT:9007199254740993"
 
 echo "=== the ceiling resolves through the settings ladder and is validated ==="
 cfg() { repo "$1"; put f.txt 1; } # NAME

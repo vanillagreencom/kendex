@@ -16,6 +16,7 @@ Persistent state file for orch workflows. Survives context compaction.
   "worktree": "/absolute/path/to/worktree",
   "branch": "user/proj-123",
   "qa_labels": ["needs-perf-test", "needs-safety-audit"],
+  "near_ceiling": ["byte-ceiling: near-ceiling=crates/core/src/engine/deps.rs:189000:204800:92"],
   "child_sessions": {
     "backend": { "status": "active", "agent_id": "agent_abc123", "runtime_agent_type": "backend", "agent_type_fallback": null, "spawned_at": "[ISO_8601_UTC]" },
     "frontend": { "status": "closed", "agent_id": "agent_def456", "runtime_agent_type": "worker", "agent_type_fallback": "spawn_rejected_or_unavailable", "spawned_at": "[ISO_8601_UTC]" }
@@ -124,6 +125,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `worktree` | string | Absolute path to git worktree |
 | `branch` | string | Git branch name |
 | `qa_labels` | string[] | QA trigger labels from dev return |
+| `near_ceiling` | string[] | `byte-ceiling` `near-ceiling` lines from the last recorded dev return, each naming a file within reach of the byte ceiling. `dev-start.md` § Store Near-Ceiling Lines is the one writer, invoked by the implement and fix accept paths and by the retry path for a structurally valid artifact with a failing `validate`. It REPLACES the list, and a return whose probe did not answer (`near_ceiling: null`) leaves it as it stood: state describes the branch as the last recorded round left it, never an accumulation across rounds. The next round's delegation renders one `Near-ceiling:` line per entry |
 | `child_sessions` | object | Per-agent lifecycle keyed by logical agent name: `{agent: {status, agent_id, runtime_agent_type, agent_type_fallback, spawned_at}}`. `status` is `"active"` while the session is live (`dev-start.md` § 2 stamps it at spawn) and `"closed"` once the caller's shutdown step retires it (`start-worktree.md` § 5.5). Reviewer slot accounting treats a record with a missing `status` field as active |
 | `review_agents` | string[] | Reviewer names currently expected to stay alive across fix/re-review cycles; in wave mode (`REVIEWER_SLOT_BUDGET` exceeded) only the currently launched wave |
 | `review_agent_ids` | object | Reviewer session IDs keyed by name — reuse before spawning `{"name":"id",...}` |

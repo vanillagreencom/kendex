@@ -6,7 +6,7 @@ license: MIT
 user-invocable: true
 dependencies:
   required: [orch, github, decider, code-quality]
-  optional: [linear]
+  optional: [linear, commit-guards]
 metadata:
   author: vanillagreen
   source: kendex

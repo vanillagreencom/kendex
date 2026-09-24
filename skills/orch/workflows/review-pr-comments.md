@@ -244,6 +244,12 @@ Every measured size verdict permits delegation. Use the round's `size_check` rep
 
 ⚠ Fill placeholders only ([Format Tags Are Literal](../references/skill-rules.md#format-tags-are-literal)). `Recommendation:` is the technical fix; the agent owns its own process.
 
+Read the near-ceiling lines the last recorded round left, and render one `Near-ceiling:` line per entry. The key is the one carrier: the artifact's own path is addressed by `dev_round_id`, which the stamp above has already overwritten.
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.near_ceiling // []'
+```
+
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 <delegation_format>
@@ -256,6 +262,7 @@ Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 [If the round may add files: "Adds: [REPO_RELATIVE_PATHS]"]
+[For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 
 Review items:
 [For each item in the fix set:]

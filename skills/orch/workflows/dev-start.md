@@ -74,6 +74,12 @@ Before EVERY implementation delegation, including each group's delegation in bun
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
+Then read the near-ceiling lines. Both templates below render one `Near-ceiling:` line per entry of this read, which the round-id stamp does not disturb; a first round on a fresh key reads `[]` and renders none.
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.near_ceiling // []'
+```
+
 Embed the round token as `[DEV_ROUND_ID]` in the delegation's `Round ID:` line and arm the watchdog (backgrounded `dev-artifact-check --wait 600 …`) per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
 
 After each spawn, persist the session:
@@ -92,6 +98,7 @@ Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [LABELS]
+[For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 </delegation_format>
 
 **GitHub items** replace the `Issue:` line with `GitHub Issue: [OWNER/REPO]#[N]`. `Artifact Key:` stays `[ISSUE_ID]`, never `OWNER/REPO#N`.
@@ -117,6 +124,7 @@ Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [parent labels]
+[For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 Audit Bundle: [yes — only when caller context `audit_bundle: true`; omit otherwise]
 Parent Title: [PARENT_TITLE — the `.title` from the preflight bundle read, verbatim]
 
@@ -161,13 +169,15 @@ git -C "[WORKTREE_PATH]" status --porcelain
 
 | A (verdict) | B (git/tracker) | Action |
 |---|---|---|
-| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store Proposed Rules, then Store QA state. |
+| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
 | `accept` | fail | Re-read ONCE after a brief pause; if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
 | `wait` | pass | Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
 | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). |
-| `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. For a structurally valid artifact with a failing `validate`, run Store Proposed Rules, then end the workflow and report without another validation round. An identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
+| `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. For a structurally valid artifact with a failing `validate`, run Store Proposed Rules and Store Near-Ceiling Lines, then end the workflow and report without another validation round. An identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
 
 Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-checks.md](../references/artifact-checks.md)).
+
+Each Store subsection below runs whatever the one before it did. `status: no_pr` in Store Proposed Rules ends that subsection, not the accept path.
 
 ### Store Proposed Rules
 
@@ -197,7 +207,19 @@ Write the remote `body` value to `[WORKTREE_PATH]/tmp/pr-body-proposed-rules-[IS
 
 Do not rebuild the body from the local worktree or push a commit from this step. This is the sole publication owner for proposed rules.
 
-**Store QA state** on accept:
+### Store Near-Ceiling Lines
+
+The accept paths, implement and fix alike, and the retry path for a structurally valid artifact with a failing `validate` run this subsection. It is the one writer of `.near_ceiling`.
+
+`[NEAR_CEILING_ARRAY]` is the artifact's `near_ceiling` as `dev-artifact-check` echoed it: a JSON array of strings, `[]` when the round recorded none, or `null` when the byte-ceiling probe did not answer: the lane exited other than 0 or 1, the lane path held a file or link that could not run, or the writer ran without `--near-ceiling-base`. On `null`, skip the write and name the echoed `near_ceiling_error` in the round's report; an empty list there would tell the next round no file is near the ceiling. Each entry names a file that round left within reach of the byte ceiling, and the next round's delegation renders one `Near-ceiling:` line per entry, so the receiving round owns the split rather than the commit the ceiling refuses. The write REPLACES the key: state then describes the branch as the last recorded round left it, so a file that round split stops being carried and a file it pushed into the warn band starts being carried.
+
+```bash
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.near_ceiling = [NEAR_CEILING_ARRAY]'
+```
+
+### Store QA State
+
+The implement path only; a fix round has no QA signals or sub-issue set to record.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.qa_labels = [QA_LABELS_ARRAY] | .sub_issues = [SUB_ISSUE_IDS_ARRAY]'

@@ -19,8 +19,23 @@
 # Usage:
 #   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
 #     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
-#     [--qa-label LABEL]... [--bundled] [--no-summary] \
-#     [--summary TEXT | --summary-file PATH] [--item N DECISION REASONING]...
+#     [--qa-label LABEL]... [--near-ceiling-base REF] \
+#     [--bundled] [--no-summary] [--summary TEXT | --summary-file PATH] \
+#     [--item N DECISION REASONING]...
+#
+# near_ceiling carries one byte-ceiling near-ceiling line per file within
+# reach of the byte ceiling, as that lane reports the branch at artifact time,
+# so the orchestrator's next round brief plans the split before a later commit
+# meets the wall. --near-ceiling-base REF is the field's one producer: this
+# writer runs the worktree's installed lane with --base REF and keeps every
+# stdout line beginning "byte-ceiling: near-ceiling=" on exit 0 or 1 (exit 1
+# only adds a file already over the ceiling). A repository with nothing at the
+# lane path has no byte ceiling and so no file near one: []. A round that did
+# not probe (no --near-ceiling-base), a broken link on the way to the lane, a
+# lane that is not executable, or a lane that exits otherwise records
+# near_ceiling: null and the cause in near_ceiling_error: an empty list would
+# claim nothing is near the wall, and the orchestrator replaces its carried list
+# with whatever it reads.
 #
 # --validate stays strictly enumerated ("pass" or "FAILING:…") so it remains
 # machine-checkable. --validate-note is the additive channel for a QUALIFIED
@@ -44,6 +59,10 @@
 #     "validate": "pass" | "FAILING: c1,c2",  // required
 #     "validate_note": "…" | null,            // --validate-note
 #     "qa_labels": ["needs-review"],          // [] when no --qa-label given
+#     "near_ceiling": ["…"] | null,           // byte-ceiling near-ceiling lines
+#                                             // for the branch at this moment; [];
+#                                             // null when the probe did not answer
+#     "near_ceiling_error": "…" | null,       // why near_ceiling is null
 #     "summary_posted": true,                 // false with --no-summary
 #     "summary": "…" | null,                  // --summary text or --summary-file content
 #     "bundled": false,                       // true with --bundled
@@ -112,8 +131,9 @@ usage() {
 Usage:
   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
-    [--qa-label LABEL]... [--bundled] [--no-summary] \
-    [--summary TEXT | --summary-file PATH] [--item N DECISION REASONING]...
+    [--qa-label LABEL]... [--near-ceiling-base REF] \
+    [--bundled] [--no-summary] [--summary TEXT | --summary-file PATH] \
+    [--item N DECISION REASONING]...
 
 Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path.
 An implement receipt carries additions plus deletions against the base branch,
@@ -126,8 +146,16 @@ worth recording); it never relaxes --validate. Outside that named ceiling a
 failing validation ends the round and is never re-run into a pass.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
 content. They are mutually exclusive (one summary source, no silent precedence).
-Every single-valued flag may be supplied at most once (no silent last-wins);
-only --qa-label and --item repeat.
+--near-ceiling-base REF runs the worktree's
+.agents/skills/commit-guards/scripts/byte-ceiling --base REF and records one
+near-ceiling line per file within reach of the byte ceiling on exit 0 or 1;
+the next round's brief plans the split from it. A repository with nothing at
+that path records []. An omitted --near-ceiling-base, a broken link on the way
+to the lane, a lane that is not executable, or a lane that exits otherwise
+records near_ceiling null and the cause in near_ceiling_error, so the
+orchestrator keeps the list it carries.
+Every single-valued flag may be supplied at most once
+(no silent last-wins); only --qa-label and --item repeat.
 --issue / --round-id must match ^[A-Za-z0-9._-]+$. Canonical schema:
 skills/orch/schemas/dev-return.md. Validated by dev-artifact-check.
 Exit 0 on success; every usage/validation error exits 2.
@@ -142,7 +170,8 @@ EOF
 is_own_flag() {
   case "$1" in
     --worktree|--kind|--issue|--round-id|--branch|--commit|--validate|\
-    --validate-note|--summary|--summary-file|--qa-label|--bundled|\
+    --validate-note|--summary|--summary-file|--qa-label|\
+    --near-ceiling-base|--bundled|\
     --no-summary|--item|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
@@ -191,6 +220,7 @@ summary_given=false
 bundled=false
 summary_posted=true
 qa_labels=()
+near_ceiling=()
 item_n=()
 item_decision=()
 item_reasoning=()
@@ -204,6 +234,8 @@ branch_given=false
 commit_given=false
 validate_given=false
 validate_note_given=false
+near_ceiling_base=""
+near_ceiling_base_given=false
 
 while (( $# > 0 )); do
   case "$1" in
@@ -218,6 +250,7 @@ while (( $# > 0 )); do
     --summary)      need "$1" $# "${2:-}"; no_dup "$1" "$summary_given";      summary_given=true;      summary_text="$2"; shift 2 ;;
     --summary-file) need "$1" $# "${2:-}"; no_dup "$1" "$summary_file_given"; summary_file_given=true; summary_file="$2"; shift 2 ;;
     --qa-label)     need "$1" $# "${2:-}"; qa_labels+=("$2"); shift 2 ;;
+    --near-ceiling-base) need "$1" $# "${2:-}"; no_dup "$1" "$near_ceiling_base_given"; near_ceiling_base_given=true; near_ceiling_base="$2"; shift 2 ;;
     --bundled)      bundled=true; shift ;;
     --no-summary)   summary_posted=false; shift ;;
     --item)
@@ -295,6 +328,10 @@ if [[ "$summary_file_given" == "true" ]]; then
   [[ -f "$summary_file" ]] || die missing-file "path=$summary_file"
 fi
 
+if [[ "$near_ceiling_base_given" == "true" ]]; then
+  [[ -n "$near_ceiling_base" ]] || die required option=--near-ceiling-base
+fi
+
 # A fix or bundled artifact without items is incomplete — reject before writing.
 if [[ "$kind" == "fix" || "$bundled" == "true" ]]; then
   if (( ${#item_n[@]} == 0 )); then
@@ -307,11 +344,57 @@ if [[ "$kind" == "implement" ]]; then
     || die baseline-read "path=$worktree" "commit=$commit"
 fi
 
-# --- Build the two variable-length arrays deterministically with jq ---
+# --- Build the variable-length arrays deterministically with jq ---
 if (( ${#qa_labels[@]} > 0 )); then
   qa_json="$(jq -n '$ARGS.positional' --args "${qa_labels[@]}")"
 else
   qa_json='[]'
+fi
+
+# The probe runs the worktree's own installed lane, so it measures under the
+# settings that repository's commits are held to.
+# Nothing at the lane path means no byte ceiling, so the list stays empty. A
+# worktree's untracked .agents children are links to the main checkout, so a
+# dangling link at or above the lane is a broken install, not an absent lane.
+near_error=""
+lane="$worktree/.agents/skills/commit-guards/scripts/byte-ceiling"
+lane_broken=""
+ancestor="${lane%/*}"
+while [[ "$ancestor" != "$worktree" && "$ancestor" == "$worktree"/* ]]; do
+  [[ -L "$ancestor" && ! -e "$ancestor" ]] && lane_broken="$ancestor"
+  ancestor="${ancestor%/*}"
+done
+if [[ "$near_ceiling_base_given" != "true" ]]; then
+  near_error="byte-ceiling not probed: no --near-ceiling-base"
+elif [[ -n "$lane_broken" ]]; then
+  near_error="byte-ceiling broken link: $lane_broken"
+elif [[ -x "$lane" ]]; then
+  lane_err="$(mktemp)"
+  trap 'rm -f -- "${lane_err:?}"' EXIT
+  lane_rc=0
+  lane_out="$(cd -- "$worktree" && "$lane" --base "$near_ceiling_base" 2>"$lane_err")" || lane_rc=$?
+  case "$lane_rc" in
+    0|1)
+      while IFS= read -r line; do
+        [[ "$line" == "byte-ceiling: near-ceiling="* ]] && near_ceiling+=("$line")
+      done <<<"$lane_out"
+      ;;
+    *)
+      near_error="byte-ceiling exit $lane_rc: $(head -n1 -- "$lane_err")"
+      ;;
+  esac
+  rm -f -- "${lane_err:?}"
+  trap - EXIT
+elif [[ -e "$lane" || -L "$lane" ]]; then
+  near_error="byte-ceiling not executable: $lane"
+fi
+
+if [[ -n "$near_error" ]]; then
+  near_json=null
+elif (( ${#near_ceiling[@]} > 0 )); then
+  near_json="$(jq -n '$ARGS.positional' --args "${near_ceiling[@]}")"
+else
+  near_json='[]'
 fi
 
 if (( ${#item_n[@]} > 0 )); then
@@ -362,6 +445,8 @@ jq -n \
   --arg validate "$validate" \
   --arg validate_note "$validate_note" \
   --argjson qa_labels "$qa_json" \
+  --argjson near_ceiling "$near_json" \
+  --arg near_ceiling_error "$near_error" \
   --argjson summary_posted "$summary_posted" \
   "${summary_arg[@]}" \
   --argjson bundled "$bundled" \
@@ -376,6 +461,8 @@ jq -n \
      validate: $validate,
      validate_note: (if $validate_note == "" then null else $validate_note end),
      qa_labels: $qa_labels,
+     near_ceiling: $near_ceiling,
+     near_ceiling_error: (if $near_ceiling_error == "" then null else $near_ceiling_error end),
      summary_posted: $summary_posted,
      summary: $summary,
      bundled: $bundled,
