@@ -282,6 +282,10 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;CLAUDE.md"
 # fails the selftest.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 
+# Apply the shared change class to review evidence. The policy table is in
+# skills/review-gate/README.md § Class policy.
+REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"
+
 # Docs-only PRs use the same classifier as CI and do not wait for bot review
 # evidence. Review objections and unresolved threads still block.
 REVIEW_GATE_DOCS_ONLY = "none"

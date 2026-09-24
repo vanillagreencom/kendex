@@ -88,9 +88,9 @@ heading or a <details> summary, and an entry off a bold or a backticked
 It names the count and the file:line
 entries: the detail carries a bounded list (a status description holds 140
 characters, so a truncated list says how many it dropped) and the full list
-goes to stderr. It has NO DEDICATED settings key, and the only switch that
-reaches it is REVIEW_GATE_MODE=off, which answers approved for the whole gate
-without reading any evidence. An entry is SUBTRACTED when the PR author has
+goes to stderr. It has NO DEDICATED settings key. A class-policy `none`
+decision skips it. REVIEW_GATE_MODE=off skips it when the class policy is
+inactive or `current`. An entry is SUBTRACTED when the PR author has
 answered it: an issue comment binding this head, carrying a line that opens
 with the entry's own `file:line` token — bare as this detail prints it, or
 bold or backticked as the review body does, all read, none the anchor, since
@@ -228,9 +228,10 @@ ladder and exceptions in references/settings.md; list values pack with ';'):
   REVIEW_GATE_API_RETRY_DELAY_SECONDS       delay between retry attempts
                                             (default 2)
   REVIEW_GATE_MODE                          'enforce' (default) or 'off':
-                                            'off' answers approved WITHOUT
-                                            evaluating any evidence — the
-                                            one-switch per-repo gate disable.
+                                            'off' answers approved without
+                                            evidence for an inactive or
+                                            `current` class policy. A `bot`
+                                            class still requires review.
                                             The verdict detail carries the
                                             attestation so every posted
                                             status says the gate is disabled,
@@ -448,6 +449,9 @@ case "$GATE_MODE" in
     exit 2
     ;;
 esac
+# A package setting the writer spends and this check adopts: judged by the one
+# rule both read, so a value that passes here cannot fail every writer run.
+rg_pr_deadline_seconds >/dev/null || exit 2
 case "$DOCS_ONLY_MODE" in
   bot|none) ;;
   *)
@@ -700,6 +704,20 @@ if [ "$DOCS_ONLY_MODE" = "none" ] && [ ! -x "$DOCS_CLASSIFIER" ]; then
   rg_message error predicate-docs-classifier "$DOCS_CLASSIFIER" "::error::review-predicate: REVIEW_GATE_DOCS_ONLY=none requires the executable harness-ci docs classifier at '$DOCS_CLASSIFIER'" >&2
   exit 2
 fi
+POLICY_OWNER="$script_dir/review-policy"
+if [ ! -x "$POLICY_OWNER" ]; then
+  rg_message error predicate-policy-owner "$POLICY_OWNER" "::error::review-predicate: the review class policy owner is not executable" >&2
+  exit 2
+fi
+POLICY_STATE="$($POLICY_OWNER --check-config)" || exit 2
+case "$POLICY_STATE" in
+  review-policy=active) POLICY_STATE=active ;;
+  review-policy=inactive) POLICY_STATE=inactive ;;
+  *)
+    rg_message error predicate-policy-protocol "$POLICY_STATE" "::error::review-predicate: the review class policy owner returned an invalid configuration record" >&2
+    exit 2
+    ;;
+esac
 
 # Every configuration rule above has now run, and --check-config stops HERE:
 # the last point before the predicate needs a PR. A rule moved below this
@@ -716,14 +734,14 @@ for required in GH_REPO PR_NUMBER HEAD_SHA; do
   fi
 done
 
-# The one-switch gate disable (owner-controlled): mode "off" answers
-# approved BEFORE any evidence read — no API calls, no evidence model, no
-# thread term. The detail line is an attestation, not a review claim: every
+# The legacy gate disable (owner-controlled): mode "off" answers approved
+# before evidence reads while class policy is inactive. The detail line is
+# an attestation, not a review claim: every
 # status the writer converges from this verdict says the gate is disabled.
 # Required env is still validated above (a caller that cannot even name the
 # PR is misconfigured regardless of mode), and an invalid mode value already
 # exited 2 — the switch can turn the gate off, a typo cannot.
-if [ "$GATE_MODE" = "off" ]; then
+if [ "$GATE_MODE" = "off" ] && [ "$POLICY_STATE" = "inactive" ]; then
   echo "verdict=approved detail=review gate disabled by settings (REVIEW_GATE_MODE=off)"
   exit 0
 fi
@@ -789,6 +807,137 @@ materialize_docs_commits() { # REPO BASE HEAD
     git -C "$repo" cat-file -e "${head_sha}^{commit}" 2>/dev/null &&
     git -C "$repo" merge-base "$base_sha" "$head_sha" >/dev/null 2>&1
 }
+
+# The policy owner and classifier come from the trusted default-branch
+# checkout. The pull-request checkout is judged data. Source preparation and
+# classification run without the writer's GitHub credentials.
+# Source preparation reads the JUDGED pull request's manifest, so how much work
+# it asks for is the pull request's to choose. The writer converges every open
+# pull request inside one 12-minute step, and an unbounded refresh lets one
+# manifest spend the whole of it while every pull request behind it goes
+# unevaluated. Two bounds hold that to one pull request's own share, and each
+# names itself in the refusal:
+#
+#   sources   CLASS_REFRESH_MAX_SOURCES, counted before anything is fetched. A
+#             manifest past it is refused rather than prepared. The number is
+#             generous on purpose — it is the pathological-manifest stop, not a
+#             limit any real consumer should meet — because refusing a legitimate
+#             manifest leaves that repository's gate unconverged for good, while
+#             the deadline below only costs it a pass.
+#   time      CLASS_REFRESH_DEADLINE_SECONDS around the refresh itself, which is
+#             the bound that actually bites: a cold fetch has its own
+#             120-second ceiling, so a handful of unresponsive sources would
+#             otherwise outlast the step. At this size a pass still reaches
+#             sixteen pull requests with every one of them overrunning.
+#
+# An overrun returns non-zero like any other preparation failure, so the caller
+# exits 2 through predicate-policy-resolve, writes no status, and the next pass
+# tries again. `timeout` is coreutils and the writer runs where it exists; a
+# host with neither spelling keeps the unbounded behaviour and says so, since
+# refusing there would disable the gate on a machine whose only fault is a
+# missing utility.
+CLASS_REFRESH_MAX_SOURCES=12
+CLASS_REFRESH_DEADLINE_SECONDS=45
+
+resolve_class_policy() ( # REPO BASE HEAD
+  repo="$1"
+  base_sha="$2"
+  head_sha="$3"
+  scratch="$(mktemp -d)" || return 1
+  subject="$scratch/subject"
+  added=0
+  cleanup_policy_subject() {
+    if [ "$added" != 0 ] && ! git -C "$repo" worktree remove --force -- "$subject" >/dev/null 2>&1; then
+      rg_message warning predicate-policy-cleanup "$subject" "review-predicate: could not remove the temporary class-policy checkout" >&2
+    fi
+    rm -rf -- "${scratch:?}"
+  }
+  trap cleanup_policy_subject EXIT
+  git -C "$repo" worktree add --quiet --detach "$subject" "$head_sha" || return 1
+  added=1
+  declared="$( (cd "$subject" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR kendex source list 2>/dev/null) | grep -c .)" || declared=0
+  if [ "$declared" -gt "$CLASS_REFRESH_MAX_SOURCES" ]; then
+    rg_message error predicate-policy-sources "$declared/$CLASS_REFRESH_MAX_SOURCES" \
+      "::error::review-predicate: the pull request's manifest declares $declared sources, past the class-policy cap of $CLASS_REFRESH_MAX_SOURCES; none were prepared" >&2
+    return 1
+  fi
+  bound=()
+  if command -v timeout >/dev/null 2>&1; then
+    bound=(timeout "$CLASS_REFRESH_DEADLINE_SECONDS")
+  elif command -v gtimeout >/dev/null 2>&1; then
+    bound=(gtimeout "$CLASS_REFRESH_DEADLINE_SECONDS")
+  else
+    rg_message warning predicate-policy-unbounded "$CLASS_REFRESH_DEADLINE_SECONDS" \
+      "review-predicate: no timeout utility here, so the class-policy refresh runs unbounded" >&2
+  fi
+  refresh_status=0
+  (cd "$subject" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR \
+    ${bound[@]+"${bound[@]}"} kendex source refresh >/dev/null) || refresh_status=$?
+  if [ "$refresh_status" -ne 0 ]; then
+    if [ "$refresh_status" -eq 124 ]; then
+      rg_message error predicate-policy-refresh-deadline "$CLASS_REFRESH_DEADLINE_SECONDS" \
+        "::error::review-predicate: source preparation passed its ${CLASS_REFRESH_DEADLINE_SECONDS}s bound; this pull request is left for the next pass" >&2
+    fi
+    return 1
+  fi
+  env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR "$POLICY_OWNER" \
+    --event pull_request --base "$base_sha" --head "$head_sha" --repo "$subject"
+)
+
+CLASS_POLICY=""
+CLASS_NAME=""
+CLASS_EVIDENCE=""
+if [ "$POLICY_STATE" = "active" ]; then
+  POLICY_REPO="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)" || {
+    rg_message error predicate-policy-repo "$script_dir" "::error::review-predicate: the trusted repository root could not be resolved" >&2
+    exit 2
+  }
+  resolve_pr_base || {
+    rg_message error predicate-policy-base "$PR_NUMBER" "::error::review-predicate: the pull request base could not be resolved for class policy" >&2
+    exit 2
+  }
+  materialize_docs_commits "$POLICY_REPO" "$pr_base" "$HEAD_SHA" || {
+    rg_message error predicate-policy-commits "$pr_base...$HEAD_SHA" "::error::review-predicate: the commits needed for class policy could not be materialized" >&2
+    exit 2
+  }
+  CLASS_POLICY="$(resolve_class_policy "$POLICY_REPO" "$pr_base" "$HEAD_SHA")" || {
+    rg_message error predicate-policy-resolve "$pr_base...$HEAD_SHA" "::error::review-predicate: the change class or review policy could not be resolved" >&2
+    exit 2
+  }
+  case "$CLASS_POLICY" in
+    "change_class=render review_evidence="*" policy=active"|"change_class=trivial review_evidence="*" policy=active"|"change_class=micro review_evidence="*" policy=active"|"change_class=small review_evidence="*" policy=active"|"change_class=standard review_evidence="*" policy=active") ;;
+    *)
+      rg_message error predicate-policy-live-protocol "$CLASS_POLICY" "::error::review-predicate: the review class policy owner returned an invalid live record" >&2
+      exit 2
+      ;;
+  esac
+  CLASS_NAME="${CLASS_POLICY#change_class=}"
+  CLASS_NAME="${CLASS_NAME%% *}"
+  CLASS_EVIDENCE="${CLASS_POLICY#* review_evidence=}"
+  CLASS_EVIDENCE="${CLASS_EVIDENCE%% *}"
+  [ "$CLASS_POLICY" = "change_class=$CLASS_NAME review_evidence=$CLASS_EVIDENCE policy=active" ] || {
+    rg_message error predicate-policy-live-protocol "$CLASS_POLICY" "::error::review-predicate: the review class policy owner returned a malformed live record" >&2
+    exit 2
+  }
+  rg_message notice predicate-class-policy "$CLASS_NAME:$CLASS_EVIDENCE" "review-predicate: change class $CLASS_NAME uses review evidence policy $CLASS_EVIDENCE" >&2
+  case "$CLASS_EVIDENCE" in
+    none)
+      echo "verdict=approved detail=change class $CLASS_NAME requires no review evidence or thread wait"
+      exit 0
+      ;;
+    required) ;;
+    current)
+      if [ "$GATE_MODE" = "off" ]; then
+        echo "verdict=approved detail=review gate disabled by settings (REVIEW_GATE_MODE=off)"
+        exit 0
+      fi
+      ;;
+    *)
+      rg_message error predicate-policy-evidence "$CLASS_EVIDENCE" "::error::review-predicate: the review class policy owner returned an unknown evidence policy" >&2
+      exit 2
+      ;;
+  esac
+fi
 
 # Two steps, not a pipe: `--paginate` emits ONE ARRAY PER PAGE, which the
 # count filters below would evaluate per-array (multi-line counts that can
@@ -1567,7 +1716,7 @@ docs_only=0
 docs_refuse() { # CODE VALUE REASON: the normal gate path decides
   rg_message notice "$1" "$2" "::warning::docs-only lane: $3; taking the normal gate path" >&2
 }
-if [ "$DOCS_ONLY_MODE" = "none" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
+if [ "$POLICY_STATE" = "inactive" ] && [ "$DOCS_ONLY_MODE" = "none" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
    && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
   docs_repo=""
   docs_base=""
@@ -1652,7 +1801,7 @@ render_files=0
 render_refuse() { # CODE VALUE REASON: the normal gate path decides
   rg_message notice "$1" "$2" "::warning::render-only lane: $3; taking the normal gate path" >&2
 }
-if [ -n "$RENDER_PATHS_N" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
+if [ "$POLICY_STATE" = "inactive" ] && [ -n "$RENDER_PATHS_N" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
    && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ] \
    && [ "$docs_only" = "0" ]; then
   render_out=""

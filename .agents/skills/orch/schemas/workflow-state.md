@@ -77,6 +77,10 @@ Persistent state file for orch workflows. Survives context compaction.
       "reason": ""
     }
   },
+  "pr_review": {
+    "mode": "review",
+    "head_sha": "76543210f9e8d7c6b5a49382716051423344abcd"
+  },
   "pr_review_baseline": {
     "last_threads": ["PRRT_kwDOABC123", "PRRT_kwDODEF456"]
   },
@@ -154,7 +158,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `pr_approval` | object | Reviewer-gate override tracking: `forced` (the user chose Force merge past a missing verdict), `reviewer_down` (`PR_REVIEW_ON_TIMEOUT=proceed` auto-proceeded past the deadline with every reviewer silent) |
 | `post_pr_budgets` | object | Automatic retry budgets owned by `workflow-state head-budget`: `review_wait` and `ci_fix` are null or `{head, attempts}`. `take` is the only action, and it spends an attempt atomically. It starts the count over on a changed authoritative head for `review_wait` only; `ci_fix` counts across heads, because every ci-fix cycle pushes one. A continuing action resets either field by clearing it with `workflow-state update` |
 | `post_pr_stop` | object\|null | A post-PR cap outcome written under `auto-recommended`: `{name, gate, remaining[]}`. The same stop is posted to the PR. A continuing action clears it |
-| `pr_review` | object | Reviewer-gate mode tracking: `mode` ("approval"/"review"/"off" as printed by `approval-wait --resolve-mode`) |
+| `pr_review` | object | Reviewer-gate mode tracking: `mode` ("approval"/"review"/"exempt"/"off" as printed by `approval-wait --resolve-mode`) and `head_sha`, the commit that mode was resolved for. A mode belongs to the endpoints it was resolved over, and the class is measured over both: a push moves the head, a retarget moves the base alone. The pair is a DIAGNOSTIC — it says what the last resolution saw — and no gate is decided from it. A reader that must waive resolves again at the live endpoints first, which is why this record has no base beside the head |
 | `handoff` | object | The lane's hand-off record, written by `workflow-state set [ISSUE_ID] handoff` at the mark [oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules) sets: the PRs `merged`, the steps `remaining`, the `branch`, the `worktree`, the `open_pr` number or null, and the `traps` the next session must know. `written_at` is the UTC time `set` stamps from its own clock when the record carries none; one later than that clock is refused as `handoff-written-at-future`, and the `set` entry in `workflow-state --help` names the rest of what it refuses there. `oversee-watch` reports it as `handoff` while `resumed_at` is absent; `start.md` § 0 stamps `resumed_at` when the relaunched lane resumes from it. On the fleet item the record is the overseer's own, written when its succession refuses, and it carries two more fields naming the session that wrote it: `session_id`, the id that session's Stop payload gave, and `pane_key`, its `<tmux server pid> <pane id>` for a harness whose payload names no session. The turn-end hook ends its refusal on a record whose names are its own and on no other, because every overseer of the fleet in turn shares this one item |
 
 ## Oversee state

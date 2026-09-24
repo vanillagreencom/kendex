@@ -180,6 +180,34 @@ excluded-path|standard|dirty|.github/workflows/ci.yml:3
 CASES
 require_rows change-class-table "$table_rows"
 
+# `standard` is two answers in one word, and `measured=` is the only thing
+# that separates them. Both shapes, from the same fixtures the table above
+# uses: a rule that names standard as its verdict, and the fallback taken when
+# the render proof did not come in. A consumer reads this marker instead of
+# keeping a list of the causes on either side.
+marker_rows=0
+while IFS='|' read -r label want verifier files; do
+  marker_rows=$((marker_rows + 1))
+  reset_case
+  set_verifier "$verifier"
+  for spec in $files; do
+    write_lines "$repo" "${spec%:*}" "${spec##*:}"
+  done
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "$label"
+  marker_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+    --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+  assert_eq "$label" "measured=$want" \
+    "$(printf '%s\n' "$marker_err" | sed -n 's/^class: class=standard \(measured=[a-z]*\) .*/\1/p')"
+done <<'MARKERS'
+a settings file is standard by rule, and says it was measured|true|clean|kendex.settings.toml:2 runtime/product.ts:2
+a path the narrow list excludes is standard by rule too|true|dirty|.github/workflows/ci.yml:3
+production past the small ceiling is standard by rule|true|dirty|runtime/product.ts:151
+two subsystems is standard by rule|true|dirty|runtime/product.ts:30 payload/data.conf:30
+a hand edit the render proof refuses is the fallback, not a rule|false|dirty|.agents/skills/orch/SKILL.md:400
+MARKERS
+require_rows change-class-marker "$marker_rows"
+
 # A generated path no passing row's position covers owns nothing, and the
 # class is refused by that path's name so an operator reading the log sees
 # which file cost the waiver. The run is asked with `--json` and with the base
@@ -193,7 +221,7 @@ unowned_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "a path no passing position covers is owned by nobody" \
   "cause=render-path-unowned path=.codex/agents/rust.md" \
-  "$(printf '%s\n' "$unowned_err" | sed -n 's/^class: class=standard //p')"
+  "$(printf '%s\n' "$unowned_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
 assert_eq "and the refused run still says how many positions it weighed" \
   "render-coverage: named=7" \
   "$(printf '%s\n' "$unowned_err" | grep '^render-coverage: ')"
@@ -215,7 +243,7 @@ partial_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "a registry file changed outside kendex's keys is refused by name" \
   "cause=render-path-partial path=.pi/settings.json foreign=changed" \
-  "$(printf '%s\n' "$partial_err" | sed -n 's/^class: class=standard //p')"
+  "$(printf '%s\n' "$partial_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
 # The refusal carries what the run said around the path: verify's own rows,
 # and every position printed under the same top-level directory.
 assert_eq "and the refusal carries verify's own rows" "1" \
@@ -236,7 +264,7 @@ git -C "$repo" commit -q -m "a shim row that owns the whole file"
 shim_only_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "the shim-only render names the proof it cleared" \
-  "class: class=render cause=renders-match-their-sources" \
+  "class: class=render measured=true cause=renders-match-their-sources" \
   "$(printf '%s\n' "$shim_only_err" | grep '^class: ')"
 
 # The Gemini settings file is a generated path AND a configuration source: the
@@ -251,7 +279,7 @@ gemini_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "the gemini settings file is a configuration source" \
   "cause=configuration-source path=.gemini/settings.json glob=.gemini/settings.json" \
-  "$(printf '%s\n' "$gemini_err" | sed -n 's/^class: class=standard //p')"
+  "$(printf '%s\n' "$gemini_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
 
 # A composite action under .github/actions/ publishes the class a workflow
 # gates its lanes on, so a change to one is refused the narrow classes by the
@@ -266,7 +294,7 @@ action_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "a composite action path is an excluded path" \
   "cause=excluded-path path=.github/actions/change-class/classify glob=.github/actions/*" \
-  "$(printf '%s\n' "$action_err" | sed -n 's/^class: class=standard //p')"
+  "$(printf '%s\n' "$action_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
 
 # Ownership is read off rows in state ok alone: the same positions under a
 # failing row own nothing. A verify with a failing row closes non-zero, so
@@ -280,7 +308,7 @@ failing_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "a failing row's positions own nothing" \
   "cause=verify-refused" \
-  "$(printf '%s\n' "$failing_err" | sed -n 's/^class: class=standard //p')"
+  "$(printf '%s\n' "$failing_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
 
 # A kendex that prints its rows for a person rather than the document, or a
 # document of another version, is refused rather than read by guesswork: the
@@ -294,13 +322,13 @@ human_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "a verifier printing human rows is not read" \
   "cause=verify-document-unreadable version=none" \
-  "$(printf '%s\n' "$human_err" | sed -n 's/^class: class=standard //p')"
+  "$(printf '%s\n' "$human_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
 set_verifier other-version
 version_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "a document of another version is not read" \
   "cause=verify-document-unreadable version=2" \
-  "$(printf '%s\n' "$version_err" | sed -n 's/^class: class=standard //p')"
+  "$(printf '%s\n' "$version_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
 
 # A file a harness executes as configuration is production, whatever its size
 # and whoever wrote it: its keys name the hooks that run and the MCP servers
@@ -324,7 +352,7 @@ while IFS= read -r registry_path; do
     --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
   assert_eq "$registry_path is a configuration source" \
     "cause=configuration-source path=$registry_path glob=$registry_path" \
-    "$(printf '%s\n' "$registry_err" | sed -n 's/^class: class=standard //p')"
+    "$(printf '%s\n' "$registry_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
 done <<'REGISTRIES'
 .claude/settings.json
 .claude/settings.local.json
@@ -357,7 +385,7 @@ copilot_hook_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "a copilot hook registry file is a configuration source" \
   "cause=configuration-source path=.github/hooks/guard.json glob=.github/hooks/*.json" \
-  "$(printf '%s\n' "$copilot_hook_err" | sed -n 's/^class: class=standard //p')"
+  "$(printf '%s\n' "$copilot_hook_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
 
 # The excluded list refuses before the allowlist is consulted, so a repository
 # that allowlists everything still cannot buy a narrow class for a gate file.
@@ -459,7 +487,7 @@ while IFS='|' read -r label expected_cause event_name base_ref; do
   err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
     --event "$event_name" --base "$base_ref" --head HEAD 2>&1 >/dev/null)"
   assert_eq "$label" "$expected_cause" \
-    "$(printf '%s\n' "$err" | sed -n 's/^class: class=standard //p')"
+    "$(printf '%s\n' "$err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
 done <<'CAUSES'
 an unresolved base reports the endpoint|cause=unresolved-endpoint endpoint=deadbeef|pull_request|deadbeef
 an unsupported event reports the event|cause=unsupported-event event=release|release|HEAD
@@ -478,7 +506,7 @@ while IFS= read -r baseless_event; do
     --event "$baseless_event" --head HEAD 2>&1 >/dev/null)"
   assert_eq "a call with no base is refused before it is measured ($baseless_event)" \
     "cause=missing-base event=$baseless_event" \
-    "$(printf '%s\n' "$err" | sed -n 's/^class: class=standard //p')"
+    "$(printf '%s\n' "$err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
   PATH="$stub_bin:$PATH" assert_class "and it answers standard ($baseless_event)" \
     standard --repo "$repo" --event "$baseless_event" --head HEAD
 done <<'BASELESS'
@@ -592,7 +620,7 @@ while IFS='|' read -r label base_state head_state cause; do
   integrity_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$integrity_repo" \
     --event pull_request --base "$integrity_base" --head HEAD 2>&1 >/dev/null)"
   assert_eq "an inventory $label is never measured" \
-    "class: class=standard ${cause//BASE/$integrity_base}" \
+    "class: class=standard measured=false ${cause//BASE/$integrity_base}" \
     "$(printf '%s\n' "$integrity_err" | grep '^class: ')"
 done <<'INTEGRITY'
 that is not a list of strings|not json {|not json {|cause=invalid-generated-paths
@@ -629,7 +657,7 @@ printf -v quoted_field '%q' "$(sed -n '$p' <<<"$quoted_listed")"
 quoted_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$quoted_repo" \
   --event pull_request --base "$quoted_base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "a changed path git had to quote is never measured" \
-  "class: class=standard cause=unreadable-changed-path path=$quoted_field" \
+  "class: class=standard measured=false cause=unreadable-changed-path path=$quoted_field" \
   "$(printf '%s\n' "$quoted_err" | grep '^class: ')"
 
 # A cause the shipped classifier reaches only through a git failure, and a
@@ -690,7 +718,7 @@ while IFS='|' read -r label cause; do
     --repo "$stub_repo" --event pull_request --base "$stub_base" \
     --head HEAD 2>&1 >/dev/null)"
   assert_eq "$label is never measured" \
-    "class: class=standard $cause" \
+    "class: class=standard measured=false $cause" \
     "$(printf '%s\n' "$stub_err" | grep '^class: ')"
 done <<'STUBCAUSES'
 a path lookup harness-only could not make|cause=file-lookup-failed path=src/one.ts
@@ -706,7 +734,7 @@ measured_err="$(STUB_ONLY_CAUSE='cause=product-source-or-unreadable-ownership pa
   "$stub_pkg/harness-ci/scripts/change-class" --repo "$stub_repo" \
   --event pull_request --base "$stub_base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "a product path the inventory does not carry is still measured" \
-  "class: class=micro cause=production-within-micro production=2" \
+  "class: class=micro measured=true cause=production-within-micro production=2" \
   "$(printf '%s\n' "$measured_err" | grep '^class: ')"
 
 # The two files kendex keeps about itself are owned from the record and
@@ -740,7 +768,7 @@ set_verifier no-bookkeeping
 book_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$book" \
   --event pull_request --base "$book_base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "and by name from nobody" \
-  "class: class=standard cause=render-path-unowned path=.kendex-generated.json" \
+  "class: class=standard measured=false cause=render-path-unowned path=.kendex-generated.json" \
   "$(printf '%s\n' "$book_err" | grep '^class: ')"
 
 # The four spellings that make any naming rule written outside the engine
@@ -962,7 +990,7 @@ git -C "$repo" commit -q -m "a diff a skewed orch would misjudge"
 skewed_err="$(PATH="$stub_bin:$PATH" "$skewed_class" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "an orch without the measurement contract is refused" \
-  "class: class=standard cause=orch-too-old path=$skewed_root/harness-ci/scripts/../../orch contract=0" \
+  "class: class=standard measured=false cause=orch-too-old path=$skewed_root/harness-ci/scripts/../../orch contract=0" \
   "$(printf '%s\n' "$skewed_err" | grep '^class: ')"
 
 # The judged tree's configuration decides nothing. Its render roots do not
@@ -1161,7 +1189,7 @@ TOML
   refresh_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$consumer_base" --head HEAD)"
   assert_eq "a customized consumer's pure refresh is a render" \
-    "class=render cause=renders-match-their-sources" \
+    "class=render measured=true cause=renders-match-their-sources" \
     "$(printf '%s\n' "$refresh_err" | sed -n 's/^class: //p')"
 
   # A priming step that writes into the checkout would be weighing its own
@@ -1173,7 +1201,7 @@ TOML
     --base "$consumer_base" --head HEAD)"
   assert_eq "a working tree that is not the commit is never verified" \
     "cause=judged-tree-dirty entries=1" \
-    "$(printf '%s\n' "$dirty_err" | sed -n 's/^class: class=standard //p')"
+    "$(printf '%s\n' "$dirty_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
   rm -- "$consumer/.claude/skills/second/spare.md"
 
   # The same refresh with one rendered file hand-edited. There is no sibling
@@ -1190,7 +1218,7 @@ TOML
   hand_edit_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$consumer_base" --head HEAD)"
   assert_eq "a hand edit inside that refresh is not a render" \
-    "class=standard cause=verify-refused" \
+    "class=standard measured=false cause=verify-refused" \
     "$(printf '%s\n' "$hand_edit_err" | sed -n 's/^class: //p')"
 
   # The de-listing half of the chain KEN-1637's security finding walks, on the
@@ -1214,7 +1242,7 @@ TOML
   de_listed_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base refreshed --head HEAD)"
   assert_eq "a de-listing that touches bookkeeping alone is refused at the proof" \
-    "class=standard cause=verify-refused" \
+    "class=standard measured=false cause=verify-refused" \
     "$(printf '%s\n' "$de_listed_err" | sed -n 's/^class: //p')"
   assert_eq "and the proof names the path the inventory de-lists" \
     "1" \
@@ -1234,7 +1262,7 @@ TOML
   de_listed_edit_err="$(classify_stderr --repo "$consumer" \
     --event pull_request --base de-listed --head HEAD)"
   assert_eq "a hand edit to a de-listed path measures as product code after a refused de-listing" \
-    "class: class=micro cause=production-within-micro production=2" \
+    "class: class=micro measured=true cause=production-within-micro production=2" \
     "$(printf '%s\n' "$de_listed_edit_err" | grep '^class: ')"
 
   # Must-fail inverse: the render proof replaced by a comparison with the
@@ -1267,7 +1295,7 @@ TOML
     "$catalog_mutant" --repo "$consumer" --event pull_request \
     --base "$consumer_base" --head HEAD 2>&1 >/dev/null)"
   assert_eq "a classifier reading catalog bytes never clears the refresh row" \
-    "class=standard cause=verify-refused" \
+    "class=standard measured=false cause=verify-refused" \
     "$(printf '%s\n' "$catalog_err" | sed -n 's/^class: //p')"
 fi
 

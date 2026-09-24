@@ -194,19 +194,33 @@ git -C [WT_PATH] commit -m "chore: update golden baselines [skip ci]"
 
 The review gate runs **before** CI verification, universally, with no repo detection. Named stops below use [SKILL.md § The Cycle](../SKILL.md#the-cycle).
 
+Bind the pull request's exact endpoints first; the mode belongs to one pull request wherever the review gate's class policy is active:
+
 ```bash
-.agents/skills/orch/scripts/approval-wait --resolve-mode
+env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefOid,headRefOid --jq '[.baseRefOid,.headRefOid]|@tsv'
 ```
 
-The printed value is `GATE_MODE` — `approval`, `review`, or `off` (full semantics: [references/gates.md](../references/gates.md)); never re-derive it here. This gate reads only GitHub-native review state, from any reviewer, human or bot; bot-specific signals are never parsed.
+Those are `[BASE_SHA]` and `[HEAD_SHA]`:
 
-Record the resolved mode as a bare word (never pre-quoted):
+```bash
+.agents/skills/orch/scripts/approval-wait --resolve-mode --base [BASE_SHA] --head [HEAD_SHA]
+```
+
+The printed value is `GATE_MODE` — `approval`, `review`, `exempt`, or `off` (full semantics: [references/gates.md](../references/gates.md)); never re-derive it here. A non-zero exit is no mode: report it and do not guess one. This gate reads only GitHub-native review state, from any reviewer, human or bot; bot-specific signals are never parsed.
+
+Record the resolved mode as a bare word (never pre-quoted), and the head it was resolved for beside it. A mode recorded without its head matches no live head, so § 6.1 re-resolves rather than apply it:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review.mode [GATE_MODE]
 ```
 
-For `off`, skip the wait and go to § 5 — the internal review, CI, and comment-hygiene gates still apply in full.
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review.head_sha [HEAD_SHA]
+```
+
+For `off` and for `exempt`, skip the wait and go to § 5 — the internal review, CI, and comment-hygiene gates still apply in full. `exempt` is the review gate's own class policy waiving this change, so gate 3 below does not apply to it either; `off` keeps gate 3.
+
+`exempt` is bound to the endpoints it was resolved over, not to the pull request: a later push changes the head, and a retarget changes the base without touching the head. Every path below that pushes commits re-runs this section's two commands and records what they print, and § 6.1 re-runs them again before it waives anything, because a mover outside this lane passes through none of these paths.
 
 1. **Wait.** Poll for the verdict and new comments together:
 
@@ -249,7 +263,7 @@ For `off`, skip the wait and go to § 5 — the internal review, CI, and comment
    .agents/skills/orch/scripts/workflow-state head-budget take [ISSUE_ID] review-wait [REVIEW_HEAD]
    ```
 
-   `continue` restarts step 1; `at-cap` records `review-round-cap` through `post-pr-stop`, posts the rendered comment, returns `MERGE_READY = false`, and skips § 5:
+   `continue` restarts step 1, after re-resolving `GATE_MODE` at `[REVIEW_HEAD]` by this section's two commands and recording it beside that head; `at-cap` records `review-round-cap` through `post-pr-stop`, posts the rendered comment, returns `MERGE_READY = false`, and skips § 5:
 
    ```bash
    .agents/skills/orch/scripts/workflow-state post-pr-stop record [ISSUE_ID] review-round-cap review "[REMAINING_FEEDBACK]" [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
@@ -296,7 +310,7 @@ A PR already green when the wait started reaches the first row, never this one: 
 
 The printed value is `MAX_CYCLES`. Reruns-in-place are for flakes and re-gating on unchanged workflows only; a PR that changes gate or CI workflow behavior exhibits it only on a fresh head.
 
-**Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → § 5.1 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`. ci-fix pushes, re-confirms the § 4 gate at the new head, and only then re-verifies CI. Record its gate re-confirmation as the § 4 result (skip when `GATE_MODE` is `off`), treat its final CI result as the § 5 result, and re-route through the table above. A returned `comments` or `changes_requested` routes through the § 4 step-1 table first, then re-enters § 5.
+**Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → § 5.1 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`. ci-fix pushes, re-confirms the § 4 gate at the new head, and only then re-verifies CI. ci-fix resolves the mode itself at the new head: record the mode it reports as `GATE_MODE`, beside the head it resolved at, and its gate re-confirmation as the § 4 result (there is no re-confirmation to record when that mode is `exempt` or `off`), treat its final CI result as the § 5 result, and re-route through the table above. A returned `comments` or `changes_requested` routes through the § 4 step-1 table first, then re-enters § 5.
 
 Keep routing failures back into ci-fix until CI passes or `MAX_CYCLES` is spent. At the cap, go to § 6 with a failure report that names the checks still failing, quotes ci-fix's last error summary, and lists what each cycle attempted — never a bare "CI is failing".
 
@@ -312,8 +326,16 @@ A PR merges on exactly four deterministic gates. Gates 2 and 4 **verify results 
 |---|------|-------|
 | 1 | Internal review verdict recorded | Managed: `review-pr.md` completed with verdict `pass`. Standalone: `json_paths` is non-empty |
 | 2 | CI green | The § 5 result is `status=complete` with `verdict=pass`, or `verdict=none` (satisfied with a `CI: none configured` note in the summary) |
-| 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0` AND every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`) |
-| 4 | Reviewer-gate verdict | `approval`: § 4 ended `approved`. `review`: § 4 ended `reviewed`. Either mode is also met by a recorded `pr_approval.forced` or `pr_approval.reviewer_down`. `off`: not applicable |
+| 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0` AND every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`). `exempt` at the live endpoints: neither term applies |
+| 4 | Reviewer-gate verdict | `approval`: § 4 ended `approved`. `review`: § 4 ended `reviewed`. Either mode is also met by a recorded `pr_approval.forced` or `pr_approval.reviewer_down`. `exempt` at the live endpoints, and `off`: not applicable |
+
+**The waiver is the live answer, never a record.** A class is measured over a base AND a head, and GitHub retargets a pull request to another base without moving its head, so no comparison against a recorded head can prove the class still holds. Re-run § 4's two commands at the live endpoints, before gates 3 and 4, and record what they print.
+
+Gates 3 and 4 waive on that fresh answer alone: `exempt` only where this resolution printed `exempt`. Any other answer is the mode from here, and the gates read it as they read any other. The recorded pair says what the last resolution saw and gates nothing; read it for the § 7 report, never to decide a gate:
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review.mode // ""'
+```
 
 **Gate 1** — standalone only:
 
@@ -325,13 +347,13 @@ Empty `json_paths` means no internal review is recorded: report the unmet gate a
 
 **Gate 2** = the recorded § 5 result — do not re-run ci-wait, and raw `gh pr checks` output is never the gate. On a `pr-merge --check` refusal run `.agents/skills/github/scripts/github.sh ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `threads` → gate 3; anything else → report the cause with its printed detail (for `ci_failed` that includes the `fail:` and `superseded:` run ids) rather than forcing or abandoning the merge.
 
-**Gate 3** — final live check:
+**Gate 3** — final live check. `exempt` from the resolution above waives both of its terms, the unresolved count and the `pr_comment_review.replied` obligation, and goes to gate 4. Replying to every bot comment stays § 3.1's hygiene rule, which is not a gate in any mode.
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
 ```
 
-`unresolved_count > 0` runs ONE triage pass (`⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 6.1 gate 3`, managed, bounded by the same `REVIEW_MAX_EXTERNAL_ROUNDS` cap on `pr_comment_review.iterations`). If that pass pushed commits, re-confirm the § 4 gate through its Restart check with a short wait (skip when `GATE_MODE` is `off`), then re-run § 5:
+`unresolved_count > 0` runs ONE triage pass (`⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 6.1 gate 3`, managed, bounded by the same `REVIEW_MAX_EXTERNAL_ROUNDS` cap on `pr_comment_review.iterations`). If that pass pushed commits, re-resolve `GATE_MODE` at the new head by § 4's two commands and record it beside that head, then re-confirm the § 4 gate through its Restart check with a short wait (no wait when that mode is `exempt` or `off`), then re-run § 5:
 
 ```bash
 .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE] --item [ISSUE_ID]
@@ -339,11 +361,7 @@ Empty `json_paths` means no internal review is recorded: report the unmet gate a
 
 Re-run the gate-3 command once. If threads remain and the external-round cap is below, `auto-recommended` logs `Triage again` and runs one more pass; at the cap it records `review-threads-open`. Under `ask`, present `Triage again` | `Force merge` | `Stop here`, with `Triage again` recommended.
 
-**Gate 4** — verify the recorded § 4 result. Read the recorded mode:
-
-```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review.mode // ""'
-```
+**Gate 4** — verify the recorded § 4 result, under the mode the resolution above printed.
 
 `MERGE_READY = true` only when all four gates are met.
 
@@ -407,7 +425,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 |--------|-------|
 | PR | #[PR_NUMBER] |
 | CI | ✅ passing / ❌ failing |
-| Review gate | ✅ approved / ✅ reviewed / ⏳ pending / forced / off (no reviewer policy) |
+| Review gate | ✅ approved / ✅ reviewed / ⏳ pending / forced / exempt (class policy waives review) / off (no reviewer policy) |
 | Unresolved threads | [N] |
 | Comment iterations | [N] |
 | Fixes applied | [N] |

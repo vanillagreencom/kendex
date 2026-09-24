@@ -144,10 +144,16 @@ Report findings for a user decision.
 Re-confirm the review gate at the new head **before** waiting on CI, on every repo with no repo detection. Either wait exiting `5` with `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [STATE_KEY]`, act on what it prints, then re-run the same wait.
 
 ```bash
-.agents/skills/orch/scripts/approval-wait --resolve-mode
+env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefOid,headRefOid --jq '[.baseRefOid,.headRefOid]|@tsv'
 ```
 
-`off` skips to the CI wait. Otherwise run the short exact-head re-confirmation:
+Those are `[BASE_SHA]` and `[HEAD_SHA]`:
+
+```bash
+.agents/skills/orch/scripts/approval-wait --resolve-mode --base [BASE_SHA] --head [HEAD_SHA]
+```
+
+`exempt` and `off` skip to the CI wait; a non-zero exit is no mode, so report it and stop. Otherwise run the short exact-head re-confirmation:
 
 ```bash
 .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE] --item [STATE_KEY]
@@ -222,4 +228,4 @@ Under `ask`, present `Run ci-fix again` | `Stop`; continuation clears the stop.
 
 ## 6. Return
 
-**Managed**: return to the parent workflow's next section. **Standalone**: return `.post_pr_stop` when present; otherwise the CI-fix session is complete.
+**Managed**: return to the parent workflow's next section with the `GATE_MODE` § 5 resolved at the new head. That head's mode is the caller's from here: the class a policy waives belongs to one head, and a push can change it. **Standalone**: return `.post_pr_stop` when present; otherwise the CI-fix session is complete.

@@ -113,6 +113,14 @@ if [[ -n "${STUB_PREDICATE_FAIL_PR:-}" && "${STUB_PREDICATE_FAIL_PR}" == "${PR_N
   echo "::error::stubbed predicate failure for PR ${PR_NUMBER}" >&2
   exit 2
 fi
+# 124 is the status a passed per-PR deadline returns, so a row asks for it
+# rather than sleeping out the writer's real bound.
+# A real overrun: the row sets a one-second share and this sleeps past it, so
+# the deadline that fires is the writer's own rather than a status this stub
+# asserted for it.
+if [[ -n "${STUB_PREDICATE_TIMEOUT_PR:-}" && "${STUB_PREDICATE_TIMEOUT_PR}" == "${PR_NUMBER:-}" ]]; then
+  sleep 5
+fi
 printf '%s\n' "${STUB_VERDICT_LINE:?}"
 if [[ -n "${REVIEW_GATE_EVIDENCE_AT_FILE:-}" ]]; then
   printf '%s\n' "${STUB_EVIDENCE_AT:-}" > "$REVIEW_GATE_EVIDENCE_AT_FILE"
@@ -431,6 +439,7 @@ table \
   "w26: a schedule pass over two open PRs converges both heads with author and base metadata|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha7,pending@sha8 author=alice,bob base=base7,base8 notice~writer-converging@2=true" \
   "w27b: an approved schedule pass opens both heads|all:schedule|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=success@sha7,success@sha8" \
   "w27: one failing PR fails the pass, is named, and the other PR still converges|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[];STUB_PREDICATE_FAIL_PR=7|rc=1 posts=pending@sha8 error~writer-convergence-failed@7=true" \
+  "w27c: a PR that passes its share of the converge step is named by the deadline and the next PR still converges|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[];STUB_PREDICATE_TIMEOUT_PR=7;REVIEW_GATE_PR_DEADLINE_SECONDS=1|rc=1 posts=pending@sha8 error~writer-convergence-deadline@7=true" \
   "w28: an event leg converges ALL open PRs, not the payload head|all:workflow_run|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha7,pending@sha8 notice~writer-converging@2=true" \
   "w29: zero open PRs is a named empty pass that posts nothing|all:workflow_run|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=[]|rc=0 posts=none notice~writer-converging@0=true" \
   "w22c: a zero-byte open-PR listing exits 1 naming the broken read|all:workflow_run|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=emptybytes|rc=1 posts=none error~writer-list-empty@acme/widgets=true" \

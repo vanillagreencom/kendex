@@ -28,6 +28,68 @@ for p in gate nogate; do
   git -C "$TMP_ROOT/$p" config user.email test@example.com
   git -C "$TMP_ROOT/$p" config user.name Test
 done
+# A third project for the review gate's class policy: orch and review-gate
+# COPIED rather than symlinked, because review-policy resolves its sibling
+# classifier from its own resolved directory and a symlink would reach the
+# repository's real one. The stub below is the classifier's contract, so a
+# resolver that drops a flag fails here instead of answering.
+mkdir -p "$TMP_ROOT/class/.agents/skills/harness-ci/scripts"
+cp -r "$REPO_ROOT/skills/orch" "$TMP_ROOT/class/.agents/skills/orch"
+cp -r "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/class/.agents/skills/review-gate"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/class/.agents/skills/github"
+cat >"$TMP_ROOT/class/.agents/skills/harness-ci/scripts/change-class" <<'CLASSIFIER'
+#!/usr/bin/env bash
+# The shipped classifier's contract as review-policy uses it: the range comes
+# from the caller, and a diff it could not read is still answered as class
+# `standard` at exit 0, with the `class:` line's measured= marker saying so
+# and a harness-note carrying the cause. Spaces in a row's note and fields are
+# written '+', since a row's environment is space-separated.
+event="" base="" head="" prev=""
+for a in "$@"; do
+  case "$prev" in --event) event="$a" ;; --base) base="$a" ;; --head) head="$a" ;; esac
+  prev="$a"
+done
+[ "$event" = pull_request ] || { echo "change-class: cause=missing-event" >&2; exit 2; }
+[ "$base" = "${STUB_EXPECT_BASE:?}" ] || { echo "change-class: bad --base '$base'" >&2; exit 3; }
+[ "$head" = "${STUB_EXPECT_HEAD:?}" ] || { echo "change-class: bad --head '$head'" >&2; exit 3; }
+if [ -n "${STUB_NOTE:-}" ]; then
+  printf 'harness-note: %s\n' "$(printf '%s' "$STUB_NOTE" | tr '+' ' ')" >&2
+fi
+[ -n "${STUB_CLASS:-}" ] || { echo "change-class: no class configured" >&2; exit 1; }
+if [ "${STUB_MARKER:-yes}" = yes ]; then
+  printf 'class: class=%s measured=%s %s\n' "$STUB_CLASS" "${STUB_MEASURED:-true}" \
+    "$(printf '%s' "${STUB_NOTE:-cause=stub}" | tr '+' ' ')" >&2
+fi
+printf 'change_class=%s\n' "$STUB_CLASS"
+CLASSIFIER
+chmod +x "$TMP_ROOT/class/.agents/skills/harness-ci/scripts/change-class"
+git -C "$TMP_ROOT/class" init -q
+git -C "$TMP_ROOT/class" config maintenance.auto false
+git -C "$TMP_ROOT/class" config user.email test@example.com
+git -C "$TMP_ROOT/class" config user.name Test
+# Two real commits: the resolver requires both endpoints to be commits this
+# checkout holds before it asks the owner anything, so a fabricated SHA would
+# make every row below refuse for that reason instead of the row's own.
+printf 'base\n' >"$TMP_ROOT/class/app.txt"
+git -C "$TMP_ROOT/class" add app.txt
+git -C "$TMP_ROOT/class" commit -q -m base
+printf 'head\n' >"$TMP_ROOT/class/app.txt"
+git -C "$TMP_ROOT/class" add app.txt
+git -C "$TMP_ROOT/class" commit -q -m head
+CLASS_BASE_SHA="$(git -C "$TMP_ROOT/class" rev-parse HEAD~1)"
+CLASS_HEAD_SHA="$(git -C "$TMP_ROOT/class" rev-parse HEAD)"
+ABSENT_SHA=0000000000000000000000000000000000000000
+# An unrelated history: both ends present, no ancestor between them, which is
+# the shape a shallow or grafted checkout produces and which the classifier
+# cannot take a merge-base diff of.
+git -C "$TMP_ROOT/class" checkout -q --orphan unrelated
+git -C "$TMP_ROOT/class" rm -q -rf .
+printf 'unrelated\n' >"$TMP_ROOT/class/other.txt"
+git -C "$TMP_ROOT/class" add other.txt
+git -C "$TMP_ROOT/class" commit -q -m unrelated
+UNRELATED_SHA="$(git -C "$TMP_ROOT/class" rev-parse HEAD)"
+git -C "$TMP_ROOT/class" checkout -q --detach "$CLASS_HEAD_SHA"
+
 GH_CALLS="$TMP_ROOT/gh.calls"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> %s\nexit 1\n' "$GH_CALLS" > "$TMP_ROOT/bin/gh"
 chmod +x "$TMP_ROOT/bin/gh"
@@ -66,7 +128,8 @@ stage() {
 
 # run PROJECT ENV ARGS... — one approval-wait run in PROJECT under the
 # space-separated ENV assignments and no other reviewer-gate key: the four the
-# resolver reads are cleared from the inherited environment first, so a row's
+# resolver reads, and the class-policy key, are cleared from the inherited
+# environment first, so a row's
 # answer is its own on any machine. OUT, RC and ERR (a file) are what
 # `observe` reads. The gh call log is emptied first.
 RUN_SEQ=0
@@ -78,7 +141,7 @@ run() {
   ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
   rm -f -- "$GH_CALLS"
   set +e
-  OUT="$(cd "$project" && PATH="$TMP_ROOT/bin:$PATH" env -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u REVIEW_GATE_SETTINGS_FILE ${env_args[@]+"${env_args[@]}"} .agents/skills/orch/scripts/approval-wait "$@" 2>"$ERR")"
+  OUT="$(cd "$project" && PATH="$TMP_ROOT/bin:$PATH" env -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY ${env_args[@]+"${env_args[@]}"} .agents/skills/orch/scripts/approval-wait "$@" 2>"$ERR")"
   RC=$?
   set -e
 }
@@ -169,6 +232,107 @@ resolve_table \
   "the fallback loader reads the committed settings file|nogate||settings:REVIEW_GATE_MODE=off|mode=off" \
   "the fallback ignores a machine-local .kendex off for the mode key too|nogate||kendex:REVIEW_GATE_MODE=off|mode=approval" \
   "a duplicate assignment fails the fallback loud, exit 1, and resolves no mode|nogate||settings:REVIEW_GATE_MODE=off,REVIEW_GATE_MODE=enforce|rc=1 stdout=empty stderr_line=kendex-env:+duplicate-key+file=<tmp>/nogate/kendex.settings.toml+key=REVIEW_GATE_MODE"
+
+echo "=== --resolve-mode under the review gate's class policy ==="
+# The class policy decides before every reviewer key. review-policy owns the
+# class-to-policy mapping; this resolver only consumes it. An ACTIVE policy
+# answers for one pull request, so a call with no range refuses instead of
+# guessing a mode. A `none` class prints exempt and no reviewer key can put the
+# gate back; the `bot` class is its inverse and keeps the reviewer keys
+# authoritative under the engine's own REVIEW_GATE_MODE=off; a `current` class
+# leaves that switch exactly as it was. A classifier that cannot answer
+# resolves no mode at all.
+POLICY_ENV='REVIEW_GATE_CLASS_POLICY=render:none;trivial:none;micro:none;small:bot;standard:current'
+# The range each row's stub classifier must be handed, so a resolver that
+# passes the wrong endpoints fails the row instead of answering it.
+RANGE_ENV="STUB_EXPECT_BASE=$CLASS_BASE_SHA STUB_EXPECT_HEAD=$CLASS_HEAD_SHA"
+class_table() { # label|env|args|expect
+  local row label env args expect
+  for row in "$@"; do
+    IFS='|' read -r label env args expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'class_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    stage class ""
+    # shellcheck disable=SC2086
+    run class "$env" $args
+    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+  done
+}
+
+RANGE="--resolve-mode --base $CLASS_BASE_SHA --head $CLASS_HEAD_SHA"
+class_table \
+  "an inactive class policy leaves the chain untouched|PR_REVIEW_GATE=review|--resolve-mode|rc=0 mode=review" \
+  "an active policy with no range refuses rather than guess a mode|$POLICY_ENV PR_REVIEW_GATE=review|--resolve-mode|rc=2 stdout=empty stderr_line=approval-wait:+policy-range+options=--base,--head" \
+  "a waived class answers exempt|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|$RANGE|rc=0 mode=exempt" \
+  "no reviewer key puts the gate back for a waived class|$POLICY_ENV $RANGE_ENV STUB_CLASS=micro PR_REVIEW_GATE=approval|$RANGE|rc=0 mode=exempt" \
+  "the required-review inverse: a bot class keeps the reviewer keys under REVIEW_GATE_MODE=off|$POLICY_ENV $RANGE_ENV STUB_CLASS=small REVIEW_GATE_MODE=off PR_REVIEW_GATE=review|$RANGE|rc=0 mode=review" \
+  "a current class still honors REVIEW_GATE_MODE=off|$POLICY_ENV $RANGE_ENV STUB_CLASS=standard REVIEW_GATE_MODE=off PR_REVIEW_GATE=review|$RANGE|rc=0 mode=off" \
+  "a classifier that cannot answer resolves no mode|$POLICY_ENV $RANGE_ENV PR_REVIEW_GATE=review|$RANGE|rc=2 stdout=empty stderr_line=approval-wait:+policy-resolve+range=$CLASS_BASE_SHA...$CLASS_HEAD_SHA" \
+  "an endpoint this checkout does not hold is no mode, and the owner is never asked|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|--resolve-mode --base $ABSENT_SHA --head $CLASS_HEAD_SHA|rc=2 stdout=empty stderr_line=approval-wait:+policy-unreadable-range+range=$ABSENT_SHA...$CLASS_HEAD_SHA" \
+  "two ends with no ancestor between them is no mode either|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|--resolve-mode --base $UNRELATED_SHA --head $CLASS_HEAD_SHA|rc=2 stdout=empty stderr_line=approval-wait:+policy-unreadable-range+range=$UNRELATED_SHA...$CLASS_HEAD_SHA" \
+  "a wait on a waived class refuses instead of idling, and reaches no gh|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|123 --base $CLASS_BASE_SHA --head $CLASS_HEAD_SHA|rc=2 gh=uncalled stderr_line=approval-wait:+gate-off+mode=exempt"
+
+# `standard` is the classifier's fallback as well as one of its verdicts, and
+# only its measured= marker separates them. These rows vary the CAUSE while
+# holding the marker: the causes below are the shapes a real classifier
+# reports, and none of them decides anything here. REVIEW_GATE_MODE=off is the
+# answer a fallback would take if the marker were not read.
+policy_marker_rows() { # WANT LABEL-PREFIX CLASS MEASURED ROWS...
+  local want="$1" prefix="$2" class="$3" measured="$4" row note label
+  shift 4
+  for row in "$@"; do
+    IFS='|' read -r note label <<<"$row"
+    stage class ""
+    run class "$POLICY_ENV $RANGE_ENV STUB_CLASS=$class STUB_MEASURED=$measured STUB_NOTE=$note REVIEW_GATE_MODE=off PR_REVIEW_GATE=review" \
+      --resolve-mode --base "$CLASS_BASE_SHA" --head "$CLASS_HEAD_SHA"
+    assert_eq "$(observe "$want")" "$want" "$prefix: $label" "$ERR"
+  done
+}
+
+policy_marker_rows "rc=2 stdout=empty" "must-fail" standard false \
+  "cause=unresolved-endpoint+endpoint=$ABSENT_SHA|an unresolved endpoint is no mode, never the gate-disabled off" \
+  "cause=unreadable-diff+range=$CLASS_BASE_SHA...$CLASS_HEAD_SHA|an unreadable diff is no mode" \
+  "cause=unreadable-base-inventory|an inventory the base end cannot supply is no mode" \
+  "cause=narrow-change-list-unreadable|a narrow-change list the classifier cannot read is no mode" \
+  "cause=size-measurement-failed|a branch measurement that did not run is no mode" \
+  "cause=generated-ownership-gain|a cause the classifier calls measurable is no mode either, when it marks the answer refused"
+
+policy_marker_rows "rc=0 mode=review" "control" small true \
+  "cause=production-within-small+subsystem=app|a measured class answers whatever its cause says" \
+  "cause=unreadable-diff+range=x...y|and a cause that reads like a refusal does not make one"
+
+# A classifier that prints no marker at all is an answer this resolver cannot
+# read, and it refuses rather than assume the class on stdout was measured.
+stage class ""
+run class "$POLICY_ENV $RANGE_ENV STUB_CLASS=render STUB_MARKER=no REVIEW_GATE_MODE=off PR_REVIEW_GATE=review" \
+  --resolve-mode --base "$CLASS_BASE_SHA" --head "$CLASS_HEAD_SHA"
+assert_eq "$(observe "rc=2 stdout=empty")" "rc=2 stdout=empty" \
+  "must-fail: a classifier printing no marker is no mode" "$ERR"
+
+# Must-fail control: the exempt verdict is what keeps a waived class from
+# picking up the evidence and thread terms downstream. Collapse it onto the
+# reviewer-less `off` and the waived row must stop answering exempt.
+CLASS_PREDICATE="$TMP_ROOT/class/.agents/skills/orch/scripts/approval-wait"
+CLASS_WAIVED_ENV="$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review"
+exempt_count="$(grep -Fc "printf 'exempt\\n'" "$CLASS_PREDICATE" || true)"
+assert_eq "$exempt_count" "1" "control: the waived-class verdict has one mutation target"
+if [[ -L "$CLASS_PREDICATE" ]]; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "control: the mutation source must not be a symlink"
+else
+  mutant="$TMP_ROOT/approval-wait.mutant"
+  sed "s/printf 'exempt\\\\n'/printf 'off\\\\n'/" "$CLASS_PREDICATE" >"$mutant"
+  if cmp -s "$mutant" "$CLASS_PREDICATE"; then
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "control: the mutant must change the waived-class verdict"
+  else
+    cat "$mutant" >"$CLASS_PREDICATE"
+    stage class ""
+    run class "$CLASS_WAIVED_ENV" --resolve-mode --base "$CLASS_BASE_SHA" --head "$CLASS_HEAD_SHA"
+    if [[ "$OUT" == exempt ]]; then
+      FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "must-fail: collapsing exempt onto off must fail the waived-class contract"
+    else
+      PASS=$((PASS + 1)); printf '  ok    %s\n' "must-fail: collapsing exempt onto off fails the waived-class contract"
+    fi
+  fi
+fi
 
 echo "=== the arg parser answers -h, --help and its own errors before gh ==="
 # `label|args|expect`; keys identify the usage response and parser refusals.

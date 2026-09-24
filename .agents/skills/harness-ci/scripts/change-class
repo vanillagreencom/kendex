@@ -13,7 +13,12 @@
 # and whether its working tree is clean.
 # stdout carries change_class=render|trivial|micro|small|standard and nothing
 # else, stderr the changed paths and the reason, and exit 2 a wiring error
-# that carries no verdict. The render proof runs `kendex verify --scope
+# that carries no verdict. The stderr `class:` line also carries `measured=`,
+# which says whether a rule earned this class or this script fell back to
+# `standard` because something could not be read. Only `standard` is ever
+# measured=false, and only this script can tell the two apart: the cause alone
+# does not, so a consumer that must not treat a fallback as a class reads the
+# marker rather than a list of causes of its own. The render proof runs `kendex verify --scope
 # project --json`, with `--base` set to the base-rev: line harness-only
 # printed, and reads its document. The classes, first match winning:
 #
@@ -142,14 +147,29 @@ harness_err="$work/harness-stderr"
 
 # The output FILE is written before stdout, as harness-only writes its own: a
 # verdict printed first would already have been read when the append died.
-answer() { # CLASS FIELDS
+#
+# `measured=` on the class line says which kind of answer this is, and it is
+# the ONE place that distinction is made. Every class but `standard` is earned
+# by a rule, so it is measured. `standard` is BOTH: a rule's verdict at the
+# handful of sites that pass `measured`, and this script's fallback everywhere
+# something could not be read — a diff, an inventory, a render proof, the
+# branch-size measurer, the narrow-change list. A consumer cannot tell those
+# apart from the cause, and enumerating causes outside this script has failed
+# three times, so the default for `standard` is REFUSED and a site that
+# measured one says so. An `answer standard` added later is refused until its
+# author decides otherwise, which is the way round that cannot hand a waiver
+# to a diff nothing read. stdout is unchanged: one `change_class=` line.
+answer() { # CLASS FIELDS [measured]
+  measured=true
+  [ "$1" != standard ] || measured=false
+  [ "${3:-}" != measured ] || measured=true
   if [ -n "$output" ]; then
     if ! { printf 'change_class=%s\n' "$1" >>"$output"; } 2>/dev/null; then
       die "cause=output-write-failed" \
         "could not append the verdict to '$output'"
     fi
   fi
-  printf 'class: class=%s %s\n' "$1" "$2" >&2
+  printf 'class: class=%s measured=%s %s\n' "$1" "$measured" "$2" >&2
   printf 'change_class=%s\n' "$1"
   exit 0
 }
@@ -269,7 +289,7 @@ path_matches() { # MODE(every|any) — against GLOB_LIST
 set_globs 'kendex.toml kendex.settings.toml kendex-local.toml
   .kendex/settings.toml .gemini/settings.json AGENTS.md */AGENTS.md'
 ! path_matches any ||
-  answer standard "cause=configuration-source $PATH_MATCH_HIT"
+  answer standard "cause=configuration-source $PATH_MATCH_HIT" measured
 REGISTRY_GLOBS='.claude/settings.json .claude/settings.local.json .mcp.json
   .codex/config.toml .codex/hooks.json
   .cursor/hooks.json .cursor/mcp.json
@@ -471,7 +491,7 @@ fi
 # beside a product file, refuses every measured class here.
 set_globs "$REGISTRY_GLOBS"
 ! path_matches any ||
-  answer standard "cause=configuration-source $PATH_MATCH_HIT"
+  answer standard "cause=configuration-source $PATH_MATCH_HIT" measured
 
 # A harness instruction pointer is a render when the whole diff is generated
 # and the proof above passed. Anywhere else nothing re-rendered it, and the
@@ -479,14 +499,14 @@ set_globs "$REGISTRY_GLOBS"
 # the narrow classes refuse it by name as they refuse the file it points at.
 set_globs 'CLAUDE.md */CLAUDE.md'
 ! path_matches any ||
-  answer standard "cause=instruction-pointer $PATH_MATCH_HIT"
+  answer standard "cause=instruction-pointer $PATH_MATCH_HIT" measured
 
 [ -r "$NARROW_CONF" ] || answer standard "cause=narrow-change-list-unreadable"
 if ! excluded="$(sed -n 's/^path //p' "$NARROW_CONF" | tr '\n' ' ')"; then
   answer standard "cause=narrow-change-list-unreadable"
 fi
 set_globs "$excluded"
-! path_matches any || answer standard "cause=excluded-path $PATH_MATCH_HIT"
+! path_matches any || answer standard "cause=excluded-path $PATH_MATCH_HIT" measured
 
 # Every measured class shares orch's branch growth reader, which owns the
 # production/test split and the render-mirror pairing branch-size-check judges
@@ -597,7 +617,7 @@ while IFS= read -r path; do
 done <<<"$changed"
 
 [ "$one_subsystem" = true ] ||
-  answer standard "cause=several-subsystems production=$production"
+  answer standard "cause=several-subsystems production=$production" measured
 [ "$production" -gt "$small_max" ] ||
   answer small "cause=production-within-small subsystem=$subsystem"
-answer standard "cause=production-past-small production=$production"
+answer standard "cause=production-past-small production=$production" measured

@@ -128,6 +128,9 @@ unknown key~append~REVIEW_GATE_CONTXET = "Review gate"~FAIL~settings-unknown~ken
 caller handle in settings~append~REVIEW_GATE_SETTINGS_FILE = "other.toml"~FAIL~settings-seam~REVIEW_GATE_SETTINGS_FILE~~~~~
 illegal mode with predicate diagnostic~append~REVIEW_GATE_MODE = "bogus"~FAIL~settings-values~2~predicate-mode~bogus~~~
 illegal docs-only policy with predicate diagnostic~append~REVIEW_GATE_DOCS_ONLY = "bogus"~FAIL~settings-values~2~predicate-docs-only~bogus~~~
+incomplete class policy with owner diagnostic~append~REVIEW_GATE_CLASS_POLICY = "render:none"~FAIL~settings-values~2~policy-invalid~render:none~~~
+illegal writer deadline with its own diagnostic~append~REVIEW_GATE_PR_DEADLINE_SECONDS = "bogus"~FAIL~settings-values~2~writer-deadline-value~bogus~~~
+zero writer deadline is not a share~append~REVIEW_GATE_PR_DEADLINE_SECONDS = "0"~FAIL~settings-values~2~writer-deadline-value~0~~~
 numeric bound~append~REVIEW_GATE_SHA_PREFIX_FLOOR = "2"~FAIL~settings-values~2~~~~~
 duplicate key~append~REVIEW_GATE_MODE = "off"\nREVIEW_GATE_MODE = "enforce"~FAIL~settings-values~2~~~~~
 exported legal mode cannot hide committed error~exported~~FAIL~settings-values~2~~~~~
@@ -190,11 +193,12 @@ while IFS='|' read -r shape target check value; do
       commit "$DIR" ;;
     syntax) printf 'if [ then\n' >>"$path" ;;
   esac
-  expect_fail "$shape" "$DIR" "$check" "$value"
+  expect_fail "$shape $target" "$DIR" "$check" "$value"
 done <<'ROWS'
 mode|scripts/review-writer.sh|runtime-mode|scripts/review-writer.sh
 missing|scripts/pr-watch.sh|runtime-missing|scripts/pr-watch.sh
 untracked|scripts/pr-watch.sh|runtime-untracked|scripts/pr-watch.sh
+untracked|scripts/review-policy|runtime-untracked|scripts/review-policy
 symlink|scripts/pr-watch.sh|runtime-symlink|scripts/pr-watch.sh
 untracked-target|scripts/review-writer.sh|workflow-target-untracked|.agents/skills/review-gate/scripts/review-writer.sh
 symlink-target|scripts/review-writer.sh|workflow-target-symlink|.agents/skills/review-gate/scripts/review-writer.sh

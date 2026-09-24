@@ -98,6 +98,25 @@ GITHUB="$REPO_ROOT/skills/github/scripts/github.sh"
 source "$TEST_DIR/lib/check-stub.sh"
 REPO="$TMPDIR/repo"
 
+# The class policy asks a classifier to read the diff between two commits, and
+# pr-merge refuses a range this checkout does not hold. So the fixture repo is
+# a real repository with two commits, and the class-policy rows name them. No
+# remote is added: the slug resolution and the volatile note below still read
+# what they read for a checkout that names no GitHub repository locally.
+git -C "$REPO" init -q
+git -C "$REPO" config maintenance.auto false
+git -C "$REPO" config user.email tests@example.invalid
+git -C "$REPO" config user.name "pr-merge tests"
+printf 'base\n' >"$REPO/app.txt"
+git -C "$REPO" add app.txt
+git -C "$REPO" commit -q -m base
+printf 'head\n' >"$REPO/app.txt"
+git -C "$REPO" add app.txt
+git -C "$REPO" commit -q -m head
+RANGE_BASE="$(git -C "$REPO" rev-parse HEAD~1)"
+RANGE_HEAD="$(git -C "$REPO" rev-parse HEAD)"
+ABSENT_SHA=3333333333333333333333333333333333333333
+
 # The admin-credential route's own world: a gh config directory that exists on
 # this "control host", and a 40-character head for --expected-head.
 ADMIN_DIR="$TMPDIR/gh-admin"
@@ -125,6 +144,25 @@ mirror_tree() { # DEST SKILL
   done < <(cd "$REPO_ROOT/skills/$skill/scripts" && find . -type f | sed 's|^\./||')
 }
 for mirrored in github orch review-gate; do mirror_tree "$MIRROR" "$mirrored"; done
+
+# What CHECKOUT CODE sees. The route runs four things out of the checkout: the
+# change classifier, the gate-mode resolver, the review gate's class-policy
+# owner, and the settings library the gate context is read from. The first is
+# the stub below; the other three all reach the settings library, so replacing
+# the mirror's symlink to it with a recorder that then sources the real one
+# puts a canary on every entry. Each writes one line naming the entry and the
+# owner credential's directory as it found it, and the admin-credential group
+# below requires every one of them to have found none.
+CHECKOUT_ENV_LOG="$TMPDIR/checkout-env.log"
+: >"$CHECKOUT_ENV_LOG"
+MIRROR_SETTINGS_LIB="$MIRROR/skills/review-gate/scripts/lib/settings.sh"
+[[ -L "$MIRROR_SETTINGS_LIB" ]] || { echo "mirror is missing the review-gate settings library" >&2; exit 2; }
+rm -f -- "${MIRROR_SETTINGS_LIB:?}"
+cat >"$MIRROR_SETTINGS_LIB" <<EOF
+# shellcheck shell=bash
+printf 'settings-lib|CFG=%s\n' "\${GH_CONFIG_DIR:-<unset>}" >>"$CHECKOUT_ENV_LOG"
+. "$REPO_ROOT/skills/review-gate/scripts/lib/settings.sh"
+EOF
 MIRROR_PR_MERGE="$MIRROR/skills/github/scripts/commands/pr-merge.sh"
 [[ -f "$MIRROR_PR_MERGE" ]] || { echo "mirror is missing pr-merge.sh" >&2; exit 2; }
 [[ -x "$MIRROR/skills/orch/scripts/approval-wait" ]] || { echo "mirror is missing approval-wait" >&2; exit 2; }
@@ -159,6 +197,11 @@ cat >"$MIRROR/skills/harness-ci/scripts/change-class" <<'EOF'
 # from the caller is caught. With no STUB_CLASS it answers nothing at all,
 # which is the route's no-classifier case; STUB_CLASS_SHAPE=bare prints the
 # bare word the route must refuse.
+# The owner credential's gh config directory must never reach checkout code.
+# Recorded first, then refused, so a leak both reds whatever the row was for
+# and shows up in the canary group at the end of this suite.
+printf 'change-class|CFG=%s\n' "${GH_CONFIG_DIR:-<unset>}" >>"${CHECKOUT_ENV_LOG:-/dev/null}"
+[[ -z "${GH_CONFIG_DIR:-}" ]] || { echo "change-class: cause=credential-leak dir=$GH_CONFIG_DIR" >&2; exit 4; }
 [[ -n "${STUB_CLASS:-}" ]] || exit 1
 event="" base="" head="" repo="" prev=""
 for a in "$@"; do
@@ -171,6 +214,13 @@ done
 [[ "$base" == "${STUB_EXPECT_BASE:-base-oid}" ]] || { echo "change-class: bad --base '$base'" >&2; exit 3; }
 [[ "$head" == "${STUB_EXPECT_HEAD:?STUB_EXPECT_HEAD unset}" ]] || { echo "change-class: bad --head '$head'" >&2; exit 3; }
 [[ "$repo" == "." ]] || { echo "change-class: bad --repo '$repo'" >&2; exit 3; }
+# The class line, whose measured= marker says whether a rule earned this class
+# or the classifier fell back to standard. review-policy reads it and refuses
+# an answer marked unmeasured, so a row can turn a waiver into a refusal
+# without changing the class on stdout.
+if [[ "${STUB_MARKER:-yes}" == yes ]]; then
+  printf 'class: class=%s measured=%s cause=stub\n' "$STUB_CLASS" "${STUB_MEASURED:-true}" >&2
+fi
 if [[ "${STUB_CLASS_SHAPE:-}" == bare ]]; then
   printf '%s\n' "$STUB_CLASS"
 else
@@ -309,6 +359,18 @@ word() {
     admin-dir:missing) W_ENV+=("ORCH_ADMIN_MERGE_GH_CONFIG_DIR=$TMPDIR/absent-config") ;;
     admin-classes:*) W_ENV+=("ORCH_ADMIN_MERGE_CLASSES=$(printf '%s' "$v" | tr '+' ' ')") ;;
     class:*) W_ENV+=("STUB_CLASS=$v" "STUB_EXPECT_HEAD=$AHEAD" "STUB_EXPECT_BASE=base-oid") ;;
+    # An ACTIVE review-gate class policy on an ordinary (non-admin) head. The
+    # value is the supported table; `-` leaves the classifier with no class to
+    # answer, which is the unreadable-policy shape.
+    class-policy:-) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
+    class-policy:range-fail) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_POLICY_RANGE_FAIL=true") ;;
+    # A class the classifier did not measure: it names one on stdout and marks
+    # the answer a fallback, which is not a class any policy row applies to.
+    class-policy:unmeasured) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_CLASS=render" "STUB_MEASURED=false" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
+    # A base the fixture repository does not hold, and no origin to fetch it
+    # from: the range is unreadable and no class can be measured.
+    class-policy:range-absent) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_CLASS=render" "STUB_BASE_OID=$ABSENT_SHA" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$ABSENT_SHA" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
+    class-policy:*) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_CLASS=$v" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     class-bare:*) W_ENV+=("STUB_CLASS=$v" "STUB_CLASS_SHAPE=bare" "STUB_EXPECT_HEAD=$AHEAD" "STUB_EXPECT_BASE=base-oid") ;;
     review:none) W_ENV+=("STUB_REVIEW_DECISION=" "STUB_REVIEW_LATEST=[]") ;;
     review:none+approved) W_ENV+=("STUB_REVIEW_DECISION=" 'STUB_REVIEW_LATEST=[{"state":"APPROVED"}]') ;;
@@ -360,6 +422,11 @@ build() {
 argv_for() {
   case "$1" in
     check) printf '%s\n' "$PR_MERGE" 123 --check ;;
+    # The mirrored tree, where the change classifier is the stub: a row whose
+    # verdict turns on the review gate's class policy runs here so the class
+    # is the row's own and not this repository's diff.
+    check-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --check ;;
+    auto-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --keep-branch ;;
     auto) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch ;;
     immediate) printf '%s\n' "$PR_MERGE" 123 --keep-branch ;;
     force) printf '%s\n' "$PR_MERGE" 123 --force --keep-branch ;;
@@ -397,6 +464,7 @@ calls() {
       "pr view 123 --json state,mergedAt"*) out="$out,view:state" ;;
       "pr view 123 --json mergeable"*) out="$out,view:mergeable" ;;
       "pr view 123 --json reviewDecision"*) out="$out,view:reviews" ;;
+      "pr view 123 --json baseRefOid,headRefOid"*) out="$out,view:policy-range" ;;
       "pr view 123 --json headRefOid"*) out="$out,view:head" ;;
       "pr view 123 --json state,headRefOid"*) out="$out,view:post" ;;
       "pr view 123 --json baseRefName,baseRefOid"*) out="$out,view:base" ;;
@@ -433,12 +501,14 @@ check_text() {
   jq -r '"merge=\(.can_merge) transient=\(.transient) state=\(.state) mergeable=\(.mergeable) at=\(if .merged_at == "" then "-" else .merged_at end) runs=\(if (.head_runs | length) == 0 then "-" else (.head_runs | join(",")) end) issues=[\(.issues | join(";"))] warnings=[\(.warnings | join(";"))]"' 2>/dev/null || printf 'unparseable'
 }
 stdout_text() {
-  if [[ "$1" == check ]]; then check_text <"$TMPDIR/stdout"; return; fi
+  if [[ "$1" == check || "$1" == check-classified ]]; then check_text <"$TMPDIR/stdout"; return; fi
   [[ -s "$TMPDIR/stdout" ]] || { printf -- '-'; return; }
   sed 's/;/\\;/g' "$TMPDIR/stdout" | paste -s -d ';' -
 }
 err_lines() {
-  sed -e 's/^[[:space:]]*//' -e '/^$/d' -e 's/;/\\;/g' "$TMPDIR/stderr" | paste -s -d ';' -
+  # The sandbox's own path is per-run, so a row that pins a child's diagnostic
+  # pins <tmp> rather than a directory no second run produces.
+  sed -e 's/^[[:space:]]*//' -e '/^$/d' -e 's/;/\\;/g' -e "s|$TMPDIR|<tmp>|g" "$TMPDIR/stderr" | paste -s -d ';' -
 }
 
 run() {
@@ -450,8 +520,9 @@ run() {
   (cd "$REPO" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO \
     -u ORCH_ADMIN_MERGE_GH_CONFIG_DIR -u ORCH_ADMIN_MERGE_CLASSES -u GH_CONFIG_DIR \
     -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u REVIEW_GATE_CONTEXT \
-    -u REVIEW_GATE_SETTINGS_FILE \
+    -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY \
     STUB_CALL_LOG="$CALL_LOG" STUB_AUTH_LOG="$AUTH_LOG" STUB_QUEUE_CLEARED_FILE="$QUEUE_CLEARED" \
+    CHECKOUT_ENV_LOG="$CHECKOUT_ENV_LOG" \
     ${W_ENV[@]+"${W_ENV[@]}"} "${argv[@]}" >"$TMPDIR/stdout" 2>"$TMPDIR/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=%s auth=%s' "$rc" "$(stdout_text "$1")" "$(err_lines)" "$(calls)" "$(auth)"
 }
@@ -464,6 +535,11 @@ err_macro() {
     permanent) printf '(permanent — needs fix or review action)' ;;
     transient) printf '(transient — GitHub still computing or CI pending)' ;;
     hint-threads) printf 'Resolve the review-thread gate and retry. Use --force or --admin only after an explicit decision to override it.' ;;
+    # git's own words for a fetch in a repository with no origin, replayed
+    # under this command's fixed line. Pinned here, in one place, because the
+    # point of the row is that git's account survives rather than being
+    # flattened into one sentence; a git that rewords this moves this macro.
+    fetch-no-origin) printf "pr-merge: the class-policy range is not in this checkout and the fetch of its two commits from origin failed:;fatal: 'origin' does not appear to be a git repository;fatal: Could not read from remote repository.;Please make sure you have the correct access rights;and the repository exists." ;;
     hint-auto) printf 'Use --auto to queue for auto-merge, or --force after an explicit decision to override safety checks.' ;;
     hint-await) printf 'Hint: github.sh await-mergeable 123 && retry' ;;
     volatile) printf 'NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently\\; follow orch merge-pr.md § 5 for PR #123;Block on .agents/skills/orch/scripts/queue-wait 123 --json once, with a poll interval and budget sized as orch merge-pr.md § 5 step 1 does\\; route its verdict by that same step, and never re-arm an unrecognized verdict. The fleet reducer is .agents/skills/review-gate/scripts/pr-watch.sh with GH_REPO set to the repository (not resolvable locally here)\\; repair what the cause names before re-arming with .agents/skills/github/scripts/github.sh pr-merge 123 --auto' ;;
@@ -513,6 +589,11 @@ run_table() {
 
 # The calls a --check makes on an open PR, and a merge's calls before the mutation.
 CHECK="view:state,view:mergeable,checks,graphql:threads,view:reviews"
+# The supported class policy, the one value the review-gate README documents.
+CLASS_POLICY="render:none;trivial:none;micro:none;small:bot;standard:current"
+# Its extra call: with a thread open, an active policy reads the pull request's
+# own endpoints once. A clean PR asks nothing and the trace is unchanged.
+CHECK_POLICY="view:state,view:mergeable,checks,graphql:threads,view:policy-range,view:reviews"
 PRE="view:state,view:mergeable,checks,graphql:threads,view:reviews,view:head"
 OPEN="state=OPEN mergeable=MERGEABLE at=-"
 
@@ -543,6 +624,12 @@ the current run's own cancellation is a failure|checks:current-cancel checks-exi
 a clean run: the verdict is mergeable and head-run names the scoped run|checks:clean-run|check|0|merge=true transient=false $OPEN runs=29099680623 issues=[] warnings=[]|mergeable;head-run: 29099680623|calls=$CHECK auth=<unset>
 a commit status with no workflow supplies its own run id|checks:status-only checks-exit:8|check|0|merge=false transient=true $OPEN runs=29099700000 issues=[ci_pending: CI Required (PENDING)] warnings=[]|blocked;head-run: 29099700000|calls=$CHECK auth=<unset>
 an actionable unresolved thread blocks permanently, never a warning|checks:ci-required threads:actionable|check|0|merge=false transient=false $OPEN runs=- issues=[unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|blocked;head-run: none|calls=$CHECK auth=<unset>
+a class the policy sends for review keeps the thread gate|checks:ci-required threads:actionable class-policy:standard|check-classified|0|merge=false transient=false $OPEN runs=- issues=[unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
+a class the policy waives keeps the count and gates nothing with it|checks:ci-required threads:actionable class-policy:render|check-classified|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[unresolved_threads_waived: 1 actionable thread(s) open, waived by the review gate's class policy for this change]|mergeable;head-run: none|calls=$CHECK_POLICY auth=<unset>
+a class policy the classifier cannot answer blocks rather than waive, and the owner's own diagnostic reaches stderr|checks:ci-required threads:actionable class-policy:-|check-classified|0|merge=false transient=false $OPEN runs=- issues=[review_policy_unreadable: The review gate's class policy could not be resolved for this pull request;unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|review-gate-error=policy-classifier-call value=<tmp>/tree/skills/review-gate/scripts/../../harness-ci/scripts/change-class;review-policy: the harness-ci change classifier could not answer;blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
+a class the classifier did not measure blocks rather than waive, whatever it named|checks:ci-required threads:actionable class-policy:unmeasured|check-classified|0|merge=false transient=false $OPEN runs=- issues=[review_policy_unreadable: The review gate's class policy could not be resolved for this pull request;unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|class: class=render measured=false cause=stub;review-gate-error=policy-unmeasured value=cause=stub;review-policy: the change classifier fell back to standard instead of measuring a class;blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
+a range naming a commit this checkout lacks blocks rather than waive|checks:ci-required threads:actionable class-policy:range-absent|check-classified|0|merge=false transient=false $OPEN runs=- issues=[review_policy_unreadable: The review gate's class policy could not be resolved for this pull request;unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|{fetch-no-origin};blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
+an unreadable pull request range blocks rather than waive|checks:ci-required threads:actionable class-policy:range-fail|check-classified|0|merge=false transient=false $OPEN runs=- issues=[review_policy_unreadable: The review gate's class policy could not be resolved for this pull request;unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
 an outdated unresolved thread is not actionable|checks:ci-required threads:outdated|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[]|mergeable;head-run: none|calls=$CHECK auth=<unset>
 a malformed thread state blocks at the trust boundary|checks:ci-required threads:malformed|check|0|merge=false transient=false $OPEN runs=- issues=[review_threads_fetch_failed: GitHub returned malformed review thread data] warnings=[]|blocked;head-run: none|calls=$CHECK auth=<unset>
 a page past ARG_MAX is streamed, not passed as an argument|checks:ci-required threads:large|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[]|mergeable;head-run: none|calls=$CHECK auth=<unset>
@@ -559,6 +646,7 @@ a live PR is still gated on its open thread|checks:ci-required threads:bot|check
 
 run_table "the merge path" "\
 --auto cannot bypass an actionable thread: no mutation, no queue query|checks:ci-required threads:actionable|auto|1|-|{blocked};{permanent};✗ {threads:1};{hint-threads}|calls=$CHECK auth=<unset>
+a waived class lets --auto arm past an open thread, with no override flag|checks:ci-required threads:actionable class-policy:render post-entry|auto-classified|75|-|Warnings:;⚠ unresolved_threads_waived: 1 actionable thread(s) open, waived by the review gate's class policy for this change;Warning: GH_BOT_TOKEN not configured, using current user;QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=view:state,view:mergeable,checks,graphql:threads,view:policy-range,view:reviews,view:head,merge:auto,graphql:queue auth=<unset>
 the immediate merge fails closed on it too|checks:ci-required threads:actionable|immediate|1|-|{blocked};{permanent};✗ {threads:1};{hint-threads}|calls=$CHECK auth=<unset>
 a malformed thread state blocks --auto|checks:ci-required threads:malformed|auto|1|-|{blocked};{permanent};✗ {malformed};{hint-threads}|calls=$CHECK auth=<unset>
 a second-page fetch failure blocks --auto|checks:ci-required threads:resolved100 threads:page2-fail|auto|1|-|{blocked};{permanent};✗ {fetch-failed};{hint-threads}|calls=view:state,view:mergeable,checks,graphql:threads,graphql:threads,view:reviews auth=<unset>
@@ -618,6 +706,9 @@ REC="admin-merge"
 ADMIN_PRE="view:state,view:head"
 ADMIN_CHECK="view:mergeable,checks,graphql:threads,view:reviews"
 ADMIN_MERGE_CALLS="compare,queue-state,view:head,view:base,merge:admin,graphql:queue"
+# The readiness check with an open thread and an active class policy: the
+# policy owner is asked, so the range read joins the trace.
+ADMIN_CHECK_POLICY="view:mergeable,checks,graphql:threads,view:policy-range,view:reviews"
 EXCL="Error: --admin-credential checks every merge condition and merges immediately\\; it cannot be combined with --check, --auto, --force, --admin or --dry-run"
 
 run_table "the admin-credential route" "\
@@ -632,6 +723,7 @@ a PR under review-required with no approval refuses, from GitHub's reviewDecisio
 approval mode with an empty reviewDecision and no approving review refuses on the not_approved warning|admin-dir checks:ci-required head:$AHEAD review:none|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=approval review=required checks=ok base=- dequeue=- reason=review-required|REFUSED PR #123 — the review gate is not met: not_approved: Review status is '';Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 approval mode with an empty reviewDecision and one approving review merges|admin-dir checks:ci-required head:$AHEAD review:none+approved post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=approval review=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,$ADMIN_MERGE_CALLS auth=<unset>
 review-required with one approval present still refuses, not inferred from the warning|admin-dir checks:ci-required head:$AHEAD review-partial|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=approval review=required checks=ok base=- dequeue=- reason=review-required|REFUSED PR #123 — the review gate is not met: GitHub reviewDecision is REVIEW_REQUIRED;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
+review mode reads the gate context out of the checkout's settings library, which is handed no credential|admin-dir gate-mode:review review:none checks:ci-required head:$AHEAD gate-status:success post:MERGED merge-commit:admin-merge-oid|admin-credential-classified:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=review review=ok checks=ok base=fresh dequeue=none|Warnings:;⚠ not_approved: Review status is '';MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,gate-status,$ADMIN_MERGE_CALLS auth=<unset>
 review mode judges the review-gate status on this head, not an approval GitHub never required|admin-dir gate-mode:review review:none checks:ci-required head:$AHEAD gate-status:success post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=review review=ok checks=ok base=fresh dequeue=none|Warnings:;⚠ not_approved: Review status is '';MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,gate-status,$ADMIN_MERGE_CALLS auth=<unset>
 review mode refuses a pending gate status, naming the context and the state|admin-dir gate-mode:review review:none checks:ci-required head:$AHEAD gate-status:pending|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=review review=required checks=ok base=- dequeue=- reason=review-required|REFUSED PR #123 — the review gate is not met: the 'Review gate' status on this head is pending;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK,gate-status auth=<unset>
 review mode refuses a failure gate status, naming the context and the state|admin-dir gate-mode:review review:none checks:ci-required head:$AHEAD gate-status:failure|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=review review=required checks=ok base=- dequeue=- reason=review-required|REFUSED PR #123 — the review gate is not met: the 'Review gate' status on this head is failure;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK,gate-status auth=<unset>
@@ -645,7 +737,7 @@ a changes-requested review still blocks in review mode, raised by the readiness 
 off mode accepts an empty reviewDecision and reads no gate status, and the merge lands|admin-dir gate-mode:off review:none checks:ci-required head:$AHEAD post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=off review=ok checks=ok base=fresh dequeue=none|Warnings:;⚠ not_approved: Review status is '';MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,$ADMIN_MERGE_CALLS auth=<unset>
 off mode still honours a server-side review requirement: no mode turns GitHub's verdict off|admin-dir gate-mode:off review:REVIEW_REQUIRED checks:ci-required head:$AHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=off review=required checks=ok base=- dequeue=- reason=review-required|REFUSED PR #123 — the review gate is not met: GitHub reviewDecision is REVIEW_REQUIRED;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 off mode narrows the review gate and nothing else: one actionable thread still refuses|admin-dir gate-mode:off review:none threads:actionable checks:ci-required head:$AHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=- review=- checks=unresolved_threads base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the readiness check does not pass: {threads:1};Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
-a mode resolver that answers nothing refuses with its own reason, nothing dequeued|admin-dir gate-mode:unresolvable checks:ci-required head:$AHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=- review=mode-unreadable checks=ok base=- dequeue=- reason=gate-mode-unreadable|REFUSED PR #123 — the reviewer-gate mode of the checkout this route runs in could not be resolved, so the review gate cannot be judged;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
+a mode resolver that answers nothing refuses with its own reason, and both children that read the broken file say so|admin-dir gate-mode:unresolvable checks:ci-required head:$AHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=- review=mode-unreadable checks=ok base=- dequeue=- reason=gate-mode-unreadable|review-gate-error=settings-duplicate value=REVIEW_GATE_MODE;::error::<tmp>/refused.settings.toml: REVIEW_GATE_MODE is assigned more than once in [env] (each key must be unique in the table);review-gate-error=settings-duplicate value=REVIEW_GATE_MODE;::error::<tmp>/refused.settings.toml: REVIEW_GATE_MODE is assigned more than once in [env] (each key must be unique in the table);approval-wait: mode-resolution setting=REVIEW_GATE_MODE;approval-wait: REVIEW_GATE_MODE could not be resolved through the review-gate settings lib (see error above);REFUSED PR #123 — the reviewer-gate mode of the checkout this route runs in could not be resolved, so the review gate cannot be judged;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 a tree with no mode resolver beside it refuses the same way, never falling back to a default mode|admin-dir checks:ci-required head:$AHEAD|admin-credential-lone:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=- review=mode-unreadable checks=ok base=- dequeue=- reason=gate-mode-unreadable|REFUSED PR #123 — the reviewer-gate mode of the checkout this route runs in could not be resolved, so the review gate cannot be judged;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 no status checks configured refuses: no required context can be proven green|admin-dir checks:none head:$AHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=approval review=ok checks=ci_unconfigured base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — no status checks are configured, so no required context can be proven green;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 a required context absent from the head rollup refuses, on the one projection|admin-dir checks:ci-required head:$AHEAD required:Absent+Check|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=- review=- checks=ci_pending base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the readiness check does not pass: ci_pending: Absent Check (missing);Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
@@ -678,6 +770,7 @@ a failed check refuses the same way|admin-dir checks:failed head:$AHEAD|admin-cr
 a head behind its base refuses: the merge never lands an unrebased branch|admin-dir checks:ci-required head:$AHEAD behind:2|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=approval review=ok checks=ok base=behind=2 dequeue=- reason=base-stale|REFUSED PR #123 — the head is 2 commit(s) behind main;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK,compare auth=<unset>
 an unreadable compare is unproven containment, never fresh|admin-dir checks:ci-required head:$AHEAD compare:fail|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review-mode=approval review=ok checks=ok base=unreadable dequeue=- reason=base-unreadable|REFUSED PR #123 — the compare endpoint did not answer, so base containment is unproven;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK,compare auth=<unset>
 an unreadable base head refuses before the class and the checks|admin-dir checks:ci-required head:$AHEAD base-oid:-|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=- head-match=ok review-mode=- review=- checks=- base=unreadable dequeue=- reason=base-unreadable|REFUSED PR #123 — the base branch head could not be resolved;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE auth=<unset>
+an open thread a waiving class policy waives still merges, and no child of the route saw the credential directory|admin-dir class-policy:render threads:actionable checks:ci-required post:MERGED merge-commit:admin-merge-oid|admin-credential-classified:$RANGE_HEAD|0|$REC merged pr=123 head=$RANGE_HEAD route=on class=any head-match=ok review-mode=exempt review=ok checks=ok base=fresh dequeue=none|Warnings:;⚠ unresolved_threads_waived: 1 actionable thread(s) open, waived by the review gate's class policy for this change;MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK_POLICY,$ADMIN_MERGE_CALLS auth=<unset>
 a class inside the list merges, the class read from the classifier alone|admin-dir admin-classes:render,trivial class:render checks:ci-required head:$AHEAD post:MERGED merge-commit:admin-merge-oid|admin-credential-classified:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=render head-match=ok review-mode=approval review=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,$ADMIN_MERGE_CALLS auth=<unset>
 a class outside the list refuses before the checks|admin-dir admin-classes:render,trivial class:standard checks:ci-required head:$AHEAD|admin-credential-classified:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=standard head-match=ok review-mode=- review=- checks=- base=- dequeue=- reason=class-not-allowed|REFUSED PR #123 — class standard is outside ORCH_ADMIN_MERGE_CLASSES=render,trivial;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE auth=<unset>
 a space-separated list is the same list|admin-dir admin-classes:render+trivial class:trivial checks:ci-required head:$AHEAD post:MERGED merge-commit:admin-merge-oid|admin-credential-classified:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=trivial head-match=ok review-mode=approval review=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,$ADMIN_MERGE_CALLS auth=<unset>
@@ -715,6 +808,15 @@ assert_eq "$(grep -o '|CFG=[^|]*' "$AUTH_LOG" | sort -u | paste -sd, -)" "|CFG=$
   "every gh call runs under the admin config directory, and under no other"
 assert_eq "$(grep -o '^GH=[^|]*|GITHUB=[^|]*' "$AUTH_LOG" | sort -u | paste -sd, -)" "GH=<unset>|GITHUB=<unset>" \
   "no gh call carries the caller's own token"
+
+# The other side of the same promise, and the one nothing asserted before: the
+# gh process gets that directory and checkout code gets none of it. Both
+# entries are required present, so a canary that stopped being reached fails
+# here rather than passing an empty set.
+assert_eq "$(cut -d'|' -f1 <"$CHECKOUT_ENV_LOG" | sort -u | paste -sd, -)" "change-class,settings-lib" \
+  "both checkout-code canaries were reached"
+assert_eq "$(cut -d'|' -f2 <"$CHECKOUT_ENV_LOG" | sort -u | paste -sd, -)" "CFG=<unset>" \
+  "no checkout code ever saw the admin config directory"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

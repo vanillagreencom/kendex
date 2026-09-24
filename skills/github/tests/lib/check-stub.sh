@@ -345,6 +345,18 @@ case "${1:-}" in
                         '{state:$state,mergedAt:(if $merged_at == "" then null else $merged_at end)}'
                     exit 0
                 fi
+                # The review gate's class-policy range, read only where a
+                # class policy is active. Matched before the headRefOid
+                # handler, whose pattern this one contains.
+                if [[ "$*" == *"--json baseRefOid,headRefOid"* ]]; then
+                    if [[ "${STUB_POLICY_RANGE_FAIL:-false}" == "true" ]]; then
+                        echo "could not read the pull request endpoints" >&2
+                        exit 1
+                    fi
+                    jq -cn --arg b "${STUB_BASE_OID-base-oid}" --arg h "${STUB_HEAD:-test-head}" \
+                        '{baseRefOid:(if $b == "" then null else $b end),headRefOid:$h}'
+                    exit 0
+                fi
                 # The admin route reads the head and the base in one call; it
                 # must match before the headRefOid and baseRefName,baseRefOid
                 # handlers, whose patterns it contains as substrings.

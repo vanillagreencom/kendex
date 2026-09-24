@@ -19,22 +19,24 @@ tags: [review]
 
 The gate answers ONE question: **has this exact PR head been reviewed?** It posts that answer as a commit status the repo's branch rules require. It does not check CI, re-run anything, or reason about jobs.
 
-Two greens do NOT mean a review happened. Under `REVIEW_GATE_MODE = "off"` the predicate evaluates no evidence and attests only that the repo disabled the gate; and merge-group statuses never read the mode, posting green as "merge-queue entry: post-approval by construction". Both: [`REVIEW_GATE_MODE` in the settings table](references/settings.md).
+Two greens do NOT mean a review happened. `REVIEW_GATE_MODE = "off"` evaluates no evidence when the class policy is inactive or resolves to `current`; it attests only that the repo disabled the gate. A class policy `bot` decision still requires review evidence. Merge-group statuses never read the mode and post green as "merge-queue entry: post-approval by construction". See [`REVIEW_GATE_MODE` in the settings table](references/settings.md).
 
 ## Decision table
 
 | Verdict | Status | Meaning |
 |---|---|---|
-| `approved` | `success` | Evidence exists for this head, the whole diff sits under `REVIEW_GATE_RENDER_PATHS`, or `REVIEW_GATE_DOCS_ONLY = "none"` and the shared CI classifier accepts the diff as docs-only; no standing objection; no unresolved threads. Under `REVIEW_GATE_MODE = "off"` the predicate evaluates NO term. Success there means only "gate disabled", stated in the status description. |
+| `approved` | `success` | Evidence exists for this head, the whole diff sits under `REVIEW_GATE_RENDER_PATHS`, or `REVIEW_GATE_DOCS_ONLY = "none"` and the shared CI classifier accepts the diff as docs-only; no standing objection; no unresolved threads. For an inactive or `current` class policy, `REVIEW_GATE_MODE = "off"` evaluates no evidence term. Success there means only "gate disabled", stated in the status description. |
 | `awaiting` | `pending` | No review evidence for this head yet. |
 | `threads-open` | `pending` | Evidence exists, but review threads are unresolved. |
 | `changes-requested` | `failure` | A reviewer objects. Red means objection, never a build failure. |
 | `untracked-claim` | `failure` | A disposition reply that claims tracking and names no issue fails the gate. |
 | `unreasoned-decline` | `failure` | A decline whose reason strips to nothing against the label vocabulary fails the gate. |
-| `suppressed-findings` | `failure` | A review body at the commit the gate relies on — the head, or the carry base once carry supplies the evidence — carries a `Suppressed comments (N)` or `Previously missed (N)` block: findings that never became threads. Either title counts, written as a markdown heading or as a `<details>` summary. The status names the count and the file:line list. It has no dedicated settings key, and while enforcement is on nothing disables it; `REVIEW_GATE_MODE = "off"` reaches it only by disabling the whole gate. An entry clears when the PR author answers it in an issue comment carrying a line `Dispositions at <sha>` that names this head, plus a line per entry opening with the entry's own `file:line` token — bare as the status prints it, or bold or backticked as the review body does — followed by `Fixed in <sha>`, `Declined: <reason>` or `Tracked: <ID>`. That marker is the only thing that binds the comment to the head. The whole term clears when that commit carries no such block. |
+| `suppressed-findings` | `failure` | A review body at the commit the gate relies on — the head, or the carry base once carry supplies the evidence — carries a `Suppressed comments (N)` or `Previously missed (N)` block: findings that never became threads. Either title counts, written as a markdown heading or as a `<details>` summary. The status names the count and the file:line list. It has no dedicated settings key. A class policy `none` decision skips it. `REVIEW_GATE_MODE = "off"` skips it for an inactive or `current` class policy. An entry clears when the PR author answers it in an issue comment carrying a line `Dispositions at <sha>` that names this head, plus a line per entry opening with the entry's own `file:line` token — bare as the status prints it, or bold or backticked as the review body does — followed by `Fixed in <sha>`, `Declined: <reason>` or `Tracked: <ID>`. That marker is the only thing that binds the comment to the head. The whole term clears when that commit carries no such block. |
 | (exit 2, no verdict) | *unchanged* | A read failed or config is invalid. Take NO action; retry next pass. |
 
 Pending text names the head; which sources open the gate is [references/settings.md](references/settings.md) § Reading the pending status. How the reply-parsing failure verdicts read a reply is `DEVELOPMENT.md` § Tracking-claim parsing and § Decline parsing, and how `suppressed-findings` reads a body is § Suppressed-finding parsing; what to write instead is orch's `references/finding-disposition.md`.
+
+An active `REVIEW_GATE_CLASS_POLICY` applies the [README class policy](README.md#class-policy) before this decision table, and that table states the scope a `none` row waives. `scripts/review-policy` is the one owner of the answer, and every other consumer reads it from there rather than re-deriving it.
 
 # Working in a consumer repo
 
@@ -123,6 +125,7 @@ Carry-forward never creates evidence or bypasses a fail-closed term. Objections 
 - `scripts/validate.sh`: validate a consumer installation. `--help`
 - `scripts/validate-workflow.sh`: compare the adopted workflow with the template. `--help`
 - `scripts/review-predicate.sh`: evaluate one head or validate config. `--help`
+- `scripts/review-policy`: map the shared classifier's answer to the configured review evidence policy. `--help`
 - `scripts/review-writer.sh`: `workflow_dispatch` and `schedule` evaluate and converge every open PR; `merge_group` posts one queue success, while `WRITER_READ_ONLY=1` is a no-op. Its header documents the workflow-only contract.
 - `scripts/pr-watch.sh`: reduce open PRs to attention lines. `--help`
 

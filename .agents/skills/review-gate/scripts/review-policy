@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# Apply the review gate's policy to the class reported by harness-ci. A caller
+# supplies a diff range, never a class. stdout is one policy record.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)" || exit 2
+SETTINGS="$SCRIPT_DIR/lib/settings.sh"
+if [ ! -r "$SETTINGS" ]; then
+  printf 'review-gate-error=policy-settings-load value=%q\nCould not load review-gate settings.\n' "$SETTINGS" >&2
+  exit 2
+fi
+# No redirect, as every sibling entry point loads it: the library refuses with
+# its own keyed line when it cannot initialize, and swallowing that leaves the
+# caller an exit 2 naming nothing.
+. "$SETTINGS" || exit 2
+
+usage() {
+  cat <<'USAGE'
+Usage: review-policy [--check-config]
+       review-policy --event EVENT [--base REF] [--head REF] [--repo DIR]
+
+REVIEW_GATE_CLASS_POLICY is empty by default. Empty prints `policy=inactive`
+without calling the classifier. An active policy has one entry per class:
+
+  render:none;trivial:none;micro:none;small:bot;standard:current
+
+`none` skips review evidence and review threads. `bot` requires both even when
+REVIEW_GATE_MODE is off. `current` keeps the gate's existing behavior.
+
+The live form calls the sibling harness-ci change classifier. It prints:
+
+  change_class=CLASS review_evidence=none|required|current policy=active
+
+`standard` is the classifier's fallback as well as one of its verdicts, and
+its `class:` line carries `measured=true|false` saying which. A `false`
+answer exits 2 as `policy-unmeasured`, naming the cause the classifier gave,
+because the policy row for `standard` would otherwise read to every consumer
+as a class something measured. This script keeps no list of causes; the
+classifier is the only thing that can tell its two answers apart. A class
+line with no marker exits 2 as well. The caller fixes what the cause names
+and asks again.
+
+Exit 2 prints no policy record. The caller cannot assert a class.
+USAGE
+}
+
+fail() { # CODE VALUE MESSAGE
+  rg_message error "$1" "$2" "review-policy: $3" >&2
+  exit 2
+}
+
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+POLICY="$(rg_setting REVIEW_GATE_CLASS_POLICY "")" || exit 2
+
+# Normalize and validate once. Every active policy names the closed class set
+# exactly once, so a missing row cannot inherit a less strict neighbor.
+if [ -n "$POLICY" ]; then
+  if ! POLICY_ROWS="$(awk -v raw="$POLICY" '
+    function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+    BEGIN {
+      n = split(raw, entries, ";")
+      if (n != 5) exit 1
+      for (i = 1; i <= n; i++) {
+        if (split(entries[i], pair, ":") != 2) exit 1
+        class = trim(pair[1]); decision = trim(pair[2])
+        if (class !~ /^(render|trivial|micro|small|standard)$/ || decision !~ /^(none|bot|current)$/ || seen[class]++) exit 1
+        policy[class] = decision
+      }
+      required[1] = "render"; required[2] = "trivial"; required[3] = "micro"; required[4] = "small"; required[5] = "standard"
+      for (i = 1; i <= 5; i++) {
+        class = required[i]
+        if (!(class in policy)) exit 1
+        print class "\t" policy[class]
+      }
+    }')"; then
+    fail policy-invalid "$POLICY" "REVIEW_GATE_CLASS_POLICY must name each class once with none, bot, or current"
+  fi
+else
+  POLICY_ROWS=""
+fi
+
+CLASSIFIER="$SCRIPT_DIR/../../harness-ci/scripts/change-class"
+if [ "${1:-}" = "--check-config" ]; then
+  [ "$#" -eq 1 ] || fail policy-arguments "$*" "--check-config takes no other arguments"
+  [ -z "$POLICY" ] || [ -x "$CLASSIFIER" ] || fail policy-classifier "$CLASSIFIER" "the harness-ci change classifier is not executable"
+  if [ -n "$POLICY" ]; then printf 'review-policy=active\n'; else printf 'review-policy=inactive\n'; fi
+  exit 0
+fi
+if [ -z "$POLICY" ]; then
+  printf 'policy=inactive\n'
+  exit 0
+fi
+[ -x "$CLASSIFIER" ] || fail policy-classifier "$CLASSIFIER" "the harness-ci change classifier is not executable"
+CLASS_ERR="$(mktemp "${TMPDIR:-/tmp}/review-policy-class.XXXXXX")" ||
+  fail policy-scratch "${TMPDIR:-/tmp}" "a scratch file for the classifier's diagnostics could not be created"
+trap 'rm -f -- "${CLASS_ERR:?}"' EXIT
+if ! CLASS_OUT="$("$CLASSIFIER" "$@" 2>"$CLASS_ERR")"; then
+  cat -- "$CLASS_ERR" >&2
+  fail policy-classifier-call "$CLASSIFIER" "the harness-ci change classifier could not answer"
+fi
+# The classifier's own log is this script's too: a caller reading the refusal
+# below needs the line that produced it.
+cat -- "$CLASS_ERR" >&2
+# `standard` is two different answers wearing one word: a rule's verdict, and
+# the classifier's fallback where something could not be read — a diff, an
+# inventory, a render proof, the branch-size measurer, the narrow-change list.
+# It carries a real policy row either way, so a fallback passed on here hands
+# every consumer a class nothing measured; under REVIEW_GATE_MODE=off that row
+# reads as no review at all.
+#
+# Only the classifier knows which it just produced, and it says so once on its
+# `class:` line. Read that marker. This script keeps NO list of causes: three
+# rounds of enumerating the producer's refusals from out here each missed a
+# site, because a list maintained beside the thing it describes is a copy that
+# drifts. The cause is repeated in the diagnostic so the caller knows what to
+# fix, but nothing here decides anything from it.
+CLASS_MEASURED="$(sed -n 's/^class: class=[a-z]* measured=\([a-z]*\) .*/\1/p' "$CLASS_ERR" | tail -1)"
+case "$CLASS_MEASURED" in
+  true) ;;
+  false)
+    CLASS_CAUSE="$(sed -n 's/^class: class=[a-z]* measured=[a-z]* //p' "$CLASS_ERR" | tail -1)"
+    fail policy-unmeasured "${CLASS_CAUSE:-unnamed}" "the change classifier fell back to standard instead of measuring a class" ;;
+  *)
+    fail policy-classifier-protocol "${CLASS_MEASURED:-absent}" "the harness-ci change classifier printed no measured marker, so its answer cannot be read" ;;
+esac
+case "$CLASS_OUT" in
+  change_class=render|change_class=trivial|change_class=micro|change_class=small|change_class=standard) CLASS="${CLASS_OUT#change_class=}" ;;
+  *) fail policy-classifier-protocol "$CLASS_OUT" "the harness-ci change classifier returned an invalid record" ;;
+esac
+DECISION=""
+while IFS=$'\t' read -r row_class row_decision; do
+  [ "$row_class" != "$CLASS" ] || DECISION="$row_decision"
+done <<EOF_POLICY
+$POLICY_ROWS
+EOF_POLICY
+case "$DECISION" in none) EVIDENCE=none ;; bot) EVIDENCE=required ;; current) EVIDENCE=current ;; *) fail policy-unresolved "$CLASS" "the class has no policy" ;; esac
+printf 'change_class=%s review_evidence=%s policy=active\n' "$CLASS" "$EVIDENCE"
