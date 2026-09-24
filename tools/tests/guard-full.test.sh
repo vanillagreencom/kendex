@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tools/guard --full, the completion run: the working-tree bot-instructions
-# check, the cross-target compile of core and the CLI, the Rust inputs that
+# check, the decision-ID check, the cross-target compile of core and the CLI, the Rust inputs that
 # decide whether it and cargo doc run, the suites of the trees the branch
 # touched, and a test binary's death by a signal named apart from a failing
 # test. Every compiler and toolchain call is a stub in fake-bin.
@@ -53,6 +53,41 @@ run_guard
   || bad "commit checks leave the staged bot check to the chain's lane" "rc=$RC out=$OUT"
 git -C "$R" reset -q --hard HEAD
 rm -rf -- "$R/.github"
+
+echo "=== a decision ID two INDEX rows share reds full validation, and only full validation ==="
+# The world's kendex.settings.toml names docs/decisions; the world has no
+# remote, so the check's base half prints its notice and the duplicate half
+# alone decides.
+mkdir -p "$R/docs/decisions"
+printf '%s\n' \
+  '| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |' \
+  '|------|----|----------|----------|-----------|--------------|--------|------|' \
+  '| 2026-01-10 | D035 | P-1 | One | Reason | Never | Active | [Full](D035-one.md) |' \
+  '| 2026-01-11 | D035 | P-2 | Two | Reason | Never | Active | [Full](D035-two.md) |' \
+  >"$R/docs/decisions/INDEX.md"
+FULL_GUARD=0
+run_guard
+[ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: decision-ids="* ]] \
+  && ok "the commit chain leaves decision IDs to full validation" \
+  || bad "the commit chain leaves decision IDs to full validation" "rc=$RC out=$OUT"
+FULL_GUARD=1
+run_guard
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: decision-ids=1"* ]] \
+  && [[ "$OUT" == *"error=id-duplicate-row id=D035 rows=3,4"* ]] \
+  && ok "full validation reds through the decision-ID lane, naming the rows" \
+  || bad "full validation reds through the decision-ID lane, naming the rows" "rc=$RC out=$OUT"
+if mutant_guard 's/decisions" check || say decision-ids "\$?"/decisions" check || :/'; then
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the decision-ID finding cut the same INDEX passes" \
+    || bad "control: with the decision-ID finding cut the same INDEX passes" "rc=$RC out=$OUT"
+else
+  bad "control: the decision-ID finding could not be cut from a guard copy"
+fi
+FULL_GUARD=0
+rm -rf -- "$R/docs/decisions"
 
 echo "=== a file Bash 3.2 cannot parse reds full validation, and only full validation ==="
 # The shape from the failure the lane answers: a `case` inside a command

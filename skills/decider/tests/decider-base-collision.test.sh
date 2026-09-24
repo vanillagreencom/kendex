@@ -1,0 +1,258 @@
+#!/usr/bin/env bash
+# Decision IDs judged against the base branch: next-id skips a number the base
+# holds, check refuses an ID two records share, and get refuses an ID on more
+# than one INDEX row. Every row builds its own repositories, so a fetch one run
+# makes never answers for the next.
+set -euo pipefail
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
+DECISIONS="$SKILL_DIR/scripts/decisions"
+# shellcheck source=lib/mutate-script.sh
+source "$TEST_DIR/lib/mutate-script.sh"
+
+PASS=0
+FAIL=0
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+ERR_FILE="$TMP_ROOT/stderr"
+
+pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
+fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
+
+# The developer's git configuration never reaches a fixture or a run: an
+# insteadOf rewrite or a signing requirement would change what is fetched or
+# committed.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+git_q() {
+  git -c user.email=test@example.com -c user.name=test -c commit.gpgsign=false "$@"
+}
+
+new_repo() { # DIR BRANCH
+  git init -q "$1"
+  git -C "$1" symbolic-ref HEAD "refs/heads/$2"
+  git -C "$1" config gc.auto 0
+  git -C "$1" config maintenance.auto false
+  mkdir -p "$1/docs/decisions"
+}
+
+clone_repo() { # UPSTREAM DIR — the clone works on its own branch, lane
+  git clone -q "$1" "$2"
+  git -C "$2" config gc.auto 0
+  git -C "$2" config maintenance.auto false
+  git -C "$2" checkout -q -b lane
+}
+
+write_index() { # REPO ROW... — each ROW is ID:LINK[:STATUS]; rows start on line 3
+  local repo="$1" row id link status
+  shift
+  {
+    printf '%s\n' '| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |'
+    printf '%s\n' '|------|----|----------|----------|-----------|--------------|--------|------|'
+    for row in "$@"; do
+      IFS=: read -r id link status <<<"$row"
+      printf '| 2026-01-10 | %s | PROJ-1 | Decision %s | Reason | Never | %s | [Full](%s) |\n' \
+        "$id" "$id" "${status:-Active}" "$link"
+    done
+  } >"$repo/docs/decisions/INDEX.md"
+  for row in "$@"; do
+    IFS=: read -r id link status <<<"$row"
+    printf '# %s: Decision\n' "$id" >"$repo/docs/decisions/$link"
+  done
+}
+
+commit_all() { # REPO MESSAGE
+  git_q -C "$1" add -A
+  git_q -C "$1" commit -q -m "$2"
+}
+
+# Each builder makes a fresh world under DIR and leaves the repository a row
+# runs in at DIR/work.
+build_ahead() { # the base gained D035 after the lane branched
+  new_repo "$1/up" main
+  write_index "$1/up" D034:D034-first.md
+  commit_all "$1/up" base
+  clone_repo "$1/up" "$1/work"
+  write_index "$1/up" D034:D034-first.md D035:D035-main.md
+  commit_all "$1/up" "main records D035"
+}
+
+build_behind() { # the lane added D035; the base has not moved
+  new_repo "$1/up" main
+  write_index "$1/up" D034:D034-first.md
+  commit_all "$1/up" base
+  clone_repo "$1/up" "$1/work"
+  write_index "$1/work" D034:D034-first.md D035:D035-lane.md
+}
+
+build_no_remote() { # no remote and no main branch: no base resolves
+  new_repo "$1/work" trunk
+  write_index "$1/work" D034:D034-first.md
+  commit_all "$1/work" base
+}
+
+build_unreachable() { # a remote that cannot be fetched; its local copy is stale
+  build_ahead "$1"
+  git -C "$1/work" remote set-url origin "$1/gone"
+}
+
+build_collision() { # the lane and the base each record their own D035
+  build_ahead "$1"
+  write_index "$1/work" D034:D034-first.md D035:D035-lane.md
+}
+
+build_edited() { # the lane changes the status of the base's own D035
+  build_ahead "$1"
+  git -C "$1/work" pull -q --ff-only origin main
+  write_index "$1/work" D034:D034-first.md "D035:D035-main.md:Superseded by D036"
+}
+
+build_dup_rows() { # two INDEX rows carry D035, no remote
+  new_repo "$1/work" trunk
+  write_index "$1/work" D034:D034-first.md D035:D035-a.md D035:D035-b.md
+  commit_all "$1/work" base
+}
+
+build_dup_files() { # one D035 row, two D035 documents, no remote
+  new_repo "$1/work" trunk
+  write_index "$1/work" D034:D034-first.md D035:D035-a.md
+  printf '# D035: Decision\n' >"$1/work/docs/decisions/D035-b.md"
+  commit_all "$1/work" base
+}
+
+run_row() { # SCRIPT FIXTURE ACTION [ARG]
+  local script="$1" fixture="$2" action="$3" arg="${4:-}" world build_rc
+  # mktemp, not a counter: a control runs its row inside a command
+  # substitution, where a counter's increment never reaches the next row.
+  if ! world="$(mktemp -d "$TMP_ROOT/world.XXXXXX")"; then
+    rc=mktemp-failed
+    out=""
+    err=""
+    return
+  fi
+  # The builder runs as a plain command in a subshell that sets errexit
+  # itself: behind || or if, errexit is off inside it and a failed step would
+  # hand the row a half-built world.
+  set +e
+  ( set -e; "build_$fixture" "$world" ) >/dev/null 2>&1
+  build_rc=$?
+  set -e
+  if [[ "$build_rc" -ne 0 ]]; then
+    rc="build-failed:$build_rc"
+    out=""
+    err=""
+    return
+  fi
+  set +e
+  out=$( (cd "$world/work" && env -u DECISIONS_DIR -u DECISION_ID_PREFIX -u DECISION_ID_WIDTH -u DECISIONS_BASE_REF \
+    DECISIONS_DIR=docs/decisions "$script" "$action" ${arg:+"$arg"}) 2>"$ERR_FILE")
+  rc=$?
+  set -e
+  err="$(<"$ERR_FILE")"
+}
+
+record_row() {
+  local mode="$1" name="$2" actual="$3" expected="$4"
+  if [[ "$actual" == "$expected" ]]; then
+    if [[ "$mode" == normal ]]; then
+      pass "$name"
+    fi
+  else
+    if [[ "$mode" == normal ]]; then
+      fail "$name (expected: $expected; got: $actual)"
+    else
+      table_failures+="|$name|"
+    fi
+  fi
+}
+
+# Columns: name, fixture, action, argument, exit status, stdout, and the first
+# line of stderr. A stdout of @get-keys@ compares the key set get answers
+# with; an empty stderr column means stderr is empty.
+evaluate_rows() {
+  local script="$1" mode="$2" only_row="${3:-}" name fixture action arg expected_rc expected_stdout expected_stderr
+  local actual_stdout first_line executed_rows=0 guard
+  table_failures=""
+  while IFS='~' read -r name fixture action arg expected_rc expected_stdout expected_stderr; do
+    if [[ -n "$only_row" && "$name" != "$only_row" ]]; then
+      continue
+    fi
+    executed_rows=$((executed_rows + 1))
+    run_row "$script" "$fixture" "$action" "$arg"
+    actual_stdout="$out"
+    if [[ "$expected_stdout" == @get-keys@ ]]; then
+      actual_stdout="$(jq -c 'keys' <<<"$out" 2>/dev/null)" || actual_stdout="unparsed: $out"
+      expected_stdout='["date","decision","id","path","rationale","research","status"]'
+    fi
+    first_line="${err%%$'\n'*}"
+    record_row "$mode" "$name" "$rc~$actual_stdout~$first_line" "$expected_rc~$expected_stdout~$expected_stderr"
+  done <<'BASE_CASES'
+next-id-base-ahead~ahead~next-id~~0~D036~
+next-id-base-behind~behind~next-id~~0~D036~
+next-id-no-remote~no_remote~next-id~~0~D035~notice=base-unverified ref=origin/main,main reason=unresolved
+next-id-fetch-failed~unreachable~next-id~~0~D035~notice=base-unverified ref=origin/main reason=fetch-failed
+check-collision~collision~check~~1~~error=id-collision id=D035 path=docs/decisions/D035-lane.md base=origin/main:docs/decisions/D035-main.md
+check-edited-record~edited~check~~0~~
+check-duplicate-row~dup_rows~check~~1~~error=id-duplicate-row id=D035 rows=4,5 paths=docs/decisions/D035-a.md,docs/decisions/D035-b.md
+check-duplicate-file~dup_files~check~~1~~error=id-duplicate-file id=D035 paths=docs/decisions/D035-a.md,docs/decisions/D035-b.md
+get-ambiguous~dup_rows~get~D035~1~~error=id-ambiguous id=D035 rows=4,5 paths=docs/decisions/D035-a.md,docs/decisions/D035-b.md
+get-unique~dup_rows~get~D034~0~@get-keys@~
+BASE_CASES
+  if [[ "$executed_rows" -eq 0 ]]; then
+    guard="base table executed no rows"
+    [[ -n "$only_row" ]] && guard="base table selected no row: $only_row"
+    if [[ "$mode" == normal ]]; then
+      fail "$guard"
+      return 1
+    else
+      printf 'TABLE_GUARD:%s' "$guard"
+      return 1
+    fi
+  fi
+  if [[ "$mode" == control ]]; then
+    printf '%s' "$table_failures"
+  fi
+}
+
+echo "=== decision IDs against the base branch ==="
+evaluate_rows "$DECISIONS" normal
+
+echo "=== must-fail controls ==="
+# Each control plants one defect in a copy of the script and names the row it
+# must turn red. Columns: row, text to replace, its replacement, what the
+# defect removes.
+control_seq=0
+while IFS='~' read -r row old new label; do
+  control_seq=$((control_seq + 1))
+  if ! mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/control-$control_seq/decisions" "$old" "$new" 1)"; then
+    fail "control $label could not be planted"
+    continue
+  fi
+  set +e
+  failures="$(evaluate_rows "$mutant" control "$row")"
+  set -e
+  if [[ "$failures" == *"|$row|"* ]]; then
+    pass "$label fails $row"
+  else
+    fail "$label did not fail $row"
+  fi
+done <<'CONTROLS'
+next-id-base-ahead~  for id in ${ids[@]+"${ids[@]}"} ${base_ids[@]+"${base_ids[@]}"}; do~  for id in ${ids[@]+"${ids[@]}"}; do~a maximum over the working tree alone
+next-id-base-ahead~      if GIT_TERMINAL_PROMPT=0 git~      if true || GIT_TERMINAL_PROMPT=0 git~a base read without a fetch
+next-id-no-remote~emit_notice base-unverified "ref=$tried reason=unresolved"~emit_notice base-unread "ref=$tried reason=unresolved"~a renamed unresolved-base notice
+next-id-fetch-failed~emit_notice base-unverified "ref=$ref reason=fetch-failed"~emit_notice base-unread "ref=$ref reason=fetch-failed"~a renamed fetch-failure notice
+check-collision~select(($held | length) > 0 and~select(($held | length) > 99 and~a collision rule that never fires
+check-edited-record~($held | map(.link) | index($row.link)) == null~true~a collision rule blind to record identity
+check-duplicate-row~map(select(length > 1))~map(select(length > 99))~a duplicate-row rule that never fires
+check-duplicate-file~file_count=$((file_count + 1))~file_count=$((file_count + 0))~a duplicate-file rule that never counts
+get-ambiguous~  if [[ "$count" -gt 1 ]]; then~  if [[ "$count" -gt 99 ]]; then~a get that answers with the first of several rows
+get-unique~del(.line, .link)~del(.line)~a get that leaks the parser's link field
+CONTROLS
+if [[ "$control_seq" -eq 0 ]]; then
+  fail "the control table planted no defect"
+fi
+
+echo
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]

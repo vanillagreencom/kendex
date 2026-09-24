@@ -131,13 +131,15 @@ evaluate_next_id_rows() {
     esac
     first_line="${err%%$'\n'*}"
     case "$stderr_rule" in
-      empty)
-        actual_stderr="$err"
-        expected=""
-        ;;
       ignore)
         actual_stderr=ignored
         expected=ignored
+        ;;
+      no-repository)
+        # The fixtures sit outside any repository, so the base read's notice
+        # is the whole of stderr on a clean answer.
+        actual_stderr="$first_line"
+        expected="notice=base-unverified ref=none reason=not-a-repository"
         ;;
       bad-id-prefix)
         actual_stderr=0,0
@@ -156,7 +158,7 @@ evaluate_next_id_rows() {
     actual="$rc~$actual_stdout~$actual_stderr"
     record_row "$mode" "$name" "$actual" "$expected_status~$expected_stdout~$expected"
   done <<'NEXT_ID_CASES'
-inferred-adr~adr-repo~default~0~exact~ADR-0036~empty
+inferred-adr~adr-repo~default~0~exact~ADR-0036~no-repository
 ignore-prose-id~d-repo~default~0~exact~D002~ignore
 latest-scheme~mixed-repo~default~0~exact~ADR-0036~ignore
 configured-prefix~mixed-repo~d-prefix~0~exact~D009~ignore
@@ -195,7 +197,7 @@ if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
     fail "wrong next ID did not fail the inferred scheme row"
   fi
 
-  diagnostic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/id-diagnostic-key/decisions" '        emit_error id-suffix-missing "value=$last_id"' '        emit_error id-suffix-invalid "value=$last_id"' 1)"
+  diagnostic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/id-diagnostic-key/decisions" '    emit_error id-suffix-missing "value=$1"' '    emit_error id-suffix-invalid "value=$1"' 1)"
   failures="$(evaluate_next_id_rows "$diagnostic_mutant" control unparseable-last-id)"
   if [[ "$failures" == *'|unparseable-last-id|'* ]]; then
     pass "a changed ID diagnostic key fails its row"

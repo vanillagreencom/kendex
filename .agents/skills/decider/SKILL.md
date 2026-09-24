@@ -29,7 +29,7 @@ Numbered decision documents indexed in one `INDEX.md` (default `docs/decisions/`
 .agents/skills/decider/scripts/decisions <command> [options]
 ```
 
-Actions (`search`, `search --issue`, `list`, `next-id`, `get`), search coverage and scoring, output shapes, and the `DECISIONS_DIR` / `DECISION_ID_*` environment: `decisions --help`. There is no bare `issue` action; use `search --issue`.
+Actions (`search`, `search --issue`, `list`, `next-id`, `get`, `check`), search coverage and scoring, output shapes, and the `DECISIONS_DIR` / `DECISIONS_BASE_REF` / `DECISION_ID_*` environment: `decisions --help`. There is no bare `issue` action; use `search --issue`.
 
 Read the full decision file before acting on a hit. A suggestion contradicting an active decision is invalid unless the decision itself is flawed.
 

@@ -10,6 +10,8 @@ Inputs: summary, reasons, and revisit conditions (required); research reference 
 .agents/skills/decider/scripts/decisions next-id
 ```
 
+`next-id` also reads the base branch's INDEX, so it skips a number another branch already merged. A `notice=base-unverified` line means the base was not read or not fetched, and the number is checked against this branch alone.
+
 Without the script: take the last populated INDEX ID value and increment its numeric suffix. If it has none, ask for the project's scheme.
 
 Derive a 2-5 word kebab-case descriptor from the summary — "Use Redis for session caching" → `session-caching`.
@@ -44,3 +46,16 @@ Every `REVISIT` marker names an ID present in the INDEX.
 Decision: [DECISION_ID] - [TITLE]
 Path: [DECISIONS_DIR]/[DECISION_ID]-[DESCRIPTOR].md
 ```
+
+## Renumber a record
+
+`decisions check` refuses an ID the base branch records for another decision, and `check` or `get` refuses an ID two rows or two documents share. The base keeps the number, and the branch's record takes a new one from `next-id`. Change every place the old ID appears on the branch's record, per `schemas/decision-format.md`:
+
+- the file name, `[DECISION_ID]-[DESCRIPTOR].md`
+- the `# [DECISION_ID]: Title` line
+- the INDEX row's ID and Link cells
+- the `[DECISION_ID](DECISION_ID-descriptor.md)` links other records carry
+- the `REVISIT([DECISION_ID])` markers in code
+- the `**Decision [DECISION_ID]**:` reference in the prompting issue
+
+Check the citations by reading them: the commit-guards `md-refs` lane passes a citation left at the old number, because that number still names the base's record.

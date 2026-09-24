@@ -11,3 +11,9 @@
 # `doc/decisions`, or `adr` directory that has an INDEX.md; set it where the
 # tree is somewhere else.
 DECISIONS_DIR = ""
+
+# The base branch `decisions next-id` and `decisions check` read beside the
+# working tree, so a number another branch already merged is not handed out
+# again. Empty = origin/HEAD, else origin/main, else main. A <remote>/<branch>
+# ref is fetched first.
+DECISIONS_BASE_REF = ""
