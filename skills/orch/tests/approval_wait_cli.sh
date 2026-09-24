@@ -40,8 +40,10 @@ ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/class/.agents/skills/github"
 cat >"$TMP_ROOT/class/.agents/skills/harness-ci/scripts/change-class" <<'CLASSIFIER'
 #!/usr/bin/env bash
 # The shipped classifier's contract as review-policy uses it: the range comes
-# from the caller, and an endpoint it cannot resolve is reported as `standard`
-# with a harness-note on stderr, never as an error.
+# from the caller, and a diff it could not read is still answered as class
+# `standard` at exit 0, with the `class:` line's measured= marker saying so
+# and a harness-note carrying the cause. Spaces in a row's note and fields are
+# written '+', since a row's environment is space-separated.
 event="" base="" head="" prev=""
 for a in "$@"; do
   case "$prev" in --event) event="$a" ;; --base) base="$a" ;; --head) head="$a" ;; esac
@@ -54,6 +56,10 @@ if [ -n "${STUB_NOTE:-}" ]; then
   printf 'harness-note: %s\n' "$(printf '%s' "$STUB_NOTE" | tr '+' ' ')" >&2
 fi
 [ -n "${STUB_CLASS:-}" ] || { echo "change-class: no class configured" >&2; exit 1; }
+if [ "${STUB_MARKER:-yes}" = yes ]; then
+  printf 'class: class=%s measured=%s %s\n' "$STUB_CLASS" "${STUB_MEASURED:-true}" \
+    "$(printf '%s' "${STUB_NOTE:-cause=stub}" | tr '+' ' ')" >&2
+fi
 printf 'change_class=%s\n' "$STUB_CLASS"
 CLASSIFIER
 chmod +x "$TMP_ROOT/class/.agents/skills/harness-ci/scripts/change-class"
@@ -265,33 +271,42 @@ class_table \
   "two ends with no ancestor between them is no mode either|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|--resolve-mode --base $UNRELATED_SHA --head $CLASS_HEAD_SHA|rc=2 stdout=empty stderr_line=approval-wait:+policy-unreadable-range+range=$UNRELATED_SHA...$CLASS_HEAD_SHA" \
   "a wait on a waived class refuses instead of idling, and reaches no gh|$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review|123 --base $CLASS_BASE_SHA --head $CLASS_HEAD_SHA|rc=2 gh=uncalled stderr_line=approval-wait:+gate-off+mode=exempt"
 
-# The classifier answers `standard` at exit 0 for EVERY cause outside the two
-# it treats as measurable, so the owner refuses on the allowlist rather than on
-# a list of causes this suite would have to keep. One row per shape
-# harness-only raises, each under REVIEW_GATE_MODE=off, which is the answer
-# they would take if the refusal were missing.
-policy_note_rows() { # WANT LABEL-PREFIX CLASS ROWS...
-  local want="$1" prefix="$2" class="$3" row note label
-  shift 3
+# `standard` is the classifier's fallback as well as one of its verdicts, and
+# only its measured= marker separates them. These rows vary the CAUSE while
+# holding the marker: the causes below are the shapes a real classifier
+# reports, and none of them decides anything here. REVIEW_GATE_MODE=off is the
+# answer a fallback would take if the marker were not read.
+policy_marker_rows() { # WANT LABEL-PREFIX CLASS MEASURED ROWS...
+  local want="$1" prefix="$2" class="$3" measured="$4" row note label
+  shift 4
   for row in "$@"; do
     IFS='|' read -r note label <<<"$row"
     stage class ""
-    run class "$POLICY_ENV $RANGE_ENV STUB_CLASS=$class STUB_NOTE=$note REVIEW_GATE_MODE=off PR_REVIEW_GATE=review" \
+    run class "$POLICY_ENV $RANGE_ENV STUB_CLASS=$class STUB_MEASURED=$measured STUB_NOTE=$note REVIEW_GATE_MODE=off PR_REVIEW_GATE=review" \
       --resolve-mode --base "$CLASS_BASE_SHA" --head "$CLASS_HEAD_SHA"
     assert_eq "$(observe "$want")" "$want" "$prefix: $label" "$ERR"
   done
 }
 
-policy_note_rows "rc=2 stdout=empty" "must-fail" standard \
+policy_marker_rows "rc=2 stdout=empty" "must-fail" standard false \
   "cause=unresolved-endpoint+endpoint=$ABSENT_SHA|an unresolved endpoint is no mode, never the gate-disabled off" \
   "cause=unreadable-diff+range=$CLASS_BASE_SHA...$CLASS_HEAD_SHA|an unreadable diff is no mode" \
   "cause=unreadable-base-inventory|an inventory the base end cannot supply is no mode" \
-  "cause=no-verifier|a render proof with no verifier is no mode" \
-  "cause=repository-unreadable|an unreadable repository is no mode"
+  "cause=narrow-change-list-unreadable|a narrow-change list the classifier cannot read is no mode" \
+  "cause=size-measurement-failed|a branch measurement that did not run is no mode" \
+  "cause=generated-ownership-gain|a cause the classifier calls measurable is no mode either, when it marks the answer refused"
 
-policy_note_rows "rc=0 mode=review" "control" small \
-  "cause=generated-ownership-gain|a generated-ownership gain still answers a class" \
-  "cause=product-source-or-unreadable-ownership+path=app.rs|a product source path still answers a class"
+policy_marker_rows "rc=0 mode=review" "control" small true \
+  "cause=production-within-small+subsystem=app|a measured class answers whatever its cause says" \
+  "cause=unreadable-diff+range=x...y|and a cause that reads like a refusal does not make one"
+
+# A classifier that prints no marker at all is an answer this resolver cannot
+# read, and it refuses rather than assume the class on stdout was measured.
+stage class ""
+run class "$POLICY_ENV $RANGE_ENV STUB_CLASS=render STUB_MARKER=no REVIEW_GATE_MODE=off PR_REVIEW_GATE=review" \
+  --resolve-mode --base "$CLASS_BASE_SHA" --head "$CLASS_HEAD_SHA"
+assert_eq "$(observe "rc=2 stdout=empty")" "rc=2 stdout=empty" \
+  "must-fail: a classifier printing no marker is no mode" "$ERR"
 
 # Must-fail control: the exempt verdict is what keeps a waived class from
 # picking up the evidence and thread terms downstream. Collapse it onto the

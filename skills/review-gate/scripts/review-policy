@@ -28,14 +28,14 @@ The live form calls the sibling harness-ci change classifier. It prints:
 
   change_class=CLASS review_evidence=none|required|current policy=active
 
-A diff the classifier REFUSED TO READ is not a class. It answers `standard`
-there and names the reason in a `harness-note:` line — an unresolved
-endpoint, an unreadable diff, an inventory it cannot stand on. Only the two
-causes the classifier itself treats as measurable pass through here
-(`product-source-or-unreadable-ownership` and `generated-ownership-gain`);
-every other cause exits 2 as `policy-unmeasured` naming it, because the
-policy row for `standard` would otherwise read to every consumer as a class
-something measured. The caller fixes what the cause names and asks again.
+`standard` is the classifier's fallback as well as one of its verdicts, and
+its `class:` line carries `measured=true|false` saying which. A `false`
+answer exits 2 as `policy-unmeasured`, naming the cause the classifier gave,
+because the policy row for `standard` would otherwise read to every consumer
+as a class something measured. This script keeps no list of causes; the
+classifier is the only thing that can tell its two answers apart. A class
+line with no marker exits 2 as well. The caller fixes what the cause names
+and asks again.
 
 Exit 2 prints no policy record. The caller cannot assert a class.
 USAGE
@@ -98,31 +98,28 @@ fi
 # The classifier's own log is this script's too: a caller reading the refusal
 # below needs the line that produced it.
 cat -- "$CLASS_ERR" >&2
-# The classifier repeats harness-only's verdict cause as a `harness-note:`
-# line and then applies ITS OWN two-entry allowlist: exactly two causes are a
-# readable product diff whose size it may measure, and EVERY other cause is a
-# refusal to read something — an inventory, a changed path, the diff itself,
-# an endpoint — which it still answers as class `standard` at exit 0.
-# `standard` carries a real policy row, so passing one of those on would hand
+# `standard` is two different answers wearing one word: a rule's verdict, and
+# the classifier's fallback where something could not be read — a diff, an
+# inventory, a render proof, the branch-size measurer, the narrow-change list.
+# It carries a real policy row either way, so a fallback passed on here hands
 # every consumer a class nothing measured; under REVIEW_GATE_MODE=off that row
 # reads as no review at all.
 #
-# So mirror the allowlist rather than name refusal causes one at a time. A
-# cause harness-only adds later refuses here until someone decides it is
-# measurable, which is the way round that cannot waive a review over a diff
-# nobody read. The caller fixes what the cause names and asks again.
-MEASURED_NOTES="$(sed -n 's/^harness-note: //p' "$CLASS_ERR")"
-while IFS= read -r note; do
-  [ -n "$note" ] || continue
-  case "$note" in
-    cause=product-source-or-unreadable-ownership | \
-      cause=product-source-or-unreadable-ownership\ * | \
-      cause=generated-ownership-gain | cause=generated-ownership-gain\ *) ;;
-    *) fail policy-unmeasured "$note" "the change classifier refused to read the diff, so no class was measured" ;;
-  esac
-done <<EOF_NOTES
-$MEASURED_NOTES
-EOF_NOTES
+# Only the classifier knows which it just produced, and it says so once on its
+# `class:` line. Read that marker. This script keeps NO list of causes: three
+# rounds of enumerating the producer's refusals from out here each missed a
+# site, because a list maintained beside the thing it describes is a copy that
+# drifts. The cause is repeated in the diagnostic so the caller knows what to
+# fix, but nothing here decides anything from it.
+CLASS_MEASURED="$(sed -n 's/^class: class=[a-z]* measured=\([a-z]*\) .*/\1/p' "$CLASS_ERR" | tail -1)"
+case "$CLASS_MEASURED" in
+  true) ;;
+  false)
+    CLASS_CAUSE="$(sed -n 's/^class: class=[a-z]* measured=[a-z]* //p' "$CLASS_ERR" | tail -1)"
+    fail policy-unmeasured "${CLASS_CAUSE:-unnamed}" "the change classifier fell back to standard instead of measuring a class" ;;
+  *)
+    fail policy-classifier-protocol "${CLASS_MEASURED:-absent}" "the harness-ci change classifier printed no measured marker, so its answer cannot be read" ;;
+esac
 case "$CLASS_OUT" in
   change_class=render|change_class=trivial|change_class=micro|change_class=small|change_class=standard) CLASS="${CLASS_OUT#change_class=}" ;;
   *) fail policy-classifier-protocol "$CLASS_OUT" "the harness-ci change classifier returned an invalid record" ;;

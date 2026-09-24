@@ -24,8 +24,12 @@ cp -R "$SKILL_DIR" "$REPO/.agents/skills/review-gate"
 mkdir -p "$REPO/.agents/skills/harness-ci/scripts"
 cat >"$REPO/.agents/skills/harness-ci/scripts/change-class" <<'CLASSIFIER'
 #!/usr/bin/env bash
+# The shipped classifier's shape as review-policy reads it: a class on stdout
+# and, on stderr, the class line whose measured= marker says whether a rule
+# earned that class or the classifier fell back to standard.
 [ -z "${GH_TOKEN+x}" ] && [ -z "${GITHUB_TOKEN+x}" ] && [ -z "${GH_CONFIG_DIR+x}" ] ||
   { echo "classifier received GitHub credentials" >&2; exit 2; }
+printf 'class: class=%s measured=%s cause=stub\n' "$STUB_CLASS" "${STUB_MEASURED:-true}" >&2
 printf 'change_class=%s\n' "$STUB_CLASS"
 CLASSIFIER
 chmod +x "$REPO/.agents/skills/harness-ci/scripts/change-class"

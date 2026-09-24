@@ -511,22 +511,18 @@ policy_range_materialize() { # ROOT BASE HEAD
 # inactive answer, not a failure. Every other failure returns nonzero and the
 # caller refuses: an unreadable policy must never resolve to a waiver, and it
 # must not silently hold a pull request either.
-# active, inactive, or non-zero when the owner cannot say. Asked once per run:
-# both the readiness check and the admin route's gate-mode step turn on it, and
-# a question answered twice is a question two sites can disagree about.
-REVIEW_POLICY_STATE=""
+# active, inactive, or non-zero when the owner cannot say. Asked per site: both
+# callers read it through a command substitution, so a memo assigned in here
+# would die with the subshell and nothing would read it. The owner is cheap,
+# reads only settings, and gives the same answer each time it is asked within
+# one run, so the repeat costs a process and no correctness.
 review_policy_state() { # ROOT
     local owner="$SCRIPT_DIR/../../../review-gate/scripts/review-policy" state
-    if [ -n "$REVIEW_POLICY_STATE" ]; then
-        printf '%s' "$REVIEW_POLICY_STATE"
-        return 0
-    fi
     if [ ! -x "$owner" ]; then
         owner=$(command -v review-policy 2>/dev/null) || owner=""
     fi
     # No owner script is no class policy: the term is absent, not defaulted.
     if [ -z "$owner" ]; then
-        REVIEW_POLICY_STATE=inactive
         printf 'inactive'
         return 0
     fi
@@ -534,11 +530,10 @@ review_policy_state() { # ROOT
     # repository root. The held diagnostics are run_checkout_child's.
     state=$(run_checkout_child "$1" "$owner" --check-config) || return 1
     case "$state" in
-    review-policy=inactive) REVIEW_POLICY_STATE=inactive ;;
-    review-policy=active) REVIEW_POLICY_STATE=active ;;
+    review-policy=inactive) printf 'inactive' ;;
+    review-policy=active) printf 'active' ;;
     *) return 1 ;;
     esac
-    printf '%s' "$REVIEW_POLICY_STATE"
 }
 
 review_policy_evidence() {
@@ -1472,12 +1467,15 @@ admin_gates() {
     # gate stands unchanged in all three.
     # The resolver runs as a credential-free child and would otherwise reach
     # the network itself on a pull request whose thread count never made the
-    # readiness check ask the policy owner. Materialize the range here, where
-    # the route's own credentials and diagnostics are, so the child finds the
-    # commits already present and its own fetch stays a fallback for callers
-    # that are not this route. A range that cannot be made readable is not a
-    # refusal on its own: the resolver below answers for an inactive policy
-    # without ever looking at it, and refuses for an active one.
+    # readiness check ask the policy owner. Materialize the range here instead,
+    # so the child finds the commits already present and its own fetch stays a
+    # fallback for callers that are not this route. The fetch is git under
+    # whatever credential the host's git helper supplies: the owner credential
+    # rides on the gh wrapper alone and is deliberately not extended to git, so
+    # on a host where only that credential can read the repository the range
+    # stays unreadable and the route refuses below — the fail-closed outcome. A
+    # range that cannot be made readable is not a refusal on its own: the
+    # resolver answers for an inactive policy without ever looking at it.
     local gate_mode gate_root gate_policy
     gate_root=$(git rev-parse --show-toplevel 2>/dev/null) || gate_root=$(pwd)
     gate_policy=$(review_policy_state "$gate_root") || gate_policy=unreadable

@@ -1087,6 +1087,7 @@
   ".agents/skills/review-gate/tests/predicate-selftest-table-load.test.sh",
   ".agents/skills/review-gate/tests/predicate-unknown-arg.test.sh",
   ".agents/skills/review-gate/tests/render-lane.test.sh",
+  ".agents/skills/review-gate/tests/review-policy.test.sh",
   ".agents/skills/review-gate/tests/review-writer-template.test.sh",
   ".agents/skills/review-gate/tests/review-writer.test.sh",
   ".agents/skills/review-gate/tests/settings-diagnostics-load.test.sh",

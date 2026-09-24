@@ -214,6 +214,13 @@ done
 [[ "$base" == "${STUB_EXPECT_BASE:-base-oid}" ]] || { echo "change-class: bad --base '$base'" >&2; exit 3; }
 [[ "$head" == "${STUB_EXPECT_HEAD:?STUB_EXPECT_HEAD unset}" ]] || { echo "change-class: bad --head '$head'" >&2; exit 3; }
 [[ "$repo" == "." ]] || { echo "change-class: bad --repo '$repo'" >&2; exit 3; }
+# The class line, whose measured= marker says whether a rule earned this class
+# or the classifier fell back to standard. review-policy reads it and refuses
+# an answer marked unmeasured, so a row can turn a waiver into a refusal
+# without changing the class on stdout.
+if [[ "${STUB_MARKER:-yes}" == yes ]]; then
+  printf 'class: class=%s measured=%s cause=stub\n' "$STUB_CLASS" "${STUB_MEASURED:-true}" >&2
+fi
 if [[ "${STUB_CLASS_SHAPE:-}" == bare ]]; then
   printf '%s\n' "$STUB_CLASS"
 else
@@ -357,6 +364,9 @@ word() {
     # answer, which is the unreadable-policy shape.
     class-policy:-) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     class-policy:range-fail) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_POLICY_RANGE_FAIL=true") ;;
+    # A class the classifier did not measure: it names one on stdout and marks
+    # the answer a fallback, which is not a class any policy row applies to.
+    class-policy:unmeasured) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_CLASS=render" "STUB_MEASURED=false" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     # A base the fixture repository does not hold, and no origin to fetch it
     # from: the range is unreadable and no class can be measured.
     class-policy:range-absent) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_CLASS=render" "STUB_BASE_OID=$ABSENT_SHA" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$ABSENT_SHA" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
@@ -617,6 +627,7 @@ an actionable unresolved thread blocks permanently, never a warning|checks:ci-re
 a class the policy sends for review keeps the thread gate|checks:ci-required threads:actionable class-policy:standard|check-classified|0|merge=false transient=false $OPEN runs=- issues=[unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
 a class the policy waives keeps the count and gates nothing with it|checks:ci-required threads:actionable class-policy:render|check-classified|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[unresolved_threads_waived: 1 actionable thread(s) open, waived by the review gate's class policy for this change]|mergeable;head-run: none|calls=$CHECK_POLICY auth=<unset>
 a class policy the classifier cannot answer blocks rather than waive, and the owner's own diagnostic reaches stderr|checks:ci-required threads:actionable class-policy:-|check-classified|0|merge=false transient=false $OPEN runs=- issues=[review_policy_unreadable: The review gate's class policy could not be resolved for this pull request;unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|review-gate-error=policy-classifier-call value=<tmp>/tree/skills/review-gate/scripts/../../harness-ci/scripts/change-class;review-policy: the harness-ci change classifier could not answer;blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
+a class the classifier did not measure blocks rather than waive, whatever it named|checks:ci-required threads:actionable class-policy:unmeasured|check-classified|0|merge=false transient=false $OPEN runs=- issues=[review_policy_unreadable: The review gate's class policy could not be resolved for this pull request;unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|class: class=render measured=false cause=stub;review-gate-error=policy-unmeasured value=cause=stub;review-policy: the change classifier fell back to standard instead of measuring a class;blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
 a range naming a commit this checkout lacks blocks rather than waive|checks:ci-required threads:actionable class-policy:range-absent|check-classified|0|merge=false transient=false $OPEN runs=- issues=[review_policy_unreadable: The review gate's class policy could not be resolved for this pull request;unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|{fetch-no-origin};blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
 an unreadable pull request range blocks rather than waive|checks:ci-required threads:actionable class-policy:range-fail|check-classified|0|merge=false transient=false $OPEN runs=- issues=[review_policy_unreadable: The review gate's class policy could not be resolved for this pull request;unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
 an outdated unresolved thread is not actionable|checks:ci-required threads:outdated|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[]|mergeable;head-run: none|calls=$CHECK auth=<unset>
