@@ -24,6 +24,7 @@ CM="$SKILL_DIR/scripts/conflict-markers"
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would mask every row below.
 unset COMMIT_GUARDS_CONFLICT_EXCLUDES COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
+unset COMMIT_GUARDS_VERBOSE 2>/dev/null || true
 
 mk7() { printf '%s%s%s%s%s%s%s' "$1" "$1" "$1" "$1" "$1" "$1" "$1"; }
 OPEN="$(mk7 '<')"
@@ -156,8 +157,9 @@ assert_eq "premise: the self fixture tracks the shipped script" "scripts/conflic
 run_rows \
   "the shipped script, tracked, scans clean: its patterns are interval-built|fx_self self|||rc=0 $(clean)" \
   "control: a planted marker fails while the script stays unnamed|fx_self_planted|||rc=1 $(hit planted.txt 1 "$OPEN HEAD");$(failed 1)" \
-  "a clean verdict names the skipped carrier and says how many went unmeasured|asset asset|||rc=0 $(skip asset.png);$(clean 1)" \
-  "a violation verdict carries the same qualifier, the marker elsewhere deciding the exit|fx_asset_planted|||rc=1 $(skip asset.png);$(hit planted.txt 1 "$CLOSE theirs");$(failed 1 "$EXCL" 1)" \
+  "a clean verdict says how many went unmeasured, naming the carrier only under COMMIT_GUARDS_VERBOSE=1|asset asset|COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip asset.png);$(clean 1)" \
+  "the same run leaves the path out by default|asset asset-quiet|||rc=0 $(clean 1)" \
+  "a violation verdict carries the same qualifier, the marker elsewhere deciding the exit|fx_asset_planted|COMMIT_GUARDS_VERBOSE=1||rc=1 $(skip asset.png);$(hit planted.txt 1 "$CLOSE theirs");$(failed 1 "$EXCL" 1)" \
   "control: the same bytes without a NUL are read, fire on their line, and nothing goes unmeasured|fx_asset_text|||rc=1 $(hit asset.png 4 "$OPEN HEAD");$(failed 1)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

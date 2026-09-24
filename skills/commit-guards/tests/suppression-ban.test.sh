@@ -21,6 +21,7 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 SB="$SKILL_DIR/scripts/suppression-ban"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
+unset COMMIT_GUARDS_VERBOSE 2>/dev/null || true
 unset COMMIT_GUARDS_SUPPRESSION_EXCLUDES COMMIT_GUARDS_SUPPRESSION_BASELINE COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
@@ -290,6 +291,7 @@ echo "=== a carrier the sniff skips is named once, counted once, and qualifies t
 # in git's leading window: the listing forces text, so the path IS matched
 # and reaches the content sniff, which is what keeps it out of the count.
 fx_skipped() { file skipped ok.rs 'fn main() {}\n'; put blob.rs "\\0000\n${BLANKET}fn f() {}\n"; stage; }
+fx_skipped_verbose() { file skipped-verbose ok.rs 'fn main() {}\n'; put blob.rs "\\0000\n${BLANKET}fn f() {}\n"; stage; }
 fx_skipped_beside() { file skipped-beside ok.rs 'fn main() {}\n'; put blob.rs "\\0000\n${BLANKET}fn f() {}\n"; put blanket.rs "${BLANKET}fn g() {}\n"; stage; }
 fx_skipped_control() { file skipped-control ok.rs 'fn main() {}\n'; put blob.rs "\n${BLANKET}fn f() {}\n"; stage; }
 # The same unreadable blob reaches two of this check's scans: the module-wide
@@ -297,10 +299,11 @@ fx_skipped_control() { file skipped-control ok.rs 'fn main() {}\n'; put blob.rs 
 # bare-allow carrier listing. The verdict counts paths.
 fx_skipped_twice() { file skipped-twice ok.rs 'fn main() {}\n'; put blob.rs "\\0000\n${BLANKET}${DEAD}fn x() {}\n"; stage; }
 run_rows \
-  "a clean verdict names the skipped carrier and says how many went unmeasured|fx_skipped|||rc=0 $(skip blob.rs);$(summary "" 0 0 1)|-" \
-  "a violation verdict carries the same qualifier|fx_skipped_beside|||rc=1 $(skip blob.rs);$(hit 'module-wide rust allow' blanket.rs 1 '#![allow(dead_code)]');$(summary '' 1 0 1)|-" \
+  "a clean verdict says how many went unmeasured, with no path named|fx_skipped|||rc=0 $(summary "" 0 0 1)|-" \
+  "control: COMMIT_GUARDS_VERBOSE=1 names the skipped carrier|fx_skipped_verbose|COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip blob.rs);$(summary "" 0 0 1)|-" \
+  "a violation verdict carries the same qualifier|fx_skipped_beside|COMMIT_GUARDS_VERBOSE=1||rc=1 $(skip blob.rs);$(hit 'module-wide rust allow' blanket.rs 1 '#![allow(dead_code)]');$(summary '' 1 0 1)|-" \
   "control: the same bytes without a NUL are read, fire on their own line, and nothing is unmeasured|fx_skipped_control|||rc=1 $(hit 'module-wide rust allow' blob.rs 2 '#![allow(dead_code)]');$(summary '' 1 0)|-" \
-  "a path skipped by two lanes is named once and counted once|fx_skipped_twice|||rc=0 $(skip blob.rs);$(summary "" 0 0 1)|-"
+  "a path skipped by two lanes is named once and counted once|fx_skipped_twice|COMMIT_GUARDS_VERBOSE=1||rc=0 $(skip blob.rs);$(summary "" 0 0 1)|-"
 
 echo "=== the usage is answered ==="
 repo help

@@ -349,6 +349,11 @@ function fail(rule, value) { if (phase == "verdict") printf "V\t%s\t%d\t%s\t%s\n
 
 function want_target(t) { if (phase == "targets" && !(t in wanted)) { wanted[t] = 1; print t } }
 
+# Every tracked path a judged reference lands on, once. The shell names the
+# ones the source walk could not measure, which is the only per-path notice a
+# passing run keeps.
+function seen_target(t) { if (phase == "verdict" && !(t in reached)) { reached[t] = 1; printf "T\t%s\n", t } }
+
 function want_content(t, phrase,   key) {
   key = t SUBSEP phrase
   if (phase == "contents" && !(key in asked)) { asked[key] = 1; printf "%s\t%s\n", t, phrase }
@@ -435,6 +440,7 @@ mode == "resolve" {
     judged++
     if (ESCAPED) { fail("link-escape", raw); next }
     if (!(target in tracked_set) && !(target in dirs)) { fail("link-target", raw ":" target); next }
+    seen_target(target)
     if (anchor == "") next
     if (target !~ /\.md$/) { fail("anchor-type", raw ":" target); next }
     want_target(target)
@@ -455,6 +461,7 @@ mode == "resolve" {
         next
       }
     }
+    seen_target(target)
     if (ckind == "content") {
       want_content(target, value)
       if (!((target SUBSEP value) in found)) fail("phrase-missing", raw ":" target ":" value)

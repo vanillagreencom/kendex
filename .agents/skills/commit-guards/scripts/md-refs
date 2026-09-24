@@ -61,7 +61,7 @@ DECISION_ID_WIDTH_DEFAULT="3"
 usage() {
   gg_message usage md-refs "Command usage follows."
   cat <<EOF
-usage: md-refs [--staged | --base REF | --against REF | --all]
+usage: md-refs [--staged | --base REF | --against REF | --all] [--verbose]
 
 A dead relative link, code-span section, anchor or content citation, or
 decision reference fails. A link followed by § must start with a heading from
@@ -88,6 +88,11 @@ including a deletion; all checks it unconditionally. Every scope that checks
 anything checks the whole set, because a removed target invalidates
 references in callers the change never touched. Callers and targets both
 resolve against the index. Exclusions apply to both sets.
+
+A matched path this lane cannot read — a symlink, a submodule gitlink, a
+binary blob — is counted by reason on the summary line rather than named.
+One is named anyway when a judged reference lands on it, and --verbose (or
+COMMIT_GUARDS_VERBOSE=1) names every one.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -136,6 +141,7 @@ while [ $# -gt 0 ]; do
       gg_md_name_range against "$1"
       ;;
     --against=*) gg_md_name_range against "${1#--against=}" ;;
+    --verbose) GG_VERBOSE=1 ;;
     -h | --help)
       usage
       exit 0
@@ -348,11 +354,16 @@ while IFS= read -r -d '' rec; do
 done <"$GG_TMP/src-files.z"
 SKIPPED=$((SKIPPED + GG_WALK_SKIPPED))
 
+# Captured before every verdict line: a gg_fail inside the substitution ends
+# only the subshell, so its status is carried out here rather than read as an
+# empty tally.
+SKIP_COUNTS="$(gg_skip_counts)" || exit 2
+
 # Before the empty-set answer below: a carrier this lane could not read is
 # what the verdict cannot speak for, and a run whose only source file was
 # that carrier would otherwise call itself measurable-free and exit 0.
 if [ "$SRC_EXTRACT_ERRORS" -gt 0 ]; then
-  gg_message incomplete "files=$SRC_EXTRACT_ERRORS skipped=$SKIPPED" "Some citation carriers could not be read."
+  gg_message incomplete "files=$SRC_EXTRACT_ERRORS skipped=$SKIPPED$SKIP_COUNTS" "Some citation carriers could not be read."
   exit 2
 fi
 
@@ -360,7 +371,7 @@ if [ "$GG_MD_COUNT" -eq 0 ] && [ "$SRC_COUNT" -eq 0 ]; then
   if [ "$SKIPPED" -eq 0 ]; then
     gg_message no-match "$MD_GLOBS_SHOWN;$SRC_GLOBS_SHOWN" "No configured documents or source files match."
   else
-    gg_message unmeasured-count "$SKIPPED" "No selected paths could be measured."
+    gg_message unmeasured-count "$SKIPPED$SKIP_COUNTS" "No selected paths could be measured."
   fi
   exit 0
 fi
@@ -428,10 +439,11 @@ while IFS="$GG_TAB" read -r kind a b c detail; do
       violations=$((violations + 1))
       ;;
     N) judged="$a" ;;
+    T) gg_skip_named "$a" ;;
     *) gg_fail verdict-record "$kind" "The resolver returned an unknown verdict record." ;;
   esac
 done <"$GG_TMP/verdict"
 [ -n "$judged" ] || gg_fail verdict-count missing "The resolver returned no reference count."
 
-gg_message summary "violations=$violations references=$judged markdown=$GG_MD_COUNT sources=$SRC_COUNT decisions=$DEC_JUDGE:$DEC_DIR skipped=$SKIPPED" "The reference scan is complete."
+gg_message summary "violations=$violations references=$judged markdown=$GG_MD_COUNT sources=$SRC_COUNT decisions=$DEC_JUDGE:$DEC_DIR skipped=$SKIPPED$SKIP_COUNTS" "The reference scan is complete."
 [ "$violations" -eq 0 ] || exit 1

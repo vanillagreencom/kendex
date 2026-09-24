@@ -179,6 +179,44 @@ gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
 # the counter is reset, so the two always describe the same run.
 GG_WALK_SKIPPED=0
 
+# A per-path notice is for somebody who asked for it. A tree tracking hundreds
+# of symlinks makes hundreds of them, none of which a passing verdict needs,
+# and they bury the one lane that did fail. So the standing answer is the
+# tally each verdict line carries, plus the per-reason counts gg_skip_counts
+# renders; the paths stay in $GG_TMP/skips.z so a lane that finds a reference
+# landing on one can name that one, and COMMIT_GUARDS_VERBOSE=1 prints them
+# all. That record is run-wide: it is never emptied where the counter is.
+case "${COMMIT_GUARDS_VERBOSE:-0}" in
+  "" | 0) GG_VERBOSE=0 ;;
+  1) GG_VERBOSE=1 ;;
+  *) gg_fail verbose "${COMMIT_GUARDS_VERBOSE}" "Set COMMIT_GUARDS_VERBOSE to 0 or 1." ;;
+esac
+
+# The reasons, as ` CODE=N` pairs for a verdict line, in first-met order.
+# A code is an identifier this family writes, so a line holds one exactly.
+gg_skip_counts() {
+  [ -s "$GG_TMP/skip-codes" ] || return 0
+  LC_ALL=C awk '{ if (!($0 in n)) order[++k] = $0; n[$0]++ }
+    END { for (i = 1; i <= k; i++) printf " %s=%d", order[i], n[order[i]] }' <"$GG_TMP/skip-codes" \
+    || gg_fail skip-tally "$?" "The skipped-reason tally failed."
+}
+
+gg_skip_named() { # PATH — the unmeasured notice for one recorded path
+  local p c e
+  [ "$GG_VERBOSE" -eq 0 ] || return 0
+  [ -s "$GG_TMP/skips.z" ] || return 0
+  # A caller asks this once per reference target, so the shell walk below runs
+  # only where the path is in the file at all. The search reads every record,
+  # code and explanation included, so a code spelled like a path is a false
+  # hit; the walk then finds no match and says nothing, which is the answer.
+  LC_ALL=C grep -q -z -F -x -e "$1" -- "$GG_TMP/skips.z" || return 0
+  while IFS= read -r -d '' p && IFS= read -r -d '' c && IFS= read -r -d '' e; do
+    [ "$p" = "$1" ] || continue
+    gg_message unmeasured "$p:$c" "$e"
+    return 0
+  done <"$GG_TMP/skips.z"
+}
+
 gg_skip_seen() { # PATH — 0 when this path was already named unmeasured
   local seen
   [ -s "$GG_TMP/skipped.z" ] || return 1
@@ -195,7 +233,9 @@ gg_note_skip() { # PATH CODE EXPLANATION — a matched path this scan cannot mea
     return 0
   fi
   printf '%s\0' "$1" >>"$GG_TMP/skipped.z"
-  gg_message unmeasured "$1:$2" "$3"
+  printf '%s\0%s\0%s\0' "$1" "$2" "$3" >>"$GG_TMP/skips.z"
+  printf '%s\n' "$2" >>"$GG_TMP/skip-codes"
+  [ "$GG_VERBOSE" -eq 0 ] || gg_message unmeasured "$1:$2" "$3"
   GG_WALK_SKIPPED=$((GG_WALK_SKIPPED + 1))
 }
 

@@ -2,7 +2,7 @@
 # The lanes end to end over the readers lib/common.sh and
 # lib/configured-paths.sh share: an unmerged index is refused rather than
 # scanned around, content decides what gg_grep_lane scans and an attributes
-# rule never does, a blob whose leading bytes carry a NUL is named unmeasured
+# rule never does, a blob whose leading bytes carry a NUL is counted unmeasured
 # rather than scanned or dropped, and a reader git or a tool could not run is
 # a collection error, never a clean verdict. One table per family: a row
 # builds its own fixture repository, runs one lane under an optional PATH
@@ -18,6 +18,7 @@ ROOT="$TMP"
 REAL_GIT="$(command -v git)"
 
 unset COMMIT_GUARDS_SETTINGS_FILE COMMIT_GUARDS_CONFLICT_EXCLUDES 2>/dev/null || true
+unset COMMIT_GUARDS_VERBOSE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -175,10 +176,13 @@ for row in "${rows[@]}"; do
 done
 assert_eq "--update left the baseline as it was" "b.rs	1" "$(cat "$R/tools/suppression-baseline.tsv")"
 
-echo "=== a blob whose leading bytes carry a NUL is named unmeasured, not scanned ==="
+echo "=== a blob whose leading bytes carry a NUL is counted unmeasured, not scanned ==="
 fx_attrs attrs-binary logo.png "PNG\0 $MARKER: not a marker\n"
-assert_eq "the unread match is named, counted apart, and the verdict carries the qualifier" \
-  "rc=0 todo-ban: unmeasured=logo.png:binary;todo-ban: index-count=0:1:tools/todo-ban-excludes" "$(lane "" todo-ban)"
+assert_eq "the unread match is counted apart and the verdict carries the qualifier, with no path named" \
+  "rc=0 todo-ban: index-count=0:1:tools/todo-ban-excludes" "$(lane "" todo-ban)"
+assert_eq "control: COMMIT_GUARDS_VERBOSE=1 names it" \
+  "rc=0 todo-ban: unmeasured=logo.png:binary;todo-ban: index-count=0:1:tools/todo-ban-excludes" \
+  "$(export COMMIT_GUARDS_VERBOSE=1; lane "" todo-ban)"
 fx_attrs attrs-text logo.png "PNG  $MARKER: not a marker\n"
 assert_eq "control: the same bytes without the NUL are scanned as text" \
   "rc=1 todo-ban: match=work marker:logo.png:1:PNG  $MARKER: not a marker;todo-ban: index-count=1:0:tools/todo-ban-excludes" "$(lane "" todo-ban)"

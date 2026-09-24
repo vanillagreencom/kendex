@@ -20,6 +20,7 @@ MDF="$SKILL_DIR/scripts/md-format"
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would mask every row below.
 unset COMMIT_GUARDS_MD_PATHS COMMIT_GUARDS_MD_EXCLUDES COMMIT_GUARDS_MD_SCOPE COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
+unset COMMIT_GUARDS_VERBOSE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -229,9 +230,10 @@ echo "=== a selected path that is not markdown is named, never counted clean ===
 fx_symlink() { repo "$1"; put notes/target.md "$WRAPPED"; mkdir -p "$R/docs"; ln -s ../notes/target.md "$R/docs/link.md"; git -C "$R" add -A; }
 fx_symlink_and_binary() { fx_symlink symlink-binary; put docs/bin.md 'lead\0000Wrapped\ntext.\n'; }
 run_rows \
-  "a symlink at a selected path is named as unmeasured and counted apart, with no clean count|fx_symlink symlink-all|COMMIT_GUARDS_MD_PATHS=docs/*.md|--all|rc=0 $(skip docs/link.md symlink);$NONE$(unmeasured 1)" \
-  "the staged scope names the same link|fx_symlink symlink-staged|COMMIT_GUARDS_MD_PATHS=docs/*.md|--staged|rc=0 $(skip docs/link.md symlink);$NONE$(unmeasured 1)" \
-  "a binary blob at a selected path is named as unmeasured, in index order beside the link|fx_symlink_and_binary|COMMIT_GUARDS_MD_PATHS=docs/*.md|--all|rc=0 $(skip docs/bin.md binary);$(skip docs/link.md symlink);$NONE$(unmeasured 2)"
+  "a symlink at a selected path is counted apart, with no clean count and no path named|fx_symlink symlink-all|COMMIT_GUARDS_MD_PATHS=docs/*.md|--all|rc=0 $NONE$(unmeasured 1)" \
+  "control: COMMIT_GUARDS_VERBOSE=1 names it|fx_symlink symlink-verbose|COMMIT_GUARDS_MD_PATHS=docs/*.md,COMMIT_GUARDS_VERBOSE=1|--all|rc=0 $(skip docs/link.md symlink);$NONE$(unmeasured 1)" \
+  "the staged scope counts the same link|fx_symlink symlink-staged|COMMIT_GUARDS_MD_PATHS=docs/*.md|--staged|rc=0 $NONE$(unmeasured 1)" \
+  "a binary blob at a selected path is counted too, in index order beside the link|fx_symlink_and_binary|COMMIT_GUARDS_MD_PATHS=docs/*.md,COMMIT_GUARDS_VERBOSE=1|--all|rc=0 $(skip docs/bin.md binary);$(skip docs/link.md symlink);$NONE$(unmeasured 2)"
 
 echo "=== the skill's own shipped markdown is in the format ==="
 fx_shipped() { # NAME — the four shipped documents

@@ -64,7 +64,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 | **changelog-entries** | Each `COMMIT_GUARDS_CHANGELOG_PATHS` fragment is one Markdown list item in a Keep a Changelog section and at most `COMMIT_GUARDS_CHANGELOG_CAP` characters. |
 | **prose** | A history reference in Markdown named by `COMMIT_GUARDS_PROSE_PATHS` fails; `COMMIT_GUARDS_CHECKS` controls whether the lane runs. |
 | **md-format** | A hard-wrapped paragraph or list item, a missing blank line around a heading, fence or list, or a trailing-double-space break in Markdown named by `COMMIT_GUARDS_MD_PATHS` fails; `md-reflow` is the remedy. |
-| **md-refs** | A dead relative link, section, content citation or decision reference in selected Markdown fails. `COMMIT_GUARDS_MD_REFS_PATHS` selects documents; `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS` selects source comments and TOML strings for `§` citations. The supported forms are in [CHECKS.md § md-refs](CHECKS.md#md-refs). |
+| **md-refs** | A dead relative link, section, content citation or decision reference in selected Markdown fails. Skipped sources are one count per reason on the summary line, with a path named only where a judged reference lands on it. `COMMIT_GUARDS_MD_REFS_PATHS` selects documents; `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS` selects source comments and TOML strings for `§` citations. The supported forms are in [CHECKS.md § md-refs](CHECKS.md#md-refs). |
 | **py-names** | An undefined name or a syntax error in a Python file fails, judged by ruff or, where ruff is absent, pyflakes; neither installed while a Python file is selected is exit 2. See [CHECKS.md § py-names](CHECKS.md#py-names). |
 | **comments** | A history reference in the comment text of a source file named by `COMMIT_GUARDS_COMMENT_PATHS` fails: an issue id (`GH_ISSUE_PATTERN`), `#NNN`, or a date. Optional audit; see [CHECKS.md § comments](CHECKS.md#comments). |
 | **commit-msg** | The header must be `type(scope)!: subject` within `COMMIT_GUARDS_SUBJECT_MAX`; a commit touching `COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS` also owes a changelog entry or `[no-changelog]`. |
@@ -117,6 +117,7 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `COMMIT_GUARDS_COMMENT_REFERENCE_TYPES` | `issue-id issue-number date` | Reference classes the comments lane checks; name at least one type. |
 | `COMMIT_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted commit types. |
 | `COMMIT_GUARDS_SUBJECT_MAX` | `72` | Characters allowed in a hand-written commit header. |
+| `COMMIT_GUARDS_VERBOSE` | `0` | `1` prints one `unmeasured` line per path a scan could not measure; `0` leaves the verdict line's count as the answer. md-refs' `--verbose` sets it for that run. |
 | `COMMIT_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |
 
 Settings follow [README.md § Settings](README.md#settings). `COMMIT_GUARDS_SETTINGS_FILE=/dev/null` skips file sources; `COMMIT_GUARDS_CHANGELOG_COLLATE=1` is environment-only, authorizes `--collate` on a clean index and working tree, and lets `commit-msg` count a record change as the release changelog entry.
