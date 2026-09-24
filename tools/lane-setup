@@ -158,10 +158,14 @@ else
 fi
 
 # The warm snapshot: the fleet runs this with FLEET_WARM=1 in a builder
-# sandbox and snapshots it, so the snapshot should hold a built main. The
-# build is the compile step of the `cargo test --workspace` that every lane's
-# `tools/guard --full` repeats; `cargo build --workspace --all-targets` would
-# add bench units under the bench profile, which no lane step builds.
+# sandbox and snapshots it. What the build warms is the clone's own target/
+# and the registry cache under CARGO_HOME; a lane worktree keeps its own
+# target/, so it reuses the compiled units only through sccache, once sccache
+# hits Rust compiles across checkout paths. The build is the compile step of
+# the `cargo test --workspace` that every lane's `tools/guard --full` runs;
+# `cargo build --workspace --all-targets` would add bench units under the
+# bench profile, which no lane step builds. --locked keeps a stale Cargo.lock
+# from being rewritten into the snapshot.
 if [ "${FLEET_WARM:-}" = 1 ]; then
   printf 'lane-setup: warm-build=run\n'
   cargo test --workspace --no-run --locked

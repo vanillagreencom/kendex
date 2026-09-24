@@ -385,14 +385,23 @@ done
 case "$LINK_TOOLS" in */cc\ * | */cc) ;; *) bad "the host provides cc for the warm build rows" "found:$LINK_TOOLS"; exit 1 ;; esac
 
 # proof_warm WARM SOURCE EXPECT [FROM TO]: the setup with FLEET_WARM=WARM
-# on a toy crate that compiles (good) or does not (broken), with the real
-# cargo on its PATH and the build kept in the clone's own target dir.
+# on a toy crate that compiles with a current Cargo.lock (good), does not
+# compile (broken), or has no Cargo.lock for --locked to accept (unlocked),
+# with the real cargo on its PATH and the build kept in the clone's own
+# target dir.
 proof_warm() {
   local warm=$1 source=$2 expect=$3 lock="" exe="" built=no
   shift 3
   lane_fixture "$@"
-  lock="$(cargo_in "$R" generate-lockfile)" || { WHY="generate-lockfile: $lock"; return 1; }
-  [ "$source" = good ] || printf 'pub fn toy( {}\n' >"$R/src/lib.rs"
+  case "$source" in
+    good) ;;
+    broken) printf 'pub fn toy( {}\n' >"$R/src/lib.rs" ;;
+    unlocked) ;;
+    *) WHY="unknown source $source"; return 1 ;;
+  esac
+  if [ "$source" != unlocked ]; then
+    lock="$(cargo_in "$R" generate-lockfile)" || { WHY="generate-lockfile: $lock"; return 1; }
+  fi
   EXTRA_BIN="$R/row-bin"
   mkdir -p "$EXTRA_BIN"
   ln -s "$CARGO_BIN" "$EXTRA_BIN/cargo"
@@ -446,7 +455,9 @@ while IFS='|' read -r warm source expect; do
 done <<'ROWS'
 1|good|built
 |good|skipped
+0|good|skipped
 1|broken|failed
+1|unlocked|failed
 ROWS
 
 echo "=== must-fail controls: each cargo proof fails against its mutant ==="
@@ -489,6 +500,12 @@ proof_warm 1 good built '  cargo test --workspace --no-run --locked' '  :' \
 proof_warm '' good skipped 'if [ "${FLEET_WARM:-}" = 1 ]; then' 'if true; then' \
   && bad "control: a build without FLEET_WARM fails the skipped row" "$WHY" \
   || ok "control: a build without FLEET_WARM fails the skipped row"
+proof_warm 0 good skipped 'if [ "${FLEET_WARM:-}" = 1 ]; then' 'if [ -n "${FLEET_WARM:-}" ]; then' \
+  && bad "control: building on any non-empty FLEET_WARM fails the FLEET_WARM=0 row" "$WHY" \
+  || ok "control: building on any non-empty FLEET_WARM fails the FLEET_WARM=0 row"
+proof_warm 1 unlocked failed '  cargo test --workspace --no-run --locked' '  cargo test --workspace --no-run' \
+  && bad "control: a warm build without --locked fails the unlocked row" "$WHY" \
+  || ok "control: a warm build without --locked fails the unlocked row"
 proof_warm 1 broken failed '  cargo test --workspace --no-run --locked' '  cargo test --workspace --no-run --locked || true' \
   && bad "control: a swallowed build failure fails the failed row" "$WHY" \
   || ok "control: a swallowed build failure fails the failed row"
