@@ -51,17 +51,42 @@ make_codex_lane() {
 # $FETCH_RETRY_AFTER a Retry-After beside it, so a case can stage a refusal
 # without a stub of its own. With FETCH_LOG set, every call first appends that
 # basename to it.
+#
+# A file $FIXTURE_DIR/<basename>.status stages that first line for one lane
+# alone, `<code> <retry-after>`, and the body still follows it, so a case can
+# refuse one account of several, or refuse with a body the endpoint sent.
+#
+# With FETCH_SEQ_DIR set the stub counts its calls PER LANE and prefers
+# `<basename>.json.<N>` and `<basename>.status.<N>` on the Nth call, so a case
+# can have one account answer differently the second time it is asked — which
+# is the whole of what a retry has to be measured against. FETCH_DELAY seconds
+# hold each call open, for a case timing two callers against each other.
 make_fetcher() {
   local path="$1"
   cat > "$path" <<'STUB'
 #!/usr/bin/env bash
 # argv: <harness> <config_dir>
-[[ -z "${FETCH_LOG:-}" ]] || basename "$2" >> "$FETCH_LOG"
-printf '%s %s\n' "${FETCH_STATUS:-200}" "${FETCH_RETRY_AFTER:-}"
-[[ "${FETCH_STATUS:-200}" == 200 ]] || exit 0
-f="$FIXTURE_DIR/$(basename "$2").json"
+name="$(basename "$2")"
+[[ -z "${FETCH_LOG:-}" ]] || printf '%s\n' "$name" >> "$FETCH_LOG"
+n=1
+if [[ -n "${FETCH_SEQ_DIR:-}" ]]; then
+  mkdir -p -- "$FETCH_SEQ_DIR" || exit 1
+  n=$(( $(cat -- "$FETCH_SEQ_DIR/$name" 2>/dev/null || printf 0) + 1 ))
+  printf '%s\n' "$n" > "$FETCH_SEQ_DIR/$name" || exit 1
+fi
+st="$FIXTURE_DIR/$name.status.$n"
+[[ -f "$st" ]] || st="$FIXTURE_DIR/$name.status"
+if [[ -f "$st" ]]; then
+  head -n 1 -- "$st"
+else
+  printf '%s %s\n' "${FETCH_STATUS:-200}" "${FETCH_RETRY_AFTER:-}"
+  [[ "${FETCH_STATUS:-200}" == 200 ]] || exit 0
+fi
+[[ -z "${FETCH_DELAY:-}" ]] || sleep "$FETCH_DELAY"
+f="$FIXTURE_DIR/$name.json.$n"
+[[ -f "$f" ]] || f="$FIXTURE_DIR/$name.json"
 [[ -f "$f" ]] || exit 1
-cat "$f"
+cat -- "$f"
 STUB
   chmod +x "$path"
 }
@@ -74,6 +99,26 @@ claude_usage() {
     limits: [{kind: "weekly_scoped", percent: $m, resets_at: "2026-08-01T06:00:00Z",
               scope: {model: {display_name: $lbl}}}]
   }'
+}
+
+# age_usage_record STATE_DIR CONFIG_DIR AGE_S — backdate the usage figure
+# STATE_DIR holds for CONFIG_DIR, so a case names the age a served figure
+# reports without waiting for a clock. The figure's stamp is `usage_fetched_at`
+# where a refusal was written over it and `fetched_at` where it stands alone,
+# and a record holding no figure is skipped. Finding none stops the suite: a
+# case whose staging silently did nothing would assert a fresh figure and call
+# it a reused one.
+age_usage_record() {
+  local f
+  for f in "$1"/usage/*.json; do
+    [[ -f "$f" && "$(jq -r 'select(.usage) | .config_dir' "$f" 2>/dev/null)" == "$2" ]] || continue
+    jq --argjson at "$(( $(date +%s) - $3 ))" \
+      'if has("usage_fetched_at") then .usage_fetched_at = $at else .fetched_at = $at end' \
+      "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    return 0
+  done
+  echo "age_usage_record: no cached usage record for $2 under $1" >&2
+  exit 1
 }
 
 # new_home NAME — a fresh home and fixture directory under TMP_ROOT; sets H

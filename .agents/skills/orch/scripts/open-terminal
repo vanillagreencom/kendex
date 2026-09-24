@@ -1072,9 +1072,10 @@ if [[ -n "$LANE" ]]; then
       # token's. A codex account whose local auth.json is dead reads
       # `unreachable`, which an offline read produces too, so widening to it
       # would print a login remedy to an operator whose network is down. A
-      # rate-limited read is `rate_limited`, which this arm refuses as
-      # lane-model-unreadable like any other unread window. --help and the
-      # message say the remedy is reported for claude lanes.
+      # rate-limited read is `rate_limited`: one the host still holds a figure
+      # for is judged on that figure, and one with none carries no window, which
+      # this arm refuses as lane-model-unreadable like any other unread window.
+      # --help and the message say the remedy is reported for claude lanes.
       5)
         # A record this script cannot read names no status, which reads as the
         # unmeasured window it is rather than as any of the answers below.

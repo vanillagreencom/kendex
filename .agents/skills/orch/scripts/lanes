@@ -37,7 +37,12 @@
 #         from being tried; `expired`, a login proven dead; `no_credentials`;
 #         `no_usage_data`, authenticated with no window to measure; `retired`;
 #         and `error`, a step this machine failed on its own, a renewal's
-#         included. Only `ok` is pickable. The split matters because
+#         included. A lane whose usage REFRESH met a 429 while the host still
+#         holds a figure for it younger than the 5-hour session window reports
+#         `rate_limited` ON that figure, with its age in the AGE column, and is
+#         judged on it; with no such figure it carries no window. Only `ok`
+#         and a `rate_limited` lane carrying a figure are pickable. The split
+#         matters because
 #         `expired` is the one word an operator answers by logging in again —
 #         `open-terminal` turns it into exactly that remedy line — so a refusal
 #         the account will survive never takes it, and every refusal an endpoint
@@ -199,7 +204,17 @@
 #                    A RECORDED REFUSAL is not a cached figure and is not
 #                    bypassed: an operator asking for a fresh reading must not
 #                    be the one caller on the host that posts again what the
-#                    endpoint has already refused.
+#                    endpoint has already refused. A lane the usage endpoint
+#                    refuses with 429, on record or on this run's own fetch,
+#                    is still answered from the last figure the host holds,
+#                    as `rate_limited` with its age in the AGE column. It
+#                    still takes the host-wide refresh lock.
+#   --max-age SECS   Serve a cached usage figure up to SECS old, for a caller
+#                    naming its own pass interval. It WIDENS
+#                    ORCH_LANES_USAGE_TTL and never narrows it, so a caller
+#                    passing nothing, or less than the TTL, keeps the TTL. A
+#                    TTL of 0 is never widened: every run still fetches.
+#                    ORCH_LANES_USAGE_MAX_AGE is the same value as a setting.
 #   --json           Machine-readable output
 #
 # The lane INVENTORY is always discovered, never hand-maintained: config is an
@@ -238,9 +253,17 @@
 #                      walls that model, and never compared with
 #                      ORCH_HANDOFF_HEADROOM_PCT. Refused, before any lane is
 #                      measured, when it is not an integer 0-100.
-#   ORCH_LANES_USAGE_TTL  Seconds a cached usage figure is reused (default 60;
-#                      0 fetches every run). The provider's `accounts` answer
-#                      is cached under the same TTL.
+#   ORCH_LANES_USAGE_TTL  Seconds a cached usage figure is reused (default 300;
+#                      0 fetches every run). Keep it at least the longest watch
+#                      interval on the host — `oversee-watch --interval`
+#                      defaults to 240 — because a TTL under that interval has
+#                      every pass find the figure expired and fetch again. The
+#                      provider's `accounts` answer is cached under the same
+#                      TTL.
+#   ORCH_LANES_USAGE_MAX_AGE  The default of --max-age (default 0, which is the
+#                      TTL alone): the caller's own pass interval, in seconds.
+#                      A pass longer than the TTL serves its last figure rather
+#                      than fetching on every pass.
 #   ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S  Seconds the provider's `accounts` verb
 #                      may take (default 10; 0 asks for no bound). Applied
 #                      where `timeout` or `gtimeout` is installed. A bound
@@ -262,21 +285,45 @@
 # USAGE CACHE: each fetched usage body is written to $OVERSEE_WATCH_STATE_DIR/
 # usage/<harness>-<config dir checksum>.json (else <project root>/tmp/
 # oversee-watch/usage, beside the claim store) and reused while younger than
-# ORCH_LANES_USAGE_TTL, so every overseer sharing that directory polls an
-# account at most once per TTL. `usage_age_s` (the AGE column) is how old the
-# figure is. A fresh write keeps the displaced figure as `prior`; lane records
-# expose the binding bucket's rate and projected wall after samples at least a
-# minute apart. Credentials are still read every run: an expired token is
-# renewed or reports its refusal, whatever the cache holds.
+# ORCH_LANES_USAGE_TTL, or than --max-age where that is longer, so every
+# overseer sharing that directory polls an account at most once per window.
+# `usage_age_s` (the AGE column) is how old the figure is. Credentials are
+# still read every run: an expired token is renewed or reports its refusal,
+# whatever the cache holds. A fresh write keeps the displaced figure as
+# `prior`; lane records expose the binding bucket's rate and projected wall
+# after samples at least a minute apart.
+#
+# The refresh itself is HOST-WIDE SERIALIZED: a lane its record cannot answer
+# takes one lock, `.usage-refresh.lock` in that same directory, over its
+# refresh and re-reads the record inside it. Two readers arriving together are
+# therefore one refresh of each account, not two, which is what the TTL alone
+# cannot do: without the lock every caller's fetch lands in the same second at
+# TTL expiry. A lane the record can answer, with a figure or a live refusal,
+# never takes the lock and never waits. A lock that does not come free within
+# 10 seconds is a keyed notice and the lane is refreshed anyway, because
+# refusing it on contention is the same wall that serving a stale figure exists
+# to prevent.
+#
+# A caller with no OVERSEE_WATCH_STATE_DIR falls back to <project root>/tmp/
+# oversee-watch, so two callers run from DIFFERENT CHECKOUTS with that variable
+# unset share neither the cache nor the lock and each pays the full burst. Set
+# it once per host to be inside the bound.
 #
 # A fetch that could not be RUN is never cached, but one an endpoint REFUSED is:
-# the record then holds a short negative entry in place of a figure — the status
-# the refusal took, its HTTP code, the cause, and the instant the window closes
-# — and while that window is open no caller on the host posts to that endpoint
-# for that lane again. The window is the answer's own Retry-After where it named
-# one in seconds, and USAGE_REFUSAL_WINDOW_S where it did not. Re-posting is
-# what sustains a rate limit, so every watch pass on the host reads the record
-# instead of asking again.
+# the record then holds a short negative entry — the status the refusal took,
+# its HTTP code, the cause, and the instant the window closes — and while that
+# window is open no caller on the host posts to that endpoint for that lane
+# again. The window is the answer's own Retry-After where it named one in
+# seconds, and USAGE_REFUSAL_WINDOW_S where it did not. Re-posting is what
+# sustains a rate limit, so every watch pass on the host reads the record
+# instead of asking again. The last figure the record held stays beside the
+# refusal, so a usage 429 is answered from it: the lane reports `rate_limited`
+# on that figure while it is younger than the 5-hour session window. With no
+# such figure, the first such lane in a run retries once, after the window or
+# 5 seconds whichever is shorter, so that retry is the one request posted
+# inside a recorded window; a later cold lane in the same run reports its
+# refusal at once. The record returns to a figure alone the moment the
+# endpoint answers again.
 # The lane host's `accounts` answer shares that cache and TTL, under
 # `host-accounts-<provider path checksum>.json`: one record per provider rather
 # than per account, since one answer covers every account it names. The
@@ -478,6 +525,22 @@ message() {
     invalid-accounts-timeout)
       printf 'lanes: invalid-accounts-timeout value=%s\n' "$1"
       printf '%s\n' "ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S must be a whole number of seconds; 0 asks for no bound"
+      ;;
+    invalid-usage-max-age)
+      printf 'lanes: invalid-usage-max-age value=%s\n' "$1"
+      printf '%s\n' "--max-age and ORCH_LANES_USAGE_MAX_AGE must be a whole number of seconds; it widens ORCH_LANES_USAGE_TTL for this caller and never narrows it"
+      ;;
+    usage-lock-timeout)
+      printf 'lanes: usage-lock-timeout lock-file=%s wait-s=%s\n' "$1" "$2"
+      if [[ -d "$1.d" ]]; then
+        printf '%s\n' "the host-wide usage refresh lock is held by another reader and did not come free, so this run refreshed the account without it and the usage endpoint may see two requests for it. If no lane reader is running, remove it: rmdir '$1.d'"
+      else
+        printf '%s\n' "the host-wide usage refresh lock is held by another lane reader and did not come free, so this run refreshed the account without it and the usage endpoint may see two requests for it. The lock frees when that reader exits"
+      fi
+      ;;
+    usage-lock-unopenable)
+      printf 'lanes: usage-lock-unopenable lock-file=%s\n' "$1"
+      printf '%s\n' "the host-wide usage refresh lock file could not be opened, so this run measured without it and the usage endpoint may see two refreshes of the same accounts; check the usage cache directory, or set OVERSEE_WATCH_STATE_DIR"
       ;;
     invalid-handoff-headroom) printf 'lanes: invalid-handoff-headroom value=%s\nORCH_HANDOFF_HEADROOM_PCT must be an integer 0-100\n' "$1" ;;
     invalid-lane-max-pct) printf 'lanes: invalid-lane-max-pct value=%s\nORCH_LANE_MAX_PCT must be an integer 0-100\n' "$1" ;;
@@ -704,14 +767,16 @@ alias_pairs() {
 # Turn a `curl -D - -w '\n%{http_code}'` capture into that shape. The headers
 # reach stdout ahead of the body, so the body starts after the LAST header
 # block: a 1xx interim response is a block of its own, and a split at the first
-# blank line would hand the real headers back as the body.
+# blank line would hand the real headers back as the body. Each block starts
+# its own header read, so a Retry-After an interim or redirect block carried is
+# never read as the refusal's own.
 http_answer() { # CAPTURE
 	local capture code
 	capture="$(printf '%s' "$1" | tr -d '\r')"
 	code="${capture##*$'\n'}"
 	printf '%s' "${capture%$'\n'"$code"}" | awk -v code="$code" '
 		BEGIN { inhdr = 1; blank = 0; retry = "" }
-		inhdr && blank && /^HTTP\// { blank = 0; next }
+		inhdr && blank && /^HTTP\// { blank = 0; retry = ""; next }
 		inhdr && blank { inhdr = 0; printf "%s %s\n", code, retry }
 		inhdr && /^$/ { blank = 1; next }
 		inhdr && tolower($1) == "retry-after:" { retry = $2; next }
@@ -966,44 +1031,27 @@ measure_lane() {
 		refreshed=true
 	fi
 
-	local raw buckets cached age=0 answer current_at="$now_s" prior_at="" prior_raw="" prior_buckets='{}' elapsed="null"
-	if cached="$(read_usage_cache "$harness" "$dir" "$now_s")"; then
-		age="$(jq -r '.age' <<<"$cached")"
-		current_at="$(jq -r '.fetched_at' <<<"$cached")"
-		raw="$(jq -c '.usage' <<<"$cached")"
-		prior_at="$(jq -r '.prior.fetched_at // empty' <<<"$cached")"
-		prior_raw="$(jq -c '.prior.usage // empty' <<<"$cached")"
-	elif refusal="$(read_usage_refusal "$harness" "$dir" "$now_s" usage)"; then
-		emit_refusal "$alias" "$harness" "$dir" "$plan" "$refusal"
+	# Read BEFORE the host-wide lock, so a lane its record can answer never
+	# waits behind another caller's refresh: `pick --lane` runs under a caller's
+	# own ceiling, and a warm figure or a live refusal has nothing to wait for.
+	# Only a lane the record cannot answer takes the lock, and
+	# refresh_lane_usage reads the record again inside it. The clock is read
+	# again first: a renewal above can have waited on the credentials lock while
+	# the peer holding it measured this lane, and the record that peer wrote
+	# would read as stamped in the future against the clock this function
+	# started with.
+	local raw="" buckets age=null current_at="" prior_at="" prior_raw="" prior_buckets='{}' elapsed="null"
+	now_s="$(date +%s)"
+	if ! usage_from_record "$now_s"; then
+		usage_lock_take
+		refresh_lane_usage
+		usage_lock_release
+	fi
+	# An empty `raw` is a lane no figure answers, whose status, detail and age
+	# the record or the refresh set: it reports no windows.
+	if [[ -z "$raw" ]]; then
+		emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" '{}' "$age" "$refreshed"
 		return
-	else
-		if ! answer="$(fetch_usage "$harness" "$dir" "$token" "$account_id")"; then
-			emit_lane "$alias" "$harness" "$dir" "unreachable" "usage query could not be run" "$plan" '{}' null "$refreshed"
-			return
-		fi
-		split_http_answer "$answer"
-		# The usage endpoint refusing says nothing about the login, so every code
-		# it answers that is not a rate limit stays `unreachable`.
-		if [[ -n "$HTTP_CODE" && "$HTTP_CODE" != 2?? ]]; then
-			status="$(http_refusal_status "$HTTP_CODE" unreachable)"
-			detail="usage query refused with HTTP $HTTP_CODE"
-			write_usage_refusal "$harness" "$dir" "$now_s" usage "$status" "$HTTP_CODE" "$detail" "$HTTP_RETRY" || true
-			emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" '{}' null "$refreshed"
-			return
-		fi
-		raw="$HTTP_BODY"
-		if [[ -z "$raw" ]]; then
-			emit_lane "$alias" "$harness" "$dir" "unreachable" "usage query answered HTTP $HTTP_CODE with no body" "$plan" '{}' null "$refreshed"
-			return
-		fi
-		if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$raw"; then
-			emit_lane "$alias" "$harness" "$dir" "error" "usage response was not a JSON object" "$plan" '{}' null "$refreshed"
-			return
-		fi
-		# A cache that cannot be written costs the next run a fetch, never a
-		# wrong figure, so this run reports what it measured either way.
-		write_usage_cache "$harness" "$dir" "$now_s" "$raw" || true
-		prior_at="$USAGE_PRIOR_AT"; prior_raw="$USAGE_PRIOR_RAW"
 	fi
 	if [[ "$harness" == "claude" ]]; then
 		buckets="$(parse_claude_usage <<<"$raw")"
@@ -1023,6 +1071,159 @@ measure_lane() {
 	emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" "$buckets" "$age" "$refreshed" local "$prior_buckets" "$elapsed"
 }
 
+# Answers the lane from its usage record without posting anything, into
+# measure_lane's own `raw`, `age`, `status` and `detail`, and the sample
+# fields take_cached_usage sets: a figure young
+# enough to serve, else a live refusal of the usage endpoint. A 429 on record is
+# answered from the last figure beside it while serve_refused_usage finds one;
+# any other refusal, and a 429 with no such figure, is reported as the record
+# states it with no windows. Returns 1 where the record answers neither, the
+# one case that posts. It reads measure_lane's `harness` and `dir`.
+#
+# The refusal is honoured whatever --no-cache says: that flag declines a cached
+# FIGURE it could refresh, not the record of a request the endpoint already
+# refused, nor the last figure a 429 is answered from. The flag is the path
+# most able to multiply a burst, since declining the cache is what puts every
+# caller back on the endpoint at once.
+usage_from_record() { # NOW
+	local cached refusal
+	if [[ "$USE_CACHE" == "true" ]] && cached="$(read_usage_cache "$harness" "$dir" "$1" "$(usage_serve_max_age)")"; then
+		take_cached_usage "$cached"
+		return 0
+	fi
+	refusal="$(read_usage_refusal "$harness" "$dir" "$1" usage)" || return 1
+	IFS=$'\t' read -r status detail age < <(
+		jq -r '[.refusal.status, .refusal.detail, (.age | tostring)] | @tsv' <<<"$refusal"
+	)
+	[[ "$status" != "rate_limited" ]] ||
+		serve_refused_usage "$harness" "$dir" "$1" "$detail; these are the last figures it gave" || true
+	return 0
+}
+
+# The fetch half of measure_lane, run with the host-wide usage lock held. It
+# assigns measure_lane's own `raw`, `age`, `status` and `detail`, and on an
+# answer `current_at`, `prior_at` and `prior_raw`, the way
+# serve_refused_usage does and for the same reason, and reads its `harness`,
+# `dir`, `token` and `account_id`. An empty `raw` on return is a lane no figure
+# answers.
+#
+# The clock is read afresh here and after each answer, never taken from
+# measure_lane: a caller that waited for the lock would otherwise judge the
+# holder's new record as stamped in the future, and a window counted from
+# before a slow request can have closed by the time that request's refusal
+# arrives.
+refresh_lane_usage() {
+	local answer window at
+	# The second read, inside the lock: a caller that waited takes the figure or
+	# the refusal the holder brought back instead of posting its own request.
+	usage_from_record "$(date +%s)" && return
+	if ! answer="$(fetch_usage "$harness" "$dir" "$token" "$account_id")"; then
+		status="unreachable"
+		detail="usage query could not be run"
+		return
+	fi
+	split_http_answer "$answer"
+	if [[ "$HTTP_CODE" == "429" ]]; then
+		# The refusal is recorded FIRST, so it stands whichever way this lane
+		# resolves: the row served below is one caller's answer, and the record
+		# is what keeps every other caller on this host off the endpoint until
+		# the window passes.
+		record_usage_refusal "$(date +%s)"
+		# A cached figure seconds old is a better answer than no answer, and no
+		# rate limit is a reason to wall a launch on an account the host has a
+		# reading of.
+		serve_refused_usage "$harness" "$dir" "$(date +%s)" "$detail; these are the last figures it gave" && return
+		# Nothing usable is cached, so there is no figure to stand in. One
+		# retry, because a first refusal with nothing behind it leaves every
+		# caller with nothing to decide on. It waits the window or
+		# USAGE_RETRY_WAIT_MAX_S, whichever is shorter, so it is the one request
+		# posted inside a window this host recorded. One per RUN: a later cold
+		# lane reports its refusal at once.
+		[[ "$USAGE_RETRY_SPENT" == "false" ]] || return
+		USAGE_RETRY_SPENT=true
+		window="$(usage_refusal_window "$HTTP_RETRY")"
+		sleep "$(( window < USAGE_RETRY_WAIT_MAX_S ? window : USAGE_RETRY_WAIT_MAX_S ))"
+		if ! answer="$(fetch_usage "$harness" "$dir" "$token" "$account_id")"; then
+			detail="$detail, and the one retry could not be run"
+			return
+		fi
+		split_http_answer "$answer"
+	fi
+	# The usage endpoint refusing says nothing about the login, so every code
+	# it answers that is not a rate limit stays `unreachable`.
+	if [[ -n "$HTTP_CODE" && "$HTTP_CODE" != 2?? ]]; then
+		record_usage_refusal "$(date +%s)"
+		return
+	fi
+	if [[ -z "$HTTP_BODY" ]]; then
+		status="unreachable"
+		detail="usage query answered HTTP $HTTP_CODE with no body"
+		return
+	fi
+	if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$HTTP_BODY"; then
+		status="error"
+		detail="usage response was not a JSON object"
+		return
+	fi
+	# An answer, so the lane is measured whatever a first refusal above set.
+	raw="$HTTP_BODY"
+	age=0
+	status="ok"
+	detail=""
+	# A cache that cannot be written costs the next run a fetch, never a wrong
+	# figure, so this run reports what it measured either way. The write
+	# replaces the whole record, so a refusal on record is spent the moment the
+	# endpoint answers again. The figure it displaces is this sample's prior.
+	at="$(date +%s)"
+	current_at="$at"
+	write_usage_cache "$harness" "$dir" "$at" "$raw" || true
+	prior_at="${USAGE_PRIOR_AT:-}"; prior_raw="${USAGE_PRIOR_RAW:-}"
+}
+
+# Records the refusal the last split_http_answer read, at epoch $1, and sets
+# measure_lane's `status` and `detail` to it. Every usage refusal goes through
+# here, a cold lane's retry included, so one line judges what each code means
+# and the window each is recorded for.
+record_usage_refusal() { # NOW
+	status="$(http_refusal_status "$HTTP_CODE" unreachable)"
+	detail="usage query refused with HTTP $HTTP_CODE"
+	write_usage_refusal "$harness" "$dir" "$1" usage "$status" "$HTTP_CODE" "$detail" "$HTTP_RETRY" || true
+}
+
+# Serves the last figure the host holds for a rate-limited lane, into
+# measure_lane's own `raw`, `age`, `status` and `detail`, while it is younger
+# than SESSION_WINDOW_S. A figure older than the shortest window it reports
+# cannot say what that window holds now, and a refusal the endpoint keeps
+# giving never replaces the figure, so without the bound one frozen figure
+# would stand in for an account indefinitely and `pick` would launch on it.
+# It returns 1 where nothing that young is held, and the caller then reports
+# the refusal with no windows.
+#
+# It assigns its caller's locals rather than printing, because several values
+# cannot come back through one substitution and the caller goes on to parse
+# them. usage_from_record and refresh_lane_usage are its callers, and the values
+# are measure_lane's locals, reached through their frames by bash's dynamic
+# scope: neither may declare them, or the writes stop at its frame.
+serve_refused_usage() { # HARNESS DIR NOW DETAIL
+	local cached
+	cached="$(read_usage_cache "$1" "$2" "$3" "$SESSION_WINDOW_S")" || return 1
+	take_cached_usage "$cached"
+	status="rate_limited"
+	detail="$4"
+}
+
+# Assigns measure_lane's `age`, `raw`, `current_at`, `prior_at` and
+# `prior_raw` from one read_usage_cache answer, in one jq pass, the way
+# serve_refused_usage assigns them and for the same reason. A figure kept
+# beside a refusal carries no prior, so a rate-limited lane reports its rate
+# unmeasured.
+take_cached_usage() { # CACHED
+	{ IFS= read -r age; IFS= read -r current_at; IFS= read -r raw
+	  IFS= read -r prior_at; IFS= read -r prior_raw; } < <(jq -r '
+		.age, .fetched_at, (.usage | tojson), (.prior.fetched_at // ""),
+		(if (.prior.usage | type) == "object" then (.prior.usage | tojson) else "" end)' <<<"$1")
+}
+
 # ── Usage cache ──────────────────────────────────────────────────────────────
 #
 # One file per lane, named by its harness and a checksum of its whole config dir,
@@ -1030,13 +1231,17 @@ measure_lane() {
 # the cache directory. The record still carries harness and config dir, and a
 # record naming another lane (a checksum collision) is a miss.
 #
-# A lane's record holds EITHER a usage figure or a refusal, never both: a lane
-# an endpoint has just refused was not measured, so a figure left beside the
-# refusal would be a number nothing stands behind. The two readers select on the
-# key they need, so a refusal record is a miss for the figure reader and a
-# figure record a miss for the refusal reader, with no shape either can
-# misread. The refusal names which endpoint refused, because the token endpoint
-# and the usage endpoint are different hosts under different limits.
+# A lane's record holds a usage figure, a refusal, or a refusal with the last
+# figure kept beside it. `fetched_at` is when the record's own answer arrived:
+# the figure's, or the refusal's where there is one, and a figure kept beside a
+# refusal keeps its own stamp in `usage_fetched_at`. The figure is kept because
+# a usage 429 is answered from it: a refused REFRESH leaves the host's last
+# reading of the account true for its age, and that age is always the figure's
+# own, never the refusal's, so no reader can take a refused refresh for a fresh
+# figure. The two readers select on the key they need, so a record with no
+# figure is a miss for the figure reader and one with no refusal a miss for the
+# refusal reader. The refusal names which endpoint refused, because the token
+# endpoint and the usage endpoint are different hosts under different limits.
 
 usage_cache_file() {
 	local sum
@@ -1044,20 +1249,45 @@ usage_cache_file() {
 	printf '%s/%s-%s.json' "$USAGE_CACHE_DIR" "$1" "${sum// /-}"
 }
 
-# Prints `{fetched_at, age, usage, prior}` for a cached body of harness $1 and dir $2 younger
-# than the TTL at epoch $3; fails on a miss, including --no-cache, an
-# unreadable or malformed record, and one stamped in the future.
-read_usage_cache() {
+# Prints `{fetched_at, age, usage, prior}` for a cached body of harness $1 and
+# dir $2 at epoch $3 whose age is under $4 seconds; an EMPTY $4 accepts any
+# age. `fetched_at` and `age` are the figure's own. Fails on a miss: an
+# unreadable or malformed record, one naming another lane, one holding no
+# figure, and one stamped in the future.
+#
+# The bound is the caller's argument and not $USAGE_TTL, because the two
+# questions this cache answers take different ones: a measurement asks for a
+# figure fresh enough to report, and a refused fetch asks for the last figure
+# there is. Whether --no-cache forbids the read is likewise the caller's: it
+# declines a figure it could refresh, not the figure that stands in for one the
+# endpoint refused.
+read_usage_cache() { # HARNESS DIR NOW MAX_AGE_S
 	local file
-	[[ "$USE_CACHE" == "true" ]] || return 1
 	file="$(usage_cache_file "$1" "$2")" || return 1
 	[[ -f "$file" ]] || return 1
-	jq -ce --arg h "$1" --arg d "$2" --argjson now "$3" --argjson ttl "$USAGE_TTL" '
-		select(.harness == $h and .config_dir == $d
-		       and (.fetched_at | type) == "number" and (.usage | type) == "object")
-		| ($now - .fetched_at) as $age
-		| select($age >= 0 and $age < $ttl)
-		| {fetched_at, age: $age, usage: .usage, prior: (.prior // null)}' "$file" 2>/dev/null
+	jq -ce --arg h "$1" --arg d "$2" --argjson now "$3" --argjson max "${4:-null}" '
+		(.usage_fetched_at // .fetched_at) as $at
+		| select(.harness == $h and .config_dir == $d
+		       and ($at | type) == "number" and (.usage | type) == "object")
+		| ($now - $at) as $age
+		| select($age >= 0 and ($max == null or $age < $max))
+		| {fetched_at: $at, age: $age, usage: .usage, prior: (.prior // null)}' "$file" 2>/dev/null
+}
+
+# The age a cached figure is served within: the TTL, or the caller's own pass
+# interval where that is longer. It only ever WIDENS the TTL. A watch whose
+# pass is longer than the TTL would otherwise fetch on every pass — the figure
+# is always past the TTL by the time it comes round — which is the burst; a
+# caller with a short pass still gets the TTL it configured. A TTL of 0 is an
+# operator asking for a fetch on every run, and no caller's interval widens it.
+usage_serve_max_age() {
+	if [[ "$USAGE_TTL" -eq 0 ]]; then
+		printf 0
+	elif [[ "$USAGE_MAX_AGE" -gt "$USAGE_TTL" ]]; then
+		printf '%s' "$USAGE_MAX_AGE"
+	else
+		printf '%s' "$USAGE_TTL"
+	fi
 }
 
 # Renamed into place only once complete, so a concurrent reader never parses
@@ -1068,9 +1298,10 @@ write_usage_cache() {
 	USAGE_PRIOR_AT=""; USAGE_PRIOR_RAW=""
 	if [[ -f "$file" ]]; then
 		prior="$(jq -ce --arg h "$1" --arg d "$2" '
-			select(.harness == $h and .config_dir == $d
-			       and (.fetched_at | type) == "number" and (.usage | type) == "object")
-			| {fetched_at, usage}' "$file" 2>/dev/null)" || prior=null
+			(.usage_fetched_at // .fetched_at) as $at
+			| select(.harness == $h and .config_dir == $d
+			       and ($at | type) == "number" and (.usage | type) == "object")
+			| {fetched_at: $at, usage}' "$file" 2>/dev/null)" || prior=null
 	fi
 	if [[ "$prior" != null ]]; then
 		USAGE_PRIOR_AT="$(jq -r '.fetched_at' <<<"$prior")"
@@ -1126,16 +1357,25 @@ write_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFT
 	return 1
 }
 
+# Writes the refusal over the lane's record, keeping the figure the record held
+# for this lane, under its own stamp, beside it: `kept` is that figure as
+# `{usage, usage_fetched_at}`, or `{}` where there is none.
 store_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFTER]
-	local file tmp window="${8:-}"
-	[[ "$window" =~ ^[0-9]+$ && "$window" -gt 0 ]] || window="$USAGE_REFUSAL_WINDOW_S"
+	local file tmp window kept=""
+	window="$(usage_refusal_window "${8:-}")"
 	file="$(usage_cache_file "$1" "$2")" || return 1
 	mkdir -p -- "$USAGE_CACHE_DIR" 2>/dev/null || return 1
+	[[ ! -f "$file" ]] || kept="$(jq -c --arg h "$1" --arg d "$2" '
+		(.usage_fetched_at // .fetched_at) as $at
+		| select(.harness == $h and .config_dir == $d
+		       and ($at | type) == "number" and (.usage | type) == "object")
+		| {usage: .usage, usage_fetched_at: $at}' "$file" 2>/dev/null)"
+	[[ -n "$kept" ]] || kept='{}'
 	tmp="$(mktemp -- "$USAGE_CACHE_DIR/.usage.XXXXXX" 2>/dev/null)" || return 1
 	if jq -nc --arg h "$1" --arg d "$2" --argjson now "$3" --arg ep "$4" \
 		--arg status "$5" --arg code "$6" --arg detail "$7" \
-		--argjson until "$(( $3 + window ))" \
-		'{harness: $h, config_dir: $d, fetched_at: $now,
+		--argjson until "$(( $3 + window ))" --argjson kept "$kept" \
+		'$kept + {harness: $h, config_dir: $d, fetched_at: $now,
 		  refusal: {endpoint: $ep, status: $status,
 		            code: (if $code == "" then null else $code end),
 		            detail: $detail, expires_at: $until}}' >"$tmp" \
@@ -1144,6 +1384,58 @@ store_usage_refusal() { # HARNESS DIR NOW ENDPOINT STATUS CODE DETAIL [RETRY_AFT
 	fi
 	rm -f -- "${tmp:?}"
 	return 1
+}
+
+# The seconds a refusal naming Retry-After $1 is recorded for: that many where
+# it names a positive whole number, USAGE_REFUSAL_WINDOW_S where it does not.
+# The one judge of the window, so the cold-lane retry waits inside the same
+# window the record holds.
+usage_refusal_window() { # RETRY_AFTER
+	local window="${1:-}"
+	[[ "$window" =~ ^[0-9]+$ && "$window" -gt 0 ]] || window="$USAGE_REFUSAL_WINDOW_S"
+	printf '%s' "$window"
+}
+
+# ── Host-wide usage refresh lock ─────────────────────────────────────────────
+#
+# One host-wide lock over each lane's REFRESH, so N callers times M lanes is
+# one request per lane per window instead of one per caller. The kendex watch,
+# the fleet watch, each `oversee-succeed --check-marks` and each `pick` sweep
+# the same accounts, and nothing else serializes them. measure_lane takes it
+# only for a lane its own record read could not answer, and refresh_lane_usage
+# reads the record again inside it, so the second caller through takes the
+# first caller's figure or refusal instead of posting its own request. That is
+# the pattern refresh_claude_token uses on the credentials file, for the same
+# reason. A lane with a fresh figure or a live refusal never waits.
+#
+# A lock this run could NOT take is a keyed notice and the refresh still
+# runs. This lock collapses concurrent refreshes; it does not authorize a read.
+# Refusing the lane on contention would report it unmeasured, which is the
+# wall on every launch decision that serving a stale figure exists to prevent,
+# and a peer legitimately holding the lock would reach it. The notice is what
+# keeps a doubled request from being silent.
+#
+# The take arms orch_take_lock's EXIT trap in this shell, so measure_lane only
+# ever runs in a subshell: a pipeline stage in collect_lanes and a command
+# substitution in cmd_pick_lane.
+usage_lock_take() {
+	local lock="$USAGE_CACHE_DIR/.usage-refresh.lock"
+	mkdir -p -- "$USAGE_CACHE_DIR" 2>/dev/null
+	if ! exec 8>"$lock"; then
+		message usage-lock-unopenable "$lock" >&2
+		return 0
+	fi
+	if ! orch_take_lock 8 "$lock" "$USAGE_LOCK_WAIT_S"; then
+		message usage-lock-timeout "$lock" "$USAGE_LOCK_WAIT_S" >&2
+		exec 8>&-
+	fi
+}
+
+# Closing the descriptor releases a flock; orch_release_lock removes the mkdir
+# mutex where flock is absent and is a no-op where this run holds none.
+usage_lock_release() {
+	exec 8>&-
+	orch_release_lock
 }
 
 # Whether an OAuth expiresAt in milliseconds has passed at epoch seconds $2.
@@ -1333,6 +1625,7 @@ emit_lane() {
 		($b // {}) as $b
 		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct] | map(select(. != null)) as $known
 		| (if ($status == "ok" and ($known | length) == 0) then "no_usage_data" else $status end) as $st
+		| ({status: $st} | lane_measured) as $measured
 		| ([{k: "weekly", p: $b.weekly_pct}, {k: "model", p: $b.model_pct}, {k: "session", p: $b.session_5h_pct}]
 		   | map(select(.p != null)) | sort_by(-.p) | first // null) as $bind
 		| {
@@ -1349,9 +1642,9 @@ emit_lane() {
 		    model_label: ($b.model_label // null),
 		    model_buckets: ($b.model_buckets // []),
 		    claims: $claims,
-		    headroom_pct: (if ($st == "ok") then (100 - ($known | max)) else null end),
-		    binding_bucket: (if ($st == "ok") then $bind.k else null end),
-		    binding_resets_at: (if ($st == "ok") then ($b.resets[$bind.k] // null) else null end),
+		    headroom_pct: (if ($measured and ($known | length) > 0) then (100 - ($known | max)) else null end),
+		    binding_bucket: (if ($measured and $bind != null) then $bind.k else null end),
+		    binding_resets_at: (if ($measured and $bind != null) then ($b.resets[$bind.k] // null) else null end),
 		    usage_age_s: $age,
 		    _rate_prior: $pb,
 		    _rate_elapsed_s: $elapsed,
@@ -1522,7 +1815,7 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 	# because which accounts a host holds decides a gate rather than reporting a
 	# figure.
 	now_s="$(date +%s)" || { message host-accounts-unreadable "$host" clock >&2; return 1; }
-	if cached="$(read_usage_cache host-accounts "$host" "$now_s")"; then
+	if [[ "$USE_CACHE" == "true" ]] && cached="$(read_usage_cache host-accounts "$host" "$now_s" "$(usage_serve_max_age)")"; then
 		# ONE read of the record, status on its first line and the rows after it:
 		# a listing the overseer runs every cycle pays for each process it starts,
 		# and two reads of one string is one process more than the answer needs.
@@ -1860,6 +2153,11 @@ parse_argv() {
 	PCT_VALUE=""
 	AS_JSON=false
 	USE_CACHE=true
+	# The caller's own pass interval, which widens the age a cached figure is
+	# served within. Read here for the reason MAX_PCT is: the loader has run
+	# for this parse, so the setting and the flag meet in one place and no
+	# second copy of the default exists to drift from this one.
+	USAGE_MAX_AGE=""
 	LANE_ARG=""
 	EXCLUDE_LANE=""
 	MODEL=""
@@ -1893,6 +2191,8 @@ parse_argv() {
 			--exclude-lane=*) EXCLUDE_LANE="${1#--exclude-lane=}"; need_val --exclude-lane "$EXCLUDE_LANE"; shift ;;
 			--json) AS_JSON=true; shift ;;
 			--no-cache) USE_CACHE=false; shift ;;
+			--max-age) need_val "$@"; USAGE_MAX_AGE="$2"; shift 2 ;;
+			--max-age=*) USAGE_MAX_AGE="${1#--max-age=}"; need_val --max-age "$USAGE_MAX_AGE"; shift ;;
 			--help|-h) print_lanes_usage; exit 0 ;;
 			*)
 				# `check` takes one config dir and `state` one item; anything
@@ -1924,6 +2224,14 @@ parse_argv() {
 		pct_valid "$MAX_PCT" || die invalid-lane-max-pct "$MAX_PCT"
 		MAX_PCT=$((10#$MAX_PCT))
 	fi
+
+	# Refused rather than dropped: an interval nobody can read would silently
+	# leave this caller on the TTL alone, which is the fetch-every-pass burst
+	# the option exists to close. Normalized where the digits are proven, so no
+	# later comparison re-infers a base from a leading zero.
+	[[ -n "$USAGE_MAX_AGE" ]] || USAGE_MAX_AGE="${ORCH_LANES_USAGE_MAX_AGE:-0}"
+	[[ "$USAGE_MAX_AGE" =~ ^[0-9]+$ ]] || die invalid-usage-max-age "$USAGE_MAX_AGE"
+	USAGE_MAX_AGE=$((10#$USAGE_MAX_AGE))
 }
 
 # `.env.local` is sourced as shell, so anything answering without doing lane
@@ -1985,7 +2293,27 @@ CODEX_USAGE_URL="${ORCH_LANES_CODEX_USAGE_URL:-https://chatgpt.com/backend-api/w
 # ~5h, with tolerance — Codex reports window durations that vary by account.
 SESSION_WINDOW_S=18000
 
-USAGE_TTL="${ORCH_LANES_USAGE_TTL:-60}"
+# At least the longest watch interval on the host: `oversee-watch --interval`
+# defaults to 240, and a TTL under that guarantees every pass finds the figure
+# expired and fetches, which is the burst this cache exists to bound.
+USAGE_TTL="${ORCH_LANES_USAGE_TTL:-300}"
+# How long a reader waits for the host-wide refresh lock. The holder refreshes
+# one account, a request curl bounds at 10 seconds, so a wait that long
+# outlasts an ordinary refresh. It stays under the 20-second ceiling
+# lane-mail-check puts on `pick --lane`, so a timed-out wait still leaves that
+# caller time for its own request. A timeout costs one duplicate request for
+# one account, under its keyed notice.
+USAGE_LOCK_WAIT_S=10
+# What a COLD lane waits before the retry after a 429. The recorded window can
+# be minutes, and a listing is a caller waiting at a terminal.
+USAGE_RETRY_WAIT_MAX_S=5
+# Whether this run has spent its one cold-lane retry. One per run, not per
+# lane: lanes are measured one after another, so a retry per cold lane would
+# cost a host-wide limit that wait and one extra request for every cold lane.
+# With it, a run spends at most USAGE_RETRY_WAIT_MAX_S and one request on
+# retries. collect_lanes measures every lane in one pipeline stage, in
+# sequence, so a later lane there reads what an earlier one set.
+USAGE_RETRY_SPENT=false
 # How long a refused endpoint is left alone when its answer named no
 # Retry-After: long enough that a fleet measuring every thirty seconds stops
 # feeding the limit it hit, short enough that a lane comes back inside one
@@ -2054,6 +2382,7 @@ validate_lane_settings() {
 	# re-infer a base: `[[ 08 -ne 0 ]]` reads the leading zero as octal, errors,
 	# and the bound below is neither applied nor refused.
 	ACCOUNTS_TIMEOUT_S=$((10#$ACCOUNTS_TIMEOUT_S))
+	USAGE_TTL=$((10#$USAGE_TTL))
 }
 
 parse_argv "$@"

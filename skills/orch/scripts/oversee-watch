@@ -646,9 +646,11 @@ DEAD_PASSES="${ORCH_OVERSEER_DEAD_PASSES:-2}"
 MARK_REPEAT="${ORCH_OVERSEER_MARK_REPEAT:-5}"
 # Seconds the overseer's own mark judgement is given. It reads every account
 # the fleet can launch on, which waits on a credentials lock and a usage
-# endpoint per account, and a pass that spent its whole interval there would
-# delay every other event it carries. A read the ceiling abandons leaves the
-# mark unjudged, which is the answer a failed read already gives.
+# endpoint per account, and on a cache miss on the host-wide usage refresh lock
+# (up to 10 seconds) and, after a 429 with nothing cached, one sleep of up to 5
+# seconds and one more usage request, and a pass that spent its whole interval
+# there would delay every other event it carries. A read the ceiling abandons
+# leaves the mark unjudged, which is the answer a failed read already gives.
 MARK_CEILING=60
 STATE_DIR_SETTING="${ORCH_STATE_DIR:-tmp}"
 WORKFLOW_STATE_DIR="$STATE_DIR_SETTING"
@@ -2119,7 +2121,7 @@ overseer_marks_reset() {
 }
 
 overseer_marks_judge() {
-  local rc=0 line first field BOUND_BY
+  local rc=0 line first field BOUND_BY max_age
   local errf="$WORK_DIR/overseer-mark.err"
   [[ "$OVERSEER_MARK_READ" -eq 0 ]] || return "$OVERSEER_MARK_RC"
   OVERSEER_MARK_READ=1
@@ -2139,13 +2141,28 @@ overseer_marks_judge() {
     return 1
   fi
   # `lanes context` inside that judgement waits on a credentials lock and a
-  # usage endpoint per account, which together can outlast the pass interval.
+  # usage endpoint per account, and on a cache miss on the host-wide usage
+  # refresh lock and a 429 retry's sleep and second request, which together can
+  # outlast the pass interval.
   # Stock macOS ships no `timeout`, and without it the read runs unbounded: the
   # pass then delays every other event it carries, which is the outcome this
   # ceiling exists to bound and not one it can prevent there.
   BOUND_BY=()
   ! command -v timeout >/dev/null 2>&1 || BOUND_BY=(timeout "$MARK_CEILING")
-  line="$(${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SUCCEED" --check-marks 2>"$errf")" || rc=$?
+  # The age a usage figure may be served at, named to the lane reader inside
+  # that judgement: two of this watch's intervals. Two judgements are one
+  # interval of sleep plus a pass's own work apart, so a window of one interval
+  # has always expired by the next pass and every pass would post for every
+  # account; two cover any pass whose work is shorter than its sleep. A larger
+  # ORCH_LANES_USAGE_MAX_AGE the settings already set is kept, since this
+  # variable outranks the settings ladder, and a value that is not a whole
+  # number is passed on for `lanes` to refuse rather than overwritten. `lanes`
+  # only ever widens its TTL with it and never widens a TTL of 0.
+  max_age="${ORCH_LANES_USAGE_MAX_AGE:-0}"
+  if [[ "$max_age" =~ ^[0-9]+$ ]] && (( 10#$max_age < 10#$INTERVAL * 2 )); then
+    max_age=$((10#$INTERVAL * 2))
+  fi
+  line="$(ORCH_LANES_USAGE_MAX_AGE="$max_age" ${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SUCCEED" --check-marks 2>"$errf")" || rc=$?
   if (( rc != 0 )); then
     [[ "$rc" -ne 124 ]] || overseer_note overseer-mark-unjudged "path=$SUCCEED" "seconds=$MARK_CEILING"
     [[ "$rc" -eq 124 ]] || overseer_note overseer-mark-unjudged "path=$SUCCEED" "exit=$rc"

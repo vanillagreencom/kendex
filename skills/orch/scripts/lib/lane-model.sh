@@ -62,6 +62,18 @@
 LANE_MODEL_JQ='
 def lane_norm: ascii_downcase | gsub("[^a-z0-9]"; "");
 
+# The statuses that can carry a usage reading, named once so both guards below
+# and the record `lanes` emits agree. `rate_limited` carries one only where the
+# endpoint refused a usage REFRESH while the host still held its last figures:
+# those windows were read from the account, and usage_age_s says how old they
+# are. Treating that lane as unmeasured would wall every launch on the host for
+# the length of a transient burst, which is the whole cost the status exists
+# to remove. A `rate_limited` lane with no figure, a token renewal refused with
+# 429 or a usage 429 with nothing cached, passes this test too and reaches null
+# only through the headroom_pct check in binding_bucket and the null-pct filter
+# in max_binding, which must stay.
+def lane_measured: (.status == "ok" or .status == "rate_limited");
+
 def wall_rank:
   if .bucket == "weekly" then 2
   elif .bucket == "model" then 1
@@ -97,7 +109,7 @@ def model_binding($model):
 # A record whose usage could not be read answers null whatever its other fields
 # say: a window nobody read is not an empty one.
 def binding_bucket:
-  if (.status != "ok" or .headroom_pct == null
+  if ((lane_measured | not) or .headroom_pct == null
       or .binding_bucket == null) then null
   else {bucket: .binding_bucket,
         label: (if .binding_bucket == "model" then ([.model_buckets[]] | max_by(.pct).label // null) else null end),
@@ -106,7 +118,7 @@ def binding_bucket:
   end;
 
 def lane_binding($model):
-  if .status != "ok" then null
+  if (lane_measured | not) then null
   elif $model != "" then model_binding($model)
   else binding_bucket
   end;

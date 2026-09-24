@@ -139,7 +139,15 @@ ORCH_LANE_SSH_PROMPT_SECS = "60"
 # ORCH_LANE_RETIRE = "nclaude=YYYY-MM-DD"
 
 # Seconds a per-host cached lane usage figure is reused; 0 fetches every run.
-# ORCH_LANES_USAGE_TTL = "60"
+# Keep it at or above the longest watch interval on the host: under that, every
+# pass finds the figure expired and posts again, which is the burst the cache
+# exists to bound.
+# ORCH_LANES_USAGE_TTL = "300"
+
+# The calling pass's own interval in seconds, which widens the age a cached
+# usage figure is served within and never narrows it. 0 leaves the TTL alone,
+# and a TTL of 0 is never widened. `lanes --max-age` is the same value on argv.
+# ORCH_LANES_USAGE_MAX_AGE = "0"
 
 # Usage share at or above which `lanes pick` refuses an account, read against
 # the binding bucket or, with --model, against the window that walls that
