@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::apply::Plan;
+use crate::lock::Lock;
 use crate::model::{HarnessId, ItemKind, Scope};
 
 use super::compared::Comparison;
@@ -276,12 +277,39 @@ pub struct EngineReport {
     /// this set is one nothing declares; a key here with no entry is one
     /// the record does not hold.
     pub installations: BTreeMap<String, Installation>,
-    /// The sources whose root this pass reached through the commit the
-    /// record last resolved, because the mirror could not serve the
-    /// declared revision. Everything rendered from one was measured
-    /// against a commit the record chose, so a proof over that record
-    /// refuses them by name.
-    pub sources_from_record: BTreeSet<String>,
+    /// The recorded sources and sets this pass could not hold to a
+    /// resolution of its own. A proof over the record refuses each by name.
+    pub stood_in: StoodInRecord,
+    /// The record this pass computed, whether or not the plan writes it:
+    /// what a proof holds the committed record to. Empty on a report
+    /// observed rather than planned, which nothing proves a record by.
+    pub record: Lock,
+}
+
+/// Each source and set the record carries that a pass could not hold to a
+/// resolution of its own, by name, and why. Every declared source is read
+/// once a pass, the ones no item names included, and each set at its own
+/// pin where it has one, so an entry is measured against that reading and
+/// never against itself carried forward; one read to no fresh commit is
+/// named here.
+#[derive(Debug, Default)]
+pub struct StoodInRecord {
+    pub sources: BTreeMap<String, StoodIn>,
+    pub sets: BTreeMap<String, StoodIn>,
+}
+
+/// Why a recorded source's or set's entry was not held to a fresh
+/// resolution this pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoodIn {
+    /// The mirror could not serve the declared revision, and the root was
+    /// reached through the commit the record last resolved: everything
+    /// rendered from it was measured against a commit the record chose.
+    RecordedCommit,
+    /// The mirror could not serve the declared revision, or nothing is
+    /// fetched for it, so the pass resolved nothing and the record's entry
+    /// was carried forward unread.
+    Unserved,
 }
 
 impl EngineReport {
@@ -311,7 +339,8 @@ impl EngineReport {
             generated: super::GeneratedPaths::default(),
             registrations: Registrations::default(),
             installations: BTreeMap::new(),
-            sources_from_record: BTreeSet::new(),
+            stood_in: StoodInRecord::default(),
+            record: Lock::default(),
         }
     }
 }

@@ -202,15 +202,36 @@ pub(crate) fn cached_or_sync(env: &Env, repo: &str, rev: Option<&str>) -> Result
     }
 }
 
+/// The commit a declaration names, read from the mirror alone: no
+/// checkout is read, published or held. What a record needs of a source
+/// nothing renders from, at the cost of a git call or two rather than a
+/// walk over a checkout. `None` is a mirror that cannot answer, a pin it
+/// does not hold included.
+pub fn mirror_commit(env: &Env, repo: &str, rev: Option<&str>) -> Option<String> {
+    let mirror = store::mirror_dir(env, &cache_key(env, repo));
+    let commit = named_commit(&mirror, rev)?;
+    // A resolved ref is a commit the mirror holds; a pin is taken on its
+    // word by `named_commit`, so it is asked about here.
+    match rev.is_some_and(store::is_pin) {
+        true => store::has_commit(&mirror, &commit).then_some(commit),
+        false => Some(commit),
+    }
+}
+
+/// The commit a declaration's selector names: a pin as written, anything
+/// else resolved in the mirror.
+fn named_commit(mirror: &std::path::Path, rev: Option<&str>) -> Option<String> {
+    let selector = rev.unwrap_or("HEAD");
+    match store::is_pin(selector) {
+        true => Some(selector.to_owned()),
+        false => store::resolve_ref(mirror, selector),
+    }
+}
+
 fn cached_strict(env: &Env, repo: &str, rev: Option<&str>) -> Result<Option<Resolution>> {
     let key = cache_key(env, repo);
     let mirror = store::mirror_dir(env, &key);
-    let selector = rev.unwrap_or("HEAD");
-    let commit = match store::is_pin(selector) {
-        true => Some(selector.to_owned()),
-        false => store::resolve_ref(&mirror, selector),
-    };
-    if let Some(commit) = commit {
+    if let Some(commit) = named_commit(&mirror, rev) {
         if let Some(root) = store::published(env, &key, &commit) {
             return Ok(Some(Resolution::at(&commit, root)));
         }

@@ -107,8 +107,7 @@ pub(super) fn validate_items(table: &Table, findings: &mut Vec<Finding>) {
                     fix: "add source = \"<source-name>\" (or \"local\")".into(),
                 }),
                 Some(source) => {
-                    if source != crate::manifest::LOCAL_SOURCE_NAME
-                        && source != crate::manifest::INPLACE_SOURCE_NAME
+                    if !crate::manifest::is_reserved_source(source)
                         && !source_names.iter().any(|s| s == source)
                     {
                         findings.push(Finding {

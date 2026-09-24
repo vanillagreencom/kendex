@@ -12,10 +12,11 @@ use crate::error::Result;
 use crate::lock::{BundleRev, Lock, SourceRev, lock_path};
 use crate::manifest::Manifest;
 use crate::model::Scope;
-use crate::source::SourceState;
+use crate::source::{ResolvedSource, SourceState};
 
 use super::config_edits;
 use super::desired::DesiredState;
+use super::report_types::{StoodIn, StoodInRecord};
 
 /// Whether a plan already persists the manifest. A caller about to insert
 /// its own save must know: a second write to the same file binds to bytes
@@ -106,82 +107,194 @@ pub(super) fn plan_config_edits(
     Ok(())
 }
 
-/// Which commit each installed set was read at, for the lock to record.
-/// Carried forward and dropped on the same terms as [`source_revisions`],
-/// and read from the same resolutions: a set is read at its declaration's
-/// revision, so what it came out as is what that resolution resolved to.
-pub(super) fn bundle_revisions(
-    manifest: &Manifest,
-    lock: &Lock,
-    state: &DesiredState,
-) -> BTreeMap<String, BundleRev> {
-    let mut revisions: BTreeMap<String, BundleRev> = lock
-        .bundles
-        .iter()
-        .filter(|(name, _)| manifest.bundles.contains_key(*name))
-        .map(|(name, revision)| (name.clone(), revision.clone()))
-        .collect();
-    for (name, decl) in &manifest.bundles {
-        let resolution = match &decl.rev {
-            Some(rev) => state.pinned.get(&(decl.source.clone(), rev.clone())),
-            None => state.sources.get(&decl.source),
-        };
-        let Some(SourceState::Ready(ready)) = resolution else {
-            continue;
-        };
-        let Some(commit) = ready.commit.clone() else {
-            continue;
-        };
-        revisions.insert(
-            name.clone(),
-            BundleRev {
-                source: decl.source.clone(),
-                source_repo: ready.provenance.clone(),
-                commit,
-            },
-        );
-    }
-    revisions
+/// What the record can say of one source or set this pass.
+pub(super) enum Reading<T> {
+    /// Resolved this pass, apart from the record: the entry to record.
+    Fresh(T),
+    /// Not resolved apart from the record: its entry, when it has one, is
+    /// carried forward unread, and a proof over the record names it.
+    StoodIn(StoodIn),
+    /// Nothing to record: a path or reserved source, a disabled one, a
+    /// name the manifest does not declare, and a set read from any of
+    /// them. A recorded entry for one is dropped.
+    Unrecorded,
 }
 
-/// Which commit each source resolved to, for the lock to record. What
-/// earlier passes resolved is carried forward — a source that is offline
-/// today should not lose the commit it was reading yesterday — and a source
-/// the manifest does not declare drops out.
-pub(super) fn source_revisions(
+/// The pass's reading of every declared source and set, by name: the one
+/// place the record's provenance is decided, so the record written and the
+/// record proved are read alike.
+pub(super) struct RecordReadings {
+    sources: BTreeMap<String, Reading<SourceRev>>,
+    sets: BTreeMap<String, Reading<BundleRev>>,
+}
+
+/// Reads every declared source and set for the record. A source no item
+/// named, one only a Pi extension names among them, has no resolution in
+/// the pass and is read from its mirror alone, so its entry is held to the
+/// declaration like any other.
+pub(super) fn record_readings(
+    env: &Env,
     manifest: &Manifest,
-    lock: &Lock,
     state: &DesiredState,
-) -> BTreeMap<String, SourceRev> {
-    let mut revisions: BTreeMap<String, SourceRev> = lock
+) -> RecordReadings {
+    let sources = manifest
         .sources
-        .iter()
-        .filter(|(name, _)| manifest.sources.contains_key(*name))
-        .map(|(name, revision)| (name.clone(), revision.clone()))
+        .keys()
+        .map(|name| {
+            let reading = match repository(manifest, name) {
+                Some((repo, rev)) => {
+                    match commit_reading(env, repo, rev, state.sources.get(name)) {
+                        Ok(commit) => Reading::Fresh(SourceRev {
+                            repo: repo.to_owned(),
+                            rev: rev.map(str::to_owned),
+                            commit,
+                        }),
+                        Err(stood_in) => Reading::StoodIn(stood_in),
+                    }
+                }
+                None => Reading::Unrecorded,
+            };
+            (name.clone(), reading)
+        })
         .collect();
-    for (name, resolution) in &state.sources {
-        let SourceState::Ready(ready) = resolution else {
-            continue;
-        };
-        let Some(commit) = ready.commit.clone() else {
-            continue;
-        };
-        revisions.insert(
-            name.clone(),
-            SourceRev {
-                repo: ready.provenance.clone(),
-                rev: manifest.sources.get(name).and_then(|decl| decl.rev.clone()),
-                commit,
-            },
-        );
+    let sets = manifest
+        .bundles
+        .iter()
+        .map(|(name, decl)| {
+            let reading = match repository(manifest, &decl.source) {
+                Some((repo, source_rev)) => {
+                    let (rev, resolution) = match &decl.rev {
+                        Some(rev) => (
+                            Some(rev.as_str()),
+                            state.pinned.get(&(decl.source.clone(), rev.clone())),
+                        ),
+                        None => (source_rev, state.sources.get(&decl.source)),
+                    };
+                    match commit_reading(env, repo, rev, resolution) {
+                        Ok(commit) => Reading::Fresh(BundleRev {
+                            source: decl.source.clone(),
+                            source_repo: repo.to_owned(),
+                            commit,
+                        }),
+                        Err(stood_in) => Reading::StoodIn(stood_in),
+                    }
+                }
+                None => Reading::Unrecorded,
+            };
+            (name.clone(), reading)
+        })
+        .collect();
+    RecordReadings { sources, sets }
+}
+
+/// The repository and revision an enabled repository source is declared
+/// at, or `None` for any source the record carries nothing for. A reserved
+/// name reads from the scope's own roots, as resolution reads it, so a
+/// repository declared under one is never read and never recorded.
+fn repository<'a>(manifest: &'a Manifest, name: &str) -> Option<(&'a str, Option<&'a str>)> {
+    if crate::manifest::is_reserved_source(name) {
+        return None;
     }
-    revisions
+    let decl = manifest.sources.get(name)?;
+    let repo = decl.repo.as_deref()?;
+    decl.enabled.then_some((repo, decl.rev.as_deref()))
+}
+
+/// The commit one enabled repository declaration reads at this pass: the
+/// resolution the pass made, or, where it made none, the mirror's answer.
+/// Never the record's own: a commit the record chose is the reason it
+/// stood in.
+fn commit_reading(
+    env: &Env,
+    repo: &str,
+    rev: Option<&str>,
+    resolution: Option<&SourceState>,
+) -> std::result::Result<String, StoodIn> {
+    match resolution {
+        Some(SourceState::Ready(ResolvedSource {
+            commit: Some(commit),
+            from_record: false,
+            ..
+        })) => Ok(commit.clone()),
+        Some(SourceState::Ready(ResolvedSource {
+            from_record: true, ..
+        })) => Err(StoodIn::RecordedCommit),
+        Some(SourceState::Pending { .. }) => Err(StoodIn::Unserved),
+        // An enabled repository declaration resolves Ready with a commit,
+        // Pending, or not at all, where the resolver's failure left it out
+        // of the pass. Whatever else stands here, the mirror is asked, so
+        // no reading falls back to the record.
+        Some(SourceState::Ready(ResolvedSource {
+            commit: None,
+            from_record: false,
+            ..
+        }))
+        | Some(SourceState::Disabled { .. } | SourceState::Missing { .. })
+        | None => crate::remote::mirror_commit(env, repo, rev).ok_or(StoodIn::Unserved),
+    }
+}
+
+impl RecordReadings {
+    /// Which commit each source resolved to, for the lock to record. What
+    /// earlier passes resolved is carried forward where this one resolved
+    /// nothing apart from the record — a source that is offline today
+    /// should not lose the commit it was reading yesterday — and an entry
+    /// the pass records nothing for drops out.
+    pub(super) fn source_revisions(&self, lock: &Lock) -> BTreeMap<String, SourceRev> {
+        revisions(&self.sources, &lock.sources)
+    }
+
+    /// Which commit each installed set was read at, on the same terms as
+    /// [`Self::source_revisions`]: a set is read at its declaration's
+    /// revision, so what it came out as is what that resolution resolved to.
+    pub(super) fn bundle_revisions(&self, lock: &Lock) -> BTreeMap<String, BundleRev> {
+        revisions(&self.sets, &lock.bundles)
+    }
+
+    /// Each source and set the record carries that this pass could not hold
+    /// to a resolution: the entries the revisions above carried forward
+    /// unread. One the record does not carry has no entry to hold.
+    pub(super) fn stood_in(&self, lock: &Lock) -> StoodInRecord {
+        StoodInRecord {
+            sources: stood_in(&self.sources, &lock.sources),
+            sets: stood_in(&self.sets, &lock.bundles),
+        }
+    }
+}
+
+fn revisions<T: Clone>(
+    readings: &BTreeMap<String, Reading<T>>,
+    recorded: &BTreeMap<String, T>,
+) -> BTreeMap<String, T> {
+    readings
+        .iter()
+        .filter_map(|(name, reading)| match reading {
+            Reading::Fresh(revision) => Some((name.clone(), revision.clone())),
+            Reading::StoodIn(_) => recorded
+                .get(name)
+                .map(|revision| (name.clone(), revision.clone())),
+            Reading::Unrecorded => None,
+        })
+        .collect()
+}
+
+fn stood_in<T>(
+    readings: &BTreeMap<String, Reading<T>>,
+    recorded: &BTreeMap<String, T>,
+) -> BTreeMap<String, StoodIn> {
+    readings
+        .iter()
+        .filter_map(|(name, reading)| match reading {
+            Reading::StoodIn(why) if recorded.contains_key(name) => Some((name.clone(), *why)),
+            Reading::StoodIn(_) | Reading::Fresh(_) | Reading::Unrecorded => None,
+        })
+        .collect()
 }
 
 /// Which commit each declared revision resolved to this pass, by source
 /// name and the revision the declaration pins — `None` for a declaration
 /// read at the source's own revision, whose resolution the record
-/// carries (earlier passes' included, on [`source_revisions`]' terms),
+/// carries (earlier passes' included, on [`RecordReadings::source_revisions`]' terms),
 /// and the pinned revision for one read at a pin of its own. Reported
 /// whether or not the plan writes a record: a pass that refuses every
 /// install writes none, and a line naming what a refused install was
@@ -226,18 +339,17 @@ pub(super) fn plan_lock_write(
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
-    new_lock: Lock,
+    new_lock: &Lock,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
-    let unchanged = new_lock.entries == lock.entries
-        && (new_lock.sources == lock.sources || new_lock.entries.is_empty())
-        && (new_lock.bundles == lock.bundles || new_lock.entries.is_empty())
+    let entries_unchanged = new_lock.entries == lock.entries
         && (lock.version == crate::lock::LOCK_VERSION || lock.entries.is_empty());
+    let provenance_unchanged = new_lock.sources == lock.sources && new_lock.bundles == lock.bundles;
     // Whether a file sits at the path is the one question left, and it is
     // asked only where the answer can change what this does: reading it
     // hashes the record, and a scope that has nothing to write and
     // declares nothing the plan leaves unrecorded is done either way.
-    if unchanged && !declares_carrier_installs(manifest) {
+    if entries_unchanged && provenance_unchanged && !declares_carrier_installs(manifest) {
         return Ok(());
     }
     let path = lock_path(env, scope);
@@ -245,7 +357,14 @@ pub(super) fn plan_lock_write(
     // one read alike by this point, and only the file still tells them
     // apart.
     let pre = Pre::observed(&path)?;
-    if unchanged && !pre.binds_nothing() {
+    // A scope with no record file and no entries needs none for its
+    // provenance alone; one that has a record keeps its provenance true,
+    // entries or not, or the record a proof is held to goes stale.
+    let unchanged = match pre.binds_nothing() {
+        true => entries_unchanged && !declares_carrier_installs(manifest),
+        false => entries_unchanged && provenance_unchanged,
+    };
+    if unchanged {
         return Ok(());
     }
     ops.push(PlannedOp {
@@ -253,7 +372,7 @@ pub(super) fn plan_lock_write(
         op: Op::WriteLock {
             pre,
             path,
-            lock: Box::new(new_lock),
+            lock: Box::new(new_lock.clone()),
         },
     });
     Ok(())

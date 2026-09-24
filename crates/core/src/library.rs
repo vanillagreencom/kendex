@@ -9,7 +9,7 @@ use specta::Type;
 
 use crate::env::Env;
 use crate::error::Result;
-use crate::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME, Manifest};
+use crate::manifest::Manifest;
 use crate::model::{HarnessId, ItemKind, Scope};
 
 mod identity;
@@ -447,7 +447,7 @@ fn origin_of(
     source: &str,
     repo: &str,
 ) -> Origin {
-    if source == LOCAL_SOURCE_NAME || source == INPLACE_SOURCE_NAME {
+    if crate::manifest::is_reserved_source(source) {
         return Origin::Own {
             source: source.to_owned(),
             forked_from: manifest

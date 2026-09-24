@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::apply::Op;
-use crate::engine::{EngineReport, planned_record};
+use crate::engine::{EngineReport, StoodIn};
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{BundleRev, LOCK_FILE, Lock, LockEntry, SourceRev};
@@ -184,12 +184,16 @@ pub fn inventory(scope: &Scope, report: &EngineReport) -> Result<Option<Standing
 /// Four readings, each the engine's. The bytes are the serialization the
 /// record writer lays down for the parsed record, so a hand-written key,
 /// a hand-laid layout or a field this build does not carry is a
-/// difference. A source served from the record's own commit is named,
-/// because everything rendered from it was measured against a commit the
-/// record chose. Each entry the pass also records is compared with the
-/// entry it would write, this machine's half aside. The sources and sets
-/// are compared both ways: one recorded that the manifest does not
-/// declare, and one the pass would record that the record does not carry,
+/// difference. A source or set served from the record's own commit is
+/// named, because everything rendered from it was measured against a
+/// commit the record chose; so is one the pass resolved nothing for,
+/// because its entry was carried forward unread and a comparison with the
+/// record would be the record against itself. Each entry the pass also
+/// records is compared with the entry it would write, this machine's half
+/// aside, in the record the pass computed whether or not its plan writes
+/// one. The sources and sets are compared both ways: one recorded that
+/// the pass records nothing for (undeclared, disabled, or read from a
+/// path), and one the pass would record that the record does not carry,
 /// are each named, so a provenance entry deleted by hand fails the row
 /// as a planted one does. Each recorded commit
 /// — an entry's source commit, a source's, a set's — must be the one the
@@ -212,12 +216,29 @@ pub fn record(
     if text != crate::lock::committed_text(&path, lock)? {
         problems.push("not laid out as kendex writes it".to_owned());
     }
-    for name in &report.sources_from_record {
-        problems.push(format!(
-            "source {name}: the mirror cannot serve the declared revision, and the recorded commit stood in"
-        ));
+    let stood_in = (report
+        .stood_in
+        .sources
+        .iter()
+        .map(|(name, why)| ("source", name, why)))
+    .chain(
+        report
+            .stood_in
+            .sets
+            .iter()
+            .map(|(name, why)| ("set", name, why)),
+    );
+    for (subject, name, why) in stood_in {
+        problems.push(match why {
+            StoodIn::RecordedCommit => format!(
+                "{subject} {name}: the mirror cannot serve the declared revision, and the recorded commit stood in"
+            ),
+            StoodIn::Unserved => format!(
+                "{subject} {name}: the mirror cannot serve the declared revision, so nothing holds the record to it — fetch it with kendex source refresh"
+            ),
+        });
     }
-    let planned = planned_record(report).unwrap_or_else(|| lock.clone());
+    let planned = &report.record;
     for (key, entry) in &lock.entries {
         // The key is what every reader looks an entry up by, and the
         // fields are what the entry says of itself; an entry the plan
@@ -352,7 +373,7 @@ fn source_problem(
 ) -> Option<String> {
     let Some(declared) = declared else {
         return Some(format!(
-            "source {name}: recorded, and the manifest declares no such source"
+            "source {name}: recorded, and the manifest declares no enabled repository source by that name"
         ));
     };
     if recorded.repo != declared.repo || recorded.rev != declared.rev {
@@ -381,7 +402,7 @@ fn bundle_problem(
 ) -> Option<String> {
     let Some(declared) = declared else {
         return Some(format!(
-            "set {name}: recorded, and the manifest declares no such set"
+            "set {name}: recorded, and the manifest declares no such set from an enabled repository source"
         ));
     };
     if recorded.source != declared.source || recorded.source_repo != declared.source_repo {

@@ -65,7 +65,7 @@ fn proven_registrations(report: &EngineReport, proven: &Lock) -> Registrations {
 }
 
 /// The record a plan would write, when it writes one.
-pub(crate) fn planned_record(report: &EngineReport) -> Option<Lock> {
+fn planned_record(report: &EngineReport) -> Option<Lock> {
     report
         .plan
         .ops
@@ -321,7 +321,7 @@ pub fn claim_plan(
             .or_insert_with(|| revision.clone());
     }
     let mut ops = Vec::new();
-    super::plan_lock_write(env, scope, manifest, disk, claimed, &mut ops)?;
+    super::plan_lock_write(env, scope, manifest, disk, &claimed, &mut ops)?;
     let mut record = Plan::landed(scope.clone(), ops)?;
     bind_reads(env, scope, fresh, &copies.registrations, &mut record)?;
     Ok(Some(record))

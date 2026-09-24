@@ -15,7 +15,7 @@ use super::AddRequest;
 use super::pick::{default_source, ensure_source};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::manifest::{LOCAL_SOURCE_NAME, Manifest};
+use crate::manifest::Manifest;
 use crate::model::{ItemKind, Scope};
 use crate::source::{self, SourceConfig, list_items, source_config_for};
 use crate::source_read::SealedSource;
@@ -107,10 +107,7 @@ pub(super) fn place(
 /// it never declares a repository. One that names no subscription refuses,
 /// listing what is subscribed (case 4).
 fn subscription(manifest: &Manifest, name: &str) -> Result<String> {
-    if name == LOCAL_SOURCE_NAME
-        || name == crate::manifest::INPLACE_SOURCE_NAME
-        || manifest.sources.contains_key(name)
-    {
+    if crate::manifest::is_reserved_source(name) || manifest.sources.contains_key(name) {
         return Ok(name.to_owned());
     }
     Err(CoreError::UnknownMarketplace {
