@@ -92,9 +92,16 @@ Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [LABELS]
+[For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 </delegation_format>
 
 **GitHub items** replace the `Issue:` line with `GitHub Issue: [OWNER/REPO]#[N]`. `Artifact Key:` stays `[ISSUE_ID]`, never `OWNER/REPO#N`.
+
+The `Near-ceiling:` lines come from workflow state, which the round-id stamp does not disturb; a first round on a fresh key reads `[]` and renders none.
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.near_ceiling // []'
+```
 
 ### Bundled issue
 
@@ -117,6 +124,7 @@ Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [parent labels]
+[For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 Audit Bundle: [yes — only when caller context `audit_bundle: true`; omit otherwise]
 Parent Title: [PARENT_TITLE — the `.title` from the preflight bundle read, verbatim]
 
@@ -197,12 +205,14 @@ Write the remote `body` value to `[WORKTREE_PATH]/tmp/pr-body-proposed-rules-[IS
 
 Do not rebuild the body from the local worktree or push a commit from this step. This is the sole publication owner for proposed rules.
 
-**Carry the near-ceiling lines** on accept: each `near_ceiling` entry `dev-artifact-check` echoed names a file the round put within reach of the byte ceiling, and it goes on the next round's delegation as a `Near-ceiling:` line so the split is planned there rather than at the commit the ceiling refuses.
+### Store QA State
 
-**Store QA state** on accept:
+This subsection runs on accept whatever ### Store Proposed Rules did, including its `status: no_pr` exit.
+
+`[NEAR_CEILING_ARRAY]` is the artifact's `near_ceiling` list as `dev-artifact-check` echoed it, a JSON array of strings and `[]` when the round produced none. Each entry names a file that round left within reach of the byte ceiling, and the next round's delegation renders one `Near-ceiling:` line per entry, so the receiving round owns the split rather than the commit the ceiling refuses. This write REPLACES the key, so state describes the branch as the accepted round left it and a file split in that round stops being carried.
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.qa_labels = [QA_LABELS_ARRAY] | .sub_issues = [SUB_ISSUE_IDS_ARRAY]'
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.qa_labels = [QA_LABELS_ARRAY] | .near_ceiling = [NEAR_CEILING_ARRAY] | .sub_issues = [SUB_ISSUE_IDS_ARRAY]'
 ```
 
 Map each Done-when item to the files serving it, in the PR body; every round measures against that map, never against its own last state, and an unmapped hunk is cut unless it is a [landing enabler](../../dev/SKILL.md#engineering-rules).

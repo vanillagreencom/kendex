@@ -222,7 +222,7 @@ receipt_table \
   "a valid implement at an explicit path, no validate_note key reads null^impl^^$FILE_ARGS^rc=0 reason=valid validate_note=null" \
   "a matching --round-id in file mode^impl^^$FILE_ARGS --round-id $R^reason=valid" \
   "a mismatched --round-id in file mode^impl^^$FILE_ARGS --round-id NOPE-1^reason=invalid" \
-  "a missing file reports the stable shape with null qualifiers^none^^--file $WT/tmp/nope.json^rc=1 reason=missing validate=null validate_note=null"
+  "a missing file reports the stable shape with null qualifiers and an empty near-ceiling list^none^^--file $WT/tmp/nope.json^rc=1 reason=missing validate=null validate_note=null near_ceiling=[]"
 
 echo "=== usage errors end in the parser ==="
 receipt_table \

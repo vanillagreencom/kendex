@@ -17,8 +17,10 @@ COMMIT_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers c
 COMMIT_GUARDS_BYTE_CEILING_KB = "200"
 
 # Percent of that ceiling at which byte-ceiling reports a file as
-# near-ceiling. The notice does not fail the run; it names the file while a
-# split is still cheap, before a later commit meets the ceiling itself.
+# near-ceiling, 1-100. The notice does not fail the run; it names the file
+# while a split is still cheap, before a later commit meets the ceiling
+# itself. A value above 100 would put the threshold past the ceiling and
+# switch the notice off, so it is refused.
 COMMIT_GUARDS_BYTE_WARN_PCT = "90"
 
 # The baseline byte-ceiling --all holds legacy oversized files to:

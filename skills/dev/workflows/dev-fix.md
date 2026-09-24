@@ -27,6 +27,8 @@ Evaluate each item in `Review items:` independently.
 
 An optional `Adds:` line is the complete blank-separated list of protected additions this round may make; a blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one. One path is `Adds: tools/one-helper.sh`; multiple paths are `Adds: tools/one-helper.sh skills/x/scripts/check`. [`../../orch/schemas/dev-round.md` § Protected additions](../../orch/schemas/dev-round.md#protected-additions) is the sole scope definition. With no line, add none in that scope. If the fix needs another protected file, report that requirement instead of creating it; the orchestrator must authorize the exact path in a fresh round.
 
+An optional `Near-ceiling:` line, one per file, is a `byte-ceiling` record the previous round produced: the path, its bytes, the ceiling in bytes and the percent of the ceiling reached. That file is within reach of the wall, and this round owns its split — plan or perform it rather than growing the file further, or say in the return why the split cannot be made here. With no line, no file is known to be within reach.
+
 - **Apply** when the item relates to the parent issue and adds no new risk. Unrelated changes are Skipped with the reason; the orchestrator files.
 - **Skip** when the pattern conflicts with the existing architecture, would break other functionality, or violates your defined rules and conventions. Before applying anything, search the decisions governing the affected area — `.agents/skills/decider/scripts/decisions search "[RELEVANT_KEYWORDS]"`, and `.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]` for those linked to the issue — and read the full file for any match. An item contradicting an active decision is skipped citing it, e.g. "Skipped — contradicts [DECISION_ID]".
 - **Decline** an item that cannot affect real usage, with one line of reasoning, and do not file it. Disposition rules are orch's [references/finding-disposition.md](../../orch/references/finding-disposition.md).
@@ -72,8 +74,6 @@ The header is the first `-m` alone: `[PREFIX]` is a Conventional Commits type su
 
 When validation failures remain, add `[validate: FAILING_CHECK]` to the body as a further `-m`, never to the header.
 
-Keep every `byte-ceiling: near-ceiling=` line the commit printed: the file is within reach of the byte ceiling, and the round that plans its split is this one, not the later round whose commit the ceiling refuses. Each line rides into the artifact as one `--near-ceiling` and is named in the return.
-
 ---
 
 ## 4. Reflect
@@ -90,6 +90,12 @@ If the validation list misses a rule, write `tmp/proposed-rule-[ISSUE_ID].md` wi
 
 ```bash
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind fix --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --no-summary [--summary-file tmp/proposed-rule-[ISSUE_ID].md] --item [N] [DECISION] [REASONING] [--item ...] [--near-ceiling [LINE]]...
+```
+
+Derive the near-ceiling lines rather than remembering them from hook output, when the lane is installed (`test -x .agents/skills/commit-guards/scripts/byte-ceiling`): run the lane once over the branch and pass each `near-ceiling` record it prints as one `--near-ceiling` value, verbatim. The base branch is what `resolve-base-branch [WORKTREE_PATH]` reports, and `--base` writes nothing into the worktree. The lines describe the branch at this moment, so run it after the commit.
+
+```bash
+.agents/skills/commit-guards/scripts/byte-ceiling --base [BASE_BRANCH]
 ```
 
 One `--item N DECISION REASONING` per **delegated** item — Applied, Skipped, and Blocked alike; the artifact must cover exactly the delegated set, `N` being the item's `#[N]` number (value shapes: `dev-return-write --help`; keep `REASONING` free of backticks). `--commit` is HEAD after the commit, or the prior HEAD when no commit was needed.

@@ -27,7 +27,7 @@
 # declared baseline (path<TAB>bytes), and a row looser than its file or naming
 # no oversized file fails, so the declaration only tightens.
 #
-# A file under the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT percent
+# A file not over the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT percent
 # of it gets one near-ceiling notice and no violation: a refusal that arrives
 # only at the wall stops a branch of a dozen commits for a split the round
 # before could have planned.
@@ -70,10 +70,10 @@ baseline (path<TAB>bytes, read from the index): a file at its row passes, one
 past it or with no row fails, and a row larger than its file or naming no
 oversized file fails. An absent baseline is empty.
 
-A file still under the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT
+A file not over the ceiling but at or above COMMIT_GUARDS_BYTE_WARN_PCT
 percent of it prints one near-ceiling line and does not fail, so the split is
 planned by the round that comes within reach of the wall rather than by the
-round that meets it.
+round that meets it. The percent must be 1-100.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -144,6 +144,11 @@ CEILING_BYTES=$((CEILING_KB * 1024))
 
 WARN_PCT="$(gg_setting COMMIT_GUARDS_BYTE_WARN_PCT 90)" || exit 2
 gg_positive_int "$WARN_PCT" "COMMIT_GUARDS_BYTE_WARN_PCT"
+# Above 100 the threshold sits past the ceiling, where every file is already a
+# violation: the notice would be silently off. The bound also keeps the
+# comparison below from overflowing on a value near the integer limit, which
+# reports a tiny file as near the ceiling at 0 percent.
+[ "$WARN_PCT" -le 100 ] || gg_fail warn-percent-range "COMMIT_GUARDS_BYTE_WARN_PCT:$WARN_PCT" "COMMIT_GUARDS_BYTE_WARN_PCT must be 1-100, got '$(gg_scrubbed "$WARN_PCT")'"
 
 EXCLUDES_FILE="$(gg_resolve_path "$EXCLUDES_OPT" COMMIT_GUARDS_BYTE_EXCLUDES "tools/byte-ceiling-excludes" excludes)" || exit 2
 gg_load_excludes "$EXCLUDES_FILE"
@@ -323,7 +328,7 @@ while IFS= read -r -d '' sha \
     # left, and rounding it up would report the threshold for a file that
     # has not reached it.
     gg_message near-ceiling "$f:$size:$CEILING_BYTES:$((size * 100 / CEILING_BYTES))" "The file is within reach of the byte ceiling."
-    echo "  remedy: plan the split while it is still cheap; a file that crosses the ceiling stops the commit and the push"
+    echo "  remedies: split the file while it is still cheap; a file that genuinely belongs at that size gets a row in $EXCLUDES_FILE with its reason, or moves to an asset store, Git LFS or build-time generation — crossing the ceiling stops the commit and the push"
   fi
 done <"$GG_TMP/candidates.z"
 

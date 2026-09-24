@@ -20,6 +20,8 @@ Run `pwd -P` before the first repo-relative command; it must print the delegatio
 
 In the sub-issue tree, complete blockers before the issues they block; entries marked `(completed)` are context only and are skipped in the § 4 loop.
 
+An optional `Near-ceiling:` line, one per file, is a `byte-ceiling` record a previous round produced: the path, its bytes, the ceiling in bytes and the percent of the ceiling reached. That file is within reach of the wall, and this round owns its split — plan or perform it rather than growing the file further, or say in the return why the split cannot be made here. With no line, no file is known to be within reach.
+
 ---
 
 ## 1. Environment Setup
@@ -203,8 +205,6 @@ git -C [WORKTREE_PATH] commit -m "[PREFIX]([ISSUE_ID]): [DESCRIPTION]"
 git -C [WORKTREE_PATH] log -1 --oneline
 ```
 
-Keep every `byte-ceiling: near-ceiling=` line the commit printed: the file is within reach of the byte ceiling, and the round that plans its split is this one, not the later round whose commit the ceiling refuses. Each line rides into the artifact as one `--near-ceiling` (§ 10) and is named in the return.
-
 Use the CURRENT sub-issue ID when bundled, not the parent's. Never stage lock files the project gitignores — stage specific files by name. When validation failures remain, add `[validate: FAILING_CHECK]` to the body as a second `-m`, never to the header.
 
 ---
@@ -283,7 +283,15 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] [--qa-label [LABEL]]... [--near-ceiling [LINE]]...
 ```
 
-One `--qa-label` per § 8 signal, none if nothing triggered. One `--near-ceiling` per § 7 near-ceiling line, none if the commits printed none. Every single round appends `--summary-file tmp/completion-summary-[ISSUE_ID].md`; GitHub and ad-hoc rounds also append `--no-summary`. Bundled rounds add `--bundled` and one `--item` per sub-issue — § 11.
+One `--qa-label` per § 8 signal, none if nothing triggered.
+
+Derive the near-ceiling lines rather than remembering them from hook output, when the lane is installed (`test -x .agents/skills/commit-guards/scripts/byte-ceiling`): run the lane once over the branch and pass each `near-ceiling` record it prints as one `--near-ceiling` value, verbatim. The base branch is what § 1's `resolve-base-branch` reported, and `--base` writes nothing into the worktree. The lines describe the branch at this moment, so run it after the commit. One run covers every commit of the round, bundled sub-issues included.
+
+```bash
+.agents/skills/commit-guards/scripts/byte-ceiling --base [BASE_BRANCH]
+```
+
+Every single round appends `--summary-file tmp/completion-summary-[ISSUE_ID].md`; GitHub and ad-hoc rounds also append `--no-summary`. Bundled rounds add `--bundled` and one `--item` per sub-issue — § 11.
 
 **Issue state.** A bundled Linear sub-issue is marked Done (`linear.sh issues update [ISSUE_ID] --state "Done"`) and aggregated by the parent session in § 11. The worktree's top-level managed issue is NOT — it stays In Progress or In Review until the PR merges. GitHub and ad-hoc issues close through the PR body or merge, never here.
 
@@ -307,7 +315,7 @@ Summary: [ISSUE_ID] ✓
 
 **Skip if** single — you returned at § 10.
 
-1. **Aggregate QA signals across sub-issues** (including nested ones) into the bundle artifact's `--qa-label` flags — the union of every sub-issue's § 8 signals, and the union of their § 7 near-ceiling lines into its `--near-ceiling` flags. No tracker mutation.
+1. **Aggregate QA signals across sub-issues** (including nested ones) into the bundle artifact's `--qa-label` flags — the union of every sub-issue's § 8 signals. No tracker mutation. The near-ceiling lines need no union: § 10's one run over the branch already covers every sub-issue's commits.
 
 2. **Post the parent summary** (Linear only): write `tmp/bundle-summary-[PARENT_ID].md`, then `linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md`.
 

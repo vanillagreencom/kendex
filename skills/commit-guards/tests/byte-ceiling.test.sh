@@ -242,7 +242,10 @@ run_rows \
   "the same file at a warn percent of 80 is named|near_fx warn-setting-low 900|$C=1,$W=80||rc=0 $(near near.txt 900 1024 87);$(ok 1)" \
   "a file past the ceiling still fails and is not doubly reported as near it|near_fx warn-over-ceiling 2000|$C=1||rc=1 $(over near.txt 2000 2 1);$(failed 1 1)" \
   "a non-numeric warn percent is exit 2, quoting it|near_fx warn-bad 100|$C=1,$W=abc||rc=2 ${ERR}positive-integer=COMMIT_GUARDS_BYTE_WARN_PCT:abc" \
-  "a zero warn percent is exit 2: every file is at or above nothing|near_fx warn-zero 100|$C=1,$W=0||rc=2 ${ERR}positive-integer=COMMIT_GUARDS_BYTE_WARN_PCT:0"
+  "a zero warn percent is exit 2: every file is at or above nothing|near_fx warn-zero 100|$C=1,$W=0||rc=2 ${ERR}positive-integer=COMMIT_GUARDS_BYTE_WARN_PCT:0" \
+  "control: 100 is the top of the range and is accepted|near_fx warn-hundred 1024|$C=1,$W=100||rc=0 $(near near.txt 1024 1024 100);$(ok 1)" \
+  "a warn percent above the range is exit 2: past the ceiling the notice would be off with no word|near_fx warn-101 100|$C=1,$W=101||rc=2 ${ERR}warn-percent-range=COMMIT_GUARDS_BYTE_WARN_PCT:101" \
+  "a warn percent large enough to overflow the comparison is refused by the same bound, not measured|near_fx warn-overflow 10|$C=1,$W=9007199254740993||rc=2 ${ERR}warn-percent-range=COMMIT_GUARDS_BYTE_WARN_PCT:9007199254740993"
 
 echo "=== the ceiling resolves through the settings ladder and is validated ==="
 cfg() { repo "$1"; put f.txt 1; } # NAME

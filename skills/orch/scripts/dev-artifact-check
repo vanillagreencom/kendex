@@ -395,11 +395,21 @@ check_id_token() {
 # never recorded. The two scalars are null and the list empty when the artifact
 # is missing or unparseable.
 emit() {
-  local ok="$1" path="$2" reason="$3" warning="${4:-}" hint="${5:-}" files="${6:-[]}" validate=null validate_note=null near_ceiling='[]'
+  local ok="$1" path="$2" reason="$3" warning="${4:-}" hint="${5:-}" files="${6:-[]}" validate=null validate_note=null near_ceiling='[]' surfaced=""
   if [[ -n "$path" && -f "$path" ]]; then
-    validate="$(jq -c 'if (.validate? | type) == "string" then .validate else null end' "$path" 2>/dev/null || printf 'null')"
-    validate_note="$(jq -c 'if (.validate_note? | type) == "string" then .validate_note else null end' "$path" 2>/dev/null || printf 'null')"
-    near_ceiling="$(jq -c 'if (.near_ceiling? | type) == "array" then [.near_ceiling[] | select(type == "string")] else [] end' "$path" 2>/dev/null || printf '[]')"
+    # One read for every surfaced field, so the process count stays flat as
+    # fields are added: one line, three tab-separated compact JSON values, in
+    # this order. Each is
+    # `tojson` output, so a tab inside any of them is escaped rather than
+    # literal and the split is exact.
+    surfaced="$(jq -r '[
+        (if (.validate? | type) == "string" then .validate else null end),
+        (if (.validate_note? | type) == "string" then .validate_note else null end),
+        (if (.near_ceiling? | type) == "array" then [.near_ceiling[] | select(type == "string")] else [] end)
+      ] | map(tojson) | join("\t")' "$path" 2>/dev/null)" || surfaced=""
+    if [[ -n "$surfaced" ]]; then
+      IFS=$'\t' read -r validate validate_note near_ceiling <<<"$surfaced"
+    fi
   fi
   # verdict is the one-word acceptance answer the orchestrator acts on:
   #   accept — artifact valid for this round (warnings ride along)
