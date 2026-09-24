@@ -175,45 +175,70 @@ both_table '2|2|NOVERIFY|a semicolon in front of the git word|true;git commit NO
 '
 
 echo
+echo "the issue's read-only commands pass"
+
+# These rows pin that the read-only commands the issue names pass. Neither
+# holds a git word with a later commit word, so they pass without the scoping
+# below and prove nothing about it.
+both_table '0|0|-|a read-only pipeline whose -n is grep own|git diff | grep -n x
+0|0|-|the commit verb only inside a quoted grep operand|ps aux | grep \"git commit\" | tail -n 5
+'
+
+echo
 echo "the no-verify flag is read in the commit's own simple command"
 
 # git skips its armed hooks over that flag only where git is the program
-# reading it, so the word is a bypass only in the simple command that holds the
-# commit. Read over the whole command it refused read-only pipelines whose sole
-# -n belonged to grep, sed or tail, which is what the passing rows hold shut.
-# The unarmed column is unchanged by the scoping: what counts as a commit at
-# all is still read over the whole command.
-both_table '0|0|-|a read-only pipeline whose -n is grep own|git diff | grep -n x
-0|2|-|a read-only pipeline whose -n is head own|git log --oneline | grep commit | head -n 3
+# reading it: in the simple command that holds the commit, or in a pipeline
+# stage feeding it, whose output xargs or parallel can turn into the commit's
+# arguments. The passing rows are the -n of another program the whole-command
+# reading refused. The unarmed column is unchanged by the scoping: what counts
+# as a commit at all is still read over the whole command.
+both_table '0|2|-|a read-only pipeline whose -n is head own|git log --oneline | grep commit | head -n 3
 0|2|-|-n belonging to another program beside the commit|sed -n 1,5p f && git commit -m x
 0|2|-|-n in a call before a semicolon|sed -n 1p f; git commit -m x
+0|2|-|-n in a call before an or-list|sed -n 1p f || git commit -m x
 0|2|-|-n in a git call that is not the commit|git log -n 3 && git commit -m x
 0|2|-|-n in a later stage of the pipeline|ps aux | grep git | grep commit | tail -n 5
-0|0|-|the commit verb only inside a quoted grep operand|ps aux | grep \"git commit\" | tail -n 5
+0|2|-|-n in a stage the commit pipes into|git commit -m x | tail -n 5
+0|2|-|-n in a git stage piped into a later commit word|git log -n 3 | grep commit
+2|2|-n|the flag in a commit that pipes into another stage|git commit -n -m x | tail -n 5
 2|2|NOVERIFY|the flag behind a separator, in the commit own call|true && git commit NOVERIFY
 2|2|-n|the flag behind a repository-moving option|git -C d commit -n
 2|2|-n|the first of two flags is the one named|git commit -n NOVERIFY -m x
 2|2|-n|the flag behind a descriptor duplication|git commit -m x 2>&1 -n
 2|2|-n|the flag behind an input duplication|git commit -m x 0<&3 -n
 2|2|-n|the flag behind a clobbering redirection|git commit -m x >|log -n
-'
-
-# The split is trusted only in a command free of quoting, escaping and
-# expansion, with no process substitution and no xargs. Every other command is
-# read whole for the flag, so each form below, where bash still hands the flag
-# to git commit, is refused as it was before the split, and so is -n beside a
-# commit that merely quotes its message.
-both_table '2|2|-n|a quoted separator in the message|git commit -m \"a;b\" -n
-2|2|-n|a single-quoted separator in the message|git commit -m '"'"'a;b'"'"' -n
-2|2|-n|a single quote of one kind nested in the other|git commit -m \"'"'"'\" -m '"'"'a;b'"'"' -m \"'"'"'\" -n
-2|2|NOVERIFY|escaped double quotes around a separator|git commit -m \"fix \\\"foo; bar\\\"\" NOVERIFY
-2|2|-n|a backtick substitution holding a separator|git commit -m `true;echo x` -n
-2|2|-n|a parameter expansion holding a separator|git commit -m ${X:-a;b} -n
-2|2|-n|legacy arithmetic holding a pipe|git commit -m $[1|2] -n
-2|2|-n|a process substitution|git commit -F <(echo x) -n
-2|2|-n|a line continuation|git commit -m x \\\n -n
 2|2|NOVERIFY|the flag piped into xargs|echo NOVERIFY | xargs git commit -m x
 2|2|-n|the short flag piped into xargs|printf %s -n | xargs git commit -m x
+2|2|-n|the short flag piped into parallel|echo -n | parallel git commit -m x
+2|2|NOVERIFY|the flag piped into parallel with an option|echo NOVERIFY | parallel -X git commit -m x
+2|2|-n|the flag piped into a subshell|echo -n | (xargs git commit -m x)
+2|2|-n|the flag piped across a newline|echo -n |\nxargs git commit -m x
+'
+
+echo
+echo "the trust gate"
+
+# The split is trusted only in a command free of quoting, escaping and
+# expansion, with no process substitution; every other command is read whole
+# for the flag. This table is the one place the gate's controls live: one row
+# per alternative of the SPLIT_TRUSTED case, in its order, each a form where
+# bash still hands the flag to git commit.
+both_table '2|2|-n|a single-quoted separator in the message|git commit -m '"'"'a;b'"'"' -n
+2|2|-n|a double-quoted separator in the message|git commit -m \"a;b\" -n
+2|2|-n|a line continuation|git commit -m x \\\n -n
+2|2|-n|a backtick substitution holding a separator|git commit -m `true;echo x` -n
+2|2|-n|a parameter expansion holding a separator|git commit -m ${X:-a;b} -n
+2|2|-n|an input process substitution|git commit -F <(echo x) -n
+2|2|-n|an output process substitution|git commit -m x > >(cat) -n
+'
+
+# More forms the gate sends to the whole-command reading, where bash still
+# hands the flag to git commit, and -n beside a commit that merely quotes its
+# message, which that reading refuses as well.
+both_table '2|2|-n|a single quote of one kind nested in the other|git commit -m \"'"'"'\" -m '"'"'a;b'"'"' -m \"'"'"'\" -n
+2|2|NOVERIFY|escaped double quotes around a separator|git commit -m \"fix \\\"foo; bar\\\"\" NOVERIFY
+2|2|-n|legacy arithmetic holding a pipe|git commit -m $[1|2] -n
 2|2|-n|-n beside a commit whose message is quoted|sed -n 1,5p f && git commit -m \"x\"
 '
 
