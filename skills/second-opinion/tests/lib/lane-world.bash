@@ -399,8 +399,8 @@ build() {
   if [[ -n "$W_STALE" ]]; then
     printf 'stale\n' >"$OUT.codex.json"
     printf 'stale raw response\n' >"$OUT.codex.json.raw.txt"
-    chmod 644 "$OUT.codex.json" "$OUT.codex.json.raw.txt"
     printf 'my own notes\n' >"$OUT.codex.json.notes"
+    chmod 644 "$OUT.codex.json" "$OUT.codex.json.raw.txt" "$OUT.codex.json.notes"
   fi
   if [[ "$W_HOME" == ro ]]; then mkdir -p "$ROW/ro-home"; chmod 555 "$ROW/ro-home"; fi
   # a link into a directory that does not exist: the capture's open and the
