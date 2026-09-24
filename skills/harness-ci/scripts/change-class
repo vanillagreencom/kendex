@@ -72,10 +72,10 @@
 # copy of this script against the pull request's tree; the branch can change
 # this file too.
 #
-# A measured class needs --event pull_request and an orch beside this package
-# carrying the measurement contract below; any other event, and a checkout
-# without that orch, answer render or standard and never a measured class.
-# The render class reads nothing of orch's.
+# A measured class needs --event pull_request or --event merge_group and an
+# orch beside this package carrying the measurement contract below; any other
+# event, and a checkout without that orch, answer render or standard and never
+# a measured class. The render class reads nothing of orch's.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -497,10 +497,18 @@ production=""
 total=""
 measure() {
   local orch_contract
-  if [ "$event" != pull_request ]; then
-    MEASURE_CAUSE="cause=unsupported-event event=$event"
-    return 1
-  fi
+  # The two events that define a range these rules can be read over. A pull
+  # request's base end is the merge base harness-only resolved; a merge
+  # group's base is an ancestor of its head by construction, so the
+  # three-dot range the size reader takes below is the same commits as the
+  # two-dot one either way. Every other event names no such range and is
+  # refused here rather than measured over one nobody defined.
+  case "$event" in
+    pull_request | merge_group) ;;
+    *)
+      MEASURE_CAUSE="cause=unsupported-event event=$event"
+      return 1 ;;
+  esac
   if [ ! -r "$ORCH_DIR/scripts/lib/branch-growth.sh" ]; then
     MEASURE_CAUSE="cause=orch-absent path=$ORCH_DIR"
     return 1
