@@ -150,7 +150,10 @@ Update Options:
   --sort-order <float>  Manual sort position (lower = higher; parent/standalone only)
   --format <fmt>        Output format for the updated issue: safe | compact | ids |
                         raw. When omitted, emits the mutation summary
-                        ({success, identifier, url, data}) as before.
+                        ({success, identifier, url, data}) as before. An
+                        attach-only update runs no issueUpdate and ignores
+                        this flag: it answers with its own object, which has
+                        the attachment fields and no data key.
 
 Relation Options (add-relation):
   --blocks <id>         This issue blocks another
