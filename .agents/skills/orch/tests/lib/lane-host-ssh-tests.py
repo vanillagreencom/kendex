@@ -14,6 +14,24 @@ import unittest
 PACKAGE = Path(__file__).resolve().parents[2]
 
 
+# The close cleanup's temporary-index block, and the working-tree comparison a
+# must-fail control puts back in its place: `git diff --no-index` reports exit 1
+# for a symlink to an unreadable directory exactly as it does for a real
+# difference, so the patch it writes for that path is empty.
+INDEX_PATCH_FRAGMENT = """    (export GIT_INDEX_FILE="$index"; git -C "$dir" add --force -- "${untracked[@]}") || {
+      rm -f -- "$index"; return 3;
+    }
+    (export GIT_INDEX_FILE="$index"; git -C "$dir" diff --binary --cached "$empty" -- "${untracked[@]}") >>"$patch" || {
+      rm -f -- "$index"; exit 1;
+    }"""
+
+NO_INDEX_PATCH_MUTANT = """    for path in "${untracked[@]}"; do
+      diff_rc=0
+      (cd -- "$dir" && git diff --no-index --binary -- /dev/null "$path") >>"$patch" || diff_rc=$?
+      test "$diff_rc" -eq 1 || exit 1
+    done"""
+
+
 class SshHostTests(unittest.TestCase):
     def setUp(self):
         scratch = Path.cwd() / "tmp"
@@ -837,23 +855,65 @@ exec git "$@"
         self.assertEqual(closed.returncode, 0, closed.stderr)
         self.assertTrue(removed.exists())
 
-    def test_close_preserves_the_patch_before_restoring(self):
+    def test_close_refuses_a_drift_patch_that_does_not_carry_the_path(self):
         self.assertEqual(self.create().returncode, 0)
         clone = Path(self.row["clone"])
         generated = clone / ".agents/skills/orch/scripts/lane-marker"
-        generated.write_text(generated.read_text() + "# preserve first\n")
+        drifted = generated.read_text() + "# preserve first\n"
+        generated.write_text(drifted)
         owned = '[".agents/skills/orch/scripts/lane-marker"]'
-        original = self.script.read_text()
-        fragment = 'git -C "$dir" diff --binary HEAD -- "${paths[@]}" >"$patch" || exit 1'
-        self.assertEqual(original.count(fragment), 1)
-        self.script.write_text(original.replace(fragment, ': >"$patch"'))
         closed = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS=owned)
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
         with tarfile.open(archive) as saved:
             patches = [name for name in saved.getnames() if "/tmp/render-drift-TEST-1-clone-" in name]
             self.assertEqual(len(patches), 1)
-            self.assertNotIn(b"preserve first", saved.extractfile(patches[0]).read())
+            self.assertIn(b"preserve first", saved.extractfile(patches[0]).read())
+
+        self.assertEqual(self.create().returncode, 0)
+        generated.write_text(drifted)
+        original = self.script.read_text()
+        fragment = 'git -C "$dir" diff --binary HEAD -- "${paths[@]}" >"$patch" || exit 1'
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, ': >"$patch"'))
+        refused = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS=owned)
+        self.assertEqual((refused.returncode, b"close-refused path=" in refused.stderr),
+                         (3, True), refused.stderr)
+        self.assertEqual(generated.read_text(), drifted)
+
+    def test_close_saves_an_untracked_render_link_whose_target_is_unreadable(self):
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        target = self.root / "unreadable-skill"
+        (target / "nested").mkdir(parents=True)
+        link = clone / ".claude/skills/rendered"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target)
+        self.addCleanup(target.chmod, 0o755)
+        target.chmod(0o000)
+        owned = json.dumps([".claude/skills/rendered"])
+        closed = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS=owned)
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        self.assertFalse(link.is_symlink())
+        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
+        with tarfile.open(archive) as saved:
+            patches = [name for name in saved.getnames() if "/tmp/render-drift-TEST-1-clone-" in name]
+            self.assertEqual(len(patches), 1)
+            patch = saved.extractfile(patches[0]).read()
+        self.assertIn(b"new file mode 120000", patch)
+        self.assertIn(str(target).encode(), patch)
+
+        self.assertEqual(self.create().returncode, 0)
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target)
+        original = self.script.read_text()
+        fragment = INDEX_PATCH_FRAGMENT
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, NO_INDEX_PATCH_MUTANT))
+        mutant = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS=owned)
+        self.assertEqual((mutant.returncode, b"close-refused path=" in mutant.stderr),
+                         (3, True), mutant.stderr)
+        self.assertTrue(link.is_symlink())
 
     def test_close_refuses_when_generated_path_ownership_cannot_be_read(self):
         self.assertEqual(self.create().returncode, 0)

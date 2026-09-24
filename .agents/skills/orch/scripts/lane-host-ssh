@@ -421,7 +421,13 @@ stop --item ID --harness claude|codex|pi resolves the owned worktree through
 the installed worktree command, signals only matching harness processes whose
 current directory is that worktree, waits for them to exit, and prints
 stopped item=ID processes=COUNT. close preserves render-only drift as a binary patch under clone/tmp, restores
-the generated paths, refreshes the clone, and then closes. Any path outside the
+the generated paths, refreshes the clone, and then closes. An untracked render,
+a skill symlink a post-launch kendex apply added among them, enters the patch
+through a temporary index rather than a working-tree comparison, so a link
+whose target cannot be read is still recorded as a link. close reads the patch
+back and restores or removes a path only when the patch carries it; a path the
+patch does not carry, and an untracked render the temporary index cannot read,
+refuse close with exit 3 and keep the static host. Any path outside the
 clone's generated inventory refuses close with exit 3 and keeps the static host.
 An absent or different item marker refuses close with exit 75
 before worktree lookup. Before worktree removal, close archives remaining clone/tmp
@@ -537,11 +543,28 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
   stamp=$(date -u +%Y%m%dT%H%M%SZ) || exit 1
   patch="$clone/tmp/render-drift-$item-$label-$stamp.patch"
   git -C "$dir" diff --binary HEAD -- "${paths[@]}" >"$patch" || exit 1
-  for path in ${untracked[@]+"${untracked[@]}"}; do
-    diff_rc=0
-    (cd -- "$dir" && git diff --no-index --binary -- /dev/null "$path") >>"$patch" || diff_rc=$?
-    test "$diff_rc" -eq 1 || exit 1
+  if test "${#untracked[@]}" -gt 0; then
+    index="$clone/tmp/render-index-$label-$$"
+    empty=$(git -C "$dir" hash-object -t tree /dev/null) || exit 1
+    rm -f -- "$index" || exit 1
+    (export GIT_INDEX_FILE="$index"; git -C "$dir" add --force -- "${untracked[@]}") || {
+      rm -f -- "$index"; return 3;
+    }
+    (export GIT_INDEX_FILE="$index"; git -C "$dir" diff --binary --cached "$empty" -- "${untracked[@]}") >>"$patch" || {
+      rm -f -- "$index"; exit 1;
+    }
+    rm -f -- "$index" || exit 1
+  fi
+  carried="$clone/tmp/render-carried-$label-$$"
+  git -C "$dir" -c core.quotePath=false apply --numstat -- "$patch" >"$carried" || {
+    rm -f -- "$carried"; return 3;
+  }
+  for path in "${paths[@]}"; do
+    awk -F'\t' -v want="$path" '$3 == want { carried = 1 } END { exit !carried }' "$carried" || {
+      rm -f -- "$carried"; return 3;
+    }
   done
+  rm -f -- "$carried" || exit 1
   if test "${#tracked[@]}" -gt 0; then
     git -C "$dir" restore --staged --worktree -- "${tracked[@]}" || exit 1
   fi
