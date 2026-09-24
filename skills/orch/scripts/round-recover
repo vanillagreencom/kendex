@@ -26,8 +26,9 @@
 # report carries no Commit: line, so a bundled round always re-delegates.
 #
 # Before the artifact is written the report is checked on disk: the reported
-# commit resolves and is HEAD (a fix report's Commits: all resolve, reach HEAD
-# and one of them is HEAD, or it reads none), and a reported pass is the verdict
+# commit resolves and is HEAD (a fix report's Commits: each lie after the round
+# record's base_sha and at or before HEAD, one of them HEAD, or it reads none
+# and HEAD is still base_sha), and a reported pass is the verdict
 # dev-validate-run gives for the newest run started at or after the round's
 # dev_delegated_at. A FAILING report needs no proof: it ends the round, never
 # passes it. A report that holds is written through dev-return-write
@@ -81,6 +82,7 @@ die() {
       run-unreadable) printf 'dev-validate-run could not read the validation run; its own line is above.\n' ;;
       write-failed) printf 'dev-return-write refused the recovered report; its own line is above.\n' ;;
       check-failed) printf 'dev-artifact-check gave no verdict on the recovered artifact.\n' ;;
+      record-unreadable) printf 'The fix round record carries no 40-hex base_sha.\n' ;;
     esac
   } >&2
   exit 2
@@ -246,6 +248,18 @@ resolve() { # REF
   esac
 }
 
+# Whether A is an ancestor of or equal to B; any other git failure is an
+# unreadable worktree.
+ancestor() { # A B
+  local status=0
+  git -C "$worktree" merge-base --is-ancestor "$1" "$2" || status=$?
+  case "$status" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) die git-failed "path=$worktree" ;;
+  esac
+}
+
 field Validate; validate="$FIELD"
 [[ "$validate" == pass || "$validate" == FAILING:* ]] || no_report unparsed
 
@@ -261,20 +275,24 @@ if [[ -f "$worktree/tmp/dev-round-$issue-$round_id.json" ]]; then
     fi
   done < "$report_file"
   (( ${#args[@]} > 0 )) || no_report unparsed
+  # Every commit claim is bound to the round record's base_sha: none means HEAD
+  # never moved past it, and each reported commit lies after it and up to HEAD.
+  record="$worktree/tmp/dev-round-$issue-$round_id.json"
+  if ! base_sha="$(jq -r '.base_sha // empty' "$record")"; then
+    die record-unreadable "path=$record"
+  fi
+  [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || die record-unreadable "path=$record"
   field Commits; commits="$FIELD"
   [[ -n "$commits" ]] || no_report unparsed
-  if [[ "$commits" != none ]]; then
+  if [[ "$commits" == none ]]; then
+    [[ "$head_sha" == "$base_sha" ]] || no_report commit-mismatch
+  else
     at_head=false
     for sha in ${commits//,/ }; do
       resolve "$sha"
-      [[ -n "$RESOLVED" ]] || no_report commit-mismatch
-      status=0
-      git -C "$worktree" merge-base --is-ancestor "$RESOLVED" "$head_sha" || status=$?
-      case "$status" in
-        0) ;;
-        1) no_report commit-mismatch ;;
-        *) die git-failed "path=$worktree" ;;
-      esac
+      [[ -n "$RESOLVED" && "$RESOLVED" != "$base_sha" ]] || no_report commit-mismatch
+      ancestor "$base_sha" "$RESOLVED" || no_report commit-mismatch
+      ancestor "$RESOLVED" "$head_sha" || no_report commit-mismatch
       if [[ "$RESOLVED" == "$head_sha" ]]; then at_head=true; fi
     done
     [[ "$at_head" == true ]] || no_report commit-mismatch

@@ -75,14 +75,21 @@ new_round() { # NAME ISSUE RID EXIT
   ORCH_STATE_DIR="$WT/tmp"
 }
 
-# new_round for a fix round: the round record holds items 1 and 2.
-new_fix_round() { # NAME N RID EXIT
+# new_round for a fix round: the round record holds items 1 and 2 and its
+# base_sha, ROUND_SHA. Unless COMMITTED is no, the round then commits its fix,
+# so HEAD_SHA is one commit past ROUND_SHA.
+new_fix_round() { # NAME N RID EXIT [COMMITTED]
   new_round "$1" "issue-$2" "$3" "$4"
   mkdir -p "$WT/.cache/linear"
   printf '[{"identifier":"issue-%s","description":"**Expected delta**: 100 lines, 100 test lines"}]\n' "$2" \
     > "$WT/.cache/linear/issues.json"
   "$ROUND_WRITE" --worktree "$WT" --issue "issue-$2" --round-id "$3" \
     --item 1 "fix nil deref" "tools/guard on a staged render" --item 2 "rename" "tools/guard on a staged render" >/dev/null
+  ROUND_SHA="$HEAD_SHA"
+  [[ "${5:-yes}" == no ]] && return 0
+  printf 'fixed\n' >> "$WT/work.txt"
+  git -C "$WT" commit -q -am fix
+  HEAD_SHA="$(git -C "$WT" rev-parse HEAD)"
 }
 
 # One transcript line: a user turn saying TEXT, or the agent returning TEXT
@@ -242,7 +249,7 @@ assert_eq "$(artifact_has "$ARTIFACT" '"\(.recovered_from) \(.kind) \(.validate)
   "transcript fix FAILING: lint 1:Applied,2:Skipped" "the fix artifact carries the table's items, the FAILING verdict and recovered_from"
 assert_eq "$("$CHECK" --worktree "$WT" --issue issue-778 --round-id 5-5 --expect-items-from-round | jq -r '"\(.ok) \(.verdict)"')" "true retry" \
   "the recovered items match the round record, and the FAILING verdict is retry, never accept"
-new_fix_round fix-none 779 5-6 0
+new_fix_round fix-none 779 5-6 0 no
 transcript "$TMP_ROOT/fix-none.jsonl" claude-send 5-6 "$(fix_report none pass)"
 run --worktree "$WT" --issue issue-779 --round-id 5-6 --transcript "$TMP_ROOT/fix-none.jsonl"
 assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-issue-779-5-6.json" .commit)" "rc=0 $HEAD_SHA" \
@@ -272,8 +279,9 @@ assert_eq "rc=$RC $OUT $(state_get KEN-20 dev_round_id)" "rc=1 round-recover: ex
   "the re-delegated round's own stall is exhausted and mints nothing" "$TMP_ROOT/stderr"
 
 echo "=== a report the disk contradicts, or cannot be read, is no report ==="
-# One planted defect per row; %H, %B and %O are HEAD, main and a commit HEAD
-# does not reach. A fix row's report is fix_report's COMMITS|VALIDATE|ROWS.
+# One planted defect per row; %H, %B, %R and %O are HEAD, main, a fix round's
+# base_sha and a commit HEAD does not reach. A fix row's report is
+# fix_report's COMMITS|VALIDATE|ROWS, and its round has committed past its base.
 row=0
 for case in \
   "commit-mismatch|implement|0|%B|pass|needs-review|b" \
@@ -285,6 +293,9 @@ for case in \
   "commit-mismatch|fix|0|0000000deadbeef|pass|yes" \
   "commit-mismatch|fix|0|%O, %H|pass|yes" \
   "commit-mismatch|fix|0|%B|pass|yes" \
+  "commit-mismatch|fix|0|%B, %H|pass|yes" \
+  "commit-mismatch|fix|0|%R, %H|pass|yes" \
+  "commit-mismatch|fix|0|none|pass|yes" \
   "unparsed|fix|0|%H|pass|no" \
   "unparsed|fix|0|-|pass|yes"; do
   row=$((row + 1))
@@ -297,6 +308,7 @@ for case in \
     key="KEN-8$row"
   fi
   commits="${commits//%H/$HEAD_SHA}"; commits="${commits//%B/$BASE_SHA}"; commits="${commits//%O/$OTHER_SHA}"
+  commits="${commits//%R/${ROUND_SHA:-}}"
   if [[ "$kind" == fix ]]; then
     report="$(fix_report "$commits" "$validate" "$qa")"
   else

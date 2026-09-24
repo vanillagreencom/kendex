@@ -19,4 +19,4 @@ Cross-script routing behind the artifact rows in [../SKILL.md](../SKILL.md). Eac
 
 ## Dev-vs-reviewer asymmetry (intentional — do not "align")
 
-A reviewer invalid artifact after a return is `incomplete` and gets one re-delegation. Dev's verdict distinguishes a still-running round (`wait` — B pass gets one report-only tail nudge, B fail escalates at the deadline) from a present-but-failing receipt (`retry` — never accepted, never treated as absent). Neither branch re-runs the work, and neither accepts without the round-scoped artifact.
+A reviewer invalid artifact after a return is `incomplete` and gets one re-delegation. Dev's verdict distinguishes a still-running round (`wait`, routed by the sentence ahead of the acceptance table in `dev-start.md` § 3 and `dev-fix.md` § 2, a stalled round to `round-recover` first) from a present-but-failing receipt (`retry` — never accepted, never treated as absent). Neither branch re-runs the work, and neither accepts without the round-scoped artifact.
