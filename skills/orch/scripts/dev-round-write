@@ -252,11 +252,10 @@ recorded allowance, or its recorded production and test counts when unsized.
 --cut-from-round PATH declares a cut retry using the earlier round's comparison.
 size_check always records the current report; cut_comparison preserves the cut
 target across retries.
---issue is the workflow-state key, whose three forms workflow-state owns and
-lists in `workflow-state --help` § Keys: a tracker identifier, `issue-N` for a
-GitHub issue, and the repository-local `pr-N` for a branch carrying no issue
-id, which names no issue and so measures under the allowance_missing verdict.
-workflow-state stores the key as passed and validates none of it.
+--issue is the workflow-state key, whose forms `workflow-state --help` § Keys
+lists. A `pr-N` key names no issue and so measures under the
+allowance_missing verdict. workflow-state stores the key as passed and
+validates none of it.
 --issue / --round-id must match
 ^[A-Za-z0-9._-]+$ with no '..'. Canonical schema:
 skills/orch/schemas/dev-round.md.
