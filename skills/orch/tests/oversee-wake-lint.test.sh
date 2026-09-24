@@ -14,6 +14,7 @@ CODEX="$SKILL_DIR/references/codex-runtime.md"
 PI="$SKILL_DIR/references/pi-runtime.md"
 MODES="$SKILL_DIR/references/communication-modes.md"
 BG_TASKS="$REPO_ROOT/pi-extensions/pi-background-tasks/instructions.md"
+BG_TOOLS="$REPO_ROOT/pi-extensions/pi-background-tasks/extensions/registrations.ts"
 BG_HEADING='## pi-background-tasks — `bg_task` and `bg_status`'
 DELIVERY="# Watch delivery"
 
@@ -81,7 +82,9 @@ rule "Pi arms the numbered follow with output wakes and an expiry" "$PI" \
   '`notifyMode: "always"`' '`timeoutSeconds: 300`' \
   'numbered follow command of [watch-delivery.md]'
 rule "Pi re-arms when the wake budget is spent" "$PI" "## Standing watch (Pi)" \
-  '| Re-arm |' '`bg_status action: "stop"`'
+  '| Re-arm |' '`bg_status action: "stop"`' 'on the kept pid'
+rule "Pi keeps the pid its stop and list read" "$PI" "## Standing watch (Pi)" \
+  'Keep the pid the spawn returns' '`Started [ID] (pid [PID])`'
 rule "Pi spawns on an exit wake only when its follow is not listed running" \
   "$PI" "## Standing watch (Pi)" '| Exit |' '`bg_status action: "list"`'
 
@@ -141,6 +144,22 @@ pi_param_gaps() {
 $rows
 EOF_ROWS
 }
+
+# The Pi rows stop a follow by the pid they kept. instructions.md does not say
+# which identifier bg_status takes, so the tool's own schema is the source: the
+# bg_status registration must take `pid` for its stop, and the spawn result must
+# print the pid beside the id.
+bg_status_schema="$(awk '/name: "bg_status"/ { on = 1 } on && /name: "bg_task"/ { exit } on' "$BG_TOOLS")"
+case "$bg_status_schema" in
+  *'pid: Type.Optional'*'stop=terminate by pid'*|*'stop=terminate by pid'*'pid: Type.Optional'*)
+    pass "bg_status stops by pid in the package's tool schema" ;;
+  *) fail "bg_status no longer stops by pid in ${BG_TOOLS##*/}: the Pi rows keep the wrong identifier" ;;
+esac
+if grep -qF 'Started ${task.id} (pid ${task.pid})' "$BG_TOOLS"; then
+  pass "the bg_task spawn result prints the pid the Pi rows keep"
+else
+  fail "the bg_task spawn result in ${BG_TOOLS##*/} no longer prints the pid"
+fi
 
 pi_rows="$(pi_params "$PI")"
 case "$pi_rows" in
@@ -203,7 +222,9 @@ else
 fi
 
 # --- The handoff shape ------------------------------------------------------
-rule "the handoff shape carries the watch row" "$MODES" "## Handoff" \
-  'Watch: [THE WAKE MECHANISM IN FORCE'
+rule "the handoff shape carries the watch row per mode" "$MODES" "## Handoff" \
+  'Watch: [REPEAT MODE: THE WAKE MECHANISM IN FORCE' 'SINGLE PASSES: `single passes` ALONE'
+rule "the single-pass handoff row is the shape's single-pass form" "$WATCH" \
+  "## Single passes" 'Watch row reads `single passes` alone'
 
 md_report

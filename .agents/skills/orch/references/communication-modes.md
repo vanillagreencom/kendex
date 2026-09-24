@@ -89,7 +89,7 @@ Standing rulings: [EACH STANDING RULING AND WHO MADE IT]
 In flight: [ITEM, ITS PULL REQUEST, ITS NEXT STEP]
 Open questions: [EACH QUESTION SENT AND NOT ANSWERED]
 Traps: [WHAT WOULD BREAK IF THE NEXT SESSION MISSED IT]
-Watch: [THE WAKE MECHANISM IN FORCE, ITS RE-ARM RULE, THE WATCH RUN DIRECTORY AND THE NEXT LOG LINE; AFTER A STOP, `stopped` AND THE WATCH RUN DIRECTORY]
+Watch: [REPEAT MODE: THE WAKE MECHANISM IN FORCE, ITS RE-ARM RULE, THE WATCH RUN DIRECTORY AND THE NEXT LOG LINE; AFTER A STOP, `stopped` AND THE WATCH RUN DIRECTORY. SINGLE PASSES: `single passes` ALONE]
 ```
 
 The overseer handoff file [oversee.md](../workflows/oversee.md) § 5 rewrites carries this shape. The stance itself is this file and is never copied into a handoff.
