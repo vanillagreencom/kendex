@@ -66,11 +66,12 @@ selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or th
 
 ALL_OFF="shell_shards=false macos_legs=false ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false"
 ALL_ON="shell_shards=true macos_legs=true ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true"
-# Every measured class runs the three Linux lanes, which hold every content
-# reader; the platform, lint and ui lanes follow the paths.
+# `render` and `trivial` run the one verify job.
+VERIFY_ROW="shell_shards=false macos_legs=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false"
+# Every measured class runs the three Linux lanes. The platform and lint
+# lanes stand down only on an all-prose diff, and ui only off ui/.
 PROSE_ROW="shell_shards=true macos_legs=false ui=false bot_instructions=true cargo_linux=true cargo_macos=false cargo_lint=false cargo_windows=false"
-WORKSPACE_ROW="shell_shards=true macos_legs=true ui=false bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true"
-UI_ROW="shell_shards=true macos_legs=true ui=true bot_instructions=true cargo_linux=true cargo_macos=false cargo_lint=false cargo_windows=false"
+CODE_ROW="shell_shards=true macos_legs=true ui=false bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true"
 
 # CLASS|DOCS_ONLY|PATHS (blank-separated)|EXPECTED
 selection_rows=0
@@ -79,30 +80,30 @@ while IFS='|' read -r class docs paths expected; do
   check "selection: $class docs_only=$docs over '$paths'" "$expected" \
     "$(selection "$class" "$docs" "$(printf '%s\n' $paths)")"
 done <<ROWS
-render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|$ALL_OFF
-trivial|true|docs/architecture/overview.md|$ALL_OFF
+render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|$VERIFY_ROW
+trivial|true|docs/architecture/overview.md|$VERIFY_ROW
+trivial|true|AGENTS.md|$VERIFY_ROW
 standard|false|crates/core/src/lib.rs|$ALL_ON
 micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$PROSE_ROW
-small|false|crates/cli/src/main.rs|$WORKSPACE_ROW
-micro|false|ui/src/app.tsx|$UI_ROW
-micro|false|clippy.toml|$WORKSPACE_ROW
-micro|false|rust-toolchain.toml|$WORKSPACE_ROW
+small|false|crates/cli/src/main.rs|$CODE_ROW
+micro|false|ui/src/app.tsx|$ALL_ON
+micro|false|clippy.toml|$CODE_ROW
+micro|false|rust-toolchain.toml|$CODE_ROW
+micro|false|install.sh|$CODE_ROW
+micro|false|.gitattributes|$CODE_ROW
+micro|false|skills/orch/scripts/lanes|$CODE_ROW
 micro|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
 small|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
 standard|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
+standard|true|AGENTS.md|$PROSE_ROW
+standard|true|docs/legal/terms.md|$PROSE_ROW
 standard|false|docs/guide.md|$ALL_ON
 enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous
 micro|false||exit=2 class-without-paths class=micro
 micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe
 ROWS
-[ "$selection_rows" -ge 15 ] ||
+[ "$selection_rows" -ge 20 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
-
-# The docs verdict narrows a `standard` diff to the row its paths select as a
-# measured class, and to nothing narrower.
-docs_paths="$(printf '%s\n' docs/architecture/overview.md docs/legal/terms.md)"
-check "standard with docs_only=true takes the small row for the same paths" \
-  "$(selection small false "$docs_paths")" "$(selection standard true "$docs_paths")"
 
 # A row that forgets a lane is refused before any lane reads it. macos_legs is
 # the lane no aggregate holds, so this refusal is what keeps a forgotten
@@ -437,13 +438,12 @@ while IFS='|' read -r sel expected; do
   job_rows=$((job_rows + 1))
   check "jobs under '$sel'" "$expected" "$(running "$WORKFLOW" "$sel")"
 done <<ROWS
-$ALL_OFF|
+$VERIFY_ROW|bot-instructions
 $ALL_ON|$EVERY_GATED
 $one_skill|bot-instructions cargo-linux skill-suites-shard
-$WORKSPACE_ROW|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
-$UI_ROW|bot-instructions cargo-linux skill-suites-shard ui-tests
+$CODE_ROW|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
 ROWS
-[ "$job_rows" -ge 5 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
+[ "$job_rows" -ge 4 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
 
 # A classifier that died published nothing. Every gated job runs, which is
 # what each condition's status function and result term are for.
