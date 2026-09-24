@@ -204,8 +204,11 @@
 #                    A RECORDED REFUSAL is not a cached figure and is not
 #                    bypassed: an operator asking for a fresh reading must not
 #                    be the one caller on the host that posts again what the
-#                    endpoint has already refused. It still takes the host-wide
-#                    refresh lock.
+#                    endpoint has already refused. A lane the usage endpoint
+#                    refuses with 429, on record or on this run's own fetch,
+#                    is still answered from the last figure the host holds,
+#                    as `rate_limited` with its age in the AGE column. It
+#                    still takes the host-wide refresh lock.
 #   --max-age SECS   Serve a cached usage figure up to SECS old, for a caller
 #                    naming its own pass interval. It WIDENS
 #                    ORCH_LANES_USAGE_TTL and never narrows it, so a caller
@@ -316,9 +319,10 @@
 # instead of asking again. The last figure the record held stays beside the
 # refusal, so a usage 429 is answered from it: the lane reports `rate_limited`
 # on that figure while it is younger than the 5-hour session window. With no
-# such figure, the lane that received the 429 retries once, after the window or
+# such figure, the first such lane in a run retries once, after the window or
 # 5 seconds whichever is shorter, so that retry is the one request posted
-# inside a recorded window. The record returns to a figure alone the moment the
+# inside a recorded window; a later cold lane in the same run reports its
+# refusal at once. The record returns to a figure alone the moment the
 # endpoint answers again.
 # The lane host's `accounts` answer shares that cache and TTL, under
 # `host-accounts-<provider path checksum>.json`: one record per provider rather
@@ -1077,9 +1081,10 @@ measure_lane() {
 # one case that posts. It reads measure_lane's `harness` and `dir`.
 #
 # The refusal is honoured whatever --no-cache says: that flag declines a cached
-# FIGURE, not the record of a request the endpoint already refused, and it is
-# the path most able to multiply a burst, since declining the cache is what puts
-# every caller back on the endpoint at once.
+# FIGURE it could refresh, not the record of a request the endpoint already
+# refused, nor the last figure a 429 is answered from. The flag is the path
+# most able to multiply a burst, since declining the cache is what puts every
+# caller back on the endpoint at once.
 usage_from_record() { # NOW
 	local cached refusal
 	if [[ "$USE_CACHE" == "true" ]] && cached="$(read_usage_cache "$harness" "$dir" "$1" "$(usage_serve_max_age)")"; then
@@ -1132,7 +1137,10 @@ refresh_lane_usage() {
 		# retry, because a first refusal with nothing behind it leaves every
 		# caller with nothing to decide on. It waits the window or
 		# USAGE_RETRY_WAIT_MAX_S, whichever is shorter, so it is the one request
-		# posted inside a window this host recorded.
+		# posted inside a window this host recorded. One per RUN: a later cold
+		# lane reports its refusal at once.
+		[[ "$USAGE_RETRY_SPENT" == "false" ]] || return
+		USAGE_RETRY_SPENT=true
 		window="$(usage_refusal_window "$HTTP_RETRY")"
 		sleep "$(( window < USAGE_RETRY_WAIT_MAX_S ? window : USAGE_RETRY_WAIT_MAX_S ))"
 		if ! answer="$(fetch_usage "$harness" "$dir" "$token" "$account_id")"; then
@@ -2296,10 +2304,16 @@ USAGE_TTL="${ORCH_LANES_USAGE_TTL:-300}"
 # caller time for its own request. A timeout costs one duplicate request for
 # one account, under its keyed notice.
 USAGE_LOCK_WAIT_S=10
-# What a COLD lane waits before its single retry after a 429. The recorded
-# window can be minutes, and a listing is a caller waiting at a terminal: this
-# bounds what one unmeasurable lane costs the whole reading.
+# What a COLD lane waits before the retry after a 429. The recorded window can
+# be minutes, and a listing is a caller waiting at a terminal.
 USAGE_RETRY_WAIT_MAX_S=5
+# Whether this run has spent its one cold-lane retry. One per run, not per
+# lane: lanes are measured one after another, so a retry per cold lane would
+# cost a host-wide limit that wait and one extra request for every cold lane.
+# With it, a run spends at most USAGE_RETRY_WAIT_MAX_S and one request on
+# retries. collect_lanes measures every lane in one pipeline stage, in
+# sequence, so a later lane there reads what an earlier one set.
+USAGE_RETRY_SPENT=false
 # How long a refused endpoint is left alone when its answer named no
 # Retry-After: long enough that a fleet measuring every thirty seconds stops
 # feeding the limit it hit, short enough that a lane comes back inside one
@@ -2368,6 +2382,7 @@ validate_lane_settings() {
 	# re-infer a base: `[[ 08 -ne 0 ]]` reads the leading zero as octal, errors,
 	# and the bound below is neither applied nor refused.
 	ACCOUNTS_TIMEOUT_S=$((10#$ACCOUNTS_TIMEOUT_S))
+	USAGE_TTL=$((10#$USAGE_TTL))
 }
 
 parse_argv "$@"

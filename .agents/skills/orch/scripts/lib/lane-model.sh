@@ -62,13 +62,16 @@
 LANE_MODEL_JQ='
 def lane_norm: ascii_downcase | gsub("[^a-z0-9]"; "");
 
-# The statuses that carry a usage reading, named once so both guards below
-# and the record `lanes` emits agree. `rate_limited` is a lane the endpoint
-# refused a REFRESH for while the host still holds its last figures: the
-# windows in that record were read from the account, and the record says how
-# old they are in usage_age_s. Treating it as unmeasured would wall every
-# launch on the host for the length of a transient burst, which is the whole
-# cost the status exists to remove.
+# The statuses that can carry a usage reading, named once so both guards below
+# and the record `lanes` emits agree. `rate_limited` carries one only where the
+# endpoint refused a usage REFRESH while the host still held its last figures:
+# those windows were read from the account, and usage_age_s says how old they
+# are. Treating that lane as unmeasured would wall every launch on the host for
+# the length of a transient burst, which is the whole cost the status exists
+# to remove. A `rate_limited` lane with no figure, a token renewal refused with
+# 429 or a usage 429 with nothing cached, passes this test too and reaches null
+# only through the headroom_pct check in binding_bucket and the null-pct filter
+# in max_binding, which must stay.
 def lane_measured: (.status == "ok" or .status == "rate_limited");
 
 def wall_rank:

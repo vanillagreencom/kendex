@@ -1358,6 +1358,24 @@ COLD_OK_REFUSALS="$(cat "$COLD_OK_STATE"/usage/*.json 2>/dev/null | jq -r 'selec
 assert_eq "refusals=${COLD_OK_REFUSALS:-0}" "refusals=0" \
   "the answer drops the refusal the first request recorded"
 rm -f -- "${FIXTURE_DIR:?}/.claude.status.1"
+# Lanes are measured one after another, so the retry is bounded per run: the
+# first cold lane spends it and a later one reports its refusal at once.
+make_lane "$H" eclaude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+printf '429 1\n' > "$FIXTURE_DIR/.claude.status"
+printf '429 1\n' > "$FIXTURE_DIR/.eclaude.status"
+COLD_PAIR_DIRS="ORCH_LANE_DIRS=$H/.claude:$H/.eclaude"
+table \
+  "two cold lanes refused in one run spend one retry between them|$COLD_PAIR_DIRS;OVERSEE_WATCH_STATE_DIR=$TMP_ROOT/cold-pair-state|$LIST|claude.status=rate_limited eclaude.status=rate_limited fetched=claude,claude,eclaude"
+# The control: the per-run guard dropped, so every cold lane sleeps and posts
+# its own retry.
+lanes_mutant mutant-retry-per-lane lanes 'USAGE_RETRY_SPENT" == "false"'
+COLD_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-retry-per-lane/lanes"
+table \
+  "control: unguarded, each cold lane posts a retry of its own|$COLD_PAIR_DIRS;OVERSEE_WATCH_STATE_DIR=$TMP_ROOT/cold-pair-mutant-state|$LIST|fetched=claude,claude,eclaude,eclaude"
+LANES="$COLD_PATCHED"
+rm -f -- "${FIXTURE_DIR:?}/.claude.status" "${FIXTURE_DIR:?}/.eclaude.status"
 
 echo "=== a caller naming its own pass interval is served its last figure ==="
 # A watch whose pass is longer than the TTL finds the figure expired on every
@@ -1406,6 +1424,18 @@ lanes_mutant mutant-max-age-setting-unread lanes \
 LANES="$TMP_ROOT/mutant-max-age-setting-unread/lanes"
 table \
   "control: unread, the same setting leaves the figure past the TTL and it is fetched|$MA_ENV;ORCH_LANES_USAGE_MAX_AGE=300|$LIST|fetched=claude"
+LANES="$MA_PATCHED"
+# A TTL written with a leading zero is decimal: 0300 is 300 seconds, so a
+# shorter named pass leaves it deciding and a figure 250 seconds old is served.
+age_usage_record "$MA_STATE" "$H/.claude" 250
+table \
+  "a zero-padded TTL is read in base 10 and a shorter pass never narrows it|$MA_ENV;ORCH_LANES_USAGE_TTL=0300|$LIST --max-age 200|claude.aged=30+ fetched=none"
+# The control: the TTL left as written, so 0300 compares as octal 192 and the
+# named 200 seconds replaces it.
+lanes_mutant mutant-ttl-octal lanes 'USAGE_TTL=\$((10#\$USAGE_TTL))'
+LANES="$TMP_ROOT/mutant-ttl-octal/lanes"
+table \
+  "control: read as octal, the shorter pass narrows the TTL and the figure is fetched|$MA_ENV;ORCH_LANES_USAGE_TTL=0300|$LIST --max-age 200|fetched=claude"
 LANES="$MA_PATCHED"
 
 echo "=== one host-wide refresh per window, whatever the number of callers ==="
