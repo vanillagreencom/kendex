@@ -2564,6 +2564,9 @@ launch_prepared() { # LOG
 # each counted before either recorded would both pass. The lock sits beside the
 # fleet state, the one address every launch into the fleet names.
 CAP_GATED=false
+# 0 for a launch that is not judged, which turns off the account cap's claim
+# check in the item loop.
+ACCOUNT_CAP=0
 [[ "$FLEET" != true || "$WAKE" == true ]] || CAP_GATED=true
 if [[ "$CAP_GATED" == true ]]; then
   [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; exit 1; }
@@ -2670,11 +2673,6 @@ lane_rejudge() { # ITEM
 cap_gate() { # ITEM KEY
   local item="$1" key="$2" lane over stale=false waited_on=""
   CAP_PASSED=""
-  # A claim this run failed to write is a lane the account count cannot see.
-  if [[ "$CLAIM_WRITE_FAILED" == true ]] && (( ACCOUNT_CAP > 0 )); then
-    ot_message claim-unrecorded "item=$item" "launched=$launched" >&2
-    return 1
-  fi
   while :; do
     lane=""
     [[ -z "$LANE_ENV" ]] || lane="$(lane_claims_canon "${LANE_ENV#*=}")"
@@ -2797,31 +2795,18 @@ for raw in "${ITEMS[@]}"; do
   # vouched for. tmux only: a claim's liveness handle is a pane, so on a GUI
   # surface a re-pick would re-read numbers nothing has moved.
   attempted=$((attempted + 1))
-  if [[ "$LANE_AUTO" == true && "$TERMINAL_MODE" == "tmux" && "$attempted" -gt 1 ]]; then
-    if [[ "$CLAIM_WRITE_FAILED" == true ]]; then
-      ot_message claim-unrecorded "item=$item" "launched=$launched" >&2
-      failed=$((failed + 1))
-      break
-    fi
-    lane_rc=0
-    next_lane="$(pick_auto_lane)" || lane_rc=$?
-    if [[ "$lane_rc" -ne 0 ]]; then
-      if [[ "$lane_rc" -eq 3 ]]; then
-        ot_message lane-unavailable "harness=$LANE_HARNESS" "item=$item" "launched=$launched" >&2
-      else
-        ot_message lane-resolution-failed "exit=$lane_rc" "item=$item" "launched=$launched" >&2
-      fi
-      failed=$((failed + 1))
-      break
-    fi
-    if lane_value_error "$next_lane"; then
-      failed=$((failed + 1))
-      break
-    fi
-    if [[ "$next_lane" != "$LANE_ENV" ]]; then
-      LANE_ENV="$next_lane"
-      ot_message lane-selected "lane=$LANE_ENV"
-    fi
+  # A claim an earlier item failed to write is a lane nothing here can see: an
+  # auto re-pick would not move off its account, and the account cap would
+  # count that account one short. Either stops the batch, before this item's
+  # re-pick and count.
+  if [[ "$CLAIM_WRITE_FAILED" == true ]] && { [[ "$LANE_AUTO" == true ]] || (( ACCOUNT_CAP > 0 )); }; then
+    ot_message claim-unrecorded "item=$item" "launched=$launched" >&2
+    failed=$((failed + 1))
+    break
+  fi
+  if [[ "$LANE_AUTO" == true && "$TERMINAL_MODE" == "tmux" && "$attempted" -gt 1 ]] && ! lane_rejudge "$item"; then
+    failed=$((failed + 1))
+    break
   fi
   # Judged once the lane is settled, since the account cap counts that lane,
   # and before the worktree, so a refused item leaves no tree behind. A

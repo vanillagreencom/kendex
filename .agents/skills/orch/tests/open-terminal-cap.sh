@@ -3,9 +3,10 @@
 # cap-reached where the fleet's running records plus its unrecorded live claims
 # reach ORCH_OVERSEER_LANES, and as account-cap-reached where the live claims
 # on its lane reach ORCH_LANE_ACCOUNT_CLAIMS, both judged under one lock held
-# from the count through the record write. --relaunch is not judged,
-# --over-cap admits one launch and records the caps it passed, and --wait-slot
-# waits for room instead of refusing.
+# from the count through the record write. A relaunch meets the fleet cap
+# where the item has no running record, and the account cap where it has none
+# or moves to another account. --over-cap admits one launch and records the
+# caps it passed, and --wait-slot waits for room instead of refusing.
 #
 # The suite runs a copy of open-terminal beside copies of workflow-state and
 # orch-env in a temp git repo, with the worktree CLI, lanes and tmux stubbed.
@@ -343,20 +344,26 @@ await_exit "$WAITER"
 assert_eq "rc=$(rc one) account=$(account_of CC-1)" "rc=0 account=$LANE_B" \
   "an auto lane waiting on a full account alone launches on the account the next pick has room on"
 
-echo "=== a claim this run could not write stops the batch while the account cap is on ==="
+echo "=== a claim this run could not write stops the batch ==="
 # The claim store is readable and not writable, so the first item launches
-# with its claim unwritten and the second cannot be counted against its account.
-row claim-unwritten
+# with its claim unwritten. The second can then neither be counted against its
+# account (a named lane under the account cap) nor spread off it (an auto lane
+# with the account cap off).
 if [[ "$(id -u)" -eq 0 ]]; then
   echo "  skip  running as root, whose writes a directory mode does not stop"
 else
-  mkdir -p "$CLAIMS/claims"
-  chmod 555 "$CLAIMS/claims"
-  launch one 10 5 --lane "$LANE_A" CC-1 CC-2
-  chmod 755 "$CLAIMS/claims"
-  assert_eq "rc=$(rc one) running=$(running) $(key one)" \
-    "rc=1 running=CC-1 open-terminal: claim-unrecorded item=CC-2 launched=1" \
-    "the item after an unwritten claim is refused rather than counted one lane short"
+  for spec in "claim-counted|5|$LANE_A|counted one lane short" "claim-spread|0|auto|picked on an account it cannot see"; do
+    IFS='|' read -r name account_cap lane why <<<"$spec"
+    row "$name"
+    printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_A" > "$ROW/pick"
+    mkdir -p "$CLAIMS/claims"
+    chmod 555 "$CLAIMS/claims"
+    launch one 10 "$account_cap" --lane "$lane" CC-1 CC-2
+    chmod 755 "$CLAIMS/claims"
+    assert_eq "rc=$(rc one) running=$(running) $(key one)" \
+      "rc=1 running=CC-1 open-terminal: claim-unrecorded item=CC-2 launched=1" \
+      "$name: the item after an unwritten claim is refused rather than $why"
+  done
 fi
 
 echo "=== a child that outlives the worktree step does not hold the launch lock ==="
