@@ -168,12 +168,46 @@ if [ -z "${PR_NUMBER:-}" ]; then
   }
   count="$(jq length <<<"$prs")"
   rg_message notice writer-converging "$count" "converging $count open PR(s)"
+  # One pull request spends only its own share of the converge step. The work
+  # each evaluation does is partly the pull request's own to choose — its
+  # manifest decides how much source preparation the class policy asks for —
+  # so without a bound one head leaves every head behind it unevaluated for
+  # that pass. An overrun is that pull request's convergence failure and
+  # nothing more: the loop records it and moves to the next, and the
+  # unconverged status stays pending for the next pass, which is the same
+  # fail-safe direction as any other failure here.
+  #
+  # PER_PR_DEADLINE_SECONDS is a fraction of the step's own budget, so a pass
+  # still reaches several pull requests where every one of them overruns.
+  # `timeout` is coreutils and this writer runs where it exists; a host with
+  # neither spelling keeps the unbounded behaviour rather than lose the gate.
+  PER_PR_DEADLINE_SECONDS="$(rg_setting REVIEW_GATE_PR_DEADLINE_SECONDS 120)" || exit 2
+  case "$PER_PR_DEADLINE_SECONDS" in
+    ''|*[!0-9]*|0) rg_message error writer-deadline-value "$PER_PR_DEADLINE_SECONDS" \
+      "::error::REVIEW_GATE_PR_DEADLINE_SECONDS must be a positive whole number of seconds"; exit 2 ;;
+  esac
+  pr_bound=()
+  if command -v timeout >/dev/null 2>&1; then
+    pr_bound=(timeout "$PER_PR_DEADLINE_SECONDS")
+  elif command -v gtimeout >/dev/null 2>&1; then
+    pr_bound=(gtimeout "$PER_PR_DEADLINE_SECONDS")
+  else
+    rg_message warning writer-unbounded "$PER_PR_DEADLINE_SECONDS" \
+      "no timeout utility here, so each PR's evaluation runs unbounded"
+  fi
   failed=0
   while read -r number head base author; do
     [ -z "$number" ] && continue
-    if ! EVENT_NAME="$EVENT_NAME" PR_NUMBER="$number" \
-        HEAD_SHA="$head" PR_BASE_SHA="$base" PR_AUTHOR="$author" bash "$self" </dev/null; then
-      rg_message error writer-convergence-failed "$number" "::error::convergence failed for PR #$number (see log above)"
+    pr_status=0
+    EVENT_NAME="$EVENT_NAME" PR_NUMBER="$number" \
+      HEAD_SHA="$head" PR_BASE_SHA="$base" PR_AUTHOR="$author" \
+      ${pr_bound[@]+"${pr_bound[@]}"} bash "$self" </dev/null || pr_status=$?
+    if [ "$pr_status" -ne 0 ]; then
+      if [ "$pr_status" -eq 124 ]; then
+        rg_message error writer-convergence-deadline "$number" "::error::PR #$number passed its ${PER_PR_DEADLINE_SECONDS}s share of the converge step; left for the next pass"
+      else
+        rg_message error writer-convergence-failed "$number" "::error::convergence failed for PR #$number (see log above)"
+      fi
       failed=1
     fi
   done < <(jq -r '.[] | "\(.number) \(.headRefOid) \(.baseRefOid) \(.author.login // "")"' <<<"$prs")

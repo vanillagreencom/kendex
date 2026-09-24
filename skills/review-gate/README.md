@@ -32,17 +32,19 @@ Set `REVIEW_GATE_*` values in `kendex.settings.toml` under `[env]`. Environment 
 
 Set `REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"` to apply this policy to the class from the shared `harness-ci` classifier.
 
-| Change class | Review evidence | Review threads |
-|---|---|---|
-| `render` | Not required | Not read |
-| `trivial` | Not required | Not read |
-| `micro` | Not required | Not read |
-| `small` | One normal bot round | Enforced |
-| `standard` | Current review-gate behavior | Current review-gate behavior |
+| Change class | Review evidence | Review threads | Objections and suppressed findings |
+|---|---|---|---|
+| `render` | Not required | Not read | Not read |
+| `trivial` | Not required | Not read | Not read |
+| `micro` | Not required | Not read | Not read |
+| `small` | One normal bot round | Enforced | Enforced |
+| `standard` | Current review-gate behavior | Current review-gate behavior | Current review-gate behavior |
+
+A `none` row puts the pull request OUTSIDE the review gate: no review evidence, no thread wait, no standing objection and no suppressed finding is read for it, because a gate that cannot stop a bot from commenting must not run on a change it waives. What stays enforced is everything outside that gate — required CI checks, commit guards and merge conflicts — and the orch merge path still refuses a `CHANGES_REQUESTED` review at its readiness check, in every mode.
 
 The table is applied only where the shared classifier measured a class, which it says on its own answer. It needs both endpoints present in the checkout, an ancestor they share, a readable generated-file inventory at the base end, and the `orch` skill beside `harness-ci` for its `references/narrow-change.conf` list and its `scripts/lib/branch-growth.sh` measurer. Missing any of those, the classifier falls back to `standard` and marks the answer unmeasured, and `review-policy` exits 2 naming the reason rather than apply a row to a class nothing earned. Fix what the reason names, then ask again.
 
-The empty default disables this table and preserves the existing gate behavior. The `render`, `trivial`, and `micro` rows exempt the review-gate status, and every consumer of `scripts/review-policy` applies the same answer: the orch skill's reviewer wait and thread gates, and the `pr-merge` review-thread gate. Required CI checks, commit guards, and merge conflicts keep their existing enforcement.
+The empty default disables this table and preserves the existing gate behavior. Every consumer of `scripts/review-policy` applies the same answer: the orch skill's reviewer wait and thread gates, orch's micro admission, and the `pr-merge` review-thread gate.
 
 - `REVIEW_GATE_CONTEXT` names the required commit status.
 - Select trusted reviewer logins and check names using [references/settings.md](references/settings.md).

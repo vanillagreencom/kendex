@@ -74,6 +74,13 @@ REVIEW_GATE_API_ATTEMPTS = "1"
 # Seconds between those attempts.
 REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
+# One pull request's share of the writer's converge step, which covers every
+# open pull request in one pass. Past it that pull request's evaluation is its
+# own convergence failure and the pass moves on, leaving its status for the
+# next one. Size it under the step's own timeout-minutes divided by the pull
+# requests a pass expects; a repository that widens that step widens this.
+REVIEW_GATE_PR_DEADLINE_SECONDS = "120"
+
 # Evidence carry-forward across carry-safe deltas ("docs", "comments",
 # "vendored"; empty = off): ancestor evidence extends to head when the delta
 # is entirely carry-safe. "vendored" carries every file under a path

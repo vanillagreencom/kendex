@@ -808,6 +808,34 @@ materialize_docs_commits() { # REPO BASE HEAD
 # The policy owner and classifier come from the trusted default-branch
 # checkout. The pull-request checkout is judged data. Source preparation and
 # classification run without the writer's GitHub credentials.
+# Source preparation reads the JUDGED pull request's manifest, so how much work
+# it asks for is the pull request's to choose. The writer converges every open
+# pull request inside one 12-minute step, and an unbounded refresh lets one
+# manifest spend the whole of it while every pull request behind it goes
+# unevaluated. Two bounds hold that to one pull request's own share, and each
+# names itself in the refusal:
+#
+#   sources   CLASS_REFRESH_MAX_SOURCES, counted before anything is fetched. A
+#             manifest past it is refused rather than prepared. The number is
+#             generous on purpose — it is the pathological-manifest stop, not a
+#             limit any real consumer should meet — because refusing a legitimate
+#             manifest leaves that repository's gate unconverged for good, while
+#             the deadline below only costs it a pass.
+#   time      CLASS_REFRESH_DEADLINE_SECONDS around the refresh itself, which is
+#             the bound that actually bites: a cold fetch has its own
+#             120-second ceiling, so a handful of unresponsive sources would
+#             otherwise outlast the step. At this size a pass still reaches
+#             sixteen pull requests with every one of them overrunning.
+#
+# An overrun returns non-zero like any other preparation failure, so the caller
+# exits 2 through predicate-policy-resolve, writes no status, and the next pass
+# tries again. `timeout` is coreutils and the writer runs where it exists; a
+# host with neither spelling keeps the unbounded behaviour and says so, since
+# refusing there would disable the gate on a machine whose only fault is a
+# missing utility.
+CLASS_REFRESH_MAX_SOURCES=12
+CLASS_REFRESH_DEADLINE_SECONDS=45
+
 resolve_class_policy() ( # REPO BASE HEAD
   repo="$1"
   base_sha="$2"
@@ -824,7 +852,31 @@ resolve_class_policy() ( # REPO BASE HEAD
   trap cleanup_policy_subject EXIT
   git -C "$repo" worktree add --quiet --detach "$subject" "$head_sha" || return 1
   added=1
-  (cd "$subject" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR kendex source refresh >/dev/null) || return 1
+  declared="$( (cd "$subject" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR kendex source list 2>/dev/null) | grep -c .)" || declared=0
+  if [ "$declared" -gt "$CLASS_REFRESH_MAX_SOURCES" ]; then
+    rg_message error predicate-policy-sources "$declared/$CLASS_REFRESH_MAX_SOURCES" \
+      "::error::review-predicate: the pull request's manifest declares $declared sources, past the class-policy cap of $CLASS_REFRESH_MAX_SOURCES; none were prepared" >&2
+    return 1
+  fi
+  bound=()
+  if command -v timeout >/dev/null 2>&1; then
+    bound=(timeout "$CLASS_REFRESH_DEADLINE_SECONDS")
+  elif command -v gtimeout >/dev/null 2>&1; then
+    bound=(gtimeout "$CLASS_REFRESH_DEADLINE_SECONDS")
+  else
+    rg_message warning predicate-policy-unbounded "$CLASS_REFRESH_DEADLINE_SECONDS" \
+      "review-predicate: no timeout utility here, so the class-policy refresh runs unbounded" >&2
+  fi
+  refresh_status=0
+  (cd "$subject" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR \
+    ${bound[@]+"${bound[@]}"} kendex source refresh >/dev/null) || refresh_status=$?
+  if [ "$refresh_status" -ne 0 ]; then
+    if [ "$refresh_status" -eq 124 ]; then
+      rg_message error predicate-policy-refresh-deadline "$CLASS_REFRESH_DEADLINE_SECONDS" \
+        "::error::review-predicate: source preparation passed its ${CLASS_REFRESH_DEADLINE_SECONDS}s bound; this pull request is left for the next pass" >&2
+    fi
+    return 1
+  fi
   env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR "$POLICY_OWNER" \
     --event pull_request --base "$base_sha" --head "$head_sha" --repo "$subject"
 )
