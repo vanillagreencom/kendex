@@ -24,10 +24,12 @@ cp "$SKILL_ROOT/scripts/pr-watch.sh" "$TMP_ROOT/scripts/"
 cp "$SKILL_ROOT/scripts/lib/settings.sh" "$SKILL_ROOT/scripts/lib/diagnostics.sh" "$TMP_ROOT/scripts/lib/"
 cat > "$TMP_ROOT/scripts/review-predicate.sh" <<'EOF'
 #!/usr/bin/env bash
-# Stub: STUB_PREDICATE_RC != 0 simulates a read failure; else
+# Stub: STUB_PREDICATE_RC != 0 simulates a read failure, printing
+# STUB_PREDICATE_STDERR (backslash escapes read) when set; else
 # STUB_VERDICT_LINE is the verdict. STUB_PREDICATE_CALLS counts invocations.
 if [[ -n "${STUB_PREDICATE_CALLS:-}" ]]; then echo x >> "$STUB_PREDICATE_CALLS"; fi
 if [[ "${STUB_PREDICATE_RC:-0}" != "0" ]]; then
+  if [[ -n "${STUB_PREDICATE_STDERR:-}" ]]; then printf '%b\n' "$STUB_PREDICATE_STDERR" >&2; fi
   echo "::error::stubbed predicate failure" >&2
   exit "${STUB_PREDICATE_RC}"
 fi

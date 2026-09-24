@@ -77,6 +77,12 @@
 # copy of this script against the pull request's tree; the branch can change
 # this file too.
 #
+# Only the render class reads kendex state, and it is reached only where
+# harness-only answers harness_only=true for the range. review-gate's
+# review-predicate.sh (resolve_class_policy) prepares the judged checkout's
+# sources on exactly that condition and on no other, so a kendex read added
+# on any other path here classifies against sources nobody prepared.
+#
 # A measured class needs --event pull_request or --event merge_group and an
 # orch beside this package carrying the measurement contract below; any other
 # event, and a checkout without that orch, answer render or standard and never

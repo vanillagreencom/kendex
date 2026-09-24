@@ -699,9 +699,9 @@ EOF_COMMENT_CFG
 # required skill dependency installs this sibling beside review-gate in both
 # catalog and rendered layouts. A partial installation must fail config
 # validation before it can leave an earlier success status in place.
-DOCS_CLASSIFIER="$script_dir/../../harness-ci/scripts/harness-only"
-if [ "$DOCS_ONLY_MODE" = "none" ] && [ ! -x "$DOCS_CLASSIFIER" ]; then
-  rg_message error predicate-docs-classifier "$DOCS_CLASSIFIER" "::error::review-predicate: REVIEW_GATE_DOCS_ONLY=none requires the executable harness-ci docs classifier at '$DOCS_CLASSIFIER'" >&2
+PATH_CLASSIFIER="$script_dir/../../harness-ci/scripts/harness-only"
+if [ "$DOCS_ONLY_MODE" = "none" ] && [ ! -x "$PATH_CLASSIFIER" ]; then
+  rg_message error predicate-docs-classifier "$PATH_CLASSIFIER" "::error::review-predicate: REVIEW_GATE_DOCS_ONLY=none requires the executable harness-ci docs classifier at '$PATH_CLASSIFIER'" >&2
   exit 2
 fi
 POLICY_OWNER="$script_dir/review-policy"
@@ -811,6 +811,12 @@ materialize_docs_commits() { # REPO BASE HEAD
 # The policy owner and classifier come from the trusted default-branch
 # checkout. The pull-request checkout is judged data. Source preparation and
 # classification run without the writer's GitHub credentials.
+#
+# Sources are prepared on the condition change-class's header states for its
+# one kendex read: harness-only answering harness_only=true for the range,
+# asked here with the arguments change-class passes it. Any other diff skips
+# the refresh.
+#
 # Source preparation reads the JUDGED pull request's manifest, so how much work
 # it asks for is the pull request's to choose. The writer converges every open
 # pull request inside one 12-minute step, and an unbounded refresh lets one
@@ -839,22 +845,9 @@ materialize_docs_commits() { # REPO BASE HEAD
 CLASS_REFRESH_MAX_SOURCES=12
 CLASS_REFRESH_DEADLINE_SECONDS=45
 
-resolve_class_policy() ( # REPO BASE HEAD
-  repo="$1"
-  base_sha="$2"
-  head_sha="$3"
-  scratch="$(mktemp -d)" || return 1
-  subject="$scratch/subject"
-  added=0
-  cleanup_policy_subject() {
-    if [ "$added" != 0 ] && ! git -C "$repo" worktree remove --force -- "$subject" >/dev/null 2>&1; then
-      rg_message warning predicate-policy-cleanup "$subject" "review-predicate: could not remove the temporary class-policy checkout" >&2
-    fi
-    rm -rf -- "${scratch:?}"
-  }
-  trap cleanup_policy_subject EXIT
-  git -C "$repo" worktree add --quiet --detach "$subject" "$head_sha" || return 1
-  added=1
+# The bounded refresh the render proof reads, in the pull request's checkout.
+prepare_policy_sources() { # CHECKOUT
+  local subject="$1" declared bound refresh_status
   declared="$( (cd "$subject" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR kendex source list 2>/dev/null) | grep -c .)" || declared=0
   if [ "$declared" -gt "$CLASS_REFRESH_MAX_SOURCES" ]; then
     rg_message error predicate-policy-sources "$declared/$CLASS_REFRESH_MAX_SOURCES" \
@@ -875,11 +868,46 @@ resolve_class_policy() ( # REPO BASE HEAD
     ${bound[@]+"${bound[@]}"} kendex source refresh >/dev/null) || refresh_status=$?
   if [ "$refresh_status" -ne 0 ]; then
     if [ "$refresh_status" -eq 124 ]; then
-      rg_message error predicate-policy-refresh-deadline "$CLASS_REFRESH_DEADLINE_SECONDS" \
-        "::error::review-predicate: source preparation passed its ${CLASS_REFRESH_DEADLINE_SECONDS}s bound; this pull request is left for the next pass" >&2
+      rg_message error predicate-policy-refresh-deadline "$PR_NUMBER/${CLASS_REFRESH_DEADLINE_SECONDS}s" \
+        "::error::review-predicate: PR #$PR_NUMBER: source preparation passed its ${CLASS_REFRESH_DEADLINE_SECONDS}s bound; this pull request is left for the next pass" >&2
     fi
     return 1
   fi
+}
+
+resolve_class_policy() ( # REPO BASE HEAD
+  repo="$1"
+  base_sha="$2"
+  head_sha="$3"
+  scratch="$(mktemp -d)" || return 1
+  subject="$scratch/subject"
+  added=0
+  cleanup_policy_subject() {
+    if [ "$added" != 0 ] && ! git -C "$repo" worktree remove --force -- "$subject" >/dev/null 2>&1; then
+      rg_message warning predicate-policy-cleanup "$subject" "review-predicate: could not remove the temporary class-policy checkout" >&2
+    fi
+    rm -rf -- "${scratch:?}"
+  }
+  trap cleanup_policy_subject EXIT
+  git -C "$repo" worktree add --quiet --detach "$subject" "$head_sha" || return 1
+  added=1
+  if ! paths_verdict="$(env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR "$PATH_CLASSIFIER" \
+    --mode harness --event pull_request --base "$base_sha" --head "$head_sha" \
+    --repo "$subject" --output /dev/null 2>"$scratch/paths.err")"; then
+    cat -- "$scratch/paths.err" >&2
+    rg_message error predicate-policy-paths "$PATH_CLASSIFIER" \
+      "::error::review-predicate: the harness-ci path classifier refused the class-policy range" >&2
+    return 1
+  fi
+  case "$paths_verdict" in
+    harness_only=true) prepare_policy_sources "$subject" || return 1 ;;
+    harness_only=false) ;;
+    *)
+      rg_message error predicate-policy-paths "$paths_verdict" \
+        "::error::review-predicate: the harness-ci path classifier returned an invalid verdict" >&2
+      return 1
+      ;;
+  esac
   env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR "$POLICY_OWNER" \
     --event pull_request --base "$base_sha" --head "$head_sha" --repo "$subject"
 )
@@ -1743,7 +1771,7 @@ if [ "$POLICY_STATE" = "inactive" ] && [ "$DOCS_ONLY_MODE" = "none" ] && [ "$got
       docs_base=""
     }
   fi
-  if [ -n "$docs_base" ] && ! docs_output="$("$DOCS_CLASSIFIER" --mode docs --event pull_request --base "$docs_base" --head "$HEAD_SHA" --repo "$docs_repo" --output /dev/null --paths-output "$docs_paths")"; then
+  if [ -n "$docs_base" ] && ! docs_output="$("$PATH_CLASSIFIER" --mode docs --event pull_request --base "$docs_base" --head "$HEAD_SHA" --repo "$docs_repo" --output /dev/null --paths-output "$docs_paths")"; then
     docs_refuse docs-classifier "$docs_base...$HEAD_SHA" "the shared docs classifier failed"
   elif [ -n "$docs_base" ]; then
     case "$docs_output" in
