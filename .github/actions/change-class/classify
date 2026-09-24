@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# classify — the shipped classifier's verdict for a diff, and the changed-path
+# families a workflow selects its jobs with.
+#
+# Nothing here decides a class or a docs verdict. `change-class` prints one
+# and writes it to the step's output file itself, and `harness-only --mode
+# docs` does the same for docs_only; this script adds the path families beside
+# them, and the families are a grouping of the path list that docs-mode call
+# prints, never a second reading of the diff. Taking the list from that call
+# is what keeps the grouping on the shipped reader: `change-class` repeats the
+# same paths on its stderr in a shell-quoted form whose only decoder is `eval`,
+# and a path list out of the judged tree is not something to hand a shell.
+#
+# Environment, all required but BASE and CLASSIFIER:
+#   EVENT  github.event_name
+#   BASE   the base endpoint sha; empty where the event carries none
+#   HEAD   the head endpoint sha
+#   REPO   the checkout to judge
+#   CLASSIFIER  the checkout root to read the shipped scripts from; empty
+#          means this script's own tree
+#   GITHUB_OUTPUT  the step output file both writers append to
+#
+# Outputs appended to GITHUB_OUTPUT:
+#   change_class       render|trivial|micro|small|standard, written by the
+#                      shipped classifier itself
+#   docs_only          true|false, written by the shipped `harness-only --mode
+#                      docs` itself. It answers false where harness-only
+#                      cannot read the diff (an unsupported event, a missing
+#                      or unresolvable endpoint, an unreadable or empty diff).
+#                      A wiring error from harness-only or from this script
+#                      fails the step with exit 2 instead, and the failed
+#                      step, not this output, is the answer.
+#   changed_skills     blank-separated first path segments under skills/
+#   changed_crates     blank-separated first path segments under crates/
+#   changed_workflows  blank-separated first path segments under
+#                      .github/workflows/
+#   changed_paths      every changed path, one per line, as the shipped reader
+#                      printed them. A family is a grouping of this list, so a
+#                      caller whose lanes answer to a tree no family names
+#                      groups it here rather than reading the diff again.
+#
+# A segment is what the path holds, not what the caller hopes: `skills/AGENTS.md`
+# puts `AGENTS.md` in changed_skills. Over-inclusion is the safe direction —
+# an unrecognised member selects a lane rather than dropping one.
+#
+# Every refusal here starts `change-class-action: wiring-error: cause=<name>`
+# and exits 2, so a caller gating a lane on the class sees a red step rather
+# than an empty output. Reading an empty class as "nothing to run" is the
+# fail-open that exit code closes.
+set -euo pipefail
+
+die() { # CAUSE MESSAGE
+  printf 'change-class-action: wiring-error: cause=%s\n' "$1" >&2
+  printf 'change-class-action: %s\n' "$2" >&2
+  exit 2
+}
+
+# Where the shipped scripts are read from. A caller that judges a tree whose
+# author could edit the classifier names a separate checkout here; with none
+# named it is this action's own tree, which a consumer referencing the action
+# at a tag or branch gets from that same revision.
+scripts_root="${CLASSIFIER:-}"
+[ -n "$scripts_root" ] || scripts_root="$(dirname "$0")/../../.."
+SCRIPTS="$(cd "$scripts_root/skills/harness-ci/scripts" 2>/dev/null && pwd)" ||
+  die "classifier-unreadable root=$scripts_root" \
+    "no skills/harness-ci/scripts under the classifier root"
+
+[ -n "${EVENT:-}" ] || die missing-event "the event input is required"
+[ -n "${HEAD:-}" ] || die missing-head "the head input is required"
+[ -n "${REPO:-}" ] || die missing-repo "the repo input is required"
+[ -n "${GITHUB_OUTPUT:-}" ] || die missing-output-file \
+  "GITHUB_OUTPUT is unset, so no caller could read a verdict"
+
+work="$(mktemp -d)" || die mktemp-failed "could not create a working directory"
+trap 'rm -rf -- "${work:?}"' EXIT
+
+args=(--event "$EVENT" --head "$HEAD" --repo "$REPO")
+[ -z "${BASE:-}" ] || args=("${args[@]}" --base "$BASE")
+
+# The verdict. `change-class` appends `change_class=` to GITHUB_OUTPUT on its
+# own and prints that same line, and nothing else, on stdout, which is where
+# it is read back. Any other exit is a wiring error that carries no verdict.
+verdict="$("$SCRIPTS/change-class" "${args[@]}")" || {
+  status=$?
+  die "classifier-failed status=$status" "change-class exited $status"
+}
+case "$verdict" in
+  change_class=render | change_class=trivial | change_class=micro | \
+    change_class=small | change_class=standard) class="${verdict#change_class=}" ;;
+  *) die "verdict-unreadable class-line=$verdict" \
+    "the classifier printed no change_class line this action knows" ;;
+esac
+
+# The docs verdict and the paths, from the reader that owns the diff range for
+# every event. It appends `docs_only=` to GITHUB_OUTPUT on its own, as the
+# classifier does its class.
+docs="$("$SCRIPTS/harness-only" --mode docs "${args[@]}" \
+  --paths-output "${work:?}/paths")" || {
+  status=$?
+  die "path-reader-failed status=$status" "harness-only exited $status"
+}
+case "$docs" in
+  docs_only=true | docs_only=false) ;;
+  *) die "docs-verdict-unreadable docs-line=$docs" \
+    "harness-only printed no docs_only line" ;;
+esac
+
+# Every class but `standard` is reached only after the classifier read a
+# changed path, so an empty list under one of them is a state neither script
+# can produce. Publishing the families empty there would select the lanes a
+# narrow class runs on nothing at all.
+if [ ! -s "${work:?}/paths" ] && [ "$class" != standard ]; then
+  die "class-without-paths class=$class" \
+    "a narrow class arrived with no changed path, which no classifier emits"
+fi
+
+# One family per directory level a caller gates on: the skill, the workspace
+# member and the workflow file. A path outside all three joins no family, and
+# a change carrying one is why `standard` exists. The read is assigned on its
+# own line rather than inside the printf below: a substitution that died
+# inside an argument list leaves printf's own zero status as the step's, and
+# the output line is then written empty with nothing red.
+family() { # NAME PREFIX DEPTH
+  local name="$1" prefix="$2" depth="$3" listed
+  listed="$(cut -d/ -f1-"$depth" <"${work:?}/paths" |
+    sed -n "s%^$prefix/%%p" | sort -u | tr '\n' ' ')" ||
+    die "family-read-failed prefix=$prefix" \
+      "could not group the changed paths under '$prefix'"
+  printf '%s=%s\n' "$name" "${listed% }" >>"$GITHUB_OUTPUT"
+}
+
+family changed_skills skills 2
+family changed_crates crates 2
+family changed_workflows .github/workflows 3
+
+sed -n 's/^changed_/family: /p' <"$GITHUB_OUTPUT" >&2
+
+# The whole list, for a caller whose lanes answer to a tree no family names.
+# A multi-line output needs a delimiter no line of the value can be. The value
+# is a path list the pull request's author writes, so a path spelling the
+# delimiter would end the value early and write the lines after it as outputs
+# of their own; that path is refused rather than escaped.
+delimiter=__change_class_changed_paths_end__
+if grep -qxF -- "$delimiter" "${work:?}/paths"; then
+  die "delimiter-collides path=$delimiter" \
+    "a changed path is exactly the heredoc delimiter this output needs"
+fi
+{
+  printf 'changed_paths<<%s\n' "$delimiter"
+  cat -- "${work:?}/paths"
+  printf '%s\n' "$delimiter"
+} >>"$GITHUB_OUTPUT"

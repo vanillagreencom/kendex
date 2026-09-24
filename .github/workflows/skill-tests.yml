@@ -5,13 +5,24 @@ name: Skill Tests
 # gating here is what lets consuming repos drop tracked vendoring: quality is
 # proven at the source, not re-proven per consumer.
 #
-# THE FULL BATTERY RUNS ON pull_request AND merge_group when the change is not
-# documentation-only: every shard, the aggregators over them, the ui lane and
-# every cargo lane, so a green PR has proven what the queue re-proves and an
-# ejection — dequeue, fix, requeue, pay the merge latency again — is rare
-# instead of routine. A docs-only diff skips the shell and cargo lanes. Their
-# aggregators still report and accept only the skips that a successful
-# classifier authorized. The push to main
+# WHAT RUNS IS KEYED TO THE CHANGE CLASS, on pull_request and merge_group
+# alike, so the second pass shrinks with the first. The `changes` job below
+# reads the class once through the change-class composite action, `tools/
+# ci-job-set` turns it into one `<lane>=true|false` line per gated lane, and
+# every `if:` in this file reads one of those lines. A `standard` diff that
+# is not documentation alone runs the full battery — every shard, the
+# aggregators over them, the ui lane and every cargo lane — so a green PR has
+# proven what the queue re-proves and an ejection — dequeue, fix, requeue,
+# pay the merge latency again — is rare instead of routine; one of
+# documentation alone takes the narrower selection below. Of the gated jobs,
+# a `render` or `trivial` diff runs the bot-instructions job alone, which
+# also carries the document byte
+# ceilings and the work-marker scan. Every other diff, a `standard` one of documentation alone
+# included, runs the shell shards, the Linux cargo lane and that job; the
+# macOS, lint and Windows lanes stand down only where every changed path is
+# prose, and the ui lane only where no path is under ui/. `tools/ci-job-set`
+# states that invariant. The aggregators still report and accept only the
+# skips the class authorized. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
 # so it runs only the compile steps: each cargo lane builds its targets with
@@ -76,29 +87,166 @@ permissions:
   contents: read
 
 jobs:
-  # The package classifier owns endpoint selection and fails closed. Keep this
-  # job inside the workflow: a trigger-level path filter would create none of
-  # the required contexts for a docs-only merge group.
+  # THE ONE READ OF THE CHANGE CLASS. Every gated lane below answers to a line
+  # this job published, and no other job classifies anything: a second reader
+  # could disagree with this one, and the lane it disagreed about would be the
+  # one nothing proved. The action is the same one a consumer references as
+  # `vanillagreencom/kendex/.github/actions/change-class@main`, so the merge
+  # route and CI can never classify differently. Here the action WRAPPER is
+  # referenced by path, because this pull request is what proves it, while the
+  # classification it runs comes from the default-branch checkout the steps
+  # below take.
+  #
+  # Keep this job inside the workflow: a trigger-level path filter would
+  # create none of the required contexts, and a merge queue waits forever on a
+  # check nothing will report.
+  #
+  # The class is read on pull_request AND merge_group, and the classifier
+  # measures both, so the second pass shrinks with the first rather than
+  # falling back to the full battery. The class-to-job contract below is the
+  # same on either event.
   changes:
     name: Classify the diff
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # The render proof re-renders every installed item, so its cost grows with
+    # this repository's catalog rather than with the diff. This ceiling sits
+    # ahead of every lane below and is the whole budget a `render` pull
+    # request's CI answers to.
+    timeout-minutes: 20
     outputs:
+      change_class: ${{ steps.classify.outputs.change_class }}
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      shell_shards: ${{ steps.select.outputs.shell_shards }}
+      macos_legs: ${{ steps.select.outputs.macos_legs }}
+      ui: ${{ steps.select.outputs.ui }}
+      bot_instructions: ${{ steps.select.outputs.bot_instructions }}
+      cargo_linux: ${{ steps.select.outputs.cargo_linux }}
+      cargo_macos: ${{ steps.select.outputs.cargo_macos }}
+      cargo_lint: ${{ steps.select.outputs.cargo_lint }}
+      cargo_windows: ${{ steps.select.outputs.cargo_windows }}
+    # THE PINNED BUILD. The tag is a published main build, immutable, and
+    # both the installer and the binary are read at that one revision. It is
+    # one part of this workflow's trust boundary: the classifier and the orch
+    # contract it measures by come from the default-branch checkout below,
+    # while the action wrapper, tools/ci-job-set and tools/ci-aggregate run
+    # from the pull request's own tree, held by review rather than by this
+    # split.
+    env:
+      # The event and its two endpoints, spelled once: the render-reach step
+      # and the classify step must judge the same range.
+      EVENT: ${{ github.event_name }}
+      BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+      HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+      KENDEX_REPO: ${{ github.repository }}
+      KENDEX_BUILD_SHA: 2ba4f18c9ba6889a190ad6f19793ac4bf089df35
+      KENDEX_VERSION: main-build-133-1-2ba4f18c9ba6889a190ad6f19793ac4bf089df35
     steps:
+      # THREE CHECKOUTS, and the split is the point. The classifier is the
+      # DEFAULT BRANCH's copy, where the pull request's author cannot change
+      # it; `subject` is the tree under judgement; and the workspace root
+      # carries the action wrapper, `tools/ci-job-set` and the
+      # `tools/ci-aggregate` the aggregators run, which this repository is
+      # proving on this pull request and which review holds. A consumer
+      # calling the action at `@main` gets the same split with one checkout,
+      # because there the action's own tree IS kendex at main.
+      #
+      # `classifier` and `subject` are siblings under the root checkout rather
+      # than nested inside the judged tree: the classifier refuses a `subject`
+      # whose working tree differs from its own HEAD, and a checkout written
+      # into it would cost every diff its `render` class.
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           persist-credentials: false
-      - id: classify
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+      - name: the classifier, from the default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: classifier
+          persist-credentials: false
+      - name: the tree under judgement
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: subject
+          persist-credentials: false
+      # Whether the render class is reachable at all. It mirrors change-class's
+      # render branch, `if [ "$harness_verdict" = "harness_only=true" ]`: that
+      # branch is the only reader of kendex and the mirror, so on every other
+      # verdict the install and the refresh below would buy nothing. Read with
+      # the default branch's copy, as the class is.
+      - id: render-reach
         run: >-
-          skills/harness-ci/scripts/harness-only
-          --mode docs --event "$EVENT" --base "$BASE" --head "$HEAD"
+          classifier/skills/harness-ci/scripts/harness-only
+          --mode harness --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
+      # The `render` class is proved by re-rendering, which needs a kendex
+      # whose `verify --json` prints the document version change-class pins.
+      # A RELEASE, not a build from this checkout: the Linux `rest` shard
+      # builds one because its suites judge the classifier against the verify
+      # that ships beside it, and paying that build here would put a cargo
+      # toolchain ahead of every lane in the workflow. The installer is read
+      # at the pinned sha rather than from the mutable published URL, so the
+      # script and the binary it fetches move together and only on a pin bump.
+      #
+      # NEITHER THIS STEP NOR THE ONE AFTER IT FAILS THIS JOB. A kendex that
+      # will not install, one answering no such document, and a mirror that
+      # will not fetch may leave the render proof unavailable, and nothing
+      # else: classification still runs, and the class the classify step
+      # prints is the answer, whatever these two steps did. Turning the job
+      # red on a network blip would instead red every required context in
+      # this file and block a change nothing is wrong with. Each carries a
+      # deadline of its own under the job's, and the warning step after them
+      # annotates the run when either did not succeed, so a pin that rotted
+      # shows on every run it costs.
+      - id: kendex
+        name: kendex, for the render class
+        if: steps.render-reach.outputs.harness_only == 'true'
+        continue-on-error: true
+        timeout-minutes: 3
+        shell: bash
+        run: >-
+          curl -fsSL
+          "https://raw.githubusercontent.com/$KENDEX_REPO/$KENDEX_BUILD_SHA/install.sh"
+          | sh -s -- --version "$KENDEX_VERSION"
+      # `kendex verify` re-renders out of the local mirror and never fetches
+      # it, so on a runner that has never fetched the source every package
+      # reports its origin unavailable and the class falls to `standard`.
+      # This primes the runner's cache and leaves the checkout as committed,
+      # which the classifier requires: it refuses a tree that differs from its
+      # own HEAD, so a step writing renders back would have the proof attest
+      # to its own repair.
+      - id: mirror
+        name: the source mirror the render proof re-renders from
+        if: steps.render-reach.outputs.harness_only == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        working-directory: subject
+        run: kendex source refresh
+      - name: warn when the render proof lost a prerequisite
+        if: steps.render-reach.outputs.harness_only == 'true' && (steps.kendex.outcome != 'success' || steps.mirror.outcome != 'success')
+        env:
+          KENDEX_OUTCOME: ${{ steps.kendex.outcome }}
+          MIRROR_OUTCOME: ${{ steps.mirror.outcome }}
+        run: >-
+          echo "::warning title=render proof may be unavailable::kendex install $KENDEX_OUTCOME, source refresh $MIRROR_OUTCOME (KENDEX_VERSION=$KENDEX_VERSION); the render proof may be unavailable, and the class the classify step prints is the answer"
+      - id: classify
+        uses: ./.github/actions/change-class
+        with:
+          classifier: classifier
+          repo: subject
+          event: ${{ env.EVENT }}
+          base: ${{ env.BASE }}
+          head: ${{ env.HEAD }}
+      # The class becomes a job set here and nowhere else. Each lane's `if:`
+      # below reads one of these lines rather than re-deriving the selection
+      # from the class and the paths, so there is one place to read what a
+      # class runs and one place to change it.
+      - id: select
+        env:
+          CHANGE_CLASS: ${{ steps.classify.outputs.change_class }}
+          DOCS_ONLY: ${{ steps.classify.outputs.docs_only }}
+          CHANGED_PATHS: ${{ steps.classify.outputs.changed_paths }}
+        run: tools/ci-job-set
 
   # This repository is the package's source, so the candidate's own checker
   # judges the candidate's renders: a change to the renderer or the derivation
@@ -108,7 +256,8 @@ jobs:
   # checker, and the review gate holds every policy path.
   bot-instructions:
     name: Bot instructions
-    if: github.event_name != 'push'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.bot_instructions == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -118,6 +267,20 @@ jobs:
           persist-credentials: false
       - id: bot-instructions-check
         run: candidate/skills/bot-instructions/scripts/bot-instructions check --repo candidate --spec candidate/skills/bot-instructions
+      # The two whole-tree content scans live in this job because every class
+      # runs it, `render` and `trivial` included, and a diff small enough to
+      # be `trivial` can still push a document past its ceiling. always(): a
+      # red check above must not suppress either scan.
+      - name: doc-limits (document byte ceilings)
+        if: always()
+        working-directory: candidate
+        run: skills/doc-limits/scripts/doc-limits
+      # The commit lane runs todo-ban --staged and judges what a commit adds;
+      # this scan takes the rest, in every blob git reads as text.
+      - name: todo-ban (index-wide work-marker scan)
+        if: always()
+        working-directory: candidate
+        run: skills/commit-guards/scripts/todo-ban
 
   # SHARDED: thirteen shards bound wall time at the slowest shard and give
   # suite growth per-shard headroom instead of a shared cliff. `orch` and
@@ -139,7 +302,8 @@ jobs:
   # the time and not half the files; every figure below is a per-suite sum over
   # the macOS leg of run 35467869265, and the comment above each step carries
   # its own. `guards` held five repository-wide scans and 68 suite files, and
-  # splits into `guards-scans` (the scans, 65s), `guards-commit` (34 files,
+  # splits into `guards-scans` (the scans, 65s when it held all five; two have
+  # since moved to the bot-instructions job), `guards-commit` (34 files,
   # 499s, and the ruff its py-names lane needs) and `guards-tools` (34 files,
   # 475s). `rest` ran 780s over 79 files and gave the worktree roster alone to
   # `worktree`, 382s over 22 files, keeping 57 files at 398s. `orch-rest` ran
@@ -180,12 +344,23 @@ jobs:
   skill-suites-shard:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'push' && !(needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true') }}
+    # Read as: never on a cancelled run; otherwise run whenever the
+    # classification is missing, and stand down only where it arrived and
+    # selected this lane out. The status function is what lifts the implicit
+    # `success()`, which would stand the shards down on exactly the diffs
+    # nothing classified.
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.shell_shards == 'true') }}
     strategy:
       fail-fast: false
       matrix:
         shard: [review-gate, orch-terminal, orch-oversee, orch-state, orch-rest, guards-scans, guards-commit, guards-tools, linear, worktree, rest, node, pi-claude-bridge]
-        os: [ubuntu-latest, macos-latest]
+        # The macOS leg is the SECOND run of these suites, under Bash 3.2 and
+        # the BSD userland. A job-level `if:` cannot reach `matrix`, so the
+        # leg is dropped from the matrix rather than conditioned inside it,
+        # and a leg that never expands bills no macOS runner. A dead
+        # classifier publishes nothing, so the result term ahead of the
+        # selection is what runs both legs rather than neither.
+        os: ${{ fromJSON((needs.changes.result != 'success' || needs.changes.outputs.macos_legs == 'true') && '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
         exclude:
           - os: macos-latest
             shard: node
@@ -443,11 +618,11 @@ jobs:
       # ---- shards: guards-scans, guards-commit, guards-tools — the
       # repository-wide scans and the guard packages' own suites, in three.
       # One `guards` shard held all of it and ran 901-1061s on the macOS leg
-      # against roughly a third of that on Linux. `guards-scans` is the five
-      # scans below, each one pass over the whole index, the whole document set
-      # or the whole shell roster; they are 65s of that macOS leg and 51s of
-      # the Linux one. The 68 suite files after them are the other two shards'
-      # work, and the ruff install rides with `guards-commit` because the suite
+      # against roughly a third of that on Linux. `guards-scans` is the scans
+      # below, each one pass over a tracked-file roster or the shell roster;
+      # the document-set and work-marker scans run in the bot-instructions
+      # job instead, which every class runs. The 68 suite files after them are
+      # the other two shards' work, and the ruff install rides with `guards-commit` because the suite
       # that needs it, commit-guards' own py-names.test.sh, runs there.
       #
       # THE SEAM BETWEEN THOSE TWO is the package boundary — commit-guards' own
@@ -481,19 +656,6 @@ jobs:
             fi
           done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' | grep -vE '/(scripts|tests)/lib/|/tests/controls/')
           exit "$fail"
-
-      # Document byte ceilings run on every PR and queue event. A failure in
-      # an earlier step must not suppress this check.
-      - name: doc-limits (document byte ceilings)
-        if: always() && matrix.shard == 'guards-scans'
-        run: skills/doc-limits/scripts/doc-limits
-
-      # Same posture, same reasons. The commit lane runs todo-ban --staged
-      # and judges what a commit adds; this scan takes the rest, in every
-      # blob git reads as text.
-      - name: todo-ban (index-wide work-marker scan)
-        if: always() && matrix.shard == 'guards-scans'
-        run: skills/commit-guards/scripts/todo-ban
 
       # One scan for Bash 4+ syntax over the roster `tools/bash32-lint --list`
       # prints. bash32-lint.test.sh proves its teeth.
@@ -972,7 +1134,8 @@ jobs:
   # queue event.
   ui-tests:
     name: UI (vitest, tsc, biome)
-    if: github.event_name != 'push'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -1015,10 +1178,10 @@ jobs:
   # skipped required context would satisfy the ruleset without any suite having
   # run (the fail-open this line exists to close).
   #
-  # The helper judges `toJSON(needs)` as a set. It requires the classifier to
-  # succeed. A skipped shell shard is accepted only when that classifier
-  # reported docs-only; UI and bot-instructions must always succeed. Failure,
-  # cancellation and every other skip fail this required context.
+  # tools/ci-aggregate judges `toJSON(needs)` as a set. It requires the
+  # classifier to succeed, and accepts a skipped lane only where the changes
+  # job published `false` for that lane's selection. Failure, cancellation and
+  # every other skip fail this required context.
   skill-suites:
     name: Skill suites (shell + node)
     needs: [changes, skill-suites-shard, ui-tests, bot-instructions]
@@ -1032,12 +1195,15 @@ jobs:
       - name: every needed job succeeded
         env:
           RESULTS: ${{ toJSON(needs) }}
-          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          SHELL_SHARDS: ${{ needs.changes.outputs.shell_shards }}
+          UI: ${{ needs.changes.outputs.ui }}
+          BOT_INSTRUCTIONS: ${{ needs.changes.outputs.bot_instructions }}
         run: |
           echo "$RESULTS"
-          skills/harness-ci/scripts/aggregate-needs \
-            --results "$RESULTS" --classifier changes --waiver "$DOCS_ONLY" \
-            --skippable skill-suites-shard
+          tools/ci-aggregate --results "$RESULTS" --classifier changes \
+            --lane "$SHELL_SHARDS:skill-suites-shard" \
+            --lane "$UI:ui-tests" \
+            --lane "$BOT_INSTRUCTIONS:bot-instructions"
 
   gate-selftest:
     # DELIBERATELY UNGATED: no `needs`, no approval condition, no path
@@ -1132,7 +1298,8 @@ jobs:
   cargo-linux:
     name: Cargo ${{ matrix.crate }} (Linux)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'push' || !(needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true')) }}
+    # What selects this lane, and why: tools/ci-job-set, cargo_linux.
+    if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -1206,7 +1373,8 @@ jobs:
   cargo-macos:
     name: macOS cargo ${{ matrix.crate }}${{ matrix.leg != 'whole' && format(' ({0})', matrix.leg) || '' }}
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'push' || !(needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true')) }}
+    # What selects this lane, and why: tools/ci-job-set, cargo_macos.
+    if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -1370,7 +1538,7 @@ jobs:
   cargo-lint:
     name: Cargo lints (clippy, fmt, doc)
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'push' && !(needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.cargo_lint == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -1402,12 +1570,17 @@ jobs:
         run: cargo doc --no-deps --document-private-items --workspace --locked
 
   # AGGREGATORS for the two required cargo contexts; the shape and the
-  # reasons are the Skill suites aggregator's. Each accepts its cargo skips
-  # only on a successful docs-only verdict. Not on push: the shards ran
-  # compile-only there and nothing requires a context on that event.
+  # reasons are the Skill suites aggregator's. Each accepts a skipped cargo
+  # lane only through tools/ci-aggregate, against the selection the changes
+  # job published for it. Not on push: the shards ran compile-only there and
+  # nothing requires a context on that event.
   cargo-tests:
     name: Cargo (workspace tests)
-    needs: [changes, cargo-linux, cargo-lint]
+    # The two Windows lanes aggregate here rather than standing as contexts of
+    # their own. GitHub counts a SKIPPED required context as satisfied, so a
+    # lane that skips on its own name is a lane nothing holds; under this
+    # aggregate a skip is accepted only where the class authorized it.
+    needs: [changes, cargo-linux, cargo-lint, cargo-check-windows, cargo-tests-windows]
     if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1418,12 +1591,16 @@ jobs:
       - name: every needed job succeeded
         env:
           RESULTS: ${{ toJSON(needs) }}
-          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          CARGO_LINUX: ${{ needs.changes.outputs.cargo_linux }}
+          CARGO_LINT: ${{ needs.changes.outputs.cargo_lint }}
+          CARGO_WINDOWS: ${{ needs.changes.outputs.cargo_windows }}
         run: |
           echo "$RESULTS"
-          skills/harness-ci/scripts/aggregate-needs \
-            --results "$RESULTS" --classifier changes --waiver "$DOCS_ONLY" \
-            --skippable cargo-linux --skippable cargo-lint
+          tools/ci-aggregate --results "$RESULTS" --classifier changes \
+            --lane "$CARGO_LINUX:cargo-linux" \
+            --lane "$CARGO_LINT:cargo-lint" \
+            --lane "$CARGO_WINDOWS:cargo-check-windows" \
+            --lane "$CARGO_WINDOWS:cargo-tests-windows"
 
   cargo-tests-macos:
     name: macOS cargo (workspace tests)
@@ -1438,12 +1615,11 @@ jobs:
       - name: every needed job succeeded
         env:
           RESULTS: ${{ toJSON(needs) }}
-          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          CARGO_MACOS: ${{ needs.changes.outputs.cargo_macos }}
         run: |
           echo "$RESULTS"
-          skills/harness-ci/scripts/aggregate-needs \
-            --results "$RESULTS" --classifier changes --waiver "$DOCS_ONLY" \
-            --skippable cargo-macos
+          tools/ci-aggregate --results "$RESULTS" --classifier changes \
+            --lane "$CARGO_MACOS:cargo-macos"
 
   # The app ships on Windows and release.yml builds it there. `cargo check`
   # does not link, so the Linux runner proves the Windows targets compile
@@ -1455,7 +1631,7 @@ jobs:
   cargo-check-windows:
     name: Windows cargo (core and CLI targets compile)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'push' || !(needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true')) }}
+    if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -1483,7 +1659,7 @@ jobs:
   cargo-tests-windows:
     name: Windows cargo (workspace tests)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'push' || !(needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true')) }}
+    if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows == 'true') }}
     runs-on: windows-latest
     timeout-minutes: 40
     steps:

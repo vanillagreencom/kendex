@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# ci-aggregate — hold a required context open over the lanes a change class
+# stood down.
+#
+# `skills/harness-ci/scripts/aggregate-needs` takes one waiver and the set of
+# jobs that waiver authorizes to skip. A class selects each lane separately,
+# so each aggregate of `.github/workflows/skill-tests.yml` has its own such
+# set: exactly the lanes `tools/ci-job-set` selected `false`. This script
+# builds that set from the selections and runs the helper, which keeps the
+# three aggregates from spelling the same derivation three times.
+#
+# Usage:
+#   ci-aggregate --results JSON --classifier JOB --lane SELECTION:JOB [--lane ...]
+#
+# SELECTION is the `true` or `false` the classifying job published for that
+# lane. A lane selected `false` is authorized to skip; every other lane must
+# have succeeded.
+#
+# An EMPTY selection is the classifying job having published nothing, which is
+# that job having failed. It authorizes no skip, so the run reaches
+# `aggregate-needs` with the waiver off and is rejected there, naming the dead
+# classifier rather than a parse failure here.
+#
+# Every refusal starts `ci-aggregate: cause=<name>` and exits 2, a helper this
+# script cannot find included. Exit 1 is the helper's own rejection, passed
+# through unchanged.
+set -euo pipefail
+
+die() { # CAUSE MESSAGE
+  printf 'ci-aggregate: cause=%s\n' "$1" >&2
+  printf 'ci-aggregate: %s\n' "$2" >&2
+  exit 2
+}
+
+helper_rel="$(dirname "$0")/../skills/harness-ci/scripts"
+helper_dir="$(cd "$helper_rel" 2>/dev/null && pwd)" ||
+  die "helper-unreadable dir=$helper_rel" \
+    "the harness-ci scripts directory beside this repository is unreadable"
+HELPER="$helper_dir/aggregate-needs"
+[ -x "$HELPER" ] || die "helper-missing path=$HELPER" \
+  "aggregate-needs is absent or not executable"
+
+results=""
+classifier=""
+lanes=""
+authorized=""
+declared=""
+
+need_value() { # FLAG REMAINING NEXT
+  [ "$2" -ge 2 ] || die "missing-value option=$1" "$1 needs a value"
+  case "$3" in
+    -?*) die "flag-used-as-value option=$1 value=$3" \
+      "$1 needs a value, got the flag '$3'" ;;
+  esac
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --results) need_value "$1" "$#" "${2:-}"; results="$2"; shift 2 ;;
+    --classifier) need_value "$1" "$#" "${2:-}"; classifier="$2"; shift 2 ;;
+    --lane) need_value "$1" "$#" "${2:-}"; lanes="$lanes $2"; shift 2 ;;
+    *) die "unknown-option option=$1" "unknown argument '$1'" ;;
+  esac
+done
+
+[ -n "$results" ] || die "missing-option option=--results" "--results is required"
+[ -n "$classifier" ] || die "missing-option option=--classifier" \
+  "--classifier is required"
+[ -n "$lanes" ] || die "missing-option option=--lane" \
+  "at least one --lane is required"
+
+for lane in $lanes; do
+  job="${lane#*:}"
+  selection="${lane%%:*}"
+  [ "$job" != "$lane" ] && [ -n "$job" ] || die "malformed-lane lane=$lane" \
+    "a lane is SELECTION:JOB"
+  # Two selections for one job would leave the verdict to whichever the
+  # helper read last, so a lane the class selected could skip under the
+  # other's `false`.
+  case "$declared --skippable " in
+    *" --skippable $job "*) die "duplicate-lane job=$job" \
+      "this job is named by more than one --lane" ;;
+  esac
+  declared="$declared --skippable $job"
+  case "$selection" in
+    false) authorized="$authorized --skippable $job" ;;
+    true | '') ;;
+    *) die "invalid-selection job=$job value=$selection" \
+      "a selection is true, false, or empty where the classifier published none" ;;
+  esac
+done
+
+# The helper needs a --skippable to parse even where no lane may skip. With
+# the waiver off that list authorizes nothing, so naming every lane there is
+# the same refusal as naming none, and it keeps the flag satisfied.
+waiver=true
+if [ -z "$authorized" ]; then
+  waiver=false
+  authorized="$declared"
+fi
+
+printf 'ci-aggregate: waiver=%s authorized=%s\n' "$waiver" \
+  "$(printf '%s' "$authorized" | sed 's/ --skippable//g; s/^ //')" >&2
+
+# shellcheck disable=SC2086 # a job name carries no whitespace
+exec "$HELPER" --results "$results" --classifier "$classifier" \
+  --waiver "$waiver" $authorized

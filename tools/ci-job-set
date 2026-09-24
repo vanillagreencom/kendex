@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# ci-job-set — which lanes of .github/workflows/skill-tests.yml a change class
+# runs.
+#
+# The class comes from the change-class composite action and is never decided
+# here; this script maps it, and the changed paths behind it, onto one
+# `<lane>=true|false` line per gated lane. Every lane condition in that
+# workflow reads one of those lines, so the selection is made once instead of
+# re-derived in each `if:`.
+#
+# Environment:
+#   CHANGE_CLASS   render|trivial|micro|small|standard
+#   DOCS_ONLY      true|false, the shipped `harness-only --mode docs` verdict
+#                  for the same diff
+#   CHANGED_PATHS  the changed paths, one per line
+#   GITHUB_OUTPUT  the step output file the selection is appended to
+#
+# THE INVARIANT, stated once, with no list of what any lane reads:
+#
+#   - On every measured class (`micro`, `small`, `standard`) the three Linux
+#     lanes always run: shell_shards, cargo_linux and bot_instructions.
+#   - The platform and lint lanes (macos_legs, cargo_macos, cargo_lint,
+#     cargo_windows) stand down only on a diff whose every path is prose,
+#     whose content no platform and no lint tool reads differently, and run
+#     on any other diff.
+#   - ui is the one lane that narrows to a tree: every ui step runs a
+#     ui/package.json script, and nothing under ui/ imports or configures a
+#     path outside ui/.
+#   - A `render` or `trivial` diff runs bot_instructions alone, the one
+#     seconds-long verify job: its check, the document byte ceilings and the
+#     work-marker scan. The classifier proved a `render` diff by
+#     re-rendering it, and a `trivial` one is inside the docs path set and its
+#     line ceiling.
+#   - The gap that leaves: a `trivial` diff runs no shell shard and no cargo
+#     lane, as the one-verify-job contract for `render` and `trivial`
+#     requires, yet compiled code reads some docs-set files
+#     (docs/legal/terms.md and privacy.md through crates/core/src/legal.rs,
+#     the root README.md through a command_update notice test,
+#     docs/authoring/README.md through include_str! in crates/app/src/mine.rs).
+#     A `trivial` edit or rename of one is judged only by the next measured
+#     run. Main skipped every cargo lane on every docs-only diff of any size;
+#     this narrows that skip to `trivial` diffs.
+#
+# The lanes:
+#
+#   shell_shards     the skill, hook and tool suites.
+#   bot_instructions the rendered review-bot instruction files and the root
+#                    AGENTS.md region they own, the document byte ceilings,
+#                    and the index-wide work-marker scan.
+#   cargo_linux      the workspace tests on Linux.
+#   macos_legs       the shell suites again under Bash 3.2 and the BSD
+#                    userland.
+#   cargo_macos      the workspace tests on the platform the app ships on.
+#   cargo_lint       clippy, fmt and doc over the workspace.
+#   cargo_windows    the Windows compile and test lanes.
+#   ui               the vitest, tsc and biome lane.
+#
+# DOCS_ONLY is read and validated on every class, and it changes one thing: a
+# `standard` diff whose every path the docs verdict accepts (docs/,
+# changelog.d/, root Markdown) takes the measured row its paths select rather
+# than every lane, whatever cause made it `standard`. Under `micro` and
+# `small` that row is already the one taken.
+#
+# Every refusal starts `ci-job-set: cause=<name>` and exits 2. A class this
+# table does not name is one of those: the step goes red, every lane's status
+# function runs it, and the required contexts refuse the skip, which is the
+# loud way to learn a sixth class shipped.
+set -euo pipefail
+
+# One line per lane, in the order the rows below spell them.
+LANES="shell_shards macos_legs ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows"
+
+die() { # CAUSE MESSAGE
+  printf 'ci-job-set: cause=%s\n' "$1" >&2
+  printf 'ci-job-set: %s\n' "$2" >&2
+  exit 2
+}
+
+[ -n "${CHANGE_CLASS:-}" ] || die missing-class "CHANGE_CLASS is required"
+[ -n "${GITHUB_OUTPUT:-}" ] || die missing-output-file \
+  "GITHUB_OUTPUT is unset, so no lane could read the selection"
+
+case "${DOCS_ONLY:-}" in
+  true | false) ;;
+  *) die "invalid-docs-only value=${DOCS_ONLY:-}" "DOCS_ONLY is true or false" ;;
+esac
+
+# Present-but-empty is a state of its own, and not the same as absent.
+paths="${CHANGED_PATHS-__unset__}"
+[ "$paths" != __unset__ ] || die missing-paths "CHANGED_PATHS is required"
+
+# A row names every lane or ends the step, before any lane has read a
+# selection with one lane missing from it.
+emit() { # LANE=VALUE ...
+  local lane given=" $* "
+  for lane in $LANES; do
+    case "$given" in
+      *" $lane="*) ;;
+      *) die "lane-unselected lane=$lane" "the row declares no value for this lane" ;;
+    esac
+  done
+  printf '%s\n' "$@" >>"$GITHUB_OUTPUT"
+  printf '%s\n' "$@" >&2
+}
+
+# `grep -c` exits 1 when nothing matched, which errexit would read as a broken
+# command; the count is the answer either way.
+any() { # REGEX — is some changed path inside it?
+  local hits
+  hits="$(printf '%s\n' "$paths" | grep -Ec -- "$1")" || hits=0
+  [ "$hits" -gt 0 ]
+}
+any_outside() { # REGEX — is some changed path NOT inside it?
+  local hits
+  hits="$(printf '%s\n' "$paths" | grep -Evc -- "$1")" || hits=0
+  [ "$hits" -gt 0 ]
+}
+
+# Prose, the one input the platform and lint lanes stand down on.
+PROSE='\.(md|markdown)$'
+
+case "$CHANGE_CLASS" in
+  render | trivial)
+    emit shell_shards=false macos_legs=false ui=false bot_instructions=true \
+      cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false
+    ;;
+  micro | small | standard)
+    if [ "$CHANGE_CLASS" = standard ] && [ "$DOCS_ONLY" = false ]; then
+      emit shell_shards=true macos_legs=true ui=true bot_instructions=true \
+        cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true
+    else
+      # A measured class is reached only after the classifier read a changed
+      # path, and so is a docs verdict of true, so an empty list here is a
+      # state no classifier emits. Reading it as "nothing matches" would
+      # stand the narrowing lanes down on no evidence.
+      [ -n "$paths" ] || die "class-without-paths class=$CHANGE_CLASS" \
+        "a measured class arrived with no changed path"
+      platform=false
+      any_outside "$PROSE" && platform=true
+      uitree=false
+      any '^ui/' && uitree=true
+      emit shell_shards=true "macos_legs=$platform" "ui=$uitree" \
+        bot_instructions=true cargo_linux=true "cargo_macos=$platform" \
+        "cargo_lint=$platform" "cargo_windows=$platform"
+    fi
+    ;;
+  *)
+    die "unknown-class class=$CHANGE_CLASS" \
+      "no lane selection is declared for this class"
+    ;;
+esac

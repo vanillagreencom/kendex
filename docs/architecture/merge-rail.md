@@ -1,6 +1,6 @@
 # CI and merge rail
 
-Covers: .github/workflows/, skills/harness-ci/, skills/review-gate/, skills/orch/workflows/merge-pr.md, skills/orch/workflows/consumer-train.md
+Covers: .github/workflows/, .github/actions/, skills/harness-ci/, skills/review-gate/, skills/orch/workflows/merge-pr.md, skills/orch/workflows/consumer-train.md
 
 The rail carries one change from a consumer pull request to the default branch, and carries kendex's own releases back out to every consumer. One classifier reads the diff, CI gates its lanes on that verdict, the review gate posts one commit status, and the branch ruleset decides the merge. Every part of it is shipped by kendex and wired by the consumer: kendex renders the scripts, and the repository owns its workflow files, its settings values, its required-context names and its ruleset.
 
@@ -41,6 +41,7 @@ The rail carries one change from a consumer pull request to the default branch, 
 | Part | Owner | Reaches a consumer by | Program issue |
 | --- | --- | --- | --- |
 | The classifier and the aggregate helper | kendex, `skills/harness-ci/scripts/` | `kendex refresh` vendors them under `.agents/` | KEN-1637, KEN-1600 |
+| The `change-class` composite action | kendex, `.github/actions/change-class/` | referenced from a workflow at `@main` or a pinned tag; no refresh, and it runs kendex's own classifier at that ref | KEN-1596 |
 | Which jobs read the verdict | the repository | copied once from `skills/harness-ci/references/wiring.md` | KEN-1596 |
 | The gate engine and its predicate | kendex, `skills/review-gate/scripts/` | `kendex refresh` | KEN-1638 |
 | The gate writer workflow | kendex ships a template; the copy is the repository's | copied verbatim at adoption, re-copied on each template update | none |
@@ -48,7 +49,7 @@ The rail carries one change from a consumer pull request to the default branch, 
 | `REVIEW_GATE_*` and `ORCH_MERGE_BYPASS` values | the repository | `kendex.settings.toml` | KEN-1638, KEN-1602 |
 | The merge route and the consumer train | kendex, `skills/orch/workflows/` | `kendex refresh` | KEN-1601, KEN-1602 |
 
-Today the classifier answers two narrow questions, `harness_only` and `docs_only`. KEN-1637 replaces both with one five-class verdict, and `.github/actions/` joins the `Covers:` line above when KEN-1600 publishes the `change-class` composite action.
+The classifier answers one five-class verdict, `change_class`, beside the two narrow questions `harness_only` and `docs_only`. `.github/actions/change-class` is the composite action that publishes the class and the changed-path families to a workflow; it wraps the shipped scripts and classifies nothing itself. In this repository `tools/ci-job-set` turns the class into one selection per lane of `skill-tests.yml`, and `tools/ci-aggregate` holds each required context to those selections.
 
 ## Boundaries
 
@@ -64,7 +65,7 @@ Today the classifier answers two narrow questions, `harness_only` and `docs_only
 3. `aggregate-needs` accepts a skipped job only where the classifier succeeded, its waiver is `true`, and the job is in the caller's explicit skippable set, so a lane that skipped for any other reason reds the required context. Enforced by `skills/harness-ci/tests/aggregate-needs.test.sh`, which carries a must-fail control for classifier success, dependency success, the waiver and skippable membership.
 4. The gate answers one question, whether this exact head was reviewed, and two green checks never stand in for a review. Enforced by `skills/review-gate/scripts/review-predicate-selftest.sh`, which pins the decision table. That the answer reaches the head as a commit status is the writer's half, enforced by `skills/review-gate/tests/review-writer.test.sh`.
 5. A waiver of reviewer evidence waives reviewer evidence alone: an objection, an unresolved thread and a suppressed finding still block. Enforced by `skills/review-gate/tests/docs-only-lane.test.sh`, which carries a row for each and a must-fail control for the suppressed-finding branch. That the ruleset's other required contexts are untouched follows from the gate posting only its own status, and is not mechanically enforced.
-6. The classifier a merge trusts is the default branch's copy, never the pull request's. Not yet held: CI runs the branch's copy today, and KEN-1637 carries the change. The package's own source repository is the standing exception, because its checker and its candidate are the same commit, per [../../skills/bot-instructions/SKILL.md](../../skills/bot-instructions/SKILL.md) § A pull request changing its own review.
+6. The classifier a merge trusts is the default branch's copy, never the pull request's. Held for the classifier scripts: the `changes` job of `skill-tests.yml` reads `skills/harness-ci/scripts` and orch's measurement contract from a separate default-branch checkout, through the action's `classifier` input. The action wrapper, `tools/ci-job-set` and `tools/ci-aggregate` still run from the pull request's tree; review holds them, and `skills/orch/references/narrow-change.conf` refuses the narrow classes to a diff touching `.github/actions/` or `tools/`, so a change to one of them runs every lane. Not mechanically enforced. The package's own source repository is the standing exception, because its checker and its candidate are the same commit, per [../../skills/bot-instructions/SKILL.md](../../skills/bot-instructions/SKILL.md) § A pull request changing its own review.
 
 ## Decisions
 
