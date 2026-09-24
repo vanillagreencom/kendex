@@ -8,7 +8,7 @@ Delegate implementation to specialist agent(s). Handles a single issue and a bun
 | `dev-start [ISSUE_ID]` | Implement a specific issue |
 | (from start-worktree / review-pr) | Managed lifecycle with caller context |
 
-**Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 4) or `"self"` (default); `issue_id` — the workflow-state key, the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number; `audit_bundle` — `true` only from review-pr's post-audit path.
+**Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 4) or `"self"` (default); `issue_id` — the workflow-state key, whose forms `workflow-state --help` § Keys enumerates, never the bare GitHub issue number; `audit_bundle` — `true` only from review-pr's post-audit path.
 
 **Standalone init** (`lifecycle: "self"`). Use the argument as `ISSUE_ID`, else:
 
