@@ -11,10 +11,11 @@
 #
 # A run renders as `rc=<n> keys=<k=v,...>`: the exit status and every
 # `publish-aur: <key>=<value>` line, stdout and stderr together, in order.
-# FP and FP2 stand for the fingerprints of the good and other keys. The
-# English under a keyed line is not pinned. The script runs with stdin closed
-# and the suite counts the rows it ran, so a read from stdin cannot swallow
-# a row. The passphrase row proves a locked key is refused; with no stdin
+# {FP} and {FP2} stand for the fingerprints of the good and other keys;
+# braces never occur in a fingerprint, so neither value can hold the other
+# placeholder. The English under a keyed line is not pinned. The script runs
+# with stdin closed and the suite counts the rows it ran, so a read from
+# stdin cannot swallow a row. The passphrase row proves a locked key is refused; with no stdin
 # and no tty it cannot tell a prompt from a refusal.
 #
 # The rows table is `label|key|aur|rc|keys`:
@@ -121,11 +122,11 @@ run() {
 }
 
 rows="
-registered to the maintaining account|good|vanillagreen|0|fingerprint=FP,account=vanillagreen
-registered to another account|good|someone|1|fingerprint=FP,account=someone
-not registered|good|none|1|fingerprint=FP,unregistered=FP
-host key mismatch|good|hostkey|1|fingerprint=FP,login=255
-only KEYFILE is offered|other|vanillagreen|1|fingerprint=FP2,unregistered=FP2
+registered to the maintaining account|good|vanillagreen|0|fingerprint={FP},account=vanillagreen
+registered to another account|good|someone|1|fingerprint={FP},account=someone
+not registered|good|none|1|fingerprint={FP},unregistered={FP}
+host key mismatch|good|hostkey|1|fingerprint={FP},login=255
+only KEYFILE is offered|other|vanillagreen|1|fingerprint={FP2},unregistered={FP2}
 passphrase-protected key|locked|vanillagreen|1|keyfile=$TMP/locked
 not a key|junk|vanillagreen|1|keyfile=$TMP/junk
 "
@@ -138,8 +139,8 @@ done <<<"$rows"
 while IFS='|' read -r label key aur rc keys; do
   [ -n "$label" ] || continue
   ran=$((ran + 1))
-  want="${keys//FP2/$FP2}"
-  want="${want//FP/$FP}"
+  want="${keys//'{FP2}'/$FP2}"
+  want="${want//'{FP}'/$FP}"
   run "$aur" --check-key "$TMP/$key"
   if [ "$RC" = "$rc" ] && [ "$KEYS" = "$want" ]; then
     ok "$label: rc=$rc keys=$keys"
