@@ -197,6 +197,17 @@ new_round latest KEN-3 3-3 0
 run --worktree "$WT" --issue KEN-3 --round-id 3-3 --transcript "$TMP_ROOT/latest.jsonl"
 assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-KEN-3-3-3.json" '.qa_labels | join(",")')" "rc=0 needs-review" \
   "the round's last report is the one recovered" "$TMP_ROOT/stderr"
+# The round's delegation repeated after a report: the window opens at the last
+# delegation, and no report follows it.
+new_round again KEN-4 3-4 0
+{
+  user_turn claude "Round ID: 3-4"
+  report_turn claude-send "$(implement_report "$HEAD_SHA" pass none)"
+  user_turn claude "Round ID: 3-4"
+  tool_turn
+} > "$TMP_ROOT/again.jsonl"
+run --worktree "$WT" --issue KEN-4 --round-id 3-4 --transcript "$TMP_ROOT/again.jsonl"
+assert_eq "rc=$RC ${OUT##* }" "rc=3 reason=no-report" "a report before the round's last delegation is not its report" "$TMP_ROOT/stderr"
 
 echo "=== the recovered implement record ==="
 # QA: none is no labels and a list is every label; a backticked commit
@@ -208,7 +219,8 @@ for case in \
   "a QA list^KEN-11^%H^needs-review, needs-safety-audit^none^KEN-11 ✓^.qa_labels|join(\",\")^needs-review,needs-safety-audit" \
   "a backticked commit^KEN-12^\`%H\`^none^none^KEN-12 ✓^.commit^%H" \
   "a proposed rule^KEN-13^%H^none^Name the reach^KEN-13 ✓^.summary|split(\"### Proposed Rules\")[1]|ltrimstr(\"\\n\\n\")^- Name the reach" \
-  "a Summary line with a check mark posts nothing^KEN-14^%H^none^none^KEN-14 ✓^.summary_posted^false"; do
+  "a Summary line with a check mark posts nothing^KEN-14^%H^none^none^KEN-14 ✓^.summary_posted^false" \
+  "Proposed rule: none adds no section^KEN-17^%H^none^none^KEN-17 ✓^.summary|contains(\"### Proposed Rules\")^false"; do
   row=$((row + 1))
   IFS='^' read -r label key commit qa proposed summary filter want <<<"$case"
   new_round "rec-$row" "$key" 4-4 0
@@ -297,6 +309,15 @@ run --worktree "$WT" --issue KEN-91 --round-id 7-7
 assert_eq "rc=$RC ${OUT##* }" "rc=3 reason=no-transcript" "no transcript re-delegates" "$TMP_ROOT/stderr"
 
 echo "=== dev-validate-run decides whether the round's run is still going ==="
+# Two runs since the delegation: the one started last is the round's run,
+# whatever its directory name sorts as.
+new_round newest KEN-94 8-8 none
+add_run "$WT" a-newest 5 0 "$DEAD_PID"
+add_run "$WT" z-older 20 1 "$DEAD_PID"
+transcript "$TMP_ROOT/newest.jsonl" claude-send 8-8 "$(implement_report "$HEAD_SHA" pass none)"
+run --worktree "$WT" --issue KEN-94 --round-id 8-8 --transcript "$TMP_ROOT/newest.jsonl"
+assert_eq "rc=$RC ${OUT%% artifact=*}" "rc=0 round-recover: recovered" \
+  "the run started last proves the pass, not the one whose name sorts last" "$TMP_ROOT/stderr"
 new_round live KEN-95 8-8 0
 add_run "$WT" 2-live 5 - "$$"
 transcript "$TMP_ROOT/live.jsonl" claude-send 8-8 ""
