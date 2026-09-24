@@ -241,21 +241,22 @@ pub(super) fn plan_not_written(
 }
 
 /// The row a withheld hook's installed copy leaves as it goes.
-const WITHHELD: &str = "withheld: a hook it runs with will not run here — will be removed";
+const WITHHELD: &str = "withheld: a hook it requires will not run here — will be removed";
 
-/// A hook withheld from a tool is written there by nothing, and a copy
-/// already installed comes out; the finding the dependency walk pushed
-/// says why. A record under the hook's key that is another declaration's
-/// — installed from one catalog, now set to come from another — is
-/// invariant 4's conflict, as it would be for a hook the plan writes: the
-/// record stays, the row says to remove it first, and nothing of it is
-/// taken. Otherwise the copy goes as the reason for withholding says
-/// ([`Withholding`]): a hook whose companion will not run comes out
-/// whatever the options, since a wrapper left armed refuses every call it
-/// guards; a companion withheld only because its requirers are lacks
-/// nothing itself, so it goes as an orphan does, and a copy the person
-/// edited is kept and named. Returns the keys of the records this pass
-/// decided.
+/// A hook withheld from a tool is written there by nothing; the finding
+/// the dependency walk pushed says why. A record under the hook's key that
+/// is another declaration's — installed from one catalog, now set to come
+/// from another — is invariant 4's conflict, as it would be for a hook the
+/// plan writes: the record stays, the row says to remove it first, and
+/// nothing of it is taken. Otherwise the reason for withholding
+/// ([`Withholding`]) says what becomes of the copy: one whose companion
+/// will not run comes out whatever the options, since a wrapper left
+/// armed refuses every call it guards; one whose companion's catalog does
+/// not answer keeps its record with no row and no op, since nothing says
+/// the copy is wrong; and one withheld only because its requirers are is
+/// left to `removal::orphans`, the one owner of what an automatic removal
+/// takes under the plan's options. Returns the keys of the records this
+/// pass decided.
 #[allow(clippy::too_many_arguments)]
 fn plan_withheld(
     env: &Env,
@@ -275,39 +276,36 @@ fn plan_withheld(
         let Some(entry) = lock.entries.get(&key) else {
             continue;
         };
-        decided.insert(key.clone());
-        let row = |state, detail: &str, cause| DriftRow {
+        let row = |state, detail: String| DriftRow {
             kind: *kind,
             name: name.clone(),
             harness: *harness,
             scope: scope.clone(),
             state,
-            detail: detail.to_owned(),
-            cause,
+            detail,
+            cause: None,
             compared: None,
             also_in_the_way: Vec::new(),
         };
         let recorded_fork = manifest.recorded_fork(*kind, name);
         if let Some(detail) = item_plan::rebound(entry, &withheld.provenance, recorded_fork) {
-            drift.push(row(DriftState::Conflict, &detail, None));
+            decided.insert(key.clone());
+            drift.push(row(DriftState::Conflict, detail));
             new_lock.entries.insert(key, entry.clone());
             continue;
         }
-        let holds = match withheld.because {
-            Withholding::Requires => false,
-            Withholding::Orphaned => removal::edit_holds(env, scope, entry),
-        };
-        if holds {
-            drift.push(row(
-                DriftState::Conflict,
-                removal::EDITED_KEPT,
-                Some(DriftCause::LocalEdit),
-            ));
-            new_lock.entries.insert(key, entry.clone());
-            continue;
+        match withheld.because {
+            Withholding::Orphaned => {}
+            Withholding::Unanswered => {
+                decided.insert(key.clone());
+                new_lock.entries.insert(key, entry.clone());
+            }
+            Withholding::Requires => {
+                decided.insert(key);
+                drift.push(row(DriftState::Orphaned, WITHHELD.into()));
+                guard.extend(ops, removal::removal_ops(env, scope, entry, config_edits)?);
+            }
         }
-        drift.push(row(DriftState::Orphaned, WITHHELD, None));
-        guard.extend(ops, removal::removal_ops(env, scope, entry, config_edits)?);
     }
     Ok(decided)
 }

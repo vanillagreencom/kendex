@@ -52,11 +52,6 @@ pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
     })
 }
 
-/// The row an automatic removal leaves on a copy the person edited: the
-/// files stay, and naming the item is what confirms taking them.
-pub(super) const EDITED_KEPT: &str =
-    "no longer wanted, but its files were edited on disk — remove it by name to confirm";
-
 /// A removal binds to what the preview showed, like every other mutation
 /// (invariant 7): the exact bytes for a file or tree, the exact target for a
 /// link we manage. Anything edited between preview and apply fails the
@@ -270,7 +265,7 @@ pub(super) fn orphans(
                 harness: entry.harness,
                 scope: scope.clone(),
                 state: DriftState::Conflict,
-                detail: EDITED_KEPT.into(),
+                detail: "no longer wanted, but its files were edited on disk — remove it by name to confirm".into(),
                 cause: Some(super::DriftCause::LocalEdit),
                 compared: None,
                 also_in_the_way: Vec::new(),

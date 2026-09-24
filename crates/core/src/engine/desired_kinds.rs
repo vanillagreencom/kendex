@@ -86,12 +86,13 @@ pub(super) fn declared(
 /// decided before the question is asked, by `find_item` for the planner
 /// and `deps::resolve` and `deps::companion` for the walk, and a source
 /// that is pending, disabled or unreadable, or whose own manifest hides
-/// its content, stops the requirer with the companion. The question is
-/// asked about the declaration the plan writes, the header being that
-/// declaration's catalog's, so where a manifest names the companion from
-/// another catalog than the requirer's, the walk reads the copy the
-/// planner will write and never the requirer's own. Outside this answer,
-/// and so outside the walk's
+/// its content, stops the requirer with the companion where both come
+/// from it, and withholds the requirer (`Withholding::Unanswered`) where
+/// the companion alone does. The question is asked about the declaration
+/// the plan writes, the header being that declaration's catalog's, so
+/// where a manifest names the companion from another catalog than the
+/// requirer's, the walk reads the copy the planner will write and never
+/// the requirer's own. Outside this answer, and so outside the walk's
 /// view, are what is decided over the whole expansion or on disk after it:
 /// a name collision on a tool (`catalog::Collisions`), a rendering refusal
 /// (`DesiredState::refused`), a Gemini, Copilot or Antigravity

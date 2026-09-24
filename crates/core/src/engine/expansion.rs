@@ -14,7 +14,7 @@ use crate::env::Env;
 use crate::lock::Reason;
 use crate::manifest::{ItemDecl, Manifest};
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::source::{SourceConfig, SourceState, source_config_for};
+use crate::source::{SourceConfig, SourceState, find_item, source_config_for};
 use crate::source_read::SealedSource;
 
 use super::desired::{DesiredState, target_harnesses};
@@ -261,6 +261,19 @@ pub(super) struct OpenCatalog {
 /// Which catalog: the source name and the revision it is read at.
 pub(super) type CatalogKey = (String, Option<String>);
 
+/// What a catalog says about one item ([`Catalogs::offer`]): the item and
+/// the catalog it is read from, which is what the planner writes; that the
+/// catalog reads whole and does not offer it, which is what the planner
+/// writes nothing for; or nothing at all — the catalog never opened, would
+/// not resolve or read, or read with its content hidden and the item not
+/// found. Silence leaves the planner writing nothing from it too, but says
+/// nothing about whether the item would run.
+pub(super) enum Offer<'a> {
+    Item(&'a OpenCatalog, std::path::PathBuf),
+    NotOffered,
+    Silent,
+}
+
 /// Every catalog read this pass, opened once. Sources that cannot be read
 /// carry nothing to derive; the declaration that names one reports that on
 /// its own, where it can say which declaration it cost.
@@ -289,11 +302,23 @@ impl Catalogs<'_> {
         self.open.get(&key).and_then(Option::as_ref)
     }
 
-    /// A catalog [`Catalogs::get`] already opened, or `None` where it was
-    /// never asked for or would not read. Borrows nothing mutably, so two
-    /// catalogs opened ahead can be read side by side.
-    pub(super) fn opened(&self, key: &CatalogKey) -> Option<&OpenCatalog> {
-        self.open.get(key).and_then(Option::as_ref)
+    /// What the catalog under `key`, opened ahead by [`Catalogs::get`],
+    /// says about one item this pass. The one question for an item derived
+    /// from a catalog, asked after every catalog a walk step needs is open,
+    /// since it borrows nothing mutably and two answers can be read side
+    /// by side.
+    pub(super) fn offer(&self, key: &CatalogKey, kind: ItemKind, name: &str) -> Offer<'_> {
+        let Some(catalog) = self.open.get(key).and_then(Option::as_ref) else {
+            return Offer::Silent;
+        };
+        match find_item(&catalog.sealed, &catalog.config, kind, name) {
+            Some(path) => Offer::Item(catalog, path),
+            // A catalog answering with less than it offers cannot say the
+            // item is not there: `SourceConfig::hides_content` is what
+            // keeps a removal from reading it as the whole truth.
+            None if catalog.config.hides_content() => Offer::Silent,
+            None => Offer::NotOffered,
+        }
     }
 
     fn read(

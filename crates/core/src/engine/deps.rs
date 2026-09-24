@@ -16,7 +16,7 @@ use crate::source_read::SealedSource;
 use super::ItemWarning;
 use super::desired::{DesiredState, Withheld, Withholding};
 use super::desired_kinds::{NotWritten, not_written};
-use super::expansion::{CatalogKey, Catalogs, Expansion, OpenCatalog};
+use super::expansion::{CatalogKey, Catalogs, Expansion, Offer, OpenCatalog};
 
 /// One item's declared dependencies. Names are as the author wrote them.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -255,19 +255,14 @@ struct Wanted {
 }
 
 impl Wanted {
-    /// Withhold the parent from `tools` for this reason. A missing
-    /// companion outranks being orphaned: the first says the copy comes out
-    /// whatever the options, and a tool already held for it stays so.
+    /// Withhold the parent from `tools` for this reason, which keeps the
+    /// reason that outranks where one is already held ([`Withholding`]).
     fn withhold(&mut self, tools: impl IntoIterator<Item = HarnessId>, because: Withholding) {
         for tool in tools {
-            match because {
-                Withholding::Requires => {
-                    self.withheld.insert(tool, because);
-                }
-                Withholding::Orphaned => {
-                    self.withheld.entry(tool).or_insert(because);
-                }
-            }
+            self.withheld
+                .entry(tool)
+                .and_modify(|held| *held = (*held).max(because))
+                .or_insert(because);
         }
     }
 }
@@ -286,11 +281,12 @@ struct Dep {
 /// One more withholding the loop found, and the finding that explains it.
 enum Spread {
     /// A companion the hook requires, read from the catalog `source`, is
-    /// withheld from these tools.
-    Requires {
+    /// withheld from these tools, for a reason the hook takes on.
+    Companion {
         dep: String,
         source: String,
         tools: Vec<HarnessId>,
+        because: Withholding,
     },
     /// Every hook that requires this derived companion is withheld from
     /// these tools, and nothing asks for it by name.
@@ -304,9 +300,13 @@ enum Spread {
 /// requires it is withheld there too, and so is a companion that exists
 /// only for hooks withheld there — until nothing changes: the lane-mail
 /// knot goes together whichever member's fault it is, and a one-way edge
-/// leaves no companion armed beside a requirer that is gone. Skills are not
-/// in this: a skill runs without what it lacks, and its finding is the
-/// whole consequence.
+/// leaves no companion armed beside a requirer that is gone. A requirer
+/// takes on its companion's reason — missing, or from a catalog that says
+/// nothing — whenever the spread reaches it, a chain one step per pass,
+/// and a reason outranking the one already held for the tool replaces it
+/// ([`Withholding`]); a companion orphaned by this very requirer's
+/// withholding spreads nothing back. Skills are not in this: a skill runs
+/// without what it lacks, and its finding is the whole consequence.
 fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion) {
     loop {
         let mut spread: Vec<(Node, Spread)> = Vec::new();
@@ -324,18 +324,25 @@ fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion
                 let Some(theirs) = wanted.get(&(*kind, dep.clone())) else {
                     continue;
                 };
-                let tools: Vec<HarnessId> = on
-                    .iter()
-                    .copied()
-                    .filter(|h| theirs.withheld.contains_key(h) && !found.withheld.contains_key(h))
-                    .collect();
-                if !tools.is_empty() {
+                let mut taken: BTreeMap<Withholding, Vec<HarnessId>> = BTreeMap::new();
+                for harness in on {
+                    let because = match theirs.withheld.get(harness) {
+                        Some(Withholding::Requires) => Withholding::Requires,
+                        Some(Withholding::Unanswered) => Withholding::Unanswered,
+                        Some(Withholding::Orphaned) | None => continue,
+                    };
+                    if found.withheld.get(harness) < Some(&because) {
+                        taken.entry(because).or_default().push(*harness);
+                    }
+                }
+                for (because, tools) in taken {
                     spread.push((
                         (*kind, parent.clone()),
-                        Spread::Requires {
+                        Spread::Companion {
                             dep: dep.clone(),
                             source: source.clone(),
                             tools,
+                            because,
                         },
                     ));
                 }
@@ -364,8 +371,13 @@ fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion
                 unreachable!("{parent} was read from this map a moment ago");
             };
             let warning = match more {
-                Spread::Requires { dep, source, tools } => {
-                    found.withhold(tools.iter().copied(), Withholding::Requires);
+                Spread::Companion {
+                    dep,
+                    source,
+                    tools,
+                    because,
+                } => {
+                    found.withhold(tools.iter().copied(), because);
                     finding(&NotWritten::Withheld, kind, &parent, &dep, &tools, &source)
                 }
                 Spread::Orphaned { requirers, tools } => {
@@ -663,11 +675,10 @@ fn chosen_extras(
 }
 
 /// Each resolved companion derived from the catalog the plan writes it
-/// from, onto `wanted`: the companions that land, and for an armed hook the
-/// tools it is withheld from, which are every tool a companion misses. A
-/// companion whose catalog will not open this pass is a finding and
-/// nothing more: a catalog that cannot be read never uninstalls a working
-/// artifact, as one that carries both hooks does not.
+/// from ([`Catalogs::offer`]), onto `wanted`: the companions that land,
+/// and for an armed hook the tools it is withheld from — every tool a
+/// companion misses, or every tool where the companion's catalog says
+/// nothing of it ([`silent`]).
 #[allow(clippy::too_many_arguments)]
 fn derive(
     kind: ItemKind,
@@ -687,59 +698,133 @@ fn derive(
         catalogs.get(&key.0, key.1.as_deref(), state);
     }
     for (dep, key) in companions {
-        let Some(catalog) = catalogs.opened(&key) else {
-            // The declaration naming that catalog has reported why.
-            wanted.findings.push(warn(
+        let source = key.0.as_str();
+        let found = &mut wanted.findings;
+        let because = match catalogs.offer(&key, kind, &dep) {
+            Offer::Item(catalog, path) => {
+                let lands = companion(
+                    env,
+                    scope,
+                    kind,
+                    dep,
+                    parent,
+                    harnesses,
+                    wanted.armed,
+                    manifest,
+                    state,
+                    catalog,
+                    &path,
+                    source,
+                    found,
+                );
+                let Some(landed) = lands else {
+                    if withholds {
+                        wanted.withhold(harnesses.iter().copied(), Withholding::Requires);
+                    }
+                    continue;
+                };
+                if withholds {
+                    wanted.withhold(
+                        harnesses.iter().copied().filter(|h| !landed.on.contains(h)),
+                        Withholding::Requires,
+                    );
+                }
+                wanted.deps.push(landed);
+                continue;
+            }
+            Offer::NotOffered => {
+                found.push(warn(
+                    kind,
+                    parent,
+                    format!(
+                        "{parent} requires {dep}, which is set to come from the catalog '{source}', and that catalog does not offer it"
+                    ),
+                    format!(
+                        "add {dep} to that catalog, or declare {dep} from a catalog that offers it"
+                    ),
+                ));
+                Withholding::Requires
+            }
+            Offer::Silent => silent(
+                env,
+                scope,
                 kind,
+                &dep,
                 parent,
-                format!(
-                    "{parent} requires {dep}, which is set to come from the catalog '{}', and that catalog cannot be read",
-                    key.0
-                ),
-                format!(
-                    "settle the note on the catalog '{}', or declare {dep} from a catalog that reads",
-                    key.0
-                ),
-            ));
-            continue;
+                harnesses,
+                wanted.armed,
+                manifest,
+                state,
+                source,
+                found,
+            ),
         };
-        let lands = companion(
-            env,
-            scope,
-            kind,
-            dep,
-            parent,
-            harnesses,
-            wanted.armed,
-            manifest,
-            state,
-            catalog,
-            &key.0,
-            &mut wanted.findings,
-        );
         if withholds {
-            let on = lands.as_ref().map(|dep| dep.on.as_slice()).unwrap_or(&[]);
-            wanted.withhold(
-                harnesses.iter().copied().filter(|h| !on.contains(h)),
-                Withholding::Requires,
-            );
-        }
-        if let Some(landed) = lands {
-            wanted.deps.push(landed);
+            wanted.withhold(harnesses.iter().copied(), because);
         }
     }
 }
 
-/// One resolved companion, taken to the tools it runs on beside its
-/// parent, read from `catalog`, the one the plan writes it from. `None`
-/// where nothing is derived: that catalog does not offer the name, or the
-/// name is an item the manifest keeps removed or switched off, or a hook
-/// whose header will not read — each a finding on the parent, except that
-/// a parent switched off itself misses nothing in a companion switched off
-/// too. Every tool the companion will not run on is a finding on the
-/// parent as well, in the words of the one answer the planner gives
-/// (`desired_kinds::not_written`); what the finding then costs the parent
-/// is [`wanted_by`]'s to decide.
+/// A companion whose catalog says nothing of it this pass. What the
+/// manifest alone says holds without a catalog: kept removed or switched
+/// off, the companion is missing, as a finding on the parent in the words
+/// of the one answer (`desired_kinds::not_written`, asked with no header,
+/// which answers those two before anything a catalog decides), except
+/// that a parent switched off itself misses nothing in a companion
+/// switched off too. Otherwise nothing says whether the companion would
+/// run: the finding names the catalog's silence, and the parent is
+/// withheld for it and nothing of it taken.
+#[allow(clippy::too_many_arguments)]
+fn silent(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    dep: &str,
+    parent: &str,
+    harnesses: &[HarnessId],
+    armed: bool,
+    manifest: &Manifest,
+    state: &DesiredState,
+    source: &str,
+    found: &mut Vec<ItemWarning>,
+) -> Withholding {
+    let refused = harnesses
+        .first()
+        .and_then(|harness| not_written(env, scope, manifest, state, kind, dep, Ok(None), *harness))
+        .filter(|reason| matches!(reason, NotWritten::KeptRemoved | NotWritten::SwitchedOff));
+    match refused {
+        Some(reason) => {
+            let quiet = reason == NotWritten::SwitchedOff && !armed;
+            if !quiet {
+                found.push(finding(&reason, kind, parent, dep, harnesses, source));
+            }
+            Withholding::Requires
+        }
+        None => {
+            found.push(warn(
+                kind,
+                parent,
+                format!(
+                    "{parent} requires {dep}, which is set to come from the catalog '{source}', and that catalog cannot be read"
+                ),
+                format!(
+                    "settle the note on the catalog '{source}', or declare {dep} from a catalog that reads"
+                ),
+            ));
+            Withholding::Unanswered
+        }
+    }
+}
+
+/// One resolved companion, offered at `path` by `catalog`, the one the
+/// plan writes it from, taken to the tools it runs on beside its parent.
+/// `None` where nothing is derived: the name is an item the manifest keeps
+/// removed or switched off, or a hook whose header will not read — each a
+/// finding on the parent, except that a parent switched off itself misses
+/// nothing in a companion switched off too. Every tool the companion will
+/// not run on is a finding on the parent as well, in the words of the one
+/// answer the planner gives (`desired_kinds::not_written`); what the
+/// finding then costs the parent is [`derive`]'s to decide.
 #[allow(clippy::too_many_arguments)]
 fn companion(
     env: &Env,
@@ -752,21 +837,11 @@ fn companion(
     manifest: &Manifest,
     state: &DesiredState,
     catalog: &OpenCatalog,
+    path: &std::path::Path,
     source: &str,
     found: &mut Vec<ItemWarning>,
 ) -> Option<Dep> {
-    let Some(path) = find_item(&catalog.sealed, &catalog.config, kind, &dep) else {
-        found.push(warn(
-            kind,
-            parent,
-            format!(
-                "{parent} requires {dep}, which is set to come from the catalog '{source}', and that catalog does not offer it"
-            ),
-            format!("add {dep} to that catalog, or declare {dep} from a catalog that offers it"),
-        ));
-        return None;
-    };
-    let header = hook_header(&catalog.sealed, kind, &path);
+    let header = hook_header(&catalog.sealed, kind, path);
     let mut on = Vec::new();
     let mut refused: BTreeMap<NotWritten, Vec<HarnessId>> = BTreeMap::new();
     for harness in harnesses {
