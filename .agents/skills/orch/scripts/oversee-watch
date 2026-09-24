@@ -381,8 +381,10 @@ only on a usage error, a state file it cannot read or parse, an argument a
 pass would refuse (an item, a --hosted entry, a repeated --repo, a lane
 outside tmux or outside any resolved session, a hosted lane with no host), a
 tmux window list that fails, a watch already running on its state, a record
-it cannot write, or a repeat delay it cannot sleep. TERM ends it at 143 and
-INT at 130, each stopping the pass it was running.
+it cannot write, or a repeat delay it cannot sleep. TERM ends it at 143,
+stopping the pass it was running; TERM is the stop signal on every start. A
+watch started as a background job, the one a succession restarts among them,
+ignores INT from its start, and no trap can take that back.
 
 Which mode fits the overseer's harness:
   repeat       a harness that delivers a detached log's lines as they are
@@ -1353,6 +1355,8 @@ watch_claim() { # ARGV...
     || die watch-record-failed "" "path=${WATCH_PID_FILE:-$STATE_FILE}"
   trap 'watch_pid_release "$STATE_FILE"' EXIT
   trap 'repeat_stop 143' TERM
+  # Reaches only a loop started in the foreground: a background job ignores
+  # INT from its start, and bash cannot trap a signal ignored on entry.
   trap 'repeat_stop 130' INT
   if [[ "${OVERSEE_WATCH_ORIGIN:-hand}" != succession ]] \
      && [[ -s "$WATCH_LOG_FILE" || -s "$WATCH_ERR_FILE" ]]; then
