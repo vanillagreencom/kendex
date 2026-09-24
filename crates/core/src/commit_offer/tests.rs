@@ -118,6 +118,100 @@ fn the_probe_maps_its_failure_structurally() {
     );
 }
 
+/// A push the branch's rules refused is read off GitHub's code, and only
+/// where the remote said it about a push. One row per way a line can look
+/// like one.
+#[test]
+fn a_push_the_branch_rules_refused_is_read_off_githubs_code() {
+    let rows: [(&str, Step, Refusal, bool); 6] = [
+        (
+            "a ruleset",
+            Step::Push,
+            Refusal::Said(vec![
+                "remote: error: GH013: Repository rule violations found for refs/heads/main."
+                    .to_owned(),
+                " ! [remote rejected] main -> main (push declined due to repository rule violations)"
+                    .to_owned(),
+            ]),
+            true,
+        ),
+        (
+            "branch protection",
+            Step::Push,
+            Refusal::Said(vec![
+                "remote: error: GH006: Protected branch update failed for refs/heads/main."
+                    .to_owned(),
+            ]),
+            true,
+        ),
+        (
+            "a local hook's words",
+            Step::Push,
+            Refusal::Said(vec![
+                "GH013: Repository rule violations found for refs/heads/main.".to_owned(),
+            ]),
+            false,
+        ),
+        (
+            "another refusal from the remote",
+            Step::Push,
+            Refusal::Said(vec!["remote: error: File too large".to_owned()]),
+            false,
+        ),
+        (
+            "not a push",
+            Step::Commit,
+            Refusal::Said(vec![
+                "remote: error: GH013: Repository rule violations found for refs/heads/main."
+                    .to_owned(),
+            ]),
+            false,
+        ),
+        ("a push that ran out of time", Step::Push, Refusal::TimedOut, false),
+    ];
+    for (what, step, refusal, want) in rows {
+        let failed = Failed { step, refusal };
+        assert_eq!(failed.refused_by_branch_rules(), want, "{what}");
+    }
+}
+
+/// The recovery by hand: the push of this commit to the new branch, then
+/// the pull request from it, every value the repository chose quoted.
+/// Nothing without a remote.
+#[test]
+fn the_recovery_by_hand_names_the_remote_and_both_branches() {
+    let mut offer = Offer {
+        scan: Scan {
+            root: PathBuf::from("/site"),
+            owned: Vec::new(),
+            shared: Vec::new(),
+            manifest: None,
+            others: 0,
+            branch: Branch::On("it's-main".to_owned()),
+        },
+        branch: "it's-main".to_owned(),
+        remote: Some(Remote {
+            name: "origin".to_owned(),
+            url: "https://github.com/acme/site.git".to_owned(),
+            tracked: true,
+        }),
+        push: Ok(()),
+        pull_request: Ok(()),
+        open: None,
+        message: String::new(),
+        new_branch: "kendex/renders".to_owned(),
+    };
+    assert_eq!(
+        offer.by_hand(),
+        [
+            "git push 'origin' 'HEAD:refs/heads/kendex/renders'",
+            "gh pr create --repo 'https://github.com/acme/site.git' --head 'kendex/renders' --base 'it'\\''s-main' --fill",
+        ]
+    );
+    offer.remote = None;
+    assert!(offer.by_hand().is_empty());
+}
+
 // ---------------------------------------------------------------------
 // A repository to offer in.
 
@@ -908,6 +1002,9 @@ fn a_push_lands_or_is_refused_in_the_remotes_words() {
         "{:?}",
         refused.said()
     );
+    // git puts the remote's words behind `remote: `, which is what the
+    // rule refusal is read from.
+    assert!(refused.refused_by_branch_rules(), "{:?}", refused.said());
 }
 
 /// A refused push ends on git's own words, with the hook's kept above

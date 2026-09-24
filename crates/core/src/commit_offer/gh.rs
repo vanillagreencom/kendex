@@ -1,5 +1,5 @@
-//! The one `gh` question the offer asks before it draws, and the one it
-//! asks after a push.
+//! The `gh` questions the offer asks before it draws, and the one it asks
+//! after a push.
 
 use crate::process::Hardened;
 
@@ -64,6 +64,78 @@ pub fn probe(repo: &str, branch: &str) -> Result<Option<OpenPullRequest>, Unavai
             number: row.number,
             url: row.url,
         }))
+}
+
+/// The rule types that take changes to a branch only through a pull
+/// request: a push of a fresh commit straight to the branch is refused
+/// under either.
+const THROUGH_A_PULL_REQUEST: &[&str] = &["pull_request", "merge_queue"];
+
+/// What a person may do past a ruleset, in GitHub's own spelling. These
+/// two let them push to the branch directly.
+const MAY_PUSH_PAST: &[&str] = &["always", "exempt"];
+
+#[derive(serde::Deserialize)]
+struct Rule {
+    #[serde(rename = "type")]
+    kind: String,
+    ruleset_id: Option<u64>,
+}
+
+#[derive(serde::Deserialize)]
+struct Ruleset {
+    current_user_can_bypass: Option<String>,
+}
+
+/// Whether the branch's rules on GitHub take changes only through a pull
+/// request, for the person `gh` is signed in as.
+///
+/// `true` only where the rules were read and one of them says so. A read
+/// that fails or answers with something this cannot parse is not known,
+/// and not known leaves the push on offer: the push's own refusal then
+/// names the rule, and [`super::Failed::refused_by_branch_rules`] adds the
+/// way on. Branch protection is not read here: its endpoint needs a
+/// permission most people pushing to a branch do not hold.
+///
+/// A person the ruleset lets past keeps the push. Where that cannot be
+/// read, the rule stands: it was read to apply here, and the exception is
+/// the part not known.
+///
+/// `GH_REPO` binds the call to the remote the offer chose, the way
+/// `--repo` binds the others: `gh api` has no `--repo`, and fills
+/// `{owner}` and `{repo}` from that variable.
+pub fn through_a_pull_request(repo: &str, branch: &str) -> bool {
+    let endpoint = format!(
+        "repos/{{owner}}/{{repo}}/rules/branches/{}",
+        crate::names::urlencoded(branch)
+    );
+    let Some(rules) = api::<Vec<Rule>>(repo, &endpoint) else {
+        return false;
+    };
+    let mut rulesets: Vec<Option<u64>> = rules
+        .into_iter()
+        .filter(|rule| THROUGH_A_PULL_REQUEST.contains(&rule.kind.as_str()))
+        .map(|rule| rule.ruleset_id)
+        .collect();
+    rulesets.sort_unstable();
+    rulesets.dedup();
+    rulesets.into_iter().any(|id| {
+        let bypass = id
+            .and_then(|id| api::<Ruleset>(repo, &format!("repos/{{owner}}/{{repo}}/rulesets/{id}")))
+            .and_then(|ruleset| ruleset.current_user_can_bypass);
+        !bypass.is_some_and(|bypass| MAY_PUSH_PAST.contains(&bypass.as_str()))
+    })
+}
+
+/// One `gh api` read bound to `repo`, parsed, or `None` where it did not
+/// run, refused, or answered with something else.
+fn api<T: serde::de::DeserializeOwned>(repo: &str, endpoint: &str) -> Option<T> {
+    let stdout = git::run(
+        Hardened::gh(&["api", endpoint]).env("GH_REPO", repo),
+        Step::Probe,
+    )
+    .ok()?;
+    serde_json::from_slice(&stdout).ok()
 }
 
 /// Why the pull-request choice is not on offer.

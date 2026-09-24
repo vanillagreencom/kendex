@@ -39,6 +39,7 @@ const offer: ProjectOffer = {
   newBranch: "kendex/renders",
   repo: "acme/site",
   tracked: true,
+  byHand: [],
 };
 
 const refused = (step: string, said: string): Refused => ({
@@ -47,6 +48,7 @@ const refused = (step: string, said: string): Refused => ({
   timedOut: false,
   seconds: 30,
   gh: false,
+  branchRules: false,
 });
 
 const buttons = () =>
@@ -60,6 +62,53 @@ beforeEach(() => {
     scoped: "action",
     accepted: false,
     message: offer.message,
+  });
+});
+
+describe("the push-refused state", () => {
+  // A push GitHub refused under the branch's rules names them and the
+  // commands that open the pull request by hand; any other refusal, and a
+  // refused push on the `pr` route, whose commit is already on a branch of
+  // its own, do not.
+  const byHand = [
+    "git push 'origin' 'HEAD:refs/heads/kendex/renders'",
+    "gh pr create --repo 'acme/site' --head 'kendex/renders' --base 'main' --fill",
+  ];
+  it.each([
+    { name: "the rules refused it", rules: true, branch: "main", shown: true },
+    { name: "another refusal", rules: false, branch: "main", shown: false },
+    {
+      name: "the pr route",
+      rules: true,
+      branch: "kendex/renders",
+      shown: false,
+    },
+  ])("names the branch's rules: $name", async (row) => {
+    useCommitOfferStore.setState({
+      queue: [{ ...offer, byHand }],
+      stage: {
+        at: "pushRefused",
+        refused: {
+          ...refused("the push", "remote: error: GH013: rule violations"),
+          branchRules: row.rules,
+        },
+        sha: "9fbb1a2",
+        branch: row.branch,
+        files: 1,
+        canOpen: true,
+        before: "4c1d90e",
+      },
+    });
+    mount(<CommitOfferDialog />);
+    await settle();
+
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Committed, not pushed");
+    for (const said of [
+      "main on origin accepts changes only through a pull request.",
+      ...byHand,
+    ])
+      expect(text.includes(said), said).toBe(row.shown);
   });
 });
 

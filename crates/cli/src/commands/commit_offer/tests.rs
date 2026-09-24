@@ -84,7 +84,7 @@ fn the_head_line_carries_the_scope_and_the_count() {
 #[test]
 fn the_choices_are_numbered_in_order_skipping_the_removed_ones() {
     type Shape = fn(&mut Offer);
-    let rows: [(&str, Shape, &[&str]); 4] = [
+    let rows: [(&str, Shape, &[&str]); 5] = [
         (
             "everything available",
             |_| {},
@@ -127,6 +127,15 @@ fn the_choices_are_numbered_in_order_skipping_the_removed_ones() {
                 "leave them as diffs",
             ],
         ),
+        (
+            "the branch's rules require a pull request",
+            |offer| offer.push = Err(Unavailable::PullRequestRequired),
+            &[
+                "commit them",
+                "commit them on a new branch and open a pull request",
+                "leave them as diffs",
+            ],
+        ),
     ];
     for (what, shape, want) in rows {
         let mut shaped = offer();
@@ -143,18 +152,17 @@ fn the_choices_are_numbered_in_order_skipping_the_removed_ones() {
     );
 }
 
-/// The reason a removed choice prints, one row per precondition, and the
-/// same row a flag naming that choice is refused with.
-#[test]
-fn a_removed_choice_prints_its_reason() {
-    type Shape = fn(&mut Offer);
-    type Row = (
-        &'static str,
-        Shape,
-        &'static [&'static str],
-        &'static [(Choice, Option<&'static str>)],
-    );
-    let rows: [Row; 6] = [
+/// One precondition: its name, how it shapes the offer, the reason lines
+/// the offer prints, and what a flag naming each choice is refused with.
+type ReasonRow = (
+    &'static str,
+    fn(&mut Offer),
+    &'static [&'static str],
+    &'static [(Choice, Option<&'static str>)],
+);
+
+fn reason_rows() -> [ReasonRow; 7] {
+    [
         (
             "everything available",
             |_| {},
@@ -223,8 +231,28 @@ fn a_removed_choice_prints_its_reason() {
                 (Choice::Push, None),
             ],
         ),
-    ];
-    for (what, shape, reasons, refused) in rows {
+        (
+            "the branch's rules require a pull request",
+            |offer| offer.push = Err(Unavailable::PullRequestRequired),
+            &["no push: this branch's rules on GitHub accept changes only through a pull request"],
+            &[
+                (
+                    Choice::Push,
+                    Some(
+                        "no push: this branch's rules on GitHub accept changes only through a pull request",
+                    ),
+                ),
+                (Choice::Pr, None),
+            ],
+        ),
+    ]
+}
+
+/// The reason a removed choice prints, one row per precondition, and the
+/// same row a flag naming that choice is refused with.
+#[test]
+fn a_removed_choice_prints_its_reason() {
+    for (what, shape, reasons, refused) in reason_rows() {
         let mut shaped = offer();
         shape(&mut shaped);
         assert_eq!(block::reasons(&shaped), reasons, "{what}");

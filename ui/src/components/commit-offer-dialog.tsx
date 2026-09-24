@@ -29,8 +29,10 @@ import {
   BRANCH_REFUSED_LINE,
   BRANCH_REFUSED_TITLE,
   BRANCH_ROW_LABEL,
+  BY_HAND_ROW_LABEL,
   backOn,
   branchIsOn,
+  branchRulesLine,
   COMMIT_AGAIN_LABEL,
   COMMIT_LABEL,
   COMMIT_OFFER_STANDING,
@@ -170,6 +172,7 @@ function Body({ offer, stage }: { offer: ProjectOffer; stage: Stage }) {
     case "pushRefused":
       return (
         <PushRefusedState
+          offer={offer}
           refused={stage.refused}
           sha={stage.sha}
           branch={stage.branch}
@@ -677,11 +680,13 @@ function BranchRefusedState({
 }
 
 function PushRefusedState({
+  offer,
   refused,
   sha,
   branch,
   canOpen,
 }: {
+  offer: ProjectOffer;
   refused: Refused;
   sha: string;
   branch: string;
@@ -698,6 +703,21 @@ function PushRefusedState({
         <Row label={COMMIT_ROW_LABEL}>{commitOn(sha, branch)}</Row>
         <Said refused={refused} />
         <p>{commitIsOn(branch)}</p>
+        {/* On the `pr` route the commit is already on a branch of its own,
+            so the way on the rules leave is only for a push to the branch
+            the offer was made on. */}
+        {refused.branchRules && branch === offer.branch ? (
+          <>
+            <p>{branchRulesLine(branch, offer.remote ?? "")}</p>
+            <Row label={BY_HAND_ROW_LABEL}>
+              <span className="inline-flex flex-col items-end gap-1">
+                {offer.byHand.map((command) => (
+                  <Copyable key={command} text={command} />
+                ))}
+              </span>
+            </Row>
+          </>
+        ) : null}
       </div>
       <DialogFooter>
         <Button variant="outline" onClick={leave}>

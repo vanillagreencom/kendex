@@ -41,6 +41,9 @@ pub enum Why {
     GhSaid {
         line: String,
     },
+    /// The branch's rules on GitHub take changes only through a pull
+    /// request.
+    PullRequestRequired,
 }
 
 impl From<&Unavailable> for Why {
@@ -50,6 +53,7 @@ impl From<&Unavailable> for Why {
             Unavailable::RemoteNotDecidable => Why::RemoteNotDecidable,
             Unavailable::GhMissing => Why::GhMissing,
             Unavailable::GhSaid(line) => Why::GhSaid { line: line.clone() },
+            Unavailable::PullRequestRequired => Why::PullRequestRequired,
         }
     }
 }
@@ -155,6 +159,10 @@ pub struct ProjectOffer {
     /// The branch already tracks the chosen remote, so a push needs no
     /// `--set-upstream`.
     pub tracked: bool,
+    /// The commands that put the commit on [`ProjectOffer::new_branch`]
+    /// and open the pull request by hand, shown where GitHub refused a push
+    /// under the branch's rules. Empty with no remote.
+    pub by_hand: Vec<String>,
 }
 
 impl ProjectOffer {
@@ -207,6 +215,8 @@ pub struct Refused {
     pub seconds: u32,
     /// Whether the words are `gh`'s rather than git's.
     pub gh: bool,
+    /// GitHub refused this push under the branch's rules.
+    pub branch_rules: bool,
 }
 
 impl From<&Failed> for Refused {
@@ -217,6 +227,7 @@ impl From<&Failed> for Refused {
             timed_out: failed.timed_out(),
             seconds: whole(failed.step.seconds()),
             gh: matches!(failed.step, Step::Probe | Step::PullRequest),
+            branch_rules: failed.refused_by_branch_rules(),
         }
     }
 }
@@ -449,6 +460,7 @@ fn drawn(root: &Path, key: &str, offer: Offer, pending: Option<&Pending>) -> Pro
         new_branch: offer.new_branch.clone(),
         repo: offer.remote.as_ref().map(|remote| remote.url.clone()),
         tracked: offer.remote.as_ref().is_some_and(|remote| remote.tracked),
+        by_hand: offer.by_hand(),
         remote: offer.remote.as_ref().map(|remote| remote.name.clone()),
         branch: offer.branch,
     }
@@ -1152,6 +1164,18 @@ mod tests {
         assert!(timed_out.said.is_empty(), "a timeout carried words");
         assert!(timed_out.gh, "gh's step read as git's");
         assert_eq!(timed_out.seconds, 120);
+
+        // A push GitHub refused under the branch's rules travels marked,
+        // so the window can offer the way on; the commit above does not.
+        assert!(!refused.branch_rules);
+        let ruled = Refused::from(&Failed {
+            step: Step::Push,
+            refusal: Refusal::Said(vec![
+                "remote: error: GH013: Repository rule violations found for refs/heads/main."
+                    .to_owned(),
+            ]),
+        });
+        assert!(ruled.branch_rules);
     }
 
     /// A commit hook can print every passing check before the check that

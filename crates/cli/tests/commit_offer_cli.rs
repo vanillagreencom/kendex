@@ -123,8 +123,9 @@ fn executable(path: &Path, body: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// A `gh` whose answers are chosen by the repository it was bound to.
-/// The directory holds nothing but `gh`, so git resolves as before.
+/// A `gh` whose answers are chosen by the repository it was bound to:
+/// `--repo`, or `GH_REPO` for `gh api`, which has no `--repo`. The
+/// directory holds nothing but `gh`, so git resolves as before.
 #[allow(clippy::unwrap_used)]
 fn path_with_fake_gh(home: &Path) -> String {
     let dir = home.join("fake-bin");
@@ -144,6 +145,14 @@ for a in "$@"; do
   if [ "$prev" = "--repo" ]; then repo="$a"; fi
   prev="$a"
 done
+if [ "$1" = api ]; then
+  case "$GH_REPO $2" in
+    *bypass*/rulesets/7) echo '{"current_user_can_bypass":"always"}'; exit 0;;
+    *ruled*/rulesets/7) echo '{"current_user_can_bypass":"never"}'; exit 0;;
+    *ruled*/rules/branches/main) echo '[{"type":"deletion","ruleset_id":7},{"type":"pull_request","ruleset_id":7}]'; exit 0;;
+  esac
+  echo 'gh: Not Found (HTTP 404)' >&2; exit 1
+fi
 case "$1 $2" in
 "pr list")
   case "$repo" in
@@ -558,6 +567,115 @@ fn the_push_flag_pushes_or_reports_the_remotes_refusal() {
         before,
         "the commit was undone"
     );
+}
+
+/// The branch's rules decide the push before anything is committed. Rules
+/// that take changes only through a pull request refuse `--push` and name
+/// the flag for the route they allow, which then opens one; a person the
+/// ruleset lets past pushes; rules that cannot be read leave the push as
+/// it was. A push GitHub then refuses under the branch's rules names them
+/// and prints the commands that open the pull request from the commit.
+#[test]
+fn the_branch_rules_are_read_before_a_push_and_a_refusal_under_them_names_the_way_on() {
+    struct Row {
+        what: &'static str,
+        origin: &'static str,
+        /// A pre-receive hook on the remote refusing the way GitHub does.
+        gh013: bool,
+        flag: &'static str,
+        exit: i32,
+        committed: bool,
+        says: &'static [&'static str],
+    }
+    let rows = [
+        Row {
+            what: "rules that take a pull request",
+            origin: "ruled-origin",
+            gh013: false,
+            flag: "--push",
+            exit: 1,
+            committed: false,
+            says: &[
+                "no push: this branch's rules on GitHub accept changes only through a pull request",
+                "run again with --pull-request to commit on a new branch and open one",
+            ],
+        },
+        Row {
+            what: "the route those rules allow",
+            origin: "ruled-origin",
+            gh013: false,
+            flag: "--pull-request",
+            exit: 0,
+            committed: true,
+            says: &["opened https://github.com/acme/site/pull/41"],
+        },
+        Row {
+            what: "a person the ruleset lets past",
+            origin: "bypass-ruled-origin",
+            gh013: false,
+            flag: "--push",
+            exit: 0,
+            committed: true,
+            says: &["pushed to origin/main"],
+        },
+        Row {
+            what: "rules that cannot be read",
+            origin: "plain-origin",
+            gh013: false,
+            flag: "--push",
+            exit: 0,
+            committed: true,
+            says: &["pushed to origin/main"],
+        },
+        Row {
+            what: "GitHub refusing the push under the rules",
+            origin: "plain-origin",
+            gh013: true,
+            flag: "--push",
+            exit: 1,
+            committed: true,
+            says: &[
+                "remote: error: GH013: Repository rule violations found for refs/heads/main.",
+                "the commit is on main in this checkout; kendex did not undo it",
+                "main on origin accepts changes only through a pull request",
+                "to open one from this commit yourself:",
+                "    git push 'origin' 'HEAD:refs/heads/kendex/renders'",
+                "' --head 'kendex/renders' --base 'main' --fill",
+            ],
+        },
+    ];
+    for row in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = project(&tmp);
+        let bare = origin(&project, row.origin);
+        if row.gh013 {
+            executable(
+                &bare.join("hooks/pre-receive"),
+                "#!/bin/sh
+echo 'error: GH013: Repository rule violations found for refs/heads/main.' >&2
+exit 1
+",
+            );
+        }
+        let (output, text) = apply(&home, &project, &[row.flag]);
+        assert_eq!(output.status.code(), Some(row.exit), "{}: {text}", row.what);
+        for line in row.says {
+            assert!(text.contains(line), "{}: {line}: {text}", row.what);
+        }
+        assert_eq!(
+            head_subject(&project) != "files",
+            row.committed,
+            "{}: {text}",
+            row.what
+        );
+        let asked = fs::read_to_string(home.join("fake-bin/calls")).unwrap_or_default();
+        assert!(
+            asked.contains("api repos/{owner}/{repo}/rules/branches/main"),
+            "{}: the rules were never read: {asked}",
+            row.what
+        );
+    }
 }
 
 /// The pull-request route: a branch of its own, the commit, the push, the

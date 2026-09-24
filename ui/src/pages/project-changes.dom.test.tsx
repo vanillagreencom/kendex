@@ -363,6 +363,7 @@ describe("the review of one project's pending changes", () => {
           timedOut: false,
           seconds: 30,
           gh: false,
+          branchRules: false,
         },
         done: {
           restored: [],
@@ -397,6 +398,7 @@ describe("a restore that stopped part-way", () => {
         timedOut: false,
         seconds: 30,
         gh: false,
+        branchRules: false,
       },
       done: {
         restored: [FILES[0]],

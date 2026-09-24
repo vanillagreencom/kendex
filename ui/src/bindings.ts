@@ -3948,6 +3948,12 @@ export type ProjectOffer = {
 	 *  `--set-upstream`.
 	 */
 	tracked: boolean,
+	/**
+	 *  The commands that put the commit on [`ProjectOffer::new_branch`]
+	 *  and open the pull request by hand, shown where GitHub refused a push
+	 *  under the branch's rules. Empty with no remote.
+	 */
+	byHand: string[],
 };
 
 /**
@@ -4055,6 +4061,8 @@ export type Refused = {
 	seconds: number,
 	/**  Whether the words are `gh`'s rather than git's. */
 	gh: boolean,
+	/**  GitHub refused this push under the branch's rules. */
+	branchRules: boolean,
 };
 
 /**
@@ -5570,7 +5578,12 @@ export type Why = { kind: "noRemote" } | { kind: "remoteNotDecidable" } | { kind
  *  gh's own first line, so a case nobody anticipated still names
  *  itself rather than reading as one kendex knows.
  */
-{ kind: "ghSaid"; line: string };
+{ kind: "ghSaid"; line: string } | 
+/**
+ *  The branch's rules on GitHub take changes only through a pull
+ *  request.
+ */
+{ kind: "pullRequestRequired" };
 
 /**  An effect that was neither shown nor offered, and why. */
 export type Withheld = {

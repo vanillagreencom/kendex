@@ -127,6 +127,9 @@ fn pushed(
         Err(failed) => {
             block::refused("the push was refused", &failed);
             block::commit_is_on(&offer.branch);
+            if failed.refused_by_branch_rules() {
+                block::branch_rules(&offer.branch, &remote.name, &offer.by_hand());
+            }
             // The recovery for a refused push is to put the commit on a
             // branch of its own, so it is offered only where a pull
             // request can be opened from that branch — and only to a

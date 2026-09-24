@@ -55,6 +55,7 @@ const offer = (over: Partial<ProjectOffer> = {}): ProjectOffer => ({
   newBranch: "kendex/renders",
   repo: "acme/site",
   tracked: true,
+  byHand: [],
   ...over,
 });
 
@@ -83,6 +84,11 @@ describe("the choices an offer carries", () => {
         name: "pull request open",
         offer: offer({ openNumber: 41 }),
         routes: ["commit", "push"],
+      },
+      {
+        name: "the branch's rules require a pull request",
+        offer: offer({ push: { kind: "pullRequestRequired" } }),
+        routes: ["commit", "pr"],
       },
     ];
     expect(rows.length).toBeGreaterThan(0);
