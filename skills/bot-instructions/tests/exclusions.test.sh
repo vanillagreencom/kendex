@@ -319,10 +319,13 @@ mkdir -p "$repo/sub"
 printf '# x\n\n## Code Review Rules\n\ny\n' > "$repo/sub/AGENTS.md"
 git -C "$repo" add -A >/dev/null 2>&1
 expect_red agents-section 'a nested AGENTS.md, with git answering' check --repo "$repo"
-# The must-fail control for the helper: its removal stubbed out, git answers.
-ctrl="$(bi_remove_git() { :; }; bi_remove_git "$repo" && bi_run check --repo "$repo" && printf '%s' "$bi_status")"
-if [ "$ctrl" = 1 ]; then ok 'control: the removal stubbed out, the no-git case goes red'
-else bad 'control: the removal stubbed out, the no-git case goes red' "status=$ctrl"; fi
+# The must-fail control for the helper: its removal stubbed out, git answers,
+# so the nested-AGENTS.md clause alone reds. Exit 1 is the findings status of
+# every clause on this fixture, so the fired set is pinned beside it.
+ctrl="$(bi_remove_git() { :; }; bi_remove_git "$repo" && bi_run check --repo "$repo" \
+  && fired="$(bi_fired)" && printf '%s %s' "$bi_status" "${fired% }")"
+if [ "$ctrl" = '1 agents-section' ]; then ok 'control: the removal stubbed out, the no-git case goes red'
+else bad 'control: the removal stubbed out, the no-git case goes red' "got=$ctrl"; fi
 bi_remove_git "$repo" || exit 1
 expect_message 'git ls-files' 'and the same tree with git unable to answer' \
   check --repo "$repo"

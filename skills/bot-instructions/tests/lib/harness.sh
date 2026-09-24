@@ -94,14 +94,14 @@ EOF
   printf '%s\n' "$repo"
 }
 
-# A repo already rendered and staged, so `drift` and `orphan` have a baseline.
 # The one removal a no-git world goes through. `.git` still standing after it
-# fails here, naming the fixture, never as a row that could not be built.
+# fails here, naming the fixture, before whatever the call site then reports.
 bi_remove_git() {
   rm -rf -- "${1:?}/.git"
   [ ! -e "$1/.git" ] || { printf 'bi_remove_git: .git survives under %s\n' "$1" >&2; return 1; }
 }
 
+# A repo already rendered and staged, so `drift` and `orphan` have a baseline.
 bi_rendered_repo() {
   local repo
   repo="$(bi_new_repo "$1")"
