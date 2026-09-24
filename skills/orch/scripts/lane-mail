@@ -11,8 +11,9 @@
 # file. A halt is acknowledged by a plain `inbox` read alone: `--ack` stops
 # short of an unread one, so a hook that hands mail over never consumes it.
 # A send prints its receipt, so silence is a send that did not land; a repeat
-# of the same text to one item inside a minute is refused before the append
-# rather than delivered a second time.
+# of one envelope to one item inside a minute is refused before the append
+# rather than delivered a second time. The Receipt section of usage() owns
+# what counts as a repeat, and nothing here restates it.
 # Text crosses a file, never argv (orch SKILL.md § Harness-Safe Shell).
 # Bash 3.2-safe: tools/bash32-lint scans this directory.
 
