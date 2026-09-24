@@ -421,7 +421,13 @@ stop --item ID --harness claude|codex|pi resolves the owned worktree through
 the installed worktree command, signals only matching harness processes whose
 current directory is that worktree, waits for them to exit, and prints
 stopped item=ID processes=COUNT. close preserves render-only drift as a binary patch under clone/tmp, restores
-the generated paths, refreshes the clone, and then closes. Any path outside the
+the generated paths, refreshes the clone, and then closes. An untracked render,
+a skill symlink a post-launch kendex apply added among them, enters the patch
+through a temporary index rather than a working-tree comparison, so a link to a
+directory is recorded as a link instead of being dropped. close reads the patch
+back and refuses unless the patch carries every path it is about to restore or
+remove; that refusal, and an untracked render the temporary index cannot read,
+exit 3 and keep the static host. Any path outside the
 clone's generated inventory refuses close with exit 3 and keeps the static host.
 An absent or different item marker refuses close with exit 75
 before worktree lookup. Before worktree removal, close archives remaining clone/tmp
@@ -502,26 +508,27 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
         stop(row, args.item, args.harness)
     elif args.verb == "close":
         path = owned_worktree(row, args.item, "close")
-        result = remote(row, '''clean_render_drift() {
+        result = remote(row, '''drop_render_scratch() { rm -f -- "$owned" "$status" "$index" "$carried"; }
+clean_render_drift() {
   dir="$1"; clone="$2"; item="$3"; label="$4"
   owned="$clone/tmp/render-owned-$label-$$.json"
   status="$clone/tmp/render-status-$label-$$"
+  index="$clone/tmp/render-index-$label-$$"
+  carried="$clone/tmp/render-carried-$label-$$"
   mkdir -p -- "$clone/tmp" || exit 1
   git -C "$dir" status --porcelain=v1 -z --untracked-files=all >"$status" || exit 1
-  if ! test -s "$status"; then rm -f -- "$status"; return 0; fi
-  (cd -- "$dir" && kendex generated-paths) >"$owned" || {
-    rm -f -- "$owned" "$status"; return 1;
-  }
+  if ! test -s "$status"; then drop_render_scratch; return 0; fi
+  (cd -- "$dir" && kendex generated-paths) >"$owned" || { drop_render_scratch; return 1; }
   jq -e 'type == "array" and all(.[]; type == "string")' "$owned" >/dev/null || {
-    rm -f -- "$owned" "$status"; return 1;
+    drop_render_scratch; return 1;
   }
   paths=(); tracked=(); untracked=()
   while IFS= read -r -d '' entry; do
     code="${entry:0:2}"
     path="${entry:3}"
-    case "$code" in *R*|*C*) rm -f -- "$owned" "$status"; return 3 ;; esac
+    case "$code" in *R*|*C*) drop_render_scratch; return 3 ;; esac
     jq -e --arg path "$path" 'index($path) != null' "$owned" >/dev/null || {
-      rm -f -- "$owned" "$status"; return 3;
+      drop_render_scratch; return 3;
     }
     paths+=("$path")
     if git -C "$dir" ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
@@ -529,19 +536,29 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
     elif test -f "$dir/$path" || test -L "$dir/$path"; then
       untracked+=("$path")
     else
-      rm -f -- "$owned" "$status"; return 3
+      drop_render_scratch; return 3
     fi
   done <"$status"
-  rm -f -- "$owned" "$status"
-  test "${#paths[@]}" -gt 0 || return 3
+  test "${#paths[@]}" -gt 0 || { drop_render_scratch; return 3; }
   stamp=$(date -u +%Y%m%dT%H%M%SZ) || exit 1
   patch="$clone/tmp/render-drift-$item-$label-$stamp.patch"
   git -C "$dir" diff --binary HEAD -- "${paths[@]}" >"$patch" || exit 1
-  for path in ${untracked[@]+"${untracked[@]}"}; do
-    diff_rc=0
-    (cd -- "$dir" && git diff --no-index --binary -- /dev/null "$path") >>"$patch" || diff_rc=$?
-    test "$diff_rc" -eq 1 || exit 1
+  if test "${#untracked[@]}" -gt 0; then
+    empty=$(git -C "$dir" hash-object -t tree /dev/null) || exit 1
+    (export GIT_INDEX_FILE="$index"; git -C "$dir" add --force -- "${untracked[@]}") || {
+      drop_render_scratch; return 3;
+    }
+    (export GIT_INDEX_FILE="$index"; git -C "$dir" diff --binary --cached "$empty" -- "${untracked[@]}") >>"$patch" || exit 1
+  fi
+  git -C "$dir" -c core.quotePath=false apply --numstat -- "$patch" >"$carried" || {
+    drop_render_scratch; return 3;
+  }
+  for path in "${paths[@]}"; do
+    awk -F'\t' -v want="$path" '$3 == want { found = 1 } END { exit !found }' "$carried" || {
+      drop_render_scratch; return 3;
+    }
   done
+  drop_render_scratch
   if test "${#tracked[@]}" -gt 0; then
     git -C "$dir" restore --staged --worktree -- "${tracked[@]}" || exit 1
   fi

@@ -14,6 +14,24 @@ import unittest
 PACKAGE = Path(__file__).resolve().parents[2]
 
 
+# The close cleanup's temporary-index block, and the working-tree comparison a
+# must-fail control puts back in its place. `git diff --no-index -- /dev/null
+# LINK` resolves a symlink to a directory and fails with `Could not access
+# 'LINK/null'` whether or not that directory can be read, so it wrote an empty
+# patch and exit 1 for every skill link a `kendex apply` inside the lane renders.
+INDEX_PATCH_FRAGMENT = """    (export GIT_INDEX_FILE="$index"; git -C "$dir" add --force -- "${untracked[@]}") || {
+      drop_render_scratch; return 3;
+    }
+    (export GIT_INDEX_FILE="$index"; git -C "$dir" diff --binary --cached "$empty" -- "${untracked[@]}") >>"$patch" || exit 1
+"""
+
+NO_INDEX_PATCH_MUTANT = """    for path in "${untracked[@]}"; do
+      diff_rc=0
+      (cd -- "$dir" && git diff --no-index --binary -- /dev/null "$path") >>"$patch" || diff_rc=$?
+      test "$diff_rc" -eq 1 || exit 1
+    done"""
+
+
 class SshHostTests(unittest.TestCase):
     def setUp(self):
         scratch = Path.cwd() / "tmp"
@@ -152,6 +170,17 @@ exec git "$@"
     def create(self, *args, harness="claude", **env):
         return self.call("create", "--item", "TEST-1", "--repo", "owner/repo", "--harness", harness,
                          "--account", str(self.account), *args, **env)
+
+    def seed_source(self, relative, text):
+        """Track one more render in the fixture origin, before any clone of it."""
+        path = self.source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        for args in (("add", "--", relative),
+                     ("-c", "user.name=Test", "-c", "user.email=test@example.org",
+                      "commit", "-qm", "seed render")):
+            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args],
+                           check=True, capture_output=True)
 
     def test_prepare_reuse_and_account_protocol(self):
         first = self.create()
@@ -837,23 +866,130 @@ exec git "$@"
         self.assertEqual(closed.returncode, 0, closed.stderr)
         self.assertTrue(removed.exists())
 
-    def test_close_preserves_the_patch_before_restoring(self):
+    def test_close_refuses_a_drift_patch_that_does_not_carry_the_path(self):
         self.assertEqual(self.create().returncode, 0)
         clone = Path(self.row["clone"])
         generated = clone / ".agents/skills/orch/scripts/lane-marker"
-        generated.write_text(generated.read_text() + "# preserve first\n")
+        drifted = generated.read_text() + "# preserve first\n"
+        generated.write_text(drifted)
         owned = '[".agents/skills/orch/scripts/lane-marker"]'
-        original = self.script.read_text()
-        fragment = 'git -C "$dir" diff --binary HEAD -- "${paths[@]}" >"$patch" || exit 1'
-        self.assertEqual(original.count(fragment), 1)
-        self.script.write_text(original.replace(fragment, ': >"$patch"'))
         closed = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS=owned)
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
         with tarfile.open(archive) as saved:
             patches = [name for name in saved.getnames() if "/tmp/render-drift-TEST-1-clone-" in name]
             self.assertEqual(len(patches), 1)
-            self.assertNotIn(b"preserve first", saved.extractfile(patches[0]).read())
+            self.assertIn(b"preserve first", saved.extractfile(patches[0]).read())
+
+        self.assertEqual(self.create().returncode, 0)
+        generated.write_text(drifted)
+        original = self.script.read_text()
+        fragment = 'git -C "$dir" diff --binary HEAD -- "${paths[@]}" >"$patch" || exit 1'
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, ': >"$patch"'))
+        refused = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS=owned)
+        self.assertEqual((refused.returncode, b"close-refused path=" in refused.stderr),
+                         (3, True), refused.stderr)
+        self.assertEqual(generated.read_text(), drifted)
+
+    def test_close_saves_an_untracked_render_link_to_a_directory(self):
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        target = self.root / "rendered-skill"
+        (target / "nested").mkdir(parents=True)
+        link = clone / ".claude/skills/rendered"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target)
+        owned = json.dumps([".claude/skills/rendered"])
+        closed = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS=owned)
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        self.assertFalse(link.is_symlink())
+        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
+        with tarfile.open(archive) as saved:
+            patches = [name for name in saved.getnames() if "/tmp/render-drift-TEST-1-clone-" in name]
+            self.assertEqual(len(patches), 1)
+            patch = saved.extractfile(patches[0]).read()
+        self.assertIn(b"new file mode 120000", patch)
+        self.assertIn(str(target).encode(), patch)
+
+        self.assertEqual(self.create().returncode, 0)
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target)
+        original = self.script.read_text()
+        fragment = INDEX_PATCH_FRAGMENT
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, NO_INDEX_PATCH_MUTANT))
+        mutant = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS=owned)
+        self.assertEqual((mutant.returncode, b"close-refused path=" in mutant.stderr),
+                         (3, True), mutant.stderr)
+        self.assertTrue(link.is_symlink())
+
+    def test_close_refuses_when_the_patch_drops_one_of_several_paths(self):
+        # The accented name is the fixture for core.quotePath=false as well:
+        # apply --numstat prints the C-quoted spelling without it, which never
+        # equals the raw path the carry comparison holds.
+        render = ".agents/skills/orch/scripts/caf\u00e9-render"
+        self.seed_source(render, "rendered\n")
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        marker = clone / ".agents/skills/orch/scripts/lane-marker"
+        accented = clone / render
+        owned = json.dumps([".agents/skills/orch/scripts/lane-marker", render])
+        marker_drift = marker.read_text() + "# marker drift\n"
+        accented_drift = accented.read_text(encoding="utf-8") + "# accented drift\n"
+
+        def drift():
+            marker.write_text(marker_drift)
+            accented.write_text(accented_drift, encoding="utf-8")
+
+        drift()
+        closed = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS=owned)
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        self.assertNotEqual(marker.read_text(), marker_drift)
+        self.assertNotEqual(accented.read_text(encoding="utf-8"), accented_drift)
+
+        # Each refusal keeps the sandbox and the drift, so the fixture carries
+        # from one mutation to the next without another create.
+        original = self.script.read_text()
+        self.assertEqual(self.create().returncode, 0)
+        drift()
+        for fragment, mutation in (
+            ('git -C "$dir" diff --binary HEAD -- "${paths[@]}" >"$patch" || exit 1',
+             'git -C "$dir" diff --binary HEAD -- "${paths[0]}" >"$patch" || exit 1'),
+            ('git -C "$dir" -c core.quotePath=false apply --numstat',
+             'git -C "$dir" apply --numstat'),
+        ):
+            self.assertEqual(original.count(fragment), 1)
+            self.script.write_text(original.replace(fragment, mutation))
+            refused = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS=owned)
+            self.assertEqual((refused.returncode, b"close-refused path=" in refused.stderr),
+                             (3, True), refused.stderr)
+            self.assertEqual(marker.read_text(), marker_drift)
+            self.assertEqual(accented.read_text(encoding="utf-8"), accented_drift)
+        self.script.write_text(original)
+
+    @unittest.skipIf(os.geteuid() == 0, "mode 000 does not stop root from reading the file")
+    def test_close_refuses_an_untracked_render_the_index_cannot_read(self):
+        # No production edit reddens this case on its own: a render git add
+        # cannot index leaves the patch without that path, so deleting the
+        # add refusal only moves the exit 3 down to the carry comparison. The
+        # case holds the contract, that close refuses and keeps both files.
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        marker = clone / ".agents/skills/orch/scripts/lane-marker"
+        drifted = marker.read_text() + "# marker drift\n"
+        marker.write_text(drifted)
+        unreadable = clone / ".agents/skills/orch/scripts/new-render"
+        unreadable.write_text("new rendered file\n")
+        self.addCleanup(unreadable.chmod, 0o644)
+        unreadable.chmod(0o000)
+        owned = json.dumps([".agents/skills/orch/scripts/lane-marker",
+                            ".agents/skills/orch/scripts/new-render"])
+        refused = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS=owned)
+        self.assertEqual((refused.returncode, b"close-refused path=" in refused.stderr),
+                         (3, True), refused.stderr)
+        self.assertTrue(unreadable.exists())
+        self.assertEqual(marker.read_text(), drifted)
 
     def test_close_refuses_when_generated_path_ownership_cannot_be_read(self):
         self.assertEqual(self.create().returncode, 0)
