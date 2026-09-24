@@ -15,3 +15,15 @@ Bg agents (no `pane: true`) are background one-shot processes, ephemeral by defa
 On re-delegation to a pane agent, use `steer_subagent` only for true mid-run correction from this same Pi parent session; its success output reads `Bridge: active` and shows the expected child `sessionFile` under this session runtime. If the bridge target is unavailable, the tool queues an inbox fallback that is **not** mid-run steering and is read only when the pane is idle — for idle follow-up work, queue a new `subagent` task to the same pane instead. A running Pi lane that is not this session's child is messaged with `lane-mail send`, never the bridge; the pi-session-bridge CLI reads its state and answers its harness dialogs ([oversee.md § Talking to a lane](../workflows/oversee.md#talking-to-a-lane)).
 
 Use `get_subagent_result` only as a recovery/status reader for missed or truncated pane completions; it does not affect ownership or delivery. If it returns `needs_completion`, the child finished a turn without the durable `complete_subagent` record — do not count it as a return; use the verbose diagnostics/outbox path to send one recovery instruction asking the same pane to call `complete_subagent` for the stored `taskId`. Treat Pi custom completion notifications as agent returns only when the task ID matches stored workflow state; repeated display is not a second return.
+
+## Standing watch (Pi)
+
+The oversee watch ([oversee.md § Watch delivery](../workflows/oversee.md#watch-delivery)) reaches a Pi overseer through a `pi-background-tasks` output wake. The spawn parameters are the package's [instructions](https://github.com/vanillagreencom/kendex/blob/main/pi-extensions/pi-background-tasks/instructions.md).
+
+| Step | Call |
+|------|------|
+| Arm | `bg_task action: "spawn"` on `tail -n +[NEXT_LINE] -F [RUN_DIR]/watch.log`, with `notifyOnOutput: true`, `notifyMode: "always"` and `notifyOnExit: true`. |
+| Read | A wake carries an inline tail capped at `outputAlertMaxChars`, so read the log from the first line not yet handled: `tail -n +[NEXT_LINE] [RUN_DIR]/watch.log`. |
+| Re-arm | The per-task wake budget ends in one "wake budget exhausted" notice. Stop that follow with `bg_status action: "stop"` and spawn a new one from the first line not yet handled. An exit wake from the follow re-arms the same way. |
+
+The `bg_task.*` activity events that pi-session-bridge relays reach external observers only, never this session.
