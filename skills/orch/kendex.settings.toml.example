@@ -120,9 +120,11 @@ ORCH_ADMIN_MERGE_CLASSES = ""
 ORCH_TMUX_VERIFY_SECS = "15"
 
 # The tmux session every lane window opens in. Unset, a fleet launch uses the
-# session its oversee state records as tmux.session, which the fleet's first
-# tmux launch writes from the launching pane; a launch from no pane with no
-# recorded session refuses as tmux-session-unresolved.
+# session its oversee state records as tmux.session, else the launching pane's.
+# The fleet's first tmux launch records the session it opened in, this one when
+# set, once tmux confirms it exists. A launch with no live pane and no recorded
+# session refuses as tmux-session-unresolved; a session tmux does not hold
+# refuses as tmux-session-missing. A launch needs $TMUX set either way.
 # ORCH_TMUX_SESSION = "kendex"
 
 # Seconds a hosted lane waits for its remote shell prompt after the ssh line is

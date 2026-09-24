@@ -52,6 +52,8 @@ EOF
 cat > "$BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf 'tmux %s\n' "$*" >> "$OT_TMUX_LOG"
+# The named session exists, so a launch reaches the window calls, which fail.
+[[ "${1:-}" != has-session ]] || exit 0
 exit 1
 EOF
 cat > "$BIN/gh" <<'EOF'
