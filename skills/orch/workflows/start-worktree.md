@@ -34,12 +34,27 @@ The full session from inside a worktree: implement → review → submit → fin
 
    Do **not** pass `--repo` (`claim` and `refresh` reject it). Exit 75 means another session holds the lease — coordinate with that owner instead of proceeding. A flock-less host still serializes through the guard's mkdir mutex; exit 1 means the guard itself failed — stop and read its message, never continue unguarded.
 
-4. **Initialize state**:
+4. **Initialize state unless it exists.** `init` overwrites, and a restarted item's state file carries its round history (`cycles`, `fixed_items`, `patched_causes`), so read existence and the branch first:
 
    ```bash
+   .agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
    .agents/skills/orch/scripts/git-context branch [WORKTREE_PATH]
-   .agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --worktree [WORKTREE_PATH] --branch "[BRANCH_FROM_PREVIOUS_COMMAND]"
    ```
+
+   `exists` false → initialize:
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --worktree [WORKTREE_PATH] --branch "[BRANCH]"
+   ```
+
+   `exists` true → keep the state and record where this session runs:
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] worktree "[WORKTREE_PATH]"
+   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] branch "[BRANCH]"
+   ```
+
+   `[BRANCH]` is the `git-context branch` output.
 
 5. **Gate on base freshness.** Every route into a worktree lands here — fresh or reused:
 
