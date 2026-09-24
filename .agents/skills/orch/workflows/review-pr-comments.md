@@ -303,7 +303,7 @@ Apply the fix-round A×B table in [`dev-fix.md` § 2](dev-fix.md), which is cano
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] verification_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "pr-comments fix round: [DOMAINS]"}'
 ```
 
-Delegate and collect it as review-pr.md § 2.2 and § 3 do, with `Diff-range: [PRE_SHA]...HEAD`, then shut its reviewers down and clear their state with review-pr.md § 5's first write. Its blockers and `category == "fix"` suggestions re-enter § 5's disposition flow as findings of this pass; what survives joins this pass's `fix set` as a defect this diff introduces. One verification pass runs per push: the fix it triggers joins the same push without a second pass, and the next external round reviews it.
+Delegate and collect it as review-pr.md § 2.2 and § 3 do, with `Diff-range: [PRE_SHA]...HEAD`, then shut its reviewers down and clear their state with review-pr.md § 5's first write. Its blockers and `category == "fix"` suggestions re-enter § 5's disposition flow as findings of this pass; what survives joins this pass's `fix set` as a defect this diff introduces. Its `category == "issue"` suggestions go to § 6.2, as § 5 routes the triage reports' own; at the cap, where § 6.2 has already run, it runs once more for them after this pass. One verification pass runs per push: the fix it triggers joins the same push without a second pass, and the next external round reviews it.
 
 **Batch per fully-reviewed head.** Push a fix round only after every configured reviewer has reported on the current head. A pass with nothing to push skips this command:
 
