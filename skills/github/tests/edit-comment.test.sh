@@ -204,18 +204,21 @@ SCENARIO="issue-comment"
 run_table "an id the issue-comments endpoint holds" "\
 the edit lands at the issue endpoint, and the pulls one is never asked^2633519824 Fixed^0^success=true url=$ISSUE_URL^-^repo,api:$ISSUE_PATH
 a dry run edits nothing and asks no endpoint^2633519824 Fixed --dry-run^0^dry id=2633519824^-^repo
-a non-numeric id is refused before the repository is resolved^r2633519824 Fixed^1^-^Comment ID must be numeric: r2633519824^-
+a non-numeric id is refused before the repository is resolved^12\"34 Fixed^1^-^Comment ID must be numeric: 12\"34^-
 "
 
 echo "=== the shape of an argument refusal ==="
-# The help says an argument error carries {error} alone, while a refusal from
-# an endpoint carries {error, detail}. The row above reads only .error, so the
-# KEYS are pinned here: a wrapper iterating .detail[] on this output fails.
+# The help says a refusal raised before any endpoint is asked carries {error}
+# alone, while a refusal from an endpoint carries {error, detail}. The row
+# above reads only .error, so the KEYS are pinned here: a wrapper iterating
+# .detail[] on this output fails. The id also carries a double quote, so jq
+# reading the stderr at all is the second thing this asserts — a refusal built
+# by interpolating the value into the JSON text prints something jq refuses.
 build
-run 'r2633519824 Fixed' >/dev/null
-assert_eq "$(jq -Sc . <"$TMP_ROOT/stderr")" \
-  '{"error":"Comment ID must be numeric: r2633519824"}' \
-  "an argument refusal is {error} alone, with no detail key"
+run '12"34 Fixed' >/dev/null
+assert_eq "$(jq -Sc . <"$TMP_ROOT/stderr" || printf 'stderr is not JSON')" \
+  '{"error":"Comment ID must be numeric: 12\"34"}' \
+  "a refusal before any endpoint is {error} alone, and stays JSON with a quote in the value"
 
 # One row per shape a 404 reaches the caller by, so the alternative that
 # matches each is the only thing holding its row green.

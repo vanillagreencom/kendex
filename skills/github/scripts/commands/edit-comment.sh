@@ -51,8 +51,9 @@ A 404 from both endpoints is refused with one keyed line, never a bare 404:
 
 A refusal from an endpoint is {error, detail} on stderr: `detail` is one entry
 per endpoint asked, carrying that endpoint and gh's own text, so no response is
-lost behind the message. An argument error is refused before any endpoint is
-asked and carries {error} alone.
+lost behind the message. A refusal raised before any endpoint is asked, over an
+argument or over the repository the command could not resolve, carries {error}
+alone.
 
 Note: a PR-level comment ID comes from find-comment. A review-thread comment
 ID comes from its comment URL, the number after #discussion_r; pr-threads
@@ -90,7 +91,8 @@ edit_comment() {
                 elif [ "$body_set" = false ]; then
                     body="$1"; body_set=true
                 else
-                    echo "{\"error\": \"Unexpected argument: $1\"}" >&2
+                    jq -nc --arg arg "$1" \
+                        '{error: ("Unexpected argument: " + $arg)}' >&2
                     exit 1
                 fi
                 shift
@@ -113,7 +115,8 @@ edit_comment() {
             exit 1
         fi
         if [ ! -r "$body_file" ]; then
-            echo "{\"error\": \"--body-file path not readable: $body_file\"}" >&2
+            jq -nc --arg path "$body_file" \
+                '{error: ("--body-file path not readable: " + $path)}' >&2
             exit 1
         fi
         body=$(cat -- "$body_file")
@@ -126,7 +129,8 @@ edit_comment() {
 
     # Validate comment ID is numeric
     if ! [[ "$comment_id" =~ ^[0-9]+$ ]]; then
-        echo "{\"error\": \"Comment ID must be numeric: $comment_id\"}" >&2
+        jq -nc --arg id "$comment_id" \
+            '{error: ("Comment ID must be numeric: " + $id)}' >&2
         exit 1
     fi
 
