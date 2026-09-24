@@ -38,7 +38,26 @@ Examples:
   # Dry run
   edit-comment.sh 12345678 "New text" --dry-run
 
-Note: Get comment ID from find-comment or from GitHub URL (#issuecomment-<ID>)
+Reaches both comment kinds: a PR-level comment (#issuecomment-<ID>) and a
+comment inside a review thread (#discussion_r<ID>). The issue-comments
+endpoint is asked first; a 404 there sends the id to the review-comments
+endpoint, and any other failure is reported as that endpoint gave it.
+
+A 404 from both endpoints is refused with one keyed line, never a bare 404:
+
+  github: comment-kind=unknown id=<ID> use=find-comment|comment-url
+    (both endpoints answered 404 for <owner>/<repo>: no such comment, or
+     the token cannot see the repository)
+
+A refusal from an endpoint is {error, detail} on stderr: `detail` is one entry
+per endpoint asked, carrying that endpoint and gh's own text, so no response is
+lost behind the message. A refusal raised before any endpoint is asked, over an
+argument or over the repository the command could not resolve, carries {error}
+alone.
+
+Note: a PR-level comment ID comes from find-comment. A review-thread comment
+ID comes from its comment URL, the number after #discussion_r; pr-threads
+returns PRRT_ thread IDs, which post-reply takes and this command does not.
 EOF
 }
 
@@ -56,11 +75,20 @@ edit_comment() {
                 show_help
                 exit 0
                 ;;
-            --body)
-                body="$2"; body_set=true; shift 2
-                ;;
-            --body-file)
-                body_file="$2"; body_file_set=true; shift 2
+            --body | --body-file)
+                # The value is read here, so its absence is refused here: with
+                # the flag last, `$2` is unset and `set -u` would end the run
+                # with a shell diagnostic no caller can parse as JSON.
+                if [ "$#" -lt 2 ]; then
+                    jq -nc --arg flag "$1" '{error: ($flag + " requires a value")}' >&2
+                    exit 1
+                fi
+                if [ "$1" = "--body" ]; then
+                    body="$2"; body_set=true
+                else
+                    body_file="$2"; body_file_set=true
+                fi
+                shift 2
                 ;;
             --dry-run)
                 dry_run="true"
@@ -72,7 +100,8 @@ edit_comment() {
                 elif [ "$body_set" = false ]; then
                     body="$1"; body_set=true
                 else
-                    echo "{\"error\": \"Unexpected argument: $1\"}" >&2
+                    jq -nc --arg arg "$1" \
+                        '{error: ("Unexpected argument: " + $arg)}' >&2
                     exit 1
                 fi
                 shift
@@ -95,7 +124,8 @@ edit_comment() {
             exit 1
         fi
         if [ ! -r "$body_file" ]; then
-            echo "{\"error\": \"--body-file path not readable: $body_file\"}" >&2
+            jq -nc --arg path "$body_file" \
+                '{error: ("--body-file path not readable: " + $path)}' >&2
             exit 1
         fi
         body=$(cat -- "$body_file")
@@ -108,7 +138,8 @@ edit_comment() {
 
     # Validate comment ID is numeric
     if ! [[ "$comment_id" =~ ^[0-9]+$ ]]; then
-        echo "{\"error\": \"Comment ID must be numeric: $comment_id\"}" >&2
+        jq -nc --arg id "$comment_id" \
+            '{error: ("Comment ID must be numeric: " + $id)}' >&2
         exit 1
     fi
 
@@ -125,13 +156,51 @@ edit_comment() {
         exit 0
     fi
 
-    # Edit comment via REST API
-    local result
-    result=$(gh api -X PATCH "repos/$owner/$repo/issues/comments/$comment_id" \
-        -f body="$body" 2>&1) || {
-        jq -nc --arg detail "$result" '{error: ("Failed to edit comment: " + $detail)}' >&2
+    # A comment id carries no marker of which endpoint owns it. A PR-level
+    # comment is an ISSUE comment; a comment inside a review thread is a REVIEW
+    # comment and lives under `pulls/comments`. Each endpoint answers 404 for
+    # the other's ids, so a 404 is the signal to ask the next endpoint rather
+    # than a verdict on the id. Every other failure is that endpoint's own
+    # answer about an id it owns, and is reported instead of retried.
+    local kind path result status=0 attempts='[]'
+    for kind in issues pulls; do
+        status=0
+        path="repos/$owner/$repo/$kind/comments/$comment_id"
+        result=$(gh api -X PATCH "$path" -f body="$body" 2>&1) || status=$?
+        if [ "$status" -eq 0 ]; then
+            break
+        fi
+        attempts=$(jq -c --arg endpoint "$kind" --arg response "$result" \
+            '. + [{endpoint: $endpoint, response: $response}]' <<<"$attempts")
+        if ! gh_error_is_not_found "$result"; then
+            break
+        fi
+    done
+
+    if [ "$status" -ne 0 ]; then
+        # A 404 from both endpoints does not say the comment is absent: GitHub
+        # answers 404 for a resource the token cannot see and for a repository
+        # that is not the one the caller meant. The refusal names what the two
+        # answers prove, hands back both responses, and names where each kind
+        # of id is read, because a bare 404 sent the caller back to guessing.
+        if gh_error_is_not_found "$result"; then
+            jq -nc --arg id "$comment_id" --arg slug "$owner/$repo" \
+                --argjson attempts "$attempts" \
+                '{error: ("github: comment-kind=unknown id=" + $id
+                    + " use=find-comment|comment-url (both endpoints answered 404 for "
+                    + $slug + ": no such comment, or the token cannot see the repository)"),
+                  detail: $attempts}' >&2
+            exit 1
+        fi
+        # The endpoint that gave this answer owns it, so the message names
+        # its path, and every response collected on the way here is in detail:
+        # a 404 at the first endpoint is not lost when the second fails some
+        # other way.
+        jq -nc --arg path "$path" --arg detail "$result" --argjson attempts "$attempts" \
+            '{error: ("Failed to edit comment at " + $path + ": " + $detail),
+              detail: $attempts}' >&2
         exit 1
-    }
+    fi
 
     # Extract URL from response
     local url

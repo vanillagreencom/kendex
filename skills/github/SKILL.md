@@ -47,12 +47,12 @@ tags: [git, integration]
 | `post-reply <PRRT_...\|numeric-id> [body \| --body-file PATH] [--pr N]` | Reply to review comment. `--pr N` is REQUIRED for numeric comment IDs; thread `PRRT_...` IDs need no PR number. |
 | `post-comment <PR> [body \| --body-file PATH]` | Post PR-level comment. |
 | `find-comment <PR> --pattern <regex>` | Find comment by pattern/author |
-| `edit-comment <id> [body \| --body-file PATH]` | Edit existing comment. |
+| `edit-comment <id> [body \| --body-file PATH]` | Edit an existing comment, PR-level (`#issuecomment-<id>`) or inside a review thread (`#discussion_r<id>`). Endpoint order and the unknown-id refusal: `edit-comment --help`. |
 | `sticky-comment <PR> [--verdict\|--analysis\|--body]` | Get bot sticky comment. `--verdict`: quick pass/fail. `--analysis`: deep recommendation. |
 
 CI waiting belongs to `.agents/skills/orch/scripts/ci-wait`; `await-mergeable` waits for merge-state resolution.
 
-Contracts: `label-add --help`, `git-https-auth --help`, `git-diff-summary --help`.
+Contracts: `label-add --help`, `edit-comment --help`, `git-https-auth --help`, `git-diff-summary --help`.
 
 ### PR Merge Outcomes
 

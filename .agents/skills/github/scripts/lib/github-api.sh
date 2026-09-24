@@ -210,6 +210,20 @@ gh_graphql() {
     done
 }
 
+# True when a captured `gh api` failure is GitHub answering "no such resource".
+# For a caller that ACTS on not-found, deciding whether to send its request
+# somewhere else rather than only telling the user what went wrong.
+#
+# Both spellings a 404 reaches a caller by are read, and nothing else: gh
+# prints `gh: Not Found (HTTP 404)` to stderr, and the API's own JSON body
+# carries `"status": "404"`. A capture can hold either alone. An unanchored
+# `Not Found` would also match a repository, branch or label whose name says
+# it, and a bare `404` a body that merely mentions the number.
+# Usage: gh_error_is_not_found "$captured_output"
+gh_error_is_not_found() {
+    grep -Eq 'HTTP 404|"status"[[:space:]]*:[[:space:]]*"?404"?' <<<"$1"
+}
+
 # Execute REST API call with error handling
 # Usage: gh_rest "repos/{owner}/{repo}/pulls/123"
 gh_rest() {

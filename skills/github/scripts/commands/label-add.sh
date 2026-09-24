@@ -9,6 +9,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../lib/gh-auth.sh"
 # shellcheck source=../lib/gh-repo.sh
 source "$SCRIPT_DIR/../lib/gh-repo.sh"
+# For gh_error_is_not_found, the one home for "GitHub answered no such
+# resource". The lib re-sources the two above, which is idempotent.
+# shellcheck source=../lib/github-api.sh
+source "$SCRIPT_DIR/../lib/github-api.sh"
 
 show_help() {
     cat <<'EOF'
@@ -115,7 +119,7 @@ preflight_label_add() {
         return 0
     fi
 
-    if printf '%s' "$lookup_output" | grep -Eq 'HTTP 404|"status"[[:space:]]*:[[:space:]]*"?404"?|Not Found'; then
+    if gh_error_is_not_found "$lookup_output"; then
         if [ "$policy" = "optional" ]; then
             emit_preflight_result \
                 "optional_unsupported" "$policy" "label_missing" "$repository" "$label"
