@@ -1,0 +1,1 @@
+- Ship the Linux `.deb` and `.rpm` with a description, a Development menu category and a git dependency, and ship the license file in the Arch `kendex-bin` package.

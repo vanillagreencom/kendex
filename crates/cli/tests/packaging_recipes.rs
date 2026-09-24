@@ -443,6 +443,18 @@ fn every_arch_package_ships_a_recipe_pair_under_one_epoch() {
     }
 }
 
+/// Arch requires a package under a non-common license such as MIT to ship
+/// its license text; namcap refuses one that does not.
+#[test]
+fn every_arch_package_installs_its_license() {
+    for package in arch_packages() {
+        assert!(
+            pkgbuild(package).contains("\"$pkgdir/usr/share/licenses/$pkgname/LICENSE\""),
+            "{package}: installs no license file under /usr/share/licenses/{package}/"
+        );
+    }
+}
+
 /// makepkg LTO makes ring's C objects fail to link with rust-lld. Every
 /// package that compiles kendex disables LTO, and records the option in the
 /// generated metadata that AUR clients read.
