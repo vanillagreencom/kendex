@@ -1163,6 +1163,20 @@ stage_rate 40 20 30
 table "samples less than a minute apart report an unmeasured rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.projected_wall_minutes=null claude.usage_rate_state=samples-too-close"
 stage_rate 20 20 600
 table "a flat rate reports unmeasured rather than healthy|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.projected_wall_minutes=null claude.usage_rate_state=not-increasing"
+# The Claude endpoint writes fractional seconds and +00:00. The prior sample
+# and the current one are compared on their reset, so both take the one
+# spelling or the rate is never measured.
+stage_rate 40 20 600
+for f in "$CACHE_STATE"/usage/*.json; do
+  [[ -f "$f" && "$(jq -r '.config_dir' "$f")" == "$H/.claude" ]] || continue
+  jq 'walk(if type == "object" and (.resets_at | type) == "string"
+           then .resets_at |= sub("Z$"; ".123456+00:00") else . end)' "$f" > "$f.tmp" \
+    && mv "$f.tmp" "$f"
+done
+assert_eq "$(jq -r 'select(.config_dir == "'"$H/.claude"'") | .usage.five_hour.resets_at + " " + .prior.usage.five_hour.resets_at' "$CACHE_STATE"/usage/*.json)" \
+  "2026-07-27T06:00:00.123456+00:00 2026-07-27T06:00:00.123456+00:00" \
+  "the staged samples carry the endpoint's fractional spelling"
+table "fractional +00:00 resets on both samples still expose the rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.usage_rate_state=measured claude.binding_resets_at=2026-07-27T06:00:00Z"
 stage_cache 0
 table "one sample reports an unmeasured rate|ORCH_LANE_DIRS=$H/.claude;OVERSEE_WATCH_STATE_DIR=$CACHE_STATE|$RATE_LIST|claude.projected_wall_minutes=null claude.usage_rate_state=one-sample"
 
@@ -1726,6 +1740,17 @@ standard_home home
 table \
   "pick --json carries the chosen lane's headroom, binding bucket and that bucket's reset||pick --harness claude --json|headroom_pct=80 binding_bucket=weekly binding_resets_at=2026-08-01T06:00:00Z" \
   "a lane bound by its session window names the session bucket and reset||$LIST|eclaude.binding_bucket=session eclaude.binding_resets_at=2026-07-27T06:00:00Z nclaude.binding_bucket=weekly openclaude.binding_bucket=null"
+
+# The Claude endpoint writes fractional seconds and +00:00; every reset a
+# record carries is whole-second UTC with a Z, the spelling Codex resets
+# already take, so a reader parses and compares one form.
+new_home fractional-resets
+make_lane "$H" claude 3600
+claude_usage 10 20 5 Opus \
+  | jq 'walk(if type == "object" and (.resets_at | type) == "string"
+             then .resets_at |= sub("Z$"; ".123456+00:00") else . end)' > "$FIXTURE_DIR/.claude.json"
+table \
+  "a fractional +00:00 reset from the endpoint is listed as whole-second UTC||$LIST|claude.binding_resets_at=2026-08-01T06:00:00Z claude.resets.session=2026-07-27T06:00:00Z claude.model_buckets[0].resets_at=2026-08-01T06:00:00Z"
 
 echo "=== pick --model judges the window that walls THAT model ==="
 # An account with plan-wide weekly room can still have none left for ONE model,
@@ -2402,9 +2427,11 @@ echo "=== a renewal a ceiling lands on finishes, keeps the rotated token and rel
 # workflow-state-flockless.sh builds its own: the real PATH minus flock, so it
 # stays true as `lanes` changes.
 #
-# Both assertions read the SETTLED state rather than the instant the ceiling
-# returns, through lib/lanes-fixture.sh's `settled_mutex`, the one reading of a
-# reaped lock these suites share.
+# The two mutex assertions read the SETTLED state rather than the instant the
+# ceiling returns, through lib/lanes-fixture.sh's `settled_mutex`, the one
+# reading of a reaped lock these suites share. The credentials check reads the
+# file only once the mutex assertion before it has waited for the release,
+# which comes after the rename.
 #
 # Each run gets its own OVERSEE_WATCH_STATE_DIR, because `lanes` also takes the
 # host-wide usage mutex under that directory and the control below reaps a run
@@ -2494,7 +2521,7 @@ if command -v timeout > /dev/null 2>&1; then
   assert_eq "$(settled_mutex "$H/.claude/.lanes-refresh.lock.d" 50)" "held" \
     "control: without those handlers the renewal leaves the mutex behind"
 else
-  printf '  skip  a reaped renewal: this host has no timeout to bound one with\n'
+  printf '  skip  a renewal a ceiling lands on: this host has no timeout to bound one with\n'
 fi
 
 echo "=== the default bound is the owner rule: more than five percent headroom ==="

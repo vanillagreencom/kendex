@@ -131,8 +131,8 @@
 #         sets HANDOFF to `required` at or below ORCH_HANDOFF_HEADROOM_PCT
 #         (default 3).
 #         --json carries `binding_resets_at` beside it, the time the account's
-#         binding bucket frees up in the one spelling both harness parsers
-#         produce, so a caller refusing on headroom can say when the account
+#         binding bucket frees up, as whole-second UTC with a Z for either
+#         harness, so a caller refusing on headroom can say when the account
 #         comes back. It also carries `server`, the tmux server the row's
 #         `pane` belongs to, since pane ids restart at %0 on every server.
 #         The caller's OWN pane is reported too, claim or no claim, so an
@@ -915,9 +915,10 @@ parse_codex_usage() {
 	local session_window="$1"
 	jq -c --argjson sw "$session_window" '
 		def pct($p): (($p | numbers) // 0) | floor | (if (. > 1e12 or . < 0) then 0 else . end);
-		# The reset is rendered to the same ISO spelling the claude parser
-		# already carries, so `resets` and `binding_resets_at` name a time in
-		# both harnesses and no reader has to know which one measured the lane.
+		# The reset is rendered as an ISO timestamp here; emit_lane gives it,
+		# and every other reset, the one spelling utc_resets in
+		# lib/lane-model.sh names, so no reader has to know which harness
+		# measured the lane.
 		def win($w): {
 			pct: pct($w.used_percent),
 			resets_at: (($w.reset_at | numbers | todate?) // null),
@@ -1634,7 +1635,7 @@ emit_lane() {
 		--argjson refreshable "$refreshable" \
 		--arg through "$through" --argjson b "$buckets" \
 		--argjson pb "$prior" --argjson elapsed "$elapsed" "$LANE_MODEL_JQ"'
-		($b // {}) as $b
+		($b // {} | utc_resets) as $b
 		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct] | map(select(. != null)) as $known
 		| (if ($status == "ok" and ($known | length) == 0) then "no_usage_data" else $status end) as $st
 		| ({status: $st} | lane_measured) as $measured
@@ -1658,7 +1659,7 @@ emit_lane() {
 		    binding_bucket: (if ($measured and $bind != null) then $bind.k else null end),
 		    binding_resets_at: (if ($measured and $bind != null) then ($b.resets[$bind.k] // null) else null end),
 		    usage_age_s: $age,
-		    _rate_prior: $pb,
+		    _rate_prior: ($pb | utc_resets),
 		    _rate_elapsed_s: $elapsed,
 		    resets: ($b.resets // {session: null, weekly: null, model: null}),
 		    detail: (if $st == "no_usage_data" and $detail == ""

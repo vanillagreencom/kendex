@@ -2852,15 +2852,13 @@ account_roster_read() {
   # exit 0 is a listing that failed to render, never a fleet with no accounts.
   # A record missing the fields a row is keyed and judged on is not an account
   # this watch can compare, and refusing the read is what keeps it from
-  # reading as an unchanged one. A reset stamp is normalized to whole-second
-  # UTC with a Z, as the merged and triage filters normalize theirs: Claude's
-  # usage endpoint writes fractional seconds and `+00:00`, which the BSD arm
-  # of to_epoch cannot read.
+  # reading as an unchanged one. `lanes` gives every reset one whole-second
+  # UTC spelling, which to_epoch reads on both date arms.
   out="$(jq -rn 'input
     | if type != "array" then error("listing is not an array") else .[] end
     | (.status // error("status missing")) as $status
     | (.verdict // error("verdict missing")) as $verdict
-    | ((.binding_resets_at // "-") | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z")) as $resets
+    | (.binding_resets_at // "-") as $resets
     | ["\(.harness)|\(.measured_through)|\(.config_dir)",
        "\($status)|\($verdict)|\($resets)",
        "\(.alias) harness=\(.harness) through=\(.measured_through) status=\($status) verdict=\($verdict) headroom_pct=\(.headroom_pct // "-") binding_bucket=\(.binding_bucket // "-") binding_resets_at=\($resets)"]

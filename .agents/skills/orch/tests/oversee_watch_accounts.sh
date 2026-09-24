@@ -149,21 +149,6 @@ assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
 assert_eq "$(grep -c "^oversee-watch: account-reset-unparsed account=claude|local|/home/u/.claude binding_resets_at=not-a-time$" "$ERR" || true)" "1" \
   "the unparseable baseline reset is noted once, naming the account and the stamp" "$ERR"
 
-# Claude's usage endpoint writes a reset with fractional seconds and +00:00,
-# which the BSD date arm cannot read: the watch keeps whole-second UTC with a
-# Z, so the reset is judged and printed the same way on every host.
-new_case reset_fractional
-accounts 1 "$(account claude ok walled 2 2026-09-24T12:00:00.123456+00:00)"
-accounts 2 "$(account claude ok walled 2 2026-10-01T12:00:00.654321+00:00)"
-printf '%s\n' "$BEFORE" > "$STUB_DIR/now.epoch"
-pass
-printf '%s\n' "$AFTER" > "$STUB_DIR/now.epoch"
-pass
-assert_eq "$(grep '^EVENT account ' <<<"$OUT")" \
-  "EVENT account claude harness=claude through=local status=ok verdict=walled headroom_pct=2 binding_bucket=weekly binding_resets_at=2026-10-01T12:00:00Z change=reset was=ok/walled" \
-  "a fractional +00:00 reset is judged and printed as whole-second UTC" "$ERR"
-assert_not_contains "$(cat "$ERR")" "account-reset-unparsed" "the fractional reset parses" "$ERR"
-
 # Any other event opens the block, and the roster stays with the heartbeat.
 new_case other_event
 accounts 1 "$(account claude ok room 80 2026-10-01T00:00:00Z)"
@@ -211,18 +196,10 @@ done
 # A reader that overruns its ceiling is noted with the seconds it was given.
 # The copy shortens the ceiling so the row need not wait out the real one.
 if command -v timeout >/dev/null 2>&1; then
-  CEILING_DIR="$TMP_ROOT/ceiling"
-  mkdir -p "$CEILING_DIR/orch"
-  cp -R "$REPO_ROOT/skills/orch/scripts" "$CEILING_DIR/orch/scripts"
-  ln -s "$REPO_ROOT/skills/github" "$CEILING_DIR/github"
-  sed 's/^READ_CEILING=60$/READ_CEILING=1/' \
-    "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$CEILING_DIR/orch/scripts/oversee-watch"
-  chmod +x "$CEILING_DIR/orch/scripts/oversee-watch"
-  assert_eq "$(cmp -s "$CEILING_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
-    "differs" "the shortened-ceiling copy really differs from the watch"
+  shortened_ceiling_watch
   new_case ceiling
   printf '3\n' > "$STUB_DIR/lanes.sleep"
-  WATCH_BIN="$CEILING_DIR/orch/scripts/oversee-watch" pass
+  WATCH_BIN="$CEILING_WATCH" pass
   assert_eq "rc=$RC first=$(head -1 <<<"$OUT") roster=$(grep '^account' <<<"$OUT" || true)" \
     "rc=0 first=$HEARTBEAT roster=account-roster unread" \
     "a read past its ceiling puts account-roster unread in the heartbeat" "$ERR"
