@@ -51,28 +51,46 @@ case "${1:-}" in
 esac
 exit 0
 EOF
-# new-window marks that it was reached, then holds the launch for
-# STUB_OPEN_DELAY seconds: the window between a launch's count and its record
-# write that a second launcher meets.
+# new-window marks that it was reached, then, where STUB_HOLD names a file,
+# holds the launch until that file exists, 10 seconds at most: the window
+# between a launch's count and its record write that a second launcher meets,
+# held for as long as the row needs it rather than for a guessed time.
 cat > "$BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
   list-windows) echo 1 ;;
-  new-window) : > "$STUB_OPEN_MARK.$STUB_TAG"; sleep "${STUB_OPEN_DELAY:-0}"; echo "$STUB_SERVER %1" ;;
+  new-window)
+    : > "$STUB_OPEN_MARK.$STUB_TAG"
+    n=0
+    while [[ -n "${STUB_HOLD:-}" && ! -e "$STUB_HOLD" ]] && (( n < 100 )); do sleep 0.1; n=$((n + 1)); done
+    echo "$STUB_SERVER %1" ;;
   display-message) echo 0 ;;
 esac
 exit 0
 EOF
-chmod +x "$BIN/lanes" "$BIN/tmux"
+# Every child a launch starts while it holds the launch lock records, under
+# $FD7, whether descriptor 7 reached it: the GUI terminal here, the worktree
+# CLI and lane-marker below. An open descriptor 7 is a child that could hold
+# the lock past the launch.
+FD7="$TMP_ROOT/fd7"
+mkdir -p "$FD7"
+cat > "$BIN/ghostty" <<EOF
+#!/usr/bin/env bash
+{ : >&7; } 2>/dev/null && : > "$FD7/terminal"
+exit 0
+EOF
+chmod +x "$BIN/lanes" "$BIN/tmux" "$BIN/ghostty"
 
 STUB="$TMP_ROOT/worktree-stub"
 cat > "$STUB" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+{ : >&7; } 2>/dev/null && : > "$FD7/worktree-\${1:-}"
 d="$TMP_ROOT/wt/\${2:-unknown}"
 case "\${1:-}" in
   exists) [[ -d "\$d" ]] && echo true || echo false ;;
-  merged) exit 1 ;;
+  merged) [[ -n "\${STUB_MERGED:-}" ]] || exit 1; echo abc1234 ;;
+  fix-links) ;;
   path) printf '%s\n' "\$d" ;;
   create) if [[ -n "\${STUB_LINGER:-}" ]]; then sleep "\$STUB_LINGER" >/dev/null 2>&1 & fi
     mkdir -p "\$d"; [[ -d "\$d/.git" ]] || { git init -q "\$d"; git -C "\$d" config gc.auto 0; git -C "\$d" config maintenance.auto false; }; printf '%s\n' "\$d" ;;
@@ -87,6 +105,13 @@ cp "$SCRIPTS_DIR/open-terminal" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-
   "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$REPO/scripts/"
 cp "$SCRIPTS_DIR/lib"/*.sh "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
+mv "$REPO/scripts/lane-marker" "$REPO/scripts/lane-marker.real"
+cat > "$REPO/scripts/lane-marker" <<EOF
+#!/usr/bin/env bash
+{ : >&7; } 2>/dev/null && : > "$FD7/lane-marker"
+exec "\$(dirname "\$0")/lane-marker.real" "\$@"
+EOF
+chmod +x "$REPO/scripts/lane-marker"
 git -C "$REPO" init -q
 git -C "$REPO" config gc.auto 0
 git -C "$REPO" config maintenance.auto false
@@ -104,16 +129,17 @@ row() {
   CLAIMS="$ROW/watch"
 }
 
-# launch TAG FLEET_CAP ACCOUNT_CAP ARGS... — one launch of the row's fleet on
-# tmux; its stdout, stderr and status land in $ROW/TAG.{out,err,rc}.
+# launch TAG FLEET_CAP ACCOUNT_CAP ARGS... — one launch of the row's fleet, on
+# tmux unless MODE names another surface flag; its stdout, stderr and status
+# land in $ROW/TAG.{out,err,rc}.
 launch() {
   local tag="$1" fleet_cap="$2" account_cap="$3" rc=0
   shift 3
   (cd "$REPO" && PATH="$BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$CLAIMS" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 GH_REPO="" STUB_SERVER=$$ STUB_OPEN_MARK="$ROW/opened" STUB_TAG="$tag" \
-    STUB_WALL="$ROW/wall" STUB_PICK="$ROW/pick" \
+    STUB_WALL="$ROW/wall" STUB_PICK="$ROW/pick" TERMINAL=ghostty \
     ORCH_OVERSEER_LANES="$fleet_cap" ORCH_LANE_ACCOUNT_CLAIMS="$account_cap" \
-    "$OT" --state-dir "$STATE" --tmux --harness claude --cmd "true --model opus --effort high" "$@" \
+    "$OT" --state-dir "$STATE" "${MODE:---tmux}" --harness claude --cmd "true --model opus --effort high" "$@" \
     >"$ROW/$tag.out" 2>"$ROW/$tag.err") || rc=$?
   printf '%s\n' "$rc" > "$ROW/$tag.rc"
 }
@@ -147,17 +173,20 @@ await_exit() {
 }
 
 # race FLEET_CAP ACCOUNT_CAP LANE_1 LANE_2 — two launches of CC-1 and CC-2, the
-# second started while the first holds its window open between count and record.
+# second started while the first holds its window open between count and record
+# and released only once the second returns. With the lock the second waits out
+# the hold's bound; without it the second counts while the first is held.
 race() {
-  STUB_OPEN_DELAY=2 launch one "$1" "$2" --lane "$3" CC-1 &
+  STUB_HOLD="$ROW/release" launch one "$1" "$2" --lane "$3" CC-1 &
   local first=$!
   await_open one
   launch two "$1" "$2" --lane "$4" CC-2
+  : > "$ROW/release"
   await_exit "$first"
 }
 
 # key TAG — the first line of every open-terminal cap line on TAG's output.
-key() { grep -hE '^open-terminal: (cap-reached|account-cap-reached|over-cap-admitted|slot-waiting|cap-unreadable|cap-option-unanchored|over-cap-items|claim-unrecorded|lane-model-walled) ' "$ROW/$1.out" "$ROW/$1.err" || true; }
+key() { grep -hE '^open-terminal: (cap-reached|account-cap-reached|over-cap-admitted|slot-waiting|cap-unreadable|cap-lock-failed|cap-option-unanchored|over-cap-items|claim-unrecorded|lane-model-walled) ' "$ROW/$1.out" "$ROW/$1.err" || true; }
 rc() { cat "$ROW/$1.rc"; }
 running() { "$WS" --state-dir "$STATE" get oversee '[(.lanes // [])[] | select(.status == "running") | .item] | join(",")'; }
 account_of() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .account // "null"'; }
@@ -339,6 +368,44 @@ STUB_LINGER=10 launch one 10 0 --lane "$LANE_A" CC-1 CC-2
 assert_eq "rc=$(rc one) running=$(running) lock-waits=$(grep -c '^open-terminal: lock-waiting' "$ROW/one.out" || true)" \
   "rc=0 running=CC-1,CC-2 lock-waits=0" \
   "the second item of a batch finds the lock free while the first item's worktree child still runs"
+
+echo "=== a refusal stops the batch ==="
+row batch
+seed_running CC-9
+launch one 1 0 --lane "$LANE_A" CC-1 CC-2
+assert_eq "rc=$(rc one) $(key one) running=$(running)" \
+  "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 running=CC-9" \
+  "the first refused item ends the batch, so the second is neither judged nor launched"
+
+echo "=== a count or a lock that cannot be had refuses before any window ==="
+row state-unreadable
+"$WS" --state-dir "$STATE" init oversee >/dev/null
+printf '%s\n' '{"lanes":[' > "$STATE/workflow-state-oversee.json"
+launch one 5 0 --lane "$LANE_A" CC-1
+assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
+  "rc=1 open-terminal: cap-unreadable item=CC-1 source=state opened=no" \
+  "a fleet state that does not parse refuses the launch rather than counting nothing"
+row lock-unopenable
+"$WS" --state-dir "$STATE" init oversee >/dev/null
+mkdir -p "$STATE/workflow-state-oversee.json.launch.lock"
+launch one 5 0 --lane "$LANE_A" CC-1
+assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
+  "rc=1 open-terminal: cap-lock-failed item=CC-1 lock=$STATE/workflow-state-oversee.json.launch.lock opened=no" \
+  "a launch lock that cannot be opened refuses the launch rather than counting unlocked"
+
+echo "=== no child started under the launch lock inherits its descriptor ==="
+# A GUI launch reaches the terminal, a fresh tmux launch the worktree create and
+# lane-marker, a relaunch the worktree exists and merged verbs, and a relaunch
+# of a merged item the worktree path and fix-links verbs.
+row fd7
+MODE=--ghostty launch gui 10 0 CC-1
+launch fresh 10 0 --lane "$LANE_A" CC-2
+launch again 10 0 --lane "$LANE_A" --relaunch CC-2
+STUB_MERGED=1 launch merged 10 0 --lane "$LANE_A" --relaunch CC-2
+assert_eq "rc=$(rc gui),$(rc fresh),$(rc again),$(rc merged) reached=$(ls "$FD7" | tr '\n' ' ')" "rc=0,0,0,0 reached=" \
+  "descriptor 7 reaches none of the terminal, the worktree verbs or lane-marker"
+assert_eq "$(grep -c '^open-terminal: worktree-reuse-merged item=CC-2 commit=abc1234$' "$ROW/merged.out" "$ROW/merged.err" | awk -F: '{ n += $2 } END { print n }')" "1" \
+  "the merged relaunch took the path and fix-links arm"
 
 echo "=== refusals ahead of any count ==="
 row options

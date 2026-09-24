@@ -11,6 +11,9 @@ if [ -z "$STUB_LIB" ]; then
 fi
 printf '%q ' "$@" >> "$LANE_HOST_STUB_LOG"
 printf '\n' >> "$LANE_HOST_STUB_LOG"
+# LANE_HOST_STUB_FD7 names a file created when descriptor 7 reached this stub:
+# the launch lock open-terminal holds, which a provider must never inherit.
+if [[ -n "${LANE_HOST_STUB_FD7:-}" ]] && { : >&7; } 2>/dev/null; then : > "$LANE_HOST_STUB_FD7"; fi
 if [[ "${LANE_HOST_STUB_STATUS:-0}" -ne 0 ]]; then
   exit "$LANE_HOST_STUB_STATUS"
 fi

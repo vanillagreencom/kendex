@@ -123,7 +123,16 @@ cp "$SRC_OT" "$REPO/scripts/open-terminal"
 cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$REPO/scripts/"
 cp "$SCRIPTS_DIR/lib"/*.sh "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
-chmod +x "$REPO/scripts/open-terminal"
+# lane-marker records whether descriptor 7, the launch lock every fleet launch
+# here holds, reached it, as the hosted rows' provider stub does through
+# LANE_HOST_STUB_FD7.
+mv "$REPO/scripts/lane-marker" "$REPO/scripts/lane-marker.real"
+cat > "$REPO/scripts/lane-marker" <<EOF
+#!/usr/bin/env bash
+{ : >&7; } 2>/dev/null && : > "$TMP_ROOT/fd7.lane-marker"
+exec "\$(dirname "\$0")/lane-marker.real" "\$@"
+EOF
+chmod +x "$REPO/scripts/open-terminal" "$REPO/scripts/lane-marker"
 git -C "$REPO" init -q
 OT="$REPO/scripts/open-terminal"
 WS="$REPO/scripts/workflow-state"
@@ -339,6 +348,14 @@ assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$O
   "rc=0 woken=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null" \
   "a wake sets the resumed session id and status running and leaves the launch's fields as they were"
 
+echo "=== a wake is not judged on the fleet cap ==="
+# The fleet already runs more lanes than a cap of 1 allows; a wake rouses one of
+# them and adds none.
+ORCH_OVERSEER_LANES=1 run_ot --wake --harness claude CC-1
+assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$OUT" || true) capped=$(grep -c '^open-terminal: cap-' <<<"$OUT$ERR" || true)" \
+  "rc=0 woken=1 capped=0" \
+  "a wake at a full fleet goes through with no cap line"
+
 echo "=== a wake of an item no record names is refused as record-missing, with nothing written ==="
 touch "$EXISTS_DIR/CC-40"
 mkdir -p "$TMP_ROOT/wt/CC-40"
@@ -358,10 +375,12 @@ HOSTED_DISK="$TMP_ROOT/remote"
 mkdir -p "$HOSTED_DISK/srv/lane"
 printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$HOSTED_DISK/srv/lane/.git"
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
-  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-60
+  LANE_HOST_STUB_FD7="$TMP_ROOT/fd7.host" run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-60
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-60)")" \
   "rc=0 item=CC-60 tracker=linear repo=o/r harness=claude window=stub:CC-60 account=$LANE_DIR host=$HOST_STUB mail_root=/srv/lane surface=tmux model=opus session_id=null status=running over_cap=null" \
   "a hosted record carries the host spec and the remote path create named, never the local tree"
+assert_eq "$(cd "$TMP_ROOT" && ls fd7.* 2>/dev/null | tr '\n' ' ')" "" \
+  "descriptor 7 reaches neither the lane host provider nor lane-marker, local or hosted, while the launch lock is held"
 
 echo "=== a hosted launch writes its lane's marker on the host and reads it back ==="
 # `hooks/lane-mail-check.sh` reads a session as a launched lane only where the
