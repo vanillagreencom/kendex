@@ -685,6 +685,11 @@ fn the_desktop_source_packages_build_the_frontend_before_the_app() {
             install < app && frontend < app,
             "{package}: the frontend is built after cargo, so the app embeds an empty ui/dist"
         );
+        let build = recipe[app..].lines().next().unwrap_or_default();
+        assert!(
+            build.contains("--features tauri/custom-protocol"),
+            "{package}: cargo builds the app without tauri/custom-protocol, so it loads devUrl"
+        );
         assert!(
             pkgbuild_field(&recipe, "makedepends")
                 .iter()
