@@ -39,6 +39,8 @@ rule "the stop mark ends oversight with no restart" "$WATCH" "$DELIVERY" \
   '`stopped` is the mark' 'no restart'
 rule "a fresh run directory restarts the line count" "$WATCH" "$DELIVERY" \
   '`[NEXT_LINE]` starts at 1'
+rule "a relaunch moves the follow to the new log" "$WATCH" "$DELIVERY" \
+  'end the current follow' 'new `[RUN_DIR]/watch.log` from line 1'
 rule "every harness follows through the one saved follow script" "$WATCH" \
   "$DELIVERY" '`[RUN_DIR]/follow.sh`' 'file-write tool'
 rule "Stop ends the detached watch before the handoff" "$OVERSEE" "## 5. Stop" \
