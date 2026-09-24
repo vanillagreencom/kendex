@@ -38,7 +38,7 @@
 # bound to produce the verdict. The log's first line is the runner line.
 #
 # Usage:
-#   dev-validate-run --worktree PATH [--poll SECS]
+#   dev-validate-run --worktree PATH [--poll SECS] [--validate-mode full|range] [--base REF]
 #       Start the run detached, then block until it ends. Prints the run
 #       directory first and the verdict last. Codex and Pi call this in the
 #       foreground; Claude Code runs it as a background command.
@@ -55,10 +55,21 @@
 #       Internal. The detached process the start path launches.
 #
 # The run directory holds cmd (the command text), start (the run's bounds and
-# class), runner (lib/job-unit.sh's record of how the child runs), class.log
-# (the stderr of the base-branch lookup and the classifier), paths
-# (DEV_VALIDATE_PATHS), pid (the detached child's process id), log (the runner
-# line, then the command's output) and exit (the sentinel).
+# class and the mode it ran under), runner (lib/job-unit.sh's record of how
+# the child runs), class.log (the stderr of the base-branch lookup and the
+# classifier), paths (DEV_VALIDATE_PATHS), pid (the detached child's process
+# id), log (the runner line, then the command's output) and exit (the
+# sentinel).
+#
+# Validation modes, --validate-mode, recorded as the validate-mode= line of
+# start:
+#   full   DEV_VALIDATE_CMD, the project's whole battery. The default.
+#   range  DEV_VALIDATE_RANGE_CMD, which validates the changes since --base REF
+#          and nothing else; a fix round's run. The command reads the base as
+#          DEV_VALIDATE_BASE, the commit REF resolved to when the run started,
+#          also recorded as the validate-base= line of start. A project that
+#          sets no DEV_VALIDATE_RANGE_CMD runs DEV_VALIDATE_CMD instead, and the
+#          run records full, the mode that ran.
 #
 # Output protocol — the agent reads these lines and the tests pin them:
 #   state=started run-dir=… log=… sentinel=… timeout-secs=N poll-secs=N cap-secs=N class=… docs-only=… [class-fallback=…]
@@ -123,6 +134,8 @@ die() {
       repeated) printf 'The option was given twice, and one of its values would be silently dropped.\n' ;;
       not-directory) printf 'The path is not a directory.\n' ;;
       empty-validate-cmd) printf 'Set it in kendex.settings.toml [env] to the project full test, lint and typecheck command.\n' ;;
+      invalid-mode) printf 'The validation mode must be full or range.\n' ;;
+      invalid-base) printf 'The base does not name a commit in the worktree.\n' ;;
       unreadable-setting) printf 'The setting could not be read.\n' ;;
       invalid-seconds) printf 'The value must be a whole number of seconds above zero.\n' ;;
       missing-command) printf 'Install it: without it the run carries no bound and no waiter can end.\n' ;;
@@ -230,9 +243,13 @@ mode=""
 poll="$POLL_DEFAULT"
 budget="$BUDGET_DEFAULT"
 worktree_given=false
+validate_mode=full
+base=""
 run_dir_given=false
 poll_given=false
 budget_given=false
+validate_mode_given=false
+base_given=false
 
 set_mode() { # FLAG NEW
   [[ -z "$mode" ]] || die mode-conflict "option=$1" "mode=$mode"
@@ -252,6 +269,8 @@ while (( $# > 0 )); do
     --run-dir)  need "$1" $# "${2:-}"; once "$1" "$run_dir_given"; run_dir_given=true; run_dir="$2"; shift 2 ;;
     --poll)     need "$1" $# "${2:-}"; once "$1" "$poll_given"; poll_given=true; poll="$2"; shift 2 ;;
     --budget)   need "$1" $# "${2:-}"; once "$1" "$budget_given"; budget_given=true; budget="$2"; shift 2 ;;
+    --validate-mode) need "$1" $# "${2:-}"; once "$1" "$validate_mode_given"; validate_mode_given=true; validate_mode="$2"; shift 2 ;;
+    --base)     need "$1" $# "${2:-}"; once "$1" "$base_given"; base_given=true; base="$2"; shift 2 ;;
     -h|--help)  usage; exit 0 ;;
     *)          die unknown-argument "argument=$1" ;;
   esac
@@ -270,10 +289,22 @@ case "$mode" in
     [[ -n "$worktree" ]] || die required option=--worktree
     [[ -d "$worktree" ]] || die not-directory "path=$worktree"
     check_seconds option=--poll "$poll"
+    if [[ "$mode" == stop ]]; then
+      [[ "$validate_mode_given" == false ]] || die option-unused "option=--validate-mode" "mode=$mode"
+      [[ "$base_given" == false ]] || die option-unused "option=--base" "mode=$mode"
+    else
+      case "$validate_mode" in
+        full) [[ "$base_given" == false ]] || die option-unused "option=--base" "validate-mode=$validate_mode" ;;
+        range) [[ -n "$base" ]] || die required "option=--base" "validate-mode=$validate_mode" ;;
+        *) die invalid-mode "option=--validate-mode" "value=$validate_mode" ;;
+      esac
+    fi
     ;;
   wait|child)
     [[ "$worktree_given" == false ]] || die mode-conflict "option=--worktree" "mode=$mode"
     [[ "$poll_given" == false ]] || die option-unused "option=--poll" "mode=$mode"
+    [[ "$validate_mode_given" == false ]] || die option-unused "option=--validate-mode" "mode=$mode"
+    [[ "$base_given" == false ]] || die option-unused "option=--base" "mode=$mode"
     [[ "$mode" == wait || "$budget_given" == false ]] || die option-unused "option=--budget" "mode=$mode"
     [[ -n "$run_dir" ]] || die required option=--run-dir
     [[ -d "$run_dir" ]] || die not-directory "path=$run_dir"
@@ -288,10 +319,28 @@ if [[ "$mode" == start ]]; then
   # orch-env resolves the project from the working directory, so the settings
   # read is the worktree's own.
   cd "$worktree"
-  if ! cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_CMD "")"; then
-    die unreadable-setting setting=DEV_VALIDATE_CMD
+  # A range run takes its base as one commit, fixed when it starts, so a
+  # branch name that moves while the run goes cannot change what it judged.
+  base_sha=""
+  cmd=""
+  if [[ "$validate_mode" == range ]]; then
+    base_sha="$(git rev-parse --verify -q "$base^{commit}")" || die invalid-base "base=$base"
+    if ! cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_RANGE_CMD "")"; then
+      die unreadable-setting setting=DEV_VALIDATE_RANGE_CMD
+    fi
+    # Unset is a project with no range command, not a failure: it validates a
+    # fix round the way it always has, and the record says so.
+    if [[ -z "${cmd//[[:space:]]/}" ]]; then
+      validate_mode=full
+      base_sha=""
+    fi
   fi
-  [[ -n "${cmd//[[:space:]]/}" ]] || die empty-validate-cmd setting=DEV_VALIDATE_CMD
+  if [[ "$validate_mode" == full ]]; then
+    if ! cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_CMD "")"; then
+      die unreadable-setting setting=DEV_VALIDATE_CMD
+    fi
+    [[ -n "${cmd//[[:space:]]/}" ]] || die empty-validate-cmd setting=DEV_VALIDATE_CMD
+  fi
   # Read against an empty default, never 3600: orch-env replaces a non-numeric
   # effective value with a numeric default of its own, so a setting of 90m would
   # arrive here as 3600 and the refusal below could never fire. The default is
@@ -334,6 +383,8 @@ if [[ "$mode" == start ]]; then
     printf 'cap-secs=%s\n' "$cap_secs"
     printf 'class=%s\n' "$class"
     printf 'docs-only=%s\n' "$docs_only"
+    printf 'validate-mode=%s\n' "$validate_mode"
+    printf 'validate-base=%s\n' "$base_sha"
   } > "$run_dir/start"
 
   # The run has to outlive the shell that launched it, because that shell is
@@ -403,6 +454,8 @@ if [[ "$mode" == child ]]; then
     || die no-run "path=$run_dir/start"
   job_unit_read "$run_dir/runner" || die no-run "path=$run_dir/runner"
   child_cmd="$(cat "$run_dir/cmd")"
+  child_base="$(start_field "$run_dir/start" validate-base)" || die no-run "path=$run_dir/start"
+  [[ -z "$child_base" ]] || export DEV_VALIDATE_BASE="$child_base"
   # Recorded before the command starts, so a waiter that finds no sentinel can
   # tell a run still going from one the host killed. Written whole, like the
   # sentinel. A process id the system has since handed to something else only

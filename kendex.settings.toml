@@ -321,7 +321,12 @@ GUARD_MIN_FREE_GB = "16"
 # the recorded 708 KiB case.
 GUARD_EXHAUSTED_FREE_MB = "512"
 
-# The bound on that run, in whole seconds. `tools/guard --full` takes well
+# A review-fix round validates its own changes: the default rules, cargo check
+# and clippy for the crates they touch, the UI checks, and the suites of the
+# trees they touch. Submit reuses only the full run; CI runs everything.
+DEV_VALIDATE_RANGE_CMD = "tools/guard --range $DEV_VALIDATE_BASE"
+
+# The bound on either run, in whole seconds. `tools/guard --full` takes well
 # under an hour on the supported hosts; past this the run is signalled, killed
 # outright ten seconds later, and the round records a failed validation. The
 # dev agent's wait is derived from it.

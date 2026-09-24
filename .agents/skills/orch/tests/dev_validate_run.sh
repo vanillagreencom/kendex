@@ -75,7 +75,7 @@ run_script() { # SCRIPT ARG...
   # A class the caller's shell carries is cleared like the settings are: this
   # suite also runs under dev-validate-run itself, which sets one. A row that
   # means to hand one in names it in INHERITED_CLASS.
-  OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS \
+  OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_BASE \
     -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
     ${INHERITED_CLASS:+DEV_VALIDATE_CLASS=$INHERITED_CLASS} \
     PATH="${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
@@ -289,6 +289,60 @@ assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
   "a bash-only validation command runs and passes" "$ERR"
 assert_eq "$(output_of "$OUT")" "ran-under-bash" \
   "and the log names the shell that ran it, not a POSIX one that refused the line"
+
+# --- The mode picks the command, and the run records the mode that ran --------
+# A committed project whose full battery and range command each print which one
+# ran; the range command also prints the base it was handed.
+make_mode_proj() { # NAME RANGE_CMD — RANGE_CMD empty leaves the setting unset
+  local dir
+  dir="$(make_proj "$1" "echo full" 20)"
+  [[ -z "$2" ]] || printf 'DEV_VALIDATE_RANGE_CMD = "%s"\n' "$2" >> "$dir/kendex.settings.toml"
+  git -C "$dir" config gc.auto 0
+  git -C "$dir" config maintenance.auto false
+  git -C "$dir" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m base
+  printf '%s\n' "$dir"
+}
+start_line() { # RUN_DIR KEY — one line of the run's start record
+  sed -n "s/^$2=//p" "$1/start"
+}
+RANGE_CMD='echo range $DEV_VALIDATE_BASE'
+# label|project's range command|arguments|log|validate-mode|validate-base is the head (yes/no)
+MODE_ROWS=(
+  "a run given no mode runs the whole battery and records full|$RANGE_CMD||full|full|no"
+  "a range run runs the range command against the commit its base names|$RANGE_CMD|--validate-mode range --base HEAD|range HEAD|range|yes"
+  "a range run in a project with no range command runs the whole battery and records full||--validate-mode range --base HEAD|full|full|no"
+)
+n=0
+for row in "${MODE_ROWS[@]}"; do
+  IFS='|' read -r label range_cmd args want_log want_mode want_base <<<"$row"
+  n=$((n + 1))
+  proj="$(make_mode_proj "proj-mode-$n" "$range_cmd")"
+  head_sha="$(git -C "$proj" rev-parse HEAD)"
+  want_log="${want_log/HEAD/$head_sha}"
+  # shellcheck disable=SC2086 # the row's argument list, split on purpose
+  run_script "$RUN" --worktree "$proj" --poll 1 $args
+  mode_dir="$(run_dir_of "$OUT")"
+  got_base=no
+  [[ "$(start_line "$mode_dir" validate-base)" != "$head_sha" ]] || got_base=yes
+  assert_eq "$(verdict_of "$OUT") $(cat "$mode_dir/log")" "state=done guard-exit=0 validate=pass $want_log" "$label" "$ERR"
+  assert_eq "$(start_line "$mode_dir" validate-mode) base=$got_base" "$want_mode base=$want_base" \
+    "$label — the start record names the mode and base that ran" "$ERR"
+done
+# The last range run's started line keeps the shape every waiter reads; the
+# class fields that close it are the classifier rows' to pin.
+proj="$(make_mode_proj proj-mode-line "$RANGE_CMD")"
+run_script "$RUN" --worktree "$proj" --poll 1 --validate-mode range --base HEAD
+mode_dir="$(run_dir_of "$OUT")"
+assert_eq "$(sed -n '1s/ class=[a-z]* docs-only=[a-z]*\( class-fallback=[a-z0-9-]*\)\{0,1\}$//p' <<<"$OUT")" \
+  "state=started run-dir=$mode_dir log=$mode_dir/log sentinel=$mode_dir/exit timeout-secs=20 poll-secs=1 cap-secs=31" \
+  "a range run prints the same started line as a full one" "$ERR"
+
+# Control: a range run that reads the full battery's setting runs the full
+# battery under a range record, and the log row reddens on it.
+mutant mutant-range-reads-full '"$SCRIPT_DIR/orch-env" DEV_VALIDATE_RANGE_CMD ""' '"$SCRIPT_DIR/orch-env" DEV_VALIDATE_CMD ""'
+run_script "$MUTANT" --worktree "$proj" --poll 1 --validate-mode range --base HEAD
+assert_eq "$(cat "$(run_dir_of "$OUT")/log")" "full" \
+  "control: with the range setting unread the range run logs the full battery" "$ERR"
 
 # --- A command that ignores SIGTERM is still ended inside the bound -----------
 # A bound with no kill escalation is one signal, which such a command outlives:
@@ -564,6 +618,23 @@ render_dir="$(run_dir_of "$OUT")"
 assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^class: class=\([a-z]*\) \(measured=[a-z]*\) \(cause=[a-z-]*\).*$/\1 \2 \3/p' "$render_dir/class.log")" \
   "standard standard measured=false cause=judged-tree-dirty" \
   "an uncommitted render diff runs as standard, the classifier naming the dirty tree" "$ERR"
+
+
+# label|arguments after the worktree or run directory|refusal's first line
+proj_refuse="$(make_mode_proj proj-mode-refuse "$RANGE_CMD")"
+MODE_REFUSALS=(
+  "a validation mode outside the two is refused, naming it|--worktree $proj_refuse --validate-mode fast|dev-validate-run: invalid-mode option=--validate-mode value=fast"
+  "a range run with no base is refused|--worktree $proj_refuse --validate-mode range|dev-validate-run: required option=--base validate-mode=range"
+  "a base handed to a full run is refused, never silently dropped|--worktree $proj_refuse --base HEAD|dev-validate-run: option-unused option=--base validate-mode=full"
+  "a base that names no commit is refused, naming it|--worktree $proj_refuse --validate-mode range --base no-such-ref|dev-validate-run: invalid-base base=no-such-ref"
+  "a validation mode handed to the waiter is refused|--wait --run-dir $stale --validate-mode range|dev-validate-run: option-unused option=--validate-mode mode=wait"
+)
+for row in "${MODE_REFUSALS[@]}"; do
+  IFS='|' read -r label args want <<<"$row"
+  # shellcheck disable=SC2086 # the row's argument list, split on purpose
+  run_script "$RUN" $args
+  assert_eq "$(sed -n 1p <<<"$ERR") rc=$RC" "$want rc=2" "$label"
+done
 
 # --- Control: the cap is not derived from the bound ---------------------------
 # The reported failure: the wait ended before the guard did, so the round had no

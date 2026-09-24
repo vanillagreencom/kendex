@@ -133,7 +133,7 @@ echo "=== a single implement record, complete by construction ==="
 init_growth_state "$STATE" "$WT" issue-776 "$RID"
 run --worktree "$WT" --kind implement --issue issue-776 --round-id "$RID" --branch issue-776 --commit "$IMPL_HEAD" --validate pass --qa-label needs-review
 assert_eq "rc=$RC $OUT" "rc=0 $WT/tmp/dev-return-issue-776-$RID.json" "the writer exits 0 and prints the round-scoped artifact path" "$ERR"
-assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"near_ceiling\":null,\"near_ceiling_error\":\"byte-ceiling not probed: no --near-ceiling-base\",\"summary_posted\":true,\"summary\":null,\"recovered_from\":null,\"bundled\":false,\"items\":[],\"baseline_lines\":3}" \
+assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_mode\":\"full\",\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"near_ceiling\":null,\"near_ceiling_error\":\"byte-ceiling not probed: no --near-ceiling-base\",\"summary_posted\":true,\"summary\":null,\"recovered_from\":null,\"bundled\":false,\"items\":[],\"baseline_lines\":3}" \
   "the record is the schema's shape with the measured baseline, a numeric schema_version and no note" "$ERR"
 assert_eq "$(env ORCH_STATE_DIR="$WT/tmp" "$CHECK" --worktree "$WT" --issue issue-776 --round-id "$RID" | jq -r '.reason')" "valid" \
   "the record round-trips through round-mode acceptance"
@@ -157,6 +157,7 @@ table \
   "an inline --summary embeds the text|--worktree $WT --kind implement --issue issue-1236i --round-id 12-12 --branch b --commit %H --validate pass --no-summary --summary inline+completion+summary|rc=0 .summary=inline+completion+summary roundtrip=valid" \
   "a --validate-note is recorded verbatim beside a strictly enumerated pass|--worktree $WT --kind implement --issue issue-note --round-id $RID --branch b --commit %H --validate pass --validate-note 80/80+on+re-run;+first+run+flaked|rc=0 .validate=pass .validate_note=80/80+on+re-run;+first+run+flaked" \
   "a FAILING verdict carries a note too|--worktree $WT --kind implement --issue issue-failnote --round-id $RID --branch b --commit %H --validate FAILING:+lint --validate-note lint+fails+only+under+--release|rc=0 .validate=FAILING:+lint .validate_note=lint+fails+only+under+--release" \
+  "a range validation is recorded as the mode that ran|--worktree %FW --kind fix --issue issue-range --round-id 17-17 --branch b --commit c --validate pass --validate-mode range --item 1 Applied fixed|rc=0 .validate_mode=range" \
   "an omitted note is present and null|--worktree $WT --kind implement --issue issue-nonote --round-id $RID --branch b --commit %H --validate pass|rc=0 has:validate_note=true .validate_note=null" \
   "a round that did not probe records null and the not-probed cause, never an empty list|--worktree $WT --kind implement --issue issue-nonear --round-id 16-16 --branch b --commit %H --validate pass|rc=0 has:near_ceiling=true .near_ceiling|tojson=null .near_ceiling_error=byte-ceiling+not+probed:+no+--near-ceiling-base roundtrip=valid" \
   "a leading single-dash summary is a value|--worktree $WT --kind implement --issue issue-dash --round-id 13-13 --branch b --commit %H --validate pass --summary -+close+as+duplicate+of+the+merged+fix --no-summary|rc=0 .summary=-+close+as+duplicate+of+the+merged+fix" \
@@ -225,6 +226,7 @@ echo "=== every refusal exits 2 on its own guard and writes nothing ==="
 # stderr clause is what proves the row's own guard fired.
 table \
   "a bad --kind|--worktree $WT --kind review --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+invalid-kind+value=review=true" \
+  "a validation mode outside the two|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-mode class|rc=2 stderr~dev-return-write:+invalid-validate-mode+value=class=true" \
   "a missing --round-id|--worktree $WT --kind implement --issue i --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+required+option=--round-id=true" \
   "a missing --issue|--worktree $WT --kind implement --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+required+option=--issue=true" \
   "a value flag with no value at the end|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate|rc=2 stderr~dev-return-write:+missing-value+option=--validate=true" \

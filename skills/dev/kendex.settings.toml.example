@@ -10,7 +10,13 @@
 # root. The dev workflow refuses to validate while this is empty.
 DEV_VALIDATE_CMD = "" # required
 
-# How long that command may run, in whole seconds, before it is signalled and,
+# The command a review-fix round runs instead, validating only the changes
+# since the commit it reads from $DEV_VALIDATE_BASE, for example
+# "tools/check --since $DEV_VALIDATE_BASE". Empty runs DEV_VALIDATE_CMD.
+# Submit reuses only a DEV_VALIDATE_CMD result.
+DEV_VALIDATE_RANGE_CMD = ""
+
+# How long either command may run, in whole seconds, before it is signalled and,
 # ten seconds later, killed outright, with the round recording a failed
 # validation. It is also the one number the wait is derived from, so no agent
 # picks its own polling cap.

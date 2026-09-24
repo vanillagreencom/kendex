@@ -168,13 +168,15 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     ui-check)
       printf 'npm run --prefix ui %s failed.\n' "$2" ;;
     argument)
-      echo "that argument is not one this script takes; usage: tools/guard [--full]." ;;
+      echo "that argument is not one this script takes; usage: tools/guard [--full | --range BASE]." ;;
     validate-class)
       echo "DEV_VALIDATE_CLASS names a class tools/ci-job-set has no lane selection for; its cause is above." ;;
     lane-unknown)
       echo "tools/ci-job-set selects no value for that lane name: tools/guard is broken." ;;
     lane-selection)
       echo "no lane selection was made — tools/ci-job-set's exit status, or paths-unreadable where DEV_VALIDATE_PATHS names no readable file — so every lane ran." ;;
+    range-base)
+      echo "that --range base names no commit in this repository." ;;
     *)
       echo "no explanation is defined for this key: tools/guard is broken." ;;
   esac
@@ -226,12 +228,27 @@ space_stop() { # KEY VALUE — a full run without room ends here, before any lat
   exit 1
 }
 
-FULL=0
+# default is the commit chain's lane: the staged change. range is a fix
+# round's validation: what changed since BASE, working tree included. full is
+# development completion and submit: everything, plus the touched trees.
+MODE=default
+range_base=""
 case "${1:-}" in
-  --full) FULL=1; shift ;;
+  --full) MODE=full; shift ;;
+  --range)
+    [ "$#" -ge 2 ] || refuse argument "$1"
+    MODE=range
+    range_base=$2
+    shift 2
+    ;;
   --help | -h)
-    printf '%s\n' 'usage: tools/guard [--full]' \
+    printf '%s\n' 'usage: tools/guard [--full | --range BASE]' \
       'Default: repository rules and compile checks for staged product changes.' \
+      '--range BASE: the default rules over the changes since BASE, working tree included,' \
+      '        cargo check and clippy for the crates they touch (the workspace for a shared' \
+      '        input), the UI checks and suite when they touch ui/, and the suites of the' \
+      '        skill, hook, tool and Pi-package trees they touch. No workspace test run,' \
+      '        cross-target check or documentation build: submit and CI run those.' \
       '--full: full Rust and UI validation for development completion and submit,' \
       '        plus the suites of the skill, hook, tool and Pi-package trees the branch touched.' \
       '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \
@@ -241,6 +258,12 @@ case "${1:-}" in
 esac
 [ "$#" -eq 0 ] || refuse argument "$1"
 cd "$(git rev-parse --show-toplevel)"
+if [ "$MODE" = range ]; then
+  # Resolved once, so every read below judges the same commit however the
+  # name moves while the run is going.
+  range_sha=$(git rev-parse --verify -q "$range_base^{commit}") || refuse range-base "$range_base"
+  range_base=$range_sha
+fi
 
 # The lanes --full runs. dev-validate-run hands over what the classifier and
 # its docs reader answer over one range: DEV_VALIDATE_CLASS,
@@ -261,7 +284,7 @@ validate_docs_only="${DEV_VALIDATE_DOCS_ONLY:-false}"
 validate_paths="${DEV_VALIDATE_PATHS:-}"
 unset DEV_VALIDATE_CLASS DEV_VALIDATE_DOCS_ONLY DEV_VALIDATE_PATHS
 lanes=all
-if [ "$FULL" -eq 1 ] && [ "$validate_class:$validate_docs_only" != standard:false ]; then
+if [ "$MODE" = full ] && [ "$validate_class:$validate_docs_only" != standard:false ]; then
   if ! selected_paths=$(cat -- "$validate_paths" 2>/dev/null); then
     say lane-selection paths-unreadable
   else
@@ -278,32 +301,46 @@ if [ "$FULL" -eq 1 ] && [ "$validate_class:$validate_docs_only" != standard:fals
   fi
 fi
 
-# Touched is what the suites lane runs suites for, and what the cross-target
-# checks and cargo doc read to learn whether the branch changed any Rust
-# input: the branch against origin/main where that ref exists, plus
-# everything the working tree and index carry, so a render-only sync counts
-# for its source. base_resolved is 0 where no merge base with origin/main was
-# found: the touched set then holds the working tree alone, not what the
-# branch committed. --no-renames: a move between two trees names its source
-# and its destination, so the tree a file left runs its suite too. Each read
-# checks its own status; a group's status is its last command's, which would
-# let a failed diff pass on a good `git status`. The status read adds what the
-# diff against the working tree cannot see: untracked files.
+# What range and full validation touched: every path changed since the base,
+# plus everything the working tree and index carry, so a render-only sync
+# counts for its source and a fix not yet committed counts at all. full's base
+# is the branch's merge base with origin/main where that ref exists; range's
+# is the base it was given. This is range's one changed set: its compile and
+# suite selection and its render and fixture rules all read it. full reads it
+# for its suites and for whether the branch changed any Rust input.
+# base_resolved is 0 where full found no merge base with origin/main: the
+# touched set then holds the working tree alone, not what the branch
+# committed.
 touched=""
+untracked_touched=""
 base_resolved=0
-if [ "$FULL" -eq 1 ]; then
-  suites_base=HEAD
-  if git rev-parse --verify -q origin/main >/dev/null; then
-    if suites_base=$(git merge-base HEAD origin/main); then
-      base_resolved=1
-    else
-      suites_base=HEAD
+if [ "$MODE" != default ]; then
+  if [ "$MODE" = range ]; then
+    suites_base=$range_base
+    base_resolved=1
+  else
+    suites_base=HEAD
+    if git rev-parse --verify -q origin/main >/dev/null; then
+      if suites_base=$(git merge-base HEAD origin/main); then
+        base_resolved=1
+      else
+        suites_base=HEAD
+      fi
     fi
   fi
+  # --no-renames: a move between two trees names its source and its
+  # destination, so the tree a file left runs its suite too. Each read checks
+  # its own status; a group's status is its last command's, which would let a
+  # failed diff pass on a good `git status`. The status read adds what the
+  # diff against the working tree cannot see: untracked files.
   branch_touched=$(git -c core.quotePath=false diff --no-renames --name-only "$suites_base" --) ||
     { branch_touched=""; say touched-set branch-diff; }
-  tree_touched=$(git -c core.quotePath=false status --porcelain --untracked-files=all | cut -c4- | sed 's/^.* -> //') ||
+  tree_status=$(git -c core.quotePath=false status --porcelain --untracked-files=all) ||
+    { tree_status=""; say touched-set working-tree; }
+  tree_touched=$(printf '%s\n' "$tree_status" | cut -c4- | sed 's/^.* -> //') ||
     { tree_touched=""; say touched-set working-tree; }
+  untracked_touched=$(printf '%s\n' "$tree_status" | sed -n 's/^?? //p') ||
+    { untracked_touched=""; say touched-set working-tree; }
   touched=$(printf '%s\n%s\n' "$branch_touched" "$tree_touched" | sort -u) ||
     { touched=""; say touched-set merge; }
 fi
@@ -318,14 +355,14 @@ lane_on() { # LANE — tools/ci-job-set's name for it
 
 # The staged bot-instructions check is a lane of the commit-guards chain that
 # runs this script; --full judges the working tree, which the chain does not.
-if [ "$FULL" -eq 1 ] && lane_on bot_instructions; then
+if [ "$MODE" = full ] && lane_on bot_instructions; then
   "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts/bot-instructions" check || say bot-instructions "$?"
 fi
 # Decision IDs are judged before merge and not per commit: the check fetches
 # the base branch and reads its tip, since a merge base older than another
 # branch's merged record cannot show the collision. No CI lane runs it, so no
-# change class stands it down.
-if [ "$FULL" -eq 1 ]; then
+# change class stands it down. A range run leaves it to that full run.
+if [ "$MODE" = full ]; then
   "$TOOLS_DIR/../.agents/skills/decider/scripts/decisions" check || say decision-ids "$?"
 fi
 
@@ -627,9 +664,13 @@ fi
 # in tools/tests/guard.test.sh removes this lane by deleting it.
 "$TOOLS_DIR/test-roster" || say test-roster "$?"
 
-# What the diff-scoped rules below diff against: HEAD, or on an unborn
-# branch the index against nothing, so the first commit is judged too.
-if git cat-file -e 'HEAD^{commit}' 2>/dev/null; then
+# What the diff-scoped rules below diff against: the range's base, HEAD, or
+# on an unborn branch the index against nothing, so the first commit is
+# judged too.
+if [ "$MODE" = range ]; then
+  diff_against=("$range_base")
+  have_head=1
+elif git cat-file -e 'HEAD^{commit}' 2>/dev/null; then
   diff_against=(HEAD)
   have_head=1
 else
@@ -687,7 +728,7 @@ fi
 # reported from before the lane existed.
 # One line on purpose, like the lane above it: the must-fail control in
 # tools/tests/guard-full.test.sh removes this lane by deleting it.
-[ "$FULL" -eq 0 ] || ! lane_on shell_shards || "$TOOLS_DIR/bash32-parse" || say bash32-parse "$?"
+[ "$MODE" != full ] || ! lane_on shell_shards || "$TOOLS_DIR/bash32-parse" || say bash32-parse "$?"
 
 # A render source lands its renders in the same change: skills/<x>/<p>
 # renders to .agents/skills/<x>/<p>, an agent definition to one file per
@@ -739,8 +780,10 @@ render_is_tracked() { # PATH — PATH itself is tracked, PATH read literally
 # A configured instruction is visible only in the managed render: its source
 # deliberately has no copy. Judge the same candidate for configuration,
 # source existence, and render bytes: the index at commit time, the worktree
-# under --full. One ordered-pair reader owns both instruction block shapes;
+# under --full and --range. One ordered-pair reader owns both instruction block shapes;
 # kendex verify owns the rendered bytes inside them.
+worktree_reads=1
+[ "$MODE" != default ] || worktree_reads=0
 render_skill_paths=$(printf '%s\n' "$render_tracked" | sort -u) ||
   { render_skill_paths=""; say render-tracked-set unreadable; }
 instruction_hits=$(python3 -c '
@@ -764,7 +807,7 @@ for render in sys.stdin.read().splitlines():
         continue
     if not has_block(text, "project") or shared and not has_block(text, "shared"):
         print(render)
-' "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts" "$FULL" 2>/dev/null <<<"$render_skill_paths") ||
+' "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts" "$worktree_reads" 2>/dev/null <<<"$render_skill_paths") ||
   { instruction_hits=""; say skill-instruction-config unreadable; }
 [ -n "$instruction_hits" ] && {
   say missing-skill-instructions "$(count_lines "$instruction_hits")"
@@ -813,11 +856,34 @@ workspace_rust_input() { # PATH — the workspace manifest, lock, toolchain pin 
   return 1
 }
 rust_all=0
-[ "$FULL" -eq 0 ] || ! lane_on cargo_lint || rust_all=1
 rust_manifests=()
 ui_changed=0
-[ "$FULL" -eq 0 ] || ! lane_on ui || ui_changed=1
-if [ "$FULL" -eq 0 ]; then
+[ "$MODE" != full ] || ! lane_on cargo_lint || rust_all=1
+[ "$MODE" != full ] || ! lane_on ui || ui_changed=1
+classify_product() { # PATH — widen the compile set for one changed path
+  local f=$1 crate manifest existing seen
+  case "$f" in
+    *.md) return 0 ;;
+    crates/*/*) ;;
+    crates/*.rs) rust_all=1; return 0 ;;
+  esac
+  if workspace_rust_input "$f"; then rust_all=1; return 0; fi
+  case "$f" in
+    crates/*/*.rs | crates/*/Cargo.toml)
+      crate="${f#crates/}"
+      manifest="crates/${crate%%/*}/Cargo.toml"
+      if [ ! -f "$manifest" ]; then rust_all=1; return 0; fi
+      seen=0
+      # Guarded: an empty array is unbound under set -u on Bash 3.2.
+      for existing in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
+        [ "$existing" != "$manifest" ] || seen=1
+      done
+      [ "$seen" -eq 1 ] || rust_manifests+=("$manifest")
+      ;;
+    ui/*) ui_changed=1 ;;
+  esac
+}
+if [ "$MODE" = default ]; then
   GG_CHECK=guard
   GUARDS="$TOOLS_DIR/../.agents/skills/commit-guards/scripts"
   source "$GUARDS/lib/common.sh"
@@ -841,27 +907,15 @@ if [ "$FULL" -eq 0 ]; then
     exit "$fail"
   fi
   while IFS= read -r -d '' f; do
-    case "$f" in
-      *.md) continue ;;
-      crates/*/*) ;;
-      crates/*.rs) rust_all=1; continue ;;
-    esac
-    if workspace_rust_input "$f"; then rust_all=1; continue; fi
-    case "$f" in
-      crates/*/*.rs | crates/*/Cargo.toml)
-        crate="${f#crates/}"
-        manifest="crates/${crate%%/*}/Cargo.toml"
-        if [ ! -f "$manifest" ]; then rust_all=1; continue; fi
-        seen=0
-        # Guarded: an empty array is unbound under set -u on Bash 3.2.
-        for existing in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
-          [ "$existing" != "$manifest" ] || seen=1
-        done
-        [ "$seen" -eq 1 ] || rust_manifests+=("$manifest")
-        ;;
-      ui/*) ui_changed=1 ;;
-    esac
+    classify_product "$f"
   done <"$GUARD_TMP/product.z"
+fi
+
+if [ "$MODE" = range ]; then
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    classify_product "$f"
+  done <<<"$touched"
 fi
 
 cargo_target="${CARGO_TARGET_DIR:-target}"
@@ -871,7 +925,7 @@ case "$cargo_target" in
   /*) cargo_target_path="$cargo_target" ;;
   *) cargo_target_path="./$cargo_target" ;;
 esac
-if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
+if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
   # The fresh Linux cargo shards in .github/workflows/skill-tests.yml explain
   # why no later compile can reuse incremental artifacts from this run.
   export CARGO_INCREMENTAL=0
@@ -923,13 +977,13 @@ if [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt
   [ -z "$fmt_out" ] || printf '%s\n' "$fmt_out"
 fi
 
-# Completion validation runs the suites CI runs for the trees this branch
-# touched, beside the whole-workspace cargo and UI runs below: a skill's own
-# tests, hooks/tests for a hook, tools/tests for a tool, and a Pi package's
-# declared script (`test:ci` where it declares one, `test` otherwise, the
-# rule pi-extensions/package-policy.test.mjs holds CI to).
-# An untouched suite is not evidence about this change and is not run here;
-# CI runs every suite on the merged tree.
+# Range and full validation run the suites CI runs for the trees the touched
+# set names, beside the cargo and UI runs: a skill's own tests, hooks/tests
+# for a hook, tools/tests for a tool, and a Pi package's declared script
+# (`test:ci` where it declares one, `test` otherwise, the rule
+# pi-extensions/package-policy.test.mjs holds CI to). An untouched suite is
+# not evidence about this change and is not run here; CI runs every suite on
+# the merged tree.
 # A Pi package whose suite value-imports Pi has no lockfile for those peers;
 # CI installs them in the step before its suite, so a checkout without that
 # install names the missing peers beside the failing suite rather than in
@@ -938,7 +992,7 @@ pi_suite_failed() { # DIR
   [ -d "$1/node_modules" ] || say missing-peers "$1"
   say suite "$1"
 }
-if [ "$FULL" -eq 1 ] && lane_on shell_shards; then
+if [ "$MODE" != default ] && lane_on shell_shards; then
   suite_dirs=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -1000,7 +1054,7 @@ compiled_includes() {
   printf '%s\n' "$rows" | awk -F '\t' '$1 == "include" { print $2 }'
 }
 
-if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
+if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
   # The cross-target checks and cargo doc each write a target tree of their
   # own, and CI covers both on the pull requests tools/ci-job-set selects
   # its cargo_lint, cargo_macos and cargo_windows lanes for. Here they are
@@ -1067,7 +1121,7 @@ if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
     fi
   fi
 fi
-if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ] && lane_on cargo_linux; then
+if [ "$MODE" = full ] && [ -f Cargo.toml ] && lane_on cargo_linux; then
   # A test binary that dies by a signal reached no verdict: the runner
   # reports the executable's death, not an assertion. A binary whose code
   # pages come back wrong from disk dies this way, and rebuilding that
@@ -1100,7 +1154,7 @@ fi
 if [ "$ui_changed" -eq 1 ] && [ -f ui/package.json ]; then
   npm run --prefix ui check:types || say ui-check check:types
   npm run --prefix ui check:lint || say ui-check check:lint
-  if [ "$FULL" -eq 1 ]; then
+  if [ "$MODE" != default ]; then
     npm run --prefix ui test -- --silent || say ui-check test
   fi
 fi
