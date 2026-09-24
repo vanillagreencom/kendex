@@ -518,6 +518,72 @@ LANE_CLOSE_MAIL_PENDING="$ASK" run_close "$SCRIPT"
 assert_eq "rc=$RC ask=$(grep -c '^lane-close: ask-unanswered ' <<<"$ERR" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 ask=1 host=0 status=stopped' 'the full close of that stopped record refuses until the ask is answered'
 
+# A preparing record: a hosted launch whose background job has written no
+# outcome. The job stands in as a process group leader running a script named
+# open-terminal that blocks until the test ends it; the close stops that group,
+# closes the window, closes or keeps the host, and records done or stopped. A
+# pid naming anything else is left alone. prepare_close SCRIPT JOB_PATH
+# [ARGS...] runs one close and sets JOB to `stopped` or `running`, read after
+# the close returns, then ends the job itself.
+JOB_DIR="$TMP_ROOT/job"
+mkdir -p "$JOB_DIR"
+printf '#!/usr/bin/env bash\nsleep 300\n' >"$JOB_DIR/open-terminal"
+printf '#!/usr/bin/env bash\nsleep 300\n' >"$JOB_DIR/other-job"
+chmod +x "$JOB_DIR/open-terminal" "$JOB_DIR/other-job"
+# A process the close signalled is gone, or a zombie until this shell reaps
+# it, within two seconds; a live one is neither.
+job_state() { # PID
+  local stat
+  for _ in $(seq 20); do
+    stat="$(ps -o stat= -p "$1" 2>/dev/null)" || { printf stopped; return; }
+    [[ "$stat" != Z* ]] || { printf stopped; return; }
+    sleep 0.1
+  done
+  printf running
+}
+prepare_close() {
+  local script="$1" job
+  shift
+  set -m
+  "$1" &
+  job=$!
+  set +m
+  shift
+  write_state preparing claude /host
+  jq --argjson pid "$job" '.lanes[0].prepare = {since: "2026-09-20T00:00:00Z", log: "/fleet/lane-prepare-KEN-1.log", pid: $pid}' "$STATE" >"$STATE.next"
+  mv -- "$STATE.next" "$STATE"
+  write_panes bash
+  run_close "$script" "$@"
+  JOB="$(job_state "$job")"
+  kill -TERM -- "-$job" 2>/dev/null || true
+  wait "$job" || true
+}
+prepare_close "$SCRIPT" "$JOB_DIR/open-terminal"
+assert_eq "rc=$RC job=$JOB kill=$(grep -c '^kill-window ' "$CALLS" || true) host=$(grep -c '^close ' "$HOST_CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 job=stopped kill=1 host=1 status=done' 'a preparing record closes by stopping its launch job, its window and its host'
+prepare_close "$SCRIPT" "$JOB_DIR/open-terminal" --keep-sandbox
+assert_eq "rc=$RC job=$JOB kill=$(grep -c '^kill-window ' "$CALLS" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 job=stopped kill=1 host=0 status=stopped' 'keep-sandbox on a preparing record stops the job and the window and keeps the host'
+# A lane with no session holds no ask, and its host need not answer a mailbox
+# read while it prepares: a failing read changes nothing and none is made.
+LANE_CLOSE_MAIL_STATUS=2 prepare_close "$SCRIPT" "$JOB_DIR/open-terminal"
+assert_eq "rc=$RC job=$JOB kill=$(grep -c '^kill-window ' "$CALLS" || true) host=$(grep -c '^close ' "$HOST_CALLS" || true) mail=$(awk 'END { print NR + 0 }' "$MAIL_CALLS") status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 job=stopped kill=1 host=1 mail=0 status=done' 'a preparing record closes with its mailbox unreadable, reading none'
+prepare_close "$SCRIPT" "$JOB_DIR/other-job"
+assert_eq "rc=$RC job=$JOB status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 job=running status=done' 'a recorded pid that runs anything but open-terminal is left running'
+MUTANT="$(mutant lane-close-unstopped '    kill -TERM -- "-$job" || { message prepare-stop-failed "item=$ITEM" "pid=$job" >&2; exit 1; }' '    :')"
+prepare_close "$MUTANT" "$JOB_DIR/open-terminal"
+assert_eq "rc=$RC job=$JOB status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 job=running status=done' 'control: without the stop a closed preparing record leaves its launch job running'
+MUTANT="$(mutant lane-close-reads-mail 'if [[ "$status" == preparing ]]; then' 'if [[ "$status" == preparing ]]; then refuse_unanswered_ask')"
+LANE_CLOSE_MAIL_STATUS=2 prepare_close "$MUTANT" "$JOB_DIR/open-terminal"
+assert_eq "rc=$RC read=$(grep -c '^lane-close: mail-read-failed ' <<<"$ERR" || true) job=$JOB status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 read=1 job=running status=preparing' 'control: a preparing close that reads the mailbox stops at a read the preparing host cannot answer'
+MUTANT="$(mutant lane-close-any-pid '[[ "$job_cmd" == *open-terminal* ]]' 'true')"
+prepare_close "$MUTANT" "$JOB_DIR/other-job"
+assert_eq "rc=$RC job=$JOB" 'rc=0 job=stopped' 'control: without the name check the close stops a process that is not the launch job'
+
 run_boundary() { # RULE SCRIPT
   local rule="$1" script="$2"
   case "$rule" in
@@ -621,17 +687,17 @@ LANE_CLOSE_TMUX_LIST_FAIL_AT=2 run_close "$SCRIPT"
 assert_eq "rc=$RC read=$(grep -c '^lane-close: pane-read-failed .* pane=%7$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 read=1 status=running' 'a late pane probe failure does not record done while its window can remain'
 echo '=== must-fail controls ==='
-MUTANT="$(mutant ambiguous '  *) message pane-ambiguous "item=$ITEM" "window=$window_name" "count=$LANE_PANE_COUNT" >&2; exit 1 ;;' '  *) ;;')"
+MUTANT="$(mutant ambiguous '    *) message pane-ambiguous "item=$ITEM" "window=$window_name" "count=$LANE_PANE_COUNT" >&2; exit 1 ;;' '    *) RESOLVED_PANE=unresolved ;;')"
 write_state running claude /host; write_panes bash duplicate; printf '\n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "ambiguous=$(grep -c '^lane-close: pane-ambiguous ' <<<"$ERR" || true) live=$(grep -c '^lane-close: lane-live .* state=unjudged ' <<<"$ERR" || true)" \
   'ambiguous=0 live=1' 'control: removing the ambiguity refusal loses its reason, leaving an unresolved pane reported as unjudged'
 MUTANT="$(mutant live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) ;;')"
 write_state running codex /host; write_panes python; printf '› run\n  press to interrupt\n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' 'control: removing the live-state refusal closes a working lane'
-MUTANT="$(mutant provider 'if [[ "$KEEP_SANDBOX" != true ]]; then close_host || exit $?; fi' 'if [[ "$KEEP_SANDBOX" != true ]]; then close_host || :; fi')"
+MUTANT="$(mutant provider '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || exit $?; fi' '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || :; fi')"
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; LANE_CLOSE_HOST_STATUS=3 run_close "$MUTANT"
 assert_eq "rc=$RC kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true)" 'rc=0 kill=1' 'control: ignoring provider exit 3 destroys the window'
-MUTANT="$(mutant pane-id '  0) tmux kill-window -t "$pane_id" \' '  0) tmux kill-window -t "$window_name" \')"
+MUTANT="$(mutant pane-id '      0) tmux kill-window -t "$pane_id" \' '      0) tmux kill-window -t "$window_name" \')"
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "pane=$(grep -c '^kill-window -t %7$' "$CALLS" || true) name=$(grep -c '^kill-window -t KEN-1$' "$CALLS" || true)" \
   'pane=0 name=1' 'control: replacing the pane id makes the test observe the unsafe window-name target'
@@ -654,7 +720,7 @@ MUTANT="$(mutant state-type '      [[ -n "$value" ]] || { TRACKER_CAUSE=no-state
 write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_TRACKER_STATE_TYPE= run_close "$MUTANT"
 assert_eq "read=$(grep -c '^lane-close: tracker-read-failed ' <<<"$ERR" || true) live=$(grep -c '^lane-close: lane-live .* state=idle ' <<<"$ERR" || true)" \
   'read=0 live=1' 'control: reading an absent state_type as a state reports the lane as still working'
-MUTANT="$(mutant missing '  0) message pane-missing "item=$ITEM" "window=$window_name" >&2; exit 1 ;;' '  0) ;;')"
+MUTANT="$(mutant missing '[[ -n "$RESOLVED_PANE" ]] || { message pane-missing "item=$ITEM" "window=$window_name" >&2; exit 1; }' ':')"
 write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true) live=$(grep -c '^lane-close: lane-live .* state=unjudged ' <<<"$ERR" || true)" \
   'missing=0 live=1' 'control: removing the missing-pane guard loses its required refusal reason'
@@ -662,7 +728,7 @@ MUTANT="$(mutant harness '[[ "$harness" == claude || "$harness" == codex ]] \' '
 write_state running pi /host; write_panes python; claude_screen; run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: accepting an unsupported harness closes it through an undefined path'
-MUTANT="$(mutant list-read '  || { message pane-read-failed "item=$ITEM" "window=$window_name" >&2; exit 1; }' '  || :')"
+MUTANT="$(mutant list-read '    || { message pane-read-failed "item=$ITEM" "window=$window_name" >&2; exit 1; }' '    || :')"
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; LANE_CLOSE_TMUX_LIST_FAIL_AT=1 run_close "$MUTANT"
 assert_eq "read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true) missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true)" \
   'read=0 missing=1' 'control: ignoring the initial pane read failure misreports a missing pane'
@@ -678,11 +744,11 @@ MUTANT="$(mutant exit-timeout '    1) message exit-timeout "item=$ITEM" "harness
 write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_NO_EXIT=1 run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: removing the exit timeout closes a lane whose harness still runs'
-MUTANT="$(mutant stopped-provider '  close_host || exit $?' '  close_host || :')"
+MUTANT="$(mutant stopped-provider '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || exit $?; fi' '  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || :; fi')"
 write_state stopped claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; LANE_CLOSE_HOST_STATUS=9 run_close "$MUTANT"
 assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 status=done' \
   'control: ignoring a stopped provider failure records the sandbox done'
-MUTANT="$(mutant state-write '  || { message state-write-failed "item=$ITEM" "status=$next_status" >&2; exit 1; }' '  || :')"
+MUTANT="$(mutant state-write '    || { message state-write-failed "item=$ITEM" "status=$next_status" >&2; exit 1; }' '    || :')"
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; LANE_CLOSE_STATE_WRITE_FAIL=6 run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: ignoring the state write failure reports a done record that was never written'

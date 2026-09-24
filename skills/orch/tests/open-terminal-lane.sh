@@ -141,7 +141,11 @@ case "${1:-}" in
     n=$((n + 1)); [[ -z "${OT_TMUX_PANES:-}" ]] || printf '%s' "$n" > "$OT_TMUX_PANES"
     echo "$OT_TMUX_SERVER_PID %$n" ;;
   list-panes)
-    i=1; while [[ "$i" -le "$n" ]]; do echo "$OT_TMUX_SERVER_PID %$i"; i=$((i + 1)); done ;;
+    # The pane ids alone where the read asks for nothing more, as tmux prints them.
+    i=1; while [[ "$i" -le "$n" ]]; do
+      if [[ "${*: -1}" == '#{pane_id}' ]]; then echo "%$i"; else echo "$OT_TMUX_SERVER_PID %$i"; fi
+      i=$((i + 1))
+    done ;;
   list-windows) echo "1" ;;
   show-environment)
     # The tmux environment a new pane inherits, which is not the launcher's own.

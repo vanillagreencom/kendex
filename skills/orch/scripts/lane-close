@@ -45,6 +45,7 @@ message() { # REASON FIELD=VALUE...
     exit-dialog-missing) printf '%s\n' 'Claude Code did not show its exit dialog. Close-out stopped.' ;;
     exit-timeout) printf '%s\n' 'The harness did not exit before the close timeout. Close-out stopped.' ;;
     state-write-failed) printf '%s\n' 'The lane closed, but its fleet record could not be updated.' ;;
+    prepare-stop-failed) printf '%s\n' 'The background launch job the record names could not be stopped. Close-out changed nothing else.' ;;
     stopped) printf '%s\n' 'The lane window closed and its sandbox was kept.' ;;
     closed) printf '%s\n' 'The lane, sandbox and fleet record closed.' ;;
   esac
@@ -59,7 +60,9 @@ Usage: lane-close [--state-dir PATH] [--keep-sandbox]
 Close one lane recorded in the oversee workflow state. The command refuses a
 live lane. It accepts an exited lane, or an idle lane whose tracker item is
 terminal. A record already marked stopped can close its kept sandbox without
-a pane. --keep-sandbox exits the harness, closes its window and records
+a pane. A preparing record, a hosted launch whose background job has written
+no outcome, closes without a harness exit: the job the record names is
+stopped and its window closed. --keep-sandbox exits the harness, closes its window and records
 stopped without calling the lane host.
 
 A lane holding an ask nobody has answered refuses as ask-unanswered, under
@@ -206,7 +209,7 @@ case "$status" in
   done)
     message closed "item=$ITEM" "status=done"
     exit 0 ;;
-  running|stopped) ;;
+  running|stopped|preparing) ;;
   *) message record-invalid "item=$ITEM" "field=status" >&2; exit 1 ;;
 esac
 [[ -n "$mail_root" ]] || { message record-invalid "item=$ITEM" "field=mail_root" >&2; exit 1; }
@@ -261,6 +264,36 @@ close_host() {
   return "$rc"
 }
 
+pane_still_exists() {
+  local listed
+  listed="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)" || return 2
+  awk -v pane="$pane_id" '$0 == pane { found=1 } END { exit !found }' <<<"$listed"
+}
+
+# The end of every close-out: the host closed unless --keep-sandbox, the
+# window closed where pane_id names one tmux still lists, then the record and
+# the line naming the outcome, pane= carried where the close had a pane.
+pane_id=""
+finish_close() {
+  local next_status=done pane_rc=0 fields=("item=$ITEM")
+  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || exit $?; fi
+  if [[ -n "$pane_id" ]]; then
+    pane_still_exists || pane_rc=$?
+    case "$pane_rc" in
+      0) tmux kill-window -t "$pane_id" \
+           || { message tmux-failed "item=$ITEM" "operation=kill-window" "pane=$pane_id" >&2; exit 1; } ;;
+      1) ;;
+      *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
+    esac
+    fields+=("pane=$pane_id")
+  fi
+  update_status "$next_status" \
+    || { message state-write-failed "item=$ITEM" "status=$next_status" >&2; exit 1; }
+  if [[ "$next_status" == stopped ]]; then message stopped "${fields[@]}" "status=stopped"
+  else message closed "${fields[@]}" "status=done"; fi
+  exit 0
+}
+
 # A stopped record means an earlier --keep-sandbox call already exited the
 # harness and removed its window. Only the kept sandbox and the record remain.
 if [[ "$status" == stopped ]]; then
@@ -271,25 +304,47 @@ if [[ "$status" == stopped ]]; then
     message stopped "item=$ITEM" "status=stopped"
     exit 0
   fi
-  close_host || exit $?
-  update_status done || { message state-write-failed "item=$ITEM" "status=done" >&2; exit 1; }
-  message closed "item=$ITEM" "status=done"
-  exit 0
+  finish_close
+fi
+
+# The recorded window resolves through the shared owner, which accepts the
+# bare and SESSION:WINDOW forms alike and reports which silence it met. A read
+# that fails and a name two panes carry refuse; RESOLVED_PANE is the one pane,
+# empty where no pane carries the name.
+RESOLVED_PANE=""
+resolve_window() {
+  local rc=0
+  lane_pane_resolve "$window_name" || rc=$?
+  [[ "$rc" -ne 2 ]] \
+    || { message pane-read-failed "item=$ITEM" "window=$window_name" >&2; exit 1; }
+  case "$LANE_PANE_COUNT" in
+    0) ;;
+    1) RESOLVED_PANE="$LANE_PANE_ID" ;;
+    *) message pane-ambiguous "item=$ITEM" "window=$window_name" "count=$LANE_PANE_COUNT" >&2; exit 1 ;;
+  esac
+}
+
+# A preparing record is a hosted launch open-terminal handed to a background
+# job that has written no outcome, so no session was started and no harness is
+# exited. A lane with no session cannot hold an ask, and the host need not have
+# its mailbox until its preparation ends, so no mailbox is read. The job is stopped by the process group the record names, where
+# that group still runs open-terminal, a pid since reused being left alone; the
+# window it holds is closed with its claim; the host is closed or kept as for a
+# stopped record.
+if [[ "$status" == preparing ]]; then
+  [[ -z "$window_name" ]] || resolve_window
+  job="$(jq -r '.prepare.pid // empty' <<<"$record")"
+  if [[ "$job" =~ ^[1-9][0-9]*$ ]] && job_cmd="$(ps -o command= -p "$job")" && [[ "$job_cmd" == *open-terminal* ]]; then
+    kill -TERM -- "-$job" || { message prepare-stop-failed "item=$ITEM" "pid=$job" >&2; exit 1; }
+  fi
+  pane_id="$RESOLVED_PANE"
+  finish_close
 fi
 
 [[ -n "$window_name" ]] || { message record-invalid "item=$ITEM" "field=window" >&2; exit 1; }
 
-# The recorded window resolves through the shared owner, which accepts the
-# bare and SESSION:WINDOW forms alike and reports which silence it met.
-resolve_rc=0
-lane_pane_resolve "$window_name" || resolve_rc=$?
-[[ "$resolve_rc" -ne 2 ]] \
-  || { message pane-read-failed "item=$ITEM" "window=$window_name" >&2; exit 1; }
-case "$LANE_PANE_COUNT" in
-  0) message pane-missing "item=$ITEM" "window=$window_name" >&2; exit 1 ;;
-  1) ;;
-  *) message pane-ambiguous "item=$ITEM" "window=$window_name" "count=$LANE_PANE_COUNT" >&2; exit 1 ;;
-esac
+resolve_window
+[[ -n "$RESOLVED_PANE" ]] || { message pane-missing "item=$ITEM" "window=$window_name" >&2; exit 1; }
 pane_id="$LANE_PANE_ID"
 pane_pid="$LANE_PANE_PID"
 pane_cmd="$LANE_PANE_CMD"
@@ -380,12 +435,6 @@ mode_read() {
     mode="$(tmux display-message -p -t "$pane_id" '#{pane_in_mode}' 2>/dev/null)" || return 1
   fi
   [[ "$mode" == 0 ]]
-}
-
-pane_still_exists() {
-  local listed
-  listed="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)" || return 2
-  awk -v pane="$pane_id" '$0 == pane { found=1 } END { exit !found }' <<<"$listed"
 }
 
 pane_now_exited() {
@@ -485,21 +534,4 @@ if [[ "$state" == idle ]]; then
   esac
 fi
 
-if [[ "$KEEP_SANDBOX" != true ]]; then close_host || exit $?; fi
-pane_rc=0
-pane_still_exists || pane_rc=$?
-case "$pane_rc" in
-  0) tmux kill-window -t "$pane_id" \
-       || { message tmux-failed "item=$ITEM" "operation=kill-window" "pane=$pane_id" >&2; exit 1; } ;;
-  1) ;;
-  *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
-esac
-next_status=done
-[[ "$KEEP_SANDBOX" != true ]] || next_status=stopped
-update_status "$next_status" \
-  || { message state-write-failed "item=$ITEM" "status=$next_status" >&2; exit 1; }
-if [[ "$next_status" == stopped ]]; then
-  message stopped "item=$ITEM" "pane=$pane_id" "status=stopped"
-else
-  message closed "item=$ITEM" "pane=$pane_id" "status=done"
-fi
+finish_close
