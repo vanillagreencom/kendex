@@ -32,13 +32,13 @@ The classifier rejects some porcelain verbs outright, top-level `git rebase` amo
 
 ## Standing watch
 
-Codex starts no turn for output that arrives after a turn ended, from a detached process or from a running exec session. The oversee watch ([oversee.md § Watch delivery](../workflows/oversee.md#watch-delivery)) is held inside the turn by the unified exec tools. The limits are the Codex CLI tool descriptions (0.156.1):
+Codex starts no turn for output that arrives after a turn ended, from a detached process or from a running exec session. The oversee watch ([watch-delivery.md](watch-delivery.md)) is held inside the turn by the unified exec tools. The limits are the Codex CLI tool descriptions (0.156.1):
 
 | Step | Call | Limit |
 |------|------|-------|
-| Arm | `exec_command`, `cmd` `tail -n +[NEXT_LINE] -F [RUN_DIR]/watch.log`, `yield_time_ms` 30000 | `yield_time_ms` takes 250-30000 ms. The call returns the first output and a `session_id` while the follow runs. |
+| Arm | `exec_command`, `cmd` the numbered follow command of [watch-delivery.md](watch-delivery.md), `yield_time_ms` 30000 | `yield_time_ms` takes 250-30000 ms. The call returns the first output and a `session_id` while the follow runs. |
 | Wait | `write_stdin` on that `session_id`, empty `chars`, `yield_time_ms` 300000 | An empty poll waits 5000-300000 ms; `background_terminal_max_timeout` sets the ceiling, 300000 by default. It returns the output written since the previous call. |
-| Re-arm | The same `write_stdin` again, in the same turn, once every returned line is handled | Never end the turn between polls while a lane record is `running`. A poll that reports an `exit_code` ended the follow: arm again from the first line not yet handled. |
+| Re-arm | The same `write_stdin` again, in the same turn, once every returned line is handled | Never end the turn between polls while a lane record is `running`. A poll that reports an `exit_code` ended the follow: arm again from the line after the last number handled. |
 
 Each call is one simple command, so the classifier above passes it.
 

@@ -130,22 +130,7 @@ The mail pass reads each lane's mailbox, never a pane, so it runs on every surfa
 
 ### Watch delivery
 
-Oversight stands from the first watch launch until § 5 Stop, and every watch line reaches this session as it is written, through the runtime's own event mechanism. Where the runtime has no asynchronous wake, the turn is the wait: hold a blocking follow of the watch log, re-arm it on every return, and never end the turn while any lane record is `running`.
-
-Launch the repeat command once from the overseer's own pane by [Waiter launch](../references/waiter-launch.md) § Launch, run path `[RUN_DIR]/watch`: output in `[RUN_DIR]/watch.log`, status in `[RUN_DIR]/watch.exit`. Arm every follow from the line after the last one handled. After each delivery and expiry, run `test -s [RUN_DIR]/watch.exit`; a nonempty file ends the watch under the stop and restart rules above.
-
-| Harness | Wake mechanism | Re-arm |
-|---------|----------------|--------|
-| Claude Code | `Monitor` on the numbered follow below, `timeout_ms` at its maximum. | At each expiry, from the line after the last number delivered. |
-| Codex | `write_stdin` polls on a follow: [codex-runtime.md § Standing watch](../references/codex-runtime.md#standing-watch). | Poll again once each poll's output is handled. |
-| Pi | `bg_task` output wakes on a follow: [pi-runtime.md § Standing watch (Pi)](../references/pi-runtime.md#standing-watch-pi). | Respawn when its wake budget is spent. |
-| Wakes only at a background command's exit | Single passes: no `--repeat`, no detach, each pass a background command. Nothing reports `overseer-dead`. | Next pass after every line is handled, with `--skip-lane [WINDOW]` per window reported `window-gone` until tmux lists it again. |
-
-```bash
-tail -n +[NEXT_LINE] -F [RUN_DIR]/watch.log | awk -v n=[NEXT_LINE] '{ print n++ ": " $0; fflush() }'
-```
-
-The § 5 handoff names the mechanism in force, its re-arm rule, `[RUN_DIR]` and the next log line.
+Launch, follow and re-arm the repeat watch as [references/watch-delivery.md](../references/watch-delivery.md) states.
 
 ### Bounded lane reads
 
@@ -220,4 +205,4 @@ A lane never arms the shared git hooks from its worktree; a guard-script PR whos
 
 ## 5. Stop
 
-Queue empty, or the user stops it. On a hosted fleet, stop only when `lane-host list` has no row but `available`, or name each such host. Report one line per lane: merged SHAs, still-open PRs, items skipped as owned or blocked. That report fills the rows [../references/communication-modes.md](../references/communication-modes.md) § Status report gives: merged SHAs under Landed, still-open PRs and items skipped as owned or blocked under Running, the queue remainder or `none` under Next, open questions or `none` under Waiting on you. Reapply the § 1 handoff-path check before rewriting the overseer handoff file in place for the next session, and delete stale per-session handoff files beside it at that rewrite, never leave them.
+Queue empty, or the user stops it. Stop a detached repeat watch first, so no pass reports this overseer dead and no successor resumes a stopped fleet: run `kill -TERM -- -[PID]` on the pid in `[RUN_DIR]/watch.pid`, confirm `kill -0 [PID]` then fails, and end the follow. On a hosted fleet, stop only when `lane-host list` has no row but `available`, or name each such host. Report one line per lane: merged SHAs, still-open PRs, items skipped as owned or blocked. That report fills the rows [../references/communication-modes.md](../references/communication-modes.md) § Status report gives: merged SHAs under Landed, still-open PRs and items skipped as owned or blocked under Running, the queue remainder or `none` under Next, open questions or `none` under Waiting on you. Reapply the § 1 handoff-path check before rewriting the overseer handoff file in place for the next session, and delete stale per-session handoff files beside it at that rewrite, never leave them.

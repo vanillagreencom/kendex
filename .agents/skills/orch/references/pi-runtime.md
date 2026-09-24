@@ -18,12 +18,13 @@ Use `get_subagent_result` only as a recovery/status reader for missed or truncat
 
 ## Standing watch (Pi)
 
-The oversee watch ([oversee.md § Watch delivery](../workflows/oversee.md#watch-delivery)) reaches a Pi overseer through a `pi-background-tasks` output wake. The spawn parameters are the package's [instructions](https://github.com/vanillagreencom/kendex/blob/main/pi-extensions/pi-background-tasks/instructions.md).
+The oversee watch ([watch-delivery.md](watch-delivery.md)) reaches a Pi overseer through a `pi-background-tasks` output wake. The spawn parameters are the package's [instructions](https://github.com/vanillagreencom/kendex/blob/main/pi-extensions/pi-background-tasks/instructions.md).
 
 | Step | Call |
 |------|------|
-| Arm | `bg_task action: "spawn"` on `tail -n +[NEXT_LINE] -F [RUN_DIR]/watch.log`, with `notifyOnOutput: true`, `notifyMode: "always"` and `notifyOnExit: true`. |
-| Read | A wake carries an inline tail capped at `outputAlertMaxChars`, so read the log from the first line not yet handled: `tail -n +[NEXT_LINE] [RUN_DIR]/watch.log`. |
-| Re-arm | The per-task wake budget ends in one "wake budget exhausted" notice. Stop that follow with `bg_status action: "stop"` and spawn a new one from the first line not yet handled. An exit wake from the follow re-arms the same way. |
+| Arm | `bg_task action: "spawn"` on the numbered follow command of [watch-delivery.md](watch-delivery.md), with `notifyOnOutput: true`, `notifyMode: "always"`, `notifyOnExit: true` and `timeoutSeconds: 300`. The timeout is the follow's expiry, where watch-delivery.md checks the watch is alive. |
+| Read | A wake carries an inline tail capped at `outputAlertMaxChars`, so read the log numbered from the line after the last number handled: `awk 'NR >= [NEXT_LINE] { print NR ": " $0 }' [RUN_DIR]/watch.log`. |
+| Re-arm | The per-task wake budget ends in one "wake budget exhausted" notice. Stop that follow with `bg_status action: "stop"` and spawn a new one from the line after the last number handled. |
+| Exit | An exit wake whose status is `timed_out`, `completed` or `failed` ended a follow this session did not stop: run the watch-delivery.md expiry checks, then spawn a new one from the line after the last number handled. The exit wake of a follow this session stopped reads `stopped` and needs no action. |
 
 The `bg_task.*` activity events that pi-session-bridge relays reach external observers only, never this session.

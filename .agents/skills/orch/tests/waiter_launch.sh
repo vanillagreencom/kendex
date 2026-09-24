@@ -138,5 +138,32 @@ launch|launch|prefixed|130|detached job dies on its own INT
 ignore|ignore-int|prefixed|0|control: a trailing & leaves INT ignored
 bare|launch|bare|0|control: the caller's own ignore reaches the detached job
 ROWS
+# The recorded pid names the job's own process group, so one group kill stops
+# the job and every process it started, and the pid then reads gone. The group
+# is compared before any kill: a pid file naming another group must fail here,
+# never signal a group this suite does not own.
+case_dir="$TMP_ROOT/stop"
+mkdir -p "$case_dir"
+bash "$TMP_ROOT/launch.sh" "$case_dir/wait" sh -c 'printf "%s\n" "$$" > "$0"; exec sleep 300' "$case_dir/child"
+wait_for_file "$case_dir/wait.pid"
+wait_for_file "$case_dir/child"
+job_pid="$(<"$case_dir/wait.pid")"
+child_pid="$(<"$case_dir/child")"
+child_group="$(ps -o pgid= -p "$child_pid" | tr -d ' ')"
+assert_eq "$child_group" "$job_pid" 'the recorded pid names the group of the job it started' "$case_dir/wait.log"
+if [[ "$child_group" == "$job_pid" ]]; then
+  kill -TERM -- "-$job_pid" 2>/dev/null || true
+  for ((attempt=0; attempt<500; attempt++)); do
+    kill -0 "$child_pid" 2>/dev/null || kill -0 "$job_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+fi
+child_state=alive
+kill -0 "$child_pid" 2>/dev/null || child_state=gone
+[[ "$child_state" == gone ]] || kill -KILL "$child_pid" 2>/dev/null || true
+assert_eq "$child_state" gone 'a group kill on the recorded pid stops the job it started' "$case_dir/wait.log"
+job_state=alive
+kill -0 "$job_pid" 2>/dev/null || job_state=gone
+assert_eq "$job_state" gone 'the recorded pid reads gone once its job is stopped' "$case_dir/wait.log"
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
