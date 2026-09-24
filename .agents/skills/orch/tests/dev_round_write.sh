@@ -332,6 +332,26 @@ for row in 'over|**Expected delta**: 4 lines' 'missing|No size field.'; do
 done
 WRITE_BIN="$LIVE_WRITE"
 
+echo "=== a pr-N key stamps its round and the checker reads it back ==="
+# A pull request with no issue id keys its state pr-N (review-pr-comments.md
+# § 1). No tracker holds that key, so the branch measures under
+# allowance_missing and the round still stamps.
+PRW="$(new_repo pr-wt)"
+init_growth_state "$STATE" "$PRW" pr-51 51-1 >/dev/null
+run_write --worktree "$PRW" --issue pr-51 --round-id 51-1 --item 1 "pr key round" "$OK_REACH"
+E="rc=0 written=yes .issue=pr-51 .size_check.verdict=allowance_missing .size_check.production_allowance=null"
+assert_eq "$(observe "$E")" "$E" "a round under a pr-N key stamps with the measured allowance_missing verdict" "$ERR"
+"$RETURN_WRITE" --worktree "$PRW" --kind fix --issue pr-51 --round-id 51-1 --branch main \
+  --commit "$(git -C "$PRW" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+set +e
+"$CHECK" --worktree "$PRW" --issue pr-51 --round-id 51-1 --expect-items-from-round >/dev/null 2>&1
+pr_check_rc=$?
+set -e
+assert_eq "$pr_check_rc" "0" "dev-artifact-check reads the pr-N round back"
+run_write --worktree "$PRW" --issue pr/51 --round-id 51-2 --item 1 "outside the grammar" "$OK_REACH"
+E="rc=2 stderr~dev-round-write:+invalid-id+arg1=--issue+arg2=pr/51=true"
+assert_eq "$(observe "$E")" "$E" "a key outside the path-safe grammar is still refused" "$ERR"
+
 echo "=== a record the reader cannot use fails acceptance closed ==="
 # A record removed after delegation, a non-string base_sha, an empty path
 # component in adds, and a whitespace path the delegation cannot express each

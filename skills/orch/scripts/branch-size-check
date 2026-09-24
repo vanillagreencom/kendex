@@ -5,12 +5,14 @@
 #   branch-size-check --worktree PATH --issue ID [--state-dir DIR] [--json]
 #     [--cut-from-round PATH]
 #
-# --issue names the tracker issue whose `**Expected delta**` line is this
-# branch's allowance: `issue-N` for GitHub, the tracker identifier (KEN-123)
-# otherwise. It is the subset of workflow-state keys that names an issue, not
-# every key: the repository-local `pr-N` fallback that ci-fix, merge-pr and
-# review-pr-comments use for a branch carrying no issue id names none, states
-# no allowance, and is not an input here. Callers resolve a tracker issue first.
+# --issue is the workflow-state key whose issue states this branch's allowance
+# in its `**Expected delta**` line: `issue-N` for GitHub, the tracker
+# identifier (KEN-123) otherwise. The repository-local `pr-N` fallback that
+# ci-fix, merge-pr and review-pr-comments use for a branch carrying no issue id
+# names no issue, so no tracker is read, the branch is measured, and the
+# verdict is allowance_missing. A key that does name an issue the tracker
+# cannot read stays an environment failure: its allowance is unknown, not
+# absent.
 #
 # State directory resolution is defined by `workflow-state --help`.
 #
@@ -78,6 +80,7 @@ unset _arg
 source "$SCRIPT_DIR/lib/branch-growth.sh"
 
 ID_GRAMMAR='^[A-Za-z0-9._-]+$'
+NO_ISSUE_KEY_GRAMMAR='^pr-[0-9]+$'
 DELTA_GRAMMAR='^(1 line|[2-9] lines|[1-9][0-9]+ lines)(, (1 test line|[2-9] test lines|[1-9][0-9]+ test lines))?$'
 
 # Callers preserve positional values for this diagnostic catalog.
@@ -233,6 +236,8 @@ if [[ -n "$cut_from_round" ]]; then
       (.production_allowance == null or (.production_allowance | type == "number")) and
       (.test_allowance == null or (.test_allowance | type == "number")))
   ' "$cut_from_round" >/dev/null 2>&1 || die invalid-round
+elif [[ "$issue" =~ $NO_ISSUE_KEY_GRAMMAR ]]; then
+  issue_body=""
 elif [[ "$issue" == issue-* ]]; then
   command -v gh >/dev/null 2>&1 || die missing-gh "$@"
   # gh and the Linear CLI both resolve their repository from the working

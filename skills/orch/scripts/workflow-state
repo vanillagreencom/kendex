@@ -1020,7 +1020,8 @@ EOF
   remove <issue_id>             Delete the state file and its lock sidecar; absent is success
 
 Keys:
-  GitHub-issue orchestration stores state under the normalized key issue-<N>.
+  GitHub-issue orchestration stores state under the normalized key issue-<N>,
+  and a branch carrying no issue id under the repository-local key pr-<N>.
   Every command resolves <issue_id> to that exact key — pass init the same
   spelling every later command will use.
 

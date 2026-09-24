@@ -255,6 +255,26 @@ jq -n '[{identifier: "KEN-OTHER", description: "another issue"}]' > "$WT/.cache/
 rc_of unread_rc run_check "$CHECK_BIN"
 assert_eq "$unread_rc" "2" "an issue absent from the cache exits 2 rather than judging by nothing"
 
+# --- A pr-N key names no issue: measured, not refused ------------------------
+# The repository-local fallback for a branch carrying no issue id. The cache
+# here holds no such row, so a key that reached the tracker would exit 2.
+"$STATE" --state-dir "$WT/tmp" init pr-51 --worktree "$WT" --branch size >/dev/null
+capture pr_json env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS ORCH_STATE_DIR="$WT/tmp" \
+  "$CHECK_BIN" --worktree "$WT" --issue pr-51 --json
+assert_eq "$(jq -r '.verdict, .production_allowance, .test_allowance' <<<"$pr_json" | paste -sd, -)" \
+  "allowance_missing,null,null" "a pr-N key is measured under allowance_missing, with no allowance invented"
+
+PR_MUTANT_SCRIPTS="$(copy_scripts pr-key-mutant)"
+PR_MUTANT="$PR_MUTANT_SCRIPTS/branch-size-check"
+mutate_file "$PR_MUTANT" 'NO_ISSUE_KEY_GRAMMAR='"'"'^pr-[0-9]+$'"'"'' 'NO_ISSUE_KEY_GRAMMAR='"'"'^$'"'"''
+set +e
+pr_mutant_error="$(env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS ORCH_STATE_DIR="$WT/tmp" \
+  "$PR_MUTANT" --worktree "$WT" --issue pr-51 2>&1 >/dev/null)"
+pr_mutant_rc=$?
+set -e
+assert_eq "$pr_mutant_rc,${pr_mutant_error%%$'\n'*}" "2,branch-size-check: linear-read issue=pr-51" \
+  "control: without the no-issue key the same run is a tracker-read refusal"
+
 # --- The state file is the one named, not the one the caller stands in ------
 write_issue "**Expected delta**: 50 lines"
 STATE_DIR="$TMP_ROOT/elsewhere"
