@@ -39,3 +39,5 @@ The harness and docs checkers have no project settings. The change classifier re
 
 
 Workflow setup: [references/wiring.md](references/wiring.md). Maintainer rules and tests: [DEVELOPMENT.md](DEVELOPMENT.md).
+
+Timing probe for KEN-1596 (closed unmerged).
