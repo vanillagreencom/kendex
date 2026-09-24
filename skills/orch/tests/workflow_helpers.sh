@@ -325,9 +325,21 @@ for wf in submit-pr merge-pr ci-fix; do
   fi
 done
 
+# The merged short-circuit is only a short-circuit while it precedes the reads
+# it skips: below them, a resolution that refuses for want of an orphaned head
+# stands between a completed merge and its cleanup.
+already_merged_line="$(grep -n -F '`[ALREADY_MERGED]=true` skips the mutation and the wait for step 2' "$merge_workflow" | cut -d: -f1)"
+resolve_line="$(grep -n -F 'approval-wait --resolve-mode --base [PREPARED_BASE]' "$merge_workflow" | cut -d: -f1)"
+if [[ -n "$already_merged_line" && -n "$resolve_line" && "$already_merged_line" -lt "$resolve_line" ]]; then
+  pass "merge-pr sends an already-merged PR to step 2 before it resolves a mode"
+else
+  fail "merge-pr must short-circuit an already-merged PR above the gate-mode resolution (short-circuit=${already_merged_line:-absent}, resolve=${resolve_line:-absent})"
+fi
+
 micro_workflow="$SKILL_DIR/workflows/micro.md"
 micro_policy_is_closed() { # micro-doc
-  grep -Fq 'review-gate/scripts/review-policy --event pull_request --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]' "$1" &&
+  grep -Fq 'env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-view [PR_NUMBER] --json baseRefOid,headRefOid' "$1" &&
+    grep -Fq 'review-gate/scripts/review-policy --event pull_request --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]' "$1" &&
     grep -Fq 'The exact answer `change_class=micro review_evidence=none policy=active` continues.' "$1" &&
     grep -Fq 'independent of the repository'"'"'s `approval` or `review` gate mode' "$1" &&
     grep -Fq 'an inactive policy, an unresolved class, another class, or another evidence policy escapes' "$1" &&

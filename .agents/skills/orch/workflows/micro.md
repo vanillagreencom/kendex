@@ -143,7 +143,7 @@ mkdir -p [MAIN_REPO_ROOT]/tmp
 Read the pull request's exact endpoints through the GitHub skill and bind them as `[BASE_SHA]` and `[HEAD_SHA]`:
 
 ```bash
-[MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-view [PR_NUMBER] --json baseRefOid,headRefOid
+env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-view [PR_NUMBER] --json baseRefOid,headRefOid
 ```
 
 Ask the review gate's policy owner to classify that range. It calls the shared harness-ci classifier and accepts no asserted class:

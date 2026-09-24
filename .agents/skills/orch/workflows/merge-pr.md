@@ -208,11 +208,13 @@ Use the output as `MAIN_REPO_ROOT`.
 
 1. **Merge**, before any cleanup:
 
-   Resolve the repository, gate mode, and exact head before any merge attempt. `[RECOVERY_COUNT]` is `0` initially and one more per recovery cycle taken in this run. Nothing persists it: a run resumed after a compaction, or relaunched by oversee's `window-gone` rule, starts a fresh budget. Read a run that keeps returning to ci-fix as the signal the cap is there for, whatever the count says.
+   Resolve the repository, gate mode and exact head before any merge attempt. `[RECOVERY_COUNT]` is `0` initially and one more per recovery cycle in this run. Nothing persists it: a run resumed after a compaction, or relaunched by oversee's `window-gone` rule, starts a fresh budget. Read a run that keeps returning to ci-fix as the signal the cap is there for, whatever the count says.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner
    ```
+
+   `[ALREADY_MERGED]=true` skips the mutation and the wait for step 2 HERE, ahead of both reads below: the squash orphans a merged head, a resumed lane may not hold it, and a resolution refusing for want of it must not block that merge's cleanup.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefOid,headRefOid --jq '[.baseRefOid,.headRefOid]|@tsv'
@@ -223,8 +225,6 @@ Use the output as `MAIN_REPO_ROOT`.
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait --resolve-mode --base [PREPARED_BASE] --head [PREPARED_HEAD]
    ```
-
-   `[ALREADY_MERGED]=true` skips the mutation and the wait for step 2.
 
    Read workflow state `pr.size_check` for `[STATE_KEY]`. Use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.
 
