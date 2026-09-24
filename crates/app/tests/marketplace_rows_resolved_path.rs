@@ -9,8 +9,7 @@
 //! spelling in this field and this file is what goes red.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::{rooted, source_path};
 
 use std::fs;

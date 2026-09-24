@@ -1,8 +1,7 @@
 //! End-to-end tests for engine constraints that need a complete fixture.
 #![cfg(unix)]
 
-#[path = "../../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::source_path;
 
 use std::fs;

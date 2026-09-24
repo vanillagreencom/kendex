@@ -5,8 +5,7 @@
 //! ships, and the state it lands on can be worse than the one it answered.
 #![cfg(unix)]
 
-#[path = "../../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::{rooted, source_path};
 
 use std::fs;

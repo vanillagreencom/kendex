@@ -13,8 +13,7 @@
 //! and stops instead; see `no_record_on_this_runner`.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::{no_record_on_this_runner, rooted};
 
 use std::fs;

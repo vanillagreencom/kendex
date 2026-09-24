@@ -4,8 +4,9 @@
 //! environment — and this wires the terminal into it, so neither suite
 //! inherits the other's rendering variables.
 //!
-//! Under `tests/support/` rather than `tests/`, where cargo's autodiscovery
-//! would compile a file holding no `#[test]` as a test binary of its own.
+//! Under `tests/support/` rather than `tests/`: it holds no `#[test]`, so
+//! it is declared once by `tests/main.rs` and is no module of the harness's
+//! roster of test files.
 #![cfg(unix)]
 
 use std::process::{Command, Output};

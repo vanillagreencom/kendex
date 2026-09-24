@@ -8,8 +8,8 @@
 #[cfg(unix)]
 use std::fs;
 
+use super::{concurrency_group, job, job_declaring, run_script, step, workflow};
 use crate::test_util::rooted;
-use crate::{concurrency_group, job, job_declaring, run_script, step, workflow};
 
 #[path = "../../build.rs"]
 #[allow(
@@ -388,7 +388,7 @@ fn a_release_that_cannot_report_its_version_fails_the_job() {
 #[test]
 fn the_classifier_reads_a_binary_the_release_stages() {
     assert!(
-        crate::release().dist.contains_key(BUILT_CLI),
+        super::release().dist.contains_key(BUILT_CLI),
         "no lane stages {BUILT_CLI}"
     );
     assert!(

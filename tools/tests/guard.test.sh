@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tools/guard at commit time, the last lane of the pre-commit chain: the
-# rooted() rule on new temporary fixtures, the bash32-lint lane, the
-# run-scoping scan, the compile checks a staged product change schedules, and
+# rooted() rule on new temporary fixtures, the bash32-lint and test-roster
+# lanes, the run-scoping scan, the compile checks a staged product change schedules, and
 # the verdicts guard leaves to the packages that own them. The --full lanes are guard-full.test.sh and the
 # render rule is guard-render.test.sh.
 set -euo pipefail
@@ -117,6 +117,28 @@ printf '%s\n' 'fn home(home: &std::path::Path) {' '    let out = std::process::C
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: test-scan=fixture-home"* ]] && ok "a fixture-home scan that cannot run blocks guard, naming its lane" || bad "a fixture-home scan that cannot run blocks guard, naming its lane" "rc=$RC out=$OUT"
 rm -f "$R/crates/cli/tests/fixture_home.rs"
 git -C "$R" reset -q HEAD -- crates/cli/tests/binary_home.rs && rm -f "$R/crates/cli/tests/binary_home.rs" "$R/fake-bin/awk" && rmdir "$R/crates/cli/tests" "$R/crates/cli"
+
+echo "=== a file under tests/ no harness declares reds through the test-roster lane ==="
+# The rule is tools/test-roster's and its rows are tools/tests/
+# test-roster.test.sh; this proves guard runs it and forwards its verdict.
+mkdir -p "$R/crates/cli/tests"
+printf '[package]\nname = "demo"\nautotests = false\n\n[[test]]\nname = "integration"\npath = "tests/main.rs"\n' >"$R/crates/cli/Cargo.toml"
+printf 'mod declared;\n' >"$R/crates/cli/tests/main.rs"
+printf 'fn declared() {}\n' >"$R/crates/cli/tests/declared.rs"
+printf 'fn orphan() {}\n' >"$R/crates/cli/tests/orphan.rs"
+git -C "$R" add -A && run_guard
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: test-roster=1"* ]] && [[ "$OUT" == *"test-roster: orphans=1"* ]] && [[ "$OUT" == *"crates/cli/tests/orphan.rs"* ]] && ok "an undeclared test file reds guard through the test-roster lane, naming the file" || bad "an undeclared test file reds guard through the test-roster lane, naming the file" "rc=$RC out=$OUT"
+if mutant_guard '/TOOLS_DIR\/test-roster/d'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the test-roster lane deleted the orphan passes" \
+    || bad "control: with the test-roster lane deleted the orphan passes" "rc=$RC out=$OUT"
+else
+  bad "control: the test-roster lane could not be deleted from a guard copy"
+fi
+git -C "$R" reset -q HEAD -- crates/cli
+rm -f "$R/crates/cli/Cargo.toml" "$R/crates/cli/tests/main.rs" "$R/crates/cli/tests/declared.rs" "$R/crates/cli/tests/orphan.rs"
+rmdir "$R/crates/cli/tests" "$R/crates/cli"
 echo "=== the shipped packages' verdicts are not twinned here ==="
 # Guard delegates document sizes and changelog entries to their shipped
 # checks. The preconditions run those checks on the same defects: the

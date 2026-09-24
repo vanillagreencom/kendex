@@ -4,8 +4,7 @@
 //! the flag that answers them.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
 use std::fs;

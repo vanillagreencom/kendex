@@ -3,9 +3,6 @@
 //! report.
 #![cfg(unix)]
 
-#[path = "../../../test_util.rs"]
-mod test_util;
-
 mod advisory;
 mod corpus;
 mod fixture;

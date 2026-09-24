@@ -5,8 +5,7 @@
 //! local git upstream, reached through `KENDEX_API` and `KENDEX_GIT_BASE`.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
 use std::fs;

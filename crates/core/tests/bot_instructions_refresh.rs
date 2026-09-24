@@ -3,13 +3,13 @@
 //! script, which kendex launches through `sh`.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::test_util::rooted;
 use kendex_core::bot_instructions;
 use kendex_core::engine::GeneratedPaths;
 use kendex_core::env::{Env, FakeOs};
@@ -17,7 +17,6 @@ use kendex_core::lock::{EmittedArtifact, Lock, LockEntry, Reason};
 use kendex_core::manifest::Method;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::process::Hardened;
-use test_util::rooted;
 
 const CODEX_PACKAGE: &str = ".agents/skills/bot-instructions";
 const CLAUDE_PACKAGE: &str = ".claude/skills/bot-instructions";

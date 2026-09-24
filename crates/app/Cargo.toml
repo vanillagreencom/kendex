@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+# The integration tests are one harness, tests/main.rs, and every other file
+# under tests/ is a module of it: autodiscovery off, or cargo would still
+# build each file as a test binary of its own, linking this crate and its
+# dependencies once per file.
+autotests = false
+
 [lib]
 name = "kendex_app"
 
@@ -68,6 +74,10 @@ rustix.workspace = true
 
 [build-dependencies]
 tauri-build.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
 
 [lints]
 workspace = true

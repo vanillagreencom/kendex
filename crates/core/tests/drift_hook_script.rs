@@ -7,8 +7,7 @@ use std::path::Path;
 
 use kendex_core::drift;
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
 /// Run the actual generated script with a private CLI stub.

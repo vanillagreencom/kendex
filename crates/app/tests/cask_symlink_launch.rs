@@ -5,8 +5,7 @@
 //! stops refusing to name a binary reached through one.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
 use std::path::{Path, PathBuf};
@@ -22,7 +21,8 @@ const PROBE_VAR: &str = "KENDEX_CASK_SYMLINK_PROBE";
 /// passing on an empty run.
 const PROBE_OK: &str = "cask-symlink probe named ";
 
-/// The probe's own name, as the harness filter spells it.
+/// The probe's own function name; `test_util::exact_test` spells it the
+/// way the harness filter reads it.
 const PROBE_TEST: &str = "a_symlinked_launch_path_names_its_own_binary";
 
 /// A cask's shape under `root`: the versioned bundle in the Caskroom, and
@@ -118,7 +118,9 @@ fn a_symlinked_launch_path_names_its_own_binary() {
     let launch = bundle.join("Contents/MacOS").join(exe.file_name().unwrap());
 
     let child = std::process::Command::new(&launch)
-        .args(["--exact", PROBE_TEST, "--nocapture", "--test-threads=1"])
+        .arg("--exact")
+        .arg(test_util::exact_test(module_path!(), PROBE_TEST))
+        .args(["--nocapture", "--test-threads=1"])
         .env(PROBE_VAR, "1")
         .output()
         .unwrap();

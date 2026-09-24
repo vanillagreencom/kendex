@@ -1,8 +1,7 @@
 //! The community directory client: strict parse with caps, the
 //! ETag/TTL/offline ladder, and the skills.sh adapter.
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
 use kendex_core::env::{Env, FakeOs};

@@ -3,7 +3,7 @@
 //! held to the bytes the Desktop Entry spec calls for, character by
 //! character, rather than to a reader of the grammar written here.
 
-use crate::{CURL, ICONS, installer_output, posix_shell, repo_root};
+use super::{CURL, ICONS, installer_output, posix_shell, repo_root};
 
 /// The encoder itself, run out of `install.sh` rather than copied here: the
 /// function is sliced out of the shipped script and handed one argument, so

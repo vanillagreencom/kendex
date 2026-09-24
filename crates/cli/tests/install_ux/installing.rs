@@ -1,7 +1,7 @@
 //! Fresh installs: which tools a package fans out to, how it is delivered,
 //! and what a second run of the same command does.
 
-use crate::{World, link_text, read, tree};
+use super::{World, link_text, read, tree};
 
 /// Symlink delivery, the default: one real tree in the shared home and a
 /// link from the only tool that does not read it, spelled relative so the
@@ -119,14 +119,14 @@ fn an_install_that_would_land_nowhere_is_refused() {
     world.declare_catalog();
 
     let nowhere = world.try_run(&["add", "cat", "--skill", "deploy", "--harness", "", "-y"]);
-    let said = crate::said(&nowhere);
+    let said = super::said(&nowhere);
     assert!(!nowhere.status.success(), "{said}");
     assert!(said.contains("nothing would be installed"), "{said}");
 
     // Pi takes skills but no MCP servers, so naming it for one is a
     // request that would plan nothing.
     let wrong = world.try_run(&["add", "cat", "--mcp-server", "gh", "--harness", "pi", "-y"]);
-    let said = crate::said(&wrong);
+    let said = super::said(&wrong);
     assert!(!wrong.status.success(), "{said}");
     assert!(said.contains("nothing would be installed"), "{said}");
 
@@ -198,7 +198,7 @@ fn refresh_is_idempotent() {
 #[test]
 fn local_workflow_state_is_ignored_and_consumer_rules_are_preserved() {
     let world = World::new(&["claude"]);
-    crate::write(&world.at(".gitignore"), "target/\ndocs/private/\n");
+    super::write(&world.at(".gitignore"), "target/\ndocs/private/\n");
     world.declare_catalog();
     world.run(&["add", "cat", "--skill", "deploy", "-y"]);
 
@@ -221,7 +221,7 @@ fn local_workflow_state_is_ignored_and_consumer_rules_are_preserved() {
         "{ignore}"
     );
     assert!(world.at(".kendex-lock.json").is_file());
-    let untracked = crate::git(
+    let untracked = super::git(
         &world.project,
         &["ls-files", "--others", "--exclude-standard"],
     );
@@ -230,7 +230,7 @@ fn local_workflow_state_is_ignored_and_consumer_rules_are_preserved() {
         "the record is git's to carry: {untracked}"
     );
     assert_eq!(
-        crate::git(
+        super::git(
             &world.project,
             &[
                 "check-ignore",
@@ -263,7 +263,7 @@ fn ignoring_the_shared_tree_or_the_record_is_reported() {
         ),
     ] {
         let world = World::new(&["claude"]);
-        crate::write(&world.at(".gitignore"), rule);
+        super::write(&world.at(".gitignore"), rule);
         world.declare_catalog();
         let said = world.run(&["add", "cat", "--skill", "deploy", "-y"]);
         let line = said

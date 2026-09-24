@@ -7,8 +7,7 @@
 //! carries it for the one window in which the uninstaller can still run.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::source_path;
 
 use std::fs;

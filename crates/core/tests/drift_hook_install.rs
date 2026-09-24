@@ -18,8 +18,7 @@ use kendex_core::manifest;
 use kendex_core::model::Scope;
 use kendex_core::process::Hardened;
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
 const REPO: &str = "owner/catalog";

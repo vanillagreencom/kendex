@@ -3,16 +3,13 @@
 //! recorded as the choice, and an unticked one is not installed.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::test_util::{rooted, source_path};
 use kendex_app::marketplaces::install::{InstallItem, install};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::{ItemKind, Scope};
-use test_util::{rooted, source_path};
 
 struct Fixture {
     _tmp: tempfile::TempDir,

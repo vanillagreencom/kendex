@@ -10,7 +10,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::{World, git, read, said};
+use super::{World, git, read, said};
 
 /// This repository's own copy of a package, dropped into the fixture
 /// catalog where `kendex add` will find it.
@@ -113,7 +113,7 @@ fn the_guards_travel_with_the_repository_and_gate_a_clone() {
 
     // Arming in the clone is the one act that needs a tool. After it, the
     // gate is committed shell and git, and nothing else.
-    crate::run(&world.home, &clone, &["guard", "install"]);
+    super::run(&world.home, &clone, &["guard", "install"]);
     fs::write(clone.join("late.rs"), "// TO".to_owned() + "DO: not yet\n").unwrap();
     git_without_kendex(&clone, &["add", "-A"]);
     let blocked = git_without_kendex(&clone, &["commit", "-m", "feat: adds a marker"]);
@@ -505,7 +505,7 @@ fn a_lapsed_package_that_is_not_commit_guards_is_told_its_own_remedy() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
     let package = world.catalog.join("skills/fenced");
-    crate::write(
+    super::write(
         &package.join("SKILL.md"),
         "---\nname: fenced\ndescription: marks the checkout\nrepo-effects:\n  summary: \"Writes a marker file in this checkout.\"\n  writes:\n    - \".fenced\"\n  installer: \"scripts/arm\"\n  uninstaller: \"scripts/disarm\"\n  checker: \"scripts/check\"\n---\nMarks the checkout.\n",
     );
@@ -515,7 +515,7 @@ fn a_lapsed_package_that_is_not_commit_guards_is_told_its_own_remedy() {
         ("check", "test -f .fenced\n"),
     ] {
         let path = package.join("scripts").join(script);
-        crate::write(&path, &format!("#!/bin/sh\n{body}"));
+        super::write(&path, &format!("#!/bin/sh\n{body}"));
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     }
     let added = world.run(&[

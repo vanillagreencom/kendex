@@ -1,0 +1,110 @@
+//! The one harness kendex-core's integration tests build as: every file
+//! beside this one is a module of it, so the crate and its dependencies link
+//! once rather than once per file. Cargo's autodiscovery is off in
+//! Cargo.toml, so a new file under `tests/` is a `mod` line here;
+//! `tools/test-roster` holds that roster.
+//!
+//! A file that stays its own `[[test]]` target says why beside its
+//! declaration in Cargo.toml.
+
+#[path = "../../test_util.rs"]
+mod test_util;
+
+mod add_from_local;
+mod adopt_many_tools;
+mod adopt_pinned;
+mod agent_skill_roots;
+mod antigravity;
+mod app_update;
+mod authored_summaries;
+mod authoring;
+mod authoring_check;
+mod bot_instructions_refresh;
+mod browse_unreadable_lock;
+mod bundles;
+mod byte_faithful;
+mod codex_mcp;
+mod collections;
+mod collision_refusal;
+mod command_names;
+mod commands;
+mod copilot;
+mod copilot_reports;
+mod credential_lock_process;
+mod credential_transactions;
+mod cursor_mcp;
+mod custom_hooks;
+mod dependencies;
+mod discovery;
+mod drift_check;
+mod drift_hook_install;
+mod drift_hook_script;
+mod drift_worktree_remedy;
+mod edits_and_forks;
+mod fixture_manifest_paths;
+mod gemini;
+mod gemini_reports;
+mod guard_repo_paths;
+mod guard_skill_roots;
+mod guard_timeout_budget;
+mod hook_promises;
+mod hook_records;
+mod hook_removal;
+mod hook_sweep;
+mod hooks_readme;
+mod in_place_preservation;
+mod install_into_project;
+mod install_seam;
+mod install_targets;
+mod installs_nowhere;
+mod instruction_shims;
+mod invariants;
+mod kinds;
+mod lock_from_another_project;
+mod marketplace_index;
+mod marketplace_subscribe;
+mod me_client;
+mod migration;
+mod not_offered_note;
+mod opencode_commands;
+mod opencode_mcp;
+mod package_checks_plan;
+mod package_detail;
+mod package_diff;
+mod package_identity;
+mod package_pins;
+mod package_versions;
+mod permissions;
+mod pi_carrier;
+mod pi_commands;
+mod plugin_registry;
+mod plugin_targets;
+mod process_guard_env;
+mod project_hook_root;
+mod quality;
+mod refresh_stale;
+mod registry;
+mod repo_effects_leaving;
+mod review_fixes;
+mod sealed_source;
+mod secret_destination;
+mod secret_storage;
+mod settings_edits;
+mod settings_grammar;
+mod settings_seed;
+mod settings_seed_repo;
+mod skill_records;
+mod source_store;
+mod structural_claims;
+mod submit_client;
+mod surfaces;
+mod symlinked_harness_dir;
+mod transitions;
+mod unmanaged_check;
+mod unmanaged_ownership;
+mod unmanaged_shapes;
+mod unmanaged_takeover;
+mod unsubscribe;
+mod unsubscribe_keep;
+mod v1_lock;
+mod validate_output;

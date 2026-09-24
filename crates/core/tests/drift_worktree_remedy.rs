@@ -8,8 +8,7 @@
 //! that name once and every remedy in the report carries it.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
 use std::fs;

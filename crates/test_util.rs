@@ -14,6 +14,24 @@ pub fn rooted(tmp: &tempfile::TempDir) -> PathBuf {
     kendex_core::paths::canonical(tmp.path()).expect("fixture root canonicalizes")
 }
 
+/// The name the test runner lists a test under: its module path inside the
+/// harness, then the function. A test that re-executes its own binary with
+/// `--exact` passes this, since the function name alone matches nothing once
+/// the file is a module of the harness rather than a binary of its own.
+///
+/// `module_path` is the calling module's `module_path!()`, whose first
+/// segment is the crate the runner leaves off.
+#[allow(
+    dead_code,
+    reason = "every test binary includes this whole module and uses the part it needs"
+)]
+pub fn exact_test(module_path: &str, function: &str) -> String {
+    match module_path.split_once("::") {
+        Some((_, inside)) => format!("{inside}::{function}"),
+        None => function.to_owned(),
+    }
+}
+
 /// The checkout this crate sits in, canonical: the workspace root two levels
 /// above `crates/<name>`, whichever of the three crates compiled this module.
 ///

@@ -7,9 +7,7 @@
 //! the fixture.
 #![cfg(unix)]
 
-#[path = "repo_effects/fixture.rs"]
-mod fixture;
-use fixture::*;
+use crate::repo_effects::fixture::*;
 
 use kendex_core::repo_effects::{Ask, SetupState};
 

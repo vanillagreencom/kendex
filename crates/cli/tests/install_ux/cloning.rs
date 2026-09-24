@@ -4,7 +4,7 @@
 
 use std::fs;
 
-use crate::{World, git, link_text, read};
+use super::{World, git, link_text, read};
 
 /// A bare clone into a path nothing in the original ever named, checked
 /// through the tool's own directory rather than the shared one — an
@@ -69,7 +69,7 @@ fn an_absolute_link_from_an_older_install_migrates_on_refresh() {
     assert_eq!(link_text(&link), canonical.display().to_string());
 
     // The drift is named for what it costs, not as an unownable link.
-    let said = crate::said(&world.try_run(&["verify"]));
+    let said = super::said(&world.try_run(&["verify"]));
     assert!(said.contains("clone"), "{said}");
 
     world.run(&["refresh", "-y"]);

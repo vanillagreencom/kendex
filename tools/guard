@@ -74,6 +74,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       printf 'the per-file scan behind the %s lane could not run, so its files were not judged.\n' "$2" ;;
     binary-home)
       echo "a launch in a test naming the kendex binary carries no fixture home before it runs — give its builder fixture_env() from crates/test_util.rs, or a HOME with KENDEX_REAL_HOME beside it; a release-profile test run otherwise drives the real machine." ;;
+    test-roster)
+      echo "tools/test-roster refused the tree — a file or directory under a crate's tests/ that no [[test]] root declares compiles nowhere under autotests = false, or the scan could not run; its own first line above names which." ;;
     fixture-diff)
       echo "the crates/*/tests diff the rooted() rule reads could not be produced." ;;
     fixture-scan)
@@ -451,6 +453,13 @@ fi
   say binary-home "$(count_lines "$hits")"
   show "$hits" | head -5
 }
+
+# Every file under a harness crate's tests/ is compiled by some [[test]]
+# target. The rule and what it judges are tools/test-roster's, which CI runs
+# beside the cargo compile; exit 1 is an orphan, exit 2 a scan that could
+# not run, and neither is a pass. One line on purpose: the must-fail control
+# in tools/tests/guard.test.sh removes this lane by deleting it.
+"$TOOLS_DIR/test-roster" || say test-roster "$?"
 
 # What the diff-scoped rules below diff against: HEAD, or on an unborn
 # branch the index against nothing, so the first commit is judged too.

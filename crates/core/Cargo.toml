@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+# The integration tests are one harness, tests/main.rs, and every other file
+# under tests/ is a module of it: autodiscovery off, or cargo would still
+# build each file as a test binary of its own, linking this crate and its
+# dependencies once per file.
+autotests = false
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
@@ -36,6 +42,16 @@ windows-sys.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 fd-lock.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
+
+# Swaps a process-global keyring builder, so it shares a process with no
+# other test.
+[[test]]
+name = "credential_store_refusals"
+path = "tests/credential_store_refusals.rs"
 
 [lints]
 workspace = true

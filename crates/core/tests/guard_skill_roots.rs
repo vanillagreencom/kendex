@@ -24,8 +24,7 @@ use kendex_core::env::{Env, FakeOs};
 use kendex_core::harness::{Surface, all_adapters};
 use kendex_core::model::ItemKind;
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
 /// Every project-scope skills directory any harness declares, relative to

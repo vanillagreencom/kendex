@@ -5,7 +5,7 @@
 use kendex_core::model::ItemKind;
 use kendex_core::quality::{AuditInput, AuditResult, Content, audit};
 
-use crate::rules::{document, skill};
+use super::rules::{document, skill};
 
 fn hook(script: &str) -> AuditResult {
     audit(AuditInput {

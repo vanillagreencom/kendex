@@ -1,7 +1,7 @@
 //! Taking over what somebody already had: a skill sitting in a tool's own
 //! directory, and a hook they registered by hand.
 
-use crate::{World, link_text, read, said};
+use super::{World, link_text, read, said};
 
 const HAND_MADE: &str =
     "---\nname: release\ndescription: cut a release\n---\nThe way we have always done it.\n";
@@ -13,8 +13,8 @@ const HAND_MADE: &str =
 fn adopting_a_claude_skill_moves_it_into_the_shared_home() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    crate::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
-    crate::write(&world.at(".claude/skills/release/notes.md"), "Notes.\n");
+    super::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
+    super::write(&world.at(".claude/skills/release/notes.md"), "Notes.\n");
 
     world.run(&["adopt", "skill", "release"]);
 
@@ -42,11 +42,11 @@ fn adopting_a_claude_skill_moves_it_into_the_shared_home() {
 fn refresh_maintains_an_adopted_skill_without_touching_its_content() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    crate::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
+    super::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
     world.run(&["adopt", "skill", "release"]);
 
     let shared = world.at(".agents/skills/release/SKILL.md");
-    crate::write(&shared, &HAND_MADE.replace("always", "usually"));
+    super::write(&shared, &HAND_MADE.replace("always", "usually"));
     world.run(&["refresh", "-y"]);
     assert!(
         read(&shared).contains("usually"),
@@ -63,13 +63,13 @@ fn refresh_maintains_an_adopted_skill_without_touching_its_content() {
 fn an_adopted_skill_clones() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    crate::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
+    super::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
     world.run(&["adopt", "skill", "release"]);
     world.commit_all("adopt release");
 
     let clone = world.tmp.path().join("elsewhere/adopted");
     std::fs::create_dir_all(clone.parent().unwrap()).unwrap();
-    crate::git(
+    super::git(
         &world.project,
         &["clone", "--quiet", ".", &clone.display().to_string()],
     );
@@ -83,7 +83,7 @@ fn an_adopted_skill_clones() {
 fn adopting_a_hook_rewrites_only_its_own_registration() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    crate::write(
+    super::write(
         &world.at(".claude/settings.json"),
         r#"{
   "env": {"KEEP": "1"},
@@ -96,7 +96,7 @@ fn adopting_a_hook_rewrites_only_its_own_registration() {
 }
 "#,
     );
-    crate::write(
+    super::write(
         &world.at(".claude/hooks/guard.sh"),
         "#!/bin/sh\necho guard\n",
     );
@@ -171,8 +171,8 @@ fn adoption_moves_the_script_a_command_runs_and_nothing_else() {
     for (what, planted, command, name, moved, recorded) in rows {
         let world = World::new(&["claude"]);
         world.declare_catalog();
-        crate::write(&world.at(planted), "#!/bin/sh\nexit 0\n");
-        crate::write(
+        super::write(&world.at(planted), "#!/bin/sh\nexit 0\n");
+        super::write(
             &world.at(".claude/settings.json"),
             &format!(
                 r#"{{"hooks": {{"PreToolUse": [{{"matcher": "Bash", "hooks": [{{"type": "command", "command": "{command}"}}]}}]}}}}"#
@@ -201,12 +201,12 @@ fn adoption_moves_the_script_a_command_runs_and_nothing_else() {
 fn tools_disagreeing_under_one_name_are_refused() {
     let world = World::new(&["claude", "codex"]);
     world.declare_catalog();
-    crate::write(&world.at(".claude/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
-    crate::write(
+    super::write(&world.at(".claude/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
+    super::write(
         &world.at(".claude/settings.json"),
         r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ".claude/hooks/guard.sh", "timeout": 10}]}]}}"#,
     );
-    crate::write(
+    super::write(
         &world.at(".codex/hooks.json"),
         r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ".claude/hooks/guard.sh", "timeout": 90}]}]}}"#,
     );
@@ -232,11 +232,11 @@ fn tools_disagreeing_under_one_name_are_refused() {
 fn a_hook_a_declaration_cannot_express_is_refused() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    crate::write(
+    super::write(
         &world.at(".claude/settings.json"),
         r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ".claude/hooks/guard.sh", "env": {"TOKEN": "x"}}]}]}}"#,
     );
-    crate::write(&world.at(".claude/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
+    super::write(&world.at(".claude/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
 
     let refused = world.try_run(&["adopt", "hook", "PreToolUse:Bash:guard"]);
     assert!(!refused.status.success());
@@ -248,11 +248,11 @@ fn a_hook_a_declaration_cannot_express_is_refused() {
 fn an_adopted_hook_keeps_its_timeout() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
-    crate::write(
+    super::write(
         &world.at(".claude/settings.json"),
         r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ".claude/hooks/guard.sh", "timeout": 45}]}]}}"#,
     );
-    crate::write(&world.at(".claude/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
+    super::write(&world.at(".claude/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
 
     world.run(&["adopt", "hook", "PreToolUse:Bash:guard"]);
     assert!(
@@ -270,11 +270,11 @@ fn an_adopted_hook_keeps_its_timeout() {
 fn a_copilot_hook_is_found_in_its_own_document_and_named_in_fleet_words() {
     let world = World::new(&["copilot"]);
     world.declare_catalog();
-    crate::write(
+    super::write(
         &world.at(".github/hooks/mine.json"),
         r#"{"version": 1, "hooks": {"preToolUse": [{"type": "command", "command": ".github/hooks/guard.sh", "matcher": "shell"}]}}"#,
     );
-    crate::write(&world.at(".github/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
+    super::write(&world.at(".github/hooks/guard.sh"), "#!/bin/sh\nexit 0\n");
 
     world.run(&[
         "adopt",
@@ -294,8 +294,8 @@ fn a_copilot_hook_is_found_in_its_own_document_and_named_in_fleet_words() {
 #[test]
 fn registering_a_project_reports_what_it_could_manage() {
     let world = World::new(&["claude"]);
-    crate::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
-    let said = crate::run(
+    super::write(&world.at(".claude/skills/release/SKILL.md"), HAND_MADE);
+    let said = super::run(
         &world.home,
         &world.project,
         &["project", "add", &world.project.display().to_string()],

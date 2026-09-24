@@ -3,8 +3,7 @@
 //! swapped for a local file:// git fixture via KENDEX_GIT_BASE.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 
 use std::fs;
 use std::path::Path;

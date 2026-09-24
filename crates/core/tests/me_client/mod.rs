@@ -9,8 +9,7 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
-#[path = "../../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::rooted;
 
 use kendex_core::env::{Env, FakeOs};

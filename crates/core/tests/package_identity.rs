@@ -11,8 +11,7 @@
 //! cannot account for has to stay exactly as distinct as it was.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
+use crate::test_util;
 use test_util::{rooted, source_path};
 
 use std::fs;

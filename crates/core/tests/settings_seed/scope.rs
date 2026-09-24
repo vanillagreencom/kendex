@@ -13,7 +13,7 @@ use kendex_core::engine::audit;
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::Scope;
 
-use super::test_util::{rooted, source_path};
+use crate::test_util::{rooted, source_path};
 
 /// One key the consumer has to decide and one that ships a working
 /// default: what an install writes, and what it leaves in the template.
