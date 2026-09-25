@@ -931,15 +931,31 @@ handoff_flap() { # [WATCH_BIN]
   handoff_record KEN-1
   old_state_reader "$STUB_DIR/old-workflow-state" 1 "" "workflow-state: unknown-command arg1=handoff-standing"
   FLAP=""
+  FLAP_BEATS=()
   for run in fail fail ok fail; do
     env=()
     [[ "$run" == ok ]] || env=(REAL_WORKFLOW_STATE="$STUB_DIR/old-workflow-state")
-    WATCH_BIN="${1:-}" run_watch ${env[@]+"${env[@]}"} -- --item KEN-1 >/dev/null 2>"$STUB_DIR/flap.err" || true
+    FLAP_BEATS+=("$(WATCH_BIN="${1:-}" run_watch ${env[@]+"${env[@]}"} -- --item KEN-1 2>"$STUB_DIR/flap.err" || true)")
     FLAP+="$(grep -c 'oversee-watch: handoff-read-failed item=KEN-1' "$STUB_DIR/flap.err" || :)"
   done
 }
 handoff_flap
 assert_eq "reports=$FLAP" "reports=1001" "a handoff read failure is reported once, and again after a read that succeeded"
+# The second run's failure stands quiet, and its heartbeat still names it:
+# the row is the long pass's, in the baseline this process reads from disk.
+assert_eq "$(grep -c '^  failing KEN-1 handoff-read-failed ' <<<"${FLAP_BEATS[1]}" || :)" "1" \
+  "a quiet run's heartbeat names the lane whose handoff read still fails"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = '<<<"$MAIL_SEEN"$\'\\n\'"$baseline")"; then'
+assert s.count(old) == 1, "baseline-less heartbeat mutant pattern"
+open(out, "w").write(s.replace(old, '<<<"$MAIL_SEEN")"; then'))
+PY
+handoff_flap "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(grep -c '^  failing KEN-1 ' <<<"${FLAP_BEATS[1]}" || :)" "0" \
+  "control: a heartbeat reading the mail file alone says nothing of the handoff read"
 python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
 import sys
 src, out = sys.argv[1:]

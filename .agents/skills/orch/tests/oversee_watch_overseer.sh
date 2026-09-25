@@ -1439,5 +1439,44 @@ banner_judged "$MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "judged=$([[ "$JUDGED" -gt 2 ]] && echo more || echo "$JUDGED")" "judged=more" \
   "control: judged afresh on every mail pass, a standing banner costs a judgement each" "$ERR"
 
+
+# A relayed banner refuted, then the overseer's own account walls under a
+# different banner inside the same interval: the new banner is judged afresh
+# rather than taken for the refuted one, so the note sent between the two is
+# left for a live overseer. The first capture carries the relayed banner and
+# every later one the new wall; the judgement answers room once, then the
+# mark. The note lands right after the first mail pass reads the mailbox.
+cat > "$TMP_ROOT/bin/lane-mail-note-after.sh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-} ${2:-} ${3:-}" == "inbox --item overseer" && ! -e "$STUB_DIR/noted" ]]; then
+  rc=0
+  "$REAL_LANE_MAIL" "$@" || rc=$?
+  touch "$STUB_DIR/noted"
+  printf 'Sent between the two banners.\n' > "$STUB_DIR/between.txt"
+  "$REAL_LANE_MAIL" send --item overseer --directive --file "$STUB_DIR/between.txt" >/dev/null
+  exit "$rc"
+fi
+exec "$REAL_LANE_MAIL" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/lane-mail-note-after.sh"
+banner_changes() { # [WATCH_BIN]
+  relayed_banner_case "walled_banner_changes${1:+_mutant}"
+  printf '%b\n' '⏺ Watching the fleet.' "$WALL_BANNER" '\xe2\x9d\xaf\xc2\xa0' > "$STUB_DIR/pane-$PANE.1.txt"
+  printf '%b\n' '⏺ Watching the fleet.' "${WALL_BANNER/9:50am/11:50am}" '\xe2\x9d\xaf\xc2\xa0' > "$STUB_DIR/pane-$PANE.txt"
+  check_switch_after_first "$WALL_MARK_LINE"
+  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 \
+    OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-note-after.sh" REAL_LANE_MAIL="$REAL_LANE_MAIL" \
+    -- --max-loops 1 --interval 3600
+  CHANGED="events=$(grep -c '^EVENT owner-note' <<<"$OUT" || true) cursor=$(mail_cursor_count) judged=$(succeed_calls --check-marks)"
+}
+banner_changes
+assert_eq "$CHANGED" "events=0 cursor=0 judged=3" \
+  "a new banner within the interval is judged afresh, and the note it walls is left unread" "$ERR"
+pmutate '    if [[ -n "$OV_WALL_AT" && "$banner" == "$OV_WALL_BANNER" && ' '    if [[ -n "$OV_WALL_AT" && ' \
+  "reuses the wall answer whatever banner it judged"
+banner_changes "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$CHANGED" "events=1 cursor=1 judged=2" \
+  "control: the refuted banner's answer reused for the new wall hands the note to a walled harness" "$ERR"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
