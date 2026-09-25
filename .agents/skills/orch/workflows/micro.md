@@ -138,7 +138,7 @@ git -C [MAIN_REPO_ROOT] checkout [BASE_BRANCH]
 
 ## 4. Arm And Wait
 
-Bind what [merge-pr.md](merge-pr.md) § 1 binds once per run, which its §§ 4-7 consume and this entry skips. `[MAIN_REPO_ROOT]` is § 1's here, `merge_mode` stays `normal`, and `[ALREADY_MERGED]` is unset. The directory is where every stop in that range renders its comment:
+Bind what [merge-pr.md](merge-pr.md) § 1 binds once per run, which its §§ 4-7 consume and this entry skips. `[MAIN_REPO_ROOT]` is § 1's here, and `[ALREADY_MERGED]` is unset. The directory is where every stop in that range renders its comment:
 
 ```bash
 .agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE auto-recommended

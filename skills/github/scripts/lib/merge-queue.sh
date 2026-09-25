@@ -1,8 +1,7 @@
 # shellcheck shell=bash
 #
-# The merge-queue disarm/dequeue GraphQL verb, owned in one place and shared by
-# the github skill's pr-merge admin-credential route and orch's queue-wait
-# late-findings guard, so the two cannot drift. Both must disarm classic
+# The merge-queue disarm/dequeue GraphQL verb, owned by the github skill and
+# run by orch's queue-wait late-findings guard. A caller must disarm classic
 # auto-merge BEFORE dequeuing: an armed PR re-enters the queue the moment its
 # requirements go green, so a bare dequeue can be raced straight back in.
 #

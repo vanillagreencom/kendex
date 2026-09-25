@@ -110,9 +110,8 @@ user_mode_effective
 
 value="${!VAR_NAME-}"
 if [[ "$VAR_NAME" == ORCH_USER_MODE && -n "$value" ]]; then
-  # What ../workflows/oversee.md § 3 Launch and ../workflows/submit-pr.md § 6.2
-  # select a question template from, so it is the same normalized mode the
-  # composition below tests.
+  # What ../workflows/oversee.md § 3 Launch selects a question template from,
+  # so it is the same normalized mode the composition below tests.
   value="$USER_MODE"
 elif [[ -z "$value" ]]; then
   if [[ "$USER_MODE" == ceo ]]; then

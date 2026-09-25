@@ -273,7 +273,7 @@ For `off` and for `exempt`, skip the wait and go to § 5 — the internal review
    .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
    ```
 
-   `ask` presents `Triage again` | `Force merge` | `Stop here`, with `Triage again` recommended, before an automatic budget transition. A standing `changes_requested` verdict on the current head outlives a disposition. Only a dismissal or a newer review clears it. Under `ask`, `Triage again` is the user's override for one more pass, `Force merge` records the override and continues to step 2 with the § 6.1 gates applying, and `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
+   `ask` presents `Triage again` | `Stop here`, with `Triage again` recommended, before an automatic budget transition. A standing `changes_requested` verdict on the current head outlives a disposition. Only a dismissal or a newer review clears it. Under `ask`, `Triage again` is the user's override for one more pass, and `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
 
    **On `timeout` under `ask`**: `Keep waiting` goes to the Restart check; `Force merge` records the override and continues to step 2 with the § 6.1 gates still applying; `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
 
@@ -359,27 +359,13 @@ Empty `json_paths` means no internal review is recorded: report the unmet gate a
 .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE] --item [ISSUE_ID]
 ```
 
-Re-run the gate-3 command once. If threads remain and the external-round cap is below, `auto-recommended` logs `Triage again` and runs one more pass; at the cap it records `review-threads-open`. Under `ask`, present `Triage again` | `Force merge` | `Stop here`, with `Triage again` recommended.
+Re-run the gate-3 command once. If threads remain and the external-round cap is below, `auto-recommended` logs `Triage again` and runs one more pass; at the cap it records `review-threads-open`. Under `ask`, present `Triage again` | `Stop here`, with `Triage again` recommended.
 
 **Gate 4** — verify the recorded § 4 result, under the mode the resolution above printed.
 
 `MERGE_READY = true` only when all four gates are met.
 
-### 6.2 Consumer Admin-Merge Question
-
-**Skip if** the repository is `vanillagreencom/kendex`, where these files are the product, or `MERGE_READY = true`, where the gates already cleared the merge.
-
-When the diff touches no product code, only harness renders, settings, or prose, an unmet gate has nothing left to judge. Whether to merge past it anyway is a question orch poses and never answers. Under `auto-recommended` orch takes the recommended `Continue through the gates` and moves on; under `ask` the user answers. An overseer relays the question to the user and never answers it, as [oversee-events.md § Held merges](../references/oversee-events.md#judgement-rules) requires.
-
-Resolve `ORCH_USER_MODE` once for the question below:
-
-```bash
-.agents/skills/orch/scripts/orch-env ORCH_USER_MODE ceo
-```
-
-Ask once, naming what the diff touches and which gate is unmet, in the template [../references/communication-modes.md](../references/communication-modes.md) gives for that mode, which carries the recommendation too. `Admin-merge past the unmet gate` and `Continue through the gates` are the answer tokens alone: both the reason and the token the user chose go in the PR body under `## Merge decision`. An admin answer invokes `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7` with `merge_mode: admin`. Anything else continues to § 6.3.
-
-### 6.3 Standalone Summary
+### 6.2 Standalone Summary
 
 **Skip if** managed → § 7.
 

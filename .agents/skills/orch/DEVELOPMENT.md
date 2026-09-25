@@ -71,17 +71,11 @@ When the review evidence arrives as a commit status rather than a check-run, no 
 
 Reruns re-execute the workflow definition and verifier state pinned at the original triggering event, so a PR that changes gate or CI behavior only exhibits the new behavior on a fresh head. Reruns are for flakes and re-gating unchanged workflows.
 
-## Merge bypass
+## Merge route
 
-A merge queue re-runs CI on the merge group before it lands the PR. Where the PR head already contains the base head AND the base has not moved since, that run tests the tree the PR head already tested, so it costs a second CI pass and finds nothing the PR run could have found. Neither half of that condition is free: the second is only ever true of a moment, not of the PR.
+A lane merges its own pull request through the base branch's merge queue, on every change class: `merge-pr.md` § 5 step 1 arms `--auto` on the exact head, under the lanes app's installation token in a lane sandbox, and waits in `queue-wait` to a terminal verdict; a finding that lands while the PR is queued takes it back out through `queue-wait`'s late-findings guard. Why the queue and not a direct merge is kendex decision D003 § Rationale. The direct attempt is reached only from an arm that answers `arm: no-merge-gate`; a base that still queues the PR answers it with exit `75`, and the lane waits in `queue-wait` as it does after the arm.
 
-`ORCH_MERGE_BYPASS=fast-path` is the per-repository opt-in, and `merge-pr.md` § 5 step 1 is the only place that decides the route. The setting decides it rather than describing it: on every other value the lane arms `--auto` before it attempts any direct merge, and reaches the direct attempt only where that arm reports no merge gate to wait on, which is a repository with no queue. An unrecognized spelling is `off`, the safe direction. Two routes skip the bypass entirely and go straight to the direct attempt: `merge_mode: admin` and a § 3.2 `Force merge` answer, each an explicit user decision naming one head and one immediate merge that no bypass verdict may convert into a queue arm.
-
-The bypass verdict must belong to the commit being merged, which takes two bindings. The head binding requires the worktree HEAD to be `[PREPARED_HEAD]` and the PR base to be the branch `base-freshness` measured. The base binding resolves that script's `base_ref` to a sha at the freshness read and re-reads the PR's `baseRefOid` immediately before the merge call, because `--expected-head` reaches `gh pr merge --match-head-commit`, which pins the head alone, GitHub's `mergeable` field never reports a branch behind its base, and a ruleset bypass waives GitHub's own up-to-date rule. Without that second read a base advancing between the two, another lane or a person merging in the UI, lands a squash commit whose combined tree ran no CI. The window the pair leaves open is the gap between the second read and the merge call, and nothing in the workflow closes it.
-
-The fast path also gives up the queue's serialization against other merges on that base, and the late-findings dequeue `queue-wait` performs, so a finding landing after the readiness check rides the merge in rather than dequeuing the PR. § 5 step 5 still reads the merged PR's unresolved threads once.
-
-Nothing in the setting grants the merge. GitHub decides it from the ruleset bypass on the merging account, so a refusal there is the ordinary BLOCKED path and leads to the `--auto` arm. Every route decision is one line under the PR body's `## Merge decision`, a section `submit-pr.md` § 6.2 also writes for the unmet-gate question; the bypass appends and never rewrites that step's lines, and since `pr-edit-body` replaces the whole body, a failed or empty body read records nothing rather than posting a one-line body over the description.
+The overseer's owner-credential merge, the `--admin` and `--force` overrides and the `ORCH_MERGE_BYPASS` fast path are retired; `pr-merge --help` § Retired settings states how their settings are refused.
 
 ## Launch lanes
 

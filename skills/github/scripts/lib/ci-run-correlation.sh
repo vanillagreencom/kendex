@@ -207,10 +207,6 @@ fetch_checks_rollup() {
 # same reason: the authoritative run has not published it.
 classify_checks_rollup() {
   local raw scoped required="${1:-[]}"
-  # A base whose protection could not be read reaches here as `null`. The
-  # classification has no narrower set to apply either way, so it counts every
-  # check; only the admin-credential route needs the two apart.
-  [ "$required" != null ] || required='[]'
   raw=$(jq -c .) || return 1
   scoped=$(echo "$raw" | scope_current_run) || return 1
   jq -cn --argjson raw "$raw" --argjson scoped "$scoped" --argjson required "$required" "$CI_RUN_JQ_DEFS"'

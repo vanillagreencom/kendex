@@ -149,9 +149,8 @@ got="$(cd "$proj_mode" && env -u PM_CREATE_AUTONOMY ORCH_USER_MODE=CEO "$ORCH_EN
 assert_eq "$got" "ask" "an unrecognized mode is treated as engineer"
 
 # Test 13: the same unrecognized value read directly. ../workflows/oversee.md
-# § 3 Launch and ../workflows/submit-pr.md § 6.2 pick a question template from
-# what this prints, so it reads back as the mode the composition above already
-# took it for.
+# § 3 Launch picks a question template from what this prints, so it reads
+# back as the mode the composition above already took it for.
 got="$(cd "$proj_mode" && ORCH_USER_MODE=CEO "$ORCH_ENV" ORCH_USER_MODE ceo)"
 assert_eq "$got" "engineer" "an unrecognized mode reads back as engineer"
 

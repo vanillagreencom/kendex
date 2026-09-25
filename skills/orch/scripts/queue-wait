@@ -128,9 +128,8 @@ source "$SCRIPT_DIR/lib/gh-repo.sh"
 source "$SCRIPT_DIR/lib/lane-mail-nap.sh"
 # shellcheck source=lib/review-threads.sh
 source "$SCRIPT_DIR/lib/review-threads.sh"
-# The disarm/dequeue verb, owned by the github skill and shared with pr-merge's
-# admin route so the waiter and that route cannot drift on how a PR leaves the
-# queue. orch declares github a required dependency (SKILL.md).
+# The disarm/dequeue verb, owned by the github skill. orch declares github a
+# required dependency (SKILL.md).
 # shellcheck source=../../github/scripts/lib/merge-queue.sh
 source "$SCRIPT_DIR/../../github/scripts/lib/merge-queue.sh"
 
