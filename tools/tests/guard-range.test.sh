@@ -31,7 +31,12 @@ chmod +x "$R/fake-bin/rustup"
 printf '[workspace]\n' >"$R/Cargo.toml"
 mkdir -p "$R/crates/core/src" "$R/ui/src" "$R/skills/quiet/tests"
 printf '[package]\nname = "kendex-core"\n\n[lints]\nworkspace = true\n' >"$R/crates/core/Cargo.toml"
-printf 'pub fn core() {}\n' >"$R/crates/core/src/lib.rs"
+# The crate includes a file from outside crates/, the shape compiled_includes
+# derives, and carries a non-Rust asset of its own.
+mkdir -p "$R/docs" "$R/crates/core/assets"
+printf 'note\n' >"$R/docs/note.txt"
+printf 'asset\n' >"$R/crates/core/assets/data.txt"
+printf '%s\n' 'pub fn core() {}' 'pub const NOTE: &str = include_str!("../../../docs/note.txt");' >"$R/crates/core/src/lib.rs"
 printf '{"name": "ui"}\n' >"$R/ui/package.json"
 printf 'export const ui = 1;\n' >"$R/ui/src/main.ts"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$R/skills/quiet/tests/quiet.test.sh"
@@ -97,6 +102,8 @@ ROWS=(
   "an untracked shared compiler input checks and lints the workspace|worktree|Cargo.lock|$WORKSPACE_CALLS"
   "a UI file runs the UI checks and the UI suite|worktree|ui/src/main.ts|$UI_CALLS"
   "a markdown file under ui/ runs no UI check|worktree|ui/README.md|"
+  "a crate's non-Rust file checks and lints that crate|worktree|crates/core/assets/data.txt|$CORE_CALLS"
+  "a file outside crates/ that compiled code includes checks and lints the workspace|worktree|docs/note.txt|$WORKSPACE_CALLS"
 )
 before=$((PASS + FAIL))
 for row in "${ROWS[@]}"; do
@@ -126,6 +133,26 @@ else
   bad "control: the markdown exclusion could not be deleted from a guard copy"
 fi
 back_to_base
+# Each new arm is what its row stands on: with one deleted, its row's change
+# compiles nothing.
+# label|path appended to|sed expression deleting the arm
+ARM_CONTROLS=(
+  "control: without the crate-file arm the crate asset compiles nothing|crates/core/assets/data.txt|/^      crates\/\*\/\*) add_crate \"\$f\" ;;$/d"
+  "control: without the include arm the included file compiles nothing|docs/note.txt|/^    if grep -Fxq -- \"\$f\" <<<\"\$range_includes\"; then rust_all=1; fi$/d"
+)
+for row in "${ARM_CONTROLS[@]}"; do
+  IFS='|' read -r label path expr <<<"$row"
+  printf 'x\n' >>"$R/$path"
+  if mutant_guard "$expr"; then
+    run_range "$BASE" "$MUTANT_TOOLS/guard"
+    [ "$RC" -eq 0 ] && [ -z "$LOG" ] \
+      && ok "$label" \
+      || bad "$label" "rc=$RC log=$LOG"
+  else
+    bad "$label" "the arm could not be deleted from a guard copy"
+  fi
+  back_to_base
+done
 
 echo "=== a range keeps its own selection whatever class it is handed ==="
 # dev-validate-run hands every run the branch's change class; the lane
@@ -201,6 +228,43 @@ if mutant_guard 's/^if \[ "\$MODE" = full \] && \[ -f Cargo.toml \]; then$/if [ 
 else
   bad "control: the space floor could not be widened to range in a guard copy"
 fi
+back_to_base
+
+echo "=== an include read that fails compiles the workspace ==="
+# Without the derivation no change can be shown to reach no included file, so
+# the range compiles everything and says why.
+REAL_FIND="$(command -v find)"
+cat >"$R/fake-bin/find" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${FAIL_FIND:-0}" -eq 1 ] && [ "${1:-}" = crates ] && [ "${4:-}" = -name ] && [ "${5:-}" = '*.rs' ]; then
+  exit 1
+fi
+exec "$REAL_FIND" "$@"
+SH
+chmod +x "$R/fake-bin/find"
+range_find_fails() { # GUARD
+  OUT=""
+  RC=0
+  : >"$CALLS"
+  OUT="$(cd "$R" && env FAIL_FIND=1 REAL_FIND="$REAL_FIND" PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$1" --range "$BASE" 2>&1 </dev/null)" || RC=$?
+  LOG="$(cat "$CALLS")"
+}
+printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
+printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
+range_find_fails "$GUARD"
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: compiled-includes=range"* ]] && [ "$LOG" = "$WORKSPACE_CALLS" ] \
+  && ok "a failed include read is a finding and the range checks the workspace" \
+  || bad "a failed include read is a finding and the range checks the workspace" "rc=$RC log=$LOG out=$OUT"
+if mutant_guard '/^    say compiled-includes range$/d'; then
+  range_find_fails "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: compiled-includes="* ]] \
+    && ok "control: with the finding removed the failed read passes" \
+    || bad "control: with the finding removed the failed read passes" "rc=$RC out=$OUT"
+else
+  bad "control: the include-read finding could not be removed from a guard copy"
+fi
+rm -f -- "${R:?}/fake-bin/find"
 back_to_base
 
 echo "=== the default rules read the range, not only the last commit ==="

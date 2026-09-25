@@ -145,7 +145,7 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     cross-doc-setting)
       echo "GUARD_FULL_CROSS_DOC is run or ci, and that value is neither or could not be read; the cross-target checks and cargo doc ran as under run." ;;
     compiled-includes)
-      echo "the include_str! and include_bytes! paths under crates/ could not be read, so the cross-target checks and cargo doc ran whatever the branch touched." ;;
+      echo "the include_str! and include_bytes! paths under crates/ could not be read, so what they narrow ran whole: the cross-target checks and cargo doc under --full, the workspace compile under --range." ;;
     cross-doc-skipped)
       case "$2" in
         ci) echo "GUARD_FULL_CROSS_DOC=ci leaves the cross-target checks and cargo doc to CI." ;;
@@ -245,8 +245,9 @@ case "${1:-}" in
     printf '%s\n' 'usage: tools/guard [--full | --range BASE]' \
       'Default: repository rules and compile checks for staged product changes.' \
       '--range BASE: the default rules over the changes since BASE, working tree included,' \
-      '        cargo check and clippy for the crates they touch (the workspace for a shared' \
-      '        input), the UI checks and suite when they touch ui/, and the suites of the' \
+      '        cargo check and clippy for the crates they touch, any file inside one included' \
+      '        (the workspace for a shared input or a file compiled code includes), the UI' \
+      '        checks and suite when they touch ui/, and the suites of the' \
       '        skill, hook, tool and Pi-package trees they touch. None of what --full adds' \
       '        beyond that: the workspace test run, cross-target checks, the documentation' \
       '        build, the Bash 3.2 parse, the working-tree bot-instructions check, the' \
@@ -883,8 +884,18 @@ rust_manifests=()
 ui_changed=0
 [ "$MODE" != full ] || ! lane_on cargo_lint || rust_all=1
 [ "$MODE" != full ] || ! lane_on ui || ui_changed=1
+# Every repository path an include_str! or include_bytes! literal under
+# crates/ names: the files outside crates/ that compiled code reads at build
+# time. The derivation is tools/rust-reads' include rows. A file a test reads
+# at run time is not here; the full run's host test run reads it.
+compiled_includes() {
+  local rows
+  rows=$("$TOOLS_DIR/rust-reads" .) || return 1
+  printf '%s\n' "$rows" | awk -F '\t' '$1 == "include" { print $2 }'
+}
+
 classify_product() { # PATH — widen the compile set for one changed path
-  local f=$1 crate manifest existing seen
+  local f=$1
   case "$f" in
     *.md) return 0 ;;
     crates/*/*) ;;
@@ -892,19 +903,21 @@ classify_product() { # PATH — widen the compile set for one changed path
   esac
   if workspace_rust_input "$f"; then rust_all=1; return 0; fi
   case "$f" in
-    crates/*/*.rs | crates/*/Cargo.toml)
-      crate="${f#crates/}"
-      manifest="crates/${crate%%/*}/Cargo.toml"
-      if [ ! -f "$manifest" ]; then rust_all=1; return 0; fi
-      seen=0
-      # Guarded: an empty array is unbound under set -u on Bash 3.2.
-      for existing in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
-        [ "$existing" != "$manifest" ] || seen=1
-      done
-      [ "$seen" -eq 1 ] || rust_manifests+=("$manifest")
-      ;;
+    crates/*/*.rs | crates/*/Cargo.toml) add_crate "$f" ;;
     ui/*) ui_changed=1 ;;
   esac
+}
+add_crate() { # PATH — under crates/<c>/: that crate's manifest joins the compile set
+  local crate manifest existing seen
+  crate="${1#crates/}"
+  manifest="crates/${crate%%/*}/Cargo.toml"
+  if [ ! -f "$manifest" ]; then rust_all=1; return 0; fi
+  seen=0
+  # Guarded: an empty array is unbound under set -u on Bash 3.2.
+  for existing in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
+    [ "$existing" != "$manifest" ] || seen=1
+  done
+  [ "$seen" -eq 1 ] || rust_manifests+=("$manifest")
 }
 if [ "$MODE" = default ]; then
   GG_CHECK=guard
@@ -934,10 +947,22 @@ if [ "$MODE" = default ]; then
   done <"$GUARD_TMP/product.z"
 fi
 
+# A range compiles what the commit chain's product paths leave out as well:
+# any other file inside a crate, which its build or its tests may read, and
+# any file compiled code includes, through the full run's derivation of them.
 if [ "$MODE" = range ]; then
+  if ! range_includes=$(compiled_includes); then
+    say compiled-includes range
+    rust_all=1
+  fi
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     classify_product "$f"
+    case "$f" in
+      *.md) ;;
+      crates/*/*) add_crate "$f" ;;
+    esac
+    if grep -Fxq -- "$f" <<<"$range_includes"; then rust_all=1; fi
   done <<<"$touched"
 fi
 
@@ -1068,16 +1093,6 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     esac
   done
 fi
-
-# Every repository path an include_str! or include_bytes! literal under
-# crates/ names: the files outside crates/ that compiled code reads at build
-# time. The derivation is tools/rust-reads' include rows. A file a test reads
-# at run time is not here; the host test run below reads it on every full run.
-compiled_includes() {
-  local rows
-  rows=$("$TOOLS_DIR/rust-reads" .) || return 1
-  printf '%s\n' "$rows" | awk -F '\t' '$1 == "include" { print $2 }'
-}
 
 if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
   # The cross-target checks and cargo doc each write a target tree of their
