@@ -289,7 +289,7 @@ pub fn restore(
             Err(error) => return Err(stopped(&done, io_refused(&whole, &error))),
             Ok(_) => {}
         }
-        if let Err(error) = crate::fs::move_to_trash(env, &whole) {
+        if let Err(error) = crate::trash::move_to_trash(env, &whole) {
             return Err(stopped(
                 &done,
                 Failed {

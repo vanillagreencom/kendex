@@ -99,7 +99,8 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         };
         planned.push((scope.clone(), report));
     }
-    for (scope, report) in planned {
+    let scopes = planned.len();
+    for (index, (scope, report)) in planned.into_iter().enumerate() {
         let blocked = print_report(env, &report);
         // Only here and in verify: a report is printed by add and pin too,
         // and an inventory of hand-made content is not what those were
@@ -141,6 +142,12 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                 // from the next one.
                 if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
                     warn(&format!("warning: snapshot not derived ({})", error));
+                }
+                // The last scope's writes are the run's last, so the
+                // trash is brought within its bounds here, before the
+                // line the run closes on.
+                if index + 1 == scopes {
+                    super::engine_common::tidy_trash(env);
                 }
                 // `None` where the plan had nothing to do: a scope that
                 // wrote nothing because it had nothing to write is up to

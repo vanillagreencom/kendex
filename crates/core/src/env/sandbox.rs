@@ -23,11 +23,12 @@ const REAL_HOME_OPT_IN: &str = "1";
 /// The subset of [`super::HARNESS_VARS`] naming a harness root a build would write
 /// into. A sandboxed build drops these and keeps the rest: an inherited
 /// CODEX_HOME would aim it straight back at the real machine, while
-/// KENDEX_GIT_BASE names a git host, `KENDEX_SOURCE_CACHE_KEEP` a count
-/// and `GEMINI_CLI_SYSTEM_SETTINGS_PATH` a read-only policy file —
-/// dropping those would not protect the machine, it would send the build
-/// to the real git host, the default count and the real machine-wide
-/// settings instead.
+/// KENDEX_GIT_BASE names a git host, `KENDEX_SOURCE_CACHE_KEEP`,
+/// `KENDEX_TRASH_KEEP_DAYS` and `KENDEX_TRASH_KEEP_MB` a count each, and
+/// `GEMINI_CLI_SYSTEM_SETTINGS_PATH` a read-only policy file — dropping
+/// those would not protect the machine, it would send the build to the
+/// real git host, the default counts and the real machine-wide settings
+/// instead.
 const HOME_RELOCATING_VARS: [&str; 5] = [
     "CODEX_HOME",
     "OPENCODE_CONFIG",
@@ -111,15 +112,17 @@ mod tests {
         }
     }
 
-    /// A git base names a host, the cache count a number and the Gemini
-    /// override a read-only policy file, so a sandboxed build still reaches
-    /// the fixture tree, the count and the fixture settings its launcher
-    /// pointed it at — dropping any would send it to the real ones.
+    /// A git base names a host, the cache and trash counts numbers and the
+    /// Gemini override a read-only policy file, so a sandboxed build still
+    /// reaches the fixture tree, the counts and the fixture settings its
+    /// launcher pointed it at — dropping any would send it to the real ones.
     #[test]
     fn a_sandbox_keeps_what_does_not_point_at_a_home() {
         let vars = BTreeMap::from([
             ("KENDEX_GIT_BASE".to_owned(), "file:///fixtures".to_owned()),
             ("KENDEX_SOURCE_CACHE_KEEP".to_owned(), "5".to_owned()),
+            ("KENDEX_TRASH_KEEP_DAYS".to_owned(), "7".to_owned()),
+            ("KENDEX_TRASH_KEEP_MB".to_owned(), "64".to_owned()),
             (
                 "GEMINI_CLI_SYSTEM_SETTINGS_PATH".to_owned(),
                 "/fixtures/gemini.json".to_owned(),
@@ -135,6 +138,14 @@ mod tests {
         assert_eq!(
             kept.get("KENDEX_SOURCE_CACHE_KEEP").map(String::as_str),
             Some("5")
+        );
+        assert_eq!(
+            kept.get("KENDEX_TRASH_KEEP_DAYS").map(String::as_str),
+            Some("7")
+        );
+        assert_eq!(
+            kept.get("KENDEX_TRASH_KEEP_MB").map(String::as_str),
+            Some("64")
         );
         assert_eq!(
             kept.get("GEMINI_CLI_SYSTEM_SETTINGS_PATH")

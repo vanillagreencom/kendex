@@ -33,7 +33,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 4. A lock records durable provenance for every installed kind, including Pi extensions: same-source reinstall is a no-op, a cross-source name collision is a hard error naming the original, and a fork is the one rebind. A read-only report or verify can use matching current manifest and render bytes when the lock is unavailable, but keeps the lock failure visible. Enforced by `crates/core/tests/invariants.rs::invariant_4_provenance_is_durable`, `crates/core/tests/collision_refusal.rs`, `crates/cli/tests/compat.rs` and `crates/cli/tests/pi_extension_only_lock.rs`.
 5. Enable and disable are lossless: file-backed kinds toggle by rename, kinds inside a shared config file toggle by a structured edit that keeps every unrelated key. Enforced by `crates/core/tests/invariants.rs::invariant_5_toggle_is_lossless_rename`.
 6. Never touch the unowned: unmanaged files are reported, never deleted; a foreign symlink is a conflict; ownership is read from the positions lock entries wrote, never from a lock key alone. Enforced by `crates/core/tests/invariants.rs::invariant_6_never_touch_the_unowned` and `crates/core/tests/unmanaged_ownership.rs`.
-7. Applies are transactional: preconditions revalidate against observed hashes right before mutation, pre-images are journaled first, a failure rolls back, an interrupted apply recovers on next launch, and removals go to a trash. Enforced by `crates/core/tests/invariants.rs::invariant_7_applies_are_transactional`, `crates/core/tests/migration.rs::an_interrupted_apply_rolls_the_whole_scope_back` and `crates/app/tests/recovery.rs`.
+7. Applies are transactional: preconditions revalidate against observed hashes right before mutation, pre-images are journaled first, a failure rolls back, an interrupted apply recovers on next launch, and removals go to a trash ([trash.md](trash.md)). Enforced by `crates/core/tests/invariants.rs::invariant_7_applies_are_transactional`, `crates/core/tests/migration.rs::an_interrupted_apply_rolls_the_whole_scope_back` and `crates/app/tests/recovery.rs`.
 8. One writer per scope: every apply holds an OS-level scope lock, journal recovery runs under it, and a busy scope is an error. Enforced by `crates/core/tests/invariants.rs::invariant_8_one_writer_per_scope` for the refusal; recovery under the lock is not mechanically enforced.
 9. kendex never stages, commits or resets in a repository it did not create; managed scopes are the only writable surface. Not mechanically enforced.
 10. In-place edits are byte-faithful: an edit changes the keys it names and nothing else, newline included, and a file that cannot be read is refused. The one exception, a repositioned list entry losing keys the model does not carry, is stated in `crates/core/src/manifest/fold.rs`. Enforced by `crates/core/tests/byte_faithful.rs::every_config_edit_is_byte_stable_on_reapply`.
@@ -48,7 +48,6 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 
 ## Decisions
 
-- Stack: Tauri 2, React 19, Vite, Tailwind v4, shadcn/ui, zustand, tauri-specta, serde and toml.
 - No database: manifests, locks and native directories are the state; scans are in-memory views; preferences, saved selections and bookmarks are three files.
 - No migration machinery: manifest and lock carry a format version, this build reads exactly the one it writes, and a file from another version is refused and left byte-for-byte.
 - One spelling per artifact: `kendex.toml`, `.kendex-lock.json`, `.kendex-local/`, `kendex.settings.toml`, `KENDEX_*` variables; no older product name is read anywhere.
@@ -70,6 +69,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 - [engine.md](engine.md): read before changing planning, apply, locks, manifests, ownership, take-over or forks.
 - [sources.md](sources.md): read before changing the source store, discovery, browsing, subscriptions, bundles, unsubscribe or the drift snapshot.
 - [harnesses.md](harnesses.md): read before changing an adapter, the capability table, rendering, hook delivery or the Pi carrier.
+- [trash.md](trash.md): read before changing the trash or its bounds.
 - [scoring.md](scoring.md): read before changing a safety or quality rule.
 - [updates.md](updates.md): read before changing the release feed, signing, digests or self-replace.
 - [registry.md](registry.md): read before changing the community directory, sign-in or the skills.sh lead.

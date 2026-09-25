@@ -27,7 +27,7 @@ mod shadow;
 mod state;
 pub use state::{PackageState, RecordBasis, declared_state, installed_state};
 
-use files::{copy_package, inside, read_dir, trash};
+use files::{copy_package, inside, read_dir};
 pub(crate) use files::{owned_package_exact_hash, owned_package_hash, owned_package_identity};
 pub use files::{package_hash, package_path};
 pub use renames::{duplicate_elsewhere, family, installed_under, same_package};
@@ -206,7 +206,7 @@ pub fn install(env: &Env, scope_root: &Path, source_pkg_dir: &Path) -> Result<In
     let package = read(source_pkg_dir)?;
     let dest = package_path(scope_root, &package.name)?;
     if dest.symlink_metadata().is_ok() {
-        trash(env, &dest)?;
+        crate::trash::move_to_trash(env, &dest)?;
     }
     copy_package(source_pkg_dir, &dest)?;
     npm_install(&package.name, &dest)?;
@@ -229,7 +229,7 @@ pub fn remove(env: &Env, scope_root: &Path, name: &str) -> Result<()> {
     strip_append_system(&append_system_path(scope_root), name)?;
     unlink_bins(&bin_dir(scope_root), &dest)?;
     if dest.symlink_metadata().is_ok() {
-        trash(env, &dest)?;
+        crate::trash::move_to_trash(env, &dest)?;
     }
     Ok(())
 }

@@ -38,14 +38,16 @@ pub const KEEP_VAR: &str = "KENDEX_SOURCE_CACHE_KEEP";
 /// Snapshots kept per repository when [`KEEP_VAR`] names no count.
 pub const DEFAULT_KEEP: usize = 3;
 
-/// What a publish did about the older snapshots beside the new one.
+/// What a retention pass did about the entries outside its keep set: a
+/// publish about the older snapshots beside the new one, and the trash
+/// pass (`crate::trash::retain`) about the entries past its bounds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Retention {
-    /// No snapshot was written, so none was judged.
+    /// Nothing was written, so nothing was judged.
     Untouched,
-    /// Every snapshot outside the keep set is gone.
+    /// Every entry outside the keep set is gone.
     Pruned { removed: usize },
-    /// Removal did not finish: what is left stays until the next publish.
+    /// Removal did not finish: what is left stays until the next pass.
     /// The keep set could not be established, or one removal failed.
     Stopped { removed: usize, reason: String },
 }

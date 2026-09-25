@@ -49,6 +49,33 @@ pub fn print_synced(synced: &kendex_core::remote::Synced) {
     }
 }
 
+/// The pass that closes every writing verb: the trash is brought within
+/// its bounds (`kendex_core::trash::retain`) once the verb's own writes
+/// are done, and what went is said in the verb's own output, so a person
+/// who never runs `kendex trash` still learns that kendex is reclaiming.
+/// A pass that stopped is a warning, never a failure of the verb: the
+/// writes it closes are on disk and the next verb retries it.
+pub fn tidy_trash(env: &Env) {
+    match kendex_core::trash::retain(env) {
+        kendex_core::trash::Retention::Untouched => {}
+        kendex_core::trash::Retention::Pruned { removed } => print_trashed(removed),
+        kendex_core::trash::Retention::Stopped { removed, reason } => {
+            print_trashed(removed);
+            warn(&format!("warning: trash: older entries kept ({reason})"));
+        }
+    }
+}
+
+/// A pass that removed nothing prints no count.
+fn print_trashed(removed: usize) {
+    if removed > 0 {
+        note(&format!(
+            "trash: removed {removed} older entr{}",
+            if removed == 1 { "y" } else { "ies" }
+        ));
+    }
+}
+
 /// The whole plan on a terminal, and back to the caller the items it
 /// refused — one derivation, so a closing count and the conflict lines it
 /// sends the reader to are one reading of one set of rows.

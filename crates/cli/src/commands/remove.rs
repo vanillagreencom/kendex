@@ -27,7 +27,10 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
         return Ok(());
     }
     ui::intro("kendex remove");
-    let mut removed_any = false;
+    // Each scope's closing line is held until every scope is written and
+    // the trash pass has run, so the pass's own line never lands under a
+    // line the run already closed on.
+    let mut closing: Vec<(Scope, usize)> = Vec::new();
     for scope in resolve_scopes(env, filter)? {
         let planned = {
             let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
@@ -53,7 +56,6 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
         if !takes_anything(&report) {
             continue;
         }
-        removed_any = true;
         say_split(&report, mode);
         let applied = {
             let _removing = ui::spinner("removing");
@@ -72,6 +74,13 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
                 scope_label(&scope)
             ));
         }
+        closing.push((scope, applied));
+    }
+    super::engine_common::tidy_trash(env);
+    if closing.is_empty() {
+        ui::ledger("Nothing removed", &[]);
+    }
+    for (scope, applied) in closing {
         // A removal refuses nothing and prints no scores, so it hands
         // over neither: the ledger's parts are read off blocks the caller
         // printed, and this one closes on its count alone.
@@ -84,9 +93,6 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
             &[],
             &[],
         );
-    }
-    if !removed_any {
-        ui::ledger("Nothing removed", &[]);
     }
     Ok(())
 }

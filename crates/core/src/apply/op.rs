@@ -530,7 +530,7 @@ fn trash(env: &Env, path: &Path, pre: &Pre, absent_is_done: bool) -> Result<()> 
         Ok(_) => {}
     }
     pre.check(path)?;
-    crate::fs::move_to_trash(env, path)
+    crate::trash::move_to_trash(env, path)
 }
 
 fn write_tree(root: &Path, files: &[(PathBuf, Vec<u8>)], pre: &Pre) -> Result<()> {
