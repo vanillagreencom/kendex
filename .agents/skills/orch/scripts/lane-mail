@@ -166,7 +166,8 @@ one trailing newline it drops. monitor is `live` when the mailbox's
 to-lane.watch, `at=<epoch> interval=<s>` rewritten by `watch` at every poll,
 is no older than twice its interval plus five seconds by the sender's clock,
 so a monitor is polling that mailbox and wakes its lane; it is `none`
-otherwise, and the lane needs a wake. A `peer send` writes a peer's overseer mailbox, so
+otherwise, and a Claude Code, Codex or Pi lane needs a wake while a lane on
+another harness takes none. A `peer send` writes a peer's overseer mailbox, so
 its receipt always names item `overseer` rather than the repository it reached.
 Silence is not a success: a send that printed no receipt appended nothing.
 
