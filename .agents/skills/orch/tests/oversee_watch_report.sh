@@ -75,6 +75,26 @@ watch ORCH_REPORT=maybe
 assert_eq "$RC|$(grep -c '^oversee-watch: report-unjudged exit=2 ' "$STUB_DIR/err" || true)|$(grep -c '^oversee-report: setting=ORCH_REPORT:maybe$' "$STUB_DIR/err" || true)" \
   "2|1|1" "a refused judgement exits the pass 2 with the report's own keyed line under the watch's" "$STUB_DIR/err"
 
+echo "=== a judgement the watch cannot read fails the pass ==="
+# Rows: case | what the stub prints on stdout, `\n` separating lines.
+while IFS='|' read -r name reply; do
+  new_case "report_reply_$name"
+  write_state
+  printf '#!/usr/bin/env bash\nprintf %%b %q\n' "$reply" > "$STUB_DIR/report-stub"
+  chmod +x "$STUB_DIR/report-stub"
+  watch OVERSEE_WATCH_REPORT="$STUB_DIR/report-stub"
+  assert_eq "$RC|$(grep -c '^oversee-watch: report-unjudged exit=0 ' "$STUB_DIR/err" || true)|$EVENTS" "2|1|" \
+    "a due reply of $name fails the pass and relays no report-due" "$STUB_DIR/err"
+done <<'ROWS'
+garbage|garbage\n
+two_lines|report-due reason=minutes since=2026-01-01T00:00:00Z\nreport-due reason=issues since=2026-01-01T00:00:00Z landed=1\n
+ROWS
+new_case report_helper_missing
+write_state
+watch OVERSEE_WATCH_REPORT="$STUB_DIR/no-report"
+assert_eq "$RC|$(grep -c "^oversee-watch: helper-missing path=$STUB_DIR/no-report setting=OVERSEE_WATCH_REPORT\$" "$STUB_DIR/err" || true)" "2|1" \
+  "a --state watch with no executable oversee-report refuses by setting" "$STUB_DIR/err"
+
 echo "=== must-fail control ==="
 # The watch without its report check: no report-due at any age.
 MUTANT_DIR="$TMP_ROOT/report-mutant"

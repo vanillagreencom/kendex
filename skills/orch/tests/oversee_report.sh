@@ -39,24 +39,33 @@ exec "$REAL_DATE" "\$@"
 EOF
 # gh: `pr list --state merged` answers merged.json narrowed to --head and
 # capped at --limit, as gh narrows it; `pr list --state open` open.json, and
-# `issue view N` issue-N.json, each from the case directory.
+# `issue view N` issue-N.json, each from the case directory. A file named
+# <base>.<SLUG>.json answers that --repo alone, SLUG being the repo with `/`
+# as `_`. gh-fail fails every list, gh-fail-open the open list alone.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
-case "${1:-} ${2:-}" in
+verb="${1:-} ${2:-}"; number="${3:-}"
+state=""; head=""; limit=1000; repo=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in --state) state="$2" ;; --head) head="$2" ;; --limit) limit="$2" ;; --repo) repo="$2" ;; esac
+  shift
+done
+slug="${repo//\//_}"
+pick() { if [[ -f "$CASE/$1.$slug.json" ]]; then printf '%s' "$CASE/$1.$slug.json"; else printf '%s' "$CASE/$1.json"; fi; }
+case "$verb" in
   "pr list")
-    state=""; head=""; limit=1000
-    while [[ $# -gt 0 ]]; do
-      case "$1" in --state) state="$2" ;; --head) head="$2" ;; --limit) limit="$2" ;; esac
-      shift
-    done
     [[ ! -f "$CASE/gh-fail" ]] || { echo "HTTP 502" >&2; exit 1; }
-    [[ -f "$CASE/$state.json" ]] || { echo '[]'; exit 0; }
-    jq -c --arg head "$head" --argjson limit "$limit"       '[.[] | select($head == "" or .headRefName == $head)] | .[:$limit]' "$CASE/$state.json" ;;
+    [[ ! -f "$CASE/gh-fail-$state" ]] || { echo "HTTP 502" >&2; exit 1; }
+    src="$(pick "$state")"
+    [[ -f "$src" ]] || { echo '[]'; exit 0; }
+    jq -c --arg head "$head" --argjson limit "$limit" \
+      '[.[] | select($head == "" or .headRefName == $head)] | .[:$limit]' "$src" ;;
   "issue view")
-    [[ -f "$CASE/issue-$3.json" ]] || { echo "no issue $3" >&2; exit 1; }
-    cat "$CASE/issue-$3.json" ;;
-  *) echo "unexpected gh call: $*" >&2; exit 1 ;;
+    src="$(pick "issue-$number")"
+    [[ -f "$src" ]] || { echo "no issue $number" >&2; exit 1; }
+    cat "$src" ;;
+  *) echo "unexpected gh call: $verb" >&2; exit 1 ;;
 esac
 EOF
 # The Linear CLI: `cache issues get ID` answers linear-ID.json in the safe
@@ -164,12 +173,13 @@ first_err() { awk 'NR == 1' "$CASE/err"; }
 # PR on the ken-1 branch name and one with no head owner did not, KEN-3 landed
 # before it, KEN-9 is no fleet item, KEN-2 and KEN-3 still run, KEN-2 with an
 # open PR; KEN-4 to KEN-6 wait in the queue and one question is open. KEN-2
-# waits on an ask and on red checks, KEN-3 on a post-PR stop.
+# waits on an ask and on red checks, KEN-3 on a post-PR stop. KEN-7 is still
+# preparing on its host.
 seed_fleet() {
   new_case "$1"
   report -3600
   fleet '+ {launch_queue: ["KEN-4", "KEN-5", "KEN-6"], owner_items: [{id: "a", text: "Merge the pricing change?"}]}' \
-    "$(lane KEN-1 done)" "$(lane KEN-2 running)" "$(lane KEN-3 running)"
+    "$(lane KEN-1 done)" "$(lane KEN-2 running)" "$(lane KEN-3 running)" "$(lane KEN-7 preparing -86400 ssh-a)"
   echo '{"id":"1790000000-1-a","kind":"ask","text":"Which schema?"}' > "$CASE/pending-KEN-2.jsonl"
   echo '[{"number": 12, "branch": "ken-2", "failed_checks": ["test", "lint"]}]' > "$CASE/failing.json"
   item_state KEN-3 '{"post_pr_stop": {"name": "review-round-cap", "gate": "review", "remaining": ["one unresolved review thread"]}}'
@@ -179,7 +189,7 @@ seed_fleet() {
     "$(merged_pr 23 ken-1 -30 2323232aaa -)" | jq -s . > "$CASE/merged.json"
   echo '[{"number": 12, "headRefName": "ken-2"}]' > "$CASE/open.json"
   local n
-  for n in 1 2 3 4 5 6; do issue "KEN-$n" "Title $n" "Outcome $n | kept"; done
+  for n in 1 2 3 4 5 6 7 8 9; do issue "KEN-$n" "Title $n" "Outcome $n | kept"; done
 }
 
 echo "=== render: the four rows from a fleet ==="
@@ -195,6 +205,7 @@ Running:
 | --- | --- | --- |
 | KEN-2 (#12, running) | Title 2 | Outcome 2 \\| kept |
 | KEN-3 (no PR, running) | Title 3 | Outcome 3 \\| kept |
+| KEN-7 (no PR, preparing) | Title 7 | Outcome 7 \\| kept |
 
 Next:
 | issue | what it is | why it matters |
@@ -209,7 +220,7 @@ Waiting on you:
 - KEN-2 waits on red checks on #12: test, lint
 - KEN-3 waits on a stopped review gate, review-round-cap: one unresolved review thread"
 assert_eq "$RC|$OUT" "0|$WANT" \
-  "Landed holds only the fleet item merged since the last report, Running each live lane with its PR, Next the queue, Waiting on you the open question then each lane's blockers"
+  "Landed holds only the fleet item merged since the last report, Running each live or preparing lane with its PR, Next the queue, Waiting on you the open question then each running lane's blockers"
 
 echo "=== render: nothing since the last report ==="
 new_case render_empty
@@ -226,9 +237,12 @@ Next: none
 Waiting on you: none" "a fleet with nothing new renders each row as none and exits 0"
 
 echo "=== render: ORCH_REPORT_UPCOMING caps Next ==="
-for row in "2|KEN-4,KEN-5" "0|none" "|KEN-4,KEN-5,KEN-6"; do
+# A queue of six, so the default cap of 5 is what stops it.
+for row in "2|KEN-4,KEN-5" "0|none" "|KEN-4,KEN-5,KEN-6,KEN-7,KEN-8"; do
   IFS='|' read -r upcoming want <<<"$row"
   seed_fleet "upcoming_${upcoming:-default}"
+  jq '.launch_queue = ["KEN-4", "KEN-5", "KEN-6", "KEN-7", "KEN-8", "KEN-9"]' "$CASE/state.json" > "$CASE/state.next"
+  mv -- "$CASE/state.next" "$CASE/state.json"
   if [[ -n "$upcoming" ]]; then run ORCH_REPORT_UPCOMING="$upcoming" -- render --state "$CASE/state.json" --repo owner/repo
   else run -- render --state "$CASE/state.json" --repo owner/repo; fi
   got="$(awk '/^Next/ { on = 1; if ($0 == "Next: none") print "none"; next } on && /^$/ { on = 0 } on && /^\| KEN-/ { print $2 }' <<<"$OUT" | paste -sd, -)"
@@ -250,11 +264,13 @@ while IFS='|' read -r tracker repo want; do
   report -60
   fleet '' "$(lane issue-7 running -86400 "" "$tracker" "$repo")"
   jq -n '{title: "GitHub title", body: "## Done when\n- GitHub outcome"}' > "$CASE/issue-7.json"
+  jq -n '{title: "Linear title", description: "## Done when\n- Linear outcome"}' > "$CASE/linear-issue-7.json"
   run -- render --state "$CASE/state.json" --repo owner/repo
   assert_eq "$RC|$(awk '/^\| issue-7/' <<<"$OUT")" "0|$want" \
     "an issue-N lane with tracker '${tracker:-none}' and repo '${repo:-none}' renders '$want'"
 done <<'ROWS'
 github|owner/repo|| issue-7 (no PR, running) | GitHub title | GitHub outcome |
+linear|owner/repo|| issue-7 (no PR, running) | Linear title | Linear outcome |
 ||| issue-7 (no PR, running) | - | - |
 github||| issue-7 (no PR, running) | - | - |
 ROWS
@@ -279,6 +295,40 @@ for row in "499|0" "500|2"; do
   [[ "$want" == 0 ]] || want="2|oversee-report: pr-list-truncated=owner/repo:KEN-1"
   assert_eq "$got" "$want" "$count merges on one fleet branch against a page of 500"
 done
+
+echo "=== render: every --repo is read, and a record's repo is its own ==="
+new_case multi_repo
+report -3600
+fleet '' "$(lane KEN-1 done)" "$(lane KEN-2 running)" "$(lane issue-8 running -86400 "" github owner/b)"
+issue KEN-1 "Title 1" "Outcome 1"
+issue KEN-2 "Title 2" "Outcome 2"
+echo '[]' > "$CASE/merged.owner_a.json"
+echo "[$(merged_pr 11 ken-1 -60 abcdef1234)]" > "$CASE/merged.owner_b.json"
+echo '[]' > "$CASE/open.owner_a.json"
+echo '[{"number": 12, "headRefName": "ken-2"}]' > "$CASE/open.owner_b.json"
+jq -n '{title: "Issue in b", body: "## Done when\n- b outcome"}' > "$CASE/issue-8.owner_b.json"
+jq -n '{title: "Issue in a", body: "## Done when\n- a outcome"}' > "$CASE/issue-8.owner_a.json"
+run -- render --state "$CASE/state.json" --repo owner/a --repo owner/b
+assert_eq "$RC|$(awk '/^\| (KEN-|issue-)/' <<<"$OUT")" "0|| KEN-1 (#11, abcdef1) | Title 1 | Outcome 1 |
+| KEN-2 (#12, running) | Title 2 | Outcome 2 |
+| issue-8 (no PR, running) | Issue in b | b outcome |" \
+  "a merge and an open PR in the second --repo are rendered, and the issue is read in the repo its record names"
+
+echo "=== render: tracker text is fitted to one line ==="
+new_case cell_text
+report -60
+fleet '+ {owner_items: [{id: "a", text: "line one\nline two"}]}' "$(lane KEN-1 running)"
+jq -n '{title: ("T" * 200), description: "Intro\r\n## Done when\r\n* CRLF outcome\r\n"}' > "$CASE/linear-KEN-1.json"
+run -- render --state "$CASE/state.json" --repo owner/repo
+LONG="$(printf 'T%.0s' $(seq 157))..."
+# Rows: what | the rendered line | want.
+while IFS='|' read -r what line want; do
+  assert_eq "$RC|$line" "0|$want" "$what"
+done <<ROWS
+a title past 160 characters keeps 157 and an ellipsis|$(awk -F' [|] ' '/^\| KEN-1/ { print $2 }' <<<"$OUT")|$LONG
+a CRLF description still yields its Done-when line|$(awk -F' [|] ' '/^\| KEN-1/ { sub(/ \|$/, "", $3); print $3 }' <<<"$OUT")|CRLF outcome
+an owner question with a newline is one list line|$(awk '/^- Question for you/' <<<"$OUT")|- Question for you: line one line two
+ROWS
 
 echo "=== render: a hosted lane's stop is read from its clone ==="
 new_case hosted_stop
@@ -319,7 +369,8 @@ while IFS='|' read -r name age settings merges want; do
   fleet '' "$(lane KEN-1 running -86400)"
   printf '%s\n' "[]" > "$CASE/merged.json"
   if [[ -n "$merges" ]]; then
-    for offset in $merges; do merged_pr 11 ken-1 "$offset" abcdef1234; done | jq -s . > "$CASE/merged.json"
+    n=11
+    for offset in $merges; do merged_pr "$n" ken-1 "$offset" abcdef1234; n=$((n + 1)); done | jq -s . > "$CASE/merged.json"
   fi
   read -r -a envs <<<"$settings"
   run ${envs[@]+"${envs[@]}"} -- due --state "$CASE/state.json" --repo owner/repo
@@ -335,7 +386,13 @@ off|999999|ORCH_REPORT=off||
 no_report_yet|none|||report-due reason=minutes since=@AGE
 issues_reached|60|ORCH_REPORT_EVERY_ISSUES=1|-30|report-due reason=issues since=@AGE landed=1
 issues_before_marker|60|ORCH_REPORT_EVERY_ISSUES=1|-120|
+issues_under|60|ORCH_REPORT_EVERY_ISSUES=2|-30|
+issues_two|60|ORCH_REPORT_EVERY_ISSUES=2|-30 -20|report-due reason=issues since=@AGE landed=2
 ROWS
+new_case due_two_lanes
+fleet '' "$(lane KEN-1 running -40000)" "$(lane KEN-2 running -86400)"
+run -- due --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$OUT" "0|report-due reason=minutes since=$(at -86400)" "due, with no report yet the fleet start is the earliest launch, not the first record's"
 new_case due_no_lanes
 fleet ''
 run -- due --state "$CASE/state.json" --repo owner/repo
@@ -359,6 +416,21 @@ seed_fleet refuse_gh
 touch "$CASE/gh-fail"
 run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" "a failing merged list refuses rather than render Landed as none"
+seed_fleet refuse_open
+touch "$CASE/gh-fail-open"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" "a failing open list alone refuses rather than render every lane with no PR"
+seed_fleet refuse_tracker_missing
+run OVERSEE_REPORT_TRACKER="$CASE/no-linear" -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: tracker-missing=$CASE/no-linear" "a Linear CLI that is not executable refuses by name"
+seed_fleet refuse_write_only
+run -- render --state "$CASE/state.json" --repo owner/repo --succession
+assert_eq "$RC|$(first_err)" "2|oversee-report: args=write-only-option" "--succession on render is refused"
+new_case refuse_gh_issue
+report -60
+fleet '' "$(lane issue-7 running -86400 "" github owner/repo)"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: tracker-read=issue-7" "a failing gh issue view refuses rather than render blank cells"
 seed_fleet refuse_mail
 touch "$CASE/mail-fail"
 run -- render --state "$CASE/state.json" --repo owner/repo
