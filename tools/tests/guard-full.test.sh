@@ -526,8 +526,9 @@ run_lanes() { # CLASS DOCS PATH... — guard --full with PATHs touched and hande
     PATH="$LANE_BIN:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" NPM_CALL_LOG="$NPM_CALL_LOG" \
     RUSTUP_INSTALLED_TARGETS="$BOTH" "$LANE_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
 }
-# Path lists are blank-separated and split unquoted on purpose.
-CODE="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh"
+# Path lists are blank-separated and split unquoted on purpose. The crate
+# path is the Rust input the cross-target checks wait for.
+CODE="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh crates/core/src/lib.rs"
 ALL="suites parse lint apple windows test ui"
 # class|docs verdict|changed paths|the lanes that run
 LANE_ROWS=(
