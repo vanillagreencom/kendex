@@ -88,10 +88,14 @@ Environment:
                        from that same value, else 3)
   DECISIONS_BASE_REF   The base branch next-id and check read beside the
                        working tree (default: origin/HEAD, else origin/main,
-                       else main). A <remote>/<branch> ref is fetched first;
-                       a local branch is read as it stands. A base that
-                       cannot be fetched or read prints base-unverified with
-                       a reason: not-a-repository, unresolved, fetch-failed
+                       else main). A <remote>/HEAD ref is the branch that
+                       remote's HEAD names now, or the one this clone last
+                       recorded when the remote does not answer. A
+                       <remote>/<branch> ref is fetched first, and one the
+                       remote lacks is skipped for the next candidate; a
+                       local branch is read as it stands. A base that cannot
+                       be fetched or read prints base-unverified with a
+                       reason: not-a-repository, unresolved, fetch-failed
                        (the local copy was read), index-absent or
                        unreadable. check refuses unresolved and unreadable,
                        exit 1; every other record is a notice, and next-id
@@ -305,7 +309,7 @@ BASE_REF=""
 BASE_PATH=""
 BASE_REASON=""
 read_base_index() {
-  local prefix cand short remote branch remotes r text fetch_failed=0
+  local prefix cand short remote branch remotes r text line listing found fetch_failed=0
   local candidates=()
 
   if ! prefix="$(git -C "$DECISIONS_DIR" rev-parse --show-prefix 2>/dev/null)"; then
@@ -317,11 +321,7 @@ read_base_index() {
   if [[ -n "${DECISIONS_BASE_REF:-}" ]]; then
     candidates=("$DECISIONS_BASE_REF")
   else
-    cand="$(git -C "$DECISIONS_DIR" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" || cand=""
-    if [[ -n "$cand" && "$cand" != origin/main ]]; then
-      candidates+=("$cand")
-    fi
-    candidates+=(origin/main main)
+    candidates=(origin/HEAD origin/main main)
   fi
 
   remotes="$(git -C "$DECISIONS_DIR" remote)" || remotes=""
@@ -336,11 +336,34 @@ read_base_index() {
     done <<<"$remotes"
     if [[ -n "$remote" ]]; then
       branch="${short#"$remote/"}"
-      # No prompt: a credential or passphrase request would hang the caller
-      # instead of degrading to a reported outcome. A failure stays recorded
-      # for every later candidate, which may be a stale local branch.
-      if ! GIT_TERMINAL_PROMPT=0 git -C "$DECISIONS_DIR" fetch --quiet --no-tags "$remote" "+refs/heads/$branch:refs/remotes/$remote/$branch" </dev/null >/dev/null 2>&1; then
+      # One listing says whether the remote answers, which branch its HEAD
+      # names now, and whether the named branch exists. A branch the remote
+      # lacks is skipped: a local ref of that name is stale for good, so it is
+      # never read in place of the next candidate. No prompt: a credential or
+      # passphrase request would hang the caller instead of degrading to a
+      # reported outcome.
+      if listing="$(GIT_TERMINAL_PROMPT=0 git -C "$DECISIONS_DIR" ls-remote --symref "$remote" HEAD "refs/heads/$branch" </dev/null 2>/dev/null)"; then
+        found=""
+        while IFS= read -r line; do
+          case "$line" in
+            "ref: refs/heads/"*$'\t'HEAD) [[ "$branch" != HEAD ]] || found="${line#ref: refs/heads/}" ;;
+            *$'\t'"refs/heads/$branch") found="$branch" ;;
+          esac
+        done <<<"$listing"
+        found="${found%$'\t'HEAD}"
+        [[ -n "$found" ]] || continue
+        cand="$remote/$found"
+        if ! GIT_TERMINAL_PROMPT=0 git -C "$DECISIONS_DIR" fetch --quiet --no-tags "$remote" "+refs/heads/$found:refs/remotes/$remote/$found" </dev/null >/dev/null 2>&1; then
+          fetch_failed=1
+        fi
+      else
+        # The remote did not answer. That stays recorded for every later
+        # candidate, which may be a stale local branch; a <remote>/HEAD falls
+        # back to the default branch this clone last recorded.
         fetch_failed=1
+        if [[ "$branch" == HEAD ]]; then
+          cand="$(git -C "$DECISIONS_DIR" symbolic-ref --quiet --short "refs/remotes/$remote/HEAD")" || continue
+        fi
       fi
     fi
     if git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$cand^{commit}" >/dev/null; then

@@ -137,6 +137,17 @@ build_origin_head() { # the upstream's default branch is master, not main
   commit_all "$1/up" "master records D035"
 }
 
+build_renamed_default() { # the upstream renamed master to trunk after the clone; both record a D002
+  new_repo "$1/up" master
+  write_index "$1/up" D001:D001-first.md
+  commit_all "$1/up" base
+  clone_repo "$1/up" "$1/work"
+  git -C "$1/up" branch -m master trunk
+  write_index "$1/up" D001:D001-first.md D002:D002-b.md
+  commit_all "$1/up" "trunk records D002"
+  write_index "$1/work" D001:D001-first.md D002:D002-z.md
+}
+
 build_configured_ref() { # only the upstream's release branch gains D035
   new_repo "$1/up" main
   write_index "$1/up" D034:D034-first.md
@@ -296,10 +307,13 @@ evaluate_rows() {
   done <<'BASE_CASES'
 next-id-base-ahead~ahead~~next-id~~0~D036~
 next-id-base-behind~behind~~next-id~~0~D036~
-next-id-no-remote~no_remote~~next-id~~0~D035~notice=base-unverified ref=origin/main,main reason=unresolved
+next-id-no-remote~no_remote~~next-id~~0~D035~notice=base-unverified ref=origin/HEAD,origin/main,main reason=unresolved
 next-id-fetch-failed~unreachable~~next-id~~0~D036~notice=base-unverified ref=origin/main reason=fetch-failed
 next-id-fetch-failed-local-main~stale_main~~next-id~~0~D035~notice=base-unverified ref=main reason=fetch-failed
 next-id-origin-head~origin_head~~next-id~~0~D036~
+next-id-configured-origin-head~ahead~DECISIONS_BASE_REF=origin/HEAD~next-id~~0~D036~
+check-renamed-default~renamed_default~~check~~1~~error=id-collision id=D002 path=docs/decisions/D002-z.md base=origin/trunk:docs/decisions/D002-b.md
+check-stale-remote-branch~renamed_default~DECISIONS_BASE_REF=origin/master~check~~1~~error=base-unverified ref=origin/master reason=unresolved
 next-id-configured-ref~configured_ref~DECISIONS_BASE_REF=origin/release~next-id~~0~D036~
 next-id-local-ref~local_ref~DECISIONS_BASE_REF=base~next-id~~0~D036~
 next-id-empty-index-base-scheme~empty_base_scheme~~next-id~~0~ADR-0036~
@@ -309,7 +323,7 @@ check-collision~collision~~check~~1~~error=id-collision id=D035 path=docs/decisi
 check-edited-record~edited~~check~~0~~
 check-duplicate-row~dup_rows~~check~~1~~error=id-duplicate-row id=D035 rows=4,5 paths=docs/decisions/D035-a.md,docs/decisions/D035-b.md;error=id-duplicate-file id=D035 paths=docs/decisions/D035-a.md,docs/decisions/D035-b.md
 check-duplicate-file~dup_files~~check~~1~~error=id-duplicate-file id=D035 paths=docs/decisions/D035-a.md,docs/decisions/D035-b.md
-check-unresolved~no_remote~~check~~1~~error=base-unverified ref=origin/main,main reason=unresolved
+check-unresolved~no_remote~~check~~1~~error=base-unverified ref=origin/HEAD,origin/main,main reason=unresolved
 check-configured-unresolved~collision~DECISIONS_BASE_REF=origin/mian~check~~1~~error=base-unverified ref=origin/mian reason=unresolved
 check-fetch-failed~unreachable_collision~~check~~1~~notice=base-unverified ref=origin/main reason=fetch-failed;error=id-collision id=D035 path=docs/decisions/D035-lane.md base=origin/main:docs/decisions/D035-main.md
 check-index-absent~index_absent~~check~~0~~notice=base-unverified ref=origin/main reason=index-absent
@@ -362,9 +376,12 @@ done <<'CONTROLS'
 next-id-base-ahead~  for id in ${ids[@]+"${ids[@]}"} ${base_ids[@]+"${base_ids[@]}"}; do~  for id in ${ids[@]+"${ids[@]}"}; do~a maximum over the working tree alone
 next-id-base-ahead~      if ! GIT_TERMINAL_PROMPT=0 git~      if false && ! GIT_TERMINAL_PROMPT=0 git~a base read without a fetch
 next-id-no-remote~  emit_notice base-unverified "ref=~  emit_notice base-unread "ref=~a renamed base notice
-next-id-fetch-failed~        fetch_failed=1~        fetch_failed=1; return 0~a failed fetch that drops the local copy
+next-id-fetch-failed~        fetch_failed=1\n        if [[ "$branch" == HEAD ]]; then~        fetch_failed=1; return 0\n        if [[ "$branch" == HEAD ]]; then~a failed fetch that drops the local copy
 next-id-fetch-failed-local-main~    short="${cand#refs/remotes/}"~    fetch_failed=0; short="${cand#refs/remotes/}"~a fetch failure forgotten by the next candidate
-next-id-origin-head~      candidates+=("$cand")~      :~a default ladder without origin/HEAD
+next-id-origin-head~    candidates=(origin/HEAD origin/main main)~    candidates=(origin/main main)~a default ladder without origin/HEAD
+next-id-configured-origin-head~|| found="${line#ref: refs/heads/}"~|| found=""~a remote HEAD that is never resolved to its branch
+check-renamed-default~|| found="${line#ref: refs/heads/}"~|| found=""~a remote HEAD that is never resolved to its branch
+check-stale-remote-branch~        [[ -n "$found" ]] || continue~        [[ -n "$found" ]] || found="$branch"~a branch the remote lacks read from its stale local ref
 next-id-configured-ref~    candidates=("$DECISIONS_BASE_REF")~    candidates=(origin/main main)~a configured base ref that is ignored
 next-id-local-ref~    candidates=("$DECISIONS_BASE_REF")~    candidates=(origin/main main)~a configured local base branch that is ignored
 next-id-empty-index-base-scheme~    elif [[ "${#base_ids[@]}" -gt 0 ]]; then~    elif false; then~a scheme inferred from the working tree alone
