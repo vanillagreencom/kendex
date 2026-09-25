@@ -152,13 +152,27 @@ step() {
     inner) make_pair; edit wt "$INNER"; edit main "$INNER" ;;
     # A file named like a sourced library, in a directory nothing sources from.
     other) make_pair; edit wt "$OTHER"; edit main "$OTHER" ;;
-    # The branch's Codex hook starts sourcing EXTRA, which the base edits too:
-    # only the pre-restack head sources it.
+    # A later branch commit than the conflicting one starts sourcing EXTRA,
+    # which the base edits too: only the pre-restack head sources it.
     branch-sourced)
+      make_pair
+      edit wt "$EXTRA"
+      write_sourcing_hook "$WT/$CODEX_HOOK" guard/scripts/lib/extra.sh base
+      git -C "$WT" add "$CODEX_HOOK"
+      git -C "$WT" commit -q -m "wt: source $EXTRA"
+      edit main "$EXTRA"
+      ;;
+    # The replayed commit starts sourcing EXTRA and edits it, the next branch
+    # commit stops sourcing it, and the base edits it: only the commit being
+    # replayed sources it, and its hook change is applied in the worktree.
+    replayed-sourced)
       make_pair
       write_sourcing_hook "$WT/$CODEX_HOOK" guard/scripts/lib/extra.sh base
       git -C "$WT" add "$CODEX_HOOK"
       edit wt "$EXTRA"
+      write_hook "$WT/$CODEX_HOOK" base
+      git -C "$WT" add "$CODEX_HOOK"
+      git -C "$WT" commit -q -m "wt: stop sourcing $EXTRA"
       edit main "$EXTRA"
       ;;
     # The base's Codex hook starts sourcing EXTRA, which the branch edits too:
@@ -170,8 +184,15 @@ step() {
       git -C "$MAIN" add "$CODEX_HOOK"
       edit main "$EXTRA"
       ;;
-    # The declaration naming the hook exists only at the pre-restack head.
-    branch-declared) make_pair; declare_cursor "$WT"; edit wt "$CURSOR_HOOK"; edit main "$CURSOR_HOOK" ;;
+    # The declaration naming the hook exists only at the pre-restack head: a
+    # later branch commit than the conflicting one adds it.
+    branch-declared)
+      make_pair
+      edit wt "$CURSOR_HOOK"
+      declare_cursor "$WT"
+      git -C "$WT" commit -q -m "wt: declare .cursor/hooks.json"
+      edit main "$CURSOR_HOOK"
+      ;;
     # The declaration naming the hook exists only on the new base.
     base-declared) make_pair; edit wt "$CURSOR_HOOK"; declare_cursor "$MAIN"; edit main "$CURSOR_HOOK" ;;
     # The base deletes a declared hook the branch edits: a modify/delete
@@ -352,6 +373,8 @@ a library a declared hook sources is held so the hook still runs|lib|create topi
 a library that library sources is held too|inner|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $INNER paused=yes parses=ok,ok runs=ok,ok saved=$I markers=$I body=base,base ordinary=-
 a file named like a sourced library in a directory nothing sources from keeps its markers|other|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$OTHER body=base,base ordinary=$OTHER
 a library only the pre-restack head's hook sources is held|branch-sourced|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $EXTRA paused=yes parses=ok,ok runs=ok,ok saved=$E markers=$E body=base,base ordinary=-
+a library only the commit being rebased sources is held|replayed-sourced|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $EXTRA paused=yes parses=ok,ok runs=ok,ok saved=$E markers=$E body=base,base ordinary=-
+a library only the commit being replayed sources is held|replayed-sourced|create topic --restack --replay|rc=1 err=worktree-replay-conflicts: <wt>;worktree-restack-hook-held: $EXTRA paused=yes parses=ok,ok runs=ok,ok saved=$E markers=$E body=base,base ordinary=-
 a library only the paused HEAD's hook sources is held|base-sourced|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $EXTRA paused=yes parses=ok,ok runs=ok,ok saved=$E markers=$E body=base,base ordinary=-
 "
 
@@ -381,8 +404,8 @@ without the refusal continue records the saved copies in the branch@scripts/work
 without the cleanup abort leaves the saved copies behind@scripts/worktree@rm -f -- \"\$WT_PATH/\$HELD_COPY\"@1@:@hooks restack@restack abort topic@rc=0 err= paused=no parses=ok,ok runs=ok,ok saved=$C,$X markers=$C,$X body=wt,wt ordinary=-
 without the unreadable fallback an ordinary path keeps its markers@scripts/lib/restack-state.sh@printf '%s\n' \"\$conflicts\"@1@:@source broken-jq@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$SOURCE_HOOK body=base,base ordinary=$SOURCE_HOOK
 without the sourcing-script read failing the hold an ordinary path keeps its markers@scripts/lib/restack-state.sh@\\1/p')\" || return 1@1@\\1/p')\"@source broken-cat-file@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$SOURCE_HOOK body=base,base ordinary=$SOURCE_HOOK
-without the pre-restack head a branch-declared hook keeps its markers@scripts/lib/restack-state.sh@\"\$(restack_state_get \"\$wt\" originalHead)\" HEAD)\"@1@HEAD)\"@branch-declared@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$CURSOR_HOOK body=base,base ordinary=$CURSOR_HOOK
-without the paused HEAD a base-declared hook keeps its markers@scripts/lib/restack-state.sh@originalHead)\" HEAD)\"@1@originalHead)\")\"@base-declared@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$CURSOR_HOOK body=base,base ordinary=$CURSOR_HOOK
+without the pre-restack head a branch-declared hook keeps its markers@scripts/lib/restack-state.sh@\"\$(restack_state_get \"\$wt\" originalHead)\" HEAD \${paused@1@HEAD \${paused@branch-declared@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$CURSOR_HOOK body=base,base ordinary=$CURSOR_HOOK
+without the paused HEAD a base-declared hook keeps its markers@scripts/lib/restack-state.sh@originalHead)\" HEAD \${paused@1@originalHead)\" \${paused@base-declared@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$CURSOR_HOOK body=base,base ordinary=$CURSOR_HOOK
 without the fallback to the branch's side a deleted hook is not held@scripts/lib/restack-state.sh@! git -C \"\$wt\" checkout --theirs -- \"\$path\" >/dev/null 2>&1; }@1@true; }@deleted@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-hold-failed: $CLAUDE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$C markers=- body=wt,base ordinary=$CLAUDE_HOOK
 without the held-path exclusion the report tells the caller to edit a held hook@scripts/lib/restack-state.sh@grep -F -x -q -e \"\$path\" <<<\"\$held\" || ordinary@1@true; ordinary@mixed@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CLAUDE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$C markers=$C,file.txt body=main,base ordinary=$CLAUDE_HOOK file.txt
 with the branch's side taken first the held hooks keep the branch's version@scripts/lib/restack-state.sh@checkout --ours --@1@checkout --theirs --@hooks@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;$HELD paused=yes parses=ok,ok runs=ok,ok saved=$C,$X markers=$C,$X body=wt,wt ordinary=-
@@ -391,8 +414,10 @@ without the library follow a sourced library keeps its markers and the hook fail
 without the indent allowance a directive inside a function is not read@scripts/lib/restack-state.sh@sed -n 's/^[[:space:]]*#[[:space:]]*shellcheck@1@sed -n 's/^#[[:space:]]*shellcheck@inner@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=FAIL,ok saved=- markers=$INNER body=base,base ordinary=$INNER
 without following a library's own directives a library it sources keeps its markers@scripts/lib/restack-state.sh@queue=\"\$queue\"\$'\\n'\"\$target\"@1@:@inner@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=FAIL,ok saved=- markers=$INNER body=base,base ordinary=$INNER
 with every directive matched as a path suffix a same-named unsourced file is held@scripts/lib/restack-state.sh@if [[ \"\$target\" == ../* ]]; then@1@if true; then@other@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $OTHER paused=yes parses=ok,ok runs=ok,ok saved=$OTHER.restack-conflict markers=$OTHER.restack-conflict body=base,base ordinary=-
-with libraries read at the paused HEAD only a library the branch's hook sources keeps its markers@scripts/lib/restack-state.sh@restack_hook_libraries \"\$wt\" \"\$rev\"@1@restack_hook_libraries \"\$wt\" HEAD@branch-sourced@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,FAIL saved=- markers=$EXTRA body=base,base ordinary=$EXTRA
+with libraries read at the paused HEAD only a library the branch's hook sources keeps its markers@scripts/lib/restack-state.sh@restack_hook_libraries \"\$wt\" \"\$rev\"@1@restack_hook_libraries \"\$wt\" HEAD@branch-sourced@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$EXTRA body=base,base ordinary=$EXTRA
 with libraries read at the pre-restack head only a library the base's hook sources keeps its markers@scripts/lib/restack-state.sh@restack_hook_libraries \"\$wt\" \"\$rev\"@1@restack_hook_libraries \"\$wt\" \"\$1\"@base-sourced@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,FAIL saved=- markers=$EXTRA body=base,base ordinary=$EXTRA
+without the commit being rebased a library only it sources keeps its markers@scripts/lib/restack-state.sh@HEAD \${paused:+\"\$paused\"})\"@1@HEAD)\"@replayed-sourced@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,FAIL saved=- markers=$EXTRA body=base,base ordinary=$EXTRA
+without the commit being replayed a library only it sources keeps its markers@scripts/lib/restack-state.sh@HEAD \${paused:+\"\$paused\"})\"@1@HEAD)\"@replayed-sourced@create topic --restack --replay@rc=1 err=worktree-replay-conflicts: <wt> paused=yes parses=ok,ok runs=ok,FAIL saved=- markers=$EXTRA body=base,base ordinary=$EXTRA
 "
 m=0
 while IFS='@' read -r label target text count replacement fixture command want; do

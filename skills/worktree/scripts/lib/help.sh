@@ -166,7 +166,8 @@ the index; deleting it, staging the path and unstaging the copy keeps the held
 side. abort removes the saved copies. The held set is the paths a
 declaration's command names and the libraries those hooks source, directly or
 through another library, read from the '# shellcheck source=' directive above
-each 'source' or '.' line. A directive resolves against the sourcing file's
+each 'source' or '.' line, at the pre-restack head, the paused HEAD and the
+commit being replayed. A directive resolves against the sourcing file's
 directory; one that climbs out of it ('../skills/<skill>/...') matches every
 tracked path ending in the rest of it, since the hook finds that library by
 searching. When the declarations or a sourcing script cannot be

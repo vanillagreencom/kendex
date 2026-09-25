@@ -309,12 +309,17 @@ restack_hook_libraries() {
 
 # The conflicted paths (one per line) that a harness hook declaration names or
 # that a named hook sources, read at the pre-restack head the running harness
-# loaded and at the paused HEAD. Declarations or sourcing scripts that cannot
-# be read make every conflicted path a held path: holding an ordinary path
-# costs a step, leaving markers in a hook or its library strands the caller.
+# loaded, at the paused HEAD, and at the commit being replayed, whose cleanly
+# applied changes are in the worktree too: REBASE_HEAD for the rebase engine,
+# CHERRY_PICK_HEAD for the replay engine, read only when Git recorded one.
+# Declarations or sourcing scripts that cannot be read make every conflicted
+# path a held path: holding an ordinary path costs a step, leaving markers in a
+# hook or its library strands the caller.
 restack_conflicted_hooks() {
-  local wt="$1" conflicts="$2" words="" path=""
-  if ! words="$(restack_hook_words "$wt" "$(restack_state_get "$wt" originalHead)" HEAD)"; then
+  local wt="$1" conflicts="$2" words="" path="" pick=REBASE_HEAD paused=""
+  [[ "$(restack_state_get "$wt" mode)" != replay ]] || pick=CHERRY_PICK_HEAD
+  paused="$(git -C "$wt" rev-parse --verify -q "$pick^{commit}")" || paused=""
+  if ! words="$(restack_hook_words "$wt" "$(restack_state_get "$wt" originalHead)" HEAD ${paused:+"$paused"})"; then
     printf '%s\n' "$conflicts"
     return 0
   fi
