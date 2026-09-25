@@ -3,11 +3,10 @@
 # the pass found as one block, and exits. The workflow handles every EVENT line
 # and re-runs it.
 #
-# Two passes on one clock. The mail pass reads every mailbox and the lane
-# records on ORCH_WATCH_MAIL_INTERVAL; the long pass (one lane snapshot,
+# Two passes on one clock: the mail pass reads every mailbox and the lane
+# records on ORCH_WATCH_MAIL_INTERVAL, and the long pass (one lane snapshot,
 # pr-watch, merged items, team triage, lane preparation, lane classification,
-# accounts) runs forked on --interval, so a long pass that overruns holds up no
-# mail pass, and the heartbeat closes on the long passes. A check that finds an
+# accounts) runs forked on --interval. A check that finds an
 # event records it and the pass runs on to the next check, so no kind starves
 # another: a reducer line on every pass or a lane parked on its limit banner
 # would otherwise be the only thing the watch ever said. The block carries the
@@ -41,12 +40,11 @@ ORCH_WATCH_MAIL_INTERVAL seconds, reads every lane mailbox, the overseer
 mailbox and the lane records one after another, and prints what it finds as
 it finds it: lane-question, lane-notice, directive-read, directive-unread,
 peer-note and owner-note. A read that waits on a lock or a slow host delays
-the mailboxes after it past that interval, as does the overseer pane below.
-The long pass
-reads everything else every --interval seconds, counted from the start of one
-long pass to the start of the next and kept across runs in the state
-directory, so a run that ends on mail news does not bring the next long pass
-forward. A long pass runs apart from the mail pass: one that overruns its
+the mailboxes after it past that interval, as do the overseer pane below and,
+run in this loop, a run's one GitHub auth check before its first long pass
+and the heartbeat's open-PR listing. The long pass reads everything else
+every --interval seconds, counted start to start and kept across runs in the
+state directory, so a run ending on mail news brings the next one no nearer. A long pass runs apart from the mail pass: one that overruns its
 interval holds up no mail pass, the next one starts only once it has ended,
 and its lines are printed together when it ends. A run with news starts no
 further long pass past one already due on the turn the news came, and exits
