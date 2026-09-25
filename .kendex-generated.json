@@ -1119,6 +1119,7 @@
   ".agents/skills/review-gate/tests/settings-parsing.test.sh",
   ".agents/skills/review-gate/tests/settings-vars-documented.test.sh",
   ".agents/skills/review-gate/tests/unreasoned-decline.test.sh",
+  ".agents/skills/review-gate/tests/validate-workflow-adopt.test.sh",
   ".agents/skills/review-gate/tests/validate-workflow-equality.test.sh",
   ".agents/skills/review-gate/tests/validate-workflow-fold.test.sh",
   ".agents/skills/review-gate/tests/validate-workflow.test.sh",
