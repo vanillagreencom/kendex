@@ -437,6 +437,40 @@ run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
   && ! grep -Eq 'cargo (test|doc)' "$COMPILE_LOG" \
   && ok "shared Rust inputs compile the workspace without running tests" \
   || bad "shared Rust input scheduling" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
+git -C "$R" reset -q HEAD -- Cargo.toml
+git -C "$R" checkout -q -- Cargo.toml
+# The shared inputs are tools/rust-reads' build rows. A reader that cannot
+# derive them is a finding, and every staged path counts as one, so the
+# workspace compiles rather than nothing.
+REAL_FIND="$(command -v find)"
+cat >"$R/fake-bin/find" <<SH
+#!/usr/bin/env bash
+if [ "\${FAIL_FIND:-0}" = 1 ] && [ "\$1" = crates ] && [ "\${5:-}" = '*.rs' ]; then exit 1; fi
+exec "$REAL_FIND" "\$@"
+SH
+chmod +x "$R/fake-bin/find"
+mkdir -p "$R/packaging"
+printf 'data\n' >"$R/packaging/recipe.txt"
+git -C "$R" add packaging/recipe.txt
+unreadable_inputs() { # [GUARD] — the staged recipe with the reader failing; sets OUT and RC
+  : >"$COMPILE_LOG"
+  GUARD="${1:-$GUARD}" run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" FAIL_FIND=1
+}
+unreadable_inputs
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: rust-reads=crates"* ]] \
+  && grep -Fxq 'cargo check --workspace --all-targets' "$COMPILE_LOG" \
+  && ok "an underivable set of shared inputs is a finding, and the workspace compiles" \
+  || bad "an underivable set of shared inputs is a finding, and the workspace compiles" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
+if mutant_guard '/^  workspace_every=1$/d'; then
+  unreadable_inputs "$MUTANT_TOOLS/guard"
+  grep -Fxq 'cargo check --workspace --all-targets' "$COMPILE_LOG" \
+    && bad "control: with every path no longer an input the recipe compiles nothing" "calls=$(cat "$COMPILE_LOG")" \
+    || ok "control: with every path no longer an input the recipe compiles nothing"
+else
+  bad "control: the fail-closed input could not be cut from a guard copy"
+fi
+git -C "$R" reset -q HEAD -- packaging/recipe.txt
+rm -f -- "$R/packaging/recipe.txt"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

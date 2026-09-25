@@ -138,7 +138,7 @@ back_to_base
 # compiles nothing.
 # label|path appended to|sed expression deleting the arm
 ARM_CONTROLS=(
-  "control: without the clippy entry a clippy.toml change compiles nothing|clippy.toml|s/ | clippy.toml) return 0 ;;$/) return 0 ;;/"
+  "control: without tools/rust-reads' build rows a clippy.toml change compiles nothing|clippy.toml|s/\$1 == \"build\" \&\& /\$1 == \"none\" \&\& /"
   "control: without the crate-file arm the crate asset compiles nothing|crates/core/assets/data.txt|/^      crates\/\*\/\*) add_crate \"\$f\" ;;$/d"
   "control: without the include arm the included file compiles nothing|docs/note.txt|/^    if grep -Fxq -- \"\$f\" <<<\"\$range_includes\"; then rust_all=1; fi$/d"
 )
@@ -174,7 +174,7 @@ range_classed "$GUARD"
 [ "$RC" -eq 0 ] && [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] \
   && ok "a range handed a render class still runs the touched skill's suite" \
   || bad "a range handed a render class still runs the touched skill's suite" "rc=$RC out=$OUT"
-if mutant_guard 's/^if \[ "\$MODE" = full \] && \[ "\$validate_class:\$validate_docs_only" != standard:false \]; then$/if [ "$MODE" != default ] \&\& [ "$validate_class:$validate_docs_only" != standard:false ]; then/'; then
+if mutant_guard 's/^if \[ "\$MODE" = full \] && \[ -n "\$validate_class" \]; then$/if [ "$MODE" != default ] \&\& [ -n "$validate_class" ]; then/'; then
   range_classed "$MUTANT_TOOLS/guard"
   [[ "$OUT" != *"=== skills/demo/tests/demo.test.sh"* ]] \
     && ok "control: with the class selection applied to range the suite stands down" \
@@ -255,12 +255,12 @@ range_find_fails() { # GUARD
 printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
 printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
 range_find_fails "$GUARD"
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: compiled-includes=range"* ]] && [ "$LOG" = "$WORKSPACE_CALLS" ] \
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: rust-reads=crates"* ]] && [ "$LOG" = "$WORKSPACE_CALLS" ] \
   && ok "a failed include read is a finding and the range checks the workspace" \
   || bad "a failed include read is a finding and the range checks the workspace" "rc=$RC log=$LOG out=$OUT"
-if mutant_guard '/^    say compiled-includes range$/d'; then
+if mutant_guard '/^  say rust-reads crates$/d'; then
   range_find_fails "$MUTANT_TOOLS/guard"
-  [ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: compiled-includes="* ]] \
+  [ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: rust-reads="* ]] \
     && ok "control: with the finding removed the failed read passes" \
     || bad "control: with the finding removed the failed read passes" "rc=$RC out=$OUT"
 else

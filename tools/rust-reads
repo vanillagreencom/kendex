@@ -1,39 +1,59 @@
 #!/usr/bin/env bash
-# The repository paths the Rust source under crates/ names as ones it reads,
-# derived from the source rather than listed by hand, in two shapes. Each row
-# says which shape it came from:
+# The repository paths each crate under crates/ reads, derived from the Rust
+# source rather than listed by hand. Each row names the shape it came from and
+# the crate that reads it:
 #
 #   include   an include_str! or include_bytes! literal, resolved against the
 #             including file's directory: a file compiled into the binary or
 #             the test at build time. A literal on the line after its opening
 #             parenthesis, the shape rustfmt gives a long one, counts too.
-#   manifest  a chain of string literals joined onto env!("CARGO_MANIFEST_DIR"),
-#             resolved against that crate's manifest directory: a path code or
-#             a test reads at run time. The chain is the literal arguments of
-#             `.join("...")` calls after it, or the literal arguments beside it
-#             in a `concat!`. A chain that ends with no further argument is a
-#             read of the path it reached, and every path under it when that
-#             is a directory.
+#   manifest  a path code or a test reads at run time: a chain of string
+#             literals joined onto env!("CARGO_MANIFEST_DIR"), resolved
+#             against the reading crate's manifest directory. The chain is the
+#             literal arguments of `.join("...")` calls after it, or the
+#             literal arguments beside it inside a `concat!`. A chain that
+#             ends with no further argument is a read of the path it reached,
+#             and of every path under it when that is a directory.
+#   build     what cargo reads to build every crate: the crates/ tree, the
+#             workspace manifest and lock, the toolchain pin and the cargo,
+#             clippy and rustfmt configuration, whether or not the checkout
+#             holds each file today, so a diff deleting one still names it.
+#
+# A chain is followed through the names it is bound to. A function whose
+# return type names Path and whose body holds a chain, or calls such a
+# function, is a root helper, crates/test_util.rs's checkout_root() among
+# them: its body is not a read, and each call of it is a chain starting where
+# the body's chain reached. A `let` binding a chain or a helper call, through
+# a Path::new, a PathBuf::from or a module path at most and with nothing but
+# canonicalize, unwrap, expect and the like after it, is not a read either:
+# each later use of the name in that file is a chain starting where it
+# reached, and a later `let` of the same name ends it. Any other use of a
+# chain is a read of what it reached.
 #
 # `.` is the row for what this reader does not follow: a chain that reaches
-# the repository root, and a chain that goes on with an argument that is not
-# a string literal, such as `.join(name)` or `.join(format!(...))`. That
-# second chain also prints the directory it reached, since `.join(name)` most
-# often names a file in it, but the argument can lead out of it too. Code that
-# joins onto a returned path elsewhere is not followed, so a helper like
-# crates/test_util.rs's checkout_root() and every read through it is absent,
-# and a helper returning the manifest directory reads as that crate's
-# directory. A path read by any other route is not here.
+# the repository root and is used there, and a chain that goes on with an
+# argument that is not a string literal, such as `.join(name)`,
+# `.join(format!(...))` or `.parent()`. That second chain also prints the
+# directory it reached, since `.join(name)` most often names a file in it,
+# but the argument can lead out of it too. A crate with a `.` row may read
+# any path. A path read by a route this header does not name is not here.
+#
+# A file under crates/ outside every crate's directory, crates/test_util.rs
+# for one, belongs to each crate whose source reaches it through a
+# `#[path = "..."]` attribute, and its chains resolve against that crate's
+# manifest directory. One no crate reaches is compiled nowhere and read by
+# none. Full-line `//` comments are not source.
 #
 # A resolved path that climbs out of the checkout names no repository path and
 # is not printed.
 #
 # Usage: tools/rust-reads [ROOT]
 #   ROOT   the checkout to read; the current directory when omitted
-# stdout: one `<kind><TAB><path>` row per distinct read, sorted, the path
-# relative to ROOT. Exit 0 with the rows, 2 when the source could not be read
-# or the arguments are wrong, and a read that did not run is never printed as
-# an empty set. A refusal is one stderr line:
+# stdout: one `<kind><TAB><path><TAB><crate>` row per distinct read, sorted,
+# the path relative to ROOT and the crate its package name. Exit 0 with the
+# rows, 2 when the source could not be read or the arguments are wrong, and a
+# read that did not run is never printed as an empty set. A refusal is one
+# stderr line:
 #   rust-reads: unreadable=<path>   ROOT, or the crates/ tree, could not be read
 #   rust-reads: usage=<usage>       more than one argument
 set -euo pipefail
@@ -46,21 +66,46 @@ esac
 cd -- "$root" 2>/dev/null || { printf 'rust-reads: unreadable=%s\n' "$root" >&2; exit 2; }
 [ -d crates ] || { echo 'rust-reads: unreadable=crates' >&2; exit 2; }
 
-# The manifest directories, for the awk pass to find each file's crate by.
-if ! manifests=$(find crates -type f -name Cargo.toml); then
+if ! manifests=$(find crates -type f -name Cargo.toml) ||
+  ! sources=$(find crates -type f -name '*.rs'); then
   echo 'rust-reads: unreadable=crates' >&2
   exit 2
 fi
 
-if ! rows=$(RUST_READS_MANIFESTS="$manifests" find crates -type f -name '*.rs' -exec awk '
-  BEGIN {
-    n = split(ENVIRON["RUST_READS_MANIFESTS"], found, "\n")
-    for (i = 1; i <= n; i++) {
-      if (found[i] == "") continue
-      dir = found[i]
-      sub(/\/?Cargo\.toml$/, "", dir)
-      crate[dir] = 1
+if ! rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SOURCES="$sources" awk '
+  # Lists are strings joined by LS; a value is a list of `path FS open`
+  # entries, open being 1 where the chain went on with an argument this
+  # reader does not follow.
+  function slurp(file,   line, out, n, r) {
+    out = ""
+    n = 0
+    while ((r = (getline line < file)) > 0) {
+      if (line ~ /^[ \t]*\/\//) line = ""
+      out = (n++ ? out "\n" : "") line
     }
+    if (r < 0) exit 2
+    close(file)
+    return out
+  }
+  function package_name(manifest, dir,   line, section, name, r) {
+    section = ""
+    name = ""
+    while ((r = (getline line < manifest)) > 0) {
+      if (line ~ /^[ \t]*\[/) { section = line; gsub(/[ \t]/, "", section); continue }
+      if (section == "[package]" && name == "" && line ~ /^[ \t]*name[ \t]*=[ \t]*"/) {
+        name = line
+        sub(/^[^"]*"/, "", name)
+        sub(/".*$/, "", name)
+      }
+    }
+    if (r < 0) exit 2
+    close(manifest)
+    return name == "" ? dir : name
+  }
+  function dirname(file,   dir) {
+    dir = file
+    if (!sub(/\/[^\/]*$/, "", dir)) return "."
+    return dir
   }
   # The repository path BASE/LIT names, or "" when it climbs out of the
   # checkout; "." is the checkout itself.
@@ -77,16 +122,24 @@ if ! rows=$(RUST_READS_MANIFESTS="$manifests" find crates -type f -name '*.rs' -
     for (i = 2; i <= k; i++) out = out "/" seg[i]
     return out
   }
-  function emit(kind, path) {
-    if (path != "") printf "%s\t%s\n", kind, path
-  }
   function unquote(tok) {
     sub(/^[^"]*"/, "", tok)
-    sub(/"$/, "", tok)
+    sub(/".*$/, "", tok)
     return tok
   }
+  function add(list, item,   n, i, have) {
+    if (item == "") return list
+    n = split(list, have, LS)
+    for (i = 1; i <= n; i++) if (have[i] == item) return list
+    return list == "" ? item : list LS item
+  }
+  function merge(list, more,   n, i, items) {
+    n = split(more, items, LS)
+    for (i = 1; i <= n; i++) list = add(list, items[i])
+    return list
+  }
   # The manifest directory owning FILE: its nearest ancestor holding a
-  # Cargo.toml. None is a crates/ file outside every crate, and "" says so.
+  # Cargo.toml, or "" for a crates/ file outside every crate.
   function manifest_dir(file,   dir) {
     dir = file
     while (sub(/\/[^\/]*$/, "", dir)) {
@@ -94,48 +147,309 @@ if ! rows=$(RUST_READS_MANIFESTS="$manifests" find crates -type f -name '*.rs' -
     }
     return ""
   }
-  function scan(file, text,   dir, rest, lit, chain, owner) {
-    dir = file
-    sub(/\/[^\/]*$/, "", dir)
-    rest = text
-    while (match(rest, /include_(str|bytes)![ \t\n]*\([ \t\n]*"[^"]*"/)) {
-      emit("include", resolve(dir, unquote(substr(rest, RSTART, RLENGTH))))
-      rest = substr(rest, RSTART + RLENGTH)
+  # The manifest directories of the crates FILE is compiled into.
+  function owners(file,   dir, n, i, via, out) {
+    if (file in owner) return owner[file]
+    dir = manifest_dir(file)
+    if (dir != "") return owner[file] = dir
+    owner[file] = ""
+    out = ""
+    n = split(includers[file], via, LS)
+    for (i = 1; i <= n; i++) out = merge(out, owners(via[i]))
+    return owner[file] = out
+  }
+  function row(kind, path, dir) {
+    if (path != "") printf "%s\t%s\t%s\n", kind, path, crate[dir]
+  }
+  # The value of VALUE with CHAIN joined on, every entry open where OPEN is.
+  function apply(value, chain, open,   n, i, entries, entry, path, out) {
+    out = ""
+    n = split(value, entries, LS)
+    for (i = 1; i <= n; i++) {
+      split(entries[i], entry, FS_)
+      path = resolve(entry[1], chain)
+      if (path != "") out = add(out, path FS_ (entry[2] + 0 || open))
     }
-    owner = manifest_dir(file)
-    if (owner == "") return
-    rest = text
-    while (match(rest, /env![ \t\n]*\([ \t\n]*"CARGO_MANIFEST_DIR"[ \t\n]*\)/)) {
-      rest = substr(rest, RSTART + RLENGTH)
-      # The closing parentheses of the Path::new or PathBuf::from around it.
-      if (match(rest, /^[ \t\n]*\)+/)) rest = substr(rest, RLENGTH + 1)
-      chain = ""
-      while (1) {
-        if (match(rest, /^[ \t\n]*\.join[ \t\n]*\([ \t\n]*"[^"]*"[ \t\n]*\)/)) {
-          lit = substr(rest, RSTART, RLENGTH)
-          sub(/[ \t\n]*\)$/, "", lit)
-          chain = chain "/" unquote(lit)
-        } else if (match(rest, /^[ \t\n]*,[ \t\n]*"[^"]*"/)) {
-          chain = chain unquote(substr(rest, RSTART, RLENGTH))
-        } else {
-          break
-        }
-        rest = substr(rest, RLENGTH + 1)
+    return out
+  }
+  # Follows the literal chain at the head of TEXT, leaving its value in FOUND
+  # and returning the text after it.
+  function follow(text, value, in_concat,   chain, open, lit) {
+    chain = ""
+    while (1) {
+      if (match(text, /^[ \t\n]*\.[ \t\n]*join[ \t\n]*\([ \t\n]*"[^"]*"[ \t\n]*\)/)) {
+        lit = substr(text, RSTART, RLENGTH)
+        sub(/[ \t\n]*\)$/, "", lit)
+        chain = chain "/" unquote(lit)
+      } else if (in_concat && match(text, /^[ \t\n]*,[ \t\n]*"[^"]*"/)) {
+        chain = chain unquote(substr(text, RSTART, RLENGTH))
+      } else if (!match(text, TRANSPARENT)) {
+        break
       }
-      emit("manifest", resolve(owner, chain))
-      # An argument the chain could not read may lead anywhere from there.
-      if (match(rest, /^[ \t\n]*(\.join[ \t\n]*\(|,)/)) emit("manifest", ".")
+      text = substr(text, RLENGTH + 1)
+    }
+    # An argument the chain could not read may lead anywhere from there.
+    open = match(text, /^[ \t\n]*\.[ \t\n]*(join|push|parent|ancestors|pop|with_file_name|set_file_name)[ \t\n]*\(/) ||
+      (in_concat && match(text, /^[ \t\n]*,/))
+    FOUND = apply(value, chain, open)
+    return text
+  }
+  # A chain whose value is FOUND ended where AFTER starts, and BEFORE is the
+  # text up to its start: a binding when BEFORE ends with `let NAME =` and a
+  # Path::new, a PathBuf::from or a module path at most, and AFTER goes on to
+  # `;` through closing parentheses alone; otherwise a read. Returns AFTER.
+  function settle(before, after, dir,   name, tail) {
+    if (match(before, LET_RHS)) {
+      name = substr(before, RSTART, RLENGTH)
+      sub(/^let[ \t\n]+(mut[ \t\n]+)?/, "", name)
+      sub(/[^A-Za-z0-9_].*$/, "", name)
+      tail = after
+      while (match(tail, TRANSPARENT)) tail = substr(tail, RLENGTH + 1)
+      if (match(tail, /^[ \t\n)?]*;/)) {
+        bound[name] = FOUND
+        bound_level[name] = LEVEL
+        return after
+      }
+      delete bound[name]
+    }
+    take(FOUND, dir)
+    return after
+  }
+  # A read of VALUE by the crate at DIR: printed, or added to the value of
+  # the helper whose body is being read.
+  function take(value, dir,   n, i, entries, entry) {
+    if (MODE == "value") { ACC = merge(ACC, value); return }
+    n = split(value, entries, LS)
+    for (i = 1; i <= n; i++) {
+      split(entries[i], entry, FS_)
+      row("manifest", entry[1], dir)
+      if (entry[2] + 0) row("manifest", ".", dir)
     }
   }
-  FNR == 1 {
-    if (NR > 1) scan(prev, text)
-    prev = FILENAME
-    text = $0
-    next
+  # The helpers of the crate at DIR that FILE can call, as the pattern of
+  # their names in SEEN and the value of each name in SEEN_VALUE: a `pub`
+  # one anywhere in the crate, any other in its own module and the modules
+  # under it, as Rust scopes them.
+  function visible(dir, file,   n, i, k, keys) {
+    SEEN = ""
+    split("", SEEN_VALUE)
+    n = split(helper_keys[dir], keys, LS)
+    for (i = 1; i <= n; i++) {
+      k = keys[i]
+      if (cand_scope[k] != "" && file != cand_file[k] && index(file, cand_scope[k] "/") != 1) continue
+      if (!(cand_name[k] in SEEN_VALUE)) SEEN = SEEN == "" ? cand_name[k] : SEEN "|" cand_name[k]
+      SEEN_VALUE[cand_name[k]] = merge(SEEN_VALUE[cand_name[k]], value_of[dir, k])
+    }
   }
-  { text = text "\n" $0 }
-  END { if (NR > 0) scan(prev, text) }
-' {} +); then
+  # The pattern for the next token: a manifest chain, a call of a helper
+  # visible here, or a use or a `let` of a bound name.
+  function tokens(dir,   names, name, lets) {
+    names = SEEN
+    lets = ""
+    for (name in bound) {
+      names = names == "" ? name : names "|" name
+      lets = lets == "" ? name : lets "|" name
+    }
+    return "[^A-Za-z0-9_.](" ENV (lets == "" ? "" : "|let[ \t\n]+(mut[ \t\n]+)?(" lets ")") \
+      (names == "" ? "" : "|" names) ")"
+  }
+  # Every read in TEXT by the crate at DIR, printed, or collected in ACC when
+  # MODE is "value". A binding ends with the block it was made in.
+  function evaluate(text, dir,   rest, before, tok, after, from, name, depth, i, c, seg) {
+    split("", bound)
+    LEVEL = 0
+    rest = "\n" text
+    while (match(rest, tokens(dir))) {
+      before = substr(rest, 1, RSTART)
+      tok = substr(rest, RSTART + 1, RLENGTH - 1)
+      after = substr(rest, RSTART + RLENGTH)
+      from = substr(rest, RSTART + 1)
+      seg = before
+      while (match(seg, /[{}]/)) {
+        if (substr(seg, RSTART, 1) == "{") {
+          LEVEL++
+        } else {
+          LEVEL--
+          for (name in bound) if (bound_level[name] > LEVEL) delete bound[name]
+        }
+        seg = substr(seg, RSTART + 1)
+      }
+      if (tok ~ /^env!/) {
+        if (before ~ /concat![ \t\n]*\([ \t\n]*$/) {
+          after = follow(after, dir FS_ 0, 1)
+        } else {
+          # The closing parentheses of the Path::new or PathBuf::from around it.
+          if (match(after, /^[ \t\n]*\)+/)) after = substr(after, RLENGTH + 1)
+          after = follow(after, dir FS_ 0, 0)
+        }
+        rest = settle(before, after, dir)
+        continue
+      }
+      # A token that runs on into a longer name, or a macro, is not this one.
+      if (substr(after, 1, 1) ~ /[A-Za-z0-9_!]/) {
+        rest = after
+        continue
+      }
+      if (tok ~ /^let[ \t\n]/) {
+        name = tok
+        sub(/^let[ \t\n]+(mut[ \t\n]+)?/, "", name)
+        delete bound[name]
+        # The `let` stays in the text, so a chain after it can bind the name.
+        rest = from
+        continue
+      }
+      if ((tok in SEEN_VALUE) && match(after, /^[ \t\n]*\(/)) {
+        if (before ~ /fn[ \t\n]+$/) {
+          rest = after
+          continue
+        }
+        # The call: its arguments, up to the parenthesis that closes them.
+        after = substr(after, RLENGTH + 1)
+        depth = 1
+        for (i = 1; i <= length(after) && depth > 0; i++) {
+          c = substr(after, i, 1)
+          if (c == "(") depth++
+          else if (c == ")") depth--
+        }
+        rest = settle(before, follow(substr(after, i), SEEN_VALUE[tok], 0), dir)
+        continue
+      }
+      if (tok in bound) {
+        rest = settle(before, follow(after, bound[tok], 0), dir)
+        continue
+      }
+      rest = after
+    }
+  }
+  # The span of the body opening at the `{` at position AT of TEXT: its
+  # length through the brace that closes it, or 0 when none does.
+  function body_length(text, at,   depth, i, c) {
+    depth = 0
+    for (i = at; i <= length(text); i++) {
+      c = substr(text, i, 1)
+      if (c == "{") depth++
+      else if (c == "}" && --depth == 0) return i - at + 1
+    }
+    return 0
+  }
+  BEGIN {
+    LS = "\034"
+    FS_ = "\035"
+    ENV = "env![ \t\n]*\\([ \t\n]*\"CARGO_MANIFEST_DIR\"[ \t\n]*\\)"
+    TRANSPARENT = "^[ \t\n]*(\\.[ \t\n]*(canonicalize|unwrap|to_path_buf|as_path|to_owned|clone|into)[ \t\n]*\\([ \t\n]*\\)|\\.[ \t\n]*expect[ \t\n]*\\([ \t\n]*\"[^\"]*\"[ \t\n]*\\)|\\?)"
+    LET_RHS = "let[ \t\n]+(mut[ \t\n]+)?[A-Za-z_][A-Za-z0-9_]*[ \t\n]*(:[^=;]*)?=[ \t\n]*&?[ \t\n]*((std::)?(path::)?(Path::new|PathBuf::from)[ \t\n]*\\([ \t\n]*|([A-Za-z_][A-Za-z0-9_]*::)*)$"
+    n = split(ENVIRON["RUST_READS_MANIFESTS"], found, "\n")
+    for (i = 1; i <= n; i++) {
+      if (found[i] == "") continue
+      dir = found[i]
+      sub(/\/?Cargo\.toml$/, "", dir)
+      crate[dir] = package_name(found[i], dir)
+    }
+    n = split(ENVIRON["RUST_READS_SOURCES"], found, "\n")
+    for (i = 1; i <= n; i++) {
+      if (found[i] == "") continue
+      file[++files] = found[i]
+      source[found[i]] = text[found[i]] = slurp(found[i])
+    }
+    # Which file reaches which through a path attribute.
+    for (f = 1; f <= files; f++) {
+      rest = text[file[f]]
+      while (match(rest, /#\[path[ \t]*=[ \t]*"[^"]*"[ \t]*\]/)) {
+        target = resolve(dirname(file[f]), unquote(substr(rest, RSTART, RLENGTH)))
+        if (target != "") includers[target] = add(includers[target], file[f])
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+    }
+    # Every function whose return type names Path, with its body: a helper
+    # once its body holds a chain or calls a helper.
+    candidates = 0
+    for (f = 1; f <= files; f++) {
+      rest = text[file[f]]
+      offset = 0
+      while (match(rest, /fn[ \t\n]+[A-Za-z_][A-Za-z0-9_]*/)) {
+        name = substr(rest, RSTART, RLENGTH)
+        sub(/^fn[ \t\n]+/, "", name)
+        public = substr(rest, 1, RSTART - 1) ~ /pub(\([a-z ]*\))?[ \t\n]+((const|async|unsafe)[ \t\n]+)*$/
+        start = offset + RSTART + RLENGTH
+        rest = substr(rest, RSTART + RLENGTH)
+        offset = start - 1
+        if (!match(rest, /[{;]/)) break
+        signature = substr(rest, 1, RSTART - 1)
+        if (substr(rest, RSTART, 1) == ";" || signature !~ /->[^{]*Path/) continue
+        length_ = body_length(rest, RSTART)
+        if (length_ == 0) break
+        candidates++
+        cand_file[candidates] = file[f]
+        cand_name[candidates] = name
+        # The module a private one belongs to: the directory of a mod.rs,
+        # lib.rs or main.rs, and the file less its extension otherwise.
+        if (public) {
+          cand_scope[candidates] = ""
+        } else if (file[f] ~ /(^|\/)(mod|lib|main)\.rs$/) {
+          cand_scope[candidates] = dirname(file[f])
+        } else {
+          cand_scope[candidates] = file[f]
+          sub(/\.rs$/, "", cand_scope[candidates])
+        }
+        cand_at[candidates] = offset + RSTART
+        cand_length[candidates] = length_
+        cand_body[candidates] = substr(rest, RSTART + 1, length_ - 2)
+        rest = substr(rest, RSTART + length_)
+        offset += RSTART + length_ - 1
+      }
+    }
+    # To a fixpoint, since a helper may call another.
+    do {
+      changed = 0
+      for (k = 1; k <= candidates; k++) {
+        n = split(owners(cand_file[k]), dirs, LS)
+        for (d = 1; d <= n; d++) {
+          dir = dirs[d]
+          visible(dir, cand_file[k])
+          if (cand_body[k] !~ ENV && (SEEN == "" || cand_body[k] !~ "[^A-Za-z0-9_.](" SEEN ")[ \t\n]*\\(")) continue
+          helper[k] = 1
+          MODE = "value"
+          ACC = ""
+          evaluate(cand_body[k], dir)
+          # A body whose chain this reader could not place reads anything.
+          if (ACC == "") ACC = "." FS_ 1
+          before = value_of[dir, k]
+          value_of[dir, k] = merge(before, ACC)
+          if (value_of[dir, k] != before) changed = 1
+          if (index(LS helper_keys[dir] LS, LS k LS) == 0) {
+            helper_keys[dir] = add(helper_keys[dir], k)
+            changed = 1
+          }
+        }
+      }
+    } while (changed)
+    # A helper body is not a read: blank each before the reads are taken.
+    for (k = candidates; k >= 1; k--) {
+      if (!helper[k]) continue
+      t = text[cand_file[k]]
+      text[cand_file[k]] = substr(t, 1, cand_at[k]) "}" substr(t, cand_at[k] + cand_length[k])
+    }
+    MODE = "print"
+    for (f = 1; f <= files; f++) {
+      n = split(owners(file[f]), dirs, LS)
+      for (d = 1; d <= n; d++) {
+        dir = dirs[d]
+        rest = source[file[f]]
+        while (match(rest, /include_(str|bytes)![ \t\n]*\([ \t\n]*"[^"]*"/)) {
+          row("include", resolve(dirname(file[f]), unquote(substr(rest, RSTART, RLENGTH))), dir)
+          rest = substr(rest, RSTART + RLENGTH)
+        }
+        visible(dir, file[f])
+        evaluate(text[file[f]], dir)
+      }
+    }
+    for (dir in crate) {
+      row("build", "crates", dir)
+      m = split("Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml .cargo clippy.toml .clippy.toml rustfmt.toml .rustfmt.toml", names, " ")
+      for (i = 1; i <= m; i++) row("build", names[i], dir)
+    }
+  }
+'); then
   echo 'rust-reads: unreadable=crates' >&2
   exit 2
 fi

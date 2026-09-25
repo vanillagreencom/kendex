@@ -366,6 +366,7 @@ chmod +x "$R/fake-bin/find"
 # A crate that includes two files outside crates/: one literal on the macro's
 # own line, one on the line after it, the shape rustfmt gives a long one.
 mkdir -p "$R/crates/app/src" "$R/docs/authoring"
+printf '[package]\nname = "kendex-app"\n\n[lints]\nworkspace = true\n' >"$R/crates/app/Cargo.toml"
 printf 'const GUIDE: &str = include_str!("../../../docs/authoring/README.md");\n' >"$R/crates/app/src/mine.rs"
 printf 'const SPLIT: &str = include_str!(\n    "../../../docs/split.md"\n);\n' >"$R/crates/app/src/split.rs"
 printf '# guide\n' >"$R/docs/authoring/README.md"
@@ -439,7 +440,7 @@ crates/app/src/mine.rs|ci|main||0|skip|guard-note: cross-doc-skipped=ci|the sett
 crates/app/src/mine.rs|run|main||0|run||the setting at run keeps both for a crate source
 crates/app/src/mine.rs|never|main||1|run|guard: cross-doc-setting=never|a setting that is neither run nor ci is refused, and both still run
 -||main||0|run||a branch at its base with a clean tree touches nothing, and both run
-docs/notes.md||main|FAIL_FIND=1|1|run|guard: compiled-includes=crates|a failed include read is refused, and both still run
+docs/notes.md||main|FAIL_FIND=1|1|run|guard: rust-reads=crates|a failed include read is refused, and both still run
 docs/notes.md||none||0|run||a committed crate change with no origin/main to diff against runs both
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the cross-doc gate" >&2; exit 2; }
@@ -461,11 +462,11 @@ while IFS='|' read -r edit touch setting base extra rc calls text label; do
   fi
 done <<'ROWS'
 s/^  rust_input=0$/  rust_input=1/|docs/notes.md||main||0|run||with the touched-set gate removed a prose file runs both
-s/if ! includes=\$(compiled_includes)/if ! includes=$(true)/|docs/authoring/README.md||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the include derivation emptied an included file skips both
+s/^    includes=\$(compiled_includes)/    includes=$(true)/|docs/authoring/README.md||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the include derivation emptied an included file skips both
 s/if \[ "\$cross_doc" = ci \]; then/if false; then/|crates/app/src/mine.rs|ci|main||0|run||with the ci branch removed the setting at ci runs both
 s/say cross-doc-setting "\$cross_doc"; //|crates/app/src/mine.rs|never|main||0|run||with the refusal removed an unknown setting passes
 /\[ -n "\$touched" \]/d|-||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the empty-set rule removed a branch that touches nothing skips both
-/say compiled-includes crates/{n;d;}|docs/notes.md||main|FAIL_FIND=1|1|skip|guard: compiled-includes=crates|with the failed read left undecided a prose file skips both
+/^  workspace_every=1$/d|docs/notes.md||main|FAIL_FIND=1|1|skip|guard: rust-reads=crates|with the failed read left undecided a prose file skips both
 /\[ "\$base_resolved" -eq 1 \]/d|docs/notes.md||none||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the base rule removed a committed crate change with no origin/main skips both
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the cross-doc gate controls" >&2; exit 2; }
@@ -658,8 +659,21 @@ NPM_CALL_LOG="$TMP/npm-calls"
 mkdir -p "$R/ui"
 printf '[workspace]\n' >"$R/Cargo.toml"
 printf '{}\n' >"$R/ui/package.json"
-git -C "$R" add Cargo.toml ui/package.json
-git -C "$R" commit -q -m "chore: a workspace and a ui package"
+# Three crates in the shapes this repository's own take: kendex-core and
+# kendex-cli read the checkout whole through a root helper, the `.` row that
+# may read anything, and kendex-app reads one ui/ file.
+for c in core cli app; do
+  mkdir -p "$R/crates/$c/src"
+  printf '[package]\nname = "kendex-%s"\n\n[lints]\nworkspace = true\n' "$c" >"$R/crates/$c/Cargo.toml"
+done
+for c in core cli; do
+  printf '%s\n' 'fn root() -> PathBuf { Path::new(env!("CARGO_MANIFEST_DIR")).join("../..") }' \
+    'fn catalog() { open(&root()); }' >"$R/crates/$c/src/lib.rs"
+done
+printf '%s\n' 'const B: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ui/src/bindings.ts");' \
+  >"$R/crates/app/src/lib.rs"
+git -C "$R" add Cargo.toml ui/package.json crates
+git -C "$R" commit -q -m "chore: a workspace, three crates and a ui package"
 lanes_head="$(git -C "$R" rev-parse HEAD)"
 git -C "$R" update-ref refs/remotes/origin/main HEAD
 # The lanes one guard run reached, in a fixed order.
@@ -675,6 +689,11 @@ lanes_ran() {
       test) grep -qFx "test --workspace --quiet" "$CARGO_CALL_LOG" ;;
       ui) [ -s "$NPM_CALL_LOG" ] ;;
     esac && seen="$seen $lane"
+    # The test lane over the crates a selection names, as test:CRATE,...
+    if [ "$lane" = test ] && crates=$(sed -n 's/^test \(\(-p [^ ]* \)*\)--quiet$/\1/p' "$CARGO_CALL_LOG" |
+      grep . | sed 's/-p //g; s/ $//; s/ /,/g'); then
+      seen="$seen test:$crates"
+    fi
   done
   printf '%s' "${seen# }"
 }
@@ -705,17 +724,25 @@ run_lanes() { # CLASS DOCS PATH... — guard --full with PATHs touched and hande
 # Path lists are blank-separated and split unquoted on purpose. The crate
 # path is the Rust input the cross-target checks wait for.
 CODE="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh crates/core/src/lib.rs"
+# A skill and a tool, the diff no build input and no ui/ path is in.
+SKILL_TOOL="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh tools/demo-tool.sh"
 ALL="suites parse lint apple windows test ui"
+# Under a class, the workspace test run names the crates it selects.
+EVERY_CRATE="test:kendex-app,kendex-cli,kendex-core"
+ROOT_READERS="test:kendex-cli,kendex-core"
 # class|docs verdict|changed paths|the lanes that run
 LANE_ROWS=(
   "||$CODE|$ALL"
-  "standard|false|$CODE|$ALL"
-  "standard|true|docs/guide.md|parse test"
+  "standard|false|$CODE ui/app.ts|suites parse lint apple windows $EVERY_CRATE ui"
+  "standard|false|$CODE|suites parse lint apple windows $EVERY_CRATE"
+  "standard|false|$SKILL_TOOL|suites parse $ROOT_READERS"
+  "standard|false|$SKILL_TOOL ui/src/bindings.ts|suites parse $EVERY_CRATE ui"
+  "standard|true|docs/guide.md|parse $ROOT_READERS"
   "render|false|$CODE|"
   "trivial|true|$CODE|"
-  "micro|false|$CODE|suites parse lint apple windows test"
-  "small|false|$CODE ui/app.ts|$ALL"
-  "micro|false|docs/guide.md|parse test"
+  "micro|false|$CODE|suites parse lint apple windows $EVERY_CRATE"
+  "small|false|$CODE ui/app.ts|suites parse lint apple windows $EVERY_CRATE ui"
+  "micro|false|docs/guide.md|parse $ROOT_READERS"
 )
 lane_guard
 for row in "${LANE_ROWS[@]}"; do
@@ -738,11 +765,26 @@ HANDED_PATHS="$TMP/absent-paths" run_lanes micro false $CODE
   || bad "an unreadable paths file is a finding and every lane runs" "rc=$RC got=$(lanes_ran) out=$OUT"
 # The issue's inverse: a guard that reads no class runs the whole battery on
 # the trivial row.
-lane_guard 's/"$validate_class:$validate_docs_only" != standard:false/standard:false != standard:false/'
+lane_guard 's/\[ "\$MODE" = full \] \&\& \[ -n "\$validate_class" \]; then/[ "$MODE" = full ] \&\& false; then/'
 run_lanes trivial true $CODE
 [ "$(lanes_ran)" = "$ALL" ] \
   && ok "control: with the class unread the trivial row runs every lane" \
   || bad "control: with the class unread the trivial row runs every lane" "rc=$RC got=$(lanes_ran)"
+# A guard that asks the lane table for every class but standard, as it once
+# did, runs every lane on the skill-and-tool row CI narrows.
+lane_guard 's/\[ "\$MODE" = full \] \&\& \[ -n "\$validate_class" \]; then/[ "$MODE" = full ] \&\& [ "$validate_class" != standard ]; then/'
+# The cross targets wait for a Rust input, which this row has none of.
+run_lanes standard false $SKILL_TOOL
+[ "$(lanes_ran)" = "suites parse lint test ui" ] \
+  && ok "control: with standard read as every lane the skill-and-tool row runs every lane" \
+  || bad "control: with standard read as every lane the skill-and-tool row runs every lane" "rc=$RC got=$(lanes_ran)"
+# A guard that tests the workspace whatever the selection runs kendex-app on
+# the row that reaches no file it reads.
+lane_guard 's/^  if \[ "\$lanes" != all \]; then$/  if false; then/'
+run_lanes standard false $SKILL_TOOL
+[ "$(lanes_ran)" = "suites parse test" ] \
+  && ok "control: with the crate selection unread the skill-and-tool row tests the workspace" \
+  || bad "control: with the crate selection unread the skill-and-tool row tests the workspace" "rc=$RC got=$(lanes_ran)"
 # A suite a lane runs inherits none of the selection: the outer run's class
 # would otherwise choose the lanes of every guard that suite starts, the way
 # this file's own rows ran under a prose-only micro selection. The touched
