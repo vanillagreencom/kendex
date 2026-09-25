@@ -397,6 +397,32 @@ fn the_write_leaves_a_directory_link_that_arrived_late() {
     );
 }
 
+/// A `/usr/local/bin` that is itself a link is refused before anything is
+/// written, so the step never writes into the directory it points at.
+#[test]
+fn the_step_refuses_a_directory_that_is_a_link() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mac = Mac::new(&tmp);
+    let elsewhere = mac.root.join("opt/homebrew/bin");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let bin = mac.places.link.parent().unwrap();
+    std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+    symlink(&elsewhere, bin).unwrap();
+
+    let plan = LinkPlan {
+        link: mac.places.link.clone(),
+        target: mac.target.clone(),
+        was: None,
+    };
+    let output = run_script(LINK_SCRIPT, &plan);
+    assert_ne!(output.status.code(), Some(0), "the step reported success");
+    assert_eq!(
+        std::fs::read_dir(&elsewhere).unwrap().count(),
+        0,
+        "the step wrote into the directory the link names"
+    );
+}
+
 /// What an install does over each shape, through the real privileged
 /// script: where the step runs, and what is at the link afterwards.
 #[test]
