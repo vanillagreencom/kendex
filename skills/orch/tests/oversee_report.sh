@@ -537,6 +537,8 @@ issues_reached|60|ORCH_REPORT_EVERY_ISSUES=1|-30|report-due reason=issues since=
 issues_before_marker|60|ORCH_REPORT_EVERY_ISSUES=1|-120|
 issues_under|60|ORCH_REPORT_EVERY_ISSUES=2|-30|
 issues_one_item_two_prs|60|ORCH_REPORT_EVERY_ISSUES=2|-30 -20|
+issues_past_lookback|691200|ORCH_REPORT_EVERY_MINUTES=0 ORCH_REPORT_EVERY_ISSUES=2|-86400|report-due reason=issues since=@AGE landed=1
+issues_inside_lookback|259200|ORCH_REPORT_EVERY_MINUTES=0 ORCH_REPORT_EVERY_ISSUES=2|-86400|
 ROWS
 new_case due_issues_two_items
 report -60
@@ -556,7 +558,7 @@ report -7300
 report -60 notes.md
 run -- due --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$OUT" "0|report-due reason=minutes since=$(at -7300)" "due, a file not named as a report is not the last report"
-when="$("$REAL_DATE" -u -d "@$((NOW - 60))" +%m-%d-%H-%M)"
+when="$("$REAL_DATE" -u -d "@$((NOW - 60))" +%m-%d-%H-%M 2>/dev/null || "$REAL_DATE" -u -r "$((NOW - 60))" +%m-%d-%H-%M)"
 report -60 "$when-succession.md"
 run -- due --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$OUT" "0|" "due, a succession report is the last report"

@@ -86,9 +86,11 @@ that time are in no report.
 due      prints `report-due reason=minutes since=<UTC>` once the last report
          is ORCH_REPORT_EVERY_MINUTES old, else `report-due reason=issues
          since=<UTC> landed=<N>` once ORCH_REPORT_EVERY_ISSUES distinct fleet
-         items landed since it, else nothing. Nothing under ORCH_REPORT=off, and
-         nothing where no report exists and no lanes[] record has a
-         launched_at.
+         items landed since it, else nothing. Where the last report is older
+         than Landed's 7-day lookback, one item landed inside the lookback is
+         enough, and landed= counts the lookback alone. Nothing under
+         ORCH_REPORT=off, and nothing where no report exists and no lanes[]
+         record has a launched_at.
 render   prints the four rows.
 write    prints the summary file's text, a blank line and the four rows, and
          writes the same bytes to the path `workflow-state
@@ -339,7 +341,12 @@ if [[ "$VERB" == due ]]; then
   # Items, not pull requests: one item's second PR, in a consumer repository
   # under the same branch, is not a second item finished.
   count="$(awk -F'\t' 'NF && !seen[$1]++ { n++ } END { print n + 0 }' <<<"$LANDED")"
-  [[ "$count" -lt "$EVERY_ISSUES" ]] || echo "report-due reason=issues since=$since landed=$count"
+  # Where the lookback cut the window, the count since MARKER is at least this
+  # one and is not read: one item inside it makes the report due, so items
+  # landing further apart than the lookback still reach a report.
+  if [[ "$count" -ge "$EVERY_ISSUES" || ("$LANDED_CUT" -eq 1 && "$count" -gt 0) ]]; then
+    echo "report-due reason=issues since=$since landed=$count"
+  fi
   exit 0
 fi
 

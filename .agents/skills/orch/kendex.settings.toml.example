@@ -210,7 +210,9 @@ ORCH_REPORT = "on"
 ORCH_REPORT_EVERY_MINUTES = "120"
 
 # Finished items that bring the next status report forward, whatever the
-# minutes above say. 0 leaves the report on its minutes alone.
+# minutes above say. 0 leaves the report on its minutes alone. Where the last
+# report is more than 7 days old, one item finished in the last 7 days is
+# enough.
 ORCH_REPORT_EVERY_ISSUES = "0"
 
 # How many queued items the report's Next list shows.
