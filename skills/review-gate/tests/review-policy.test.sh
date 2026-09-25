@@ -150,20 +150,30 @@ stated() { # KIND FILE — what FILE says the default is
     *) printf 'unknown-kind' ;;
   esac
 }
-drift() { # FILE OUT — OUT is a copy of FILE with the default replaced by other rows
-  local content
-  content="$(cat -- "$1")"
-  printf '%s\n' "${content/"$DEFAULT"/"$CUSTOM"}" >"$2"
+# Literal, through the environment and index/substr, as the marker mutant
+# below does: a quoted replacement word in ${var/pat/rep} keeps its quotes
+# under Bash 3.2, so the copy would carry text no reader was asked about.
+drift() { # FILE OUT — OUT is FILE with the default replaced by other rows
+  DRIFT_OLD="$DEFAULT" DRIFT_NEW="$CUSTOM" awk '
+    {
+      old = ENVIRON["DRIFT_OLD"]
+      at = index($0, old)
+      if (at) { $0 = substr($0, 1, at - 1) ENVIRON["DRIFT_NEW"] substr($0, at + length(old)) }
+      print
+    }' "$1" >"$2"
 }
 while IFS='|' read -r label kind file mode want; do
   case "$want" in DEFAULT) want="$DEFAULT" ;; CUSTOM) want="$CUSTOM" ;; esac
   path="$SKILL_DIR/$file"
   if [ "$mode" != shipped ]; then
-    drift "$path" "$TMP/drift.${file##*/}"
-    if cmp -s -- "$path" "$TMP/drift.${file##*/}"; then
-      bad "control: the drift copy of $file kept the default"
-    fi
-    path="$TMP/drift.${file##*/}"
+    out="$TMP/drift.${file##*/}"
+    drift "$path" "$out"
+    # The copy is the original with exactly the one string swapped: no
+    # default left, one custom string, and no byte added around it.
+    want_bytes=$(( $(wc -c <"$path") - ${#DEFAULT} + ${#CUSTOM} ))
+    assert_eq "$(grep -cF -- "$DEFAULT" "$out" || true):$(grep -cF -- "$CUSTOM" "$out" || true):$(( $(wc -c <"$out") ))" \
+      "0:1:$want_bytes" "control: the drift copy of $file swaps the default for other rows and nothing else"
+    path="$out"
   fi
   assert_eq "$(stated "$kind" "$path")" "$want" "$label"
 done <<'ROWS'
