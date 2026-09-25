@@ -110,7 +110,7 @@ A `--check` exit `1` with no JSON whose first stderr line is `pr-merge: retired-
 
 Three warnings are merge gates, not advice:
 
-- **`unresolved_threads`** — zero unresolved review threads is required at merge time. Its sibling `unresolved_threads_waived` carries the same count where the class policy waives the thread term, is not a gate, and needs no action. Route to `review-pr-comments` to reply and resolve first. `auto-recommended` keeps triaging within `REVIEW_MAX_EXTERNAL_ROUNDS`, then records `review-threads-open`. No answer merges past them: § 5's arm refuses an unresolved thread, a `Force merge` included.
+- **`unresolved_threads`** — zero unresolved review threads is required at merge time. Its sibling `unresolved_threads_waived` carries the same count where the class policy waives the thread term, is not a gate, and needs no action. Route to `review-pr-comments` to reply and resolve first. `auto-recommended` keeps triaging within `REVIEW_MAX_EXTERNAL_ROUNDS`, then records `review-threads-open`. No answer merges past them: § 5's arm refuses an unresolved thread.
 - **`suppressed-findings`** — not a `CHECK` warning, and a merge gate. `pr-merge --check` reduces the red gate to `ci_failed`, `ci-classify-refusal` prints a `fail:` line naming the `Review gate` check, and that check's status description opens `N suppressed finding(s) in a review body`; `pr-watch` reports the same state as a `suppressed-findings` attention line. Those entries are findings a reviewer wrote into its review body, so no thread carries them: `unresolved_threads` reads zero and `review-pr-comments` reaches none of them. Answer them by [references/suppressed-findings.md](../references/suppressed-findings.md), which owns the whole route.
 - **`not_approved`** — bind this pull request's endpoints as `[BASE_SHA]` and `[HEAD_SHA]`:
 
@@ -134,7 +134,7 @@ Three warnings are merge gates, not advice:
 
   An `unreviewable` status is never a met gate: no automatic reviewer targets this PR's base, so the silence is structural. Follow [references/gates.md](../references/gates.md) § Stacked pull requests, then re-run the wait. If it repeats, `auto-recommended` records `review-gate-unreviewable`, while `ask` presents the wait or stop choice.
 
-  Stop waiting for a missing gate verdict only on an explicit user `Force merge`, which then takes § 5's `--auto` arm.
+  Stop waiting for a missing gate verdict only on an explicit user `Force merge` that [`submit-pr.md`](submit-pr.md) § 4 recorded as `pr_approval.forced`; that head then takes § 5's `--auto` arm.
 
 Bot-specific signals — emoji reactions, sticky-comment prose, checklist text — are never parsed as merge gates. Only GitHub-native review state and the thread-resolution count count.
 
@@ -222,7 +222,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`: the class is measured over both endpoints, and a retarget changes it without moving the head, so the fresh answer is what carries the exemption and the head says it is the same run. Any other answer arms nothing and escapes by micro.md condition 9. Read workflow state `pr.size_check` for `[STATE_KEY]`, and use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.
 
-   **Merge route.** One route, on every change class: take the `--auto` arm below, and reach the direct attempt only where that arm answers `arm: no-merge-gate`, a repository with no queue and nothing for auto-merge to wait on. A § 3.2 `Force merge` answer takes the same arm: it ends the wait for a missing gate verdict and skips nothing the arm or the queue checks, so an unresolved thread still refuses it.
+   **Merge route.** One route, on every change class: take the `--auto` arm below, and reach the direct attempt only where that arm answers `arm: no-merge-gate`, a repository with no queue and nothing for auto-merge to wait on. A head whose `Force merge` `submit-pr.md` § 4 recorded as `pr_approval.forced` takes the same arm: that answer ends the wait for a missing gate verdict and skips nothing the arm or the queue checks, so an unresolved thread still refuses it.
 
    The lane arms its own head under the token the `github.sh` router selects, which in a lane sandbox is the lanes app's installation token, and waits in `queue-wait` to a terminal verdict. No overseer merges for it and no setting routes it past the queue (`pr-merge --help` § Retired settings).
 
