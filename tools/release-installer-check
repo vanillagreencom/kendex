@@ -205,11 +205,13 @@ check_dmg() {
   hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg" >/dev/null 2>&1 ||
     die extract "$dmg"
   # The EXIT trap detaches it, so a refusal inside answers cannot leave
-  # the image mounted.
+  # the image mounted; a detach that fails here leaves it recorded, and
+  # the trap tries again.
   MOUNTED=$mount
   answers "$dmg" "$mount/kendex.app/Contents/MacOS/kendex"
-  hdiutil detach "$mount" >/dev/null 2>&1 || true
-  MOUNTED=""
+  if hdiutil detach "$mount" >/dev/null 2>&1; then
+    MOUNTED=""
+  fi
 }
 
 case "$target" in

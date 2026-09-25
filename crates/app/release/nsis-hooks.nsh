@@ -40,7 +40,9 @@
   SendMessage ${KENDEX_HWND_BROADCAST} ${KENDEX_WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 !macroend
 
-!define KENDEX_PATH_OPEN "$$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $$true); $$p = [string]$$k.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames); $$d = $$env:KENDEX_BIN_DIR; $$r = 'Software\ai.kendex.app';"
+; ErrorActionPreference Stop turns a failed registry call into a nonzero
+; exit, which the macro above reports, instead of a printed error beside 0.
+!define KENDEX_PATH_OPEN "$$ErrorActionPreference = 'Stop'; $$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $$true); $$p = [string]$$k.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames); $$d = $$env:KENDEX_BIN_DIR; $$r = 'Software\ai.kendex.app';"
 
 ; The PATH entry is the setup's to remove only when the setup added it. A
 ; directory already on the PATH before the install stays there after the
