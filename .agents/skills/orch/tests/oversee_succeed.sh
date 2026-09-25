@@ -213,12 +213,14 @@ ttl=""
 [ -z "\${USAGE_TTL:-}" ] || ttl="ORCH_LANES_USAGE_TTL=\$USAGE_TTL"
 wall="ORCH_OVERSEER_WALL_MINUTES=\${WALL_MINUTES:-0}"
 successors="ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=\${SUCCESSOR_ACCOUNTS:-0}"
+qt=""
+[ -z "\${QUESTION_TOOL:-}" ] || qt="ORCH_OVERSEER_QUESTION_TOOL=\$QUESTION_TOOL"
 cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
   \$lane \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
   ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \\
-  \$hp \$cm \$ttl \$wall \$successors "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
+  \$hp \$cm \$ttl \$wall \$successors \$qt "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
 # in-pane ARGS... — a caller pane's own command: draw the screen, wait until
 # tmux shows it, then become the script.
@@ -1270,6 +1272,32 @@ SUCCESSION=off run_succeed printoff '' --print-launch-line
 check "succession off still prints the line: printing launches nothing" \
   "$RC|$OUT|$(overseers)" \
   "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|0"
+
+# A successor overseer keeps its harness question tool unless
+# ORCH_OVERSEER_QUESTION_TOOL is off, which writes the words every lane launch
+# carries. The setting decides either way, so a caller's own copy of the words
+# is dropped while it is on, and a value that is neither refuses before a line
+# is built.
+for row in \
+  "claude|||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|unset keeps the claude question tool" \
+  "claude|off||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --disallowedTools=AskUserQuestion\\,EnterPlanMode '$BRIEF'|off takes the claude question tool away" \
+  "claude|on|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --verbose '$BRIEF'|on drops the caller's own question-tool words" \
+  "codex|off||0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false --disable default_mode_request_user_input '$BRIEF'|off takes the codex question tool away" \
+  "claude|sometimes||1|oversee-succeed: invalid-question-tool ORCH_OVERSEER_QUESTION_TOOL=sometimes|a value that is neither on nor off refuses" \
+  ; do
+  IFS='|' read -r row_harness row_value row_flags row_rc row_want row_what <<<"$row"
+  if [[ "$row_harness" == codex ]]; then
+    new_caller "$CODEX_SCREEN" 'Context 48% left'
+    row_lane="CODEX_HOME=$H/.codex"
+  else
+    new_caller "$UNDER_MARK"
+    row_lane="CLAUDE_CONFIG_DIR=$H/.claude"
+  fi
+  # shellcheck disable=SC2086  # a row's flags are its own words, split on purpose.
+  CALLER_LANE="$row_lane" QUESTION_TOOL="$row_value" run_succeed "printquestion-$row_harness" '' --print-launch-line \
+    ${row_flags:+-- $row_flags}
+  check "question tool: $row_what" "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" "$row_rc|$row_want|0"
+done
 
 # The dead overseer's window: a pane drawing NOTHING — no status line, no
 # harness — at an index of its own, so a row reads which window the successor

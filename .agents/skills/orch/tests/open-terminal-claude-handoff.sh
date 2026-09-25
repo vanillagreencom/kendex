@@ -307,7 +307,10 @@ observe() {
   local got="" token name value needle
   set -f
   for token in $1; do
+    # A needle can hold `=` and is ended by the last one; the tail's value can
+    # hold one too and follows the first.
     name="${token%=*}"
+    [[ "$token" != tail=* ]] || name=tail
     needle="${name#*~}"; needle="${needle//+/ }"
     case "$name" in
       rc) value="$RC" ;;
@@ -385,7 +388,7 @@ launch_table \
   "linear:claude renders the caller's launch flags before the brief, no warning|gui|-|--model opus[1m] --effort max --dangerously-skip-permissions|-|rc=0 cmd~'--model'+'opus[1m]'+'--effort'+'max'+'--dangerously-skip-permissions'+'$BRIEFN'=true stderr~open-terminal:+permission-prompt=false" \
   "github:claude renders the same|github|-|--effort max --dangerously-skip-permissions|-|rc=0 cmd~'--effort'+'max'+'--dangerously-skip-permissions'+'/orch+start+github+acme/widgets#42'=true" \
   "a second launch renders its own flags, nothing leaking from another launch or a stored default|gui|-|--model sonnet --permission-mode bypassPermissions|-|rc=0 cmd~'--model'+'sonnet'+'--permission-mode'+'bypassPermissions'+'$BRIEFN'=true cmd~'--effort'+'max'=false stderr~open-terminal:+permission-prompt=false" \
-  "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|rc=0 tail=claude+-n+CC-737+'$BRIEFN' stderr~open-terminal:+permission-prompt+flags==true" \
+  "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|rc=0 tail=claude+-n+CC-737+'--disallowedTools=AskUserQuestion,EnterPlanMode'+'$BRIEFN' stderr~open-terminal:+permission-prompt+flags==true" \
   "an unflagged codex launch warns for the same unattended prompt|gui-codex|-|-|-|rc=0 stderr~open-terminal:+permission-prompt+flags==true" \
   "codex's unattended permission word suppresses the warning|gui-codex|-|--dangerously-bypass-approvals-and-sandbox|-|rc=0 cmd~--dangerously-bypass-approvals-and-sandbox=true stderr~open-terminal:+permission-prompt=false" \
   "a prompting override still launches, rendered as given, and warns loudly|gui|-|--permission-mode plan|-|rc=0 cmd~'--permission-mode'+'plan'+'$BRIEFN'=true stderr~open-terminal:+permission-prompt+flags=--permission-mode+plan=true" \
@@ -432,7 +435,7 @@ if wait_capture; then
   # rendered line through a login shell, which is the shape under test.
   (cd "$globbait" && OT_ARGV_CAPTURE="$TMP_ROOT/argv" bash -lc "PATH=\"$BIN:\$PATH\"; ${cmd##*&& }") >/dev/null 2>&1 || true
   rm -f "$BIN/claude"
-  assert_eq "$(tr '\n' ' ' < "$TMP_ROOT/argv" 2>/dev/null || echo unrun)" "-n CC-737 --model opus[1m] --dangerously-skip-permissions $BRIEF " \
+  assert_eq "$(tr '\n' ' ' < "$TMP_ROOT/argv" 2>/dev/null || echo unrun)" "-n CC-737 --disallowedTools=AskUserQuestion,EnterPlanMode --model opus[1m] --dangerously-skip-permissions $BRIEF " \
     "the argv claude receives is the flags as given: a same-named file cannot rewrite the model id"
 else
   FAIL=$((FAIL + 1))

@@ -41,6 +41,8 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 source "$TEST_DIR/lib/waiter-assertions.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$TEST_DIR/lib/lanes-fixture.sh"
+# shellcheck source=lib/question-off.sh
+source "$TEST_DIR/lib/question-off.sh"
 # The trust rows below read the config a codex launch would open. That reading
 # is the launcher's own, so the suite sources it rather than scanning the file
 # a second way and pinning what its own scanner happens to find.
@@ -271,7 +273,8 @@ CHOICE_CMD='cmd=true --model opus --effort high'
 # `max_pct=unset` drops the pinned launch threshold so `lanes` decides, and
 # `prep=store_ro` or `prep=claims_file` stages this run's claim store as a
 # read-only directory or as a plain file before the launch, `flags=S` passes S
-# as one --launch-flags string and `cmd=S` passes S as one --cmd template. Those
+# as one --launch-flags string and `cmd=S` passes S as one --cmd template, with
+# every harness's question-tool words after it (lib/question-off.sh). Those
 # last two exist because a lane launch names both a model and an effort, which
 # is two words, while a table row's args field is word-split; the env list is
 # not. They are alternatives, never both: --launch-flags beside --cmd reach
@@ -300,7 +303,7 @@ run_ot() {
           ;;
         prep=*) prep="${item#prep=}" ;;
         flags=*) flag_args=(--launch-flags "${item#flags=}") ;;
-        cmd=*) flag_args=(--cmd "${item#cmd=}") ;;
+        cmd=*) flag_args=(--cmd "${item#cmd=} $QUESTION_OFF_ALL") ;;
         *) env_args+=("$item") ;;
       esac
     done
@@ -595,11 +598,11 @@ table \
 # The --cmd template carries the same two words for the same reason: a launch
 # writing its own harness argv still made the choice, and a template a row
 # cannot spell inside a word-split args field is passed through run_ot's argv.
-run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus --effort high" CC-88
+run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus --effort high $QUESTION_OFF_ALL" CC-88
 assert_eq "$(observe "rc=0 launched=1 modelmissing=none effortmissing=none")" \
   "rc=0 launched=1 modelmissing=none effortmissing=none" \
   "a model and an effort named only in the --cmd template are named"
-run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus" CC-89
+run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus $QUESTION_OFF_ALL" CC-89
 assert_eq "$(observe "rc=1 launched=nolog effortmissing=harness=claude,lane=$H/.claude,spellings=--effort")" \
   "rc=1 launched=nolog effortmissing=harness=claude,lane=$H/.claude,spellings=--effort" \
   "a --cmd template naming a model and no effort is refused for the effort"
@@ -649,7 +652,7 @@ table \
   "a claude launch whose model value carries a colon is still asked for its effort, its row naming no separator|cmd=true --model opus:1m|--harness claude --lane $H/.claude CC-98|rc=1 launched=nolog modelmissing=none effortmissing=harness=claude,lane=$H/.claude,spellings=--effort"
 # The same value inside a --cmd template, which a word-split args field cannot
 # spell.
-run_ot "" --harness pi --lane "$H/.claude" --cmd "pi --model sonnet:high" CC-96
+run_ot "" --harness pi --lane "$H/.claude" --cmd "pi --model sonnet:high $QUESTION_OFF_ALL" CC-96
 assert_eq "$(observe "rc=0 launched=1 modelmissing=none effortmissing=none")" \
   "rc=0 launched=1 modelmissing=none effortmissing=none" \
   "pi's level named on the model value inside the --cmd template names the effort too"
@@ -686,14 +689,14 @@ assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct
 # waved through, and the same wall is judged as for a launch whose command this
 # launcher builds. The second row is the inverse, a model with room in the same
 # template still launching.
-run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model fable --effort high" CC-75
+run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model fable --effort high $QUESTION_OFF_ALL" CC-75
 assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model")" \
   "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model" \
   "a model named inside the --cmd command gates the lane on that model's wall"
 # cmd_home beside the launch: a claude lane names no CODEX_HOME and builds no
 # home of its own, since the folder-trust record that harness reads is not this
 # file at all.
-run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus --effort high" CC-76
+run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus --effort high $QUESTION_OFF_ALL" CC-76
 assert_eq "$(observe "rc=0 launched=1 walled=none cmd_home=none trust_route=none")" \
   "rc=0 launched=1 walled=none cmd_home=none trust_route=none" \
   "a --cmd naming a model with room still launches, under no CODEX_HOME and no trust route"
@@ -900,7 +903,7 @@ echo "=== a tmux launch under a lane runs under it and records its claim ==="
 # and stays on the lane resolved up front.
 table \
   "--lane <alias> launches under that lane's env prefix and records one claim naming lane, window and pane|ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD|--harness claude --lane work CC-2|rc=0 cmd_lane=eclaude claims=1 claim_lanes=eclaude claim_window=CC-2 claim_pane=%1" \
-  'a launch with no --lane still opens its window and records no claim||--harness claude --cmd true CC-3|launched=1 claims=nolog' \
+  'a launch with no --lane still opens its window and records no claim|cmd=true|--harness claude CC-3|launched=1 claims=nolog' \
   "a GUI batch launches, records no claim, and reports the one lane it resolved|TERMINAL=ghostty;$CHOICE_CMD|--ghostty --harness claude --lane auto CC-10 CC-11|rc=0 claims=nolog summary=lane=claude"
 
 echo "=== --lane auto over a batch re-picks off every claimed lane ==="
@@ -950,7 +953,7 @@ typed() { grep -cF -- "$1" "$RUN/tmux.log" 2>/dev/null || true; }
 said() { grep -cxF -- "$1" <<<"$OUT" || true; }
 
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD" --harness claude --lane work --repo o/r CC-40
-assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=$(host_call) ssh=$(typed "clear; ssh 'lane.example'") remote=$(typed "exec bash -lc 'cd /srv/lane && exec true --model opus --effort high'") env=$(typed CLAUDE_CONFIG_DIR=) opened=$(said "open-terminal: tmux-opened item=CC-40 host=$HOST_STUB path=/srv/lane")" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=$(host_call) ssh=$(typed "clear; ssh 'lane.example'") remote=$(typed "exec bash -lc 'cd /srv/lane && exec true --model opus --effort high $QUESTION_OFF_ALL'") env=$(typed CLAUDE_CONFIG_DIR=) opened=$(said "open-terminal: tmux-opened item=CC-40 host=$HOST_STUB path=/srv/lane")" \
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude calls=create,--item,CC-40,--repo,o/r,--harness,claude,--account,eclaude;cat,--item,CC-40,/srv/lane/.git;put,--item,CC-40,/srv/clone/.git/lane-mail/cc-40;cat,--item,CC-40,/srv/clone/.git/lane-mail/cc-40 ssh=1 remote=1 env=0 opened=1" \
   "a hosted launch creates through lane-host, types ssh then the remote line, and renders no lane env prefix"
 # A hosted relaunch continues natively. Q is how single_quote renders one quote
@@ -969,16 +972,16 @@ Q="'\\''"
 hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every directive it prints.' "$1" "$1"; }
 HOSTED_LINE="$(hosted_line CC-41)"
 run_ot "$CHOICE" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch CC-41
-assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q --continue $Q$HOSTED_LINE$Q'")" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q --continue $Q$HOSTED_LINE$Q'")" \
   "rc=0 creates=nolog launched=1 calls=create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,CC-41,/srv/lane/.git;put,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;cat,--item,CC-41,/srv/clone/.git/lane-mail/cc-41 remote=1" \
   "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line"
 HOSTED_LINE="$(hosted_line CC-48)"
 run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model opus --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-48
-assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec pi $Q--model$Q ${Q}opus$Q $Q--thinking$Q ${Q}high$Q -c $Q$HOSTED_LINE$Q'")" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec pi $Q--exclude-tools$Q ${Q}question$Q $Q--model$Q ${Q}opus$Q $Q--thinking$Q ${Q}high$Q -c $Q$HOSTED_LINE$Q'")" \
   "rc=0 creates=nolog launched=1 remote=1" \
   "a hosted pi relaunch continues natively with the continuation line"
 run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=-m gpt-6-astra -c model_reasoning_effort=high" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
-assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec codex $Q-c$Q ${Q}check_for_update_on_startup=false$Q $Q-m$Q ${Q}gpt-6-astra$Q $Q-c$Q ${Q}model_reasoning_effort=high$Q resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec codex $Q-c$Q ${Q}check_for_update_on_startup=false$Q $Q--disable$Q ${Q}default_mode_request_user_input$Q $Q-m$Q ${Q}gpt-6-astra$Q $Q-c$Q ${Q}model_reasoning_effort=high$Q resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \
   "rc=0 creates=nolog launched=1 remote=1 line=0" \
   "a hosted codex relaunch resumes promptless, so no sentence is rendered into the session-id slot"
 # The lane comes up idle, so the launcher owes the operator a record saying the
@@ -1005,7 +1008,7 @@ if command -v codex >/dev/null 2>&1; then
   # escape, which is what the remote shell does before codex sees its argv.
   RENDERED="$(sed -n "s/.*exec bash -lc 'cd \/srv\/lane \&\& exec \(codex .*\)'.*/\1/p" "$RUN/tmux.log" \
     | tail -1 | sed "s/'\\\\''/'/g")"
-  assert_eq "${RENDERED:-MISSING}" "codex '-c' 'check_for_update_on_startup=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high' resume --last" \
+  assert_eq "${RENDERED:-MISSING}" "codex '-c' 'check_for_update_on_startup=false' '--disable' 'default_mode_request_user_input' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high' resume --last" \
     "the rendered remote command is recovered from the pane log"
   CODEX_PARSE_RC=0
   CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 bash -c "$RENDERED zz-appended-session" </dev/null >/dev/null 2>&1 || CODEX_PARSE_RC=$?
@@ -1025,7 +1028,7 @@ fi
 # distinct, and the assertion below is what reddens if the bare number returns.
 HOSTED_LINE="$(hosted_line issue-2708)"
 run_ot "ORCH_LANE_ALIASES=eclaude=work;$CHOICE" --host "$HOST_STUB" --tracker github --harness claude --lane work --repo o/r --relaunch 2708
-assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q --continue $Q$HOSTED_LINE$Q'")" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q --continue $Q$HOSTED_LINE$Q'")" \
   "rc=0 creates=nolog launched=1 calls=create,--item,issue-2708,--repo,o/r,--harness,claude,--account,eclaude,--relaunch;cat,--item,issue-2708,/srv/lane/.git;put,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;cat,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708 remote=1" \
   "a GitHub relaunch names the worktree id its mailbox is bound under, never the bare issue number, and asks the provider nothing on an account that measured"
 
@@ -1344,7 +1347,7 @@ git -C "$SCRIPTREPO" init -q; git -C "$CALLERREPO" init -q
   TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$TMP_ROOT/caller.tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.panes" \
   OT_WT_LOG="$TMP_ROOT/caller.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto \
-  --cmd "true --model opus --effort high" CC-20 ) >/dev/null 2>&1
+  --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-20 ) >/dev/null 2>&1
 assert_eq "caller=$(ls -1 "$CALLERREPO"/tmp/oversee-watch/claims 2>/dev/null | wc -l | tr -d '[:space:]') script=$(ls -1 "$SCRIPTREPO"/tmp/oversee-watch/claims 2>/dev/null | wc -l | tr -d '[:space:]')" \
   "caller=1 script=0" "the claim lands in the caller checkout, where lanes reads it, never under the script's"
 
@@ -1360,7 +1363,7 @@ REPO_LOG="$TMP_ROOT/caller.repo.tmux.log"
   TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$REPO_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.repo.panes" \
   OT_WT_LOG="$TMP_ROOT/caller.repo.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto \
-  --cmd 'true {repo} --model opus --effort high' CC-21 ) >/dev/null 2>&1
+  --cmd "true {repo} --model opus --effort high $QUESTION_OFF_ALL" CC-21 ) >/dev/null 2>&1
 assert_eq "caller=$(grep -c 'caller-owner/caller-repo' "$REPO_LOG" || true) script=$(grep -c 'script-owner/script-repo' "$REPO_LOG" || true)" \
   "caller=1 script=0" "the launch line names the caller checkout's repository, never the script checkout's"
 
@@ -1403,7 +1406,7 @@ run_bad_repo() {
     OT_TMUX_PANES="$TMP_ROOT/$name.panes" OT_WT_LOG="$TMP_ROOT/$name.worktree.log" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     "$script" --harness claude --lane auto \
-      --cmd 'true {repo} --model opus --effort high' CC-30 ) >/dev/null 2>&1
+      --cmd "true {repo} --model opus --effort high $QUESTION_OFF_ALL" CC-30 ) >/dev/null 2>&1
   printf 'launched=%s rejected=%s' \
     "$(grep -c '^new-window' "$log" || true)" "$(grep -cF "$BAD_REPO" "$log" || true)"
 }
@@ -1443,7 +1446,7 @@ marked() {
   out="$( cd "$caller" && GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" \
     OT_TMUX_PANES="$runs/panes" OT_WT_LOG="$runs/worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$3" \
-    "$script" --harness claude --cmd true CC-40 2>&1 )" || rc=$?
+    "$script" --harness claude --cmd "true $QUESTION_OFF_ALL" CC-40 2>&1 )" || rc=$?
   wt="$(find "$runs" -maxdepth 1 -type d -name 'wt.*')"
   if [[ -f "$wt/.git/lane-mail/cc-40" ]]; then
     marker=other
@@ -1643,14 +1646,14 @@ lane_launch() {
   # nothing here turns on its value. It goes in the text the launch RUNS: inside
   # a row's own --cmd command where it has one, since --launch-flags beside a
   # template reach nothing and are refused, and in --launch-flags where it does
-  # not. Appended, so the template's FIRST word, which is what the launcher form
+  # not. The question-tool words follow it, for the same reason. Appended, so the template's FIRST word, which is what the launcher form
   # is judged on, stays the row's own.
   local choice extra=()
   case "$harness" in
     codex) choice="-m gpt-6-astra -c model_reasoning_effort=high" ;;
     *) choice="--model opus --effort high" ;;
   esac
-  if [[ -n "$template" ]]; then extra=(--cmd "$template $choice")
+  if [[ -n "$template" ]]; then extra=(--cmd "$template $choice $QUESTION_OFF_ALL")
   else extra=(--launch-flags "$choice"); fi
   # shellcheck disable=SC2206  # a row's flags are its own words, split on purpose.
   [[ -z "$flags" ]] || extra+=($flags)
@@ -1875,7 +1878,7 @@ sed -i.bak 's/LAUNCH_TEXT="\$CMD_TEMPLATE"/LAUNCH_TEXT="$LAUNCH_FLAGS $CMD_TEMPL
 assert_eq "$(grep -cF 'LAUNCH_TEXT="$LAUNCH_FLAGS $CMD_TEMPLATE"' "$TMP_ROOT/ctl-flags-reach/scripts/open-terminal")" "1" \
   "control ctl-flags-reach applied its second mutation"
 OPEN_TERMINAL="$TMP_ROOT/ctl-flags-reach/scripts/open-terminal"
-run_ot "flags=--model opus --effort high" --harness claude --lane "$OUTSIDE_LANE" --cmd true CC-113
+run_ot "flags=--model opus --effort high" --harness claude --lane "$OUTSIDE_LANE" --cmd "true $QUESTION_OFF_ALL" CC-113
 assert_eq "$(observe "rc=0 launched=1 flagsunreachable=none modelmissing=none")" \
   "rc=0 launched=1 flagsunreachable=none modelmissing=none" \
   "control: with the refusal gone and the flags read again, a launch whose command names no model passes the gate on a model the harness never runs"
