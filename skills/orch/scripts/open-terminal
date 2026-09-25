@@ -104,7 +104,7 @@ ot_message() { # REASON FIELD=VALUE...
     wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd, --relaunch or lane host.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
     wake-failed) text='The delivering command exited non-zero before the wake window closed. The lane was not woken; the log says why.' ;;
-    wake-refused) text='The lane is not idle: the reason names the state the shared judge read from its pane and its harness process, and a resume would run a second session beside a live one. Nothing was started. Mail reaches a lane only while it still takes a tool call or ends a turn, so a refusal is a state and not a remedy: the refusal table in the oversee workflow, under Talking to a lane, says what each reason licenses.' ;;
+    wake-refused) text='The lane is not idle: the reason names the state the shared judge read from its pane and its harness process, and a resume would run a second session beside a live one. Nothing was started. Mail reaches a lane only while it still takes a tool call or ends a turn, so a refusal is a state and not a remedy: the refusal table in the orch lane-reach reference, under Wake refusals, says what each reason licenses.' ;;
     lane-woken) text='The line that reads the lane inbox is on its way to the session. The delivering command runs detached; its output goes to the log.' ;;
     summary) text='The launch batch is complete.' ;;
     *) printf 'open-terminal: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
@@ -374,8 +374,8 @@ Options:
                     asking, walled, exited or unjudged. Mail reaches a lane
                     only while it still takes a tool call or ends a turn, so
                     a refusal is a state and not a remedy: the refusal table
-                    in the oversee workflow, under Talking to a lane, says
-                    what each reason licenses.
+                    in the orch lane-reach reference, under Wake refusals,
+                    says what each reason licenses.
 
 A Linear ITEM is accepted in whichever case GH_ISSUE_PATTERN matches and
 launched under the tracker's canonical spelling, TEAM-N, which names the
