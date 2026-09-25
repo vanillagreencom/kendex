@@ -204,20 +204,9 @@ host="$(record_field host)"
 resolve_identity tracker tracker "$(record_field tracker)" "$OPT_TRACKER"
 resolve_identity repo repo "$(record_field repo)" "$OPT_REPO"
 resolve_identity harness harness "$(record_field harness)" "$OPT_HARNESS"
-# The item key answers the tracker for one of its two shapes and not the other.
-# A tracker-identifier key is a Linear item: open-terminal canonicalizes it
-# under that launcher's own default tracker. An issue-N key names no tracker.
-# It is the spelling open-terminal writes for a GitHub item AND the spelling a
-# Linear item is keyed by wherever GH_ISSUE_PATTERN accepts it, so nothing in
-# the key picks between them; deriving github there would send gh issue view N
-# at whatever --repo the operator supplied next and close a Linear lane on an
-# unrelated issue's state. The repository behind a GitHub item is in no other
-# field of the record, so it stays --repo's alone.
-case "$ITEM" in
-  issue-*) derived_tracker="" ;;
-  *) derived_tracker=linear ;;
-esac
-derive_identity tracker "$derived_tracker"
+# The item key answers the tracker for one of its two shapes and not the other,
+# by lib/lane-state.sh's rule; the repository stays --repo's alone.
+derive_identity tracker "$(lane_key_tracker "$ITEM")"
 tracker_source=given
 [[ "$DERIVE_IDENTITY_FILLED" -eq 0 ]] || tracker_source=derived
 

@@ -575,3 +575,43 @@ lane_state() {
     *) printf -v "$_ls_out" unjudged ;;
   esac
 }
+
+# ---------------------------------------------------------------------------
+# A lane's work item: which tracker its key names, and which merged pull
+# requests are its own. The watch, lane-close and oversee-report each ask one
+# of these here, so each gets the same answer for the same key and pull
+# request.
+# ---------------------------------------------------------------------------
+
+# lane_key_tracker ITEM — prints the tracker the item key alone names: `linear`
+# for a tracker-identifier key, nothing for an issue-N key. open-terminal
+# canonicalizes a tracker-identifier key under its default tracker, Linear. An
+# issue-N key names no tracker: it is the spelling open-terminal writes for a
+# GitHub item AND the spelling a Linear item is keyed by wherever
+# GH_ISSUE_PATTERN accepts it, so nothing in the key picks between them, and
+# guessing github would read whatever repository is at hand on an unrelated
+# issue. The repository behind a GitHub item is in no field but the record's
+# own `repo`, so nothing here supplies one.
+lane_key_tracker() {
+  case "$1" in
+    issue-*) ;;
+    *) printf 'linear' ;;
+  esac
+}
+
+# LANE_MERGED_JQ defines `lane_merged($branch; $owner; $since)`, the one
+# filter over a `gh pr list --state merged` array answering which pull requests
+# are a lane's own: head branch equal to the item key lower-cased, head owner
+# equal to the repository owner (a head GitHub returns with no owner, a
+# deleted fork, is not the lane's), merged at or after the epoch $since. Each
+# kept pull request gains `at`, its merge epoch. A caller prepends it to its
+# own program: jq -r "$LANE_MERGED_JQ"' lane_merged($b; $o; $s)[] | ...'.
+# mergedAt carries fractional seconds on some responses, which fromdateiso8601
+# refuses, so they are cut first.
+LANE_MERGED_JQ='def lane_merged($branch; $owner; $since):
+  [ .[]
+    | select((.headRefName | ascii_downcase) == ($branch | ascii_downcase))
+    | select(((.headRepositoryOwner.login // "") | ascii_downcase) == ($owner | ascii_downcase))
+    | select(.mergedAt != null)
+    | . + {at: (.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}
+    | select(.at >= $since) ];'

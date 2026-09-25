@@ -552,7 +552,13 @@ shortened_ceiling_watch() {
 # any checkout it names carries the same .agents/skills/orch symlink.
 # Every kendex [env] setting the watch reads is unset here as well: a settings
 # file exports them into the agent shell, and one inherited from the caller
-# would decide a case's outcome instead of the case.
+# would decide a case's outcome instead of the case. ORCH_REPORT is set off
+# rather than unset: its default is on, and a fleet state whose lanes launched
+# more than an interval ago would put report-due into every case's block. The
+# report cases pass ORCH_REPORT=on, which the later assignment makes win.
+# The report's helper paths, OVERSEE_WATCH_REPORT and every OVERSEE_REPORT_*
+# override oversee-report reads, are unset for the same reason; a case that
+# names one sets it after the clear.
 # `--repo owner/repo` is supplied only when ARGS name no repo of their own:
 # --repo is repeatable, so injecting it beside a case's own would make that
 # case a two-repo fleet with owner/repo first. `--no-repo` is the harness's own
@@ -583,6 +589,10 @@ run_watch() {
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR \
            -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS \
+           -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES -u ORCH_REPORT_UPCOMING \
+           -u ORCH_REPORT_COLUMNS -u ORCH_PROGRESS_REPORT_DIR -u OVERSEE_WATCH_REPORT \
+           -u OVERSEE_REPORT_WORKFLOW_STATE -u OVERSEE_REPORT_TRACKER -u OVERSEE_REPORT_GITHUB \
+           -u OVERSEE_REPORT_LANE_MAIL -u OVERSEE_REPORT_LANE_HOST ORCH_REPORT=off \
            STUB_DIR="$STUB_DIR" TMUX="fake" OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" \
            ORCH_WATCH_MAIL_INTERVAL=0 \
            ${team_args[@]+"${team_args[@]}"} \

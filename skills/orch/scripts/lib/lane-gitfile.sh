@@ -18,3 +18,68 @@ lane_gitfile_common_dir() { # GITFILE_CONTENT
   line="${line#gitdir: }"
   printf '%s\n' "${line%/worktrees/*}"
 }
+
+# ---------------------------------------------------------------------------
+# A hosted lane's files, read through lane-host: the probe oversee-watch and
+# oversee-report read a hosted worktree's `.git` and its item's workflow state
+# through, so both answer a gone worktree the same way. Each takes the
+# lane-host CLI path. ORCH_LANE_HOST is the caller's to set: oversee-report
+# puts the lane record's host in front of each call, and oversee-watch runs
+# under the ambient setting.
+# ---------------------------------------------------------------------------
+
+# lane_host_fetch LANE_HOST_CLI ITEM PATH DEST ERRF — `lane-host cat --item
+# ITEM PATH` into DEST: 0 read, 1 not there, 2 failed. Exit 2 is also the
+# dispatcher's own refusal, so it reads as a missing file only once `touch`
+# answers (schemas/lane-host.md). A failed read leaves no DEST; ERRF holds
+# what lane-host said.
+lane_host_fetch() {
+  local rc=0
+  "$1" cat --item "$2" "$3" >"$4" 2>"$5" || rc=$?
+  [[ "$rc" -ne 0 ]] || return 0
+  rm -f -- "$4"
+  [[ "$rc" -eq 2 ]] || return 2
+  "$1" touch --item "$2" >/dev/null 2>>"$5" || return 2
+  return 1
+}
+
+# lane_hosted_clone LANE_HOST_CLI ITEM ROOT SCRATCH ERRF — the clone a hosted
+# worktree at ROOT belongs to, read from its `.git` into SCRATCH, as
+# LANE_HOSTED_CLONE. 0 read; 1 the worktree is gone, which
+# ../../workflows/merge-pr.md § 5 leaves behind a merged lane until lane-close
+# runs; 2 the read failed, ERRF saying why; 3 the file names no linked
+# worktree, LANE_HOSTED_GITLINE holding the line it read, empty for an empty
+# file. A root that is itself a clone has a `.git` directory, which `cat`
+# fails on and whose HEAD answers: the clone is the root, with no `.git`
+# appended, and ERRF keeps the `.git` read's own words where HEAD does not
+# answer either.
+LANE_HOSTED_CLONE=""
+LANE_HOSTED_GITLINE=""
+lane_hosted_clone() {
+  local rc=0 common err
+  LANE_HOSTED_CLONE=""
+  LANE_HOSTED_GITLINE=""
+  lane_host_fetch "$1" "$2" "$3/.git" "$4" "$5" || rc=$?
+  if [[ "$rc" -eq 2 ]]; then
+    err="$(cat "$5")"
+    if lane_host_fetch "$1" "$2" "$3/.git/HEAD" "$4.head" "$5"; then
+      LANE_HOSTED_CLONE="$3"
+      return 0
+    fi
+    printf '%s\n' "$err" >"$5"
+  fi
+  [[ "$rc" -eq 0 ]] || return "$rc"
+  IFS= read -r LANE_HOSTED_GITLINE <"$4" || [[ -n "$LANE_HOSTED_GITLINE" ]] || return 3
+  common="$(lane_gitfile_common_dir "$LANE_HOSTED_GITLINE")" || return 3
+  LANE_HOSTED_CLONE="${common%/.git}"
+}
+
+# lane_hosted_state_path CLONE STATE_DIR ITEM — sets LANE_HOSTED_STATE_PATH to
+# the item's workflow-state file on its host: STATE_DIR joined to the clone
+# root where it is relative, as workflow-state joins it there.
+LANE_HOSTED_STATE_PATH=""
+lane_hosted_state_path() {
+  local remote="$2"
+  [[ "$remote" == /* ]] || remote="$1/$remote"
+  LANE_HOSTED_STATE_PATH="$remote/workflow-state-$3.json"
+}

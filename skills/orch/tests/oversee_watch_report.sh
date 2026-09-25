@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# oversee-watch's report-due event: relayed from `oversee-report due` on every
+# pass while a report is due, so it stops once the overseer writes one, and
+# never where the report settings turn the cadence off. The judgement's own
+# rows are oversee_report.sh; these hold the watch to relaying it.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/oversee-watch-harness.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
+
+NOW=1790000000
+iso() { "$OVERSEE_TEST_REAL_DATE" -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || "$OVERSEE_TEST_REAL_DATE" -u -r "$1" +%Y-%m-%dT%H:%M:%SZ; }
+# write_state — one running lane with no window, launched a day before NOW,
+# so the pass reads no pane for it.
+write_state() {
+  jq -n --arg at "$(iso $((NOW - 86400)))" \
+    '{issue_id: "oversee", triaged: [], lanes: [{item: "issue-1", window: null, host: null, mail_root: "/w/issue-1",
+      account: null, surface: "tmux", model: null, session_id: null, launched_at: $at, status: "running"}]}' \
+    > "$STUB_DIR/state.json"
+}
+# report AGE — a report, named as workflow-state names one, in the directory
+# ORCH_PROGRESS_REPORT_DIR names, AGE seconds before NOW.
+report() {
+  local when file
+  when="$("$OVERSEE_TEST_REAL_DATE" -u -d "@$((NOW - $1))" +%Y%m%d%H%M.%S 2>/dev/null \
+    || "$OVERSEE_TEST_REAL_DATE" -u -r "$((NOW - $1))" +%Y%m%d%H%M.%S)"
+  file="$STUB_DIR/progress-reports/${when:4:2}-${when:6:2}-${when:8:2}-${when:10:2}.md"
+  mkdir -p "$STUB_DIR/progress-reports"
+  echo "a report" > "$file"
+  TZ=UTC touch -t "$when" "$file"
+}
+# watch [ENV=VAL...] — one pass at NOW; EVENTS holds its report-due lines
+# joined by `|`, RC its exit status.
+watch() {
+  printf '%s\n' "$NOW" > "$STUB_DIR/now.epoch"
+  RC=0
+  EVENTS="$(run_watch ORCH_REPORT=on ORCH_PROGRESS_REPORT_DIR="$STUB_DIR/progress-reports" "$@" \
+    -- --max-loops 1 --state "$STUB_DIR/state.json" 2>"$STUB_DIR/err" </dev/null)" || RC=$?
+  EVENTS="$(grep '^EVENT report-due' <<<"$EVENTS" | paste -sd '|' - || true)"
+}
+
+echo "=== report-due on every pass while the last report is older than the interval ==="
+new_case report_due
+write_state
+report 7300
+DUE="EVENT report-due reason=minutes since=$(iso $((NOW - 7300)))"
+watch
+assert_eq "$RC|$EVENTS" "0|$DUE" "a report older than the default 120 minutes makes the pass report it due" "$STUB_DIR/err"
+watch
+assert_eq "$RC|$EVENTS" "0|$DUE" "the next pass reports it again while no newer report exists" "$STUB_DIR/err"
+report 60
+watch
+assert_eq "events=$EVENTS" "events=" "a report written since stops it" "$STUB_DIR/err"
+
+echo "=== settings that turn the cadence off ==="
+for setting in ORCH_REPORT_EVERY_MINUTES= ORCH_REPORT=off; do
+  new_case "report_off_${setting%%=*}"
+  write_state
+  report 999999
+  watch "$setting"
+  assert_eq "events=$EVENTS" "events=" "$setting reports no report-due at any age" "$STUB_DIR/err"
+done
+
+echo "=== the completion count ==="
+new_case report_issues
+write_state
+report 600
+jq -n --arg at "$(iso $((NOW - 60)))" \
+  '[{number: 7, headRefName: "issue-1", mergedAt: $at, mergeCommit: {oid: "abcdef1234"}}]' > "$STUB_DIR/merged.json"
+watch ORCH_REPORT_EVERY_ISSUES=1
+assert_eq "events=$EVENTS" "events=EVENT report-due reason=issues since=$(iso $((NOW - 600))) landed=1" \
+  "a fleet item merged since the last report reaches ORCH_REPORT_EVERY_ISSUES=1" "$STUB_DIR/err"
+
+echo "=== a judgement that fails fails the pass ==="
+new_case report_unjudged
+write_state
+watch ORCH_REPORT=maybe
+assert_eq "$RC|$(grep -c '^oversee-watch: report-unjudged exit=2 ' "$STUB_DIR/err" || true)|$(grep -c '^oversee-report: setting=ORCH_REPORT:maybe$' "$STUB_DIR/err" || true)" \
+  "2|1|1" "a refused judgement exits the pass 2 with the report's own keyed line under the watch's" "$STUB_DIR/err"
+
+echo "=== a judgement the watch cannot read fails the pass ==="
+# Rows: case | what the stub prints on stdout, `\n` separating lines.
+while IFS='|' read -r name reply; do
+  new_case "report_reply_$name"
+  write_state
+  printf '#!/usr/bin/env bash\nprintf %%b %q\n' "$reply" > "$STUB_DIR/report-stub"
+  chmod +x "$STUB_DIR/report-stub"
+  watch OVERSEE_WATCH_REPORT="$STUB_DIR/report-stub"
+  assert_eq "$RC|$(grep -c '^oversee-watch: report-unjudged exit=0 ' "$STUB_DIR/err" || true)|$EVENTS" "2|1|" \
+    "a due reply of $name fails the pass and relays no report-due" "$STUB_DIR/err"
+done <<'ROWS'
+garbage|garbage\n
+two_lines|report-due reason=minutes since=2026-01-01T00:00:00Z\nreport-due reason=issues since=2026-01-01T00:00:00Z landed=1\n
+ROWS
+new_case report_helper_missing
+write_state
+watch OVERSEE_WATCH_REPORT="$STUB_DIR/no-report"
+assert_eq "$RC|$(grep -c "^oversee-watch: helper-missing path=$STUB_DIR/no-report setting=OVERSEE_WATCH_REPORT\$" "$STUB_DIR/err" || true)" "2|1" \
+  "a --state watch with no executable oversee-report refuses by setting" "$STUB_DIR/err"
+
+echo "=== must-fail control ==="
+# The watch without its report check: no report-due at any age.
+MUTANT_DIR="$TMP_ROOT/report-mutant"
+mkdir -p "$MUTANT_DIR/orch"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
+ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+call='    check_report'
+assert_eq "$(grep -cxF -- "$call" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the report check is one call to strip"
+awk -v line="$call" '$0 == line { print "    :"; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+new_case report_due_mutant
+write_state
+report 999999
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" watch
+assert_eq "events=$EVENTS" "events=" "control: without the check a report long overdue is never reported" "$STUB_DIR/err"
+
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]

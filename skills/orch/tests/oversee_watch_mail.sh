@@ -795,8 +795,25 @@ hosted_mutant nothing-kept '        echo "kept=none"' '        :'
 hosted_mutant exit-zero '  [[ "$close_failed" -eq 0 ]] || exit 2' '  :'
 hosted_mutant unkeyed '      ow_message lane-close-failed "item=$1" "exit=$rc" >&2' '      :'
 hosted_mutant commit-after '        lane_row_commit "$asking_state"' '        :'
-hosted_mutant misread-cat '  [[ "$rc" -eq 2 ]] || return 2' '  :'
-hosted_mutant misread-touch '  "$SCRIPT_DIR/lane-host" touch --item "$1" >/dev/null 2>>"$WORK_DIR/host.err" || return 2' '  :'
+# The hosted read's probe lives in lib/lane-gitfile.sh, shared with
+# oversee-report: these mutants plant the defect there, under a watch copy
+# that sources the mutated lib.
+hosted_lib_mutant() { # NAME OLD NEW
+  python3 -c 'import sys
+lib, watch, out_lib, out_watch, name, old, new = sys.argv[1:]
+s = open(lib).read()
+assert s.count(old) == 1, "hosted lib mutant pattern: " + old
+open(out_lib, "w").write(s.replace(old, new))
+line = "source \"$SCRIPT_DIR/lib/lane-gitfile.sh\"\n"
+w = open(watch).read()
+assert w.count(line) == 1, "hosted lib mutant source line"
+open(out_watch, "w").write(w.replace(line, "source \"$SCRIPT_DIR/lib/lane-gitfile-" + name + ".sh\"\n"))' \
+    "$REPO_ROOT/skills/orch/scripts/lib/lane-gitfile.sh" "$REPO_ROOT/skills/orch/scripts/oversee-watch" \
+    "$MUTANT_DIR/orch/scripts/lib/lane-gitfile-$1.sh" "$MUTANT_DIR/orch/scripts/oversee-watch-$1" "$1" "$2" "$3"
+  chmod +x "$MUTANT_DIR/orch/scripts/oversee-watch-$1"
+}
+hosted_lib_mutant misread-cat '  [[ "$rc" -eq 2 ]] || return 2' '  :'
+hosted_lib_mutant misread-touch '  "$1" touch --item "$2" >/dev/null 2>>"$5" || return 2' '  :'
 hosted_mutant early-exit $'  check_handoff\n  # check_handoff commits' $'  [[ "$close_failed" -eq 0 ]] || exit 2\n  check_handoff\n  # check_handoff commits'
 hosted_mutant path-unparsed '        path="${line#*close-refused path=}"' '        :'
 ONE='issue-2: handoff=1 notice=1'
@@ -1056,7 +1073,7 @@ new_case mail_hosted_clone_root
 clone_root_fleet
 assert_eq "rc=$CLONE_RC asks=$(grep -c '^EVENT lane-question KEN-91 clone-1$' <<<"$CLONE_OUT" || :) failed=$(grep -c '^oversee-watch: handoff-read-failed ' "$STUB_DIR/clone.err" || :)" \
   "rc=0 asks=1 failed=0" "a hosted root that is a clone has its ask read there, with no read failure" "$STUB_DIR/clone.err"
-cadence_mutant gitfile-only '    if host_fetch "$1" "$HOSTED_ROOT/.git/HEAD" "$WORK_DIR/githead"; then' '    if false; then'
+hosted_lib_mutant gitfile-only '    if lane_host_fetch "$1" "$2" "$3/.git/HEAD" "$4.head" "$5"; then' '    if false; then'
 new_case mail_hosted_clone_root_mutant
 clone_root_fleet "$MUTANT_DIR/orch/scripts/oversee-watch-gitfile-only"
 assert_eq "rc=$CLONE_RC asks=$(grep -c '^EVENT lane-question KEN-91 clone-1$' <<<"$CLONE_OUT" || :)" "rc=2 asks=0" \

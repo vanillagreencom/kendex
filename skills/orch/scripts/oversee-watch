@@ -6,7 +6,7 @@
 # Two passes on one clock: the mail pass reads every mailbox and the lane
 # records on ORCH_WATCH_MAIL_INTERVAL, and the long pass (one lane snapshot,
 # pr-watch, merged items, team triage, lane preparation, lane classification,
-# accounts) runs forked on --interval. A check that finds an
+# accounts, report) runs forked on --interval. A check that finds an
 # event records it and the pass runs on to the next check, so no kind starves
 # another: a reducer line on every pass or a lane parked on its limit banner
 # would otherwise be the only thing the watch ever said. The block carries the
@@ -202,6 +202,13 @@ The long pass's events, checked and reported in this order:
                              two accounts can share an alias. The first
                              reading of an account is its baseline and an
                              unchanged account says nothing
+  EVENT report-due reason=<minutes|issues> since=<utc> [landed=<N>]
+                             the overseer's status report is due, as
+                             `oversee-report due --state` judges it from the
+                             newest owner progress report and the ORCH_REPORT
+                             settings. Reported on every long pass while it
+                             stays due, so it stops once a report is written;
+                             read only with --state
   EVENT heartbeat            --max-loops long passes with no event. A line
                              `  failing <item> <key>` follows for every lane
                              of the current fleet whose failure still stands,
@@ -503,6 +510,9 @@ Environment:
                               heartbeat roster; a missing one exits 2. The read
                               takes the same 60 second ceiling and usage age as
                               the overseer's own mark judgement
+  OVERSEE_WATCH_REPORT        path to oversee-report, whose `due` judges the
+                              report-due event; with --state a missing one
+                              exits 2
   OVERSEE_WATCH_SUCCEED       path to oversee-succeed, which records the
                               overseer's launch line and relaunches a dead or
                               walled overseer. A missing one leaves the
@@ -644,6 +654,7 @@ ow_message() { # REASON FIELD=VALUE...
     items-omitted) text='No work items were supplied. Merged and handoff checks are skipped.' ;;
     lanes-omitted) text='No lane windows were supplied. Pane checks are skipped; the named checks continue.' ;;
     child-probe-failed) text='The child-process probe could not run. Shell panes remain watched.' ;;
+    report-unjudged) text='oversee-report could not judge whether a report is due, so the pass says nothing about it and exits 2. Its own keyed lines follow.' ;;
     account-unread) text='The account roster could not be read this pass, so no account event is judged and a heartbeat carries account-roster unread in place of the roster. The baseline stands for the next read. The field names the exit, the seconds the ceiling allowed, or parse=failed when the listing or a record in it could not be read.' ;;
     account-reset-unparsed) text='The binding_resets_at the baseline held could not be parsed into a time, so whether that bucket reset settles nothing, and the baseline has already moved to the new reading: that reset is not reported. Status and headroom changes on the account are still judged.' ;;
     claim-missing) text='The pane has no live lane claim. The usage event names no account.' ;;
@@ -839,6 +850,7 @@ LANE_MAIL="${OVERSEE_WATCH_LANE_MAIL:-$SCRIPT_DIR/lane-mail}"
 LANE_CLOSE="${OVERSEE_WATCH_LANE_CLOSE:-$SCRIPT_DIR/lane-close}"
 SUCCEED="${OVERSEE_WATCH_SUCCEED:-$SCRIPT_DIR/oversee-succeed}"
 LANES_CLI="${OVERSEE_WATCH_LANES:-$SCRIPT_DIR/lanes}"
+REPORT_CLI="${OVERSEE_WATCH_REPORT:-$SCRIPT_DIR/oversee-report}"
 # Consecutive `exited` readings of the overseer pane before the death is news.
 # One is a poll that caught a live session between its harness and its shell,
 # the same reason the lane-exited check debounces.
@@ -1613,49 +1625,21 @@ hosted_lane_item() { # LANE
 # The hosted items whose worktree this pass's mail read found gone, one per line.
 HOSTED_GONE_ITEMS=""
 
-# `lane-host cat --item ITEM PATH` into DEST: 0 read, 1 not there, 2 failed.
-# Exit 2 is also the dispatcher's own refusal, so it reads as a missing file
-# only once `touch` answers (schemas/lane-host.md). A failed read leaves no DEST.
-host_fetch() { # ITEM PATH DEST
-  local rc=0
-  "$SCRIPT_DIR/lane-host" cat --item "$1" "$2" >"$3" 2>"$WORK_DIR/host.err" || rc=$?
-  [[ "$rc" -ne 0 ]] || return 0
-  rm -f -- "$3"
-  [[ "$rc" -eq 2 ]] || return 2
-  "$SCRIPT_DIR/lane-host" touch --item "$1" >/dev/null 2>>"$WORK_DIR/host.err" || return 2
-  return 1
-}
-
 # The clone a hosted lane's worktree belongs to, which its record does not
 # carry: the worktree's `.git` file names it while the worktree stands, read
-# through lib/lane-gitfile.sh, and STATE's clone-root row keeps it for after
-# merge-pr.md § 5 removes the worktree. A root that is itself a clone has a
-# `.git` directory, which `cat` fails on and whose HEAD answers: the clone is
-# the root, with no `.git` appended. Sets HOSTED_CLONE, and HOSTED_GONE to 1
+# through lib/lane-gitfile.sh's lane_hosted_clone, and STATE's clone-root row
+# keeps it for after merge-pr.md § 5 removes the worktree. A root that is
+# itself a clone is its own clone. Sets HOSTED_CLONE, and HOSTED_GONE to 1
 # when the worktree is gone. Call after hosted_root.
 hosted_clone() { # ITEM STATE
-  local line="" common="" rc=0 err
+  local rc=0
   HOSTED_GONE=0
-  host_fetch "$1" "$HOSTED_ROOT/.git" "$WORK_DIR/gitfile" || rc=$?
-  if [[ "$rc" -eq 2 ]]; then
-    err="$(cat "$WORK_DIR/host.err")"
-    if host_fetch "$1" "$HOSTED_ROOT/.git/HEAD" "$WORK_DIR/githead"; then
-      HOSTED_CLONE="$HOSTED_ROOT"
-      return 0
-    fi
-    printf '%s\n' "$err" >"$WORK_DIR/host.err"
-  fi
+  lane_hosted_clone "$SCRIPT_DIR/lane-host" "$1" "$HOSTED_ROOT" "$WORK_DIR/gitfile" "$WORK_DIR/host.err" || rc=$?
   case "$rc" in
-    0)
-      if ! IFS= read -r line <"$WORK_DIR/gitfile" && [[ -z "$line" ]]; then
-        lane_failure_set handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=<empty>"
-        return 1
-      fi
-      if ! common="$(lane_gitfile_common_dir "$line")"; then
-        lane_failure_set handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=$line"
-        return 1
-      fi
-      HOSTED_CLONE="${common%/.git}" ;;
+    0) HOSTED_CLONE="$LANE_HOSTED_CLONE" ;;
+    3)
+      lane_failure_set handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=${LANE_HOSTED_GITLINE:-<empty>}"
+      return 1 ;;
     1)
       HOSTED_GONE=1
       if ! HOSTED_CLONE="$(lane_row_get clone-root "$2" "$1")" || [[ -z "$HOSTED_CLONE" ]]; then
@@ -1675,7 +1659,7 @@ hosted_clone() { # ITEM STATE
 # reader then reads; a file the host does not have leaves it empty, as a
 # missing local file does. The clone is the one the last mail pass learned.
 item_state_dir() { # ITEM
-  local clone remote rc=0
+  local clone rc=0
   ITEM_STATE_DIR="$WORKFLOW_STATE_DIR"
   hosted_root "$1"
   [[ -n "$HOSTED_ROOT" ]] || return 0
@@ -1683,16 +1667,16 @@ item_state_dir() { # ITEM
     lane_failure_set handoff-read-failed "" "item=$1" "clone=unknown"
     return 1
   fi
-  remote="$STATE_DIR_SETTING"
-  [[ "$remote" == /* ]] || remote="$clone/$remote"
+  lane_hosted_state_path "$clone" "$STATE_DIR_SETTING" "$1"
   ITEM_STATE_DIR="$WORK_DIR/hosted-state/$1"
   if ! mkdir -p -- "$ITEM_STATE_DIR"; then
     lane_failure_set handoff-read-failed "" "item=$1" "path=$ITEM_STATE_DIR"
     return 1
   fi
-  host_fetch "$1" "$remote/workflow-state-$1.json" "$ITEM_STATE_DIR/workflow-state-$1.json" || rc=$?
+  lane_host_fetch "$SCRIPT_DIR/lane-host" "$1" "$LANE_HOSTED_STATE_PATH" \
+    "$ITEM_STATE_DIR/workflow-state-$1.json" "$WORK_DIR/host.err" || rc=$?
   if [[ "$rc" -gt 1 ]]; then
-    lane_failure_set handoff-read-failed "$(cat "$WORK_DIR/host.err")" "item=$1" "path=$remote"
+    lane_failure_set handoff-read-failed "$(cat "$WORK_DIR/host.err")" "item=$1" "path=${LANE_HOSTED_STATE_PATH%/*}"
     return 1
   fi
 }
@@ -1870,6 +1854,9 @@ require_item_helpers
 # change unsaid.
 [[ -x "$LANES_CLI" ]] \
   || die helper-missing "" "path=$LANES_CLI" "setting=OVERSEE_WATCH_LANES"
+# The report judgement reads the fleet state, so it is required where one is.
+[[ -z "$STATE_FILE" || -x "$REPORT_CLI" ]] \
+  || die helper-missing "" "path=$REPORT_CLI" "setting=OVERSEE_WATCH_REPORT"
 # Inside tmux the pane checks are how an item's lane is watched, so a run
 # naming items and no window is told which checks it is not running, as the
 # two notes above say for the reducer and the merged check. Outside tmux there
@@ -1898,15 +1885,11 @@ check_merged() {
     for repo in "${REPOS[@]}"; do
       list="$(gh pr list --repo "$repo" --head "$branch" --state merged --limit 10 --json number,headRefName,headRepositoryOwner,mergedAt 2>"$errf")" \
         || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "branch=$branch"
-      hit="$(jq -r --arg branch "$branch" --arg owner "${repo%%/*}" --arg repo "$repo" --argjson since "$SINCE_EPOCH" '
-        [ .[]
-          | select(.headRefName | ascii_downcase == $branch)
-          | select(((.headRepositoryOwner.login // "") | ascii_downcase) == $owner)
-          | select(.mergedAt != null)
-          | select((.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $since)
-          | "\(.number) \(.headRefName) \($repo)" ]
-        | .[]' <<<"$list" 2>"$errf")" \
-        || die pr-list-invalid "$(cat "$errf")" "repo=$repo" "branch=$branch"
+      if ! hit="$(jq -r --arg branch "$branch" --arg owner "${repo%%/*}" --arg repo "$repo" --argjson since "$SINCE_EPOCH" \
+        "$LANE_MERGED_JQ"' lane_merged($branch; $owner; $since)[] | "\(.number) \(.headRefName) \($repo)"' \
+        <<<"$list" 2>"$errf")"; then
+        die pr-list-invalid "$(cat "$errf")" "repo=$repo" "branch=$branch"
+      fi
       [[ -z "$hit" ]] || hits+="$hit"$'\n'
     done
     if [[ -z "$hits" ]]; then
@@ -3477,6 +3460,31 @@ check_accounts() {
   lane_row_commit "$state"
 }
 
+# The status report's cadence, judged by oversee-report alone. No row is kept:
+# the report file the overseer writes is what ends the event, so an overseer
+# that has not written one is told again on the next long pass.
+check_report() {
+  [[ -n "$STATE_FILE" ]] || return 0
+  local errf="$WORK_DIR/report.err" out rc=0 repo repo_args=()
+  for repo in "${REPOS[@]}"; do repo_args+=(--repo "$repo"); done
+  out="$("$REPORT_CLI" due --state "$STATE_FILE" "${repo_args[@]}" 2>"$errf")" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    ow_message report-unjudged "exit=$rc" "path=$REPORT_CLI" >&2
+    cat -- "$errf" >&2
+    PASS_FAILED=1
+    return 0
+  fi
+  [[ -n "$out" ]] || return 0
+  if [[ "$out" == *$'\n'* || "$out" != "report-due reason="* ]]; then
+    ow_message report-unjudged "exit=0" "path=$REPORT_CLI" >&2
+    printf '%s\n' "$out" >&2
+    PASS_FAILED=1
+    return 0
+  fi
+  echo "EVENT $out"
+  PASS_EVENT=1
+}
+
 # Every --repo's open PRs, each line prefixed with its repo as the reducer's
 # are, and all of them read before the event line goes out: a repo that
 # cannot be listed is a failed pass, not a heartbeat missing a repo. The
@@ -3550,6 +3558,7 @@ long_pass() {
     check_prepare
     check_lanes
     check_accounts
+    check_report
   fi
   # Under names of their own, so sourcing them cannot overwrite the news this
   # process's mail passes found.
