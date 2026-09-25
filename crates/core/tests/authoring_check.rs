@@ -161,29 +161,51 @@ fn copy_tree(from: &Path, to: &Path) {
 /// The check, the index and the Mine row read one checkout the same way
 /// where they can differ: a checkout whose `origin` is kendex's own
 /// repository has its accepted finding set aside in all three, and one
-/// whose `origin` is a fork keeps it in all three. The package is this
-/// repository's `harness-ci`, whose one accepted finding the table names.
+/// whose `origin` is a fork, one with no `origin`, and a folder that is
+/// no repository keep it in all three. The package is this repository's
+/// `harness-ci`, whose one accepted finding the table names.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_index_and_mine_agree_on_the_checkout() {
     let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/harness-ci");
-    let rows: [(&str, &str, u32, usize); 2] = [
+    let init: &[&str] = &["init", "--quiet", "-b", "main"];
+    let rows: [(&str, Vec<&[&str]>, u32, usize); 4] = [
         (
             "kendex",
-            "https://github.com/vanillagreencom/kendex.git",
+            vec![
+                init,
+                &[
+                    "remote",
+                    "add",
+                    "origin",
+                    "https://github.com/vanillagreencom/kendex.git",
+                ],
+            ],
             100,
             0,
         ),
-        ("fork", "https://github.com/someone/kendex.git", 85, 1),
+        (
+            "fork",
+            vec![
+                init,
+                &[
+                    "remote",
+                    "add",
+                    "origin",
+                    "https://github.com/someone/kendex.git",
+                ],
+            ],
+            85,
+            1,
+        ),
+        ("no origin", vec![init], 85, 1),
+        ("no git", vec![], 85, 1),
     ];
-    for (row, origin, score, findings) in rows {
+    for (row, git, score, findings) in rows {
         let (_tmp, root) = repo();
         copy_tree(&shipped, &root.join("skills/harness-ci"));
         fs::write(root.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-        for args in [
-            &["init", "--quiet", "-b", "main"][..],
-            &["remote", "add", "origin", origin][..],
-        ] {
+        for args in git {
             let output = kendex_core::process::Hardened::git(args, Some(&root))
                 .run()
                 .unwrap();
