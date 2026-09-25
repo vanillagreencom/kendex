@@ -80,6 +80,7 @@ const gh: ItemSafety = {
     },
   ],
   mentions: [],
+  accepted: [],
   skipped: [],
   safety: { score: 58, deductions: [] },
   quality: null,

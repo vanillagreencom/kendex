@@ -135,14 +135,18 @@ fn the_guard_hooks_scan_clean() {
 /// written as code in a file a harness loads, and the rule counts it there
 /// rather than deciding which program the string reaches. The launch
 /// table's comment naming the switch is the one mention. The fixture line
-/// handing it to `assert_eq` stays a finding: the tests define that name
+/// handing it to `assert_eq` is not a mention: the tests define that name
 /// many times over, not every body only prints, and a name is diagnostic
 /// only when every definition is.
 ///
 /// That is the cost of the reading, pinned to a real tree: one Critical
-/// finding in production and thirty High findings in supporting files. A
-/// reading that went quiet on them would be reading an argument list
-/// again, and this is where that fails.
+/// finding in production and thirty High findings in supporting files,
+/// every one of them accepted by kendex's own table for exactly these
+/// bytes, so the skill scores clean and a verbose reading still lists
+/// them. A reading that went quiet on them would be reading an argument
+/// list again, and this is where that fails; so does a table that lets an
+/// edit to one of these files keep its acceptance
+/// (`allowance.rs::a_finding_is_accepted_only_for_the_exact_text_the_table_names`).
 #[test]
 fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
     let result = shipped("orch");
@@ -150,8 +154,21 @@ fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
     let open_terminal = "skills/orch/tests/open-terminal-claude-handoff.sh";
     let oversee_succeed = "skills/orch/tests/oversee_succeed.sh";
     let overseer_watch = "skills/orch/tests/oversee_watch_overseer.sh";
+    assert_eq!(found(&result), vec![], "{:#?}", result.findings);
+    assert_eq!(result.safety.score, 100);
+    let accepted: Vec<(&str, Severity, &str)> = result
+        .accepted
+        .iter()
+        .map(|finding| {
+            (
+                finding.rule.as_str(),
+                finding.severity,
+                finding.location.as_str(),
+            )
+        })
+        .collect();
     assert_eq!(
-        found(&result),
+        accepted,
         [
             vec![("safety-bypass", Severity::Critical, lane_launch); 1],
             vec![("safety-bypass", Severity::High, open_terminal); 6],
@@ -160,9 +177,8 @@ fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
         ]
         .concat(),
         "{:#?}",
-        result.findings
+        result.accepted
     );
-    assert_eq!(result.safety.score, 50);
     let mentioned: Vec<(&str, Option<u32>)> = result
         .mentions
         .iter()

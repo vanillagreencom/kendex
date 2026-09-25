@@ -185,6 +185,118 @@ fn a_verbose_refresh_prints_what_the_rules_read_as_a_mention() {
     assert!(finding_lines(&printed).is_empty(), "{printed}");
 }
 
+/// Every file under `from`, copied to `to`.
+#[allow(clippy::unwrap_used)]
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        match entry.file_type().unwrap().is_dir() {
+            true => copy_tree(&entry.path(), &target),
+            false => {
+                fs::copy(entry.path(), &target).unwrap();
+            }
+        }
+    }
+}
+
+/// A package kendex publishes with a finding its own table accepts,
+/// installed from a catalog holding exactly the published bytes, scores
+/// clean: the accepted finding prints only on a verbose run, one line per
+/// row of the table. An edit to the file holding it puts the finding back
+/// on the plain run, at the severity the rule gives it.
+///
+/// The package is the one dependency-free skill in the table; the first
+/// assertion says so, so a table that no longer names it points here.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_finding_kendex_accepted_in_its_own_package_prints_only_on_a_verbose_run() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let package = kendex_core::quality::Allowance::builtin()
+        .unwrap()
+        .packages
+        .iter()
+        .find(|package| package.name == "iced-rs")
+        .unwrap_or_else(|| panic!("the compiled-in table accepts nothing in skills/iced-rs; pick another dependency-free package for this case"))
+        .clone();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let home = home.as_path();
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    let catalog = home.join("catalog");
+    copy_tree(
+        &repo.join("skills/iced-rs"),
+        &catalog.join("skills/iced-rs"),
+    );
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.iced-rs]\nsource = \"cat\"\n",
+            source_path(&catalog)
+        ),
+    )
+    .unwrap();
+
+    let plain = kendex(home, &project, &["refresh", "-y", "--scope", "project"]);
+    assert!(plain.status.success(), "{plain:?}");
+    let printed = String::from_utf8_lossy(&plain.stderr).into_owned();
+    assert!(
+        printed.contains("safety: skill iced-rs for Claude Code scores 100/100"),
+        "{printed}"
+    );
+    assert!(finding_lines(&printed).is_empty(), "{printed}");
+    assert!(
+        !printed.contains("accepted in kendex's own package"),
+        "{printed}"
+    );
+
+    let verbose = kendex(
+        home,
+        &project,
+        &["refresh", "-y", "--scope", "project", "--verbose"],
+    );
+    assert!(verbose.status.success(), "{verbose:?}");
+    let printed = String::from_utf8_lossy(&verbose.stderr).into_owned();
+    let accepted: Vec<&str> = printed
+        .lines()
+        .filter(|line| line.starts_with("  accepted in kendex's own package: "))
+        .collect();
+    let expected: Vec<String> = package
+        .files
+        .iter()
+        .flat_map(|file| {
+            file.accepted.iter().map(move |row| {
+                let line = row.line.map(|line| format!(":{line}")).unwrap_or_default();
+                format!(
+                    "  accepted in kendex's own package: {} (skills/iced-rs/{}{line})",
+                    row.message, file.path
+                )
+            })
+        })
+        .collect();
+    assert_eq!(accepted, expected, "{printed}");
+    assert!(finding_lines(&printed).is_empty(), "{printed}");
+
+    // One byte more in the accepted file, and the finding is back.
+    let edited = &package.files[0];
+    let path = catalog.join("skills/iced-rs").join(&edited.path);
+    let mut bytes = fs::read(&path).unwrap();
+    bytes.extend_from_slice(b"\n");
+    fs::write(&path, bytes).unwrap();
+    let again = kendex(home, &project, &["refresh", "-y", "--scope", "project"]);
+    assert!(again.status.success(), "{again:?}");
+    let printed = String::from_utf8_lossy(&again.stderr).into_owned();
+    let flagged: Vec<&str> = finding_lines(&printed)
+        .into_iter()
+        .filter(|line| line.contains(&edited.accepted[0].message))
+        .collect();
+    assert_eq!(flagged.len(), edited.accepted.len(), "{printed}");
+    assert!(!printed.contains("scores 100/100"), "{printed}");
+}
+
 /// add, apply and refresh print the identical block for the identical
 /// content: one format, not three that happen to agree.
 #[test]

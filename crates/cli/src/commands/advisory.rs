@@ -3,7 +3,7 @@
 
 use kendex_core::engine::{CatalogSource, EngineReport, ItemSafety, SafetyTarget};
 use kendex_core::model::ItemKind;
-use kendex_core::quality::Finding;
+use kendex_core::quality::{Finding, place_within};
 
 use super::say;
 
@@ -65,6 +65,8 @@ struct SafetyBlock {
     /// The mention lines a verbose run prints; empty otherwise, so a
     /// difference no line shows splits no block.
     mentions: Vec<PrintedFinding>,
+    /// The accepted lines a verbose run prints, under the same rule.
+    accepted: Vec<PrintedFinding>,
     /// The count and reason [`print_skipped`] puts on its line, `None`
     /// where it prints no line at all.
     skipped: Option<(usize, String)>,
@@ -101,24 +103,15 @@ fn safety_block(row: &ItemSafety, verbose: bool) -> SafetyBlock {
             true => advisory.mentions.iter().map(printed).collect(),
             false => Vec::new(),
         },
+        accepted: match verbose {
+            true => advisory.accepted.iter().map(printed).collect(),
+            false => Vec::new(),
+        },
         skipped: advisory
             .skipped
             .first()
             .map(|first| (advisory.skipped.len(), first.reason.clone())),
     }
-}
-
-/// Where a finding fired inside the rendering whose root it names, kept
-/// with the separator that joins it back on: `/SKILL.md` in a tree,
-/// ` (command)` for a hook, empty where the finding is the rendering
-/// itself. Two harnesses fire at the same place under two roots, and the
-/// roots are what a block is grouped across.
-///
-/// `None` where the location is not inside this root, which the separator
-/// decides: `/a/bc.md` starts with the root `/a/b` and is not in it.
-fn within<'a>(location: &'a str, root: &str) -> Option<&'a str> {
-    let rest = location.strip_prefix(root)?;
-    (rest.is_empty() || rest.starts_with(['/', ' '])).then_some(rest)
 }
 
 /// Every other rendering this block covers, at this finding's own place
@@ -132,7 +125,7 @@ fn also_at(finding: &Finding, targets: &[SafetyTarget]) -> Vec<String> {
     let Some((first, rest)) = targets.split_first() else {
         return Vec::new();
     };
-    let Some(place) = within(&finding.location, &first.location) else {
+    let Some(place) = place_within(&finding.location, &first.location) else {
         return Vec::new();
     };
     let line = finding
@@ -179,7 +172,9 @@ pub enum ScoredAt<'a> {
 /// A verbose run adds one line per mention: a switch the rules read as
 /// the file naming it rather than using it, which costs the score
 /// nothing. It is what the precision skipped, printed so a reader can
-/// check the reading against the file.
+/// check the reading against the file. It adds one line per accepted
+/// finding the same way: a finding kendex's own table set aside, which
+/// costs nothing while the file keeps the accepted text.
 ///
 /// Severity leads the finding as a word, never as a colour: the line has
 /// to carry it for a reader who has no colour, and this printer emits
@@ -244,6 +239,13 @@ pub fn print_advisory(
                 where_at(mention)
             ));
         }
+        for accepted in &advisory.accepted {
+            say(&format!(
+                "  accepted in kendex's own package: {}{}",
+                accepted.message,
+                where_at(accepted)
+            ));
+        }
     }
     print_skipped(advisory);
 }
@@ -274,7 +276,7 @@ fn cited(
         return unchanged();
     };
     let root = targets.first().map_or("", |at| at.location.as_str());
-    let Some(place) = within(&finding.location, root) else {
+    let Some(place) = place_within(&finding.location, root) else {
         return unchanged();
     };
     // A place inside a rendered tree is a position the catalog holds only
@@ -367,6 +369,7 @@ mod tests {
                     remediation: "download it to a file and run it as its own step".to_owned(),
                 }],
                 mentions: Vec::new(),
+                accepted: Vec::new(),
                 skipped: skipped
                     .iter()
                     .map(|reason| SkippedRule {

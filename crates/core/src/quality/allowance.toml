@@ -1,0 +1,232 @@
+# Findings kendex accepts in its own packages, one row per finding, keyed
+# on the text of the file holding it. Generated from the catalog by
+# `cargo test -p kendex-core -- --ignored regenerate_allowance`, and
+# `crates/core/tests/allowance.rs` fails while it is stale. Read by
+# `crates/core/src/quality/allowance.rs`.
+
+ruleset = 6
+
+[[package]]
+kind = "skill"
+name = "harness-ci"
+source-hash = "f4892dc924c28024c171942a59d325877c1aac6f00a448034e6649658cb78c68"
+
+[[package.file]]
+path = "references/wiring.md"
+hash = "cd5db4b635ba904d258720d3a0394f0a097019871016d6821ab5cfa830a0b10e"
+
+[[package.file.finding]]
+rule = "rce"
+line = 207
+message = "this line pipes a download straight into a shell with `https://kendex.ai/install.sh`, so whatever the far end serves is what runs"
+
+[[package]]
+kind = "skill"
+name = "iced-rs"
+source-hash = "7da28ea49e0e94077b9cad120c3eecd96731473cfd1e2a3b972fe0132af086ac"
+
+[[package.file]]
+path = "references/keyboard.md"
+hash = "acbd631ce09babc17ec1def491a2baa1998afbea07e1486906c3a73a6aaf91f1"
+
+[[package.file.finding]]
+rule = "obfuscated-content"
+message = "this file reads differently than it looks: 1 letter(s) that only look Latin folded (U+0441)"
+
+[[package]]
+kind = "skill"
+name = "orch"
+source-hash = "68f9da934788dcd97c14e32a0dc83311a223034e8a236e677caf6e4ab7d59a29"
+
+[[package.file]]
+path = "scripts/lib/lane-launch.sh"
+hash = "a37f04d3ce0cef36640457882dffd9386600430d10741a51505fca4135817854"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 135
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file]]
+path = "tests/open-terminal-claude-handoff.sh"
+hash = "8eb87b128f3914edae15c45967a8889004f16abda83bd809a0851449bdf2c452"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 204
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 388
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 389
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 422
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 438
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 464
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file]]
+path = "tests/oversee_succeed.sh"
+hash = "7baff720def352e650accc509f4edba8a1c5ef91fc527b9ac713e3bd1c73264c"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 340
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 348
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 354
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 364
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 376
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 408
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 441
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 444
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 458
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 490
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 491
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 492
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 493
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 541
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 590
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 649
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 652
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 659
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 1789
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 2236
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file]]
+path = "tests/oversee_watch_overseer.sh"
+hash = "16efefc962b4bb865d503469dd1bb68349aaaa626b5484a765e671b4a80e6d4b"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 31
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 581
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 831
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 836
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package]]
+kind = "skill"
+name = "review-gate"
+source-hash = "c4d1e041f03dbfe92e466c18b2357fc42e3a315710e842857e93bb12a5f003f3"
+
+[[package.file]]
+path = "tests/corpus/declines-reasoned.txt"
+hash = "1df70651f54739c75a21f9be8823fdee662a4e4086bfdc3de740231c9320dead"
+
+[[package.file.finding]]
+rule = "obfuscated-content"
+message = "this file reads differently than it looks: 23 letter(s) that only look Latin folded (U+0430, U+0433, U+0434, U+0435, U+0437, U+043A, and 5 more, c41abb01ea7427d4)"
+
+[[package.file]]
+path = "templates/review-gate-writer.yml"
+hash = "05c242972d6362eb6c27bcb4ae7652daa6cfdcb845a0350f8ddedf7defdd5196"
+
+[[package.file.finding]]
+rule = "rce"
+line = 633
+message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/${K… 99f983ea52d58ae0`, so whatever the far end serves is what runs"

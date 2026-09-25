@@ -29,6 +29,14 @@ pub(crate) fn populated() -> AuditResult {
             message: "`--no-verify` skips the checks a commit runs".to_owned(),
             remediation: "leave the check in place".to_owned(),
         }],
+        accepted: vec![Finding {
+            rule: "safety-bypass".to_owned(),
+            severity: Severity::Critical,
+            location: "scripts/launch.sh".to_owned(),
+            line: Some(97),
+            message: "`--dangerously-skip-permissions` turns off permission prompts".to_owned(),
+            remediation: "leave the check in place".to_owned(),
+        }],
         skipped: vec![SkippedRule {
             rule: "secret-material".to_owned(),
             reason: "this item ships no script to read".to_owned(),

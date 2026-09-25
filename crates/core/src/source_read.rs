@@ -312,6 +312,17 @@ impl SealedSource {
         Ok(())
     }
 
+    /// The hash a catalog item is recorded by: its skill tree for a
+    /// directory, its own bytes for a file. What a rendering is compared
+    /// against to say whether it is the catalog's bytes unchanged, and what
+    /// an accepted finding names the package by.
+    pub fn catalog_hash(&self, path: &Path) -> Result<String> {
+        if self.is_dir(path) {
+            return Ok(crate::hash::hash_files(&self.collect_skill_tree(path)?));
+        }
+        Ok(crate::hash::hash_bytes(&self.read(path)?))
+    }
+
     /// Content hash of a catalog file or tree, matching `hash::hash_tree`'s
     /// construction — but through the sealed walk, so a symlinked catalog
     /// cannot feed host bytes into an installation hash.

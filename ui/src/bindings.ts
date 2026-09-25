@@ -835,6 +835,13 @@ export type AuditResult = {
 	 *  They cost the score nothing and print only on a verbose reading.
 	 */
 	mentions: Finding[],
+	/**
+	 *  Findings kendex accepted in a package it publishes ([`Allowance`]):
+	 *  the same shape, at no cost to the score, printed only on a verbose
+	 *  reading. Any edit to the file holding one puts it back among
+	 *  `findings`.
+	 */
+	accepted: Finding[],
 	skipped: SkippedRule[],
 	/**
 	 *  What every finding here costs — the advisory number every surface

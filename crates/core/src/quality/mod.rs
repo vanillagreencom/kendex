@@ -19,6 +19,7 @@ use specta::Type;
 
 use crate::model::{HarnessId, ItemKind};
 
+mod allowance;
 pub mod dimensions;
 mod finding;
 mod homoglyph;
@@ -31,6 +32,7 @@ mod score;
 mod secret;
 mod text;
 
+pub use allowance::{Accepted, AcceptedFile, Allowance, Package as AllowedPackage};
 pub use dimensions::{AntiPattern, DimensionScore, QualityScore};
 pub use finding::Finding;
 pub use score::{Deduction, SafetyScore, safety};
@@ -302,6 +304,20 @@ pub struct Doc {
     pub location: String,
     pub role: DocRole,
     pub lines: Vec<Line>,
+    /// [`crate::hash::hash_bytes`] of the text as the input carried it,
+    /// before deobfuscation: what an edit to the file changes, and what
+    /// the [`Allowance`] names a file by.
+    pub digest: String,
+}
+
+/// Where `location` stands inside `root`, kept with the separator that
+/// joins it back on: `/SKILL.md` in a tree, ` (command)` for a hook's
+/// command line, empty where the location is the root itself. `None`
+/// where the location is not inside this root, which the separator
+/// decides: `/a/bc.md` starts with the root `/a/b` and is not in it.
+pub fn place_within<'a>(location: &'a str, root: &str) -> Option<&'a str> {
+    let rest = location.strip_prefix(root)?;
+    (rest.is_empty() || rest.starts_with(['/', ' '])).then_some(rest)
 }
 
 /// An input after deobfuscation, with its text split into classified lines.
@@ -403,6 +419,11 @@ pub struct AuditResult {
     /// markdown code span, a shell comment, a string a script prints.
     /// They cost the score nothing and print only on a verbose reading.
     pub mentions: Vec<Finding>,
+    /// Findings kendex accepted in a package it publishes ([`Allowance`]):
+    /// the same shape, at no cost to the score, printed only on a verbose
+    /// reading. Any edit to the file holding one puts it back among
+    /// `findings`.
+    pub accepted: Vec<Finding>,
     pub skipped: Vec<SkippedRule>,
     /// What every finding here costs — the advisory number every surface
     /// shows.
@@ -413,26 +434,59 @@ pub struct AuditResult {
     pub ruleset: u32,
 }
 
-/// Deobfuscate, then run every rule, then score. The same call serves both
-/// paths: what a plan would write, and what a scan found on disk.
+/// Deobfuscate, then run every rule, then score. The same call serves every
+/// path: what a plan would write, what a scan found on disk, what a catalog
+/// offers. Findings kendex's own table accepts are set aside before the
+/// score is taken; a table this build cannot read accepts nothing.
 pub fn audit(input: AuditInput) -> AuditResult {
-    let prepared = text::prepare(input);
-    let mut findings = Vec::new();
-    let mut mentions = Vec::new();
-    let mut skipped = Vec::new();
+    audit_with(input, Allowance::builtin().unwrap_or(&EMPTY_ALLOWANCE))
+}
+
+static EMPTY_ALLOWANCE: Allowance = Allowance {
+    ruleset: RULESET_VERSION,
+    packages: Vec::new(),
+};
+
+/// What every rule said about one prepared input, before any of it is
+/// accepted or scored.
+struct Ran {
+    findings: Vec<Finding>,
+    mentions: Vec<Finding>,
+    skipped: Vec<SkippedRule>,
+}
+
+fn run_rules(prepared: &Prepared) -> Ran {
+    let mut ran = Ran {
+        findings: Vec::new(),
+        mentions: Vec::new(),
+        skipped: Vec::new(),
+    };
     for rule in rules::registry() {
-        match rule.check(&prepared) {
+        match rule.check(prepared) {
             Outcome::Ran(mut found) => {
-                findings.append(&mut found.findings);
-                mentions.append(&mut found.mentions);
+                ran.findings.append(&mut found.findings);
+                ran.mentions.append(&mut found.mentions);
             }
             Outcome::OutOfScope => {}
-            Outcome::NotApplicable(reason) => skipped.push(SkippedRule {
+            Outcome::NotApplicable(reason) => ran.skipped.push(SkippedRule {
                 rule: rule.id().to_owned(),
                 reason: reason.to_owned(),
             }),
         }
     }
+    ran
+}
+
+/// [`audit`] under a given table of accepted findings rather than the
+/// compiled-in one.
+pub fn audit_with(input: AuditInput, allowance: &Allowance) -> AuditResult {
+    let prepared = text::prepare(input);
+    let Ran {
+        findings,
+        mut mentions,
+        skipped,
+    } = run_rules(&prepared);
+    let (mut findings, mut accepted) = allowance.accept(&prepared, findings);
     // Worst first, then by place. The line is part of the place and so
     // part of the order: while it lived inside `location` it sorted as
     // text, which put line 10 before line 2, and taking it out of the key
@@ -447,11 +501,13 @@ pub fn audit(input: AuditInput) -> AuditResult {
     };
     findings.sort_by(by_place);
     mentions.sort_by(by_place);
+    accepted.sort_by(by_place);
     let safety = score::safety(&findings);
     let quality = dimensions::quality(&prepared);
     AuditResult {
         findings,
         mentions,
+        accepted,
         skipped,
         safety,
         quality,

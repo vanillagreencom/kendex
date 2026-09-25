@@ -31,8 +31,8 @@ fn a_scored_row_serves_its_advisory_fields_at_the_top_level() {
     assert_eq!(
         keys,
         [
-            "findings", "kind", "mentions", "name", "quality", "ruleset", "safety", "scope",
-            "skipped", "source", "targets"
+            "accepted", "findings", "kind", "mentions", "name", "quality", "ruleset", "safety",
+            "scope", "skipped", "source", "targets"
         ],
         "{json}"
     );

@@ -50,7 +50,7 @@ pub const SAFETY_PASS: &str = "safety";
 pub const CATALOG_PASS: &str = "catalog";
 
 /// Every kind a catalog can offer, in report order.
-const CHECKED_KINDS: [ItemKind; 5] = [
+pub(crate) const CHECKED_KINDS: [ItemKind; 5] = [
     ItemKind::Agent,
     ItemKind::Skill,
     ItemKind::Hook,
@@ -333,7 +333,7 @@ pub fn check_item(
 /// A skill's whole tree; anything else is one file. Read through the same
 /// constructor every install-side reading uses, over the same whole tree,
 /// so this check scores the content the install-side passes read back.
-fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Content> {
+pub(crate) fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Content> {
     if kind != ItemKind::Skill {
         return Ok(Content::Document {
             text: sealed.read_to_string(path)?,

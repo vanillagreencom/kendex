@@ -4,8 +4,9 @@
 //! A cached entry is verified before reuse: the item's content hash is
 //! recomputed from the catalog bytes, so a parser change that moves bytes
 //! between items re-scores, and so does any bump of the rule set, the
-//! discovery table, or the record format below. Advisory like every other
-//! reading of the score — a preview, never a gate.
+//! discovery table, the table of accepted findings, or the record format
+//! below. Advisory like every other reading of the score — a preview,
+//! never a gate.
 
 use std::path::PathBuf;
 
@@ -15,7 +16,7 @@ use specta::Type;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::ItemKind;
-use crate::quality::{AuditResult, RULESET_VERSION};
+use crate::quality::{Allowance, AuditResult, RULESET_VERSION};
 use crate::source::DISCOVERY_VERSION;
 
 use super::{Browsed, Catalog};
@@ -24,20 +25,25 @@ mod input;
 use input::input_for;
 
 /// The shape of one cached record — the scanner/parser half of the cache
-/// key, beside the rule-set and discovery-table versions. Bump it when what
-/// the record holds, or how the input is read into it, changes.
-const CACHE_FORMAT: u32 = 4;
+/// key, beside the rule-set and discovery-table versions and the accepted
+/// findings' digest. Bump it when what the record holds, or how the input
+/// is read into it, changes.
+const CACHE_FORMAT: u32 = 5;
 
 /// What one scoring pass produced, exactly as it is cached. The advisory
 /// payload flattens into the record, so the cached JSON keeps `findings`,
-/// `mentions`, `safety`, `quality`, `skipped` and `ruleset` at the top
-/// level beside the cache-key fields.
+/// `mentions`, `accepted`, `safety`, `quality`, `skipped` and `ruleset` at
+/// the top level beside the cache-key fields.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CachedScore {
     format: u32,
     content_hash: String,
     discovery: u32,
+    /// [`Allowance::builtin_digest`] of the build that scored: another
+    /// table accepts other findings, and the same bytes score differently
+    /// under it.
+    allowance: String,
     #[serde(flatten)]
     advisory: AuditResult,
 }
@@ -142,6 +148,7 @@ fn scored(
         format: CACHE_FORMAT,
         content_hash,
         discovery: DISCOVERY_VERSION,
+        allowance: Allowance::builtin_digest().to_owned(),
         advisory: crate::quality::audit(input),
     };
     if let Some(path) = &cache {
@@ -166,6 +173,7 @@ fn verified(path: &std::path::Path, content_hash: &str) -> Option<CachedScore> {
     (hit.format == CACHE_FORMAT
         && hit.advisory.ruleset == RULESET_VERSION
         && hit.discovery == DISCOVERY_VERSION
+        && hit.allowance == Allowance::builtin_digest()
         && hit.content_hash == content_hash)
         .then_some(hit)
 }
