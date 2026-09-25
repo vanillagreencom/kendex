@@ -81,7 +81,9 @@ Overseer side:
               not answered. Then every to-lane.jsonl directive past
               to-lane.cursor: sent and not yet read. A peer's inbound ask
               lands in to-lane.jsonl and is read by `inbox`, so `pending`
-              never lists it
+              never lists it. A cursor read `drain --receipts` would report
+              `missed` is refused `mail-read-failed=<item> cursor=missed`
+              and prints nothing
 
 Peer side, one other repository's overseer mailbox per call:
   peer ask --repo REPO --file PATH [--options a,b]
@@ -999,34 +1001,16 @@ case "$VERB" in
     [ "$VERB" != drain ] || lm_after "$AFTER"
     lm_answered "$WORK_DIR/answered"
     ANSWERED="$(cat -- "$WORK_DIR/answered")"
-    lm_fetch "$TO_OVERSEER" "$WORK_DIR/over.raw"
-    lm_terminated "$WORK_DIR/over.raw" "$WORK_DIR/over.jsonl"
-    if [ "$VERB" = drain ]; then
-      lm_header "$WORK_DIR/over.jsonl"
-      awk -v seen="$AFTER" 'NR > seen' <"$WORK_DIR/over.jsonl" >"$WORK_DIR/new"
-    else
-      cat -- "$WORK_DIR/over.jsonl" >"$WORK_DIR/new"
-    fi
-    # An answered ask is not news again; `pending` is what is still owed a reply.
-    lm_objects "$WORK_DIR/new" | jq -c --arg answered "$ANSWERED" --arg verb "$VERB" '
-      ($answered | split("\n")) as $done
-      | . as $envelope
-      | select($verb == "drain" or $envelope.kind == "ask")
-      | select($envelope.kind != "ask" or ($done | index($envelope.id) | not))'
     # And what was sent the other way: from the to-lane.jsonl lm_answered
     # left, each directive against the cursor that says how far the reader
     # got. pending lists the ones not passed; drain --receipts lists them all
     # beside the cursor, clamped to the lines listed, so a directive appended
     # and read between the file read and the cursor read is not taken as read
-    # before it was listed.
+    # before it was listed. Judged before anything is printed, so a pending
+    # read that missed prints nothing but its refusal.
     if [ "$VERB" = pending ] || [ "$RECEIPTS" -eq 1 ]; then
       lm_cursor_read
       lm_directives "$WORK_DIR/lane.jsonl" >"$WORK_DIR/directives"
-    fi
-    if [ "$VERB" = pending ]; then
-      jq -c --argjson seen "$SEEN" 'select(.line > $seen) | .envelope' <"$WORK_DIR/directives" ||
-        refuse file-unreadable "$TO_LANE"
-    elif [ "$RECEIPTS" -eq 1 ]; then
       COUNT="$(lm_count "$WORK_DIR/lane.jsonl")" || refuse file-unreadable "$TO_LANE"
       # The cursor counts lines of an append-only file, so one above 0 over a
       # listing of no line is a listing that missed. Over one that has lines
@@ -1044,6 +1028,32 @@ case "$VERB" in
         lm_fetch "$CURSOR.lock" "$WORK_DIR/cursor.lock.read"
         [ "$LM_FETCH_ABSENT" -eq 1 ] || SEEN=missed
       fi
+      # pending has no receipts line to carry `missed`: listed, a read that
+      # missed shows directives the lane read as unread and, over a listing
+      # that missed, answered asks as owed, so it is refused instead.
+      if [ "$VERB" = pending ] && [ "$SEEN" = missed ]; then
+        REFUSE_EXTRA=cursor=missed
+        refuse mail-read-failed "$ITEM"
+      fi
+    fi
+    lm_fetch "$TO_OVERSEER" "$WORK_DIR/over.raw"
+    lm_terminated "$WORK_DIR/over.raw" "$WORK_DIR/over.jsonl"
+    if [ "$VERB" = drain ]; then
+      lm_header "$WORK_DIR/over.jsonl"
+      awk -v seen="$AFTER" 'NR > seen' <"$WORK_DIR/over.jsonl" >"$WORK_DIR/new"
+    else
+      cat -- "$WORK_DIR/over.jsonl" >"$WORK_DIR/new"
+    fi
+    # An answered ask is not news again; `pending` is what is still owed a reply.
+    lm_objects "$WORK_DIR/new" | jq -c --arg answered "$ANSWERED" --arg verb "$VERB" '
+      ($answered | split("\n")) as $done
+      | . as $envelope
+      | select($verb == "drain" or $envelope.kind == "ask")
+      | select($envelope.kind != "ask" or ($done | index($envelope.id) | not))'
+    if [ "$VERB" = pending ]; then
+      jq -c --argjson seen "$SEEN" 'select(.line > $seen) | .envelope' <"$WORK_DIR/directives" ||
+        refuse file-unreadable "$TO_LANE"
+    elif [ "$RECEIPTS" -eq 1 ]; then
       HEADER="$(lm_header "$WORK_DIR/lane.jsonl")"
       printf 'receipts cursor=%s %s\n' "$SEEN" "$HEADER"
       jq -r "$LM_JQ_DEFS"'

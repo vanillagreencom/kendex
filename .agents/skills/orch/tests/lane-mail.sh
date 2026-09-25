@@ -263,6 +263,21 @@ empty_listing() { # NAME
 empty_listing receipts_empty_listing
 assert_eq "$EMPTY_LISTING" "0=receipts cursor=missed count=0" \
   "drain --receipts reports a cursor over a listing of no line as missed"
+# A lane that read its directive, whose cursor then reads as not there beside
+# the lock that read left, as a hosted cursor read that misses once does:
+# pending refuses rather than list the directive the lane read as unread.
+missed_pending() { # NAME
+  new_lane "$1"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Read already.')"
+  LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1
+  rm -- "${LANE:?}/tmp/lane-mail/KEN-1/to-lane.cursor"
+  lm pending --item KEN-1 --root "$LANE"
+  MISSED_PENDING="$RC=$ERR lock=$([ -e "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor.lock" ] && echo kept || echo gone)"
+  MISSED_PENDING+=" listed=$(jq -rs 'map(select(.kind == "directive")) | length' <<<"$OUT")"
+}
+missed_pending pending_missed
+assert_eq "$MISSED_PENDING" "2=lane-mail: mail-read-failed=KEN-1 cursor=missed lock=kept listed=0" \
+  "pending refuses a cursor read that missed and lists nothing"
 cursor_lane inbox_quiet
 assert_eq "$QUIET" "kept" "an inbox that hands nothing over leaves the cursor file alone"
 assert_eq "$CLAMPED" "receipts cursor=1 count=1" "drain --receipts lists the cursor no further than the lines it read"
@@ -1020,6 +1035,11 @@ assert_eq "$PENDING_DIRECTIVE" "" "control: directive lines numbered alone drop 
 mutant receipts-unclamped 's@^        \[ "\$SEEN" -le "\$COUNT" \] || SEEN="\$COUNT"$@        :@'
 cursor_lane control_clamp
 assert_eq "$CLAMPED" "receipts cursor=5 count=1" "control: an unclamped cursor claims lines the read never listed"
+
+mutant absent-as-zero 's@^        \[ "\$LM_FETCH_ABSENT" -eq 1 \] || SEEN=missed$@        :@'
+missed_pending control_pending_missed
+assert_eq "$MISSED_PENDING" "0= lock=kept listed=1" \
+  "control: an absent cursor read as 0 lists the directive the lane read as unread"
 
 mutant receipts-empty-clamped 's@^      if \[ "\$SEEN" -gt 0 \] && \[ "\$COUNT" -eq 0 \]; then$@      if false; then@'
 empty_listing control_empty_listing

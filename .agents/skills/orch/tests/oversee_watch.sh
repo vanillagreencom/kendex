@@ -1101,6 +1101,40 @@ WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- >/dev/nul
 assert_eq "prwatch=$([[ -f "$STUB_DIR/prwatch.repos" ]] && echo called || echo none)" "prwatch=called" \
   "control: with no credential check before it, the long pass reads GitHub on a dead token" "$TMP_ROOT/e6a-mutant"
 
+# A run that dies on its credential check started no long pass, so the run
+# after the repair starts one at once rather than --interval later. Its lane
+# notice ends that run on the turn it starts, so a long pass not yet due is
+# skipped rather than waited for.
+auth_recovery_case() { # NAME [WATCH_BIN]
+  local rc=0
+  new_case "$1"
+  mkdir -p "$TMP_ROOT/repo/tmp/lane-mail/KEN-96"
+  touch "$STUB_DIR/auth-fail"
+  WATCH_BIN="${2:-}" run_watch -- --interval 3600 --item KEN-96 >/dev/null 2>"$TMP_ROOT/e-$1" || rc=$?
+  rm -f -- "$STUB_DIR/auth-fail"
+  printf '{"id":"after-1","kind":"notice","at":"t","text":"Rebased."}\n' \
+    > "$TMP_ROOT/repo/tmp/lane-mail/KEN-96/to-overseer.jsonl"
+  WATCH_BIN="${2:-}" run_watch -- --interval 3600 --item KEN-96 >/dev/null 2>>"$TMP_ROOT/e-$1" || true
+  AUTH_RECOVERY="failed=$rc prwatch=$([[ -f "$STUB_DIR/prwatch.repos" ]] && echo called || echo none)"
+  rm -rf -- "${TMP_ROOT:?}/repo/tmp/lane-mail/KEN-96"
+}
+auth_recovery_case auth_recovery
+assert_eq "$AUTH_RECOVERY" "failed=2 prwatch=called" \
+  "a run after a failed credential check starts its long pass at once" "$TMP_ROOT/e-auth_recovery"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = "long_start() {\n  github_ready\n"
+assert s.count(old) == 1, "start-first mutant pattern"
+open(out, "w").write(s.replace(old,
+    "long_start() {\n  mail_row_commit \"$(lane_row_set long-pass \"$MAIL_SEEN\" fleet \"$PASS_NOW\")\"\n  github_ready\n"))
+PY
+auth_recovery_case auth_recovery_start_first "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$AUTH_RECOVERY" "failed=2 prwatch=none" \
+  "control: a start committed before the credential check holds the next long pass back" \
+  "$TMP_ROOT/e-auth_recovery_start_first"
+
 # A run that ends on a lane's notice before any long pass is due asks GitHub
 # nothing, not even its credential.
 mail_only_case() { # NAME [WATCH_BIN]

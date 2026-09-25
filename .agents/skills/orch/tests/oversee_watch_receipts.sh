@@ -328,5 +328,33 @@ never_read "$MUTANT_DIR/orch/scripts/lane-mail-missed-always"
 assert_eq "$NEVER" "$HEARTBEAT" \
   "control: a cursor not there always taken for a missed read never reports the unread directive" "$STUB_DIR/receipts.err"
 
+# The heartbeat's owed mail pass after a long pass that overran: under the stub
+# clock the turn's mail pass reads a directive younger than the age, and the
+# long pass's pr-watch moves the clock past it. The owed pass reads the clock
+# afresh and reports the directive unread.
+overrun_unread() { # [WATCH_BIN]
+  local sent
+  mail_reset KEN-84
+  OVERRUN_ID="$(direct KEN-84 'Rebase before the review.')"
+  sent="$(date -u +%s)"
+  printf '%s\n' "$((sent + 10))" > "$STUB_DIR/now.epoch"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" %s > "$STUB_DIR/now.epoch"\nexec "%s" "$@"\n' \
+    "$((sent + 1000))" "$TMP_ROOT/bin/pr-watch-stub.sh" > "$STUB_DIR/pr-watch-overrun.sh"
+  chmod +x "$STUB_DIR/pr-watch-overrun.sh"
+  receipts KEN-84 "${1:-}" ORCH_DIRECTIVE_UNREAD_SECS=300 OVERSEE_WATCH_PR_WATCH="$STUB_DIR/pr-watch-overrun.sh"
+}
+new_case receipts_overrun_unread
+overrun_unread
+assert_eq "$RECEIPTS" "EVENT directive-unread KEN-84 $OVERRUN_ID age=N" \
+  "the owed mail pass after an overrunning long pass judges a directive's age on a fresh clock" \
+  "$STUB_DIR/receipts.err"
+receipts_mutant stale-owed $'    MAIL_OWED=0\n    # A turn of its own: the turn\'s reading predates the long pass it follows.\n    PASS_NOW="$(date -u +%s)" || die time-failed "" "clock=UTC"\n' \
+  $'    MAIL_OWED=0\n'
+new_case receipts_overrun_unread_mutant
+overrun_unread "$MUTANT_DIR/orch/scripts/oversee-watch-stale-owed"
+assert_eq "$RECEIPTS" "$HEARTBEAT" \
+  "control: the owed pass on the turn's clock takes the directive for one still younger than the age" \
+  "$STUB_DIR/receipts.err"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

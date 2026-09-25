@@ -3561,11 +3561,15 @@ long_pass() {
 }
 # The fork gets a scratch directory and temp-file tag of its own: both passes
 # run at once, and one shared would have each read the other's tool errors and
-# a die in one discard the other's staged baselines.
+# a die in one discard the other's staged baselines. The start is committed
+# last before the fork, so a run that dies on its credential check leaves the
+# next run's long pass due.
 long_start() {
   github_ready
   rm -f -- "$LONG_STATUS" "$LONG_DONE"
   mkdir -p -- "$WORK_DIR/long" || die state-directory-create-failed "" "path=$WORK_DIR/long"
+  mail_row_commit "$(lane_row_set long-pass "$MAIL_SEEN" fleet "$PASS_NOW")"
+  LONG_DUE=$((PASS_NOW + INTERVAL))
   ( WORK_DIR="$WORK_DIR/long"; PW_TMP_TAG="$$-long"; trap 'touch "$LONG_DONE"' EXIT; long_pass ) \
     >"$LONG_OUT" 2>"$LONG_ERR" &
   LONG_PID=$!
@@ -3589,9 +3593,9 @@ long_collect() { # [wait]
 # Whether a long pass starts now: none in flight, fewer than --max-loops run,
 # and --interval gone by since the last one started, in this run or an earlier
 # one. A run with news ends at run_end before a later turn reaches here, so a
-# long pass due on the turn the news came is the last one. The start is kept
-# in the mail pass's file, so with every repository named by --repo an hour's
-# long passes and GitHub calls are the interval's alone.
+# long pass due on the turn the news came is the last one. long_start keeps the
+# start in the mail pass's file, so with every repository named by --repo an
+# hour's long passes and GitHub calls are the interval's alone.
 LONG_DUE=0
 long_due() {
   local last
@@ -3601,9 +3605,7 @@ long_due() {
   fi
   LONG_DUE="$PASS_NOW"
   [[ ! "$last" =~ ^[0-9]+$ ]] || LONG_DUE=$((last + INTERVAL))
-  [[ "$PASS_NOW" -ge "$LONG_DUE" ]] || return 1
-  mail_row_commit "$(lane_row_set long-pass "$MAIL_SEEN" fleet "$PASS_NOW")"
-  LONG_DUE=$((PASS_NOW + INTERVAL))
+  [[ "$PASS_NOW" -ge "$LONG_DUE" ]]
 }
 
 # Whether the overseer's pane reads down now, before every mail pass: no
@@ -3709,6 +3711,8 @@ run_end() {
   [[ -z "$LONG_PID" ]] || return 0
   if [[ "$PASS_EVENT" -eq 0 && "$PASS_FAILED" -eq 0 && "$LONG_PASSES" -ge "$MAX_LOOPS" && "$MAIL_OWED" -eq 1 ]]; then
     MAIL_OWED=0
+    # A turn of its own: the turn's reading predates the long pass it follows.
+    PASS_NOW="$(date -u +%s)" || die time-failed "" "clock=UTC"
     overseer_down || check_mail
   fi
   if [[ "$PASS_FAILED" -eq 1 ]]; then
