@@ -118,7 +118,8 @@ elif [[ -f "$CASE/failing.json" ]]; then cat "$CASE/failing.json"
 else echo '[]'; fi
 EOF
 # lane-mail: `pending --item ITEM` answers pending-ITEM.jsonl, nothing
-# without one; mail-fail makes it fail. The call must read the lane's own
+# without one; mail-fail-ITEM makes it fail with that file as its stderr and
+# mail-exit-ITEM's status, 2 without one. The call must read the lane's own
 # root, /w/ITEM, and a hosted lane's (hosted-ITEM names its host) through
 # --host under that host's ORCH_LANE_HOST, a local one without --host.
 cat > "$TMP_ROOT/bin/lane-mail" <<'EOF'
@@ -128,16 +129,18 @@ want="--root /w/$3"; host=""
 [[ ! -f "$CASE/hosted-$3" ]] || { host="$(cat "$CASE/hosted-$3")"; want+=" --host"; }
 [[ "${*:4}" == "$want" && "${ORCH_LANE_HOST:-}" == "$host" ]] \
   || { echo "lane-mail stub: wrong route for $3: ${*:4} host=${ORCH_LANE_HOST:-}" >&2; exit 9; }
-[[ ! -f "$CASE/mail-fail" ]] || { echo "lane-mail: mail-read-failed" >&2; exit 2; }
+[[ ! -f "$CASE/mail-fail-$3" ]] || { cat "$CASE/mail-fail-$3" >&2; exit "$(cat "$CASE/mail-exit-$3" 2>/dev/null || echo 2)"; }
 [[ ! -f "$CASE/pending-$3.jsonl" ]] || cat "$CASE/pending-$3.jsonl"
 EOF
 # lane-host: `cat --item ITEM PATH` answers host/PATH, exit 2 without it;
-# `touch` succeeds. Every call must run under the ORCH_LANE_HOST its item's
+# `touch` succeeds; host-gone-ITEM fails every call as a host that no longer
+# knows the item. Every call must run under the ORCH_LANE_HOST its item's
 # record names (hosted-ITEM).
 cat > "$TMP_ROOT/bin/lane-host" <<'EOF'
 #!/usr/bin/env bash
 [[ -f "$CASE/hosted-$3" && "${ORCH_LANE_HOST:-}" == "$(cat "$CASE/hosted-$3")" ]] \
   || { echo "lane-host stub: $3 read under host=${ORCH_LANE_HOST:-}" >&2; exit 9; }
+[[ ! -f "$CASE/host-gone-$3" ]] || { echo "lane-host: item-unknown=$3" >&2; exit 2; }
 case "$1" in
   cat) [[ -f "$CASE/host$4" ]] || exit 2; cat "$CASE/host$4" ;;
   touch) exit 0 ;;
@@ -553,6 +556,72 @@ rm -f -- "${CASE:?}/host/clone/tmp/workflow-state-KEN-7.json"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Validation/ { on = 1; next } on && /^$/ { on = 0 } on' <<<"$OUT")" "0|- KEN-7: no validation run recorded" \
   "a lane with no state on its host has no validation run recorded"
+echo "=== render and write: a lane whose mailbox cannot be read is marked, the rest reported ==="
+# KEN-8 runs on a host that no longer knows the item: its mailbox read fails,
+# and its state, on that host too, is not read (the host fails every call, so
+# a read would refuse as item-state).
+seed_unreadable() {
+  seed_fleet "$1"
+  jq -c --argjson lane "$(lane KEN-8 running -86400 ssh-b)" '.lanes += [$lane]' "$CASE/state.json" > "$CASE/state.next"
+  mv -- "$CASE/state.next" "$CASE/state.json"
+  printf 'lane-mail: host-unreachable=KEN-8 state=unknown\nThe lane host could not be reached.\n' > "$CASE/mail-fail-KEN-8"
+  touch "$CASE/host-gone-KEN-8"
+}
+seed_unreadable mail_unreadable
+MARK="- KEN-8 mailbox unreadable (mail-read=KEN-8): lane-mail: host-unreachable=KEN-8 state=unknown"
+run -- render --state "$CASE/state.json" --repo owner/repo
+ROW7='| KEN-7 (no PR, preparing) | Title 7 | Outcome 7 \| kept |'
+ROW8='| KEN-8 (no PR, running) | Title 8 | Outcome 8 \| kept |'
+VAL3='- KEN-3: 60 min over 2 rounds: implement full 55, fix range 5'
+VAL8='- KEN-8: validation unread, its host unreachable'
+WANT8="$(row7="$ROW7" row8="$ROW8" val3="$VAL3" val8="$VAL8" awk '{ print }
+  $0 == ENVIRON["row7"] { print ENVIRON["row8"] } $0 == ENVIRON["val3"] { print ENVIRON["val8"] }' <<<"$WANT")"
+assert_eq "$RC|$OUT" "0|$WANT8
+$MARK" "render lists KEN-8 under Running, marks its validation unread and its mailbox under Waiting on you, and every other lane as before"
+echo "One lane is unreadable." > "$CASE/summary.txt"
+run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+assert_eq "$RC|$(awk 'END { print }' <<<"$OUT")" "0|$MARK" "write writes the report with the unreadable lane marked"
+echo '{"lanes": [' > "$CASE/state.json"
+run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+assert_eq "$RC|$(first_err)" "2|oversee-report: state=$CASE/state.json" "a fleet state file that cannot be read still refuses"
+# A local lane's state is on this host, so its stop is still read even where
+# the refusal names a host.
+seed_fleet mail_unreadable_local
+echo 'lane-mail: host-unreachable=KEN-3' > "$CASE/mail-fail-KEN-3"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(grep '^- KEN-3 ' <<<"$OUT")" "0|- KEN-3 mailbox unreadable (mail-read=KEN-3): lane-mail: host-unreachable=KEN-3
+- KEN-3 waits on a stopped review gate, review-round-cap: one unresolved review thread" \
+  "a local lane whose mailbox read fails is marked and its stored stop still listed"
+# A hosted lane whose host answers but whose mailbox read fails still has its
+# stop read from that host.
+new_case mail_read_failed_hosted
+report -60
+fleet '' "$(lane KEN-7 running -86400 ssh-a)"
+issue KEN-7 "Title 7" "Outcome 7"
+mkdir -p "$CASE/host/w/KEN-7" "$CASE/host/clone/tmp"
+echo "gitdir: /clone/.git/worktrees/KEN-7" > "$CASE/host/w/KEN-7/.git"
+echo '{"post_pr_stop": {"name": "ci-fix-cap", "gate": "ci", "remaining": ["test"]}}' > "$CASE/host/clone/tmp/workflow-state-KEN-7.json"
+echo 'lane-mail: mail-read-failed=KEN-7' > "$CASE/mail-fail-KEN-7"
+run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^Waiting on you/ { on = 1; next } on' <<<"$OUT")" "0|- KEN-7 mailbox unreadable (mail-read=KEN-7): lane-mail: mail-read-failed=KEN-7
+- KEN-7 waits on a stopped ci gate, ci-fix-cap: test" "a hosted lane whose host answers keeps its stop when its mailbox read fails"
+# Only a refusal naming the lane's own host or mailbox is marked: a missing
+# helper, a crash, a global refusal or another item's refusal still refuses.
+while IFS='|' read -r name status text; do
+  seed_unreadable "mail_$name"
+  echo "$status" > "$CASE/mail-exit-KEN-8"
+  printf '%s\n' "$text" > "$CASE/mail-fail-KEN-8"
+  run -- render --state "$CASE/state.json" --repo owner/repo
+  assert_eq "$RC|$(first_err)" "2|oversee-report: mail-read=KEN-8" "a mailbox failure of kind $name refuses the report"
+done <<'ROWS'
+crash|1|lane-mail: host-unreachable=KEN-8 state=unknown
+global|2|lane-mail: root-unresolved=/w/KEN-8
+other-item|2|lane-mail: host-unreachable=KEN-9 state=unknown
+prefix-item|2|lane-mail: mail-read-failed=KEN-80
+ROWS
+seed_fleet mail_helper_missing
+run OVERSEE_REPORT_LANE_MAIL="$CASE/no-lane-mail" -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: mail-read=KEN-2" "a lane-mail helper that is not there refuses the report"
 
 echo "=== write: each merge lands in exactly one report ==="
 # KEN-3 merged at the second the lists are read, and KEN-2 merges while the
@@ -696,10 +765,6 @@ report -60
 fleet '' "$(lane issue-7 running -86400 "" github owner/repo)"
 run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: tracker-read=issue-7" "a failing gh issue view refuses rather than render blank cells"
-seed_fleet refuse_mail
-touch "$CASE/mail-fail"
-run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(first_err)" "2|oversee-report: mail-read=KEN-2" "a mailbox that cannot be read refuses rather than render the lane as waiting on nothing"
 seed_fleet refuse_title
 echo '{"description": "## Done when\n- no title here"}' > "$CASE/linear-KEN-2.json"
 run -- render --state "$CASE/state.json" --repo owner/repo
@@ -840,6 +905,29 @@ echo '{"id":"1790000000-2-b","kind":"directive","text":"Rebase first."}' >> "$CA
 REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(grep -c '^- KEN-2 waits on the overseer to answer: Rebase first\.$' <<<"$OUT")" "0|1" \
   "control: without the filter the unread directive is listed as a question for the overseer"
+
+# Without the skip, the report reads the unreadable lane's state from the host
+# its mailbox read could not reach, and that read refuses the whole report.
+skip='[[ "$mail" == host-unreachable && -n "$host" ]] || '
+assert_eq "$(grep -cF -- "$skip" "$REPORT_BIN")" "1" "control: the unreachable-host skip is one guard to strip"
+skip="$skip" awk '{ i = index($0, ENVIRON["skip"]); if (i) $0 = substr($0, 1, i - 1) substr($0, i + length(ENVIRON["skip"])); print }' \
+  "$REPORT_BIN" > "$MUTANT"
+seed_unreadable mail_unreadable_mutant
+REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: item-state=KEN-8" \
+  "control: without the skip the unreachable lane's state read refuses the report"
+
+# Without the host condition, a local lane whose mailbox read fails loses the
+# stop its readable state holds.
+cond=' && -n "$host"'
+assert_eq "$(grep -cF -- "$cond ]] ||" "$REPORT_BIN")" "1" "control: the host condition is one clause to strip"
+cond="$cond ]] ||" awk '{ i = index($0, ENVIRON["cond"]); if (i) $0 = substr($0, 1, i - 1) " ]] ||" substr($0, i + length(ENVIRON["cond"])); print }' \
+  "$REPORT_BIN" > "$MUTANT"
+seed_fleet mail_unreadable_local_mutant
+echo 'lane-mail: host-unreachable=KEN-3' > "$CASE/mail-fail-KEN-3"
+REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(grep -c '^- KEN-3 waits on a stopped review gate' <<<"$OUT")" "0|0" \
+  "control: without the host condition the local lane's stored stop vanishes"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
