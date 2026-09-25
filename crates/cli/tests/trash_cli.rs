@@ -371,6 +371,23 @@ fn a_remove_that_fails_at_a_later_scope_still_closes_the_scopes_it_wrote() {
     );
 }
 
+/// A remove whose first planned scope fails wrote nothing, and says so
+/// with the error alone: no "Nothing removed" above it, since the run
+/// stopped rather than found nothing to take.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_remove_that_fails_at_its_first_scope_says_only_the_error() {
+    let (_tmp, home) = fixture();
+    let project = migrating_project(&home);
+    fs::write(project.join("kendex.toml"), "schema = \n").unwrap();
+
+    let stopped = kendex(&home, &project, &[], &["remove", "deploy"]);
+    assert!(!stopped.status.success(), "{}", said(&stopped));
+    let text = said(&stopped);
+    assert!(text.contains("kendex.toml"), "{text}");
+    assert!(!text.contains("Nothing removed"), "{text}");
+}
+
 /// A bound exported as something other than a count stops the pass with
 /// everything intact and says which variable it could not read, and the
 /// verb still succeeds; one exported empty reads as the default.
