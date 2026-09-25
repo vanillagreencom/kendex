@@ -541,7 +541,9 @@ blockers() {
     if ! asks="$(ORCH_LANE_HOST="$host" "$LANE_MAIL" "${args[@]}" 2>"$WORK_DIR/mail.err")"; then
       refuse mail-read "$item" "$(cat "$WORK_DIR/mail.err")"
     fi
-    if ! asks="$(jq -r -R --arg item "$item" 'fromjson? | objects | "- \($item) waits on the overseer to answer: \(.text // "" | gsub("\n"; " "))"' <<<"$asks" 2>"$WORK_DIR/mail.err")"; then
+    # pending also lists the unread directives this overseer sent the lane,
+    # which wait on the lane, not on the overseer: the asks alone are kept.
+    if ! asks="$(jq -r -R --arg item "$item" 'fromjson? | objects | select(.kind == "ask") | "- \($item) waits on the overseer to answer: \(.text // "" | gsub("\n"; " "))"' <<<"$asks" 2>"$WORK_DIR/mail.err")"; then
       refuse mail-read "$item" "$(cat "$WORK_DIR/mail.err")"
     fi
     [[ -z "$asks" ]] || BLOCKERS+="$asks"$'\n'

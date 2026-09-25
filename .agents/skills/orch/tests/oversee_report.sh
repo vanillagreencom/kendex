@@ -270,6 +270,14 @@ Waiting on you:
 assert_eq "$RC|$OUT" "0|$WANT" \
   "Landed holds only the fleet item merged since the last report, Running each live or preparing lane with its PR, Next the queue, Waiting on you the open question then each running lane's blockers"
 
+echo "=== render: Waiting on you holds a lane's asks, not its unread directives ==="
+# lane-mail pending lists the directives the overseer sent and the lane has
+# not read beside the asks; the directive waits on the lane, not on the owner.
+seed_fleet pending_directive
+echo '{"id":"1790000000-2-b","kind":"directive","text":"Rebase first."}' >> "$CASE/pending-KEN-2.jsonl"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$OUT" "0|$WANT" "an unread directive beside an ask leaves Waiting on you with the ask alone"
+
 echo "=== render and due: the GitHub auth ladder ==="
 # A revoked env token with no keyring falls through to the project's
 # GH_BOT_TOKEN, as the watch's own ladder does; with no working credential the
@@ -738,6 +746,18 @@ echo "[$(merged_pr 11 ken-1 -30 abcdef1234)]" > "$CASE/merged.json"
 touch "$CASE/auth-fail"
 REPORT_UNDER_TEST="$MUTANT" run ORCH_REPORT_EVERY_ISSUES=1 GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_bot00000 -- due --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" "control: without the ladder due's count fails on a revoked GH_TOKEN"
+
+# Without the kind filter, an unread directive reads as a question the lane
+# waits on the overseer to answer.
+filter='select(.kind == "ask") | '
+assert_eq "$(grep -cF -- "$filter" "$REPORT_BIN")" "1" "control: the kind filter is one clause to strip"
+filter="$filter" awk '{ i = index($0, ENVIRON["filter"]); if (i) $0 = substr($0, 1, i - 1) substr($0, i + length(ENVIRON["filter"])); print }' \
+  "$REPORT_BIN" > "$MUTANT"
+seed_fleet pending_directive_mutant
+echo '{"id":"1790000000-2-b","kind":"directive","text":"Rebase first."}' >> "$CASE/pending-KEN-2.jsonl"
+REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(grep -c '^- KEN-2 waits on the overseer to answer: Rebase first\.$' <<<"$OUT")" "0|1" \
+  "control: without the filter the unread directive is listed as a question for the overseer"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
