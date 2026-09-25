@@ -11,7 +11,7 @@
 //! [`KEEP_DAYS_VAR`] days whose bytes, newest first, fit under
 //! [`KEEP_MB_VAR`], and every entry this invocation wrote
 //! (`Env::hold_trashed`), and removes the rest. It runs at the end of
-//! `apply`, `refresh`, `remove` and `update-pi`, after the command's own
+//! the verbs `docs/architecture/trash.md` names, after the command's own
 //! writes, never in the middle of one. A bound it cannot read stops the
 //! pass with everything intact; an entry it cannot measure or remove
 //! stops it where it is, with what went before already gone.

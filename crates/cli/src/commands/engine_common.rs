@@ -49,13 +49,13 @@ pub fn print_synced(synced: &kendex_core::remote::Synced) {
     }
 }
 
-/// The pass `apply`, `refresh`, `remove` and `update-pi` close on: the
-/// trash is brought within its bounds (`kendex_core::trash::retain`)
-/// once the verb's own writes are done, and what went is said in the
-/// verb's own output, so a person who never runs `kendex trash` still
-/// learns that kendex is reclaiming. A pass that stopped is a warning,
-/// never a failure of the verb: the writes it closes are on disk, and the
-/// next of those four verbs retries it.
+/// The pass a writing verb closes on; the call sites are the list and
+/// `docs/architecture/trash.md` § Boundaries owns it. The trash is brought
+/// within its bounds (`kendex_core::trash::retain`) once the verb's own
+/// writes are done, and what went is said in the verb's own output, so a
+/// person who never runs `kendex trash` still learns that kendex is
+/// reclaiming. A pass that stopped is a warning, never a failure of the
+/// verb: the writes are on disk, and the next of those verbs retries it.
 pub fn tidy_trash(env: &Env) {
     match kendex_core::trash::retain(env) {
         Ok(removed) => print_trashed(removed),

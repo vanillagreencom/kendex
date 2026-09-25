@@ -9,9 +9,9 @@ use super::{CliResult, out, say};
 use crate::ui;
 
 /// The trash every removal's bytes go to: what it holds, and the one way
-/// to empty it by hand. The automatic bound runs at the end of `apply`,
-/// `refresh` and `remove`; this verb is for the person who wants to see
-/// it or take more out.
+/// to empty it by hand. The automatic bound runs at the end of the verbs
+/// `docs/architecture/trash.md` names; this verb is for the person who
+/// wants to see it or take more out.
 #[derive(Subcommand)]
 pub enum TrashCommand {
     /// What the trash holds: each entry's name, age and size, newest first
