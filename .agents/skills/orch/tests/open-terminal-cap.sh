@@ -2,7 +2,8 @@
 # open-terminal's fleet caps: a fresh launch under --state-dir is refused as
 # cap-reached where the fleet's running and preparing records plus its
 # unrecorded live claims reach ORCH_OVERSEER_LANES, and as account-cap-reached
-# where the live claims on its lane reach ORCH_LANE_ACCOUNT_CLAIMS, both judged
+# where the fleet's records on its lane plus the live claims there no such
+# record accounts for reach ORCH_LANE_ACCOUNT_CLAIMS, both judged
 # under the fleet's lock and the claim store's, held from the count through the
 # claim and record writes. A relaunch meets the fleet cap where the item has
 # no running or preparing record, and the account cap where it has none or
@@ -421,26 +422,43 @@ await_exit "$WAITER"
 assert_eq "rc=$(rc one) account=$(account_of CC-1)" "rc=0 account=$LANE_B" \
   "an auto lane waiting on a full account alone launches on the account the next pick has room on"
 
-echo "=== a claim this run could not write stops the batch ==="
-# The claim store is readable and not writable, so the first item launches
-# with its claim unwritten. The second can then neither be counted against its
-# account (a named lane under the account cap) nor spread off it (an auto lane
-# with the account cap off).
+echo "=== the account cap counts a lane by its record where it has no claim ==="
+# A lane whose claim write failed, and a GUI lane, which writes none, each
+# still hold their account through the record the launch wrote: the next
+# launch onto that account, in a later invocation, counts them.
+row gui-account
+MODE=--ghostty launch one 10 1 --lane "$LANE_A" CC-1
+launch two 10 1 --lane "$LANE_A" CC-2
+assert_eq "one=$(rc one) two=$(rc two) $(key two)" \
+  "one=0 two=1 open-terminal: account-cap-reached item=CC-2 lane=$LANE_A cap=1 claims=1" \
+  "a GUI lane recorded on the account fills its cap for the next launch"
 if [[ "$(id -u)" -eq 0 ]]; then
   echo "  skip  running as root, whose writes a directory mode does not stop"
 else
-  for spec in "claim-counted|5|$LANE_A|counted one lane short" "claim-spread|0|auto|picked on an account it cannot see"; do
-    IFS='|' read -r name account_cap lane why <<<"$spec"
-    row "$name"
-    printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_A" > "$ROW/pick"
-    mkdir -p "$CLAIMS/claims"
-    chmod 555 "$CLAIMS/claims"
-    launch one 10 "$account_cap" --lane "$lane" CC-1 CC-2
-    chmod 755 "$CLAIMS/claims"
-    assert_eq "rc=$(rc one) running=$(running) $(key one)" \
-      "rc=1 running=CC-1 open-terminal: claim-unrecorded item=CC-2 launched=1" \
-      "$name: the item after an unwritten claim is refused rather than $why"
-  done
+  # The claim store is readable and not writable, so the first batch's lanes
+  # stand with their claims unwritten, and a named lane's batch runs on,
+  # counting them by their records.
+  row claim-lost
+  mkdir -p "$CLAIMS/claims"
+  chmod 555 "$CLAIMS/claims"
+  launch one 10 5 --lane "$LANE_A" CC-1 CC-2
+  chmod 755 "$CLAIMS/claims"
+  unwritten="$(ls "$CLAIMS/claims" | wc -l | tr -d ' ')"
+  launch two 10 2 --lane "$LANE_A" CC-3
+  assert_eq "one=$(rc one) running=$(running) claims=$unwritten two=$(rc two) $(key two)" \
+    "one=0 running=CC-1,CC-2 claims=0 two=1 open-terminal: account-cap-reached item=CC-3 lane=$LANE_A cap=2 claims=2" \
+    "a named lane's batch runs on past unwritten claims, and a later invocation counts those lanes"
+  # Under --lane auto the re-pick reads claims alone, so a batch whose claim
+  # went unwritten stops rather than picking an account it cannot see.
+  row claim-spread
+  printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_A" > "$ROW/pick"
+  mkdir -p "$CLAIMS/claims"
+  chmod 555 "$CLAIMS/claims"
+  launch one 10 0 --lane auto CC-1 CC-2
+  chmod 755 "$CLAIMS/claims"
+  assert_eq "rc=$(rc one) running=$(running) $(key one)" \
+    "rc=1 running=CC-1 open-terminal: claim-unrecorded item=CC-2 launched=1" \
+    "the auto item after an unwritten claim is refused rather than picked on an account it cannot see"
 fi
 
 echo "=== a child that outlives the worktree step does not hold the launch lock ==="

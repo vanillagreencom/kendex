@@ -68,7 +68,7 @@ ot_message() { # REASON FIELD=VALUE...
     record-missing) text='No lane record names the item, so this launcher never launched it and the wake recorded nothing; the woken session runs. Record the lane per oversee.md § 3 Lane record, or close its window and relaunch the item with --relaunch.' ;;
     state-unwritable) text='The oversee workflow state could not be created, so no lane would be watched. Nothing launched; fix what workflow-state names.' ;;
     cap-reached) text='A launch here would put the fleet over ORCH_OVERSEER_LANES. cap names that setting, running the lane records in the fleet state whose status is running or preparing, and claims the live launch claims this fleet wrote that no such record names, a lane whose record is neither while its pane still runs. Nothing was launched. Wait for a lane to close, launch with --wait-slot to wait for one here, or pass --over-cap for one deliberate exception.' ;;
-    account-cap-reached) text='A launch here would put the account over ORCH_LANE_ACCOUNT_CLAIMS. lane names the account, cap that setting, and claims the live launch claims on that account. Nothing was launched. Wait for a lane on that account to close, launch with --wait-slot to wait for one here (under --lane auto it moves to an account with room), name a lane on another account, or pass --over-cap for one deliberate exception. 0 turns this cap off.' ;;
+    account-cap-reached) text='A launch here would put the account over ORCH_LANE_ACCOUNT_CLAIMS. lane names the account, cap that setting, and claims the lanes on that account: the running or preparing records of this fleet on it, and the live launch claims on it that are not the claims of those records, lanes of other fleets among them. Nothing was launched. Wait for a lane on that account to close, launch with --wait-slot to wait for one here (under --lane auto it moves to an account with room), name a lane on another account, or pass --over-cap for one deliberate exception. 0 turns this cap off.' ;;
     cap-unreadable) text='The lanes in flight could not be counted, so neither cap can be judged. Nothing was launched. source=state is the fleet state named by --state-dir; source=claims is the claim store, whose own keyed lane-claims line above names what failed.' ;;
     cap-lock-failed) text='A launch lock, the fleet one or the claim store one that lock names, was not taken inside its bound, so the count and the record write cannot be one step. Nothing was launched. Another launch holds it; the lock line above names a stale mutex where flock is absent.' ;;
     cap-option-unanchored) text='This option answers the fleet caps, which a launch meets only where --state-dir names its fleet. Nothing was launched. Pass --state-dir, or drop the option.' ;;
@@ -89,7 +89,7 @@ ot_message() { # REASON FIELD=VALUE...
     issue-canonical-failed) text='The git-context helper could not canonicalize the issue identifier. Nothing was created.' ;;
     github-item-invalid) text='A GitHub work item must be an issue number.' ;;
     repo-missing) text='Specify a repository when GitHub cannot resolve it.' ;;
-    claim-unrecorded) text='The previous claim is missing, so the next item can neither be spread to another account nor counted against the account cap. The batch stops.' ;;
+    claim-unrecorded) text='The previous claim is missing, so under --lane auto the next item cannot be spread off its account. The batch stops.' ;;
     item-owned) text='Another session owns this work item. Its worktree was skipped.' ;;
     worktree-failed) text='The worktree helper failed to create this item.' ;;
     worktree-reuse-merged) text='The item pull request merged, so its tree is kept as it stands and no rebase is attempted.' ;;
@@ -458,12 +458,14 @@ record names (a claim store several fleets share counts each fleet's
 own claims here, and every fleet's toward an account); a
 launch that would pass it is refused as cap-reached, naming the cap, those
 records and the claims. The account cap, ORCH_LANE_ACCOUNT_CLAIMS
-(default 3, 0 turns it off), counts the live claims on the lane the launch
-would use, as `lanes` counts its claims column; a launch that would pass it
-is refused as account-cap-reached, naming the lane, the cap and the claims.
-Both settings are read through orch-env. A refusal stops the batch, and so
-does a claim this run failed to write while the account cap is on, as
-claim-unrecorded. A store that cannot be read refuses as cap-unreadable, and
+(default 3, 0 turns it off), counts the lanes on the account the launch
+would use: this fleet's running or preparing records on it, which count a
+GUI lane and one whose claim was never written, plus the live launch claims
+on it that are not those records' own, other fleets' lanes among them; a
+launch that would pass it is refused as account-cap-reached, naming the
+lane, the cap and that count as claims. Both settings are read through
+orch-env. A refusal stops the batch, and so does a claim this run failed to
+write under --lane auto, whose re-pick reads claims, as claim-unrecorded. A store that cannot be read refuses as cap-unreadable, and
 a lock not taken as cap-lock-failed. A --relaunch meets the fleet cap where
 the item has no running or preparing record, and the account cap where it
 has none or moves to another account. --wake is not judged. Both flags below need
@@ -2653,32 +2655,49 @@ cap_take() { # ITEM
 
 # Sets CAP_RUNNING (records lib/lane-claims.sh's LANE_RUNNING_JQ calls held,
 # running or preparing), CAP_INFLIGHT (live claims naming this fleet whose
-# window no held record names: a lane whose pane outlived its record's running status; a record's
-# window is `SESSION:WINDOW`, or bare where written by hand, and a claim's is
-# the bare name, so the two are compared on the name),
-# CAP_ACCOUNT (live claims on LANE, counted by the reader `lanes` counts with),
+# window no held record names: a lane whose pane outlived its record's running
+# status; a record's window is `SESSION:WINDOW`, or bare where written by hand,
+# and a claim's is the bare name, so the two are compared on the name),
+# CAP_ACCOUNT (the lanes on LANE, canonical: this fleet's held records whose
+# account is LANE, plus the live claims on LANE that are not this fleet's claim
+# for a held record, which are other fleets' lanes and lanes nothing recorded),
 # and CAP_ITEM_HELD and CAP_ITEM_ACCOUNT (whether KEY's own record is held,
-# and the account it names). Returns 1 on a store it could not read: a
-# count missing a lane is a cap that admits one lane too many.
+# and the account it names). The records are this fleet's durable count: a GUI
+# launch writes no claim and a claim write can fail, and either lane still has
+# its record. Returns 1 on a store it could not read: a count missing a lane
+# is a cap that admits one lane too many.
 cap_count() { # ITEM KEY LANE
-  local lanes out windows claims rc=0
+  local lanes out held windows="" claims counts tag account window rc=0
   lanes="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.lanes // []')" || rc=$?
+  # One line per held record, tagged and joined by the unit separator, which
+  # keeps an empty account or window a field of its own.
   [[ "$rc" -eq 0 ]] && out="$(jq -r --arg key "$2" "$LANE_RUNNING_JQ"'
     ([.[] | objects | select(.item == $key)] | first) as $own
-    | ([.[] | select(held)] | length),
-      (if $own == null then "absent" elif ($own | held) then "held" else "stopped" end),
+    | (if $own == null then "absent" elif ($own | held) then "held" else "stopped" end),
       ($own.account // ""),
-      (.[] | select(held) | .window // empty | sub("^[^:]*:"; ""))' <<<"$lanes")" || rc=1
+      (.[] | select(held) | ["held", (.account // ""), (.window // "" | sub("^[^:]*:"; ""))] | join("\u001f"))' <<<"$lanes")" || rc=1
   [[ "$rc" -eq 0 ]] || { ot_message cap-unreadable "item=$1" "source=state" >&2; return 1; }
-  { read -r CAP_RUNNING; read -r CAP_ITEM_HELD; read -r CAP_ITEM_ACCOUNT; windows="$(cat)"; } <<<"$out"
+  { read -r CAP_ITEM_HELD; read -r CAP_ITEM_ACCOUNT; held="$(cat)"; } <<<"$out"
+  CAP_RUNNING=0
+  CAP_ACCOUNT=0
+  while IFS=$'\037' read -r tag account window; do
+    [[ "$tag" == held ]] || continue
+    CAP_RUNNING=$((CAP_RUNNING + 1))
+    [[ -z "$window" ]] || windows+="$window"$'\n'
+    [[ -z "$3" || -z "$account" || "$(lane_claims_canon "$account")" != "$3" ]] || CAP_ACCOUNT=$((CAP_ACCOUNT + 1))
+  done <<<"$held"
   claims="$(lane_claims_read "$(lane_claims_dir "$CLAIM_ROOT")" fleet)" || rc=$?
   [[ "$rc" -eq 0 ]] || { ot_message cap-unreadable "item=$1" "source=claims" >&2; return 1; }
-  CAP_INFLIGHT="$(CAP_WINDOWS="$windows" CAP_FLEET="$CAP_FLEET" awk -F'\t' '
+  # This fleet's claims whose window a held record names are that record's
+  # lane, counted above; its other claims are the fleet cap's in-flight lanes.
+  counts="$(CAP_WINDOWS="$windows" CAP_FLEET="$CAP_FLEET" CAP_LANE="$3" awk -F'\t' '
     BEGIN { n = split(ENVIRON["CAP_WINDOWS"], w, "\n"); for (i = 1; i <= n; i++) if (w[i] != "") seen[w[i]] = 1 }
-    NF && $5 == ENVIRON["CAP_FLEET"] && !($2 in seen) { c++ }
-    END { print c + 0 }' <<<"$claims")"
-  CAP_ACCOUNT=0
-  [[ -z "$3" ]] || CAP_ACCOUNT="$(lane_claims_count "$claims" "$3")"
+    NF { recorded = ($5 == ENVIRON["CAP_FLEET"] && ($2 in seen)) }
+    NF && $5 == ENVIRON["CAP_FLEET"] && !recorded { f++ }
+    NF && ENVIRON["CAP_LANE"] != "" && $1 == ENVIRON["CAP_LANE"] && !recorded { a++ }
+    END { print f + 0, a + 0 }' <<<"$claims")"
+  CAP_INFLIGHT="${counts% *}"
+  CAP_ACCOUNT=$((CAP_ACCOUNT + ${counts#* }))
 }
 
 # Judges the launch lane again once a --wait-slot wait has let its usage
@@ -2832,11 +2851,11 @@ for raw in "${ITEMS[@]}"; do
   # vouched for. tmux only: a claim's liveness handle is a pane, so on a GUI
   # surface a re-pick would re-read numbers nothing has moved.
   attempted=$((attempted + 1))
-  # A claim an earlier item failed to write is a lane nothing here can see: an
-  # auto re-pick would not move off its account, and the account cap would
-  # count that account one short. Either stops the batch, before this item's
-  # re-pick and count.
-  if [[ "$CLAIM_WRITE_FAILED" == true ]] && { [[ "$LANE_AUTO" == true ]] || (( ACCOUNT_CAP > 0 )); }; then
+  # A claim an earlier item failed to write is a lane an auto re-pick, which
+  # reads claims, cannot see, so it would not move off that account. That stops
+  # the batch, before this item's re-pick. The account cap counts the lane by
+  # its record and needs no stop.
+  if [[ "$CLAIM_WRITE_FAILED" == true && "$LANE_AUTO" == true ]]; then
     ot_message claim-unrecorded "item=$item" "launched=$launched" >&2
     failed=$((failed + 1))
     break

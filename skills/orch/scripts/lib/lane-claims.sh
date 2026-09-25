@@ -196,7 +196,7 @@ lane_claim_write() {
 
 # The one answer to which oversee lane records are lanes in flight, as jq
 # definitions a caller prefixes to its own program: oversee-watch carries the
-# running records, and open-terminal counts the held ones against the fleet cap,
+# running records, and open-terminal counts the held ones against both caps,
 # those plus the preparing records of hosted lanes handed to a background job,
 # whose window and host are taken before the lane runs. The watch and the cap
 # cannot describe two different fleets. Hand-appended entries that are not
