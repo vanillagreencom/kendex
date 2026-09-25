@@ -4,8 +4,8 @@
 # changes touch, the UI checks and suite for a UI change, and the suites of
 # the trees they touch, and none of what --full adds beyond that: the
 # workspace test run, cross-target checks, the documentation build, the Bash
-# 3.2 parse, the working-tree bot-instructions check, the cargo free-space
-# floor and the class lane selection. Every compiler and
+# 3.2 parse, the working-tree bot-instructions check, the decision-ID check,
+# the cargo free-space floor and the class lane selection. Every compiler and
 # toolchain call is a stub in fake-bin that logs what it was asked.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -152,6 +152,30 @@ if mutant_guard 's/^if \[ "\$MODE" = full \] && \[ "\$validate_class:\$validate_
     || bad "control: with the class selection applied to range the suite stands down" "rc=$RC out=$OUT"
 else
   bad "control: the class selection could not be widened to range in a guard copy"
+fi
+back_to_base
+
+echo "=== the decision-ID check is the full run's, not the range's ==="
+# The check judges the branch against the base before merge; a range leaves it
+# to that full run. A shared ID in the INDEX would red the check.
+mkdir -p "$R/docs/decisions"
+printf '%s\n' \
+  '| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |' \
+  '|------|----|----------|----------|-----------|--------------|--------|------|' \
+  '| 2026-01-10 | D035 | P-1 | One | Reason | Never | Active | [Full](D035-one.md) |' \
+  '| 2026-01-11 | D035 | P-2 | Two | Reason | Never | Active | [Full](D035-two.md) |' \
+  >"$R/docs/decisions/INDEX.md"
+run_range "$BASE"
+[ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: decision-ids="* ]] \
+  && ok "a range leaves a shared decision ID to the full run" \
+  || bad "a range leaves a shared decision ID to the full run" "rc=$RC out=$OUT"
+if mutant_guard 's/^if \[ "\$MODE" = full \]; then$/if [ "$MODE" != default ]; then/'; then
+  run_range "$BASE" "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: decision-ids=1"* ]] \
+    && ok "control: with the check widened to range the shared ID reds it" \
+    || bad "control: with the check widened to range the shared ID reds it" "rc=$RC out=$OUT"
+else
+  bad "control: the decision-ID check could not be widened to range in a guard copy"
 fi
 back_to_base
 

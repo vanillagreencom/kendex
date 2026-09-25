@@ -249,8 +249,8 @@ case "${1:-}" in
       '        input), the UI checks and suite when they touch ui/, and the suites of the' \
       '        skill, hook, tool and Pi-package trees they touch. None of what --full adds' \
       '        beyond that: the workspace test run, cross-target checks, the documentation' \
-      '        build, the Bash 3.2 parse, the working-tree bot-instructions check,' \
-      '        the cargo free-space floor and the class lane selection.' \
+      '        build, the Bash 3.2 parse, the working-tree bot-instructions check, the' \
+      '        decision-ID check, the cargo free-space floor and the class lane selection.' \
       '--full: full Rust and UI validation for development completion and submit,' \
       '        plus the suites of the skill, hook, tool and Pi-package trees the branch touched.' \
       '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \
