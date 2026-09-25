@@ -221,7 +221,7 @@ The accept paths, implement and fix alike, and the retry path for a structurally
 
 ### Store Validation Time
 
-The accept paths, implement and fix alike, and the retry path for a structurally valid artifact with a failing `validate` run this subsection. It is the one writer of `.validate_rounds`, which the lane status file and `oversee-report`'s Validation row read.
+The accept paths, implement and fix alike, and the retry path for a structurally valid artifact with a failing `validate` run this subsection. It is the one writer of `.validate_rounds`: the lane rewrites its status file's validation line from it, and `oversee-report`'s Validation row reads it.
 
 `[VALIDATE_TIME]` is the artifact's `validate_time` as `dev-artifact-check` echoed it. On `null` the round named no run, or its run is unfinished, and there is no wall time to record: skip the write. A `no-verdict` run the timeout ended carries its time and is recorded like any other. Otherwise `[SECONDS]` is its `seconds`, `[VALIDATE_MODE]` the echoed `validate_mode`, and `[KIND]` the round's `implement` or `fix`. The write appends one entry per round and replaces an entry already carrying this round id, so a re-run of this step never counts a round twice.
 
