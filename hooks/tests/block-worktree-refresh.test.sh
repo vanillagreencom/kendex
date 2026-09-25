@@ -420,7 +420,7 @@ sudo -D is a move too|payload|own|2|block-worktree-refresh: moved=add|sudo -D $M
 sudo --chdir is the same move|payload|own|2|block-worktree-refresh: moved=add|sudo --chdir $MAIN kendex add orch
 an env without a directory option moves nothing|payload|own|0|-|env FOO=1 kendex add orch
 env -C inside a cluster of short options is the same move|payload|own|2|block-worktree-refresh: moved=add|env -iC $MAIN kendex add orch
-sudo -D inside a cluster of short options is the same move|payload|own|2|block-worktree-refresh: moved=add|sudo -bD $MAIN kendex add orch
+sudo -D inside a cluster of short options is the same move|payload|own|2|block-worktree-refresh: moved=add|sudo -ED $MAIN kendex add orch
 a project above the worktree's root is not the worktree's own|payload|hosted|2|block-worktree-refresh: refused=add|kendex add orch
 a project below the worktree root with its own kendex.toml is that worktree's own|payload|nested-app|0|-|kendex remove gh
 a marker-only project inside a declaring worktree has no manifest of its own|payload|own-marked|2|block-worktree-refresh: refused=add|kendex add orch
