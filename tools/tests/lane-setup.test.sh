@@ -6,10 +6,14 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS="$(cd "$TEST_DIR/.." && pwd)"
-REPO="$(cd "$TOOLS/.." && pwd)"
+# Physical, because cargo names a crate's directory by its physical path and
+# the warm rows compare that name with the lane path built from this one.
+REPO="$(cd "$TOOLS/.." && pwd -P)"
 mkdir -p "$REPO/tmp"
 TMP="$(mktemp -d "$REPO/tmp/lane-setup.XXXXXX")"
 trap 'rm -rf -- "${TMP:?}"' EXIT
+
+REAL_GIT="$(command -v git)" || { printf 'the host provides git\n'; exit 1; }
 
 PASS=0
 FAIL=0
@@ -35,11 +39,18 @@ mutate() {
 }
 
 # fixture NAME [FROM TO]: a clone at $TMP/NAME, its lane-setup mutated when
-# FROM and TO are given.
+# FROM and TO are given. Its worktree skill answers only `path --hosted`, with
+# the hosted lane path a clone of that name has by default, LANE_PATH.
 fixture() {
   R="$TMP/$1"
   EXTRA_BIN=""
-  mkdir -p "$R/tools" "$R/ui" "$R/fake-bin" "$R/home" "$R/src"
+  LANE_PATH="${R%/*}/.worktrees/${R##*/}/lane"
+  mkdir -p "$R/tools" "$R/ui" "$R/fake-bin" "$R/home" "$R/src" "$R/.agents/skills/worktree/scripts"
+  cat >"$R/.agents/skills/worktree/scripts/worktree" <<SH
+#!/usr/bin/env bash
+[ "\$*" = "path --hosted" ] || exit 64
+printf '%s\\n' '$LANE_PATH'
+SH
   cp "$REPO/.fleet-setup" "$R/"
   cp "$TOOLS/lane-setup" "$R/tools/"
   [ $# -eq 1 ] || mutate "$R/tools/lane-setup" "$2" "$3"
@@ -53,9 +64,12 @@ fixture() {
 #!/usr/bin/env bash
 printf 'v22.19.0\n'
 SH
+  # git answers the dependency-input read itself and hands `worktree`, which
+  # the warm build takes, to the real git.
   cat >"$R/fake-bin/git" <<'SH'
 #!/usr/bin/env bash
 set -eu
+if [ "${1-}" = worktree ]; then exec "$REAL_GIT" "$@"; fi
 [ "$*" = "rev-parse HEAD:ui/package.json HEAD:ui/package-lock.json" ]
 printf 'package:'
 cat ui/package.json
@@ -84,7 +98,7 @@ printf '%s\n' "$*" >>"$RUSTUP_LOG"
 [ "${RUSTUP_FAIL:-0}" -eq 0 ] || exit "$RUSTUP_FAIL"
 printf '%s\n' aarch64-apple-darwin x86_64-pc-windows-msvc >"$RUSTUP_STATE"
 SH
-  chmod +x "$R/fake-bin/"*
+  chmod +x "$R/fake-bin/"* "$R/.agents/skills/worktree/scripts/worktree"
   git -C "$R" init -q
   git -C "$R" add -A
   git -C "$R" -c user.name=test -c user.email=test@example.com commit -qm fixture
@@ -99,7 +113,7 @@ run_setup() {
   local command=$1
   shift
   RC=0
-  OUT="$(cd "$R" && env -i HOME="$R/home" PATH="${EXTRA_BIN:+$EXTRA_BIN:}$R/fake-bin:$SYS_BIN" NPM_LOG="$NPM_LOG" RUSTUP_LOG="$RUSTUP_LOG" RUSTUP_STATE="$RUSTUP_STATE" NPM_FAIL="${NPM_FAIL:-0}" RUSTUP_FAIL="${RUSTUP_FAIL:-0}" "$@" "$command" 2>&1)" || RC=$?
+  OUT="$(cd "$R" && env -i HOME="$R/home" PATH="${EXTRA_BIN:+$EXTRA_BIN:}$R/fake-bin:$SYS_BIN" REAL_GIT="$REAL_GIT" NPM_LOG="$NPM_LOG" RUSTUP_LOG="$RUSTUP_LOG" RUSTUP_STATE="$RUSTUP_STATE" NPM_FAIL="${NPM_FAIL:-0}" RUSTUP_FAIL="${RUSTUP_FAIL:-0}" "$@" "$command" 2>&1)" || RC=$?
 }
 
 echo "=== a fresh clone installs both dependency sets ==="
@@ -390,14 +404,17 @@ for tool in cc ld ld.mold mold ld.lld; do
 done
 case "$LINK_TOOLS" in */cc\ * | */cc) ;; *) bad "the host provides cc for the warm build rows" "found:$LINK_TOOLS"; exit 1 ;; esac
 
-# proof_warm WARM SOURCE EXPECT [FROM TO]: the setup with FLEET_WARM=WARM
-# on a toy crate that compiles with a current Cargo.lock (good), does not
-# compile (broken), or has no Cargo.lock for --locked to accept (unlocked),
-# with the real cargo on its PATH and the build kept in the clone's own
-# target dir.
+# proof_warm WARM SOURCE WRAPPER EXPECT [FROM TO]: the setup with
+# FLEET_WARM=WARM on a toy crate, committed, that compiles with a current
+# Cargo.lock (good), does not compile (broken), or has no Cargo.lock for
+# --locked to accept (unlocked), with the real cargo on its PATH and the build
+# kept in the clone's own target dir. WRAPPER sccache gives the lane config a
+# pass-through sccache and an endpoint; none gives it no wrapper. A build that
+# ran compiled the crate at LANE_PATH and left no tree there.
 proof_warm() {
-  local warm=$1 source=$2 expect=$3 lock="" exe="" built=no
-  shift 3
+  local warm=$1 source=$2 wrapper=$3 expect=$4 lock="" exe="" built=no trees="" at_lane=no
+  local -a endpoint=()
+  shift 4
   lane_fixture "$@"
   case "$source" in
     good) ;;
@@ -408,6 +425,8 @@ proof_warm() {
   if [ "$source" != unlocked ]; then
     lock="$(cargo_in "$R" generate-lockfile)" || { WHY="generate-lockfile: $lock"; return 1; }
   fi
+  git -C "$R" add -A || return 1
+  git -C "$R" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m "$source crate" || return 1
   EXTRA_BIN="$R/row-bin"
   mkdir -p "$EXTRA_BIN"
   ln -s "$CARGO_BIN" "$EXTRA_BIN/cargo"
@@ -415,15 +434,29 @@ proof_warm() {
   for tool in $LINK_TOOLS; do
     ln -s "$tool" "$EXTRA_BIN/${tool##*/}"
   done
-  run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test CARGO_TARGET_DIR="$R/target" ${warm:+FLEET_WARM="$warm"}
+  case "$wrapper" in
+    sccache)
+      printf '#!/usr/bin/env bash\nexec "$@"\n' >"$EXTRA_BIN/sccache"
+      chmod +x "$EXTRA_BIN/sccache"
+      endpoint=(FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379)
+      ;;
+    none) ;;
+    *) WHY="unknown wrapper $wrapper"; return 1 ;;
+  esac
+  run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test CARGO_TARGET_DIR="$R/target" ${endpoint[@]+"${endpoint[@]}"} ${warm:+FLEET_WARM="$warm"}
   for exe in "$R"/target/debug/deps/toy-*; do
     case "${exe##*/}" in *.*) ;; *) [ ! -f "$exe" ] || [ ! -x "$exe" ] || built=yes ;; esac
   done
-  WHY="rc=$RC built=$built out=$OUT"
+  trees="$(git -C "$R" worktree list --porcelain | grep -c '^worktree ')" || return 1
+  case "$OUT" in *"Compiling toy v0.1.0 ($LANE_PATH)"*) at_lane=yes ;; esac
+  WHY="rc=$RC built=$built at-lane=$at_lane trees=$trees out=$OUT"
+  [ "$trees" -eq 1 ] && [ ! -e "$LANE_PATH" ] || return 1
   case "$expect" in
-    built) [ "$RC" -eq 0 ] && [ "$built" = yes ] && case "$OUT" in *"lane-setup: warm-build=run"*) true ;; *) false ;; esac ;;
+    built) [ "$RC" -eq 0 ] && [ "$built" = yes ] && [ "$at_lane" = yes ] && case "$OUT" in *"lane-setup: warm-build=run path=$LANE_PATH"*) true ;; *) false ;; esac ;;
     skipped) [ "$RC" -eq 0 ] && [ ! -e "$R/target" ] && case "$OUT" in *"lane-setup: warm-build=skip"*) true ;; *) false ;; esac ;;
-    failed) [ "$RC" -ne 0 ] && case "$OUT" in *"lane-setup: warm-build=run"*) true ;; *) false ;; esac ;;
+    fetched) [ "$RC" -eq 0 ] && [ "$built" = no ] && [ "$at_lane" = no ] && case "$OUT" in *"lane-setup: warm-build=fetch-only:no-wrapper"*) true ;; *) false ;; esac ;;
+    fetch-failed) [ "$RC" -ne 0 ] && [ "$built" = no ] && case "$OUT" in *"lane-setup: warm-build=fetch-only:no-wrapper"*) true ;; *) false ;; esac ;;
+    failed) [ "$RC" -ne 0 ] && case "$OUT" in *"lane-setup: warm-build=run path=$LANE_PATH"*) true ;; *) false ;; esac ;;
     *) WHY="unknown expectation $expect"; return 1 ;;
   esac
 }
@@ -456,14 +489,16 @@ FLEET_SCCACHE_REDIS_ENDPOINT=|present|unused
 FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|absent|unused
 ROWS
 
-while IFS='|' read -r warm source expect; do
-  proof_warm "$warm" "$source" "$expect" && ok "warm: FLEET_WARM=[$warm] on a $source crate is $expect" || bad "warm: FLEET_WARM=[$warm] on a $source crate is $expect" "$WHY"
+while IFS='|' read -r warm source wrapper expect; do
+  proof_warm "$warm" "$source" "$wrapper" "$expect" && ok "warm: FLEET_WARM=[$warm] on a $source crate with wrapper $wrapper is $expect" || bad "warm: FLEET_WARM=[$warm] on a $source crate with wrapper $wrapper is $expect" "$WHY"
 done <<'ROWS'
-1|good|built
-|good|skipped
-0|good|skipped
-1|broken|failed
-1|unlocked|failed
+1|good|sccache|built
+|good|sccache|skipped
+0|good|sccache|skipped
+1|broken|sccache|failed
+1|unlocked|sccache|failed
+1|good|none|fetched
+1|unlocked|none|fetch-failed
 ROWS
 
 echo "=== must-fail controls: each cargo proof fails against its mutant ==="
@@ -500,21 +535,36 @@ proof_wrapper FLEET_SCCACHE_REDIS_ENDPOINT= present unused '  if [ -z "${FLEET_S
   && bad "control: a wrapper on an empty endpoint fails the empty-endpoint row" "$WHY" \
   || ok "control: a wrapper on an empty endpoint fails the empty-endpoint row"
 
-proof_warm 1 good built '  cargo test --workspace --no-run --locked' '  :' \
+proof_warm 1 good sccache built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  :' \
   && bad "control: a warm run that builds nothing fails the built row" "$WHY" \
   || ok "control: a warm run that builds nothing fails the built row"
-proof_warm '' good skipped 'if [ "${FLEET_WARM:-}" = 1 ]; then' 'if true; then' \
+proof_warm 1 good sccache built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cargo test --workspace --no-run --locked) || build_status=$?' \
+  && bad "control: a warm build in the clone rather than at the lane path fails the built row" "$WHY" \
+  || ok "control: a warm build in the clone rather than at the lane path fails the built row"
+proof_warm 1 good sccache built '  git worktree remove --force -- "$lane_path"' '  :' \
+  && bad "control: a warm tree left at the lane path fails the built row" "$WHY" \
+  || ok "control: a warm tree left at the lane path fails the built row"
+proof_warm '' good sccache skipped 'elif [ "${FLEET_WARM:-}" = 1 ]; then' 'elif true; then' \
   && bad "control: a build without FLEET_WARM fails the skipped row" "$WHY" \
   || ok "control: a build without FLEET_WARM fails the skipped row"
-proof_warm 0 good skipped 'if [ "${FLEET_WARM:-}" = 1 ]; then' 'if [ -n "${FLEET_WARM:-}" ]; then' \
+proof_warm 0 good sccache skipped 'elif [ "${FLEET_WARM:-}" = 1 ]; then' 'elif [ -n "${FLEET_WARM:-}" ]; then' \
   && bad "control: building on any non-empty FLEET_WARM fails the FLEET_WARM=0 row" "$WHY" \
   || ok "control: building on any non-empty FLEET_WARM fails the FLEET_WARM=0 row"
-proof_warm 1 unlocked failed '  cargo test --workspace --no-run --locked' '  cargo test --workspace --no-run' \
+proof_warm 1 unlocked sccache failed '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cd -- "$lane_path" && cargo test --workspace --no-run) || build_status=$?' \
   && bad "control: a warm build without --locked fails the unlocked row" "$WHY" \
   || ok "control: a warm build without --locked fails the unlocked row"
-proof_warm 1 broken failed '  cargo test --workspace --no-run --locked' '  cargo test --workspace --no-run --locked || true' \
+proof_warm 1 broken sccache failed '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || true' \
   && bad "control: a swallowed build failure fails the failed row" "$WHY" \
   || ok "control: a swallowed build failure fails the failed row"
+proof_warm 1 good none fetched 'if [ "${FLEET_WARM:-}" = 1 ] && [ -z "$lane_wrapper" ]; then' 'if false; then' \
+  && bad "control: a warm build with no wrapper fails the fetched row" "$WHY" \
+  || ok "control: a warm build with no wrapper fails the fetched row"
+proof_warm 1 unlocked none fetch-failed '  cargo fetch --locked' '  :' \
+  && bad "control: a skipped fetch fails the fetch-failed row" "$WHY" \
+  || ok "control: a skipped fetch fails the fetch-failed row"
+proof_warm 1 unlocked none fetch-failed '  cargo fetch --locked' '  cargo fetch' \
+  && bad "control: a fetch without --locked fails the fetch-failed row" "$WHY" \
+  || ok "control: a fetch without --locked fails the fetch-failed row"
 
 echo "=== the script starts under a real Bash 3.2 when one is reachable ==="
 RUNTIMES="$(sed -n 's/^RUNTIMES="\(.*\)"$/\1/p' "$TOOLS/bash32-parse")"
