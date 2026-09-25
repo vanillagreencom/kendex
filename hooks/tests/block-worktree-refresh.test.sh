@@ -329,8 +329,14 @@ a command without kendex passes|0|-|git status
 the verb before the kendex word is not the command|0|-|refresh kendex
 the two glued together are another word|0|-|kendexrefresh
 the pair inside a quoted argument is prose, not a command|0|-|echo "run kendex refresh from main"
-a parenthesis inside an earlier quoted argument opens no command position for the next|0|-|dev-return-write --validate-note "pass (CI)." --no-summary --item 1 Applied "ran kendex update-pi from main"
+a closing parenthesis inside an earlier quoted argument opens no command position for the next|0|-|dev-return-write --validate-note "pass (CI)." --no-summary --item 1 Applied "ran kendex update-pi from main"
 nor does one inside an earlier single-quoted argument|0|-|echo 'pass (CI).' "run kendex refresh from main"
+nor does a semicolon inside an earlier quoted argument|0|-|echo "a;." "run kendex refresh from main"
+nor does a pipe|0|-|echo "a|eval" "run kendex refresh from main"
+nor does an ampersand|0|-|echo "a&eval" "run kendex refresh from main"
+nor does an opening parenthesis|0|-|echo 'a(.' "run kendex refresh from main"
+nor does a backtick|0|-|echo 'a\0140.' "run kendex refresh from main"
+a hash after a quoted separator starts no comment|2|block-worktree-refresh: refused=refresh|FOO="a;#" kendex refresh
 an unquoted separator after a quoted argument still starts a command|2|block-worktree-refresh: refused=update-pi|dev-return-write --validate-note "pass (CI)." ; kendex update-pi
 the pair inside a heredoc body is fed to a command, not run|0|-|cat <<EOF\nkendex refresh\nEOF
 the pair behind a hash on the line is a comment|0|-|echo hi # kendex refresh
