@@ -23,6 +23,6 @@
 
 **Revisit When**: A pass's cost is dominated by the directory listing rather than measurement, or an entry gains a writer after it lands.
 
-**Verification**: `cargo test -p kendex-core --lib trash::` (`an_entry_is_measured_once_in_its_lifetime`, `the_record_holds_only_the_entries_the_trash_holds`, `a_record_that_will_not_parse_stops_the_pass_with_everything_intact`), and the release timing in the KEN-1803 pull request body.
+**Verification**: `cargo test -p kendex-core --lib trash::` (`an_entry_is_measured_once_in_its_lifetime`, `the_record_holds_only_the_entries_the_trash_holds`, `a_crossing_entry_whose_removal_fails_keeps_no_row`, `a_record_that_will_not_read_or_parse_stops_the_pass_with_everything_intact`, `a_record_that_will_not_write_stops_the_pass_after_its_decisions`), and the release timing in the KEN-1803 pull request body.
 
 **References**: KEN-1803, KEN-1704, [D004](D004-trash-retention.md).

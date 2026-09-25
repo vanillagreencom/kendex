@@ -18,8 +18,9 @@
 //!
 //! Nothing writes into an entry after it lands, so its bytes are
 //! measured once: the pass records them in [`SIZES_FILE`] beside the
-//! entries and reads them back on every later pass, until the entry
-//! goes and its record with it.
+//! entries and reads them back on every later pass. A row the pass
+//! removes goes with its entry; one whose entry left through [`empty`]
+//! or by hand goes on the next pass's write.
 //!
 //! [`empty`] is the person's own request, through `kendex trash empty`:
 //! every entry, or every entry past an age, this invocation's excepted.
@@ -244,10 +245,10 @@ fn bounds(env: &Env) -> std::result::Result<Bounds, String> {
 /// Each entry's bytes by name, as [`SIZES_FILE`] holds them. An entry
 /// is measured the first time a pass needs its size and read back from
 /// here on every later pass, so a kept entry costs one lookup, not one
-/// walk of its files. A name the listing no longer holds is dropped on
-/// the next write, and an entry's record goes before its removal is
-/// tried, so a removal that stops halfway leaves no number for what is
-/// left of it.
+/// walk of its files. An entry's row goes before the pass tries its
+/// removal, so a removal that stops halfway leaves no number for what
+/// is left of it; a name the listing no longer holds, an entry [`empty`]
+/// or a hand took, is dropped on the next write.
 struct Sizes {
     path: PathBuf,
     /// As the file held it, so a pass that learned nothing writes nothing:
@@ -262,27 +263,32 @@ impl Sizes {
     /// judged like a trash that will not read, and the pass stops on it.
     fn read(trash: &Path, present: &[Entry]) -> std::result::Result<Self, String> {
         let path = trash.join(SIZES_FILE);
-        let read: BTreeMap<String, u64> = match fs::read_to_string(&path) {
-            Ok(text) => {
-                serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
-            Err(error) => return Err(format!("{}: {error}", path.display())),
-        };
+        let read: BTreeMap<String, u64> =
+            match crate::fs::read_if_exists(&path).map_err(|e| e.to_string())? {
+                Some(text) => {
+                    serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?
+                }
+                None => BTreeMap::new(),
+            };
         let listed: BTreeSet<&str> = present.iter().map(|entry| entry.name.as_str()).collect();
         let mut known = read.clone();
         known.retain(|name, _| listed.contains(name.as_str()));
         Ok(Sizes { path, read, known })
     }
 
-    /// The entry's bytes: as recorded, or measured now and recorded.
-    fn bytes(&mut self, entry: &Entry) -> std::result::Result<u64, String> {
-        if let Some(bytes) = self.known.get(&entry.name) {
-            return Ok(*bytes);
-        }
-        let bytes = bytes_under(&entry.path)?;
-        self.known.insert(entry.name.clone(), bytes);
-        Ok(bytes)
+    /// Add the entry's bytes to `total`: as recorded, or measured now
+    /// and recorded.
+    fn add(&mut self, entry: &Entry, total: &mut u64) -> std::result::Result<(), String> {
+        let bytes = match self.known.get(&entry.name) {
+            Some(bytes) => *bytes,
+            None => {
+                let bytes = bytes_under(&entry.path)?;
+                self.known.insert(entry.name.clone(), bytes);
+                bytes
+            }
+        };
+        *total = total.saturating_add(bytes);
+        Ok(())
     }
 
     fn forget(&mut self, entry: &Entry) {
@@ -310,9 +316,10 @@ impl Sizes {
 /// there is nothing an older one's size could change.
 ///
 /// One directory listing per pass, one read of the size record, and one
-/// measurement of each kept entry the record does not yet hold, which
-/// is none on a trash the last pass already judged; no measurement at
-/// all of what the age bound or the crossing already decided. A trash
+/// measurement of each entry up to and including the crossing one that
+/// the record does not yet hold, which is none on a trash the last pass
+/// already judged; no measurement at all of what the age bound decided
+/// or of what is older than the crossing. A trash
 /// the pass cannot read, measure or remove from stops it where it is,
 /// with the count of what went before, and so does a record it cannot
 /// read or write back; `Ok` carries the count of what went.
@@ -354,17 +361,15 @@ fn judge(
     let mut removed = 0;
     for entry in entries {
         if held.contains(&entry.path) {
-            match sizes.bytes(entry) {
-                Ok(bytes) => total = total.saturating_add(bytes),
-                Err(reason) => return Err(Stopped { removed, reason }),
+            if let Err(reason) = sizes.add(entry, &mut total) {
+                return Err(Stopped { removed, reason });
             }
             continue;
         }
         let aged = now.saturating_sub(entry.trashed_at) > bounds.max_age_secs;
         if !over && !aged {
-            match sizes.bytes(entry) {
-                Ok(bytes) => total = total.saturating_add(bytes),
-                Err(reason) => return Err(Stopped { removed, reason }),
+            if let Err(reason) = sizes.add(entry, &mut total) {
+                return Err(Stopped { removed, reason });
             }
             if total <= bounds.max_bytes {
                 continue;
