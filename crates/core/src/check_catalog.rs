@@ -309,8 +309,8 @@ pub fn check_with(
 
 /// Both passes over one item at its catalog path — the unit the indexer
 /// scores packages with. `publisher` is whose repository the catalog is,
-/// as the caller established it; a catalog checked by directory name is
-/// nobody's.
+/// which [`check_with`] establishes once from the checkout's `origin`
+/// remote for every item it checks.
 pub fn check_item(
     sealed: &SealedSource,
     kind: ItemKind,

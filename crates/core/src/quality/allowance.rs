@@ -46,9 +46,10 @@ const HEADER: &str = "\
 ";
 
 /// Whose bytes an input is, as far as the table is concerned: kendex's
-/// own catalog, or anyone else's. Decided once from the item's recorded
-/// source by [`Publisher::of`]; an item with no recorded source (a
-/// hand-placed copy, a catalog checked by directory name) is
+/// own catalog, or anyone else's. Decided once, by [`Publisher::of`] over
+/// an item's recorded source or by [`Publisher::of_checkout`] over a local
+/// catalog's `origin` remote; an item with no recorded source (a
+/// hand-placed copy) and a folder with no `origin` are
 /// [`Publisher::Other`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Publisher {
@@ -78,7 +79,7 @@ impl Publisher {
     /// checkout of kendex's own repository reads as kendex's in each and a
     /// folder with no git, no repository or no `origin` is nobody's.
     pub fn of_checkout(root: &std::path::Path) -> Publisher {
-        crate::author::status::origin_url(root).map_or(Publisher::Other, |url| Publisher::of(&url))
+        crate::process::origin_url(root).map_or(Publisher::Other, |url| Publisher::of(&url))
     }
 }
 

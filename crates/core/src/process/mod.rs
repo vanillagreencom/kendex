@@ -148,6 +148,35 @@ const MATERIALISING: &[&str] = &[
 
 mod programs;
 
+/// One line of git's answer under `path`: the whole trimmed output, which
+/// is empty exactly when a `status --porcelain` has nothing to say. `None`
+/// where git is absent, the call fails or times out: a folder without
+/// git, or a machine without it, is an honest nothing, never an error.
+/// `--no-optional-locks` keeps even `status` from refreshing `.git/index`,
+/// because reading a folder must not change a byte inside it. Every read
+/// that asks git about a folder kendex did not clone comes through here.
+pub(crate) fn git_line(path: &Path, args: &[&str]) -> Option<String> {
+    let mut no_locks: Vec<&str> = vec!["--no-optional-locks"];
+    no_locks.extend_from_slice(args);
+    let output = Hardened::git_in(path, &no_locks)
+        .timeout(Duration::from_secs(10))
+        .run()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// The `origin` remote's URL of the checkout at `path`, read through git
+/// itself so a linked worktree, whose `.git` is a file, answers like a
+/// main checkout: `None` where there is no git, no repository, or no
+/// such remote. The one read every reader of "whose checkout is this"
+/// makes.
+pub(crate) fn origin_url(path: &Path) -> Option<String> {
+    git_line(path, &["remote", "get-url", "origin"]).filter(|url| !url.is_empty())
+}
+
 pub struct Hardened {
     command: Command,
     /// What the caller asked for, for error messages. Plumbing arguments
