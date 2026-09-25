@@ -83,7 +83,10 @@ owned_header='# Written by tools/lane-setup, rewritten on every run: edits here 
 # write_owned KEY PATH CONTENT: replaces a file this script wrote, refuses one
 # it did not, and announces KEY=write or KEY=skip.
 write_owned() {
-  local key=$1 path=$2 content="$owned_header"$'\n'"$3" current=""
+  local key=$1 path=$2 content="$owned_header" current=""
+  if [ -n "$3" ]; then
+    content="$content"$'\n'"$3"
+  fi
   if [ -e "$path" ]; then
     current="$(cat -- "$path")" || exit $?
     if [ "${current%%$'\n'*}" != "$owned_header" ]; then
@@ -118,8 +121,11 @@ incremental = false"
 rustc-wrapper = $(toml_string "$sccache_path")"
     sccache_config=""
     if [ -n "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ]; then
+      printf 'lane-setup: sccache-cache=redis\n'
       sccache_config="[cache.redis]
 endpoint = $(toml_string "$FLEET_SCCACHE_REDIS_ENDPOINT")"
+    else
+      printf 'lane-setup: sccache-cache=local:endpoint-unset\n'
     fi
     write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" "$sccache_config"
   fi
@@ -182,8 +188,9 @@ fi
 # the remove, and the setup with it. The build is the compile step of the
 # `cargo test --workspace` that every lane's `tools/guard --full` runs;
 # `cargo build --workspace --all-targets` would add bench units under the
-# bench profile, which no lane step builds. It builds HEAD, the tree a lane starts from. --locked keeps a
-# stale Cargo.lock from being rewritten into the snapshot.
+# bench profile, which no lane step builds. It builds HEAD, the tree a lane
+# starts from. --locked keeps a stale Cargo.lock from being rewritten into
+# the snapshot.
 if [ "${FLEET_WARM:-}" = 1 ] && [ -z "$lane_wrapper" ]; then
   printf 'lane-setup: warm-build=fetch-only:no-wrapper\n'
   cargo fetch --locked

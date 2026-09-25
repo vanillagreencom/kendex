@@ -367,13 +367,19 @@ proof_linux_only() { # [FROM TO]
   [ "$(count "$out" -fuse-ld=)" -eq "$(count "$BASE_FOREIGN" -fuse-ld=)" ]
 }
 
-# proof_wrapper PRIOR ASSIGNMENT SCCACHE EXPECT [FROM TO]: the sandbox setup
-# with the endpoint ASSIGNMENT, after a first run with PRIOR when that is set.
-# sccache wraps rustc and its config names the endpoint (redis), wraps rustc
-# with no cache section in its config (local), or neither (unused).
+# The first line of every file the setup owns, read from the script itself.
+OWNED_HEADER="$(sed -n "s/^owned_header='\(.*\)'\$/\1/p" "$TOOLS/lane-setup")"
+[ -n "$OWNED_HEADER" ] || { bad "the owned_header extractor reads the header from lane-setup" "no owned_header= line matched"; exit 1; }
+
+# proof_wrapper PRIOR ASSIGNMENT SCCACHE EXPECT CONFIG [FROM TO]: the sandbox
+# setup with the endpoint ASSIGNMENT, after a first run with PRIOR when that
+# is set. sccache wraps rustc and its config names the endpoint (redis),
+# wraps rustc and its config is the owned header alone (local), or neither
+# (unused). CONFIG is the sccache-config key the second run prints, write or
+# skip, or none when it prints none.
 proof_wrapper() {
-  local prior=$1 assignment=$2 sccache=$3 expect=$4 out="" conf="" conf_text=""
-  shift 4
+  local prior=$1 assignment=$2 sccache=$3 expect=$4 config=$5 out="" conf="" conf_text=""
+  shift 5
   lane_fixture "$@"
   EXTRA_BIN="$R/row-bin"
   mkdir -p "$EXTRA_BIN"
@@ -392,14 +398,22 @@ proof_wrapper() {
   if [ -e "$conf" ]; then
     conf_text="$(cat "$conf")" || return 1
   fi
-  WHY="setup=$OUT sccache-config=[$conf_text] check=$out"
+  WHY="setup=$OUT conf=[$conf_text] check=$out"
+  case "$config" in
+    write | skip) case "$OUT" in *"lane-setup: sccache-config=$config"*) ;; *) return 1 ;; esac ;;
+    none) case "$OUT" in *"lane-setup: sccache-config="*) return 1 ;; esac ;;
+    *) WHY="unknown config key $config"; return 1 ;;
+  esac
   case "$expect" in
     redis)
-      [ -s "$EXTRA_BIN/sccache.log" ] && grep -qxF "endpoint = \"${assignment#*=}\"" "$conf" ;;
+      [ -s "$EXTRA_BIN/sccache.log" ] && grep -qxF "endpoint = \"${assignment#*=}\"" "$conf" \
+        && case "$OUT" in *"lane-setup: sccache-cache=redis"*) true ;; *) false ;; esac ;;
     local)
-      [ -s "$EXTRA_BIN/sccache.log" ] && case $'\n'"$conf_text"$'\n' in *$'\n[cache.redis]\n'*) false ;; *) true ;; esac ;;
+      [ -s "$EXTRA_BIN/sccache.log" ] && [ -e "$conf" ] && [ "$conf_text" = "$OWNED_HEADER" ] \
+        && case "$OUT" in *"lane-setup: sccache-cache=local:endpoint-unset"*) true ;; *) false ;; esac ;;
     unused)
-      [ ! -e "$EXTRA_BIN/sccache.log" ] && [ ! -e "$conf" ] ;;
+      [ ! -e "$EXTRA_BIN/sccache.log" ] && [ ! -e "$conf" ] \
+        && case "$OUT" in *"lane-setup: sccache-cache="*) false ;; *) true ;; esac ;;
     *) WHY="unknown expectation $expect"; return 1 ;;
   esac
 }
@@ -420,9 +434,11 @@ case "$LINK_TOOLS" in */cc\ * | */cc) ;; *) bad "the host provides cc for the wa
 # kept in the clone's own target dir. WRAPPER sccache gives the lane config a
 # pass-through sccache and an endpoint; none gives it no wrapper. STALE tree
 # leaves a cut-off build's worktree, with an untracked file, at LANE_PATH;
-# registration leaves its registration with the directory gone; none leaves
-# neither. A build that ran compiled the crate at LANE_PATH and left no tree
-# there.
+# registration leaves its registration with the directory gone; foreign
+# leaves a plain directory holding a file, which git does not know as a
+# worktree; none leaves nothing. A build that ran compiled the crate at
+# LANE_PATH and left no tree there; a refused run left the foreign directory
+# as it was.
 proof_warm() {
   local warm=$1 source=$2 wrapper=$3 stale=$4 expect=$5 lock="" exe="" built=no trees="" at_lane=no
   local -a endpoint=()
@@ -449,6 +465,10 @@ proof_warm() {
       git -C "$R" worktree add -q --detach "$LANE_PATH" HEAD || return 1
       rm -rf -- "$LANE_PATH" || return 1
       ;;
+    foreign)
+      mkdir -p "$LANE_PATH" || return 1
+      printf 'keep\n' >"$LANE_PATH/keep" || return 1
+      ;;
     *) WHY="unknown stale state $stale"; return 1 ;;
   esac
   EXTRA_BIN="$R/row-bin"
@@ -474,8 +494,10 @@ proof_warm() {
   trees="$(git -C "$R" worktree list --porcelain | grep -c '^worktree ')" || return 1
   case "$OUT" in *"Compiling toy v0.1.0 ($LANE_PATH)"*) at_lane=yes ;; esac
   WHY="rc=$RC built=$built at-lane=$at_lane trees=$trees out=$OUT"
-  [ "$trees" -eq 1 ] && [ ! -e "$LANE_PATH" ] || return 1
+  [ "$trees" -eq 1 ] || return 1
+  [ "$expect" = refused ] || [ ! -e "$LANE_PATH" ] || return 1
   case "$expect" in
+    refused) [ "$RC" -ne 0 ] && [ -f "$LANE_PATH/keep" ] && [ "$at_lane" = no ] && case "$OUT" in *"lane-setup: warm-tree=remove-stale path=$LANE_PATH"*) true ;; *) false ;; esac ;;
     built) [ "$RC" -eq 0 ] && [ "$built" = yes ] && [ "$at_lane" = yes ] && case "$OUT" in *"lane-setup: warm-build=run path=$LANE_PATH"*) true ;; *) false ;; esac ;;
     skipped) [ "$RC" -eq 0 ] && [ ! -e "$R/target" ] && case "$OUT" in *"lane-setup: warm-build=skip"*) true ;; *) false ;; esac ;;
     fetched) [ "$RC" -eq 0 ] && [ "$built" = no ] && [ "$at_lane" = no ] && case "$OUT" in *"lane-setup: warm-build=fetch-only:no-wrapper"*) true ;; *) false ;; esac ;;
@@ -504,14 +526,15 @@ if [ -n "$FOREIGN_TARGET" ]; then
 else
   ok "linker: non-Linux target row skipped, no aarch64-apple-darwin or x86_64-pc-windows-msvc in $SYSROOT"
 fi
-while IFS='|' read -r prior assignment sccache expect; do
-  proof_wrapper "$prior" "$assignment" "$sccache" "$expect" && ok "wrapper: [$assignment] after [$prior] with sccache $sccache is $expect" || bad "wrapper: [$assignment] after [$prior] with sccache $sccache is $expect" "$WHY"
+while IFS='|' read -r prior assignment sccache expect config; do
+  proof_wrapper "$prior" "$assignment" "$sccache" "$expect" "$config" && ok "wrapper: [$assignment] after [$prior] with sccache $sccache is $expect, config $config" || bad "wrapper: [$assignment] after [$prior] with sccache $sccache is $expect, config $config" "$WHY"
 done <<'ROWS'
-|FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|present|redis
-|FLEET_SCCACHE_REDIS_ENDPOINT=|present|local
-||present|local
-FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379||present|local
-|FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|absent|unused
+|FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|present|redis|write
+|FLEET_SCCACHE_REDIS_ENDPOINT=|present|local|write
+||present|local|write
+FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379||present|local|write
+FLEET_SCCACHE_REDIS_ENDPOINT=||present|local|skip
+|FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|absent|unused|none
 ROWS
 
 while IFS='|' read -r warm source wrapper stale expect; do
@@ -520,6 +543,7 @@ done <<'ROWS'
 1|good|sccache|none|built
 1|good|sccache|tree|built
 1|good|sccache|registration|built
+1|good|sccache|foreign|refused
 |good|sccache|none|skipped
 0|good|sccache|none|skipped
 1|broken|sccache|none|failed
@@ -558,15 +582,18 @@ if [ -n "$FOREIGN_TARGET" ]; then
     && bad "control: a linker entry for every target fails the non-Linux row" "$WHY" \
     || ok "control: a linker entry for every target fails the non-Linux row"
 fi
-proof_wrapper '' FLEET_SCCACHE_REDIS_ENDPOINT= present local '  if ! sccache_path="$(command -v sccache)"; then' '  if [ -z "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ] || ! sccache_path="$(command -v sccache)"; then' \
+proof_wrapper '' FLEET_SCCACHE_REDIS_ENDPOINT= present local write '  if ! sccache_path="$(command -v sccache)"; then' '  if [ -z "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ] || ! sccache_path="$(command -v sccache)"; then' \
   && bad "control: a wrapper tied to the endpoint fails the empty-endpoint row" "$WHY" \
   || ok "control: a wrapper tied to the endpoint fails the empty-endpoint row"
-proof_wrapper '' '' present local '    if [ -n "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ]; then' '    if true; then' \
+proof_wrapper '' '' present local write '    if [ -n "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ]; then' '    if true; then' \
   && bad "control: a redis section written with no endpoint fails the unset-endpoint row" "$WHY" \
   || ok "control: a redis section written with no endpoint fails the unset-endpoint row"
-proof_wrapper FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379 '' present local '    write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" "$sccache_config"' '    [ -z "$sccache_config" ] || write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" "$sccache_config"' \
+proof_wrapper FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379 '' present local write '    write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" "$sccache_config"' '    [ -z "$sccache_config" ] || write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" "$sccache_config"' \
   && bad "control: an earlier run's redis section left in place fails the rerun row" "$WHY" \
   || ok "control: an earlier run's redis section left in place fails the rerun row"
+proof_wrapper FLEET_SCCACHE_REDIS_ENDPOINT= '' present local skip '  if [ -n "$3" ]; then' '  if true; then' \
+  && bad "control: a blank line after the header of an empty config fails the no-endpoint rerun row" "$WHY" \
+  || ok "control: a blank line after the header of an empty config fails the no-endpoint rerun row"
 
 proof_warm 1 good sccache none built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  :' \
   && bad "control: a warm run that builds nothing fails the built row" "$WHY" \
@@ -604,6 +631,9 @@ proof_warm 1 good sccache tree built '  if [ -e "$lane_path" ]; then' '  if fals
 proof_warm 1 good sccache registration built '  git worktree add --force --quiet --detach -- "$lane_path" HEAD' '  git worktree add --quiet --detach -- "$lane_path" HEAD' \
   && bad "control: an add without --force fails the stale-registration row" "$WHY" \
   || ok "control: an add without --force fails the stale-registration row"
+proof_warm 1 good sccache foreign refused '    git worktree remove --force -- "$lane_path"' '    git worktree remove --force -- "$lane_path" || mv -- "$lane_path" "$lane_path.gone"' \
+  && bad "control: moving a foreign directory aside fails the foreign row" "$WHY" \
+  || ok "control: moving a foreign directory aside fails the foreign row"
 
 echo "=== the script starts under a real Bash 3.2 when one is reachable ==="
 RUNTIMES="$(sed -n 's/^RUNTIMES="\(.*\)"$/\1/p' "$TOOLS/bash32-parse")"
