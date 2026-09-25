@@ -421,13 +421,12 @@ launch_choice_permission_write() { # HARNESS
 
 # The words a launcher builds for HARNESS, left in LAUNCH_CHOICE_KEPT: that
 # harness's launch settings first, with `--question-off` its question-tool
-# words after them, then WORD... in order with every row's settings run taken
-# out wherever it stands whole, and with `--question-off` every row's
-# question-tool run too. A caller's flags handed on keep none of the runs this
-# writes: the same harness would carry them twice, and another would be handed a
-# word its launch form may not have. Without `--question-off` a caller's
-# question-tool words stay as the caller wrote them. Runs are matched
-# newline-bounded, since a caller's flag word can hold a space.
+# words after them, then WORD... in order with every row's settings run and
+# question-tool run taken out wherever it stands whole. A caller's flags handed
+# on keep none of their own: the same harness would carry them twice, another
+# harness would be handed a word its launch form refuses, and whether a launch
+# keeps its question tool is the flag's answer, never the caller's words.
+# Runs are matched newline-bounded, since a caller's flag word can hold a space.
 launch_choice_lead_settings() { # [--question-off] HARNESS WORD...
   local question_off=false
   if [[ "${1:-}" == --question-off ]]; then
@@ -439,7 +438,6 @@ launch_choice_lead_settings() { # [--question-off] HARNESS WORD...
   words="$nl$(printf '%s\n' "$@")$nl"
   for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
     IFS='|' read -r name _ _ _ _ _ _ settings question <<<"$row"
-    [[ "$question_off" == true ]] || question=-
     for run in "$settings" "$question"; do
       [[ "$run" != - ]] || continue
       run="${run// /$nl}"
@@ -447,7 +445,7 @@ launch_choice_lead_settings() { # [--question-off] HARNESS WORD...
     done
     [[ "$name" == "$harness" ]] || continue
     [[ "$settings" == - ]] || lead="${settings// /$nl}"
-    [[ "$question" == - ]] || lead="$lead$nl${question// /$nl}"
+    [[ "$question_off" != true || "$question" == - ]] || lead="$lead$nl${question// /$nl}"
   done
   LAUNCH_CHOICE_KEPT=()
   while IFS= read -r line; do

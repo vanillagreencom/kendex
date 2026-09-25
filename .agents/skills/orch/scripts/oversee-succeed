@@ -205,9 +205,9 @@
 #                    budget and the running-turn wait gets a single probe; at 2
 #                    and 3 each wait gets one second (default 60)
 #   -- FLAGS...      Passed to the harness word by word, each quoted. A caller,
-#                    print or walled entry carries every word unchanged, and
-#                    ORCH_OVERSEER_QUESTION_TOOL=off adds the harness's
-#                    question-tool words once on every entry. A
+#                    print or walled entry carries every word unchanged but
+#                    the question-tool words, which every entry carries
+#                    exactly when ORCH_OVERSEER_QUESTION_TOOL is off. A
 #                    named same-harness entry replaces model and effort but
 #                    keeps permission words exact. A named cross-harness entry
 #                    accepts one transferable full-bypass posture, and no other
@@ -616,9 +616,11 @@ if [[ "$MODE" != print ]]; then
 fi
 
 # Whether a successor keeps the harness question tool. The overseer keeps it by
-# default, because the owner answers there, and a successor carries whatever
-# question-tool words the caller's own flags hold; `off` gives every successor
-# the words that take it away, as every lane launch carries. Read only by the modes that
+# default, because the owner answers there; `off` gives every successor the
+# words that take it away, as every lane launch carries. The setting is the one
+# owner: question-tool words in the caller's own flags never carry, since a
+# successor on another harness would be handed a flag its launch refuses.
+# Read only by the modes that
 # build a line: `dead` sends the line it was handed and `check` launches nothing.
 QUESTION_OFF=()
 if [[ "$MODE" != dead && "$MODE" != check ]]; then
@@ -1146,7 +1148,8 @@ else
   # and effort but keeps the caller's exact permission spelling. A cross-harness
   # entry accepts one full-bypass spelling whose meaning the shared row can
   # prove and no other permission word, writes the target spelling, and strips
-  # all caller choices.
+  # all caller choices. On every entry the question-tool words are the lead
+  # below's, never the caller's.
   if [[ "$chosen" == caller ]]; then
     LAUNCH_CHOICE_KEPT=(${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"})
   elif [[ "$harness" == "$CALLER_HARNESS" ]]; then

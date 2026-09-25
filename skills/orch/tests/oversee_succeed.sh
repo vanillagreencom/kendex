@@ -397,6 +397,24 @@ check "a named entry keeps unrelated words and replaces the caller's model, effo
   "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
   "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;--verbose;$BRIEF;"
 
+# A claude caller's question-tool words are a flag codex refuses, so a codex
+# entry never carries them: it carries codex's own words exactly when
+# ORCH_OVERSEER_QUESTION_TOOL is off.
+for row in \
+  "|;--verbose|on, the codex line carries no question-tool word" \
+  "off|;-c;features.default_mode_request_user_input=false;--verbose|off, the codex line carries codex's own words and not claude's" \
+  ; do
+  IFS='|' read -r row_value row_tail row_what <<<"$row"
+  new_caller "$MARK"
+  CROSS_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+  CROSS_HOME="$(lane_codex_home_path "$H/.codex" "$CROSS_CWD")"
+  QUESTION_TOOL="$row_value" run_succeed "crossquestion$row_value" 'codex:1:high' -- \
+    --model fable --effort high --dangerously-skip-permissions --disallowedTools=AskUserQuestion,EnterPlanMode --verbose
+  check "a claude caller's question-tool words never reach a codex successor: $row_what" \
+    "$RC|$(overseers)|$(recorded codex)" \
+    "0|1|lane=$CROSS_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false$row_tail;$BRIEF;"
+done
+
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
@@ -1275,13 +1293,13 @@ check "succession off still prints the line: printing launches nothing" \
 
 # A successor overseer keeps its harness question tool unless
 # ORCH_OVERSEER_QUESTION_TOOL is off, which writes the words every lane launch
-# carries. While it is on a caller's own flags stay whole, question-tool words
-# included; off carries them once. A value that is neither refuses before a
-# line is built.
+# carries. The setting alone decides: a caller's own copy of the words is
+# dropped while it is on and carried once while it is off. A value that is
+# neither refuses before a line is built.
 for row in \
   "claude|||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|unset keeps the claude question tool" \
   "claude|off||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --disallowedTools=AskUserQuestion\\,EnterPlanMode '$BRIEF'|off takes the claude question tool away" \
-  "claude|on|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose '$BRIEF'|on keeps the caller's own question-tool words" \
+  "claude|on|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --verbose '$BRIEF'|on drops the caller's own question-tool words" \
   "claude|off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose '$BRIEF'|off carries a caller's own copy of the words once" \
   "codex|off||0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c features.default_mode_request_user_input=false '$BRIEF'|off takes the codex question tool away" \
   "claude|sometimes||1|oversee-succeed: invalid-question-tool ORCH_OVERSEER_QUESTION_TOOL=sometimes|a value that is neither on nor off refuses" \
