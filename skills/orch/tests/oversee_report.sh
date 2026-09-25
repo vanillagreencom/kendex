@@ -76,24 +76,38 @@ cat > "$TMP_ROOT/bin/linear" <<'EOF'
 [[ "$1 $2 $3" == "cache issues get" && -f "$CASE/linear-$4.json" ]] || { echo "No cache entry for $4" >&2; exit 1; }
 if [[ "${5:-}" == --format=safe ]]; then cat "$CASE/linear-$4.json"; else jq -c '{issue: .}' "$CASE/linear-$4.json"; fi
 EOF
-# github.sh: `pr-list-failing --all` answers failing.json, [] without one.
+# github.sh: `pr-list-failing --all` answers failing.<SLUG>.json for the
+# GH_REPO it runs under, else failing.json, [] without either.
 cat > "$TMP_ROOT/bin/github" <<'EOF'
 #!/usr/bin/env bash
 [[ "$*" == "pr-list-failing --all" ]] || { echo "unexpected github.sh call: $*" >&2; exit 1; }
-if [[ -f "$CASE/failing.json" ]]; then cat "$CASE/failing.json"; else echo '[]'; fi
+[[ -n "${GH_REPO:-}" ]] || { echo "github.sh stub: no GH_REPO" >&2; exit 1; }
+slug="${GH_REPO//\//_}"
+if [[ -f "$CASE/failing.$slug.json" ]]; then cat "$CASE/failing.$slug.json"
+elif [[ -f "$CASE/failing.json" ]]; then cat "$CASE/failing.json"
+else echo '[]'; fi
 EOF
 # lane-mail: `pending --item ITEM` answers pending-ITEM.jsonl, nothing
-# without one; mail-fail makes it fail.
+# without one; mail-fail makes it fail. The call must read the lane's own
+# root, /w/ITEM, and a hosted lane's (hosted-ITEM names its host) through
+# --host under that host's ORCH_LANE_HOST, a local one without --host.
 cat > "$TMP_ROOT/bin/lane-mail" <<'EOF'
 #!/usr/bin/env bash
 [[ "$1 $2" == "pending --item" ]] || { echo "unexpected lane-mail call: $*" >&2; exit 2; }
+want="--root /w/$3"; host=""
+[[ ! -f "$CASE/hosted-$3" ]] || { host="$(cat "$CASE/hosted-$3")"; want+=" --host"; }
+[[ "${*:4}" == "$want" && "${ORCH_LANE_HOST:-}" == "$host" ]] \
+  || { echo "lane-mail stub: wrong route for $3: ${*:4} host=${ORCH_LANE_HOST:-}" >&2; exit 9; }
 [[ ! -f "$CASE/mail-fail" ]] || { echo "lane-mail: mail-read-failed" >&2; exit 2; }
 [[ ! -f "$CASE/pending-$3.jsonl" ]] || cat "$CASE/pending-$3.jsonl"
 EOF
 # lane-host: `cat --item ITEM PATH` answers host/PATH, exit 2 without it;
-# `touch` succeeds.
+# `touch` succeeds. Every call must run under the ORCH_LANE_HOST its item's
+# record names (hosted-ITEM).
 cat > "$TMP_ROOT/bin/lane-host" <<'EOF'
 #!/usr/bin/env bash
+[[ -f "$CASE/hosted-$3" && "${ORCH_LANE_HOST:-}" == "$(cat "$CASE/hosted-$3")" ]] \
+  || { echo "lane-host stub: $3 read under host=${ORCH_LANE_HOST:-}" >&2; exit 9; }
 case "$1" in
   cat) [[ -f "$CASE/host$4" ]] || exit 2; cat "$CASE/host$4" ;;
   touch) exit 0 ;;
@@ -121,8 +135,11 @@ issue() {
     > "$CASE/linear-$1.json"
 }
 # lane ITEM STATUS [LAUNCH_OFFSET] [HOST] [TRACKER] [REPO] — one lanes[]
-# record; an empty HOST, TRACKER or REPO is recorded as null.
+# record; an empty HOST, TRACKER or REPO is recorded as null. A HOST is also
+# written to hosted-ITEM, the route the lane-mail and lane-host stubs hold
+# every read of that item to.
 lane() {
+  [[ -z "${4:-}" ]] || printf '%s' "$4" > "$CASE/hosted-$1"
   jq -cn --arg item "$1" --arg status "$2" --arg at "$(at "${3:--86400}")" --arg host "${4:-}" \
     --arg tracker "${5:-}" --arg repo "${6:-}" \
     'def opt: if . == "" then null else . end;
@@ -275,6 +292,13 @@ linear|owner/repo|| issue-7 (no PR, running) | Linear title | Linear outcome |
 github||| issue-7 (no PR, running) | (repo unknown) | - |
 ROWS
 
+new_case identity_github_not_issue
+report -60
+fleet '' "$(lane KEN-7 running -86400 "" github owner/repo)"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^\| KEN-7/' <<<"$OUT")" "0|| KEN-7 (no PR, running) | (no issue number) | - |" \
+  "a GitHub record whose key is not issue-N is not read, and says so"
+
 echo "=== render: Landed lists each fleet branch on its own ==="
 # Unrelated merges past a whole page never reach the report, which asks for
 # the fleet's branches alone; one branch's own page filling refuses.
@@ -299,20 +323,29 @@ done
 echo "=== render: every --repo is read, and a record's repo is its own ==="
 new_case multi_repo
 report -3600
-fleet '' "$(lane KEN-1 done)" "$(lane KEN-2 running)" "$(lane issue-8 running -86400 "" github owner/b)"
+# KEN-1's merge on the first --repo is newer than KEN-3's on the second, so
+# Landed runs in merge order, not in item or --repo order. KEN-2's red check
+# is on the second --repo alone.
+fleet '' "$(lane KEN-1 done)" "$(lane KEN-3 done)" "$(lane KEN-2 running)" "$(lane issue-8 running -86400 "" github owner/b)"
 issue KEN-1 "Title 1" "Outcome 1"
 issue KEN-2 "Title 2" "Outcome 2"
-echo '[]' > "$CASE/merged.owner_a.json"
-echo "[$(merged_pr 11 ken-1 -60 abcdef1234)]" > "$CASE/merged.owner_b.json"
+issue KEN-3 "Title 3" "Outcome 3"
+echo "[$(merged_pr 11 ken-1 -30 abcdef1234)]" > "$CASE/merged.owner_a.json"
+echo "[$(merged_pr 13 ken-3 -90 1234567abc)]" > "$CASE/merged.owner_b.json"
+echo '[{"number": 12, "branch": "ken-2", "failed_checks": ["test"]}]' > "$CASE/failing.owner_b.json"
+echo '[]' > "$CASE/failing.owner_a.json"
 echo '[]' > "$CASE/open.owner_a.json"
 echo '[{"number": 12, "headRefName": "ken-2"}]' > "$CASE/open.owner_b.json"
 jq -n '{title: "Issue in b", body: "## Done when\n- b outcome"}' > "$CASE/issue-8.owner_b.json"
 jq -n '{title: "Issue in a", body: "## Done when\n- a outcome"}' > "$CASE/issue-8.owner_a.json"
 run -- render --state "$CASE/state.json" --repo owner/a --repo owner/b
-assert_eq "$RC|$(awk '/^\| (KEN-|issue-)/' <<<"$OUT")" "0|| KEN-1 (#11, abcdef1) | Title 1 | Outcome 1 |
+assert_eq "$RC|$(awk '/^\| (KEN-|issue-)/' <<<"$OUT")" "0|| KEN-3 (#13, 1234567) | Title 3 | Outcome 3 |
+| KEN-1 (#11, abcdef1) | Title 1 | Outcome 1 |
 | KEN-2 (#12, running) | Title 2 | Outcome 2 |
 | issue-8 (no PR, running) | Issue in b | b outcome |" \
-  "a merge and an open PR in the second --repo are rendered, and the issue is read in the repo its record names"
+  "merges in both --repo values land oldest first, an open PR in the second is rendered, and the issue is read in the repo its record names"
+assert_eq "$(awk '/^Waiting on you/ { on = 1; next } on' <<<"$OUT")" "- KEN-2 waits on red checks on #12: test" \
+  "a red check in the second --repo is read under that repo"
 
 echo "=== render: tracker text is fitted to one line ==="
 new_case cell_text
@@ -341,6 +374,10 @@ echo '{"post_pr_stop": {"name": "ci-fix-cap", "gate": "ci", "remaining": ["test"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Waiting on you/ { on = 1; next } on' <<<"$OUT")" "0|- KEN-7 waits on a stopped ci gate, ci-fix-cap: test" \
   "a hosted lane's post-PR stop is read from the clone its worktree's .git names"
+echo "gitdir: /clone/.git" > "$CASE/host/w/KEN-7/.git"
+run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: item-state=KEN-7" "a .git that names no linked worktree refuses rather than read as no state"
+echo "gitdir: /clone/.git/worktrees/KEN-7" > "$CASE/host/w/KEN-7/.git"
 rm -f -- "${CASE:?}/host/clone/tmp/workflow-state-KEN-7.json"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Waiting on you/' <<<"$OUT")" "0|Waiting on you: none" "a hosted lane with no state file on its host waits on nothing"

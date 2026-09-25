@@ -20,11 +20,12 @@ lane_gitfile_common_dir() { # GITFILE_CONTENT
 }
 
 # ---------------------------------------------------------------------------
-# A hosted lane's files, read through lane-host: the one probe every reader of
-# a hosted worktree's `.git` and its item's workflow state goes through, so
-# the watch and the status report answer a gone worktree the same way. Each
-# takes the lane-host CLI path; the caller puts ORCH_LANE_HOST in front of the
-# call where the lane's record names its host.
+# A hosted lane's files, read through lane-host: the probe oversee-watch and
+# oversee-report read a hosted worktree's `.git` and its item's workflow state
+# through, so both answer a gone worktree the same way. Each takes the
+# lane-host CLI path. ORCH_LANE_HOST is the caller's to set: oversee-report
+# puts the lane record's host in front of each call, and oversee-watch runs
+# under the ambient setting.
 # ---------------------------------------------------------------------------
 
 # lane_host_fetch LANE_HOST_CLI ITEM PATH DEST ERRF — `lane-host cat --item
