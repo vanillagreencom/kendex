@@ -320,6 +320,7 @@ for case in \
   "validate-unproven|implement|1|%H|no-verdict: dev_validate_run.sh|needs-review|b" \
   "validate-unproven|implement|0|%H|no-verdict: dev_validate_run.sh|needs-review|b" \
   "validate-unproven|implement|no-verdict|%H|no-verdict|needs-review|b" \
+  "validate-unproven|implement|no-verdict|%H|no-verdict:|needs-review|b" \
   "unparsed|implement|0|%H|passing|needs-review|b" \
   "unparsed|implement|0|%H|pass|needs-review|-" \
   "unparsed|implement|0|-|pass|needs-review|b" \
