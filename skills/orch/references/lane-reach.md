@@ -18,7 +18,14 @@ The rows are the wake's refusal reasons, plus the different silence `lanes state
 
 ## Mail the wake cannot deliver
 
-Every lane the wake refuses while its session still runs takes this route, whatever its harness: `working`, `unjudged` from a wake, and a hosted lane's `wake-invalid`. The mail waits by default, and the lane reads it at the next point the Lane mail rule in [skill-rules.md § Coordination](skill-rules.md#coordination) names, a waiter's return included; a lane idle at its prompt reads nothing until its next turn starts. Mail that cannot wait ends the session by signal: `lane-host stop --item [ITEM] --harness [HARNESS]` for a hosted lane, and for a local lane `lane_stop_owned [WORKTREE] [HARNESS]` from `scripts/lib/lane-state.sh`, the stop `lane-close` runs. Then wait for `lane-exited`, and close and relaunch as the `usage-limit` handling in [oversee-events.md § Event kinds](oversee-events.md#event-kinds) sets out, under [oversee.md § Recovery relaunch](../workflows/oversee.md#recovery-relaunch), never as a second session beside a running one. The relaunch carries its own continuation line, which tells the lane to read `lane-mail inbox`, except on a hosted Codex lane, which resumes with no line, reported as `resume-lineless`, and takes it as that section says. The stop interrupts any turn in flight, so it is never the default.
+Every lane the wake refuses while its session still runs takes this route, whatever its harness: `working`, `unjudged` from a wake, and a hosted lane's `wake-invalid`. The mail waits by default, and the lane reads it at the next point the Lane mail rule in [skill-rules.md § Coordination](skill-rules.md#coordination) names, a waiter's return included; a lane idle at its prompt reads nothing until its next turn starts. Mail that cannot wait ends the session by signal, then closes and relaunches the lane, never as a second session beside a running one:
+
+1. Stop the harness. A hosted lane takes `lane-host stop --item [ITEM] --harness [HARNESS]` and needs its `stopped item=[ITEM] processes=[COUNT]` line. A local lane takes `lane_stop_owned [WORKTREE] [HARNESS]` from `scripts/lib/lane-state.sh`, the stop `lane-close` runs, and needs its status 0.
+2. Wait for the lane's `lane-exited` event.
+3. Run `lane-close --keep-sandbox --state-dir [OVERSEE_STATE_DIR] [ITEM]`. It ends a local lane's validation runs, closes the window and records the lane `stopped`, keeping a hosted lane's sandbox.
+4. Relaunch under [oversee.md § Recovery relaunch](../workflows/oversee.md#recovery-relaunch).
+
+The relaunch carries its own continuation line, which tells the lane to read `lane-mail inbox`, except on a hosted Codex lane, which resumes with no line, reported as `resume-lineless`, and takes it as that section says. The stop interrupts any turn in flight, so it is never the default.
 
 ## Per harness
 
