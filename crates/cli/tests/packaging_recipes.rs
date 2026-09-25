@@ -465,14 +465,17 @@ fn every_arch_package_installs_its_license() {
 /// built from a release has no checkout to name and sets nothing.
 #[test]
 fn the_packages_built_from_main_name_their_commit() {
-    let export = "export KENDEX_SOURCE_COMMIT=\"$(git rev-parse HEAD)\"";
+    let assign = "KENDEX_SOURCE_COMMIT=\"$(git rev-parse HEAD)\"";
     let mut from_main = 0;
     for package in arch_packages() {
         let recipe = pkgbuild(package);
         let builds_main = pkgbuild_field(&recipe, "source")
             .iter()
             .any(|source| source.starts_with("git+"));
-        let exports = recipe.lines().any(|line| line.trim_start() == export);
+        // Assigned on a line of its own, so makepkg's errexit sees a failed
+        // rev-parse; `export NAME="$(...)"` reports export's status instead.
+        let lines: Vec<&str> = recipe.lines().map(str::trim_start).collect();
+        let exports = lines.contains(&assign) && lines.contains(&"export KENDEX_SOURCE_COMMIT");
         from_main += usize::from(builds_main);
         assert_eq!(
             exports, builds_main,

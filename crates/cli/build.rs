@@ -33,8 +33,9 @@ pub fn build_version_from_env(package_version: &str) -> Result<String, String> {
 /// ordered by the workflow run number the main feed carries. A source
 /// commit alone is a build from a checkout that has no run number, such as
 /// an AUR `-git` package: it names its commit under `git.`, which the main
-/// channel does not read as one of its builds, so it is judged against
-/// releases like the tag it is built between.
+/// channel does not read as one of its builds. Build metadata plays no part
+/// in choosing a channel, so the build follows the same stream a plain build
+/// of that checkout's version would.
 pub fn build_version_from_values(
     package_version: &str,
     commit: Option<&str>,
