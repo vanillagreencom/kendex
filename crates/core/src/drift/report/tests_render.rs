@@ -82,62 +82,75 @@ fn report_budget_counts_its_truncation_line_and_never_cuts_a_line() {
     }
 }
 
-/// Every remedy against a project the command has to name, and the same
-/// remedies against one it does not.
+/// Every remedy against a project the command has to name, as the main
+/// checkout's and as the checked worktree's own, and the same remedies
+/// against one it does not.
 ///
 /// A project scope is ordinarily the directory a command is typed in, and
 /// the command carries no destination at all. Where it is a linked git
-/// worktree the destination has to be in the words, and only `refresh`,
-/// `apply` and `updates --apply` have a flag for it. The other four keep
-/// their command and are marked as running somewhere else: a reader left
-/// with the drift line and no remedy has nothing to act on.
+/// worktree the destination has to be in the words for `refresh`, `apply`
+/// and `updates --apply`, which have a flag for it. The verbs without one
+/// run as they are in a worktree carrying its own manifest when they write
+/// the project they are typed in, and are otherwise marked as running
+/// somewhere else: a reader left with the drift line and no remedy has
+/// nothing to act on.
 #[test]
-fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_elsewhere() {
-    let target = std::path::Path::new("/w/lane");
+fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_run() {
+    let main = ProjectTarget::MainCheckout("/w/app".into());
+    let own = ProjectTarget::Worktree("/w/lane".into());
     let here = |command: &str| Some(Fix::Here(command.to_owned()));
     let elsewhere = |command: &str| Some(Fix::Elsewhere(command.to_owned()));
-    let rows: [(&str, Remedy, Option<Fix>, Option<Fix>); 8] = [
+    // The label, the remedy, and its rendering unnamed, against the main
+    // checkout's project and against the checked worktree's own.
+    type Row = (&'static str, Remedy, Option<Fix>, Option<Fix>, Option<Fix>);
+    let rows: [Row; 9] = [
         (
             "apply",
             Remedy::Apply { global: false },
             here("kendex apply"),
+            here("kendex apply --project-path '/w/app'"),
             here("kendex apply --project-path '/w/lane'"),
         ),
         (
             "apply --replace-unmanaged",
             Remedy::ReplaceUnmanaged { global: false },
             here("kendex apply --replace-unmanaged"),
+            here("kendex apply --replace-unmanaged --project-path '/w/app'"),
             here("kendex apply --replace-unmanaged --project-path '/w/lane'"),
         ),
         (
             "refresh",
             Remedy::Refresh { global: false },
             here("kendex refresh"),
+            here("kendex refresh --project-path '/w/app'"),
             here("kendex refresh --project-path '/w/lane'"),
         ),
         (
             "apply --plan",
             Remedy::Plan { global: false },
             here("kendex apply --plan"),
+            here("kendex apply --plan --project-path '/w/app'"),
             here("kendex apply --plan --project-path '/w/lane'"),
         ),
         (
-            "update-pi, which has no such flag",
+            "update-pi, which has no such flag and writes the Pi roots directly",
             Remedy::UpdatePi { global: false },
             here("kendex update-pi --scope project"),
             elsewhere("kendex update-pi --scope project"),
+            elsewhere("kendex update-pi --scope project"),
         ),
         (
-            "remove, which has none either",
+            "remove, which has none either and writes where it is typed",
             Remedy::Remove {
                 name: "gh".into(),
                 global: false,
             },
             here("kendex remove gh"),
             elsewhere("kendex remove gh"),
+            here("kendex remove gh"),
         ),
         (
-            "add, which has none either",
+            "add, the same",
             Remedy::Add {
                 kind: ItemKind::Skill,
                 name: "gh".into(),
@@ -145,9 +158,10 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_elsewhere()
             },
             here("kendex add --skill gh"),
             elsewhere("kendex add --skill gh"),
+            here("kendex add --skill gh"),
         ),
         (
-            "fork, which has none either",
+            "fork, the same",
             Remedy::Fork {
                 kind: ItemKind::Skill,
                 name: "gh".into(),
@@ -155,12 +169,26 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_elsewhere()
             },
             here("kendex fork skill gh"),
             elsewhere("kendex fork skill gh"),
+            here("kendex fork skill gh"),
+        ),
+        (
+            "drift-hook, the same",
+            Remedy::DriftHook { global: false },
+            here("kendex drift-hook --yes --scope project"),
+            elsewhere("kendex drift-hook --yes --scope project"),
+            here("kendex drift-hook --yes --scope project"),
         ),
     ];
-    for (label, remedy, unnamed, named) in rows {
+    for (label, remedy, unnamed, in_main, in_own) in rows {
         assert_eq!(remedy.render(None), unnamed, "{label}, unnamed");
-        assert_eq!(remedy.render(Some(target)), named, "{label}, named");
+        assert_eq!(
+            remedy.render(Some(&main)),
+            in_main,
+            "{label}, main checkout"
+        );
+        assert_eq!(remedy.render(Some(&own)), in_own, "{label}, own worktree");
     }
+    let target = &main;
     // The personal scope is one place on the machine and is never named by
     // path, so a target in hand changes nothing about it.
     assert_eq!(
@@ -170,7 +198,8 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_elsewhere()
     // A path is whatever the filesystem allowed, and this is a command
     // position: the quoting is what keeps it one word.
     assert_eq!(
-        Remedy::Refresh { global: false }.render(Some(std::path::Path::new("/w/my lane"))),
+        Remedy::Refresh { global: false }
+            .render(Some(&ProjectTarget::MainCheckout("/w/my lane".into()))),
         here("kendex refresh --project-path '/w/my lane'")
     );
 }
@@ -192,7 +221,7 @@ fn a_non_utf8_project_target_keeps_the_row_and_omits_the_command() {
                 remedy: Some(Remedy::Apply { global: false }),
             }],
         }],
-        project_target: Some(target.clone()),
+        project_target: Some(ProjectTarget::Worktree(target.clone())),
         ..check_report()
     };
 
@@ -220,7 +249,9 @@ fn a_non_utf8_project_target_keeps_the_row_and_omits_the_command() {
 
 /// What the reader is handed, through the renderer rather than the
 /// remedy: a verb that takes the name carries it, and one that does not
-/// keeps its command, marked with why it will not run here.
+/// keeps its command — marked with why it will not run here where the
+/// project is the main checkout's, and bare where it is the checked
+/// worktree's own.
 ///
 /// Asserted here and not only on `render`, because the reader never sees
 /// `render`: a suppression the renderer swallowed would be a line with no
@@ -232,7 +263,7 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
         text: text.to_owned(),
         remedy: Some(remedy),
     };
-    let report = CheckReport {
+    let report = |target: ProjectTarget| CheckReport {
         status: CheckStatus::Drift,
         sections: vec![Section {
             title: "stale".to_owned(),
@@ -270,28 +301,42 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
                 ),
             ],
         }],
-        project_target: Some(std::path::PathBuf::from("/w/lane")),
+        project_target: Some(target),
         ..check_report()
     };
-
-    let text = render_plain(&report);
-    assert!(
-        text.contains("— fix: kendex refresh --project-path '/w/lane'\n"),
-        "{text}"
-    );
-    for command in [
+    let commands = [
         "kendex fork skill orch",
         "kendex remove dev",
         "kendex add --skill gh",
-    ] {
+    ];
+
+    let text = render_plain(&report(ProjectTarget::MainCheckout("/w/app".into())));
+    assert!(
+        text.contains("— fix: kendex refresh --project-path '/w/app'\n"),
+        "{text}"
+    );
+    for command in commands {
         assert!(
             text.contains(&format!(
-                "— fix: {command} (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)"
+                "— fix: {command} (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)\n"
             )),
             "{command} missing its marker: {text}"
         );
     }
-    assert!(text.ends_with("Next: kendex check --global to list global packages; kendex refresh --global --yes for global packages; kendex refresh --scope project --project-path '/w/lane' --yes in that checkout for project packages.\n"));
+    assert!(text.ends_with("Next: kendex check --global to list global packages; kendex refresh --global --yes for global packages; kendex refresh --scope project --project-path '/w/app' --yes in that checkout for project packages.\n"));
+
+    let text = render_plain(&report(ProjectTarget::Worktree("/w/lane".into())));
+    assert!(
+        text.contains("— fix: kendex refresh --project-path '/w/lane'\n"),
+        "{text}"
+    );
+    for command in commands {
+        assert!(
+            text.contains(&format!("— fix: {command}\n")),
+            "{command} marked as running elsewhere in its own worktree: {text}"
+        );
+    }
+    assert!(text.ends_with("Next: kendex check --global to list global packages; kendex refresh --global --yes for global packages; kendex refresh --scope project --project-path '/w/lane' --yes in this checkout for project packages.\n"));
 }
 
 #[test]

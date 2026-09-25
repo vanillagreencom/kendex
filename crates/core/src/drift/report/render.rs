@@ -34,14 +34,13 @@ fn next_action(report: &CheckReport) -> Option<String> {
         }
     }
     let command =
-        |global| match Remedy::render_refresh_action(global, report.project_target.as_deref()) {
+        |global| match Remedy::render_refresh_action(global, report.project_target.as_ref()) {
             Some(Fix::Here(command)) => Some(format!("{command} --yes")),
             Some(Fix::Elsewhere(_)) | None => None,
         };
-    let checkout = if report.project_target.is_some() {
-        "in that checkout"
-    } else {
-        "in this checkout"
+    let checkout = match report.project_target {
+        Some(ProjectTarget::MainCheckout(_)) => "in that checkout",
+        Some(ProjectTarget::Worktree(_)) | None => "in this checkout",
     };
     match (global, project) {
         (false, false) => None,
@@ -90,7 +89,7 @@ fn render(report: &CheckReport, bounded: bool) -> String {
         };
         for line in &section.lines[..shown_count] {
             match line.remedy.as_ref().and_then(|remedy| {
-                Remedy::render(remedy, report.project_target.as_deref())
+                Remedy::render(remedy, report.project_target.as_ref())
                     .map(|rendered| (remedy.mutates(), rendered))
             }) {
                 Some((mutates, fix)) => {

@@ -3,9 +3,11 @@
 //!
 //! A session running the catalog's `block-worktree-refresh` hook is
 //! refused a project-scope kendex write from a linked worktree unless the
-//! command names the checkout it lands in, so a report printing the bare
-//! verb there prints a command that session cannot run. The check resolves
-//! that name once and every remedy in the report carries it.
+//! command names the checkout it lands in, or the worktree carries its own
+//! manifest and the verb writes the project it is typed in, so a report
+//! printing the bare verb elsewhere prints a command that session cannot
+//! run. The check resolves that name once and every remedy in the report
+//! carries it.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -158,13 +160,15 @@ fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_ho
     declare(&env, &scope(&main));
     let checked = report::check(&env, &[scope(&linked)]);
     assert_eq!(
-        checked.project_target.as_deref(),
-        Some(kendex_core::paths::canonical(&main).unwrap().as_path()),
+        checked.project_target,
+        Some(report::ProjectTarget::MainCheckout(
+            kendex_core::paths::canonical(&main).unwrap()
+        )),
         "a worktree with no manifest of its own points at the checkout that has one"
     );
     assert!(
         report::render_plain(&checked).contains(
-            "fix: kendex remove gh (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)"
+            "fix: kendex remove gh (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)\n"
         ),
         "an absent manifest retains the explicit elsewhere marker"
     );
@@ -172,8 +176,10 @@ fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_ho
     declare(&env, &scope(&linked));
     let checked = report::check(&env, &[scope(&linked)]);
     assert_eq!(
-        checked.project_target.as_deref(),
-        Some(kendex_core::paths::canonical(&linked).unwrap().as_path()),
+        checked.project_target,
+        Some(report::ProjectTarget::Worktree(
+            kendex_core::paths::canonical(&linked).unwrap()
+        )),
         "a worktree that declares its own packages is the project a write names"
     );
 
@@ -192,7 +198,9 @@ fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_ho
 
 /// What the reader actually reads. The target is only useful if it reaches
 /// the rendered command, and a report whose fix cannot be run where it is
-/// printed is the defect this exists to end.
+/// printed is the defect this exists to end. A verb with no
+/// `--project-path` form that writes the project it is typed in runs bare
+/// in the worktree that declares, with no marker sending the reader away.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_rendered_fix_inside_a_worktree_names_the_project_it_writes() {
@@ -207,11 +215,21 @@ fn a_rendered_fix_inside_a_worktree_names_the_project_it_writes() {
     // test is the rendering of the target the check resolved.
     checked.sections = vec![report::Section {
         title: "stale".to_owned(),
-        lines: vec![report::Line {
-            class: report::Class::Drift,
-            text: "'gh' does not match its source".to_owned(),
-            remedy: Some(report::Remedy::Apply { global: false }),
-        }],
+        lines: vec![
+            report::Line {
+                class: report::Class::Drift,
+                text: "'gh' does not match its source".to_owned(),
+                remedy: Some(report::Remedy::Apply { global: false }),
+            },
+            report::Line {
+                class: report::Class::Drift,
+                text: "'gh' is no longer offered by its source".to_owned(),
+                remedy: Some(report::Remedy::Remove {
+                    name: "gh".to_owned(),
+                    global: false,
+                }),
+            },
+        ],
     }];
 
     let text = report::render_plain(&checked);
@@ -222,6 +240,7 @@ fn a_rendered_fix_inside_a_worktree_names_the_project_it_writes() {
         )),
         "{text}"
     );
+    assert!(text.contains("fix: kendex remove gh\n"), "{text}");
 }
 
 /// A current manifest can still want the recorded name in another harness.
@@ -273,14 +292,11 @@ fn a_worktree_whose_manifest_will_not_load_names_itself() {
 
     let checked = report::check(&env, &[scope(&linked)]);
     assert_eq!(
-        checked.project_target.as_deref(),
-        Some(kendex_core::paths::canonical(&linked).unwrap().as_path()),
-        "the manifest that would not load is the worktree's own"
-    );
-    assert_ne!(
-        checked.project_target.as_deref(),
-        Some(kendex_core::paths::canonical(&main).unwrap().as_path()),
-        "and never the checkout it was added from"
+        checked.project_target,
+        Some(report::ProjectTarget::Worktree(
+            kendex_core::paths::canonical(&linked).unwrap()
+        )),
+        "the manifest that would not load is the worktree's own, never the checkout it was added from"
     );
 }
 
@@ -303,12 +319,10 @@ fn a_project_below_the_git_top_level_maps_onto_the_same_place_in_the_main_checko
     record_a_missing_agent(&env, &below);
     let checked = report::check(&env, &[below]);
     assert_eq!(
-        checked.project_target.as_deref(),
-        Some(
-            kendex_core::paths::canonical(&main.join("app"))
-                .unwrap()
-                .as_path()
-        ),
+        checked.project_target,
+        Some(report::ProjectTarget::MainCheckout(
+            kendex_core::paths::canonical(&main.join("app")).unwrap()
+        )),
         "the project under the main checkout, not its top level"
     );
 

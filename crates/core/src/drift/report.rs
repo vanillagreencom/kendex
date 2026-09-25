@@ -140,11 +140,39 @@ pub enum Fix {
     /// Runnable, but not where it was read: the line is about a project
     /// the command has to name and this verb has no `--project-path`
     /// form, so a session running the catalog's `block-worktree-refresh`
-    /// hook is refused it inside a linked git worktree. The command is
-    /// still the fix, and the renderer marks it with why it will not run
-    /// here — a reader handed no remedy at all is left with the drift and
-    /// no way out of it.
+    /// hook is refused it inside that linked git worktree — every such
+    /// verb where the project is the main checkout's, and `update-pi`
+    /// where it is the worktree's own. The command is still the fix, and
+    /// the renderer marks it with why it will not run here — a reader
+    /// handed no remedy at all is left with the drift and no way out of
+    /// it.
     Elsewhere(String),
+}
+
+/// The project a project-scope remedy has to name, and whose it is: the
+/// two differ in which verbs reach it by being typed in the checked
+/// directory. Serialized as the path alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(untagged)]
+pub enum ProjectTarget {
+    /// The checked linked worktree, which carries a manifest of its own,
+    /// readable or not. A verb typed there writes it, so the verbs with no
+    /// `--project-path` form that write the project they are typed in run
+    /// there as they are.
+    Worktree(std::path::PathBuf),
+    /// The project at the same place inside the main checkout, where the
+    /// checked worktree carries no manifest and the declarations are the
+    /// main checkout's. Only a command naming it reaches it from the
+    /// worktree.
+    MainCheckout(std::path::PathBuf),
+}
+
+impl ProjectTarget {
+    pub fn path(&self) -> &std::path::Path {
+        match self {
+            ProjectTarget::Worktree(path) | ProjectTarget::MainCheckout(path) => path,
+        }
+    }
 }
 
 impl Remedy {
@@ -189,27 +217,44 @@ impl Remedy {
         )
     }
 
+    /// Whether this verb, with no `--project-path` form, writes a linked
+    /// worktree's own project by being typed inside it: the verbs the
+    /// catalog's `block-worktree-refresh` hook lets through in a worktree
+    /// that carries its own manifest. `update-pi` writes the Pi package
+    /// roots directly, and that hook refuses it in every linked worktree.
+    fn writes_where_typed(&self) -> bool {
+        matches!(
+            self,
+            Remedy::Add { .. }
+                | Remedy::Remove { .. }
+                | Remedy::Fork { .. }
+                | Remedy::DriftHook { .. }
+        )
+    }
+
     /// The pasteable spelling, or `None` when the identifier the command
     /// would carry is not one that may reach a command position — the
     /// line then stands without a remedy.
     ///
     /// `target` is the project a project-scope command has to name to
-    /// reach the place the line is about, set by [`CheckReport`] where a
-    /// command typed where the check ran does not reach it. A verb with
-    /// no `--project-path` form still renders its command there, as
-    /// [`Fix::Elsewhere`]: the command is the fix, and the marker the
-    /// renderer adds says why it will not run where the report was read.
-    pub fn render(&self, target: Option<&std::path::Path>) -> Option<Fix> {
+    /// reach the place the line is about, set by [`CheckReport`] where the
+    /// checked directory is a linked worktree. A verb with no
+    /// `--project-path` form renders its bare command there: runnable
+    /// where the target is the worktree itself and the verb writes the
+    /// project it is typed in, and otherwise [`Fix::Elsewhere`] — the
+    /// command is still the fix, and the marker the renderer adds says why
+    /// it will not run where the report was read.
+    pub fn render(&self, target: Option<&ProjectTarget>) -> Option<Fix> {
         self.render_with_scope(target, false)
     }
 
-    fn render_refresh_action(global: bool, target: Option<&std::path::Path>) -> Option<Fix> {
+    fn render_refresh_action(global: bool, target: Option<&ProjectTarget>) -> Option<Fix> {
         Remedy::Refresh { global }.render_with_scope(target, !global)
     }
 
     fn render_with_scope(
         &self,
-        target: Option<&std::path::Path>,
+        target: Option<&ProjectTarget>,
         explicit_project: bool,
     ) -> Option<Fix> {
         if let Remedy::Remove { name, .. } | Remedy::Add { name, .. } | Remedy::Fork { name, .. } =
@@ -231,8 +276,11 @@ impl Remedy {
         };
         let place = match (self.global(), named.filter(|_| self.takes_project_path())) {
             (true, _) => " --global".to_owned(),
-            (false, Some(path)) => {
-                format!("{scope} --project-path {}", command_word(path, false)?)
+            (false, Some(target)) => {
+                format!(
+                    "{scope} --project-path {}",
+                    command_word(target.path(), false)?
+                )
             }
             (false, None) => scope.to_owned(),
         };
@@ -274,7 +322,13 @@ impl Remedy {
             }
             Remedy::Plan { .. } => format!("kendex apply --plan{place}"),
         };
-        Some(match named.is_some() && !self.takes_project_path() {
+        let elsewhere = match named {
+            None => false,
+            Some(_) if self.takes_project_path() => false,
+            Some(ProjectTarget::Worktree(_)) => !self.writes_where_typed(),
+            Some(ProjectTarget::MainCheckout(_)) => true,
+        };
+        Some(match elsewhere {
             true => Fix::Elsewhere(command),
             false => Fix::Here(command),
         })
@@ -361,7 +415,7 @@ pub struct CheckReport {
     /// no project root at that place, which leaves every remedy in the
     /// bare spelling a command typed in the checked directory would take.
     #[serde(skip_serializing_if = "project_target_not_serializable")]
-    pub project_target: Option<std::path::PathBuf>,
+    pub project_target: Option<ProjectTarget>,
     /// Whether a scope's plan over unrecorded copies outran the deadline
     /// and is still owed — what sends the caller's background refresh
     /// through it. For the caller that ran the check, never for the
@@ -373,8 +427,10 @@ pub struct CheckReport {
 
 /// A project target is command data. JSON omits a path the platform cannot
 /// represent as the exact UTF-8 argument the command renderer requires.
-fn project_target_not_serializable(target: &Option<std::path::PathBuf>) -> bool {
-    target.as_deref().is_none_or(|path| path.to_str().is_none())
+fn project_target_not_serializable(target: &Option<ProjectTarget>) -> bool {
+    target
+        .as_ref()
+        .is_none_or(|target| target.path().to_str().is_none())
 }
 
 impl CheckReport {
@@ -476,7 +532,7 @@ impl Sections {
     fn into_report(
         self,
         snapshot_age_secs: Option<u64>,
-        project_target: Option<std::path::PathBuf>,
+        project_target: Option<ProjectTarget>,
     ) -> CheckReport {
         let sections: Vec<Section> = [
             ("stale", self.stale),
@@ -540,7 +596,7 @@ impl Sections {
 /// strength of the guess: what a reader then runs is the bare verb, which
 /// the catalog's `block-worktree-refresh` hook refuses out loud where a
 /// session installed it.
-fn remedy_target(scope: &Scope, manifest: ManifestState) -> Option<std::path::PathBuf> {
+fn remedy_target(scope: &Scope, manifest: ManifestState) -> Option<ProjectTarget> {
     let Scope::Project { root } = scope else {
         return None;
     };
@@ -549,8 +605,12 @@ fn remedy_target(scope: &Scope, manifest: ManifestState) -> Option<std::path::Pa
         return None;
     }
     match manifest {
-        ManifestState::Declared | ManifestState::Unreadable => Some(root.clone()),
-        ManifestState::Absent => main_checkout_project(&repo, root),
+        ManifestState::Declared | ManifestState::Unreadable => {
+            Some(ProjectTarget::Worktree(root.clone()))
+        }
+        ManifestState::Absent => {
+            main_checkout_project(&repo, root).map(ProjectTarget::MainCheckout)
+        }
     }
 }
 
