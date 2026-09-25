@@ -94,6 +94,13 @@ while IFS='~' read -r label action data want check value error_code error_value 
       chmod 000 "$DIR/unreadable.settings.toml"; override=unreadable.settings.toml ;;
     absent) override=absent.settings.toml ;;
     no-classifier) rm -r -- "${DIR:?}/.agents/skills/harness-ci"; commit "$DIR" ;;
+    dotenv) printf '%b\n' "$data" >"$DIR/.env.local" ;;
+    choice-protocol)
+      # A policy owner answering --check-choice outside its protocol, while its
+      # --check-config answer stays legal for the predicate.
+      printf '#!/usr/bin/env bash\ncase "$1" in --check-choice) echo review-policy-choice=unknown ;; *) echo review-policy=active ;; esac\n' \
+        >"$DIR/.agents/skills/review-gate/scripts/review-policy"
+      commit "$DIR" ;;
     uncommitted-record)
       printf '%b\n' "$data" >>"$DIR/kendex.settings.toml"
       printf 'decision\n' >"$DIR/uncommitted-decision.md" ;;
@@ -192,6 +199,12 @@ decision record on disk but never committed~uncommitted-record~REVIEW_GATE_CLASS
 decision record that is a tracked directory~append~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs"~FAIL~class-policy-decision-untracked~docs~~~~~
 docs-only lane under the active class policy~append~REVIEW_GATE_DOCS_ONLY = "none"~FAIL~class-policy-inert-lane~REVIEW_GATE_DOCS_ONLY~~~~~
 render-only lane under the active class policy~append~REVIEW_GATE_RENDER_PATHS = "docs/*"~FAIL~class-policy-inert-lane~REVIEW_GATE_RENDER_PATHS~~~~~
+docs-only lane under a custom class policy~append~REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:none;standard:none"\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs/guide.md"\nREVIEW_GATE_DOCS_ONLY = "none"~FAIL~class-policy-inert-lane~REVIEW_GATE_DOCS_ONLY~~~~~
+class policy the owner refuses~append~REVIEW_GATE_CLASS_POLICY = "render:none"~FAIL~class-policy-unresolved~2~~~~~
+class policy choice outside the owner protocol~choice-protocol~~FAIL~class-policy-protocol~review-policy-choice=unknown~~~~~
+decision record the loader refuses~dotenv~REVIEW_GATE_CLASS_POLICY=""\nREVIEW_GATE_CLASS_POLICY_DECISION="docs/guide.md"x~FAIL~class-policy-setting-unreadable~REVIEW_GATE_CLASS_POLICY_DECISION~~~~~
+docs-only lane the loader refuses~dotenv~REVIEW_GATE_DOCS_ONLY="none"x~FAIL~class-policy-setting-unreadable~REVIEW_GATE_DOCS_ONLY~~~~~
+render-only lane the loader refuses~dotenv~REVIEW_GATE_RENDER_PATHS="docs/*"x~FAIL~class-policy-setting-unreadable~REVIEW_GATE_RENDER_PATHS~~~~~
 docs-only lane under a recorded opt-out~append~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs/guide.md"\nREVIEW_GATE_DOCS_ONLY = "none"~clean~class-policy-decision~docs/guide.md~~~~~
 default class policy with no classifier installed~no-classifier~~FAIL~settings-values~2~policy-classifier~@/.agents/skills/review-gate/scripts/../../harness-ci/scripts/change-class~~~
 ROWS
