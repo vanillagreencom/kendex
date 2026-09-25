@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # job-unit.sh — start a long-lived orch job so no process it starts outlives
-# it, and stop one by what its launch recorded. The one owner of the manager
-# probe, the unit name, the systemd-run launch and its properties, the setsid
-# fallback, the unit stop and the process-group kill. Run it, or source it for
-# the same functions; Bash 3.2.
+# it, and stop one by what its launch recorded. It bounds a job's lifetime and
+# nothing else: no memory, CPU or task limit. The one owner of the manager
+# probe, the unit name, the systemd-run launch, the setsid fallback, the unit
+# stop and the process-group kill. Run it, or source it for the same
+# functions; Bash 3.2.
 #
 # Where a systemd user manager starts a transient unit, the job runs as one:
 # when its main process exits systemd kills every process left in the unit,
@@ -14,33 +15,27 @@
 # the stop rule are references/job-units.md.
 #
 # Usage:
-#   job-unit.sh check
-#       Print the bounds table, one line per class:
-#         class=CLASS tasks-max=N runtime-max-sec=caller kill-grace-sec=N
-#       runtime-max-sec=caller is the rule that the launch's --cap is the
-#       unit's RuntimeMaxSec.
-#   job-unit.sh name CLASS NAME PID
-#       Print the unit name orch-CLASS-NAME-PID.
-#   job-unit.sh launch CLASS NAME RECORD --cap SECS -- ARGV...
-#       Start ARGV detached, as the unit orch-CLASS-NAME-PID where a manager
-#       answers, PID being this launch's own process, and print its runner
-#       line. CLASS is a row of the bounds table. RECORD is written whole
-#       before each launch attempt, so the job can read how it runs the moment
-#       it starts:
+#   job-unit.sh name NAME PID
+#       Print the unit name orch-NAME-PID.
+#   job-unit.sh launch NAME RECORD --cap SECS -- ARGV...
+#       Start ARGV detached, as the unit orch-NAME-PID where a manager answers,
+#       PID being this launch's own process, and print its runner line. RECORD
+#       is written whole before each launch attempt, so the job can read how it
+#       runs the moment it starts:
 #         runner=systemd|setsid
-#         unit=NAME            where runner=systemd
+#         unit=UNIT            where runner=systemd
 #         line=RUNNER_LINE
-#       --cap is the RuntimeMaxSec of a class whose row says caller: the
-#       caller sets it above its own bound plus the kill grace, so the job's
-#       own bound fires first.
+#       --cap is the unit's RuntimeMaxSec, from the timeout the caller already
+#       has: set above that bound plus the kill grace, so the job's own bound
+#       fires first.
 #       Exit 0 launched; 1 RECORD could not be written; 2 no setsid where the
-#       fallback needs it; 3 usage, an unknown class included.
+#       fallback needs it; 3 usage.
 #   job-unit.sh end RECORD LEADER_PID
 #       The job's own last call. Under setsid, kill the process group
 #       LEADER_PID leads, the caller included; under a unit, nothing, since the
 #       unit's end does it. Exit 0 done; 2 the group could not be killed.
-#   job-unit.sh stop NAME
-#       Stop the unit NAME. Exit 0 it was running and is stopped; 1 the
+#   job-unit.sh stop UNIT
+#       Stop the unit UNIT. Exit 0 it was running and is stopped; 1 the
 #       manager has no such unit, so it had ended; 2 anything else, a manager
 #       that cannot be reached included.
 #   job-unit.sh kill-group PID ARGV_GLOB
@@ -57,14 +52,6 @@
 # JOB_UNIT_LINE, which launch also sets. A status-2 failure leaves its KEY in
 # JOB_UNIT_ERROR_KEY and its fields in JOB_UNIT_ERROR.
 
-# The bounds table, one row per class: CLASS TASKS_MAX RUNTIME_MAX_SEC.
-# TasksMax counts processes and threads together, so a runaway fork stops at
-# the unit rather than exhausting the host's own limit. RuntimeMaxSec `caller`
-# is the launch's --cap: validate's own bound is DEV_VALIDATE_TIMEOUT_SECS, a
-# setting, so no constant stays above every value of it. No memory cap: one
-# under 1G has frozen hosts, which is why kendex.settings.toml
-# COMMAND_SAFETY_DENY_PATTERN refuses one.
-JOB_UNIT_TABLE='validate 4096 caller'
 # The seconds between SIGTERM and SIGKILL, both for what a unit still holds
 # when it stops and for a caller's own bound, so the two graces are one number.
 JOB_UNIT_KILL_GRACE=10
@@ -81,31 +68,9 @@ job_unit_fail() { # KEY FIELDS
   return 2
 }
 
-# orch-CLASS-NAME-PID, with anything a unit name cannot carry replaced by `_`.
-job_unit_name() { # CLASS NAME PID
-  printf 'orch-%s-%s-%s' "$1" "$2" "$3" | LC_ALL=C tr -c 'A-Za-z0-9_.-' '_'
-}
-
-# The row for CLASS, into JOB_UNIT_TASKS_MAX and JOB_UNIT_RUNTIME_MAX.
-JOB_UNIT_TASKS_MAX=""
-JOB_UNIT_RUNTIME_MAX=""
-job_unit_bounds() { # CLASS
-  local class tasks runtime
-  while read -r class tasks runtime; do
-    [[ "$class" == "$1" ]] || continue
-    JOB_UNIT_TASKS_MAX="$tasks"
-    JOB_UNIT_RUNTIME_MAX="$runtime"
-    return 0
-  done <<<"$JOB_UNIT_TABLE"
-  return 1
-}
-
-job_unit_check() {
-  local class tasks runtime
-  while read -r class tasks runtime; do
-    printf 'class=%s tasks-max=%s runtime-max-sec=%s kill-grace-sec=%s\n' \
-      "$class" "$tasks" "$runtime" "$JOB_UNIT_KILL_GRACE"
-  done <<<"$JOB_UNIT_TABLE"
+# orch-NAME-PID, with anything a unit name cannot carry replaced by `_`.
+job_unit_name() { # NAME PID
+  printf 'orch-%s-%s' "$1" "$2" | LC_ALL=C tr -c 'A-Za-z0-9_.-' '_'
 }
 
 # An argument as the service manager reads it: it expands ${NAME} in a unit's
@@ -150,13 +115,11 @@ job_unit_read() { # RECORD
   esac
 }
 
-job_unit_launch() { # CLASS NAME RECORD --cap SECS -- ARGV...
-  local class="$1" job="$2" record="$3" cap="${5:-}" probe_err="" launch_err="" nofile name arg
+job_unit_launch() { # NAME RECORD --cap SECS -- ARGV...
+  local job="$1" record="$2" cap="${4:-}" probe_err="" launch_err="" nofile name arg
   local unit_env=() unit_argv=()
-  [[ $# -ge 7 && "$4" == --cap && "$6" == -- && "$cap" =~ ^[1-9][0-9]*$ ]] || return 3
-  job_unit_bounds "$class" || return 3
-  [[ "$JOB_UNIT_RUNTIME_MAX" == caller ]] || return 3
-  shift 6
+  [[ $# -ge 6 && "$3" == --cap && "$5" == -- && "$cap" =~ ^[1-9][0-9]*$ ]] || return 3
+  shift 5
   JOB_UNIT_RUNNER=setsid
   JOB_UNIT_NAME=""
   # The probe starts a unit, since that is the question: `systemctl
@@ -166,7 +129,7 @@ job_unit_launch() { # CLASS NAME RECORD --cap SECS -- ARGV...
     JOB_UNIT_LINE="runner=setsid reason=no-systemd-run"
   elif probe_err="$(systemd-run --user --quiet --collect true </dev/null 2>&1 >/dev/null)"; then
     JOB_UNIT_RUNNER=systemd
-    JOB_UNIT_NAME="$(job_unit_name "$class" "$job" "$$")"
+    JOB_UNIT_NAME="$(job_unit_name "$job" "$$")"
     JOB_UNIT_LINE="runner=systemd unit=$JOB_UNIT_NAME"
   else
     JOB_UNIT_LINE="runner=setsid reason=probe-failed detail=${probe_err%%$'\n'*}"
@@ -177,14 +140,15 @@ job_unit_launch() { # CLASS NAME RECORD --cap SECS -- ARGV...
     job_unit_record "$record" || return 1
     # A user unit inherits the manager's environment and resource limits, not
     # the caller's, so every exported name is handed over (--setenv=NAME takes
-    # the value from systemd-run's own environment) and so are the open-file
-    # limits, which a build and test battery exhausts first; the manager caps
-    # a value above its own ceiling at that ceiling.
+    # the value from systemd-run's own environment) and so are the caller's
+    # own open-file limits, which a build and test battery exhausts first; the
+    # manager caps a value above its own ceiling at that ceiling. They are the
+    # caller's numbers, never the runner's.
     for name in $(compgen -e); do unit_env+=("--setenv=$name"); done
     for arg in "$@"; do unit_argv+=("$(job_unit_arg "$arg")"); done
     nofile="$(job_unit_nofile -S):$(job_unit_nofile -H)"
     if launch_err="$(systemd-run --user --quiet --collect --unit="$JOB_UNIT_NAME" \
-      -p "TasksMax=$JOB_UNIT_TASKS_MAX" -p "RuntimeMaxSec=$cap" -p "TimeoutStopSec=$JOB_UNIT_KILL_GRACE" \
+      -p "RuntimeMaxSec=$cap" -p "TimeoutStopSec=$JOB_UNIT_KILL_GRACE" \
       -p "LimitNOFILE=$nofile" ${unit_env[@]+"${unit_env[@]}"} \
       -- "${unit_argv[@]}" </dev/null 2>&1 >/dev/null)"; then
       return 0
@@ -200,7 +164,7 @@ job_unit_launch() { # CLASS NAME RECORD --cap SECS -- ARGV...
   setsid -f "$@" </dev/null >/dev/null 2>&1
 }
 
-job_unit_stop() { # NAME
+job_unit_stop() { # UNIT
   local out load
   JOB_UNIT_ERROR=""
   if out="$(systemctl --user stop -- "$1.service" 2>&1)"; then
@@ -255,9 +219,8 @@ job_unit_main() {
     -h|--help)
       sed -n '2,/^$/p' < "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       return 0 ;;
-    check) [[ $# -eq 0 ]] || rc=3 ;;
-    name) [[ $# -eq 3 ]] || rc=3 ;;
-    launch) [[ $# -ge 7 ]] || rc=3 ;;
+    name) [[ $# -eq 2 ]] || rc=3 ;;
+    launch) [[ $# -ge 6 ]] || rc=3 ;;
     end) [[ $# -eq 2 ]] || rc=3 ;;
     stop) [[ $# -eq 1 ]] || rc=3 ;;
     kill-group) [[ $# -eq 2 ]] || rc=3 ;;
@@ -269,13 +232,12 @@ job_unit_main() {
     return 3
   fi
   case "$cmd" in
-    check) job_unit_check ;;
     name) job_unit_name "$@"; printf '\n' ;;
     launch)
       job_unit_launch "$@" || rc=$?
       case "$rc" in
         0) printf '%s\n' "$JOB_UNIT_LINE" ;;
-        1) printf 'job-unit: record-unwritable path=%s\n' "$3" >&2 ;;
+        1) printf 'job-unit: record-unwritable path=%s\n' "$2" >&2 ;;
         2) printf 'job-unit: missing-command commands=setsid\n' >&2 ;;
         *) printf 'job-unit: usage subcommand=launch\n' >&2 ;;
       esac ;;

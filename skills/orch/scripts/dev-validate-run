@@ -29,12 +29,12 @@
 # uncommitted render edits is standard.
 #
 # No process the run starts outlives it. lib/job-unit.sh starts the child, as
-# a transient systemd user unit of class `validate` named for the worktree
-# directory (for a lane its item in lower case) where a user manager answers,
-# and ends it; references/job-units.md is the name shape, the bounds table, the
-# runner line and the stop rule. The unit's RuntimeMaxSec is the cap, a
-# backstop above the bound that still leaves the bound to produce the verdict.
-# The log's first line is the runner line.
+# a transient systemd user unit named for validate-<worktree directory> (for a
+# lane, its item in lower case) where a user manager answers, and ends it;
+# references/job-units.md is the name shape, the runner line and the stop
+# rule. The unit's RuntimeMaxSec is the cap, a backstop above the bound that
+# still leaves the bound to produce the verdict. The log's first line is the
+# runner line.
 #
 # Usage:
 #   dev-validate-run --worktree PATH [--poll SECS]
@@ -337,7 +337,7 @@ if [[ "$mode" == start ]]; then
   # The run has to outlive the shell that launched it, because that shell is
   # what a harness kills; a job unit does.
   launch_rc=0
-  job_unit_launch validate "${worktree##*/}" "$run_dir/runner" --cap "$cap_secs" \
+  job_unit_launch "validate-${worktree##*/}" "$run_dir/runner" --cap "$cap_secs" \
     -- "$SCRIPT_PATH" --child --run-dir "$run_dir" || launch_rc=$?
   case "$launch_rc" in
     0) ;;

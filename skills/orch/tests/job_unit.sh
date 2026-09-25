@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for lib/job-unit.sh through its executable interface, the contract a
-# markdown recipe calls: --help, check, name, launch, stop and kill-group. The
+# markdown recipe calls: --help, name, launch, stop and kill-group. The
 # containment each runner gives, the fallbacks behind a failing systemd-run,
 # and each rule --stop applies are pinned through dev-validate-run, which
 # sources the same functions, in dev_validate_run.sh.
@@ -56,30 +56,26 @@ echo "=== job-unit executable ==="
 run "$JOB_UNIT" --help
 assert_eq "$RC $(sed -n 1p <<<"$OUT")" "0 job-unit.sh — start a long-lived orch job so no process it starts outlives" \
   "--help prints the header and exits 0"
-assert_eq "$(grep -c -E '^  job-unit\.sh (check|name|launch|end|stop|kill-group|stop-job)' <<<"$OUT")" "7" \
+assert_eq "$(grep -c -E '^  job-unit\.sh (name|launch|end|stop|kill-group|stop-job) ' <<<"$OUT")" "6" \
   "and names every subcommand"
-run "$JOB_UNIT" launch validate x
+run "$JOB_UNIT" launch validate-x
 assert_eq "$RC $ERR" "3 job-unit: usage subcommand=launch" "a launch missing its arguments is refused as usage"
 
-run "$JOB_UNIT" check
-assert_eq "$RC $OUT" "0 class=validate tasks-max=4096 runtime-max-sec=caller kill-grace-sec=10" \
-  "check prints the bounds table"
-
 # --- The unit name shape ---------------------------------------------------------
-# class|name|pid|unit name
+# name|pid|unit name
 NAME_ROWS=(
-  'validate|ken-1784|180993|orch-validate-ken-1784-180993'
-  'validate|proj-${HOME}|1|orch-validate-proj-__HOME_-1'
-  'watch|a b/c|7|orch-watch-a_b_c-7'
+  'validate-ken-1784|180993|orch-validate-ken-1784-180993'
+  'validate-proj-${HOME}|1|orch-validate-proj-__HOME_-1'
+  'watch a b/c|7|orch-watch_a_b_c-7'
 )
 for row in "${NAME_ROWS[@]}"; do
-  IFS='|' read -r class name pid want <<<"$row"
-  run "$JOB_UNIT" name "$class" "$name" "$pid"
-  assert_eq "$OUT" "$want" "class $class, name '$name' and pid $pid name the unit $want"
+  IFS='|' read -r name pid want <<<"$row"
+  run "$JOB_UNIT" name "$name" "$pid"
+  assert_eq "$OUT" "$want" "name '$name' and pid $pid name the unit $want"
 done
 mutant no-sanitize "| LC_ALL=C tr -c 'A-Za-z0-9_.-' '_'" ''
-run "$MUTANT" name watch 'a b/c' 7
-assert_eq "$OUT" "orch-watch-a b/c-7" "control: unsanitized, the name's space and slash reach the unit name"
+run "$MUTANT" name 'watch a b/c' 7
+assert_eq "$OUT" "orch-watch a b/c-7" "control: unsanitized, the name's spaces and slash reach the unit name"
 
 # --- A launch where no systemd-run is installed ------------------------------------
 # A PATH holding what the setsid launch and its job call, and no systemd-run.
@@ -97,7 +93,7 @@ wait_pid() { # FILE — the pid the job wrote, once it has
 if command -v setsid >/dev/null 2>&1; then
   record="$TMP_ROOT/setsid.record"
   pidfile="$TMP_ROOT/setsid.pid"
-  run env PATH="$FARM" "$JOB_UNIT" launch validate id-1 "$record" --cap 60 \
+  run env PATH="$FARM" "$JOB_UNIT" launch validate-id-1 "$record" --cap 60 \
     -- bash -c 'echo $$ > "$0"; exec sleep 30' "$pidfile"
   assert_eq "$RC $OUT" "0 runner=setsid reason=no-systemd-run" \
     "a launch with no systemd-run prints the setsid runner line"
@@ -129,7 +125,7 @@ fi
 # Which runner this host gives is read off the executable's own answer: a host
 # where no manager answers skips these rows, saying so.
 record="$TMP_ROOT/unit.record"
-run "$JOB_UNIT" launch validate id-2 "$record" --cap 60 -- sleep 30
+run "$JOB_UNIT" launch validate-id-2 "$record" --cap 60 -- sleep 30
 if [[ "$(sed -n 's/^runner=//p' "$record" 2>/dev/null)" == systemd ]]; then
   unit="$(sed -n 's/^unit=//p' "$record")"
   assert_eq "$RC ${unit%-*}-PID $OUT" "0 orch-validate-id-2-PID runner=systemd unit=$unit" \
