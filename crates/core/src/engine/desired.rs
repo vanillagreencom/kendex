@@ -339,12 +339,13 @@ pub enum Withholding {
 }
 
 impl Withholding {
-    /// Whether a copy installed under this withholding comes out — taken
-    /// by the withheld pass, or by the orphan pass where the copy is an
-    /// orphan — rather than staying, record and all. The one answer for
-    /// the pass that disposes of the copy (`plan_pass::plan_withheld`) and
-    /// for the walk, which counts a requirer as gone from a tool only
-    /// where its withholding takes its copy (`deps::orphaned`).
+    /// Whether this withholding lets a copy installed under it go: taken
+    /// by the withheld pass, or handed to the orphan pass to dispose of
+    /// under its options. False where the copy stays, record and all. The
+    /// one answer for the pass that disposes of the copy
+    /// (`plan_pass::plan_withheld`) and for the walk, which counts a
+    /// requirer as gone from a tool only where its withholding lets its
+    /// copy go (`deps::orphaned`).
     pub fn takes(self) -> bool {
         match self {
             Withholding::Orphaned | Withholding::Requires => true,
