@@ -1,1 +1,1 @@
-- `lane-mail send` and `peer send` print `lane-mail: sent item=<item> id=<id> bytes=<n>`, so silence is a send that did not land, and refuse a repeat of one identical envelope within a minute.
+- `lane-mail send` and `peer send` print `lane-mail: sent item=<item> id=<id> bytes=<n> monitor=<m>`, where `live` means a lane watch polls that mailbox, and refuse a repeat envelope within a minute.

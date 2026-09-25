@@ -181,6 +181,37 @@ rows_case() { # LABEL HARNESS-EXIT RESULT KEY WANT-STATUS
 rows_case "a harness that answers nothing fails every row it is asked" 0 fail failed 1
 rows_case "a harness that cannot run leaves every row unanswerable" 3 unanswerable unanswerable 3
 
+# A print-mode session that arms its mailbox monitor, answers `armed` and ends
+# with its turn stops that monitor, and the watch withdraws its liveness record
+# as it stops. The stand-in does exactly that, so a verdict read from the
+# mailbox after the session reports the monitor never armed and fails, where
+# the row's contract is unanswerable.
+echo "=== a lane that arms its monitor and ends with its turn is unanswerable ==="
+cat >"$ROWS_BIN/claude" <<'STANDIN'
+#!/usr/bin/env bash
+for prompt; do :; done
+case "$prompt" in *" watch --item "*) ;; *) exit 0 ;; esac
+watch_cmd=$(sed -n 's/.*on the shell command `\([^`]*\)`.*/\1/p' <<<"$prompt")
+bash -c "exec $watch_cmd" >/dev/null 2>&1 &
+watch=$!
+sleep 3
+kill -TERM "$watch"
+wait "$watch"
+printf 'armed\n'
+STANDIN
+chmod +x "$ROWS_BIN/claude"
+rm -rf -- "${TMP:?}/rows-dir"
+mkdir -p "$TMP/rows-dir"
+(cd "$ROWS_REPO" && PATH="$ROWS_BIN:$PATH" CLAUDE_CONFIG_DIR="$ROWS_CFG" \
+  "$BASH" "$SMOKE" --only claude --dir "$TMP/rows-dir" >"$TMP/wake-out" 2>&1) || :
+wake_result="$(awk '$1 == "claude" && $2 == "mail-wake" { print $3; exit }' "$TMP/wake-out")"
+if [ "$wake_result" = unanswerable ]; then
+  ok "an armed monitor stopped with the turn reads unanswerable, not never armed"
+else
+  bad "an armed monitor stopped with the turn reads unanswerable, not never armed" \
+    "mail-wake=${wake_result:--}: $(grep -m 1 'mail-wake' "$TMP/wake-out" || :)"
+fi
+
 # Which harness gets a lane's mail by which mechanism is read out of the
 # `lane-mail-check` row of hooks/README.md, and a table answering for one
 # harness less would leave that harness's row skipped — a run that says nothing

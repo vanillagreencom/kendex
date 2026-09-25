@@ -217,15 +217,26 @@ assert_eq "$(sed -n 3p "$WATCH_OUT")" "$(printf '%q inbox --item KEN-1 --root %q
   "a watch given --root hands over the inbox command with that root"
 stop_watch
 
-# The liveness record the receipt reads, judged on its age alone.
-new_lane liveness
-for row in "$(( $(date -u +%s) - 60 ))|none|a record older than twice its interval plus five seconds reads as no monitor" \
-  "$(date -u +%s)|live|a fresh record reads as a live monitor"; do
-  printf 'at=%s interval=5\n' "${row%%|*}" >"$BOX/to-lane.watch"
-  rest="${row#*|}"
-  send_directive "Liveness ${rest%%|*}."
-  assert_eq "${SENT##* }" "monitor=${rest%%|*}" "${rest#*|}"
-done
+# The liveness record the receipt reads, judged on its age alone. At interval
+# 5 the window is fifteen seconds: rows sit either side of it, and a record
+# stamped ahead of the sender's clock is no evidence of a poll.
+liveness_rows() { # [BIN]
+  local row age rest
+  new_lane "liveness${1:+-mutant}"
+  for row in "17|none|a record just past twice its interval plus five seconds reads as no monitor" \
+    "12|live|a record just inside that window reads as a live monitor" \
+    "-60|none|a record stamped ahead of the sender's clock reads as no monitor"; do
+    age="${row%%|*}"
+    printf 'at=%s interval=5\n' "$(( $(date -u +%s) - age ))" >"$BOX/to-lane.watch"
+    rest="${row#*|}"
+    SENT="$(cd "$LANE" && "${1:-$LANE_MAIL}" send --item KEN-1 --root "$LANE" --directive \
+      --file "$(text d "Liveness $age.")")"
+    LIVENESS="$LIVENESS${SENT##* }|"
+    [ -n "${1:-}" ] || assert_eq "${SENT##* }" "monitor=${rest%%|*}" "${rest#*|}"
+  done
+}
+LIVENESS=""
+liveness_rows
 
 # Refusals, keyed on their first line.
 new_lane refusals
@@ -257,6 +268,49 @@ if kill -0 "$WATCH_PID" 2>/dev/null; then RC=running; else wait "$WATCH_PID" || 
 WATCH_PID=""
 assert_eq "$RC=$(head -n 1 "$WATCH_ERR")" "2=lane-mail: mailbox-missing=$BOX" \
   "a watch whose mailbox is removed exits within two intervals"
+
+# A long interval, so a stop that waited out the sleep would be seen. TERM ends
+# the wait at once and the EXIT trap withdraws the liveness record.
+term_row() { # [BIN] — sets TERMED to how the watch ended
+  local tries=0
+  new_lane "term${1:+-mutant}"
+  start_watch "${1:-$LANE_MAIL}" --item KEN-1 --interval 30
+  while [ ! -e "$BOX/to-lane.watch" ] && [ "$tries" -lt 25 ]; do sleep 0.2; tries=$((tries + 1)); done
+  kill -TERM "$WATCH_PID"
+  tries=0
+  while kill -0 "$WATCH_PID" 2>/dev/null && [ "$tries" -lt 15 ]; do sleep 0.2; tries=$((tries + 1)); done
+  if kill -0 "$WATCH_PID" 2>/dev/null; then TERMED=running; else TERMED=exited; fi
+  # A KILL, not a second TERM: one still waiting would run its trap and blur
+  # the record half of the verdict.
+  kill -KILL "$WATCH_PID" 2>/dev/null || :
+  wait "$WATCH_PID" 2>/dev/null || :
+  WATCH_PID=""
+  TERMED="$TERMED:$([ -e "$BOX/to-lane.watch" ] && echo record-kept || echo record-withdrawn)"
+}
+term_row
+assert_eq "$TERMED" "exited:record-withdrawn" \
+  "a TERM ends a watch mid-wait within three seconds and withdraws its liveness record"
+
+# A KILL runs no trap, so what the lane's messages leave behind is what the
+# poll removed before its wait: no copy of the mailbox under the watch's TMPDIR.
+kill_row() { # [BIN] — sets KILLED to the mailbox copies left behind
+  local tries=0 dir="$TMP_ROOT/kill-tmp${1:+-mutant}"
+  new_lane "kill${1:+-mutant}"
+  send_directive 'A message worth keeping private.'
+  mkdir -p "$dir"
+  TMPDIR="$dir" start_watch "${1:-$LANE_MAIL}" --item KEN-1 --interval 30
+  await_announced 1
+  while [ -n "$(find "$dir" \( -name lane.raw -o -name lane.jsonl -o -name unread \) -print)" ] && [ "$tries" -lt 25 ]; do
+    sleep 0.2
+    tries=$((tries + 1))
+  done
+  kill -KILL "$WATCH_PID"
+  wait "$WATCH_PID" 2>/dev/null || :
+  WATCH_PID=""
+  KILLED="$(find "$dir" \( -name lane.raw -o -name lane.jsonl -o -name unread \) -print | awk 'END { print NR + 0 }')"
+}
+kill_row
+assert_eq "$KILLED" "0" "a watch killed in its wait leaves no copy of the lane's mailbox behind"
 
 # Controls, each a copy of lane-mail beside the libraries and siblings it
 # sources, with one line of the watch removed.
@@ -294,6 +348,22 @@ await_polls 2
 assert_eq "$([ "$(mail_lines | tr '\n' '|')" = "lane-mail: mail=KEN-1 new=1|" ] && echo alone || echo read-mail-announced)" \
   "read-mail-announced" "control: without the cursor raise a watch announces mail the lane already read"
 stop_watch
+
+mutant foreground-sleep 's@^      sleep "\$INTERVAL" &$@      sleep "$INTERVAL"@;s@^      wait "\$!"$@      :@'
+term_row "$MUTANT"
+assert_eq "$TERMED" "running:record-kept" \
+  "control: with the wait in the foreground a TERM waits out the interval"
+
+mutant copies-kept 's@^      rm -f -- "\$WORK_DIR/lane.raw".*@      :@'
+kill_row "$MUTANT"
+assert_eq "$([ "$KILLED" -gt 0 ] && echo kept || echo none)" "kept" \
+  "control: without the per-poll removal a killed watch leaves the mailbox copies behind"
+
+mutant wider-window 's@now - at <= 2 \* interval + 5@now - at <= 4 * interval + 5@'
+LIVENESS=""
+liveness_rows "$MUTANT"
+assert_eq "${LIVENESS%%|*}" "monitor=live" \
+  "control: with the window widened a record just past the bound reads as live"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

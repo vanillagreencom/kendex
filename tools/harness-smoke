@@ -766,7 +766,10 @@ mail_row() { # HARNESS LABEL LISTED [CMD...]
 # the directive lands once that turn is over; the directive asks the lane to
 # repeat the announcement that woke it, which a lane that polled its inbox by
 # itself never sees. A session that answers `armed` and exits is print mode
-# ending with the turn, not a monitor that failed, and is unanswerable. It runs
+# ending with the turn, not a monitor that failed, and is unanswerable. The
+# verdict reads only what was recorded as it happened, the sender's log and the
+# session's output, never the mailbox after the session: the watch withdraws
+# its liveness record when it is stopped, so a monitor that ran leaves none. It runs
 # before the lane-mail row, whose install adds the hook that would hand the
 # directive over at the turn's end instead, and on an item of its own, so
 # neither row reads the other's cursor. Codex has no row to run: Codex starts
@@ -777,6 +780,7 @@ WAKE_DELAY=30
 WAKE_READER="$SELF/skills/orch/scripts/lane-mail"
 WAKE_SKIPPED='Codex starts no turn for output that arrives after a turn ended; a Codex lane is reached by open-terminal --wake'
 WAKE_ANNOUNCED="lane-mail: mail=$WAKE_ITEM new=1"
+WAKE_ARMED='smoke-wake: monitor-armed'
 printf 'Reply with exactly two lines and nothing else: %s, then the first line of the monitor event that woke you.\n' \
   "$MAIL_ANSWER" >"$DIR/wake-directive.txt"
 wake_task() { # ARM — the lane session's prompt, ARM naming the harness's background wake
@@ -797,6 +801,7 @@ wake_row() { # HARNESS LABEL CMD...
       tries=$((tries + 1))
     done
     [ -e "$MAIL_BOX/to-lane.watch" ] || exit 0
+    printf '%s=%s\n' "$WAKE_ARMED" "$MAIL_BOX/to-lane.watch"
     sleep "$WAKE_DELAY"
     exec "$WAKE_READER" send --item "$WAKE_ITEM" --root "$PROJECT" --directive --file "$DIR/wake-directive.txt"
   ) </dev/null >>"$log" 2>&1 &
@@ -806,8 +811,8 @@ wake_row() { # HARNESS LABEL CMD...
   # out of a scratch tree already removed.
   kill "$sender" 2>/dev/null || :
   wait "$sender" 2>/dev/null || :
-  if [ "$STATUS" -eq 0 ] && [ ! -e "$MAIL_BOX/to-lane.watch" ] && ! grep -q '^lane-mail: sent ' "$log"; then
-    row "$harness" mail-wake fail "harness=$harness delivery=none: $label never armed the monitor (no $MAIL_BOX/to-lane.watch); its last line: $(clip "$(last_line)")"
+  if [ "$STATUS" -eq 0 ] && ! grep -q "^$WAKE_ARMED=" "$log"; then
+    row "$harness" mail-wake fail "harness=$harness delivery=none: $label never armed the monitor (no $MAIL_BOX/to-lane.watch while it ran); its last line: $(clip "$(last_line)")"
   elif [ "$STATUS" -eq 0 ] && [ "$(last_line)" = armed ]; then
     row "$harness" mail-wake unanswerable "harness=$harness $label armed the monitor and ended with its turn: print mode starts no turn on the monitor's output"
   elif grep -qE -e "^$MAIL_ANSWER\$" <<<"$OUT" && ! grep -qF -- "$WAKE_ANNOUNCED" <<<"$OUT"; then

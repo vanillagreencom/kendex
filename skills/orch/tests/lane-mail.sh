@@ -670,7 +670,7 @@ unsafe_inbox() { # KIND COMPONENT — relative to tmp/lane-mail, empty for tmp/l
   UNSAFE="$RC=$ERR"
 }
 for row in link: link:KEN-1 link:KEN-1/to-overseer.jsonl link:KEN-1/to-lane.jsonl link:KEN-1/to-lane.cursor \
-  link:KEN-1/to-lane.cursor.lock kind:KEN-1 kind:KEN-1/to-lane.jsonl; do
+  link:KEN-1/to-lane.cursor.lock link:KEN-1/to-lane.watch kind:KEN-1 kind:KEN-1/to-lane.jsonl; do
   component="${row#*:}"
   unsafe_inbox "${row%%:*}" "$component"
   assert_eq "$UNSAFE" "2=lane-mail: mailbox-unsafe=$UNSAFE_PATH" \
