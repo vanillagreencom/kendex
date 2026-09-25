@@ -37,6 +37,8 @@ message() { # KEY VALUE [CAUSE]
       setting) echo "The setting holds a value it does not take. oversee-report --help lists the values." ;;
       clock) echo "The current UTC time, a file time or a scratch file could not be had." ;;
       sort) echo "sort failed over the landed rows, so their order is unknown." ;;
+      auth-helper) echo "The shared GitHub auth helper could not be loaded, so no GitHub credential can be chosen:" ;;
+      auth-failed) echo "No configured GitHub credential works: not the env token, the keyring or the project's GH_BOT_TOKEN. Run gh auth login." ;;
       pr-list) echo "The GitHub pull request list failed, so what landed or what is open is unknown:" ;;
       pr-list-truncated) echo "The repository's merged search reached GitHub's ceiling, so a merge past it would be missing from the report. Nothing is rendered from a partial list." ;;
       settings-load) echo "The project's settings or private env file could not be loaded; the kendex-env lines above name the file and the fault." ;;
@@ -141,6 +143,11 @@ Settings, read through the kendex settings ladder:
                              paths to lane-mail, lane-host and workflow-state
 The report's directory is ORCH_PROGRESS_REPORT_DIR, workflow-state's setting.
 
+GitHub auth, before the first gh call: the ladder oversee-watch runs
+(references/gates.md § Waiter auth ladder), the env token, then the
+keyring, then the project's GH_BOT_TOKEN. None working refuses as
+auth-failed.
+
 Exit status:
   0  the line, the rows or the report was printed, or nothing was due
   2  a refusal; the first stderr line is `oversee-report: KEY=VALUE`
@@ -198,6 +205,23 @@ STATE_DIR_SETTING="${ORCH_STATE_DIR:-tmp}"
 WORK_DIR="$(mktemp -d)" || refuse clock mktemp
 TMP_FILE=""
 trap 'rm -rf -- "$WORK_DIR"; [[ -z "$TMP_FILE" ]] || rm -f -- "$TMP_FILE"' EXIT
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh" 2>"$WORK_DIR/gh-auth.err" \
+  || refuse auth-helper "$SCRIPT_DIR/lib/gh-auth.sh" "$(cat "$WORK_DIR/gh-auth.err")"
+
+# github_auth — the auth ladder oversee-watch runs (references/gates.md §
+# Waiter auth ladder): a stale env token yields to the keyring, and where
+# neither works the project's GH_BOT_TOKEN is the last candidate. Never
+# unauthenticated, since an unauthenticated list would read as nothing landed.
+# Called before the first gh call alone, so a due judged on minutes asks
+# GitHub nothing.
+github_auth() {
+  orch_sanitize_gh_env
+  if ! orch_github_auth_status; then
+    unset GH_TOKEN GITHUB_TOKEN
+    { orch_load_env_bot_token "$PROJECT_ROOT" && orch_github_auth_status; } || refuse auth-failed github
+  fi
+}
 
 # --- settings ----------------------------------------------------------------
 
@@ -337,6 +361,7 @@ if [[ "$VERB" == due ]]; then
     exit 0
   fi
   [[ "$EVERY_ISSUES" -gt 0 ]] || exit 0
+  github_auth
   landed_read
   # Items, not pull requests: one item's second PR, in a consumer repository
   # under the same branch, is not a second item finished.
@@ -528,6 +553,7 @@ blockers() {
 
 render() {
   local rows="" item number sha repo list open="" pr status landed_name=Landed cut_since
+  github_auth
   landed_read
   while IFS=$'\t' read -r item number sha; do
     [[ -n "$item" ]] || continue

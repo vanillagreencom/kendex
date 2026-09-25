@@ -47,7 +47,9 @@ EOF
 # search-unfiltered. A file named
 # <base>.<SLUG>.json answers that --repo alone, SLUG being the repo with `/`
 # as `_`. gh-fail fails every list, gh-fail-open the open list alone. Every
-# call's argv is appended to gh.calls.
+# call's argv is appended to gh.calls. `auth status`, the keyring's answer,
+# fails where the case holds auth-fail; `api user`, an env token's check, and
+# every list fail for a GH_TOKEN starting ghp_stale, as a revoked token does.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -63,7 +65,14 @@ done
 slug="${repo//\//_}"
 pick() { if [[ -f "$CASE/$1.$slug.json" ]]; then printf '%s' "$CASE/$1.$slug.json"; else printf '%s' "$CASE/$1.json"; fi; }
 case "$verb" in
+  "auth status")
+    [[ ! -f "$CASE/auth-fail" ]] || { echo "You are not logged into any GitHub hosts." >&2; exit 1; }
+    echo "Logged in" ;;
+  "api user")
+    [[ "${GH_TOKEN:-}" != ghp_stale* ]] || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+    echo "someone" ;;
   "pr list")
+    [[ "${GH_TOKEN:-}" != ghp_stale* ]] || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
     [[ ! -f "$CASE/gh-fail" ]] || { echo "HTTP 502" >&2; exit 1; }
     [[ ! -f "$CASE/gh-fail-$state" ]] || { echo "HTTP 502" >&2; exit 1; }
     src="$(pick "$state")"
@@ -199,7 +208,7 @@ run() {
   shift
   RC=0
   OUT="$(cd "$CASE" && env -u ORCH_REPORT -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES \
-    -u ORCH_REPORT_UPCOMING -u ORCH_REPORT_COLUMNS -u GH_TOKEN -u GITHUB_TOKEN \
+    -u ORCH_REPORT_UPCOMING -u ORCH_REPORT_COLUMNS -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN \
     PATH="$TMP_ROOT/bin:$PATH" CASE="$CASE" OVERSEE_REPORT_TRACKER="$TMP_ROOT/bin/linear" \
     OVERSEE_REPORT_GITHUB="$TMP_ROOT/bin/github" OVERSEE_REPORT_LANE_MAIL="$TMP_ROOT/bin/lane-mail" \
     OVERSEE_REPORT_LANE_HOST="$TMP_ROOT/bin/lane-host" ORCH_STATE_DIR="$CASE/ws" \
@@ -260,6 +269,29 @@ Waiting on you:
 - KEN-3 waits on a stopped review gate, review-round-cap: one unresolved review thread"
 assert_eq "$RC|$OUT" "0|$WANT" \
   "Landed holds only the fleet item merged since the last report, Running each live or preparing lane with its PR, Next the queue, Waiting on you the open question then each running lane's blockers"
+
+echo "=== render and due: the GitHub auth ladder ==="
+# A revoked env token with no keyring falls through to the project's
+# GH_BOT_TOKEN, as the watch's own ladder does; with no working credential the
+# report refuses by name rather than read GitHub unauthenticated.
+seed_fleet auth_bot_fallback
+touch "$CASE/auth-fail"
+run GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_bot00000 -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$OUT" "0|$WANT" "render, a revoked GH_TOKEN and no keyring: GH_BOT_TOKEN reads the same rows"
+seed_fleet auth_none
+touch "$CASE/auth-fail"
+run GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_stale_bot -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: auth-failed=github" "render, no credential works: refused as auth-failed"
+new_case auth_due_fallback
+report -60
+fleet '' "$(lane KEN-1 running -86400)"
+echo "[$(merged_pr 11 ken-1 -30 abcdef1234)]" > "$CASE/merged.json"
+touch "$CASE/auth-fail"
+run ORCH_REPORT_EVERY_ISSUES=1 GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_bot00000 -- due --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$OUT" "0|report-due reason=issues since=$(at -60) landed=1" "due, a revoked GH_TOKEN and no keyring: GH_BOT_TOKEN counts the landing"
+touch "$CASE/auth-fail"
+run ORCH_REPORT_EVERY_ISSUES=1 GH_TOKEN=ghp_stale0000 -- due --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: auth-failed=github" "due, no credential works: refused as auth-failed"
 
 echo "=== render: nothing since the last report ==="
 new_case render_empty
@@ -618,13 +650,16 @@ echo "=== must-fail controls ==="
 # Without the shared filter's since clause, a merge older than the last report
 # is news again. The clause lives in lib/lane-state.sh, which the watch's
 # merged check reads too.
-MUTANT="$TMP_ROOT/mutant/scripts/oversee-report"
+# The copy sits in a skills layout beside the github skill, whose shared auth
+# helper lib/gh-auth.sh reaches through ../../../github.
+MUTANT="$TMP_ROOT/mutant/orch/scripts/oversee-report"
 LIB="$(cd "$TEST_DIR/../scripts/lib" && pwd)/lane-state.sh"
-mkdir -p "$TMP_ROOT/mutant"
-cp -R "$TEST_DIR/../scripts" "$TMP_ROOT/mutant/scripts"
+mkdir -p "$TMP_ROOT/mutant/orch"
+cp -R "$TEST_DIR/../scripts" "$TMP_ROOT/mutant/orch/scripts"
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/mutant/github"
 filter="    | select(.at >= \$since) ];'"
 assert_eq "$(grep -cxF -- "$filter" "$LIB")" "1" "control: the since clause is one line to strip"
-awk -v line="$filter" '$0 == line { print "    ];'"'"'"; next } { print }' "$LIB" > "$TMP_ROOT/mutant/scripts/lib/lane-state.sh"
+awk -v line="$filter" '$0 == line { print "    ];'"'"'"; next } { print }' "$LIB" > "$TMP_ROOT/mutant/orch/scripts/lib/lane-state.sh"
 seed_fleet render_mutant
 # The search's own qualifier would hide the older merge before the clause
 # ever saw it; search-unfiltered makes the stub return the whole list, so the
@@ -632,7 +667,7 @@ seed_fleet render_mutant
 touch "$CASE/search-unfiltered"
 REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$(grep -c '^| KEN-3 (#13, 1234567)' <<<"$OUT")" "1" "control: without the clause Landed carries the merge from before the last report"
-cp -- "$LIB" "$TMP_ROOT/mutant/scripts/lib/lane-state.sh"
+cp -- "$LIB" "$TMP_ROOT/mutant/orch/scripts/lib/lane-state.sh"
 
 # Without the ceiling guard, a search that stopped at GitHub's ceiling renders
 # as if it were whole.
@@ -656,6 +691,28 @@ line="$line" awk '$0 == ENVIRON["line"] { print "      :"; next } { print }' "$R
 seed_fleet render_stop_mutant
 REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(grep -c '^- KEN-3 waits on a stopped' <<<"$OUT")" "0|0" "control: without it the stopped lane is missing from Waiting on you"
+
+# Without the ladder, a revoked env token reads GitHub as it stands: the
+# fallback row refuses on the list, and the no-credential row names the list,
+# not the credential.
+ladder='  github_auth'
+assert_eq "$(grep -cxF -- "$ladder" "$REPORT_BIN")" "2" "control: the ladder is two call lines to strip"
+awk -v line="$ladder" '$0 == line { print "  :"; next } { print }' "$REPORT_BIN" > "$MUTANT"
+seed_fleet auth_bot_fallback_mutant
+touch "$CASE/auth-fail"
+REPORT_UNDER_TEST="$MUTANT" run GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_bot00000 -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" "control: without the ladder a revoked GH_TOKEN fails the list"
+seed_fleet auth_none_mutant
+touch "$CASE/auth-fail"
+REPORT_UNDER_TEST="$MUTANT" run GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_stale_bot -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" "control: without the ladder no credential is named as the list failing"
+new_case auth_due_fallback_mutant
+report -60
+fleet '' "$(lane KEN-1 running -86400)"
+echo "[$(merged_pr 11 ken-1 -30 abcdef1234)]" > "$CASE/merged.json"
+touch "$CASE/auth-fail"
+REPORT_UNDER_TEST="$MUTANT" run ORCH_REPORT_EVERY_ISSUES=1 GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_bot00000 -- due --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" "control: without the ladder due's count fails on a revoked GH_TOKEN"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
