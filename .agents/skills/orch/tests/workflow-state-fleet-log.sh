@@ -58,6 +58,13 @@ key="$(head -n 1 "$TMP_ROOT/reader.err")"
   && ok "another reader is refused as fleet-log-reader" \
   || bad "another reader is refused as fleet-log-reader" "rc=$rc key=$key"
 
+# A first fleet session has no fleet state yet: its takeover is empty, not a
+# refusal whose advice would write an issue-shaped state as the fleet's.
+rc=0
+out="$("$WS" --state-dir "$TMP_ROOT/no-fleet" fleet-log takeover 2>&1)" || rc=$?
+[[ "$rc" -eq 0 && -z "$out" ]] && ok "takeover with no fleet state prints nothing and exits 0" \
+  || bad "takeover with no fleet state prints nothing and exits 0" "rc=$rc out=$out"
+
 # Planted: the takeover slice dropped. The read then prints the whole log.
 MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_DIR"
@@ -70,6 +77,18 @@ sed 's/else \.\[-\$n:\]\[\] end/else .[] end/' "$WS" > "$MUTANT_DIR/workflow-sta
 got="$(bash "$MUTANT_DIR/workflow-state" --state-dir "$sd" fleet-log takeover | jq -s 'length')"
 [[ "$got" == "14" ]] && ok "control: without the slice the takeover read prints every row" \
   || bad "control: without the slice the takeover read prints every row" "got=$got"
+
+# Planted: the absent-state arm made the existence check every other reader
+# takes. The first session's takeover then refuses as state-missing.
+anchor='[[ -f "$state_file" ]] || return 0'
+[[ "$(grep -Fc -- "$anchor" "$WS")" == "1" ]] && ok "the absent-state control finds its arm" \
+  || bad "the absent-state control finds its arm"
+awk -v a="$anchor" 'index($0, a) { sub(/[^ ].*/, ""); print $0 "ensure_state_exists \"$state_file\""; next } { print }' \
+  "$WS" > "$MUTANT_DIR/absent-refused"
+rc=0
+bash "$MUTANT_DIR/absent-refused" --state-dir "$TMP_ROOT/no-fleet" fleet-log takeover >/dev/null 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] && ok "control: without the absent-state arm the first takeover refuses" \
+  || bad "control: without the absent-state arm the first takeover refuses" "rc=$rc"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

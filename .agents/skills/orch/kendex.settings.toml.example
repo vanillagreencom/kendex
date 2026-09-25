@@ -175,6 +175,15 @@ ORCH_LANE_SSH_PROMPT_SECS = "60"
 # oversee-succeed judges the overseer on it for that hook and for the watch.
 # ORCH_HANDOFF_CONTEXT_TOKENS = "500000"
 
+# The recording policy: the most bytes one fleet log row's text may carry,
+# the fleet log rows a successor overseer reads at takeover, the days before
+# `workflow-state prune` archives and removes a record, and the directory the
+# owner progress reports go to (schemas/workflow-state.md, Recording policy).
+# ORCH_FLEET_LOG_ROW_BYTES = "600"
+# ORCH_TAKEOVER_ROWS = "10"
+# ORCH_RECORD_RETENTION_DAYS = "14"
+# ORCH_PROGRESS_REPORT_DIR = "tmp/progress-reports"
+
 # Path globs that add the needs-perf-test QA signal to review routing.
 # QA_PERF_PATHS = "src/hot/* engine/src/*"
 
