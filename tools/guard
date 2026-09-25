@@ -892,13 +892,12 @@ done <<<"$render_changed"
 # The changelog gate owns commit change collection and product-path matching.
 # Shared compiler inputs outside those product paths still affect all crates:
 # tools/rust-reads' build rows outside crates/. Its rows are read once here. A
-# derivation that fails is a finding and makes every path an input, so the
-# whole workspace compiles.
+# derivation or filter that fails is a finding and makes every path an input,
+# so the whole workspace compiles.
 workspace_inputs=""
 workspace_every=0
-if reads_rows=$("$TOOLS_DIR/rust-reads" .); then
-  workspace_inputs=$(awk -F '\t' '$1 == "build" && $2 !~ /^crates(\/|$)/ { print $2 }' <<<"$reads_rows")
-else
+if ! { reads_rows=$("$TOOLS_DIR/rust-reads" .) &&
+  workspace_inputs=$(awk -F '\t' '$1 == "build" && $2 !~ /^crates(\/|$)/ { print $2 }' <<<"$reads_rows"); }; then
   say rust-reads crates
   workspace_every=1
 fi
