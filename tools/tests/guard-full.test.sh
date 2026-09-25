@@ -10,6 +10,9 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GUARD_FULL_CROSS_DOC
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/guard-world.sh
 . "$TEST_DIR/lib/guard-world.sh"
+# Unreachable bounds: a --full run that bypasses GUARD_TEST_BOUNDS refuses on
+# every host, not only on one short of space.
+export GUARD_MIN_FREE_GB=1000000 GUARD_EXHAUSTED_FREE_MB=1000000000
 
 echo "=== bot instructions: full validation reads the worktree; the staged check is the chain's lane ==="
 BOT="$REPO/.agents/skills/bot-instructions/scripts/bot-instructions"
@@ -238,7 +241,7 @@ if [ -e /dev/full ]; then
   fmt_full_row() { # GUARD_PATH — sets OUT and RC
     : >"$DF_CALL_LOG"
     RC=0
-    (cd "$R" && env PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
+    (cd "$R" && env "${GUARD_TEST_BOUNDS[@]}" PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
       FMT_FULL_STREAM="$TMP/guard-stream" DF_FREE_KIB_START="$high_free_kib" DF_FREE_KIB_END="$high_free_kib" \
       RUSTUP_INSTALLED_TARGETS="$BOTH" "$1" --full >"$TMP/guard-stream" 2>&1 </dev/null) || RC=$?
     OUT="$(cat "$TMP/guard-stream")"
@@ -351,10 +354,8 @@ gated_run() {
   esac
   [ "$touch" = - ] || printf '// edit\n' >>"$R/$touch"
   : >"$CARGO_CALL_LOG"
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && env PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" REAL_FIND="$REAL_FIND" \
-    RUSTUP_INSTALLED_TARGETS="$BOTH" "$@" "$guard_path" --full 2>&1 </dev/null)" || RC=$?
+  GUARD="$guard_path" FULL_GUARD=1 run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" \
+    REAL_FIND="$REAL_FIND" RUSTUP_INSTALLED_TARGETS="$BOTH" "$@"
 }
 gated_ran() { # — both cross targets and cargo doc, once each
   [ "$(grep -cFx "$(check_call "$APPLE")" "$CARGO_CALL_LOG")" -eq 1 ] &&
