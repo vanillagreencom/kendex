@@ -15,9 +15,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COLUMN_VOCABULARY="issue|what it is|why it matters"
 # Most characters one prose cell keeps; a longer title or Done-when line is cut.
 CELL_MAX=160
-# Page size of every pull request list. One branch's merged list that fills it
-# refuses, since the merges past it would be missing from Landed.
+# Page size of the open pull request list.
 PR_PAGE=500
+# Most merged pull requests one repository's search returns, GitHub search's
+# own ceiling. A list that reaches it refuses, since the merges past it would
+# be missing from Landed.
+MERGED_PAGE=1000
 
 # Every line this script writes to stderr, and the only place its text lives:
 # a stable key and the value acted on, then the English under it, then what a
@@ -32,7 +35,7 @@ message() { # KEY VALUE [CAUSE]
       clock) echo "The current UTC time, a file time or a scratch file could not be had." ;;
       sort) echo "sort failed over the landed rows, so their order is unknown." ;;
       pr-list) echo "The GitHub pull request list failed, so what landed or what is open is unknown:" ;;
-      pr-list-truncated) echo "One branch's merged list filled its page, so a merge past it would be missing from the report. Nothing is rendered from a partial list." ;;
+      pr-list-truncated) echo "The repository's merged search reached GitHub's ceiling, so a merge past it would be missing from the report. Nothing is rendered from a partial list." ;;
       settings-load) echo "The project's settings or private env file could not be loaded; the kendex-env lines above name the file and the fault." ;;
       tracker-missing) echo "The Linear CLI is not executable, so the issue's title and Done-when cannot be read. Install the linear skill or set OVERSEE_REPORT_TRACKER." ;;
       tracker-read) echo "The issue could not be read from the tracker:" ;;
@@ -67,14 +70,15 @@ Next, Waiting on you.
 progress-reports/ beside it. The newest file there is the last report: what
 landed since its modification time is news, and its age is what the cadence
 measures. With no report yet, the fleet start, the earliest lanes[] launch,
-stands in for it. A report covers merges up to the moment it read its lists,
-and `write` stamps its file with that moment, so each merge lands in exactly
-one report.
+stands in for it, though Landed then reaches back one
+ORCH_REPORT_EVERY_MINUTES at most. A report covers merges up to the moment it
+read its lists, and `write` stamps its file with that moment, so each merge
+lands in exactly one report.
 
 due      prints `report-due reason=minutes since=<UTC>` once the last report
          is ORCH_REPORT_EVERY_MINUTES old, else `report-due reason=issues
-         since=<UTC> landed=<N>` once ORCH_REPORT_EVERY_ISSUES fleet items
-         landed since it, else nothing. Nothing under ORCH_REPORT=off, and
+         since=<UTC> landed=<N>` once ORCH_REPORT_EVERY_ISSUES distinct fleet
+         items landed since it, else nothing. Nothing under ORCH_REPORT=off, and
          nothing where progress-reports/ holds no report and no lanes[]
          record has a launched_at.
 render   prints the four rows.
@@ -86,11 +90,13 @@ write    prints the summary file's text, a blank line and the four rows, and
 Rows:
   Landed          each fleet item, a lanes[] record of any status, whose own
                   branch, the key lower-cased, has a pull request merged since
-                  the last report, in any --repo. The issue cell carries the
+                  the last report, in any --repo: one merged search per repo,
+                  matched against every item. The issue cell carries the
                   PR number and the merge commit.
   Running         each lanes[] record reading running or preparing. The issue
                   cell carries its open PR, or `no PR`, and that status.
-  Next            the first ORCH_REPORT_UPCOMING keys of launch_queue.
+  Next            the first ORCH_REPORT_UPCOMING keys of launch_queue that
+                  have no lanes[] record reading running or preparing.
   Waiting on you  each owner_items entry, as `Question for you: <text>`,
                   then one line per thing a running lane waits on, naming the
                   item: an ask `lane-mail pending` lists, the post_pr_stop its
@@ -221,8 +227,10 @@ REPORT_DIR="$(dirname -- "$STATE")/progress-reports"
 # in the next one and every merge in exactly one.
 NOW="$(date -u +%s)" || refuse clock now
 
-# MARKER is the epoch the report covers from: the newest report's modification
-# time, else the fleet start, else empty where the state records no lane.
+# MARKER is the epoch the cadence measures from: the newest report's
+# modification time, else the fleet start, else empty where the state records
+# no lane. LANDED_SINCE is where Landed starts: MARKER, bounded as below when
+# no report exists yet.
 MARKER=""
 if [[ -d "$REPORT_DIR" ]]; then
   for file in "$REPORT_DIR"/*.md; do
@@ -231,48 +239,53 @@ if [[ -d "$REPORT_DIR" ]]; then
     [[ -n "$MARKER" && "$MARKER" -ge "$stamp" ]] || MARKER="$stamp"
   done
 fi
+LANDED_SINCE="$MARKER"
 if [[ -z "$MARKER" ]]; then
   start="$(jq -r '[.lanes[] | .launched_at // empty] | sort | first // ""' <<<"$STATE_JSON")" || refuse state "$STATE"
   if [[ -n "$start" ]]; then
     MARKER="$(to_epoch "$start")" || refuse state "$STATE"
+  fi
+  # A first report on a fleet that has run for weeks covers one interval, not
+  # its whole history: that history can pass the merged search's ceiling.
+  LANDED_SINCE="$MARKER"
+  if [[ -n "$MARKER" && -n "$EVERY_MINUTES" && "$EVERY_MINUTES" -gt 0 \
+    && $((NOW - EVERY_MINUTES * 60)) -gt "$MARKER" ]]; then
+    LANDED_SINCE=$((NOW - EVERY_MINUTES * 60))
   fi
 fi
 
 # --- what landed --------------------------------------------------------------
 
 # LANDED holds `item<TAB>number<TAB>sha` per fleet item whose own pull
-# request merged at or after MARKER and before NOW, in any --repo, oldest
-# merge first. Each
-# item's branch is listed on its own, as oversee-watch's merged check lists it,
-# so the page counts one branch's merges and never the repository's, and the
-# pull request is judged the lane's own by lib/lane-state.sh's LANE_MERGED_JQ.
+# request merged at or after LANDED_SINCE and before NOW, in any --repo, oldest
+# merge first. Each repository is read once, as one search for pull requests
+# merged since then, and every lanes[] item is matched against that one list by
+# lib/lane-state.sh's LANE_MERGED_JQ, the filter oversee-watch's merged check
+# uses: the calls stay one per repository however many lanes the fleet has run.
 LANDED=""
 landed_read() {
-  local repo item items list rows found=""
-  [[ -n "$MARKER" ]] || return 0
-  if ! items="$(jq -r '[.lanes[] | .item // empty] | unique[]' <<<"$STATE_JSON")"; then
+  local repo items list rows since found=""
+  [[ -n "$LANDED_SINCE" ]] || return 0
+  if ! items="$(jq -c '[.lanes[] | .item // empty] | unique' <<<"$STATE_JSON")"; then
     refuse state "$STATE"
   fi
-  while IFS= read -r item; do
-    [[ -n "$item" ]] || continue
-    for repo in "${REPOS[@]}"; do
-      if ! list="$(gh pr list --repo "$repo" --head "$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')" \
-        --state merged --limit "$PR_PAGE" \
-        --json number,headRefName,headRepositoryOwner,mergedAt,mergeCommit 2>"$WORK_DIR/gh.err")"; then
-        refuse pr-list "$repo" "$(cat "$WORK_DIR/gh.err")"
-      fi
-      if ! rows="$(jq -r --arg item "$item" --arg owner "${repo%%/*}" --argjson since "$MARKER" \
-        --argjson until "$NOW" --argjson page "$PR_PAGE" "$LANE_MERGED_JQ"'
-        if length >= $page then "page-full"
-        else lane_merged($item; $owner; $since)[] | select(.at < $until)
-          | [(.at | tostring), $item, (.number | tostring), ((.mergeCommit.oid // "") | .[0:7])] | @tsv
-        end' <<<"$list" 2>"$WORK_DIR/jq.err")"; then
-        refuse pr-list "$repo" "$(cat "$WORK_DIR/jq.err")"
-      fi
-      [[ "$rows" != page-full ]] || refuse pr-list-truncated "$repo:$item"
-      [[ -z "$rows" ]] || found+="$rows"$'\n'
-    done
-  done <<<"$items"
+  since="$(from_epoch "$LANDED_SINCE" %Y-%m-%dT%H:%M:%SZ)" || refuse clock "$LANDED_SINCE"
+  for repo in "${REPOS[@]}"; do
+    if ! list="$(gh pr list --repo "$repo" --state merged --search "merged:>=$since" --limit "$MERGED_PAGE" \
+      --json number,headRefName,headRepositoryOwner,mergedAt,mergeCommit 2>"$WORK_DIR/gh.err")"; then
+      refuse pr-list "$repo" "$(cat "$WORK_DIR/gh.err")"
+    fi
+    if ! rows="$(jq -r --argjson items "$items" --arg owner "${repo%%/*}" --argjson since "$LANDED_SINCE" \
+      --argjson until "$NOW" --argjson page "$MERGED_PAGE" "$LANE_MERGED_JQ"'
+      if length >= $page then "page-full"
+      else . as $list | $items[] as $item | $list | lane_merged($item; $owner; $since)[] | select(.at < $until)
+        | [(.at | tostring), $item, (.number | tostring), ((.mergeCommit.oid // "") | .[0:7])] | @tsv
+      end' <<<"$list" 2>"$WORK_DIR/jq.err")"; then
+      refuse pr-list "$repo" "$(cat "$WORK_DIR/jq.err")"
+    fi
+    [[ "$rows" != page-full ]] || refuse pr-list-truncated "$repo"
+    [[ -z "$rows" ]] || found+="$rows"$'\n'
+  done
   [[ -n "$found" ]] || return 0
   if ! LANDED="$(sort -n -k1,1 <<<"$found" | cut -f2-)"; then
     refuse sort landed
@@ -291,7 +304,9 @@ if [[ "$VERB" == due ]]; then
   fi
   [[ "$EVERY_ISSUES" -gt 0 ]] || exit 0
   landed_read
-  count="$(awk 'NF { n++ } END { print n + 0 }' <<<"$LANDED")"
+  # Items, not pull requests: one item's second PR, in a consumer repository
+  # under the same branch, is not a second item finished.
+  count="$(awk -F'\t' 'NF && !seen[$1]++ { n++ } END { print n + 0 }' <<<"$LANDED")"
   [[ "$count" -lt "$EVERY_ISSUES" ]] || echo "report-due reason=issues since=$since landed=$count"
   exit 0
 fi
@@ -503,7 +518,11 @@ render() {
   table Running "$rows"
   echo
 
-  list="$(jq -r --argjson n "$UPCOMING" '(.launch_queue // [])[:$n][] | [., .] | @tsv' <<<"$STATE_JSON")" \
+  # A queued item already launched is Running's, whatever order the overseer
+  # rewrote the queue in.
+  list="$(jq -r --argjson n "$UPCOMING" '
+    ((.launch_queue // []) - [.lanes[] | select(.status == "running" or .status == "preparing") | .item])[:$n][]
+    | [., .] | @tsv' <<<"$STATE_JSON")" \
     || refuse state "$STATE"
   table Next "$list"
   echo

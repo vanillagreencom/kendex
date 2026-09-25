@@ -44,10 +44,12 @@ EOF
 # capped at --limit, as gh narrows it; `pr list --state open` open.json, and
 # `issue view N` issue-N.json, each from the case directory. A file named
 # <base>.<SLUG>.json answers that --repo alone, SLUG being the repo with `/`
-# as `_`. gh-fail fails every list, gh-fail-open the open list alone.
+# as `_`. gh-fail fails every list, gh-fail-open the open list alone. Every
+# call's argv is appended to gh.calls.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
+printf '%s\n' "$*" >> "$CASE/gh.calls"
 verb="${1:-} ${2:-}"; number="${3:-}"
 state=""; head=""; limit=1000; repo=""
 while [[ $# -gt 0 ]]; do
@@ -265,16 +267,24 @@ Waiting on you: none" "a fleet with nothing new renders each row as none and exi
 
 echo "=== render: ORCH_REPORT_UPCOMING caps Next ==="
 # A queue of six, so the default cap of 5 is what stops it.
-for row in "2|KEN-4,KEN-5" "0|none" "|KEN-4,KEN-5,KEN-6,KEN-7,KEN-8"; do
+for row in "2|KEN-4,KEN-5" "0|none" "|KEN-4,KEN-5,KEN-6,KEN-8,KEN-9"; do
   IFS='|' read -r upcoming want <<<"$row"
   seed_fleet "upcoming_${upcoming:-default}"
-  jq '.launch_queue = ["KEN-4", "KEN-5", "KEN-6", "KEN-7", "KEN-8", "KEN-9"]' "$CASE/state.json" > "$CASE/state.next"
+  jq '.launch_queue = ["KEN-4", "KEN-5", "KEN-6", "KEN-8", "KEN-9", "KEN-1"]' "$CASE/state.json" > "$CASE/state.next"
   mv -- "$CASE/state.next" "$CASE/state.json"
   if [[ -n "$upcoming" ]]; then run ORCH_REPORT_UPCOMING="$upcoming" -- render --state "$CASE/state.json" --repo owner/repo
   else run -- render --state "$CASE/state.json" --repo owner/repo; fi
   got="$(awk '/^Next/ { on = 1; if ($0 == "Next: none") print "none"; next } on && /^$/ { on = 0 } on && /^\| KEN-/ { print $2 }' <<<"$OUT" | paste -sd, -)"
   assert_eq "$RC|$got" "0|$want" "ORCH_REPORT_UPCOMING=${upcoming:-unset} renders Next as $want"
 done
+
+echo "=== render: Next leaves out what is already running ==="
+seed_fleet next_launched
+jq '.launch_queue = ["KEN-2", "KEN-4", "KEN-7", "KEN-5"]' "$CASE/state.json" > "$CASE/state.next"
+mv -- "$CASE/state.next" "$CASE/state.json"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^Next/ { on = 1; next } on && /^$/ { on = 0 } on && /^\| KEN-/ { print $2 }' <<<"$OUT" | paste -sd, -)" "0|KEN-4,KEN-5" \
+  "a queued item with a running or preparing lane is Running's, not Next's"
 
 echo "=== render: ORCH_REPORT_COLUMNS picks and orders the columns ==="
 seed_fleet columns
@@ -309,9 +319,9 @@ run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^\| KEN-7/' <<<"$OUT")" "0|| KEN-7 (no PR, running) | (no issue number) | - |" \
   "a GitHub record whose key is not issue-N is not read, and says so"
 
-echo "=== render: Landed lists each fleet branch on its own ==="
-# Unrelated merges past a whole page never reach the report, which asks for
-# the fleet's branches alone; one branch's own page filling refuses.
+echo "=== render: Landed reads one merged search per repository ==="
+# Unrelated merges are read and matched away; a search that reaches GitHub's
+# ceiling refuses, since merges past it would be missing.
 new_case landed_busy_repo
 report -3600
 fleet '' "$(lane KEN-1 done)"
@@ -321,14 +331,34 @@ jq -n --arg at "$(at -60)" '[range(600) | {number: (1000 + .), headRefName: "oth
 run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk 'NR == 4' <<<"$OUT")" "0|| KEN-1 (#11, abcdef1) | Title 1 | Outcome 1 |" \
   "600 merges on other branches leave the fleet's own merge rendered"
-for row in "499|0" "500|2"; do
+for row in "999|0" "1000|2"; do
   IFS='|' read -r count want <<<"$row"
-  jq -n --arg at "$(at -60)" --argjson n "$count" '[range($n) | {number: (1000 + .), headRefName: "ken-1", headRepositoryOwner: {login: "owner"}, mergedAt: $at, mergeCommit: {oid: "ffffffffff"}}]' > "$CASE/merged.json"
+  jq -n --arg at "$(at -60)" --argjson n "$count" '[range($n) | {number: (1000 + .), headRefName: "other-\(.)", headRepositoryOwner: {login: "owner"}, mergedAt: $at, mergeCommit: {oid: "ffffffffff"}}]' > "$CASE/merged.json"
   run -- render --state "$CASE/state.json" --repo owner/repo
   got="$RC"; [[ "$RC" -eq 0 ]] || got="$RC|$(first_err)"
-  [[ "$want" == 0 ]] || want="2|oversee-report: pr-list-truncated=owner/repo:KEN-1"
-  assert_eq "$got" "$want" "$count merges on one fleet branch against a page of 500"
+  [[ "$want" == 0 ]] || want="2|oversee-report: pr-list-truncated=owner/repo"
+  assert_eq "$got" "$want" "$count merges in one repository's search against its ceiling of 1000"
 done
+
+# Lane records outlive their lanes, so the reads must not grow with them: one
+# merged search per repository, whatever the fleet has launched.
+new_case landed_call_count
+report -3600
+fleet '' "$(lane KEN-1 done)" "$(lane KEN-2 done)" "$(lane KEN-3 done)" "$(lane KEN-4 done)" "$(lane KEN-5 running)"
+issue KEN-5 "Title 5" "Outcome 5"
+run -- render --state "$CASE/state.json" --repo owner/a --repo owner/b
+assert_eq "$RC|$(grep -c -- '--state merged' "$CASE/gh.calls")|$(grep -c -- '--head' "$CASE/gh.calls" || true)" "0|2|0" \
+  "five lane records over two repositories take two merged searches and no per-branch read"
+
+# With no report yet, Landed reaches back one interval, not to the fleet start.
+new_case landed_first_report
+fleet '' "$(lane KEN-1 done -86400)" "$(lane KEN-2 done -86400)"
+issue KEN-2 "Title 2" "Outcome 2"
+printf '%s\n' "$(merged_pr 11 ken-1 -10000 abcdef1234)" "$(merged_pr 12 ken-2 -3600 1212121aaa)" | jq -s . > "$CASE/merged.json"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^\| KEN-/' <<<"$OUT")|$(grep -c -- "merged:>=$(at -7200)" "$CASE/gh.calls")" \
+  "0|| KEN-2 (#12, 1212121) | Title 2 | Outcome 2 ||1" \
+  "a first report lists merges from one ORCH_REPORT_EVERY_MINUTES back and searches from there"
 
 echo "=== render: every --repo is read, and a record's repo is its own ==="
 new_case multi_repo
@@ -460,8 +490,14 @@ no_report_yet|none|||report-due reason=minutes since=@AGE
 issues_reached|60|ORCH_REPORT_EVERY_ISSUES=1|-30|report-due reason=issues since=@AGE landed=1
 issues_before_marker|60|ORCH_REPORT_EVERY_ISSUES=1|-120|
 issues_under|60|ORCH_REPORT_EVERY_ISSUES=2|-30|
-issues_two|60|ORCH_REPORT_EVERY_ISSUES=2|-30 -20|report-due reason=issues since=@AGE landed=2
+issues_one_item_two_prs|60|ORCH_REPORT_EVERY_ISSUES=2|-30 -20|
 ROWS
+new_case due_issues_two_items
+report -60
+fleet '' "$(lane KEN-1 running)" "$(lane KEN-2 done)"
+printf '%s\n' "$(merged_pr 11 ken-1 -30 abcdef1234)" "$(merged_pr 12 ken-2 -20 1212121aaa)" | jq -s . > "$CASE/merged.json"
+run ORCH_REPORT_EVERY_ISSUES=2 -- due --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$OUT" "0|report-due reason=issues since=$(at -60) landed=2" "due, two items landed reach ORCH_REPORT_EVERY_ISSUES=2"
 new_case due_two_lanes
 fleet '' "$(lane KEN-1 running -40000)" "$(lane KEN-2 running -86400)"
 run -- due --state "$CASE/state.json" --repo owner/repo
@@ -533,17 +569,18 @@ REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owne
 assert_eq "$(grep -c '^| KEN-3 (#13, 1234567)' <<<"$OUT")" "1" "control: without the clause Landed carries the merge from before the last report"
 cp -- "$LIB" "$TMP_ROOT/mutant/scripts/lib/lane-state.sh"
 
-# Without the page guard, one branch's full page renders as if it were whole.
-guard='        if length >= $page then "page-full"'
-assert_eq "$(grep -cxF -- "$guard" "$REPORT_BIN")" "1" "control: the page guard is one line to strip"
-awk -v line="$guard" '$0 == line { print "        if false then \"page-full\""; next } { print }' "$REPORT_BIN" > "$MUTANT"
+# Without the ceiling guard, a search that stopped at GitHub's ceiling renders
+# as if it were whole.
+guard='      if length >= $page then "page-full"'
+assert_eq "$(grep -cxF -- "$guard" "$REPORT_BIN")" "1" "control: the ceiling guard is one line to strip"
+awk -v line="$guard" '$0 == line { print "      if false then \"page-full\""; next } { print }' "$REPORT_BIN" > "$MUTANT"
 new_case page_mutant
 report -3600
 fleet '' "$(lane KEN-1 done)"
 issue KEN-1 "Title 1" "Outcome 1"
-jq -n --arg at "$(at -60)" '[range(500) | {number: (1000 + .), headRefName: "ken-1", headRepositoryOwner: {login: "owner"}, mergedAt: $at, mergeCommit: {oid: "ffffffffff"}}]' > "$CASE/merged.json"
+jq -n --arg at "$(at -60)" '[range(1000) | {number: (1000 + .), headRefName: "other-\(.)", headRepositoryOwner: {login: "owner"}, mergedAt: $at, mergeCommit: {oid: "ffffffffff"}}]' > "$CASE/merged.json"
 REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC" "0" "control: without the guard a full page of one branch renders instead of refusing"
+assert_eq "$RC" "0" "control: without the guard a search at the ceiling renders instead of refusing"
 
 # Without the stop line, a lane held by a post-PR stop reads as waiting on
 # nothing.
