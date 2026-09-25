@@ -1,7 +1,8 @@
 use super::*;
 
 /// What the card is owed, per state. Every arm that is not the app's own
-/// to carry says something, and no arm invents a name or a command: the
+/// to carry says something — a command inside the app is carried by the
+/// app half and says nothing — and no arm invents a name or a command: the
 /// managed one repeats the installer's, the privileged one names the
 /// installer that can write where the app cannot, and the unknown one
 /// neither.
@@ -12,6 +13,7 @@ fn the_card_is_told_what_each_state_owes_a_person() {
         None
     );
     assert_eq!(CommandNotice::for_card(&CommandBeside::Absent), None);
+    assert_eq!(CommandNotice::for_card(&CommandBeside::InsideTheApp), None);
     assert_eq!(
         CommandNotice::for_card(&CommandBeside::NotOurs(InstallChannel::Unknown)),
         Some(CommandNotice::Unknown)
@@ -57,6 +59,7 @@ fn every_state() -> Vec<CommandBeside> {
     vec![
         CommandBeside::Ours("/home/pat/.local/bin/kendex".into()),
         CommandBeside::Absent,
+        CommandBeside::InsideTheApp,
         CommandBeside::NotOurs(InstallChannel::Unknown),
         CommandBeside::NotOurs(InstallChannel::Managed {
             manager: "Homebrew".to_owned(),
@@ -99,9 +102,14 @@ fn a_card_whose_command_moved_is_told_what_became_of_it() {
             let told = CommandNotice::not_as_shown("5.1.0", half, found.as_ref(), card.as_ref())
                 .unwrap_or_else(|| panic!("{other:?} became {state:?} and nothing was said"));
             assert!(told.contains("kendex 5.1.0 is installed"), "{told}");
+            // A command found inside the app says the same nothing to a
+            // card as none at all, and the app half moves it: the command
+            // the card described is not beside the app any more.
             let expected = match (&state, half) {
                 (_, CommandHalf::Moved) => "carried across rather than left",
-                (CommandBeside::Absent, _) => "not beside this app any more",
+                (CommandBeside::Absent | CommandBeside::InsideTheApp, _) => {
+                    "not beside this app any more"
+                }
                 _ => "left on the release it is on",
             };
             assert!(

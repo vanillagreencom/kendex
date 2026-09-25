@@ -26,6 +26,30 @@ const HOMEBREW: &str = "Homebrew";
 /// today says nothing about what fetched the package, so naming it would
 /// be inventing the one fact this build does not have.
 const AUR_HELPER: &str = "an AUR helper";
+/// The `.deb` and `.rpm` the release publishes, each named by the package
+/// manager that installed it. Neither updates itself: the route is the
+/// next release's package from the download page.
+const DEB_PACKAGE: &str = "the kendex .deb package";
+const RPM_PACKAGE: &str = "the kendex .rpm package";
+/// What dpkg and rpm both name the kendex package, after the bundle's
+/// product name.
+const LINUX_PACKAGE_NAME: &str = "kendex";
+
+/// Where a release is downloaded. `README.md` publishes it and this is
+/// its only spelling in Rust; `command_update::notice`'s suite reads it
+/// back out of the README, so the two cannot drift.
+pub(crate) const DOWNLOAD_PAGE: &str = "https://kendex.ai/download";
+
+/// A distro's package manager, asked who owns a file by its own query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageManager {
+    /// `pacman -Qoq`.
+    Pacman,
+    /// `dpkg-query -S`.
+    Dpkg,
+    /// `rpm -qf`.
+    Rpm,
+}
 
 /// How the running install may be brought up to date.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -176,17 +200,17 @@ pub trait HostProbe {
     /// exactly the installs this must call [`InstallChannel::Direct`].
     fn replaceable(&self, path: &Path) -> bool;
 
-    /// The installed package that owns a path, as `pacman -Qoq` names it.
-    /// pacman is the only package manager asked — named here rather than
-    /// left as "this machine's package manager", because a dpkg or rpm
-    /// machine answers `None` with an owner sitting in its own database.
-    /// The one caller asks only where `os_release` already reads as Arch.
+    /// The installed package that owns a path, as `manager`'s own query
+    /// names it. Which manager to ask is the caller's, decided from the
+    /// distro's `os-release` family, so a dpkg machine is never asked
+    /// through pacman and answered `None` with an owner in its own
+    /// database.
     ///
-    /// `None` also covers a path no package owns, a machine with no pacman,
-    /// and a question that could not be answered. Each leaves the caller
-    /// naming nobody, which is honest, in place of naming a package that
-    /// would move a person to another channel.
-    fn pacman_owner(&self, path: &Path) -> Option<String>;
+    /// `None` also covers a path no package owns, a machine without that
+    /// manager, and a question that could not be answered. Each leaves the
+    /// caller naming nobody, which is honest, in place of naming a package
+    /// that would move a person to another channel.
+    fn owning_package(&self, manager: PackageManager, path: &Path) -> Option<String>;
 
     /// Whether a path is a command this machine would run: a regular file
     /// with an execute bit. Presence is a weaker question — a directory, or
@@ -231,12 +255,17 @@ impl HostProbe for Host {
         }
     }
 
-    fn pacman_owner(&self, path: &Path) -> Option<String> {
-        let output = crate::process::Hardened::pacman_owner(path)
+    fn owning_package(&self, manager: PackageManager, path: &Path) -> Option<String> {
+        let query = match manager {
+            PackageManager::Pacman => crate::process::Hardened::pacman_owner(path),
+            PackageManager::Dpkg => crate::process::Hardened::dpkg_owner(path),
+            PackageManager::Rpm => crate::process::Hardened::rpm_owner(path),
+        };
+        let output = query
             .timeout(crate::process::INTERACTIVE_TIMEOUT)
             .run()
             .ok()?;
-        printed_owner(output.status.success(), &output.stdout)
+        printed_owner(manager, output.status.success(), &output.stdout)
     }
 
     fn is_command(&self, path: &Path) -> bool {
@@ -286,13 +315,68 @@ pub fn for_app(install: &AppInstall, probe: &dyn HostProbe) -> InstallChannel {
     }
 }
 
+/// Who moves the running `kendex` command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandChannel {
+    /// A downloadable installer put the command inside the desktop app,
+    /// and the app's updater replaces the two together. Rewriting the
+    /// command on its own splits it from the app, and inside a signed
+    /// macOS bundle breaks the signature the app was notarized under.
+    InsideTheApp,
+    /// A command installed on its own; the channel says whose it is.
+    OnItsOwn(InstallChannel),
+}
+
+/// The desktop app's executable on Windows, named after its cargo package
+/// the way every bundle names it. The NSIS setup writes it at the root of
+/// the install directory, one level above the `bin` it puts the command in.
+const WINDOWS_APP_EXECUTABLE: &str = "kendex-app.exe";
+
+/// Whether `exe` is the command a downloadable installer put inside the
+/// desktop app. Two layouts, one per platform that ships such an
+/// installer, read off the path's shape the way [`bundle_root`] reads a
+/// bundle:
+///
+/// - macOS: `<name>.app/Contents/MacOS/kendex`, the sidecar the bundler
+///   signs and notarizes with the app;
+/// - Windows: `<install dir>\bin\kendex.exe`, where the install directory
+///   holds the app's own executable.
+///
+/// `probe` answers the one fact the shape alone cannot: a `bin\kendex.exe`
+/// is any command someone put under a `bin` directory until the app's
+/// executable is found beside that directory. Linux is never inside: the
+/// `.deb` and `.rpm` install the command at `/usr/bin/kendex`, and
+/// [`distro_channel`] names the package that owns it.
+///
+/// This is the one judge of the question. [`for_cli`] folds it into the
+/// command's channel, the app's command search stops on it, and the
+/// first-run record skips it; every site reads the answer from here.
+pub fn inside_the_app(exe: &Path, probe: &dyn HostProbe) -> bool {
+    if bundle_root(exe).is_some() {
+        return true;
+    }
+    let Some(bin) = exe.parent() else {
+        return false;
+    };
+    let Some(install_dir) = bin.parent() else {
+        return false;
+    };
+    bin.file_name().is_some_and(|name| name == "bin")
+        && probe.is_command(&install_dir.join(WINDOWS_APP_EXECUTABLE))
+}
+
 /// The channel the running `kendex` command installed through.
 ///
 /// `exe` is already resolved — [`HostProbe::resolve`] is the caller's to
 /// call, once, on the path it will also write to. Resolving here instead
 /// would decide about the file while the caller still held the link.
-pub fn for_cli(exe: &Path, probe: &dyn HostProbe) -> InstallChannel {
-    package_owner(exe, probe).unwrap_or_else(|| replaceable_or_unknown(exe, probe))
+pub fn for_cli(exe: &Path, probe: &dyn HostProbe) -> CommandChannel {
+    if inside_the_app(exe, probe) {
+        return CommandChannel::InsideTheApp;
+    }
+    CommandChannel::OnItsOwn(
+        package_owner(exe, probe).unwrap_or_else(|| replaceable_or_unknown(exe, probe)),
+    )
 }
 
 /// The package manager whose prefix `exe` sits under, where one does.
@@ -314,7 +398,32 @@ pub fn package_owner(exe: &Path, probe: &dyn HostProbe) -> Option<InstallChannel
 /// them, and `None` where the path is not one of those, which leaves the
 /// caller to judge the file on its own.
 fn system_channel(path: &Path, probe: &dyn HostProbe) -> Option<InstallChannel> {
-    system_owned(path).then(|| arch_channel(path, probe))
+    system_owned(path).then(|| distro_channel(path, probe))
+}
+
+/// A package-owned path is actionable only once a package manager has
+/// named the owner, and the manager asked is the distro's own, read from
+/// `os-release` the way Arch always was: an rpm distro with dpkg installed
+/// beside it is still asked through rpm. Arch goes to pacman, because four
+/// Arch packages carry kendex; the Debian family to dpkg and the Fedora
+/// and SUSE families to rpm, since the release's `.deb` and `.rpm` are
+/// what put a command under `/usr` there. A distro of no known family, or
+/// an owner that is not the kendex package, names nobody.
+fn distro_channel(path: &Path, probe: &dyn HostProbe) -> InstallChannel {
+    let family = probe.os_release().and_then(|text| distro_family(&text));
+    let (manager, package, extension) = match family {
+        Some(PackageManager::Pacman) => return arch_channel(path, probe),
+        Some(PackageManager::Dpkg) => (PackageManager::Dpkg, DEB_PACKAGE, ".deb"),
+        Some(PackageManager::Rpm) => (PackageManager::Rpm, RPM_PACKAGE, ".rpm"),
+        None => return InstallChannel::Unknown,
+    };
+    if probe.owning_package(manager, path).as_deref() != Some(LINUX_PACKAGE_NAME) {
+        return InstallChannel::Unknown;
+    }
+    InstallChannel::Managed {
+        manager: package.to_owned(),
+        command: format!("install the new release's {extension} from {DOWNLOAD_PAGE}"),
+    }
 }
 
 /// The Arch packages that carry kendex. A name printed by the machine
@@ -354,20 +463,14 @@ impl ArchPackage {
     }
 }
 
-/// A package-owned path is only actionable on a distro whose update command
-/// this build knows, and only once the package manager has named the owner.
-/// Anywhere else the honest answer is that we cannot say.
-///
-/// The owner is asked for by path rather than read off the layout: the four
+/// The Arch answer, reached only where `os-release` reads as Arch. The
+/// owner is asked for by path rather than read off the layout: the four
 /// packages install the same `kendex` command, two of them track main where
 /// the other two track a release, and naming the wrong one moves a person
 /// to a channel they did not choose.
 fn arch_channel(path: &Path, probe: &dyn HostProbe) -> InstallChannel {
-    if !probe.os_release().is_some_and(|text| is_arch(&text)) {
-        return InstallChannel::Unknown;
-    }
     let Some(package) = probe
-        .pacman_owner(path)
+        .owning_package(PackageManager::Pacman, path)
         .as_deref()
         .and_then(ArchPackage::named)
     else {
@@ -387,22 +490,47 @@ fn arch_channel(path: &Path, probe: &dyn HostProbe) -> InstallChannel {
     }
 }
 
-/// The package name in `pacman -Qoq`'s output, or `None` where the run said
-/// nothing this build can use. Split from the spawn so every branch of it is
-/// reachable without a pacman on the machine; a spawn that never ran is the
-/// remaining way to reach `None`, and it is the `ok()?` at the call site.
+/// The package name in an owner query's output, or `None` where the run
+/// said nothing this build can use. Split from the spawn so every branch
+/// of it is reachable without the manager on the machine; a spawn that
+/// never ran is the remaining way to reach `None`, and it is the `ok()?`
+/// at the call site.
 ///
-/// A nonzero status is pacman saying no package owns the path, and its
-/// stdout is not read at all: the diagnostic goes to stderr today, and a
-/// spelling that printed a name beside a refusal must not be read as
-/// ownership. One name is expected, so the first line is the whole answer,
-/// trimmed because a name is compared against fixed text.
-fn printed_owner(success: bool, stdout: &[u8]) -> Option<String> {
+/// A nonzero status is the manager saying no package owns the path, and
+/// its stdout is not read at all: the diagnostic goes to stderr today, and
+/// a spelling that printed a name beside a refusal must not be read as
+/// ownership. One owner is expected, and one rule holds for every
+/// manager: a path more than one package has a claim on names nobody,
+/// because none of them is the one owner this asks for. pacman and rpm
+/// print one name per line, so a second line naming another package is
+/// that. dpkg prints `<package>: <path>`, where a comma-separated list
+/// before the colon is a file several packages ship; a file another
+/// package has diverted is reported as three lines that differ, which the
+/// same rule refuses. The name is trimmed because it is compared against
+/// fixed text.
+fn printed_owner(manager: PackageManager, success: bool, stdout: &[u8]) -> Option<String> {
     if !success {
         return None;
     }
     let printed = std::str::from_utf8(stdout).ok()?;
-    let name = printed.lines().next()?.trim();
+    let mut lines = printed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let first = lines.next()?;
+    let name = match manager {
+        PackageManager::Pacman | PackageManager::Rpm => first,
+        PackageManager::Dpkg => {
+            let (owners, _) = first.split_once(':')?;
+            if owners.contains(',') {
+                return None;
+            }
+            owners.trim()
+        }
+    };
+    if lines.any(|line| line != first) {
+        return None;
+    }
     (!name.is_empty()).then(|| name.to_owned())
 }
 
@@ -439,19 +567,35 @@ fn bundle_root(exe: &Path) -> Option<&Path> {
     is_bundle.then_some(root)
 }
 
-/// Arch by `ID`, or a derivative naming it in `ID_LIKE`.
-fn is_arch(os_release: &str) -> bool {
-    os_release.lines().any(|line| {
-        let Some((key, value)) = line.split_once('=') else {
-            return false;
-        };
-        let value = unquote(value.trim());
-        match key.trim() {
-            "ID" => value == "arch",
-            "ID_LIKE" => value.split_whitespace().any(|word| word == "arch"),
-            _ => false,
-        }
-    })
+/// The package manager a distro's `os-release` names it under, by its
+/// `ID` or any family it names in `ID_LIKE`. Each word is whole, so
+/// `archlinux` is not Arch. Arch wins wherever it is named, because its
+/// answer is the most specific this build has (four packages); no
+/// distro names two families, so the order past that never decides.
+fn distro_family(os_release: &str) -> Option<PackageManager> {
+    let words: Vec<String> = os_release
+        .lines()
+        .filter_map(|line| {
+            let (name, value) = line.split_once('=')?;
+            matches!(name.trim(), "ID" | "ID_LIKE").then(|| unquote(value.trim()).to_owned())
+        })
+        .flat_map(|value| {
+            value
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let named = |family: &[&str]| words.iter().any(|word| family.contains(&word.as_str()));
+    if named(&["arch"]) {
+        Some(PackageManager::Pacman)
+    } else if named(&["debian", "ubuntu"]) {
+        Some(PackageManager::Dpkg)
+    } else if named(&["fedora", "rhel", "centos", "suse", "opensuse", "sles"]) {
+        Some(PackageManager::Rpm)
+    } else {
+        None
+    }
 }
 
 fn unquote(value: &str) -> &str {

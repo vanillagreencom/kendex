@@ -75,7 +75,7 @@ fn a_command_another_installer_owns_is_never_ours_and_names_its_owner() {
 }
 
 /// Two ways to have no command to move. Nothing installed under any
-/// candidate is a dmg or msi install; the running app reachable as
+/// candidate is a machine that never had one; the running app reachable as
 /// `kendex` is not a command to carry — written over, it would take the
 /// command binary and then be written back by the app half, leaving the
 /// machine with neither.
@@ -103,41 +103,62 @@ fn nothing_installed_and_the_running_app_both_read_absent() {
     );
 }
 
-/// Windows is the case the updater's own path cannot cover. It judges no
-/// path there, so nothing but the running executable itself keeps the app
-/// out of the search — and the desktop executable is `kendex.exe`, the
-/// name the command carries, so an install directory on `PATH` puts the
-/// app first in line. Taken for the command, it would be overwritten with
-/// the CLI binary before the updater ever ran.
+/// A command inside the app is the app's to move, and the search stops on
+/// it: the Windows setup puts `bin\kendex.exe` on `PATH` beside its own
+/// executable, and a macOS bundle's sidecar is reached through whatever
+/// links it out. Neither is `Ours`, whatever the record says about the
+/// path, because the app half replaces the tree they sit in; and a second
+/// copy further down the search is never reached for, since the first
+/// command a shell resolves is the one a person runs.
 #[test]
-fn a_windows_app_on_path_is_never_taken_for_the_command() {
-    let exe = PathBuf::from("C:/Program Files/kendex/kendex.exe");
-    let machine = Machine {
-        present: vec![exe.clone()],
+fn a_command_inside_the_app_stops_the_search_as_the_apps_own() {
+    let windows_bin = PathBuf::from("C:/Users/pat/AppData/Local/kendex/bin/kendex.exe");
+    let windows_app = PathBuf::from("C:/Users/pat/AppData/Local/kendex/kendex-app.exe");
+    let linked = PathBuf::from("/usr/local/bin/kendex");
+    let sidecar = PathBuf::from("/Applications/kendex.app/Contents/MacOS/kendex");
+    let further = PathBuf::from("/home/pat/.local/bin/kendex");
+    let rows = [
+        (
+            "the Windows setup's bin on PATH",
+            Machine {
+                present: vec![windows_bin.clone(), windows_app.clone(), further.clone()],
+                ..Machine::default()
+            },
+            vec![windows_bin.clone(), further.clone()],
+            windows_bin.display().to_string(),
+        ),
+        (
+            "a link out of the macOS bundle",
+            Machine {
+                present: vec![linked.clone(), further.clone()],
+                links: vec![(linked.clone(), sidecar.clone())],
+                ..Machine::default()
+            },
+            vec![linked.clone(), further.clone()],
+            linked.display().to_string(),
+        ),
+    ];
+    for (label, machine, probed, recorded_at) in rows {
+        assert_eq!(
+            located(&machine, &probed, &recorded_at),
+            CommandBeside::InsideTheApp,
+            "{label}"
+        );
+    }
+
+    // The same `bin` with no app beside it is a command on its own, so
+    // the sibling is what decided above and not the directory's name.
+    let alone = Machine {
+        present: vec![windows_bin.clone()],
         ..Machine::default()
     };
-    let probed = vec![exe.clone()];
-
-    // What the updater offers on Windows: no path at all. Recorded, so
-    // the fixture reaches the app and the exclusion is what stops it.
     assert_eq!(
-        command_beside_app(
-            &machine,
-            &probed,
-            &[],
-            Some(&recorded(&exe.display().to_string()))
+        located(
+            &alone,
+            std::slice::from_ref(&windows_bin),
+            &windows_bin.display().to_string()
         ),
-        CommandBeside::Ours(exe.clone()),
-        "the fixture has to reach the app before the exclusion can be what stops it"
-    );
-    assert_eq!(
-        command_beside_app(
-            &machine,
-            &probed,
-            std::slice::from_ref(&exe),
-            Some(&recorded(&exe.display().to_string()))
-        ),
-        CommandBeside::Absent
+        CommandBeside::Ours(windows_bin)
     );
 }
 

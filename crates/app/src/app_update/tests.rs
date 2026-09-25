@@ -234,7 +234,11 @@ impl kendex_core::install_channel::HostProbe for OnlyWritable {
 
     /// The bundle this fake approves is a macOS one, which no package
     /// manager owns.
-    fn pacman_owner(&self, _: &std::path::Path) -> Option<String> {
+    fn owning_package(
+        &self,
+        _: kendex_core::install_channel::PackageManager,
+        _: &std::path::Path,
+    ) -> Option<String> {
         None
     }
 
@@ -311,11 +315,10 @@ fn a_failed_app_half_says_whether_the_command_went_ahead_of_it() {
 /// the candidate list ends with a system path this machine may well have a
 /// kendex in.
 ///
-/// Unix only, because there is no command beside the app on Windows: the
-/// installer carries the app alone, so the name there only ever fails to
-/// exist and every lookup below would answer `Absent` — which the first
-/// assertion, a difference, would pass without reaching the exclusion it
-/// is about.
+/// Unix only, because the fixture writes the command under the unix name
+/// and the Windows search looks for `kendex.exe`: every lookup below would
+/// answer `Absent` there — which the first assertion, a difference, would
+/// pass without reaching the exclusion it is about.
 #[cfg(unix)]
 #[test]
 fn the_app_s_own_image_is_never_the_command_it_carries() {
@@ -354,13 +357,11 @@ fn the_app_s_own_image_is_never_the_command_it_carries() {
 /// The two paths a family update must never write over, and why naming one
 /// is not enough. An AppImage's executable lives inside a mount that is not
 /// the image the updater judged, so the judged path is needed; the Windows
-/// installer judges no path at all while the desktop executable carries the
-/// command's own name, so the running executable is needed. Excluded by the
-/// judged path alone, a Windows install on `PATH` would replace itself with
-/// the CLI binary.
+/// installer judges no path at all, so the running executable is the only
+/// one that names the app there.
 #[test]
 fn the_running_executable_is_excluded_where_the_updater_names_no_path() {
-    let exe = PathBuf::from("C:/Program Files/kendex/kendex.exe");
+    let exe = PathBuf::from("C:/Program Files/kendex/kendex-app.exe");
     assert_eq!(
         not_the_command(&AppInstall::WindowsInstaller, Some(exe.clone())),
         vec![exe.clone()],
@@ -406,8 +407,8 @@ fn a_recorded_command(dir: &tempfile::TempDir) -> (Env, std::ffi::OsString, Path
 /// beside this app is one nothing vouches for any more.
 ///
 /// Unix only, for the same reason: the second answer is a command found by
-/// name on `PATH` and vouched for by nobody, and Windows has no command
-/// beside the app to find.
+/// name on `PATH` and vouched for by nobody, and the fixture's name is not
+/// the one the Windows search looks for.
 #[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]

@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::env::Env;
-use crate::install_channel::Host;
+use crate::install_channel::{Host, PackageManager};
 use record::{Write, record_as};
 
 mod described;
@@ -237,9 +237,10 @@ fn main_commits_are_distinct_builds() {
     assert!(!one_release(first, second));
 }
 
-/// Absence is not failure. A dmg or msi with no command beside it is the
-/// whole install already, and a command another installer owns is that
-/// installer's to move — neither stops the app from updating itself.
+/// Absence is not failure. A machine with no command beside the app is the
+/// whole install already, a command another installer owns is that
+/// installer's to move, and one inside the app moves with the app half —
+/// none stops the app from updating itself, and none is written here.
 #[test]
 fn no_command_or_one_another_installer_owns_lets_the_app_go_alone() {
     let dir = tempfile::tempdir().unwrap();
@@ -248,6 +249,7 @@ fn no_command_or_one_another_installer_owns_lets_the_app_go_alone() {
     for beside in [
         CommandBeside::Absent,
         CommandBeside::NotOurs(InstallChannel::Unknown),
+        CommandBeside::InsideTheApp,
     ] {
         assert_eq!(
             across(&beside, &feed_url, RELEASE).unwrap(),
@@ -356,7 +358,9 @@ impl HostProbe for Machine {
         !self.unwritable.iter().any(|p| p == path)
     }
 
-    fn pacman_owner(&self, path: &Path) -> Option<String> {
+    /// Answered for whichever manager asks: every machine here that names
+    /// an owner is an Arch one, so pacman is the manager that reaches it.
+    fn owning_package(&self, _: PackageManager, path: &Path) -> Option<String> {
         self.owners
             .iter()
             .find(|(owned, _)| owned == path)

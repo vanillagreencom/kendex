@@ -133,14 +133,40 @@ impl Hardened {
     }
 
     /// `pacman -Qoq`: the name of the installed package that owns a file,
-    /// and nothing else. The update paths ask it who owns the running bytes
-    /// rather than reading a layout — four Arch packages install the same
-    /// `kendex` command, and two of them track main where the other two
-    /// track a release, so the layout cannot tell them apart.
+    /// and nothing else. The update paths ask a distro's own manager who
+    /// owns the running bytes rather than reading a layout — four Arch
+    /// packages install the same `kendex` command, and two of them track
+    /// main where the other two track a release, so the layout cannot tell
+    /// them apart; dpkg and rpm below answer for the release's own packages.
     pub fn pacman_owner(path: &Path) -> Hardened {
         Hardened::new(
             "pacman",
             vec![OsString::from("-Qoq"), path.as_os_str().to_owned()],
+        )
+    }
+
+    /// `dpkg-query -S`: the installed package that owns a file on a dpkg
+    /// machine, printed as `<package>: <path>`. Asked for the same reason
+    /// as pacman: the `.deb` puts the command where a hand install never
+    /// does, and only dpkg can say the file is the package's.
+    pub fn dpkg_owner(path: &Path) -> Hardened {
+        Hardened::new(
+            "dpkg-query",
+            vec![OsString::from("-S"), path.as_os_str().to_owned()],
+        )
+    }
+
+    /// `rpm -qf`: the installed package that owns a file on an rpm machine,
+    /// its name alone through the query format.
+    pub fn rpm_owner(path: &Path) -> Hardened {
+        Hardened::new(
+            "rpm",
+            vec![
+                OsString::from("-qf"),
+                OsString::from("--queryformat"),
+                OsString::from("%{NAME}\n"),
+                path.as_os_str().to_owned(),
+            ],
         )
     }
 

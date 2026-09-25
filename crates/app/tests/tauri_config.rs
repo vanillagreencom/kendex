@@ -37,6 +37,9 @@ fn config() -> serde_json::Value {
 /// - the category: the `.deb` and `.rpm` desktop entries are written from
 ///   it, and without one their `Categories=` is empty.
 /// - the homepage: the `.deb` and `.rpm` carry it as the package's homepage.
+/// - the bundle targets: every installer the release publishes and no
+///   `.msi`; the Windows download is the NSIS setup alone, which is the
+///   one that installs the command and puts it on the PATH.
 #[test]
 fn the_settings_the_window_and_the_release_path_lean_on() {
     let config = config();
@@ -67,6 +70,10 @@ fn the_settings_the_window_and_the_release_path_lean_on() {
         (
             "/bundle/homepage",
             serde_json::Value::from("https://kendex.ai"),
+        ),
+        (
+            "/bundle/targets",
+            serde_json::Value::from(vec!["deb", "rpm", "appimage", "app", "dmg", "nsis"]),
         ),
     ];
     for (pointer, expected) in rows {
@@ -142,4 +149,91 @@ fn the_app_and_the_cli_pin_one_updater_key() {
         key_id, "C922C89178B7C6CC",
         "the pin carries a key id the release signing key does not"
     );
+}
+
+/// The JSON pointer of every leaf under `value`, prefixed by `at`. A key
+/// is escaped the way RFC 6901 reads it back, `~` as `~0` then `/` as
+/// `~1`, so the `/usr/bin/kendex` keys of the Linux file maps point at
+/// the entry rather than at a path of three missing objects.
+fn leaves(value: &serde_json::Value, at: &str, out: &mut Vec<String>) {
+    match value.as_object() {
+        Some(map) if !map.is_empty() => {
+            for (key, inner) in map {
+                let key = key.replace('~', "~0").replace('/', "~1");
+                leaves(inner, &format!("{at}/{key}"), out);
+            }
+        }
+        Some(_) | None => out.push(at.to_owned()),
+    }
+}
+
+/// The overlays `tauri build --config` reads on a release lane, and what
+/// the base config must not carry. tauri-build copies `bundle.externalBin`
+/// and `bundle.resources` into the target directory at compile time, read
+/// from this file, from a `tauri.<platform>.conf.json` beside it, and from
+/// the `TAURI_CONFIG` the CLI exports for `--config`; a command named in
+/// either file would make every plain `cargo build -p kendex-app` — the
+/// Arch source recipes, this suite — need a staged command first. So each
+/// overlay sets only `bundle` keys, none of its leaves is in the base
+/// config, and no platform config file sits beside it.
+#[test]
+#[allow(clippy::expect_used)]
+fn release_only_bundle_settings_stay_out_of_the_base_config() {
+    let config = config();
+    let app = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for platform in ["linux", "macos", "windows"] {
+        assert!(
+            !app.join(format!("tauri.{platform}.conf.json")).exists(),
+            "tauri.{platform}.conf.json is read by tauri-build on every build"
+        );
+    }
+    let mut overlays = 0;
+    for entry in std::fs::read_dir(app.join("release")).expect("release overlays directory") {
+        let path = entry.expect("directory entry").path();
+        if path.extension().is_none_or(|ext| ext != "json") {
+            continue;
+        }
+        overlays += 1;
+        let overlay: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("overlay read"))
+                .unwrap_or_else(|error| panic!("{} does not parse: {error}", path.display()));
+        let mut keys: Vec<&String> = overlay
+            .as_object()
+            .expect("an overlay is an object")
+            .keys()
+            .collect();
+        keys.sort();
+        assert_eq!(keys, ["$schema", "bundle"], "{}", path.display());
+        let mut set = Vec::new();
+        leaves(&overlay["bundle"], "/bundle", &mut set);
+        assert!(
+            !set.is_empty(),
+            "leaves found nothing in {}",
+            path.display()
+        );
+        for pointer in set {
+            assert!(
+                overlay.pointer(&pointer).is_some(),
+                "leaves produced {pointer}, which does not resolve in {}",
+                path.display()
+            );
+            assert_eq!(
+                config.pointer(&pointer),
+                None,
+                "{} sets {pointer}, which the base config also carries",
+                path.display()
+            );
+        }
+    }
+    assert!(
+        overlays > 0,
+        "no overlay under crates/app/release, so nothing above ran"
+    );
+    for pointer in ["/bundle/externalBin", "/bundle/resources"] {
+        assert_eq!(
+            config.pointer(pointer),
+            None,
+            "{pointer} is copied at compile time"
+        );
+    }
 }
