@@ -412,8 +412,13 @@ fn a_bound_that_is_not_a_count_removes_nothing_and_an_empty_one_is_the_default()
             &["apply", "-y", "--replace-unmanaged"],
         );
         assert!(stopped.status.success(), "{garbage}: {}", said(&stopped));
+        // The wrapper and the cause on one line: a pass that stopped is
+        // said as such, not as entries kept, since a stop can follow a
+        // removal.
         assert!(
-            said(&stopped).contains(garbage),
+            said(&stopped).lines().any(|line| {
+                line.starts_with("warning: trash: pass stopped (") && line.contains(garbage)
+            }),
             "{garbage}: {}",
             said(&stopped)
         );
