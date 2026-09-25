@@ -2,7 +2,7 @@
 
 Covers: .github/workflows/, .github/actions/, skills/harness-ci/, skills/review-gate/, skills/orch/workflows/merge-pr.md, skills/orch/workflows/consumer-train.md
 
-The rail carries one change from a consumer pull request to the default branch, and carries each kendex merge to a shipped catalog path back out to every consumer. One classifier reads the diff, CI gates its lanes on that verdict, the review gate posts one commit status, and the branch ruleset decides the merge. Every part of it is shipped by kendex and wired by the consumer: kendex renders the scripts, and the repository owns its workflow files, its settings values, its required-context names and its ruleset.
+The rail carries one change from a consumer pull request to the default branch, and, off a hosted fleet, carries each kendex merge to a shipped catalog path back out to every consumer; on a hosted fleet that route does not run, and the orch `merged` event in [../../skills/orch/references/oversee-events.md](../../skills/orch/references/oversee-events.md) § Event kinds says what the overseer does instead. One classifier reads the diff, CI gates its lanes on that verdict, the review gate posts one commit status, and the branch ruleset decides the merge. Every part of it is shipped by kendex and wired by the consumer: kendex renders the scripts, and the repository owns its workflow files, its settings values, its required-context names and its ruleset.
 
 ```text
   a consumer pull request                     a kendex merge to a shipped path
