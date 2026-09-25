@@ -133,7 +133,7 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
             here("kendex apply --plan --project-path '/w/lane'"),
         ),
         (
-            "update-pi, which has no such flag and whose default scope writes the global Pi roots too",
+            "update-pi, which runs in a linked worktree only at global scope",
             Remedy::UpdatePi { global: false },
             here("kendex update-pi --scope project"),
             elsewhere("kendex update-pi --scope project"),

@@ -26,10 +26,9 @@ AT=""
 REASON=""
 # What kind of writer a verb is, the one answer every decision below
 # dispatches on: `target` for the three that write a whole scope and take
-# `--project-path PATH`; `pi` for update-pi, which has no such form and
-# whose default scope, all, writes the global Pi roots as well as the
-# project's; `typed` for every other writing verb, which writes the one
-# project it is typed in and has no such form either.
+# `--project-path PATH`; `pi` for update-pi, which runs in a linked worktree
+# only as `kendex update-pi --scope global`; `typed` for every other writing
+# verb, which writes the one project it is typed in and has no such form.
 verb_kind() { # VERB -> KIND
   case "$1" in
     refresh | apply | updates) KIND=target ;;
@@ -104,8 +103,7 @@ refuse() { # KEY VALUE [CAUSE]
       verb_kind "$VERB"
       case "$OWNER:$KIND" in
         worktree:pi)
-          echo "  The project here, $PROJECT, has its own $MANIFEST, but update-pi has no --project-path form, and its default scope, all, writes the global Pi roots as well; its policy in a linked worktree is unchanged." >&2
-          echo "  Run it from the main checkout (the first line of 'git worktree list'), or pass $GLOBAL_FORM for a global change." >&2
+          echo "  In a linked worktree update-pi runs only as: kendex update-pi $GLOBAL_FORM" >&2
           ;;
         worktree:target)
           echo "  The project here, $PROJECT, has its own $MANIFEST, and 'kendex $VERB' writes a whole project scope only where the command names it." >&2
@@ -605,7 +603,7 @@ else
   PROJECT=$TOP
 fi
 # A whole-scope writer keeps to the named target in every worktree, and
-# update-pi's policy in a linked worktree is left as it was.
+# update-pi runs in one only at the global scope.
 while IFS= read -r VERB; do
   [ -n "$VERB" ] || continue
   verb_kind "$VERB"

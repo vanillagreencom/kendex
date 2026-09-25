@@ -84,6 +84,15 @@ CATALOG_LOCAL="$TMP_ROOT/catalog-local"
 git -C "$MAIN" worktree add -q "$CATALOG_LOCAL" -b catalog-local
 printf 'schema = 6\nis_source_catalog = true\n' >"$CATALOG_LOCAL/kendex.toml"
 printf 'schema = 6\n' >"$CATALOG_LOCAL/kendex-local.toml"
+# Claude Code puts a linked worktree inside the main checkout, under
+# `.claude/worktrees/`, so the main checkout's marker and its untracked
+# kendex.toml stand above the worktree's root; the walk stops at that root.
+HOST="$TMP_ROOT/host"
+git init -q "$HOST"
+git -C "$HOST" commit -q --allow-empty -m init
+mkdir -p "$HOST/.claude/worktrees"
+printf 'schema = 6\n' >"$HOST/kendex.toml"
+git -C "$HOST" worktree add -q "$HOST/.claude/worktrees/lane" -b lane
 CATALOG_TABLED="$TMP_ROOT/catalog-tabled"
 git -C "$MAIN" worktree add -q "$CATALOG_TABLED" -b catalog-tabled
 printf 'schema = 6\n[marketplace]\nis_source_catalog = true\n' >"$CATALOG_TABLED/kendex.toml"
@@ -206,6 +215,7 @@ directory_table() {
       catalog) dir="$CATALOG" ;;
       catalog-local) dir="$CATALOG_LOCAL" ;;
       catalog-tabled) dir="$CATALOG_TABLED" ;;
+      hosted) dir="$HOST/.claude/worktrees/lane" ;;
       *) printf 'directory table: unknown world: %s\n' "$world" >&2; exit 1 ;;
     esac
     case "$mode" in
@@ -355,6 +365,7 @@ a backslash leaves the words unsure, so no global scope is read|2|block-worktree
 a > behind a quote may be quoted, so the word is unsure|2|block-worktree-refresh: refused=remove|kendex remove "a>b" --global
 a --scope whose value the segment does not hold is not the global scope|2|block-worktree-refresh: refused=refresh|kendex refresh --global --scope "global"
 the value spelled with an equals sign names a target whatever it holds|0|-|kendex refresh --project-path=\0044PWD -y
+an expansion before --project-path= may be --, so no target is named|2|block-worktree-refresh: refused=refresh|kendex refresh \0044X --project-path=/elsewhere
 --scope project before -g keeps the project scope|2|block-worktree-refresh: refused=refresh|kendex refresh --scope project -g
 --scope=project before --global keeps it too|2|block-worktree-refresh: refused=refresh|kendex refresh --scope=project --global
 --scope project before --scope global keeps it|2|block-worktree-refresh: refused=refresh|kendex refresh --scope project --scope global
@@ -408,6 +419,9 @@ env --chdir= is the same move|payload|own|2|block-worktree-refresh: moved=add|en
 sudo -D is a move too|payload|own|2|block-worktree-refresh: moved=add|sudo -D $MAIN kendex add orch
 sudo --chdir is the same move|payload|own|2|block-worktree-refresh: moved=add|sudo --chdir $MAIN kendex add orch
 an env without a directory option moves nothing|payload|own|0|-|env FOO=1 kendex add orch
+env -C inside a cluster of short options is the same move|payload|own|2|block-worktree-refresh: moved=add|env -iC $MAIN kendex add orch
+sudo -D inside a cluster of short options is the same move|payload|own|2|block-worktree-refresh: moved=add|sudo -bD $MAIN kendex add orch
+a project above the worktree's root is not the worktree's own|payload|hosted|2|block-worktree-refresh: refused=add|kendex add orch
 a project below the worktree root with its own kendex.toml is that worktree's own|payload|nested-app|0|-|kendex remove gh
 a marker-only project inside a declaring worktree has no manifest of its own|payload|own-marked|2|block-worktree-refresh: refused=add|kendex add orch
 a source catalog without kendex-local.toml has no manifest of its own|payload|catalog|2|block-worktree-refresh: refused=add|kendex add orch
@@ -439,9 +453,11 @@ run_in "$OWN" 'kendex refresh'
 assert_contains "$ERR_FILE" "--project-path $OWN" 'a worktree with its own kendex.toml is named by its own root'
 run_in "$OWN" 'kendex updates --apply'
 assert_contains "$ERR_FILE" "kendex updates --apply --project-path $OWN" 'the updates remedy keeps the --apply that makes it a write'
-run_in "$OWN" 'kendex update-pi'
-assert_not_contains "$ERR_FILE" 'update-pi --project-path' 'update-pi is never offered a flag it does not take'
-assert_contains "$ERR_FILE" 'has no --project-path form' 'and the refusal says it has none'
+run_in "$OWN" 'kendex update-pi --scope project'
+assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: refused=update-pi' 'update-pi at the project scope is refused where the project owns its manifest'
+assert_contains "$ERR_FILE" 'kendex update-pi --scope global' 'and the refusal offers the one form update-pi runs as in a linked worktree'
+assert_not_contains "$ERR_FILE" 'update-pi --project-path' 'never a flag update-pi does not take'
+assert_not_contains "$ERR_FILE" 'main checkout' 'nor the main checkout, whose project is a different one'
 run_in "$OWN/marked" 'kendex add orch'
 assert_contains "$ERR_FILE" "$OWN/marked" 'the refusal names the project kendex would write, not the worktree root'
 set +e

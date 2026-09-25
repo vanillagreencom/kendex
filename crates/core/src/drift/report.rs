@@ -227,10 +227,8 @@ impl Remedy {
     /// Whether this verb, with no `--project-path` form, writes a linked
     /// worktree's own project by being typed inside it: the verbs the
     /// catalog's `block-worktree-refresh` hook lets through where the
-    /// project is [`ProjectTarget::Worktree`]. `update-pi` has no such form
-    /// either, but its default scope, all, writes the global Pi roots as
-    /// well, and that hook leaves its policy as it was and refuses it in
-    /// every linked worktree.
+    /// project is [`ProjectTarget::Worktree`]. That hook runs `update-pi` in
+    /// a linked worktree only as `kendex update-pi --scope global`.
     fn writes_where_typed(&self) -> bool {
         matches!(
             self,
