@@ -33,10 +33,13 @@
 # dev_delegated_at. A FAILING report needs no proof: it ends the round, never
 # passes it. A report that holds is written through dev-return-write
 # --recovered-text, so the artifact records recovered_from: transcript and
-# dev-artifact-check judges it before this script reports it: an artifact that
-# check refuses (a fix report whose rows miss, repeat or invent a delegated
-# item, among others) is removed and the round re-delegates as unparsed; one
-# valid but FAILING stays. A Proposed rule: line other than
+# dev-artifact-check judges it before this script reports it. Only a refusal of
+# the report's own shape (incomplete: a fix report whose rows miss, repeat or
+# invent a delegated item; invalid) removes it and re-delegates as unparsed.
+# Every other verdict, a FAILING validation or a gate such as cut_not_shrunk or
+# unapproved_additions, keeps the artifact and prints recovered, so the
+# delegating workflow's acceptance table routes that reason through its own
+# retry row. A Proposed rule: line other than
 # none joins that text as a ### Proposed Rules section. Recovery never verifies
 # a tracker post, so a recovered artifact records summary_posted false.
 #
@@ -336,10 +339,10 @@ if ! artifact="$("$SCRIPT_DIR/dev-return-write" --worktree "$worktree" --kind "$
   die write-failed "issue=$issue" "round-id=$round_id"
 fi
 
-# dev-artifact-check owns the round's gates, a fix round's exact item set among
-# them. An artifact it refuses would send acceptance to a nudge the stalled
-# agent never reads, so it is removed and the round re-delegates; a valid
-# artifact whose validation is FAILING is ok and stays.
+# dev-artifact-check owns the round's gates. A report-shape refusal would send
+# acceptance to a nudge the stalled agent never reads, so that artifact is
+# removed and the round re-delegates; every other gate's retry row belongs to
+# the delegating workflow, so its artifact stays for that row to read.
 check=("$SCRIPT_DIR/dev-artifact-check" --worktree "$worktree" --issue "$issue" --round-id "$round_id")
 [[ "$kind" == implement ]] || check+=(--expect-items-from-round)
 status=0
@@ -348,15 +351,15 @@ case "$status" in
   0|1) ;;
   *) die check-failed "issue=$issue" "round-id=$round_id" "exit=$status" ;;
 esac
-if ! ok="$(jq -r '.ok' <<<"$verdict")"; then
+if ! judged="$(jq -r '"\(.ok) \(.reason)"' <<<"$verdict")"; then
   die check-failed "issue=$issue" "round-id=$round_id" "exit=$status"
 fi
-case "$ok" in
-  true) ;;
-  false)
+case "$judged" in
+  "false incomplete"|"false invalid")
     rm -f -- "${artifact:?}"
     no_report unparsed
     ;;
-  *) die check-failed "issue=$issue" "round-id=$round_id" "ok=$ok" ;;
+  "true "*|"false "*) ;;
+  *) die check-failed "issue=$issue" "round-id=$round_id" "verdict=$judged" ;;
 esac
 printf '%s: recovered artifact=%s\n' "$PROG" "$artifact"

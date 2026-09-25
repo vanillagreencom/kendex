@@ -76,14 +76,18 @@ new_round() { # NAME ISSUE RID EXIT
 }
 
 # new_round for a fix round: the round record holds items 1 and 2 and its
-# base_sha, ROUND_SHA. Unless COMMITTED is no, the round then commits its fix,
-# so HEAD_SHA is one commit past ROUND_SHA.
-new_fix_round() { # NAME N RID EXIT [COMMITTED]
+# base_sha, ROUND_SHA, and with CUT yes declares a cut against a one-line
+# allowance the fix then exceeds. Unless COMMITTED is no, the round then
+# commits its fix, growing the branch, so HEAD_SHA is one commit past
+# ROUND_SHA.
+new_fix_round() { # NAME N RID EXIT [COMMITTED] [CUT]
+  local cut=() allowance="100 lines, 100 test lines"
   new_round "$1" "issue-$2" "$3" "$4"
   mkdir -p "$WT/.cache/linear"
-  printf '[{"identifier":"issue-%s","description":"**Expected delta**: 100 lines, 100 test lines"}]\n' "$2" \
+  [[ "${6:-no}" == yes ]] && cut=(--cut) && allowance="1 line, 1 test line"
+  printf '[{"identifier":"issue-%s","description":"**Expected delta**: %s"}]\n' "$2" "$allowance" \
     > "$WT/.cache/linear/issues.json"
-  "$ROUND_WRITE" --worktree "$WT" --issue "issue-$2" --round-id "$3" \
+  "$ROUND_WRITE" --worktree "$WT" --issue "issue-$2" --round-id "$3" ${cut[@]+"${cut[@]}"} \
     --item 1 "fix nil deref" "tools/guard on a staged render" --item 2 "rename" "tools/guard on a staged render" >/dev/null
   ROUND_SHA="$HEAD_SHA"
   [[ "${5:-yes}" == no ]] && return 0
@@ -256,6 +260,13 @@ transcript "$TMP_ROOT/fix-none.jsonl" claude-send 5-6 "$(fix_report none pass)"
 run --worktree "$WT" --issue issue-779 --round-id 5-6 --transcript "$TMP_ROOT/fix-none.jsonl"
 assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-issue-779-5-6.json" .commit)" "rc=0 $HEAD_SHA" \
   "Commits: none records the unchanged HEAD" "$TMP_ROOT/stderr"
+# A cut round whose fix grew the branch: the gate's refusal is the acceptance
+# table's retry row to route, so the artifact stays and the round is recovered.
+new_fix_round fix-cut 781 5-8 0 yes yes
+transcript "$TMP_ROOT/fix-cut.jsonl" claude-send 5-8 "$(fix_report "$HEAD_SHA" pass)"
+run --worktree "$WT" --issue issue-781 --round-id 5-8 --transcript "$TMP_ROOT/fix-cut.jsonl"
+assert_eq "rc=$RC ${OUT%% artifact=*} $("$CHECK" --worktree "$WT" --issue issue-781 --round-id 5-8 --expect-items-from-round 2>/dev/null | jq -r '"\(.verdict) \(.reason)"')" \
+  "rc=0 round-recover: recovered retry cut_not_shrunk" "a cut that did not shrink keeps its artifact for the retry row" "$TMP_ROOT/stderr"
 # A report missing a delegated item fails dev-artifact-check's exact-set gate:
 # the written artifact is removed and the round re-delegates.
 new_fix_round fix-short 780 5-7 0
