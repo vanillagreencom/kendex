@@ -888,9 +888,11 @@ check "--check-marks at the context mark: the mark is reported, nothing is launc
 check "and the fleet state keeps the launch line it had: a judgement records none" \
   "$(recorded_line)" "$BEFORE_LINE"
 
+# A mistyped ORCH_OVERSEER_QUESTION_TOOL rides along: a judgement builds no
+# line, so the setting is not read and cannot silence the mark.
 new_caller "$UNDER_MARK"
-run_succeed checkunder '' --check-marks
-check "--check-marks under both marks: the below-mark line, nothing launched" \
+QUESTION_TOOL=sometimes run_succeed checkunder '' --check-marks
+check "--check-marks under both marks: the below-mark line, nothing launched, a mistyped question-tool setting unread" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
   "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80|0|yes"
 
@@ -1331,10 +1333,12 @@ overseer_index() { tm list-windows -t fleet -F '#{window_index} #{window_name}' 
 RECORDED_LINE="claude -n overseer 'relaunched from the record'"
 printf '%s\n' "$RECORDED_LINE" > "$TMP_ROOT/line-file"
 
+# A mistyped ORCH_OVERSEER_QUESTION_TOOL rides along: the recorded line is sent
+# as it stands, so the setting is not read and cannot refuse the relaunch.
 new_caller "$MARK"
 new_dead_pane
-run_succeed deadpane '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"
-check "--dead-pane sends the recorded line into the dead overseer's window, asking that pane nothing" \
+QUESTION_TOOL=sometimes run_succeed deadpane '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"
+check "--dead-pane sends the recorded line into the dead overseer's window, asking that pane nothing, a mistyped question-tool setting unread" \
   "$RC|$(overseer_index)|$(caller_open)|$(dead_open)|$(recorded claude)" \
   "0|5|yes|no|lane=;-n;overseer;relaunched from the record;"
 new_caller "$MARK"

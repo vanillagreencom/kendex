@@ -381,6 +381,8 @@ counted() {
 #   effortmissing the same of the launch-effort-missing line, or none
 #   flagsunreachable  every field of the launch-flags-unreachable line, commas
 #                 for spaces, or none
+#   questionmissing  every field of the launch-question-tool-missing line,
+#                 commas for spaces, or none
 #   credentialdead  lane and host of the host-credential-dead line, or none
 #   promptmissing every field of the remote-prompt-missing line, commas for
 #                 spaces, or none
@@ -455,6 +457,10 @@ observe() {
         # Every field of the line, commas for spaces: the flags it names carry
         # spaces of their own and an expect string is word-split.
         value="$(sed -n 's/^open-terminal: launch-flags-unreachable //p' <<<"$OUT" | sed -n 1p | tr ' ' ',')"
+        value="${value:-none}"
+        ;;
+      questionmissing)
+        value="$(sed -n 's/^open-terminal: launch-question-tool-missing //p' <<<"$OUT" | sed -n 1p | tr ' ' ',')"
         value="${value:-none}"
         ;;
       credentialdead)
@@ -635,6 +641,15 @@ run_ot "flags=--model opus --effort high" --cmd true CC-112
 assert_eq "$(observe "rc=1 launched=nolog flagsunreachable=option=--launch-flags,flags=--model,opus,--effort,high")" \
   "rc=1 launched=nolog flagsunreachable=option=--launch-flags,flags=--model,opus,--effort,high" \
   "a wholly custom launch with no harness and no lane is refused for the same unreachable flags"
+
+# A fleet lane is a --lane --cmd launch, so its command carries the harness's
+# question-tool words itself, and one that leaves them out is refused before
+# its worktree, its window or its claim. Called without run_ot's cmd= item,
+# which appends the words every other row here needs.
+run_ot "" --harness claude --lane "$H/.claude" --cmd "true --model opus --effort high" CC-140
+assert_eq "$(observe "rc=1 launched=nolog creates=nolog claims=nolog questionmissing=harness=claude,word=--disallowedTools=AskUserQuestion,EnterPlanMode")" \
+  "rc=1 launched=nolog creates=nolog claims=nolog questionmissing=harness=claude,word=--disallowedTools=AskUserQuestion,EnterPlanMode" \
+  "a --lane --cmd launch without the question-tool words is refused before anything launches or is claimed"
 
 # pi spells the thinking level on the model value too, `--model sonnet:high`,
 # which its own --help documents. A launch passing that has made both choices, so
