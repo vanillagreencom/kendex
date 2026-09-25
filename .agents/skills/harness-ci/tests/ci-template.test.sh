@@ -17,9 +17,14 @@
 #      the lanes down, and CI runs on both events whatever its needs did.
 #   4. the copy: every expression closes on its line and every script path
 #      it names is one this package ships.
+#   5. the steps the classifier can live without: each one ahead of the
+#      classify step continues on error, so a repository whose default
+#      branch does not yet carry this package still classifies, as
+#      `standard`.
 # Must-fail arms plant a lane condition without its status function, a
-# `lanes` output that forgets a class, CI without always(), and a template
-# without merge_group.
+# `lanes` output that forgets a class, CI without always(), a template
+# without merge_group, a render-reach step that fails the job, and an
+# evaluator that refuses every expression.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
@@ -27,7 +32,6 @@ set -euo pipefail
 . "$TEST_DIR/lib/workflow.sh"
 
 TEMPLATE="${CI_TEMPLATE_UNDER_TEST:-$TEST_DIR/../templates/ci.yml}"
-GH_EVAL="$TEST_DIR/lib/gh-eval.py"
 AGGREGATE_NEEDS="$TEST_DIR/../scripts/aggregate-needs"
 [ -f "$TEMPLATE" ] || { echo "missing $TEMPLATE" >&2; exit 1; }
 
@@ -47,8 +51,7 @@ output_value() { # TEMPLATE OUTPUT CLASS
     }
   ' "$1")"
   [ -n "$expr" ] || { printf 'no-output=%s' "$2"; return 0; }
-  python3 "$GH_EVAL" value \
-    "$(jq -cn --arg c "$3" '{steps: {classify: {outputs: {change_class: $c}}}}')" "$expr" | tr -d '"'
+  gh_eval value "$(jq -cn --arg c "$3" '{steps: {classify: {outputs: {change_class: $c}}}}')" "$expr" | tr -d '"'
 }
 
 # The lanes: every job reading the changes job but CI.
@@ -68,37 +71,10 @@ running() { # TEMPLATE EVENT RESULT CLASS — sorted and spaced, or `none`
   ran="$(job_needs "$wf" | while IFS="$(printf '\t')" read -r job needs; do
     grep -qxF -- "$job" "$SANDBOX/lanes" || continue
     printf '%s\t%s\t%s\n' "$job" "$needs" "$(job_ifs "$wf" | awk -F '\t' -v j="$job" '$1 == j { print $2 }')"
-  done | python3 "$GH_EVAL" jobs \
+  done | gh_eval jobs \
     "$(jq -cn --arg e "$2" --arg r "$3" --argjson o "$outputs" '{github: {event_name: $e}, needs: {changes: {result: $r, outputs: $o}}}')" |
     LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
   printf '%s' "${ran:-none}"
-}
-
-# Whether CI runs on EVENT with every job it needs at RESULT.
-ci_runs() { # TEMPLATE EVENT RESULT — yes or no
-  local wf="$1" ci needs expr ctx
-  ci="$(jobs_named "$wf" CI)"
-  needs="$(job_needs "$wf" | awk -F '\t' -v j="$ci" '$1 == j { print $2 }')"
-  expr="$(job_ifs "$wf" | awk -F '\t' -v j="$ci" '$1 == j { print $2 }')"
-  ctx="$(jq -cn --arg e "$2" --arg r "$3" --arg n "$needs" \
-    '{github: {event_name: $e}, needs: ($n | split(",") | map({key: ., value: {result: $r}}) | from_entries)}')"
-  if [ -n "$(printf '%s\t%s\t%s\n' "$ci" "$needs" "$expr" | python3 "$GH_EVAL" jobs "$ctx")" ]; then
-    echo yes
-  else
-    echo no
-  fi
-}
-
-# A copy of the template with FROM replaced once by TO, or the suite stops.
-plant() { # FROM TO OUT
-  [ "$(grep -cF -- "$1" "$TEMPLATE")" -eq 1 ] ||
-    { echo "the planted text is no longer one line: $1" >&2; exit 1; }
-  FROM="$1" TO="$2" awk '
-    { i = index($0, ENVIRON["FROM"]) }
-    i > 0 { $0 = substr($0, 1, i - 1) ENVIRON["TO"] substr($0, i + length(ENVIRON["FROM"])) }
-    { print }
-  ' "$TEMPLATE" >"$3"
-  ! cmp -s "$TEMPLATE" "$3" || { echo "the planted edit changed nothing: $1" >&2; exit 1; }
 }
 
 # --- 1. The names -----------------------------------------------------------
@@ -154,7 +130,7 @@ assert_eq "every lane is one the waiver may stand down" "$LANES" "$skippable"
 aggregate_rows=0
 while IFS='|' read -r class lane_result expected; do
   aggregate_rows=$((aggregate_rows + 1))
-  waiver="$(python3 "$GH_EVAL" value \
+  waiver="$(gh_eval value \
     "$(jq -cn --arg l "$(output_value "$TEMPLATE" lanes "$class")" '{needs: {changes: {outputs: {lanes: $l}}}}')" \
     "$waiver_expr")"
   results="$(jq -cn --arg r "$lane_result" --arg lanes "$LANES" \
@@ -200,22 +176,48 @@ assert_eq "the template's steps name the shipped script paths" \
 assert_eq "those paths are scripts this package ships" "yes yes" \
   "$([ -x "$AGGREGATE_NEEDS" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no)"
 
+# --- 5. The steps ahead of the classifier ----------------------------------
+
+# Whether the changes job's step with id ID carries `continue-on-error: true`.
+continues() { # TEMPLATE ID — yes or no
+  local hit
+  hit="$(awk -v id="$2" '
+    /^  changes:/ { in_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
+    in_job && /^      - / { in_step = ($0 == "      - id: " id) }
+    in_job && in_step && $0 == "        continue-on-error: true" { print "yes" }
+  ' "$1")"
+  printf '%s' "${hit:-no}"
+}
+# ID|CONTINUES
+step_rows=0
+while IFS='|' read -r id expected; do
+  step_rows=$((step_rows + 1))
+  assert_eq "the $id step continues on error: $expected" "$expected" "$(continues "$TEMPLATE" "$id")"
+done <<ROWS
+render-reach|yes
+kendex|yes
+mirror|yes
+classify|no
+ROWS
+require_rows step "$step_rows"
+
 # --- Must-fail controls -----------------------------------------------------
 
 # Without its status function a lane keeps GitHub's implicit success() and
 # stands down on exactly the run nothing classified.
-plant "if: \${{ !cancelled() && (needs.changes.result" "if: \${{ (needs.changes.result" "$SANDBOX/no-status.yml"
+plant "$TEMPLATE" "if: \${{ !cancelled() && (needs.changes.result" "if: \${{ (needs.changes.result" "$SANDBOX/no-status.yml"
 assert_eq "must-fail: a lane without its status function stands down under a dead classifier" "none" \
   "$(running "$SANDBOX/no-status.yml" merge_group failure "")"
 
 # A `lanes` output that forgets `trivial` runs every lane on a trivial group.
-plant " && steps.classify.outputs.change_class != 'trivial'" "" "$SANDBOX/no-trivial.yml"
+plant "$TEMPLATE" " && steps.classify.outputs.change_class != 'trivial'" "" "$SANDBOX/no-trivial.yml"
 assert_eq "must-fail: a lanes output without trivial runs the lanes on a trivial group" "$LANES" \
   "$(running "$SANDBOX/no-trivial.yml" merge_group success trivial)"
 
 # Without always(), a failed need skips CI, and a skipped required context
 # satisfies the ruleset.
-plant "    if: always()" "    if: github.event_name != ''" "$SANDBOX/no-always.yml"
+plant "$TEMPLATE" "    if: always()" "    if: github.event_name != ''" "$SANDBOX/no-always.yml"
 assert_eq "must-fail: CI without always() does not run on a failed need" "no" \
   "$(ci_runs "$SANDBOX/no-always.yml" merge_group failure)"
 
@@ -224,6 +226,25 @@ awk '$0 == "  merge_group:" { n++; next } { print } END { if (n != 1) exit 2 }' 
   { echo "merge_group could not be dropped from a copy" >&2; exit 1; }
 assert_eq "must-fail: a template without merge_group is named" "pull_request" \
   "$(triggers "$SANDBOX/no-group.yml" | tr '\n' ' ' | sed 's/ $//')"
+
+# render-reach failing the job, as it does where the default branch has no
+# harness-only: the classifier dies on the adoption pull request.
+awk '$0 == "      - id: render-reach" { print; getline; if ($0 == "        continue-on-error: true") { n++; next } } { print } END { if (n != 1) exit 2 }' \
+  "$TEMPLATE" >"$SANDBOX/reach-fails.yml" ||
+  { echo "continue-on-error could not be dropped from render-reach in a copy" >&2; exit 1; }
+assert_eq "must-fail: a render-reach step that fails the job is named" "no" \
+  "$(continues "$SANDBOX/reach-fails.yml" render-reach)"
+
+# An evaluator that refuses every expression answers neither a stand-down nor
+# a CI that does not run, the two answers the controls above expect.
+printf 'import sys\nsys.stderr.write("gh-eval: cause=planted-refusal\\n")\nsys.exit(2)\n' >"$SANDBOX/refusing-eval.py"
+real_eval="$GH_EVAL"
+GH_EVAL="$SANDBOX/refusing-eval.py"
+refused_lanes="$(running "$TEMPLATE" merge_group failure "" 2>/dev/null)"
+refused_ci="$(ci_runs "$TEMPLATE" merge_group failure 2>/dev/null)"
+GH_EVAL="$real_eval"
+assert_eq "must-fail: a refusing evaluator is no stand-down" "gh-eval-refused:2 cause=planted-refusal" "$refused_lanes"
+assert_eq "must-fail: a refusing evaluator is no CI that stays down" "gh-eval-refused:2 cause=planted-refusal" "$refused_ci"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

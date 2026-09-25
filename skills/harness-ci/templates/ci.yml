@@ -57,8 +57,13 @@ jobs:
           persist-credentials: false
       # change-class reads kendex and the source mirror only where
       # harness-only answers harness_only=true, so the two network steps run
-      # only there.
+      # only there. It reads the default branch's harness-only, which the
+      # adoption pull request and its merge group do not have yet: a failure
+      # here leaves harness_only empty, both network steps skip, and the class
+      # falls to `standard`, which runs every lane, rather than failing the
+      # classifier on the one pull request that could add it.
       - id: render-reach
+        continue-on-error: true
         run: >-
           classifier/.agents/skills/harness-ci/scripts/harness-only
           --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"

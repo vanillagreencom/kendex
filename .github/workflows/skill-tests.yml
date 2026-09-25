@@ -18,7 +18,7 @@ name: Skill Tests
 # `tools/ci-job-set` selects it; the invariant comment there is the one
 # statement of what each lane runs. The aggregators still report and accept
 # only the skips the selection authorized, and the last job, `CI`, is the one
-# every other job reports into. The push to main
+# every other job reports into, the three aggregators excepted. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
 # so it runs only the compile steps: each cargo lane builds its targets with
@@ -1693,8 +1693,9 @@ jobs:
   # ruleset of docs/decisions/D003-one-merge-path.md item 3, and the job name
   # skills/harness-ci/templates/ci.yml gives every repository. Every other job
   # in this workflow reports into it, the three aggregators above excepted:
-  # they hold the same lanes under the per-repository ruleset's names until
-  # that ruleset is retired. The shape and the reasons are the Skill suites
+  # it holds every lane they hold, plus gate-selftest, Preflight and Markdown,
+  # and they keep the per-repository ruleset's names until that ruleset is
+  # retired. The shape and the reasons are the Skill suites
   # aggregator's: `always()` so a failed or skipped need fails this context
   # rather than skipping it, and not on push, where nothing requires it.
   #
