@@ -20,6 +20,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 export ORCH_LANE_HOST=local
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
+# shellcheck source=lib/question-off.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/question-off.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
@@ -145,7 +147,7 @@ launch() {
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 GH_REPO="" STUB_SERVER=$$ STUB_OPEN_MARK="$ROW/opened" STUB_TAG="$tag" \
     STUB_WALL="$ROW/wall" STUB_PICK="$ROW/pick" TERMINAL=ghostty ORCH_TMUX_SESSION=fleet \
     ORCH_OVERSEER_LANES="$fleet_cap" ORCH_LANE_ACCOUNT_CLAIMS="$account_cap" \
-    "$OT" --state-dir "$STATE" "${MODE:---tmux}" --harness claude --cmd "true --model opus --effort high" "$@" \
+    "$OT" --state-dir "$STATE" "${MODE:---tmux}" --harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL" "$@" \
     >"$ROW/$tag.out" 2>"$ROW/$tag.err") || rc=$?
   printf '%s\n' "$rc" > "$ROW/$tag.rc"
 }
@@ -520,7 +522,7 @@ for spec in \
   if [[ "$mode" == no-fleet ]]; then
     rc=0
     err="$(cd "$REPO" && PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" TMUX=stub,1,0 \
-      "$OT" --tmux --harness claude --cmd "true --model opus --effort high" $words CC-1 2>&1 >/dev/null)" || rc=$?
+      "$OT" --tmux --harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL" $words CC-1 2>&1 >/dev/null)" || rc=$?
   else
     launch opt 1 0 $words CC-1
     rc="$(rc opt)"; err="$(cat "$ROW/opt.err")"

@@ -205,6 +205,12 @@ ORCH_LANE_ACCOUNT_CLAIMS = "3"
 # a notice for a manual replacement.
 # ORCH_OVERSEER_SUCCESSION = "on"
 
+# "on" keeps the harness question tool in a successor overseer, so the owner is
+# asked there; "off" launches successors without it. open-terminal launches
+# lanes without it; references/skill-rules.md, Coordination, names what it
+# does not judge.
+# ORCH_OVERSEER_QUESTION_TOOL = "on"
+
 # Minutes before the projected account wall that starts overseer succession.
 # Zero disables the rate trigger.
 ORCH_OVERSEER_WALL_MINUTES = "30"

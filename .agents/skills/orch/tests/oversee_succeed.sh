@@ -213,12 +213,14 @@ ttl=""
 [ -z "\${USAGE_TTL:-}" ] || ttl="ORCH_LANES_USAGE_TTL=\$USAGE_TTL"
 wall="ORCH_OVERSEER_WALL_MINUTES=\${WALL_MINUTES:-0}"
 successors="ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=\${SUCCESSOR_ACCOUNTS:-0}"
+qt=""
+[ -z "\${QUESTION_TOOL:-}" ] || qt="ORCH_OVERSEER_QUESTION_TOOL=\$QUESTION_TOOL"
 cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
   \$lane \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
   ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \\
-  \$hp \$cm \$ttl \$wall \$successors "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
+  \$hp \$cm \$ttl \$wall \$successors \$qt "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
 # in-pane ARGS... — a caller pane's own command: draw the screen, wait until
 # tmux shows it, then become the script.
@@ -387,13 +389,27 @@ check "an unreadable account config refuses the successor and keeps the caller" 
 # fixture carries through states nothing about permissions: what a caller's
 # permission switches should do at a successor of ANOTHER harness is a
 # separate question from the pair this strip owns.
-new_caller "$MARK"
-STRIP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
-STRIP_HOME="$(lane_codex_home_path "$H/.codex" "$STRIP_CWD")"
-run_succeed stripflags 'codex:1:high' -- --model fable --effort high --dangerously-skip-permissions --verbose
-check "a named entry keeps unrelated words and replaces the caller's model, effort and permission posture" \
-  "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
-  "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;--verbose;$BRIEF;"
+#
+# A claude caller's question-tool words are a flag codex refuses, so a codex
+# entry never carries them either: it carries codex's own words exactly when
+# ORCH_OVERSEER_QUESTION_TOOL is off. One table, so the caller's permission
+# switch is spelled on one line for every row.
+# QUESTION_TOOL|CALLER WORDS AFTER THE PERMISSION SWITCH|LINE TAIL|WHAT
+for row in \
+  "|--verbose|;--verbose|a named entry keeps unrelated words and replaces the caller's model, effort and permission posture" \
+  "|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|;--verbose|a claude caller's question-tool words never reach a codex successor: on, the codex line carries no question-tool word" \
+  "off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|;-c;features.default_mode_request_user_input=false;--verbose|a claude caller's question-tool words never reach a codex successor: off, the codex line carries codex's own words and not claude's" \
+  ; do
+  IFS='|' read -r row_value row_words row_tail row_what <<<"$row"
+  new_caller "$MARK"
+  STRIP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+  STRIP_HOME="$(lane_codex_home_path "$H/.codex" "$STRIP_CWD")"
+  # shellcheck disable=SC2086  # a row's words are its own, split on purpose.
+  QUESTION_TOOL="$row_value" run_succeed "stripflags$row_value" 'codex:1:high' -- --model fable --effort high --dangerously-skip-permissions $row_words
+  check "$row_what" \
+    "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
+    "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false$row_tail;$BRIEF;"
+done
 
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -868,9 +884,11 @@ check "--check-marks at the context mark: the mark is reported, nothing is launc
 check "and the fleet state keeps the launch line it had: a judgement records none" \
   "$(recorded_line)" "$BEFORE_LINE"
 
+# A mistyped ORCH_OVERSEER_QUESTION_TOOL rides along: a judgement builds no
+# line, so the setting is not read and cannot silence the mark.
 new_caller "$UNDER_MARK"
-run_succeed checkunder '' --check-marks
-check "--check-marks under both marks: the below-mark line, nothing launched" \
+QUESTION_TOOL=sometimes run_succeed checkunder '' --check-marks
+check "--check-marks under both marks: the below-mark line, nothing launched, a mistyped question-tool setting unread" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
   "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80|0|yes"
 
@@ -1271,6 +1289,33 @@ check "succession off still prints the line: printing launches nothing" \
   "$RC|$OUT|$(overseers)" \
   "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|0"
 
+# A successor overseer keeps its harness question tool unless
+# ORCH_OVERSEER_QUESTION_TOOL is off, which writes the words every lane launch
+# carries. The setting alone decides: a caller's own copy of the words is
+# dropped while it is on and carried once while it is off. A value that is
+# neither refuses before a line is built.
+for row in \
+  "claude|||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|unset keeps the claude question tool" \
+  "claude|off||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --disallowedTools=AskUserQuestion\\,EnterPlanMode '$BRIEF'|off takes the claude question tool away" \
+  "claude|on|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --verbose '$BRIEF'|on drops the caller's own question-tool words" \
+  "claude|off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose '$BRIEF'|off carries a caller's own copy of the words once" \
+  "codex|off||0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c features.default_mode_request_user_input=false '$BRIEF'|off takes the codex question tool away" \
+  "claude|sometimes||1|oversee-succeed: invalid-question-tool ORCH_OVERSEER_QUESTION_TOOL=sometimes|a value that is neither on nor off refuses" \
+  ; do
+  IFS='|' read -r row_harness row_value row_flags row_rc row_want row_what <<<"$row"
+  if [[ "$row_harness" == codex ]]; then
+    new_caller "$CODEX_SCREEN" 'Context 48% left'
+    row_lane="CODEX_HOME=$H/.codex"
+  else
+    new_caller "$UNDER_MARK"
+    row_lane="CLAUDE_CONFIG_DIR=$H/.claude"
+  fi
+  # shellcheck disable=SC2086  # a row's flags are its own words, split on purpose.
+  CALLER_LANE="$row_lane" QUESTION_TOOL="$row_value" run_succeed "printquestion-$row_harness" '' --print-launch-line \
+    ${row_flags:+-- $row_flags}
+  check "question tool: $row_what" "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" "$row_rc|$row_want|0"
+done
+
 # The dead overseer's window: a pane drawing NOTHING — no status line, no
 # harness — at an index of its own, so a row reads which window the successor
 # landed in and whether the caller's own was touched.
@@ -1284,10 +1329,12 @@ overseer_index() { tm list-windows -t fleet -F '#{window_index} #{window_name}' 
 RECORDED_LINE="claude -n overseer 'relaunched from the record'"
 printf '%s\n' "$RECORDED_LINE" > "$TMP_ROOT/line-file"
 
+# A mistyped ORCH_OVERSEER_QUESTION_TOOL rides along: the recorded line is sent
+# as it stands, so the setting is not read and cannot refuse the relaunch.
 new_caller "$MARK"
 new_dead_pane
-run_succeed deadpane '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"
-check "--dead-pane sends the recorded line into the dead overseer's window, asking that pane nothing" \
+QUESTION_TOOL=sometimes run_succeed deadpane '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"
+check "--dead-pane sends the recorded line into the dead overseer's window, asking that pane nothing, a mistyped question-tool setting unread" \
   "$RC|$(overseer_index)|$(caller_open)|$(dead_open)|$(recorded claude)" \
   "0|5|yes|no|lane=;-n;overseer;relaunched from the record;"
 new_caller "$MARK"

@@ -41,6 +41,7 @@ ot_message() { # REASON FIELD=VALUE...
     lane-refused) text='A lane setting excludes or retires this lane. No window was opened.' ;;
     launch-flags-unreachable) text='These launch flags reach nothing. A --cmd launch runs its template as the whole command and no flag is appended to it, so a model, an effort or a permission word left here would be judged and recorded while the harness ran its own default. Nothing was launched. Name them inside the --cmd command, or drop --cmd and let this launcher build the harness command from --launch-flags.' ;;
     launch-model-missing) text='This lane launch names no model, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the model in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes.' ;;
+    launch-question-tool-missing) text='This lane launch leaves the harness question tool on, and a lane that calls it stops at a dialog nobody at the pane answers. Nothing was launched. Put the words this line names, in that order, inside the --cmd command; a launch without --cmd is given them by this launcher. A lane asks its overseer through lane-mail ask.' ;;
     launch-effort-missing) text='This lane launch names no reasoning effort, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the effort in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes, one ending in = being a whole token with its value attached.' ;;
     lane-selected) text='The launch account is selected.' ;;
     launch-trusted) text='The launch directory is trusted in the config this codex launch will read, so the harness starts into it rather than onto the folder-trust question. route=preapproved is the account config already carrying the entry; route=launch-home is a CODEX_HOME built for this launch under the account, holding the account files by link and a config of its own, because the account config is a link the account shim repoints at every launch.' ;;
@@ -157,8 +158,9 @@ Options:
   --cmd "..."       Custom command; {issue}, {item}, and {repo} are replaced.
                     It is the WHOLE command: it is rendered verbatim and no
                     launch flag is appended to it, so a --cmd launch names its
-                    own model, reasoning effort and permission posture inside
-                    the command. --launch-flags beside it reach nothing and are
+                    own model, reasoning effort, permission posture and
+                    question-tool words (see --launch-flags) inside the
+                    command. --launch-flags beside it reach nothing and are
                     refused as launch-flags-unreachable, rather than gating and
                     recording a model the harness never runs.
   --lane <spec>     Launch under a chosen harness account. `auto` picks the
@@ -321,6 +323,15 @@ Options:
                     check_for_update_on_startup=false ahead of these flags,
                     so Codex never opens its startup update prompt, where a
                     pasted line would install the update and end the session.
+                    EVERY COMMAND BUILT HERE TAKES THE HARNESS QUESTION TOOL
+                    AWAY, ahead of these flags; a lane asks through lane-mail.
+                      claude    --disallowedTools=AskUserQuestion,EnterPlanMode
+                      codex     -c features.default_mode_request_user_input=false
+                      pi        --exclude-tools question
+                    An opencode lane keeps its tool: no flag turns it off. A
+                    --cmd launch on a harness with words carries them in its
+                    command, --lane or not, or is refused as
+                    launch-question-tool-missing, one word= field per word.
   --relaunch        Replace a dead session on items that may already have a
                     worktree: an existing tree is reused instead of being read
                     as another session's claim. The newest matching Claude,
@@ -930,6 +941,24 @@ if [[ -n "$LANE" && -n "$(launch_choice_row "$LAUNCH_HARNESS")" ]]; then
   [[ "$launch_choice_missing" != true ]] || exit 1
 fi
 
+# A lane never holds its harness question tool: every command start_cmd builds
+# carries the words that take it away, and a --cmd template, rendered verbatim,
+# has to carry them itself. Keyed on the same harness as the gate above and
+# asked whether or not a --lane is named, because an item launched here is a
+# lane on any account; a launch naming no harness has no row and is not asked.
+# A reading of the words that fails is refused as their absence, never skipped.
+LAUNCH_QUESTION_OFF=""
+if ! LAUNCH_QUESTION_OFF="$(launch_choice_question_off "$LAUNCH_HARNESS")" \
+   || { [[ -n "$CMD_TEMPLATE" && -n "$LAUNCH_QUESTION_OFF" ]] \
+        && ! launch_choice_words_present "$LAUNCH_QUESTION_OFF" "$CMD_TEMPLATE"; }; then
+  question_words=()
+  question_fields=()
+  read -r -a question_words <<<"$LAUNCH_QUESTION_OFF"
+  for question_word in ${question_words[@]+"${question_words[@]}"}; do question_fields+=("word=$question_word"); done
+  ot_message launch-question-tool-missing "harness=$LAUNCH_HARNESS" ${question_fields[@]+"${question_fields[@]}"} >&2
+  exit 1
+fi
+
 # Handoff is unattended. A harness whose row names a permission posture stalls
 # at its first approval prompt when the caller supplies none. Rows carrying the
 # `-` sentinel have no permission word to require here. Warn loudly, but launch:
@@ -1525,15 +1554,15 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # the launch directory and the lane starts on a different model, or none.
   # Trailing space only when flags are present, so an unflagged launch renders
   # the exact command a human would type rather than a double-spaced one.
-  # The harness's launch-only settings lead, once, on every command built here
-  # and never inside a --cmd template, which returned above as the caller's
-  # whole command.
+  # The harness's launch-only settings and its question-tool words lead, once,
+  # on every command built here and never inside a --cmd template, which
+  # returned above as the caller's whole command.
   local flags="" tok
   local -a flag_tokens=()
   # read -a splits on IFS without globbing; a bare `for tok in $LAUNCH_FLAGS`
   # would expand the very brackets this quoting exists to protect.
   read -r -a flag_tokens <<<"$LAUNCH_FLAGS"
-  launch_choice_lead_settings "$HARNESS" ${flag_tokens[@]+"${flag_tokens[@]}"}
+  launch_choice_lead_settings --question-off "$HARNESS" ${flag_tokens[@]+"${flag_tokens[@]}"}
   for tok in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
     flags+="'$tok' "
   done
