@@ -609,11 +609,13 @@ assert_eq "$(output_of "$OUT" 2>/dev/null)" "unset:true:docs/a.md" \
   "control: with the class not handed over the trivial row's command runs with no class" "$ERR"
 cp "$SCRIPTS_DIR/dev-validate-run" "$LAYOUT/orch/scripts/dev-validate-run"
 
-# --- The real classifier refuses render over uncommitted edits ------------------
-# change-class proves render only on a clean tree, and dev-implement validates
-# before it commits. A diff of generated files alone, left uncommitted, is
-# standard at dev completion. The kendex on PATH is a stub that fails if run:
-# the dirty-tree refusal comes before any render proof.
+# --- The real classifier weighs uncommitted render edits -----------------------
+# dev-implement validates before it commits, so the runner hands the
+# classifier a snapshot commit of the worktree as the range's head, and
+# change-class checks that commit out privately for its render proof. The
+# kendex on PATH is a stub that passes the proof only where the tree it runs
+# in holds the uncommitted edit, so a classifier weighing anything but the
+# snapshot answers standard.
 proj_render="$(make_proj proj-render 'printf %s ${DEV_VALIDATE_CLASS-unset}' 20)"
 mkdir -p "$proj_render/.agents/skills/demo"
 printf 'tmp/\n' > "$proj_render/.gitignore"
@@ -624,15 +626,19 @@ git -C "$proj_render" -c user.name=t -c user.email=t@example.com commit -q -m ba
 git -C "$proj_render" update-ref refs/remotes/origin/main HEAD
 printf 'rendered again\n' >> "$proj_render/.agents/skills/demo/SKILL.md"
 mkdir -p "$TMP_ROOT/render-bin"
-printf '#!/usr/bin/env bash\necho "stub kendex ran" >&2\nexit 99\n' > "$TMP_ROOT/render-bin/kendex"
+cat > "$TMP_ROOT/render-bin/kendex" <<'STUB'
+#!/usr/bin/env bash
+grep -qx 'rendered again' .agents/skills/demo/SKILL.md || exit 99
+printf '%s\n' '{"version":1,"clean":true,"checked":1,"failed":0,"rows":[{"state":"ok","positions":[{"path":".agents/skills/demo","owns":"tree"}]}]}'
+STUB
 chmod +x "$TMP_ROOT/render-bin/kendex"
 RUN_PATH="$TMP_ROOT/render-bin:$PATH"
 run_script "$RUN" --worktree "$proj_render" --poll 1
 RUN_PATH=""
 render_dir="$(run_dir_of "$OUT")"
 assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^class: class=\([a-z]*\) \(measured=[a-z]*\) \(cause=[a-z-]*\).*$/\1 \2 \3/p' "$render_dir/class.log")" \
-  "standard standard measured=false cause=judged-tree-dirty" \
-  "an uncommitted render diff runs as standard, the classifier naming the dirty tree" "$ERR"
+  "render render measured=true cause=renders-match-their-sources" \
+  "an uncommitted render diff the proof passes runs as render" "$ERR"
 
 
 # label|arguments after the worktree or run directory|refusal's first line

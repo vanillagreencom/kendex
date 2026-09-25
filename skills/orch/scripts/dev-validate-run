@@ -24,9 +24,10 @@
 # class that cannot be read, for any cause, is standard with docs-only false
 # and an empty paths file, and the started line names the cause as
 # class-fallback=CAUSE: base-unresolved, worktree-unrecorded, or a cause
-# lib/change-class.sh names. change-class proves render only on a clean tree
-# with no kendex arming record (<git-dir>/kendex/armed), so a run over
-# uncommitted render edits is standard.
+# lib/change-class.sh names. change-class proves render in a private checkout
+# of the range's head, which here is the worktree's snapshot commit, so a run
+# over uncommitted render edits is weighed with those edits, and a kendex
+# arming record in the worktree's git directories does not refuse it.
 #
 # lib/job-unit.sh starts the child, as a transient systemd user unit named for
 # validate-<worktree directory> (for a lane, its item in lower case) where a
