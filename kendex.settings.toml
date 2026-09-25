@@ -304,8 +304,8 @@ GUARD_MIN_FREE_GB = "16"
 # the recorded 708 KiB case.
 GUARD_EXHAUSTED_FREE_MB = "512"
 
-# A review-fix round validates its own changes: the default rules, cargo check
-# and clippy for the crates they touch, the UI checks, and the suites of the
+# A review-fix round validates its own changes: the default rules, cargo
+# clippy for the crates they touch, the UI checks, and the suites of the
 # trees they touch, and none of what --full adds beyond that: the workspace
 # test run, cross-target checks, the documentation build, the Bash 3.2 parse,
 # the working-tree bot-instructions check, the decision-ID check, the

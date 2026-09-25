@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tools/guard --range BASE, a fix round's validation: the default rules read
-# over the changes since BASE, cargo check and clippy for the crates those
+# over the changes since BASE, cargo clippy for the crates those
 # changes touch, the UI checks and suite for a non-Markdown UI change, and the
 # suites of the trees they touch, and none of what --full adds beyond that: the
 # workspace test run, cross-target checks, the documentation build, the Bash
@@ -74,7 +74,7 @@ grep -qFx "cargo test --workspace --quiet" "$CALLS" \
   || bad "inverse: the same skill-only diff under --full runs the workspace tests" "rc=$RC log=$(cat "$CALLS")"
 if mutant_guard 's/^\[ "\$MODE" != full \] || ! lane_on cargo_lint || rust_all=1$/! lane_on cargo_lint || rust_all=1/'; then
   run_range "$BASE" "$MUTANT_TOOLS/guard"
-  grep -qFx "cargo check --workspace --all-targets" <<<"$LOG" \
+  grep -qFx "cargo clippy --workspace --all-targets --quiet -- -D warnings" <<<"$LOG" \
     && ok "control: with range compiling everything the skill-only diff reaches cargo" \
     || bad "control: with range compiling everything the skill-only diff reaches cargo" "rc=$RC log=$LOG"
 else
@@ -84,11 +84,9 @@ back_to_base
 
 echo "=== what a range compiles is what it touched since its base ==="
 CORE_CALLS="cargo tree -p kendex-core -e normal
-cargo check --manifest-path crates/core/Cargo.toml --all-targets
 cargo clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings
 cargo fmt --check"
 WORKSPACE_CALLS="cargo tree -p kendex-core -e normal
-cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets --quiet -- -D warnings
 cargo fmt --check"
 UI_CALLS="npm run --prefix ui check:types
@@ -217,7 +215,7 @@ OUT=""
 RC=0
 : >"$CALLS"
 OUT="$(cd "$R" && env GUARD_MIN_FREE_GB=1000000 GUARD_EXHAUSTED_FREE_MB=1000000000 PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$GUARD" --range "$BASE" 2>&1 </dev/null)" || RC=$?
-[ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: cargo-space-"* ]] && grep -qFx "cargo check --manifest-path crates/core/Cargo.toml --all-targets" "$CALLS" \
+[ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: cargo-space-"* ]] && grep -qFx "cargo clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings" "$CALLS" \
   && ok "a range under unreachable space floors still checks its crate" \
   || bad "a range under unreachable space floors still checks its crate" "rc=$RC out=$OUT"
 if mutant_guard 's/^if \[ "\$MODE" = full \] && \[ -f Cargo.toml \]; then$/if [ "$MODE" != default ] \&\& [ -f Cargo.toml ]; then/'; then

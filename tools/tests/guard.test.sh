@@ -387,10 +387,9 @@ printf 'fn second() {}\n' >>"$R/crates/core/src/lib.rs"
 git -C "$R" add crates/core/src/lib.rs
 : >"$COMPILE_LOG"
 run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
-[ "$RC" -eq 0 ] && grep -Fxq 'cargo check --manifest-path crates/core/Cargo.toml --all-targets' "$COMPILE_LOG" \
-  && grep -Fxq 'cargo clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings' "$COMPILE_LOG" \
-  && ! grep -Eq 'crates/cli|cargo (test|doc)|npm|--workspace|--target ' "$COMPILE_LOG" \
-  && ok "Rust checks select the touched crate and omit full suites" \
+[ "$RC" -eq 0 ] && grep -Fxq 'cargo clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings' "$COMPILE_LOG" \
+  && ! grep -Eq 'crates/cli|cargo (check|test|doc)|npm|--workspace|--target ' "$COMPILE_LOG" \
+  && ok "Rust checks select the touched crate, clippy alone compiling it, and omit full suites" \
   || bad "Rust scoped checks" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
 # A failing compiler call blocks with guard's own first line for that call:
 # `guard: <key>=<value>`, the value naming what was checked. The table counts
@@ -402,7 +401,6 @@ while IFS='|' read -r command clause; do
     && ok "the $command failure blocks, naming it" \
     || bad "the $command failure blocks, naming it" "rc=$RC out=$OUT"
 done <<'ROWS'
-check --manifest-path crates/core/Cargo.toml --all-targets|cargo-check=crates/core/Cargo.toml
 clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings|clippy=crates/core/Cargo.toml
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the compiler failures" >&2; exit 2; }
@@ -433,9 +431,9 @@ printf '# workspace changed\n' >>"$R/Cargo.toml"
 git -C "$R" add Cargo.toml
 : >"$COMPILE_LOG"
 run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
-[ "$RC" -eq 0 ] && grep -Fxq 'cargo check --workspace --all-targets' "$COMPILE_LOG" \
-  && ! grep -Eq 'cargo (test|doc)' "$COMPILE_LOG" \
-  && ok "shared Rust inputs compile the workspace without running tests" \
+[ "$RC" -eq 0 ] && grep -Fxq 'cargo clippy --workspace --all-targets --quiet -- -D warnings' "$COMPILE_LOG" \
+  && ! grep -Eq 'cargo (check|test|doc)' "$COMPILE_LOG" \
+  && ok "shared Rust inputs compile the workspace with clippy alone, without running tests" \
   || bad "shared Rust input scheduling" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
 git -C "$R" reset -q HEAD -- Cargo.toml
 git -C "$R" checkout -q -- Cargo.toml
@@ -452,12 +450,12 @@ unreadable_inputs() { # [GUARD] — the staged recipe with the reader failing; s
 }
 unreadable_inputs
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: rust-reads=crates"* ]] \
-  && grep -Fxq 'cargo check --workspace --all-targets' "$COMPILE_LOG" \
+  && grep -Fxq 'cargo clippy --workspace --all-targets --quiet -- -D warnings' "$COMPILE_LOG" \
   && ok "an underivable set of shared inputs is a finding, and the workspace compiles" \
   || bad "an underivable set of shared inputs is a finding, and the workspace compiles" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
 if mutant_guard '/^  workspace_every=1$/d'; then
   unreadable_inputs "$MUTANT_TOOLS/guard"
-  grep -Fxq 'cargo check --workspace --all-targets' "$COMPILE_LOG" \
+  grep -Fxq 'cargo clippy --workspace --all-targets --quiet -- -D warnings' "$COMPILE_LOG" \
     && bad "control: with every path no longer an input the recipe compiles nothing" "calls=$(cat "$COMPILE_LOG")" \
     || ok "control: with every path no longer an input the recipe compiles nothing"
 else
