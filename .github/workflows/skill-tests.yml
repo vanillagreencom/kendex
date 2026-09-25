@@ -15,17 +15,12 @@ name: Skill Tests
 # jobs, a `render` or `trivial` diff runs the bot-instructions job alone,
 # which also carries the document byte ceilings and the work-marker scan.
 # Every other diff, and a `trivial` one changing a path tools/rust-reads
-# names, runs the shell shards and that job; a cargo leg runs for a crate the
-# diff reaches through tools/rust-reads' rows, a macOS or Windows test leg
-# only where a path other than prose reaches one, the lint and Windows
-# compile lanes only where a build input changed, the macOS shell legs where
-# a path other than prose changed or the diff is `standard` and not
-# documentation alone, and the ui lane only where a path is under ui/. A
-# diff to a workflow, an action or the selection scripts runs every lane.
+# names, runs the shell shards and that job, and each other lane and cargo
+# leg as `tools/ci-job-set` selects it; the invariant comment there is the
+# one statement of what each lane runs, a crate's `.` row included.
 # kendex-core and kendex-cli carry a `.` row, reads decided at run time
-# through checkout_root() and helpers like it, so their legs run on every
-# diff that is not prose alone. `tools/ci-job-set` states that invariant. The aggregators still report and
-# accept only the skips the selection authorized. The push to main
+# through checkout_root() and helpers like it. The aggregators still report
+# and accept only the skips the selection authorized. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
 # so it runs only the compile steps: each cargo lane builds its targets with
