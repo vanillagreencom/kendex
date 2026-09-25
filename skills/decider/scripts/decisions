@@ -323,6 +323,18 @@ BASE_REF=""
 BASE_PATH=""
 BASE_REASON=""
 BASE_ROWS_SKIPPED=0
+
+# Every git call that may reach the remote runs through git_remote, so no
+# prompt can wait on a terminal nobody watches. GIT_TERMINAL_PROMPT stops
+# git's own credential prompt; ssh opens /dev/tty itself for a host key,
+# password or passphrase, so BatchMode joins the ssh command the caller chose
+# (GIT_SSH_COMMAND, else core.sshCommand, else plain ssh), keeping any deploy
+# key or jump host that command names.
+BASE_SSH_COMMAND=""
+git_remote() { # GIT-ARGS...
+  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$BASE_SSH_COMMAND" git -C "$DECISIONS_DIR" "$@" </dev/null
+}
+
 read_base_index() {
   local prefix cand short remote branch remotes r text line listing found fetch_failed=0
   local candidates=()
@@ -339,6 +351,15 @@ read_base_index() {
     candidates=(origin/HEAD origin/main main)
   fi
 
+  BASE_SSH_COMMAND="${GIT_SSH_COMMAND:-}"
+  if [[ ! "$BASE_SSH_COMMAND" =~ [^[:space:]] ]]; then
+    BASE_SSH_COMMAND="$(git -C "$DECISIONS_DIR" config --get core.sshCommand)" || BASE_SSH_COMMAND=""
+  fi
+  if [[ ! "$BASE_SSH_COMMAND" =~ [^[:space:]] ]]; then
+    BASE_SSH_COMMAND=ssh
+  fi
+  BASE_SSH_COMMAND="$BASE_SSH_COMMAND -oBatchMode=yes"
+
   remotes="$(git -C "$DECISIONS_DIR" remote)" || remotes=""
   for cand in "${candidates[@]}"; do
     short="${cand#refs/remotes/}"
@@ -354,10 +375,8 @@ read_base_index() {
       # One listing says whether the remote answers, which branch its HEAD
       # names now, and whether the named branch exists. A branch the remote
       # lacks is skipped: a local ref of that name is stale for good, so it is
-      # never read in place of the next candidate. No prompt: a credential or
-      # passphrase request would hang the caller instead of degrading to a
-      # reported outcome.
-      if listing="$(GIT_TERMINAL_PROMPT=0 git -C "$DECISIONS_DIR" ls-remote --symref "$remote" HEAD "refs/heads/$branch" </dev/null 2>/dev/null)"; then
+      # never read in place of the next candidate.
+      if listing="$(git_remote ls-remote --symref "$remote" HEAD "refs/heads/$branch" 2>/dev/null)"; then
         found=""
         while IFS= read -r line; do
           case "$line" in
@@ -368,7 +387,7 @@ read_base_index() {
         found="${found%$'\t'HEAD}"
         [[ -n "$found" ]] || continue
         cand="$remote/$found"
-        if ! GIT_TERMINAL_PROMPT=0 git -C "$DECISIONS_DIR" fetch --quiet --no-tags "$remote" "+refs/heads/$found:refs/remotes/$remote/$found" </dev/null >/dev/null 2>&1; then
+        if ! git_remote fetch --quiet --no-tags "$remote" "+refs/heads/$found:refs/remotes/$remote/$found" >/dev/null 2>&1; then
           fetch_failed=1
         fi
       else
@@ -403,7 +422,7 @@ read_base_index() {
     [[ "$fetch_failed" -eq 0 ]] || BASE_REASON=fetch-failed
     return 0
   fi
-  if ! text="$(GIT_TERMINAL_PROMPT=0 git -C "$DECISIONS_DIR" show "$BASE_REF:$BASE_PATH" </dev/null 2>/dev/null)"; then
+  if ! text="$(git_remote show "$BASE_REF:$BASE_PATH" 2>/dev/null)"; then
     BASE_REASON=unreadable
     return 0
   fi

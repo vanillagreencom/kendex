@@ -411,7 +411,7 @@ while IFS='~' read -r row old new label; do
   fi
 done <<'CONTROLS'
 next-id-base-ahead~  for id in ${ids[@]+"${ids[@]}"} ${base_ids[@]+"${base_ids[@]}"}; do~  for id in ${ids[@]+"${ids[@]}"}; do~a maximum over the working tree alone
-next-id-base-ahead~      if ! GIT_TERMINAL_PROMPT=0 git~      if false && ! GIT_TERMINAL_PROMPT=0 git~a base read without a fetch
+next-id-base-ahead~        if ! git_remote fetch~        if false && ! git_remote fetch~a base read without a fetch
 next-id-no-remote~  emit_notice base-unverified "ref=~  emit_notice base-unread "ref=~a renamed base notice
 next-id-fetch-failed~        fetch_failed=1\n        if [[ "$branch" == HEAD ]]; then~        fetch_failed=1; return 0\n        if [[ "$branch" == HEAD ]]; then~a failed fetch that drops the local copy
 next-id-fetch-failed-local-main~    short="${cand#refs/remotes/}"~    fetch_failed=0; short="${cand#refs/remotes/}"~a fetch failure forgotten by the next candidate
@@ -443,6 +443,83 @@ CONTROLS
 if [[ "$control_seq" -eq 0 ]]; then
   fail "the control table planted no defect"
 fi
+
+echo "=== ssh never prompts, and keeps the caller's ssh command ==="
+# git runs the ssh command itself, and ssh opens the terminal on its own for a
+# host key, password or passphrase, so BatchMode must reach ssh's argv. The
+# stub records each argv and fails, as an unreachable host does.
+SSH_STUB="$TMP_ROOT/ssh-stub"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*" >>"$SSH_CAPTURE"' 'exit 255' >"$SSH_STUB"
+chmod +x "$SSH_STUB"
+
+ssh_verdict() { # SCRIPT SOURCE — SOURCE is env or config; prints ok or what was captured
+  local script="$1" source="$2" world capture captured line build_rc
+  local ssh_env=()
+  if ! world="$(mktemp -d "$TMP_ROOT/ssh.XXXXXX")"; then
+    printf 'mktemp-failed'
+    return
+  fi
+  capture="$world/ssh-args"
+  set +e
+  ( set -e
+    build_ahead "$world"
+    git -C "$world/work" remote set-url origin ssh://git@example.invalid/repo.git
+    if [[ "$source" == config ]]; then
+      git -C "$world/work" config core.sshCommand "$SSH_STUB -i fixture-key"
+    fi ) >/dev/null 2>&1
+  build_rc=$?
+  set -e
+  if [[ "$build_rc" -ne 0 ]]; then
+    printf 'build-failed:%s' "$build_rc"
+    return
+  fi
+  [[ "$source" != env ]] || ssh_env=("GIT_SSH_COMMAND=$SSH_STUB -i fixture-key")
+  (cd "$world/work" && env -u GIT_SSH_COMMAND -u DECISIONS_DIR -u DECISIONS_BASE_REF \
+    DECISIONS_DIR=docs/decisions SSH_CAPTURE="$capture" ${ssh_env[@]+"${ssh_env[@]}"} \
+    "$script" next-id) >/dev/null 2>&1 || true
+  captured=""
+  [[ ! -f "$capture" ]] || captured="$(<"$capture")"
+  if [[ -z "$captured" ]]; then
+    printf 'ssh-not-run'
+    return
+  fi
+  while IFS= read -r line; do
+    if [[ "$line" != "-i fixture-key "* || "$line" != *" -oBatchMode=yes "* ]]; then
+      printf 'argv: %s' "$line"
+      return
+    fi
+  done <<<"$captured"
+  printf 'ok'
+}
+
+for source in env config; do
+  verdict="$(ssh_verdict "$DECISIONS" "$source")"
+  if [[ "$verdict" == ok ]]; then
+    pass "ssh from $source keeps its arguments and gains BatchMode"
+  else
+    fail "ssh from $source keeps its arguments and gains BatchMode ($verdict)"
+  fi
+done
+
+# Columns: source, text to replace, its replacement, what the defect removes.
+while IFS='~' read -r source old new label; do
+  control_seq=$((control_seq + 1))
+  if ! mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/control-$control_seq/decisions" "$old" "$new" 1)"; then
+    fail "control $label could not be planted"
+    continue
+  fi
+  verdict="$(ssh_verdict "$mutant" "$source")"
+  if [[ "$verdict" != ok ]]; then
+    pass "$label fails ssh from $source"
+  else
+    fail "$label did not fail ssh from $source"
+  fi
+done <<'SSH_CONTROLS'
+env~  BASE_SSH_COMMAND="$BASE_SSH_COMMAND -oBatchMode=yes"~  BASE_SSH_COMMAND="$BASE_SSH_COMMAND"~an ssh command without BatchMode
+config~  BASE_SSH_COMMAND="$BASE_SSH_COMMAND -oBatchMode=yes"~  BASE_SSH_COMMAND="$BASE_SSH_COMMAND"~an ssh command without BatchMode
+env~  BASE_SSH_COMMAND="${GIT_SSH_COMMAND:-}"~  BASE_SSH_COMMAND=""~an inherited GIT_SSH_COMMAND that is dropped
+config~    BASE_SSH_COMMAND="$(git -C "$DECISIONS_DIR" config --get core.sshCommand)" || BASE_SSH_COMMAND=""~    BASE_SSH_COMMAND=""~a configured core.sshCommand that is dropped
+SSH_CONTROLS
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
