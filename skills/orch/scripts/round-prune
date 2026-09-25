@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# round-prune — at a dev round's start, reclaim the lane worktree's build output
+# when its disk is past the mark, and record what that freed in workflow state.
+#
+# Usage: round-prune [--state-dir DIR] ISSUE_ID
+#
+# The orchestrator runs it after `workflow-state new-round-id` and before the
+# delegation, so no validation run is in flight in the worktree: the prune
+# happens between rounds and a validation run deletes nothing. It reads the
+# item's worktree and round id from workflow state, and the use of the volume
+# holding the worktree's target/ from df. At or past ORCH_ROUND_PRUNE_DISK_PCT
+# (default 75) it runs
+#   worktree cleanup --targets-only --apply --worktree WORKTREE --owner ISSUE_ID
+# whose owner is the lease start-worktree claims for the item, so the whole of
+# the lane's build output goes, however recent. That bounds target/ across
+# rounds without tracking which artifact a run still reads. Below the mark it
+# prunes nothing, and the next validation run starts warm.
+#
+# Output: one line,
+#   round-prune: action=pruned|below-mark|failed used-pct=N mark-pct=N bytes=N round=ID worktree=PATH
+# and the same fields under .round_prunes[ROUND_ID] in workflow state. bytes is
+# the prune's own summary figure, 0 below the mark.
+#
+# Exit status: 0 pruned or below the mark; 1 the prune failed, recorded as
+# failed with the worktree CLI's records on stderr; 2 usage, state, setting or
+# disk read failure, with nothing recorded.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
+ORCH_ENV="$SCRIPT_DIR/orch-env"
+WORKTREE_BIN="${ORCH_WORKTREE_BIN:-$SCRIPT_DIR/../../worktree/scripts/worktree}"
+MARK_DEFAULT=75
+
+# Message text is centralized; callers supply the key and its value.
+message() { # KEY VALUE
+  printf 'round-prune: %s=%s\n' "$1" "$2"
+  case "$1" in
+  usage) printf '%s\n' 'Usage: round-prune [--state-dir DIR] ISSUE_ID' ;;
+  state) printf '%s\n' 'workflow state names no worktree or no dev_round_id for this item; run it after workflow-state new-round-id.' ;;
+  mark) printf '%s\n' 'ORCH_ROUND_PRUNE_DISK_PCT must be a whole percentage from 1 to 100.' ;;
+  disk) printf '%s\n' 'df could not report the use of the volume holding the worktree target, so the round cannot tell whether to prune.' ;;
+  prune) printf '%s\n' 'the owner-scoped prune did not complete; its records are above, and the round record says failed.' ;;
+  record) printf '%s\n' 'the prune result could not be written to workflow state.' ;;
+  esac
+}
+
+state_args=()
+case "${1:-}" in
+--help | -h)
+  sed -n '2,/^set -euo pipefail$/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'
+  exit 0
+  ;;
+--state-dir)
+  [[ $# -ge 2 ]] || { message usage "$*" >&2; exit 2; }
+  state_args=(--state-dir "$2")
+  shift 2
+  ;;
+esac
+[[ $# -eq 1 && -n "$1" ]] || { message usage "$*" >&2; exit 2; }
+issue="$1"
+
+state_get() { # JQ
+  "$WORKFLOW_STATE" ${state_args[@]+"${state_args[@]}"} get "$issue" "$1"
+}
+worktree="" round=""
+if ! worktree="$(state_get '.worktree // ""')" || ! round="$(state_get '.dev_round_id // ""')" ||
+  [[ -z "$worktree" || "$worktree" == null || -z "$round" || "$round" == null ]]; then
+  message state "$issue" >&2
+  exit 2
+fi
+
+mark=""
+mark="$("$ORCH_ENV" ORCH_ROUND_PRUNE_DISK_PCT "$MARK_DEFAULT")" || { message mark unreadable >&2; exit 2; }
+if ! [[ "$mark" =~ ^[0-9]{1,3}$ ]] || [[ "$((10#$mark))" -lt 1 || "$((10#$mark))" -gt 100 ]]; then
+  message mark "$mark" >&2
+  exit 2
+fi
+mark="$((10#$mark))"
+
+# The volume the next build writes to: target/ where it exists, which may be a
+# mount or a link of its own, and the worktree before the first build.
+probe="$worktree/target"
+[[ -d "$probe" ]] || probe="$worktree"
+df_out="" used=""
+df_out="$(df -P -- "$probe" 2>/dev/null)" || { message disk "$probe" >&2; exit 2; }
+used="$(awk 'NR == 2 { sub(/%$/, "", $5); print $5 }' <<<"$df_out")"
+[[ "$used" =~ ^[0-9]{1,3}$ ]] || { message disk "$probe" >&2; exit 2; }
+used="$((10#$used))"
+
+action=below-mark
+bytes=0
+if [[ "$used" -ge "$mark" ]]; then
+  report="" rc=0
+  report="$(cd "$worktree" && "$WORKTREE_BIN" cleanup --targets-only --apply --worktree "$worktree" --owner "$issue")" || rc=$?
+  [[ -z "$report" ]] || printf '%s\n' "$report" >&2
+  summary_bytes="$(sed -n 's/^worktree-output-prune-summary: .* mode=apply .* bytes=\([0-9][0-9]*\) .*$/\1/p' <<<"$report")"
+  if [[ "$rc" -eq 0 && "$summary_bytes" =~ ^[0-9]+$ ]]; then
+    action=pruned
+    bytes="$summary_bytes"
+  else
+    action=failed
+  fi
+fi
+
+if ! "$WORKFLOW_STATE" ${state_args[@]+"${state_args[@]}"} update "$issue" \
+  --arg round "$round" --arg action "$action" --argjson used "$used" --argjson mark "$mark" \
+  --argjson bytes "$bytes" \
+  '.round_prunes[$round] = {action: $action, used_pct: $used, mark_pct: $mark, bytes: $bytes}' >/dev/null; then
+  message record "$issue" >&2
+  exit 2
+fi
+printf 'round-prune: action=%s used-pct=%s mark-pct=%s bytes=%s round=%s worktree=%s\n' \
+  "$action" "$used" "$mark" "$bytes" "$round" "$worktree"
+if [[ "$action" == failed ]]; then
+  message prune "$worktree" >&2
+  exit 1
+fi
+exit 0

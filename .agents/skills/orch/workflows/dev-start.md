@@ -60,7 +60,7 @@ gh issue view [N] --json labels --jq '.labels[].name'
 
 Dev agents persist for the whole session — never shut one down here; only the caller's finalization step does.
 
-Before EVERY implementation delegation, including each group's delegation in bundled mode, run these three as separate tool calls:
+Before EVERY implementation delegation, including each group's delegation in bundled mode, run these four as separate tool calls; the last is the round-start prune, [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
@@ -72,6 +72,10 @@ Before EVERY implementation delegation, including each group's delegation in bun
 
 ```bash
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
+```
+
+```bash
+.agents/skills/orch/scripts/round-prune [ISSUE_ID]
 ```
 
 Then read the near-ceiling lines. Both templates below render one `Near-ceiling:` line per entry of this read, which the round-id stamp does not disturb; a first round on a fresh key reads `[]` and renders none.

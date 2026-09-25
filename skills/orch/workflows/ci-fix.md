@@ -70,7 +70,7 @@ git -C "[WORKTREE_PATH]" push
 
 Infer the agent from the component paths or issue labels. A test failure in concurrent code that passes locally is a flaky-test candidate — check the project's testing conventions (missing barriers, iteration-based waits, static mutable state) before treating it as a real regression.
 
-Stamp the round as separate tool calls immediately before delegating, and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
+Stamp the round as separate tool calls immediately before delegating, the last being the round-start prune, and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
@@ -78,6 +78,10 @@ Stamp the round as separate tool calls immediately before delegating, and arm th
 
 ```bash
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
+```
+
+```bash
+.agents/skills/orch/scripts/round-prune [ISSUE_ID]
 ```
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.

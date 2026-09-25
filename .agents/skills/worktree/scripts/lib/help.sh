@@ -349,12 +349,14 @@ print_cleanup_help() {
   cat <<'EOF'
 Usage: worktree cleanup [--stale] [--ttl-minutes N]
        worktree cleanup --targets-only [--apply] [--older-than-days N]
+       worktree cleanup --targets-only [--apply] --worktree PATH --owner ID
 
 Remove worktrees whose branch is already merged into origin/<default>.
 A worktree held by a session guard lease is never collected — not even one
 this session claimed — nor is a zero-commit worktree: a branch with no
 commits of its own is pending work, not merged work. Every skip is reported;
-a quiet cleanup means nothing was held back.
+a quiet cleanup means nothing was held back. The one exception is the
+owner-scoped prune below, and it removes build output, never a worktree.
 
 cleanup fetches origin, considers non-main registered worktrees, and proves
 each branch merged two ways: ancestry into origin/<default> (or the local
@@ -436,6 +438,16 @@ live process holds it; and when the unit is lock-free on a platform with no
 process inspection. It keeps the whole worktree when a session guard lease is
 present or HEAD moves mid-run.
 
+--worktree PATH --owner ID is the owner-scoped prune: the session holding a
+worktree's lease reclaims that one worktree's build output, for example before
+a round when its disk runs short. PATH must be a linked worktree of this
+repository. It runs under the lease when the lease owner is ID, claims the
+worktree for the delete as the sweep does when no lease is held, and refuses,
+exiting 1, when another owner's lease or a lock outside the guard holds it or
+HEAD moves mid-run. No retention window applies: output written a minute ago is
+pruned too, and a held build lock or a live holder still keeps a unit. The
+lease stays with its owner afterwards.
+
 --apply claims each worktree through the session guard for the duration of the
 delete and refuses outright when that guard is unavailable; the preview needs
 no lease because it writes nothing. Only this mode needs python3 and Unix
@@ -452,6 +464,9 @@ Options:
   --targets-only      Prune build output; keep the worktree and its branch.
   --apply             Delete what the preview listed. --targets-only only.
   --older-than-days N Keep output written within N days (default: 7).
+                      --targets-only only; not with --owner.
+  --worktree PATH     With --owner: prune this one worktree. --targets-only only.
+  --owner ID          With --worktree: the lease owner the prune acts for.
                       --targets-only only.
 EOF
 }

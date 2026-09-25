@@ -223,6 +223,8 @@ step() {
       age "$WT/.next"
       ;;
     claim) "$SESSION_GUARD" claim "$WT" --owner another-session >/dev/null ;;
+    # The lease the owner-scoped rows act for, as a lane's round claims it.
+    own-lease) "$SESSION_GUARD" claim "$WT" --owner KEN-1 >/dev/null ;;
     hold-lock)
       local await_marker="$ROOT/lock-held"
       flock -x "$WT/target/debug/.cargo-lock" -c "touch '$await_marker'; sleep 120" &
@@ -296,7 +298,8 @@ branch_state() {
 run() {
   local -a argv
   local rc=0
-  read -r -a argv <<<"$1"
+  local command="${1//@WT@/$WT}"
+  read -r -a argv <<<"${command//@MAIN@/$MAIN}"
   (cd "$MAIN" && env PATH="$ROW_PATH" ${ROW_ENV[@]+"${ROW_ENV[@]}"} \
     "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   printf 'rc=%s out=%s err=%s branch=%s left=%s' "$rc" \
@@ -366,6 +369,8 @@ out_text() {
     cargo-and-modules) report eligible preview debug release modules ;;
     empty) report eligible preview ;;
     cargo-apply) report pruned apply debug release ;;
+    owned-apply) printf '%s;' "$OWNED"; report pruned apply debug release ;;
+    owned-release-apply) printf '%s;' "$OWNED"; report pruned apply release ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }
@@ -410,6 +415,10 @@ err_text() {
     stale-rejected) printf 'worktree-cleanup-targets-lease-flag: --stale' ;;
     ttl-rejected) printf 'worktree-cleanup-targets-lease-flag: --ttl-minutes' ;;
     days-invalid) printf 'worktree-cleanup-days-invalid: 0' ;;
+    lease-foreign) printf 'worktree-output-prune-lease-foreign: worktree=<wt> owner=KEN-1' ;;
+    owner-pair) printf 'worktree-cleanup-targets-owner-pair: --worktree' ;;
+    owner-retention) printf 'worktree-cleanup-targets-owner-retention: --older-than-days' ;;
+    worktree-unknown) printf 'worktree-output-prune-worktree-unknown: <main>' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -430,8 +439,12 @@ CARGO_OUT='target,target/<triple>,target/<triple>/release,target/<triple>/releas
 # so a build waiting on one resumes against the same inode.
 CARGO_SHELL='target,target/<triple>,target/<triple>/release,target/<triple>/release/.cargo-lock,target/debug,target/debug/.cargo-lock'
 WIP='untracked-source.txt'
+OWNED='worktree-output-prune-lease-owned: worktree=<wt> owner=KEN-1'
 
 CARGO_TREE="$DOT,$CARGO_SRC,$BASE,$CARGO_OUT"
+CARGO_PRUNED="$DOT,$CARGO_SRC,$BASE,$CARGO_SHELL"
+# The release profile pruned to its lock, the debug profile whole.
+DEBUG_KEPT="$DOT,$CARGO_SRC,$BASE,target,target/<triple>,target/<triple>/release,target/<triple>/release/.cargo-lock,target/debug,target/debug/.cargo-lock,target/debug/deps,target/debug/deps/big.o"
 EXE_TREE="$DOT,$CARGO_SRC,$BASE,target,target/<triple>,target/<triple>/release,target/<triple>/release/.cargo-lock,target/<triple>/release/deps,target/<triple>/release/deps/big.o,target/debug,target/debug/.cargo-lock,target/debug/deps,target/debug/deps/big.o,target/debug/sleeper"
 JS_TREE="$DOT,$NEXT_OUT,$BASE,$MODULES_OUT,$JS_SRC"
 BOTH_TREE="$DOT,$NEXT_OUT,$CARGO_SRC,$BASE,$MODULES_OUT,$JS_SRC,$CARGO_OUT,$WIP"
@@ -504,6 +517,14 @@ a HEAD that moves mid-run deletes nothing|cargo tree cargo-out drift|cleanup --t
 --stale is refused in a mode that never releases a lease|cargo tree cargo-out|cleanup --targets-only --stale|1|-|stale-rejected|$CARGO_TREE
 --ttl-minutes is refused too, rather than accepted and ignored|cargo tree cargo-out|cleanup --targets-only --ttl-minutes 1|1|-|ttl-rejected|$CARGO_TREE
 a zero retention window is refused|cargo tree cargo-out|cleanup --targets-only --older-than-days 0|1|-|days-invalid|$CARGO_TREE
+the lease owner prunes its own worktree, output written just now included|cargo tree cargo-out fresh own-lease|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|0|owned-apply|-|$CARGO_PRUNED
+the sweep still skips a worktree whatever owner leased it|cargo tree cargo-out own-lease|cleanup --targets-only --apply|0|-|lease-held|$CARGO_TREE
+another owner's lease refuses the owner-scoped prune|cargo tree cargo-out claim|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|1|-|lease-foreign|$CARGO_TREE
+a held Cargo lock still keeps its profile under the owner's lease|cargo tree cargo-out fresh own-lease hold-lock|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|0|owned-release-apply|lock-held|$DEBUG_KEPT
+an unleased worktree is pruned for the owner that names it|cargo tree cargo-out fresh|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|0|cargo-apply|-|$CARGO_PRUNED
+--worktree without --owner is refused|cargo tree cargo-out|cleanup --targets-only --worktree @WT@|1|-|owner-pair|$CARGO_TREE
+a retention window is refused beside --owner|cargo tree cargo-out fresh|cleanup --targets-only --worktree @WT@ --owner KEN-1 --older-than-days 3|1|-|owner-retention|$CARGO_TREE
+the main checkout is not a worktree the owner-scoped prune takes|cargo tree cargo-out|cleanup --targets-only --apply --worktree @MAIN@ --owner KEN-1|1|-|worktree-unknown|$CARGO_TREE
 "
 
 echo "=== cleanup --targets-only ==="
@@ -572,6 +593,13 @@ run 'cleanup --targets-only --apply' >/dev/null
 LEASE_RC=0
 "$SESSION_GUARD" status "$WT" --repo "$MAIN" >/dev/null 2>&1 || LEASE_RC=$?
 assert_eq "$LEASE_RC" 3 'an applied prune leaves no lease behind'
+# The owner-scoped prune runs under the owner's lease and hands nothing back:
+# the round that asked for it still holds the worktree afterwards.
+build owned-lease-kept cargo tree cargo-out own-lease
+run 'cleanup --targets-only --apply --worktree @WT@ --owner KEN-1' >/dev/null
+LEASE_RC=0
+"$SESSION_GUARD" status "$WT" --owner KEN-1 --repo "$MAIN" >/dev/null 2>&1 || LEASE_RC=$?
+assert_eq "$LEASE_RC" 0 "an owner-scoped prune leaves the owner's lease held"
 
 # A scripts/ copy whose session guard cannot be run. The lease is the only
 # ownership check over this delete, so a guard that cannot answer is a refusal,

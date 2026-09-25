@@ -29,6 +29,7 @@ Exit status is this worktree's verdict:
 """
 import argparse
 import contextlib
+import math
 import os
 import shutil
 import stat
@@ -588,10 +589,12 @@ def hold_lock(stack: contextlib.ExitStack, unit: Unit) -> Optional[str]:
     return None
 
 
-def run(worktree: Path, head: str, older_than_days: int, apply_prune: bool) -> int:
+def run(worktree: Path, head: str, older_than_days: Optional[int], apply_prune: bool) -> int:
     if not head_unchanged(worktree, head):
         return HEAD_MOVED
-    cutoff = time.time() - older_than_days * 86400
+    # No retention window leaves no unit recent: every unit is aged, and only
+    # its lock, its holders and a change under the measurement can keep it.
+    cutoff = math.inf if older_than_days is None else time.time() - older_than_days * 86400
     aged: List[Unit] = []
     for unit in discover(worktree):
         measured = survey(unit, collect=False)
@@ -708,7 +711,9 @@ def main(argv: Tuple[str, ...]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worktree", required=True, type=Path)
     parser.add_argument("--head", required=True)
-    parser.add_argument("--older-than-days", required=True, type=positive_days)
+    retention = parser.add_mutually_exclusive_group(required=True)
+    retention.add_argument("--older-than-days", type=positive_days)
+    retention.add_argument("--no-retention", action="store_true")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     try:

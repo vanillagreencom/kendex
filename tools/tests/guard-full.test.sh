@@ -149,6 +149,12 @@ if [ "$*" = "fmt --check" ] && [ -n "${FMT_FULL_STREAM:-}" ]; then
   printf 'Diff in src/lib.rs:\n' && exit 1
   exit 0
 fi
+# A test run under CARGO_WRITE_UNIT leaves that source state's unit in the
+# target, as a build after a dependency change writes one under a new hash.
+if [ "$*" = "test --workspace --quiet" ] && [ -n "${CARGO_WRITE_UNIT:-}" ]; then
+  mkdir -p "$CARGO_TARGET_DIR/debug/deps"
+  printf 'unit\n' >"$CARGO_TARGET_DIR/debug/deps/unit-$CARGO_WRITE_UNIT.rlib"
+fi
 for t in ${CROSS_CHECK_FAIL:-}; do
   if [ "$*" = "check -p kendex-core -p kendex-cli --all-targets --target $t" ]; then
     exit 1
@@ -298,6 +304,26 @@ if [ -e /dev/full ]; then
 else
   echo "  skip  /dev/full is absent; the full-output fmt row did not run"
 fi
+
+# A full run deletes nothing from target/: the second of two runs leaves the
+# first run's superseded unit beside its own. What bounds target/ across rounds
+# is the round-start prune, outside every validation run, and
+# skills/orch/tests/round_prune.sh measures it across the same two runs.
+RUNS_TARGET="$TMP/two-runs/target"
+mkdir -p "$RUNS_TARGET/debug"
+: >"$RUNS_TARGET/debug/.cargo-lock"
+runs_units() { (cd "$RUNS_TARGET" && find . -name 'unit-*' | sed 's|.*/||' | sort | paste -s -d ',' -); }
+RUNS_SEEN="before=[$(runs_units)]"
+for unit in 1 2; do
+  : >"$DF_CALL_LOG"
+  run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
+    DF_FREE_KIB_START="$high_free_kib" DF_FREE_KIB_END="$high_free_kib" DU_KIB=0 DU_INCREMENTAL_KIB=0 \
+    RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TARGET_DIR="$RUNS_TARGET" CARGO_WRITE_UNIT="$unit"
+  RUNS_SEEN="$RUNS_SEEN rc$unit=$RC after$unit=[$(runs_units)]"
+done
+[ "$RUNS_SEEN" = "before=[] rc1=0 after1=[unit-1.rlib] rc2=0 after2=[unit-1.rlib,unit-2.rlib]" ] \
+  && ok "two full runs leave target/ holding both runs' units: the guard deletes nothing" \
+  || bad "two full runs leave target/ holding both runs' units: the guard deletes nothing" "$RUNS_SEEN out=$OUT"
 rm -f "$R/fake-bin/df" "$R/fake-bin/du"
 
 : >"$CARGO_CALL_LOG"
