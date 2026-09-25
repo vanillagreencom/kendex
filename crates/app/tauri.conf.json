@@ -50,7 +50,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["deb", "rpm", "appimage", "app", "dmg", "nsis"],
     "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
     "shortDescription": "Package manager for AI coding agents, skills, and hooks",

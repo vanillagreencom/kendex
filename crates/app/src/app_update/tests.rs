@@ -311,11 +311,10 @@ fn a_failed_app_half_says_whether_the_command_went_ahead_of_it() {
 /// the candidate list ends with a system path this machine may well have a
 /// kendex in.
 ///
-/// Unix only, because there is no command beside the app on Windows: the
-/// installer carries the app alone, so the name there only ever fails to
-/// exist and every lookup below would answer `Absent` — which the first
-/// assertion, a difference, would pass without reaching the exclusion it
-/// is about.
+/// Unix only, because the fixture writes the command under the unix name
+/// and the Windows search looks for `kendex.exe`: every lookup below would
+/// answer `Absent` there — which the first assertion, a difference, would
+/// pass without reaching the exclusion it is about.
 #[cfg(unix)]
 #[test]
 fn the_app_s_own_image_is_never_the_command_it_carries() {
@@ -406,8 +405,8 @@ fn a_recorded_command(dir: &tempfile::TempDir) -> (Env, std::ffi::OsString, Path
 /// beside this app is one nothing vouches for any more.
 ///
 /// Unix only, for the same reason: the second answer is a command found by
-/// name on `PATH` and vouched for by nobody, and Windows has no command
-/// beside the app to find.
+/// name on `PATH` and vouched for by nobody, and the fixture's name is not
+/// the one the Windows search looks for.
 #[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]

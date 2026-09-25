@@ -11,7 +11,7 @@ The headline install is the curl script. The rest are package-manager entries th
 | Arch (from source) | `yay -S kendex` | app + CLI | [`arch/kendex/`](arch/kendex/) |
 | Arch (latest commit) | `yay -S kendex-git` | app + CLI | [`arch/kendex-git/`](arch/kendex-git/) |
 | Arch (latest commit, CLI) | `yay -S kendex-cli-git` | CLI | [`arch/kendex-cli-git/`](arch/kendex-cli-git/) |
-| App bundles | download from the release | app | built by `release.yml` |
+| App bundles | download from the release | app + CLI | built by `release.yml` |
 
 The desktop app binary is named `kendex-app`, after its cargo package, and every channel that installs both keeps it off `PATH` (on Linux the AppImage or the plain `kendex-app` binary, on macOS the `.app` bundle) so the `kendex` command is the CLI. That name is also what a Linux launcher matches a running window against, which is why both the curl script and the Arch packages put `StartupWMClass=kendex-app` in the desktop entry they write.
 

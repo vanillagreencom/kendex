@@ -22,6 +22,7 @@ mod bundles_cli;
 mod catalog_check;
 mod cli;
 mod collection_cli;
+mod command_inside_the_app;
 mod command_record;
 mod commit_offer_cli;
 mod compat;

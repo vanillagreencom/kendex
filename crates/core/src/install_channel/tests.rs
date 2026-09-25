@@ -15,6 +15,8 @@ const PACKAGED_COMMAND: &str = "/usr/bin/kendex";
 #[derive(Default)]
 struct Fake {
     replaceable: Vec<String>,
+    /// Paths this machine would run.
+    commands: Vec<String>,
     owners: Vec<(String, String)>,
     on_path: Vec<String>,
     os_release: Option<String>,
@@ -38,6 +40,11 @@ impl Fake {
         self
     }
 
+    fn command(mut self, path: &str) -> Self {
+        self.commands.push(path.to_owned());
+        self
+    }
+
     fn os_release(mut self, text: &str) -> Self {
         self.os_release = Some(text.to_owned());
         self
@@ -50,10 +57,11 @@ impl Fake {
 }
 
 impl HostProbe for Fake {
-    /// Nothing routed through this fake asks; `for_app` and `for_cli`
-    /// judge a path they were handed rather than looking one up.
-    fn is_command(&self, _: &Path) -> bool {
-        false
+    /// Asked only about the app executable beside a `bin` directory;
+    /// `for_app` and `for_cli` judge the path they were handed rather
+    /// than looking one up.
+    fn is_command(&self, path: &Path) -> bool {
+        self.commands.iter().any(|p| Path::new(p) == path)
     }
 
     fn replaceable(&self, path: &Path) -> bool {
@@ -88,6 +96,12 @@ fn managed(manager: &str, command: &str) -> InstallChannel {
         manager: manager.to_owned(),
         command: command.to_owned(),
     }
+}
+
+/// A command installed on its own, the answer every layout below the
+/// app's tree gets.
+fn own(channel: InstallChannel) -> CommandChannel {
+    CommandChannel::OnItsOwn(channel)
 }
 
 /// Every Arch arm names the class rather than the helper it found, so the
@@ -346,7 +360,7 @@ fn a_brew_linked_cli_is_brews_to_upgrade_however_it_was_reached() {
         for reached in [linked, cellar] {
             assert_eq!(
                 for_cli(&probe.resolve(Path::new(reached)), &probe),
-                managed(HOMEBREW, "brew upgrade kendex-cli"),
+                own(managed(HOMEBREW, "brew upgrade kendex-cli")),
                 "{reached}"
             );
         }
@@ -461,6 +475,78 @@ fn for_cli_names_the_channel_of_each_binary_layout() {
         ),
     ];
     for (label, exe, probe, expected) in rows {
+        assert_eq!(for_cli(Path::new(exe), &probe), own(expected), "{label}");
+    }
+}
+
+/// One row per layout a `kendex` command can sit in relative to the
+/// desktop app, and whether it is the app's to move. The two layouts a
+/// downloadable installer produces are inside: the sidecar in a macOS
+/// bundle, judged by the bundle's shape alone, and `bin\kendex.exe` under
+/// the Windows install directory, judged by the app's own executable
+/// sitting beside that directory. Everything else is a command on its own,
+/// however writable: a `bin` with no app beside it, the app's executable
+/// beside a command that is not under `bin` (a cargo target directory
+/// holds both), a loose executable inside a bundle's `Resources`, and the
+/// package-owned `/usr/bin/kendex` the `.deb` and `.rpm` install, which
+/// stays the package manager's.
+#[test]
+fn a_command_inside_the_app_is_the_apps_to_move() {
+    let windows_bin = "C:/Users/pat/AppData/Local/kendex/bin/kendex.exe";
+    let windows_app = "C:/Users/pat/AppData/Local/kendex/kendex-app.exe";
+    let target_dir = "C:/src/kendex/target/release/kendex.exe";
+    let hand_bin = "C:/tools/bin/kendex.exe";
+    let rows: Vec<(&str, &str, Fake, CommandChannel)> = vec![
+        (
+            "the sidecar inside the macOS bundle",
+            "/Applications/kendex.app/Contents/MacOS/kendex",
+            Fake::default().replaceable("/Applications/kendex.app/Contents/MacOS/kendex"),
+            CommandChannel::InsideTheApp,
+        ),
+        (
+            "the sidecar of a cask bundle behind the Caskroom",
+            "/opt/homebrew/Caskroom/kendex/1.0.0/kendex.app/Contents/MacOS/kendex",
+            Fake::default(),
+            CommandChannel::InsideTheApp,
+        ),
+        (
+            "bin under the Windows install directory, the app beside it",
+            windows_bin,
+            Fake::default()
+                .command(windows_app)
+                .replaceable(windows_bin),
+            CommandChannel::InsideTheApp,
+        ),
+        (
+            "bin with no app beside it",
+            hand_bin,
+            Fake::default().replaceable(hand_bin),
+            own(InstallChannel::Direct),
+        ),
+        (
+            "a cargo target directory holding the app and the command",
+            target_dir,
+            Fake::default()
+                .command("C:/src/kendex/target/release/kendex-app.exe")
+                .replaceable(target_dir),
+            own(InstallChannel::Direct),
+        ),
+        (
+            "an executable under a bundle's Resources",
+            "/Applications/kendex.app/Contents/Resources/kendex",
+            Fake::default(),
+            own(InstallChannel::Unknown),
+        ),
+        (
+            "the command the .deb and .rpm install, on Debian",
+            PACKAGED_COMMAND,
+            Fake::default().os_release(DEBIAN),
+            own(InstallChannel::Unknown),
+        ),
+    ];
+    for (label, exe, probe, expected) in rows {
+        let inside = expected == CommandChannel::InsideTheApp;
+        assert_eq!(inside_the_app(Path::new(exe), &probe), inside, "{label}");
         assert_eq!(for_cli(Path::new(exe), &probe), expected, "{label}");
     }
 }
@@ -477,7 +563,9 @@ fn nothing_read_from_the_machine_reaches_a_command_string() {
         .os_release(hostile)
         .on_path("paru")
         .owned_by("/usr/bin/kendex; rm -rf /", "kendex");
-    let InstallChannel::Managed { manager, command } = for_cli(exe, &probe) else {
+    let CommandChannel::OnItsOwn(InstallChannel::Managed { manager, command }) =
+        for_cli(exe, &probe)
+    else {
         panic!("a package-owned path on Arch is Managed");
     };
     assert_eq!(command, "paru -S kendex");
@@ -497,7 +585,7 @@ fn nothing_read_from_the_machine_reaches_a_command_string() {
                     .on_path("paru")
                     .owned_by("/usr/bin/kendex", printed)
             ),
-            InstallChannel::Unknown,
+            own(InstallChannel::Unknown),
             "{printed:?}"
         );
     }
@@ -840,7 +928,7 @@ fn judged_path_hands_over_the_file_for_app_approved() {
 #[test]
 fn each_installer_is_named_as_itself() {
     let named = |channel| match channel {
-        InstallChannel::Managed { manager, .. } => manager,
+        CommandChannel::OnItsOwn(InstallChannel::Managed { manager, .. }) => manager,
         other => panic!("expected a managed channel, got {other:?}"),
     };
     let brew = Path::new("/opt/homebrew/Cellar/kendex-cli/5.0.1/bin/kendex");

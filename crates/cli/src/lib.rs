@@ -337,13 +337,23 @@ pub fn main() -> ExitCode {
 /// Nothing is said when it fails. This is opportunistic and every run pays
 /// for it; the command that needs the record is `kendex update`, and that
 /// one records the binary itself and reports when it cannot.
+///
+/// A command inside the desktop app records nothing: the record tells the
+/// app which file to carry across, and this one moves with the app.
+/// Recorded, the app would find its own sidecar and refuse it as a file
+/// with an owner, or replace it and split it from the bundle it is signed
+/// into.
 fn bootstrap_the_command_record(env: &Env) {
     let Ok(running) = std::env::current_exe() else {
         return;
     };
+    let running = Host.resolve(&running);
+    if kendex_core::install_channel::inside_the_app(&running, &Host) {
+        return;
+    }
     let _ = kendex_core::command_update::record_first_run_on(
         env,
-        &Host.resolve(&running),
+        &running,
         kendex_core::update_channel::UpdateChannel::for_version(env!("KENDEX_BUILD_VERSION")),
     );
 }

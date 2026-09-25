@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "../../target/bundle-cli/kendex.exe": "bin/kendex.exe"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "release/nsis-hooks.nsh"
+      }
+    }
+  }
+}

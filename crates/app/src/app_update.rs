@@ -244,9 +244,10 @@ fn read_published(
 
 /// The `kendex` command this app would carry across with it, if there is
 /// one. `install.sh` puts the two side by side, so an app that moved alone
-/// would leave every terminal on the old release; a dmg or msi that
-/// installed no command has nothing to carry, which is an answer rather
-/// than a failure.
+/// would leave every terminal on the old release; a machine with no command
+/// beside the app has nothing to carry, and one whose command sits inside
+/// the app moves it with the app half, which is an answer rather than a
+/// failure either way.
 fn command_beside(
     env: &Env,
     install: &AppInstall,

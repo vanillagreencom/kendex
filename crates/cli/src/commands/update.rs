@@ -7,7 +7,7 @@ use kendex_core::command_update::{
     replace_executable,
 };
 use kendex_core::env::Env;
-use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
+use kendex_core::install_channel::{CommandChannel, Host, HostProbe, InstallChannel, for_cli};
 use kendex_core::release_digests::ReleaseDigests;
 use kendex_core::update_channel::UpdateChannel;
 use kendex_core::update_feed::{
@@ -34,6 +34,11 @@ pub fn release_main_build(args: ReleaseMainBuildArgs) -> CliResult {
     Ok(())
 }
 
+/// The one line a command inside the desktop app says. Fixed text and an
+/// exit of zero, like a package-managed install: the run has said whose
+/// bytes these are and where they move, which is not a failure.
+const INSIDE_THE_APP: &str = "this command is part of the kendex desktop app and updates with it; open kendex and press Update now";
+
 /// The release feed is parsed by core so the CLI and app accept one schema,
 /// and core picks which feed off the running version so both shells follow
 /// one channel — the override rule included.
@@ -52,7 +57,17 @@ pub fn run(env: &Env, force: bool, git: bool) -> CliResult {
     // this is has to be the path that gets written, or a command reached
     // through a link is judged by its target and replaced at the link.
     let current_exe = Host.resolve(&std::env::current_exe()?);
-    let channel = for_cli(&current_exe, &Host);
+    // A command inside the desktop app is answered here, ahead of the
+    // record and the feed: the app replaces the two together, and a run
+    // that recorded or fetched anything first would have started a
+    // family update on bytes it is about to refuse to touch.
+    let channel = match for_cli(&current_exe, &Host) {
+        CommandChannel::InsideTheApp => {
+            out(INSIDE_THE_APP);
+            return Ok(());
+        }
+        CommandChannel::OnItsOwn(channel) => channel,
+    };
     let update_channel = update_channel(git);
     run_on_channel(
         env,

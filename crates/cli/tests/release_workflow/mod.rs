@@ -241,18 +241,21 @@ struct Lane {
 
 /// A hand-maintained model of what a full tag run hands the staging step:
 /// Tauri 2 bundle names for `productName: kendex` at version 5.1.0 with
-/// `createUpdaterArtifacts` on. Tauri signs AppImage, deb, rpm, NSIS, and
-/// MSI packages, plus the macOS `.app.tar.gz` it tars from the `.app`. A
-/// lane therefore offers the staging step several signatures, but only one
-/// belongs in the manifest. Both Apple lanes name their archive
-/// identically, which is what the staging step's rename is for.
+/// `createUpdaterArtifacts` on, the app binary named `kendex-app` after
+/// its cargo package, and the command carried as the macOS sidecar. Tauri
+/// signs AppImage, deb, rpm and NSIS packages, plus the macOS `.app.tar.gz`
+/// it tars from the `.app`. A lane therefore offers the staging step
+/// several signatures, but only one belongs in the manifest. Both Apple
+/// lanes name their archive identically, which is what the staging step's
+/// rename is for. No lane builds an `.msi`: `bundle.targets` in
+/// `tauri.conf.json` leaves it out.
 const LANES: [Lane; 5] = [
     Lane {
         platform: "linux-x86_64",
         target: "x86_64-unknown-linux-gnu",
         runner_os: "Linux",
         bundle: &[
-            "appimage/kendex.AppDir/usr/bin/kendex",
+            "appimage/kendex.AppDir/usr/bin/kendex-app",
             "appimage/kendex_5.1.0_amd64.AppImage",
             "appimage/kendex_5.1.0_amd64.AppImage.sig",
             "deb/kendex_5.1.0_amd64.deb",
@@ -266,7 +269,7 @@ const LANES: [Lane; 5] = [
         target: "aarch64-unknown-linux-gnu",
         runner_os: "Linux",
         bundle: &[
-            "appimage/kendex.AppDir/usr/bin/kendex",
+            "appimage/kendex.AppDir/usr/bin/kendex-app",
             "appimage/kendex_5.1.0_aarch64.AppImage",
             "appimage/kendex_5.1.0_aarch64.AppImage.sig",
             "deb/kendex_5.1.0_arm64.deb",
@@ -281,6 +284,7 @@ const LANES: [Lane; 5] = [
         runner_os: "macOS",
         bundle: &[
             "dmg/kendex_5.1.0_x64.dmg",
+            "macos/kendex.app/Contents/MacOS/kendex-app",
             "macos/kendex.app/Contents/MacOS/kendex",
             "macos/kendex.app.tar.gz",
             "macos/kendex.app.tar.gz.sig",
@@ -292,6 +296,7 @@ const LANES: [Lane; 5] = [
         runner_os: "macOS",
         bundle: &[
             "dmg/kendex_5.1.0_aarch64.dmg",
+            "macos/kendex.app/Contents/MacOS/kendex-app",
             "macos/kendex.app/Contents/MacOS/kendex",
             "macos/kendex.app.tar.gz",
             "macos/kendex.app.tar.gz.sig",
@@ -302,8 +307,6 @@ const LANES: [Lane; 5] = [
         target: "x86_64-pc-windows-msvc",
         runner_os: "Windows",
         bundle: &[
-            "msi/kendex_5.1.0_x64_en-US.msi",
-            "msi/kendex_5.1.0_x64_en-US.msi.sig",
             "nsis/kendex_5.1.0_x64-setup.exe",
             "nsis/kendex_5.1.0_x64-setup.exe.sig",
         ],
@@ -625,6 +628,168 @@ fn every_lane_the_staging_step_stages_reaches_the_manifest() {
             "{platform} carries another lane's signature: {entry}"
         );
     }
+}
+
+/// The `.msi` is not built, so a staging glob for one would stage nothing
+/// today and, the day a config change brought it back, a second signed
+/// Windows artifact the manifest step would take for the setup. The
+/// bundle-target list that leaves it out is `crates/app/tests/tauri_config.rs`'s.
+#[test]
+fn no_step_stages_an_msi() {
+    let workflow = workflow();
+    for line in step(&workflow, "name: Stage release assets") {
+        assert!(!line.contains("msi"), "{}", line.trim());
+    }
+}
+
+/// Where the command a lane staged for its bundle lands, per the overlay
+/// `tauri build --config` reads. Every path is relative to `crates/app`,
+/// the directory `tauri build` runs in.
+fn overlay_command_sources(overlay: &serde_json::Value, lane: &Lane) -> Vec<String> {
+    let ext = if lane.runner_os == "Windows" {
+        ".exe"
+    } else {
+        ""
+    };
+    let mut sources = Vec::new();
+    // Tauri's sidecar rule: `externalBin` names `<path>`, and the file it
+    // reads is `<path>-<triple>[.exe]`.
+    if let Some(bins) = overlay["bundle"]["externalBin"].as_array() {
+        for bin in bins {
+            let bin = bin.as_str().unwrap_or_default();
+            sources.push(format!("{bin}-{}{ext}", lane.target));
+        }
+    }
+    // A resources map is source to destination; the two Linux file maps
+    // are destination to source.
+    if let Some(map) = overlay["bundle"]["resources"].as_object() {
+        sources.extend(map.keys().cloned());
+    }
+    for package in ["deb", "rpm"] {
+        if let Some(map) = overlay["bundle"]["linux"][package]["files"].as_object() {
+            sources.extend(
+                map.values()
+                    .map(|source| source.as_str().unwrap_or_default().to_owned()),
+            );
+        }
+    }
+    sources
+}
+
+/// The overlay a lane's bundle step reads names the file the lane's
+/// staging step wrote, and nothing else: the two are one contract in two
+/// halves, one in YAML and one in JSON, and only a tag run joins them.
+/// Here the real staging script runs for each lane over a tree holding
+/// the command that lane built, the overlay it exported is read the way
+/// the bundle step reads it, and every command source the overlay names
+/// has to be a file that staging left behind. A lane's overlay naming no
+/// command at all bundles the app alone and passes every other check, so
+/// the extractor is floored at one source per lane.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn every_lane_stages_the_command_where_its_overlay_reads_it() {
+    let workflow = workflow();
+    let bundle_line = workflow
+        .lines()
+        .find(|l| !l.trim_start().starts_with('#') && l.contains("tauri build"))
+        .unwrap();
+    assert!(
+        bundle_line.contains("--config \"$KENDEX_BUNDLE_OVERLAY\""),
+        "the bundle step does not read the overlay staging exported: {bundle_line}"
+    );
+    let overlays_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../app");
+    let mut read: Vec<String> = Vec::new();
+    for lane in &LANES {
+        let dir = tempfile::tempdir().unwrap();
+        let root = rooted(&dir);
+        let out = root.join("target").join(lane.target).join("release");
+        fs::create_dir_all(&out).unwrap();
+        let ext = if lane.runner_os == "Windows" {
+            ".exe"
+        } else {
+            ""
+        };
+        fs::write(out.join(format!("kendex{ext}")), lane.target).unwrap();
+        let github_env = root.join("github.env");
+        let script = expand(
+            &run_script(&step(&workflow, "name: Stage the command for the bundle")),
+            lane,
+        );
+        let run = std::process::Command::new("bash")
+            .args(["-eo", "pipefail", "-c", &script])
+            .current_dir(&root)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("GITHUB_ENV", &github_env)
+            .output()
+            .unwrap();
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "{} failed to stage the command: {}",
+            lane.target,
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let exported = fs::read_to_string(&github_env).unwrap();
+        let overlay = exported
+            .lines()
+            .find_map(|l| l.strip_prefix("KENDEX_BUNDLE_OVERLAY="))
+            .unwrap_or_else(|| panic!("{} exported no overlay: {exported}", lane.target));
+        let overlay_file = overlays_dir.join(overlay);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&overlay_file).unwrap_or_else(|error| {
+                panic!(
+                    "{} names {}, which cannot be read: {error}",
+                    lane.target, overlay
+                )
+            }))
+            .unwrap();
+        let sources = overlay_command_sources(&parsed, lane);
+        assert!(
+            !sources.is_empty(),
+            "overlay_command_sources found no command in {overlay}, so it is broken or the overlay bundles the app alone"
+        );
+        for source in sources {
+            // Resolved the way tauri resolves it: from `crates/app`.
+            let staged = root.join("crates/app").join(&source);
+            let staged = normalized(&staged);
+            assert!(
+                staged.is_file(),
+                "{}: {overlay} reads {source}, and staging left no file at {}",
+                lane.target,
+                staged.display()
+            );
+        }
+        read.push(overlay.to_owned());
+    }
+    // Every overlay in the tree is one some lane reads; one nothing reads
+    // is a mechanism no release carries.
+    let mut on_disk: Vec<String> = fs::read_dir(overlays_dir.join("release"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".json"))
+        .map(|name| format!("release/{name}"))
+        .collect();
+    on_disk.sort();
+    read.sort();
+    read.dedup();
+    assert_eq!(read, on_disk);
+}
+
+/// A path with its `..` components folded, without touching the disk, so a
+/// file that is not there is reported at the name it would have had.
+fn normalized(path: &Path) -> std::path::PathBuf {
+    let mut out = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// A lane the matrix gains with no fixture here publishes a platform

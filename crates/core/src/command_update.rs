@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use semver::Version;
 
-use crate::install_channel::{HostProbe, InstallChannel, package_owner};
+use crate::install_channel::{HostProbe, InstallChannel, inside_the_app, package_owner};
 use crate::process::Hardened;
 use crate::release_digests::{ReleaseDigests, release_digests_url};
 use crate::update_channel::UpdateChannel;
@@ -46,9 +46,9 @@ pub use record::{
     recorded_command,
 };
 
-/// What `install.sh` installs the command as. Windows has no command
-/// beside the app — the installer carries the app alone — so the name
-/// there only ever fails to exist.
+/// What an installer puts the command on `PATH` as: `install.sh` on Linux
+/// and macOS, and on Windows the setup's `bin\kendex.exe`, which the search
+/// finds there and judges as the app's own.
 #[cfg(windows)]
 const COMMAND_NAME: &str = "kendex.exe";
 #[cfg(not(windows))]
@@ -75,8 +75,13 @@ pub enum CommandBeside {
     /// the privilege, and saying "not ours" here would name no owner and
     /// offer no way out of a state a single command fixes.
     NeedsPrivilege(PathBuf),
-    /// No `kendex` command beside the app — a dmg or msi install, where
-    /// the app is the whole install. An answer, not a failure.
+    /// The command a downloadable installer put inside the app itself,
+    /// which the app's updater replaces together with the app. Nothing to
+    /// carry and nothing to say: it moves when the app moves.
+    InsideTheApp,
+    /// No `kendex` command beside the app — a dmg install with nothing
+    /// linked out of the bundle, or a machine that never had one. An
+    /// answer, not a failure.
     Absent,
 }
 
@@ -180,6 +185,13 @@ pub fn command_beside_app(
         if running.contains(&resolved) {
             continue;
         }
+        // The app's own tree is asked about first: a command inside it is
+        // this app's to replace with itself, whatever any record says, and
+        // the search stops on it rather than passing over it to a second
+        // copy nobody runs.
+        if inside_the_app(&resolved, probe) {
+            return CommandBeside::InsideTheApp;
+        }
         // Asked before the record, because a package manager's copy has an
         // owner worth naming and no record of ours changes whose bytes
         // those are.
@@ -218,7 +230,8 @@ pub fn command_beside_app(
 ///
 /// Every other `beside` leaves the command where it is, `NeedsPrivilege`
 /// included: the app cannot write that directory, and the card named it
-/// before Update now was pressed.
+/// before Update now was pressed. A command inside the app is left to the
+/// app half, which replaces the whole install it sits in.
 pub fn bring_command_across(
     beside: &CommandBeside,
     feed_url: &str,
@@ -232,7 +245,10 @@ pub fn bring_command_across(
             return Ok(CommandHalf::Untouched);
         }
         CommandBeside::Ours(path) | CommandBeside::Main(path) => path,
-        CommandBeside::NotOurs(_) | CommandBeside::NeedsPrivilege(_) | CommandBeside::Absent => {
+        CommandBeside::NotOurs(_)
+        | CommandBeside::NeedsPrivilege(_)
+        | CommandBeside::InsideTheApp
+        | CommandBeside::Absent => {
             return Ok(CommandHalf::Untouched);
         }
     };

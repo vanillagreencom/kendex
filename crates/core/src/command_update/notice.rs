@@ -82,8 +82,9 @@ const DOWNLOAD_PAGE: &str = "https://kendex.ai/download";
 
 /// Whether this platform has an installer to re-run. `install.sh` takes
 /// Linux and macOS and rejects everything else by name, and Windows has no
-/// installer of its own — a `kendex.exe` is downloaded from the release —
-/// so a pipeline offered there is an instruction that cannot be followed.
+/// script of its own — the setup carries its command inside the app, and
+/// a loose `kendex.exe` is downloaded from the release — so a pipeline
+/// offered there is an instruction that cannot be followed.
 const HAS_INSTALLER: bool = !cfg!(windows);
 
 impl CommandNotice {
@@ -98,7 +99,12 @@ impl CommandNotice {
     /// test comes through [`Self::for_card`], which asks the platform.
     pub(crate) fn for_card_where(beside: &CommandBeside, installer: bool) -> Option<Self> {
         match beside {
-            CommandBeside::Ours(_) | CommandBeside::Main(_) | CommandBeside::Absent => None,
+            // Inside the app is the app's to carry, the way `Ours` is:
+            // the app half replaces the tree it sits in.
+            CommandBeside::Ours(_)
+            | CommandBeside::Main(_)
+            | CommandBeside::InsideTheApp
+            | CommandBeside::Absent => None,
             CommandBeside::NeedsPrivilege(path) => {
                 let path = shown(&path.display().to_string());
                 Some(match installer {

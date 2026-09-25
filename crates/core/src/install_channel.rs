@@ -286,13 +286,68 @@ pub fn for_app(install: &AppInstall, probe: &dyn HostProbe) -> InstallChannel {
     }
 }
 
+/// Who moves the running `kendex` command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandChannel {
+    /// A downloadable installer put the command inside the desktop app,
+    /// and the app's updater replaces the two together. Rewriting the
+    /// command on its own splits it from the app, and inside a signed
+    /// macOS bundle breaks the signature the app was notarized under.
+    InsideTheApp,
+    /// A command installed on its own; the channel says whose it is.
+    OnItsOwn(InstallChannel),
+}
+
+/// The desktop app's executable on Windows, named after its cargo package
+/// the way every bundle names it. The NSIS setup writes it at the root of
+/// the install directory, one level above the `bin` it puts the command in.
+const WINDOWS_APP_EXECUTABLE: &str = "kendex-app.exe";
+
+/// Whether `exe` is the command a downloadable installer put inside the
+/// desktop app. Two layouts, one per platform that ships such an
+/// installer, read off the path's shape the way [`bundle_root`] reads a
+/// bundle:
+///
+/// - macOS: `<name>.app/Contents/MacOS/kendex`, the sidecar the bundler
+///   signs and notarizes with the app;
+/// - Windows: `<install dir>\bin\kendex.exe`, where the install directory
+///   holds the app's own executable.
+///
+/// `probe` answers the one fact the shape alone cannot: a `bin\kendex.exe`
+/// is any command someone put under a `bin` directory until the app's
+/// executable is found beside that directory. Linux is never inside: the
+/// `.deb` and `.rpm` install the command at `/usr/bin/kendex`, which the
+/// system-prefix rule already reads as the package manager's.
+///
+/// This is the one judge of the question. [`for_cli`] folds it into the
+/// command's channel, the app's command search stops on it, and the
+/// first-run record skips it; every site reads the answer from here.
+pub fn inside_the_app(exe: &Path, probe: &dyn HostProbe) -> bool {
+    if bundle_root(exe).is_some() {
+        return true;
+    }
+    let Some(bin) = exe.parent() else {
+        return false;
+    };
+    let Some(install_dir) = bin.parent() else {
+        return false;
+    };
+    bin.file_name().is_some_and(|name| name == "bin")
+        && probe.is_command(&install_dir.join(WINDOWS_APP_EXECUTABLE))
+}
+
 /// The channel the running `kendex` command installed through.
 ///
 /// `exe` is already resolved — [`HostProbe::resolve`] is the caller's to
 /// call, once, on the path it will also write to. Resolving here instead
 /// would decide about the file while the caller still held the link.
-pub fn for_cli(exe: &Path, probe: &dyn HostProbe) -> InstallChannel {
-    package_owner(exe, probe).unwrap_or_else(|| replaceable_or_unknown(exe, probe))
+pub fn for_cli(exe: &Path, probe: &dyn HostProbe) -> CommandChannel {
+    if inside_the_app(exe, probe) {
+        return CommandChannel::InsideTheApp;
+    }
+    CommandChannel::OnItsOwn(
+        package_owner(exe, probe).unwrap_or_else(|| replaceable_or_unknown(exe, probe)),
+    )
 }
 
 /// The package manager whose prefix `exe` sits under, where one does.

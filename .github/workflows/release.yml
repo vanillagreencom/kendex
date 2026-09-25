@@ -66,7 +66,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
-            librsvg2-dev patchelf libxdo-dev xdg-utils
+            librsvg2-dev patchelf libxdo-dev xdg-utils libarchive-tools
         shell: bash
       - run: npm ci --prefix ui
         shell: bash
@@ -119,8 +119,35 @@ jobs:
             echo "APPLE_API_KEY=$KEY_ID"
             echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8"
           } >> "$GITHUB_ENV"
+      # The command the lane just built goes into this lane's installers:
+      # the .deb and .rpm install it at /usr/bin/kendex, the macOS bundle
+      # carries it as the sidecar Contents/MacOS/kendex, signed and
+      # notarized with the app, and the Windows setup installs it as
+      # bin\kendex.exe under the install directory and puts that directory
+      # on the user PATH. Each platform's mechanism is its overlay under
+      # crates/app/release/, passed to `tauri build --config` below and
+      # kept out of tauri.conf.json: tauri-build copies externalBin and
+      # resources at compile time, so a key in the base config would make
+      # every plain `cargo build -p kendex-app` need a staged command.
+      #
+      # The overlays name the staged file under target/bundle-cli, one
+      # spelling per mechanism: tauri's sidecar rule looks for
+      # `<name>-<triple>`, and its two file maps take the path as written.
+      - name: Stage the command for the bundle
+        run: |
+          ext=""
+          [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          case "${{ runner.os }}" in
+            macOS) staged="target/bundle-cli/kendex-${{ matrix.target }}" ;;
+            Linux | Windows) staged="target/bundle-cli/kendex${ext}" ;;
+            *) echo "::error::No overlay bundles the command on ${{ runner.os }}."; exit 1 ;;
+          esac
+          mkdir -p target/bundle-cli
+          cp "target/${{ matrix.target }}/release/kendex${ext}" "$staged"
+          echo "KENDEX_BUNDLE_OVERLAY=release/$(echo '${{ runner.os }}' | tr '[:upper:]' '[:lower:]').json" >> "$GITHUB_ENV"
+        shell: bash
       - name: Bundle the desktop app
-        run: cd crates/app && ../../ui/node_modules/.bin/tauri build --target ${{ matrix.target }}
+        run: cd crates/app && ../../ui/node_modules/.bin/tauri build --target ${{ matrix.target }} --config "$KENDEX_BUNDLE_OVERLAY"
         shell: bash
         env:
           # Required: every lane bundles an updater-enabled target, so
@@ -131,6 +158,23 @@ jobs:
           # from the staging step above via GITHUB_ENV, only when the
           # secrets exist. APPLE_API_KEY there is the key ID in tauri's
           # vocabulary; the .p8 content travels by APPLE_API_KEY_PATH.
+      # Every installer this lane built carries a working command, and it
+      # answers the version the lane's own command answers, before any of
+      # them is staged for the release. An installer that lost the command
+      # is a download that installs the app alone, which is the state the
+      # overlays exist to end, and nothing after this step would notice.
+      - name: Check each installer carries the command
+        if: runner.os != 'Windows'
+        run: tools/release-installer-check "${{ matrix.target }}" "target/${{ matrix.target }}/release"
+        shell: bash
+      # The Windows check installs the setup for real: silently, into a
+      # directory of its own, then uninstalls it. That is the only way to
+      # reach what the setup does beyond copying files — the PATH entry its
+      # hooks write, as REG_EXPAND_SZ, and take away again.
+      - name: Check the Windows setup installs and removes the command
+        if: runner.os == 'Windows'
+        run: tools/release-installer-check.ps1 -Target "${{ matrix.target }}" -Out "target/${{ matrix.target }}/release"
+        shell: pwsh
       - name: Stage release assets
         run: |
           mkdir -p dist
@@ -140,7 +184,7 @@ jobs:
           cp "${out}/kendex${ext}" "dist/kendex-${{ matrix.target }}${ext}"
           find "${out}/bundle" -type f \
             \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
-               -o -name '*.dmg' -o -name '*-setup.exe' -o -name '*.msi' \
+               -o -name '*.dmg' -o -name '*-setup.exe' \
                -o -name '*.AppImage.sig' -o -name '*-setup.exe.sig' \) \
             -exec cp {} dist/ \;
           # Tauri names the macOS updater archive after the app alone, so

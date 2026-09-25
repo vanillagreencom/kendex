@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+# release-installer-check — every installer one release lane built carries
+# a working kendex command, and that command answers the version the lane's
+# own command answers.
+#
+# The .deb and .rpm install the command at /usr/bin/kendex; the macOS app,
+# its dmg and its .app.tar.gz updater archive carry it as the sidecar
+# Contents/MacOS/kendex. An installer that lost it is a download that
+# installs the app alone, and nothing after the bundle step would notice.
+# The Windows setup is checked by release-installer-check.ps1 beside this
+# script, which installs it for real.
+#
+# usage: tools/release-installer-check TARGET OUT
+#
+#   TARGET  the Rust target triple this lane built
+#   OUT     the lane's output directory, target/<triple>/release: the command
+#           at OUT/kendex and the bundles under OUT/bundle
+#
+# Each installer is taken apart into a directory of its own and the command
+# inside it is run with --version; the answer has to be the line OUT/kendex
+# answers. Every installer this lane's target produces is required, and one
+# that is missing is a refusal: a bundle step that stopped making one would
+# otherwise pass here by producing nothing to check.
+#
+# A refusal prints two lines to stderr and exits 1. The first is the stable
+# `release-installer-check: <key>=<value>`, where the key names the condition
+# and the value is the path, the pattern or the answer the reader acts on.
+# The second is one `::error::` GitHub Actions annotation carrying the
+# English: the workflow-command grammar ends an annotation at the newline, so
+# that text is one line, and it is the line the release job surfaces.
+# message_text is the only place a key's English lives. A check that passes
+# prints one `checked=<installer>` line per installer to stdout. An unsigned
+# macOS build prints `unsigned=<app>` and skips the signature checks: no
+# APPLE_* secrets is a build the workflow allows, not a dependency that
+# failed.
+set -euo pipefail
+
+message_text() { # KEY VALUE [EXTRA...] — the English for one key, one line
+  case "$1" in
+    usage)
+      printf 'usage: tools/release-installer-check TARGET OUT\n' ;;
+    not-a-directory)
+      printf '%s is not a directory, so this lane built nothing to check.\n' "$2" ;;
+    no-command)
+      printf '%s is not a command this lane built, so there is no version to hold the installers to.\n' "$2" ;;
+    version-unreadable)
+      printf '%s did not answer --version, so nothing here can say what this release was built as.\n' "$2" ;;
+    target)
+      printf "'%s' is not a target this release builds; add it here and to the release matrix together.\n" "$2" ;;
+    tool)
+      printf '%s is not on PATH, and this check takes installers apart with it.\n' "$2" ;;
+    missing)
+      printf '%s holds no file matching %s; this lane stopped building that installer.\n' "$3" "$2" ;;
+    ambiguous)
+      printf '%s holds more than one file matching %s (%s and %s); this lane cannot say which one it built.\n' "$3" "$2" "$4" "$5" ;;
+    extract)
+      printf '%s could not be taken apart, so what it installs is unknown.\n' "$2" ;;
+    absent)
+      printf '%s installs no kendex command at %s; the download would install the app alone.\n' "$2" "$3" ;;
+    unrunnable)
+      printf 'the kendex command inside %s does not run (%s); an install from it would have a command that fails on first use.\n' "$2" "$3" ;;
+    version-mismatch)
+      printf 'the kendex command inside %s answers "%s" and the command this lane built answers "%s"; the installer carries another build.\n' "$2" "$3" "$4" ;;
+    signature)
+      printf '%s carries a signature the sidecar does not check out under, so the notarized app would refuse to run its command.\n' "$2" ;;
+    *)
+      printf 'no explanation is defined for this key: tools/release-installer-check is broken.\n' ;;
+  esac
+}
+emit() { # KEY VALUE [EXTRA...] — the keyed line, then its annotation
+  printf 'release-installer-check: %s=%s\n' "$1" "$2" >&2
+  printf '::error::%s\n' "$(message_text "$@")" >&2
+}
+die() { # KEY VALUE [EXTRA...] — nothing further is checked
+  emit "$@"
+  exit 1
+}
+need() { # TOOL — refuse before any installer is opened without it
+  command -v "$1" >/dev/null 2>&1 || die tool "$1"
+}
+
+[ "$#" -eq 2 ] || die usage "$#"
+target=$1
+out=$2
+
+[ -d "$out" ] || die not-a-directory "$out"
+built="$out/kendex"
+[ -x "$built" ] || die no-command "$built"
+expected=$("$built" --version) || die version-unreadable "$built"
+
+TMP=$(mktemp -d)
+trap 'rm -rf -- "${TMP:?}"' EXIT
+
+# Exactly one match or none: two debs under the bundle directory is a lane
+# that built another release's package beside its own, and checking either
+# says nothing about the download a person gets. The pattern is what a
+# refusal names, because it is what the bundle step has to satisfy.
+only_match() { # DIR PATTERN — the one file under DIR matching it
+  local dir=$1 pattern=$2 candidate found=""
+  for candidate in "$dir"/$pattern; do
+    [ -f "$candidate" ] || continue
+    [ -z "$found" ] || die ambiguous "$pattern" "$dir" "$found" "$candidate"
+    found=$candidate
+  done
+  [ -n "$found" ] || die missing "$pattern" "$dir"
+  printf '%s' "$found"
+}
+
+# The command at COMMAND, taken out of INSTALLER, answers what the built
+# command answers. Run with a clean environment: the version is baked in,
+# and a command that only runs with the build host's environment is one an
+# install cannot rely on.
+answers() { # INSTALLER COMMAND
+  local installer=$1 command=$2 answer
+  [ -f "$command" ] || die absent "$installer" "$command"
+  answer=$(env -i PATH="$PATH" "$command" --version 2>"$TMP/stderr") ||
+    die unrunnable "$installer" "$(tr '\n' ' ' <"$TMP/stderr")"
+  [ "$answer" = "$expected" ] || die version-mismatch "$installer" "$answer" "$expected"
+  printf 'checked=%s\n' "$installer"
+}
+
+# A directory of its own per installer, so one that installs the command
+# at the wrong path cannot pass on another's file.
+opened() { # NAME — an empty directory under TMP
+  local dir="$TMP/$1"
+  mkdir -p "$dir"
+  printf '%s' "$dir"
+}
+
+check_deb() {
+  local deb dir
+  deb=$(only_match "$out/bundle/deb" "*.deb")
+  dir=$(opened deb)
+  # A deb is an ar archive holding the data tarball; bsdtar reads both.
+  bsdtar -xf "$deb" -C "$dir" 2>/dev/null || die extract "$deb"
+  mkdir -p "$dir/root"
+  bsdtar -xf "$dir"/data.tar.* -C "$dir/root" 2>/dev/null || die extract "$deb"
+  answers "$deb" "$dir/root/usr/bin/kendex"
+}
+
+check_rpm() {
+  local rpm dir
+  rpm=$(only_match "$out/bundle/rpm" "*.rpm")
+  dir=$(opened rpm)
+  # bsdtar reads the cpio payload through the rpm header.
+  bsdtar -xf "$rpm" -C "$dir" 2>/dev/null || die extract "$rpm"
+  answers "$rpm" "$dir/usr/bin/kendex"
+}
+
+# The signed app also has to check out with its sidecar: codesign verifies
+# the bundle's seal, --deep every nested code it holds, and --strict under
+# the rules notarization applies.
+check_signature() { # APP SIDECAR
+  local app=$1 sidecar=$2
+  if ! codesign -d "$app" >/dev/null 2>&1; then
+    printf 'unsigned=%s\n' "$app"
+    return 0
+  fi
+  codesign --verify --strict "$sidecar" >/dev/null 2>&1 || die signature "$sidecar"
+  codesign --verify --strict --deep "$app" >/dev/null 2>&1 || die signature "$app"
+}
+
+check_app() {
+  local app="$out/bundle/macos/kendex.app"
+  [ -d "$app" ] || die missing "kendex.app" "$out/bundle/macos"
+  answers "$app" "$app/Contents/MacOS/kendex"
+  check_signature "$app" "$app/Contents/MacOS/kendex"
+}
+
+check_app_archive() {
+  local archive="$out/bundle/macos/kendex.app.tar.gz" dir
+  [ -f "$archive" ] || die missing "kendex.app.tar.gz" "$out/bundle/macos"
+  dir=$(opened archive)
+  tar -xzf "$archive" -C "$dir" 2>/dev/null || die extract "$archive"
+  answers "$archive" "$dir/kendex.app/Contents/MacOS/kendex"
+}
+
+check_dmg() {
+  local dmg mount
+  dmg=$(only_match "$out/bundle/dmg" "*.dmg")
+  mount=$(opened dmg-mount)
+  hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg" >/dev/null 2>&1 ||
+    die extract "$dmg"
+  # Detached whatever the answer, so a refusal does not leave the image
+  # mounted on the runner; the refusal itself still ends the run.
+  status=0
+  answers "$dmg" "$mount/kendex.app/Contents/MacOS/kendex" || status=$?
+  hdiutil detach "$mount" >/dev/null 2>&1 || true
+  return "$status"
+}
+
+case "$target" in
+  x86_64-unknown-linux-gnu | aarch64-unknown-linux-gnu)
+    need bsdtar
+    check_deb
+    check_rpm
+    ;;
+  aarch64-apple-darwin | x86_64-apple-darwin)
+    need hdiutil
+    need codesign
+    check_app
+    check_app_archive
+    check_dmg
+    ;;
+  x86_64-pc-windows-msvc)
+    die target "$target (checked by release-installer-check.ps1)"
+    ;;
+  *) die target "$target" ;;
+esac
