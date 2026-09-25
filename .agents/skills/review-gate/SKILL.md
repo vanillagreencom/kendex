@@ -44,7 +44,7 @@ Two greens do NOT mean a review happened. `REVIEW_GATE_MODE = "off"` evaluates n
 
 Pending text names the head; which sources open the gate is [references/settings.md](references/settings.md) § Reading the pending status. How the reply-parsing failure verdicts read a reply is `DEVELOPMENT.md` § Tracking-claim parsing and § Decline parsing, and how `suppressed-findings` reads a body is § Suppressed-finding parsing; what to write instead is orch's `references/finding-disposition.md`.
 
-An active `REVIEW_GATE_CLASS_POLICY` applies the [README class policy](README.md#class-policy) before this decision table, and that table states the scope a `none` row waives. `scripts/review-policy` is the one owner of the answer, and every other consumer reads it from there rather than re-deriving it.
+`REVIEW_GATE_CLASS_POLICY`, active by default, applies the [README class policy](README.md#class-policy) before this decision table, and that table states the scope a `none` row waives. `scripts/review-policy` is the one owner of the answer, and every other consumer reads it from there rather than re-deriving it.
 
 # Working in a consumer repo
 

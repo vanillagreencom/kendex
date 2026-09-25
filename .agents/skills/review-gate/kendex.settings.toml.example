@@ -107,9 +107,17 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE = ""
 # fails the selftest.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 
-# Per-class review evidence policy. Empty keeps the existing gate behavior.
-# The supported active value is documented in README.md § Class policy.
-REVIEW_GATE_CLASS_POLICY = ""
+# How much review each size of change needs before it can merge. Generated
+# files, trivial and micro changes need no review; a small change needs one
+# bot review round; a standard change keeps the full review gate. Every
+# repository runs this same value unless it opts out.
+# To opt out, set the key to "" and set REVIEW_GATE_CLASS_POLICY_DECISION.
+REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"
+
+# The decision record that turned the class policy off, as a path from the
+# repository root. The configuration check refuses an empty class policy
+# without it, and refuses a path the repository does not track.
+REVIEW_GATE_CLASS_POLICY_DECISION = ""
 
 # "bot" requires normal review evidence for a docs-only diff. "none" lets
 # harness-ci's shared docs classifier substitute for missing evidence.

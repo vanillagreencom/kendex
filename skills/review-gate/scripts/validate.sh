@@ -60,6 +60,10 @@ Four groups run, in this order:
               legal. Unknown keys, per-invocation seams and repository
               variables are each named as what they are; the value rules come
               from `review-predicate.sh --check-config`, never a copy of them.
+              The class policy is active, or it is off and
+              REVIEW_GATE_CLASS_POLICY_DECISION names the tracked decision
+              record that turned it off (`review-policy --check-config`
+              decides which).
   carry       every REVIEW_GATE_CARRY_FORWARD_EXCLUDE policy glob matches
               a tracked path and is not universal; every prophylactic
               declaration names an active exclusion that still matches
@@ -406,12 +410,44 @@ else
   fi
 fi
 
+# Every repository runs one class policy. review-policy owns whether the
+# resolved value is active; an inactive one is an opt-out, and an opt-out is
+# legal only when the repository names the tracked decision record behind it.
+SCRATCH="$(mktemp -d)" || die scratch "${TMPDIR:-/tmp}" "could not create a scratch directory"
+trap 'rm -rf -- "${SCRATCH:?}"' EXIT
+policy_rc=0
+policy_state="$("${scrub[@]}" "$SKILL_DIR/scripts/review-policy" --check-config 2>"$SCRATCH/policy-err")" || policy_rc=$?
+policy_diag="$(cat -- "$SCRATCH/policy-err")"
+if [ "$policy_rc" -ne 0 ]; then
+  bad class-policy-unresolved "$policy_rc" "the class policy could not be resolved (scripts/review-policy --check-config):"
+  printf '%s\n' "$policy_diag" | sed 's/^/        /'
+else
+  case "$policy_state" in
+    review-policy=active) ok class-policy-active "REVIEW_GATE_CLASS_POLICY" "the class policy is active" ;;
+    review-policy=inactive)
+      decision_rc=0
+      decision="$("${scrub[@]}" bash -c '
+        . "$1/scripts/lib/settings.sh"
+        rg_setting REVIEW_GATE_CLASS_POLICY_DECISION ""
+      ' _ "$SKILL_DIR" 2>&1)" || decision_rc=$?
+      if [ "$decision_rc" -ne 0 ]; then
+        bad class-policy-decision-unreadable "REVIEW_GATE_CLASS_POLICY_DECISION" "REVIEW_GATE_CLASS_POLICY_DECISION could not be read, so the opt-out from the class policy names no decision record:"
+        printf '%s\n' "$decision" | sed 's/^/        /'
+      elif [ -z "$decision" ]; then
+        bad class-policy-inactive "REVIEW_GATE_CLASS_POLICY" "the class policy is turned off with no decision record behind it. Every repository runs the default class policy (README.md § Class policy): delete the empty REVIEW_GATE_CLASS_POLICY assignment, or set REVIEW_GATE_CLASS_POLICY_DECISION to the tracked decision record that turned it off"
+      elif [ -f "$decision" ] && git ls-files --error-unmatch -- "$decision" >/dev/null 2>&1; then
+        ok class-policy-opt-out "$decision" "the class policy is off, as the decision record $decision says"
+      else
+        bad class-policy-decision-untracked "$decision" "REVIEW_GATE_CLASS_POLICY_DECISION names $decision, which is not a tracked file in this repository; name the decision record by its path from the repository root"
+      fi
+      ;;
+    *) bad class-policy-protocol "$policy_state" "scripts/review-policy --check-config printed a record that is neither review-policy=active nor review-policy=inactive" ;;
+  esac
+fi
+
 # ----------------------------------------------------------------- carry ---
 
 group "review-policy exclusions"
-
-CARRY_TMP="$(mktemp -d)" || die scratch "${TMPDIR:-/tmp}" "could not create a scratch directory"
-trap 'rm -rf "$CARRY_TMP"' EXIT
 
 # The loader's DIAGNOSTIC is kept and a refusal is a finding: collapsing a
 # failed read into an empty value would read as "no exclusions configured"
@@ -424,12 +460,12 @@ carry_setting() { # KEY — sets CARRY_VALUE; a refusal is a FAIL row, not ""
   CARRY_VALUE="$("${scrub[@]}" bash -c '
     . "$1/scripts/lib/settings.sh"
     rg_setting "$2" ""
-  ' _ "$SKILL_DIR" "$1" 2>"$CARRY_TMP/err")" || rc=$?
+  ' _ "$SKILL_DIR" "$1" 2>"$SCRATCH/err")" || rc=$?
   [ "$rc" -eq 0 ] && return 0
   CARRY_LOAD_FAILED=1
   CARRY_VALUE=""
   bad carry-load "$1" "$SETTINGS_FILE: $1 could not be read — a refused load is a configuration error, never an empty value:
-$(sed 's/^/        /' "$CARRY_TMP/err")"
+$(sed 's/^/        /' "$SCRATCH/err")"
   return 0
 }
 

@@ -14,18 +14,33 @@ fi
 # caller an exit 2 naming nothing.
 . "$SETTINGS" || exit 2
 
+# The policy every repository gets unless it assigns the key. The one opt-out
+# is an explicit empty assignment, which validate.sh refuses unless the
+# repository names the decision record behind it.
+DEFAULT_POLICY='render:none;trivial:none;micro:none;small:bot;standard:current'
+
 usage() {
   cat <<'USAGE'
 Usage: review-policy [--check-config]
        review-policy --event EVENT [--base REF] [--head REF] [--repo DIR]
 
-REVIEW_GATE_CLASS_POLICY is empty by default. Empty prints `policy=inactive`
-without calling the classifier. An active policy has one entry per class:
+REVIEW_GATE_CLASS_POLICY is active by default. An active policy has one entry
+per class, and the default is:
 
-  render:none;trivial:none;micro:none;small:bot;standard:current
+USAGE
+  printf '  %s\n' "$DEFAULT_POLICY"
+  cat <<'USAGE'
 
 `none` skips review evidence and review threads. `bot` requires both even when
 REVIEW_GATE_MODE is off. `current` keeps the gate's existing behavior.
+
+An explicit empty assignment turns the policy off: it prints `policy=inactive`
+without calling the classifier. The review-gate validate.sh refuses that value
+unless REVIEW_GATE_CLASS_POLICY_DECISION names the decision record behind it.
+
+--check-config prints `review-policy=active` or `review-policy=inactive`. An
+active policy with no executable harness-ci classifier beside this skill exits
+2 as `policy-classifier`.
 
 The live form calls the sibling harness-ci change classifier. It prints:
 
@@ -50,7 +65,7 @@ fail() { # CODE VALUE MESSAGE
 }
 
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
-POLICY="$(rg_setting REVIEW_GATE_CLASS_POLICY "")" || exit 2
+POLICY="$(rg_setting REVIEW_GATE_CLASS_POLICY "$DEFAULT_POLICY")" || exit 2
 
 # Normalize and validate once. Every active policy names the closed class set
 # exactly once, so a missing row cannot inherit a less strict neighbor.

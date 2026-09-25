@@ -277,10 +277,12 @@ exit 1
 EOF
 chmod +x "$TMP_ROOT/awbin/gh"
 
+# The class policy is assigned empty: an active one answers per pull request
+# and needs a range, while this case is about the thread walk alone.
 run_aw() { # $1 = graphql body
   ( set +e
     cd "$AW_REPO" || exit 9
-    PATH="$TMP_ROOT/awbin:$PATH" STUB_AW_THREADS="$1" \
+    PATH="$TMP_ROOT/awbin:$PATH" STUB_AW_THREADS="$1" REVIEW_GATE_CLASS_POLICY="" \
       .agents/skills/orch/scripts/approval-wait 7 1 4 --json
     exit $? )
 }
