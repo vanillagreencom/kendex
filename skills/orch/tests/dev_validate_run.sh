@@ -618,10 +618,10 @@ grandchild_state() { # PROJ
   state_of "$pid"
   kill -KILL "$pid" 2>/dev/null || true
 }
-# The runner line a run's log opens with, with its unit's run stamp folded to
-# RUN so the rest of the name is pinned.
+# The runner line a run's log opens with, with its unit's launching pid folded
+# to PID so the rest of the name is pinned.
 runner_line() { # OUTPUT
-  sed -n '1{s/-[0-9]\{8\}T[0-9]\{6\}Z-[0-9]*$/-RUN/;p;}' "$(log_of "$1")"
+  sed -n '1{s/^\(runner=systemd unit=.*\)-[0-9][0-9]*$/\1-PID/;p;}' "$(log_of "$1")"
 }
 
 # Which runner this host gives a run, read off a run's own log: a host where no
@@ -641,7 +641,7 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
     proj="$(make_proj "$name" "$cmd" "$secs")"
     run_script "$RUN" --worktree "$proj" --poll 1
     assert_eq "$(verdict_of "$OUT")" "$want_verdict" "$label: the verdict" "$ERR"
-    assert_eq "$(runner_line "$OUT")" "runner=systemd unit=validate-$name-RUN" \
+    assert_eq "$(runner_line "$OUT")" "runner=systemd unit=orch-validate-$name-PID" \
       "$label: the log opens naming its unit" "$ERR"
     assert_eq "$(grandchild_state "$proj")" "gone" "$label" "$ERR"
   done
@@ -681,7 +681,7 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   RUN_PATH="$TMP_ROOT/unit-bin:$(farm_path unit-no-setsid setsid)"
   proj_nosetsid="$(make_proj proj-no-setsid "exit 0" 20)"
   run_script "$RUN" --worktree "$proj_nosetsid" --poll 1
-  assert_eq "$(verdict_of "$OUT") $(runner_line "$OUT")" "state=done guard-exit=0 validate=pass runner=systemd unit=validate-proj-no-setsid-RUN" \
+  assert_eq "$(verdict_of "$OUT") $(runner_line "$OUT")" "state=done guard-exit=0 validate=pass runner=systemd unit=orch-validate-proj-no-setsid-PID" \
     "a host with a user manager and no setsid runs its validation in a unit" "$ERR"
   MUTANT_FILE=lib/job-unit.sh mutant mutant-setsid-first '  [[ "$JOB_UNIT_RUNNER" == systemd ]] || command -v setsid' '  command -v setsid'
   run_script "$MUTANT" --worktree "$proj_nosetsid" --poll 1
@@ -694,7 +694,7 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   # name carries none of it.
   proj_dollar="$(make_proj 'proj-${HOME}' "exit 0" 20)"
   run_script "$RUN" --worktree "$proj_dollar" --poll 1
-  assert_eq "$(verdict_of "$OUT") $(runner_line "$OUT")" "state=done guard-exit=0 validate=pass runner=systemd unit=validate-proj-__HOME_-RUN" \
+  assert_eq "$(verdict_of "$OUT") $(runner_line "$OUT")" "state=done guard-exit=0 validate=pass runner=systemd unit=orch-validate-proj-__HOME_-PID" \
     "a worktree whose path carries a \$ runs in a unit and passes" "$ERR"
   MUTANT_FILE=lib/job-unit.sh mutant mutant-unescaped 'unit_argv+=("$(job_unit_arg "$arg")")' 'unit_argv+=("$arg")'
   run_script "$MUTANT" --worktree "$proj_dollar" --poll 1
@@ -717,7 +717,7 @@ assert_eq "$(grandchild_state "$proj_group")" "gone" \
   "and a grandchild left in its process group is gone once it completes" "$ERR"
 
 # Control: the child records its verdict and exits without ending its group.
-mutant mutant-no-group-kill '    setsid) kill -KILL -- "-$$" ;;' '    setsid) ;;'
+MUTANT_FILE=lib/job-unit.sh mutant mutant-no-group-kill 'kill -KILL -- "-$2" 2>/dev/null || job_unit_fail kill-group-failed "pid=$2 step=kill"' ':'
 run_script "$MUTANT" --worktree "$proj_group" --poll 1
 assert_eq "$(grandchild_state "$proj_group")" "alive" \
   "control: without the group kill that grandchild outlives the run" "$ERR"
@@ -832,7 +832,7 @@ assert_eq "$(state_of "$stop_child") $(grandchild_state "$proj_stop_group")" "go
 end_long_run
 
 # Control: the group is never signalled, so the run goes on.
-mutant mutant-no-group-stop 'kill -KILL -- "-$pid" 2>/dev/null ||' 'true ||'
+MUTANT_FILE=lib/job-unit.sh mutant mutant-no-group-stop 'kill -KILL -- "-$pid" 2>/dev/null ||' 'true ||'
 proj_stop_left="$(make_proj proj-stop-left "$long_cmd" 600)"
 start_long_run "$proj_stop_left" "$RUN_PATH"
 stop_child="$(cat "$proj_stop_left"/tmp/dev-validate-*/pid 2>/dev/null || true)"
@@ -878,12 +878,13 @@ PLANT_ROWS=(
   "unit-run|systemd|no|child|state=stopped units=1 groups=0|alive"
   "gone-pid|setsid|no|dead|state=stopped units=0 groups=0|gone"
 )
-# name%the one line of --stop each control removes%what that control then sees
+# name%the file holding the rule%its line%what replaces it%what that control
+# then sees
 PLANT_CONTROLS=(
-  'reused-pid%        [[ "$args" == *" --child --run-dir "*"/tmp/${dir##*/}" ]] || continue%state=stopped units=0 groups=1 0 gone'
-  'has-verdict%    [[ ! -s "$dir/exit" ]] || continue%state=stopped units=0 groups=1 0 gone'
-  'unit-run%    case "$(start_field "$runner_file" runner)" in%state=stopped units=0 groups=1 0 gone'
-  'gone-pid%          kill -0 "$pid" 2>/dev/null || continue% 1 gone'
+  'reused-pid%lib/job-unit.sh%  [[ "$args" == $glob ]] || return 1%  :%state=stopped units=0 groups=1 0 gone'
+  'has-verdict%dev-validate-run%    [[ ! -s "$dir/exit" ]] || continue%    :%state=stopped units=0 groups=1 0 gone'
+  'unit-run%lib/job-unit.sh%    systemd) job_unit_stop "$JOB_UNIT_NAME" ;;%    systemd) job_unit_kill_group "$2" "$3" ;;%state=stopped units=1 groups=0 0 gone'
+  'gone-pid%lib/job-unit.sh%    kill -0 "$pid" 2>/dev/null || return 1%    :% 1 gone'
 )
 RUN_PATH="$TMP_ROOT/stop-bin:$PATH"
 for row in "${PLANT_ROWS[@]}"; do
@@ -897,15 +898,12 @@ for row in "${PLANT_ROWS[@]}"; do
   rm -rf -- "$proj"
 done
 for row in "${PLANT_CONTROLS[@]}"; do
-  IFS='%' read -r name line want <<<"$row"
+  IFS='%' read -r name file line new want <<<"$row"
   for plant_row in "${PLANT_ROWS[@]}"; do
     [[ "$plant_row" == "$name|"* ]] || continue
     IFS='|' read -r _ runner verdict process _ _ <<<"$plant_row"
   done
-  case "$line" in
-    *'case "$(start_field'*) mutant "mutant-plant-$name" "$line" '    case setsid in' ;;
-    *) mutant "mutant-plant-$name" "$line" "${line%%[^ ]*}:" ;;
-  esac
+  MUTANT_FILE="$file" mutant "mutant-plant-$name" "$line" "$new"
   plant "$name" "$runner" "$verdict" "$process"
   proj="$PLANT_PROJ"
   run_script "$MUTANT" --stop --worktree "$proj"

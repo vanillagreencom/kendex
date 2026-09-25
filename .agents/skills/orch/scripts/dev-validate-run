@@ -28,15 +28,13 @@
 # with no kendex arming record (<git-dir>/kendex/armed), so a run over
 # uncommitted render edits is standard.
 #
-# No process the run starts outlives it. The child is started through
-# lib/job-unit.sh, as a transient systemd user unit of kind `validate` where a
-# user manager answers, named from the worktree directory (for a lane its item
-# in lower case) and the run directory's stamp; references/job-units.md is the
-# name shape, the runner line and the stop rule. The unit's RuntimeMaxSec is
-# the cap, a backstop above the bound that still leaves the bound to produce
-# the verdict. Elsewhere the child runs under setsid in its own process group,
-# and kills that group once the verdict is recorded: a process that started its
-# own session escapes it there. The log's first line is the runner line.
+# No process the run starts outlives it. lib/job-unit.sh starts the child, as
+# a transient systemd user unit of class `validate` named for the worktree
+# directory (for a lane its item in lower case) where a user manager answers,
+# and ends it; references/job-units.md is the name shape, the bounds table, the
+# runner line and the stop rule. The unit's RuntimeMaxSec is the cap, a
+# backstop above the bound that still leaves the bound to produce the verdict.
+# The log's first line is the runner line.
 #
 # Usage:
 #   dev-validate-run --worktree PATH [--poll SECS]
@@ -131,6 +129,7 @@ die() {
       sentinel-unreadable) printf 'The sentinel does not carry a guard-exit value.\n' ;;
       scratch-unavailable) printf 'A scratch directory for reading the change class could not be created.\n' ;;
       runner-unrecorded) printf 'The record of how the run is started could not be written, so no run was started.\n' ;;
+      job-end-failed) printf 'The verdict is recorded; what the command left in its process group may still run.\n' ;;
     esac
   } >&2
   exit 2
@@ -336,11 +335,9 @@ if [[ "$mode" == start ]]; then
   } > "$run_dir/start"
 
   # The run has to outlive the shell that launched it, because that shell is
-  # what a harness kills. A user unit does, and so does a setsid launch, which
-  # is the orch skill's declared dependency for exactly this (references/
-  # waiter-launch.md) and is needed only where no user manager answers.
+  # what a harness kills; a job unit does.
   launch_rc=0
-  job_unit_launch validate "${worktree##*/}" "$run_id" "$cap_secs" "$run_dir/runner" \
+  job_unit_launch validate "${worktree##*/}" "$run_dir/runner" --cap "$cap_secs" \
     -- "$SCRIPT_PATH" --child --run-dir "$run_dir" || launch_rc=$?
   case "$launch_rc" in
     0) ;;
@@ -374,32 +371,15 @@ if [[ "$mode" == stop ]]; then
     [[ -f "$runner_file" ]] || continue
     dir="${runner_file%/runner}"
     [[ ! -s "$dir/exit" ]] || continue
-    case "$(start_field "$runner_file" runner)" in
-      systemd)
-        unit="$(start_field "$runner_file" unit)"
-        stop_rc=0
-        job_unit_stop "$unit" || stop_rc=$?
-        case "$stop_rc" in
-          0) units=$(( units + 1 )) ;;
-          1) ;;
-          *) stop_failed "run-dir=$dir" "unit=$unit.service" "detail=$JOB_UNIT_ERROR" ;;
-        esac
-        ;;
-      setsid)
-        pid="$(cat "$dir/pid" 2>/dev/null)" || continue
-        [[ "$pid" =~ ^[0-9]+$ ]] || continue
-        if ! args="$(ps -ww -o args= -p "$pid")"; then
-          kill -0 "$pid" 2>/dev/null || continue
-          stop_failed "run-dir=$dir" "pid=$pid" step=read
-        fi
-        [[ "$args" == *" --child --run-dir "*"/tmp/${dir##*/}" ]] || continue
-        # The group can end between the read and the signal: the child kills
-        # it itself once it records a verdict.
-        kill -KILL -- "-$pid" 2>/dev/null || ! kill -0 -- "-$pid" 2>/dev/null \
-          || stop_failed "run-dir=$dir" "pid=$pid" step=kill
-        groups=$(( groups + 1 ))
-        ;;
-      *) stop_failed "run-dir=$dir" step=read-runner ;;
+    # The child's argv ends in this run directory; a pid with any other argv
+    # is not this run's child.
+    pid="$(cat "$dir/pid" 2>/dev/null || true)"
+    stop_rc=0
+    job_unit_stop_job "$runner_file" "$pid" "* --child --run-dir */tmp/${dir##*/}" || stop_rc=$?
+    case "$stop_rc" in
+      0) if [[ "$JOB_UNIT_RUNNER" == systemd ]]; then units=$(( units + 1 )); else groups=$(( groups + 1 )); fi ;;
+      1) ;;
+      *) stop_failed "run-dir=$dir" "$JOB_UNIT_ERROR" ;;
     esac
   done
   printf 'state=stopped units=%s groups=%s\n' "$units" "$groups"
@@ -417,14 +397,7 @@ if [[ "$mode" == child ]]; then
   fi
   [[ -n "$child_worktree" && -n "$child_timeout_bin" && -n "$child_timeout_secs" && -n "$child_class" && -n "$child_docs_only" ]] \
     || die no-run "path=$run_dir/start"
-  if ! child_runner="$(start_field "$run_dir/runner" runner)" \
-    || ! child_runner_line="$(start_field "$run_dir/runner" line)"; then
-    die no-run "path=$run_dir/runner"
-  fi
-  case "$child_runner" in
-    systemd|setsid) ;;
-    *) die no-run "path=$run_dir/runner" "runner=$child_runner" ;;
-  esac
+  job_unit_read "$run_dir/runner" || die no-run "path=$run_dir/runner"
   child_cmd="$(cat "$run_dir/cmd")"
   # Recorded before the command starts, so a waiter that finds no sentinel can
   # tell a run still going from one the host killed. Written whole, like the
@@ -437,7 +410,7 @@ if [[ "$mode" == child ]]; then
   # The first log line names what contains the run. A log that cannot be
   # written loses that line and never the verdict, as it loses the command's
   # output below.
-  printf '%s\n' "$child_runner_line" 2>/dev/null > "$run_dir/log" || :
+  printf '%s\n' "$JOB_UNIT_LINE" 2>/dev/null > "$run_dir/log" || :
   # bash, not sh: DEV_VALIDATE_CMD is written for the harness's own shell, and
   # on Debian and Ubuntu sh is dash, where source, [[ ]] and set -o pipefail are
   # errors that would record a false failing verdict. post-merge and
@@ -454,13 +427,9 @@ if [[ "$mode" == child ]]; then
   printf 'guard-exit=%s at=%s\n' "$status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$run_dir/exit.part"
   mv "$run_dir/exit.part" "$run_dir/exit"
   # The verdict is on disk, so nothing the command left behind is still owed a
-  # run. In a unit, systemd kills what remains once this process exits. Under
-  # setsid this process leads its own group, and this signal ends that group,
-  # itself included.
-  case "$child_runner" in
-    setsid) kill -KILL -- "-$$" ;;
-    systemd) ;;
-  esac
+  # run. setsid -f made this process its group's leader, and ending that group
+  # ends this process too.
+  job_unit_end "$run_dir/runner" "$$" || die job-end-failed "$JOB_UNIT_ERROR"
   exit 0
 fi
 
