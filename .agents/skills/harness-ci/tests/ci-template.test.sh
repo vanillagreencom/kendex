@@ -17,10 +17,10 @@
 #      the lanes down, and CI runs on both events whatever its needs did.
 #   4. the copy: every expression closes on its line and every script path
 #      it names is one this package ships.
-#   5. the steps the classifier can live without: each one ahead of the
-#      classify step continues on error, so a repository whose default
-#      branch does not yet carry this package still classifies, as
-#      `standard`.
+#   5. the steps the classifier can live without: the render-reach, kendex
+#      install and mirror steps continue on error and the classify step does
+#      not, so a repository whose default branch does not yet carry this
+#      package still classifies, with the `render` class out of reach.
 # Must-fail arms plant a lane condition without its status function, a
 # `lanes` output that forgets a class, CI without always(), a template
 # without merge_group, a render-reach step that fails the job, and an
@@ -176,7 +176,7 @@ assert_eq "the template's steps name the shipped script paths" \
 assert_eq "those paths are scripts this package ships" "yes yes" \
   "$([ -x "$AGGREGATE_NEEDS" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no)"
 
-# --- 5. The steps ahead of the classifier ----------------------------------
+# --- 5. The steps the classifier can live without -------------------------
 
 # Whether the changes job's step with id ID carries `continue-on-error: true`.
 continues() { # TEMPLATE ID — yes or no

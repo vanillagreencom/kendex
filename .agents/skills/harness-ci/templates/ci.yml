@@ -59,9 +59,10 @@ jobs:
       # harness-only answers harness_only=true, so the two network steps run
       # only there. It reads the default branch's harness-only, which the
       # adoption pull request and its merge group do not have yet: a failure
-      # here leaves harness_only empty, both network steps skip, and the class
-      # falls to `standard`, which runs every lane, rather than failing the
-      # classifier on the one pull request that could add it.
+      # here leaves harness_only empty and both network steps skip, so the
+      # `render` class is out of reach and every other class is judged as
+      # usual, rather than failing the classifier on the one pull request
+      # that could add it.
       - id: render-reach
         continue-on-error: true
         run: >-

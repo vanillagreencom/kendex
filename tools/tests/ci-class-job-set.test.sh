@@ -14,8 +14,9 @@
 #      lane line, and the refusals beside them; then a `trivial` diff of a
 #      path the Rust source reads, in a fixture checkout, with a control.
 #   2. the names: the lanes the gates read, the lanes the changes job
-#      publishes, the lanes ci-job-set selects, and the lane each aggregate
-#      holds each job to are one set, compared by name.
+#      publishes and the lanes ci-job-set selects are one set, compared by
+#      name, and each aggregate, on its own, holds every job it needs to the
+#      lane or event condition that job's own `if:` reads.
 #   3. the job set: each gated job's own `if:` and the platform matrix's
 #      `os:` expression, read out of the workflow and EVALUATED against a
 #      selection and an event, with GitHub's implicit success() where a
@@ -26,8 +27,9 @@
 #      runs on both gated events whatever its needs did. Must-fail arms plant
 #      a lane condition that reads no selection, one that drops its status
 #      function, one that ignores the class on a merge group, a matrix with
-#      its arms swapped, a job dropped from CI's needs, CI without always()
-#      and an event-held job held to another condition.
+#      its arms swapped, a job dropped from CI's needs, CI without always(),
+#      a lane dropped from one aggregate alone and an event-held job held to
+#      another condition.
 #   4. the aggregate: a lane the class authorized may skip; one it did not
 #      is rejected, and so is a dead classifier, a job named twice and a
 #      helper that is not there.
@@ -336,6 +338,14 @@ set_gap() { # EXPECTED ACTUAL
     "$(comm -13 <(printf '%s\n' "$1" | grep . | LC_ALL=C sort) <(printf '%s\n' "$2" | grep . | LC_ALL=C sort) | tr '\n' ' ' | sed 's/ $//')"
 }
 CI_JOB="$(jobs_named "$WORKFLOW" CI)"
+aggregators() { # WORKFLOW — every job whose script calls tools/ci-aggregate
+  awk '
+    /^jobs:/ { in_jobs = 1; next }
+    !in_jobs { next }
+    /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job); next }
+    /^ +tools\/ci-aggregate --/ { print job }
+  ' "$1" | LC_ALL=C sort -u
+}
 
 PUBLISHED_BY_SCRIPT="$(selection standard false 'crates/core/src/lib.rs' |
   tr ' ' '\n' | sed 's/=.*//' | LC_ALL=C sort)"
@@ -350,29 +360,49 @@ check "the gates read exactly the lanes ci-job-set selects" \
 GATE_PAIRS="$(gate_pairs "$WORKFLOW")"
 [ "$(printf '%s\n' "$GATE_PAIRS" | grep -c .)" -gt 0 ] ||
   { echo "no gated job read out of $WORKFLOW, so the extractor is broken" >&2; exit 1; }
-check "the aggregates hold each gated job to the lane its own condition reads" \
-  "$GATE_PAIRS" "$(aggregate_pairs "$WORKFLOW")"
-# The aggregators above repeat CI's lanes, so the union cannot see a lane CI
-# alone omits; CI's own set is compared on its own.
-check "CI alone holds each gated job to the lane its own condition reads" "missing= extra=" \
-  "$(set_gap "$GATE_PAIRS" "$(aggregate_pairs "$WORKFLOW" "$CI_JOB")")"
 
-# A job an aggregate holds to an event rather than a lane is held to the
-# condition it runs under, spelled the same: `JOB<tab>EXPR` from the
-# aggregate against the job's own `if:`.
-event_ifs() { # WORKFLOW — each event-held job's own condition, as JOB<tab>EXPR
-  local wf="$1" job expr
-  aggregate_events "$wf" | cut -f1 >"$TMP/event-held"
-  job_ifs "$wf" | while IFS="$(printf '\t')" read -r job expr; do
-    grep -qxF -- "$job" "$TMP/event-held" && printf '%s\t%s\n' "$job" "$expr"
-  done | LC_ALL=C sort -u || true
+# Each aggregate, on its own, holds every gated job it needs to the lane that
+# job's own condition reads, and every job it needs whose condition stands it
+# down on a gated event to that condition, spelled as the job spells it. The
+# aggregates repeat each other's lanes, so a comparison over their union
+# would hide one aggregate's omission behind another's copy. A needed job
+# with no lane is event-held where its own condition evaluates false on
+# pull_request or merge_group; a condition the evaluator refuses prints its
+# refusal into the gap.
+aggregate_gap() { # WORKFLOW AGGREGATE — `lanes: missing= extra= events: missing= extra=`
+  local wf="$1" agg="$2" needs job expr pr group held=""
+  needs="$(job_needs "$wf" | awk -F '\t' -v j="$agg" '$1 == j { print $2 }' | tr ',' '\n' | grep .)" || needs=""
+  gate_pairs "$wf" >"$TMP/gap-gates"
+  job_ifs "$wf" >"$TMP/gap-ifs"
+  while IFS= read -r job; do
+    grep -q ":$job\$" "$TMP/gap-gates" && continue
+    expr="$(awk -F '\t' -v j="$job" '$1 == j { print $2 }' "$TMP/gap-ifs")"
+    [ -n "$expr" ] || continue
+    pr="$(gh_eval value '{"github":{"event_name":"pull_request"}}' "$expr")"
+    group="$(gh_eval value '{"github":{"event_name":"merge_group"}}' "$expr")"
+    case "$pr $group" in
+      "true true") ;;
+      "true false" | "false true" | "false false") held="$held$(printf '%s\t%s' "$job" "$expr")
+" ;;
+      *) held="$held$(printf '%s\t%s' "$job" "refused: $pr $group")
+" ;;
+    esac
+  done <<<"$needs"
+  printf 'lanes: %s events: %s' \
+    "$(set_gap "$(printf '%s\n' "$needs" | while IFS= read -r job; do grep ":$job\$" "$TMP/gap-gates" || true; done)" \
+      "$(aggregate_pairs "$wf" "$agg")")" \
+    "$(set_gap "$held" "$(aggregate_events "$wf" "$agg")" | tr '\t' '=')"
 }
+AGGREGATE_ROWS=0
+for agg in $(aggregators "$WORKFLOW"); do
+  AGGREGATE_ROWS=$((AGGREGATE_ROWS + 1))
+  check "$agg holds each job it needs to the selection its own condition reads" \
+    "lanes: missing= extra= events: missing= extra=" "$(aggregate_gap "$WORKFLOW" "$agg")"
+done
+[ "$AGGREGATE_ROWS" -ge 4 ] || { echo "the aggregate table read $AGGREGATE_ROWS rows" >&2; exit 1; }
+# The event-held set, derived above, holds the two diff checks CI names.
 EVENT_HELD="$(aggregate_events "$WORKFLOW" | cut -f1 | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
 check "the aggregates hold the two diff checks to an event" "markdown preflight" "$EVENT_HELD"
-check "each event-held job is held to the condition it runs under" \
-  "$(event_ifs "$WORKFLOW")" "$(aggregate_events "$WORKFLOW")"
-check "CI holds every event-held job itself" "$(aggregate_events "$WORKFLOW")" \
-  "$(aggregate_events "$WORKFLOW" "$CI_JOB")"
 
 # --- 3. The job set ---------------------------------------------------------
 # gh-eval.py's header names the expression forms it covers and refuses the
@@ -507,14 +537,6 @@ done
 # as it does; it runs on both gated events whatever its needs did, and the
 # classifier it reads runs on both.
 
-aggregators() { # WORKFLOW — every job whose script calls tools/ci-aggregate
-  awk '
-    /^jobs:/ { in_jobs = 1; next }
-    !in_jobs { next }
-    /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job); next }
-    /^ +tools\/ci-aggregate --/ { print job }
-  ' "$1" | LC_ALL=C sort -u
-}
 ci_needs_gap() { # WORKFLOW — `missing=` and `extra=` against every job but the aggregators
   local wf="$1" ci
   ci="$(jobs_named "$wf" CI)"
@@ -610,12 +632,16 @@ plant "$WORKFLOW" "needs: [changes, bot-instructions, skill-suites-shard," "need
 check "must-fail: a job dropped from CI's needs is named" "missing=bot-instructions extra=" \
   "$(ci_needs_gap "$TMP/wf-ci-short.yml")"
 
-# A lane dropped from CI's own --lane list, which the aggregator beside it
-# still passes, is named.
-plant "$WORKFLOW" '--lane "$UI:ui-tests"' '' "$TMP/wf-ci-lane.yml" "$CI_JOB"
-check "must-fail: a lane dropped from CI alone is named" "missing=ui:ui-tests extra=" \
-  "$(set_gap "$GATE_PAIRS" "$(aggregate_pairs "$TMP/wf-ci-lane.yml" "$CI_JOB")")"
-check "and the union of every aggregate does not see it" "$GATE_PAIRS" "$(aggregate_pairs "$TMP/wf-ci-lane.yml")"
+# A lane dropped from one aggregate alone, while another aggregate still
+# passes it, is named on that aggregate: CI, and a per-repository aggregator.
+# AGGREGATE|LANE LINE|GAP
+while IFS='|' read -r agg line gap; do
+  plant "$WORKFLOW" "$line" '' "$TMP/wf-lane-$agg.yml" "$agg"
+  check "must-fail: a lane dropped from $agg alone is named" "$gap" "$(aggregate_gap "$TMP/wf-lane-$agg.yml" "$agg")"
+done <<'ROWS'
+ci|--lane "$UI:ui-tests"|lanes: missing=ui:ui-tests extra= events: missing= extra=
+cargo-tests|--lane "$CARGO_LINT:cargo-lint"|lanes: missing=cargo_lint:cargo-lint extra= events: missing= extra=
+ROWS
 
 # Without always(), GitHub's implicit success() skips CI on a failed need, and
 # a skipped required context satisfies the ruleset.
@@ -627,66 +653,9 @@ check "must-fail: CI without always() does not run on a failed need" "no" \
 # An event-held job held to another condition than its own.
 plant "$WORKFLOW" "PULL_REQUEST: \${{ github.event_name == 'pull_request' }}" "PULL_REQUEST: \${{ github.event_name != 'push' }}" \
   "$TMP/wf-event-drift.yml"
-[ "$(event_ifs "$TMP/wf-event-drift.yml")" != "$(aggregate_events "$TMP/wf-event-drift.yml")" ] &&
-  ok "must-fail: an event-held job held to another condition is caught" ||
-  bad "must-fail: an event-held job held to another condition is caught"
-
-# --- 4. The aggregate -------------------------------------------------------
-
-RESULTS='{"changes":{"result":"success"},"skill-suites-shard":{"result":"success"},"ui-tests":{"result":"skipped"},"bot-instructions":{"result":"success"}}'
-aggregate() { # AGGREGATE_SCRIPT LANE... — the exit status, and the refusal key when there is one
-  local script="$1" status=0
-  shift
-  "$script" --results "$RESULTS" --classifier changes "$@" \
-    >"$TMP/aggregate-out" 2>"$TMP/aggregate-err" || status=$?
-  printf '%s' "$status"
-  sed -n 's/^ci-aggregate: cause=/ /p' "$TMP/aggregate-err" | head -1
-}
-
-check "a lane the class stood down may skip" "0" \
-  "$(aggregate "$AGGREGATE" --lane 'true:skill-suites-shard' --lane 'false:ui-tests' \
-    --lane 'true:bot-instructions')"
-check "a lane the class selected may not skip" "1" \
-  "$(aggregate "$AGGREGATE" --lane 'true:skill-suites-shard' --lane 'true:ui-tests' \
-    --lane 'true:bot-instructions')"
-# One lane stood down turns the waiver on; the skipped lane beside it is one
-# the class selected, so the waiver must not reach it.
-check "a waiver for one lane authorizes no skip of another" "1" \
-  "$(aggregate "$AGGREGATE" --lane 'true:skill-suites-shard' --lane 'true:ui-tests' \
-    --lane 'false:bot-instructions')"
-# The second selection for one job is refused before either becomes a waiver,
-# whichever of the two comes last.
-check "a job named twice is refused, the selected one first" \
-  "2 duplicate-lane job=ui-tests" \
-  "$(aggregate "$AGGREGATE" --lane 'true:ui-tests' --lane 'false:ui-tests')"
-check "a job named twice is refused, the stood-down one first" \
-  "2 duplicate-lane job=ui-tests" \
-  "$(aggregate "$AGGREGATE" --lane 'false:ui-tests' --lane 'true:ui-tests')"
-
-# A copy of the script parked where the harness-ci scripts are not, and one
-# beside a scripts directory that holds no helper. Exit 1 is the helper's
-# rejection of a lane, so neither may answer it.
-mkdir -p "$TMP/no-dir/tools" "$TMP/no-helper/tools" "$TMP/no-helper/skills/harness-ci/scripts"
-cp "$AGGREGATE" "$TMP/no-dir/tools/ci-aggregate"
-cp "$AGGREGATE" "$TMP/no-helper/tools/ci-aggregate"
-case "$(aggregate "$TMP/no-dir/tools/ci-aggregate" --lane 'false:ui-tests')" in
-  "2 helper-unreadable dir="*) ok "a missing helper directory is a refusal, not a rejected lane" ;;
-  *) bad "a missing helper directory is a refusal, not a rejected lane ($(cat "$TMP/aggregate-err"))" ;;
-esac
-case "$(aggregate "$TMP/no-helper/tools/ci-aggregate" --lane 'false:ui-tests')" in
-  "2 helper-missing path="*) ok "a missing helper is a refusal, not a rejected lane" ;;
-  *) bad "a missing helper is a refusal, not a rejected lane ($(cat "$TMP/aggregate-err"))" ;;
-esac
-
-# A classifier that died publishes no selection, so every lane reads empty.
-# That authorizes nothing and the helper names the classifier.
-DEAD='{"changes":{"result":"failure"},"ui-tests":{"result":"skipped"}}'
-dead_status=0
-"$AGGREGATE" --results "$DEAD" --classifier changes --lane ':ui-tests' \
-  >/dev/null 2>"$TMP/dead-err" || dead_status=$?
-check "a dead classifier authorizes no skip" "1" "$dead_status"
-check "and the rejection names the classifier, not a parse failure" "1" \
-  "$(grep -c 'aggregate-needs: rejected classifier=changes waiver=false' "$TMP/dead-err")"
+check "must-fail: an event-held job held to another condition is named" \
+  "lanes: missing= extra= events: missing=markdown=github.event_name == 'pull_request' preflight=github.event_name == 'pull_request' extra=markdown=github.event_name != 'push' preflight=github.event_name != 'push'" \
+  "$(aggregate_gap "$TMP/wf-event-drift.yml" "$CI_JOB")"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
