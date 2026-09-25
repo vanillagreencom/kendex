@@ -114,7 +114,7 @@ Cancel ends the workflow; a selection goes to § 2.
 
    Accept it through step 5. The cut comparison and retry flag are [dev-round.md § Declared cuts](../schemas/dev-round.md#declared-cuts). Declare a cut only on the round that does the cutting.
 
-   `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. A `pr-N` or `local-` key names no issue, so the delegation omits `Issue:` for it and the dev agent reads no tracker. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]' '[REACH]'` groups inline in one command instead.
+   `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]' '[REACH]'` groups inline in one command instead.
 
    ⚠ Fill placeholders only ([Format Tags Are Literal](../references/skill-rules.md#format-tags-are-literal)). `Recommendation:` is the technical fix, never procedure steps — the agent owns validate, commit, and return.
 
@@ -122,7 +122,7 @@ Cancel ends the workflow; a selection goes to § 2.
    Follow workflow: .agents/skills/dev/workflows/dev-fix.md
 
    Source: [SOURCE]
-   [If ISSUE_ID names an issue: "Issue: [ISSUE_ID]"]
+   Issue: [ISSUE_ID]
    Worktree: [WORKTREE_PATH]
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
