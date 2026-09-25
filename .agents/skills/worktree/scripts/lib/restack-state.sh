@@ -242,10 +242,11 @@ resolve_restack_worktree() {
 # entries carry a `command` string, the shape .claude/settings.json,
 # .codex/hooks.json and .pi/kendex/hooks.json share. Print each word of those
 # commands with a leading `$VAR/`, `${VAR}/` or `./` root dropped, so a word
-# equal to a repository path names that path. The status is non-zero when any
-# declaration could not be read: jq missing or failing, or git grep erroring.
+# equal to a repository path names that path, then the libraries those paths
+# source (restack_hook_libraries). The status is non-zero when any declaration
+# or sourcing script could not be read: jq missing or failing, or git erroring.
 restack_hook_words() {
-  local wt="$1" rev="" files="" file="" rc=0
+  local wt="$1" rev="" files="" file="" words="" rc=0
   shift
   command -v jq >/dev/null 2>&1 || return 1
   for rev in "$@"; do
@@ -253,19 +254,62 @@ restack_hook_words() {
     files="$(git -C "$wt" grep -l -F -e '"hooks"' "$rev" -- '*.json')" || rc=$?
     [[ "$rc" -le 1 ]] || return 1
     [[ -n "$files" ]] || continue
+    words=""
     while IFS= read -r file; do
-      git -C "$wt" cat-file -p "$file" 2>/dev/null |
+      words="$words$(git -C "$wt" cat-file -p "$file" 2>/dev/null |
         jq -r '.hooks? | objects | .. | objects | .command? | strings
           | splits("[\"'"'"' ;(|)&]+")
           | sub("^[$][{]?[A-Za-z_][A-Za-z0-9_]*[}]?/"; "") | sub("^[.]/"; "")
-          | select(length > 0)' 2>/dev/null || return 1
+          | select(length > 0)' 2>/dev/null)"$'\n' || return 1
     done <<<"$files"
+    printf '%s' "$words"
+    restack_hook_libraries "$wt" "$rev" "$words" || return 1
   done
 }
 
-# The conflicted paths (one per line) that a harness hook declaration names,
-# read at the pre-restack head the running harness loaded and at the paused
-# HEAD. Declarations that cannot be read make every conflicted path a hook
+# Bash runs a sourced file as it runs the hook, so markers in a library a hook
+# sources fail the hook the same way. A `source` or `.` line names a path the
+# hook computes at run time, so its target is read from the
+# `# shellcheck source=` directive this project's hooks and libraries write
+# above every such line. A directive resolves against the sourcing file's
+# directory. One that climbs out of it names a tree the hook finds by searching
+# its ancestors and .agents/skills, so it resolves to every tracked path ending
+# in the directive with its leading `../` dropped. Print each tracked file at
+# REV that the hook paths among WORDS source, directly or through a library.
+restack_hook_libraries() {
+  local wt="$1" rev="$2" tracked="" queue="" seen="" script="" directives="" target="" rc=0
+  tracked="$(git -C "$wt" ls-tree -r --name-only "$rev")" || return 1
+  queue="$(grep -F -x -e "$3" <<<"$tracked")" || rc=$?
+  [[ "$rc" -le 1 ]] || return 1
+  while [[ -n "$queue" ]]; do
+    script="${queue%%$'\n'*}"
+    if [[ "$queue" == *$'\n'* ]]; then queue="${queue#*$'\n'}"; else queue=""; fi
+    if [[ -z "$script" ]] || grep -F -x -q -e "$script" <<<"$seen"; then
+      continue
+    fi
+    seen="$seen$script"$'\n'
+    directives="$(git -C "$wt" cat-file -p "$rev:$script" |
+      sed -n 's/^[[:space:]]*#[[:space:]]*shellcheck[[:space:]].*source=\([^[:space:]]*\).*/\1/p')" || return 1
+    while IFS= read -r target; do
+      target="${target#./}"
+      [[ -n "$target" ]] || continue
+      if [[ "$target" == ../* ]]; then
+        while [[ "$target" == ../* ]]; do target="${target#../}"; done
+        target="$(awk -v t="$target" '$0 == t || substr($0, length($0) - length(t)) == "/" t' <<<"$tracked")" || return 1
+      else
+        [[ "$script" != */* ]] || target="${script%/*}/$target"
+        target="$(awk -v t="$target" '$0 == t' <<<"$tracked")" || return 1
+      fi
+      [[ -n "$target" ]] || continue
+      printf '%s\n' "$target"
+      queue="$queue"$'\n'"$target"
+    done <<<"$directives"
+  done
+}
+
+# The conflicted paths (one per line) that a harness hook declaration names or
+# that a named hook sources, read at the pre-restack head the running harness
+# loaded and at the paused HEAD. Declarations that cannot be read make every conflicted path a hook
 # path: holding an ordinary path costs a step, leaving markers in a hook
 # strands the caller.
 restack_conflicted_hooks() {
@@ -317,7 +361,7 @@ restack_hold_conflicted_hooks() {
     fi
     named="$named $path"
   done <<<"$held"
-  worktree_message restack-hook-held "${named# }" "A harness runs these paths as hooks, so each now holds one side of the conflict and its conflicted content is saved beside it as <path>$RESTACK_HELD_SUFFIX." >&2
+  worktree_message restack-hook-held "${named# }" "A harness runs these paths as hooks or sources them from one, so each now holds one side of the conflict and its conflicted content is saved beside it as <path>$RESTACK_HELD_SUFFIX." >&2
   printf '%s\n' "$held"
 }
 
