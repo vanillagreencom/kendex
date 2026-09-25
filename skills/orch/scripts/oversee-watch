@@ -318,9 +318,13 @@ Options:
                       file: its own pid, whatever launched it, the state
                       path, the pane it serves, its origin, its script and
                       directory in oversee-watch.pid, and its arguments
-                      before -- in oversee-watch.argv. Stop it with kill on
-                      that pid, never on a launcher's $!: TERM stops the pass
-                      it is running and removes the record. A start on a
+                      before -- in oversee-watch.argv. That record is the
+                      watch's claim, which the start refusals below and a
+                      succession's handover read; how an overseer launches,
+                      finds and stops its watch is
+                      references/watch-delivery.md's. However it is sent,
+                      TERM on the loop ends it and the pass it is running,
+                      and the record goes with it. A start on a
                       state whose recorded watch still runs is refused as
                       watch-running naming that pid, except where that watch
                       is the one `oversee-succeed` restarted for this same
