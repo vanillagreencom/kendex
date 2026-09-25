@@ -53,17 +53,29 @@
 
 !macro NSIS_HOOK_POSTUNINSTALL
   !insertmacro KENDEX_EDIT_USER_PATH "${KENDEX_PATH_OPEN} $$a = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($$r, $$true); $$added = if ($$a) { [string]$$a.GetValue('CommandPathAdded', '') } else { '' }; if ($$added -eq $$d) { $$parts = @($$p -split ';' | Where-Object { $$_ -ne '' -and $$_ -ne $$d }); if ($$parts.Count -eq 0) { $$k.DeleteValue('Path', $$false) } else { $$k.SetValue('Path', ($$parts -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString) }; $$a.DeleteValue('CommandPathAdded', $$false); $$a.Close() }" "removed from"
+  ; The record was the key's only value, so the key goes with it; a key
+  ; something else has since written to is left alone.
+  DeleteRegKey /ifempty HKCU "Software\ai.kendex.app"
 !macroend
 
 ; Tauri's template checks only kendex-app.exe for a running process before
 ; it writes bin\kendex.exe, so a kendex.exe still running (a refresh the
 ; session hook spawned, say) would make that write fail. Windows lets a
-; running image be renamed, so the old command is moved aside first and the
-; moved file removed at the next reboot where it cannot be removed now.
+; running image be renamed, so the old command is moved aside first. A
+; per-user setup cannot schedule a delete for the next reboot, so the moved
+; file is deleted where it can be, here and again on uninstall.
 !macro NSIS_HOOK_PREINSTALL
   ${If} ${FileExists} "$INSTDIR\bin\kendex.exe"
     Delete "$INSTDIR\bin\kendex.exe.old"
     Rename "$INSTDIR\bin\kendex.exe" "$INSTDIR\bin\kendex.exe.old"
-    Delete /REBOOTOK "$INSTDIR\bin\kendex.exe.old"
+    Delete "$INSTDIR\bin\kendex.exe.old"
   ${EndIf}
+!macroend
+
+; Ahead of the template's own removal, which deletes bin\kendex.exe and
+; then removes bin only where it is empty: a command moved aside by an
+; earlier update would keep the directory, and the install directory with
+; it.
+!macro NSIS_HOOK_PREUNINSTALL
+  Delete "$INSTDIR\bin\kendex.exe.old"
 !macroend

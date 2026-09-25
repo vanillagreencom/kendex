@@ -92,6 +92,9 @@ target=$1
 out=$2
 
 [ -d "$out" ] || die not-a-directory "$out"
+# Absolute from here on: the lane passes target/<triple>/release, and the
+# deb is opened from inside a directory of its own.
+out=$(cd "$out" && pwd)
 built="$out/kendex"
 [ -x "$built" ] || die no-command "$built"
 expected=$("$built" --version) || die version-unreadable "$built"

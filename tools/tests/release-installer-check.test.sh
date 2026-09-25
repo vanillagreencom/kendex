@@ -138,6 +138,15 @@ no deb at all|none|1|missing=*.deb|-
 two debs, which is a lane that cannot say which it built|two|1|ambiguous=*.deb|-
 EOF
 
+# The lane passes OUT relative to the checkout, and the deb is opened from
+# a directory of its own, so a relative OUT has to be made absolute first.
+build_linux command
+relative_rc=0
+(cd "$TMP" && "$CHECK" "$LINUX" out) >"$TMP/std" 2>"$TMP/err" || relative_rc=$?
+assert_eq "rc=$relative_rc first=$(first_text) checked=$(checked_text)" \
+  "rc=1 first=missing=*.rpm checked=$DEB" \
+  "a relative output directory is read the way an absolute one is"
+
 echo "=== the lane itself ==="
 lane
 rm "$OUT/kendex"

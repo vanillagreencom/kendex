@@ -402,21 +402,20 @@ fn system_channel(path: &Path, probe: &dyn HostProbe) -> Option<InstallChannel> 
 }
 
 /// A package-owned path is actionable only once a package manager has
-/// named the owner. Arch is asked through pacman, by `os-release`, because
-/// four Arch packages carry kendex; anywhere else the manager is whichever
-/// of dpkg and rpm is on `PATH`, since the release's `.deb` and `.rpm` are
-/// what put a command under `/usr` there. A machine with neither, or an
-/// owner that is not the kendex package, names nobody.
+/// named the owner, and the manager asked is the distro's own, read from
+/// `os-release` the way Arch always was: an rpm distro with dpkg installed
+/// beside it is still asked through rpm. Arch goes to pacman, because four
+/// Arch packages carry kendex; the Debian family to dpkg and the Fedora
+/// and SUSE families to rpm, since the release's `.deb` and `.rpm` are
+/// what put a command under `/usr` there. A distro of no known family, or
+/// an owner that is not the kendex package, names nobody.
 fn distro_channel(path: &Path, probe: &dyn HostProbe) -> InstallChannel {
-    if probe.os_release().is_some_and(|text| is_arch(&text)) {
-        return arch_channel(path, probe);
-    }
-    let (manager, package, extension) = if probe.on_path("dpkg-query") {
-        (PackageManager::Dpkg, DEB_PACKAGE, ".deb")
-    } else if probe.on_path("rpm") {
-        (PackageManager::Rpm, RPM_PACKAGE, ".rpm")
-    } else {
-        return InstallChannel::Unknown;
+    let family = probe.os_release().and_then(|text| distro_family(&text));
+    let (manager, package, extension) = match family {
+        Some(PackageManager::Pacman) => return arch_channel(path, probe),
+        Some(PackageManager::Dpkg) => (PackageManager::Dpkg, DEB_PACKAGE, ".deb"),
+        Some(PackageManager::Rpm) => (PackageManager::Rpm, RPM_PACKAGE, ".rpm"),
+        None => return InstallChannel::Unknown,
     };
     if probe.owning_package(manager, path).as_deref() != Some(LINUX_PACKAGE_NAME) {
         return InstallChannel::Unknown;
@@ -500,28 +499,38 @@ fn arch_channel(path: &Path, probe: &dyn HostProbe) -> InstallChannel {
 /// A nonzero status is the manager saying no package owns the path, and
 /// its stdout is not read at all: the diagnostic goes to stderr today, and
 /// a spelling that printed a name beside a refusal must not be read as
-/// ownership. One name is expected, so the first line is the whole answer,
-/// trimmed because a name is compared against fixed text. pacman and rpm
-/// print the name alone; dpkg prints `<package>: <path>`, and a line
-/// naming several packages before the colon (a diverted file) names
-/// nobody, because none of them is the one owner this asks for.
+/// ownership. One owner is expected, and one rule holds for every
+/// manager: a path more than one package has a claim on names nobody,
+/// because none of them is the one owner this asks for. pacman and rpm
+/// print one name per line, so a second line naming another package is
+/// that. dpkg prints `<package>: <path>`, where a comma-separated list
+/// before the colon is a file several packages ship; a file another
+/// package has diverted is reported as three lines that differ, which the
+/// same rule refuses. The name is trimmed because it is compared against
+/// fixed text.
 fn printed_owner(manager: PackageManager, success: bool, stdout: &[u8]) -> Option<String> {
     if !success {
         return None;
     }
     let printed = std::str::from_utf8(stdout).ok()?;
-    let line = printed.lines().next()?;
+    let mut lines = printed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let first = lines.next()?;
     let name = match manager {
-        PackageManager::Pacman | PackageManager::Rpm => line,
+        PackageManager::Pacman | PackageManager::Rpm => first,
         PackageManager::Dpkg => {
-            let (owners, _) = line.split_once(':')?;
+            let (owners, _) = first.split_once(':')?;
             if owners.contains(',') {
                 return None;
             }
-            owners
+            owners.trim()
         }
+    };
+    if lines.any(|line| line != first) {
+        return None;
     }
-    .trim();
     (!name.is_empty()).then(|| name.to_owned())
 }
 
@@ -558,19 +567,35 @@ fn bundle_root(exe: &Path) -> Option<&Path> {
     is_bundle.then_some(root)
 }
 
-/// Arch by `ID`, or a derivative naming it in `ID_LIKE`.
-fn is_arch(os_release: &str) -> bool {
-    os_release.lines().any(|line| {
-        let Some((key, value)) = line.split_once('=') else {
-            return false;
-        };
-        let value = unquote(value.trim());
-        match key.trim() {
-            "ID" => value == "arch",
-            "ID_LIKE" => value.split_whitespace().any(|word| word == "arch"),
-            _ => false,
-        }
-    })
+/// The package manager a distro's `os-release` names it under, by its
+/// `ID` or any family it names in `ID_LIKE`. Each word is whole, so
+/// `archlinux` is not Arch. Arch wins wherever it is named, because its
+/// answer is the most specific this build has (four packages); no
+/// distro names two families, so the order past that never decides.
+fn distro_family(os_release: &str) -> Option<PackageManager> {
+    let words: Vec<String> = os_release
+        .lines()
+        .filter_map(|line| {
+            let (name, value) = line.split_once('=')?;
+            matches!(name.trim(), "ID" | "ID_LIKE").then(|| unquote(value.trim()).to_owned())
+        })
+        .flat_map(|value| {
+            value
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let named = |family: &[&str]| words.iter().any(|word| family.contains(&word.as_str()));
+    if named(&["arch"]) {
+        Some(PackageManager::Pacman)
+    } else if named(&["debian", "ubuntu"]) {
+        Some(PackageManager::Dpkg)
+    } else if named(&["fedora", "rhel", "centos", "suse", "opensuse", "sles"]) {
+        Some(PackageManager::Rpm)
+    } else {
+        None
+    }
 }
 
 fn unquote(value: &str) -> &str {

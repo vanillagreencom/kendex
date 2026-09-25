@@ -133,10 +133,11 @@ impl Hardened {
     }
 
     /// `pacman -Qoq`: the name of the installed package that owns a file,
-    /// and nothing else. The update paths ask it who owns the running bytes
-    /// rather than reading a layout — four Arch packages install the same
-    /// `kendex` command, and two of them track main where the other two
-    /// track a release, so the layout cannot tell them apart.
+    /// and nothing else. The update paths ask a distro's own manager who
+    /// owns the running bytes rather than reading a layout — four Arch
+    /// packages install the same `kendex` command, and two of them track
+    /// main where the other two track a release, so the layout cannot tell
+    /// them apart; dpkg and rpm below answer for the release's own packages.
     pub fn pacman_owner(path: &Path) -> Hardened {
         Hardened::new(
             "pacman",

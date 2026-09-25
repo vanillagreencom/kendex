@@ -614,16 +614,9 @@ fn nothing_read_from_the_machine_reaches_a_command_string() {
     }
 }
 
-/// One row per Linux machine a `/usr/bin/kendex` can sit on outside Arch.
-/// The `.deb` and `.rpm` are named through the manager on `PATH`, dpkg
-/// before rpm, and only when that manager says the kendex package owns
-/// the file; a machine with neither manager, an owner of another name, a
-/// file no package claims, and a manager that is on `PATH` but was not the
-/// one that would answer all name nobody. Arch is still pacman's, even
-/// with dpkg-query beside it. The app's own binary from the `.deb` gets the
-/// same answer through `for_app`, since neither package updates itself.
-#[test]
-fn the_deb_and_rpm_command_is_named_by_the_manager_that_installed_it() {
+/// The rows of the table above: the machine and the answer, with the
+/// two package routes spelled once.
+fn deb_and_rpm_rows() -> Vec<(&'static str, Fake, InstallChannel)> {
     const FEDORA: &str = "NAME=\"Fedora Linux\"\nID=fedora\n";
     let deb = managed(
         DEB_PACKAGE,
@@ -633,7 +626,7 @@ fn the_deb_and_rpm_command_is_named_by_the_manager_that_installed_it() {
         RPM_PACKAGE,
         "install the new release's .rpm from https://kendex.ai/download",
     );
-    let rows: Vec<(&str, Fake, InstallChannel)> = vec![
+    vec![
         (
             "Debian, dpkg owns it",
             Fake::default()
@@ -646,12 +639,11 @@ fn the_deb_and_rpm_command_is_named_by_the_manager_that_installed_it() {
             "Fedora, rpm owns it",
             Fake::default()
                 .os_release(FEDORA)
-                .on_path("rpm")
                 .rpm_owned_by(PACKAGED_COMMAND, "kendex"),
-            rpm,
+            rpm.clone(),
         ),
         (
-            "dpkg first where both managers are on PATH",
+            "Debian with both tools on PATH is dpkg's",
             Fake::default()
                 .os_release(DEBIAN)
                 .on_path("dpkg-query")
@@ -659,6 +651,23 @@ fn the_deb_and_rpm_command_is_named_by_the_manager_that_installed_it() {
                 .dpkg_owned_by(PACKAGED_COMMAND, "kendex")
                 .rpm_owned_by(PACKAGED_COMMAND, "kendex-extra"),
             deb.clone(),
+        ),
+        (
+            "Fedora with both tools on PATH is rpm's",
+            Fake::default()
+                .os_release(FEDORA)
+                .on_path("dpkg-query")
+                .on_path("rpm")
+                .dpkg_owned_by(PACKAGED_COMMAND, "kendex-extra")
+                .rpm_owned_by(PACKAGED_COMMAND, "kendex"),
+            rpm.clone(),
+        ),
+        (
+            "a derivative naming its family in ID_LIKE",
+            Fake::default()
+                .os_release("ID=rocky\nID_LIKE=\"rhel centos fedora\"\n")
+                .rpm_owned_by(PACKAGED_COMMAND, "kendex"),
+            rpm,
         ),
         (
             "dpkg naming another package",
@@ -682,10 +691,11 @@ fn the_deb_and_rpm_command_is_named_by_the_manager_that_installed_it() {
             InstallChannel::Unknown,
         ),
         (
-            "no package manager on PATH",
+            "a distro of no known family",
             Fake::default()
-                .os_release(DEBIAN)
-                .dpkg_owned_by(PACKAGED_COMMAND, "kendex"),
+                .os_release("ID=alpine\n")
+                .dpkg_owned_by(PACKAGED_COMMAND, "kendex")
+                .rpm_owned_by(PACKAGED_COMMAND, "kendex"),
             InstallChannel::Unknown,
         ),
         (
@@ -697,8 +707,22 @@ fn the_deb_and_rpm_command_is_named_by_the_manager_that_installed_it() {
                 .owned_by(PACKAGED_COMMAND, "kendex-bin"),
             aur("paru -S kendex-bin"),
         ),
-    ];
-    for (label, probe, expected) in rows {
+    ]
+}
+
+/// One row per Linux machine a `/usr/bin/kendex` can sit on outside Arch.
+/// The `.deb` and `.rpm` are named through the distro's own manager, read
+/// off `os-release` (`ID`, then `ID_LIKE`), and only when that manager
+/// says the kendex package owns the file: an rpm distro with dpkg beside
+/// it is asked through rpm, whatever is on `PATH`. A distro of no known
+/// family, an owner of another name, a file no package claims, and an
+/// owner known only to the manager that was not asked all name nobody.
+/// Arch is still pacman's, even with dpkg-query beside it. The app's own
+/// binary from the `.deb` gets the same answer through `for_app`, since
+/// neither package updates itself.
+#[test]
+fn the_deb_and_rpm_command_is_named_by_the_manager_that_installed_it() {
+    for (label, probe, expected) in deb_and_rpm_rows() {
         assert_eq!(
             for_cli(Path::new(PACKAGED_COMMAND), &probe),
             own(expected),
@@ -706,36 +730,28 @@ fn the_deb_and_rpm_command_is_named_by_the_manager_that_installed_it() {
         );
     }
 
+    // The app's own binary from the .deb gets the deb's answer too: the
+    // first row is the deb row, and the same route is what it is told.
     let app = Fake::default()
         .os_release(DEBIAN)
-        .on_path("dpkg-query")
         .dpkg_owned_by("/usr/bin/kendex-app", "kendex");
+    let (_, _, deb) = deb_and_rpm_rows().remove(0);
     assert_eq!(for_app(&app_binary("/usr/bin/kendex-app"), &app), deb);
 }
 
-/// One row per answer an owner query can give: the manager asked, whether
-/// it said it found an owner, the bytes it printed, and the name this
-/// build takes from them. A refusal names nobody even with a package name
-/// on stdout, bytes that are not text name nobody, one name is read from
-/// the first line whatever follows it, and a line that is blank once
-/// trimmed is no name. dpkg prints the name before a colon, and a diverted
-/// file naming two packages there names nobody.
-///
-/// The remaining way to reach `None` is a run that never happened, which is
-/// the `ok()?` on `Hardened::run` in `Host::pacman_owner`; this suite has no
-/// pacman to fail, and that branch carries no logic of its own.
-#[test]
-fn the_printed_owner_is_read_off_one_run() {
+/// The manager asked, its status, its stdout, and the name taken.
+type OwnerRow = (
+    &'static str,
+    PackageManager,
+    bool,
+    &'static [u8],
+    Option<&'static str>,
+);
+
+/// The rows of the table above.
+fn owner_query_rows() -> [OwnerRow; 16] {
     use PackageManager::{Dpkg, Pacman, Rpm};
-    /// The manager asked, its status, its stdout, and the name taken.
-    type Row = (
-        &'static str,
-        PackageManager,
-        bool,
-        &'static [u8],
-        Option<&'static str>,
-    );
-    let rows: [Row; 14] = [
+    [
         (
             "the owning package",
             Pacman,
@@ -758,11 +774,18 @@ fn the_printed_owner_is_read_off_one_run() {
             Some("kendex"),
         ),
         (
-            "a second line after it",
+            "a second line naming another package",
             Pacman,
             true,
             b"kendex-git\nkendex\n",
-            Some("kendex-git"),
+            None,
+        ),
+        (
+            "a second line repeating the name",
+            Rpm,
+            true,
+            b"kendex\nkendex\n",
+            Some("kendex"),
         ),
         (
             "a refusal naming a package anyway",
@@ -789,10 +812,17 @@ fn the_printed_owner_is_read_off_one_run() {
             Some("kendex"),
         ),
         (
-            "dpkg naming two packages for a diverted file",
+            "dpkg naming two packages that ship the file",
             Dpkg,
             true,
-            b"diversion by kendex-extra, kendex: /usr/bin/kendex\n",
+            b"kendex, kendex-extra: /usr/bin/kendex\n",
+            None,
+        ),
+        (
+            "dpkg reporting a diversion, as it prints one",
+            Dpkg,
+            true,
+            b"diversion by kendex-extra from: /usr/bin/kendex\ndiversion by kendex-extra to: /usr/bin/kendex.distrib\nkendex: /usr/bin/kendex\n",
             None,
         ),
         ("dpkg with no colon", Dpkg, true, b"kendex\n", None),
@@ -810,8 +840,24 @@ fn the_printed_owner_is_read_off_one_run() {
             b"kendex\n",
             Some("kendex"),
         ),
-    ];
-    for (label, manager, success, stdout, expected) in rows {
+    ]
+}
+
+/// One row per answer an owner query can give: the manager asked, whether
+/// it said it found an owner, the bytes it printed, and the name this
+/// build takes from them. A refusal names nobody even with a package name
+/// on stdout, bytes that are not text name nobody, a line that is blank
+/// once trimmed is no name, and one rule holds for every manager: a second
+/// package with a claim on the path names nobody — a second line naming
+/// another package, a dpkg list before the colon, or dpkg's diversion
+/// report, printed here as `dpkg-query -S` prints it.
+///
+/// The remaining way to reach `None` is a run that never happened, which is
+/// the `ok()?` on `Hardened::run` in `Host::owning_package`; this suite has no
+/// pacman to fail, and that branch carries no logic of its own.
+#[test]
+fn the_printed_owner_is_read_off_one_run() {
+    for (label, manager, success, stdout, expected) in owner_query_rows() {
         assert_eq!(
             printed_owner(manager, success, stdout).as_deref(),
             expected,
@@ -845,6 +891,7 @@ fn each_arch_package_is_named_once_and_selected_by_that_name() {
 
 #[test]
 fn an_os_release_value_is_read_unquoted_and_whole() {
+    let is_arch = |text: &str| distro_family(text) == Some(PackageManager::Pacman);
     assert!(is_arch("ID='arch'\n"));
     assert!(is_arch("ID=\"arch\"\n"));
     assert!(is_arch("ID_LIKE=\"debian arch\"\n"));
@@ -852,6 +899,17 @@ fn an_os_release_value_is_read_unquoted_and_whole() {
     assert!(!is_arch("ID_LIKE=\"archlinux\"\n"));
     assert!(!is_arch("BUILD_ID=arch\n"));
     assert!(!is_arch("no equals sign here\n"));
+    // A family named in either key is the family, and a derivative that
+    // names its own `ID` is read by what it is like.
+    assert_eq!(
+        distro_family("ID=ubuntu\nID_LIKE=debian\n"),
+        Some(PackageManager::Dpkg)
+    );
+    assert_eq!(
+        distro_family("ID=cachyos\nID_LIKE=arch\n"),
+        Some(PackageManager::Pacman)
+    );
+    assert_eq!(distro_family("ID=alpine\n"), None);
 }
 
 /// The one question that gates writing over an install answers for both
