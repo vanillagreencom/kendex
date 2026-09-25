@@ -6,8 +6,8 @@
 # jobs that waiver authorizes to skip. A class selects each lane separately,
 # so each aggregate of `.github/workflows/skill-tests.yml` has its own such
 # set: exactly the lanes `tools/ci-job-set` selected `false`. This script
-# builds that set from the selections and runs the helper, which keeps the
-# three aggregates from spelling the same derivation three times.
+# builds that set from the selections and runs the helper, which keeps each
+# aggregate from spelling the same derivation.
 #
 # Usage:
 #   ci-aggregate --results JSON --classifier JOB --lane SELECTION:JOB [--lane ...]
@@ -19,7 +19,10 @@
 # An EMPTY selection is the classifying job having published nothing, which is
 # that job having failed. It authorizes no skip, so the run reaches
 # `aggregate-needs` with the waiver off and is rejected there, naming the dead
-# classifier rather than a parse failure here.
+# classifier rather than a parse failure here. A lane held to an event rather
+# than a class, never empty, can still select `false` beside a dead
+# classifier and turn the waiver on; `aggregate-needs` rejects that run on the
+# classifier's own result.
 #
 # Every refusal starts `ci-aggregate: cause=<name>` and exits 2, a helper this
 # script cannot find included. Exit 1 is the helper's own rejection, passed

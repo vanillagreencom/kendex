@@ -14,15 +14,22 @@
 #      lane line, and the refusals beside them; then a `trivial` diff of a
 #      path the Rust source reads, in a fixture checkout, with a control.
 #   2. the names: the lanes the gates read, the lanes the changes job
-#      publishes, the lanes ci-job-set selects, and the lane each aggregate
-#      holds each job to are one set, compared by name.
+#      publishes and the lanes ci-job-set selects are one set, compared by
+#      name, and each aggregate, on its own, holds every job it needs to the
+#      lane or event condition that job's own `if:` reads.
 #   3. the job set: each gated job's own `if:` and the platform matrix's
 #      `os:` expression, read out of the workflow and EVALUATED against a
-#      selection, with GitHub's implicit success() where a condition carries
-#      no status function. A dead classifier runs every gated job and both
-#      platform legs. Must-fail arms plant a lane condition that reads no
-#      selection, one that drops its status function, and a matrix with its
-#      arms swapped.
+#      selection and an event, with GitHub's implicit success() where a
+#      condition carries no status function. A merge group runs the class
+#      job set its pull request ran, less the two jobs held to the
+#      pull-request event. A dead classifier runs every gated job and both
+#      platform legs. The `CI` job needs every job but the aggregators and
+#      runs on both gated events whatever its needs did. Must-fail arms plant
+#      a lane condition that reads no selection, one that drops its status
+#      function, one that ignores the class on a merge group, a matrix with
+#      its arms swapped, a job dropped from CI's needs, CI without always(),
+#      a lane dropped from one aggregate alone and an event-held job held to
+#      another condition.
 #   4. the aggregate: a lane the class authorized may skip; one it did not
 #      is rejected, and so is a dead classifier, a job named twice and a
 #      helper that is not there.
@@ -35,6 +42,11 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 ROOT="$(git rev-parse --show-toplevel)"
 WORKFLOW="$ROOT/.github/workflows/skill-tests.yml"
+# The workflow readers and the expression evaluator are the harness-ci
+# package's, which its template suite reads a workflow with too.
+# shellcheck source=../../skills/harness-ci/tests/lib/workflow.sh
+. "$ROOT/skills/harness-ci/tests/lib/workflow.sh"
+[ -f "$GH_EVAL" ] || { echo "missing $GH_EVAL" >&2; exit 1; }
 JOB_SET="$ROOT/tools/ci-job-set"
 AGGREGATE="$ROOT/tools/ci-aggregate"
 
@@ -249,22 +261,6 @@ CONTROLS
 
 OUTPUT_NAME='needs\.changes\.outputs\.[a-z_]+'
 
-# One `JOB<tab>EXPR` line per job with a job-level `if:`, the `${{ }}`
-# stripped. Only a line at the job's own indent is read.
-job_ifs() { # WORKFLOW
-  awk '
-    /^jobs:/ { in_jobs = 1; next }
-    !in_jobs { next }
-    /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job); next }
-    /^    if:/ {
-      expr = $0
-      sub(/^    if:[ ]*/, "", expr)
-      if (substr(expr, 1, 3) == "${{") { expr = substr(expr, 4); sub(/}}[ ]*$/, "", expr) }
-      print job "\t" expr
-    }
-  ' "$1"
-}
-
 # The platform matrix's `os:` expression, the `${{ }}` stripped.
 matrix_expr() { # WORKFLOW
   sed -n 's/^        os: \${{ \(.*\) }}$/\1/p' "$1"
@@ -300,23 +296,54 @@ published_map() { # WORKFLOW
   ' "$1"
 }
 
-# `LANE:JOB` for every `--lane "$VAR:JOB"` an aggregate passes, VAR resolved
-# through that same job's `VAR: ${{ needs.changes.outputs.LANE }}` entry. An
-# unresolved VAR prints as `?`, which matches no lane.
-aggregate_pairs() { # WORKFLOW
-  awk '
-    /^  [A-Za-z0-9_-]+:/ { split("", var) }
-    match($0, /^          [A-Z_]+: \$\{\{ needs\.changes\.outputs\.[a-z_]+ \}\}$/) {
+# `AGGREGATE<tab>JOB<tab>EXPR` for every `--lane "$VAR:JOB"` an aggregate
+# passes, VAR resolved through that same job's `VAR: ${{ EXPR }}` entry, and
+# EXPR empty where it resolves to none. AGGREGATE, when named, keeps that
+# job's lanes alone.
+aggregate_lanes() { # WORKFLOW [AGGREGATE]
+  AGG="${2:-}" awk '
+    /^  [A-Za-z0-9_-]+:/ { agg = $1; sub(/:$/, "", agg); split("", var) }
+    match($0, /^          [A-Z_]+: \$\{\{ .* \}\}$/) {
       name = $1; sub(/:$/, "", name)
-      lane = $0; sub(/.*needs\.changes\.outputs\./, "", lane); sub(/ .*/, "", lane)
-      var[name] = lane
+      expr = $0; sub(/^[^{]*\{\{ /, "", expr); sub(/ \}\}$/, "", expr)
+      var[name] = expr
     }
     match($0, /--lane "\$[A-Z_]+:[a-z0-9-]+"/) {
       pair = substr($0, RSTART + 9, RLENGTH - 10)
       name = pair; sub(/:.*/, "", name)
       job = pair; sub(/^[^:]*:/, "", job)
-      print ((name in var) ? var[name] : "?") ":" job
+      if (ENVIRON["AGG"] == "" || agg == ENVIRON["AGG"]) print agg "\t" job "\t" ((name in var) ? var[name] : "")
     }
+  ' "$1" | LC_ALL=C sort -u
+}
+PUBLISHED_LANE='^needs\.changes\.outputs\.[a-z_]+$'
+# `LANE:JOB` for each lane held to a published selection, and `?:JOB` for one
+# whose selection resolves to nothing, which matches no lane.
+aggregate_pairs() { # WORKFLOW [AGGREGATE]
+  aggregate_lanes "$@" | LANE="$PUBLISHED_LANE" awk -F '\t' '
+    $3 == "" { print "?:" $2; next }
+    $3 ~ ENVIRON["LANE"] { sub(/^needs\.changes\.outputs\./, "", $3); print $3 ":" $2 }
+  ' | LC_ALL=C sort -u
+}
+# `JOB<tab>EXPR` for each lane held to anything but a published selection:
+# the event conditions a job is held to.
+aggregate_events() { # WORKFLOW [AGGREGATE]
+  aggregate_lanes "$@" | LANE="$PUBLISHED_LANE" awk -F '\t' '$3 != "" && $3 !~ ENVIRON["LANE"] { print $2 "\t" $3 }' |
+    LC_ALL=C sort -u
+}
+# `missing=` and `extra=` of ACTUAL against EXPECTED, each a line-per-member set.
+set_gap() { # EXPECTED ACTUAL
+  printf 'missing=%s extra=%s' \
+    "$(comm -23 <(printf '%s\n' "$1" | grep . | LC_ALL=C sort) <(printf '%s\n' "$2" | grep . | LC_ALL=C sort) | tr '\n' ' ' | sed 's/ $//')" \
+    "$(comm -13 <(printf '%s\n' "$1" | grep . | LC_ALL=C sort) <(printf '%s\n' "$2" | grep . | LC_ALL=C sort) | tr '\n' ' ' | sed 's/ $//')"
+}
+CI_JOB="$(jobs_named "$WORKFLOW" CI)"
+aggregators() { # WORKFLOW — every job whose script calls tools/ci-aggregate
+  awk '
+    /^jobs:/ { in_jobs = 1; next }
+    !in_jobs { next }
+    /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job); next }
+    /^ +tools\/ci-aggregate --/ { print job }
   ' "$1" | LC_ALL=C sort -u
 }
 
@@ -333,202 +360,87 @@ check "the gates read exactly the lanes ci-job-set selects" \
 GATE_PAIRS="$(gate_pairs "$WORKFLOW")"
 [ "$(printf '%s\n' "$GATE_PAIRS" | grep -c .)" -gt 0 ] ||
   { echo "no gated job read out of $WORKFLOW, so the extractor is broken" >&2; exit 1; }
-check "the aggregates hold each gated job to the lane its own condition reads" \
-  "$GATE_PAIRS" "$(aggregate_pairs "$WORKFLOW")"
+
+# Each aggregate, on its own, holds every gated job it needs to the lane that
+# job's own condition reads, and every job it needs whose condition stands it
+# down on a gated event to that condition, spelled as the job spells it. The
+# aggregates repeat each other's lanes, so a comparison over their union
+# would hide one aggregate's omission behind another's copy. A needed job
+# with no lane is event-held where its own condition evaluates false on
+# pull_request or merge_group; a condition the evaluator refuses prints its
+# refusal into the gap.
+aggregate_gap() { # WORKFLOW AGGREGATE — `lanes: missing= extra= events: missing= extra=`
+  local wf="$1" agg="$2" needs job expr pr group held=""
+  needs="$(job_needs "$wf" | awk -F '\t' -v j="$agg" '$1 == j { print $2 }' | tr ',' '\n' | grep .)" || needs=""
+  gate_pairs "$wf" >"$TMP/gap-gates"
+  job_ifs "$wf" >"$TMP/gap-ifs"
+  while IFS= read -r job; do
+    grep -q ":$job\$" "$TMP/gap-gates" && continue
+    expr="$(awk -F '\t' -v j="$job" '$1 == j { print $2 }' "$TMP/gap-ifs")"
+    [ -n "$expr" ] || continue
+    pr="$(gh_eval value '{"github":{"event_name":"pull_request"}}' "$expr")"
+    group="$(gh_eval value '{"github":{"event_name":"merge_group"}}' "$expr")"
+    case "$pr $group" in
+      "true true") ;;
+      "true false" | "false true" | "false false") held="$held$(printf '%s\t%s' "$job" "$expr")
+" ;;
+      *) held="$held$(printf '%s\t%s' "$job" "refused: $pr $group")
+" ;;
+    esac
+  done <<<"$needs"
+  printf 'lanes: %s events: %s' \
+    "$(set_gap "$(printf '%s\n' "$needs" | while IFS= read -r job; do grep ":$job\$" "$TMP/gap-gates" || true; done)" \
+      "$(aggregate_pairs "$wf" "$agg")")" \
+    "$(set_gap "$held" "$(aggregate_events "$wf" "$agg")" | tr '\t' '=')"
+}
+AGGREGATE_ROWS=0
+for agg in $(aggregators "$WORKFLOW"); do
+  AGGREGATE_ROWS=$((AGGREGATE_ROWS + 1))
+  check "$agg holds each job it needs to the selection its own condition reads" \
+    "lanes: missing= extra= events: missing= extra=" "$(aggregate_gap "$WORKFLOW" "$agg")"
+done
+[ "$AGGREGATE_ROWS" -ge 4 ] || { echo "the aggregate table read $AGGREGATE_ROWS rows" >&2; exit 1; }
+# The event-held set, derived above, holds the two diff checks CI names.
+EVENT_HELD="$(aggregate_events "$WORKFLOW" | cut -f1 | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
+check "the aggregates hold the two diff checks to an event" "markdown preflight" "$EVENT_HELD"
 
 # --- 3. The job set ---------------------------------------------------------
-# The evaluator covers the expression forms these conditions use: string,
-# number and boolean literals, context paths, `!`, `==`, `!=`, `&&`, `||`,
-# parentheses, and the functions fromJSON, always, cancelled and success.
-# Anything else is a refusal, not a guess. `==` compares strings without
-# regard to case, `&&` and `||` return an operand, and a path that names no
-# value is null, as GitHub evaluates them.
-cat >"$TMP/gh-eval.py" <<'PY'
-import json, re, sys
+# gh-eval.py's header names the expression forms it covers and refuses the
+# rest.
 
-TOKEN = re.compile(r"\s*(?:(\|\||&&|==|!=|!|\(|\)|,)|'((?:[^']|'')*)'"
-                   r"|([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*)|(\d+))")
-STATUS = ("always", "cancelled", "success", "failure")
-
-
-def refuse(msg):
-    sys.stderr.write("gh-eval: " + msg + "\n")
-    sys.exit(2)
-
-
-def tokens(src):
-    out, i, src = [], 0, src.strip()
-    while i < len(src):
-        m = TOKEN.match(src, i)
-        if not m or m.end() == i:
-            refuse("cause=untokenizable at=%d expr=%s" % (i, src))
-        op, string, ident, num = m.groups()
-        if op:
-            out.append(("op", op))
-        elif string is not None:
-            out.append(("str", string.replace("''", "'")))
-        elif ident:
-            out.append(("id", ident))
-        else:
-            out.append(("num", int(num)))
-        i = m.end()
-    return out
-
-
-def truthy(v):
-    return not (v is None or v is False or v == "" or (type(v) in (int, float) and v == 0))
-
-
-def equal(a, b):
-    if isinstance(a, str) and isinstance(b, str):
-        return a.lower() == b.lower()
-    return a == b
-
-
-class Parser:
-    def __init__(self, toks, ctx):
-        self.t, self.i, self.ctx = toks, 0, ctx
-
-    def peek(self):
-        return self.t[self.i] if self.i < len(self.t) else (None, None)
-
-    def expect(self, value):
-        if self.peek() != ("op", value):
-            refuse("cause=expected token=%s at=%d" % (value, self.i))
-        self.i += 1
-
-    def whole(self):
-        v = self.or_()
-        if self.i != len(self.t):
-            refuse("cause=trailing-tokens at=%d" % self.i)
-        return v
-
-    def or_(self):
-        v = self.and_()
-        while self.peek() == ("op", "||"):
-            self.i += 1
-            r = self.and_()
-            v = v if truthy(v) else r
-        return v
-
-    def and_(self):
-        v = self.cmp()
-        while self.peek() == ("op", "&&"):
-            self.i += 1
-            r = self.cmp()
-            v = r if truthy(v) else v
-        return v
-
-    def cmp(self):
-        v = self.unary()
-        kind, op = self.peek()
-        if kind == "op" and op in ("==", "!="):
-            self.i += 1
-            r = self.unary()
-            v = equal(v, r) if op == "==" else not equal(v, r)
-        return v
-
-    def unary(self):
-        if self.peek() == ("op", "!"):
-            self.i += 1
-            return not truthy(self.unary())
-        return self.primary()
-
-    def primary(self):
-        kind, v = self.peek()
-        if (kind, v) == ("op", "("):
-            self.i += 1
-            r = self.or_()
-            self.expect(")")
-            return r
-        if kind in ("str", "num"):
-            self.i += 1
-            return v
-        if kind != "id":
-            refuse("cause=unexpected-token at=%d" % self.i)
-        self.i += 1
-        if v in ("true", "false"):
-            return v == "true"
-        if v == "null":
-            return None
-        if self.peek() == ("op", "("):
-            self.i += 1
-            args = []
-            if self.peek() != ("op", ")"):
-                args.append(self.or_())
-                while self.peek() == ("op", ","):
-                    self.i += 1
-                    args.append(self.or_())
-            self.expect(")")
-            return self.call(v, args)
-        return self.lookup(v)
-
-    def call(self, name, args):
-        if name == "fromJSON":
-            return json.loads(args[0])
-        if name == "always":
-            return True
-        if name == "cancelled":
-            return False
-        if name == "success":
-            return self.ctx["needs"]["changes"]["result"] == "success"
-        refuse("cause=unknown-function name=%s" % name)
-
-    def lookup(self, path):
-        parts = path.split(".")
-        if parts[0] not in self.ctx:
-            refuse("cause=unknown-context name=%s" % parts[0])
-        v = self.ctx
-        for p in parts:
-            v = v.get(p) if isinstance(v, dict) else None
-        return v
-
-
-def context(event, result, selection, map_file):
-    chosen = dict(pair.split("=", 1) for pair in selection.split())
-    outputs = {}
-    if result == "success":
-        with open(map_file) as f:
-            for line in f:
-                name, source = line.split()
-                if source in chosen:
-                    outputs[name] = chosen[source]
-    return {"github": {"event_name": event},
-            "needs": {"changes": {"result": result, "outputs": outputs}}}
-
-
-mode, event, result, selection, map_file = sys.argv[1:6]
-ctx = context(event, result, selection, map_file)
-if mode == "value":
-    print(json.dumps(Parser(tokens(sys.argv[6]), ctx).whole(), separators=(",", ":")))
-elif mode == "jobs":
-    for line in sys.stdin:
-        job, expr = line.rstrip("\n").split("\t", 1)
-        # A condition naming no status function runs under GitHub's implicit
-        # success(), which a dead classifier makes false.
-        if not any(re.search(r"\b%s\(" % f, expr) for f in STATUS):
-            expr = "success() && (%s)" % expr
-        if truthy(Parser(tokens(expr), ctx).whole()):
-            print(job)
-else:
-    refuse("cause=unknown-mode mode=%s" % mode)
-PY
-
-# The jobs a class stands down or runs: every job whose own condition reads
-# a lane, and every job an aggregate holds, since a job an aggregate holds
-# whose condition reads nothing runs on every class.
-gated_jobs() { # WORKFLOW
-  { gate_pairs "$1"; aggregate_pairs "$1"; } | sed 's/^[^:]*://' | LC_ALL=C sort -u
+# The context a gated job's condition reads: the event, and the changes job's
+# result with the outputs its published map names out of a selection, or none
+# where it did not succeed.
+context_json() { # EVENT RESULT SELECTION MAP_FILE
+  local outputs='{}'
+  if [ "$2" = success ]; then
+    outputs="$(printf '%s\n' $3 | jq -Rn --rawfile map "$4" '
+      ([inputs | select(length > 0) | split("=") | {key: .[0], value: .[1]}] | from_entries) as $chosen
+      | [$map | split("\n")[] | select(length > 0) | split(" ")
+         | select($chosen[.[1]] != null) | {key: .[0], value: $chosen[.[1]]}] | from_entries')" ||
+      { echo "could not build the outputs of '$3'" >&2; exit 1; }
+  fi
+  jq -cn --arg event "$1" --arg result "$2" --argjson outputs "$outputs" \
+    '{github: {event_name: $event}, needs: {changes: {result: $result, outputs: $outputs}}}'
 }
 
-running() { # WORKFLOW SELECTION [RESULT] — the gated jobs that run, sorted and spaced
-  local wf="$1" sel="$2" result="${3:-success}" map="$TMP/published-map" job
+# The jobs a class or an event stands down or runs: every job whose own
+# condition reads a lane, and every job an aggregate holds, since a job an
+# aggregate holds whose condition reads nothing runs on every class.
+gated_jobs() { # WORKFLOW
+  { gate_pairs "$1" | sed 's/^[^:]*://'; aggregate_lanes "$1" | cut -f2; } | LC_ALL=C sort -u
+}
+
+running() { # WORKFLOW SELECTION [RESULT] [EVENT] — the gated jobs that run, sorted and spaced
+  local wf="$1" sel="$2" result="${3:-success}" event="${4:-pull_request}" map="$TMP/published-map" job expr
   published_map "$wf" >"$map"
   gated_jobs "$wf" >"$TMP/gated"
+  job_needs "$wf" >"$TMP/needs"
   job_ifs "$wf" | while IFS="$(printf '\t')" read -r job expr; do
-    grep -qxF -- "$job" "$TMP/gated" && printf '%s\t%s\n' "$job" "$expr"
+    grep -qxF -- "$job" "$TMP/gated" &&
+      printf '%s\t%s\t%s\n' "$job" "$(awk -F '\t' -v j="$job" '$1 == j { print $2 }' "$TMP/needs")" "$expr"
   done >"$TMP/gated-ifs" || true
-  python3 "$TMP/gh-eval.py" jobs pull_request "$result" "$sel" "$map" <"$TMP/gated-ifs" |
+  gh_eval jobs "$(context_json "$event" "$result" "$sel" "$map")" <"$TMP/gated-ifs" |
     LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//'
 }
 
@@ -537,28 +449,56 @@ legs() { # WORKFLOW SELECTION [RESULT] — the platform legs the matrix expands 
   published_map "$wf" >"$map"
   expr="$(matrix_expr "$wf")"
   [ -n "$expr" ] || { printf 'no-matrix-expression'; return 0; }
-  python3 "$TMP/gh-eval.py" value pull_request "$result" "$sel" "$map" "$expr"
+  gh_eval value "$(context_json pull_request "$result" "$sel" "$map")" "$expr"
 }
 
-EVERY_GATED="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard ui-tests"
+EVERY_GATED="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows markdown preflight skill-suites-shard ui-tests"
+# What a merge group runs of it: every lane, without the two pull-request diff
+# checks.
+EVERY_GROUP_LANE="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard ui-tests"
 check "the gated set is read out of the workflow" "$EVERY_GATED" \
   "$(gated_jobs "$WORKFLOW" | tr '\n' ' ' | sed 's/ $//')"
 
 one_skill="$(selection micro false 'skills/orch/SKILL.md
 .agents/skills/orch/SKILL.md')"
-# SELECTION|EXPECTED JOBS
+# A standard diff of product code, the full battery a pull request of that
+# class runs.
+standard_code="$(selection standard false 'crates/core/src/lib.rs')"
+# EVENT|SELECTION|EXPECTED JOBS. A merge group runs the class job set its pull
+# request ran, the two pull-request diff checks aside: a `render` group runs
+# the one verify job and a standard group every lane its class selects.
 job_rows=0
-while IFS='|' read -r sel expected; do
+while IFS='|' read -r event sel expected; do
   job_rows=$((job_rows + 1))
-  check "jobs under '$sel'" "$expected" "$(running "$WORKFLOW" "$sel")"
+  check "jobs on $event under '$sel'" "$expected" "$(running "$WORKFLOW" "$sel" success "$event")"
 done <<ROWS
-$VERIFY_ROW|bot-instructions
-$ALL_ON|$EVERY_GATED
-$one_skill|bot-instructions cargo-linux skill-suites-shard
-$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
-$BUILD_ROW|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
+pull_request|$VERIFY_ROW|bot-instructions markdown preflight
+merge_group|$VERIFY_ROW|bot-instructions
+pull_request|$ALL_ON|$EVERY_GATED
+merge_group|$ALL_ON|$EVERY_GROUP_LANE
+pull_request|$one_skill|bot-instructions cargo-linux markdown preflight skill-suites-shard
+merge_group|$one_skill|bot-instructions cargo-linux skill-suites-shard
+pull_request|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows markdown preflight skill-suites-shard
+merge_group|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
+pull_request|$standard_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows markdown preflight skill-suites-shard
+merge_group|$standard_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
 ROWS
-[ "$job_rows" -ge 4 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
+[ "$job_rows" -ge 10 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
+
+# The same property over every selection the table names: what a merge group
+# runs is what its pull request ran less the event-held jobs.
+without_event_held() { # JOBS — the jobs, spaced, with every event-held one dropped
+  local job out=""
+  for job in $1; do
+    case " $EVENT_HELD " in *" $job "*) ;; *) out="$out $job" ;; esac
+  done
+  printf '%s' "${out# }"
+}
+for sel in "$VERIFY_ROW" "$ALL_ON" "$one_skill" "$CODE_ROW" "$UI_ROW" "$PROSE_ROW" "$standard_code"; do
+  check "a merge group runs its pull request's class job set under '$sel'" \
+    "$(without_event_held "$(running "$WORKFLOW" "$sel" success pull_request)")" \
+    "$(running "$WORKFLOW" "$sel" success merge_group)"
+done
 
 # A classifier that died published nothing. Every gated job runs, which is
 # what each condition's status function and result term are for.
@@ -575,7 +515,8 @@ check "the matrix runs both legs when nothing classified" \
 # The document byte ceilings and the work-marker scan run in the job a
 # `render` or `trivial` diff runs, and in no other, so every class that runs
 # any gated job runs both scans. Each `run:` line is read with the job it
-# sits in.
+# sits in. The job a `render` diff runs is read off a merge group, where no
+# job held to the pull-request event runs beside it.
 job_of_run() { # WORKFLOW COMMAND — the jobs whose `run:` line names it, sorted and spaced
   COMMAND="$2" awk '
     /^jobs:/ { in_jobs = 1; next }
@@ -584,30 +525,56 @@ job_of_run() { # WORKFLOW COMMAND — the jobs whose `run:` line names it, sorte
     /^ +run: / && index($0, ENVIRON["COMMAND"]) > 0 { print job }
   ' "$1" | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//'
 }
-VERIFY_JOBS="$(running "$WORKFLOW" "$VERIFY_ROW")"
+VERIFY_JOBS="$(running "$WORKFLOW" "$VERIFY_ROW" success merge_group)"
 [ -n "$VERIFY_JOBS" ] || { echo "the verify row runs no job, so the extractor is broken" >&2; exit 1; }
 for scan in skills/doc-limits/scripts/doc-limits skills/commit-guards/scripts/todo-ban; do
   check "$scan runs in the verify job alone" "$VERIFY_JOBS" "$(job_of_run "$WORKFLOW" "$scan")"
 done
 
-# --- 3b. Must-fail controls -------------------------------------------------
-plant() { # FROM TO OUT — replace FROM once in the workflow, or stop
-  local from="$1" to="$2" out="$3"
-  [ "$(grep -cF -- "$from" "$WORKFLOW")" -eq 1 ] ||
-    { echo "the planted text is no longer one line: $from" >&2; exit 1; }
-  FROM="$from" TO="$to" awk '
-    { i = index($0, ENVIRON["FROM"]) }
-    i > 0 { $0 = substr($0, 1, i - 1) ENVIRON["TO"] substr($0, i + length(ENVIRON["FROM"])) }
-    { print }
-  ' "$WORKFLOW" >"$out"
-  ! cmp -s "$WORKFLOW" "$out" ||
-    { echo "the planted edit changed nothing: $from" >&2; exit 1; }
+# --- 3a. The one context ---------------------------------------------------
+# `CI` is the context the organization ruleset requires beside `Review gate`.
+# Every job reports into it but the aggregators, which run tools/ci-aggregate
+# as it does; it runs on both gated events whatever its needs did, and the
+# classifier it reads runs on both.
+
+ci_needs_gap() { # WORKFLOW — `missing=` and `extra=` against every job but the aggregators
+  local wf="$1" ci
+  ci="$(jobs_named "$wf" CI)"
+  set_gap "$(job_needs "$wf" | cut -f1 | LC_ALL=C sort | comm -23 - <(aggregators "$wf"))" \
+    "$(job_needs "$wf" | awk -F '\t' -v j="$ci" '$1 == j { print $2 }' | tr ',' '\n')"
 }
+check "one job is named CI" "ci" "$(jobs_named "$WORKFLOW" CI | tr '\n' ' ' | sed 's/ $//')"
+AGGREGATORS="$(aggregators "$WORKFLOW" | tr '\n' ' ' | sed 's/ $//')"
+check "the aggregators are read out of the workflow" "cargo-tests cargo-tests-macos ci skill-suites" "$AGGREGATORS"
+check "CI needs every job but the aggregators" "missing= extra=" "$(ci_needs_gap "$WORKFLOW")"
+# EVENT|RESULT|RUNS
+ci_rows=0
+while IFS='|' read -r event result runs; do
+  ci_rows=$((ci_rows + 1))
+  check "CI runs on $event with its needs at $result: $runs" "$runs" "$(ci_runs "$WORKFLOW" "$event" "$result")"
+done <<ROWS
+pull_request|success|yes
+pull_request|failure|yes
+merge_group|failure|yes
+merge_group|skipped|yes
+push|success|no
+ROWS
+[ "$ci_rows" -ge 5 ] || { echo "the CI table read $ci_rows rows" >&2; exit 1; }
+# The classifier every lane and CI read runs on both gated events.
+check "the workflow runs on both gated events" "merge_group pull_request push" \
+  "$(triggers "$WORKFLOW" | tr '\n' ' ' | sed 's/ $//')"
+changes_if="$(job_ifs "$WORKFLOW" | awk -F '\t' '$1 == "changes" { print $2 }')"
+for event in pull_request merge_group; do
+  check "the changes job classifies on $event" "true" \
+    "$(gh_eval value "$(jq -cn --arg e "$event" '{github: {event_name: $e}}')" "$changes_if")"
+done
+
+# --- 3b. Must-fail controls -------------------------------------------------
 
 # The pre-patch shape of the macOS cargo lane: gated on the event alone. It
 # runs on the one-skill row, which is the full battery the narrowing exists
 # to avoid.
-plant "!cancelled() && (github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true')" \
+plant "$WORKFLOW" "!cancelled() && (github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true')" \
   "!cancelled()" "$TMP/wf-ungated.yml"
 case " $(running "$TMP/wf-ungated.yml" "$one_skill") " in
   *" cargo-macos "*) ok "must-fail: a lane condition reading no selection runs on the one-skill row" ;;
@@ -616,7 +583,7 @@ esac
 
 # A condition without its status function keeps GitHub's implicit success()
 # and stands its lane down on exactly the run nothing classified.
-plant "!cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true')" \
+plant "$WORKFLOW" "!cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true')" \
   "github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true')" \
   "$TMP/wf-no-status.yml"
 case " $(running "$TMP/wf-no-status.yml" "$ALL_OFF" failure) " in
@@ -626,7 +593,7 @@ esac
 
 # The matrix with its two arms swapped runs macOS exactly where the class
 # dropped it.
-plant "'[\"ubuntu-latest\", \"macos-latest\"]' || '[\"ubuntu-latest\"]'" \
+plant "$WORKFLOW" "'[\"ubuntu-latest\", \"macos-latest\"]' || '[\"ubuntu-latest\"]'" \
   "'[\"ubuntu-latest\"]' || '[\"ubuntu-latest\", \"macos-latest\"]'" "$TMP/wf-swapped.yml"
 check "must-fail: a matrix with its arms swapped expands the wrong legs" \
   '["ubuntu-latest","macos-latest"]' "$(legs "$TMP/wf-swapped.yml" "$one_skill")"
@@ -651,6 +618,44 @@ awk '
 check "must-fail: a doc-limits step moved to the shell shards is reported there" \
   "skill-suites-shard" \
   "$(job_of_run "$TMP/wf-moved-scan.yml" skills/doc-limits/scripts/doc-limits)"
+
+# A lane that ignores the class on a merge group runs in a render group,
+# which is the full battery the queue pass exists to avoid.
+plant "$WORKFLOW" "github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true'" \
+  "github.event_name == 'push' || github.event_name == 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true'" \
+  "$TMP/wf-group-ungated.yml"
+check "must-fail: a lane ignoring the class on merge groups runs in a render group" \
+  "bot-instructions cargo-linux" "$(running "$TMP/wf-group-ungated.yml" "$VERIFY_ROW" success merge_group)"
+
+# A job CI does not need reports into no required context.
+plant "$WORKFLOW" "needs: [changes, bot-instructions, skill-suites-shard," "needs: [changes, skill-suites-shard," "$TMP/wf-ci-short.yml"
+check "must-fail: a job dropped from CI's needs is named" "missing=bot-instructions extra=" \
+  "$(ci_needs_gap "$TMP/wf-ci-short.yml")"
+
+# A lane dropped from one aggregate alone, while another aggregate still
+# passes it, is named on that aggregate: CI, and a per-repository aggregator.
+# AGGREGATE|LANE LINE|GAP
+while IFS='|' read -r agg line gap; do
+  plant "$WORKFLOW" "$line" '' "$TMP/wf-lane-$agg.yml" "$agg"
+  check "must-fail: a lane dropped from $agg alone is named" "$gap" "$(aggregate_gap "$TMP/wf-lane-$agg.yml" "$agg")"
+done <<'ROWS'
+ci|--lane "$UI:ui-tests"|lanes: missing=ui:ui-tests extra= events: missing= extra=
+cargo-tests|--lane "$CARGO_LINT:cargo-lint"|lanes: missing=cargo_lint:cargo-lint extra= events: missing= extra=
+ROWS
+
+# Without always(), GitHub's implicit success() skips CI on a failed need, and
+# a skipped required context satisfies the ruleset.
+plant "$WORKFLOW" "    if: always() && github.event_name != 'push'" "    if: github.event_name != 'push'" \
+  "$TMP/wf-ci-no-always.yml" "$CI_JOB"
+check "must-fail: CI without always() does not run on a failed need" "no" \
+  "$(ci_runs "$TMP/wf-ci-no-always.yml" merge_group failure)"
+
+# An event-held job held to another condition than its own.
+plant "$WORKFLOW" "PULL_REQUEST: \${{ github.event_name == 'pull_request' }}" "PULL_REQUEST: \${{ github.event_name != 'push' }}" \
+  "$TMP/wf-event-drift.yml"
+check "must-fail: an event-held job held to another condition is named" \
+  "lanes: missing= extra= events: missing=markdown=github.event_name == 'pull_request' preflight=github.event_name == 'pull_request' extra=markdown=github.event_name != 'push' preflight=github.event_name != 'push'" \
+  "$(aggregate_gap "$TMP/wf-event-drift.yml" "$CI_JOB")"
 
 # --- 4. The aggregate -------------------------------------------------------
 

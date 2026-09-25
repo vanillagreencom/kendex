@@ -1,0 +1,148 @@
+# The CI workflow a repository adopts from the harness-ci package, copied to
+# .github/workflows/ci.yml. .agents/skills/harness-ci/references/wiring.md
+# § The CI template says what to keep and what to change.
+#
+# `CI` is the one required context the organization ruleset asks of every
+# repository beside `Review gate`, so the job carrying it keeps that name and
+# every lane the repository runs reports into it: a lane in another workflow
+# is a lane no required context holds. The classifier reads the change class
+# on pull_request and merge_group alike, and every lane reads the same
+# `lanes` output on both, so a merge group runs the class job set its pull
+# request ran: a `render` or `trivial` diff runs no lane, and every other
+# class runs them all.
+name: CI
+
+"on":
+  pull_request:
+  # A required context a merge group never produces blocks the queue forever.
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  # THE ONE READ OF THE CHANGE CLASS. No other job classifies anything.
+  changes:
+    name: Classify the diff
+    runs-on: ubuntu-latest
+    # The render proof re-renders every installed item, so its cost grows
+    # with the install rather than with the diff.
+    timeout-minutes: 20
+    outputs:
+      change_class: ${{ steps.classify.outputs.change_class }}
+      # Whether the lanes run: every class but the two whose diff needs no
+      # lane. The one place that set is spelled, and the waiver CI reads.
+      lanes: ${{ steps.classify.outputs.change_class != 'render' && steps.classify.outputs.change_class != 'trivial' }}
+    env:
+      EVENT: ${{ github.event_name }}
+      BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+      HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
+      # The kendex the render proof re-renders with: a published main build,
+      # whose installer is read at the same sha. Move both together, to a
+      # build whose `kendex verify --json` prints a version 1 document.
+      KENDEX_BUILD_SHA: 2ba4f18c9ba6889a190ad6f19793ac4bf089df35
+      KENDEX_VERSION: main-build-133-1-2ba4f18c9ba6889a190ad6f19793ac4bf089df35
+    steps:
+      - name: the classifier, from the default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: classifier
+          persist-credentials: false
+      - name: the tree under judgement
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: subject
+          persist-credentials: false
+      # change-class reads kendex and the source mirror only where
+      # harness-only answers harness_only=true, so the two network steps run
+      # only there. It reads the default branch's harness-only, which the
+      # adoption pull request and its merge group do not have yet: a failure
+      # here leaves harness_only empty and both network steps skip, so the
+      # `render` class is out of reach and every other class is judged as
+      # usual, rather than failing the classifier on the one pull request
+      # that could add it.
+      - id: render-reach
+        continue-on-error: true
+        run: >-
+          classifier/.agents/skills/harness-ci/scripts/harness-only
+          --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
+      # Neither network step fails this job: without them the render proof is
+      # unavailable and the class falls to `standard`, which runs every lane.
+      # The warning step annotates the run when either did not succeed.
+      - id: kendex
+        name: kendex, for the render class
+        if: steps.render-reach.outputs.harness_only == 'true'
+        continue-on-error: true
+        timeout-minutes: 3
+        shell: bash
+        run: >-
+          curl -fsSL
+          "https://raw.githubusercontent.com/vanillagreencom/kendex/$KENDEX_BUILD_SHA/install.sh"
+          | sh -s -- --version "$KENDEX_VERSION"
+      - id: mirror
+        name: the source mirror the render proof re-renders from
+        if: steps.render-reach.outputs.harness_only == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        working-directory: subject
+        run: kendex source refresh
+      - name: warn when the render proof lost a prerequisite
+        if: steps.render-reach.outputs.harness_only == 'true' && (steps.kendex.outcome != 'success' || steps.mirror.outcome != 'success')
+        env:
+          KENDEX_OUTCOME: ${{ steps.kendex.outcome }}
+          MIRROR_OUTCOME: ${{ steps.mirror.outcome }}
+        run: >-
+          echo "::warning title=render proof may be unavailable::kendex install $KENDEX_OUTCOME, source refresh $MIRROR_OUTCOME (KENDEX_VERSION=$KENDEX_VERSION)"
+      - id: classify
+        uses: vanillagreencom/kendex/.github/actions/change-class@main
+        env:
+          ORCH_SIZE_RENDER_ROOTS: .agents .claude .codex .pi
+          # ORCH_SIZE_TEST_PATHS: <globs>
+        with:
+          repo: subject
+          event: ${{ env.EVENT }}
+          base: ${{ env.BASE }}
+          head: ${{ env.HEAD }}
+
+  # THE REPOSITORY'S LANES. Replace this job with the repository's own, one
+  # job per lane, each with this `needs:` and this `if:`, and name each one in
+  # CI's `needs:` and in a `--skippable` of its aggregate step. Copied as it
+  # stands, this lane fails, and CI with it.
+  test:
+    name: Test
+    needs: changes
+    # The status function runs the lane when the classifier died, and the
+    # result term keeps the empty outputs of a dead classifier from reading
+    # as a skip.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.lanes == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: echo "::error::replace the Test job with the repository's own lanes" && exit 1
+
+  # THE REQUIRED CONTEXT. always(): a failed or skipped need would otherwise
+  # skip this job, and a skipped required context satisfies the ruleset.
+  # aggregate-needs accepts a skipped lane only where the classifier
+  # succeeded and its `lanes` output stood the lanes down.
+  ci:
+    name: CI
+    needs: [changes, test]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: the classifier ran and every lane that skipped was told to
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          WAIVER: ${{ needs.changes.outputs.lanes == 'false' }}
+        run: >-
+          .agents/skills/harness-ci/scripts/aggregate-needs
+          --results "$RESULTS" --classifier changes --waiver "$WAIVER"
+          --skippable test

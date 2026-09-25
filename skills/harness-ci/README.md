@@ -18,6 +18,7 @@ Commit the installed skill and generated-file inventory. The CI runner needs `jq
 - Support pull requests, pushes and merge-queue events.
 - Validate skipped jobs before a required-context aggregator reports success.
 - Name the kind of a change: a re-rendered install, a trivial edit, a micro or small change, or anything else.
+- Ship a CI workflow template that reports one `CI` check, the name every repository's ruleset requires beside the review gate, and runs the same checks on a merge queue as on the pull request.
 
 ## How it works
 
