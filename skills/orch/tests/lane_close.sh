@@ -582,11 +582,15 @@ assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") stop=$(stop_count 
 
 # The two fields the record can answer for itself once it is read rather than
 # asked for: the item key names the tracker, and the pane names the harness it
-# is running. With both, a pre-record lane closes on its item alone.
-write_legacy_state running /host; write_panes claude; claude_screen
-run_close "$SCRIPT"
-assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") stop=$(stop_count KEN-1 claude)" \
-  'rc=0 status=done stop=1' 'an idle legacy record closes on its item alone, the harness read off its pane'
+# is running. With both, a pre-record lane closes on its item alone, one row
+# per harness the pane can name.
+for harness in claude codex pi; do
+  write_legacy_state running /host; write_panes "$harness"
+  if [[ "$harness" == codex ]]; then codex_screen; else claude_screen; fi
+  run_close "$SCRIPT"
+  assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") stop=$(stop_count KEN-1 "$harness")" \
+    'rc=0 status=done stop=1' "an idle legacy record closes on its item alone, the $harness harness read off its pane"
+done
 
 # issue-N is what open-terminal keys a GitHub lane by AND what a Linear lane is
 # keyed by wherever GH_ISSUE_PATTERN accepts that spelling, so the key picks no
@@ -1009,6 +1013,10 @@ MUTANT="$(mutant derive-harness '  claude|codex|pi) derive_identity harness "$pa
 write_legacy_state running /host; write_panes claude; claude_screen; run_close "$MUTANT"
 assert_eq "rc=$RC unsupported=$(grep -c '^lane-close: harness-unsupported item=KEN-1 harness=unknown$' <<<"$ERR" || true) closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" \
   'rc=1 unsupported=1 closed=0' 'control: dropping the pane harness derivation refuses a lane whose harness is on the screen'
+MUTANT="$(mutant derive-harness-pi '  claude|codex|pi) derive_identity harness "$pane_cmd" ;;' '  claude|codex) derive_identity harness "$pane_cmd" ;;')"
+write_legacy_state running /host; write_panes pi; claude_screen; run_close "$MUTANT"
+assert_eq "rc=$RC unsupported=$(grep -c '^lane-close: harness-unsupported item=KEN-1 harness=unknown$' <<<"$ERR" || true)" \
+  'rc=1 unsupported=1' 'control: a derivation without pi refuses a directly launched legacy Pi lane'
 
 MUTANT="$(mutant derive-tracker '  *) derived_tracker=linear ;;' '  *) derived_tracker="" ;;')"
 write_legacy_state running /host; write_panes claude; claude_screen; run_close "$MUTANT"
