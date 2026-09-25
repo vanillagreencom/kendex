@@ -2,7 +2,7 @@
 //! this invocation wrote, the person's own emptying, and the one writer
 //! every removal lands through.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -46,14 +46,22 @@ fn plant(f: &Fixture, age: u64, base: &str, bytes: usize) -> PathBuf {
     entry
 }
 
+/// Every name the trash directory holds but the size record's.
 fn names(f: &Fixture) -> BTreeSet<String> {
     match fs::read_dir(f.env.trash_dir()) {
         Ok(listing) => listing
             .flatten()
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name != SIZES_FILE)
             .collect(),
         Err(_) => BTreeSet::new(),
     }
+}
+
+/// The size record as the trash holds it, by entry name.
+fn recorded(f: &Fixture) -> BTreeMap<String, u64> {
+    let text = fs::read_to_string(f.env.trash_dir().join(SIZES_FILE)).unwrap();
+    serde_json::from_str(&text).unwrap()
 }
 
 fn name_of(path: &Path) -> String {
@@ -91,6 +99,175 @@ fn entries_past_the_size_bound_go_oldest_first() {
     assert_eq!(
         names(&f),
         BTreeSet::from([name_of(&newest), name_of(&second), name_of(&third)])
+    );
+    // The crossing entry was measured and then went, and its record
+    // with it; what went unmeasured was never recorded.
+    assert_eq!(
+        recorded(&f),
+        BTreeMap::from([
+            (name_of(&newest), quarter as u64),
+            (name_of(&second), quarter as u64),
+            (name_of(&third), quarter as u64),
+        ])
+    );
+}
+
+/// An entry is walked once in its lifetime: the pass that first needs
+/// its size records it, held or not, and every later pass reads the
+/// record instead, so an entry that will no longer read is still judged.
+/// The listing measures fresh and stops on it. A pass that learned
+/// nothing writes nothing: the record file is the same file afterwards.
+#[cfg(unix)]
+#[test]
+fn an_entry_is_measured_once_in_its_lifetime() {
+    use std::os::unix::fs::MetadataExt as _;
+    use std::os::unix::fs::PermissionsExt as _;
+    if crate::test_util::no_record_on_this_runner() {
+        return;
+    }
+    let f = bounded("7", "1024");
+    let planted = plant(&f, DAY, "planted", 10);
+    let removed = f._tmp.path().join("removed");
+    fs::create_dir_all(&removed).unwrap();
+    fs::write(removed.join("blob"), vec![b'x'; 20]).unwrap();
+    move_to_trash(&f.env, &removed).unwrap();
+    let held = f.env.held().trashed.into_iter().next().unwrap();
+
+    assert_eq!(retain(&f.env), Ok(0));
+    assert_eq!(
+        recorded(&f),
+        BTreeMap::from([(name_of(&planted), 10), (name_of(&held), 20)])
+    );
+    let record = f.env.trash_dir().join(SIZES_FILE);
+    let written = fs::metadata(&record).unwrap().ino();
+    let locked = [planted.join("locked"), held.join("locked")];
+    for dir in &locked {
+        fs::create_dir_all(dir).unwrap();
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o000)).unwrap();
+    }
+
+    let next = f.env.next_invocation();
+    let outcome = retain(&next);
+    let listed = list(&next);
+    for dir in &locked {
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    assert_eq!(outcome, Ok(0));
+    assert_eq!(fs::metadata(&record).unwrap().ino(), written);
+    let Err(reason) = listed else {
+        panic!("{listed:?}");
+    };
+    assert!(reason.contains("locked"), "{reason}");
+}
+
+/// A record follows the listing: an entry the pass removes, or one
+/// taken out by hand, loses its row on the next write, and a row is
+/// never written for an entry the pass did not measure.
+#[test]
+fn the_record_holds_only_the_entries_the_trash_holds() {
+    let f = bounded("7", "1024");
+    let young = plant(&f, DAY, "young", 10);
+    plant(&f, 40 * DAY, "aged", 10);
+
+    assert_eq!(retain(&f.env), Ok(1));
+    assert_eq!(recorded(&f), BTreeMap::from([(name_of(&young), 10)]));
+
+    fs::remove_dir_all(&young).unwrap();
+    let later = plant(&f, 2 * DAY, "later", 30);
+    assert_eq!(retain(&f.env.next_invocation()), Ok(0));
+    assert_eq!(recorded(&f), BTreeMap::from([(name_of(&later), 30)]));
+}
+
+/// A record that will not read, or that does not parse, is not an
+/// empty record: the pass stops before it removes anything and names
+/// the file.
+#[test]
+fn a_record_that_will_not_read_or_parse_stops_the_pass_with_everything_intact() {
+    enum Record {
+        Torn,
+        Directory,
+    }
+    let rows = [("torn", Record::Torn), ("a directory", Record::Directory)];
+    for (shape, planted) in rows {
+        let f = bounded("7", "1024");
+        plant(&f, 40 * DAY, "aged", 10);
+        let record = f.env.trash_dir().join(SIZES_FILE);
+        match planted {
+            Record::Torn => fs::write(&record, "{\"half").unwrap(),
+            Record::Directory => fs::create_dir(&record).unwrap(),
+        }
+
+        let Err(Stopped { removed, reason }) = retain(&f.env) else {
+            panic!("{shape}: the record was read");
+        };
+        assert_eq!(removed, 0, "{shape}");
+        assert!(
+            reason.contains(&record.display().to_string()),
+            "{shape}: {reason}"
+        );
+        assert_eq!(names(&f).len(), 1, "{shape}");
+    }
+}
+
+/// A record the pass cannot write back stops it after its decisions,
+/// naming where the record lives: the next pass measures again what
+/// this one could not record.
+#[cfg(unix)]
+#[test]
+fn a_record_that_will_not_write_stops_the_pass_after_its_decisions() {
+    use std::os::unix::fs::PermissionsExt as _;
+    if crate::test_util::no_record_on_this_runner() {
+        return;
+    }
+    let f = bounded("7", "1024");
+    let young = plant(&f, DAY, "young", 10);
+    let trash = f.env.trash_dir();
+    fs::set_permissions(&trash, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let outcome = retain(&f.env);
+    fs::set_permissions(&trash, fs::Permissions::from_mode(0o755)).unwrap();
+    let Err(Stopped { removed, reason }) = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert_eq!(removed, 0);
+    assert!(
+        reason.contains(&trash.join("sizes").display().to_string()),
+        "{reason}"
+    );
+    assert_eq!(names(&f), BTreeSet::from([name_of(&young)]));
+    assert!(!trash.join(SIZES_FILE).exists());
+}
+
+/// The crossing entry is measured, then its removal is tried; when that
+/// fails, the record written back holds no row for it, so what is left
+/// of it is measured afresh next time.
+#[cfg(unix)]
+#[test]
+fn a_crossing_entry_whose_removal_fails_keeps_no_row() {
+    use std::os::unix::fs::PermissionsExt as _;
+    if crate::test_util::no_record_on_this_runner() {
+        return;
+    }
+    let f = bounded("365", "1");
+    let newest = plant(&f, DAY, "newest", 300 * 1024);
+    let stuck = plant(&f, 2 * DAY, "stuck", 900 * 1024);
+    // A directory nothing may write in cannot lose the file it holds.
+    fs::set_permissions(&stuck, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let outcome = retain(&f.env);
+    fs::set_permissions(&stuck, fs::Permissions::from_mode(0o755)).unwrap();
+    let Err(Stopped { removed, reason }) = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert_eq!(removed, 0);
+    assert!(reason.contains("stuck"), "{reason}");
+    assert_eq!(
+        names(&f),
+        BTreeSet::from([name_of(&newest), name_of(&stuck)])
+    );
+    assert_eq!(
+        recorded(&f),
+        BTreeMap::from([(name_of(&newest), 300 * 1024)])
     );
 }
 
@@ -341,7 +518,10 @@ fn an_empty_that_stops_leaves_the_newest_entries() {
 }
 
 /// The listing: newest first, each entry's age and the bytes it holds,
-/// and a name that carries no stamp is not kendex's and is left off.
+/// and a name that carries no stamp is not kendex's entry and is left
+/// off. The size record is such a name: the listing and an emptying
+/// skip it as an entry, and the pass skips it as an entry while it
+/// keeps it as the record.
 #[test]
 fn a_listing_reports_name_age_and_bytes_newest_first() {
     let f = fixture();
@@ -362,7 +542,12 @@ fn a_listing_reports_name_age_and_bytes_newest_first() {
     );
 
     assert_eq!(retain(&f.env), Ok(0));
-    assert!(names(&f).contains("not-kendex"));
+    let record = f.env.trash_dir().join(SIZES_FILE);
+    assert!(record.is_file());
+    assert_eq!(list(&f.env).unwrap().len(), 2);
+    assert_eq!(empty(&f.env, None), Ok(2));
+    assert!(record.is_file());
+    assert_eq!(names(&f), BTreeSet::from(["not-kendex".to_owned()]));
 }
 
 /// Files under an entry are summed, a link counts as itself and is never

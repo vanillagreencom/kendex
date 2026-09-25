@@ -61,12 +61,14 @@ fn plant(home: &Path, age: u64, base: &str, bytes: usize) -> String {
     name
 }
 
+/// Every name the trash directory holds but the size record's.
 #[allow(clippy::unwrap_used)]
 fn names(home: &Path) -> Vec<String> {
     let mut names: Vec<String> = match fs::read_dir(trash_dir(home)) {
         Ok(listing) => listing
             .flatten()
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name != kendex_core::trash::SIZES_FILE)
             .collect(),
         Err(_) => Vec::new(),
     };
@@ -410,8 +412,13 @@ fn a_bound_that_is_not_a_count_removes_nothing_and_an_empty_one_is_the_default()
             &["apply", "-y", "--replace-unmanaged"],
         );
         assert!(stopped.status.success(), "{garbage}: {}", said(&stopped));
+        // The wrapper and the cause on one line: a pass that stopped is
+        // said as such, not as entries kept, since a stop can follow a
+        // removal.
         assert!(
-            said(&stopped).contains(garbage),
+            said(&stopped).lines().any(|line| {
+                line.starts_with("warning: trash: pass stopped (") && line.contains(garbage)
+            }),
             "{garbage}: {}",
             said(&stopped)
         );

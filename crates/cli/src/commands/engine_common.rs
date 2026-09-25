@@ -61,7 +61,7 @@ pub fn tidy_trash(env: &Env) {
         Ok(removed) => print_trashed(removed),
         Err(kendex_core::trash::Stopped { removed, reason }) => {
             print_trashed(removed);
-            warn(&format!("warning: trash: older entries kept ({reason})"));
+            warn(&format!("warning: trash: pass stopped ({reason})"));
         }
     }
 }
