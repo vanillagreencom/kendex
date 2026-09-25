@@ -518,9 +518,10 @@ fn an_empty_that_stops_leaves_the_newest_entries() {
 }
 
 /// The listing: newest first, each entry's age and the bytes it holds,
-/// and a name that carries no stamp is not kendex's and is left off,
-/// the size record's included: neither the listing, the pass nor an
-/// emptying touches it.
+/// and a name that carries no stamp is not kendex's entry and is left
+/// off. The size record is such a name: the listing and an emptying
+/// skip it as an entry, and the pass skips it as an entry while it
+/// keeps it as the record.
 #[test]
 fn a_listing_reports_name_age_and_bytes_newest_first() {
     let f = fixture();
