@@ -133,14 +133,14 @@ Omit empty categories. **Disposition is by rule, not by prompt** — never prese
 
 **Never fix as the main agent.**
 
-With no `ISSUE_ID`, the fix round still needs a workflow-state key. Mint one, take the printed key as `ISSUE_ID` to the end of § 5, and init its state under it. This workflow owns the key:
+With no `ISSUE_ID`, the fix round still needs a workflow-state key. Mint one as `LOCAL_KEY`, init its state, and set `ISSUE_ID` to `LOCAL_KEY` for the rest of § 4. This workflow owns that state and removes it in § 5:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state new-local-key
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --worktree [WT_PATH] --branch [BRANCH]
+.agents/skills/orch/scripts/workflow-state init [LOCAL_KEY] --worktree [WT_PATH] --branch [BRANCH]
 ```
 
 Then, with either key:
@@ -169,10 +169,12 @@ Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination
 
 ## 5. Summary
 
-Shut the review agents down (wave runs already did). A local key § 4 minted has no later reader, since the next review mints its own; remove its state:
+Shut the review agents down (wave runs already did).
+
+**Skip if** § 4 minted no local key. A key from the branch names live state that later workflows read, so only `LOCAL_KEY` is removed. Its state has no later reader, since the next review mints its own key:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state remove [ISSUE_ID]
+.agents/skills/orch/scripts/workflow-state remove [LOCAL_KEY]
 ```
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).

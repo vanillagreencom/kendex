@@ -1364,8 +1364,8 @@ Keys:
   issue, issue-<N> for a GitHub issue, the repository-local pr-<N> for a
   pull request whose branch carries no issue id, and local-<epoch>-<pid>-<random>
   from new-local-key for work with neither, such as a local review whose fix
-  round needs a key. The workflow that mints a local key owns it: it inits
-  the state, passes the key to every round it stamps, and removes the state
+  round needs a key. A workflow that inits state under a local key owns that
+  state: it passes the key to every round it stamps and removes the state
   when it ends. pr-<N> and local- keys name no issue. Beside them stands one
   fixed key, oversee, holding the fleet session state that
   schemas/workflow-state.md section Oversee state describes. The key is stored as passed and validated by its

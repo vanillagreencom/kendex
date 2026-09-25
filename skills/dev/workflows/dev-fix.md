@@ -10,7 +10,7 @@ The workflow for a dev agent receiving a review-fix delegation. Every path is wo
 
 Confirm the shell's real working directory is the delegation's `Worktree:` path before any repo-relative command, by the check at the top of [dev-implement.md](./dev-implement.md).
 
-**Skip if** the delegation is ad-hoc. Read prior work, decisions, and handoff notes before evaluating any item.
+**Skip if** the delegation is ad-hoc: it carries no `Issue:` line, which orch omits for a key that names no issue (`pr-N`, `local-`). In such a round, `[ISSUE_ID]` in the commit header and the proposed-rule path below takes the `Artifact Key:` value. Otherwise read prior work, decisions, and handoff notes before evaluating any item.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
