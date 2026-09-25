@@ -425,8 +425,8 @@ assert_eq "long=${LONG_PASS_PID:+found} $LONG_PASS_STATE pass=$PASS_STATE loop=$
 assert_eq "held=${HELD_PID:+found} $HELD_STATE" "held=found gone" \
   "and the command that long pass was waiting on" "$TMP_ROOT/e-term_long_pass"
 mutant long_pass_alone oversee-watch \
-  '    for pid in $(tree_pids "$LONG_PID"); do' \
-  '    for pid in "$LONG_PID"; do'
+  '    tree="$(tree_pids "$LONG_PID")"' \
+  '    tree="$LONG_PID"'
 # Only the held command is read: under bash 3.2 a TERM to the long pass alone
 # does not end it while it waits on that command.
 term_long_case term_long_alone_mutant "$MUTANT"
@@ -812,11 +812,12 @@ exec sh "$TMP_ROOT/launch.sh" "\$FENCE_RUN_DIR/watch" "\$FENCE_TARGET" "\$@"
 EOF
 # A close that notes its start, holds until the case's release file exists,
 # notes its end and exits SLOW_CLOSE_RC: it outlasts any stop bound until the
-# case lets it go.
+# case lets it go. It holds in a child process and fails when that child is
+# signalled, as lane-close fails when its lane-host child dies.
 cat > "$TMP_ROOT/bin/slow-close.sh" <<EOF
 #!/usr/bin/env bash
 printf 'started\n' >> "\$STUB_DIR/close.log"
-while [[ ! -f "\$STUB_DIR/release" ]]; do "$REAL_SLEEP" 0.1; done
+bash -c 'while [[ ! -f "\$1/release" ]]; do "$REAL_SLEEP" 0.1; done' hold "\$STUB_DIR" || exit \$?
 printf 'done\n' >> "\$STUB_DIR/close.log"
 exit "\${SLOW_CLOSE_RC:-0}"
 EOF
@@ -992,9 +993,10 @@ if command -v setsid >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1; then
 
   # Controls, one per rule the takeover rows hold, each a mutant of the same
   # short-bound tree: the loop not waiting for its pass, the pass stop
-  # signalling the close, the long pass taking TERM's default mid-close, the
-  # pass ending at TERM without reporting the close, the record kept until the
-  # loop exits, and the new start not waiting for the old watch's exit.
+  # signalling the close or a child of it, the long pass taking TERM's default
+  # mid-close, the pass ending at TERM without reporting the close, the record
+  # kept until the loop exits, and the new start not waiting for the old
+  # watch's exit.
   # name%file%line%replacement%close exit%what the row reads%expected%label
   while IFS='%' read -r cname cfile cline cnew crc cread cwant clabel; do
     MUTANT_BASE="$SHORT" mutant "$cname" "$cfile" "$cline" "$cnew"
@@ -1009,6 +1011,7 @@ if command -v setsid >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1; then
   done <<'ROWS'
 unit_nowait%oversee-watch%    wait "$REPEAT_CHILD_PID" 2>/dev/null || true%    :%0%at-exit%started %a loop that does not wait for its pass exits mid-close
 unit_unspared%oversee-watch%      [[ "$spared" != *" $pid "* ]] || continue%      :%0%at-exit%started %a pass stop that signals the close with the rest of the long pass kills it mid-close
+unit_unspared_tree%oversee-watch%    [[ ! -s "$CLOSE_PID_FILE" ]] || spared+="$(tree_pids "$(cat -- "$CLOSE_PID_FILE")" | tr '\n' ' ')"%    [[ ! -s "$CLOSE_PID_FILE" ]] || spared+="$(cat -- "$CLOSE_PID_FILE") "%0%at-exit%started %a pass stop that spares the close but signals its children fails it mid-close
 unit_notrap%oversee-watch%  trap 'CLOSE_TERMED=1' TERM%  :%0%at-exit%started %a pass that takes TERM's default dies mid-close
 unit_unreported%oversee-watch%  trap 'CLOSE_TERMED=1' TERM%  trap 'wait; exit 143' TERM%0%event%0%a pass that ends at TERM once the close is done never reports it
 unit_late_release%oversee-watch%  watch_pid_release "$STATE_FILE"%  :%0%taken%0%a loop that keeps its record until the close ends is refused as a live watch

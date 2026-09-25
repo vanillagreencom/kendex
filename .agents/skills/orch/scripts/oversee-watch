@@ -1450,8 +1450,7 @@ repeat_stop() { # STATUS
 # writes, so it never prints or removes them. Any other start gets here only
 # once their writer is stopped above or gone, a live one being refused, and
 # prints and removes them, with the runner record the restart wrote beside
-# them, so nothing a restarted watch reported where no session read it, and
-# no refusal it ended on, is lost.
+# them, so no event or refusal a restarted watch left unread is lost.
 watch_claim() { # ARGV...
   local why="" taken=""
   if watch_pid_live "$STATE_FILE"; then
@@ -1714,7 +1713,7 @@ item_state_dir() { # ITEM
 # caller commits the lane's row and ends the long pass. A close ended midway
 # would lose a failure the row is reset to retry. The close is waited on in the
 # background, for tick_sleep's reason, and again after a TERM returns the wait
-# early. pass_stop spares it and its tree by its pid in CLOSE_PID_FILE.
+# early. pass_stop spares its tree, read from CLOSE_PID_FILE.
 CLOSE_TERMED=""
 close_hosted_lane() { # ITEM
   local out line path="" rc=0 close_pid
@@ -1813,10 +1812,11 @@ on_exit() {
 }
 trap on_exit EXIT
 # TERM, the stop every start takes, ends a long pass in flight and its whole
-# tree, `timeout`'s own process group among it, parent first so nothing new
-# starts under it, rather than on_exit waiting it out beside the next watch;
-# what it spooled is still printed. One that has ended is not signalled. Its
-# lane-close is spared, which it waits out and reports (close_hosted_lane).
+# tree, `timeout`'s process group among it, parent first so nothing new starts
+# under it, rather than on_exit waiting it out beside the next watch; its spool
+# is still printed. An ended one is not signalled. Its lane-close's tree is
+# spared, read second so a child the close starts between reads is in it
+# (close_hosted_lane).
 tree_pids() { # PID
   ps -A -o pid= -o ppid= 2>/dev/null | awk -v root="$1" '{ kids[$2] = kids[$2] " " $1 }
     END { q[n = 1] = root; for (i = 1; i <= n; i++) { print q[i]
@@ -1824,11 +1824,12 @@ tree_pids() { # PID
 }
 TICK_SLEEP_PID=""
 pass_stop() {
-  local pid spared=" "
+  local pid tree spared=" "
   [[ -z "$TICK_SLEEP_PID" ]] || kill -TERM "$TICK_SLEEP_PID" 2>/dev/null || :
   if [[ -n "$LONG_PID" && ! -e "$LONG_DONE" ]]; then
+    tree="$(tree_pids "$LONG_PID")"
     [[ ! -s "$CLOSE_PID_FILE" ]] || spared+="$(tree_pids "$(cat -- "$CLOSE_PID_FILE")" | tr '\n' ' ')"
-    for pid in $(tree_pids "$LONG_PID"); do
+    for pid in $tree; do
       [[ "$spared" != *" $pid "* ]] || continue
       kill -TERM "$pid" 2>/dev/null || :
     done
