@@ -81,14 +81,17 @@ lane_claims_canon() {
 # Prune dead claims, print the live ones as `<config dir>\t<window>\t<server
 # pid>\t<pane id>` lines. Where $2 is `count`, the form open-terminal's caps
 # count, each line ends in `\t<fleet>` and the live reservations are among
-# them.
+# them, read in full before the claims are listed: a launch writes its claim or
+# its record before it drops its reservation, so a reservation gone by the
+# time it is read is a claim the later listing finds, or a record for a caller
+# that reads its records after this.
 # The four-field form is the default because lane-context appends its own
 # fifth field. $1: claims directory. Exits 2 when the store cannot be read at
 # all: a caller deciding where to launch must fail closed on that, and only
 # the caller knows whether it is deciding or reporting.
 lane_claims_read() {
   local dir="$1" mode="${2:-}" live this_server f server pane cfg window fleet rc=0
-  local rechecked=0 recheck_ok=1 live_now fresh line rest files
+  local rechecked=0 recheck_ok=1 live_now fresh line rest kinds=claim kind
   # Absent is genuinely empty; anything else that is not a directory is a
   # misconfiguration, and an unreadable store is not an empty one. Reporting
   # no claims for either would report every busy account as free.
@@ -107,81 +110,82 @@ lane_claims_read() {
   # The enumerated server's pid, empty when nothing could be enumerated.
   this_server="${live%%$'\n'*}"
   this_server="${this_server%% *}"
-  files=("$dir"/*.claim)
-  [[ "$mode" != count ]] || files+=("$dir"/*.reserve)
-  for f in "${files[@]}"; do
-    [[ -f "$f" ]] || continue
-    # Cleared every iteration: a failed read must never leave the previous
-    # record's fields standing in for this one.
-    server=""; pane=""; cfg=""; window=""; fleet=""
-    if [[ ! -r "$f" ]]; then
-      # A claim that cannot be read is a launch that cannot be seen: reported,
-      # left in place, and carried out as a failure so a caller deciding where
-      # to launch refuses rather than counting it as absent.
-      lane_claims_message unreadable-claim "$@" >&2
-      rc=2
-      continue
-    fi
-    line=""
-    IFS= read -r line < "$f" || true
-    # Split by hand, never `IFS=$'\t' read`: a TAB is IFS whitespace, so read
-    # folds a reservation's empty config dir and shifts every later field left.
-    rest="$line"$'\t'
-    server="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
-    pane="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
-    cfg="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
-    window="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
-    # The creation stamp is for a reader of the file, not for liveness.
-    rest="${rest#*$'\t'}"
-    fleet="${rest%%$'\t'*}"
-    if [[ -z "$pane" ]] || [[ ! "$server" =~ ^[0-9]+$ ]]; then
-      rm -f -- "$f"
-      continue
-    fi
-    live_now=0
-    if [[ "$f" == *.reserve ]]; then
-      # A reservation is live while the launcher that wrote it runs.
-      ! kill -0 "$server" 2>/dev/null || live_now=1
-    elif grep -qxF -- "$server $pane" <<<"$live"; then
-      live_now=1
-    elif [[ "$server" == "$this_server" ]]; then
-      # The pane list predates this record: another launcher can create its
-      # window and write its claim in between, and deleting that record would
-      # hand a running account straight back out. One re-enumeration settles
-      # every same-server miss in this pass.
-      if [[ "$rechecked" -eq 0 ]]; then
-        rechecked=1
-        # A re-enumeration that FAILS says nothing: it neither replaces the
-        # snapshot nor settles the record that provoked it.
-        if fresh="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>/dev/null)"; then
-          live="$fresh"
-        else
-          recheck_ok=0
-        fi
+  [[ "$mode" != count ]] || kinds="reserve claim"
+  for kind in $kinds; do
+    for f in "$dir"/*."$kind"; do
+      [[ -f "$f" ]] || continue
+      # Cleared every iteration: a failed read must never leave the previous
+      # record's fields standing in for this one.
+      server=""; pane=""; cfg=""; window=""; fleet=""
+      if [[ ! -r "$f" ]]; then
+        # A claim that cannot be read is a launch that cannot be seen: reported,
+        # left in place, and carried out as a failure so a caller deciding where
+        # to launch refuses rather than counting it as absent.
+        lane_claims_message unreadable-claim "$@" >&2
+        rc=2
+        continue
       fi
-      if [[ "$recheck_ok" -eq 0 ]]; then
-        # Only a snapshot taken after this record was written can call it
-        # dead, and none is available: unknown, and an unknown claim is kept.
-        live_now=1
+      line=""
+      IFS= read -r line < "$f" || true
+      # Split by hand, never `IFS=$'\t' read`: a TAB is IFS whitespace, so read
+      # folds a reservation's empty config dir and shifts every later field left.
+      rest="$line"$'\t'
+      server="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+      pane="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+      cfg="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+      window="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+      # The creation stamp is for a reader of the file, not for liveness.
+      rest="${rest#*$'\t'}"
+      fleet="${rest%%$'\t'*}"
+      if [[ -z "$pane" ]] || [[ ! "$server" =~ ^[0-9]+$ ]]; then
+        rm -f -- "$f"
+        continue
+      fi
+      live_now=0
+      if [[ "$f" == *.reserve ]]; then
+        # A reservation is live while the launcher that wrote it runs.
+        ! kill -0 "$server" 2>/dev/null || live_now=1
       elif grep -qxF -- "$server $pane" <<<"$live"; then
         live_now=1
+      elif [[ "$server" == "$this_server" ]]; then
+        # The pane list predates this record: another launcher can create its
+        # window and write its claim in between, and deleting that record would
+        # hand a running account straight back out. One re-enumeration settles
+        # every same-server miss in this pass.
+        if [[ "$rechecked" -eq 0 ]]; then
+          rechecked=1
+          # A re-enumeration that FAILS says nothing: it neither replaces the
+          # snapshot nor settles the record that provoked it.
+          if fresh="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>/dev/null)"; then
+            live="$fresh"
+          else
+            recheck_ok=0
+          fi
+        fi
+        if [[ "$recheck_ok" -eq 0 ]]; then
+          # Only a snapshot taken after this record was written can call it
+          # dead, and none is available: unknown, and an unknown claim is kept.
+          live_now=1
+        elif grep -qxF -- "$server $pane" <<<"$live"; then
+          live_now=1
+        fi
+      elif kill -0 "$server" 2>/dev/null; then
+        # A server this process cannot enumerate, still running.
+        live_now=1
       fi
-    elif kill -0 "$server" 2>/dev/null; then
-      # A server this process cannot enumerate, still running.
-      live_now=1
-    fi
-    if [[ "$live_now" -eq 0 ]]; then
-      rm -f -- "$f"
-      continue
-    fi
-    # Canonical on the way out, whatever spelling the record carries: the
-    # count compares strings, and a hand-written or older record must still
-    # land on the account discovery reports.
-    if [[ "$mode" == count ]]; then
-      printf '%s\t%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane" "$fleet"
-    else
-      printf '%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane"
-    fi
+      if [[ "$live_now" -eq 0 ]]; then
+        rm -f -- "$f"
+        continue
+      fi
+      # Canonical on the way out, whatever spelling the record carries: the
+      # count compares strings, and a hand-written or older record must still
+      # land on the account discovery reports.
+      if [[ "$mode" == count ]]; then
+        printf '%s\t%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane" "$fleet"
+      else
+        printf '%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane"
+      fi
+    done
   done
   return "$rc"
 }

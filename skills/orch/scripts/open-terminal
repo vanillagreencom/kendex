@@ -2728,12 +2728,17 @@ cap_take() { # ITEM
 # account count it is one where it names the record's window and account and
 # this fleet or none, lib/lane-claims.sh's header saying which claims carry
 # none. A record's window is `SESSION:WINDOW`, or bare where written by hand,
-# and a claim's is the bare name, so the two are compared on the name. The records are this fleet's durable count: a GUI
-# launch writes no claim and a claim write can fail, and either lane still has
-# its record. Returns 1 on a store it could not read: a count missing a lane
-# is a cap that admits one lane too many.
+# and a claim's is the bare name, so the two are compared on the name. The
+# records are this fleet's durable count: a GUI launch writes no claim and a
+# claim write can fail, and either lane still has its record. They are read
+# after the claim store, because a launch writes its record before it drops
+# its reservation: a lane whose reservation the claim read missed is a record
+# this read finds. Returns 1 on a store it could not read: a count missing a
+# lane is a cap that admits one lane too many.
 cap_count() { # ITEM KEY LANE
   local lanes out held owned="" claims counts tag account window rc=0
+  claims="$(lane_claims_read "$(lane_claims_dir "$CLAIM_ROOT")" count)" || rc=$?
+  [[ "$rc" -eq 0 ]] || { ot_message cap-unreadable "item=$1" "source=claims" >&2; return 1; }
   lanes="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.lanes // []')" || rc=$?
   # One line per held record, tagged and joined by the unit separator, which
   # keeps an empty account or window a field of its own.
@@ -2753,8 +2758,6 @@ cap_count() { # ITEM KEY LANE
     [[ -z "$window" ]] || owned+="$window"$'\t'"$account"$'\n'
     [[ -z "$3" || -z "$account" || "$account" != "$3" ]] || CAP_ACCOUNT_RECORDS=$((CAP_ACCOUNT_RECORDS + 1))
   done <<<"$held"
-  claims="$(lane_claims_read "$(lane_claims_dir "$CLAIM_ROOT")" count)" || rc=$?
-  [[ "$rc" -eq 0 ]] || { ot_message cap-unreadable "item=$1" "source=claims" >&2; return 1; }
   # A held record's own claims are that record's lane, counted above; this
   # fleet's other claims are the fleet cap's in-flight lanes.
   counts="$(CAP_OWNED="$owned" CAP_FLEET="$CAP_FLEET" CAP_LANE="$3" awk -F'\t' '
@@ -2824,11 +2827,11 @@ cap_gate() { # ITEM KEY WINDOW
       continue
     fi
     if [[ "$OVER_CAP" == true ]]; then
+      cap_reserve "$item" "$3" || return 1
       CAP_PASSED="$over"
       ot_message over-cap-admitted "item=$item" "passed=$over" "cap=$FLEET_CAP" "running=$CAP_RUNNING" \
         "claims=$CAP_INFLIGHT" "lane=$lane" "account-cap=$ACCOUNT_CAP" "account-claims=$CAP_ACCOUNT" >&2
-      cap_reserve "$item" "$3"
-      return
+      return 0
     fi
     cap_release
     if [[ "$WAIT_SLOT" != true ]]; then

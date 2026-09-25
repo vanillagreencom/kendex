@@ -285,6 +285,26 @@ assert_eq "one=$(rc one) two=$(rc two) lock-waits=$(lock_waits two) $(key two)" 
   "one=0 two=1 lock-waits=0 open-terminal: cap-reached item=CC-2 cap=1 running=1 claims=1" \
   "the next launch counts at once, the exception's reservation among the lanes it counts"
 
+echo "=== a count that reads the claim store before a launch records sees the lane in its records ==="
+# A launch naming no lane writes no claim: its record replaces its reservation.
+# The second count is held after it lists the claim store's panes, before any
+# of its reads, while the first launch records its lane and drops its
+# reservation.
+row reserve-to-record
+STUB_HOLD_CREATE="$ROW/release" launch one 1 0 CC-1 &
+FIRST=$!
+await_step one create
+STUB_HOLD_COUNT="$ROW/counted" launch two 1 0 CC-2 &
+SECOND=$!
+await_step two count
+: > "$ROW/release"
+await_exit "$FIRST"
+: > "$ROW/counted"
+await_exit "$SECOND"
+assert_eq "one=$(rc one) two=$(rc two) running=$(running) $(key two)" \
+  "one=0 two=1 running=CC-1 open-terminal: cap-reached item=CC-2 cap=1 running=1 claims=0" \
+  "the second count finds the first lane by its record once its reservation is gone"
+
 echo "=== a reservation whose launcher has exited holds no place ==="
 row reserve-dead
 ( exit 0 ) &
@@ -569,9 +589,9 @@ else
     chmod 555 "$CLAIMS/claims"
     launch one 1 5 --lane "$LANE_A" ${over[@]+"${over[@]}"} CC-1
     chmod 755 "$CLAIMS/claims"
-    assert_eq "rc=$(rc one) $(key one | grep '^open-terminal: cap-reserve-failed ' || true) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
+    assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
       "rc=1 open-terminal: cap-reserve-failed item=CC-1 store=$CLAIMS/claims opened=no" \
-      "a claim store that takes no reservation refuses a launch admitted $arm the caps before any window"
+      "a claim store that takes no reservation refuses a launch admitted $arm the caps before any window, admitting nothing"
   done
   # The store stops taking writes after a launch naming no lane reserved its
   # place, so the item's end cannot remove the reservation.
