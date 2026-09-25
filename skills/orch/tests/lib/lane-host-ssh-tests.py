@@ -411,9 +411,10 @@ exec git "$@"
         target = self.root / "mailbox"
         self.assertEqual(self.call("put", "--item", "TEST-1", "--", str(target),
                                    data=b"first answer\n").returncode, 0)
-        cut = self.call("put", "--item", "TEST-1", "--", str(target),
-                        data=b"a much longer second answer\n", SSH_TEST_CUT="5")
-        self.assertNotEqual(cut.returncode, 0)
+        longer = b"a much longer second answer\n"
+        cut = self.call("put", "--item", "TEST-1", "--", str(target), data=longer, SSH_TEST_CUT="5")
+        self.assertEqual(cut.returncode, 1, cut.stderr)
+        self.assertIn(f"lane-host-ssh: put-short expected={len(longer)} arrived=5".encode(), cut.stderr)
         self.assertEqual(target.read_bytes(), b"first answer\n")
         self.assertEqual(list(target.parent.glob("mailbox.kendex-put.*")), [])
         # The control: a provider that renames whatever arrived. The staged
@@ -452,9 +453,10 @@ exec git "$@"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(target.read_bytes(), b'{"id":"half"\n{"id":"whole"}\n')
         # A stream cut short adds nothing and leaves no staging file behind.
-        cut = self.call("append", "--item", "TEST-1", "--", str(target),
-                        data=b'{"id":"a much longer line"}\n', SSH_TEST_CUT="5")
-        self.assertNotEqual(cut.returncode, 0)
+        longer = b'{"id":"a much longer line"}\n'
+        cut = self.call("append", "--item", "TEST-1", "--", str(target), data=longer, SSH_TEST_CUT="5")
+        self.assertEqual(cut.returncode, 1, cut.stderr)
+        self.assertIn(f"lane-host-ssh: append-short expected={len(longer)} arrived=5".encode(), cut.stderr)
         self.assertEqual(target.read_bytes(), b'{"id":"half"\n{"id":"whole"}\n')
         self.assertEqual(list(target.parent.glob("to-lane.jsonl.kendex-append.*")), [])
         # One control per rule, each keeping every other rule in place. The
@@ -565,6 +567,63 @@ exec git "$@"
                 self.assertNotIn(number, refused.stderr)
                 self.assertEqual(target.read_bytes(), b'{"id":"kept"}\n')
         library.write_text(original)
+
+    @unittest.skipUnless(os.path.exists("/dev/full") and os.path.isdir("/proc/self/fd"),
+                         "needs /dev/full and /proc to aim one write at a full device")
+    def test_a_full_disk_leaves_no_staged_file_and_names_the_cause(self):
+        """A write refused for lack of space says so and leaves nothing staged."""
+        self.assertEqual(self.create().returncode, 0)
+        target = self.root / "lane/tmp/lane-mail/TEST-1/to-lane.jsonl"
+        target.parent.mkdir(parents=True)
+        # The real cat, its output sent to /dev/full when that output is a file
+        # SSH_TEST_FULL matches, so the one write it names meets the kernel's
+        # own ENOSPC and cat's own report of it.
+        full = self.root / "full-bin"
+        self.executable(full / "cat", '''#!/usr/bin/env bash
+out=$(readlink -- "/proc/$$/fd/1") || out=
+if [[ $# -eq 0 && "$out" == $SSH_TEST_FULL ]]; then exec "$REAL_CAT" >/dev/full; fi
+exec "$REAL_CAT" "$@"
+''')
+        env = dict(PATH=str(full) + os.pathsep + self.env["PATH"], REAL_CAT=shutil.which("cat"))
+
+        def write(verb, where):
+            target.write_bytes(b'{"id":"kept"}\n')
+            return self.call(verb, "--item", "TEST-1", "--", str(target), data=b'{"id":"lost"}\n',
+                             SSH_TEST_FULL=where, **env)
+
+        def staged():
+            return sorted(p.name for p in target.parent.glob("to-lane.jsonl.kendex-*"))
+
+        # Fields: the verb, the file whose write the disk refuses: the staging
+        # copy each verb makes, or the mailbox the library appends to.
+        rows = (("append", "*.kendex-append.*"), ("append", "*/to-lane.jsonl"), ("put", "*.kendex-put.*"))
+        for verb, where in rows:
+            with self.subTest(verb=verb, where=where):
+                refused = write(verb, where)
+                self.assertEqual(refused.returncode, 1, refused.stderr)
+                self.assertIn(f"lane-host-ssh: {verb}-failed path={target} reason=no-space\n".encode(),
+                              refused.stderr)
+                self.assertIn(b"No space left on device", refused.stderr)
+                self.assertEqual(target.read_bytes(), b'{"id":"kept"}\n')
+                self.assertEqual(staged(), [])
+        # One control per rule, each on the staging row: without the trap the
+        # staged file stays, and without the match the cause is the generic word.
+        original = self.script.read_text()
+        controls = (
+            ("""trap 'rm -f -- "${staged:?}"' EXIT""", ":",
+             lambda refused: self.assertEqual(len(staged()), 1, refused.stderr)),
+            ("""*'No space left on device'*) printf no-space ;; """, "",
+             lambda refused: self.assertIn(b"append-failed path=%s reason=write-failed\n" % bytes(target),
+                                           refused.stderr)),
+        )
+        for rule, without, red in controls:
+            with self.subTest(control=rule):
+                self.assertEqual(original.count(rule), 1)
+                self.script.write_text(original.replace(rule, without))
+                red(write("append", "*.kendex-append.*"))
+                for leftover in target.parent.glob("to-lane.jsonl.kendex-*"):
+                    leftover.unlink()
+                self.script.write_text(original)
 
     def test_append_names_a_clone_that_predates_the_verb(self):
         """The control machine and the host's clone update apart."""

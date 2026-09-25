@@ -808,24 +808,31 @@ lm_after() { # VALUE
 }
 
 # Replaced by rename, so a reader never meets a half-written count.
+# lm_cursor_put answers with its status alone, for the one caller that must
+# not refuse; lm_cursor_write refuses where it fails.
+lm_cursor_put() { # COUNT
+  printf '%s\n' "$1" >"$WORK_DIR/cursor" && mv -- "$WORK_DIR/cursor" "$CURSOR"
+}
 lm_cursor_write() { # COUNT
-  printf '%s\n' "$1" >"$WORK_DIR/cursor" || refuse write-failed "$CURSOR"
-  mv -- "$WORK_DIR/cursor" "$CURSOR" || refuse write-failed "$CURSOR"
+  lm_cursor_put "$1" || refuse write-failed "$CURSOR"
 }
 
 # The count to-lane.cursor holds, as SEEN, read through the route every other
 # read of this mailbox takes; a cursor that is not there counts 0, and
-# CURSOR_ABSENT says it was not there. inbox calls it under its lock; the
-# readers that move no cursor take none, since the rename above never shows
-# them half a count.
+# CURSOR_ABSENT says it was not there, and CURSOR_COUNTED 0 says it held no
+# count at all, absent or empty. inbox calls it under its lock; the readers
+# that move no cursor take none, since the rename above never shows them half
+# a count.
 SEEN=0
 CURSOR_ABSENT=0
+CURSOR_COUNTED=1
 lm_cursor_read() {
   lm_fetch "$CURSOR" "$WORK_DIR/cursor.read"
   CURSOR_ABSENT="$LM_FETCH_ABSENT"
+  CURSOR_COUNTED=1
   SEEN="$(awk 'NR == 1 { print; exit }' <"$WORK_DIR/cursor.read")" || refuse file-unreadable "$CURSOR"
   case "$SEEN" in
-    '') SEEN=0 ;;
+    '') SEEN=0; CURSOR_COUNTED=0 ;;
     *[!0-9]*) refuse cursor-invalid "$CURSOR" ;;
   esac
 }
@@ -953,7 +960,6 @@ case "$VERB" in
     esac
     [ -z "$ACK" ] || lm_after "$ACK"
     mkdir -p -- "$BOX" || refuse write-failed "$BOX"
-    : >>"$CURSOR" || refuse write-failed "$CURSOR"
     # One lock across the read and the rewrite, so the Stop hook and a
     # workflow wait point never hand the same line over twice. The lock is its
     # own file because a rename replaces the cursor, and a lock on the cursor
@@ -963,6 +969,23 @@ case "$VERB" in
     orch_take_lock 9 "$CURSOR.lock" 30 || refuse lock-failed "$CURSOR.lock"
     trap lm_cleanup EXIT
     lm_cursor_read
+    # A mailbox read before its first line still leaves a count behind: the
+    # fleet's state sync reads this file outside this script and takes one
+    # numeric line, which an empty file is not. An empty cursor an earlier
+    # inbox left is given its count the same way. Written under the lock, so a
+    # first read racing another never renames 0 over a count it advanced.
+    # A peek writes the same 0 but never refuses on it: the hooks peek before
+    # every tool call, and a write that cannot land there would refuse each
+    # one, the call that frees the disk included. Where the count cannot land
+    # the peek still leaves a cursor, empty, as pending needs one beside the
+    # lock to tell a lane that has read from a read that missed.
+    if [ "$CURSOR_COUNTED" -eq 0 ]; then
+      if [ "$PEEK" -eq 0 ]; then
+        lm_cursor_write 0
+      else
+        lm_cursor_put 0 2>/dev/null || { : >>"$CURSOR"; } 2>/dev/null || :
+      fi
+    fi
     if [ -n "$ACK" ]; then
       # A halt stands until a plain read: the count stops at the line before
       # the first unread halt, whatever a hook that showed it acknowledges.
@@ -1023,7 +1046,10 @@ case "$VERB" in
       # A cursor that is not there is one of two things, told apart here once:
       # a lane that has never read, whose inbox has made neither the cursor
       # nor its lock, or a read of it that missed, beside the lock every read
-      # the lane has made left behind.
+      # the lane has made left behind. Every inbox, a peek included, leaves
+      # the cursor beside the lock; a first inbox creates the lock a moment
+      # before it writes the cursor, so a read inside that moment is judged
+      # missed as well: the watch moves nothing on it and pending refuses it.
       if [ "$CURSOR_ABSENT" -eq 1 ]; then
         lm_fetch "$CURSOR.lock" "$WORK_DIR/cursor.lock.read"
         [ "$LM_FETCH_ABSENT" -eq 1 ] || SEEN=missed
