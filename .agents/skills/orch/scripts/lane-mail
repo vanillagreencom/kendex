@@ -396,7 +396,18 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=lib/mailbox-append.sh
 . "$SCRIPT_DIR/lib/mailbox-append.sh"
 
-WORK_DIR="$(mktemp -d)" || refuse write-failed "${TMPDIR:-/tmp}"
+# The template names TMPDIR outright, as lib/review-artifact-gates.sh does: a
+# bare `mktemp` reads it only on GNU, and BSD mktemp, the one macOS ships,
+# allocates under its own per-user directory instead. The trailing slash macOS
+# sets comes off, and a relative root takes `./` so it cannot read as an option.
+TMP_ROOT="${TMPDIR:-/tmp}"
+TMP_ROOT="${TMP_ROOT%/}"
+case "$TMP_ROOT" in
+  "") TMP_ROOT="/" ;;
+  /*) ;;
+  *) TMP_ROOT="./$TMP_ROOT" ;;
+esac
+WORK_DIR="$(mktemp -d "$TMP_ROOT/lane-mail.XXXXXX")" || refuse write-failed "$TMP_ROOT"
 # orch_take_lock's mutex arm arms its own EXIT trap, so every caller below
 # re-arms this one after it returns; both halves run either way.
 lm_cleanup() { orch_release_lock; rm -rf -- "$WORK_DIR"; }

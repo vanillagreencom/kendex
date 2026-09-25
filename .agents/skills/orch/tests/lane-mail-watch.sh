@@ -301,9 +301,13 @@ assert_eq "$TERMED" "exited:record-withdrawn" \
 
 # A KILL runs no trap, so what the lane's messages leave behind is what the
 # poll removed before its wait: no copy of the mailbox under the watch's TMPDIR.
-kill_row() { # [BIN] — sets KILLED to the mailbox copies left behind
-  local tries=0 dir="$TMP_ROOT/kill-tmp${1:+-mutant}"
-  new_lane "kill${1:+-mutant}"
+# The work directory itself stays, and counting it is what makes the copy count
+# a reading of the watch's own files rather than of an empty directory.
+kill_row() { # [BIN] — sets KILLED to the mailbox copies left behind, WORK_DIRS to the work directories there
+  local tries=0 tag=real dir
+  [ -z "${1:-}" ] || tag="$(basename -- "$(dirname -- "$1")")"
+  dir="$TMP_ROOT/kill-tmp-$tag"
+  new_lane "kill-$tag"
   send_directive 'A message worth keeping private.'
   mkdir -p "$dir"
   TMPDIR="$dir" start_watch "${1:-$LANE_MAIL}" --item KEN-1 --interval 30
@@ -316,9 +320,11 @@ kill_row() { # [BIN] — sets KILLED to the mailbox copies left behind
   wait "$WATCH_PID" 2>/dev/null || :
   WATCH_PID=""
   KILLED="$(find "$dir" \( -name lane.raw -o -name lane.jsonl -o -name unread \) -print | awk 'END { print NR + 0 }')"
+  WORK_DIRS="$(find "$dir" -mindepth 1 -maxdepth 1 -type d -name 'lane-mail.*' -print | awk 'END { print NR + 0 }')"
 }
 kill_row
-assert_eq "$KILLED" "0" "a watch killed in its wait leaves no copy of the lane's mailbox behind"
+assert_eq "$KILLED/$WORK_DIRS" "0/1" \
+  "a watch killed in its wait leaves no copy of the lane's mailbox in the work directory it made under TMPDIR"
 
 # Controls, each a copy of lane-mail beside the libraries and siblings it
 # sources, with one line of the watch removed.
@@ -366,6 +372,16 @@ mutant copies-kept 's@^      rm -f -- "\$WORK_DIR/lane.raw".*@      :@'
 kill_row "$MUTANT"
 assert_eq "$([ "$KILLED" -gt 0 ] && echo kept || echo none)" "kept" \
   "control: without the per-poll removal a killed watch leaves the mailbox copies behind"
+
+# BSD mktemp, the one macOS ships, ignores TMPDIR for a bare template; this
+# copy names another root the same way, so the row finds no work directory.
+mutant tmpdir-ignored 's@^TMP_ROOT="\${TMPDIR:-/tmp}"$@TMP_ROOT="$KILL_ELSEWHERE"@'
+export KILL_ELSEWHERE="$TMP_ROOT/kill-elsewhere"
+mkdir -p "$KILL_ELSEWHERE"
+kill_row "$MUTANT"
+unset KILL_ELSEWHERE
+assert_eq "$WORK_DIRS" "0" \
+  "control: a work directory made outside TMPDIR leaves the killed-watch row nothing of its own to count"
 
 mutant wider-window 's@now - at <= 2 \* interval + 5@now - at <= 4 * interval + 5@'
 LIVENESS=""
