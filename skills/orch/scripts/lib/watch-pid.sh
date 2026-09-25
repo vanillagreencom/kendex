@@ -128,9 +128,11 @@ watch_argv_read() { # STATE
 # the caller when the rest has happened. Returns 1 when PID still holds its
 # record at the bound, which is read off the shell's own clock rather than
 # counted in sleeps, so a sleep that returns early cannot shorten it, and
-# where STATE's directory does not resolve, before any signal.
+# where STATE's directory does not resolve, before any signal. SECONDS counts
+# whole seconds and can tick at once, so the deadline is one past the bound:
+# the wait is never shorter than WATCH_STOP_SECS.
 watch_stop() { # PID STATE
-  local deadline=$((SECONDS + WATCH_STOP_SECS))
+  local deadline=$((SECONDS + WATCH_STOP_SECS + 1))
   watch_pid_paths "$2" || return 1
   kill -TERM "$1" 2>/dev/null || true
   while kill -0 "$1" 2>/dev/null && grep -qxF -- "pid=$1" "$WATCH_PID_FILE" 2>/dev/null; do

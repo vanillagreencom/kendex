@@ -326,6 +326,27 @@ wait "$LAUNCHER" 2>/dev/null || true
 assert_eq "$([[ -f "$STUB_DIR/oversee-watch.pid" ]] && echo left || echo removed)" "left" \
   "control: a loop that does not release its record leaves it behind when stopped"
 
+# A stop started just before SECONDS ticks still waits its whole bound for a
+# watch that holds its record: HALF, touched half the bound in, is there when
+# the stop gives up. The control is the deadline on the bare bound.
+stop_bound_case() { # NAME WATCH_PID_LIB
+  local holder half
+  new_case "$1"
+  bash -c 'trap "" TERM; while :; do "$1" 0.1; done' oversee-watch "$REAL_SLEEP" & holder=$!
+  printf 'pid=%s\n' "$holder" > "$STUB_DIR/oversee-watch.pid"
+  local s=$SECONDS; while (( SECONDS == s )); do :; done; "$REAL_SLEEP" 0.8
+  ( "$REAL_SLEEP" 0.5; touch "$STUB_DIR/half" ) & half=$!
+  ( source "$2"; WATCH_STOP_SECS=1; watch_stop "$holder" "$STUB_DIR/state.json" ) && STOP_RC=0 || STOP_RC=$?
+  STOP_HALF="$([[ -f "$STUB_DIR/half" ]] && echo reached || echo early)"
+  kill -KILL "$holder" 2>/dev/null || true
+  wait "$holder" "$half" 2>/dev/null || true
+}
+stop_bound_case stop_bound "$REPO_ROOT/skills/orch/scripts/lib/watch-pid.sh"
+assert_eq "rc=$STOP_RC half=$STOP_HALF" "rc=1 half=reached" "a stop that reaches its bound waited the whole bound"
+mutant stop_bare_bound lib/watch-pid.sh '  local deadline=$((SECONDS + WATCH_STOP_SECS + 1))' '  local deadline=$((SECONDS + WATCH_STOP_SECS))'
+stop_bound_case stop_bare_bound "$(dirname "$MUTANT")/lib/watch-pid.sh"
+assert_eq "rc=$STOP_RC half=$STOP_HALF" "rc=1 half=early" "control: a deadline on the bare bound gives up as SECONDS ticks"
+
 # A plain kill -TERM on the recorded pid, while a pass sits in its interval,
 # ends that pass with the loop: a pass left behind would keep reading the
 # fleet, and draining the overseer mailbox, beside the next watch.
