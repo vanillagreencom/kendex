@@ -201,6 +201,7 @@ ROWS=(
   "a command that succeeds records a zero sentinel and passes|echo built; exit 0|20|state=done guard-exit=0 validate=pass|0"
   "a command that fails records its own status and fails the round|echo broke; exit 7|20|state=done guard-exit=7 validate=FAILING|1"
   "a command that exits 124 itself inside the bound fails the round|exit 124|20|state=done guard-exit=124 validate=FAILING|1"
+  "a command that exits 137 itself fails the round|exit 137|20|state=done guard-exit=137 validate=FAILING|1"
   "a command that outlives the bound is cut off at it: no verdict, neither pass nor FAILING|sleep 30|2|state=done guard-exit=124 validate=no-verdict|1"
 )
 row_n=0
@@ -231,28 +232,12 @@ run_script "$MUTANT" --record --run-dir "$timeout_dir"
 assert_eq "$OUT" "validate-mode=full verdict=FAILING" \
   "control: with the bound's verdict unread the cut-off run's record reads FAILING" "$ERR"
 
-# Control: a child that takes any 124 for the bound's, whatever the time, turns
-# a command's own exit 124 into no verdict.
-mutant mutant-any-124 '>= bound_secs' '>= 0'
+# Control: with the own-exit marker never written, a command's own exit 124
+# reads as the bound's.
+mutant mutant-no-own-exit 'rc=$?; : > "$2"; exit "$rc"' 'rc=$?; exit "$rc"'
 run_script "$MUTANT" --worktree "$(make_proj proj-own-124 "exit 124" 20)" --poll 1
 assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=124 validate=no-verdict" \
-  "control: without the elapsed check a command's own 124 reads as the bound's" "$ERR"
-
-# A 137 is the kill's only once the grace behind the bound has passed too. The
-# stand-in timeout below sleeps past the bound, inside the grace, and exits 137,
-# as an out-of-memory kill of the battery would.
-RUN_PATH="$(farm_path fake-137 timeout gtimeout)"
-printf '#!/usr/bin/env bash\n# --foreground -k GRACE SECS COMMAND...\nsleep $(( $4 + 1 ))\nexit 137\n' > "$RUN_PATH/timeout"
-chmod +x "$RUN_PATH/timeout"
-proj_own_137="$(make_proj proj-own-137 "exit 0" 2)"
-run_script "$RUN" --worktree "$proj_own_137" --poll 1
-assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=137 validate=FAILING" \
-  "a 137 past the bound but inside the kill grace is the command's own failure" "$ERR"
-mutant mutant-137-no-grace '[[ "$status" != 137 ]] || bound_secs=$(( bound_secs + KILL_GRACE ))' ':'
-run_script "$MUTANT" --worktree "$proj_own_137" --poll 1
-assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=137 validate=no-verdict" \
-  "control: without the grace a 137 inside it reads as the bound's kill" "$ERR"
-RUN_PATH=""
+  "control: without the own-exit marker a command's own 124 reads as the bound's" "$ERR"
 
 # --- The command's output goes to the log, never into the verdict -------------
 proj_log="$(make_proj proj-log "echo first; echo second >&2; exit 0" 20)"
@@ -383,17 +368,18 @@ assert_eq "$(output_of "$OUT")" "full" \
   "control: with the range setting unread the range run logs the full battery" "$ERR"
 
 # --- A command that ignores SIGTERM is still ended inside the bound -----------
-# A bound with no kill escalation is one signal, which such a command outlives:
-# the run holds open past the setting with no verdict, no sentinel and no owner,
-# and fixtures in this repository trap TERM by construction. The elapsed
-# assertion is what reddens on that; the command would otherwise run forty
-# seconds and the waiter would report the cap instead.
+# Fixtures in this repository trap TERM by construction. The bound's TERM ends
+# the wrapper the command runs under, whatever the command does with it, and
+# the teardown ends the command after the verdict. A run held open past the
+# setting would leave no sentinel: the elapsed assertion is what reddens on
+# that; the command would otherwise run forty seconds and the waiter would
+# report the cap instead.
 proj_term="$(make_proj proj-term "trap '' TERM; sleep 40" 2)"
 term_start="$(date +%s)"
 run_script "$RUN" --worktree "$proj_term" --poll 5
 term_elapsed=$(( $(date +%s) - term_start ))
-assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=137 validate=no-verdict" \
-  "a command that ignores SIGTERM is killed anyway and records the bound's verdict" "$ERR"
+assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=124 validate=no-verdict" \
+  "a command that ignores SIGTERM still ends the run at its bound with the bound's verdict" "$ERR"
 assert_eq "$RC" "1" "and exits 1, which is never a pass" "$ERR"
 assert_eq "$([[ "$term_elapsed" -le 20 ]] && echo within || echo "over:$term_elapsed")" "within" \
   "with the sentinel landing inside the bound plus the grace, not at the command's own length"
@@ -707,7 +693,7 @@ assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
 # says the validation passed when nothing had finished inside the limit.
 # The poll interval keeps the cap clear of both outcomes, so the only thing the
 # two runs differ in is whether the command was killed at its bound.
-mutant mutant-unbounded '"$child_timeout_bin" --foreground -k "$KILL_GRACE" "$child_timeout_secs" bash -c "$child_cmd"' 'bash -c "$child_cmd"'
+mutant mutant-unbounded '"$child_timeout_bin" --foreground -k "$KILL_GRACE" "$child_timeout_secs" \' '\'
 proj_unbounded="$(make_proj proj-unbounded "sleep 2; exit 0" 1)"
 run_script "$MUTANT" --worktree "$proj_unbounded" --poll 3
 assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \

@@ -454,6 +454,7 @@ echo "=== the validation note reaches the orchestrator ==="
 # artifact is echoed; the note is optional beside the required verdict, and a
 # wrong-typed or empty note is a malformed receipt.
 NOTE="80/80-on-rerun,first-run-flaked-on-release-tests"
+SUITES_NOTE="scoped-suites-green:dev_validate_run.sh-232/0"
 # A real note carries spaces, a semicolon and parentheses; the echo is by-value
 # through jq --arg, asserted outside the table since expect tokens split on
 # whitespace. It also carries a literal TAB, which is what emit() joins its
@@ -471,7 +472,7 @@ receipt_table \
   "a null validate_mode beside a pass is invalid^impl^.validate_mode=null^$FILE_ARGS^reason=invalid" \
   "a null validate_mode beside a failing validate is valid^impl^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null^$FILE_ARGS^reason=valid validate_mode=null" \
   "a null validate_mode beside no-verdict is invalid^impl^.validate=\"no-verdict\" | .validate_note=\"$NOTE\" | .validate_mode=null^$FILE_ARGS^reason=invalid" \
-  "a no-verdict validate, a battery the timeout cut off, is accepted with its suites named^impl^.validate=\"no-verdict\" | .validate_note=\"$NOTE\"^$FILE_ARGS^verdict=accept reason=valid validate=no-verdict" \
+  "a no-verdict validate, a battery the timeout cut off, is accepted with its suites named^impl^.validate=\"no-verdict\" | .validate_note=\"$SUITES_NOTE\"^$FILE_ARGS^verdict=accept reason=valid validate=no-verdict" \
   "a no-verdict validate naming no suites is invalid^impl^.validate=\"no-verdict\"^$FILE_ARGS^verdict=retry reason=invalid" \
   "a failing validate on the same receipt is retried^impl^.validate=\"FAILING: lint\"^$FILE_ARGS^verdict=retry reason=valid" \
   "an empty validate_note is invalid^impl^.validate_note=\"\"^$FILE_ARGS^reason=invalid" \

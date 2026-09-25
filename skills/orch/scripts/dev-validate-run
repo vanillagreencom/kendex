@@ -64,8 +64,8 @@
 # class and the mode it ran under), runner (lib/job-unit.sh's record of how
 # the child runs), class.log (the stderr of the base-branch lookup and the
 # classifier), paths (DEV_VALIDATE_PATHS), pid (the detached child's process
-# id), log (the runner line, then the command's output) and exit (the
-# sentinel).
+# id), log (the runner line, then the command's output), own-exit (present
+# once the command returned by itself) and exit (the sentinel).
 #
 # Validation modes, --validate-mode, recorded as the validate-mode= line of
 # start:
@@ -91,10 +91,10 @@
 # Only pass is a passing validation.
 #
 # A run the bound ended is no verdict, neither pass nor FAILING: the command
-# was cut off, not refuted. The child records verdict=no-verdict only when the
-# exit is timeout's own and the bound has elapsed: 124 once the bound has run
-# out, 137 once the kill grace behind it has too. A command that exits either
-# by itself before then is a failing command.
+# was cut off, not refuted. The child records verdict=no-verdict only for
+# timeout's own exit, 124 or 137, with no own-exit marker: the command writes
+# that marker when it returns by itself, so a command that exits 124 or 137 on
+# its own is a failing command.
 #
 # state=lost is the detached child gone with no verdict recorded: a host or
 # low-memory kill, or a launch that never ran. It is a failed validation, and it
@@ -485,7 +485,6 @@ if [[ "$mode" == child ]]; then
   mv "$run_dir/pid.part" "$run_dir/pid"
   status=0
   cd "$child_worktree"
-  child_started="$(date +%s)"
   # The first log line names what contains the run. A log that cannot be
   # written loses that line and never the verdict, as it loses the command's
   # output below.
@@ -494,26 +493,26 @@ if [[ "$mode" == child ]]; then
   # on Debian and Ubuntu sh is dash, where source, [[ ]] and set -o pipefail are
   # errors that would record a false failing verdict. post-merge and
   # open-terminal run a configured command the same way. -k turns the bound from
-  # one ignorable signal into one the command cannot survive. --foreground keeps
+  # one ignorable signal into one the wrapper below cannot survive. --foreground keeps
   # the command in this process's group rather than a group of timeout's own,
   # so the group this child kills below is every process the command started
   # that did not leave it. The class and its companions are set over whatever
   # the launching shell exported.
+  #
+  # The command runs under a wrapper that writes own-exit once it returns by
+  # itself, which is how the bound's 124 or 137 is told from the command's
+  # own. The bound's TERM therefore ends the wrapper, not the command: the
+  # command, still in this group or unit, is ended by the teardown below,
+  # TERM first and KILL a grace later, once the verdict is on disk.
   DEV_VALIDATE_CLASS="$child_class" DEV_VALIDATE_DOCS_ONLY="$child_docs_only" \
-    DEV_VALIDATE_PATHS="$run_dir/paths" "$child_timeout_bin" --foreground -k "$KILL_GRACE" "$child_timeout_secs" bash -c "$child_cmd" >> "$run_dir/log" 2>&1 || status=$?
-  # Written whole or not at all: a poll that caught a half-written sentinel
-  # would read a verdict that is not one.
-  # timeout exits 124 when the bound fired and 137 when the kill a grace later
-  # did, so each is the bound's only once its own time has passed. The elapsed
-  # time is wall time and the bound runs on the monotonic clock, so a clock
-  # stepped forward can still read a command's own exit as the bound's.
+    DEV_VALIDATE_PATHS="$run_dir/paths" "$child_timeout_bin" --foreground -k "$KILL_GRACE" "$child_timeout_secs" \
+    bash -c 'bash -c "$1"; rc=$?; : > "$2"; exit "$rc"' _ "$child_cmd" "$run_dir/own-exit" >> "$run_dir/log" 2>&1 || status=$?
   ended_by=""
-  bound_secs=$(( 10#$child_timeout_secs ))
-  [[ "$status" != 137 ]] || bound_secs=$(( bound_secs + KILL_GRACE ))
-  if [[ "$status" == 124 || "$status" == 137 ]] \
-    && (( $(date +%s) - child_started >= bound_secs )); then
+  if [[ ( "$status" == 124 || "$status" == 137 ) && ! -e "$run_dir/own-exit" ]]; then
     ended_by=" verdict=no-verdict"
   fi
+  # Written whole or not at all: a poll that caught a half-written sentinel
+  # would read a verdict that is not one.
   printf 'guard-exit=%s at=%s%s\n' "$status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ended_by" > "$run_dir/exit.part"
   mv "$run_dir/exit.part" "$run_dir/exit"
   # The verdict is on disk, so nothing the command left behind is still owed a
