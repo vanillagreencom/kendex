@@ -119,7 +119,9 @@ checked_text() { # — the installers the checked= lines name, `-` for none
 
 run() { # TARGET [OUT]
   local rc=0
-  "$CHECK" "$1" "${2:-$OUT}" >"$TMP/std" 2>"$TMP/err" || rc=$?
+  # The fixtures are unsigned, so a signing identity exported on the host
+  # would push every row through the signing lane's refusal.
+  env -u APPLE_SIGNING_IDENTITY "$CHECK" "$1" "${2:-$OUT}" >"$TMP/std" 2>"$TMP/err" || rc=$?
   printf 'rc=%s first=%s checked=%s' "$rc" "$(first_text)" "$(checked_text)"
 }
 
