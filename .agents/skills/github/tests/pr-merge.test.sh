@@ -57,6 +57,9 @@ GITHUB="$REPO_ROOT/skills/github/scripts/github.sh"
 
 # shellcheck source=lib/check-stub.sh
 source "$TEST_DIR/lib/check-stub.sh"
+# A child that resolves symlinks prints the sandbox's physical path, under
+# /private on macOS, so err_lines maps that spelling to <tmp> as well.
+TMPDIR_PHYSICAL="$(cd "$TMPDIR" && pwd -P)"
 REPO="$TMPDIR/repo"
 
 # The class policy asks a classifier to read the diff between two commits, and
@@ -358,7 +361,7 @@ stdout_text() {
 err_lines() {
   # The sandbox's own path is per-run, so a row that pins a child's diagnostic
   # pins <tmp> rather than a directory no second run produces.
-  sed -e 's/^[[:space:]]*//' -e '/^$/d' -e 's/;/\\;/g' -e "s|$TMPDIR|<tmp>|g" "$TMPDIR/stderr" | paste -s -d ';' -
+  sed -e 's/^[[:space:]]*//' -e '/^$/d' -e 's/;/\\;/g' -e "s|$TMPDIR_PHYSICAL|<tmp>|g" -e "s|$TMPDIR|<tmp>|g" "$TMPDIR/stderr" | paste -s -d ';' -
 }
 
 run() {
