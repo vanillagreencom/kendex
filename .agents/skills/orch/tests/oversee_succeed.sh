@@ -389,30 +389,26 @@ check "an unreadable account config refuses the successor and keeps the caller" 
 # fixture carries through states nothing about permissions: what a caller's
 # permission switches should do at a successor of ANOTHER harness is a
 # separate question from the pair this strip owns.
-new_caller "$MARK"
-STRIP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
-STRIP_HOME="$(lane_codex_home_path "$H/.codex" "$STRIP_CWD")"
-run_succeed stripflags 'codex:1:high' -- --model fable --effort high --dangerously-skip-permissions --verbose
-check "a named entry keeps unrelated words and replaces the caller's model, effort and permission posture" \
-  "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
-  "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;--verbose;$BRIEF;"
-
+#
 # A claude caller's question-tool words are a flag codex refuses, so a codex
-# entry never carries them: it carries codex's own words exactly when
-# ORCH_OVERSEER_QUESTION_TOOL is off.
+# entry never carries them either: it carries codex's own words exactly when
+# ORCH_OVERSEER_QUESTION_TOOL is off. One table, so the caller's permission
+# switch is spelled on one line for every row.
+# QUESTION_TOOL|CALLER WORDS AFTER THE PERMISSION SWITCH|LINE TAIL|WHAT
 for row in \
-  "|;--verbose|on, the codex line carries no question-tool word" \
-  "off|;-c;features.default_mode_request_user_input=false;--verbose|off, the codex line carries codex's own words and not claude's" \
+  "|--verbose|;--verbose|a named entry keeps unrelated words and replaces the caller's model, effort and permission posture" \
+  "|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|;--verbose|a claude caller's question-tool words never reach a codex successor: on, the codex line carries no question-tool word" \
+  "off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|;-c;features.default_mode_request_user_input=false;--verbose|a claude caller's question-tool words never reach a codex successor: off, the codex line carries codex's own words and not claude's" \
   ; do
-  IFS='|' read -r row_value row_tail row_what <<<"$row"
+  IFS='|' read -r row_value row_words row_tail row_what <<<"$row"
   new_caller "$MARK"
-  CROSS_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
-  CROSS_HOME="$(lane_codex_home_path "$H/.codex" "$CROSS_CWD")"
-  QUESTION_TOOL="$row_value" run_succeed "crossquestion$row_value" 'codex:1:high' -- \
-    --model fable --effort high --dangerously-skip-permissions --disallowedTools=AskUserQuestion,EnterPlanMode --verbose
-  check "a claude caller's question-tool words never reach a codex successor: $row_what" \
-    "$RC|$(overseers)|$(recorded codex)" \
-    "0|1|lane=$CROSS_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false$row_tail;$BRIEF;"
+  STRIP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+  STRIP_HOME="$(lane_codex_home_path "$H/.codex" "$STRIP_CWD")"
+  # shellcheck disable=SC2086  # a row's words are its own, split on purpose.
+  QUESTION_TOOL="$row_value" run_succeed "stripflags$row_value" 'codex:1:high' -- --model fable --effort high --dangerously-skip-permissions $row_words
+  check "$row_what" \
+    "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
+    "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false$row_tail;$BRIEF;"
 done
 
 new_caller "$MARK"

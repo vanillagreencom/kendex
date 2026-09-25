@@ -171,7 +171,7 @@ fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
         .collect();
     assert_eq!(
         mentioned,
-        vec![(lane_launch, Some(91))],
+        vec![(lane_launch, Some(97))],
         "{:#?}",
         result.mentions
     );
