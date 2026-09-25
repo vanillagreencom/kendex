@@ -285,6 +285,18 @@ assert_eq "one=$(rc one) two=$(rc two) lock-waits=$(lock_waits two) $(key two)" 
   "one=0 two=1 lock-waits=0 open-terminal: cap-reached item=CC-2 cap=1 running=1 claims=1" \
   "the next launch counts at once, the exception's reservation among the lanes it counts"
 
+echo "=== a reservation whose launcher has exited holds no place ==="
+row reserve-dead
+( exit 0 ) &
+DEAD=$!
+wait "$DEAD"
+mkdir -p "$CLAIMS/claims"
+printf '%s\t-\t%s\tCC-8\t2026-01-01T00:00:00Z\t%s\n' "$DEAD" "$LANE_A" "$STATE/workflow-state-oversee.json" \
+  > "$CLAIMS/claims/claim.dead.reserve"
+launch one 1 0 --lane "$LANE_A" CC-1
+assert_eq "rc=$(rc one) running=$(running) reservations=$(reservations) $(key one)" "rc=0 running=CC-1 reservations=0 " \
+  "the count prunes the reservation and admits the launch into the fleet's only slot"
+
 echo "=== a launch between its claim and its record counts once ==="
 row claimed
 STUB_HOLD_PASTE="$ROW/release" launch one 1 0 --lane "$LANE_A" CC-1 &
@@ -547,14 +559,20 @@ if [[ "$(id -u)" -eq 0 ]]; then
 else
   # The claim store is readable and not writable: a judged launch cannot
   # write its reservation, and one naming no fleet cannot write its claim.
-  row reserve-lost
-  mkdir -p "$CLAIMS/claims"
-  chmod 555 "$CLAIMS/claims"
-  launch one 10 5 --lane "$LANE_A" CC-1
-  chmod 755 "$CLAIMS/claims"
-  assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
-    "rc=1 open-terminal: cap-reserve-failed item=CC-1 store=$CLAIMS/claims opened=no" \
-    "a claim store that takes no reservation refuses the launch before any window"
+  # Each arm of the gate that admits a launch reserves: within both caps, and
+  # past the fleet cap on --over-cap.
+  for arm in within over; do
+    row "reserve-lost-$arm"
+    over=()
+    if [[ "$arm" == over ]]; then seed_running CC-9; over=(--over-cap); fi
+    mkdir -p "$CLAIMS/claims"
+    chmod 555 "$CLAIMS/claims"
+    launch one 1 5 --lane "$LANE_A" ${over[@]+"${over[@]}"} CC-1
+    chmod 755 "$CLAIMS/claims"
+    assert_eq "rc=$(rc one) $(key one | grep '^open-terminal: cap-reserve-failed ' || true) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
+      "rc=1 open-terminal: cap-reserve-failed item=CC-1 store=$CLAIMS/claims opened=no" \
+      "a claim store that takes no reservation refuses a launch admitted $arm the caps before any window"
+  done
   # The store stops taking writes after a launch naming no lane reserved its
   # place, so the item's end cannot remove the reservation.
   row reserve-stuck
@@ -578,6 +596,14 @@ else
   assert_eq "rc=$(rc one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no) $(key one)" \
     "rc=1 opened=yes open-terminal: claim-unrecorded item=CC-2 launched=1" \
     "the auto item after an unwritten claim is refused rather than picked on an account it cannot see"
+  # A named lane needs no claim to pick its account, so its batch runs on.
+  row claim-named
+  mkdir -p "$CLAIMS/claims"
+  chmod 555 "$CLAIMS/claims"
+  STATE="" launch one 10 0 --lane "$LANE_A" CC-1 CC-2
+  chmod 755 "$CLAIMS/claims"
+  assert_eq "rc=$(rc one) $(grep -c '^open-terminal: summary launched=2 ' "$ROW/one.out" || true)" "rc=0 1" \
+    "a named lane's batch naming no fleet runs on past unwritten claims"
 fi
 
 echo "=== a refusal stops the batch ==="
