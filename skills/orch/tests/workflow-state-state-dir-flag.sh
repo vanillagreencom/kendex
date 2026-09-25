@@ -67,8 +67,8 @@ mutant_dir="$TMP_ROOT/mutant/orch/scripts"
 mkdir -p "$mutant_dir"
 cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$mutant_dir/lib"
 cp "$REPO_ROOT/skills/orch/scripts/git-context" "$mutant_dir/git-context"
-assert_eq "$(grep -Fc 'STATE_DIR="$STATE_ROOT/$STATE_DIR"' "$WS")" "1" "anchor control finds the relative-directory join"
-sed 's|STATE_DIR="$STATE_ROOT/$STATE_DIR"|STATE_DIR="$PWD/$STATE_DIR"|' "$WS" > "$mutant_dir/workflow-state"
+assert_eq "$(grep -Fc '*) root=$(project_root) || return 1' "$WS")" "1" "anchor control finds the relative-directory join"
+sed 's|\*) root=$(project_root) \|\| return 1|*) root=$PWD|' "$WS" > "$mutant_dir/workflow-state"
 (cd "$worktree" && env -u ORCH_STATE_DIR bash "$mutant_dir/workflow-state" init issue-mutant --branch issue-mutant) >/dev/null
 assert_file_absent "$main_repo/tmp/workflow-state-issue-mutant.json" "control: a cwd-relative join misses the main checkout"
 

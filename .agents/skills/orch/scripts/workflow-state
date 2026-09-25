@@ -130,6 +130,34 @@ state_message() {
       printf 'workflow-state: fleet-log-at-future at=%s now=%s\n' "$at" "$now"
       printf '%s\n' "Error: append-file: fleet_log record $file is dated $at, later than the clock at $now; leave \"at\" out and the append stamps it"
       ;;
+    fleet-log-row-bytes)
+      printf 'workflow-state: fleet-log-row-bytes bytes=%s cap=%s\n' "$bytes" "$cap"
+      printf '%s\n' "Error: append-file: fleet_log record $file carries $bytes bytes of text, over ORCH_FLEET_LOG_ROW_BYTES=$cap; write the ruling as one line under the cap"
+      ;;
+    fleet-log-reader)
+      printf 'workflow-state: fleet-log-reader reader=%s\n' "${1:-}"
+      printf '%s\n' "Error: fleet-log takes the reader takeover or audit"
+      ;;
+    keep-value)
+      printf 'workflow-state: keep-value option=%s\n' "--keep"
+      printf '%s\n' "Error: --keep requires a path argument"
+      ;;
+    prune-age-unreadable)
+      printf 'workflow-state: prune-age-unreadable path=%s\n' "$unit"
+      printf '%s\n' "Error: prune: find could not read every entry under $unit, so its age is unjudged; nothing was archived or removed"
+      ;;
+    prune-archive-failed)
+      printf 'workflow-state: prune-archive-failed path=%s\n' "$archive_dir"
+      printf '%s\n' "Error: prune: the archive under $archive_dir could not be written; nothing was removed"
+      ;;
+    prune-remove-failed)
+      printf 'workflow-state: prune-remove-failed path=%s kept=%s\n' "$unit" "$archive"
+      printf '%s\n' "Error: prune: $unit could not be removed; the archive holds it and every path before it"
+      ;;
+    progress-dir-failed)
+      printf 'workflow-state: progress-dir-failed path=%s\n' "$dir"
+      printf '%s\n' "Error: progress-report-path: $dir could not be created"
+      ;;
     handoff-record)
       printf 'workflow-state: handoff-record issue=%s\n' "$issue_id"
       printf '%s\n' "Error: set: the handoff record for $issue_id is not a JSON object, so its \"written_at\" cannot be read"
@@ -605,6 +633,14 @@ cmd_append_file() {
             stamp)   stamp_args=(--arg now "$now")
                      entry_expr='($entry[0] | .at = $now)' ;;
         esac
+        # A successor reads the last ORCH_TAKEOVER_ROWS rows whole at takeover,
+        # so the cap on each row's text is what bounds that read.
+        local cap bytes
+        cap=$("$SCRIPT_DIR/orch-env" ORCH_FLEET_LOG_ROW_BYTES 600) || return 1
+        bytes=$(jq -r '.text? // "" | tostring | utf8bytelength' < "$file") || return 1
+        if (( bytes > cap )); then
+            state_message fleet-log-row-bytes "$@" >&2; return 1
+        fi
     fi
 
     local state_file
@@ -888,6 +924,205 @@ cmd_handoff_standing() {
     printf '%s\n' "$record"
 }
 
+# The main checkout every worktree of this repository shares, or the project
+# root outside Git, and a project-relative setting joined to it, so a path
+# setting names one directory from any checkout.
+project_root() {
+    if git -C "$PROJECT_ROOT" rev-parse --show-toplevel >/dev/null 2>&1; then
+        "$SCRIPT_DIR/git-context" common-root "$PROJECT_ROOT"
+    else
+        printf '%s\n' "$PROJECT_ROOT"
+    fi
+}
+
+project_path() { # PATH
+    local root
+    case "$1" in
+        /*) printf '%s\n' "$1" ;;
+        *) root=$(project_root) || return 1
+           printf '%s/%s\n' "$root" "$1" ;;
+    esac
+}
+
+# The fleet log's two readers, each printing its rows one JSON object per
+# line: the successor overseer's takeover read, the last ORCH_TAKEOVER_ROWS
+# rows, and the audit read, every proposal and ruling row.
+cmd_fleet_log() {
+    local reader="${1:-}" state_file rows
+    state_file=$(get_state_file oversee)
+    case "$reader" in
+        takeover)
+            ensure_state_exists "$state_file"
+            rows=$("$SCRIPT_DIR/orch-env" ORCH_TAKEOVER_ROWS 10) || return 1
+            jq -c --argjson n "$rows" \
+                '(.fleet_log // []) | if $n == 0 then empty else .[-$n:][] end' "$state_file" ;;
+        audit)
+            ensure_state_exists "$state_file"
+            jq -c '(.fleet_log // [])[] | select(.kind == "proposal" or .kind == "ruling")' "$state_file" ;;
+        *) state_message fleet-log-reader "$@" >&2; return 2 ;;
+    esac
+}
+
+# The owner progress report's path: MM-DD-HH-MM.md in UTC under
+# ORCH_PROGRESS_REPORT_DIR, with -succession before the extension for the one
+# a succession writes. The directory is created; the report is the caller's.
+cmd_progress_report_path() {
+    local suffix="" setting dir now_epoch stamp field=progress_report
+    case "$#:${1:-}" in
+        0:) ;;
+        1:--succession) suffix=-succession ;;
+        *) state_message unknown-option "$@" >&2; return 2 ;;
+    esac
+    setting=$("$SCRIPT_DIR/orch-env" ORCH_PROGRESS_REPORT_DIR tmp/progress-reports) || return 1
+    dir=$(project_path "$setting") || return 1
+    now_epoch=$(date -u +%s) || now_epoch=""
+    stamp=$(from_epoch "$now_epoch" '%m-%d-%H-%M') || stamp=""
+    if [[ -z "$now_epoch" || -z "$stamp" ]]; then
+        state_message clock-unreadable "$@" >&2; return 1
+    fi
+    mkdir -p -- "$dir" || { state_message progress-dir-failed "$@" >&2; return 1; }
+    printf '%s/%s%s.md\n' "$dir" "$stamp" "$suffix"
+}
+
+# `prune [--keep PATH]...`: the retention that
+# schemas/workflow-state.md § Recording policy states, applied to the fleet
+# state and the directory holding it.
+#
+# Every refusal here rests on telling a live lane from a closed one, which only
+# the fleet state's lane records can do, so a prune with no fleet state is
+# refused rather than judged on file ages alone. The keep list is explicit, and
+# a path on it is never a candidate whatever its age. Nothing leaves the disk or
+# the state before one archive holding all of it is written: a failed archive
+# removes nothing, and the rows are dropped from the state before any path is
+# removed, so a failure part way leaves the archive a superset of what went.
+#
+# Output, one keyed line each: `pruned path=PATH` per removed path, then
+# `pruned fleet_log=N lanes=N progress_reports=N paths=N`, then `kept=ARCHIVE`,
+# or `kept=none` where there was nothing to archive.
+cmd_prune() {
+    local -a keeps=() units=() candidates=()
+    local keep
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --keep)
+                [[ $# -ge 2 && -n "$2" ]] || { state_message keep-value "$@" >&2; return 2; }
+                keep="$2"
+                [[ "$keep" == /* ]] || keep="$PWD/$keep"
+                if [[ -d "$keep" ]]; then
+                    keep=$(cd -P -- "$keep" && pwd -P) || return 1
+                elif [[ -d "$(dirname -- "$keep")" ]]; then
+                    keep="$(cd -P -- "$(dirname -- "$keep")" && pwd -P)/$(basename -- "$keep")" || return 1
+                fi
+                keeps+=("$keep"); shift 2 ;;
+            *) state_message unknown-option "$@" >&2; return 2 ;;
+        esac
+    done
+
+    local state_file field=fleet_log
+    state_file=$(get_state_file oversee)
+    ensure_state_exists "$state_file"
+
+    local days setting progress_dir now_epoch cutoff
+    days=$("$SCRIPT_DIR/orch-env" ORCH_RECORD_RETENTION_DAYS 14) || return 1
+    setting=$("$SCRIPT_DIR/orch-env" ORCH_PROGRESS_REPORT_DIR tmp/progress-reports) || return 1
+    progress_dir=$(project_path "$setting") || return 1
+    now_epoch=$(date -u +%s) || now_epoch=""
+    cutoff=""
+    [[ -z "$now_epoch" ]] || cutoff=$(from_epoch "$((now_epoch - days * 86400))" '%Y-%m-%dT%H:%M:%SZ') || cutoff=""
+    [[ -n "$cutoff" ]] || { state_message clock-unreadable "$@" >&2; return 1; }
+
+    # A lane whose record is anything but `done` is live: `running`, and a
+    # `preparing` or `stopped` one a relaunch resumes into its own files.
+    local live rows
+    live=$(jq -r '(.lanes // [])[] | select(.status != "done") | .item // empty' "$state_file") || return 1
+    rows=$(jq -c --arg cut "$cutoff" '
+        def old: type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") and . < $cut;
+        {fleet_log: [(.fleet_log // [])[] | select(.at | old)],
+         lanes: [(.lanes // [])[] | select(.status == "done" and (.launched_at | old))]}' "$state_file") || return 1
+
+    local sd pd="" entry name f
+    sd=$(cd -P -- "$STATE_DIR" && pwd -P) || return 1
+    [[ ! -d "$progress_dir" ]] || pd=$(cd -P -- "$progress_dir" && pwd -P) || return 1
+    shopt -s nullglob dotglob
+    for entry in "$sd"/*; do
+        name="${entry##*/}"
+        [[ -z "$pd" || ( "$pd" != "$entry" && "$pd" != "$entry"/* ) ]] || continue
+        case "$name" in
+            workflow-state-oversee.json|workflow-state-oversee.json.lock|oversee-watch.pid|oversee-watch.argv) ;;
+            handoffs)
+                for f in "$entry"/*; do [[ "${f##*/}" == OVERSEER-HANDOFF.md ]] || units+=("$f"); done ;;
+            lane-mail)
+                for f in "$entry"/*; do [[ "${f##*/}" == overseer ]] || units+=("$f"); done ;;
+            *) units+=("$entry") ;;
+        esac
+    done
+    if [[ -n "$pd" ]]; then
+        for f in "$pd"/*; do units+=("$f"); done
+    fi
+    shopt -u nullglob dotglob
+
+    local unit item re recent kept_by reports=0
+    for unit in ${units[@]+"${units[@]}"}; do
+        kept_by=""
+        for keep in ${keeps[@]+"${keeps[@]}"}; do
+            [[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || kept_by=keep
+        done
+        # A live lane's item as a whole token of the name: its mailbox, its
+        # workflow state, its status file and anything else named for it.
+        while IFS= read -r item; do
+            [[ -n "$item" ]] || continue
+            re="(^|[-_.])${item//./\\.}([-_.]|$)"
+            [[ ! "${unit##*/}" =~ $re ]] || kept_by=live
+        done <<<"$live"
+        [[ -z "$kept_by" ]] || continue
+        recent=$(find "$unit" -mtime "-$days" -print 2>/dev/null) || { state_message prune-age-unreadable "$@" >&2; return 1; }
+        [[ -z "$recent" ]] || continue
+        candidates+=("$unit")
+        [[ -z "$pd" || "$unit" != "$pd"/* ]] || reports=$((reports + 1))
+    done
+
+    local n_rows n_log n_lanes repo_root archive_dir stage archive=none
+    n_log=$(jq '.fleet_log | length' <<<"$rows") || return 1
+    n_lanes=$(jq '.lanes | length' <<<"$rows") || return 1
+    n_rows=$((n_log + n_lanes))
+    if [[ "$n_rows" -gt 0 || "${#candidates[@]}" -gt 0 ]]; then
+        repo_root=$(project_root) || return 1
+        archive_dir="${FLEET_DIR:-$HOME/.fleet}/archive/${repo_root##*/}/oversee"
+        # Paths relative to /, as lane-host close archives a lane's records, so
+        # a progress directory outside the state directory archives the same way.
+        # The refusal's key is the first line, so tar's own words follow it.
+        stage=""
+        if ! { mkdir -p -- "$archive_dir" 2>/dev/null \
+               && stage=$(mktemp -d "$archive_dir/prune-$now_epoch-XXXXXX" 2>/dev/null) \
+               && printf '%s\n' "$rows" > "$stage/records.json" \
+               && { printf '%s\n' "${stage#/}/records.json"
+                    for unit in ${candidates[@]+"${candidates[@]}"}; do printf '%s\n' "${unit#/}"; done
+                  } > "$stage/paths" \
+               && tar -czf "$stage.tgz" -C / -T "$stage/paths" 2>"$stage/tar.err"; }; then
+            state_message prune-archive-failed "$@" >&2
+            if [[ -n "$stage" ]]; then
+                cat -- "$stage/tar.err" >&2 2>/dev/null || true
+                rm -rf -- "${stage:?}" "${stage:?}.tgz"
+            fi
+            return 1
+        fi
+        archive="$stage.tgz"
+        if [[ "$n_rows" -gt 0 ]] && ! atomic_update "$state_file" \
+            '.fleet_log = ((.fleet_log // []) - $r[0].fleet_log) | .lanes = ((.lanes // []) - $r[0].lanes)' \
+            --slurpfile r "$stage/records.json"; then
+            rm -rf -- "${stage:?}"; return 1
+        fi
+        rm -rf -- "${stage:?}"
+        for unit in ${candidates[@]+"${candidates[@]}"}; do
+            rm -rf -- "${unit:?}" || { state_message prune-remove-failed "$@" >&2; return 1; }
+            printf 'pruned path=%s\n' "$unit"
+        done
+    fi
+    printf 'pruned fleet_log=%s lanes=%s progress_reports=%s paths=%s\n' \
+        "$n_log" "$n_lanes" "$reports" "${#candidates[@]}"
+    printf 'kept=%s\n' "$archive"
+}
+
 cmd_remove() {
     local state_file
     state_file="$(get_state_file "$1")"
@@ -967,7 +1202,9 @@ Commands:
                                 current UTC time. A clock this
                                 command cannot read refuses the append as
                                 clock-unreadable rather than stamping an
-                                unreadable time
+                                unreadable time. Text longer than
+                                ORCH_FLEET_LOG_ROW_BYTES bytes (default 600) is
+                                refused as fleet-log-row-bytes
   cap <setting> [--issue <id> | --count <n>]
                                 Round caps. Bare: print the resolved cap.
                                 With --issue: read the state field the setting
@@ -1019,6 +1256,28 @@ EOF
                                 cannot parse kills the script before dispatch —
                                 and is never read as "no record stands"
   remove <issue_id>             Delete the state file and its lock sidecar; absent is success
+  fleet-log takeover|audit      Print fleet_log rows of the oversee state, one
+                                JSON object per line: takeover the last rows,
+                                as many as ORCH_TAKEOVER_ROWS (default 10);
+                                audit every proposal and ruling row
+  progress-report-path [--succession]
+                                Print the owner progress report's path,
+                                MM-DD-HH-MM.md in UTC (MM-DD-HH-MM-succession.md
+                                with --succession) under ORCH_PROGRESS_REPORT_DIR
+                                (default tmp/progress-reports), creating the
+                                directory
+  prune [--keep PATH]...        Apply the retention in schemas/workflow-state.md
+                                section Recording policy to the oversee state
+                                and its directory, past the retention in days
+                                that ORCH_RECORD_RETENTION_DAYS sets (default
+                                14). Archives everything it removes under
+                                FLEET_DIR/archive/REPO/oversee first (FLEET_DIR
+                                defaults to ~/.fleet); a failed archive removes
+                                nothing. Never removes a --keep path, nor a
+                                path named for a lane whose record is not done.
+                                Prints "pruned path=PATH" per removed path, a
+                                "pruned fleet_log=N lanes=N progress_reports=N
+                                paths=N" count, then "kept=ARCHIVE" or kept=none
 
 Keys:
   Three per-item key forms: the tracker identifier (KEN-123) for a tracked
@@ -1122,17 +1381,7 @@ kendex_load_project_env "$PROJECT_ROOT"
 # Parsed only now, so the flag the caller passed outranks every project file.
 parse_global_opts "$@"
 shift "$GLOBAL_OPTS"
-STATE_DIR="${STATE_DIR_FLAG:-${ORCH_STATE_DIR:-tmp}}"
-case "$STATE_DIR" in
-    /*) ;;
-    *)
-        STATE_ROOT="$PROJECT_ROOT"
-        if git -C "$PROJECT_ROOT" rev-parse --show-toplevel >/dev/null 2>&1; then
-            STATE_ROOT="$("$SCRIPT_DIR/git-context" common-root "$PROJECT_ROOT")"
-        fi
-        STATE_DIR="$STATE_ROOT/$STATE_DIR"
-        ;;
-esac
+STATE_DIR="$(project_path "${STATE_DIR_FLAG:-${ORCH_STATE_DIR:-tmp}}")"
 # Not configurable at all, and so resolved here rather than above the loader,
 # which would let a settings [env] key rename the state file: the file name is
 # the identity every caller and doc reference resolves, so renaming it would
@@ -1159,6 +1408,9 @@ case "$1" in
     path)      shift; cmd_path "$@" ;;
     exists)    shift; cmd_exists "$@" ;;
     handoff-standing) shift; cmd_handoff_standing "$@" ;;
+    fleet-log) shift; cmd_fleet_log "$@" ;;
+    progress-report-path) shift; cmd_progress_report_path "$@" ;;
+    prune)     shift; cmd_prune "$@" ;;
     remove)    shift; cmd_remove "$@" ;;
     *) state_message unknown-command "$@" >&2; cmd_help >&2; exit 1 ;;
 esac
