@@ -97,6 +97,17 @@ pending_ask() { # AGE_SECONDS
     "$((now - $1))"
 }
 
+# dev-validate-run records each --stop. The records' /srv/worktree is no
+# directory here, so only a row that points mail_root at one reaches it.
+export LANE_CLOSE_VALIDATE_CALLS="$TMP_ROOT/validate-calls"
+cat >"$SCRIPTS/dev-validate-run" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$LANE_CLOSE_VALIDATE_CALLS"
+[[ "${LANE_CLOSE_VALIDATE_STATUS:-0}" -eq 0 ]] || { printf 'dev-validate-run: stop-failed step=kill\n' >&2; exit "$LANE_CLOSE_VALIDATE_STATUS"; }
+printf 'state=stopped units=0 groups=0\n'
+EOF
+chmod +x "$SCRIPTS/dev-validate-run"
+
 cat >"$FIXTURE/skills/linear/scripts/linear.sh" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${LANE_CLOSE_TRACKER_FAIL:-0}" != 0 ]]; then
@@ -290,6 +301,48 @@ printf '\n' >"$SCREEN"
 run_close "$SCRIPT"
 assert_eq "rc=$RC host=$(host_call_count) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE") kept=$(grep -c '^kept=' <<<"$OUT" || true)" \
   'rc=0 host=1 kill=1 status=done kept=1' 'an exited hosted Pi lane closes the provider once, kills by pane id and records done'
+
+echo '=== a local lane ends the validations its worktree still runs ==='
+validate_calls() { awk 'END { print NR + 0 }' "$LANE_CLOSE_VALIDATE_CALLS"; }
+LANE_WORKTREE="$TMP_ROOT/worktrees/ken-1"
+mkdir -p "$LANE_WORKTREE"
+# A record whose mail_root is the lane worktree on this disk, as open-terminal
+# writes a local lane's.
+lane_state() { # HOST
+  write_state running pi "$1"; write_panes bash; printf '\n' >"$SCREEN"; : >"$LANE_CLOSE_VALIDATE_CALLS"
+  jq --arg root "$LANE_WORKTREE" '.lanes[0].mail_root = $root' "$STATE" >"$STATE.next" && mv -- "$STATE.next" "$STATE"
+}
+# label|record host|validate-run status|expected
+STOP_ROWS=(
+  "an exited local lane stops its worktree's runs, then closes|-|0|rc=0 calls=1 stop=1 kill=1 status=done"
+  "a stop that fails refuses before the window or the record changes|-|1|rc=1 calls=1 stop=1 kill=0 status=running refused=1 relayed=1"
+  "a hosted lane stops nothing here: its runs end with its sandbox|/host|0|rc=0 calls=0 stop=0 kill=1 status=done"
+)
+for row in "${STOP_ROWS[@]}"; do
+  IFS='|' read -r label record_host validate_status want <<<"$row"
+  [[ "$record_host" != - ]] || record_host=""
+  lane_state "$record_host"
+  LANE_CLOSE_VALIDATE_STATUS="$validate_status" run_close "$SCRIPT"
+  got="rc=$RC calls=$(validate_calls) stop=$(grep -c -x -- "--stop --worktree $LANE_WORKTREE" "$LANE_CLOSE_VALIDATE_CALLS" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
+  [[ "$validate_status" -eq 0 ]] \
+    || got+=" refused=$(grep -c -x "lane-close: validate-stop-failed item=KEN-1 worktree=$LANE_WORKTREE status=1" <<<"$ERR" || true) relayed=$(grep -c -x 'dev-validate-run: stop-failed step=kill' <<<"$ERR" || true)"
+  assert_eq "$got" "$want" "$label"
+done
+write_state running pi ""; write_panes bash; printf '\n' >"$SCREEN"; : >"$LANE_CLOSE_VALIDATE_CALLS"
+run_close "$SCRIPT"
+assert_eq "rc=$RC calls=$(validate_calls) status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 calls=0 status=done' \
+  'a local lane whose mail_root is no directory on this disk stops nothing and closes'
+mv -- "$SCRIPTS/dev-validate-run" "$SCRIPTS/dev-validate-run.off"
+lane_state ""
+run_close "$SCRIPT"
+assert_eq "rc=$RC missing=$(grep -c -x "lane-close: helper-missing item=KEN-1 path=$SCRIPTS/dev-validate-run" <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 missing=1 kill=0 status=running' 'a missing dev-validate-run refuses naming its path, before the window or record changes'
+mv -- "$SCRIPTS/dev-validate-run.off" "$SCRIPTS/dev-validate-run"
+MUTANT="$(mutant lane-close-no-validate-stop '  [[ -n "$host" ]] || stop_validations' '  :')"
+lane_state ""
+run_close "$MUTANT"
+assert_eq "rc=$RC calls=$(validate_calls) status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 calls=0 status=done' \
+  "control: without the stop a closed local lane leaves its worktree's validations running"
 
 echo '=== a provider refusal stays unchanged and preserves the window ==='
 write_state running claude /host
