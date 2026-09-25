@@ -34,15 +34,19 @@ assert_eq() {
 }
 
 # df as round-prune calls it, `df -P -- PATH`: DF_TARGET_USED percent for a
-# path ending in /target, 10 percent for any other, so a row past the mark
-# holds only while the target/ volume is the one read. DF_FAIL fails it and
-# DF_JUNK prints a use that is not a number.
+# path ending in /target, DF_OUTSIDE_USED for one ending in /cargo-out, 10
+# percent for any other, so a row holds only while the volume of the target
+# the build uses is the one read. DF_FAIL fails it and DF_JUNK prints a use
+# that is not a number.
 mkdir -p "$TMP_ROOT/bin"
 cat >"$TMP_ROOT/bin/df" <<'SH'
 #!/usr/bin/env bash
 [[ -z "${DF_FAIL:-}" ]] || exit 1
 used=10
-case "${!#}" in */target) used="${DF_TARGET_USED:?}" ;; esac
+case "${!#}" in
+  */target) used="${DF_TARGET_USED:?}" ;;
+  */cargo-out) used="${DF_OUTSIDE_USED:?}" ;;
+esac
 [[ -z "${DF_JUNK:-}" ]] || used=unknown
 printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
 printf '/dev/fake 1000 1 1 %s%% /\n' "$used"
@@ -54,7 +58,9 @@ ROOT="" MAIN="" WT="" STATE=""
 fill() { head -c "$2" /dev/zero >"$1"; }
 
 KEY="" BRANCH=""
-build() { # NAME [LEASE_OWNER] [STATE_WORKTREE] [STATE_KEY] [BRANCH] — STATE_WORKTREE "none" records none
+build() { # NAME [LEASE_OWNER] [STATE_WORKTREE] [STATE_KEY] [BRANCH]
+  # STATE_WORKTREE: "branch" records the branch alone, "none" a branch no
+  # worktree has checked out, anything else the worktree and its branch.
   ROOT="$TMP_ROOT/$1"
   MAIN="$ROOT/main"
   WT="$ROOT/trees/topic"
@@ -75,8 +81,10 @@ build() { # NAME [LEASE_OWNER] [STATE_WORKTREE] [STATE_KEY] [BRANCH] — STATE_W
   : >"$WT/target/debug/.cargo-lock"
   fill "$WT/target/debug/deps/unit-0.rlib" 65536
   [[ -z "${2:-}" ]] || "$SESSION_GUARD" claim "$WT" --owner "$2" >/dev/null
-  if [[ "${3:-}" == none ]]; then
+  if [[ "${3:-}" == branch ]]; then
     "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" init "$KEY" --branch "$BRANCH" >/dev/null
+  elif [[ "${3:-}" == none ]]; then
+    "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" init "$KEY" --branch gone-branch >/dev/null
   else
     "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" init "$KEY" --worktree "$WT" --branch "$BRANCH" >/dev/null
   fi
@@ -104,7 +112,7 @@ prune() { # USED [SCRIPTS_DIR] — a fresh round id, then the round-start prune
   local scripts="${2:-$ORCH_SCRIPTS}"
   "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" new-round-id "$KEY" dev_round_id >/dev/null
   RC=0
-  OUT="$(cd "$MAIN" && env PATH="$TMP_ROOT/bin:$PATH" DF_TARGET_USED="$1" ORCH_ROUND_PRUNE_DISK_PCT=75 \
+  OUT="$(cd "$MAIN" && env -u CARGO_TARGET_DIR PATH="$TMP_ROOT/bin:$PATH" DF_TARGET_USED="$1" ORCH_ROUND_PRUNE_DISK_PCT=75 \
     ORCH_WORKTREE_BIN="$REPO_ROOT/skills/worktree/scripts/worktree" ${ROW_ENV[@]+"${ROW_ENV[@]}"} \
     "$scripts/round-prune" --state-dir "$STATE" "$KEY" 2>/dev/null)" || RC=$?
 }
@@ -130,6 +138,20 @@ row_setup() {
       while [[ ! -e "$ROOT/locked" ]]; do sleep 0.05; done
       ;;
     summary-fails) ROW_ENV=("ORCH_WORKTREE_BIN=$TMP_ROOT/bin/summary-then-fail") ;;
+    target-relative) ROW_ENV=("CARGO_TARGET_DIR=target") ;;
+    target-absolute) ROW_ENV=("CARGO_TARGET_DIR=$WT/target") ;;
+    # A Cargo target on a path outside the worktree, holding a built profile,
+    # on a volume full or roomy while the worktree's own reads the row's use.
+    target-outside-full | target-outside-roomy)
+      mkdir -p "$ROOT/outside/cargo-out/debug/deps"
+      : >"$ROOT/outside/cargo-out/debug/.cargo-lock"
+      fill "$ROOT/outside/cargo-out/debug/deps/unit-9.rlib" 4096
+      ROW_ENV=("CARGO_TARGET_DIR=$ROOT/outside/cargo-out")
+      case "$1" in
+        *full) ROW_ENV+=(DF_OUTSIDE_USED=80) ;;
+        *) ROW_ENV+=(DF_OUTSIDE_USED=74) ;;
+      esac
+      ;;
     *) echo "UNKNOWN-SETUP: $1" >&2; exit 2 ;;
   esac
 }
@@ -151,6 +173,7 @@ recorded() { # — the current round's record, bytes aliased as in line()
 
 artifacts() { (cd "$WT/target/debug" && find . -type f | sed 's|^\./||' | sort | paste -s -d ',' -); }
 js_left() { [[ ! -d "$WT/pkg" ]] || printf ' js=%s' "$(cd "$WT/pkg" && find node_modules -type f | paste -s -d ',' -)"; }
+outside_left() { [[ ! -d "$ROOT/outside" ]] || printf ' outside=%s' "$(cd "$ROOT/outside/cargo-out/debug" && find deps -type f | paste -s -d ',' -)"; }
 
 echo "=== round-prune: the mark decides ==="
 # label|target/ volume use %|state key|branch|lease owner|state worktree|setup|rc|line action and bytes|record|output left
@@ -164,7 +187,12 @@ a build holding the target lock fails the round and keeps the output|80|KEN-1|ke
 a prune that reports its summary and then exits non-zero is failed, not pruned|80|KEN-1|ken-1|KEN-1|-|summary-fails|1|failed used-pct=80 mark-pct=75 bytes=<positive>|failed used=80 mark=75 bytes=<positive>|.cargo-lock,deps/unit-0.rlib
 a state keyed apart from the lease prunes under the owner its branch names|80|pr-5|ken-1|KEN-1|-|-|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
 a branch naming no issue is pruned under the state key|80|KEN-1|topic|KEN-1|-|-|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
-a state with no worktree records no-worktree and lets the round go|80|pr-5|ken-1|KEN-1|none|-|0|no-worktree used-pct=0 mark-pct=75 bytes=0|no-worktree used=0 mark=75 bytes=0|.cargo-lock,deps/unit-0.rlib
+a state carrying only a branch prunes the worktree that has it checked out|80|pr-5|ken-1|KEN-1|branch|-|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
+a state whose branch no worktree holds records no-worktree and lets the round go|80|pr-5|ken-1|KEN-1|none|-|0|no-worktree used-pct=0 mark-pct=75 bytes=0|no-worktree used=0 mark=75 bytes=0|.cargo-lock,deps/unit-0.rlib
+a relative CARGO_TARGET_DIR naming the worktree's target/ is pruned|80|KEN-1|ken-1|KEN-1|-|target-relative|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
+an absolute CARGO_TARGET_DIR at the worktree's target/ is pruned|80|KEN-1|ken-1|KEN-1|-|target-absolute|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
+past the mark a CARGO_TARGET_DIR outside the worktree fails closed and prunes nothing|10|KEN-1|ken-1|KEN-1|-|target-outside-full|1|target-elsewhere used-pct=80 mark-pct=75 bytes=0|target-elsewhere used=80 mark=75 bytes=0|.cargo-lock,deps/unit-0.rlib outside=deps/unit-9.rlib
+below the mark a CARGO_TARGET_DIR outside the worktree prunes nothing, read on its own volume|80|KEN-1|ken-1|KEN-1|-|target-outside-roomy|0|below-mark used-pct=74 mark-pct=75 bytes=0|below-mark used=74 mark=75 bytes=0|.cargo-lock,deps/unit-0.rlib outside=deps/unit-9.rlib
 "
 n=0
 while IFS='|' read -r label used key branch owner state_wt setup rc action record left; do
@@ -174,10 +202,10 @@ while IFS='|' read -r label used key branch owner state_wt setup rc action recor
   row_setup "$setup"
   prune "$used"
   row_teardown
-  assert_eq "rc=$RC $(line) | $(recorded) | $(artifacts)$(js_left)" \
+  assert_eq "rc=$RC $(line) | $(recorded) | $(artifacts)$(js_left)$(outside_left)" \
     "rc=$rc round-prune: action=$action round=<round> worktree=$([[ "$state_wt" == none ]] || echo '<wt>') | $record | $left" "$label"
 done <<<"$ROWS"
-[[ "$n" -ge 10 ]] || { echo "the row table was not read" >&2; exit 2; }
+[[ "$n" -ge 15 ]] || { echo "the row table was not read" >&2; exit 2; }
 row_setup -
 
 # Must-fail control: a copy whose comparison never reaches the mark prunes

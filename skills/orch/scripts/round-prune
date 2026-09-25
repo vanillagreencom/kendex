@@ -10,22 +10,27 @@
 # flight in the worktree: the prune happens between rounds and a validation run
 # deletes nothing. It resolves its own target from the state and the tree, so
 # no workflow passes one: the round id and the worktree from workflow state,
-# the lease owner from that worktree's branch through
-# `git-context issue-from-branch`, which is the issue id start-worktree claims
-# the lease under, and the use of the volume holding the worktree's target/
-# from df. A state naming no worktree has no lane target to free: it records
-# action=no-worktree and exits 0. A branch naming no issue id had no
-# start-worktree lease, and the state key stands in as the owner. At or past
-# ORCH_ROUND_PRUNE_DISK_PCT (default 75) it runs
+# or, where the state names no worktree, the linked worktree (never the main
+# checkout) that has the state's branch checked out; the lease owner from that
+# worktree's branch through `git-context issue-from-branch`, which is the issue
+# id start-worktree claims the lease under; the Cargo target as tools/guard
+# resolves it, ${CARGO_TARGET_DIR:-target} with a relative value read from the
+# worktree; and the use of the volume holding that target from df. A state
+# with neither has no lane target to free: it records action=no-worktree and
+# exits 0. A branch naming no issue id had no start-worktree lease, and the
+# state key stands in as the owner. At or past ORCH_ROUND_PRUNE_DISK_PCT
+# (default 75) it runs
 #   worktree cleanup --targets-only --apply --worktree WORKTREE --owner OWNER
-# That prune takes every Cargo profile under target/,
+# That prune takes every Cargo profile under the worktree's own target/,
 # however recent, and nothing else: node_modules/ and .next/ stay, since nothing
-# reinstalls them between rounds. It bounds target/ across rounds without
-# tracking which artifact a run still reads. Below the mark it prunes nothing,
-# and the next validation run starts warm.
+# reinstalls them between rounds. A Cargo target anywhere else is out of its
+# reach, so past the mark that round records action=target-elsewhere and fails
+# rather than report a prune that freed nothing the build writes. It bounds
+# target/ across rounds without tracking which artifact a run still reads.
+# Below the mark it prunes nothing, and the next validation run starts warm.
 #
 # Output: one line,
-#   round-prune: action=pruned|below-mark|failed|no-worktree used-pct=N mark-pct=N bytes=N round=ID worktree=PATH
+#   round-prune: action=pruned|below-mark|failed|target-elsewhere|no-worktree used-pct=N mark-pct=N bytes=N round=ID worktree=PATH
 # printed before the same fields are written under .round_prunes[ROUND_ID] in
 # workflow state. With no worktree, used-pct is 0 and worktree is empty. bytes
 # is the prune's own summary figure: 0 below the mark or with no worktree,
@@ -34,8 +39,10 @@
 # change, or that exited non-zero after its summary, is failed, never pruned.
 #
 # Exit status: 0 pruned, below the mark or no worktree; 1 the prune failed,
-# recorded as failed, with the worktree CLI's records on stderr; 2 usage, a
-# state with no round id, a setting, branch or disk read failure with nothing
+# recorded as failed, with the worktree CLI's records on stderr, or the target
+# lies outside the worktree's target/ past the mark, recorded as
+# target-elsewhere; 2 usage, a state with no round id, a setting, worktree
+# list, branch or disk read failure with nothing
 # pruned or recorded, or a failed state write after the result line, when the
 # prune may already have run.
 set -euo pipefail
@@ -54,6 +61,8 @@ message() { # KEY VALUE
   usage) printf '%s\n' 'Usage: round-prune [--state-dir DIR] STATE_KEY' ;;
   state-missing) printf '%s\n' 'workflow state has no value for that field under this key; dev_round_id comes from workflow-state new-round-id run under the same key.' ;;
   owner) printf '%s\n' 'git-context could not read the worktree branch, so the lease owner is unknown.' ;;
+  worktree-list) printf '%s\n' 'git worktree list failed, so the worktree holding the state'"'"'s branch is unknown.' ;;
+  target-elsewhere) printf '%s\n' 'CARGO_TARGET_DIR puts the Cargo target outside the worktree'"'"'s target/, which the owner-scoped prune cannot take; free that volume by hand or unset it for the lane.' ;;
   mark) printf '%s\n' 'ORCH_ROUND_PRUNE_DISK_PCT must be a whole percentage from 1 to 100.' ;;
   disk) printf '%s\n' 'df could not report the use of the volume holding the worktree target, so the round cannot tell whether to prune.' ;;
   prune) printf '%s\n' 'the owner-scoped prune did not reclaim the whole target; its records are above, and the round record says failed.' ;;
@@ -84,8 +93,22 @@ if ! round="$(state_get '.dev_round_id // ""')" || [[ -z "$round" ]]; then
   message state-missing dev_round_id >&2
   exit 2
 fi
-worktree=""
+worktree="" branch=""
 worktree="$(state_get '.worktree // ""')" || { message state-missing worktree >&2; exit 2; }
+# A state initialized with a branch alone names its tree through the linked
+# worktree that has that branch checked out; the first listed is the main
+# checkout, whose lease the guard refuses and which is never a lane's.
+if [[ -z "$worktree" ]]; then
+  branch="$(state_get '.branch // ""')" || { message state-missing branch >&2; exit 2; }
+  if [[ -n "$branch" ]]; then
+    listing=""
+    listing="$(git worktree list --porcelain)" || { message worktree-list "$branch" >&2; exit 2; }
+    worktree="$(awk -v want="refs/heads/$branch" '
+      /^worktree / { path = substr($0, 10); n++ }
+      $0 == "branch " want && n > 1 { print path; exit }
+    ' <<<"$listing")"
+  fi
+fi
 
 record() { # ACTION USED MARK BYTES — the result line, then the round record
   printf 'round-prune: action=%s used-pct=%s mark-pct=%s bytes=%s round=%s worktree=%s\n' \
@@ -122,10 +145,24 @@ if ! owner="$("$GIT_CONTEXT" issue-from-branch "$worktree" 2>/dev/null)"; then
   esac
 fi
 
-# The volume the next build writes to: target/ where it exists, which may be a
-# mount or a link of its own, and the worktree before the first build.
-probe="$worktree/target"
-[[ -d "$probe" ]] || probe="$worktree"
+# The Cargo target the validation run builds into, resolved as tools/guard
+# resolves it, and the volume holding it: the target where it exists, which may
+# be a mount or a link of its own, else its nearest existing ancestor.
+cargo_target="${CARGO_TARGET_DIR:-target}"
+case "$cargo_target" in
+/*) ;;
+*) cargo_target="$worktree/$cargo_target" ;;
+esac
+cargo_target="${cargo_target%/}"
+own_target=false
+if [[ -d "$cargo_target" && -d "$worktree/target" ]]; then
+  [[ "$(cd -- "$cargo_target" && pwd -P)" != "$(cd -- "$worktree/target" && pwd -P)" ]] || own_target=true
+elif [[ "$cargo_target" == "$worktree/target" ]]; then
+  own_target=true
+fi
+probe="$cargo_target"
+while [[ ! -d "$probe" && "$probe" == */* ]]; do probe="${probe%/*}"; done
+[[ -n "$probe" ]] || probe=/
 df_out="" used=""
 df_out="$(df -P -- "$probe" 2>/dev/null)" || { message disk "$probe" >&2; exit 2; }
 used="$(awk 'NR == 2 { sub(/%$/, "", $5); print $5 }' <<<"$df_out")"
@@ -135,21 +172,31 @@ used="$((10#$used))"
 action=below-mark
 bytes=0
 if [[ "$used" -ge "$mark" ]]; then
-  report="" rc=0
-  report="$(cd "$worktree" && "$WORKTREE_BIN" cleanup --targets-only --apply --worktree "$worktree" --owner "$owner")" || rc=$?
-  [[ -z "$report" ]] || printf '%s\n' "$report" >&2
-  summary_bytes="$(sed -n 's/^worktree-output-prune-summary: .* mode=apply .* bytes=\([0-9][0-9]*\) .*$/\1/p' <<<"$report")"
-  [[ ! "$summary_bytes" =~ ^[0-9]+$ ]] || bytes="$summary_bytes"
-  if [[ "$rc" -eq 0 && "$summary_bytes" =~ ^[0-9]+$ ]]; then
-    action=pruned
+  if [[ "$own_target" == false ]]; then
+    action=target-elsewhere
   else
-    action=failed
+    report="" rc=0
+    report="$(cd "$worktree" && "$WORKTREE_BIN" cleanup --targets-only --apply --worktree "$worktree" --owner "$owner")" || rc=$?
+    [[ -z "$report" ]] || printf '%s\n' "$report" >&2
+    summary_bytes="$(sed -n 's/^worktree-output-prune-summary: .* mode=apply .* bytes=\([0-9][0-9]*\) .*$/\1/p' <<<"$report")"
+    [[ ! "$summary_bytes" =~ ^[0-9]+$ ]] || bytes="$summary_bytes"
+    if [[ "$rc" -eq 0 && "$summary_bytes" =~ ^[0-9]+$ ]]; then
+      action=pruned
+    else
+      action=failed
+    fi
   fi
 fi
 
 record "$action" "$used" "$mark" "$bytes"
-if [[ "$action" == failed ]]; then
+case "$action" in
+failed)
   message prune "$worktree" >&2
   exit 1
-fi
+  ;;
+target-elsewhere)
+  message target-elsewhere "$cargo_target" >&2
+  exit 1
+  ;;
+esac
 exit 0
