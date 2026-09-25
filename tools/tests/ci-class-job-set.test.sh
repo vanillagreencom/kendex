@@ -657,5 +657,62 @@ check "must-fail: an event-held job held to another condition is named" \
   "lanes: missing= extra= events: missing=markdown=github.event_name == 'pull_request' preflight=github.event_name == 'pull_request' extra=markdown=github.event_name != 'push' preflight=github.event_name != 'push'" \
   "$(aggregate_gap "$TMP/wf-event-drift.yml" "$CI_JOB")"
 
+# --- 4. The aggregate -------------------------------------------------------
+
+RESULTS='{"changes":{"result":"success"},"skill-suites-shard":{"result":"success"},"ui-tests":{"result":"skipped"},"bot-instructions":{"result":"success"}}'
+aggregate() { # AGGREGATE_SCRIPT LANE... — the exit status, and the refusal key when there is one
+  local script="$1" status=0
+  shift
+  "$script" --results "$RESULTS" --classifier changes "$@" \
+    >"$TMP/aggregate-out" 2>"$TMP/aggregate-err" || status=$?
+  printf '%s' "$status"
+  sed -n 's/^ci-aggregate: cause=/ /p' "$TMP/aggregate-err" | head -1
+}
+
+check "a lane the class stood down may skip" "0" \
+  "$(aggregate "$AGGREGATE" --lane 'true:skill-suites-shard' --lane 'false:ui-tests' \
+    --lane 'true:bot-instructions')"
+check "a lane the class selected may not skip" "1" \
+  "$(aggregate "$AGGREGATE" --lane 'true:skill-suites-shard' --lane 'true:ui-tests' \
+    --lane 'true:bot-instructions')"
+# One lane stood down turns the waiver on; the skipped lane beside it is one
+# the class selected, so the waiver must not reach it.
+check "a waiver for one lane authorizes no skip of another" "1" \
+  "$(aggregate "$AGGREGATE" --lane 'true:skill-suites-shard' --lane 'true:ui-tests' \
+    --lane 'false:bot-instructions')"
+# The second selection for one job is refused before either becomes a waiver,
+# whichever of the two comes last.
+check "a job named twice is refused, the selected one first" \
+  "2 duplicate-lane job=ui-tests" \
+  "$(aggregate "$AGGREGATE" --lane 'true:ui-tests' --lane 'false:ui-tests')"
+check "a job named twice is refused, the stood-down one first" \
+  "2 duplicate-lane job=ui-tests" \
+  "$(aggregate "$AGGREGATE" --lane 'false:ui-tests' --lane 'true:ui-tests')"
+
+# A copy of the script parked where the harness-ci scripts are not, and one
+# beside a scripts directory that holds no helper. Exit 1 is the helper's
+# rejection of a lane, so neither may answer it.
+mkdir -p "$TMP/no-dir/tools" "$TMP/no-helper/tools" "$TMP/no-helper/skills/harness-ci/scripts"
+cp "$AGGREGATE" "$TMP/no-dir/tools/ci-aggregate"
+cp "$AGGREGATE" "$TMP/no-helper/tools/ci-aggregate"
+case "$(aggregate "$TMP/no-dir/tools/ci-aggregate" --lane 'false:ui-tests')" in
+  "2 helper-unreadable dir="*) ok "a missing helper directory is a refusal, not a rejected lane" ;;
+  *) bad "a missing helper directory is a refusal, not a rejected lane ($(cat "$TMP/aggregate-err"))" ;;
+esac
+case "$(aggregate "$TMP/no-helper/tools/ci-aggregate" --lane 'false:ui-tests')" in
+  "2 helper-missing path="*) ok "a missing helper is a refusal, not a rejected lane" ;;
+  *) bad "a missing helper is a refusal, not a rejected lane ($(cat "$TMP/aggregate-err"))" ;;
+esac
+
+# A classifier that died publishes no selection, so every lane reads empty.
+# That authorizes nothing and the helper names the classifier.
+DEAD='{"changes":{"result":"failure"},"ui-tests":{"result":"skipped"}}'
+dead_status=0
+"$AGGREGATE" --results "$DEAD" --classifier changes --lane ':ui-tests' \
+  >/dev/null 2>"$TMP/dead-err" || dead_status=$?
+check "a dead classifier authorizes no skip" "1" "$dead_status"
+check "and the rejection names the classifier, not a parse failure" "1" \
+  "$(grep -c 'aggregate-needs: rejected classifier=changes waiver=false' "$TMP/dead-err")"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
