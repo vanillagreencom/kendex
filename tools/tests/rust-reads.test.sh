@@ -90,8 +90,7 @@ OUT=""
 RC=0
 OUT="$(cd "$W" && PATH="$TMP/fake-bin:$PATH" "$READS" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && [ "$OUT" = "rust-reads: unreadable=crates" ] && ok "a failed source walk exits 2 naming crates" || bad "a failed source walk exits 2 naming crates" "rc=$RC out=$OUT"
-# crates/ holding source and no manifest reads nothing, which is never an
-# empty set; the control is a reader without that rule.
+# crates/ with source and no manifest is refused; the control drops the rule.
 rm -f -- "$W/crates/demo/Cargo.toml"
 run_reads
 [ "$RC" -eq 2 ] && [ "$OUT" = "rust-reads: unreadable=crates" ] && ok "a crates/ holding no crate exits 2 naming crates" || bad "a crates/ holding no crate exits 2 naming crates" "rc=$RC out=$OUT"
@@ -113,21 +112,6 @@ RC=0
 OUT="$("$READS" one two 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && [[ "$OUT" == "rust-reads: usage="* ]] && ok "a second argument is refused with the usage line" || bad "a second argument is refused with the usage line" "rc=$RC out=$OUT"
 
-echo "=== the build rows carry the workspace files cargo reads ==="
-# Required members; the control drops one from the reader's list.
-build_rows() { # [READER]
-  (cd "$W" && "${1:-$READS}") | awk -F '\t' '$1 == "build" { print $2 }'
-}
-seed_world crates/demo/src/lib.rs 'fn main() {}'
-for member in crates Cargo.toml Cargo.lock rust-toolchain.toml .cargo clippy.toml; do
-  grep -qFx -- "$member" <<<"$(build_rows)" && ok "the build rows carry $member" ||
-    bad "the build rows carry $member" "$(build_rows)"
-done
-sed 's/ \.cargo \\$/ \\/' "$READS" >"$TMP/rust-reads-nocargo"
-chmod +x "$TMP/rust-reads-nocargo"
-! cmp -s "$READS" "$TMP/rust-reads-nocargo" && ! grep -qFx -- .cargo <<<"$(build_rows "$TMP/rust-reads-nocargo")" &&
-  ok "control: the build rows carry .cargo, with it removed" ||
-  bad "control: the build rows carry .cargo, with it removed"
 
 echo "=== each derivation rule has a control ==="
 # EDIT|SHAPE LABEL — a reader copy with EDIT applied prints something other

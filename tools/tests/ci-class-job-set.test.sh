@@ -93,11 +93,7 @@ standard|false|crates/core/src/lib.rs|$BUILD_ROW
 micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$PROSE_ROW
 small|false|crates/cli/src/main.rs|$BUILD_ROW
 micro|false|ui/src/app.tsx|$UI_ROW
-micro|false|clippy.toml|$BUILD_ROW
-micro|false|rust-toolchain.toml|$BUILD_ROW
 standard|false|skills/orch/scripts/lanes tools/guard|$CODE_ROW
-standard|false|.github/workflows/skill-tests.yml|$ALL_ON
-standard|false|tools/rust-reads|$ALL_ON
 standard|false|tools/ci-job-set.orig|$CODE_ROW
 micro|false|install.sh|$CODE_ROW
 micro|false|.gitattributes|$CODE_ROW
@@ -116,8 +112,36 @@ enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous
 micro|false||exit=2 class-without-paths class=micro
 micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe
 ROWS
-[ "$selection_rows" -ge 28 ] ||
+[ "$selection_rows" -ge 24 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
+
+# Each declared lane source runs every lane and each declared build name is a
+# build input, both read from the script; a copy without a member reds its row.
+lane_sources() { # SCRIPT — a path per LANE_SOURCES alternative
+  sed -n "s/^LANE_SOURCES='^(\(.*\))'\$/\1/p" "$1" | awk '{
+    for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); d += (c == "(") - (c == ")")
+      if (c == "|" && !d) { alt[++n] = cur; cur = "" } else cur = cur c }; alt[++n] = cur
+    for (k = 1; k <= n; k++) { a = alt[k]; gsub(/\\/, "", a); sub(/\$$/, "", a); split("", opt)
+      if (match(a, /\([^)]*\)/)) m = split(substr(a, RSTART + 1, RLENGTH - 2), opt, "|")
+      else { m = 1; RSTART = length(a) + 1; RLENGTH = 0 }
+      for (j = 1; j <= m; j++) print substr(a, 1, RSTART - 1) opt[j] substr(a, RSTART + RLENGTH) (a ~ /\/$/ ? "x" : "") } }'
+}
+build_names() { # SCRIPT — the names its build list declares
+  awk '/^build=\$\(printf/ { on = 1; sub(/.*%s\\n. /, "") } on { last = /\)$/; gsub(/[\\)]/, ""); print; if (last) exit }' "$1" | tr -s ' ' '\n' | grep .
+}
+sources="$(lane_sources "$JOB_SET")" names="$(build_names "$ROOT/tools/rust-reads")"
+grep -qx tools/rust-reads <<<"$sources" && grep -qx .cargo <<<"$names" ||
+  { echo "a declared list read empty, so an extractor is broken: '$sources' '$names'" >&2; exit 1; }
+while IFS= read -r p; do check "lane source $p runs every lane" "$ALL_ON" "$(selection standard false "$p")"; done <<<"$sources"
+while IFS= read -r p; do check "build name $p is a build input" "$BUILD_ROW" "$(selection micro false "$p")"; done <<<"$names"
+mkdir -p "$TMP/member/tools"
+sed 's/(\(ci-job-set.\)ci-aggregate/(\1nothing/' "$JOB_SET" >"$TMP/member/tools/ci-job-set"
+sed 's/ \.cargo \\$/ \\/' "$ROOT/tools/rust-reads" >"$TMP/member/tools/rust-reads"
+chmod +x "$TMP/member/tools/ci-job-set" "$TMP/member/tools/rust-reads"
+for row in "standard tools/ci-aggregate" "micro .cargo"; do
+  check "control: copies without the member $row run it as no lane source or build input" "$CODE_ROW" \
+    "$(SELECT_WITH="$TMP/member/tools/ci-job-set" selection ${row% *} false "${row#* }")"
+done
 
 # A row that forgets a lane is refused before any lane reads it. macos_legs is
 # the lane no aggregate holds, so this refusal is what keeps a forgotten
