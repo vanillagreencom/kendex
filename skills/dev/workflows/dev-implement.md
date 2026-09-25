@@ -162,7 +162,8 @@ The validation gate is this complete list:
 
 - The affected suite passes. It consists of installed preflight and doc-limits gates, the delegation's required verification commands in their § 2.4 normalized form, and Visual QA under the current workflow's rule below.
 - One must-fail control per changed behavioral surface with a test turns that surface's test red once, or carries the statement [code-quality § Tests](../../code-quality/SKILL.md#tests) takes in its place where no production edit reddens the test. A workflow sentence has no test and adds no control. A production gate or guard change keeps the per-rule control that [code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards) requires inside this item.
-- `DEV_VALIDATE_CMD` passes once against the round's final worktree contents, run through `.agents/skills/orch/scripts/dev-validate-run` as [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation) sets out. The runner hands the command the diff's change class as `DEV_VALIDATE_CLASS`, with the docs verdict and changed paths beside it (`dev-validate-run --help`). A full battery the class does not need is a failure of the project's `DEV_VALIDATE_CMD` configuration, which reads the class to stand lanes down; the round's verdict is still the `guard-exit=` value, and the agent never picks a class or a narrower command by hand. An empty value is a validation failure named `DEV_VALIDATE_CMD`, which that runner refuses before starting anything, with the note `DEV_VALIDATE_CMD is empty; set it in kendex.settings.toml [env] to the project's full test, lint and typecheck command`. Run nothing in its place.
+- `DEV_VALIDATE_CMD` passes once against the round's final worktree contents, run through `.agents/skills/orch/scripts/dev-validate-run` as [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation) sets out. The runner hands the command the diff's change class as `DEV_VALIDATE_CLASS`, with the docs verdict and changed paths beside it (`dev-validate-run --help`). A full battery the class does not need is a failure of the project's `DEV_VALIDATE_CMD` configuration, which reads the class to stand lanes down; the round's verdict is still the run's `validate=` value, and the agent never picks a class or a narrower command by hand. An empty value is a validation failure named `DEV_VALIDATE_CMD`, which that runner refuses before starting anything, with the note `DEV_VALIDATE_CMD is empty; set it in kendex.settings.toml [env] to the project's full test, lint and typecheck command`. Run nothing in its place.
+- A run the bound cut off prints `validate=no-verdict`: neither a pass nor a failure. This is the one exception to the rule above against a narrower command by hand: run each suite file that exercises a script the diff changes once, each as its own foreground command. A red suite, or one the harness's foreground ceiling cuts off, is `FAILING: [SUITE]` and never green. A diff that changes no script selects no suite file: that is `FAILING: DEV_VALIDATE_CMD timed out, no scoped suite`, never `no-verdict`. All green is `--validate no-verdict` with the cut-off run's `run-dir=` as `--validate-run-dir` and a `--validate-note` naming the suites, and the return reads `Validate: no-verdict: [SUITES]`. CI is the full record.
 - After the dev agent returns its local result, the orchestrator gets green CI and a passing review gate. The dev agent does not claim or reproduce these downstream results.
 
 For a test-only PR whose validation runs longer than 30 minutes and fails, run the failed target alone once under load. Record both results in `--validate-note` with the prefix `Test-only validation ceiling:`. Report the result and do not extend validation.
@@ -282,10 +283,10 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 `[BASE_BRANCH]` is what § 1's `resolve-base-branch` reported; `--near-ceiling-base` takes it as `origin/[BASE_BRANCH]` because § 1 fetched that remote ref and left the local branch where it was.
 
 ```bash
-.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR]] [--validate-note [TEXT]] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
+.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|no-verdict|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR]] [--validate-note [TEXT]] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
 ```
 
-`[RUN_DIR]` is the `run-dir=` value `dev-validate-run` printed, and a `pass` needs that run to have passed; omit the flag only when validation failed before any run started.
+`[RUN_DIR]` is the `run-dir=` value `dev-validate-run` printed, and a `pass` needs that run to have passed, a `no-verdict` that run to have been cut off; omit the flag only when validation failed before any run started.
 
 One `--qa-label` per § 8 signal, none if nothing triggered.
 
@@ -299,7 +300,7 @@ Every single round appends `--summary-file tmp/completion-summary-[ISSUE_ID].md`
 Branch: [BRANCH_NAME]
 Commit: [SHA]
 QA: [signals or "none"]
-Validate: [pass or "FAILING: check1, check2"]
+Validate: [pass, "no-verdict: suite1, suite2", or "FAILING: check1, check2"]
 Proposed rule: [proposal or "none"]
 Summary: [ISSUE_ID] ✓
 </output_format>
@@ -333,7 +334,7 @@ Summary: [ISSUE_ID] ✓
 3. **Write the artifact**, keyed to the Parent ID, with that group's `Round ID:` when the bundle was delegated in groups:
 
    ```bash
-   .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR]] [--validate-note [TEXT]] --summary-file tmp/bundle-summary-[PARENT_ID].md --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
+   .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|no-verdict|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR]] [--validate-note [TEXT]] --summary-file tmp/bundle-summary-[PARENT_ID].md --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
    ```
 
    `--bundled` requires one `--item` per sub-issue result — `DECISION` is Applied, Skipped, or Blocked and `REASONING` non-empty plain text with no backticks — populated from the sub-issue tree. `--commit` is the last sub-issue's HEAD.

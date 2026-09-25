@@ -29,6 +29,7 @@ VRUN_RANGE="$(validate_run_dir "$TMP_ROOT/validate-run-range" range)"
 VRUN_BAD="$(validate_run_dir "$TMP_ROOT/validate-run-bad" class)"
 VRUN_FAILED="$(validate_run_dir "$TMP_ROOT/validate-run-failed" full 1)"
 VRUN_UNFINISHED="$(validate_run_dir "$TMP_ROOT/validate-run-unfinished" full none)"
+VRUN_CUT="$(validate_run_dir "$TMP_ROOT/validate-run-cut" full no-verdict)"
 mkdir -p "$TMP_ROOT/validate-run-empty"
 
 new_repo() {
@@ -167,6 +168,8 @@ table \
   "a FAILING result beside a run that passed, another gate failing, records the run's mode|--worktree $WT --kind implement --issue issue-gatefail --round-id 20-20 --branch b --commit %H --validate FAILING:+doc-limits --validate-run-dir $VRUN|rc=0 .validate=FAILING:+doc-limits .validate_mode=full" \
   "a FAILING result beside a run with no verdict records the run's mode|--worktree $WT --kind implement --issue issue-lost --round-id 21-21 --branch b --commit %H --validate FAILING:+lost --validate-run-dir $VRUN_UNFINISHED|rc=0 .validate=FAILING:+lost .validate_mode=full" \
   "a FAILING result naming a failed run records the run's mode|--worktree $WT --kind implement --issue issue-failrun --round-id 19-19 --branch b --commit %H --validate FAILING:+lint --validate-run-dir $VRUN_FAILED|rc=0 .validate_mode=full" \
+  "a no-verdict result beside a run the timeout ended records the run's mode|--worktree $WT --kind implement --issue issue-cut --round-id 22-22 --branch b --commit %H --validate no-verdict --validate-run-dir $VRUN_CUT --validate-note scoped+suites+green:+dev_return_write.sh|rc=0 .validate=no-verdict .validate_mode=full .validate_note=scoped+suites+green:+dev_return_write.sh roundtrip=valid" \
+  "a FAILING result beside a run the timeout ended is accepted|--worktree $WT --kind implement --issue issue-cutfail --round-id 23-23 --branch b --commit %H --validate FAILING:+lint --validate-run-dir $VRUN_CUT|rc=0 .validate=FAILING:+lint" \
   "a FAILING round with no run records a null mode|--worktree $WT --kind implement --issue issue-norun --round-id 18-18 --branch b --commit %H --validate FAILING:+DEV_VALIDATE_CMD|rc=0 has:validate_mode=true .validate_mode=null roundtrip=valid" \
   "an omitted note is present and null|--worktree $WT --kind implement --issue issue-nonote --round-id $RID --branch b --commit %H --validate pass --validate-run-dir $VRUN|rc=0 has:validate_note=true .validate_note=null" \
   "a round that did not probe records null and the not-probed cause, never an empty list|--worktree $WT --kind implement --issue issue-nonear --round-id 16-16 --branch b --commit %H --validate pass --validate-run-dir $VRUN|rc=0 has:near_ceiling=true .near_ceiling|tojson=null .near_ceiling_error=byte-ceiling+not+probed:+no+--near-ceiling-base roundtrip=valid" \
@@ -240,6 +243,11 @@ table \
   "a run directory whose mode is outside the two|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN_BAD|rc=2 stderr~dev-return-write:+run-record-unreadable+path=$VRUN_BAD+cause=dev-validate-run:+record-unreadable+path=$VRUN_BAD/start+validate-mode=class=true" \
   "a run directory with no start record|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $TMP_ROOT/validate-run-empty|rc=2 stderr~dev-return-write:+run-record-unreadable+path=$TMP_ROOT/validate-run-empty+cause=dev-validate-run:+no-run+path=$TMP_ROOT/validate-run-empty/start=true" \
   "a pass naming a run that failed|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN_FAILED|rc=2 stderr~dev-return-write:+validate-disagrees+validate=pass+run=FAILING=true" \
+  "a pass naming a run the timeout ended|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN_CUT|rc=2 stderr~dev-return-write:+validate-disagrees+validate=pass+run=no-verdict=true" \
+  "no-verdict naming a run that failed|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate no-verdict --validate-run-dir $VRUN_FAILED|rc=2 stderr~dev-return-write:+validate-disagrees+validate=no-verdict+run=FAILING=true" \
+  "no-verdict naming a run that passed|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate no-verdict --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+validate-disagrees+validate=no-verdict+run=pass=true" \
+  "no-verdict with no note naming the scoped suites|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate no-verdict --validate-run-dir $VRUN_CUT|rc=2 stderr~dev-return-write:+required+option=--validate-note+validate=no-verdict=true" \
+  "no-verdict with no run directory|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate no-verdict|rc=2 stderr~dev-return-write:+required+option=--validate-run-dir+validate=no-verdict=true" \
   "a pass naming a run with no verdict yet|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN_UNFINISHED|rc=2 stderr~dev-return-write:+validate-disagrees+validate=pass+run=unfinished=true" \
   "a missing --round-id|--worktree $WT --kind implement --issue i --branch b --commit c --validate pass --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+required+option=--round-id=true" \
   "a missing --issue|--worktree $WT --kind implement --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+required+option=--issue=true" \

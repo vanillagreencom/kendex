@@ -61,12 +61,17 @@ growth_round_write() {
 
 # validate_run_dir DIR MODE [EXIT] — a finished dev-validate-run run directory
 # for a receipt to name: a start record under MODE and a sentinel recording
-# EXIT, 0 by default; EXIT "none" leaves the run unfinished. The receipt reads
+# EXIT, 0 by default; EXIT "none" leaves the run unfinished and "no-verdict"
+# records the bound ending it, as the runner's child does. The receipt reads
 # it back through dev-validate-run --record, which dev_validate_run.sh pins
 # against runs the script itself wrote. Prints DIR.
 validate_run_dir() {
   mkdir -p "$1"
   printf 'validate-mode=%s\n' "$2" > "$1/start"
-  [[ "${3:-0}" == none ]] || printf 'guard-exit=%s at=2026-01-01T00:00:00Z\n' "${3:-0}" > "$1/exit"
+  case "${3:-0}" in
+    none) ;;
+    no-verdict) printf 'guard-exit=124 at=2026-01-01T00:00:00Z verdict=no-verdict\n' > "$1/exit" ;;
+    *) printf 'guard-exit=%s at=2026-01-01T00:00:00Z\n' "${3:-0}" > "$1/exit" ;;
+  esac
   printf '%s\n' "$1"
 }

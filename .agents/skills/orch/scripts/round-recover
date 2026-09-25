@@ -28,14 +28,17 @@
 # Before the artifact is written the report is checked on disk: the reported
 # commit resolves and is HEAD (a fix report's Commits: each lie after the round
 # record's base_sha and at or before HEAD, one of them HEAD, or it reads none
-# and HEAD is still base_sha), and a reported pass is the verdict
+# and HEAD is still base_sha), and a reported pass or no-verdict is the verdict
 # dev-validate-run gives for the newest run started at or after the round's
 # dev_delegated_at. A FAILING report needs no proof: it ends the round, never
 # passes it. A report that holds is written through dev-return-write
 # --recovered-text, so the artifact records recovered_from: transcript and
 # dev-artifact-check judges it before this script reports it. That run is the
 # receipt's --validate-run-dir, from which the writer takes validate_mode and
-# which a pass needs; a FAILING report with no run records validate_mode null. Only a refusal of
+# which a pass or no-verdict needs; a FAILING report with no run records
+# validate_mode null. A no-verdict report reads `Validate: no-verdict: SUITES`,
+# and SUITES, the scoped suites that passed in the cut-off run's place, become
+# the receipt's --validate-note; a no-verdict naming none is unproven. Only a refusal of
 # the report's own shape (incomplete: a fix report whose rows miss, repeat or
 # invent a delegated item; invalid) removes it and re-delegates as unparsed.
 # Every other verdict, a FAILING validation or a gate such as cut_not_shrunk or
@@ -152,13 +155,20 @@ for start_file in "$worktree"/tmp/dev-validate-*/start; do
 done
 
 # dev-validate-run owns whether a run is still going and what it decided.
+# run_verdict is the validate= value its --wait line prints, pass, FAILING or
+# no-verdict, so a reported result is compared with it as spelled.
 run_verdict=none
 if [[ -n "$run" ]]; then
   status=0
-  "$SCRIPT_DIR/dev-validate-run" --wait --run-dir "$run" --budget 1 >/dev/null || status=$?
+  run_line="$("$SCRIPT_DIR/dev-validate-run" --wait --run-dir "$run" --budget 1)" || status=$?
   case "$status" in
-    0) run_verdict=pass ;;
-    1) run_verdict=failing ;;
+    0 | 1)
+      run_verdict="$(sed -n 's/^state=[a-z]* .* validate=\([^ ]*\) .*$/\1/p' <<<"$run_line")"
+      case "$run_verdict" in
+        pass | FAILING | no-verdict) ;;
+        *) die run-unreadable "run-dir=$run" "exit=$status" ;;
+      esac
+      ;;
     3)
       printf '%s: round-live run-dir=%s\n' "$PROG" "$run"
       exit 4
@@ -278,7 +288,18 @@ ancestor() { # A B
 }
 
 field Validate; validate="$FIELD"
-[[ "$validate" == pass || "$validate" == FAILING:* ]] || no_report unparsed
+validate_note=""
+case "$validate" in
+  pass | FAILING:*) ;;
+  no-verdict:*)
+    validate_note="${validate#no-verdict:}"
+    validate_note="${validate_note#"${validate_note%%[![:space:]]*}"}"
+    validate=no-verdict
+    [[ -n "$validate_note" ]] || no_report validate-unproven
+    ;;
+  no-verdict) no_report validate-unproven ;;
+  *) no_report unparsed ;;
+esac
 
 args=()
 if [[ -f "$worktree/tmp/dev-round-$issue-$round_id.json" ]]; then
@@ -332,8 +353,9 @@ else
 fi
 args+=(--no-summary)
 [[ -z "$run" ]] || args+=(--validate-run-dir "$run")
+[[ -z "$validate_note" ]] || args+=(--validate-note "scoped suites green: $validate_note")
 
-if [[ "$validate" == pass && "$run_verdict" != pass ]]; then
+if [[ "$validate" != FAILING:* && "$validate" != "$run_verdict" ]]; then
   no_report validate-unproven
 fi
 

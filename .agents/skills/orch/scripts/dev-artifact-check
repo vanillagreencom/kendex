@@ -18,11 +18,13 @@
 # Artifact schema (written by `dev-return-write`; canonical:
 # skills/orch/schemas/dev-return.md):
 #   { "schema_version": 1, "round_id": "…", "kind": "implement"|"fix",
-#     "issue": "…", "branch": "…", "commit": "…", "validate": "pass"|"FAILING: …",
+#     "issue": "…", "branch": "…", "commit": "…",
+#     "validate": "pass"|"no-verdict"|"FAILING: …",
 #     "baseline_lines": 138 (implement only),
 #     "validate_mode": "full"|"range"|null (the validation mode that ran;
-#       null only beside a failing validate),
-#     "validate_note": "…"|null (optional free-text qualifier),
+#       null only beside a FAILING: validate),
+#     "validate_note": "…"|null (optional free-text qualifier; required
+#       beside no-verdict, where it names the scoped suites that passed),
 #     "qa_labels": […], "near_ceiling": […]|null (byte-ceiling near-ceiling lines,
 #     null when the probe did not answer), "near_ceiling_error": "…"|null,
 #     "summary_posted": bool, "summary": "…"|null,
@@ -186,8 +188,8 @@ reason meanings when ok=false:
               wrong-typed/empty: .kind ∈ {implement,fix}; .issue/.branch
               non-empty strings; .round_id non-empty string; .schema_version a
               number; .commit/.validate non-empty strings; .validate_mode
-              present and full or range, or null beside a failing .validate;
-              implement requires
+              present and full or range, or null beside a FAILING: .validate;
+              a no-verdict .validate carries a .validate_note; implement requires
               integer .baseline_lines >= 1, and fix forbids that field
   commit_unresolvable
               the artifact's .commit names no object in the worktree's repo
@@ -434,12 +436,18 @@ emit() {
   #   accept — artifact valid for this round (warnings ride along)
   #   wait   — no artifact for this round yet; the round is still running
   #   retry  — an artifact exists but is not accepted
-  # A validate value other than "pass" downgrades accept to retry: the agent
-  # finished its tail but the round's validation is failing.
+  # A validate value other than "pass" or "no-verdict" downgrades accept to
+  # retry: the agent finished its tail but the round's validation is failing.
+  # no-verdict is a battery the timeout cut off, which is neither pass nor
+  # failing: the scoped suites were the round's result and CI is the full
+  # record.
   local verdict
   if [[ "$ok" == "true" ]]; then
     verdict="accept"
-    if [[ "$validate" != null && "$validate" != '"pass"' ]]; then verdict="retry"; fi
+    case "$validate" in
+      null | '"pass"' | '"no-verdict"') ;;
+      *) verdict="retry" ;;
+    esac
   elif [[ "$reason" == "missing" ]]; then
     verdict="wait"
   else
@@ -472,8 +480,9 @@ round_id_matches() {
 # Type-strict required scalars: .kind ∈ {implement,fix}; .issue/.branch
 # non-empty STRINGS (arrays/objects/bools/numbers fail, not just ""); .round_id a
 # non-empty string; .schema_version a number; .commit/.validate non-empty
-# strings; .validate_mode present and full or range, or null beside a failing
-# .validate. A truncated or half-written receipt fails this gate → reason=invalid.
+# strings; .validate_mode present and full or range, or null beside a
+# FAILING: .validate; a no-verdict .validate carries the .validate_note naming
+# the scoped suites, its only evidence. A truncated or half-written receipt fails this gate → reason=invalid.
 has_required_fields() {
   jq -e '
     (.kind? // "") as $k
@@ -486,9 +495,10 @@ has_required_fields() {
       and ((.validate? | type) == "string") and (.validate != "")
       and has("validate_mode")
       and (.validate_mode == "full" or .validate_mode == "range"
-           or (.validate_mode == null and .validate != "pass"))
+           or (.validate_mode == null and (.validate | startswith("FAILING:"))))
       and ((.validate_note? | type) as $t | $t == "null" or $t == null
            or ($t == "string" and (.validate_note != "")))
+      and (.validate != "no-verdict" or ((.validate_note? | type) == "string"))
       and (if $k == "implement"
            then ((.baseline_lines? | type) == "number")
              and (.baseline_lines == (.baseline_lines | floor))
