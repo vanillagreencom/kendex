@@ -124,3 +124,20 @@ proc_cwd_write() { # FILE PID=CWD...
     printf '%s\t%s\n' "${entry%%=*}" "${entry#*=}" >> "$file"
   done
 }
+
+# proc_state_after PID — whether a real process is still running once a signal
+# or a unit's end has had time to land: `alive` or `gone`, polled for up to
+# five seconds, a zombie waiting on its reaper counted as gone. A process the
+# test did not fork is reaped by whoever adopted it, so a bare `kill -0` right
+# after the signal reads a zombie as alive.
+proc_state_after() { # PID
+  local n=0 stat
+  while kill -0 "$1" 2>/dev/null; do
+    stat="$(ps -o stat= -p "$1" 2>/dev/null || true)"
+    [[ "$stat" != Z* ]] || break
+    (( n < 50 )) || { echo alive; return 0; }
+    sleep 0.1
+    n=$((n + 1))
+  done
+  echo gone
+}

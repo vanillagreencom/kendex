@@ -28,13 +28,14 @@
 # with no kendex arming record (<git-dir>/kendex/armed), so a run over
 # uncommitted render edits is standard.
 #
-# No process the run starts outlives it. lib/job-unit.sh starts the child, as
-# a transient systemd user unit named for validate-<worktree directory> (for a
-# lane, its item in lower case) where a user manager answers, and ends it;
-# references/job-units.md is the name shape, the runner line and the stop
-# rule. The unit's RuntimeMaxSec is the cap, a backstop above the bound that
-# still leaves the bound to produce the verdict. The log's first line is the
-# runner line.
+# lib/job-unit.sh starts the child, as a transient systemd user unit named for
+# validate-<worktree directory> (for a lane, its item in lower case) where a
+# user manager answers and under setsid elsewhere, and ends it. In a unit no
+# process the run starts outlives it; under setsid what the run leaves in its
+# process group ends with it, and references/job-units.md § Runner line names
+# what escapes. That file is also the name shape and the stop rule. The unit's
+# RuntimeMaxSec is the cap, a backstop above the bound that still leaves the
+# bound to produce the verdict. The log's first line is the runner line.
 #
 # Usage:
 #   dev-validate-run --worktree PATH [--poll SECS]
@@ -129,6 +130,7 @@ die() {
       sentinel-unreadable) printf 'The sentinel does not carry a guard-exit value.\n' ;;
       scratch-unavailable) printf 'A scratch directory for reading the change class could not be created.\n' ;;
       runner-unrecorded) printf 'The record of how the run is started could not be written, so no run was started.\n' ;;
+      launch-failed) printf 'The run could not be started, so there is no verdict to wait for.\n' ;;
       job-end-failed) printf 'The verdict is recorded; what the command left in its process group may still run.\n' ;;
     esac
   } >&2
@@ -341,8 +343,10 @@ if [[ "$mode" == start ]]; then
     -- "$SCRIPT_PATH" --child --run-dir "$run_dir" || launch_rc=$?
   case "$launch_rc" in
     0) ;;
+    1) die runner-unrecorded "path=$run_dir/runner" ;;
     2) die missing-command commands=setsid ;;
-    *) die runner-unrecorded "path=$run_dir/runner" ;;
+    4) die launch-failed "$JOB_UNIT_ERROR" ;;
+    *) die launch-failed "status=$launch_rc" ;;
   esac
 
   printf 'state=started run-dir=%s log=%s sentinel=%s timeout-secs=%s poll-secs=%s cap-secs=%s class=%s docs-only=%s%s\n' \
@@ -427,8 +431,9 @@ if [[ "$mode" == child ]]; then
   printf 'guard-exit=%s at=%s\n' "$status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$run_dir/exit.part"
   mv "$run_dir/exit.part" "$run_dir/exit"
   # The verdict is on disk, so nothing the command left behind is still owed a
-  # run. setsid -f made this process its group's leader, and ending that group
-  # ends this process too.
+  # run. Under setsid, setsid -f made this process its group's leader, and
+  # ending that group ends this process too. In a unit the call does nothing:
+  # systemd ends what remains once this process exits.
   job_unit_end "$run_dir/runner" "$$" || die job-end-failed "$JOB_UNIT_ERROR"
   exit 0
 fi

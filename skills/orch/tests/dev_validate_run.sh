@@ -8,6 +8,7 @@
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
@@ -596,26 +597,14 @@ assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=124 validate=FAILING" \
 # One that calls setsid leaves the run's process group, which only a unit's
 # cgroup still holds; one that does not stays in the group the setsid fallback
 # kills. Neither is gone the instant the verdict lands, since the unit or the
-# group ends just after, so each read allows five seconds. A zombie waiting on
-# its reaper counts as gone.
-state_of() { # PID
-  local n=0 stat
-  while kill -0 "$1" 2>/dev/null; do
-    stat="$(ps -o stat= -p "$1" 2>/dev/null || true)"
-    [[ "$stat" != Z* ]] || break
-    (( n < 50 )) || { echo alive; return 0; }
-    sleep 0.1
-    n=$((n + 1))
-  done
-  echo gone
-}
+# group ends just after, so each read is proc_state_after's bounded poll.
 # The grandchild a row's command recorded, killed after the read so a control
 # that leaves it running leaves nothing behind the suite.
 grandchild_state() { # PROJ
   local pid
   pid="$(cat "$1/grand.pid" 2>/dev/null || true)"
   [[ "$pid" =~ ^[0-9]+$ ]] || { echo unrecorded; return 0; }
-  state_of "$pid"
+  proc_state_after "$pid"
   kill -KILL "$pid" 2>/dev/null || true
 }
 # The runner line a run's log opens with, with its unit's launching pid folded
@@ -746,8 +735,23 @@ for row in "${FALLBACK_ROWS[@]}"; do
     "and the log names why, in systemd-run's words" "$ERR"
 done
 
+# setsid that cannot start the child fails the start by name, never as a
+# record that could not be written.
+mkdir -p "$TMP_ROOT/failing-setsid-bin"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP_ROOT/failing-setsid-bin/setsid"
+chmod +x "$TMP_ROOT/failing-setsid-bin/setsid"
+RUN_PATH="$TMP_ROOT/failing-setsid-bin:$FALLBACK_PATH"
+run_script "$RUN" --worktree "$proj_refused" --poll 1
+assert_eq "$(sed -n 1p <<<"$ERR") $RC" "dev-validate-run: launch-failed status=1 2" \
+  "a setsid that cannot start the child fails the start as launch-failed" "$ERR"
+mutant mutant-launch-unmapped '    4) die launch-failed "$JOB_UNIT_ERROR" ;;' '    4) ;;'
+run_script "$MUTANT" --worktree "$proj_refused" --poll 1
+assert_eq "$(verdict_of "$OUT") $RC" "state=lost cap-secs=31 validate=FAILING 1" \
+  "control: unmapped, a launch that never happened is waited on and reads as lost" "$ERR"
+RUN_PATH="$TMP_ROOT/refusing-bin:$FALLBACK_PATH"
+
 # Control: the refused unit is not replaced, so no run is started at all.
-MUTANT_FILE=lib/job-unit.sh mutant mutant-no-fallback '    command -v setsid >/dev/null 2>&1 || return 2' '    return 2'
+MUTANT_FILE=lib/job-unit.sh mutant mutant-no-fallback '    command -v setsid >/dev/null 2>&1 || { job_unit_fail missing-command commands=setsid; return; }' '    job_unit_fail missing-command commands=setsid; return'
 run_script "$MUTANT" --worktree "$proj_refused" --poll 1
 assert_eq "$(verdict_of "$OUT")|$RC" "|2" \
   "control: without the fallback a refused unit leaves no run at all" "$ERR"
@@ -796,7 +800,7 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   proj_twin_b="$(make_proj twin-b/proj-twin "exit 0" 20)"
   start_long_run "$proj_twin_a" ""
   run_script "$RUN" --stop --worktree "$proj_twin_b"
-  assert_eq "$OUT $RC $(state_of "$(cat "$proj_twin_a/grand.pid")")" "state=stopped units=0 groups=0 0 alive" \
+  assert_eq "$OUT $RC $(proc_state_after "$(cat "$proj_twin_a/grand.pid")")" "state=stopped units=0 groups=0 0 alive" \
     "--stop on one worktree leaves a same-named worktree's unit running" "$ERR"
   run_script "$RUN" --stop --worktree "$proj_twin_a"
   assert_eq "$OUT $(grandchild_state "$proj_twin_a")" "state=stopped units=1 groups=0 gone" \
@@ -827,7 +831,7 @@ stop_child="$(cat "$proj_stop_group"/tmp/dev-validate-*/pid 2>/dev/null || true)
 run_script "$RUN" --stop --worktree "$proj_stop_group"
 assert_eq "$OUT $RC" "state=stopped units=0 groups=1 0" \
   "--stop on a host with no user manager ends each setsid run's group" "$ERR"
-assert_eq "$(state_of "$stop_child") $(grandchild_state "$proj_stop_group")" "gone gone" \
+assert_eq "$(proc_state_after "$stop_child") $(grandchild_state "$proj_stop_group")" "gone gone" \
   "and the run's child and the grandchild in its group are gone" "$ERR"
 end_long_run
 
@@ -837,17 +841,19 @@ proj_stop_left="$(make_proj proj-stop-left "$long_cmd" 600)"
 start_long_run "$proj_stop_left" "$RUN_PATH"
 stop_child="$(cat "$proj_stop_left"/tmp/dev-validate-*/pid 2>/dev/null || true)"
 run_script "$MUTANT" --stop --worktree "$proj_stop_left"
-assert_eq "$(state_of "$stop_child") $(grandchild_state "$proj_stop_left")" "alive alive" \
+assert_eq "$(proc_state_after "$stop_child") $(grandchild_state "$proj_stop_left")" "alive alive" \
   "control: without the group kill --stop leaves the run and its grandchild running" "$ERR"
 kill -KILL -- "-$stop_child" 2>/dev/null || true
 end_long_run
 RUN_PATH=""
 
 # --- Which recorded runs --stop may signal -------------------------------------
-# One planted run record per worktree, naming a live process that leads its own
-# group: `child` carries a run child's argv tail for that directory, `other` is
-# a plain sleep, and `dead` is a pid that has exited. The systemctl stub stops
-# whatever it is asked to, so a unit record is counted and never signalled.
+# One planted run record per worktree, naming a process: `child` leads its own
+# group and carries a run child's argv tail for that directory, `nonleader`
+# carries that tail from inside this suite's own group, `other` is a plain
+# sleep leading its group, `dead` is a pid that has exited, and `none` plants
+# no run directory at all. The systemctl stub stops whatever it is asked to, so
+# a unit record is counted and never signalled.
 mkdir -p "$TMP_ROOT/stop-bin"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP_ROOT/stop-bin/systemctl"
 chmod +x "$TMP_ROOT/stop-bin/systemctl"
@@ -858,17 +864,30 @@ PLANT_PROJ=""
 plant() { # NAME RUNNER VERDICT PROCESS
   local dir
   PLANT_PROJ="$TMP_ROOT/planted/$1"
+  PLANTED=""
   dir="$PLANT_PROJ/tmp/dev-validate-planted-$1"
+  if [[ "$4" == none ]]; then
+    mkdir -p "$PLANT_PROJ/tmp"
+    return 0
+  fi
   mkdir -p "$dir"
   printf 'runner=%s\nunit=validate-planted-%s\nline=planted\n' "$2" "$1" > "$dir/runner"
   [[ "$3" == no ]] || printf 'guard-exit=0 at=now\n' > "$dir/exit"
   case "$4" in
     child) setsid bash -c 'sleep 300; :' planted --child --run-dir "$dir" </dev/null >/dev/null 2>&1 & PLANTED=$!; disown "$PLANTED" ;;
+    nonleader) bash -c 'sleep 300; :' planted --child --run-dir "$dir" </dev/null >/dev/null 2>&1 & PLANTED=$!; disown "$PLANTED" ;;
     other) setsid sleep 300 </dev/null >/dev/null 2>&1 & PLANTED=$!; disown "$PLANTED" ;;
     dead) sleep 0 & PLANTED=$!; wait "$PLANTED" ;;
   esac
   printf '%s\n' "$PLANTED" > "$dir/pid"
   sleep 0.2
+}
+# The planted process's state after --stop, `-` where none was planted, then
+# the process killed whether it leads a group or not.
+planted_state() {
+  [[ -n "$PLANTED" ]] || { echo -; return 0; }
+  proc_state_after "$PLANTED"
+  kill -KILL -- "-$PLANTED" 2>/dev/null || kill -KILL "$PLANTED" 2>/dev/null || true
 }
 # name|runner|verdict recorded|process|what --stop prints|the process after
 PLANT_ROWS=(
@@ -877,6 +896,8 @@ PLANT_ROWS=(
   "has-verdict|setsid|yes|child|state=stopped units=0 groups=0|alive"
   "unit-run|systemd|no|child|state=stopped units=1 groups=0|alive"
   "gone-pid|setsid|no|dead|state=stopped units=0 groups=0|gone"
+  "not-leader|setsid|no|nonleader|state=stopped units=0 groups=0|alive"
+  "no-run|setsid|no|none|state=stopped units=0 groups=0|-"
 )
 # name%the file holding the rule%its line%what replaces it%what that control
 # then sees
@@ -885,16 +906,42 @@ PLANT_CONTROLS=(
   'has-verdict%dev-validate-run%    [[ ! -s "$dir/exit" ]] || continue%    :%state=stopped units=0 groups=1 0 gone'
   'unit-run%lib/job-unit.sh%    systemd) job_unit_stop "$JOB_UNIT_NAME" ;;%    systemd) job_unit_kill_group "$2" "$3" ;;%state=stopped units=1 groups=0 0 gone'
   'gone-pid%lib/job-unit.sh%    kill -0 "$pid" 2>/dev/null || return 1%    :% 1 gone'
+  'not-leader%lib/job-unit.sh%  [[ "${pgid// /}" == "$pid" ]] || return 1%  :%state=stopped units=0 groups=1 0 alive'
+  'no-run%dev-validate-run%    [[ -f "$runner_file" ]] || continue%    :% 1 -'
 )
+# Every rule under which --stop leaves a run alone has its row and control
+# above: each `|| return 1` line of job_unit_kill_group and each `|| continue`
+# line of the --stop loop is a PLANT_CONTROLS line, so a rule added without a
+# control reddens here. The floors name a broken extractor, not a thin rule set.
+guard_lines() { # FILE FIRST_LINE_REGEX LAST_LINE_REGEX GUARD_REGEX
+  awk -v first="$2" -v last="$3" '$0 ~ first { on = 1 } on { print } on && $0 ~ last { exit }' "$1" \
+    | grep -E -- "$4" | sed 's/^ *//'
+}
+controlled_lines="$(for row in "${PLANT_CONTROLS[@]}"; do IFS='%' read -r _ _ line _ _ <<<"$row"; printf '%s\n' "${line#"${line%%[! ]*}"}"; done)"
+# file%first line%last line%guard%floor
+GUARD_SOURCES=(
+  'lib/job-unit.sh%^job_unit_kill_group[(][)]%^}%[|][|] return 1$%3'
+  'dev-validate-run%for runner_file in%^  done$%[|][|] continue$%2'
+)
+for source_row in "${GUARD_SOURCES[@]}"; do
+  IFS='%' read -r file first last guard floor <<<"$source_row"
+  guards="$(guard_lines "$SCRIPTS_DIR/$file" "$first" "$last" "$guard")"
+  assert_eq "$(( $(grep -c . <<<"$guards") >= floor ))" "1" \
+    "the guard extractor finds at least $floor rules in $file (fewer means the extractor broke)"
+  while IFS= read -r guard_line; do
+    [[ -n "$guard_line" ]] || continue
+    assert_eq "$(grep -c -x -F -- "$guard_line" <<<"$controlled_lines")" "1" \
+      "the $file rule '$guard_line' has a planted row and a control"
+  done <<<"$guards"
+done
 RUN_PATH="$TMP_ROOT/stop-bin:$PATH"
 for row in "${PLANT_ROWS[@]}"; do
   IFS='|' read -r name runner verdict process want_out want_state <<<"$row"
   plant "$name" "$runner" "$verdict" "$process"
   proj="$PLANT_PROJ"
   run_script "$RUN" --stop --worktree "$proj"
-  assert_eq "$OUT $RC $(state_of "$PLANTED")" "$want_out 0 $want_state" \
+  assert_eq "$OUT $RC $(planted_state)" "$want_out 0 $want_state" \
     "--stop on a planted $name record" "$ERR"
-  kill -KILL -- "-$PLANTED" 2>/dev/null || true
   rm -rf -- "$proj"
 done
 for row in "${PLANT_CONTROLS[@]}"; do
@@ -907,9 +954,8 @@ for row in "${PLANT_CONTROLS[@]}"; do
   plant "$name" "$runner" "$verdict" "$process"
   proj="$PLANT_PROJ"
   run_script "$MUTANT" --stop --worktree "$proj"
-  assert_eq "$OUT $RC $(state_of "$PLANTED")" "$want" \
+  assert_eq "$OUT $RC $(planted_state)" "$want" \
     "control: without that line --stop on the $name record signals or fails" "$ERR"
-  kill -KILL -- "-$PLANTED" 2>/dev/null || true
   rm -rf -- "$proj"
 done
 
@@ -929,9 +975,32 @@ kill -KILL -- "-$PLANTED" 2>/dev/null || true
 RUN_PATH=""
 
 # --- A value option given twice is refused, never half-read ---------------------
-run_script "$RUN" --worktree "$proj_probe" --worktree "$proj_log" --poll 1
-assert_eq "$(sed -n 1p <<<"$ERR") $RC" "dev-validate-run: repeated option=--worktree 2" \
-  "a second --worktree is refused rather than silently winning"
+# option|the arguments that repeat it
+REPEAT_ROWS=(
+  "--worktree|--worktree $proj_probe --worktree $proj_log --poll 1"
+  "--poll|--worktree $proj_probe --poll 1 --poll 2"
+  "--run-dir|--wait --run-dir $stale --run-dir $absent"
+  "--budget|--wait --run-dir $stale --budget 5 --budget 6"
+)
+repeat_rows() { # SCRIPT
+  local row flag args
+  for row in "${REPEAT_ROWS[@]}"; do
+    IFS='|' read -r flag args <<<"$row"
+    # shellcheck disable=SC2086 # the row's arguments are space-separated paths without spaces
+    run_script "$1" $args
+    printf '%s %s\n' "$(sed -n 1p <<<"$ERR")" "$RC"
+  done
+}
+repeat_out="$(repeat_rows "$RUN")"
+for row in "${REPEAT_ROWS[@]}"; do
+  IFS='|' read -r flag _ <<<"$row"
+  assert_eq "$(grep -c -x -F -- "dev-validate-run: repeated option=$flag 2" <<<"$repeat_out")" "1" \
+    "a second $flag is refused rather than silently winning"
+done
+# Control: the repeat check passes everything, so each second value wins.
+mutant mutant-no-once '[[ "$2" == false ]] || die repeated "option=$1"' 'true'
+assert_eq "$(repeat_rows "$MUTANT" | grep -c ' repeated ' || true)" "0" \
+  "control: without the repeat check no repeated option is refused"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

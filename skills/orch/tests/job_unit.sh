@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Tests for lib/job-unit.sh through its executable interface, the contract a
-# markdown recipe calls: --help, name, launch, stop and kill-group. The
+# markdown recipe calls: --help, name, launch, end, stop, kill-group and
+# stop-job. The
 # containment each runner gives, the fallbacks behind a failing systemd-run,
 # and each rule --stop applies are pinned through dev-validate-run, which
 # sources the same functions, in dev_validate_run.sh.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JOB_UNIT="$TEST_DIR/../scripts/lib/job-unit.sh"
@@ -54,8 +56,8 @@ mutant() { # NAME OLD NEW
 echo "=== job-unit executable ==="
 
 run "$JOB_UNIT" --help
-assert_eq "$RC $(sed -n 1p <<<"$OUT")" "0 job-unit.sh — start a long-lived orch job so no process it starts outlives" \
-  "--help prints the header and exits 0"
+assert_eq "$RC $(sed -n '1s/ — .*$//p' <<<"$OUT")" "0 job-unit.sh" \
+  "--help prints the header, which opens on the script's name, and exits 0"
 assert_eq "$(grep -c -E '^  job-unit\.sh (name|launch|end|stop|kill-group|stop-job) ' <<<"$OUT")" "6" \
   "and names every subcommand"
 run "$JOB_UNIT" launch validate-x
@@ -90,17 +92,22 @@ wait_pid() { # FILE — the pid the job wrote, once it has
   cat "$1" 2>/dev/null || true
 }
 
+# One job launched under setsid, writing its pid where the row can read it.
+JOB_PID=""
+launch_setsid_job() { # RECORD PIDFILE
+  run env PATH="$FARM" "$JOB_UNIT" launch validate-id-1 "$1" --cap 60 \
+    -- bash -c 'echo $$ > "$0"; exec sleep 30' "$2"
+  JOB_PID="$(wait_pid "$2")"
+}
+
 if command -v setsid >/dev/null 2>&1; then
   record="$TMP_ROOT/setsid.record"
-  pidfile="$TMP_ROOT/setsid.pid"
-  run env PATH="$FARM" "$JOB_UNIT" launch validate-id-1 "$record" --cap 60 \
-    -- bash -c 'echo $$ > "$0"; exec sleep 30' "$pidfile"
+  launch_setsid_job "$record" "$TMP_ROOT/setsid-1.pid"
   assert_eq "$RC $OUT" "0 runner=setsid reason=no-systemd-run" \
     "a launch with no systemd-run prints the setsid runner line"
   assert_eq "$(cat "$record")" "$(printf 'runner=setsid\nline=runner=setsid reason=no-systemd-run')" \
     "and records that runner and line, with no unit"
-  job_pid="$(wait_pid "$pidfile")"
-  assert_eq "$([[ "$job_pid" =~ ^[0-9]+$ ]] && kill -0 "$job_pid" 2>/dev/null && echo running || echo absent)" "running" \
+  assert_eq "$([[ "$JOB_PID" =~ ^[0-9]+$ ]] && kill -0 "$JOB_PID" 2>/dev/null && echo running || echo absent)" "running" \
     "and the job runs"
 
   # kill-group: the job leads its group, and its argv decides whether it is
@@ -112,14 +119,54 @@ if command -v setsid >/dev/null 2>&1; then
   )
   for row in "${KILL_ROWS[@]}"; do
     IFS='|' read -r glob want_rc want_state <<<"$row"
-    run "$JOB_UNIT" kill-group "$job_pid" "$glob"
-    sleep 0.2
-    assert_eq "$RC $(kill -0 "$job_pid" 2>/dev/null && echo alive || echo gone)" "$want_rc $want_state" \
+    run "$JOB_UNIT" kill-group "$JOB_PID" "$glob"
+    assert_eq "$RC $(proc_state_after "$JOB_PID")" "$want_rc $want_state" \
       "kill-group with argv glob '$glob' exits $want_rc and leaves the job $want_state"
   done
+
+  # stop-job on the record a setsid launch wrote stops that job's group.
+  launch_setsid_job "$record" "$TMP_ROOT/setsid-2.pid"
+  run "$JOB_UNIT" stop-job "$record" "$JOB_PID" "*sleep 30"
+  assert_eq "$RC $(proc_state_after "$JOB_PID")" "0 gone" \
+    "stop-job on a setsid record kills the job's group"
+
+  # end is the job's own last call, here made for it: its group ends.
+  launch_setsid_job "$record" "$TMP_ROOT/setsid-3.pid"
+  run "$JOB_UNIT" end "$record" "$JOB_PID"
+  assert_eq "$RC $(proc_state_after "$JOB_PID")" "0 gone" \
+    "end on a setsid record kills the group its leader names"
+
+  # A setsid that cannot start the job is a launch failure, by name.
+  mkdir -p "$TMP_ROOT/failing-setsid"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP_ROOT/failing-setsid/setsid"
+  chmod +x "$TMP_ROOT/failing-setsid/setsid"
+  run env PATH="$TMP_ROOT/failing-setsid:$FARM" "$JOB_UNIT" launch validate-id-1 "$record" --cap 60 -- sleep 30
+  assert_eq "$RC $ERR" "4 job-unit: launch-failed status=1" \
+    "a setsid that cannot start the job exits 4 as launch-failed"
+  mutant no-launch-failed '|| job_unit_fail launch-failed "status=$?" 4' ''
+  run env PATH="$TMP_ROOT/failing-setsid:$FARM" "$MUTANT" launch validate-id-1 "$record" --cap 60 -- sleep 30
+  assert_eq "$RC $ERR" "1 " \
+    "control: without its own status a failed launch reads as the record-unwritable status"
 else
   echo "  skip  setsid is not installed; the setsid launch rows did not run"
 fi
+
+# stop-job on a record the library cannot read is a failure, named.
+printf 'runner=bogus\n' > "$TMP_ROOT/bogus.record"
+run "$JOB_UNIT" stop-job "$TMP_ROOT/bogus.record" 1 "*"
+assert_eq "$RC $ERR" "2 job-unit: record-unreadable path=$TMP_ROOT/bogus.record" \
+  "stop-job on an unreadable record exits 2 and names it"
+
+# With neither systemd-run nor setsid there is no runner, and the launch says
+# which command is missing.
+NO_RUNNER="$TMP_ROOT/no-runner"
+mkdir -p "$NO_RUNNER"
+for name in bash mv tr; do
+  ln -sf "$(command -v "$name")" "$NO_RUNNER/$name"
+done
+run env PATH="$NO_RUNNER" "$JOB_UNIT" launch validate-id-1 "$TMP_ROOT/none.record" --cap 60 -- sleep 30
+assert_eq "$RC $ERR" "2 job-unit: missing-command commands=setsid" \
+  "a host with neither runner exits 2 naming setsid"
 
 # --- A launch where a user manager answers ------------------------------------------
 # Which runner this host gives is read off the executable's own answer: a host

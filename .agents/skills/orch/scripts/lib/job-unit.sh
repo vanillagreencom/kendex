@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# job-unit.sh — start a long-lived orch job so no process it starts outlives
-# it, and stop one by what its launch recorded. It bounds a job's lifetime and
-# nothing else: no memory, CPU or task limit. The one owner of the manager
-# probe, the unit name, the systemd-run launch, the setsid fallback, the unit
-# stop and the process-group kill. Run it, or source it for the same
-# functions; Bash 3.2.
+# job-unit.sh — start a long-lived orch job as a transient systemd user unit
+# where a user manager answers, under setsid elsewhere, and stop it by what its
+# launch recorded. It bounds a job's lifetime and nothing else: no memory, CPU
+# or task limit. It holds the manager probe, the unit name, the systemd-run
+# launch, the setsid fallback, the unit stop and the process-group kill for
+# the jobs that use it; dev-validate-run is the first. Run it, or source it for
+# the same functions; Bash 3.2.
 #
-# Where a systemd user manager starts a transient unit, the job runs as one:
-# when its main process exits systemd kills every process left in the unit,
-# one that detached into its own session included. Elsewhere it runs under
-# setsid as the leader of its own process group, and calls `end` before it
-# exits, which kills that group; a process that started its own session
-# escapes it. The unit name shape, the runner lines, the unit properties and
-# the stop rule are references/job-units.md.
+# A unit holds every process the job starts: when the job's main process exits
+# or reaches the unit's RuntimeMaxSec, systemd kills every process left in it,
+# one that detached into its own session included. Under setsid the job leads
+# its own process group and calls `end` when it finishes, which kills that
+# group; nothing bounds it, and a job killed before `end`, or a process that
+# started its own session, escapes. The unit name shape, the runner lines, the
+# unit properties, the stop rule and the orch launches that use their own
+# mechanism are references/job-units.md.
 #
 # Usage:
 #   job-unit.sh name NAME PID
@@ -28,12 +30,14 @@
 #       --cap is the unit's RuntimeMaxSec, from the timeout the caller already
 #       has: set above that bound plus the kill grace, so the job's own bound
 #       fires first.
-#       Exit 0 launched; 1 RECORD could not be written; 2 no setsid where the
-#       fallback needs it; 3 usage.
+#       Exit 0 launched; 1 RECORD could not be written (record-unwritable); 2
+#       no setsid where the fallback needs it (missing-command); 3 usage; 4
+#       setsid could not start the job (launch-failed, with its exit status).
 #   job-unit.sh end RECORD LEADER_PID
 #       The job's own last call. Under setsid, kill the process group
 #       LEADER_PID leads, the caller included; under a unit, nothing, since the
-#       unit's end does it. Exit 0 done; 2 the group could not be killed.
+#       unit's end does it. Exit 0 done; 2 RECORD could not be read
+#       (record-unreadable) or the group could not be killed.
 #   job-unit.sh stop UNIT
 #       Stop the unit UNIT. Exit 0 it was running and is stopped; 1 the
 #       manager has no such unit, so it had ended; 2 anything else, a manager
@@ -44,12 +48,14 @@
 #       left alone. Exit 0 killed; 1 left alone; 2 the read or the kill failed.
 #   job-unit.sh stop-job RECORD PID ARGV_GLOB
 #       Stop the job RECORD describes: its unit by the exact recorded name, or
-#       under setsid its group as kill-group does. Exits as those two do.
+#       under setsid its group as kill-group does. Exits as those two do, and 2
+#       where RECORD could not be read (record-unreadable).
 #
-# A failure prints one line, `job-unit: KEY FIELD=VALUE...`, on stderr.
+# Every failure prints one line, `job-unit: KEY FIELD=VALUE...`, on stderr; a
+# unit that had ended and a process left alone are exit 1 and no failure.
 # Sourced, each subcommand is the function job_unit_<name with _ for ->, and
 # job_unit_read RECORD loads a record into JOB_UNIT_RUNNER, JOB_UNIT_NAME and
-# JOB_UNIT_LINE, which launch also sets. A status-2 failure leaves its KEY in
+# JOB_UNIT_LINE, which launch also sets. A failure leaves its KEY in
 # JOB_UNIT_ERROR_KEY and its fields in JOB_UNIT_ERROR.
 
 # The seconds between SIGTERM and SIGKILL, both for what a unit still holds
@@ -62,10 +68,10 @@ JOB_UNIT_LINE=""
 JOB_UNIT_ERROR=""
 JOB_UNIT_ERROR_KEY=""
 
-job_unit_fail() { # KEY FIELDS
+job_unit_fail() { # KEY FIELDS [STATUS]
   JOB_UNIT_ERROR_KEY="$1"
   JOB_UNIT_ERROR="$2"
-  return 2
+  return "${3:-2}"
 }
 
 # orch-NAME-PID, with anything a unit name cannot carry replaced by `_`.
@@ -118,7 +124,9 @@ job_unit_read() { # RECORD
 job_unit_launch() { # NAME RECORD --cap SECS -- ARGV...
   local job="$1" record="$2" cap="${4:-}" probe_err="" launch_err="" nofile name arg
   local unit_env=() unit_argv=()
-  [[ $# -ge 6 && "$3" == --cap && "$5" == -- && "$cap" =~ ^[1-9][0-9]*$ ]] || return 3
+  JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
+  [[ $# -ge 6 && "$3" == --cap && "$5" == -- && "$cap" =~ ^[1-9][0-9]*$ ]] \
+    || { job_unit_fail usage subcommand=launch 3; return; }
   shift 5
   JOB_UNIT_RUNNER=setsid
   JOB_UNIT_NAME=""
@@ -134,10 +142,11 @@ job_unit_launch() { # NAME RECORD --cap SECS -- ARGV...
   else
     JOB_UNIT_LINE="runner=setsid reason=probe-failed detail=${probe_err%%$'\n'*}"
   fi
-  [[ "$JOB_UNIT_RUNNER" == systemd ]] || command -v setsid >/dev/null 2>&1 || return 2
+  [[ "$JOB_UNIT_RUNNER" == systemd ]] || command -v setsid >/dev/null 2>&1 \
+    || { job_unit_fail missing-command commands=setsid; return; }
 
   if [[ "$JOB_UNIT_RUNNER" == systemd ]]; then
-    job_unit_record "$record" || return 1
+    job_unit_record "$record" || { job_unit_fail record-unwritable "path=$record" 1; return; }
     # A user unit inherits the manager's environment and resource limits, not
     # the caller's, so every exported name is handed over (--setenv=NAME takes
     # the value from systemd-run's own environment) and so are the caller's
@@ -155,18 +164,20 @@ job_unit_launch() { # NAME RECORD --cap SECS -- ARGV...
     fi
     # The manager answered the probe and refused the unit. The job still runs,
     # contained as far as a process group reaches, and its record says why.
-    command -v setsid >/dev/null 2>&1 || return 2
+    command -v setsid >/dev/null 2>&1 || { job_unit_fail missing-command commands=setsid; return; }
     JOB_UNIT_RUNNER=setsid
     JOB_UNIT_NAME=""
     JOB_UNIT_LINE="runner=setsid reason=unit-launch-failed detail=${launch_err%%$'\n'*}"
   fi
-  job_unit_record "$record" || return 1
-  setsid -f "$@" </dev/null >/dev/null 2>&1
+  job_unit_record "$record" || { job_unit_fail record-unwritable "path=$record" 1; return; }
+  # setsid -f returns once it has forked; a status here is a fork it could not
+  # make or an argv it could not start.
+  setsid -f "$@" </dev/null >/dev/null 2>&1 || job_unit_fail launch-failed "status=$?" 4
 }
 
 job_unit_stop() { # UNIT
   local out load
-  JOB_UNIT_ERROR=""
+  JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
   if out="$(systemctl --user stop -- "$1.service" 2>&1)"; then
     return 0
   fi
@@ -177,11 +188,12 @@ job_unit_stop() { # UNIT
   job_unit_fail stop-failed "unit=$1.service detail=${out%%$'\n'*}"
 }
 
+# Each `|| return 1` line below is a rule under which the group is left alone;
+# dev_validate_run.sh holds one planted record and one control per such line.
 job_unit_kill_group() { # PID ARGV_GLOB
   local pid="$1" glob="$2" args pgid
-  JOB_UNIT_ERROR=""
-  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-  if ! args="$(ps -ww -o args= -p "$pid")" || ! pgid="$(ps -o pgid= -p "$pid")"; then
+  JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
+  if ! args="$(ps -ww -o args= -p "$pid" 2>/dev/null)" || ! pgid="$(ps -o pgid= -p "$pid" 2>/dev/null)"; then
     kill -0 "$pid" 2>/dev/null || return 1
     job_unit_fail kill-group-failed "pid=$pid step=read"
     return
@@ -195,7 +207,7 @@ job_unit_kill_group() { # PID ARGV_GLOB
 }
 
 job_unit_stop_job() { # RECORD PID ARGV_GLOB
-  JOB_UNIT_ERROR=""
+  JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
   job_unit_read "$1" || { job_unit_fail record-unreadable "path=$1"; return; }
   case "$JOB_UNIT_RUNNER" in
     systemd) job_unit_stop "$JOB_UNIT_NAME" ;;
@@ -204,7 +216,7 @@ job_unit_stop_job() { # RECORD PID ARGV_GLOB
 }
 
 job_unit_end() { # RECORD LEADER_PID
-  JOB_UNIT_ERROR=""
+  JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
   job_unit_read "$1" || { job_unit_fail record-unreadable "path=$1"; return; }
   case "$JOB_UNIT_RUNNER" in
     systemd) return 0 ;;
@@ -233,17 +245,11 @@ job_unit_main() {
   fi
   case "$cmd" in
     name) job_unit_name "$@"; printf '\n' ;;
-    launch)
-      job_unit_launch "$@" || rc=$?
-      case "$rc" in
-        0) printf '%s\n' "$JOB_UNIT_LINE" ;;
-        1) printf 'job-unit: record-unwritable path=%s\n' "$2" >&2 ;;
-        2) printf 'job-unit: missing-command commands=setsid\n' >&2 ;;
-        *) printf 'job-unit: usage subcommand=launch\n' >&2 ;;
-      esac ;;
     *)
+      JOB_UNIT_ERROR_KEY=""
       "job_unit_${cmd//-/_}" "$@" || rc=$?
-      [[ "$rc" -ne 2 ]] || printf 'job-unit: %s %s\n' "$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR" >&2 ;;
+      [[ "$rc" -ne 0 || "$cmd" != launch ]] || printf '%s\n' "$JOB_UNIT_LINE"
+      [[ -z "$JOB_UNIT_ERROR_KEY" ]] || printf 'job-unit: %s %s\n' "$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR" >&2 ;;
   esac
   return "$rc"
 }

@@ -1,8 +1,8 @@
 # Job units
 
-Load when starting, naming, finding or stopping a long-lived orch job. `scripts/lib/job-unit.sh` starts and stops every one; run it with `--help` for its subcommands, or source it for the same functions. `dev-validate-run` is its first caller.
+Load when starting, naming, finding or stopping an orch job through `scripts/lib/job-unit.sh`: run it with `--help` for its subcommands, or source it for the same functions. `dev-validate-run` is its first caller. These launches use their own mechanism, not this one: the `setsid` launch [waiter-launch.md](waiter-launch.md) gives `approval-wait`, `ci-wait` and `queue-wait`, `lane_run_detached` in `scripts/lib/lane-launch.sh`, and the preparing-job stop in `lane-close` and `open-terminal`.
 
-The runner bounds a job's lifetime and nothing else: a job and everything it forks end when the job ends or reaches its bound. It sets no memory, CPU or task limit and no slice.
+The runner bounds a job's lifetime and nothing else; it sets no memory, CPU or task limit and no slice. Under a unit, the job and everything it forks end when the job ends or reaches its bound. Under `setsid` see [Runner line](#runner-line) for what escapes.
 
 ## Unit name
 
@@ -36,7 +36,7 @@ The launch prints the runner line and records it; `dev-validate-run` writes it a
 | `runner=setsid reason=probe-failed detail=TEXT` | `systemd-run` could not start the probe unit; `TEXT` is its first line of stderr |
 | `runner=setsid reason=unit-launch-failed detail=TEXT` | The probe unit started and the job's unit did not |
 
-A unit holds every process the job starts, and systemd kills what remains when the job's main process exits. Under `setsid` the job leads its own process group and calls `job-unit.sh end` before it exits, which kills that group; a process that starts its own session escapes it.
+A unit holds every process the job starts, and systemd kills what remains when the job's main process exits or reaches `RuntimeMaxSec`. Under `setsid` nothing bounds the job: it leads its own process group and calls `job-unit.sh end` when it finishes, which kills that group. A job killed before `end`, and a process that starts its own session, escape it.
 
 ## Stopping
 
