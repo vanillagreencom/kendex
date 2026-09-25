@@ -47,7 +47,7 @@ message() { # REASON FIELD=VALUE...
         '  provider          the lane host stop verb exited with status; its own words are on the lines above this one.' \
         '  answer-unparsed   the lane host stop verb succeeded without its stopped item=ID processes=COUNT line.' \
         '  any other value   the local stop step lib/lane-state.sh lane_stop_owned names, pid= the process it failed on.' ;;
-    exit-timeout) printf '%s\n' 'The pane did not read exited before the close timeout. processes= is how many harness processes the stop signalled in the lane worktree; 0 means no process there carries the harness name. Close-out stopped.' ;;
+    exit-timeout) printf '%s\n' 'The pane did not read exited before the close timeout. processes= is how many harness processes the stop signalled in the lane worktree and saw exit; 0 means none was left there to signal. Close-out stopped.' ;;
     state-write-failed) printf '%s\n' 'The lane closed, but its fleet record could not be updated.' ;;
     prepare-stop-failed) printf '%s\n' 'The background launch job the record names could not be stopped. Close-out changed nothing else.' ;;
     validate-stop-failed) printf '%s\n' "A validation run in the lane's worktree could not be ended. The window and record are unchanged; dev-validate-run's own words are on the lines above this one." ;;
@@ -69,6 +69,9 @@ terminal. An idle lane's harness is ended by SIGTERM, never by typing into its
 pane: through lane-host stop for a record carrying host, and for a local lane
 by the same stop against the worktree the record's mail_root names. The close
 then waits up to ORCH_LANE_CLOSE_SECS (default 15) for the pane to read exited.
+The local stop reads each harness process's directory through /proc, or
+through lsof on a host without /proc such as macOS; a host with neither
+refuses as stop-failed cause=cwd-reader-missing.
 A record already marked stopped can close its kept sandbox without a pane. A
 preparing record, a hosted launch whose background job has written no
 outcome, closes without a harness exit: the job the record names is stopped

@@ -741,7 +741,7 @@ exec git "$@"
             self.assertEqual((raced.returncode, raced.stdout),
                              (0, b"stopped item=TEST-1 processes=0\n"), raced.stderr)
 
-            guard = '''    if ! current="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)"; then
+            guard = '''    if ! current="$(lane_process_cwd "$pid")"; then
       state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
       if [[ -z "$state" || "$state" == Z ]]; then continue; fi'''
             self.assertEqual(library_original.count(guard), 1)
@@ -758,9 +758,9 @@ exec git "$@"
                              (0, b"stopped item=TEST-1 processes=0\n"), inverse.stderr)
 
             lane = harness(worktree)
-            guard = 'lane_owned_processes "$root" "$2" || {'
+            guard = 'lane_owned_processes "$root" "$2" || rc=$?'
             self.assertEqual(library_original.count(guard), 1)
-            library.write_text(library_original.replace(guard, 'lane_owned_processes "$root" claude || {'))
+            library.write_text(library_original.replace(guard, 'lane_owned_processes "$root" claude || rc=$?'))
             mutant = self.call("stop", "--item", "TEST-1", "--harness", "codex")
             self.assertEqual(mutant.returncode, 0, mutant.stderr)
             lane.wait(timeout=2)
@@ -784,9 +784,9 @@ exec git "$@"
         refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
         self.assertEqual((refused.returncode, b"stop-process-read-failed item=TEST-1\n" in refused.stderr),
                          (1, True), refused.stderr)
-        guard = 'lane_owned_processes "$root" "$2" || { LANE_STOP_CAUSE=process-read-failed; return 1; }'
+        guard = '    *) LANE_STOP_CAUSE=process-read-failed; return 1 ;;'
         self.assertEqual(library_original.count(guard), 1)
-        library.write_text(library_original.replace(guard, 'lane_owned_processes "$root" "$2" || :')
+        library.write_text(library_original.replace(guard, '    *) ;;')
                            + '\nlane_owned_processes() { return 2; }\n')
         mutant = self.call("stop", "--item", "TEST-1", "--harness", "claude")
         self.assertEqual(mutant.returncode, 0, mutant.stderr)

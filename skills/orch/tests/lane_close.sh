@@ -248,8 +248,7 @@ codex_screen() { cp -- "$PANE_FIXTURES/codex-composer-idle.txt" "$SCREEN"; }
 # in the lane's worktree, so the library's ownership read finds it by name and
 # directory as it finds the real one. It is started detached, so init reaps it
 # rather than this shell holding it as a zombie. LANE_PID is its pid, which the
-# tmux stub reads as LANE_CLOSE_LANE_PID. The read is procfs-only, so these
-# rows run where /proc answers.
+# tmux stub reads as LANE_CLOSE_LANE_PID.
 LANE_ROOT="$TMP_ROOT/lane-worktree"
 HARNESS_BIN="$TMP_ROOT/harness-bin"
 mkdir -p "$LANE_ROOT" "$HARNESS_BIN"
@@ -302,6 +301,61 @@ PY
 }
 
 SCRIPT="$SCRIPTS/lane-close"
+
+# What lives in lib/lane-state.sh takes a fixture tree of its own: the same
+# lane-close and stubs over one changed library. OLD is replaced by NEW where
+# OLD is given, and APPEND, where given, is added at the end, where it
+# redefines a function the library defined above it.
+lib_mutant() { # NAME OLD NEW [APPEND]
+  local name="$1" old="$2" new="$3" dir
+  dir="$TMP_ROOT/libmut-$name"
+  mkdir -p "$dir/skills/orch/scripts/lib" "$dir/skills/linear/scripts"
+  cp "$SCRIPTS/lane-close" "$SCRIPTS/workflow-state" "$SCRIPTS/lane-host" "$SCRIPTS/lane-mail" \
+    "$dir/skills/orch/scripts/"
+  cp "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
+  python3 - "$SCRIPTS/lib/lane-state.sh" "$dir/skills/orch/scripts/lib/lane-state.sh" "$old" "$new" "${4:-}" <<'MUTPY'
+import pathlib, sys
+source, target, old, new, append = sys.argv[1:]
+text = pathlib.Path(source).read_text()
+if old:
+    if text.count(old) != 1:
+        raise SystemExit(f"mutation match count={text.count(old)} old={old!r}")
+    text = text.replace(old, new)
+if append:
+    text += "\n" + append + "\n"
+pathlib.Path(target).write_text(text)
+MUTPY
+  chmod +x "$dir/skills/orch/scripts/lane-close" "$dir/skills/orch/scripts/workflow-state" \
+    "$dir/skills/orch/scripts/lane-host" "$dir/skills/orch/scripts/lane-mail" \
+    "$dir/skills/linear/scripts/linear.sh"
+  printf '%s\n' "$dir/skills/orch/scripts/lane-close"
+}
+
+# A host without /proc, macOS among them, reads a process's directory through
+# lsof. NOPROC is lane-close over a library that says this host has no /proc,
+# which is the host itself where there is none. Where /proc exists the lsof on
+# NOPROC_PATH answers as lsof does, from the directory /proc holds, and the
+# rows run under both readers; elsewhere the host's own lsof answers.
+NO_PROC='lane_proc_readable() { return 1; }'
+NOPROC="$(lib_mutant no-proc '' '' "$NO_PROC")"
+NOPROC_PATH="$PATH"
+LOCAL_READERS=("lsof|$NOPROC")
+if [[ -d /proc/self ]]; then
+  mkdir -p "$TMP_ROOT/lsof-bin"
+  cat >"$TMP_ROOT/lsof-bin/lsof" <<'EOF'
+#!/usr/bin/env bash
+pid=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == -p ]]; then pid="$2"; shift; fi
+  shift
+done
+cwd="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)" || exit 1
+printf 'p%s\nfcwd\nn%s\n' "$pid" "$cwd"
+EOF
+  chmod +x "$TMP_ROOT/lsof-bin/lsof"
+  NOPROC_PATH="$TMP_ROOT/lsof-bin:$PATH"
+  LOCAL_READERS=("proc|$SCRIPT" "lsof|$NOPROC")
+fi
 
 echo '=== lane-close refuses ambiguous and live panes ==='
 write_state running claude /host
@@ -387,26 +441,50 @@ for harness in claude codex pi; do
 done
 
 # A local lane: the same stop, run here against the worktree its record names,
-# ends the harness process itself.
-if [[ -d /proc/self ]]; then
+# ends the harness process itself, under every directory reader this host has.
+for reader_row in "${LOCAL_READERS[@]}"; do
+  IFS='|' read -r reader reader_script <<<"$reader_row"
   for harness in claude codex pi; do
     MAIL_ROOT="$LANE_ROOT" write_state running "$harness" ""
     write_panes python; claude_screen
     start_local_harness "$harness"
-    LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$SCRIPT"
+    PATH="$NOPROC_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$reader_script"
     assert_eq "rc=$RC lane=$(lane_alive "$LANE_PID") typed=$(typed_count) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
-      'rc=0 lane=gone typed=0 host=0 status=done' "a local $harness lane is stopped by SIGTERM to its own process"
+      'rc=0 lane=gone typed=0 host=0 status=done' "a local $harness lane is stopped by SIGTERM to its own process, its directory read through $reader"
   done
-  MUTANT="$(mutant local-stop '    if ! lane_stop_owned "$mail_root" "$harness"; then' '    if ! lane_stop_owned "$mail_root" none; then')"
-  MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
-  start_local_harness claude
-  LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
-  assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=claude pane=%7 processes=0$' <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
-    'rc=1 timeout=1 lane=alive status=running' 'control: a stop that looks for another harness name signals nothing and the lane outlives the wait'
-  kill -KILL "$LANE_PID" 2>/dev/null || true
-else
-  printf '  skip  a local lane stop reads process directories from procfs\n'
-fi
+done
+MUTANT="$(mutant local-stop '    if ! lane_stop_owned "$mail_root" "$harness"; then' '    if ! lane_stop_owned "$mail_root" none; then')"
+MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+start_local_harness claude
+LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
+assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=claude pane=%7 processes=0$' <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 timeout=1 lane=alive status=running' 'control: a stop that looks for another harness name signals nothing and the lane outlives the wait'
+kill -KILL "$LANE_PID" 2>/dev/null || true
+
+# The lsof reader is what answers without /proc: an answer it cannot parse is a
+# live harness whose directory nothing read, and the close refuses.
+MUTANT="$(lib_mutant lsof-parse "'/^n/ { print substr(\$0, 2); exit }'" "'/^x/ { print substr(\$0, 2); exit }'" "$NO_PROC")"
+MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+start_local_harness claude
+PATH="$NOPROC_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
+assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=process-read-failed$' <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID")" \
+  'rc=1 failed=1 lane=alive' 'control: an lsof answer the reader cannot parse leaves the harness unread and the close refuses'
+kill -KILL "$LANE_PID" 2>/dev/null || true
+
+# A host with no directory reader at all refuses under its own cause, never as a
+# failed process read.
+MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+start_local_harness claude
+MUTANT="$(lib_mutant reader-missing '' '' 'lane_process_cwd() { return 3; }')"
+LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
+assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=cwd-reader-missing$' <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 failed=1 lane=alive status=running' 'a host with neither /proc nor lsof refuses the local stop as cwd-reader-missing'
+MUTANT="$(lib_mutant reader-missing-cause '    3) LANE_STOP_CAUSE=cwd-reader-missing; return 1 ;;
+' '' 'lane_process_cwd() { return 3; }')"
+LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
+assert_eq "missing=$(grep -c ' cause=cwd-reader-missing$' <<<"$ERR" || true) read=$(grep -c ' cause=process-read-failed$' <<<"$ERR" || true)" \
+  'missing=0 read=1' 'control: without its own cause a host lacking any directory reader is blamed on the process read'
+kill -KILL "$LANE_PID" 2>/dev/null || true
 
 # A local stop that cannot run refuses, naming the step, rather than waiting
 # the lane out: a record whose worktree is not on this machine resolves none.
@@ -576,13 +654,11 @@ LANE_CLOSE_MAIL_PENDING="$ASK" run_close "$SCRIPT"
 assert_eq "rc=$RC ask=$(grep -cE "^lane-close: ask-unanswered item=KEN-1 ask=$ASK_ID age=360[0-9]s count=1\$" <<<"$ERR" || true) hosted=$(grep -c -- '^pending --item KEN-1 --root /srv/worktree --host host=/host$' "$MAIL_CALLS" || true) stop=$(stop_count KEN-1 claude) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 ask=1 hosted=1 stop=0 status=running' 'an idle lane whose ask nobody answered refuses, naming the ask and its wait, and stops nothing'
 
-if [[ -d /proc/self ]]; then
-  MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
-  start_local_harness claude
-  LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$SCRIPT"
-  assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") local=$(grep -c -- "^pending --item KEN-1 --root $LANE_ROOT host=\$" "$MAIL_CALLS" || true)" \
-    'rc=0 status=done local=1' 'the same lane closes once the answer lands, a local mailbox read on this disk'
-fi
+MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+start_local_harness claude
+LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$SCRIPT"
+assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") local=$(grep -c -- "^pending --item KEN-1 --root $LANE_ROOT host=\$" "$MAIL_CALLS" || true)" \
+  'rc=0 status=done local=1' 'the same lane closes once the answer lands, a local mailbox read on this disk'
 
 write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_MAIL_STATUS=2 run_close "$SCRIPT"
@@ -920,30 +996,6 @@ MUTANT="$(mutant derive-github '  issue-*) derived_tracker="" ;;' '  issue-*) de
 write_legacy_state running /host issue-1; write_panes claude; claude_screen; run_close "$MUTANT" --repo owner/repo
 assert_eq "rc=$RC ambiguous=$(grep -c ' cause=key-ambiguous$' <<<"$ERR" || true) gh=$(grep -c '^issue view 1 --repo owner/repo --json state --jq .state$' "$GH_CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=0 ambiguous=0 gh=1 status=done' 'control: deriving github from an issue-N key reads that repository issue and closes the lane on its state'
-
-# The resolution the rows above exercise lives in lib/lane-state.sh, so its
-# control needs a fixture tree of its own: the same lane-close and stubs over
-# one mutated library.
-lib_mutant() { # NAME OLD NEW
-  local name="$1" old="$2" new="$3" dir
-  dir="$TMP_ROOT/libmut-$name"
-  mkdir -p "$dir/skills/orch/scripts/lib" "$dir/skills/linear/scripts"
-  cp "$SCRIPTS/lane-close" "$SCRIPTS/workflow-state" "$SCRIPTS/lane-host" "$SCRIPTS/lane-mail" \
-    "$dir/skills/orch/scripts/"
-  cp "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
-  python3 - "$SCRIPTS/lib/lane-state.sh" "$dir/skills/orch/scripts/lib/lane-state.sh" "$old" "$new" <<'MUTPY'
-import pathlib, sys
-source, target, old, new = sys.argv[1:]
-text = pathlib.Path(source).read_text()
-if text.count(old) != 1:
-    raise SystemExit(f"mutation match count={text.count(old)} old={old!r}")
-pathlib.Path(target).write_text(text.replace(old, new))
-MUTPY
-  chmod +x "$dir/skills/orch/scripts/lane-close" "$dir/skills/orch/scripts/workflow-state" \
-    "$dir/skills/orch/scripts/lane-host" "$dir/skills/orch/scripts/lane-mail" \
-    "$dir/skills/linear/scripts/linear.sh"
-  printf '%s\n' "$dir/skills/orch/scripts/lane-close"
-}
 
 MUTANT="$(lib_mutant session-column '(q == 0 || $1 == s) && $2 == n { print }' '$2 == n { print }')"
 write_state running claude /host linear '' 'kendex:KEN-1'; write_panes bash '' other; claude_screen
