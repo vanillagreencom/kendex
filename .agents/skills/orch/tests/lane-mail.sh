@@ -151,19 +151,23 @@ done
 
 # A peek on a mailbox whose cursor holds no count and whose directory takes
 # no write still lists what is unread: the hooks peek before every tool call,
-# so a peek refused on a full disk would refuse the call that frees it.
-unwritable_peek() { # NAME
+# so a peek refused on a full disk would refuse the call that frees it. The
+# cursor is empty, or absent beside its lock as a plain inbox refused
+# write-failed leaves it, where neither the count nor the empty create lands.
+unwritable_peek() { # NAME empty|absent
   new_lane "$1"
   LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Free the disk.')"
-  : > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
+  [ "$2" = absent ] || : > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
   : > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor.lock"
   chmod 0555 "$LANE/tmp/lane-mail/KEN-1"
   lm inbox --item KEN-1 --peek
   chmod 0755 "$LANE/tmp/lane-mail/KEN-1"
   UNWRITABLE_PEEK="$RC=$(sed -n '/^{/p' <<<"$OUT" | jq -r 'select(.kind == "directive") | .text')"
 }
-unwritable_peek peek_unwritable
-assert_eq "$UNWRITABLE_PEEK" "0=Free the disk." "a peek over a cursor it cannot write still lists the unread directive"
+for SEED in empty absent; do
+  unwritable_peek "peek_unwritable_$SEED" "$SEED"
+  assert_eq "$UNWRITABLE_PEEK" "0=Free the disk." "a peek over an $SEED cursor it cannot write still lists the unread directive"
+done
 
 # A first peek, then pending: the peek leaves a cursor beside the lock, so
 # pending reads a lane that has not read yet rather than a read that missed.
@@ -1098,7 +1102,7 @@ assert_eq "$FIRST_CURSOR" "0=" "control: a create judged on absence alone leaves
 
 PEEK_CREATE='^        lm_cursor_put 0 2>/dev/null || { : >>"\$CURSOR"; } 2>/dev/null || :$'
 mutant peek-writes "s@$PEEK_CREATE@        lm_cursor_write 0@"
-unwritable_peek control_peek_unwritable
+unwritable_peek control_peek_unwritable empty
 assert_eq "${UNWRITABLE_PEEK%%=*}" "2" "control: a peek that writes the count is refused where the write cannot land"
 
 mutant peek-uncreated "s@$PEEK_CREATE@        :@"
@@ -1108,6 +1112,11 @@ assert_eq "${PEEK_PENDING%%=*}" "2" "control: a first peek that leaves no cursor
 mutant peek-count-only "s@$PEEK_CREATE@        lm_cursor_put 0 2>/dev/null || :@"
 peek_pending control_peek_pending_no_mv "$NO_MV_BIN"
 assert_eq "${PEEK_PENDING%%=*}" "2" "control: a peek whose count cannot land and creates nothing has pending judge the read missed"
+
+mutant peek-create-refuses "s@$PEEK_CREATE@        lm_cursor_put 0 2>/dev/null || { : >>\"\$CURSOR\"; } 2>/dev/null@"
+unwritable_peek control_peek_unwritable_absent absent
+assert_eq "$([ "${UNWRITABLE_PEEK%%=*}" -ne 0 ] && echo nonzero || echo zero)" "nonzero" \
+  "control: a peek whose empty create fails without the last no-refuse clause exits nonzero"
 
 mutant directives-alone 's@foreach inputs as \$raw (0; \. + 1;@foreach (inputs | select(test("directive"))) as $raw (0; . + 1;@'
 answered_lane control_pending_answer
