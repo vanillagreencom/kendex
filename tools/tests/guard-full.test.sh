@@ -308,7 +308,8 @@ fi
 # A full run deletes nothing from target/: the second of two runs leaves the
 # first run's superseded unit beside its own. What bounds target/ across rounds
 # is the round-start prune, outside every validation run, and
-# skills/orch/tests/round_prune.sh measures it across the same two runs.
+# skills/orch/tests/round_prune.sh measures it across two simulated validation
+# runs of the same shape.
 RUNS_TARGET="$TMP/two-runs/target"
 mkdir -p "$RUNS_TARGET/debug"
 : >"$RUNS_TARGET/debug/.cargo-lock"

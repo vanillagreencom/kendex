@@ -38,8 +38,9 @@ ORCH_LANE_HOST = "local"
 ORCH_LANE_OUTPUT = "quiet"
 
 # Disk use, in percent of the volume holding a lane worktree's target/, at or
-# past which round-prune removes that worktree's build output before a dev
-# round. Below it nothing is pruned and the round's validation starts warm.
+# past which round-prune removes that worktree's Cargo output before a dev
+# round. Below it nothing is pruned and the round's validation starts warm, so
+# set it where the free space left below it still holds one full validation.
 ORCH_ROUND_PRUNE_DISK_PCT = "75"
 
 # Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a

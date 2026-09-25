@@ -28,7 +28,9 @@ OUTPUT_PRUNE_DAYS_SET=false
 # The owner-scoped mode: one worktree, pruned for the session whose lease it
 # carries. That session is the one deciding its own warm cache is worth less
 # than the disk, so no retention window applies, and its lease, which blocks
-# every other sweep, admits this one.
+# every other sweep, admits this one. With no window, only output a build lock
+# guards is in scope (a Cargo profile), and a unit kept for that lock, a live
+# holder or a change fails the prune: the engine's --owned.
 OUTPUT_PRUNE_WORKTREE=""
 OUTPUT_PRUNE_OWNER=""
 # The last flag seen that only the targets-only mode accepts, so validation can
@@ -235,7 +237,7 @@ output_prune_sweep() {
       claimed=true
     fi
     if [[ -n "$OUTPUT_PRUNE_OWNER" ]]; then
-      engine_args=(--worktree "$wt" --head "$head" --no-retention)
+      engine_args=(--worktree "$wt" --head "$head" --owned)
     else
       engine_args=(--worktree "$wt" --head "$head" --older-than-days "$OUTPUT_PRUNE_DAYS")
     fi
@@ -253,6 +255,12 @@ output_prune_sweep() {
       # The engine's own `incomplete` record named the cause; a second record
       # here would restate it.
       1) failed=true ;;
+      7)
+        # Only --owned exits 7, and only this mode passes it. The engine's own
+        # kept records above name each unit and its reason.
+        worktree_message output-prune-units-kept "worktree=$wt" "Error: a build lock, a live holder or a change kept part of this worktree's output, so the owner-scoped prune did not reclaim it all: $wt" >&2
+        failed=true
+        ;;
       6)
         worktree_message output-prune-head-moved "worktree=$wt" "Skipped (HEAD moved while the prune was running; nothing was removed): $wt" >&2
         [[ -z "$OUTPUT_PRUNE_OWNER" ]] || failed=true

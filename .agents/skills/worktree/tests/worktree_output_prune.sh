@@ -225,6 +225,8 @@ step() {
     claim) "$SESSION_GUARD" claim "$WT" --owner another-session >/dev/null ;;
     # The lease the owner-scoped rows act for, as a lane's round claims it.
     own-lease) "$SESSION_GUARD" claim "$WT" --owner KEN-1 >/dev/null ;;
+    # A native git lock the session guard did not write.
+    hand-lock) git -C "$MAIN" worktree lock --reason 'held by hand' "$WT" ;;
     hold-lock)
       local await_marker="$ROOT/lock-held"
       flock -x "$WT/target/debug/.cargo-lock" -c "touch '$await_marker'; sleep 120" &
@@ -371,6 +373,7 @@ out_text() {
     cargo-apply) report pruned apply debug release ;;
     owned-apply) printf '%s;' "$OWNED"; report pruned apply debug release ;;
     owned-release-apply) printf '%s;' "$OWNED"; report pruned apply release ;;
+    owned-only) printf '%s' "$OWNED" ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }
@@ -417,6 +420,9 @@ err_text() {
     days-invalid) printf 'worktree-cleanup-days-invalid: 0' ;;
     lease-foreign) printf 'worktree-output-prune-lease-foreign: worktree=<wt> owner=KEN-1' ;;
     owner-pair) printf 'worktree-cleanup-targets-owner-pair: --worktree' ;;
+    owner-pair-owner) printf 'worktree-cleanup-targets-owner-pair: --owner' ;;
+    owned-lock-held) printf '%s;worktree-output-prune-units-kept: worktree=<wt>' "$(unit_record kept debug lock-held)" ;;
+    unmanaged) printf 'worktree-output-prune-lease-blocked: worktree=<wt> state=unmanaged' ;;
     owner-retention) printf 'worktree-cleanup-targets-owner-retention: --older-than-days' ;;
     worktree-unknown) printf 'worktree-output-prune-worktree-unknown: <main>' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
@@ -520,7 +526,11 @@ a zero retention window is refused|cargo tree cargo-out|cleanup --targets-only -
 the lease owner prunes its own worktree, output written just now included|cargo tree cargo-out fresh own-lease|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|0|owned-apply|-|$CARGO_PRUNED
 the sweep still skips a worktree whatever owner leased it|cargo tree cargo-out own-lease|cleanup --targets-only --apply|0|-|lease-held|$CARGO_TREE
 another owner's lease refuses the owner-scoped prune|cargo tree cargo-out claim|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|1|-|lease-foreign|$CARGO_TREE
-a held Cargo lock still keeps its profile under the owner's lease|cargo tree cargo-out fresh own-lease hold-lock|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|0|owned-release-apply|lock-held|$DEBUG_KEPT
+a held Cargo lock keeps its profile and fails the owner-scoped prune|cargo tree cargo-out fresh own-lease hold-lock|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|1|owned-release-apply|owned-lock-held|$DEBUG_KEPT
+the owner-scoped prune never takes a lock-free node_modules or .next|cargo js tree cargo-out js-out fresh own-lease|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|0|owned-apply|-|$DOT,$NEXT_OUT,$CARGO_SRC,$BASE,$MODULES_OUT,$JS_SRC,$CARGO_SHELL
+a HEAD that moves mid-run fails the owner-scoped prune|cargo tree cargo-out fresh own-lease drift|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|1|owned-only|head-moved|$CARGO_TREE
+a lock outside the guard fails the owner-scoped prune|cargo tree cargo-out hand-lock|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|1|-|unmanaged|$CARGO_TREE
+--owner without --worktree is refused|cargo tree cargo-out|cleanup --targets-only --apply --owner KEN-1|1|-|owner-pair-owner|$CARGO_TREE
 an unleased worktree is pruned for the owner that names it|cargo tree cargo-out fresh|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|0|cargo-apply|-|$CARGO_PRUNED
 --worktree without --owner is refused|cargo tree cargo-out|cleanup --targets-only --worktree @WT@|1|-|owner-pair|$CARGO_TREE
 a retention window is refused beside --owner|cargo tree cargo-out fresh|cleanup --targets-only --worktree @WT@ --owner KEN-1 --older-than-days 3|1|-|owner-retention|$CARGO_TREE

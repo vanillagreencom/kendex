@@ -1,29 +1,37 @@
 #!/usr/bin/env bash
-# round-prune — at a dev round's start, reclaim the lane worktree's build output
-# when its disk is past the mark, and record what that freed in workflow state.
+# round-prune — at a dev round's start, reclaim the lane worktree's Cargo build
+# output when its disk is at or past the mark, and record what that freed in
+# workflow state.
 #
-# Usage: round-prune [--state-dir DIR] ISSUE_ID
+# Usage: round-prune [--state-dir DIR] [--worktree PATH] [--owner ID] STATE_KEY
 #
 # The orchestrator runs it after `workflow-state new-round-id` and before the
-# delegation, so no validation run is in flight in the worktree: the prune
-# happens between rounds and a validation run deletes nothing. It reads the
-# item's worktree and round id from workflow state, and the use of the volume
-# holding the worktree's target/ from df. At or past ORCH_ROUND_PRUNE_DISK_PCT
-# (default 75) it runs
-#   worktree cleanup --targets-only --apply --worktree WORKTREE --owner ISSUE_ID
-# whose owner is the lease start-worktree claims for the item, so the whole of
-# the lane's build output goes, however recent. That bounds target/ across
-# rounds without tracking which artifact a run still reads. Below the mark it
-# prunes nothing, and the next validation run starts warm.
+# `dev_delegated_at` stamp and the delegation, so no validation run is in
+# flight in the worktree: the prune happens between rounds and a validation run
+# deletes nothing. It reads the round id from workflow state, the worktree from
+# --worktree or the state's .worktree, and the use of the volume holding the
+# worktree's target/ from df. At or past ORCH_ROUND_PRUNE_DISK_PCT (default 75)
+# it runs
+#   worktree cleanup --targets-only --apply --worktree WORKTREE --owner OWNER
+# where OWNER is --owner or STATE_KEY, the owner start-worktree claims the
+# item's lease under. That prune takes every Cargo profile under target/,
+# however recent, and nothing else: node_modules/ and .next/ stay, since nothing
+# reinstalls them between rounds. It bounds target/ across rounds without
+# tracking which artifact a run still reads. Below the mark it prunes nothing,
+# and the next validation run starts warm.
 #
 # Output: one line,
 #   round-prune: action=pruned|below-mark|failed used-pct=N mark-pct=N bytes=N round=ID worktree=PATH
-# and the same fields under .round_prunes[ROUND_ID] in workflow state. bytes is
-# the prune's own summary figure, 0 below the mark.
+# printed before the same fields are written under .round_prunes[ROUND_ID] in
+# workflow state. bytes is the prune's own summary figure: 0 below the mark,
+# and on a failed prune what it reclaimed before failing, 0 with no summary.
+# A prune that kept a profile for its held build lock, a live holder or a
+# change, or that exited non-zero after its summary, is failed, never pruned.
 #
 # Exit status: 0 pruned or below the mark; 1 the prune failed, recorded as
-# failed with the worktree CLI's records on stderr; 2 usage, state, setting or
-# disk read failure, with nothing recorded.
+# failed, with the worktree CLI's records on stderr; 2 usage, state, setting or
+# disk read failure with nothing pruned or recorded, or a failed state write
+# after the result line, when the prune may already have run.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,37 +44,51 @@ MARK_DEFAULT=75
 message() { # KEY VALUE
   printf 'round-prune: %s=%s\n' "$1" "$2"
   case "$1" in
-  usage) printf '%s\n' 'Usage: round-prune [--state-dir DIR] ISSUE_ID' ;;
-  state) printf '%s\n' 'workflow state names no worktree or no dev_round_id for this item; run it after workflow-state new-round-id.' ;;
+  usage) printf '%s\n' 'Usage: round-prune [--state-dir DIR] [--worktree PATH] [--owner ID] STATE_KEY' ;;
+  state-missing) printf '%s\n' 'workflow state has no value for that field: dev_round_id comes from workflow-state new-round-id, the worktree from init --worktree or this command'"'"'s --worktree.' ;;
   mark) printf '%s\n' 'ORCH_ROUND_PRUNE_DISK_PCT must be a whole percentage from 1 to 100.' ;;
   disk) printf '%s\n' 'df could not report the use of the volume holding the worktree target, so the round cannot tell whether to prune.' ;;
-  prune) printf '%s\n' 'the owner-scoped prune did not complete; its records are above, and the round record says failed.' ;;
-  record) printf '%s\n' 'the prune result could not be written to workflow state.' ;;
+  prune) printf '%s\n' 'the owner-scoped prune did not reclaim the whole target; its records are above, and the round record says failed.' ;;
+  record) printf '%s\n' 'the result above could not be written to workflow state; any prune it reports has already run.' ;;
   esac
 }
 
 state_args=()
-case "${1:-}" in
---help | -h)
-  sed -n '2,/^set -euo pipefail$/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'
-  exit 0
-  ;;
---state-dir)
-  [[ $# -ge 2 ]] || { message usage "$*" >&2; exit 2; }
-  state_args=(--state-dir "$2")
-  shift 2
-  ;;
-esac
-[[ $# -eq 1 && -n "$1" ]] || { message usage "$*" >&2; exit 2; }
-issue="$1"
+worktree=""
+owner=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+  --help | -h)
+    sed -n '2,/^set -euo pipefail$/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'
+    exit 0
+    ;;
+  --state-dir | --worktree | --owner)
+    [[ $# -ge 2 && -n "$2" ]] || { message usage "$1" >&2; exit 2; }
+    case "$1" in
+    --state-dir) state_args=(--state-dir "$2") ;;
+    --worktree) worktree="$2" ;;
+    --owner) owner="$2" ;;
+    esac
+    shift 2
+    ;;
+  -*) message usage "$1" >&2; exit 2 ;;
+  *) break ;;
+  esac
+done
+[[ $# -eq 1 && -n "$1" ]] || { message usage "${1:-}" >&2; exit 2; }
+key="$1"
+[[ -n "$owner" ]] || owner="$key"
 
 state_get() { # JQ
-  "$WORKFLOW_STATE" ${state_args[@]+"${state_args[@]}"} get "$issue" "$1"
+  "$WORKFLOW_STATE" ${state_args[@]+"${state_args[@]}"} get "$key" "$1"
 }
-worktree="" round=""
-if ! worktree="$(state_get '.worktree // ""')" || ! round="$(state_get '.dev_round_id // ""')" ||
-  [[ -z "$worktree" || "$worktree" == null || -z "$round" || "$round" == null ]]; then
-  message state "$issue" >&2
+round=""
+if ! round="$(state_get '.dev_round_id // ""')" || [[ -z "$round" ]]; then
+  message state-missing dev_round_id >&2
+  exit 2
+fi
+if [[ -z "$worktree" ]] && { ! worktree="$(state_get '.worktree // ""')" || [[ -z "$worktree" ]]; }; then
+  message state-missing worktree >&2
   exit 2
 fi
 
@@ -92,26 +114,26 @@ action=below-mark
 bytes=0
 if [[ "$used" -ge "$mark" ]]; then
   report="" rc=0
-  report="$(cd "$worktree" && "$WORKTREE_BIN" cleanup --targets-only --apply --worktree "$worktree" --owner "$issue")" || rc=$?
+  report="$(cd "$worktree" && "$WORKTREE_BIN" cleanup --targets-only --apply --worktree "$worktree" --owner "$owner")" || rc=$?
   [[ -z "$report" ]] || printf '%s\n' "$report" >&2
   summary_bytes="$(sed -n 's/^worktree-output-prune-summary: .* mode=apply .* bytes=\([0-9][0-9]*\) .*$/\1/p' <<<"$report")"
+  [[ ! "$summary_bytes" =~ ^[0-9]+$ ]] || bytes="$summary_bytes"
   if [[ "$rc" -eq 0 && "$summary_bytes" =~ ^[0-9]+$ ]]; then
     action=pruned
-    bytes="$summary_bytes"
   else
     action=failed
   fi
 fi
 
-if ! "$WORKFLOW_STATE" ${state_args[@]+"${state_args[@]}"} update "$issue" \
+printf 'round-prune: action=%s used-pct=%s mark-pct=%s bytes=%s round=%s worktree=%s\n' \
+  "$action" "$used" "$mark" "$bytes" "$round" "$worktree"
+if ! "$WORKFLOW_STATE" ${state_args[@]+"${state_args[@]}"} update "$key" \
   --arg round "$round" --arg action "$action" --argjson used "$used" --argjson mark "$mark" \
   --argjson bytes "$bytes" \
   '.round_prunes[$round] = {action: $action, used_pct: $used, mark_pct: $mark, bytes: $bytes}' >/dev/null; then
-  message record "$issue" >&2
+  message record "$key" >&2
   exit 2
 fi
-printf 'round-prune: action=%s used-pct=%s mark-pct=%s bytes=%s round=%s worktree=%s\n' \
-  "$action" "$used" "$mark" "$bytes" "$round" "$worktree"
 if [[ "$action" == failed ]]; then
   message prune "$worktree" >&2
   exit 1

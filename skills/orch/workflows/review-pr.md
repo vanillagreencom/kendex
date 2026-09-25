@@ -14,7 +14,7 @@ Pre-submission review: reviewer fan-out, bounded fix rounds, QA checks, and the 
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the checkout the paragraph above resolves `WT_PATH` from.
 
-**Standalone init** (`lifecycle: "self"`): resolve `ISSUE_ID` with `git-context issue-from-branch .`, then `workflow-state exists --json [ISSUE_ID]`; when absent, initialize with `git-context branch [WT_PATH]` and `workflow-state init`, and resolve `TRACKER`. On this path § 5 derives its QA signals from the diff scan and judgment — there is no dev artifact.
+**Standalone init** (`lifecycle: "self"`): resolve `ISSUE_ID` with `git-context issue-from-branch .`, then `workflow-state exists --json [ISSUE_ID]`; when absent, initialize with `git-context branch [WT_PATH]` and `workflow-state init [ISSUE_ID] --worktree [WT_PATH] --branch [BRANCH]`, since the round-start prune reads the worktree from state, and resolve `TRACKER`. On this path § 5 derives its QA signals from the diff scan and judgment — there is no dev artifact.
 
 ---
 

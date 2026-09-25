@@ -444,8 +444,11 @@ a round when its disk runs short. PATH must be a linked worktree of this
 repository. It runs under the lease when the lease owner is ID, claims the
 worktree for the delete as the sweep does when no lease is held, and refuses,
 exiting 1, when another owner's lease or a lock outside the guard holds it or
-HEAD moves mid-run. No retention window applies: output written a minute ago is
-pruned too, and a held build lock or a live holder still keeps a unit. The
+HEAD moves mid-run. No retention window applies, so it takes only output a
+build lock guards, the Cargo profiles under target/, and never node_modules/ or
+.next/, which nothing reinstalls between rounds. Output written a minute ago is
+pruned too; a profile kept for its held build lock, a live holder or a change
+under the measurement fails the prune, exit 1, after the rest is reclaimed. The
 lease stays with its owner afterwards.
 
 --apply claims each worktree through the session guard for the duration of the

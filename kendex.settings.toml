@@ -155,9 +155,10 @@ ORCH_HANDOFF_HEADROOM_PCT = "3"
 ORCH_LANE_OUTPUT = "quiet"
 
 # Disk use, in percent of the volume holding a lane worktree's target/, at or
-# past which round-prune removes that worktree's build output before a dev
-# round. On a 30 GB sandbox 75 percent leaves about 7.5 GB, above what one
-# measured full run writes; below the mark the round's validation starts warm.
+# past which round-prune removes that worktree's Cargo output before a dev
+# round. Below the mark on a 30 GB sandbox more than 7.5 GB is free, above
+# GUARD_MIN_FREE_GB, so a round the prune skips still passes tools/guard's
+# start floor and validates warm; one full run writes about 3.0 GiB.
 ORCH_ROUND_PRUNE_DISK_PCT = "75"
 
 # Priority-ordered roster, space/comma separated. Per entry:
@@ -301,9 +302,12 @@ DECISIONS_DIR = "docs/decisions"
 # tools/ci-job-set selects for it.
 DEV_VALIDATE_CMD = "tools/guard --full"
 
-# A full run with CARGO_INCREMENTAL=0 writes only deps: the recorded 20 GB
-# target/ held 6 to 9 GB of incremental, so deps was at most about 14 GB.
-GUARD_MIN_FREE_GB = "16"
+# A full run with CARGO_INCREMENTAL=0 writes one artifact set. Measured from a
+# clean target/ at rustc 1.96.1, its test, clippy and doc invocations wrote
+# 2.7 GiB and the two cross-target checks 0.3 GiB; the floor is twice that.
+# The recorded 20 GB target/ was incremental caches and superseded artifacts,
+# which the round-start prune at ORCH_ROUND_PRUNE_DISK_PCT bounds.
+GUARD_MIN_FREE_GB = "6"
 
 # The free space a full run needs at its start and has left at its end, for the
 # validation log, sentinel, and shell operations. This floor stays far above

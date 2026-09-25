@@ -26,6 +26,16 @@ Exit status is this worktree's verdict:
      the records to see how far it got, then inspect the worktree.
   6  HEAD moved during the run; nothing was deleted, because this returns
      before the apply loop
+  7  --owned only: inspection complete, and a unit it found was kept for a
+     held or replaced build lock, a live holder or a change under the
+     measurement, so the owner's output was not all reclaimed. The records
+     and the summary are whole.
+
+--owned is the owner-scoped prune a round runs on its own worktree: no
+retention window applies, so only an output a build lock guards is in scope,
+a Cargo profile. A lock-free output such as node_modules has nothing a
+starting install would wait on and nothing reinstalls it between rounds, so
+this mode never considers it.
 """
 import argparse
 import contextlib
@@ -46,6 +56,7 @@ except ImportError:  # A platform without Unix advisory locks cannot hold a buil
 
 INSPECTION_INCOMPLETE = 1
 HEAD_MOVED = 6
+UNITS_KEPT = 7
 
 
 class Output(NamedTuple):
@@ -513,8 +524,11 @@ def keep(worktree: Path, unit: Unit, reason: str) -> None:
     )
 
 
-def discover(worktree: Path) -> Tuple[Unit, ...]:
-    """Every prunable unit in the worktree, reporting each path it keeps."""
+def discover(worktree: Path, locked_only: bool) -> Tuple[Unit, ...]:
+    """Every prunable unit in the worktree, reporting each path it keeps.
+
+    locked_only leaves every output with no build lock out of scope unreported:
+    it is not a path this mode keeps but one it never takes."""
     roots = package_roots(worktree)
     if not roots:
         emit("err", "no-layout", reason="no-ecosystem-marker")
@@ -529,6 +543,8 @@ def discover(worktree: Path) -> Tuple[Unit, ...]:
             emit("err", "kept", ecosystem=layout.name, reason="unreportable-root-name")
             continue
         for output in layout.outputs:
+            if locked_only and output.lock is None:
+                continue
             path = root / output.path
             shown = relative(worktree, path)
             kept = None
@@ -590,16 +606,26 @@ def hold_lock(stack: contextlib.ExitStack, unit: Unit) -> Optional[str]:
 
 
 def run(worktree: Path, head: str, older_than_days: Optional[int], apply_prune: bool) -> int:
+    """older_than_days None is --owned: no retention window, lock-guarded
+    outputs only, and a unit kept here is the prune's failure (UNITS_KEPT)."""
     if not head_unchanged(worktree, head):
         return HEAD_MOVED
+    owned = older_than_days is None
     # No retention window leaves no unit recent: every unit is aged, and only
     # its lock, its holders and a change under the measurement can keep it.
-    cutoff = math.inf if older_than_days is None else time.time() - older_than_days * 86400
+    cutoff = math.inf if owned else time.time() - older_than_days * 86400
+    kept_units = 0
+
+    def keep_unit(unit: Unit, reason: str) -> None:
+        nonlocal kept_units
+        kept_units += 1
+        keep(worktree, unit, reason)
+
     aged: List[Unit] = []
-    for unit in discover(worktree):
+    for unit in discover(worktree, locked_only=owned):
         measured = survey(unit, collect=False)
         if measured is None or measured.newest_mtime > cutoff:
-            keep(worktree, unit, "changed" if measured is None else "recent")
+            keep_unit(unit, "changed" if measured is None else "recent")
             continue
         aged.append(unit)
 
@@ -615,7 +641,7 @@ def run(worktree: Path, head: str, older_than_days: Optional[int], apply_prune: 
                 continue
             reason = hold_lock(stack, unit)
             if reason is not None:
-                keep(worktree, unit, reason)
+                keep_unit(unit, reason)
                 continue
             locked.append(unit)
 
@@ -629,10 +655,10 @@ def run(worktree: Path, head: str, older_than_days: Optional[int], apply_prune: 
         idle: List[Unit] = []
         for unit in locked:
             if not probe_available and unit.lock is None:
-                keep(worktree, unit, "holder-probe-unavailable")
+                keep_unit(unit, "holder-probe-unavailable")
                 continue
             if held_under(holders, unit.directory):
-                keep(worktree, unit, "live-holder")
+                keep_unit(unit, "live-holder")
                 continue
             idle.append(unit)
 
@@ -650,7 +676,7 @@ def run(worktree: Path, head: str, older_than_days: Optional[int], apply_prune: 
         for unit in idle:
             tally = survey(unit, collect=True)
             if tally is None or tally.newest_mtime > cutoff:
-                keep(worktree, unit, "changed")
+                keep_unit(unit, "changed")
                 continue
             ledger.absorb(unit, tally)
             settled.append(unit)
@@ -674,7 +700,7 @@ def run(worktree: Path, head: str, older_than_days: Optional[int], apply_prune: 
                 fresh, fresh_uninspected = process_holders()
                 uninspected = max(uninspected, fresh_uninspected)
                 if held_under(fresh, unit.directory):
-                    keep(worktree, unit, "live-holder")
+                    keep_unit(unit, "live-holder")
                     continue
             total += reclaimed
             pruned += 1
@@ -697,7 +723,7 @@ def run(worktree: Path, head: str, older_than_days: Optional[int], apply_prune: 
         bytes=total,
         uninspected_processes=uninspected,
     )
-    return 0
+    return UNITS_KEPT if owned and kept_units else 0
 
 
 def positive_days(text: str) -> int:
@@ -713,7 +739,7 @@ def main(argv: Tuple[str, ...]) -> int:
     parser.add_argument("--head", required=True)
     retention = parser.add_mutually_exclusive_group(required=True)
     retention.add_argument("--older-than-days", type=positive_days)
-    retention.add_argument("--no-retention", action="store_true")
+    retention.add_argument("--owned", action="store_true")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     try:
