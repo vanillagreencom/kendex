@@ -2,7 +2,9 @@
 # tools/guard's render rule: a render source lands its tracked renders in the
 # same change and the renders outlive it. Rendered is judged at the tree for
 # skills and agents and per file for hooks. Each control below removes one
-# clause from a guard copy and expects the same defect to pass.
+# clause from a guard copy and expects the same defect to pass. At commit
+# time the rule judges the index, so a row stages what it plants unless the
+# row is about what the worktree holds beside the index.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -12,6 +14,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "=== a skill source lands its render in the same change ==="
 printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
+git -C "$R" add -A
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: missing-render=1"* ]] \
   && [[ "$OUT" == *"skills/demo/scripts/demo.sh -> .agents/skills/demo/scripts/demo.sh"* ]] \
@@ -26,21 +29,23 @@ else
   bad "control: the skills render arm could not be deleted from a guard copy"
 fi
 printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
+git -C "$R" add -A
 run_guard
 [ "$RC" -eq 0 ] \
   && ok "the same edit with its render in the change passes" \
   || bad "the same edit with its render in the change passes" "rc=$RC out=$OUT"
-git -C "$R" checkout -q -- skills .agents
+git -C "$R" reset -q --hard HEAD
 
 # A deletion is in the changed set too, so a render removed beside a living
 # source has to red; both gone together is a clean removal.
 printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
 rm -f "$R/.agents/skills/demo/scripts/demo.sh"
+git -C "$R" add -A
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo/scripts/demo.sh -> .agents/skills/demo/scripts/demo.sh"* ]] \
   && ok "a skill source edited with its render deleted reds, naming the render" \
   || bad "a skill source edited with its render deleted reds, naming the render" "rc=$RC out=$OUT"
-if mutant_guard 's/ && { \[ ! -e "\$1" \] || \[ -e "\$2" \]; }//'; then
+if mutant_guard 's/ \&\& { ! render_has "\$1" || render_has "\$2"; }//'; then
   run_mutant
   [ "$RC" -eq 0 ] \
     && ok "control: with the outlives clause deleted the deleted render passes" \
@@ -49,15 +54,36 @@ else
   bad "control: the outlives clause could not be deleted from a guard copy"
 fi
 rm -f "$R/skills/demo/scripts/demo.sh"
+git -C "$R" add -A
 run_guard
 [ "$RC" -eq 0 ] \
   && ok "a skill source deleted with its render passes" \
   || bad "a skill source deleted with its render passes" "rc=$RC out=$OUT"
-git -C "$R" checkout -q -- skills .agents
+git -C "$R" reset -q --hard HEAD
+
+# Outlives is judged in the index: a render staged for deletion is gone from
+# the commit though the worktree still holds it.
+printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
+git -C "$R" add skills/demo/scripts/demo.sh
+git -C "$R" rm -q --cached .agents/skills/demo/scripts/demo.sh
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo/scripts/demo.sh -> .agents/skills/demo/scripts/demo.sh"* ]] \
+  && ok "a skill source edited with its render's deletion staged and the file kept reds, naming the render" \
+  || bad "a skill source edited with its render's deletion staged and the file kept reds, naming the render" "rc=$RC out=$OUT"
+if mutant_guard 's/{ ! render_has "\$1" || render_has "\$2"; }/{ [ ! -e "$1" ] || [ -e "$2" ]; }/'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with existence read from the worktree the kept render passes" \
+    || bad "control: with existence read from the worktree the kept render passes" "rc=$RC out=$OUT"
+else
+  bad "control: the outlives clause could not be pointed at the worktree in a guard copy"
+fi
+git -C "$R" reset -q --hard HEAD
 
 # A path with a non-ASCII byte: git quotes it unless told not to, and the
 # quoted spelling would slip past the case arm.
 printf 'echo more\n' >>"$R/skills/demo/scripts/frappé.sh"
+git -C "$R" add -A
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo/scripts/frappé.sh -> .agents/skills/demo/scripts/frappé.sh"* ]] \
   && ok "a source-only edit to a non-ASCII path reds, naming the render left behind" \
@@ -70,7 +96,7 @@ if mutant_guard 's/-c core.quotePath=false //g'; then
 else
   bad "control: path quoting could not be turned back on in a guard copy"
 fi
-git -C "$R" checkout -q -- skills .agents
+git -C "$R" reset -q --hard HEAD
 
 # Rendered is judged at the tree, so each file in a rendered skill owes a
 # render the tree does not track yet.
@@ -115,6 +141,7 @@ cp "$R/skills/demo[1/scripts/b.sh" "$R/.agents/skills/demo[1/scripts/b.sh"
 git -C "$R" add -A skills .agents
 git -C "$R" commit -q -m "chore: a skill with a bracket in its name"
 printf 'echo more\n' >>"$R/skills/demo[1/scripts/b.sh"
+git -C "$R" add -A
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo[1/scripts/b.sh -> .agents/skills/demo[1/scripts/b.sh"* ]] \
   && ok "a source-only edit in a skill named with a bracket reds, naming the render" \
@@ -127,24 +154,25 @@ if mutant_guard 's|^  case "\$NL\$render_tracked\$NL" in \*"\$NL\$1/"\*) return 
 else
   bad "control: the literal prefix test could not be turned back into a pattern in a guard copy"
 fi
-git -C "$R" checkout -q -- skills .agents
 git -C "$R" reset -q --hard HEAD~1
 
 echo "=== an agent definition lands a render in every harness directory that tracks any ==="
 AGENT_RENDERS=(.claude/agents/demo.md .codex/agents/demo.toml .pi/agents/demo.md)
 for r in "${AGENT_RENDERS[@]}"; do
-  git -C "$R" checkout -q -- agents .claude/agents .codex .pi
+  git -C "$R" reset -q --hard HEAD
   printf '# amended\n' >>"$R/agents/demo.md"
   for other in "${AGENT_RENDERS[@]}"; do
     [ "$other" = "$r" ] || printf '# amended\n' >>"$R/$other"
   done
+  git -C "$R" add -A
   run_guard
   [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/demo.md -> $r"* ]] \
     && ok "an agent edit leaving $r behind reds, naming it" \
     || bad "an agent edit leaving $r behind reds, naming it" "rc=$RC out=$OUT"
 done
-git -C "$R" checkout -q -- agents .claude/agents .codex .pi
+git -C "$R" reset -q --hard HEAD
 printf '# amended\n' >>"$R/agents/demo.md"
+git -C "$R" add -A
 if mutant_guard '/^  agents\/\*\.md)$/,/^    ;;$/d'; then
   run_mutant
   [ "$RC" -eq 0 ] \
@@ -156,22 +184,24 @@ fi
 for other in "${AGENT_RENDERS[@]}"; do
   printf '# amended\n' >>"$R/$other"
 done
+git -C "$R" add -A
 run_guard
 [ "$RC" -eq 0 ] \
   && ok "an agent edit landing all three renders passes" \
   || bad "an agent edit landing all three renders passes" "rc=$RC out=$OUT"
-git -C "$R" checkout -q -- agents .claude/agents .codex .pi
+git -C "$R" reset -q --hard HEAD
 
 printf '# amended\n' >>"$R/agents/demo.md"
 printf '# amended\n' >>"$R/.codex/agents/demo.toml"
 printf '# amended\n' >>"$R/.pi/agents/demo.md"
 rm -f "$R/.claude/agents/demo.md"
+git -C "$R" add -A
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/demo.md -> .claude/agents/demo.md"* ]] \
   && [[ "$OUT" != *"-> .codex/agents/demo.toml"* ]] && [[ "$OUT" != *"-> .pi/agents/demo.md"* ]] \
   && ok "an agent edit with one harness render deleted reds, naming that render alone" \
   || bad "an agent edit with one harness render deleted reds, naming that render alone" "rc=$RC out=$OUT"
-git -C "$R" checkout -q -- agents .claude/agents .codex .pi
+git -C "$R" reset -q --hard HEAD
 
 # An agent definition owes a render to every harness directory that
 # tracks any, though none of its own is tracked yet. The control puts the
@@ -254,13 +284,51 @@ run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/pinned.md -> .pi/agents/pinned.md"* ]] \
   && ok "a staged opus -> sonnet edit with inherit unstaged beside it reds, naming the Pi render" \
   || bad "a staged opus -> sonnet edit with inherit unstaged beside it reds, naming the Pi render" "rc=$RC out=$OUT"
-if mutant_guard 's/^  if \[ "\$MODE" = default \]; then$/  if false; then/'; then
+if mutant_guard '/^# The whole rule reads one tree\./,/^fi$/s/^if \[ "\$MODE" = default \]; then$/if false; then/'; then
   run_mutant
   [ "$RC" -eq 0 ] \
     && ok "control: with the worktree read in place of the index the staged sonnet passes" \
     || bad "control: with the worktree read in place of the index the staged sonnet passes" "rc=$RC out=$OUT"
 else
   bad "control: the index read could not be removed from a guard copy"
+fi
+git -C "$R" reset -q --hard HEAD
+
+# The changed set is the index's too. An unstaged opus -> inherit edit is not
+# in the commit, so it owes nothing to a commit of another file; a Pi render
+# edited only in the worktree does not land beside a staged sonnet.
+CHANGED_SET_CONTROL='s/--name-only --no-renames "\${render_diff\[@\]}")/--name-only --no-renames HEAD)/'
+write_pinned inherit opus
+printf '# amended\n' >>"$R/.claude/agents/pinned.md"
+printf '# amended\n' >>"$R/.codex/agents/pinned.toml"
+printf 'notes\n' >"$R/notes.txt"
+git -C "$R" add notes.txt
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "an unrelated commit beside an unstaged opus -> inherit edit passes" \
+  || bad "an unrelated commit beside an unstaged opus -> inherit edit passes" "rc=$RC out=$OUT"
+if mutant_guard "$CHANGED_SET_CONTROL"; then
+  run_mutant
+  [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/pinned.md -> .pi/agents/pinned.md"* ]] \
+    && ok "control: with the changed set read from the worktree the unrelated commit reds" \
+    || bad "control: with the changed set read from the worktree the unrelated commit reds" "rc=$RC out=$OUT"
+else
+  bad "control: the changed set could not be pointed at the worktree in a guard copy"
+fi
+git -C "$R" reset -q --hard HEAD
+land_pinned sonnet opus
+printf '# amended\n' >>"$R/.pi/agents/pinned.md"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/pinned.md -> .pi/agents/pinned.md"* ]] \
+  && ok "a staged opus -> sonnet edit with the Pi render edited only in the worktree reds, naming it" \
+  || bad "a staged opus -> sonnet edit with the Pi render edited only in the worktree reds, naming it" "rc=$RC out=$OUT"
+if mutant_guard "$CHANGED_SET_CONTROL"; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the changed set read from the worktree the unstaged Pi render passes" \
+    || bad "control: with the changed set read from the worktree the unstaged Pi render passes" "rc=$RC out=$OUT"
+else
+  bad "control: the changed set could not be pointed at the worktree in a guard copy"
 fi
 git -C "$R" reset -q --hard HEAD
 
@@ -316,6 +384,7 @@ echo "=== a hook lands the renders it already has ==="
 # are owed, the third harness directory is not, and a hook test that renders
 # nowhere owes nothing.
 printf 'echo more\n' >>"$R/hooks/demo.sh"
+git -C "$R" add -A
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"hooks/demo.sh -> .claude/hooks/demo.sh"* ]] \
   && [[ "$OUT" == *"hooks/demo.sh -> .codex/hooks/demo.sh"* ]] \
@@ -332,32 +401,34 @@ else
 fi
 printf 'echo more\n' >>"$R/.claude/hooks/demo.sh"
 printf 'echo more\n' >>"$R/.codex/hooks/demo.sh"
+git -C "$R" add -A
 run_guard
 [ "$RC" -eq 0 ] \
   && ok "a hook edit landing both tracked renders passes" \
   || bad "a hook edit landing both tracked renders passes" "rc=$RC out=$OUT"
-git -C "$R" checkout -q -- hooks .claude/hooks .codex/hooks
+git -C "$R" reset -q --hard HEAD
 
 # Staging a render's deletion takes it out of the index, and the index alone
 # would then read the hook as unrendered and owe nothing. Both renders go, so
 # no surviving copy can red this for another reason: the union with HEAD is
 # what keeps the rule running, and the outlives clause is what refuses.
 printf 'echo more\n' >>"$R/hooks/demo.sh"
+git -C "$R" add hooks/demo.sh
 git -C "$R" rm -q .claude/hooks/demo.sh .codex/hooks/demo.sh
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"hooks/demo.sh -> .claude/hooks/demo.sh"* ]] \
   && [[ "$OUT" == *"hooks/demo.sh -> .codex/hooks/demo.sh"* ]] \
   && ok "a hook edit staging its renders' deletion reds, naming both" \
   || bad "a hook edit staging its renders' deletion reds, naming both" "rc=$RC out=$OUT"
-git -C "$R" reset -q HEAD -- .claude/hooks .codex/hooks
-git -C "$R" checkout -q -- hooks .claude/hooks .codex/hooks
+git -C "$R" reset -q --hard HEAD
 
 printf 'echo more\n' >>"$R/hooks/tests/demo.test.sh"
+git -C "$R" add -A
 run_guard
 [ "$RC" -eq 0 ] \
   && ok "a hook test with no render anywhere passes" \
   || bad "a hook test with no render anywhere passes" "rc=$RC out=$OUT"
-git -C "$R" checkout -q -- hooks
+git -C "$R" reset -q --hard HEAD
 
 # A harness directory that tracks nothing is owed nothing.
 git -C "$R" rm -q .pi/agents/demo.md
@@ -365,6 +436,7 @@ git -C "$R" commit -q -m "chore: no pi renders"
 printf '# amended\n' >>"$R/agents/demo.md"
 printf '# amended\n' >>"$R/.claude/agents/demo.md"
 printf '# amended\n' >>"$R/.codex/agents/demo.toml"
+git -C "$R" add -A
 run_guard
 [ "$RC" -eq 0 ] \
   && ok "an agent edit with no pi render tracked anywhere passes without one" \

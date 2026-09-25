@@ -774,12 +774,26 @@ fi
 agent_roots=(.claude/agents:md .codex/agents:toml .pi/agents:md)
 hook_roots=(.claude/hooks .codex/hooks .pi/kendex/hooks)
 render_roots=(.agents/skills "${agent_roots[@]%:*}" "${hook_roots[@]}")
+# The whole rule reads one tree. The commit chain reads the index, which is
+# what the commit records whatever the worktree holds beside it; --range and
+# --full read the worktree. render_diff is that tree's diff against the base,
+# render_has and render_read a path's existence and bytes in it.
+if [ "$MODE" = default ]; then
+  render_diff=(--cached)
+  [ "$have_head" = 0 ] || render_diff+=(HEAD)
+  render_has() { git cat-file -e ":$1" 2>/dev/null; }
+  render_read() { git show ":$1"; }
+else
+  render_diff=("${diff_against[@]}")
+  render_has() { [ -e "$1" ]; }
+  render_read() { cat -- "$1"; }
+fi
 # range reads its one changed set, untracked files included, so a new source
 # and its new render are judged alike however each sits in the index.
 if [ "$MODE" = range ]; then
   render_changed=$touched
 else
-  render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${diff_against[@]}") ||
+  render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${render_diff[@]}") ||
     { render_changed=""; say render-changed-set unreadable; }
 fi
 # Tracked is the index UNION what HEAD carries: the index alone drops a render
@@ -861,22 +875,13 @@ frontmatter_end() { # — the line number of the closing --- of the text on stdi
 render_unchanged_by() { # SOURCE RENDER — every changed SOURCE line is a frontmatter row render_blind lists for RENDER's root, and each key it removes it adds back
   # A key removed or added outright moves it to or from its absent default,
   # which the table does not judge: a Pi agent with no model renders sonnet.
-  # The commit chain judges what the commit records, the index, whatever
-  # the worktree holds beside it; --range and --full judge the worktree.
-  [ "$have_head" = 1 ] || return 1
-  local old_source new_source old_end new_end source_diff staged=()
-  if [ "$MODE" = default ]; then
-    git cat-file -e ":$1" 2>/dev/null && git cat-file -e ":$2" 2>/dev/null || return 1
-    new_source=$(git show ":$1") || return 1
-    staged=(--cached)
-  else
-    [ -e "$1" ] && [ -e "$2" ] || return 1
-    new_source=$(cat -- "$1") || return 1
-  fi
+  [ "$have_head" = 1 ] && render_has "$1" && render_has "$2" || return 1
+  local old_source new_source old_end new_end source_diff
+  new_source=$(render_read "$1") || return 1
   old_source=$(git show "${diff_against[0]}:$1" 2>/dev/null) || return 1
   old_end=$(frontmatter_end <<<"$old_source") || return 1
   new_end=$(frontmatter_end <<<"$new_source") || return 1
-  source_diff=$(git -c core.quotePath=false diff --no-color --no-ext-diff --unified=0 ${staged[@]+"${staged[@]}"} "${diff_against[@]}" -- "$1") || return 1
+  source_diff=$(git -c core.quotePath=false diff --no-color --no-ext-diff --unified=0 "${render_diff[@]}" -- "$1") || return 1
   awk -v root="${2%/*}" -v old_end="$old_end" -v new_end="$new_end" -v rows="$render_blind" '
     function blind(text, line, end,   value) {
       key = ""
@@ -896,7 +901,7 @@ render_unchanged_by() { # SOURCE RENDER — every changed SOURCE line is a front
   ' <<<"$source_diff"
 }
 require_render() { # SOURCE RENDER — RENDER changes with SOURCE and outlives it
-  { grep -Fxq -- "$2" <<<"$render_changed" && { [ ! -e "$1" ] || [ -e "$2" ]; }; } ||
+  { grep -Fxq -- "$2" <<<"$render_changed" && { ! render_has "$1" || render_has "$2"; }; } ||
     render_unchanged_by "$1" "$2" ||
     render_hits="$render_hits$1 -> $2
 "
