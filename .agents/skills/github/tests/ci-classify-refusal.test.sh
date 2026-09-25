@@ -13,7 +13,7 @@
 #          `required:<context>` a base-branch ruleset requiring that one
 #          context, `env:N=V` the caller's environment, `settings:retired`
 #          run from a checkout whose kendex.settings.toml [env] sets
-#          ORCH_MERGE_BYPASS; `-` for none
+#          ORCH_ADMIN_MERGE_CLASSES; `-` for none
 #   argv   the arguments as written; `-` for none
 #   rc     the exit status
 #   out    every stdout line by kind, in order, joined by `;`: `cause=<w>`,
@@ -41,7 +41,7 @@ REPO="$TMPDIR/repo"
 RETIRED_REPO="$TMPDIR/retired-repo"
 git init -q "$RETIRED_REPO"
 git -C "$RETIRED_REPO" config maintenance.auto false
-printf '[env]\nORCH_MERGE_BYPASS = "fast-path"\n' >"$RETIRED_REPO/kendex.settings.toml"
+printf '[env]\nORCH_ADMIN_MERGE_CLASSES = "render"\n' >"$RETIRED_REPO/kendex.settings.toml"
 
 # --- the checks fixtures -------------------------------------------------------
 R=https://github.com/owner/repo/actions/runs
@@ -195,11 +195,12 @@ two PR numbers exit 2|checks:ci-required|123 456|2|-|0
 "
 
 # pr-merge --check refuses a retired key with no JSON, and the classifier
-# surfaces only pr-merge's last stderr line: that line must name the key.
+# surfaces only pr-merge's last stderr line: that line must name the key. The
+# planted key is one pr-merge's fixed refusal text never names.
 echo "=== a pr-merge refusal before any JSON ==="
 build checks:ci-required settings:retired
 assert_eq "$(run 123)" "rc=1 out=- checks=0" "a retired key in kendex.settings.toml [env] refuses before any checks call"
-assert_contains "$(<"$TMPDIR/stderr")" "ORCH_MERGE_BYPASS" "the surfaced line names the retired key"
+assert_contains "$(<"$TMPDIR/stderr")" "ORCH_ADMIN_MERGE_CLASSES" "the surfaced line names the retired key"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
