@@ -279,14 +279,15 @@ jobs:
         working-directory: candidate
         run: skills/commit-guards/scripts/todo-ban
 
-  # SHARDED: thirteen shards bound wall time at the slowest shard and give
+  # SHARDED: fourteen shards bound wall time at the slowest shard and give
   # suite growth per-shard headroom instead of a shared cliff. `orch` and
   # `rest` were one `shell` shard whose halves ran serially and bounded every
   # queue run; `pi-claude-bridge` was the node shard's hottest step; `guards`
   # and `linear` were the halves of a `rest` that had grown past ten minutes
   # (commit-guards 165s and linear 151s of its 582s); the `orch-` shards all
   # descend from an `orch` that had grown to 907s and was cancelled at the job
-  # ceiling. The ruleset's required context is the AGGREGATOR below — shard
+  # ceiling, and `orch-oversee-succeed` from an `orch-oversee` that did the
+  # same. The ruleset's required context is the AGGREGATOR below — shard
   # names are not, so shards can be rebalanced or extended without touching
   # repo settings. Measured over the ten runs before the first split:
   # review-gate 58s, orch 250s, node 101s, pi-claude-bridge 45s; after it the
@@ -307,7 +308,7 @@ jobs:
   # 675s over 64 files and gave the lane, workflow-state and round-artifact
   # suites to `orch-state`, 382s over 30 files, keeping 34 at 293s.
   #
-  # THE macOS LEG runs the eleven shell shards a second time on the runner whose
+  # THE macOS LEG runs the twelve shell shards a second time on the runner whose
   # /bin/bash is 3.2.57, the shell every skill claims to support (skills/
   # AGENTS.md). tools/bash32-lint scans the source for that claim; this leg
   # runs it, which is the only way to reach what a text scan cannot — a
@@ -350,7 +351,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [review-gate, orch-terminal, orch-oversee, orch-state, orch-rest, guards-scans, guards-commit, guards-tools, linear, worktree, rest, node, pi-claude-bridge]
+        shard: [review-gate, orch-terminal, orch-oversee, orch-oversee-succeed, orch-state, orch-rest, guards-scans, guards-commit, guards-tools, linear, worktree, rest, node, pi-claude-bridge]
         # The macOS leg is the SECOND run of these suites, under Bash 3.2 and
         # the BSD userland. A job-level `if:` cannot reach `matrix`, so the
         # leg is dropped from the matrix rather than conditioned inside it,
@@ -551,16 +552,17 @@ jobs:
           fi
           exit "$fail"
 
-      # ---- shards: orch-terminal, orch-oversee, orch-state, orch-rest —
-      # the orch battery in four, split by suite name ------------------------
+      # ---- shards: orch-terminal, orch-oversee, orch-oversee-succeed,
+      # orch-state, orch-rest — the orch battery in five, split by suite name -
       # One `orch` shard ran the whole battery and grew past the job ceiling:
       # 907s over 77 files, cancelled at 15m16s. run-all.sh takes name
-      # filters — a bare one selects, `!name` rejects — so the four steps
-      # below carry a set, a second set, a third set, and the negation of all
-      # three. Every suite therefore runs in exactly one shard, and a suite
-      # added later joins exactly one of the two negation shards rather than
-      # none: `orch-state` when its base name carries `lane`, `workflow-state`,
-      # `dev` or `review`, and `orch-rest` otherwise. `orch-state`'s
+      # filters — a bare one selects, `!name` rejects — so the steps below
+      # carry a set, a second set split in two, a third set, and the negation
+      # of all three. Every suite therefore runs in exactly one shard, and a
+      # suite added later joins exactly one negation shard rather than none:
+      # `orch-oversee` when its base name carries `oversee`, `orch-state` when
+      # it carries `lane`, `workflow-state`, `dev` or `review`, and
+      # `orch-rest` otherwise. `orch-state`'s
       # selectors are exactly the rejectors `orch-rest` adds, so a selector
       # added to one without the other leaves a suite in both shards or in
       # neither; tools/tests/orch-shard-partition.test.sh reads both filters
@@ -578,8 +580,22 @@ jobs:
       # have to name individual suites rather than a name prefix, since
       # open-terminal-lane alone is 130s of its 306s, so that is where a name
       # partition stops.
+      #
+      # `orch-oversee` then ran 14m37s-14m47s on main's own orch pull requests
+      # and was cancelled at 15m16s on PR #2902, inside
+      # oversee_watch_receipts, having spent oversee_succeed 191s,
+      # oversee_watch_mail 165s, oversee_watch_lifecycle 126s, oversee_watch
+      # 112s, oversee_watch_overseer 78s, oversee_succeed_watch 78s,
+      # oversee_watch_lanes 60s and oversee_report 29s. `orch-oversee-succeed`
+      # takes the succession, mailbox and report suites by name
+      # (oversee_succeed, oversee_succeed_watch, oversee_watch_mail,
+      # oversee_report: 463s on that run), and `orch-oversee` keeps every
+      # other oversee suite by rejecting exactly those names, the watch loop,
+      # its lanes, receipts and usage limits, about 550s. Its rejectors are the
+      # other shard's selectors, so a new oversee suite lands in `orch-oversee`
+      # and never in neither.
       - name: tmux for pane delivery tests
-        if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'node'
+        if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-oversee-succeed' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'node'
         run: |
           if [[ "$RUNNER_OS" == macOS ]]; then
             command -v tmux >/dev/null || brew install tmux
@@ -595,7 +611,11 @@ jobs:
 
       - name: orch suites — the oversee watch loop
         if: matrix.shard == 'orch-oversee'
-        run: bash skills/orch/tests/run-all.sh oversee
+        run: bash skills/orch/tests/run-all.sh oversee '!oversee_succeed' '!oversee_watch_mail' '!oversee_report'
+
+      - name: orch suites — the overseer succession, mailbox and report
+        if: matrix.shard == 'orch-oversee-succeed'
+        run: bash skills/orch/tests/run-all.sh oversee_succeed oversee_watch_mail oversee_report
 
       - name: orch suites — the lane, workflow-state and round-artifact suites
         if: matrix.shard == 'orch-state'
@@ -603,7 +623,7 @@ jobs:
 
       # The negation of the three above, so this shard needs no roster of its
       # own and no suite can fall between the four.
-      - name: orch suites — every suite the three shards above do not run
+      - name: orch suites — every suite the shards above do not run
         if: matrix.shard == 'orch-rest'
         run: bash skills/orch/tests/run-all.sh '!open-terminal' '!oversee' '!lane' '!workflow-state' '!dev' '!review'
 
