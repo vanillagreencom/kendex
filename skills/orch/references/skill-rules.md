@@ -53,7 +53,7 @@ The acceptance table lives in the delegating workflow (`dev-start.md` § 3, `dev
 | Line | Action |
 |---|---|
 | `recovered` | The report is now the round's artifact. Run the delegating workflow's acceptance table; a gate refusal such as `cut_not_shrunk` or `unapproved_additions` takes that table's `retry` row. |
-| `redelegate` | No report, or a report the disk contradicts; the printed `reason` names which. The printed `round-id` is already minted into `dev_round_id`. Re-stamp `dev_delegated_at`, keep `pre_delegate_sha`, and on a fix round run `dev-round-write` for that id with the same items. Shut the idle agent down, spawn a fresh instance, delegate under that id, and arm its watchdog. |
+| `redelegate` | No report, or a report the disk contradicts; the printed `reason` names which. The printed `round-id` is already minted into `dev_round_id`. Re-stamp `dev_delegated_at`, keep `pre_delegate_sha`, and on a fix round run `dev-round-write` for that id with the whole authorization of the printed `from` round's record, `[WORKTREE]/tmp/dev-round-[ISSUE_ID]-[FROM].json`: the same items, the same `--adds` list, repeated as the delegation's `Adds:` line, and `--cut-from-round` on that path when the record has `cut: true`. Shut the idle agent down, spawn a fresh instance, delegate under that id, and arm its watchdog. |
 | `exhausted` | The re-delegated round stalled too, with no report or a report the disk contradicts; the printed `reason` names which. Stop and report it. |
 | `round-live` | Not a stall. Arm one new watchdog. |
 
