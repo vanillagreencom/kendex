@@ -580,6 +580,15 @@ issues_past_lookback|691200|ORCH_REPORT_EVERY_MINUTES=0 ORCH_REPORT_EVERY_ISSUES
 issues_past_lookback_none|691200|ORCH_REPORT_EVERY_MINUTES=0 ORCH_REPORT_EVERY_ISSUES=2||
 issues_inside_lookback|259200|ORCH_REPORT_EVERY_MINUTES=0 ORCH_REPORT_EVERY_ISSUES=2|-86400|
 ROWS
+# A due judged on minutes reaches no gh call, so a credential that would
+# refuse is never asked.
+new_case due_minutes_no_gh
+report -7200
+fleet '' "$(lane KEN-1 running -86400)"
+touch "$CASE/auth-fail"
+run ORCH_REPORT_EVERY_ISSUES=1 GH_TOKEN=ghp_stale0000 -- due --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$OUT|$([[ -s "$CASE/gh.calls" ]] && echo asked || echo unasked)" "0|report-due reason=minutes since=$(at -7200)|unasked" \
+  "due, minutes reached: GitHub is not asked, so a failing credential does not refuse it"
 new_case due_issues_two_items
 report -60
 fleet '' "$(lane KEN-1 running)" "$(lane KEN-2 done)"
@@ -698,6 +707,15 @@ line="$line" awk '$0 == ENVIRON["line"] { print "      :"; next } { print }' "$R
 seed_fleet render_stop_mutant
 REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(grep -c '^- KEN-3 waits on a stopped' <<<"$OUT")" "0|0" "control: without it the stopped lane is missing from Waiting on you"
+
+# Without the github skill beside orch, the shared auth helper cannot load,
+# and the report refuses by its own key rather than end on the helper's.
+mkdir -p "$TMP_ROOT/nohelper/orch"
+cp -R "$TEST_DIR/../scripts" "$TMP_ROOT/nohelper/orch/scripts"
+seed_fleet auth_helper_missing
+REPORT_UNDER_TEST="$TMP_ROOT/nohelper/orch/scripts/oversee-report" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: auth-helper=$TMP_ROOT/nohelper/orch/scripts/lib/gh-auth.sh" \
+  "render, no github skill beside orch: refused as auth-helper"
 
 # Without the ladder, a revoked env token reads GitHub as it stands: the
 # fallback row refuses on the list, and the no-credential row names the list,
