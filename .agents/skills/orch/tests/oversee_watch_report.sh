@@ -18,13 +18,15 @@ write_state() {
       account: null, surface: "tmux", model: null, session_id: null, launched_at: $at, status: "running"}]}' \
     > "$STUB_DIR/state.json"
 }
-# report AGE — a report file beside the state, AGE seconds before NOW.
+# report AGE — a report, named as workflow-state names one, in the directory
+# ORCH_PROGRESS_REPORT_DIR names, AGE seconds before NOW.
 report() {
-  local file="$STUB_DIR/progress-reports/$1.md" when
-  mkdir -p "$STUB_DIR/progress-reports"
-  echo "a report" > "$file"
+  local when file
   when="$("$OVERSEE_TEST_REAL_DATE" -u -d "@$((NOW - $1))" +%Y%m%d%H%M.%S 2>/dev/null \
     || "$OVERSEE_TEST_REAL_DATE" -u -r "$((NOW - $1))" +%Y%m%d%H%M.%S)"
+  file="$STUB_DIR/progress-reports/${when:4:2}-${when:6:2}-${when:8:2}-${when:10:2}.md"
+  mkdir -p "$STUB_DIR/progress-reports"
+  echo "a report" > "$file"
   TZ=UTC touch -t "$when" "$file"
 }
 # watch [ENV=VAL...] — one pass at NOW; EVENTS holds its report-due lines
@@ -32,7 +34,8 @@ report() {
 watch() {
   printf '%s\n' "$NOW" > "$STUB_DIR/now.epoch"
   RC=0
-  EVENTS="$(run_watch ORCH_REPORT=on "$@" -- --max-loops 1 --state "$STUB_DIR/state.json" 2>"$STUB_DIR/err" </dev/null)" || RC=$?
+  EVENTS="$(run_watch ORCH_REPORT=on ORCH_PROGRESS_REPORT_DIR="$STUB_DIR/progress-reports" "$@" \
+    -- --max-loops 1 --state "$STUB_DIR/state.json" 2>"$STUB_DIR/err" </dev/null)" || RC=$?
   EVENTS="$(grep '^EVENT report-due' <<<"$EVENTS" | paste -sd '|' - || true)"
 }
 

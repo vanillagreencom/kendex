@@ -137,14 +137,17 @@ chmod +x "$TMP_ROOT/bin/date" "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/linear" "$TMP_RO
 
 # at OFFSET — the UTC ISO stamp OFFSET seconds from NOW.
 at() { "$REAL_DATE" -u -d "@$((NOW + $1))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || "$REAL_DATE" -u -r "$((NOW + $1))" +%Y-%m-%dT%H:%M:%SZ; }
-# report OFFSET [NAME] — a prior report file whose modification time is
-# OFFSET seconds from NOW.
+# report OFFSET [FILE] — a prior report whose modification time is OFFSET
+# seconds from NOW, named MM-DD-HH-MM.md for that time in UTC as
+# `workflow-state progress-report-path` names one, or FILE, in the directory
+# ORCH_PROGRESS_REPORT_DIR names for every case.
 report() {
-  local file="$CASE/progress-reports/${2:-prior}.md" when
-  mkdir -p "$CASE/progress-reports"
-  echo "an earlier report" > "$file"
+  local when name
   when="$("$REAL_DATE" -u -d "@$((NOW + $1))" +%Y%m%d%H%M.%S 2>/dev/null || "$REAL_DATE" -u -r "$((NOW + $1))" +%Y%m%d%H%M.%S)"
-  TZ=UTC touch -t "$when" "$file"
+  name="${2:-${when:4:2}-${when:6:2}-${when:8:2}-${when:10:2}.md}"
+  mkdir -p "$CASE/progress-reports"
+  echo "an earlier report" > "$CASE/progress-reports/$name"
+  TZ=UTC touch -t "$when" "$CASE/progress-reports/$name"
 }
 # issue KEY TITLE DONE_WHEN_LINE — the tracker's copy of a Linear issue.
 issue() {
@@ -200,6 +203,7 @@ run() {
     PATH="$TMP_ROOT/bin:$PATH" CASE="$CASE" OVERSEE_REPORT_TRACKER="$TMP_ROOT/bin/linear" \
     OVERSEE_REPORT_GITHUB="$TMP_ROOT/bin/github" OVERSEE_REPORT_LANE_MAIL="$TMP_ROOT/bin/lane-mail" \
     OVERSEE_REPORT_LANE_HOST="$TMP_ROOT/bin/lane-host" ORCH_STATE_DIR="$CASE/ws" \
+    ORCH_PROGRESS_REPORT_DIR="$CASE/progress-reports" \
     ${envs[@]+"${envs[@]}"} "${REPORT_UNDER_TEST:-$REPORT_BIN}" "$@" 2>"$CASE/err")" || RC=$?
 }
 first_err() { awk 'NR == 1' "$CASE/err"; }
@@ -539,6 +543,18 @@ new_case due_two_lanes
 fleet '' "$(lane KEN-1 running -40000)" "$(lane KEN-2 running -86400)"
 run -- due --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$OUT" "0|report-due reason=minutes since=$(at -86400)" "due, with no report yet the fleet start is the earliest launch, not the first record's"
+# Only a file named as a report is one: a newer note beside the reports moves
+# nothing, and a succession report counts like any other.
+new_case due_report_names
+fleet '' "$(lane KEN-1 running -86400)"
+report -7300
+report -60 notes.md
+run -- due --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$OUT" "0|report-due reason=minutes since=$(at -7300)" "due, a file not named as a report is not the last report"
+when="$("$REAL_DATE" -u -d "@$((NOW - 60))" +%m-%d-%H-%M)"
+report -60 "$when-succession.md"
+run -- due --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$OUT" "0|" "due, a succession report is the last report"
 new_case due_no_lanes
 fleet ''
 run -- due --state "$CASE/state.json" --repo owner/repo

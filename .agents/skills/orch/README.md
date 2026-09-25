@@ -18,7 +18,7 @@ Requires jq, Bash 3.2, flock, setsid and timeout or gtimeout; the included SSH h
 - `oversee-succeed` replaces an overseer in the same tmux position when its context, headroom, projected wall time, or qualifying-account trigger fires. It also replaces an overseer that ended or walled.
 - `lanes` reads the usage of each Claude Code and Codex account it discovers or is configured with, and picks the account with the fewest lanes in flight among those under the usage threshold; the watch reports an account that hit its usage limit and the time the limit resets.
 - `lane-host` runs lanes on another machine through a provider script, with the same mailbox and watch; `lane-host-ssh` is the included provider for SSH hosts. What runs where, which credential each part spends and how mail and handoff move on a hosted fleet: [docs/hosted-oversight.html](docs/hosted-oversight.html).
-- `oversee-report` gives the overseer's status report, in its chat and as a file, on a timer and at each succession.
+- `oversee-report` writes the overseer's status report to its chat and a file, on a timer and at handover.
 - `open-terminal --relaunch` resumes a stopped lane's own agent session, on the same account or another one, and workflow state and handoff files let a lane or overseer continue where it stopped.
 - Each review finding is fixed, filed as an issue or declined by the rules in [references/finding-disposition.md](references/finding-disposition.md), settings cap the review and CI-fix rounds, and `branch-size-check` compares the branch's added lines with the issue's expected size.
 - Lanes run on Claude Code, Codex, OpenCode and Pi, and on another machine on Claude Code, Codex and Pi; the orchestrator runs on Claude Code, Codex, OpenCode and Pi, and account selection and overseer succession cover Claude Code and Codex.
@@ -65,7 +65,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_OVERSEER_SUCCESSOR_ACCOUNTS` | Remaining qualifying successor accounts that fire succession. `0` disables this trigger | `1` |
 | `ORCH_OVERSEER_MARK_REPEAT` | Watch passes a standing `overseer-mark` waits before it is reported again | `5` |
 | Recording settings | `ORCH_FLEET_LOG_ROW_BYTES`, `ORCH_TAKEOVER_ROWS`, `ORCH_RECORD_RETENTION_DAYS`, `ORCH_PROGRESS_REPORT_DIR`: [recording policy](schemas/workflow-state.md#recording-policy) | |
-| Report settings | `ORCH_REPORT`, `ORCH_REPORT_EVERY_MINUTES`, `ORCH_REPORT_EVERY_ISSUES`, `ORCH_REPORT_UPCOMING`, `ORCH_REPORT_COLUMNS`: `oversee-report --help` | `on`, `120`, `0`, `5`, three columns |
+| Report settings | `ORCH_REPORT`, `ORCH_REPORT_EVERY_MINUTES`, `ORCH_REPORT_EVERY_ISSUES`, `ORCH_REPORT_UPCOMING`, `ORCH_REPORT_COLUMNS`: `oversee-report --help` | |
 | Watch settings | `ORCH_WATCH_TAIL_LINES`, `ORCH_WATCH_PREPARE_SECS`: `oversee-watch --help` § Environment | |
 | `ORCH_LANE_HOST` | Provider `lane-host` runs: an executable script path or `local`. `open-terminal` launches through it; `--host` overrides. [Host protocol](schemas/lane-host.md) | `local` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal | empty |

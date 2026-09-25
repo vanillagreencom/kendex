@@ -205,8 +205,8 @@ The long pass's events, checked and reported in this order:
   EVENT report-due reason=<minutes|issues> since=<utc> [landed=<N>]
                              the overseer's status report is due, as
                              `oversee-report due --state` judges it from the
-                             newest file in progress-reports/ beside the fleet
-                             state and the ORCH_REPORT settings. Reported on every long pass
+                             newest owner progress report and the ORCH_REPORT
+                             settings. Reported on every long pass
                              while it stays due, so it stops once a report is
                              written; read only with --state
   EVENT heartbeat            --max-loops long passes with no event. A line

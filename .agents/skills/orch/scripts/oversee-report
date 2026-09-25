@@ -48,6 +48,7 @@ message() { # KEY VALUE [CAUSE]
       report-exists) echo "A report under this name already stands, and it is never overwritten. Write again in the next minute." ;;
       write) echo "The report file could not be written." ;;
       report-written) echo "The report printed above is this file's content." ;;
+      report-path) echo "workflow-state progress-report-path gave no path, so where reports live is unknown:" ;;
     esac
     [ -z "${3:-}" ] || printf '%s\n' "$3"
   } >&2
@@ -69,10 +70,12 @@ The overseer's status report, in the four rows
 references/communication-modes.md § Status report gives: Landed, Running,
 Next, Waiting on you.
 
---state is the oversee workflow-state file the watch reads. Reports live in
-progress-reports/ beside it. The newest file there is the last report: what
-landed since its modification time is news, and its age is what the cadence
-measures. With no report yet, the fleet start, the earliest lanes[] launch,
+--state is the oversee workflow-state file the watch reads. The report is
+the owner progress report record schemas/workflow-state.md § Recording policy
+states: its directory and its names are `workflow-state progress-report-path`'s,
+and this script reads and writes them through that verb alone. The newest
+report there is the last report: what landed since its modification time is
+news, and its age is what the cadence measures. With no report yet, the fleet start, the earliest lanes[] launch,
 stands in for it. A report covers merges up to the moment it read its lists,
 and `write` stamps its file with that moment, so each merge lands in exactly
 one report, with one limit: Landed reaches back 7 days at most, whatever the
@@ -84,13 +87,14 @@ due      prints `report-due reason=minutes since=<UTC>` once the last report
          is ORCH_REPORT_EVERY_MINUTES old, else `report-due reason=issues
          since=<UTC> landed=<N>` once ORCH_REPORT_EVERY_ISSUES distinct fleet
          items landed since it, else nothing. Nothing under ORCH_REPORT=off, and
-         nothing where progress-reports/ holds no report and no lanes[]
-         record has a launched_at.
+         nothing where no report exists and no lanes[] record has a
+         launched_at.
 render   prints the four rows.
 write    prints the summary file's text, a blank line and the four rows, and
-         writes the same bytes to progress-reports/MM-DD-HH-MM.md, in UTC,
-         or MM-DD-HH-MM-succession.md with --succession. The new file is the
-         next report's starting point. A name that already stands is refused.
+         writes the same bytes to the path `workflow-state
+         progress-report-path` prints, with --succession passed on to it.
+         The new file is the next report's starting point. A path that
+         already stands is refused.
 
 Rows:
   Landed          each fleet item, a lanes[] record of any status, whose own
@@ -131,6 +135,7 @@ Settings, read through the kendex settings ladder:
   OVERSEE_REPORT_LANE_MAIL, OVERSEE_REPORT_LANE_HOST,
   OVERSEE_REPORT_WORKFLOW_STATE
                              paths to lane-mail, lane-host and workflow-state
+The report's directory is ORCH_PROGRESS_REPORT_DIR, workflow-state's setting.
 
 Exit status:
   0  the line, the rows or the report was printed, or nothing was due
@@ -226,7 +231,6 @@ if ! STATE_JSON="$(jq -c 'select(type == "object" and ((.lanes // []) | type) ==
   refuse state "$STATE"
 fi
 [[ -n "$STATE_JSON" ]] || refuse state "$STATE"
-REPORT_DIR="$(dirname -- "$STATE")/progress-reports"
 # NOW is read before any list, and a report covers merges before it alone: a
 # written report is stamped NOW, so a merge the lists could not yet see falls
 # in the next one, and every merge inside the lookback below in exactly one.
@@ -236,14 +240,33 @@ NOW="$(date -u +%s)" || refuse clock now
 # modification time, else the fleet start, else empty where the state records
 # no lane. LANDED_SINCE is where Landed starts: MARKER, or LANDED_LOOKBACK
 # before NOW where MARKER is older, on every path.
+# report_path [--succession] — sets REPORT_PATH to the path workflow-state
+# gives the next report, and REPORT_GLOB to its name's shape, each digit a
+# [0-9]: a report is a file of that shape, and nothing here spells the name.
+REPORT_PATH=""
+REPORT_GLOB=""
+report_path() {
+  local base
+  if ! REPORT_PATH="$("$WORKFLOW_STATE" progress-report-path "$@" 2>"$WORK_DIR/report-path.err")" \
+    || [[ -z "$REPORT_PATH" ]]; then
+    refuse report-path "${1:-plain}" "$(cat "$WORK_DIR/report-path.err")"
+  fi
+  base="${REPORT_PATH##*/}"
+  REPORT_GLOB="${base//[0-9]/[0-9]}"
+}
+report_path --succession
+SUCCESSION_GLOB="$REPORT_GLOB"
+report_path
+REPORT_DIR="${REPORT_PATH%/*}"
 MARKER=""
-if [[ -d "$REPORT_DIR" ]]; then
-  for file in "$REPORT_DIR"/*.md; do
-    [[ -f "$file" ]] || continue
-    stamp="$(stat -c %Y -- "$file" 2>/dev/null || stat -f %m -- "$file" 2>/dev/null)" || refuse clock "$file"
-    [[ -n "$MARKER" && "$MARKER" -ge "$stamp" ]] || MARKER="$stamp"
-  done
-fi
+for file in "$REPORT_DIR"/*; do
+  [[ -f "$file" ]] || continue
+  # Unquoted on purpose: each glob is a pattern.
+  # shellcheck disable=SC2053
+  [[ "${file##*/}" == $REPORT_GLOB || "${file##*/}" == $SUCCESSION_GLOB ]] || continue
+  stamp="$(stat -c %Y -- "$file" 2>/dev/null || stat -f %m -- "$file" 2>/dev/null)" || refuse clock "$file"
+  [[ -n "$MARKER" && "$MARKER" -ge "$stamp" ]] || MARKER="$stamp"
+done
 if [[ -z "$MARKER" ]]; then
   start="$(jq -r '[.lanes[] | .launched_at // empty] | sort | first // ""' <<<"$STATE_JSON")" || refuse state "$STATE"
   if [[ -n "$start" ]]; then
@@ -252,7 +275,7 @@ if [[ -z "$MARKER" ]]; then
 fi
 # A window as old as a fleet that ran for weeks, or one resumed after a long
 # pause, passes the merged search's ceiling, and a refusal there would stand
-# on every call until someone edited progress-reports/. Landed stops at the
+# on every call until someone edited the report directory. Landed stops at the
 # lookback instead, and its row says it did.
 LANDED_SINCE="$MARKER"
 LANDED_CUT=0
@@ -563,12 +586,10 @@ fi
 BODY="$(render)" || exit 2
 SUMMARY_TEXT="$(awk '{ line[NR] = $0 } NF { last = NR } END { for (i = 1; i <= last; i++) print line[i] }' < "$SUMMARY")" \
   || refuse summary "$SUMMARY"
-NAME="$(from_epoch "$NOW" %m-%d-%H-%M)" || refuse clock "$NOW"
-[[ "$SUCCESSION" -eq 0 ]] || NAME+="-succession"
-TARGET="$REPORT_DIR/$NAME.md"
+if [[ "$SUCCESSION" -eq 1 ]]; then report_path --succession; else report_path; fi
+TARGET="$REPORT_PATH"
 [[ ! -e "$TARGET" ]] || refuse report-exists "$TARGET"
-mkdir -p -- "$REPORT_DIR" || refuse write "$REPORT_DIR"
-TMP_FILE="$(mktemp "$REPORT_DIR/.report.XXXXXX")" || refuse write "$REPORT_DIR"
+TMP_FILE="$(mktemp "${TARGET%/*}/.report.XXXXXX")" || refuse write "${TARGET%/*}"
 printf '%s\n\n%s\n' "$SUMMARY_TEXT" "$BODY" > "$TMP_FILE" || refuse write "$TMP_FILE"
 # Stamped NOW, not the end of the render: the next report starts where this
 # one's lists were read. touch -t reads its stamp in TZ.
