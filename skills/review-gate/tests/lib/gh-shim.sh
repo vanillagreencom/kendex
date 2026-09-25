@@ -4,7 +4,8 @@
 # any --jq filter with real jq, so review-predicate.sh runs unmodified.
 # Dispatch is by request shape (the endpoint path, or GraphQL); the switches
 # GH_SHIM_FAIL, GH_SHIM_FAIL_TIMES and GH_SHIM_EMPTY drive the fail-loud
-# paths, and <name>.page2.json models a second page.
+# paths, and <name>.page2.json models a second page. A ruleset read is
+# served from ruleset-<id>.json, so each ruleset can carry its own answer.
 # Every request URL is appended to .urls.log so a case can pin read shapes.
 set -euo pipefail
 url=""; filter=""; paginate=0; graphql_page2=0; graphql_after=""
@@ -56,6 +57,15 @@ case "$url" in
   *"/issues/"*"/comments"*) name=comments ;;
   graphql)       name=graphql ;;
   *"/pulls/"*)   name=pull ;;
+  *"/rules/branches/"*) name=rules ;;
+  *"/rulesets/"*) name="ruleset-${url##*/}" ;;
+  "orgs/"*"/installations") name=installations ;;
+  *"/deployment-branch-policies") name=branch-policies ;;
+  *"/environments/"*"/secrets") name=environment-secrets ;;
+  *"/environments") name=environments ;;
+  *"/actions/organization-secrets") name=organization-secrets ;;
+  *"/actions/secrets") name=repository-secrets ;;
+  "repos/{owner}/{repo}") name=repository ;;
   *) printf 'gh-shim-error=request value=%q\n' "$url" >&2; exit 90 ;;
 esac
 echo "$url" >>"$GH_SHIM_FIXTURES/.urls.log"

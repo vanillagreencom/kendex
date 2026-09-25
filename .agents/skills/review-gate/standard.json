@@ -1,0 +1,6 @@
+{
+  "required_contexts": ["CI", "Review gate"],
+  "app": "vanillagreen-fleet-lanes",
+  "environment": "kendex",
+  "environment_secrets": ["FLEET_GH_APP_ID", "FLEET_GH_APP_PRIVATE_KEY"]
+}
