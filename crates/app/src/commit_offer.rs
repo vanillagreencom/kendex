@@ -977,25 +977,30 @@ pub fn project_changes_restore_plan(
 #[tauri::command(async)]
 #[specta::specta]
 pub fn project_changes_restore(root: String, paths: Vec<String>) -> Result<RestoreResult, String> {
-    let env = env()?;
-    let scope = Scope::Project {
-        root: PathBuf::from(root),
-    };
-    let generated = generated(&env, &scope)?;
+    restore(&env()?, PathBuf::from(root), paths)
+}
+
+/// The restore itself, against the environment it is given.
+pub fn restore(env: &Env, root: PathBuf, paths: Vec<String>) -> Result<RestoreResult, String> {
+    let scope = Scope::Project { root };
+    let generated = generated(env, &scope)?;
     let chosen: BTreeSet<String> = paths.into_iter().collect();
-    Ok(
-        match commit_offer::restore(&env, &scope, &generated, &chosen) {
-            Ok(plan) => RestoreResult::Effect {
-                effect: plan.into(),
-            },
-            // What the run had already written travels with the refusal: a
-            // failure among the removals leaves every restored path on disk.
-            Err(failure) => RestoreResult::Refused {
-                refused: Refused::from(&failure.failed),
-                done: failure.done.into(),
-            },
+    let result = match commit_offer::restore(env, &scope, &generated, &chosen) {
+        Ok(plan) => RestoreResult::Effect {
+            effect: plan.into(),
         },
-    )
+        // What the run had already written travels with the refusal: a
+        // failure among the removals leaves every restored path on disk.
+        Err(failure) => RestoreResult::Refused {
+            refused: Refused::from(&failure.failed),
+            done: failure.done.into(),
+        },
+    };
+    // A restore's removals land in the trash with no plan behind them, so
+    // the pass closes this write here, after the removals, and its lines
+    // are dropped: the answer is paths alone.
+    crate::trash::tidy(env);
+    Ok(result)
 }
 
 #[tauri::command(async)]

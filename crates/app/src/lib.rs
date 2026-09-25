@@ -24,6 +24,7 @@ pub mod repo_effects;
 mod scopes;
 pub mod sources;
 mod templates;
+mod trash;
 pub mod unsubscribe;
 pub mod update_check;
 mod whole_file;

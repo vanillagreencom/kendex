@@ -311,9 +311,9 @@ pub struct SubscribeOutcome {
     /// opens next, never an identity.
     pub lead: Option<String>,
     pub notes: Vec<String>,
-    /// What a package leaving with this plan had undone, if one did. Its
-    /// own field rather than more notes, so the account a removal owes has
-    /// one name across every command that can make one.
+    /// The account of the write (`crates/app/src/repo_effects.rs::execute`).
+    /// Its own field rather than more notes, so the account a write owes
+    /// has one name across every command that can make one.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub undone: Vec<String>,
 }

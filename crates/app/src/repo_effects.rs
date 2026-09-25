@@ -226,6 +226,10 @@ impl std::fmt::Display for ExecuteError {
 /// ran carries those lines on the failure too: the repository is disarmed
 /// by then, and a bare refusal would say nothing happened.
 ///
+/// The trash pass closes the write here too: once the plan is on disk,
+/// `crate::trash::tidy` runs and its lines join the account
+/// (`docs/architecture/trash.md` § Boundaries).
+///
 /// Once `execute` has returned, everything a command reads back is
 /// enrichment — `after_writing` is how that read's failure carries the
 /// account rather than replacing it.
@@ -256,7 +260,10 @@ pub fn execute(env: &Env, report: &EngineReport) -> Result<Vec<String>, ExecuteE
         return Err(ExecuteError::Undo(said.join("\n")));
     }
     match kendex_core::apply::execute(env, &report.plan) {
-        Ok(_) => Ok(said),
+        Ok(_) => {
+            said.extend(crate::trash::tidy(env));
+            Ok(said)
+        }
         Err(error) => Err(ExecuteError::Apply {
             said,
             error: Box::new(error),
@@ -290,7 +297,7 @@ pub fn after_writing<T>(undone: &[String], read: Result<T, String>) -> Result<T,
 }
 
 /// The same write for a caller whose plan must take nothing away, and
-/// which has nowhere to say what a removal ran.
+/// which has nowhere to say what a removal ran or what the trash pass did.
 ///
 /// The emptiness is checked, not assumed. A caller reaches this because it
 /// proved something about its own plan a moment earlier, and a proof in a

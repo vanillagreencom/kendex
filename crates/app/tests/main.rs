@@ -25,4 +25,5 @@ mod repo_effects;
 mod repo_effects_escaping;
 mod sources_refresh_absent_manifest;
 mod tauri_config;
+mod trash_pass;
 mod updates_scope_error;
