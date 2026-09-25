@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
 LANE_HOST="$SCRIPT_DIR/lane-host"
 LANE_MAIL="$SCRIPT_DIR/lane-mail"
+DEV_VALIDATE_RUN="$SCRIPT_DIR/dev-validate-run"
+WORKTREE_CLI="$SCRIPT_DIR/../../worktree/scripts/worktree"
 LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 
@@ -46,6 +48,7 @@ message() { # REASON FIELD=VALUE...
     exit-timeout) printf '%s\n' 'The harness did not exit before the close timeout. Close-out stopped.' ;;
     state-write-failed) printf '%s\n' 'The lane closed, but its fleet record could not be updated.' ;;
     prepare-stop-failed) printf '%s\n' 'The background launch job the record names could not be stopped. Close-out changed nothing else.' ;;
+    validate-stop-failed) printf '%s\n' "A validation run in the lane's worktree could not be ended. The window and record are unchanged; dev-validate-run's own words are on the lines above this one." ;;
     stopped) printf '%s\n' 'The lane window closed and its sandbox was kept.' ;;
     closed) printf '%s\n' 'The lane, sandbox and fleet record closed.' ;;
   esac
@@ -63,7 +66,9 @@ terminal. A record already marked stopped can close its kept sandbox without
 a pane. A preparing record, a hosted launch whose background job has written
 no outcome, closes without a harness exit: the job the record names is
 stopped and its window closed. --keep-sandbox exits the harness, closes its window and records
-stopped without calling the lane host.
+stopped without calling the lane host. A local lane's close first ends every
+validation run in its worktree that has recorded no verdict, through
+dev-validate-run --stop; a hosted lane's runs end with its sandbox.
 
 A lane holding an ask nobody has answered refuses as ask-unanswered, under
 --keep-sandbox and on a stopped record alike: the answer would reach a session
@@ -264,18 +269,36 @@ close_host() {
   return "$rc"
 }
 
+# A validation the lane started goes on after its session ends, and nothing
+# would ever read its verdict. Its worktree is where `worktree path` puts the
+# item's, and a lane with no worktree there ran in the checkout itself, whose
+# runs this cannot tell from another lane's.
+stop_validations() {
+  local worktree rc=0
+  [[ -x "$WORKTREE_CLI" ]] || { message record-invalid "item=$ITEM" "field=worktree" >&2; exit 1; }
+  [[ -x "$DEV_VALIDATE_RUN" ]] || { message record-invalid "item=$ITEM" "field=dev-validate-run" >&2; exit 1; }
+  worktree="$("$WORKTREE_CLI" path "$ITEM")" \
+    || { message validate-stop-failed "item=$ITEM" "step=worktree-path" >&2; exit 1; }
+  [[ -d "$worktree" ]] || return 0
+  "$DEV_VALIDATE_RUN" --stop --worktree "$worktree" >/dev/null || rc=$?
+  [[ "$rc" -eq 0 ]] \
+    || { message validate-stop-failed "item=$ITEM" "worktree=$worktree" "status=$rc" >&2; exit 1; }
+}
+
 pane_still_exists() {
   local listed
   listed="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)" || return 2
   awk -v pane="$pane_id" '$0 == pane { found=1 } END { exit !found }' <<<"$listed"
 }
 
-# The end of every close-out: the host closed unless --keep-sandbox, the
-# window closed where pane_id names one tmux still lists, then the record and
-# the line naming the outcome, pane= carried where the close had a pane.
+# The end of every close-out: a local lane's validations ended, the host closed
+# unless --keep-sandbox, the window closed where pane_id names one tmux still
+# lists, then the record and the line naming the outcome, pane= carried where
+# the close had a pane.
 pane_id=""
 finish_close() {
   local next_status=done pane_rc=0 fields=("item=$ITEM")
+  [[ -n "$host" ]] || stop_validations
   if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || exit $?; fi
   if [[ -n "$pane_id" ]]; then
     pane_still_exists || pane_rc=$?

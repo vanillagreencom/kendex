@@ -47,10 +47,12 @@ make_proj() { # NAME CMD TIMEOUT_SECS
 }
 
 # A run directory's start file, the bounds a waiter reads, polled every second,
-# and the change class a child hands its command.
+# and the change class a child hands its command. Its runner is a unit's: a
+# child run directly here is what a unit's main process is, one that leaves
+# containment to the unit and kills nothing itself.
 write_start() { # DIR WORKTREE TIMEOUT_BIN START TIMEOUT_SECS CAP_SECS
   mkdir -p "$1"
-  printf 'worktree=%s\ntimeout-bin=%s\nstart=%s\ntimeout-secs=%s\npoll-secs=1\ncap-secs=%s\nclass=standard\ndocs-only=false\n' \
+  printf 'worktree=%s\ntimeout-bin=%s\nstart=%s\ntimeout-secs=%s\npoll-secs=1\ncap-secs=%s\nclass=standard\ndocs-only=false\nrunner=systemd\nunit=validate-fixture\n' \
     "$2" "$3" "$4" "$5" "$6" > "$1/start"
 }
 
@@ -103,6 +105,12 @@ log_of() { # OUTPUT
   sed -n 's/^state=started run-dir=[^ ]* log=\([^ ]*\) .*$/\1/p' <<<"$1"
 }
 
+# What the command itself wrote: the log after its first line, which names the
+# runner and is pinned by the containment rows.
+output_of() { # OUTPUT
+  sed 1d "$(log_of "$1")"
+}
+
 # A copy of the script with one literal substitution applied, for the controls.
 # The count assertions are the edit's proof: a pattern that stopped matching
 # would otherwise leave the control running the shipped code and passing. The
@@ -132,14 +140,15 @@ echo "=== dev-validate-run bounded validation runner ==="
 # A PATH holding only what the script and orch-env call, minus the binary under
 # test. Both are declared dependencies in the orch README and SKILL.md: a host
 # without one is told which, never left with an unbounded run or a launch that
-# dies with its caller.
+# dies with its caller. The farm carries no systemd-run, so a run under it is
+# the setsid fallback of a host where no user manager answers.
 farm_path() { # NAME OMIT...
   local dir="$TMP_ROOT/$1/bin" name src omit
   shift
   mkdir -p "$dir"
   for name in bash sh env git date dirname basename mkdir mv rm cat sed grep cut tr awk \
     sleep kill ls head tail sort wc uname chmod ln find readlink realpath mktemp \
-    timeout gtimeout setsid; do
+    timeout gtimeout setsid ps; do
     for omit in "$@"; do
       [[ "$name" != "$omit" ]] || continue 2
     done
@@ -210,8 +219,8 @@ assert_eq "$(sed -n 's/^guard-exit=[0-9]* at=\(.*\)$/\1/p' "$timeout_dir/exit" |
 proj_log="$(make_proj proj-log "echo first; echo second >&2; exit 0" 20)"
 run_script "$RUN" --worktree "$proj_log" --poll 1
 log_dir="$(run_dir_of "$OUT")"
-assert_eq "$(cat "$(log_of "$OUT")")" "$(printf 'first\nsecond')" \
-  "the log the started line names holds the command's own output, both streams"
+assert_eq "$(output_of "$OUT")" "$(printf 'first\nsecond')" \
+  "the log the started line names holds, under its runner line, the command's own output, both streams"
 
 # --- Every field of the started and done lines, which the agent reads ---------
 # The fixture has no commit, so no worktree commit can be written to classify
@@ -275,7 +284,7 @@ proj_bash="$(make_proj proj-bash 'source /dev/null && [[ -n ${BASH_VERSION:-} ]]
 run_script "$RUN" --worktree "$proj_bash" --poll 1
 assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
   "a bash-only validation command runs and passes" "$ERR"
-assert_eq "$(cat "$(log_of "$OUT")")" "ran-under-bash" \
+assert_eq "$(output_of "$OUT")" "ran-under-bash" \
   "and the log names the shell that ran it, not a POSIX one that refused the line"
 
 # --- A command that ignores SIGTERM is still ended inside the bound -----------
@@ -408,7 +417,7 @@ assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: option-unused option=--bud
 assert_eq "$RC" "2" "and exits 2"
 
 run_script "$RUN" --poll 1
-assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: required options=--worktree,--wait,--child" \
+assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: required options=--worktree,--wait,--stop,--child" \
   "a call naming no mode is refused"
 assert_eq "$RC" "2" "and exits 2"
 
@@ -475,7 +484,7 @@ for row in "${CLASS_ROWS[@]}"; do
   export STUB_ANSWER="$answer" STUB_DOCS="$docs"
   # An inherited class is what a lane asserting its own would look like.
   INHERITED_CLASS=trivial run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
-  assert_eq "$(cat "$(log_of "$OUT")" 2>/dev/null)" "$want_handed" \
+  assert_eq "$(output_of "$OUT" 2>/dev/null)" "$want_handed" \
     "classifier '$answer' and docs reader '$docs' hand the command $want_handed" "$ERR"
   assert_eq "$(sed -n 's/^state=started .* cap-secs=[0-9]* //p' <<<"$OUT")" "$want_fields" \
     "and the started line reports $want_fields" "$ERR"
@@ -512,7 +521,7 @@ rm -f "$proj_class/draft.md"
 # With no classifier installed the class is standard, and says why.
 mv "$LAYOUT/harness-ci" "$LAYOUT/harness-ci.off"
 run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
-assert_eq "$(cat "$(log_of "$OUT")" 2>/dev/null) $(sed -n 's/^state=started .* cap-secs=[0-9]* //p' <<<"$OUT")" \
+assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^state=started .* cap-secs=[0-9]* //p' <<<"$OUT")" \
   "standard:false: class=standard docs-only=false class-fallback=classifier-absent" \
   "no classifier runs the whole battery, naming the absence" "$ERR"
 mv "$LAYOUT/harness-ci.off" "$LAYOUT/harness-ci"
@@ -524,7 +533,7 @@ mutant mutant-no-class 'DEV_VALIDATE_CLASS="$child_class" DEV_VALIDATE_DOCS_ONLY
 cp "$MUTANT" "$LAYOUT/orch/scripts/dev-validate-run"
 export STUB_ANSWER=change_class=trivial STUB_DOCS=true
 run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
-assert_eq "$(cat "$(log_of "$OUT")" 2>/dev/null)" "unset:true:docs/a.md" \
+assert_eq "$(output_of "$OUT" 2>/dev/null)" "unset:true:docs/a.md" \
   "control: with the class not handed over the trivial row's command runs with no class" "$ERR"
 cp "$SCRIPTS_DIR/dev-validate-run" "$LAYOUT/orch/scripts/dev-validate-run"
 
@@ -549,7 +558,7 @@ RUN_PATH="$TMP_ROOT/render-bin:$PATH"
 run_script "$RUN" --worktree "$proj_render" --poll 1
 RUN_PATH=""
 render_dir="$(run_dir_of "$OUT")"
-assert_eq "$(cat "$(log_of "$OUT")" 2>/dev/null) $(sed -n 's/^class: class=\([a-z]*\) \(measured=[a-z]*\) \(cause=[a-z-]*\).*$/\1 \2 \3/p' "$render_dir/class.log")" \
+assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^class: class=\([a-z]*\) \(measured=[a-z]*\) \(cause=[a-z-]*\).*$/\1 \2 \3/p' "$render_dir/class.log")" \
   "standard standard measured=false cause=judged-tree-dirty" \
   "an uncommitted render diff runs as standard, the classifier naming the dirty tree" "$ERR"
 
@@ -571,7 +580,7 @@ assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
 # says the validation passed when nothing had finished inside the limit.
 # The poll interval keeps the cap clear of both outcomes, so the only thing the
 # two runs differ in is whether the command was killed at its bound.
-mutant mutant-unbounded '"$child_timeout_bin" -k "$KILL_GRACE" "$child_timeout_secs" bash -c "$child_cmd"' 'bash -c "$child_cmd"'
+mutant mutant-unbounded '"$child_timeout_bin" --foreground -k "$KILL_GRACE" "$child_timeout_secs" bash -c "$child_cmd"' 'bash -c "$child_cmd"'
 proj_unbounded="$(make_proj proj-unbounded "sleep 2; exit 0" 1)"
 run_script "$MUTANT" --worktree "$proj_unbounded" --poll 3
 assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
@@ -579,6 +588,182 @@ assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
 run_script "$RUN" --worktree "$proj_unbounded" --poll 3
 assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=124 validate=FAILING" \
   "under the bound that same command is killed at it and the round fails" "$ERR"
+
+# --- No process the run starts outlives it ------------------------------------
+# Each command leaves a grandchild behind and records its pid in the worktree.
+# One that calls setsid leaves the run's process group, which only a unit's
+# cgroup still holds; one that does not stays in the group the setsid fallback
+# kills. Neither is gone the instant the verdict lands, since the unit or the
+# group ends just after, so each read allows five seconds. A zombie waiting on
+# its reaper counts as gone.
+state_of() { # PID
+  local n=0 stat
+  while kill -0 "$1" 2>/dev/null; do
+    stat="$(ps -o stat= -p "$1" 2>/dev/null || true)"
+    [[ "$stat" != Z* ]] || break
+    (( n < 50 )) || { echo alive; return 0; }
+    sleep 0.1
+    n=$((n + 1))
+  done
+  echo gone
+}
+# The grandchild a row's command recorded, killed after the read so a control
+# that leaves it running leaves nothing behind the suite.
+grandchild_state() { # PROJ
+  local pid
+  pid="$(cat "$1/grand.pid" 2>/dev/null || true)"
+  [[ "$pid" =~ ^[0-9]+$ ]] || { echo unrecorded; return 0; }
+  state_of "$pid"
+  kill -KILL "$pid" 2>/dev/null || true
+}
+# The runner line a run's log opens with, with its unit's run stamp folded to
+# RUN so the rest of the name is pinned.
+runner_line() { # OUTPUT
+  sed -n '1{s/-[0-9]\{8\}T[0-9]\{6\}Z-[0-9]*$/-RUN/;p;}' "$(log_of "$1")"
+}
+
+# Which runner this host gives a run, read off a run's own log: a host where no
+# user manager answers skips the unit rows, saying so, and never passes them.
+proj_probe="$(make_proj proj-probe "exit 0" 20)"
+run_script "$RUN" --worktree "$proj_probe" --poll 1
+HOST_RUNNER="$(sed -n '1s/^runner=\([a-z]*\) .*$/\1/p' "$(log_of "$OUT")")"
+
+if [[ "$HOST_RUNNER" == systemd ]]; then
+  # label|name|cmd|timeout-secs|expected verdict
+  UNIT_ROWS=(
+    "a completed run leaves no grandchild that started its own session|proj-unit-done|setsid sleep 300 & echo \$! > grand.pid; exit 0|20|state=done guard-exit=0 validate=pass"
+    "a run killed at its bound leaves no such grandchild either|proj-unit-bound|setsid sleep 300 & echo \$! > grand.pid; sleep 30|2|state=done guard-exit=124 validate=FAILING"
+  )
+  for row in "${UNIT_ROWS[@]}"; do
+    IFS='|' read -r label name cmd secs want_verdict <<<"$row"
+    proj="$(make_proj "$name" "$cmd" "$secs")"
+    run_script "$RUN" --worktree "$proj" --poll 1
+    assert_eq "$(verdict_of "$OUT")" "$want_verdict" "$label: the verdict" "$ERR"
+    assert_eq "$(runner_line "$OUT")" "runner=systemd unit=validate-$name-RUN" \
+      "$label: the log opens naming its unit" "$ERR"
+    assert_eq "$(grandchild_state "$proj")" "gone" "$label" "$ERR"
+  done
+
+  # Control: the run launched under setsid on this same host, which is the
+  # runner before units. The grandchild that left the group outlives it.
+  mutant mutant-no-unit '    runner=systemd' '    runner=setsid'
+  proj_nounit="$(make_proj proj-no-unit 'setsid sleep 300 & echo $! > grand.pid; exit 0' 20)"
+  run_script "$MUTANT" --worktree "$proj_nounit" --poll 1
+  assert_eq "$(runner_line "$OUT") $(grandchild_state "$proj_nounit")" "runner=setsid reason=no-user-manager alive" \
+    "control: outside a unit the grandchild that started its own session outlives the run" "$ERR"
+
+  # The manager expands ${NAME} in a unit's command line, so a worktree path
+  # that carries one reaches the child only with its $ written $$. The unit
+  # name carries none of it.
+  proj_dollar="$(make_proj 'proj-${HOME}' "exit 0" 20)"
+  run_script "$RUN" --worktree "$proj_dollar" --poll 1
+  assert_eq "$(verdict_of "$OUT") $(runner_line "$OUT")" "state=done guard-exit=0 validate=pass runner=systemd unit=validate-proj-__HOME_-RUN" \
+    "a worktree whose path carries a \$ runs in a unit and passes" "$ERR"
+  mutant mutant-unescaped '--run-dir "$(unit_arg "$run_dir")"' '--run-dir "$run_dir"'
+  run_script "$MUTANT" --worktree "$proj_dollar" --poll 1
+  assert_eq "$(verdict_of "$OUT")" "state=lost cap-secs=31 validate=FAILING" \
+    "control: unescaped, the manager rewrites that path and the child never finds its run" "$ERR"
+else
+  echo "  skip  no systemd user manager answers on this host; the unit rows did not run"
+fi
+
+# The setsid fallback, on a PATH with no systemd-run, holds what stays in its
+# process group.
+RUN_PATH="$(farm_path fallback)"
+proj_group="$(make_proj proj-group 'sleep 300 & echo $! > grand.pid; exit 0' 20)"
+run_script "$RUN" --worktree "$proj_group" --poll 1
+assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
+  "a run on a host with no user manager passes under setsid" "$ERR"
+assert_eq "$(runner_line "$OUT")" "runner=setsid reason=no-user-manager" \
+  "and its log opens naming that runner and why" "$ERR"
+assert_eq "$(grandchild_state "$proj_group")" "gone" \
+  "and a grandchild left in its process group is gone once it completes" "$ERR"
+
+# Control: the child records its verdict and exits without ending its group.
+mutant mutant-no-group-kill '    setsid) kill -KILL -- "-$$" ;;' '    setsid) ;;'
+run_script "$MUTANT" --worktree "$proj_group" --poll 1
+assert_eq "$(grandchild_state "$proj_group")" "alive" \
+  "control: without the group kill that grandchild outlives the run" "$ERR"
+
+# A manager that answers the probe and then refuses the unit still gets a run,
+# under setsid, and its log says why. The stub systemd-run starts only `true`.
+mkdir -p "$TMP_ROOT/refusing-bin"
+printf '#!/usr/bin/env bash\n[[ "${*: -1}" == true ]]\n' > "$TMP_ROOT/refusing-bin/systemd-run"
+chmod +x "$TMP_ROOT/refusing-bin/systemd-run"
+RUN_PATH="$TMP_ROOT/refusing-bin:$RUN_PATH"
+proj_refused="$(make_proj proj-refused "echo ran" 20)"
+run_script "$RUN" --worktree "$proj_refused" --poll 1
+assert_eq "$(verdict_of "$OUT") $(runner_line "$OUT") $(output_of "$OUT")" \
+  "state=done guard-exit=0 validate=pass runner=setsid reason=unit-launch-failed ran" \
+  "a unit the manager refuses runs under setsid instead, the log naming why" "$ERR"
+
+# Control: the refused unit is not replaced, so nothing runs and the run is lost.
+mutant mutant-no-fallback '      runner=setsid' '      :'
+run_script "$MUTANT" --worktree "$proj_refused" --poll 1
+assert_eq "$(verdict_of "$OUT")" "state=lost cap-secs=31 validate=FAILING" \
+  "control: without the fallback a refused unit leaves no run at all" "$ERR"
+RUN_PATH=""
+
+# --- --stop ends a worktree's runs that have recorded no verdict --------------
+# The run is started detached and still going when --stop is called, as a lane
+# closed mid-validation leaves it. PATH is empty for this host's own runner.
+STOP_CALLER=""
+start_long_run() { # PROJ PATH
+  local out="$1.out" n=0
+  setsid bash -c "env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS PATH='${2:-$PATH}' '$RUN' --worktree '$1' --poll 1 > '$out' 2>&1" &
+  STOP_CALLER=$!
+  while [[ ! -s "$1/grand.pid" ]] && (( n < 100 )); do sleep 0.1; n=$((n + 1)); done
+}
+end_long_run() {
+  kill -KILL -- "-$STOP_CALLER" 2>/dev/null || true
+  wait "$STOP_CALLER" 2>/dev/null || true
+}
+long_cmd='sleep 300 & echo $! > grand.pid; sleep 300'
+
+if [[ "$HOST_RUNNER" == systemd ]]; then
+  proj_stop_unit="$(make_proj proj-stop-unit "setsid $long_cmd" 600)"
+  start_long_run "$proj_stop_unit" ""
+  run_script "$RUN" --stop --worktree "$proj_stop_unit"
+  assert_eq "$OUT $RC" "state=stopped units=validate-proj-stop-unit-* groups=0 0" \
+    "--stop stops the worktree's units by their prefix" "$ERR"
+  assert_eq "$(grandchild_state "$proj_stop_unit")" "gone" \
+    "and the unit's grandchild that started its own session is gone with it" "$ERR"
+  end_long_run
+
+  # Control: the units are never stopped, so the running one keeps its
+  # grandchild.
+  mutant mutant-no-unit-stop 'systemctl --user stop -- "$prefix*"' 'true'
+  proj_stop_kept="$(make_proj proj-stop-kept "setsid $long_cmd" 600)"
+  start_long_run "$proj_stop_kept" ""
+  run_script "$MUTANT" --stop --worktree "$proj_stop_kept"
+  assert_eq "$(grandchild_state "$proj_stop_kept")" "alive" \
+    "control: with no unit stopped the running validation's grandchild survives --stop" "$ERR"
+  end_long_run
+  systemctl --user stop -- 'validate-proj-stop-kept-*' 2>/dev/null || true
+fi
+
+RUN_PATH="$(farm_path fallback)"
+proj_stop_group="$(make_proj proj-stop-group "$long_cmd" 600)"
+start_long_run "$proj_stop_group" "$RUN_PATH"
+stop_child="$(cat "$proj_stop_group"/tmp/dev-validate-*/pid 2>/dev/null || true)"
+run_script "$RUN" --stop --worktree "$proj_stop_group"
+assert_eq "$OUT $RC" "state=stopped units=none groups=1 0" \
+  "--stop on a host with no user manager ends each setsid run's group" "$ERR"
+assert_eq "$(state_of "$stop_child") $(grandchild_state "$proj_stop_group")" "gone gone" \
+  "and the run's child and the grandchild in its group are gone" "$ERR"
+end_long_run
+
+# Control: the group is never signalled, so the run goes on.
+mutant mutant-no-group-stop 'kill -KILL -- "-$pid" 2>/dev/null ||' 'true ||'
+proj_stop_left="$(make_proj proj-stop-left "$long_cmd" 600)"
+start_long_run "$proj_stop_left" "$RUN_PATH"
+stop_child="$(cat "$proj_stop_left"/tmp/dev-validate-*/pid 2>/dev/null || true)"
+run_script "$MUTANT" --stop --worktree "$proj_stop_left"
+assert_eq "$(state_of "$stop_child") $(grandchild_state "$proj_stop_left")" "alive alive" \
+  "control: without the group kill --stop leaves the run and its grandchild running" "$ERR"
+kill -KILL -- "-$stop_child" 2>/dev/null || true
+end_long_run
+RUN_PATH=""
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
