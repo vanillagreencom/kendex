@@ -40,8 +40,9 @@ rule "a micro item's launch points at the rule" "$OVERSEE" "### Item Tier" \
 rule "Placement points at the rule" "$OVERSEE" "### Lane directive" \
   'Placement:' "$POINTER"
 rule "a hosted merge runs no train and mails each consumer's overseer" \
-  "$EVENTS" "## Event kinds" '- `merged` →' "$POINTER" \
-  '`lane-mail peer send --repo [NAME_OR_PATH] --file [PATH]`' 'D003'
+  "$EVENTS" "## Event kinds" '- `merged` →' 'the train is item work and does not run' \
+  "$POINTER" '`lane-mail peer send --repo [NAME_OR_PATH] --file [PATH]`' \
+  'until KEN-1779 ships' 'D003 (KEN-1776)'
 rule "the train says it does not run on a hosted fleet" "$TRAIN" \
   "# Consumer train" 'On a hosted fleet it does not run' "$POINTER"
 
