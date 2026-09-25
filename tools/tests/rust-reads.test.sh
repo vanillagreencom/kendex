@@ -44,7 +44,9 @@ a literal on the line after the parenthesis counts|crates/demo/src/lib.rs|const 
 an include climbing out of the checkout names nothing|crates/demo/src/lib.rs|const A: &str = include_str!("../../../../outside.md");|
 a concat! literal joins the manifest directory|crates/demo/src/lib.rs|const S: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ui/src/bindings.ts");|manifest:ui/src/bindings.ts
 a .join literal joins the manifest directory|crates/demo/src/lib.rs|let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../README.md");|manifest:README.md
-a chain across lines stops at a directory at the first non-literal|crates/demo/src/lib.rs|let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))\n    .join("../../docs/legal")\n    .join(name);|manifest:docs/legal
+a chain across lines that goes on with a non-literal prints its directory and the root|crates/demo/src/lib.rs|let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))\n    .join("../../docs/legal")\n    .join(name);|manifest:.;manifest:docs/legal
+a format! argument leaves the read unfollowed|crates/demo/tests/t.rs|let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../{SCRIPT}"));|manifest:.;manifest:crates/demo
+a non-literal concat! argument leaves the read unfollowed|crates/demo/src/lib.rs|const S: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs", SUFFIX);|manifest:.;manifest:docs
 consecutive literal joins resolve together|crates/demo/tests/t.rs|let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join("docs/b.md");|manifest:docs/b.md
 a chain stopping at the checkout root prints the root|crates/demo/tests/t.rs|let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");|manifest:.
 the manifest directory alone is the crate|crates/demo/tests/t.rs|let dir = Path::new(env!("CARGO_MANIFEST_DIR"));|manifest:crates/demo
@@ -124,7 +126,8 @@ s/\\(\[ \\t\\n\]\*"\[^"\]\*"\/)) {/\\([ \\t]*"[^"]*"\/)) {/|a literal on the lin
 s/chain = chain "\/" unquote(lit)/chain = chain/|a .join literal joins the manifest directory
 s/chain = chain unquote(substr(rest, RSTART, RLENGTH))/chain = chain/|a concat! literal joins the manifest directory
 s/if (seg\[i\] == "..") { if (k == 0) return ""; k--; continue }/if (seg[i] == "..") { if (k > 0) k--; continue }/|an include climbing out of the checkout names nothing
-s/if (match(rest, \/^\[ \\t\\n\]\*\\)+\/)) rest = substr(rest, RLENGTH + 1)//|a chain across lines stops at a directory at the first non-literal
+s/if (match(rest, \/^\[ \\t\\n\]\*\\)+\/)) rest = substr(rest, RLENGTH + 1)//|a chain across lines that goes on with a non-literal prints its directory and the root
+/emit("manifest", ".")$/d|a format! argument leaves the read unfollowed
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the controls" >&2; exit 2; }
 

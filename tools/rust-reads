@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Every repository path the Rust source under crates/ names as one it reads,
-# derived from the source rather than listed by hand.
-#
-# Two shapes are read, and each row says which it came from:
+# The repository paths the Rust source under crates/ names as ones it reads,
+# derived from the source rather than listed by hand, in two shapes. Each row
+# says which shape it came from:
 #
 #   include   an include_str! or include_bytes! literal, resolved against the
 #             including file's directory: a file compiled into the binary or
@@ -12,12 +11,19 @@
 #             resolved against that crate's manifest directory: a path code or
 #             a test reads at run time. The chain is the literal arguments of
 #             `.join("...")` calls after it, or the literal arguments beside it
-#             in a `concat!`, and it stops at the first argument that is not a
-#             literal. A chain that stops at a directory is that directory,
-#             and every path under it is read. A chain that stops at the
-#             repository root prints `.`: the code reaches something in the
-#             checkout by a path it spells elsewhere, which this reader does
-#             not follow. A path read by any other route is not here.
+#             in a `concat!`. A chain that ends with no further argument is a
+#             read of the path it reached, and every path under it when that
+#             is a directory.
+#
+# `.` is the row for what this reader does not follow: a chain that reaches
+# the repository root, and a chain that goes on with an argument that is not
+# a string literal, such as `.join(name)` or `.join(format!(...))`. That
+# second chain also prints the directory it reached, since `.join(name)` most
+# often names a file in it, but the argument can lead out of it too. Code that
+# joins onto a returned path elsewhere is not followed, so a helper like
+# crates/test_util.rs's checkout_root() and every read through it is absent,
+# and a helper returning the manifest directory reads as that crate's
+# directory. A path read by any other route is not here.
 #
 # A resolved path that climbs out of the checkout names no repository path and
 # is not printed.
@@ -25,9 +31,11 @@
 # Usage: tools/rust-reads [ROOT]
 #   ROOT   the checkout to read; the current directory when omitted
 # stdout: one `<kind><TAB><path>` row per distinct read, sorted, the path
-# relative to ROOT. Exit 0 with the rows, 2 when the source could not be read,
-# and a read that did not run is never printed as an empty set. A refusal is
-# one `rust-reads: unreadable=<path>` line.
+# relative to ROOT. Exit 0 with the rows, 2 when the source could not be read
+# or the arguments are wrong, and a read that did not run is never printed as
+# an empty set. A refusal is one stderr line:
+#   rust-reads: unreadable=<path>   ROOT, or the crates/ tree, could not be read
+#   rust-reads: usage=<usage>       more than one argument
 set -euo pipefail
 
 case $# in
@@ -115,6 +123,8 @@ if ! rows=$(RUST_READS_MANIFESTS="$manifests" find crates -type f -name '*.rs' -
         rest = substr(rest, RLENGTH + 1)
       }
       emit("manifest", resolve(owner, chain))
+      # An argument the chain could not read may lead anywhere from there.
+      if (match(rest, /^[ \t\n]*(\.join[ \t\n]*\(|,)/)) emit("manifest", ".")
     }
   }
   FNR == 1 {

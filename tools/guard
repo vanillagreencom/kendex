@@ -82,8 +82,6 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       printf 'the per-file scan behind the %s lane could not run, so its files were not judged.\n' "$2" ;;
     binary-home)
       echo "a launch in a test naming the kendex binary carries no fixture home before it runs — give its builder fixture_env() from crates/test_util.rs, or a HOME with KENDEX_REAL_HOME beside it; a release-profile test run otherwise drives the real machine." ;;
-    trivial-reads)
-      echo "tools/trivial-reads refused the tree — a file the Rust source reads that a diff changing it alone would classify trivial, which runs no cargo lane, or a judgement that could not run; its own first line above names which." ;;
     test-roster)
       echo "tools/test-roster refused the tree — a file or directory under a crate's tests/ that no [[test]] root declares compiles nowhere under autotests = false, or the scan could not run; its own first line above names which." ;;
     fixture-diff)
@@ -1001,15 +999,6 @@ compiled_includes() {
   rows=$("$TOOLS_DIR/rust-reads" .) || return 1
   printf '%s\n' "$rows" | awk -F '\t' '$1 == "include" { print $2 }'
 }
-
-# No file the Rust source reads can take the trivial change class alone, the
-# class that runs no cargo lane. The rule and what it judges are
-# tools/trivial-reads', which CI runs in its guards-scans shard, a shell
-# shard, so this lane stands down where that one does; exit 1 is a read file
-# that classifies trivial, exit 2 a judgement that could not be made, and
-# neither is a pass. One line on purpose: the must-fail control in
-# tools/tests/guard-full.test.sh removes this lane by deleting it.
-[ "$FULL" -eq 0 ] || ! lane_on shell_shards || "$TOOLS_DIR/trivial-reads" || say trivial-reads "$?"
 
 if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
   # The cross-target checks and cargo doc each write a target tree of their

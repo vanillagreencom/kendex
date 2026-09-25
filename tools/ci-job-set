@@ -31,11 +31,11 @@
 #     work-marker scan. The classifier proved a `render` diff by
 #     re-rendering it, and a `trivial` one is inside the docs path set and its
 #     line ceiling.
-#   - A `trivial` diff runs no shell shard and no cargo lane, as the
-#     one-verify-job contract for `render` and `trivial` requires, so no file
-#     the Rust source reads may be in one. orch's narrow-change.conf refuses
-#     the narrow classes to each such docs-set file, and tools/trivial-reads,
-#     which derives the files from the source, fails on one it leaves out.
+#   - The exception: a `trivial` diff changing a path tools/rust-reads names,
+#     or a path under a directory it names, takes the measured row its paths
+#     select, so the cargo lane runs on a docs file the Rust source reads.
+#     tools/rust-reads reads the Rust source of the checkout this script runs
+#     in, and its header states the reads it does not follow.
 #
 # The lanes:
 #
@@ -60,8 +60,11 @@
 # Every refusal starts `ci-job-set: cause=<name>` and exits 2. A class this
 # table does not name is one of those: the step goes red, every lane's status
 # function runs it, and the required contexts refuse the skip, which is the
-# loud way to learn a sixth class shipped.
+# loud way to learn a sixth class shipped. A read set tools/rust-reads could
+# not derive is another.
 set -euo pipefail
+
+TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # One line per lane, in the order the rows below spell them.
 LANES="shell_shards macos_legs ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows"
@@ -115,12 +118,36 @@ any_outside() { # REGEX — is some changed path NOT inside it?
 # Prose, the one input the platform and lint lanes stand down on.
 PROSE='\.(md|markdown)$'
 
-case "$CHANGE_CLASS" in
+# Does some changed path equal a path tools/rust-reads names, or sit under
+# one? Its `.` row matches nothing: a changed path never starts with `./`.
+touches_rust_read() {
+  local rows kind read path
+  rows="$("$TOOLS_DIR/rust-reads" .)" ||
+    die "rust-reads-failed" "tools/rust-reads could not derive the paths the Rust source reads"
+  while IFS="$(printf '\t')" read -r kind read; do
+    [ -n "$read" ] || continue
+    while IFS= read -r path; do
+      case "$path" in
+        "$read" | "$read"/*)
+          printf 'ci-job-set: rust-read=%s kind=%s path=%s\n' "$read" "$kind" "$path" >&2
+          return 0 ;;
+      esac
+    done <<<"$paths"
+  done <<<"$rows"
+  return 1
+}
+
+row="$CHANGE_CLASS"
+if [ "$CHANGE_CLASS" = trivial ] && touches_rust_read; then
+  row=trivial-read
+fi
+
+case "$row" in
   render | trivial)
     emit shell_shards=false macos_legs=false ui=false bot_instructions=true \
       cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false
     ;;
-  micro | small | standard)
+  micro | small | standard | trivial-read)
     if [ "$CHANGE_CLASS" = standard ] && [ "$DOCS_ONLY" = false ]; then
       emit shell_shards=true macos_legs=true ui=true bot_instructions=true \
         cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true
