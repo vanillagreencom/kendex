@@ -11,8 +11,8 @@
 # or reaches the unit's RuntimeMaxSec, systemd kills every process left in it,
 # one that detached into its own session included, SIGTERM first and SIGKILL
 # a kill grace later. Under setsid the job leads its own process group and
-# calls `end` when it finishes, which gives that group the same SIGTERM and
-# SIGKILL; nothing bounds it, and a job killed before `end`, or a process that
+# calls `end` when it finishes, which tears that group down the same way;
+# nothing bounds it, and a job killed before `end`, or a process that
 # started its own session, escapes. The unit name shape, the runner lines, the
 # unit properties, the stop rule and the orch launches that use their own
 # mechanism are references/job-units.md.
@@ -39,19 +39,23 @@
 #       the job was not started (launch-failed: setsid's exit status, or a
 #       unit the manager would not describe).
 #   job-unit.sh end RECORD LEADER_PID
-#       The job's own last call. Under setsid, send the process group
-#       LEADER_PID leads SIGTERM, wait up to the kill grace for every other
-#       member to exit, then SIGKILL it, the caller included; under a unit,
-#       nothing, since the unit's end does the same. Exit 0 done; 2 RECORD could not be read
-#       (record-unreadable) or the group could not be killed.
+#       The job's own last call. Under setsid, tear down the process group
+#       LEADER_PID leads, the caller being a member; under a unit, nothing,
+#       since the unit's end does the same. Exit 0 done; 2 RECORD could not be
+#       read (record-unreadable) or the group could not be killed.
 #   job-unit.sh stop UNIT
 #       Stop the unit UNIT. Exit 0 it was running and is stopped; 1 the
 #       manager has no such unit, so it had ended; 2 anything else, a manager
 #       that cannot be reached included.
 #   job-unit.sh kill-group PID ARGV_GLOB
-#       Kill the process group PID leads, while PID still runs and its argv
-#       matches ARGV_GLOB, so a pid the system reused for anything else is
-#       left alone. Exit 0 killed; 1 left alone; 2 the read or the kill failed.
+#       Tear down the process group PID leads, while PID still runs and its
+#       argv matches ARGV_GLOB, so a pid the system reused for anything else is
+#       left alone. Exit 0 torn down; 1 left alone; 2 the read or the kill
+#       failed.
+#
+# Every setsid teardown is one: SIGTERM to the group, up to the kill grace for
+# its members to exit, then SIGKILL only if any still run. A unit's stop is the
+# same SIGTERM and grace.
 #   job-unit.sh stop-job RECORD PID ARGV_GLOB
 #       Stop the job RECORD describes: its unit by the exact recorded name, or
 #       under setsid its group as kill-group does. Exits as those two do, and 2
@@ -219,9 +223,7 @@ job_unit_kill_group() { # PID ARGV_GLOB
   [[ "${pgid// /}" == "$pid" ]] || return 1
   # shellcheck disable=SC2053 # ARGV_GLOB is a pattern by contract
   [[ "$args" == $glob ]] || return 1
-  # The group can end between the read and the signal: a job ends its own.
-  kill -KILL -- "-$pid" 2>/dev/null || ! kill -0 -- "-$pid" 2>/dev/null \
-    || job_unit_fail kill-group-failed "pid=$pid step=kill"
+  job_unit_teardown "$pid"
 }
 
 job_unit_stop_job() { # RECORD PID ARGV_GLOB
@@ -248,27 +250,33 @@ job_unit_group_others() { # PGID
     }' <<<"$table"
 }
 
+# The one setsid teardown: SIGTERM to group PGID, as a unit's stop sends it, so
+# what the group holds runs its traps; up to the kill grace for its members to
+# exit; SIGKILL only where one still runs. A group that empties is left
+# alone, since its id can be reused. A caller that is a member (MEMBER=member)
+# ignores the SIGTERM and is not counted; it is killed only with a SIGKILL
+# the rest of the group needed.
+job_unit_teardown() { # PGID [MEMBER]
+  local n=0 others=""
+  [[ "${2:-}" != member ]] || trap '' TERM
+  # No group left to signal is a group already torn down.
+  kill -TERM -- "-$1" 2>/dev/null || return 0
+  while (( n < JOB_UNIT_KILL_GRACE * 5 )); do
+    others="$(job_unit_group_others "$1")" || break
+    [[ "$others" != 0 ]] || return 0
+    sleep 0.2
+    n=$((n + 1))
+  done
+  kill -KILL -- "-$1" 2>/dev/null || ! kill -0 -- "-$1" 2>/dev/null \
+    || job_unit_fail kill-group-failed "pid=$1 step=kill"
+}
+
 job_unit_end() { # RECORD LEADER_PID
-  local n=0 others
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
   job_unit_read "$1" || { job_unit_fail record-unreadable "path=$1"; return; }
   case "$JOB_UNIT_RUNNER" in
     systemd) return 0 ;;
-    setsid)
-      # SIGTERM first, as a unit's stop sends it, so what remains runs its
-      # traps; this process ignores it, being a member of the group.
-      trap '' TERM
-      kill -TERM -- "-$2" 2>/dev/null || true
-      while (( n < JOB_UNIT_KILL_GRACE * 5 )); do
-        others="$(job_unit_group_others "$2")" || break
-        [[ "$others" != 0 ]] || break
-        sleep 0.2
-        n=$((n + 1))
-      done
-      # An empty group has nothing left to kill.
-      kill -KILL -- "-$2" 2>/dev/null || ! kill -0 -- "-$2" 2>/dev/null \
-        || job_unit_fail kill-group-failed "pid=$2 step=kill"
-      ;;
+    setsid) job_unit_teardown "$2" member ;;
   esac
 }
 

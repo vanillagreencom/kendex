@@ -431,9 +431,10 @@ if [[ "$mode" == child ]]; then
   printf 'guard-exit=%s at=%s\n' "$status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$run_dir/exit.part"
   mv "$run_dir/exit.part" "$run_dir/exit"
   # The verdict is on disk, so nothing the command left behind is still owed a
-  # run. Under setsid, setsid -f made this process its group's leader, and
-  # ending that group ends this process too. In a unit the call does nothing:
-  # systemd ends what remains once this process exits.
+  # run. Under setsid, setsid -f made this process its group's leader, and the
+  # call tears down what else the group holds before this process exits. In a
+  # unit the call does nothing: systemd ends what remains once this process
+  # exits.
   job_unit_end "$run_dir/runner" "$$" || die job-end-failed "$JOB_UNIT_ERROR"
   exit 0
 fi

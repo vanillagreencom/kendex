@@ -187,6 +187,19 @@ if command -v setsid >/dev/null 2>&1; then
   done
 fi
 
+# Every SIGKILL the library sends is job_unit_teardown's, after its SIGTERM and
+# grace, so no setsid teardown can send SIGKILL alone. The floor names a broken
+# extractor, not a missing site.
+kill_sites() { # SCRIPT — `1 1`: the teardown holds a SIGKILL, and holds every one
+  local teardown all
+  teardown="$(awk '/^job_unit_teardown[(][)]/ { on = 1 } on { print } on && /^}/ { exit }' "$1" | grep -c 'kill -KILL' || true)"
+  all="$(grep -c 'kill -KILL' "$1" || true)"
+  printf '%s %s' "$(( teardown >= 1 ))" "$(( all == teardown ))"
+}
+assert_eq "$(kill_sites "$JOB_UNIT")" "1 1" "every SIGKILL in job-unit.sh is inside job_unit_teardown"
+mutant kill-alone '  job_unit_teardown "$pid"' '  kill -KILL -- "-$pid"'
+assert_eq "$(kill_sites "$MUTANT")" "1 0" "control: a SIGKILL sent outside the teardown is found"
+
 # stop-job on a record the library cannot read is a failure, named.
 printf 'runner=bogus\n' > "$TMP_ROOT/bogus.record"
 run "$JOB_UNIT" stop-job "$TMP_ROOT/bogus.record" 1 "*"

@@ -721,8 +721,8 @@ assert_eq "$(verdict_of "$OUT") $(cat "$proj_term_group/term.flag" 2>/dev/null |
   "a setsid run's grandchild gets SIGTERM, and runs its trap, when the run ends at its bound" "$ERR"
 grandchild_state "$proj_term_group" >/dev/null
 # Control: SIGKILL alone, which no trap sees.
-rm -f -- "$proj_term_group/term.flag"
-MUTANT_FILE=lib/job-unit.sh mutant mutant-no-term '      kill -TERM -- "-$2" 2>/dev/null || true' '      :'
+rm -f -- "${proj_term_group:?}/term.flag"
+MUTANT_FILE=lib/job-unit.sh mutant mutant-no-term '  kill -TERM -- "-$1" 2>/dev/null || return 0' '  :'
 run_script "$MUTANT" --worktree "$proj_term_group" --poll 1
 assert_eq "$(cat "$proj_term_group/term.flag" 2>/dev/null || echo no-term)" "no-term" \
   "control: without the SIGTERM step the grandchild is killed with no trap run" "$ERR"
@@ -854,8 +854,28 @@ assert_eq "$(proc_state_after "$stop_child") $(grandchild_state "$proj_stop_grou
   "and the run's child and the grandchild in its group are gone" "$ERR"
 end_long_run
 
+# --stop tears a setsid run down the way its own end does, SIGTERM first: a
+# grandchild of a run stopped mid-validation runs its TERM trap. The control
+# reuses mutant-no-term, the shared teardown with its SIGTERM step removed.
+proj_stop_term="$(make_proj proj-stop-term 'bash grand.sh & echo $! > grand.pid; sleep 300' 600)"
+printf '%s\n' "trap 'echo got-term > term.flag; exit 0' TERM" 'while :; do sleep 1; done' > "$proj_stop_term/grand.sh"
+# script|what --stop prints and the grandchild's flag|label
+STOP_TERM_ROWS=(
+  "$RUN|state=stopped units=0 groups=1 got-term|--stop sends a setsid run's group SIGTERM, and a grandchild runs its trap"
+  "$TMP_ROOT/mutant-no-term/dev-validate-run|state=stopped units=0 groups=1 no-term|control: without the SIGTERM step --stop kills that grandchild with no trap run"
+)
+for row in "${STOP_TERM_ROWS[@]}"; do
+  IFS='|' read -r script want label <<<"$row"
+  rm -f -- "${proj_stop_term:?}/term.flag" "${proj_stop_term:?}/grand.pid"
+  start_long_run "$proj_stop_term" "$RUN_PATH"
+  run_script "$script" --stop --worktree "$proj_stop_term"
+  assert_eq "$OUT $(cat "$proj_stop_term/term.flag" 2>/dev/null || echo no-term)" "$want" "$label" "$ERR"
+  grandchild_state "$proj_stop_term" >/dev/null
+  end_long_run
+done
+
 # Control: the group is never signalled, so the run goes on.
-MUTANT_FILE=lib/job-unit.sh mutant mutant-no-group-stop 'kill -KILL -- "-$pid" 2>/dev/null ||' 'true ||'
+MUTANT_FILE=lib/job-unit.sh mutant mutant-no-group-stop '  job_unit_teardown "$pid"' '  :'
 proj_stop_left="$(make_proj proj-stop-left "$long_cmd" 600)"
 start_long_run "$proj_stop_left" "$RUN_PATH"
 stop_child="$(cat "$proj_stop_left"/tmp/dev-validate-*/pid 2>/dev/null || true)"
