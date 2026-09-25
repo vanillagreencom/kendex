@@ -52,7 +52,7 @@ make_proj() { # NAME CMD TIMEOUT_SECS
 # containment to the unit and kills nothing itself.
 write_start() { # DIR WORKTREE TIMEOUT_BIN START TIMEOUT_SECS CAP_SECS
   mkdir -p "$1"
-  printf 'worktree=%s\ntimeout-bin=%s\nstart=%s\ntimeout-secs=%s\npoll-secs=1\ncap-secs=%s\nclass=standard\ndocs-only=false\nrunner=systemd\nunit=validate-fixture\n' \
+  printf 'worktree=%s\ntimeout-bin=%s\nstart=%s\ntimeout-secs=%s\npoll-secs=1\ncap-secs=%s\nclass=standard\ndocs-only=false\nrunner=systemd\nunit=validate-fixture\nrunner-line=runner=systemd unit=validate-fixture\n' \
     "$2" "$3" "$4" "$5" "$6" > "$1/start"
 }
 
@@ -646,11 +646,46 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
 
   # Control: the run launched under setsid on this same host, which is the
   # runner before units. The grandchild that left the group outlives it.
-  mutant mutant-no-unit '    runner=systemd' '    runner=setsid'
+  mutant mutant-no-unit '    runner=systemd' '    runner_line="runner=setsid reason=no-systemd-run"'
   proj_nounit="$(make_proj proj-no-unit 'setsid sleep 300 & echo $! > grand.pid; exit 0' 20)"
   run_script "$MUTANT" --worktree "$proj_nounit" --poll 1
-  assert_eq "$(runner_line "$OUT") $(grandchild_state "$proj_nounit")" "runner=setsid reason=no-user-manager alive" \
+  assert_eq "$(runner_line "$OUT") $(grandchild_state "$proj_nounit")" "runner=setsid reason=no-systemd-run alive" \
     "control: outside a unit the grandchild that started its own session outlives the run" "$ERR"
+
+  # The unit carries what a user unit does not inherit: the caller's exported
+  # variables and its open-file soft limit, lowered here so it differs from
+  # any manager default.
+  proj_inherit="$(make_proj proj-inherit 'printf %s:%s ${VALIDATE_ENV_MARK-unset} $(ulimit -Sn)' 20)"
+  export VALIDATE_ENV_MARK=x
+  run_script bash -c 'ulimit -Sn 777 && exec "$0" "$@"' "$RUN" --worktree "$proj_inherit" --poll 1
+  assert_eq "$(output_of "$OUT")" "x:777" \
+    "a unit's command sees the caller's exported variable and open-file soft limit" "$ERR"
+  mutant mutant-no-env ' ${unit_env[@]+"${unit_env[@]}"}' ''
+  run_script bash -c 'ulimit -Sn 777 && exec "$0" "$@"' "$MUTANT" --worktree "$proj_inherit" --poll 1
+  assert_eq "$(output_of "$OUT" | cut -d: -f1)" "unset" \
+    "control: with no environment handed over the command sees no such variable" "$ERR"
+  mutant mutant-no-nofile '-p "LimitNOFILE=$nofile" ' ''
+  run_script bash -c 'ulimit -Sn 777 && exec "$0" "$@"' "$MUTANT" --worktree "$proj_inherit" --poll 1
+  assert_eq "$([[ "$(output_of "$OUT")" == x:777 ]] && echo caller || echo manager)" "manager" \
+    "control: with no limit handed over the command runs under the manager's" "$ERR"
+  unset VALIDATE_ENV_MARK
+
+  # A host with a user manager and no setsid runs: setsid is the fallback's
+  # alone. systemd-run refuses to resolve its command through a symlink, so
+  # the probe's `true` is a copy here rather than a farm link.
+  mkdir -p "$TMP_ROOT/unit-bin"
+  ln -sf "$(command -v systemd-run)" "$TMP_ROOT/unit-bin/systemd-run"
+  cp "$(type -P true)" "$TMP_ROOT/unit-bin/true"
+  RUN_PATH="$TMP_ROOT/unit-bin:$(farm_path unit-no-setsid setsid)"
+  proj_nosetsid="$(make_proj proj-no-setsid "exit 0" 20)"
+  run_script "$RUN" --worktree "$proj_nosetsid" --poll 1
+  assert_eq "$(verdict_of "$OUT") $(runner_line "$OUT")" "state=done guard-exit=0 validate=pass runner=systemd unit=validate-proj-no-setsid-RUN" \
+    "a host with a user manager and no setsid runs its validation in a unit" "$ERR"
+  mutant mutant-setsid-first '  [[ "$runner" == systemd ]] || command -v setsid' '  command -v setsid'
+  run_script "$MUTANT" --worktree "$proj_nosetsid" --poll 1
+  assert_eq "$(sed -n 1p <<<"$ERR") $RC" "dev-validate-run: missing-command commands=setsid 2" \
+    "control: with setsid required ahead of the probe that host is refused" "$ERR"
+  RUN_PATH=""
 
   # The manager expands ${NAME} in a unit's command line, so a worktree path
   # that carries one reaches the child only with its $ written $$. The unit
@@ -673,8 +708,8 @@ RUN_PATH="$(farm_path fallback)"
 proj_group="$(make_proj proj-group 'sleep 300 & echo $! > grand.pid; exit 0' 20)"
 run_script "$RUN" --worktree "$proj_group" --poll 1
 assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
-  "a run on a host with no user manager passes under setsid" "$ERR"
-assert_eq "$(runner_line "$OUT")" "runner=setsid reason=no-user-manager" \
+  "a run on a host with no systemd-run passes under setsid" "$ERR"
+assert_eq "$(runner_line "$OUT")" "runner=setsid reason=no-systemd-run" \
   "and its log opens naming that runner and why" "$ERR"
 assert_eq "$(grandchild_state "$proj_group")" "gone" \
   "and a grandchild left in its process group is gone once it completes" "$ERR"
@@ -685,17 +720,29 @@ run_script "$MUTANT" --worktree "$proj_group" --poll 1
 assert_eq "$(grandchild_state "$proj_group")" "alive" \
   "control: without the group kill that grandchild outlives the run" "$ERR"
 
-# A manager that answers the probe and then refuses the unit still gets a run,
-# under setsid, and its log says why. The stub systemd-run starts only `true`.
-mkdir -p "$TMP_ROOT/refusing-bin"
-printf '#!/usr/bin/env bash\n[[ "${*: -1}" == true ]]\n' > "$TMP_ROOT/refusing-bin/systemd-run"
-chmod +x "$TMP_ROOT/refusing-bin/systemd-run"
-RUN_PATH="$TMP_ROOT/refusing-bin:$RUN_PATH"
+# Where systemd-run is installed and fails, the run is still made under setsid
+# and its log carries systemd-run's own first line. The stubs fail the probe
+# unit, or start only that unit.
+FALLBACK_PATH="$RUN_PATH"
+mkdir -p "$TMP_ROOT/probe-bin" "$TMP_ROOT/refusing-bin"
+printf '#!/usr/bin/env bash\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n' > "$TMP_ROOT/probe-bin/systemd-run"
+printf '#!/usr/bin/env bash\n[[ "${*: -1}" == true ]] && exit 0\necho "Failed to start transient service unit: refused" >&2\nexit 1\n' > "$TMP_ROOT/refusing-bin/systemd-run"
+chmod +x "$TMP_ROOT/probe-bin/systemd-run" "$TMP_ROOT/refusing-bin/systemd-run"
 proj_refused="$(make_proj proj-refused "echo ran" 20)"
-run_script "$RUN" --worktree "$proj_refused" --poll 1
-assert_eq "$(verdict_of "$OUT") $(runner_line "$OUT") $(output_of "$OUT")" \
-  "state=done guard-exit=0 validate=pass runner=setsid reason=unit-launch-failed ran" \
-  "a unit the manager refuses runs under setsid instead, the log naming why" "$ERR"
+# stub dir|the log's first line
+FALLBACK_ROWS=(
+  "probe-bin|runner=setsid reason=probe-failed detail=Failed to connect to bus: No medium found"
+  "refusing-bin|runner=setsid reason=unit-launch-failed detail=Failed to start transient service unit: refused"
+)
+for row in "${FALLBACK_ROWS[@]}"; do
+  IFS='|' read -r stub want_line <<<"$row"
+  RUN_PATH="$TMP_ROOT/$stub:$FALLBACK_PATH"
+  run_script "$RUN" --worktree "$proj_refused" --poll 1
+  assert_eq "$(verdict_of "$OUT") $(output_of "$OUT")" "state=done guard-exit=0 validate=pass ran" \
+    "a systemd-run from $stub still gets a run, under setsid" "$ERR"
+  assert_eq "$(runner_line "$OUT")" "$want_line" \
+    "and the log names why, in systemd-run's words" "$ERR"
+done
 
 # Control: the refused unit is not replaced, so nothing runs and the run is lost.
 mutant mutant-no-fallback '      runner=setsid' '      :'
@@ -704,7 +751,7 @@ assert_eq "$(verdict_of "$OUT")" "state=lost cap-secs=31 validate=FAILING" \
   "control: without the fallback a refused unit leaves no run at all" "$ERR"
 RUN_PATH=""
 
-# --- --stop ends a worktree's runs that have recorded no verdict --------------
+# --- --stop ends the runs a worktree's run directories record ------------------
 # The run is started detached and still going when --stop is called, as a lane
 # closed mid-validation leaves it. PATH is empty for this host's own runner.
 STOP_CALLER=""
@@ -724,22 +771,51 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   proj_stop_unit="$(make_proj proj-stop-unit "setsid $long_cmd" 600)"
   start_long_run "$proj_stop_unit" ""
   run_script "$RUN" --stop --worktree "$proj_stop_unit"
-  assert_eq "$OUT $RC" "state=stopped units=validate-proj-stop-unit-* groups=0 0" \
-    "--stop stops the worktree's units by their prefix" "$ERR"
+  assert_eq "$OUT $RC" "state=stopped units=1 groups=0 0" \
+    "--stop stops the unit its worktree's run records name" "$ERR"
   assert_eq "$(grandchild_state "$proj_stop_unit")" "gone" \
     "and the unit's grandchild that started its own session is gone with it" "$ERR"
   end_long_run
 
-  # Control: the units are never stopped, so the running one keeps its
+  # Control: the unit is never stopped, so the running one keeps its
   # grandchild.
-  mutant mutant-no-unit-stop 'systemctl --user stop -- "$prefix*"' 'true'
+  mutant mutant-no-unit-stop 'stop_err="$(systemctl --user stop -- "$unit" 2>&1)"' 'stop_err="$(true)"'
   proj_stop_kept="$(make_proj proj-stop-kept "setsid $long_cmd" 600)"
   start_long_run "$proj_stop_kept" ""
   run_script "$MUTANT" --stop --worktree "$proj_stop_kept"
   assert_eq "$(grandchild_state "$proj_stop_kept")" "alive" \
     "control: with no unit stopped the running validation's grandchild survives --stop" "$ERR"
   end_long_run
-  systemctl --user stop -- 'validate-proj-stop-kept-*' 2>/dev/null || true
+  run_script "$RUN" --stop --worktree "$proj_stop_kept"
+
+  # Two worktrees of one name under different parents, as two repositories'
+  # lanes for the same item are: stopping one leaves the other's unit running.
+  proj_twin_a="$(make_proj twin-a/proj-twin "setsid $long_cmd" 600)"
+  proj_twin_b="$(make_proj twin-b/proj-twin "exit 0" 20)"
+  start_long_run "$proj_twin_a" ""
+  run_script "$RUN" --stop --worktree "$proj_twin_b"
+  assert_eq "$OUT $RC $(state_of "$(cat "$proj_twin_a/grand.pid")")" "state=stopped units=0 groups=0 0 alive" \
+    "--stop on one worktree leaves a same-named worktree's unit running" "$ERR"
+  run_script "$RUN" --stop --worktree "$proj_twin_a"
+  assert_eq "$OUT $(grandchild_state "$proj_twin_a")" "state=stopped units=1 groups=0 gone" \
+    "and stops it when that worktree is the one named" "$ERR"
+  end_long_run
+
+  # A caller that cannot reach the manager is told so, never that nothing ran.
+  proj_nobus="$(make_proj proj-no-bus "setsid $long_cmd" 600)"
+  start_long_run "$proj_nobus" ""
+  nobus_dir="$(ls -d "$proj_nobus"/tmp/dev-validate-*)"
+  nobus_unit="$(sed -n 's/^unit=//p' "$nobus_dir/start").service"
+  set +e
+  nobus_err="$(env -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS "$RUN" --stop --worktree "$proj_nobus" 2>&1 >/dev/null)"
+  nobus_rc=$?
+  set -e
+  assert_eq "$(sed -n '1s/ detail=.*$//p' <<<"$nobus_err") $nobus_rc" \
+    "dev-validate-run: stop-failed run-dir=$nobus_dir unit=$nobus_unit 1" \
+    "--stop with no bus to the manager fails naming the unit it could not stop" "$nobus_err"
+  run_script "$RUN" --stop --worktree "$proj_nobus"
+  grandchild_state "$proj_nobus" >/dev/null
+  end_long_run
 fi
 
 RUN_PATH="$(farm_path fallback)"
@@ -747,7 +823,7 @@ proj_stop_group="$(make_proj proj-stop-group "$long_cmd" 600)"
 start_long_run "$proj_stop_group" "$RUN_PATH"
 stop_child="$(cat "$proj_stop_group"/tmp/dev-validate-*/pid 2>/dev/null || true)"
 run_script "$RUN" --stop --worktree "$proj_stop_group"
-assert_eq "$OUT $RC" "state=stopped units=none groups=1 0" \
+assert_eq "$OUT $RC" "state=stopped units=0 groups=1 0" \
   "--stop on a host with no user manager ends each setsid run's group" "$ERR"
 assert_eq "$(state_of "$stop_child") $(grandchild_state "$proj_stop_group")" "gone gone" \
   "and the run's child and the grandchild in its group are gone" "$ERR"
@@ -764,6 +840,98 @@ assert_eq "$(state_of "$stop_child") $(grandchild_state "$proj_stop_left")" "ali
 kill -KILL -- "-$stop_child" 2>/dev/null || true
 end_long_run
 RUN_PATH=""
+
+# --- Which recorded runs --stop may signal -------------------------------------
+# One planted run record per worktree, naming a live process that leads its own
+# group: `child` carries a run child's argv tail for that directory, `other` is
+# a plain sleep, and `dead` is a pid that has exited. The systemctl stub stops
+# whatever it is asked to, so a unit record is counted and never signalled.
+mkdir -p "$TMP_ROOT/stop-bin"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP_ROOT/stop-bin/systemctl"
+chmod +x "$TMP_ROOT/stop-bin/systemctl"
+# plant sets PLANT_PROJ and PLANTED rather than printing them: a command
+# substitution would wait on the planted process holding its output open.
+PLANTED=""
+PLANT_PROJ=""
+plant() { # NAME RUNNER VERDICT PROCESS
+  local dir
+  PLANT_PROJ="$TMP_ROOT/planted/$1"
+  dir="$PLANT_PROJ/tmp/dev-validate-planted-$1"
+  mkdir -p "$dir"
+  printf 'runner=%s\nunit=validate-planted-%s\nrunner-line=planted\n' "$2" "$1" > "$dir/start"
+  [[ "$3" == no ]] || printf 'guard-exit=0 at=now\n' > "$dir/exit"
+  case "$4" in
+    child) setsid bash -c 'sleep 300; :' planted --child --run-dir "$dir" </dev/null >/dev/null 2>&1 & PLANTED=$!; disown "$PLANTED" ;;
+    other) setsid sleep 300 </dev/null >/dev/null 2>&1 & PLANTED=$!; disown "$PLANTED" ;;
+    dead) sleep 0 & PLANTED=$!; wait "$PLANTED" ;;
+  esac
+  printf '%s\n' "$PLANTED" > "$dir/pid"
+  sleep 0.2
+}
+# name|runner|verdict recorded|process|what --stop prints|the process after
+PLANT_ROWS=(
+  "run-child|setsid|no|child|state=stopped units=0 groups=1|gone"
+  "reused-pid|setsid|no|other|state=stopped units=0 groups=0|alive"
+  "has-verdict|setsid|yes|child|state=stopped units=0 groups=0|alive"
+  "unit-run|systemd|no|child|state=stopped units=1 groups=0|alive"
+  "gone-pid|setsid|no|dead|state=stopped units=0 groups=0|gone"
+)
+# name%the one line of --stop each control removes%what that control then sees
+PLANT_CONTROLS=(
+  'reused-pid%        [[ "$args" == *" --child --run-dir "*"/tmp/${dir##*/}" ]] || continue%state=stopped units=0 groups=1 0 gone'
+  'has-verdict%    [[ ! -s "$dir/exit" ]] || continue%state=stopped units=0 groups=1 0 gone'
+  'unit-run%    case "$(start_field "$start_file" runner)" in%state=stopped units=0 groups=1 0 gone'
+  'gone-pid%          kill -0 "$pid" 2>/dev/null || continue% 1 gone'
+)
+RUN_PATH="$TMP_ROOT/stop-bin:$PATH"
+for row in "${PLANT_ROWS[@]}"; do
+  IFS='|' read -r name runner verdict process want_out want_state <<<"$row"
+  plant "$name" "$runner" "$verdict" "$process"
+  proj="$PLANT_PROJ"
+  run_script "$RUN" --stop --worktree "$proj"
+  assert_eq "$OUT $RC $(state_of "$PLANTED")" "$want_out 0 $want_state" \
+    "--stop on a planted $name record" "$ERR"
+  kill -KILL -- "-$PLANTED" 2>/dev/null || true
+  rm -rf -- "$proj"
+done
+for row in "${PLANT_CONTROLS[@]}"; do
+  IFS='%' read -r name line want <<<"$row"
+  for plant_row in "${PLANT_ROWS[@]}"; do
+    [[ "$plant_row" == "$name|"* ]] || continue
+    IFS='|' read -r _ runner verdict process _ _ <<<"$plant_row"
+  done
+  case "$line" in
+    *'case "$(start_field'*) mutant "mutant-plant-$name" "$line" '    case setsid in' ;;
+    *) mutant "mutant-plant-$name" "$line" "${line%%[^ ]*}:" ;;
+  esac
+  plant "$name" "$runner" "$verdict" "$process"
+  proj="$PLANT_PROJ"
+  run_script "$MUTANT" --stop --worktree "$proj"
+  assert_eq "$OUT $RC $(state_of "$PLANTED")" "$want" \
+    "control: without that line --stop on the $name record signals or fails" "$ERR"
+  kill -KILL -- "-$PLANTED" 2>/dev/null || true
+  rm -rf -- "$proj"
+done
+
+# A systemctl that cannot stop a unit the record names, and cannot say it has
+# ended, fails --stop: exit 1 and the stop-failed line lane-close refuses on.
+printf '#!/usr/bin/env bash\necho "stub refused" >&2\nexit 1\n' > "$TMP_ROOT/stop-bin/systemctl"
+plant unit-refused systemd no other
+proj="$PLANT_PROJ"
+run_script "$RUN" --stop --worktree "$proj"
+assert_eq "$(sed -n 1p <<<"$ERR") $RC" \
+  "dev-validate-run: stop-failed run-dir=$proj/tmp/dev-validate-planted-unit-refused unit=validate-planted-unit-refused.service detail=stub refused 1" \
+  "a unit systemctl will not stop fails --stop, naming it" "$ERR"
+mutant mutant-stop-exit-0 'in this worktree may still be running.' "in this worktree.'; exit 0; printf '"
+run_script "$MUTANT" --stop --worktree "$proj"
+assert_eq "$RC" "0" "control: a stop failure that exits 0 reads as a clean stop" "$ERR"
+kill -KILL -- "-$PLANTED" 2>/dev/null || true
+RUN_PATH=""
+
+# --- A value option given twice is refused, never half-read ---------------------
+run_script "$RUN" --worktree "$proj_probe" --worktree "$proj_log" --poll 1
+assert_eq "$(sed -n 1p <<<"$ERR") $RC" "dev-validate-run: repeated option=--worktree 2" \
+  "a second --worktree is refused rather than silently winning"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
