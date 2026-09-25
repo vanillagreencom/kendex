@@ -622,25 +622,35 @@ exec git "$@"
         self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
 
     def test_clone_without_committed_render_refuses_create(self):
-        """A checkout with no render is named before create touches the host."""
-        shutil.rmtree(self.source / ".agents")
-        subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qam", "no render"], check=True)
+        """A checkout missing a render script is named before create makes a worktree."""
+        git = [self.env["REAL_GIT"], "-C", str(self.source)]
+        commit = ["-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm"]
         original = self.script.read_text()
         fragment = "    require_render(row)\n"
         self.assertEqual(original.count(fragment), 1)
-        # The control drops the check: each clone then fails later, unnamed.
-        for control in (False, True):
-            self.script.write_text(original.replace(fragment, "") if control else original)
-            for kind in ("new", "existing"):
-                with self.subTest(control=control, clone=kind):
-                    self.row["clone"] = str(self.root / f"{kind}-{control}")
-                    self.inventory.write_text(json.dumps([self.row]))
-                    if kind == "existing":
-                        subprocess.run([self.env["REAL_GIT"], "clone", "-q", str(self.source), self.row["clone"]], check=True)
-                    refused = self.create()
-                    self.assertNotEqual(refused.returncode, 0)
-                    self.assertEqual(b"lane-host-ssh: render-missing path=" in refused.stderr, not control, refused.stderr)
-                    self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
+        for script in ("orch/scripts/sync-base", "worktree/scripts/worktree"):
+            relative = ".agents/skills/" + script
+            subprocess.run([*git, "rm", "-q", "--", relative], check=True)
+            subprocess.run([*git, *commit, "drop " + script], check=True)
+            # The control drops the check: the clone then fails later, or not
+            # at all where create never runs the missing script, and unnamed.
+            for control in (False, True):
+                self.script.write_text(original.replace(fragment, "") if control else original)
+                for kind in ("new", "existing"):
+                    with self.subTest(script=script, control=control, clone=kind):
+                        self.row["clone"] = str(self.root / f"{script.split('/')[0]}-{kind}-{control}")
+                        self.inventory.write_text(json.dumps([self.row]))
+                        if kind == "existing":
+                            subprocess.run([self.env["REAL_GIT"], "clone", "-q", str(self.source), self.row["clone"]], check=True)
+                        result = self.create()
+                        line = f"lane-host-ssh: render-missing path={self.row['clone']}/{relative}".encode()
+                        self.assertEqual(line in result.stderr.splitlines(), not control, result.stderr)
+                        if not control:
+                            self.assertEqual(result.returncode, 1, result.stderr)
+                            self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
+            subprocess.run([*git, "checkout", "-q", "HEAD~1", "--", relative], check=True)
+            subprocess.run([*git, *commit, "restore " + script], check=True)
+        self.script.write_text(original)
 
     def test_file_lifecycle_and_dirty_close(self):
         self.assertEqual(self.create().returncode, 0)
@@ -1095,6 +1105,8 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
                         self.assertEqual((path / entry).exists(), repair)
                         if repair:
                             self.assertEqual((path / entry).read_bytes(), (Path(self.row["clone"]) / entry).read_bytes())
+                # The first setup, before preparation, already copies it.
+                self.assertEqual((path / "copy-config").read_text(), "copied")
                 self.assertFalse((path / "copy-added").exists())
                 if repair:
                     self.source.joinpath("kendex.settings.toml").write_text('[env]\nWORKTREE_DEFAULT_BRANCH = "main"\nWORKTREE_SYMLINKS = ".env.local .agents"\nWORKTREE_COPIES = "copy-config copy-added"\n')

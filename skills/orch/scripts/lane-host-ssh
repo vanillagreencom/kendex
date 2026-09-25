@@ -193,13 +193,16 @@ def require_render(row):
 
     create renders nothing: the lane's tree is a worktree of the base branch,
     and the scripts every later step runs are the render that branch commits.
-    A clone of a repository that commits none, or one last fetched before its
-    repository did, is named here rather than failing later as bash's 127.
+    A clone of a repository that commits none, or one whose checkout predates
+    the commit that added it, is named here rather than failing later as
+    bash's 127. A fetch does not repair the second: this check runs before
+    sync-base, which is itself part of the render, so the checkout has to be
+    fast-forwarded by hand or the clone removed for create to clone afresh.
     """
     remote(row, '''for script in orch/scripts/sync-base worktree/scripts/worktree; do
   if ! test -x "$1/.agents/skills/$script"; then
     printf 'lane-host-ssh: render-missing path=%s\\n' "$1/.agents/skills/$script" >&2
-    printf 'create renders nothing; the base branch must commit the render and this clone must be fetched past that commit\\n' >&2
+    printf 'create renders nothing; fast-forward this checkout past the commit that added the render (git -C CLONE pull --ff-only), or remove the clone so create clones it afresh\\n' >&2
     exit 1
   fi
 done''', row["clone"])
@@ -415,9 +418,10 @@ writers on several machines each keep their line; it creates the file with
 private permissions and closes an unterminated last line first. A clone
 without that library predates the verb and append exits 1 naming it, so
 refresh a host created before the verb shipped. Prepare the
-host with Git, gh, Bash, kendex and the harness first, and for Pi lanes install
-the Pi packages once at global scope under ACCOUNT, the PI_CODING_AGENT_DIR a
-Pi lane runs with.
+host with Git, gh, Bash, kendex and the harness first. A Pi lane runs with the
+row's remote account directory as PI_CODING_AGENT_DIR, so install its Pi
+packages once on the host at that root:
+PI_CODING_AGENT_DIR=<row account> kendex update-pi --scope global.
 The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
 fields. Existing ownership exits 75; --reuse and --relaunch pass --reuse to the
