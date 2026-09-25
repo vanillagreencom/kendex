@@ -7,8 +7,10 @@
 # and STUB_STATE_FAIL_ONCE, a marker path the first lookup of a run creates;
 # the branch-rule reads' failures through STUB_RULES_EXIT and
 # STUB_BRANCH_EXIT). STUB_POST_GRAPHQL_PARTIAL makes the post-merge read a
-# GraphQL 200 carrying an errors array beside data, and STUB_BASE_OID is the
-# base end of the class-policy range.
+# GraphQL 200 carrying an errors array beside data, STUB_POST_VIEW_FAIL fails
+# its pr-view fallback, and STUB_BASE_OID is the base end of the class-policy
+# range. STUB_REVIEW_DECISION and STUB_REVIEW_LATEST are the readiness check's
+# reviewDecision and latestReviews.
 # Sourced, never run — CI's suite glob picks up skills/*/tests/*.sh only, so
 # this file lives one level down.
 #
@@ -269,10 +271,21 @@ case "${1:-}" in
                     exit 0
                 fi
                 if [[ "$*" == *"--json reviewDecision,latestReviews"* ]]; then
-                    echo '{"reviewDecision":"APPROVED","latestReviews":[{"state":"APPROVED"}]}'
+                    latest="${STUB_REVIEW_LATEST:-}"
+                    [[ -n "$latest" ]] || latest='[{"state":"APPROVED"}]'
+                    # Unset is a PR nobody set a decision for, which GitHub
+                    # answers APPROVED here. Set-but-empty is the answer a base
+                    # with no required-review rule gives, so the default must
+                    # not swallow it: `-`, never `:-`.
+                    jq -cn --arg d "${STUB_REVIEW_DECISION-APPROVED}" --argjson l "$latest" \
+                        '{reviewDecision:$d,latestReviews:$l}'
                     exit 0
                 fi
                 if [[ "$*" == *"--json state,headRefOid,headRefName,mergeCommit,autoMergeRequest"* ]]; then
+                    if [[ "${STUB_POST_VIEW_FAIL:-false}" == "true" ]]; then
+                        echo "post-merge view unavailable" >&2
+                        exit 1
+                    fi
                     jq -cn \
                         --arg state "${STUB_POST_STATE:-OPEN}" \
                         --arg head "${STUB_POST_HEAD:-${STUB_HEAD:-test-head}}" \

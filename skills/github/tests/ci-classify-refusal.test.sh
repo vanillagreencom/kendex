@@ -40,6 +40,7 @@ source "$TEST_DIR/lib/check-stub.sh"
 REPO="$TMPDIR/repo"
 RETIRED_REPO="$TMPDIR/retired-repo"
 git init -q "$RETIRED_REPO"
+git -C "$RETIRED_REPO" config gc.auto 0
 git -C "$RETIRED_REPO" config maintenance.auto false
 printf '[env]\nORCH_ADMIN_MERGE_CLASSES = "render"\n' >"$RETIRED_REPO/kendex.settings.toml"
 

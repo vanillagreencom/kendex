@@ -17,7 +17,10 @@
 #     head:<sha>, post:<MERGED|OPEN>, post-head:<sha>, post-auto, post-queue
 #     (in the queue with an entry), post-entry (an entry only), post-state:<s>
 #     merge-commit:<oid>, merge-fail:<already-queued|policy|transport|queue-required>
-#     graphql:fail (the queue query fails, the REST fallback answers)
+#     graphql:fail (the queue query fails, the REST fallback answers),
+#     post-view-fail (that REST fallback fails too)
+#     review:<decision|none> GitHub's reviewDecision, none being empty, with
+#     no latest review; review-latest:<state> one latest review in that state
 #     require-token (the stub refuses a mutation without the bot token)
 #     repo:no-auto (allow_auto_merge=false), repo:no-rule (no ruleset check),
 #     repo:pr-rule (a ruleset pull_request rule only), repo:classic (no ruleset,
@@ -68,6 +71,7 @@ REPO="$TMPDIR/repo"
 # remote is added: the slug resolution and the volatile note below still read
 # what they read for a checkout that names no GitHub repository locally.
 git -C "$REPO" init -q
+git -C "$REPO" config gc.auto 0
 git -C "$REPO" config maintenance.auto false
 git -C "$REPO" config user.email tests@example.invalid
 git -C "$REPO" config user.name "pr-merge tests"
@@ -89,6 +93,7 @@ ABSENT_SHA=3333333333333333333333333333333333333333
 settings_fixture() { # NAME RELPATH CONTENT
   local dir="$TMPDIR/settings-$1"
   git init -q "$dir"
+  git -C "$dir" config gc.auto 0
   git -C "$dir" config maintenance.auto false
   mkdir -p "$(dirname "$dir/$2")"
   printf '%s\n' "$3" >"$dir/$2"
@@ -242,6 +247,10 @@ word() {
     merge-commit:*) W_ENV+=("STUB_MERGE_COMMIT=$v") ;;
     merge-fail:*) W_ENV+=("STUB_MERGE_EXIT=1" "STUB_MERGE_STDERR=$(merge_stderr_of "$v")") ;;
     graphql:fail) W_ENV+=("STUB_POST_GRAPHQL_FAIL=true") ;;
+    post-view-fail) W_ENV+=("STUB_POST_VIEW_FAIL=true") ;;
+    review:none) W_ENV+=("STUB_REVIEW_DECISION=" "STUB_REVIEW_LATEST=[]") ;;
+    review:*) W_ENV+=("STUB_REVIEW_DECISION=$v" "STUB_REVIEW_LATEST=[]") ;;
+    review-latest:*) W_ENV+=("STUB_REVIEW_LATEST=[{\"state\":\"$v\"}]") ;;
     require-token) W_ENV+=("STUB_REQUIRE_TOKEN=true") ;;
     repo:no-auto) W_ENV+=("STUB_ALLOW_AUTO_MERGE=false") ;;
     repo:no-rule) W_ENV+=("STUB_GATE_RULES=[]") ;;
@@ -486,6 +495,10 @@ an unreadable pull request range blocks rather than waive|checks:ci-required thr
 an outdated unresolved thread is not actionable|checks:ci-required threads:outdated|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[]|mergeable;head-run: none|calls=$CHECK auth=<unset>
 a malformed thread state blocks at the trust boundary|checks:ci-required threads:malformed|check|0|merge=false transient=false $OPEN runs=- issues=[review_threads_fetch_failed: GitHub returned malformed review thread data] warnings=[]|blocked;head-run: none|calls=$CHECK auth=<unset>
 a page past ARG_MAX is streamed, not passed as an argument|checks:ci-required threads:large|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[]|mergeable;head-run: none|calls=$CHECK auth=<unset>
+a changes-requested reviewDecision blocks permanently|checks:ci-required review:CHANGES_REQUESTED|check|0|merge=false transient=false $OPEN runs=- issues=[changes_requested: Reviewer requested changes] warnings=[]|blocked;head-run: none|calls=$CHECK auth=<unset>
+a changes-requested latest review blocks when the decision does not say so|checks:ci-required review:REVIEW_REQUIRED review-latest:CHANGES_REQUESTED|check|0|merge=false transient=false $OPEN runs=- issues=[changes_requested: Reviewer requested changes] warnings=[]|blocked;head-run: none|calls=$CHECK auth=<unset>
+a PR with no approval is named not_approved, a warning that blocks nothing here|checks:ci-required review:REVIEW_REQUIRED|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[not_approved: Review status is 'REVIEW_REQUIRED']|mergeable;head-run: none|calls=$CHECK auth=<unset>
+an approving latest review clears not_approved where the decision is empty|checks:ci-required review:none review-latest:APPROVED|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[]|mergeable;head-run: none|calls=$CHECK auth=<unset>
 an actionable thread on the second page blocks|checks:ci-required threads:resolved100 threads:page2:actionable|check|0|merge=false transient=false $OPEN runs=- issues=[unresolved_threads: 1 actionable thread(s) need attention] warnings=[]|blocked;head-run: none|calls=view:state,view:mergeable,checks,graphql:threads,graphql:threads,view:reviews auth=<unset>
 a merged PR reports its state and timestamp, no issues, no check fetched|state:MERGED merged-at|check|0|merge=false transient=false state=MERGED mergeable=UNKNOWN at=2026-08-15T09:41:12Z runs=- issues=[] warnings=[]|merged;head-run: none|calls=view:state auth=<unset>
 a closed PR reports its state, no issues|state:CLOSED|check|0|merge=false transient=false state=CLOSED mergeable=UNKNOWN at=- runs=- issues=[] warnings=[]|closed;head-run: none|calls=view:state auth=<unset>
@@ -521,6 +534,7 @@ classic auto-merge is success-pending, exit 75, volatile|checks:ci-required post
 an immediate merge whose snapshot is MERGED exits 0|checks:ci-required post:MERGED merge-commit:merged-oid|auto|0|-|{no-token};MERGED PR #123|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 OPEN, unqueued and unarmed after a zero exit is blocked, naming the absent proof|checks:ci-required|auto|1|-|{no-token};BLOCKED PR #123 — gh reported success but state=OPEN, autoMerge=false, mergeQueue=false;merge command accepted|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 a snapshot on a newer head fails closed|checks:ci-required head:guarded-head post-head:newer-unreviewed-head post-queue|auto|1|-|{no-token};BLOCKED PR #123 — head changed during merge attempt (expected=guarded-head, actual=newer-unreviewed-head)|calls=$PRE,merge:auto,graphql:queue auth=<unset>
+a merge whose both post-merge reads fail is blocked, never a success|checks:ci-required merge-commit:merged-oid graphql:fail post-view-fail|immediate|1|-|{no-token};BLOCKED PR #123 — gh reported success but state=UNKNOWN, autoMerge=false, mergeQueue=false;merge command accepted|calls=$PRE,merge,graphql:queue,view:post auth=<unset>
 the REST fallback keeps classic auto-merge when the queue query fails|checks:ci-required graphql:fail post-auto|auto|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:auto,graphql:queue,view:post auth=<unset>
 a second --auto on a queued PR: gh's already-queued failure, the snapshot's entry wins|checks:ci-required head:already-queued-head merge-fail:already-queued post-queue|auto|75|-|{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 a genuine merge failure with no proof stays blocked with gh's output|checks:ci-required merge-fail:policy|auto|1|-|{no-token};{merge-failed};failed to run merge: Pull request is not mergeable: the base branch policy prohibits the merge|calls=$PRE,merge:auto,graphql:queue auth=<unset>
