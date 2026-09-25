@@ -38,8 +38,8 @@
 # claim nothing is near the wall, and the orchestrator replaces its carried list
 # with whatever it reads.
 #
-# --validate stays strictly enumerated ("pass" or "FAILING:…") so it remains
-# machine-checkable. --validate-note is the additive channel for a QUALIFIED
+# --validate stays strictly enumerated ("pass", "no-verdict" or "FAILING:…") so
+# it remains machine-checkable. --validate-note is the additive channel for a QUALIFIED
 # result the enumeration cannot express — a lane that passed only on re-run, a
 # flake that had to be investigated, a caveat worth carrying.
 # Without it the caveat is lost from the record orch treats as authoritative,
@@ -48,11 +48,13 @@
 # --validate-run-dir is the run directory the round's dev-validate-run printed.
 # `dev-validate-run --record` owns that directory's format and answers for it:
 # validate_mode is its mode, never typed by the agent, and a --validate pass
-# needs a run whose sentinel is guard-exit=0. A FAILING result is accepted
-# beside any run: --validate judges every gate of the round, and a passing run
+# needs a run whose sentinel is guard-exit=0. no-verdict needs a run the bound
+# ended, whose record is verdict=timeout: that run was cut off, not refuted,
+# so it is neither a pass nor a failure. A FAILING result is accepted beside
+# any run: --validate judges every gate of the round, and a passing run
 # with another gate failing is still a failed round. Submit reuses only a full
 # pass, so a range pass recorded as full, or a failed run recorded as a pass,
-# would stand in for the whole battery. A pass requires the
+# would stand in for the whole battery. A pass or no-verdict requires the
 # run. A failing round may omit it, because dev-validate-run refuses some
 # failures, an empty DEV_VALIDATE_CMD among them, before any run directory
 # exists; validate_mode is then null.
@@ -69,7 +71,7 @@
 #     "commit": "[HEAD_SHA_AFTER_COMMIT]",    // required
 #     "baseline_lines": 138,                  // implement only; additions + deletions
 #                                             // outside the render mirror, floor 1
-#     "validate": "pass" | "FAILING: c1,c2",  // required
+#     "validate": "pass" | "no-verdict" | "FAILING: c1,c2", // required
 #     "validate_mode": "full" | "range" | null, // read from --validate-run-dir;
 #                                             // null only for a FAILING round
 #                                             // with no run
@@ -134,9 +136,9 @@ die() {
       unknown-argument) printf 'The argument is not supported.\n' ;;
       not-directory) printf 'The worktree path is not a directory.\n' ;;
       invalid-kind) printf 'The kind must be implement or fix.\n' ;;
-      invalid-validate) printf 'The validation result must be pass or start with FAILING:.\n' ;;
+      invalid-validate) printf 'The validation result must be pass, no-verdict, or start with FAILING:.\n' ;;
       run-record-unreadable) printf 'dev-validate-run --record could not read the run; its refusal follows.\n' ;;
-      validate-disagrees) printf 'A pass needs a run that passed; this run did not.\n' ;;
+      validate-disagrees) printf 'A pass needs a run that passed, and no-verdict a run the timeout ended; this run is neither.\n' ;;
       empty-text) printf 'The text must contain a non-whitespace character.\n' ;;
       summary-conflict) printf 'Supply one summary source.\n' ;;
       missing-file) printf 'The summary or recovered-text file does not exist.\n' ;;
@@ -161,15 +163,17 @@ Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path
 An implement receipt carries additions plus deletions against the base branch,
 with a floor of 1. The orchestrator verifies and persists the first accepted one.
 --kind fix OR --bundled requires >=1 --item; DECISION is Applied|Skipped|Blocked;
-REASONING must be non-empty. --validate is "pass" or begins with "FAILING:".
+REASONING must be non-empty. --validate is "pass", "no-verdict" or begins
+with "FAILING:".
 --validate-note carries a qualified result the enumeration cannot express (the
 test-only validation-ceiling re-run dev-implement.md section 5 names, a flake
 worth recording); it never relaxes --validate. Outside that named ceiling a
 failing validation ends the round and is never re-run into a pass.
 --validate-run-dir RUN_DIR is the run directory dev-validate-run printed;
 validate_mode is the mode dev-validate-run --record reports for it, full or
-range, and a --validate pass needs a run that passed; a FAILING result is
-accepted beside any run. A pass requires it; a FAILING round with no run omits it and
+range, and a --validate pass needs a run that passed, no-verdict a run the
+timeout ended; a FAILING result is accepted beside any run. A pass or
+no-verdict requires it; a FAILING round with no run omits it and
 records validate_mode null. Submit reuses only a full pass.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
 content. --recovered-text PATH embeds the report round-recover read from a
@@ -335,7 +339,7 @@ check_id_token --round-id "$round_id"
 [[ -n "$branch" ]]   || die required option=--branch
 [[ -n "$commit" ]]   || die required option=--commit
 [[ -n "$validate" ]] || die required option=--validate
-[[ "$validate" == "pass" || "$validate" == FAILING:* ]] \
+[[ "$validate" == "pass" || "$validate" == "no-verdict" || "$validate" == FAILING:* ]] \
   || die invalid-validate "value=$validate"
 if [[ "$validate_run_dir_given" == "true" ]]; then
   [[ -n "$validate_run_dir" ]] || die required option=--validate-run-dir
@@ -348,11 +352,11 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
   validate_mode="${validate_mode%% *}"
   run_verdict="${run_record##* verdict=}"
   case "$run_verdict:$validate" in
-    pass:pass | *:FAILING*) ;;
+    pass:pass | timeout:no-verdict | *:FAILING*) ;;
     *) die validate-disagrees "validate=$validate" "run=$run_verdict" ;;
   esac
-elif [[ "$validate" == "pass" ]]; then
-  die required option=--validate-run-dir validate=pass
+elif [[ "$validate" != FAILING:* ]]; then
+  die required option=--validate-run-dir "validate=$validate"
 fi
 # An empty or whitespace-only note is worse than none: it looks like a recorded
 # caveat while carrying nothing. Reject it rather than storing "".

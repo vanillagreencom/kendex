@@ -28,7 +28,7 @@
 # Before the artifact is written the report is checked on disk: the reported
 # commit resolves and is HEAD (a fix report's Commits: each lie after the round
 # record's base_sha and at or before HEAD, one of them HEAD, or it reads none
-# and HEAD is still base_sha), and a reported pass is the verdict
+# and HEAD is still base_sha), and a reported pass or no-verdict is the verdict
 # dev-validate-run gives for the newest run started at or after the round's
 # dev_delegated_at. A FAILING report needs no proof: it ends the round, never
 # passes it. A report that holds is written through dev-return-write
@@ -152,13 +152,18 @@ for start_file in "$worktree"/tmp/dev-validate-*/start; do
 done
 
 # dev-validate-run owns whether a run is still going and what it decided.
+# run_verdict is the validate= value its --wait line prints, pass, FAILING or
+# no-verdict, so a reported result is compared with it as spelled.
 run_verdict=none
 if [[ -n "$run" ]]; then
   status=0
-  "$SCRIPT_DIR/dev-validate-run" --wait --run-dir "$run" --budget 1 >/dev/null || status=$?
+  run_line="$("$SCRIPT_DIR/dev-validate-run" --wait --run-dir "$run" --budget 1)" || status=$?
   case "$status" in
     0) run_verdict=pass ;;
-    1) run_verdict=failing ;;
+    1)
+      run_verdict=FAILING
+      [[ " $run_line " != *" validate=no-verdict "* ]] || run_verdict=no-verdict
+      ;;
     3)
       printf '%s: round-live run-dir=%s\n' "$PROG" "$run"
       exit 4
@@ -278,7 +283,7 @@ ancestor() { # A B
 }
 
 field Validate; validate="$FIELD"
-[[ "$validate" == pass || "$validate" == FAILING:* ]] || no_report unparsed
+[[ "$validate" == pass || "$validate" == no-verdict || "$validate" == FAILING:* ]] || no_report unparsed
 
 args=()
 if [[ -f "$worktree/tmp/dev-round-$issue-$round_id.json" ]]; then
@@ -333,7 +338,7 @@ fi
 args+=(--no-summary)
 [[ -z "$run" ]] || args+=(--validate-run-dir "$run")
 
-if [[ "$validate" == pass && "$run_verdict" != pass ]]; then
+if [[ "$validate" != FAILING:* && "$validate" != "$run_verdict" ]]; then
   no_report validate-unproven
 fi
 

@@ -186,6 +186,15 @@ for harness in claude-send claude-text pi codex codex-item; do
     "$harness: dev-artifact-check accepts the recovered round"
 done
 
+# A run the bound ended proves a no-verdict report, which is accepted, since it
+# is neither a pass nor a failure.
+new_round cut KEN-3 1-1 124
+printf 'guard-exit=124 at=2026-01-01T00:00:00Z verdict=timeout\n' > "$WT/tmp/dev-validate-1/exit"
+transcript "$TMP_ROOT/cut.jsonl" claude-send 1-1 "$(implement_report "$HEAD_SHA" no-verdict none)"
+run --worktree "$WT" --issue KEN-3 --round-id 1-1 --transcript "$TMP_ROOT/cut.jsonl"
+assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-KEN-3-1-1.json" .validate) $("$CHECK" --worktree "$WT" --issue KEN-3 --round-id 1-1 | jq -r .verdict)" \
+  "rc=0 no-verdict accept" "a no-verdict report beside a run the timeout ended is recovered and accepted" "$TMP_ROOT/stderr"
+
 echo "=== only this round's turns hold its report ==="
 # A persistent agent's earlier round reported above this round's delegation,
 # and this round made only tool calls: no report.
@@ -303,6 +312,8 @@ row=0
 for case in \
   "commit-mismatch|implement|0|%B|pass|needs-review|b" \
   "validate-unproven|implement|1|%H|pass|needs-review|b" \
+  "validate-unproven|implement|1|%H|no-verdict|needs-review|b" \
+  "validate-unproven|implement|0|%H|no-verdict|needs-review|b" \
   "unparsed|implement|0|%H|passing|needs-review|b" \
   "unparsed|implement|0|%H|pass|needs-review|-" \
   "unparsed|implement|0|-|pass|needs-review|b" \

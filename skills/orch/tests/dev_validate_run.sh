@@ -91,7 +91,7 @@ run_dir_of() { # OUTPUT
 
 # The verdict fields a caller acts on, in a fixed order, from the last line.
 verdict_of() { # OUTPUT
-  sed -n 's/^\(state=[a-z]*\) \(guard-exit=[0-9]*\) at=[^ ]* \(validate=[A-Za-z]*\).*$/\1 \2 \3/p;s/^\(state=timeout\) elapsed-secs=[0-9]* cap-secs=\([0-9]*\) \(validate=[A-Za-z]*\).*$/\1 cap-secs=\2 \3/p;s/^\(state=lost\) elapsed-secs=[0-9]* cap-secs=\([0-9]*\) \(validate=[A-Za-z]*\).*$/\1 cap-secs=\2 \3/p;s/^\(state=running\) elapsed-secs=[0-9]* \(cap-secs=[0-9]*\).*$/\1 \2/p' <<<"$1" | sed -n '$p'
+  sed -n 's/^\(state=[a-z]*\) \(guard-exit=[0-9]*\) at=[^ ]* \(verdict=[a-z]* \)\{0,1\}\(validate=[A-Za-z-]*\).*$/\1 \2 \3\4/p;s/^\(state=timeout\) elapsed-secs=[0-9]* cap-secs=\([0-9]*\) \(validate=[A-Za-z]*\).*$/\1 cap-secs=\2 \3/p;s/^\(state=lost\) elapsed-secs=[0-9]* cap-secs=\([0-9]*\) \(validate=[A-Za-z]*\).*$/\1 cap-secs=\2 \3/p;s/^\(state=running\) elapsed-secs=[0-9]* \(cap-secs=[0-9]*\).*$/\1 \2/p' <<<"$1" | sed -n '$p'
 }
 
 # One whole protocol line with only its elapsed seconds folded away, so every
@@ -200,11 +200,14 @@ fi
 ROWS=(
   "a command that succeeds records a zero sentinel and passes|echo built; exit 0|20|state=done guard-exit=0 validate=pass|0"
   "a command that fails records its own status and fails the round|echo broke; exit 7|20|state=done guard-exit=7 validate=FAILING|1"
-  "a command that outlives the bound is killed at it and fails the round|sleep 30|2|state=done guard-exit=124 validate=FAILING|1"
+  "a command that exits 124 itself inside the bound fails the round|exit 124|20|state=done guard-exit=124 validate=FAILING|1"
+  "a command that outlives the bound is cut off at it: no verdict, neither pass nor FAILING|sleep 30|2|state=done guard-exit=124 verdict=timeout validate=no-verdict|1"
 )
+row_n=0
 for row in "${ROWS[@]}"; do
   IFS='|' read -r label cmd secs want_verdict want_rc <<<"$row"
-  proj="$(make_proj "proj-$want_rc-$secs" "$cmd" "$secs")"
+  row_n=$((row_n + 1))
+  proj="$(make_proj "proj-row-$row_n" "$cmd" "$secs")"
   run_script "$RUN" --worktree "$proj" --poll 1
   assert_eq "$(verdict_of "$OUT")" "$want_verdict" "$label" "$ERR"
   assert_eq "$RC" "$want_rc" "$label — exit status" "$ERR"
@@ -213,20 +216,27 @@ done
 # The last run above is the timeout one; its own sentinel and log are the files
 # a waiter in another process reads.
 timeout_dir="$(run_dir_of "$OUT")"
-assert_eq "$(sed 's/ at=.*$//' "$timeout_dir/exit")" "guard-exit=124" \
-  "the sentinel file carries the guard-exit line on its own"
-assert_eq "$(sed -n 's/^guard-exit=[0-9]* at=\(.*\)$/\1/p' "$timeout_dir/exit" | grep -c -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')" "1" \
+assert_eq "$(sed 's/ at=[^ ]*//' "$timeout_dir/exit")" "guard-exit=124 verdict=timeout" \
+  "the sentinel file carries the guard-exit line and the bound's verdict on one line"
+assert_eq "$(sed -n 's/^guard-exit=[0-9]* at=\([^ ]*\).*$/\1/p' "$timeout_dir/exit" | grep -c -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')" "1" \
   "and one UTC timestamp beside it"
 run_script "$RUN" --record --run-dir "$timeout_dir"
-assert_eq "$OUT rc=$RC" "validate-mode=full verdict=FAILING rc=0" \
-  "the record of a run killed at its bound reads FAILING, never pass" "$ERR"
+assert_eq "$OUT rc=$RC" "validate-mode=full verdict=timeout rc=0" \
+  "the record of a run killed at its bound reads timeout, never pass or FAILING" "$ERR"
 
-# Control: a record that reads every finished run as a pass hands the receipt a
-# pass for that same killed run.
-mutant mutant-record-pass 'record_verdict=FAILING' 'record_verdict=pass'
+# Control: a sentinel reader that files the bound's verdict with the failures
+# hands the receipt a FAILING for that same cut-off run.
+mutant mutant-timeout-failing '*" verdict=timeout") SENTINEL_VERDICT=timeout ;;' '*" verdict=timeout") SENTINEL_VERDICT=FAILING ;;'
 run_script "$MUTANT" --record --run-dir "$timeout_dir"
-assert_eq "$OUT" "validate-mode=full verdict=pass" \
-  "control: with the sentinel's status unread the killed run's record reads pass" "$ERR"
+assert_eq "$OUT" "validate-mode=full verdict=FAILING" \
+  "control: with the bound's verdict unread the cut-off run's record reads FAILING" "$ERR"
+
+# Control: a child that takes any 124 for the bound's, whatever the time, turns
+# a command's own exit 124 into no verdict.
+mutant mutant-any-124 '>= 10#$child_timeout_secs' '>= 0'
+run_script "$MUTANT" --worktree "$(make_proj proj-own-124 "exit 124" 20)" --poll 1
+assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=124 verdict=timeout validate=no-verdict" \
+  "control: without the elapsed check a command's own 124 reads as the bound's" "$ERR"
 
 # --- The command's output goes to the log, never into the verdict -------------
 proj_log="$(make_proj proj-log "echo first; echo second >&2; exit 0" 20)"
@@ -366,9 +376,9 @@ proj_term="$(make_proj proj-term "trap '' TERM; sleep 40" 2)"
 term_start="$(date +%s)"
 run_script "$RUN" --worktree "$proj_term" --poll 5
 term_elapsed=$(( $(date +%s) - term_start ))
-assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=137 validate=FAILING" \
-  "a command that ignores SIGTERM is killed anyway and records that kill as its verdict" "$ERR"
-assert_eq "$RC" "1" "and the round fails on it" "$ERR"
+assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=137 verdict=timeout validate=no-verdict" \
+  "a command that ignores SIGTERM is killed anyway and records the bound's verdict" "$ERR"
+assert_eq "$RC" "1" "and exits 1, which is never a pass" "$ERR"
 assert_eq "$([[ "$term_elapsed" -le 20 ]] && echo within || echo "over:$term_elapsed")" "within" \
   "with the sentinel landing inside the bound plus the grace, not at the command's own length"
 
@@ -687,8 +697,8 @@ run_script "$MUTANT" --worktree "$proj_unbounded" --poll 3
 assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
   "control: with no bound applied the over-long command runs to completion and passes" "$ERR"
 run_script "$RUN" --worktree "$proj_unbounded" --poll 3
-assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=124 validate=FAILING" \
-  "under the bound that same command is killed at it and the round fails" "$ERR"
+assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=124 verdict=timeout validate=no-verdict" \
+  "under the bound that same command is killed at it and gives no pass" "$ERR"
 
 # --- No process the run starts outlives it ------------------------------------
 # Each command leaves a grandchild behind and records its pid in the worktree.
@@ -721,7 +731,7 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   # label|name|cmd|timeout-secs|expected verdict
   UNIT_ROWS=(
     "a completed run leaves no grandchild that started its own session|proj-unit-done|setsid sleep 300 & echo \$! > grand.pid; exit 0|20|state=done guard-exit=0 validate=pass"
-    "a run killed at its bound leaves no such grandchild either|proj-unit-bound|setsid sleep 300 & echo \$! > grand.pid; sleep 30|2|state=done guard-exit=124 validate=FAILING"
+    "a run killed at its bound leaves no such grandchild either|proj-unit-bound|setsid sleep 300 & echo \$! > grand.pid; sleep 30|2|state=done guard-exit=124 verdict=timeout validate=no-verdict"
   )
   for row in "${UNIT_ROWS[@]}"; do
     IFS='|' read -r label name cmd secs want_verdict <<<"$row"
@@ -815,7 +825,7 @@ proj_term_group="$(make_proj proj-term-group 'bash grand.sh & echo $! > grand.pi
 printf '%s\n' "trap 'echo got-term > term.flag; exit 0' TERM" 'while :; do sleep 1; done' > "$proj_term_group/grand.sh"
 run_script "$RUN" --worktree "$proj_term_group" --poll 1
 assert_eq "$(verdict_of "$OUT") $(cat "$proj_term_group/term.flag" 2>/dev/null || echo no-term)" \
-  "state=done guard-exit=124 validate=FAILING got-term" \
+  "state=done guard-exit=124 verdict=timeout validate=no-verdict got-term" \
   "a setsid run's grandchild gets SIGTERM, and runs its trap, when the run ends at its bound" "$ERR"
 grandchild_state "$proj_term_group" >/dev/null
 # Control: SIGKILL alone, which no trap sees.
