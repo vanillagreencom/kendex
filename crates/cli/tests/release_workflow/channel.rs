@@ -587,7 +587,7 @@ fn the_channel_tag_is_the_one_core_sends_a_candidate_to() {
 fn main_build_metadata_extends_existing_metadata() {
     let commit = "0123456789abcdef0123456789abcdef01234567";
     assert_eq!(
-        build_script::build_version_from_values("5.0.1+vendor.7", Some(commit), Some("42"))
+        build_script::build_version_from_values("5.0.1+vendor.7", Some(commit), Some("42"), None)
             .unwrap(),
         format!("5.0.1+vendor.7.main.42.{commit}")
     );
@@ -597,10 +597,45 @@ fn main_build_metadata_extends_existing_metadata() {
 fn main_build_inputs_are_one_complete_identity() {
     let commit = "0123456789abcdef0123456789abcdef01234567";
     assert_eq!(
-        build_script::build_version_from_values("5.0.1", None, None).unwrap(),
+        build_script::build_version_from_values("5.0.1", None, None, None).unwrap(),
         "5.0.1"
     );
     for (commit, build) in [(Some(commit), None), (None, Some("42"))] {
-        assert!(build_script::build_version_from_values("5.0.1", commit, build).is_err());
+        assert!(build_script::build_version_from_values("5.0.1", commit, build, None).is_err());
+    }
+}
+
+/// A source build (an AUR `-git` package) names its commit, and the update
+/// channel still reads it as a release build: it has no run number the
+/// main feed could order it by.
+#[test]
+fn a_source_commit_names_the_build_without_joining_the_main_channel() {
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    let version =
+        build_script::build_version_from_values("5.0.1", None, None, Some(commit)).unwrap();
+    assert_eq!(version, format!("5.0.1+git.{commit}"));
+    assert_eq!(
+        kendex_core::update_channel::UpdateChannel::for_version(&version),
+        kendex_core::update_channel::UpdateChannel::Release
+    );
+}
+
+/// The source commit is a second identity, so it is refused beside either
+/// half of the rolling-main pair, and a short or uppercase commit is refused
+/// like the main one.
+#[test]
+fn a_source_commit_is_one_whole_identity_on_its_own() {
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    for (main_commit, build, source) in [
+        (Some(commit), Some("42"), Some(commit)),
+        (Some(commit), None, Some(commit)),
+        (None, Some("42"), Some(commit)),
+        (None, None, Some("0123456")),
+        (None, None, Some("0123456789ABCDEF0123456789ABCDEF01234567")),
+    ] {
+        assert!(
+            build_script::build_version_from_values("5.0.1", main_commit, build, source).is_err(),
+            "{main_commit:?} {build:?} {source:?}"
+        );
     }
 }

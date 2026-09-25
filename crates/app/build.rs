@@ -15,6 +15,7 @@ fn main() {
     println!("cargo:rustc-env=KENDEX_TARGET={target}");
     println!("cargo:rerun-if-env-changed=KENDEX_GIT_COMMIT");
     println!("cargo:rerun-if-env-changed=KENDEX_MAIN_BUILD");
+    println!("cargo:rerun-if-env-changed=KENDEX_SOURCE_COMMIT");
     let display = match cli_build::build_version_from_env(env!("CARGO_PKG_VERSION")) {
         Ok(version) => version,
         Err(error) => {
