@@ -102,15 +102,18 @@ status_of() { # status_of <filter>... ; the exit status, output discarded
 
 # --- 1. The filter ----------------------------------------------------------
 check "no filter runs the whole battery" "$roster" "$(selected)"
+# run-all.sh matches a filter anywhere in a suite's name, so every expectation
+# here is a substring match: a prefix match drops a suite that carries the
+# filter mid-name.
 check "a bare argument selects by substring" \
-  "$(printf '%s\n' "$roster" | grep '^oversee')" "$(selected oversee)"
+  "$(printf '%s\n' "$roster" | grep -F 'oversee')" "$(selected oversee)"
 check "two arguments are a union, not an intersection" \
-  "$(printf '%s\n' "$roster" | grep -E '^(oversee|open-terminal)')" \
+  "$(printf '%s\n' "$roster" | grep -F -e 'oversee' -e 'open-terminal')" \
   "$(selected oversee open-terminal)"
 check "an argument written !name rejects what it matches" \
-  "$(printf '%s\n' "$roster" | grep -v '^oversee')" "$(selected '!oversee')"
+  "$(printf '%s\n' "$roster" | grep -vF 'oversee')" "$(selected '!oversee')"
 check "a rejector overrides a selector that also matches" \
-  "$(printf '%s\n' "$roster" | grep '^open-terminal')" \
+  "$(printf '%s\n' "$roster" | grep -F 'open-terminal' | grep -vF 'oversee')" \
   "$(selected open-terminal oversee '!oversee')"
 check "an empty argument refuses instead of running everything" \
   "1" "$(status_of '')"
