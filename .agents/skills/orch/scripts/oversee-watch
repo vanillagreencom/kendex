@@ -395,13 +395,11 @@ Options:
                       succession's handover read; how an overseer launches,
                       finds and stops its watch is
                       references/watch-delivery.md's. However it is sent,
-                      TERM on the loop removes the record at once and ends
-                      the pass it is running, and the loop exits once that
-                      pass has: a pass part way through a lane-close runs it
-                      to its end, prints its outcome to that watch's own
-                      output and commits its lane row first, and a start
-                      that took that watch over notes watch-finishing and
-                      waits for it before its first pass. A start on a
+                      TERM on the loop removes the record at once, ends
+                      the pass it is running and exits once that pass has;
+                      a lane-close part way through is run to its end and
+                      reported first, and a start that took that watch over
+                      waits for it under a watch-finishing note. A start on a
                       state whose recorded watch still runs is refused as
                       watch-running naming that pid, except where that watch
                       is the one `oversee-succeed` restarted for this same
@@ -467,9 +465,7 @@ tmux window list that fails, a watch already running on its state, a record
 it cannot write, or a repeat delay it cannot sleep. TERM ends it at 143,
 stopping the pass it was running and that pass's long pass; TERM is the stop
 signal on every start. A watch started as a background job ignores INT from
-its start, and no trap can take that back; one the orch job runner starts, as
-references/waiter-launch.md and a succession's restart do, carries no ignore
-the runner added.
+its start, which no trap can take back; the orch job runner adds no ignore.
 
 Which mode fits the overseer's harness:
   repeat       a harness that delivers a detached log's lines as they are
@@ -639,7 +635,7 @@ ow_message() { # REASON FIELD=VALUE...
     watch-running) text='Another watch already runs on this fleet state, and this start could not show its pane gone: tmux lists it, or this start runs outside tmux, the record names no pane, or the pane list could not be read. Two watches would read one overseer mailbox and each replay what the other drained. Handle its events, or stop it as references/watch-delivery.md states and start again; the pid field is the watch that read finds.' ;;
     watch-replay-failed) text='The output a restarted watch left beside the fleet state could not be printed or removed, so the start stops rather than lose it or print it twice. The path names the file.' ;;
     watch-record-failed) text='The watch could not write its own record beside the fleet state, so a second watch could not be refused and a succession could not restart this one.' ;;
-    watch-finishing) text='The watch taken over is finishing the lane-close its pass had started. This start waits for it to exit, so the lane row that close settles is committed before this watch reads it, and the output of a watch a succession restarted is replayed whole. The close outcome goes to the output of the watch taken over, which for one started through references/waiter-launch.md is the log in its run directory.' ;;
+    watch-finishing) text='The watch taken over is finishing a lane-close. This start waits for it to exit, so the lane row is committed before this watch reads it and the output of a restarted watch is replayed whole. The close outcome is in the output of the old watch: for one references/waiter-launch.md started, the log in its run directory.' ;;
     watch-taken-over) text='A live watch on this fleet state was stopped and this one runs in its place. The reason field says why it could be: succession is the watch oversee-succeed restarted for this pane, pane-gone one whose pane tmux no longer lists.' ;;
     watch-replayed) text='A watch oversee-succeed restarted wrote output no session read, and the restart wrote how it went. Both follow, stdout here and stderr on stderr, and are then removed, so no event it reported and no refusal it ended on is lost.' ;;
     mail-read-failed) text='The lane mailbox could not be read. Fix what lane-mail names rather than reading the lane as silent.' ;;
@@ -934,16 +930,10 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 # merged and still in --item read the same on every pass of every run, and the
 # overseer re-runs the watch after every event.
 # Each helper takes the whole baseline blob and returns the answer or the
-# rewritten blob, so a pass mutates a local and commits once.
-# One per-lane row per KIND in the watch state, all laid out above:
-# `lane-asking` holds the prompt fingerprint a lane was last reported on,
-# `usage-limit` the pass clock this watch first saw a lane's limit banner on,
-# the pane it saw it in, and the wall it named; `lane-exited` and `lane-idle`
-# the pane a lane read as exited or idle on the previous pass, the first half
-# of the two consecutive passes those kinds need, marked once reported. Rows,
-# not process globals: a pass that found any event exits the process, so with a
-# lane parked on its banner every pass is a first pass, and a debounce kept in
-# memory never reaches its second. Same three columns, same file, one set of readers.
+# rewritten blob, so a pass mutates a local and commits once. `lane-exited` and
+# `lane-idle` hold the first of the two consecutive passes those kinds need.
+# Rows, not process globals: a pass that found any event exits the process, so
+# a debounce kept in memory never reaches its second pass.
 lane_row_get() {
   awk -F'\t' -v kind="$1" -v lane="$3" '$1 == kind && NF == 3 && $2 == lane { print $3 }' <<<"$2"
 }
@@ -1421,8 +1411,7 @@ watch_pane_gone() { # PANE
 
 # The repeat loop's pass or delay, the one child a stop has to take with it.
 # The record goes first, so the start that stopped this loop is not refused,
-# then the loop waits for that child, which outlives the TERM while it ends a
-# lane-close (close_hosted_lane); a job unit's end kills what still runs.
+# then the loop waits for that child, which may be ending a lane-close.
 REPEAT_CHILD_PID=""
 repeat_stop() { # STATUS
   watch_pid_release "$STATE_FILE"
@@ -1436,14 +1425,11 @@ repeat_stop() { # STATUS
 # The watch's own record beside the fleet state (lib/watch-pid.sh), which a
 # second start is refused on and `oversee-succeed` restarts this watch from. A
 # live record refuses the start, with two exceptions, whose watch is stopped
-# and replaced. One is the watch a succession restarted for THIS pane: that
-# start is the successor running its own watch, as oversee.md § 4 has every
-# overseer do. The other is a watch whose pane tmux no longer lists: it serves
-# an overseer that is gone. That is the watch a succession hands over, which
-# the restarted watch's own start stops here, and the one a successor meets
-# where that restart never ran; this function is the one place a live watch is
-# replaced. The pid recorded is this process's own, whatever launched it, so a
-# stop reaches the loop and never a shell that only started it.
+# and replaced: the watch a succession restarted for THIS pane, since that
+# start is the successor running its own watch (oversee.md § 4), and a watch
+# whose pane tmux no longer lists, which serves an overseer that is gone. This
+# function is the one place a live watch is replaced. The pid recorded is this
+# process's own, so a stop reaches the loop and never a shell that started it.
 #
 # oversee-watch.log and .err have one writer: a watch a succession started,
 # through its own stdout and stderr. A start of that origin is reading files it
@@ -2363,13 +2349,11 @@ WATCH_BANNER_LEAD=3
 # where the banner is has ONE owner and this looks for none of its own.
 #
 # The judge matches a banner anywhere in the slice, so a block capped from the
-# bottom trims one drawn further than the cap above the slice's end right back
-# out, and a block opening on the banner drops the sentence above it that says
-# whose words it is. Either way the event's whole handling — confirm the
-# account spoke rather than a lane quoting a limit phrase, read the reset it
-# states — has nothing to read. The window carries WATCH_BANNER_LEAD lines
-# above the banner and the rest of the cap below, slides to whichever end of
-# the slice it runs into, and holds the banner under every setting.
+# bottom can trim it back out, and one opening on the banner drops the sentence
+# above that says whose words it is, leaving the handling nothing to read. The
+# window carries WATCH_BANNER_LEAD lines above the banner and the rest of the
+# cap below, slides to whichever end of the slice it meets, and always holds
+# the banner.
 #
 # Exit 1 is the judge and this disagreeing: an empty banner, or one this
 # slice does not carry. Neither is a payload, and the caller refuses.
@@ -2709,18 +2693,13 @@ overseer_relaunch_failed() { # ROW ROWS IDENTITY PANE WINDOW ATTEMPT STEP
 # that could not be taken means, and a second copy here would let the watch
 # wake an overseer the succession would then tell to keep running.
 #
-# Memoised FOR ONE PASS because both arms can ask inside it — a wall the
-# account refutes falls through to the live arm — and the judgement reads
-# every account the fleet can launch on. Two readings there would pay that
-# twice and could answer differently within one pass. overseer_marks_reset
-# clears it at the two sites that begin a judgement: the top of every long
-# pass, and overseer_down before a mail pass judges a wall itself, since the
-# long pass is forked from the loop that mail pass runs in. One invocation
-# runs up to --max-loops passes an --interval apart, and a memo that outlived
-# the pass would answer all of them with the first one's reading, leaving the
-# fleet unattended — a wall landing after pass 1 refuted against the stale
-# below-mark reading, a stale mark-reached closing a live window, a failed
-# judgement disabling both arms, a lifted mark never clearing its row.
+# Memoised FOR ONE PASS: both arms can ask inside it (a wall the account
+# refutes falls through to the live arm), and the judgement reads every
+# account the fleet can launch on, so two readings would pay twice and could
+# disagree. overseer_marks_reset clears it where a judgement begins: the top
+# of every long pass, and overseer_down before a mail pass judges a wall. A
+# memo that outlived the pass would answer every later pass of the run with
+# the first one's reading.
 #
 # OVERSEER_MARK_KEY is the answer's own key, `mark-reached`, `mark-unmeasured`
 # or `below-mark` for either of the two below-mark lines; the KIND, VALUE,
@@ -2829,14 +2808,11 @@ overseer_marks_judge() {
 # cannot tell the two apart — and acting on it closes a window whose harness is
 # alive.
 #
-# So the screen never decides alone. The account's own measurement is the
-# second reading, taken from the one judge that owns it, and the answer that
-# confirms the wall is that judge's own account mark: `mark-reached
-# kind=headroom` is reached exactly when this session's account sits at or
-# below ORCH_OVERSEER_HEADROOM_PCT. No figure is compared here, so no rule is
-# copied. Every other answer, a judgement that could not be made included,
-# leaves the wall unconfirmed and the pane read as the working overseer it
-# looks like everywhere else.
+# So the screen never decides alone: the wall is confirmed only by the
+# judge's own `mark-reached kind=headroom`, reached exactly when this
+# session's account sits at or below ORCH_OVERSEER_HEADROOM_PCT, so no figure
+# is compared here. Every other answer, a failed judgement included, leaves
+# the pane read as the working overseer it looks like.
 overseer_wall_confirmed() { # PANE
   overseer_marks_judge || { overseer_note overseer-wall-unjudged "pane=$1"; return 1; }
   [[ "$OVERSEER_MARK_KEY" == mark-reached && "$OVERSEER_MARK_KIND" == headroom ]] && return 0
@@ -3295,12 +3271,9 @@ check_lanes() {
     if [[ -z "$claimed" && -n "$claims" ]]; then
       ow_message claim-missing "lane=$lane" >&2
     fi
-    # The banner and the lines under it, never the banner alone: the handling
-    # (../references/oversee-events.md § Event kinds) is confirming the
-    # account is what spoke rather than a lane quoting a limit phrase in its
-    # own output, and one matched line settles nothing — the sentence that
-    # marks a quotation is written above the banner as often as beside it,
-    # which is why the block is a window around it. Asked of the same
+    # A window around the banner, never the banner alone (banner_payload): the
+    # handling (../references/oversee-events.md § Event kinds) confirms the
+    # account spoke rather than a lane quoting a limit phrase. Asked of the same
     # judge over the same slice that classified the lane, and asked BEFORE
     # the event line, so a disagreement stops the pass instead of printing
     # half an event. The `walled` rung read this judge over this slice, so an
