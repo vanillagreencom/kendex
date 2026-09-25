@@ -140,25 +140,38 @@ start_field() { # FILE KEY
 # stands: dev-implement validates before it commits, so HEAD alone would be a
 # diff missing the round's own edit. Its contents are written to one
 # unreferenced commit through a copy of the index, so HEAD, the index and the
-# tree are left as they were. A narrow class on no evidence would skip lanes
-# the diff needs, so a failure never guesses one.
+# tree are left as they were. Every object that commit needs is written to the
+# scratch directory, the repository's own store serving as an alternate for
+# what it already holds: an untracked or unstaged file never becomes a loose
+# object in the shared store, where the umask, not the file's own mode, would
+# decide who can read it. The scratch store is exported for the snapshot and
+# the two classifier reads of it, and removed from the environment before
+# anything else runs. A narrow class on no evidence would skip lanes the diff
+# needs, so a failure never guesses one.
 class=standard
 docs_only=false
 class_fallback=""
 class_scratch=""
 classify() {
-  local base index tree head log
+  local base index objects
   class_scratch="$(mktemp -d)" || die scratch-unavailable
   trap 'rm -rf -- "$class_scratch"' EXIT
-  log="$class_scratch/class.log"
-  : > "$log"
+  : > "$class_scratch/class.log"
   : > "$class_scratch/paths"
-  base="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>>"$log")" \
+  base="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>>"$class_scratch/class.log")" \
     || { class_fallback=base-unresolved; return 0; }
   index="$(git -C "$worktree" rev-parse --path-format=absolute --git-path index 2>/dev/null)" \
+    && objects="$(git -C "$worktree" rev-parse --path-format=absolute --git-path objects 2>/dev/null)" \
+    && mkdir -- "$class_scratch/objects" \
     || { class_fallback=worktree-unrecorded; return 0; }
   [[ ! -f "$index" ]] || cp -- "$index" "$class_scratch/index" \
     || { class_fallback=worktree-unrecorded; return 0; }
+  export GIT_OBJECT_DIRECTORY="$class_scratch/objects" GIT_ALTERNATE_OBJECT_DIRECTORIES="$objects"
+  classify_snapshot "$base"
+  unset GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+}
+classify_snapshot() { # BASE — the snapshot and its two reads, in the scratch store
+  local log="$class_scratch/class.log" tree head
   if ! tree="$(GIT_INDEX_FILE="$class_scratch/index" git -C "$worktree" add -A 2>/dev/null \
       && GIT_INDEX_FILE="$class_scratch/index" git -C "$worktree" write-tree 2>/dev/null)" \
     || ! head="$(GIT_AUTHOR_NAME="$PROG" GIT_AUTHOR_EMAIL="$PROG@localhost" \
@@ -167,8 +180,8 @@ classify() {
     class_fallback=worktree-unrecorded
     return 0
   fi
-  if ! change_class_read "origin/$base" "$head" "$worktree" "$log" \
-    || ! change_class_docs "origin/$base" "$head" "$worktree" "$class_scratch/paths" "$log"; then
+  if ! change_class_read "origin/$1" "$head" "$worktree" "$log" \
+    || ! change_class_docs "origin/$1" "$head" "$worktree" "$class_scratch/paths" "$log"; then
     class_fallback="$CHANGE_CLASS_CAUSE"
     : > "$class_scratch/paths"
     return 0

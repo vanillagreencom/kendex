@@ -403,6 +403,14 @@ cp "$SCRIPTS_DIR/lib"/*.sh "$LAYOUT/orch/scripts/lib/"
 cat > "$LAYOUT/harness-ci/scripts/change-class" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$STUB_ARGS"
+# What the head it was handed holds, read while that head still exists: the
+# snapshot lives in a scratch store the runner removes when it exits.
+head="$(sed -n '/^--head$/{n;p;}' "$STUB_ARGS")"
+repo="$(sed -n '/^--repo$/{n;p;}' "$STUB_ARGS")"
+{
+  git -C "$repo" show --name-only --format= "$head"
+  git -C "$repo" rev-parse "$head^"
+} > "$STUB_SEEN" 2>&1
 case "$STUB_ANSWER" in
   exit-2) echo "wiring-error: cause=stub" >&2; exit 2 ;;
   *) printf '%s\n' "$STUB_ANSWER" ;;
@@ -421,7 +429,7 @@ case "$STUB_DOCS" in
 esac
 SH
 chmod +x "$LAYOUT/harness-ci/scripts/change-class" "$LAYOUT/harness-ci/scripts/harness-only"
-export STUB_ARGS="$TMP_ROOT/stub-args"
+export STUB_ARGS="$TMP_ROOT/stub-args" STUB_SEEN="$TMP_ROOT/stub-seen"
 proj_class="$(make_proj proj-class 'printf %s:%s:%s ${DEV_VALIDATE_CLASS-unset} ${DEV_VALIDATE_DOCS_ONLY-unset} $(cat ${DEV_VALIDATE_PATHS-/dev/null})' 20)"
 # The run directories land under tmp/, which an orch project ignores.
 printf 'tmp/\n' > "$proj_class/.gitignore"
@@ -452,17 +460,30 @@ done
 
 # The diff classified is the worktree as it stands: a file no commit holds yet
 # is in the head the classifier is handed, and HEAD and the index are not moved.
+# Nothing the snapshot writes lands in the repository's own object store.
+loose_objects() { git -C "$proj_class" count-objects -v | sed -n 's/^count: //p'; }
 printf 'draft\n' > "$proj_class/draft.md"
 export STUB_ANSWER=change_class=trivial STUB_DOCS=true
+objects_before="$(loose_objects)"
 run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
-judged="$(sed -n '/^--head$/{n;p;}' "$STUB_ARGS")"
 assert_eq "$(sed -n '/^--event$/{n;p;}' "$STUB_ARGS") $(sed -n '/^--base$/{n;p;}' "$STUB_ARGS")" \
   "pull_request origin/main" "the classifier judges a pull request against the base branch" "$ERR"
-assert_eq "$(git -C "$proj_class" show --name-only --format= "$judged" 2>&1)" "draft.md" \
-  "the head it judges carries the uncommitted file" "$ERR"
-assert_eq "$(git -C "$proj_class" rev-parse "$judged^") $(git -C "$proj_class" status --porcelain)" \
-  "$(git -C "$proj_class" rev-parse HEAD) ?? draft.md" \
-  "and sits on HEAD while HEAD, the index and the tree stay as they were" "$ERR"
+assert_eq "$(cat "$STUB_SEEN")" "$(printf 'draft.md\n%s' "$(git -C "$proj_class" rev-parse HEAD)")" \
+  "the head it judges carries the uncommitted file and sits on HEAD" "$ERR"
+assert_eq "$(git -C "$proj_class" status --porcelain)" "?? draft.md" \
+  "and HEAD, the index and the tree stay as they were" "$ERR"
+assert_eq "$(loose_objects)" "$objects_before" \
+  "and the repository's object store gains no object from the snapshot" "$ERR"
+
+# Control: with the scratch store never exported the snapshot writes the
+# untracked file's blob, its tree and its commit into the shared store.
+mutant mutant-shared-store 'export GIT_OBJECT_DIRECTORY="$class_scratch/objects" GIT_ALTERNATE_OBJECT_DIRECTORIES="$objects"' 'true'
+cp "$MUTANT" "$LAYOUT/orch/scripts/dev-validate-run"
+objects_before="$(loose_objects)"
+run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
+assert_eq "$(( $(loose_objects) > objects_before ))" "1" \
+  "control: without the scratch store the snapshot adds loose objects to the shared store" "$ERR"
+cp "$SCRIPTS_DIR/dev-validate-run" "$LAYOUT/orch/scripts/dev-validate-run"
 rm -f "$proj_class/draft.md"
 
 # With no classifier installed the class is standard, and says why.
