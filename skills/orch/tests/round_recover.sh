@@ -220,7 +220,8 @@ assert_eq "rc=$RC ${OUT##* }" "rc=3 reason=no-report" "a report before the round
 
 echo "=== the recovered implement record ==="
 # QA: none is no labels and a list is every label; a backticked commit
-# resolves; a proposed rule becomes the section Store Proposed Rules reads;
+# resolves; a proposed rule becomes the section Store Proposed Rules reads,
+# inline code and all;
 # recovery never verifies a tracker post, so no summary is recorded as posted.
 row=0
 for case in \
@@ -228,6 +229,7 @@ for case in \
   "a QA list^KEN-11^%H^needs-review, needs-safety-audit^none^KEN-11 ✓^.qa_labels|join(\",\")^needs-review,needs-safety-audit" \
   "a backticked commit^KEN-12^\`%H\`^none^none^KEN-12 ✓^.commit^%H" \
   "a proposed rule^KEN-13^%H^none^Name the reach^KEN-13 ✓^.summary|split(\"### Proposed Rules\")[1]|ltrimstr(\"\\n\\n\")^- Name the reach" \
+  "a proposed rule with inline code^KEN-18^%H^none^Run \`tools/guard --full\` first^KEN-18 ✓^.summary|split(\"### Proposed Rules\")[1]|ltrimstr(\"\\n\\n\")^- Run \`tools/guard --full\` first" \
   "a Summary line with a check mark posts nothing^KEN-14^%H^none^none^KEN-14 ✓^.summary_posted^false" \
   "Proposed rule: none adds no section^KEN-17^%H^none^none^KEN-17 ✓^.summary|contains(\"### Proposed Rules\")^false"; do
   row=$((row + 1))
@@ -241,7 +243,7 @@ done
 
 echo "=== a fix round's report closes against its item record ==="
 new_fix_round fix 778 5-5 1
-transcript "$TMP_ROOT/fix.jsonl" claude-send 5-5 "$(fix_report "${HEAD_SHA:0:9}" "FAILING: lint")"
+transcript "$TMP_ROOT/fix.jsonl" claude-send 5-5 "$(fix_report "\`${HEAD_SHA:0:9}\`" "FAILING: lint")"
 run --worktree "$WT" --issue issue-778 --round-id 5-5 --transcript "$TMP_ROOT/fix.jsonl"
 ARTIFACT="$WT/tmp/dev-return-issue-778-5-5.json"
 assert_eq "rc=$RC $OUT" "rc=0 round-recover: recovered artifact=$ARTIFACT" "a fix report is recovered" "$TMP_ROOT/stderr"

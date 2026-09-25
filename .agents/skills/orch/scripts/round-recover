@@ -217,8 +217,8 @@ mkdir -p "$worktree/tmp"
 report_file="$worktree/tmp/round-recovered-$issue-$round_id.md"
 printf '%s\n' "$report" > "$report_file"
 
-# Sets FIELD to the last line carrying KEY:, backticks and trailing blanks
-# stripped, and FOUND to whether any line carried it.
+# Sets FIELD to the last line carrying KEY:, verbatim but for trailing blanks,
+# and FOUND to whether any line carried it.
 field() { # KEY
   local line
   FIELD=""
@@ -229,8 +229,14 @@ field() { # KEY
       FOUND=true
     fi
   done < "$report_file"
-  FIELD="${FIELD//\`/}"
   FIELD="${FIELD%"${FIELD##*[![:space:]]}"}"
+}
+
+# A reported commit may arrive wrapped as inline code; the wrapper is no part
+# of the SHA.
+unwrap() { # WORD
+  local word="${1#\`}"
+  printf '%s' "${word%\`}"
 }
 
 if ! head_sha="$(git -C "$worktree" rev-parse HEAD)"; then
@@ -289,7 +295,7 @@ if [[ -f "$worktree/tmp/dev-round-$issue-$round_id.json" ]]; then
   else
     at_head=false
     for sha in ${commits//,/ }; do
-      resolve "$sha"
+      resolve "$(unwrap "$sha")"
       [[ -n "$RESOLVED" && "$RESOLVED" != "$base_sha" ]] || no_report commit-mismatch
       ancestor "$base_sha" "$RESOLVED" || no_report commit-mismatch
       ancestor "$RESOLVED" "$head_sha" || no_report commit-mismatch
@@ -302,7 +308,7 @@ else
   field Branch; branch="$FIELD"
   field Commit; commit="$FIELD"
   [[ -n "$branch" && -n "$commit" ]] || no_report unparsed
-  resolve "$commit"
+  resolve "$(unwrap "$commit")"
   [[ "$RESOLVED" == "$head_sha" ]] || no_report commit-mismatch
   # An absent QA: line is no answer; only a literal none means no labels.
   field QA; qa="$FIELD"
