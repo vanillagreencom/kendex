@@ -118,6 +118,10 @@ watch_argv_read() { # STATE
   while IFS= read -r -d '' word; do WATCH_ARGV+=("$word"); done < "$WATCH_ARGV_FILE"
 }
 
+# The shell's own clock in whole seconds, as WATCH_NOW. A suite that sources
+# this file redefines it to run the stop's bound on a clock the suite owns.
+watch_clock() { WATCH_NOW=$SECONDS; }
+
 # Stop the watch at PID and wait for it to give up its record: to exit, or to
 # remove the record naming it, whichever comes first. TERM reaches the loop's
 # trap at once, since the loop waits on its pass and its delay in the
@@ -126,17 +130,20 @@ watch_argv_read() { # STATE
 # and reports it before it exits; that close has no bound of its own here, so
 # the stop waits for the record and not for the exit, and watch_pid_runs tells
 # the caller when the rest has happened. Returns 1 when PID still holds its
-# record at the bound, which is read off the shell's own clock rather than
-# counted in sleeps, so a sleep that returns early cannot shorten it, and
-# where STATE's directory does not resolve, before any signal. SECONDS counts
-# whole seconds and can tick at once, so the deadline is one past the bound:
-# the wait is never shorter than WATCH_STOP_SECS.
+# record at the bound, which is read off watch_clock rather than counted in
+# sleeps, so a sleep that returns early cannot shorten it, and where STATE's
+# directory does not resolve, before any signal. The clock counts whole seconds
+# and can tick at once, so the deadline is one past the bound: the wait is
+# never shorter than WATCH_STOP_SECS.
 watch_stop() { # PID STATE
-  local deadline=$((SECONDS + WATCH_STOP_SECS + 1))
+  local deadline
+  watch_clock
+  deadline=$((WATCH_NOW + WATCH_STOP_SECS + 1))
   watch_pid_paths "$2" || return 1
   kill -TERM "$1" 2>/dev/null || true
   while kill -0 "$1" 2>/dev/null && grep -qxF -- "pid=$1" "$WATCH_PID_FILE" 2>/dev/null; do
-    (( SECONDS < deadline )) || return 1
+    watch_clock
+    (( WATCH_NOW < deadline )) || return 1
     sleep 0.1
   done
 }
