@@ -1,6 +1,6 @@
 # Job units
 
-Load when starting, naming, finding or stopping an orch job through `scripts/lib/job-unit.sh`: run it with `--help` for its subcommands, or source it for the same functions. `dev-validate-run` is its first caller. These launches use their own mechanism, not this one: the `setsid` launch [waiter-launch.md](waiter-launch.md) gives `approval-wait`, `ci-wait` and `queue-wait`, `lane_run_detached` in `scripts/lib/lane-launch.sh`, and the preparing-job stop in `lane-close` and `open-terminal`.
+Load when starting, naming, finding or stopping an orch job through `scripts/lib/job-unit.sh`: run it with `--help` for its subcommands, or source it for the same functions. `dev-validate-run` is its first caller. These launches use their own mechanism, not this one: every job launched through [waiter-launch.md](waiter-launch.md), `lane_run_detached` in `scripts/lib/lane-launch.sh`, and the preparing-job stop in `lane-close` and `open-terminal`.
 
 The runner bounds a job's lifetime and nothing else; it sets no memory, CPU or task limit and no slice. Under a unit, the job and everything it forks end when the job ends or reaches its bound. Under `setsid` see [Runner line](#runner-line) for what escapes.
 
