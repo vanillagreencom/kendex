@@ -116,7 +116,7 @@ ROWS
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
 
 # Each declared lane source runs every lane and each declared build name is a
-# build input, both read from the script; a copy without a member reds its row.
+# build input; both lists are read from the scripts and pinned here.
 lane_sources() { # SCRIPT — a path per LANE_SOURCES alternative
   sed -n "s/^LANE_SOURCES='^(\(.*\))'\$/\1/p" "$1" | awk '{
     for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); d += (c == "(") - (c == ")")
@@ -129,15 +129,19 @@ lane_sources() { # SCRIPT — a path per LANE_SOURCES alternative
 build_names() { # SCRIPT — the names its build list declares
   awk '/^build=\$\(printf/ { on = 1; sub(/.*%s\\n. /, "") } on { last = /\)$/; gsub(/[\\)]/, ""); print; if (last) exit }' "$1" | tr -s ' ' '\n' | grep .
 }
+SOURCES=".github/workflows/x .github/actions/x tools/ci-job-set tools/ci-aggregate tools/rust-reads"
+NAMES="crates Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml .cargo clippy.toml .clippy.toml rustfmt.toml .rustfmt.toml"
+pins() { echo "$(echo $(lane_sources "$1"))|$(echo $(build_names "$2"))"; } # JOB-SET READER
+check "the declared lists are the pinned sets" "$SOURCES|$NAMES" "$(pins "$JOB_SET" "$ROOT/tools/rust-reads")"
 sources="$(lane_sources "$JOB_SET")" names="$(build_names "$ROOT/tools/rust-reads")"
-grep -qx tools/rust-reads <<<"$sources" && grep -qx .cargo <<<"$names" ||
-  { echo "a declared list read empty, so an extractor is broken: '$sources' '$names'" >&2; exit 1; }
 while IFS= read -r p; do check "lane source $p runs every lane" "$ALL_ON" "$(selection standard false "$p")"; done <<<"$sources"
 while IFS= read -r p; do check "build name $p is a build input" "$BUILD_ROW" "$(selection micro false "$p")"; done <<<"$names"
 mkdir -p "$TMP/member/tools"
 sed 's/(\(ci-job-set.\)ci-aggregate/(\1nothing/' "$JOB_SET" >"$TMP/member/tools/ci-job-set"
 sed 's/ \.cargo \\$/ \\/' "$ROOT/tools/rust-reads" >"$TMP/member/tools/rust-reads"
 chmod +x "$TMP/member/tools/ci-job-set" "$TMP/member/tools/rust-reads"
+check "control: a copy without a member fails each pin" "${SOURCES/ci-aggregate/nothing}|$(echo ${NAMES/.cargo /})" \
+  "$(pins "$TMP/member/tools/ci-job-set" "$TMP/member/tools/rust-reads")"
 for row in "standard tools/ci-aggregate" "micro .cargo"; do
   check "control: copies without the member $row run it as no lane source or build input" "$CODE_ROW" \
     "$(SELECT_WITH="$TMP/member/tools/ci-job-set" selection ${row% *} false "${row#* }")"
@@ -200,8 +204,7 @@ check "a read set rust-reads cannot derive is refused" "exit=2 rust-reads-failed
   "$(SELECT_IN="$TMP/no-crates" selection trivial true docs/a.md)"
 check "and on a measured diff, whose compile lanes it gates" "exit=2 rust-reads-failed" \
   "$(SELECT_IN="$TMP/no-crates" selection micro true docs/a.md)"
-# A build input is a path other than prose under a build or include row; a
-# run-time read is none.
+# A build input is a non-prose path under a build or include row, not a read.
 check "an included file other than prose is a build input" "$BUILD_ROW" \
   "$(SELECT_IN="$READ_WORLD" selection micro false assets/x.json)"
 check "a file the Rust source reads at run time is no build input" "$CODE_ROW" \

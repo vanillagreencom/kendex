@@ -439,8 +439,7 @@ run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
   || bad "shared Rust input scheduling" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
 git -C "$R" reset -q HEAD -- Cargo.toml
 git -C "$R" checkout -q -- Cargo.toml
-# A reader that cannot derive the shared inputs is a finding, and every
-# staged path counts as one, so the workspace compiles rather than nothing.
+# An underivable reader is a finding, and every path an input: all compiles.
 printf '#!/usr/bin/env bash\n[ "${FAIL_FIND:-0}" = 1 ] && [ "$1" = crates ] && [ "${5:-}" = "*.rs" ] && exit 1\nexec %s "$@"\n' \
   "$(command -v find)" >"$R/fake-bin/find"
 chmod +x "$R/fake-bin/find"

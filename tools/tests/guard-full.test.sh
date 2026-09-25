@@ -735,8 +735,7 @@ run_lanes stale false $CODE
 [ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: validate-class=stale"* ]] && [ "$(lanes_ran)" = "" ] \
   && ok "a class ci-job-set has no selection for is refused before any lane runs" \
   || bad "a class ci-job-set has no selection for is refused before any lane runs" "rc=$RC out=$OUT"
-# The runner's fallback when it could not read a class: standard, docs-only
-# false and an empty paths file. Every lane runs and the run is green.
+# The runner's class fallback, an empty paths file, runs every lane, green.
 : >"$TMP/empty-paths"
 HANDED_PATHS="$TMP/empty-paths" run_lanes standard false $SKILL_TOOL
 [ "$RC" -eq 0 ] && [[ "$OUT" == *"guard-note: lane-selection=class-fallback"* ]] && [ "$(lanes_ran)" = "suites parse lint test ui" ] \
@@ -798,8 +797,7 @@ inherited_row
 [[ "$OUT" == *"inner=micro:false:$PATHS_FILE"* ]] \
   && ok "control: with the selection left exported the suite inherits it" \
   || bad "control: with the selection left exported the suite inherits it" "rc=$RC out=$OUT"
-# The lanes come from ci-job-set's output file alone, never its stderr. The
-# stub selects no lane in the file and the lint lane on stderr.
+# Lanes come from the output file, not stderr, where the stub selects lint.
 cp "$LANE_TOOLS/ci-job-set" "$TMP/ci-job-set.real"
 printf '%s\n' '#!/usr/bin/env bash' \
   'rows="shell_shards=false macos_legs=false ui=false bot_instructions=false cargo_linux=false' \
