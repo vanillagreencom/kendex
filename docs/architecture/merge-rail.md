@@ -2,10 +2,10 @@
 
 Covers: .github/workflows/, .github/actions/, skills/harness-ci/, skills/review-gate/, skills/orch/workflows/merge-pr.md, skills/orch/workflows/consumer-train.md
 
-The rail carries one change from a consumer pull request to the default branch, and carries kendex's own releases back out to every consumer. One classifier reads the diff, CI gates its lanes on that verdict, the review gate posts one commit status, and the branch ruleset decides the merge. Every part of it is shipped by kendex and wired by the consumer: kendex renders the scripts, and the repository owns its workflow files, its settings values, its required-context names and its ruleset.
+The rail carries one change from a consumer pull request to the default branch, and carries each kendex merge to a shipped catalog path back out to every consumer. One classifier reads the diff, CI gates its lanes on that verdict, the review gate posts one commit status, and the branch ruleset decides the merge. Every part of it is shipped by kendex and wired by the consumer: kendex renders the scripts, and the repository owns its workflow files, its settings values, its required-context names and its ruleset.
 
 ```text
-  a consumer pull request                     a kendex release
+  a consumer pull request                     a kendex merge to a shipped path
             |                                         |
     +-------+--------+                      +---------+---------+
     v                v                      v                   v
@@ -75,4 +75,4 @@ The classifier answers one five-class verdict, `change_class`, beside the two na
 - The gate is a commit status, not a CI job. Adoption still changes CI: it adds the ungated validate job, and a repository that wants the docs waiver also takes the fast/full split. What stays untouched is that no job is conditioned on the gate's verdict.
 - The consumer train is the current propagation path, and [D003](../decisions/D003-one-merge-path.md) replaces it with a workflow each consumer runs itself. The train enters each consumer's own checkout, refreshes it, and commits the refresh output and nothing else, beyond a manifest edit where a bundle's member list moved, through that repository's branch, review and merge path.
 - In kendex itself the gate's carry-forward and render-only lanes are off: `REVIEW_GATE_CARRY_FORWARD` is empty and `REVIEW_GATE_RENDER_PATHS` takes its empty default. `REVIEW_GATE_DOCS_ONLY` is `none`, so a documentation diff waives reviewer evidence alone.
-- The merge queue is the one merge path. `ORCH_MERGE_BYPASS = "fast-path"` merges a met head directly where the account holds a ruleset bypass; [D003](../decisions/D003-one-merge-path.md) retires the fast path and those bypass actors.
+- The merge queue is one of the three current routes that § Boundaries names; `ORCH_MERGE_BYPASS = "fast-path"` merges a met head directly where the account holds a ruleset bypass. [D003](../decisions/D003-one-merge-path.md) makes the queue the one merge path, and KEN-1777 retires the fast path and those bypass actors.
