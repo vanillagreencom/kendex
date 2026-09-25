@@ -367,9 +367,13 @@ proof_linux_only() { # [FROM TO]
   [ "$(count "$out" -fuse-ld=)" -eq "$(count "$BASE_FOREIGN" -fuse-ld=)" ]
 }
 
-proof_wrapper() { # ENDPOINT-ASSIGNMENT SCCACHE EXPECT [FROM TO]
-  local assignment=$1 sccache=$2 expect=$3 out="" conf=""
-  shift 3
+# proof_wrapper PRIOR ASSIGNMENT SCCACHE EXPECT [FROM TO]: the sandbox setup
+# with the endpoint ASSIGNMENT, after a first run with PRIOR when that is set.
+# sccache wraps rustc and its config names the endpoint (redis), wraps rustc
+# with no cache section in its config (local), or neither (unused).
+proof_wrapper() {
+  local prior=$1 assignment=$2 sccache=$3 expect=$4 out="" conf="" conf_text=""
+  shift 4
   lane_fixture "$@"
   EXTRA_BIN="$R/row-bin"
   mkdir -p "$EXTRA_BIN"
@@ -377,18 +381,23 @@ proof_wrapper() { # ENDPOINT-ASSIGNMENT SCCACHE EXPECT [FROM TO]
     printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"${0%%/*}/sccache.log"\nexec "$@"\n' >"$EXTRA_BIN/sccache"
     chmod +x "$EXTRA_BIN/sccache"
   fi
-  if [ -n "$assignment" ]; then
-    run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test "$assignment"
-  else
-    run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test
+  if [ -n "$prior" ]; then
+    run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test "$prior"
+    [ "$RC" -eq 0 ] || { WHY="prior rc=$RC out=$OUT"; return 1; }
   fi
+  run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test ${assignment:+"$assignment"}
   [ "$RC" -eq 0 ] || { WHY="rc=$RC out=$OUT"; return 1; }
   out="$(cargo_in "$R" check -v)" || { WHY="$out"; return 1; }
   conf="$R/home/.config/sccache/config"
-  WHY="setup=$OUT check=$out"
+  if [ -e "$conf" ]; then
+    conf_text="$(cat "$conf")" || return 1
+  fi
+  WHY="setup=$OUT sccache-config=[$conf_text] check=$out"
   case "$expect" in
-    used)
+    redis)
       [ -s "$EXTRA_BIN/sccache.log" ] && grep -qxF "endpoint = \"${assignment#*=}\"" "$conf" ;;
+    local)
+      [ -s "$EXTRA_BIN/sccache.log" ] && case $'\n'"$conf_text"$'\n' in *$'\n[cache.redis]\n'*) false ;; *) true ;; esac ;;
     unused)
       [ ! -e "$EXTRA_BIN/sccache.log" ] && [ ! -e "$conf" ] ;;
     *) WHY="unknown expectation $expect"; return 1 ;;
@@ -404,17 +413,20 @@ for tool in cc ld ld.mold mold ld.lld; do
 done
 case "$LINK_TOOLS" in */cc\ * | */cc) ;; *) bad "the host provides cc for the warm build rows" "found:$LINK_TOOLS"; exit 1 ;; esac
 
-# proof_warm WARM SOURCE WRAPPER EXPECT [FROM TO]: the setup with
+# proof_warm WARM SOURCE WRAPPER STALE EXPECT [FROM TO]: the setup with
 # FLEET_WARM=WARM on a toy crate, committed, that compiles with a current
 # Cargo.lock (good), does not compile (broken), or has no Cargo.lock for
 # --locked to accept (unlocked), with the real cargo on its PATH and the build
 # kept in the clone's own target dir. WRAPPER sccache gives the lane config a
-# pass-through sccache and an endpoint; none gives it no wrapper. A build that
-# ran compiled the crate at LANE_PATH and left no tree there.
+# pass-through sccache and an endpoint; none gives it no wrapper. STALE tree
+# leaves a cut-off build's worktree, with an untracked file, at LANE_PATH;
+# registration leaves its registration with the directory gone; none leaves
+# neither. A build that ran compiled the crate at LANE_PATH and left no tree
+# there.
 proof_warm() {
-  local warm=$1 source=$2 wrapper=$3 expect=$4 lock="" exe="" built=no trees="" at_lane=no
+  local warm=$1 source=$2 wrapper=$3 stale=$4 expect=$5 lock="" exe="" built=no trees="" at_lane=no
   local -a endpoint=()
-  shift 4
+  shift 5
   lane_fixture "$@"
   case "$source" in
     good) ;;
@@ -427,6 +439,18 @@ proof_warm() {
   fi
   git -C "$R" add -A || return 1
   git -C "$R" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m "$source crate" || return 1
+  case "$stale" in
+    none) ;;
+    tree)
+      git -C "$R" worktree add -q --detach "$LANE_PATH" HEAD || return 1
+      printf 'partial\n' >"$LANE_PATH/leftover" || return 1
+      ;;
+    registration)
+      git -C "$R" worktree add -q --detach "$LANE_PATH" HEAD || return 1
+      rm -rf -- "$LANE_PATH" || return 1
+      ;;
+    *) WHY="unknown stale state $stale"; return 1 ;;
+  esac
   EXTRA_BIN="$R/row-bin"
   mkdir -p "$EXTRA_BIN"
   ln -s "$CARGO_BIN" "$EXTRA_BIN/cargo"
@@ -480,25 +504,28 @@ if [ -n "$FOREIGN_TARGET" ]; then
 else
   ok "linker: non-Linux target row skipped, no aarch64-apple-darwin or x86_64-pc-windows-msvc in $SYSROOT"
 fi
-while IFS='|' read -r assignment sccache expect; do
-  proof_wrapper "$assignment" "$sccache" "$expect" && ok "wrapper: [$assignment] with sccache $sccache is $expect" || bad "wrapper: [$assignment] with sccache $sccache is $expect" "$WHY"
+while IFS='|' read -r prior assignment sccache expect; do
+  proof_wrapper "$prior" "$assignment" "$sccache" "$expect" && ok "wrapper: [$assignment] after [$prior] with sccache $sccache is $expect" || bad "wrapper: [$assignment] after [$prior] with sccache $sccache is $expect" "$WHY"
 done <<'ROWS'
-FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|present|used
-FLEET_SCCACHE_REDIS_ENDPOINT=|present|unused
-|present|unused
-FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|absent|unused
+|FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|present|redis
+|FLEET_SCCACHE_REDIS_ENDPOINT=|present|local
+||present|local
+FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379||present|local
+|FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|absent|unused
 ROWS
 
-while IFS='|' read -r warm source wrapper expect; do
-  proof_warm "$warm" "$source" "$wrapper" "$expect" && ok "warm: FLEET_WARM=[$warm] on a $source crate with wrapper $wrapper is $expect" || bad "warm: FLEET_WARM=[$warm] on a $source crate with wrapper $wrapper is $expect" "$WHY"
+while IFS='|' read -r warm source wrapper stale expect; do
+  proof_warm "$warm" "$source" "$wrapper" "$stale" "$expect" && ok "warm: FLEET_WARM=[$warm] on a $source crate with wrapper $wrapper and stale $stale is $expect" || bad "warm: FLEET_WARM=[$warm] on a $source crate with wrapper $wrapper and stale $stale is $expect" "$WHY"
 done <<'ROWS'
-1|good|sccache|built
-|good|sccache|skipped
-0|good|sccache|skipped
-1|broken|sccache|failed
-1|unlocked|sccache|failed
-1|good|none|fetched
-1|unlocked|none|fetch-failed
+1|good|sccache|none|built
+1|good|sccache|tree|built
+1|good|sccache|registration|built
+|good|sccache|none|skipped
+0|good|sccache|none|skipped
+1|broken|sccache|none|failed
+1|unlocked|sccache|none|failed
+1|good|none|none|fetched
+1|unlocked|none|none|fetch-failed
 ROWS
 
 echo "=== must-fail controls: each cargo proof fails against its mutant ==="
@@ -531,40 +558,52 @@ if [ -n "$FOREIGN_TARGET" ]; then
     && bad "control: a linker entry for every target fails the non-Linux row" "$WHY" \
     || ok "control: a linker entry for every target fails the non-Linux row"
 fi
-proof_wrapper FLEET_SCCACHE_REDIS_ENDPOINT= present unused '  if [ -z "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ]; then' '  if false; then' \
-  && bad "control: a wrapper on an empty endpoint fails the empty-endpoint row" "$WHY" \
-  || ok "control: a wrapper on an empty endpoint fails the empty-endpoint row"
+proof_wrapper '' FLEET_SCCACHE_REDIS_ENDPOINT= present local '  if ! sccache_path="$(command -v sccache)"; then' '  if [ -z "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ] || ! sccache_path="$(command -v sccache)"; then' \
+  && bad "control: a wrapper tied to the endpoint fails the empty-endpoint row" "$WHY" \
+  || ok "control: a wrapper tied to the endpoint fails the empty-endpoint row"
+proof_wrapper '' '' present local '    if [ -n "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ]; then' '    if true; then' \
+  && bad "control: a redis section written with no endpoint fails the unset-endpoint row" "$WHY" \
+  || ok "control: a redis section written with no endpoint fails the unset-endpoint row"
+proof_wrapper FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379 '' present local '    write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" "$sccache_config"' '    [ -z "$sccache_config" ] || write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" "$sccache_config"' \
+  && bad "control: an earlier run's redis section left in place fails the rerun row" "$WHY" \
+  || ok "control: an earlier run's redis section left in place fails the rerun row"
 
-proof_warm 1 good sccache built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  :' \
+proof_warm 1 good sccache none built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  :' \
   && bad "control: a warm run that builds nothing fails the built row" "$WHY" \
   || ok "control: a warm run that builds nothing fails the built row"
-proof_warm 1 good sccache built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cargo test --workspace --no-run --locked) || build_status=$?' \
+proof_warm 1 good sccache none built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cargo test --workspace --no-run --locked) || build_status=$?' \
   && bad "control: a warm build in the clone rather than at the lane path fails the built row" "$WHY" \
   || ok "control: a warm build in the clone rather than at the lane path fails the built row"
-proof_warm 1 good sccache built '  git worktree remove --force -- "$lane_path"' '  :' \
+proof_warm 1 good sccache none built '  git worktree remove --force -- "$lane_path"' '  :' \
   && bad "control: a warm tree left at the lane path fails the built row" "$WHY" \
   || ok "control: a warm tree left at the lane path fails the built row"
-proof_warm '' good sccache skipped 'elif [ "${FLEET_WARM:-}" = 1 ]; then' 'elif true; then' \
+proof_warm '' good sccache none skipped 'elif [ "${FLEET_WARM:-}" = 1 ]; then' 'elif true; then' \
   && bad "control: a build without FLEET_WARM fails the skipped row" "$WHY" \
   || ok "control: a build without FLEET_WARM fails the skipped row"
-proof_warm 0 good sccache skipped 'elif [ "${FLEET_WARM:-}" = 1 ]; then' 'elif [ -n "${FLEET_WARM:-}" ]; then' \
+proof_warm 0 good sccache none skipped 'elif [ "${FLEET_WARM:-}" = 1 ]; then' 'elif [ -n "${FLEET_WARM:-}" ]; then' \
   && bad "control: building on any non-empty FLEET_WARM fails the FLEET_WARM=0 row" "$WHY" \
   || ok "control: building on any non-empty FLEET_WARM fails the FLEET_WARM=0 row"
-proof_warm 1 unlocked sccache failed '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cd -- "$lane_path" && cargo test --workspace --no-run) || build_status=$?' \
+proof_warm 1 unlocked sccache none failed '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cd -- "$lane_path" && cargo test --workspace --no-run) || build_status=$?' \
   && bad "control: a warm build without --locked fails the unlocked row" "$WHY" \
   || ok "control: a warm build without --locked fails the unlocked row"
-proof_warm 1 broken sccache failed '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || true' \
+proof_warm 1 broken sccache none failed '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || true' \
   && bad "control: a swallowed build failure fails the failed row" "$WHY" \
   || ok "control: a swallowed build failure fails the failed row"
-proof_warm 1 good none fetched 'if [ "${FLEET_WARM:-}" = 1 ] && [ -z "$lane_wrapper" ]; then' 'if false; then' \
+proof_warm 1 good none none fetched 'if [ "${FLEET_WARM:-}" = 1 ] && [ -z "$lane_wrapper" ]; then' 'if false; then' \
   && bad "control: a warm build with no wrapper fails the fetched row" "$WHY" \
   || ok "control: a warm build with no wrapper fails the fetched row"
-proof_warm 1 unlocked none fetch-failed '  cargo fetch --locked' '  :' \
+proof_warm 1 unlocked none none fetch-failed '  cargo fetch --locked' '  :' \
   && bad "control: a skipped fetch fails the fetch-failed row" "$WHY" \
   || ok "control: a skipped fetch fails the fetch-failed row"
-proof_warm 1 unlocked none fetch-failed '  cargo fetch --locked' '  cargo fetch' \
+proof_warm 1 unlocked none none fetch-failed '  cargo fetch --locked' '  cargo fetch' \
   && bad "control: a fetch without --locked fails the fetch-failed row" "$WHY" \
   || ok "control: a fetch without --locked fails the fetch-failed row"
+proof_warm 1 good sccache tree built '  if [ -e "$lane_path" ]; then' '  if false; then' \
+  && bad "control: a stale tree left at the lane path fails the stale-tree row" "$WHY" \
+  || ok "control: a stale tree left at the lane path fails the stale-tree row"
+proof_warm 1 good sccache registration built '  git worktree add --force --quiet --detach -- "$lane_path" HEAD' '  git worktree add --quiet --detach -- "$lane_path" HEAD' \
+  && bad "control: an add without --force fails the stale-registration row" "$WHY" \
+  || ok "control: an add without --force fails the stale-registration row"
 
 echo "=== the script starts under a real Bash 3.2 when one is reachable ==="
 RUNTIMES="$(sed -n 's/^RUNTIMES="\(.*\)"$/\1/p' "$TOOLS/bash32-parse")"
