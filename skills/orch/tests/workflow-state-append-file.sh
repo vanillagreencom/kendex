@@ -179,6 +179,52 @@ key="$(head -n 1 "$TMP_ROOT/fl-scalar.err")"
 MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_DIR"
 cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$MUTANT_DIR/lib"
+cp "$REPO_ROOT/skills/orch/scripts/orch-env" "$MUTANT_DIR/orch-env"
+# The row's text is capped in bytes, not characters: a successor reads the
+# last rows whole at takeover, and the cap is what bounds that read. Rows:
+# the setting (- for unset), the character and its count, and the verdict.
+cap_sd="$TMP_ROOT/cap-state"
+"$WS" --state-dir "$cap_sd" init oversee >/dev/null
+while IFS='|' read -r setting char n verdict; do
+  text="$(printf "%${n}s" '' | sed "s/ /$char/g")"
+  jq -n --arg t "$text" '{kind: "ruling", item: "KEN-7", text: $t}' > "$TMP_ROOT/fl-cap.json"
+  bytes="$(printf '%s' "$text" | wc -c | tr -d ' ')"
+  [[ "$setting" == - ]] && cap_env=(env -u ORCH_FLEET_LOG_ROW_BYTES) || cap_env=(env ORCH_FLEET_LOG_ROW_BYTES="$setting")
+  cap="${setting/-/600}"
+  before="$("$WS" --state-dir "$cap_sd" get oversee '.fleet_log | length')"
+  rc=0
+  "${cap_env[@]}" "$WS" --state-dir "$cap_sd" append-file oversee fleet_log "$TMP_ROOT/fl-cap.json" \
+    >/dev/null 2>"$TMP_ROOT/fl-cap.err" || rc=$?
+  after="$("$WS" --state-dir "$cap_sd" get oversee '.fleet_log | length')"
+  key="$(head -n 1 "$TMP_ROOT/fl-cap.err")"
+  case "$verdict" in
+    stored) [[ "$rc" -eq 0 && "$after" -eq $((before + 1)) ]] ;;
+    refused) [[ "$rc" -eq 1 && "$after" -eq "$before" \
+                && "$key" == "workflow-state: fleet-log-row-bytes bytes=$bytes cap=$cap" ]] ;;
+  esac && ok "a $bytes-byte text under cap $cap is $verdict" \
+    || bad "a $bytes-byte text under cap $cap is $verdict" "rc=$rc key=$key rows=$before->$after"
+done <<'ROWS'
+-|a|600|stored
+-|a|601|refused
+-|é|300|stored
+-|é|301|refused
+100|a|100|stored
+100|a|101|refused
+ROWS
+
+# Planted: the cap check removed. The over-cap row is then stored, which is
+# what the unpatched append did.
+[[ "$(grep -Fc 'if (( bytes > cap )); then' "$WS")" == "1" ]] \
+  && ok "the cap control finds the cap comparison" || bad "the cap control finds the cap comparison"
+sed 's/if (( bytes > cap )); then/if false; then/' "$WS" > "$MUTANT_DIR/no-cap"
+jq -n --arg t "$(printf '%601s' '' | tr ' ' a)" '{kind: "ruling", item: "KEN-8", text: $t}' > "$TMP_ROOT/fl-over.json"
+"$WS" --state-dir "$TMP_ROOT/mutant-cap" init oversee >/dev/null
+env -u ORCH_FLEET_LOG_ROW_BYTES bash "$MUTANT_DIR/no-cap" --state-dir "$TMP_ROOT/mutant-cap" \
+  append-file oversee fleet_log "$TMP_ROOT/fl-over.json" >/dev/null 2>&1 || true
+got="$("$WS" --state-dir "$TMP_ROOT/mutant-cap" get oversee '.fleet_log | length')"
+[[ "$got" == "1" ]] && ok "control: without the cap comparison the over-cap row is stored" \
+  || bad "control: without the cap comparison the over-cap row is stored" "got=$got"
+
 mutant_run() { # MUTANT_NAME STATE_DIR RECORD ERR_FILE
   local rc=0
   "$WS" --state-dir "$2" init oversee >/dev/null
