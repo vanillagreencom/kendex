@@ -1147,5 +1147,48 @@ two_causes "$MUTANT_DIR/orch/scripts/oversee-watch-causeless"
 assert_eq "reports=$CAUSES" "reports=10" "control: keyed on the reason alone, the second cause passes in silence" \
   "$STUB_DIR/causes-file-unreadable.err"
 
+# The overseer mailbox acknowledged after its notes print: an --ack lane-mail
+# refuses, here lock-failed as a cursor lock held past its wait gives, is the
+# mailbox's failure. The note is printed, the refusal is said once, the run
+# fails, and the cursor stays for the next reader.
+cat > "$TMP_ROOT/bin/lane-mail-ack-refusing.sh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == inbox && " $* " == *" --item overseer "* && " $* " == *" --ack "* ]]; then
+  printf 'lane-mail: lock-failed=/srv/box/to-lane.cursor.lock\nThe refusal.\n' >&2
+  exit 2
+fi
+exec "$REAL_LANE_MAIL" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/lane-mail-ack-refusing.sh"
+ack_refused() { # [WATCH_BIN]
+  local rc=0 out cursor
+  mail_reset overseer
+  printf 'Hold the release.\n' > "$TMP_ROOT/ack-note.txt"
+  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item overseer --directive --file "$TMP_ROOT/ack-note.txt" >/dev/null)
+  out="$(WATCH_BIN="${1:-}" run_watch OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-ack-refusing.sh" \
+    REAL_LANE_MAIL="$LANE_MAIL" -- --max-loops 1 2>"$STUB_DIR/ack.err")" || rc=$?
+  cursor="$(cat "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.cursor" 2>/dev/null || :)"
+  ACK_REFUSED="rc=$rc printed=$(grep -c '^EVENT owner-note ' <<<"$out" || :)"
+  ACK_REFUSED+=" refused=$(grep -c '^oversee-watch: mail-read-failed item=overseer exit=2$' "$STUB_DIR/ack.err" || :)"
+  ACK_REFUSED+=" cursor=${cursor:-0}"
+}
+new_case mail_ack_refused
+ack_refused
+assert_eq "$ACK_REFUSED" "rc=2 printed=1 refused=1 cursor=0" \
+  "a refused overseer --ack prints the note, reports the failure once and fails the run, moving no cursor" \
+  "$STUB_DIR/ack.err"
+cadence_mutant ack-unreported '      else
+        lane_failure_report "$item" "$state"
+        state="$LANE_FAILURE_STATE"
+      fi
+      mail_row_commit "$state"
+      continue' '      fi
+      mail_row_commit "$state"
+      continue'
+new_case mail_ack_refused_mutant
+ack_refused "$MUTANT_DIR/orch/scripts/oversee-watch-ack-unreported"
+assert_eq "$ACK_REFUSED" "rc=0 printed=1 refused=0 cursor=0" \
+  "control: without the failure arm a refused ack passes in silence" "$STUB_DIR/ack.err"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
