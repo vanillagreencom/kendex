@@ -45,8 +45,10 @@ message() { # REASON FIELD=VALUE...
       printf '%s\n' \
         'The harness could not be stopped by signal. Close-out stopped. cause names the step:' \
         '  provider          the lane host stop verb exited with status; its own words are on the lines above this one.' \
+        '                    status=4 under --keep-sandbox is an item whose worktree is gone; only a full close skips that stop.' \
         '  answer-unparsed   the lane host stop verb succeeded without its stopped item=ID processes=COUNT line.' \
         '  any other value   the local stop step lib/lane-state.sh lane_stop_owned names, pid= the process it failed on.' ;;
+    stop-skipped) printf '%s\n' "The lane host answered that the item's worktree is gone, so no harness process can be found by its directory. The host close below ends the harness where the provider's close ends the sandbox; otherwise the window close hangs up the lane's ssh session, which ends it. A static host's close ends no process." ;;
     exit-timeout) printf '%s\n' 'The pane did not read exited before the close timeout. processes= is how many harness processes the stop signalled in the lane worktree and saw exit; 0 means none was left there to signal. Close-out stopped.' ;;
     state-write-failed) printf '%s\n' 'The lane closed, but its fleet record could not be updated.' ;;
     prepare-stop-failed) printf '%s\n' 'The background launch job the record names could not be stopped. Close-out changed nothing else.' ;;
@@ -69,6 +71,13 @@ terminal. An idle lane's harness is ended by SIGTERM, never by typing into its
 pane: through lane-host stop for a record carrying host, and for a local lane
 by the same stop against the worktree the record's mail_root names. The close
 then waits up to ORCH_LANE_CLOSE_SECS (default 15) for the pane to read exited.
+A hosted stop answering status 4, the item's worktree already removed by its
+own close-out, prints stop-skipped cause=worktree-removed and goes straight to
+the host close and window kill. The host close ends the harness where the
+provider's close ends the sandbox; otherwise the window kill hangs up the
+lane's ssh session, which ends it, as a static host's close ends no process.
+Under --keep-sandbox, where no host close follows, that answer refuses as
+stop-failed.
 The local stop reads each harness process's directory through /proc, or
 through lsof on a host without /proc such as macOS; a host with neither
 refuses as stop-failed cause=cwd-reader-missing.
@@ -468,12 +477,26 @@ pane_now_exited() {
 # worktree its record names. STOPPED_COUNT is how many processes the stop
 # signalled, which the exit wait below names where the pane outlives it.
 STOPPED_COUNT=""
+STOP_SKIPPED=false
+STOP_WORKTREE_REMOVED=4
 STOP_LINE_RE='^stopped item=[^ ]+ processes=([0-9]+)$'
 stop_harness() {
   local out rc=0 fields=("item=$ITEM" "harness=$harness")
   if [[ -n "$host" ]]; then
     [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; exit 1; }
     out="$(ORCH_LANE_HOST="$host" "$LANE_HOST" stop --item "$ITEM" --harness "$harness")" || rc=$?
+    # A merged lane's own close-out removes its worktree before the lane goes
+    # idle, so the provider has no directory to find the harness by. Only an
+    # idle lane on a terminal item reaches this stop, and what follows ends the
+    # harness, so the stop is skipped rather than refused: the host close where
+    # the provider's close ends the sandbox, otherwise the window kill, which
+    # hangs up the lane's ssh session, as a static host's close ends no
+    # process. Under --keep-sandbox no host close follows.
+    if [[ "$rc" -eq "$STOP_WORKTREE_REMOVED" && "$KEEP_SANDBOX" == false ]]; then
+      message stop-skipped "${fields[@]}" "cause=worktree-removed"
+      STOP_SKIPPED=true
+      return 0
+    fi
     [[ "$rc" -eq 0 ]] || { message stop-failed "${fields[@]}" "cause=provider" "status=$rc" >&2; exit 1; }
     if [[ "$out" =~ $STOP_LINE_RE ]]; then
       STOPPED_COUNT="${BASH_REMATCH[1]}"
@@ -501,6 +524,7 @@ if [[ "$state" == idle ]]; then
   [[ "$close_secs" =~ ^[1-9][0-9]*$ ]] \
     || { message record-invalid "item=$ITEM" "field=ORCH_LANE_CLOSE_SECS" >&2; exit 1; }
   stop_harness
+  [[ "$STOP_SKIPPED" == false ]] || finish_close
   passes=$((close_secs * 5))
   while :; do
     rc=0
