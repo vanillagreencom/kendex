@@ -223,10 +223,11 @@ seed_pinned() { # FRONTMATTER-MODEL BODY-MODEL — commit that source with every
   git -C "$R" add -A agents .claude/agents .codex/agents .pi/agents
   git -C "$R" commit -q -m "chore: an agent with a model in its frontmatter"
 }
-land_pinned() { # FRONTMATTER-MODEL BODY-MODEL — write that source, land the Claude and Codex renders, leave Pi
+land_pinned() { # FRONTMATTER-MODEL BODY-MODEL — stage that source and the Claude and Codex renders, leave Pi
   write_pinned "$1" "$2"
   printf '# amended\n' >>"$R/.claude/agents/pinned.md"
   printf '# amended\n' >>"$R/.codex/agents/pinned.toml"
+  git -C "$R" add agents/pinned.md .claude/agents/pinned.md .codex/agents/pinned.toml
 }
 
 seed_pinned opus opus
@@ -243,11 +244,30 @@ if mutant_guard '/^    render_unchanged_by "\$1" "\$2" ||$/d'; then
 else
   bad "control: the unchanged-render allowance could not be deleted from a guard copy"
 fi
-git -C "$R" checkout -q -- agents .claude/agents .codex .pi
+git -C "$R" reset -q --hard HEAD
+
+# The commit records the index: a staged sonnet owes the Pi render though the
+# worktree beside it has moved on to inherit.
+land_pinned sonnet opus
+write_pinned inherit opus
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/pinned.md -> .pi/agents/pinned.md"* ]] \
+  && ok "a staged opus -> sonnet edit with inherit unstaged beside it reds, naming the Pi render" \
+  || bad "a staged opus -> sonnet edit with inherit unstaged beside it reds, naming the Pi render" "rc=$RC out=$OUT"
+if mutant_guard 's/^  if \[ "\$MODE" = default \]; then$/  if false; then/'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the worktree read in place of the index the staged sonnet passes" \
+    || bad "control: with the worktree read in place of the index the staged sonnet passes" "rc=$RC out=$OUT"
+else
+  bad "control: the index read could not be removed from a guard copy"
+fi
+git -C "$R" reset -q --hard HEAD
 
 # The allowance is per render root: the Claude render does carry the model.
 write_pinned inherit opus
 printf '# amended\n' >>"$R/.codex/agents/pinned.toml"
+git -C "$R" add agents/pinned.md .codex/agents/pinned.toml
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/pinned.md -> .claude/agents/pinned.md"* ]] \
   && [[ "$OUT" != *"-> .pi/agents/pinned.md"* ]] \

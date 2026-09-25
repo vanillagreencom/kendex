@@ -861,12 +861,22 @@ frontmatter_end() { # — the line number of the closing --- of the text on stdi
 render_unchanged_by() { # SOURCE RENDER — every changed SOURCE line is a frontmatter row render_blind lists for RENDER's root, and each key it removes it adds back
   # A key removed or added outright moves it to or from its absent default,
   # which the table does not judge: a Pi agent with no model renders sonnet.
-  [ "$have_head" = 1 ] && [ -e "$1" ] && [ -e "$2" ] || return 1
-  local old_source old_end new_end source_diff
+  # The commit chain judges what the commit records, the index, whatever
+  # the worktree holds beside it; --range and --full judge the worktree.
+  [ "$have_head" = 1 ] || return 1
+  local old_source new_source old_end new_end source_diff staged=()
+  if [ "$MODE" = default ]; then
+    git cat-file -e ":$1" 2>/dev/null && git cat-file -e ":$2" 2>/dev/null || return 1
+    new_source=$(git show ":$1") || return 1
+    staged=(--cached)
+  else
+    [ -e "$1" ] && [ -e "$2" ] || return 1
+    new_source=$(cat -- "$1") || return 1
+  fi
   old_source=$(git show "${diff_against[0]}:$1" 2>/dev/null) || return 1
   old_end=$(frontmatter_end <<<"$old_source") || return 1
-  new_end=$(frontmatter_end <"$1") || return 1
-  source_diff=$(git -c core.quotePath=false diff --no-color --no-ext-diff --unified=0 "${diff_against[@]}" -- "$1") || return 1
+  new_end=$(frontmatter_end <<<"$new_source") || return 1
+  source_diff=$(git -c core.quotePath=false diff --no-color --no-ext-diff --unified=0 ${staged[@]+"${staged[@]}"} "${diff_against[@]}" -- "$1") || return 1
   awk -v root="${2%/*}" -v old_end="$old_end" -v new_end="$new_end" -v rows="$render_blind" '
     function blind(text, line, end,   value) {
       key = ""
