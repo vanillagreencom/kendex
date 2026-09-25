@@ -61,7 +61,15 @@ export const useCommandLinkStore = create<CommandLinkStore>((set, get) => ({
       set({ state: null, readError: read.error });
       return;
     }
-    set({ state: read.data, readError: null });
+    // A cancelled or failed attempt is news until the page is read again;
+    // an open question keeps its own ending on screen.
+    const { stage, question } = get();
+    const resting = stage.at !== "working" && question === null;
+    set({
+      state: read.data,
+      readError: null,
+      ...(resting ? { stage: { at: "idle" } as const } : {}),
+    });
     const { command, ask } = read.data;
     if (ask && command.kind === "offered" && !get().answered) {
       if (get().question === null) set({ question: command });

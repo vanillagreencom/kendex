@@ -21,7 +21,7 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
 
 const LINK = "/usr/local/bin/kendex";
 const TARGET = "/Applications/kendex.app/Contents/MacOS/kendex";
-const OLDER = "/Users/me/Downloads/kendex.app/Contents/MacOS/kendex";
+const OTHER = "/Users/me/Downloads/kendex.app/Contents/MacOS/kendex";
 
 const buttons = (host: HTMLElement) =>
   [...host.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim());
@@ -61,11 +61,11 @@ describe("the command row", () => {
       says: `Creates a link at ${LINK} to the command inside this app, ${TARGET}`,
     },
     {
-      name: "offers to point a link from an older copy here",
-      command: { kind: "offered", link: LINK, target: TARGET, replaces: OLDER },
+      name: "offers to point a link from another copy here",
+      command: { kind: "offered", link: LINK, target: TARGET, replaces: OTHER },
       drawn: true,
       buttons: ["Link to this app"],
-      says: `${LINK} runs an older copy of kendex at ${OLDER}`,
+      says: `${LINK} links to another copy of kendex at ${OTHER}`,
     },
     {
       name: "says the link is installed",
@@ -89,8 +89,8 @@ describe("the command row", () => {
       says: `${LINK} is a file kendex did not create, so kendex leaves it alone.`,
     },
     {
-      name: "says to move a translocated app to Applications",
-      command: { kind: "translocated" },
+      name: "says to move a transient app to Applications",
+      command: { kind: "transient" },
       drawn: true,
       buttons: [],
       says: "Move kendex to your Applications folder",
@@ -120,6 +120,20 @@ describe("the command row", () => {
     const alert = host.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain("settings.toml is not readable");
     expect(buttons(host)).toEqual(["Try again"]);
+  });
+
+  it("drops an earlier attempt's line once the row is read again", async () => {
+    vi.mocked(commands.commandLinkState).mockResolvedValue({
+      status: "ok",
+      data: {
+        command: { kind: "linked", link: LINK, target: TARGET },
+        ask: false,
+      },
+    });
+    useCommandLinkStore.setState({ stage: { at: "cancelled" } });
+    const host = mount(<CommandLinkSection />);
+    await settle();
+    expect(host.querySelector('[role="alert"]')).toBeNull();
   });
 
   it("says a cancelled prompt on the row and keeps the install", async () => {

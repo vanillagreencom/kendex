@@ -15,7 +15,7 @@
 //! compared again inside the step itself ([`LINK_SCRIPT`]), because between
 //! the two the directory is anybody's and the step runs as root.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
@@ -23,7 +23,9 @@ use serde::Serialize;
 use specta::Type;
 
 use crate::base::Base;
-use crate::command_update::{COMMAND_NAME, INSTALLER_HOME_BIN, INSTALLER_SYSTEM_BIN};
+use crate::command_update::{
+    COMMAND_NAME, INSTALLER_SYSTEM_BIN, InstalledCommand, command_candidates,
+};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::install_channel::{Host, HostProbe, inside_the_app};
@@ -35,9 +37,12 @@ use crate::settings::{self, AppSettings, CommandLinkPrompt};
 const HOMEBREW_BIN: &str = "/opt/homebrew/bin";
 
 /// The directory macOS runs a quarantined app from when it is opened where
-/// it was downloaded. Nothing under it outlives the process, so a link into
-/// it would stop working the moment the app quits.
+/// it was downloaded. Nothing under it outlives the process.
 const TRANSLOCATED: &str = "AppTranslocation";
+
+/// Where macOS mounts a disk image, the `.dmg` included. An app opened
+/// straight from the image is gone once the image is ejected.
+const VOLUMES: &str = "/Volumes";
 
 /// The status [`LINK_SCRIPT`] exits with when what is at the link is no
 /// longer what [`state`] saw. The script spells it as a literal; the suite
@@ -63,6 +68,13 @@ const ADMIN_PROMPT_TIMEOUT: Duration = Duration::from_secs(300);
 /// answer rather than judging again: which links may be replaced is
 /// decided once, in [`slot`].
 ///
+/// The comparison and the write are two steps, and something can still
+/// land at `$2` between them. The write is `ln -sn`, which treats `$2` as
+/// a name even where it is a link to a directory: an arrival there makes
+/// the write fail, where a plain `ln -s` would create the link inside the
+/// directory it names, as root. [`install`] then judges again and reports
+/// what is there.
+///
 /// Constant text; every value reaches it as an argument.
 const LINK_SCRIPT: &str = r#"dir=$1 link=$2 target=$3 was=$4
 /bin/mkdir -p "$dir" || exit 1
@@ -72,7 +84,7 @@ else
   { [ -L "$link" ] && [ "$(/usr/bin/readlink "$link")" = "$was" ]; } || exit 3
   /bin/rm -f "$link" || exit 1
 fi
-/bin/ln -s "$target" "$link" || exit 1
+/bin/ln -sn "$target" "$link" || exit 1
 "#;
 
 /// Runs [`LINK_SCRIPT`] under `do shell script ... with administrator
@@ -86,31 +98,40 @@ const ADMIN_APPLESCRIPT: &str = r#"on run argv
 	do shell script shellCommand with administrator privileges
 end run"#;
 
-/// Where the command is looked for and where the link goes: fixed paths on
-/// a Mac, a temporary tree in a suite.
+/// Where the command is looked for and where the link goes: this Mac's
+/// places in the app, a temporary tree in a suite.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Places {
     /// The link this module writes.
     pub link: PathBuf,
-    /// Where an installed kendex command is looked for. Read off the disk
-    /// rather than off `PATH`, because a Finder-launched app's `PATH`
-    /// names none of them.
+    /// Where an installed kendex command is looked for.
     pub searched: Vec<PathBuf>,
 }
 
 impl Places {
     /// This Mac: the link in `/usr/local/bin`, where `install.sh` also puts
-    /// the command, and the search over that directory, Homebrew's, and
-    /// `~/.local/bin`.
-    pub fn on_this_mac(home: &Path) -> Places {
-        let link = Path::new(INSTALLER_SYSTEM_BIN).join(COMMAND_NAME);
+    /// the command. The search is the one the app's updater runs for the
+    /// command beside it — every `PATH` entry, then `install.sh`'s two
+    /// directories — with Homebrew's `bin` and the recorded command after
+    /// it. `path_var` is the app's `PATH`, which the launch environment has
+    /// already taken from the login shell; the two additions cover a shell
+    /// whose startup files never name them.
+    pub fn on_this_mac(
+        home: &Path,
+        path_var: Option<&OsStr>,
+        installed: Option<&InstalledCommand>,
+    ) -> Places {
+        let mut searched = command_candidates(home, path_var);
+        let more = std::iter::once(Path::new(HOMEBREW_BIN).join(COMMAND_NAME))
+            .chain(installed.map(|record| record.path.clone()));
+        for candidate in more {
+            if !searched.contains(&candidate) {
+                searched.push(candidate);
+            }
+        }
         Places {
-            searched: vec![
-                link.clone(),
-                Path::new(HOMEBREW_BIN).join(COMMAND_NAME),
-                home.join(INSTALLER_HOME_BIN).join(COMMAND_NAME),
-            ],
-            link,
+            link: Path::new(INSTALLER_SYSTEM_BIN).join(COMMAND_NAME),
+            searched,
         }
     }
 }
@@ -126,15 +147,15 @@ pub enum CommandLink {
     /// The running app holds no command: a build that was not bundled, or
     /// a platform whose installer puts the command on `PATH` itself.
     NotCarried,
-    /// macOS is running this app from a temporary copy, so a link to it
-    /// would stop working when the app quits. Opening it from Applications
-    /// lifts this.
-    Translocated,
+    /// The app runs from where it will not stay — a copy macOS translocated,
+    /// or a mounted disk image — so a link to it would stop working, and no
+    /// kendex command is installed. Opening it from Applications lifts this.
+    Transient,
     /// `link` already runs this app's command at `target`.
     Linked { link: PathBuf, target: PathBuf },
-    /// Installing creates `link` pointing at `target`. `replaces` is the
-    /// command in another copy of kendex that the link leads to now, which
-    /// the install points at this one instead.
+    /// Installing creates `link` pointing at `target`. `replaces` is set
+    /// where the link leads into another copy of kendex now, which the
+    /// install points at this one instead.
     Offered {
         link: PathBuf,
         target: PathBuf,
@@ -317,6 +338,16 @@ impl Judged {
     }
 }
 
+/// Whether the app at `target` runs from where it will not stay, so a link
+/// to it would soon lead nowhere: a copy macOS translocated, or an app
+/// opened straight from a mounted disk image.
+fn transient(target: &Path) -> bool {
+    target.starts_with(VOLUMES)
+        || target
+            .components()
+            .any(|part| part == Component::Normal(TRANSLOCATED.as_ref()))
+}
+
 fn judge(app_exe: Option<&Path>, places: &Places) -> Result<Judged> {
     let Some(target) = app_exe
         .and_then(Path::parent)
@@ -327,16 +358,18 @@ fn judge(app_exe: Option<&Path>, places: &Places) -> Result<Judged> {
     if !inside_the_app(&target, &Host) || !crate::fs::is_executable(&target) {
         return Ok(Judged::settled(CommandLink::NotCarried, false));
     }
-    if target
-        .components()
-        .any(|part| part == Component::Normal(TRANSLOCATED.as_ref()))
-    {
-        return Ok(Judged::settled(CommandLink::Translocated, false));
-    }
     let found = places
         .searched
         .iter()
         .find(|path| crate::fs::is_executable(path));
+    // A command already installed is the answer wherever the app runs from;
+    // only with none does the app's own place decide.
+    if transient(&target) {
+        return Ok(match found {
+            Some(path) => Judged::settled(CommandLink::Elsewhere { path: path.clone() }, true),
+            None => Judged::settled(CommandLink::Transient, false),
+        });
+    }
     let link = places.link.clone();
     let offered = |replaces: Option<PathBuf>, was: Option<PathBuf>| Judged {
         command: CommandLink::Offered {
@@ -375,7 +408,7 @@ fn judge(app_exe: Option<&Path>, places: &Places) -> Result<Judged> {
 ///
 /// It asks only where the answer can be yes and nothing is installed yet:
 /// the install is on offer, no searched place holds a command, and the
-/// question has not been answered before. A link into an older copy of
+/// question has not been answered before. A link into another copy of
 /// kendex that still runs is offered in Settings but not asked about,
 /// because a kendex command is already reachable.
 pub fn state(
@@ -432,7 +465,7 @@ pub fn install(
     match judge(app_exe, places)?.command {
         CommandLink::Linked { .. } => Ok(()),
         CommandLink::NotCarried
-        | CommandLink::Translocated
+        | CommandLink::Transient
         | CommandLink::Offered { .. }
         | CommandLink::Elsewhere { .. }
         | CommandLink::Taken { .. } => Err(LinkRefused::Failed {

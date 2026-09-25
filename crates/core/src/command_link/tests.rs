@@ -10,9 +10,9 @@ use super::*;
 use crate::env::FakeOs;
 use crate::test_util::rooted;
 
-/// A Mac in a temporary tree: this app's bundle, an older copy's bundle,
-/// the three places a command is searched for, and the link. Nothing is
-/// created in any of them until a row plants it.
+/// A Mac in a temporary tree: this app's bundle, another copy's bundle,
+/// the places a command is searched for, and the link. Nothing is created
+/// in any of them until a row plants it.
 struct Mac {
     root: PathBuf,
     places: Places,
@@ -20,9 +20,9 @@ struct Mac {
     app: PathBuf,
     /// The command this app carries.
     target: PathBuf,
-    /// The command an older copy of kendex carries, its bundle name holding
+    /// The command another copy of kendex carries, its bundle name holding
     /// a space the way a Finder duplicate's does.
-    older: PathBuf,
+    other: PathBuf,
 }
 
 impl Mac {
@@ -37,14 +37,17 @@ impl Mac {
         let link = root.join("usr/local/bin/kendex");
         Mac {
             places: Places {
+                // The link, Homebrew's, `install.sh`'s home directory, and a
+                // `PATH` entry none of those name (MacPorts').
                 searched: vec![
                     link.clone(),
                     root.join("opt/homebrew/bin/kendex"),
                     root.join("home/.local/bin/kendex"),
+                    root.join("opt/local/bin/kendex"),
                 ],
                 link,
             },
-            older: root.join("Downloads/kendex 2.app/Contents/MacOS/kendex"),
+            other: root.join("Downloads/kendex 2.app/Contents/MacOS/kendex"),
             root,
             app,
             target,
@@ -81,22 +84,29 @@ struct Unprivileged {
     runs: Cell<u32>,
 }
 
+/// `script` run by `/bin/sh` with `plan`'s arguments, the way the
+/// administrator step runs [`LINK_SCRIPT`].
+fn run_script(script: &str, plan: &LinkPlan) -> std::process::Output {
+    let mut args: Vec<String> = plan
+        .script_args()
+        .into_iter()
+        .map(|arg| arg.into_string().unwrap())
+        .collect();
+    args[0] = script.to_owned();
+    let mut argv = vec!["-c"];
+    argv.extend(args.iter().map(String::as_str));
+    // The script names every program by its absolute path; the two
+    // variables are set so nothing inherited decides how it reads.
+    Hardened::program("/bin/sh", &argv)
+        .env("PATH", "/usr/bin:/bin")
+        .env("LC_ALL", "C")
+        .run()
+        .unwrap()
+}
+
 impl Unprivileged {
     fn run(plan: &LinkPlan) -> Elevated {
-        let args: Vec<String> = plan
-            .script_args()
-            .into_iter()
-            .map(|arg| arg.into_string().unwrap())
-            .collect();
-        let mut argv = vec!["-c"];
-        argv.extend(args.iter().map(String::as_str));
-        // The script names every program by its absolute path; the two
-        // variables are set so nothing inherited decides how it reads.
-        let output = Hardened::program("/bin/sh", &argv)
-            .env("PATH", "/usr/bin:/bin")
-            .env("LC_ALL", "C")
-            .run()
-            .unwrap();
+        let output = run_script(LINK_SCRIPT, plan);
         match output.status.code() {
             Some(0) => Elevated::Done,
             Some(MOVED_EXIT) => Elevated::Moved,
@@ -119,8 +129,8 @@ impl Elevate for Unprivileged {
 /// first launch and the Settings row read off each. The rows the owner's
 /// rules name: a command already reachable anywhere searched asks nothing;
 /// a file that is not a link into a kendex app is left alone; a link into
-/// an older copy is offered for repointing; a build carrying no command
-/// asks nothing; and an answered question is not put again.
+/// another copy is offered for repointing; and an answered question is not
+/// put again.
 #[test]
 #[allow(
     clippy::too_many_lines,
@@ -137,7 +147,7 @@ fn the_judge_over_every_shape_the_places_can_hold() {
     let repoint: Expect = |mac| CommandLink::Offered {
         link: mac.places.link.clone(),
         target: mac.target.clone(),
-        replaces: Some(mac.older.clone()),
+        replaces: Some(mac.other.clone()),
     };
     let taken: Expect = |mac| CommandLink::Taken {
         link: mac.places.link.clone(),
@@ -145,7 +155,7 @@ fn the_judge_over_every_shape_the_places_can_hold() {
     let at_link: Expect = |mac| CommandLink::Elsewhere {
         path: mac.places.link.clone(),
     };
-    let rows: [(&str, Plant, CommandLinkPrompt, Expect, bool); 14] = [
+    let rows: [(&str, Plant, CommandLinkPrompt, Expect, bool); 15] = [
         (
             "nothing installed asks",
             |_| {},
@@ -166,6 +176,15 @@ fn the_judge_over_every_shape_the_places_can_hold() {
             CommandLinkPrompt::Ask,
             |mac| CommandLink::Elsewhere {
                 path: mac.places.searched[1].clone(),
+            },
+            false,
+        ),
+        (
+            "a command on PATH outside the fixed places asks nothing",
+            |mac| command(&mac.places.searched[3]),
+            CommandLinkPrompt::Ask,
+            |mac| CommandLink::Elsewhere {
+                path: mac.places.searched[3].clone(),
             },
             false,
         ),
@@ -207,18 +226,18 @@ fn the_judge_over_every_shape_the_places_can_hold() {
             false,
         ),
         (
-            "a link to an older copy still there is offered, not asked",
+            "a link to another copy still there is offered, not asked",
             |mac| {
-                command(&mac.older);
-                mac.link_to(&mac.older);
+                command(&mac.other);
+                mac.link_to(&mac.other);
             },
             CommandLinkPrompt::Ask,
             repoint,
             false,
         ),
         (
-            "a link to an older copy since deleted is asked about",
-            |mac| mac.link_to(&mac.older),
+            "a link to a copy since deleted is asked about",
+            |mac| mac.link_to(&mac.other),
             CommandLinkPrompt::Ask,
             repoint,
             true,
@@ -275,9 +294,9 @@ fn the_judge_over_every_shape_the_places_can_hold() {
     }
 }
 
-/// What the running executable decides before any place is read: a build
-/// that is not a bundle, a translocated copy, and another platform ask
-/// nothing and offer nothing.
+/// What the running executable decides: a build that is not a bundle and
+/// another platform offer nothing, and a translocated copy offers nothing
+/// but still names a command already installed.
 #[test]
 fn the_running_executable_decides_whether_anything_is_offered() {
     let tmp = tempfile::tempdir().unwrap();
@@ -286,33 +305,95 @@ fn the_running_executable_decides_whether_anything_is_offered() {
     let exe = mac.root.join("target/debug/kendex-app");
     command(&exe);
     command(&mac.root.join("target/debug/kendex"));
+    let not_carried = CommandLinkState {
+        command: CommandLink::NotCarried,
+        ask: false,
+    };
     assert_eq!(
         mac.state(&exe, CommandLinkPrompt::Ask),
-        CommandLinkState {
-            command: CommandLink::NotCarried,
-            ask: false
-        },
-        "a build that is not a bundle asks nothing, a command beside it or not"
+        not_carried,
+        "a build that is not a bundle, a command beside it or not"
     );
+    assert_eq!(
+        state(None, &mac.places, CommandLinkPrompt::Ask).unwrap(),
+        not_carried,
+        "another platform"
+    );
+
     let translocated = mac
         .root
         .join("private/var/folders/T/AppTranslocation/0A1B/d/kendex.app/Contents/MacOS");
     command(&translocated.join("kendex"));
+    let app = translocated.join("kendex-app");
     assert_eq!(
-        mac.state(&translocated.join("kendex-app"), CommandLinkPrompt::Ask),
+        mac.state(&app, CommandLinkPrompt::Ask),
         CommandLinkState {
-            command: CommandLink::Translocated,
+            command: CommandLink::Transient,
             ask: false
         },
-        "a translocated copy asks nothing"
+        "a translocated copy with nothing installed"
     );
+    command(&mac.places.searched[1]);
     assert_eq!(
-        state(None, &mac.places, CommandLinkPrompt::Ask).unwrap(),
+        mac.state(&app, CommandLinkPrompt::Ask),
         CommandLinkState {
-            command: CommandLink::NotCarried,
+            command: CommandLink::Elsewhere {
+                path: mac.places.searched[1].clone()
+            },
             ask: false
         },
-        "another platform asks nothing"
+        "a translocated copy names the command already installed"
+    );
+}
+
+/// Where an app runs from that will not stay: a translocated copy and an
+/// app opened from a mounted disk image, and nothing else.
+#[test]
+fn a_translocated_or_mounted_app_is_transient() {
+    let rows: [(&str, bool); 4] = [
+        (
+            "/private/var/folders/x/T/AppTranslocation/0A1B/d/kendex.app/Contents/MacOS/kendex",
+            true,
+        ),
+        ("/Volumes/kendex/kendex.app/Contents/MacOS/kendex", true),
+        ("/Applications/kendex.app/Contents/MacOS/kendex", false),
+        ("/Users/me/Volumes/kendex.app/Contents/MacOS/kendex", false),
+    ];
+    for (path, expected) in rows {
+        assert_eq!(transient(Path::new(path)), expected, "{path}");
+    }
+}
+
+/// The write that ends the privileged step, run on its own against a link
+/// to a directory that arrived after the comparison: it fails and creates
+/// nothing inside that directory. The step is read out of [`LINK_SCRIPT`]
+/// itself, its first line binding the arguments and its last line the
+/// write, so the script under test is the one shipped.
+#[test]
+fn the_write_leaves_a_directory_link_that_arrived_late() {
+    let lines: Vec<&str> = LINK_SCRIPT.lines().collect();
+    let (bind, write) = (lines[0], lines[lines.len() - 1]);
+    assert!(
+        bind.starts_with("dir=$1 ") && write.starts_with("/bin/ln "),
+        "LINK_SCRIPT no longer opens with its arguments and ends with its write: {bind:?} {write:?}"
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    let mac = Mac::new(&tmp);
+    let directory = mac.root.join("somewhere-root-owns");
+    std::fs::create_dir_all(&directory).unwrap();
+    mac.link_to(&directory);
+
+    let plan = LinkPlan {
+        link: mac.places.link.clone(),
+        target: mac.target.clone(),
+        was: None,
+    };
+    let output = run_script(&format!("{bind}\n{write}\n"), &plan);
+    assert_ne!(output.status.code(), Some(0), "the write reported success");
+    assert_eq!(
+        std::fs::read_dir(&directory).unwrap().count(),
+        0,
+        "the write created an entry inside the linked directory"
     );
 }
 
@@ -344,10 +425,10 @@ fn an_install_writes_only_where_the_judge_offered() {
             After::LinkedHere,
         ),
         (
-            "repoints a link from an older copy",
+            "repoints a link from another copy",
             |mac| {
-                command(&mac.older);
-                mac.link_to(&mac.older);
+                command(&mac.other);
+                mac.link_to(&mac.other);
             },
             Ok(()),
             1,
@@ -421,8 +502,8 @@ fn the_privileged_step_leaves_what_arrived_after_the_judging() {
             |mac| data(&mac.places.link),
         ),
         (
-            "an older copy's link is swapped for a foreign one",
-            |mac| mac.link_to(&mac.older),
+            "another copy's link is swapped for a foreign one",
+            |mac| mac.link_to(&mac.other),
             |mac| {
                 std::fs::remove_file(&mac.places.link).unwrap();
                 mac.link_to(&mac.root.join("elsewhere/kendex"));
@@ -535,20 +616,33 @@ fn the_first_launch_question_is_put_once() {
     assert!(!asks(&env), "an answered machine does not ask again");
 }
 
-/// The link goes in `/usr/local/bin`, which exists or is created, and is
-/// searched with Homebrew's and the home directory's; Homebrew's is never
-/// the link.
+/// The link goes in `/usr/local/bin`; the search is the updater's own —
+/// every `PATH` entry, then `install.sh`'s two directories — with
+/// Homebrew's `bin` and the recorded command after it, each once. Homebrew's
+/// is never the link.
 #[test]
-fn a_mac_links_in_usr_local_bin_and_searches_three_places() {
-    let places = Places::on_this_mac(Path::new("/Users/someone"));
+fn a_mac_links_in_usr_local_bin_and_searches_where_the_updater_does() {
+    let installed = InstalledCommand {
+        path: PathBuf::from("/Users/someone/.cargo/bin/kendex"),
+        channel: crate::update_channel::UpdateChannel::Release,
+    };
+    let places = Places::on_this_mac(
+        Path::new("/Users/someone"),
+        Some(OsStr::new(
+            "/opt/local/bin:/usr/local/bin:/opt/homebrew/bin",
+        )),
+        Some(&installed),
+    );
     assert_eq!(
         places,
         Places {
             link: PathBuf::from("/usr/local/bin/kendex"),
             searched: vec![
+                PathBuf::from("/opt/local/bin/kendex"),
                 PathBuf::from("/usr/local/bin/kendex"),
                 PathBuf::from("/opt/homebrew/bin/kendex"),
                 PathBuf::from("/Users/someone/.local/bin/kendex"),
+                PathBuf::from("/Users/someone/.cargo/bin/kendex"),
             ],
         }
     );

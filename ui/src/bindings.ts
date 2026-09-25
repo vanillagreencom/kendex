@@ -1332,17 +1332,17 @@ export type CommandLink =
  */
 { kind: "notCarried" } | 
 /**
- *  macOS is running this app from a temporary copy, so a link to it
- *  would stop working when the app quits. Opening it from Applications
- *  lifts this.
+ *  The app runs from where it will not stay — a copy macOS translocated,
+ *  or a mounted disk image — so a link to it would stop working, and no
+ *  kendex command is installed. Opening it from Applications lifts this.
  */
-{ kind: "translocated" } | 
+{ kind: "transient" } | 
 /**  `link` already runs this app's command at `target`. */
 { kind: "linked"; link: string; target: string } | 
 /**
- *  Installing creates `link` pointing at `target`. `replaces` is the
- *  command in another copy of kendex that the link leads to now, which
- *  the install points at this one instead.
+ *  Installing creates `link` pointing at `target`. `replaces` is set
+ *  where the link leads into another copy of kendex now, which the
+ *  install points at this one instead.
  */
 { kind: "offered"; link: string; target: string; replaces: string | null } | 
 /**

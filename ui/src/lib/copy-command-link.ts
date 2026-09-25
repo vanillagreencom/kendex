@@ -24,9 +24,10 @@ export const CLOSE_LABEL = "Close";
 export const createsLink = (link: string, target: string) =>
   `Creates a link at ${link} to the command inside this app, ${target}, so kendex runs in any terminal window. macOS asks for an administrator password once.`;
 
-/** The link leads to another copy of kendex, which the install replaces. */
+/** The link leads into another copy of kendex, which the install replaces.
+ *  Whether that copy is still there is not claimed. */
 export const repointsLink = (link: string, replaces: string) =>
-  `${link} runs an older copy of kendex at ${replaces}. Installing points it at this app instead; macOS asks for an administrator password once.`;
+  `${link} links to another copy of kendex at ${replaces}. Installing points it at this app instead; macOS asks for an administrator password once.`;
 
 export const LATER_IN_SETTINGS =
   "If you don't install it now, Settings has it later.";
@@ -49,8 +50,8 @@ export function standing(command: CommandLink): string {
   switch (command.kind) {
     case "notCarried":
       return "This build of kendex carries no command to install.";
-    case "translocated":
-      return "macOS is running kendex from a temporary copy. Move kendex to your Applications folder and open it from there to install the command.";
+    case "transient":
+      return "kendex is running from a temporary copy or a disk image. Move kendex to your Applications folder and open it from there to install the command.";
     case "linked":
       return `${command.link} runs the command inside this app.`;
     case "offered":
@@ -72,11 +73,11 @@ export function standing(command: CommandLink): string {
 export function standingWord(command: CommandLink): string {
   switch (command.kind) {
     case "notCarried":
-    case "translocated":
+    case "transient":
     case "taken":
       return "not installed";
     case "offered":
-      return command.replaces === null ? "not installed" : "older copy";
+      return command.replaces === null ? "not installed" : "another copy";
     case "linked":
     case "elsewhere":
       return "installed";

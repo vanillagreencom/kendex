@@ -5,7 +5,10 @@
 
 use std::path::PathBuf;
 
-use kendex_core::command_link::{self, AdministratorPrompt, CommandLinkState, LinkRefused, Places};
+use kendex_core::command_link::{
+    self, AdministratorPrompt, CommandLink, CommandLinkState, LinkRefused, Places,
+};
+use kendex_core::command_update::recorded_command;
 use kendex_core::env::Env;
 
 use crate::scopes::env;
@@ -28,22 +31,36 @@ fn running_app() -> Result<Option<PathBuf>, String> {
     }
 }
 
-fn read(env: &Env) -> Result<CommandLinkState, String> {
-    let prompt = kendex_core::settings::load(env)
+/// This Mac's places, searched the way the app's updater searches for the
+/// command beside it.
+fn places(env: &Env) -> Places {
+    Places::on_this_mac(
+        &env.home,
+        std::env::var_os("PATH").as_deref(),
+        recorded_command(env).as_ref(),
+    )
+}
+
+/// The state. A platform with no app to link reads nothing, so a settings
+/// file it cannot read never reaches a Settings section it does not draw.
+fn read() -> Result<CommandLinkState, String> {
+    let Some(app) = running_app()? else {
+        return Ok(CommandLinkState {
+            command: CommandLink::NotCarried,
+            ask: false,
+        });
+    };
+    let env = env()?;
+    let prompt = kendex_core::settings::load(&env)
         .map_err(|error| error.to_string())?
         .command_link_prompt;
-    command_link::state(
-        running_app()?.as_deref(),
-        &Places::on_this_mac(&env.home),
-        prompt,
-    )
-    .map_err(|error| error.to_string())
+    command_link::state(Some(&app), &places(&env), prompt).map_err(|error| error.to_string())
 }
 
 #[tauri::command(async)]
 #[specta::specta]
 pub fn command_link_state() -> Result<CommandLinkState, String> {
-    read(&env()?)
+    read()
 }
 
 /// Link the command through the administrator prompt. Blocks until the
@@ -55,17 +72,16 @@ pub fn command_link_install() -> Result<CommandLinkState, LinkRefused> {
     let env = env().map_err(failed)?;
     command_link::install(
         running_app().map_err(failed)?.as_deref(),
-        &Places::on_this_mac(&env.home),
+        &places(&env),
         &AdministratorPrompt,
     )?;
-    read(&env).map_err(failed)
+    read().map_err(failed)
 }
 
 /// Record that the first-launch question was answered.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn command_link_prompt_answered() -> Result<CommandLinkState, String> {
-    let env = env()?;
-    command_link::answer_prompt(&env).map_err(|error| error.to_string())?;
-    read(&env)
+    command_link::answer_prompt(&env()?).map_err(|error| error.to_string())?;
+    read()
 }
