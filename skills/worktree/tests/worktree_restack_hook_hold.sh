@@ -190,6 +190,14 @@ step() {
       chmod +x "$ROOT/stub/jq"
       PATH="$ROOT/stub:$PATH"
       ;;
+    # A git that cannot read the Claude hook's blob, ahead of the real one: the
+    # declarations read, the hook they name, a sourcing script, does not.
+    broken-cat-file)
+      mkdir -p "$ROOT/stub"
+      printf '#!/usr/bin/env bash\ncase " $* " in *" cat-file -p "*":%s "*) exit 128 ;; esac\nexec %q "$@"\n' "$CLAUDE_HOOK" "$(command -v git)" >"$ROOT/stub/git"
+      chmod +x "$ROOT/stub/git"
+      PATH="$ROOT/stub:$PATH"
+      ;;
     restack) (cd "$MAIN" && "$SCRIPT" create "$ISSUE" --restack >/dev/null 2>&1) || true ;;
     restack-replay) (cd "$MAIN" && "$SCRIPT" create "$ISSUE" --restack --replay >/dev/null 2>&1) || true ;;
     resolve-file) printf 'resolved\n' >"$WT/file.txt"; git -C "$WT" add file.txt ;;
@@ -334,6 +342,7 @@ a conflict in an ordinary file and a hook at once is told to edit only the ordin
 a replay continue refuses while a copy moved off disk is still staged|hooks restack-replay stage-all consume-staged|restack continue topic|rc=1 err=worktree-restack-hook-unconsumed: $C $X paused=yes parses=ok,ok runs=ok,ok saved=$C,$X markers=- body=resolved,resolved ordinary=-
 a replay continue completes once each moved copy is also unstaged|hooks restack-replay stage-all consume|restack continue topic|rc=0 err=worktree-rebase-count: 1 paused=no parses=ok,ok runs=ok,ok saved=- markers=- body=resolved,resolved ordinary=-
 continue completes once each saved copy is deleted and its path staged|hooks restack discard|restack continue topic|rc=0 err=worktree-rebase-count: 1 paused=no parses=ok,ok runs=ok,ok saved=- markers=- body=main,main ordinary=-
+a sourcing script that cannot be read holds every conflicted path, an ordinary one included|source broken-cat-file|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$S markers=$S body=base,base ordinary=-
 declarations that cannot be read hold every conflicted path, an ordinary one included|source broken-jq|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$S markers=$S body=base,base ordinary=-
 a hook declared only at the pre-restack head is held|branch-declared|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CURSOR_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$U markers=$U body=base,base ordinary=-
 a hook declared only on the new base is held|base-declared|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CURSOR_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$U markers=$U body=base,base ordinary=-
@@ -371,6 +380,7 @@ without the hold a continue that stops again leaves markers in the hook@scripts/
 without the refusal continue records the saved copies in the branch@scripts/worktree@restack_refuse_unconsumed_hooks \"\$WT_PATH\" || exit 1@1@:@hooks restack stage-all@restack continue topic@rc=0 err=worktree-rebase-count: 1 paused=no parses=ok,ok runs=ok,ok saved=$C,$X markers=$C,$X body=main,main ordinary=-
 without the cleanup abort leaves the saved copies behind@scripts/worktree@rm -f -- \"\$WT_PATH/\$HELD_COPY\"@1@:@hooks restack@restack abort topic@rc=0 err= paused=no parses=ok,ok runs=ok,ok saved=$C,$X markers=$C,$X body=wt,wt ordinary=-
 without the unreadable fallback an ordinary path keeps its markers@scripts/lib/restack-state.sh@printf '%s\n' \"\$conflicts\"@1@:@source broken-jq@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$SOURCE_HOOK body=base,base ordinary=$SOURCE_HOOK
+without the sourcing-script read failing the hold an ordinary path keeps its markers@scripts/lib/restack-state.sh@\\1/p')\" || return 1@1@\\1/p')\"@source broken-cat-file@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$SOURCE_HOOK body=base,base ordinary=$SOURCE_HOOK
 without the pre-restack head a branch-declared hook keeps its markers@scripts/lib/restack-state.sh@\"\$(restack_state_get \"\$wt\" originalHead)\" HEAD)\"@1@HEAD)\"@branch-declared@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$CURSOR_HOOK body=base,base ordinary=$CURSOR_HOOK
 without the paused HEAD a base-declared hook keeps its markers@scripts/lib/restack-state.sh@originalHead)\" HEAD)\"@1@originalHead)\")\"@base-declared@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$CURSOR_HOOK body=base,base ordinary=$CURSOR_HOOK
 without the fallback to the branch's side a deleted hook is not held@scripts/lib/restack-state.sh@! git -C \"\$wt\" checkout --theirs -- \"\$path\" >/dev/null 2>&1; }@1@true; }@deleted@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-hold-failed: $CLAUDE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$C markers=- body=wt,base ordinary=$CLAUDE_HOOK
