@@ -188,13 +188,34 @@ def create_flags(row, item, reuse_requested):
     raise SystemExit(1)
 
 
-def install(row):
-    """Install the clone's declared packages before worktree setup."""
-    remote(row, '''cd -- "$1"
-if test -f kendex.toml; then
-  kendex update-pi --leave >&2
-  kendex refresh --yes --leave >&2
-fi''', row["clone"])
+def require_render(row):
+    """Refuse a clone whose checkout carries no committed render.
+
+    create renders nothing: the lane's tree is a worktree of the base branch,
+    and the scripts every later step runs are the render that branch commits.
+    A clone of a repository that commits none, or one whose checkout predates
+    the commit that added it, is named here rather than failing later as
+    bash's 127. A fetch does not repair the second: this check runs before
+    sync-base, which is itself part of the render, so the checkout has to be
+    fast-forwarded by hand or the clone removed for create to clone afresh.
+    A script present but not committed at HEAD is the render an earlier
+    create's refresh left untracked in a clone of a repository that committed
+    none; git never updates it, and a pull collides with it, so only removing
+    it or the clone repairs that clone.
+    """
+    remote(row, '''for script in orch/scripts/sync-base worktree/scripts/worktree; do
+  if ! test -x "$1/.agents/skills/$script"; then
+    printf 'lane-host-ssh: render-missing path=%s\\n' "$1/.agents/skills/$script" >&2
+    printf 'create renders nothing; fast-forward this checkout past the commit that added the render (git -C CLONE pull --ff-only), or remove the clone so create clones it afresh\\n' >&2
+    exit 1
+  fi
+  committed=$(git -C "$1" ls-tree --name-only HEAD -- ".agents/skills/$script") || exit 1
+  if test -z "$committed"; then
+    printf 'lane-host-ssh: render-untracked path=%s\\n' "$1/.agents/skills/$script" >&2
+    printf 'this render is not committed at HEAD and git never updates it; remove the clone, or delete its untracked .agents render, before create runs again\\n' >&2
+    exit 1
+  fi
+done''', row["clone"])
 
 
 def create(row, args, source):
@@ -215,19 +236,8 @@ else
   gh repo clone "$2" "$1" >&2
   printf new
 fi''', row["clone"], args.repo, args.item)
+    require_render(row)
     if result.stdout == b"existing":
-        ready = remote(row, '''if test -x "$1/.agents/skills/orch/scripts/sync-base" &&
-   test -x "$1/.agents/skills/worktree/scripts/worktree"; then printf ready; exit 0; fi
-worktrees=$(git -C "$1" worktree list --porcelain) || exit 1
-if [[ "$worktrees" == *$'\nworktree '* ]]; then exit 75; fi
-dirty=$(git -C "$1" status --porcelain --untracked-files=no) || exit 1; if [[ -n "$dirty" ]]; then printf 'lane-host-ssh: bootstrap-dirty path=%s\n' "$1" >&2; exit 3; fi
-test -f "$1/kendex.toml" || exit 1
-printf bootstrap''', row["clone"]).stdout
-        if ready == b"bootstrap":
-            install(row)
-        elif ready != b"ready":
-            notice("bootstrap-state-invalid", item=args.item)
-            raise SystemExit(1)
         remote(row, '''test -x "$1/.agents/skills/worktree/scripts/worktree"
 exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
         create_worktree(row, args.item, create_flags(row, args.item, args.relaunch or args.reuse))
@@ -243,7 +253,6 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
             tar.add(cache, arcname="linear", filter=unlocked)
         remote(row, 'mkdir -p -- "$1/.cache"; tar -xzf - -C "$1/.cache"',
                row["clone"], data=archive.getvalue())
-    install(row)
     account = Path(args.account)
     remote_account = row["account"]
     if args.harness == "claude":
@@ -402,6 +411,10 @@ LANE_HOST_SSH_SOURCE names the local source clone (default: current directory).
 create copies its .env.local and, for a fresh clone, .cache/linear without locks.
 An existing clone must have an origin for the configured repository. Its base
 branch is fast-forwarded before setup; local changes or divergence stop create.
+create renders nothing and installs no Pi package: the worktree carries the
+render its base branch commits. A clone whose checkout lacks that render exits
+1 with render-missing, and one whose render is not committed at HEAD exits 1
+with render-untracked.
 Claude reads ACCOUNT/setup-token; Codex and Pi read ACCOUNT/auth.json. When present,
 ACCOUNT/lane-host/.claude.json merges into the remote home's .claude.json (its
 top-level keys set, its project entries merged key by key), and
@@ -416,7 +429,10 @@ writers on several machines each keep their line; it creates the file with
 private permissions and closes an unterminated last line first. A clone
 without that library predates the verb and append exits 1 naming it, so
 refresh a host created before the verb shipped. Prepare the
-host with Git, gh, Bash, kendex and the harness first.
+host with Git, gh, Bash, kendex and the harness first. A Pi lane runs with the
+row's remote account directory as PI_CODING_AGENT_DIR, so install its Pi
+packages once on the host at that root:
+PI_CODING_AGENT_DIR=<row account> kendex update-pi --scope global.
 The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
 fields. Existing ownership exits 75; --reuse and --relaunch pass --reuse to the
