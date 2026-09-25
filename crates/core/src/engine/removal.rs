@@ -1,7 +1,7 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use super::desired;
+use super::desired::{self, Withholding};
 use super::owned::{Owned, installed};
 use super::targets::disabled_name;
 use super::{DriftRow, DriftState, PlanOptions};
@@ -20,8 +20,9 @@ use super::origin::Origins;
 /// only take content they can prove is ours: every content path must hash
 /// to what apply last wrote. A record that cannot prove that holds
 /// whatever content is present, hooks included. Explicitly asked-for
-/// removals and withheld hooks (`plan_pass::plan_withheld`) are not gated
-/// here: the trash keeps what they take.
+/// removals and a hook withheld for a companion that will not run
+/// (`Withholding::Requires`) are not gated here: the trash keeps what they
+/// take.
 pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
     // A hook with no anchor is not the common stock of older installs
     // that holding would exempt from cleanup for good: a lock this build
@@ -177,8 +178,10 @@ impl TrashGuard {
 /// written: every verdict is known before the first is acted on, so a
 /// record a held one requires can be kept with it.
 enum Verdict {
-    /// Kept with no row: its declaration's source is unreachable, or its
-    /// origin will not read.
+    /// Kept with no row, for want of an answer: its declaration's source
+    /// is unreachable, or its origin will not read. What it requires stays
+    /// with it, except a copy withheld for a companion that will not run,
+    /// which is an answer, and what is known outranks what is not.
     Retained,
     /// Not removable under the options: the left-over row, and offered to
     /// a sweep where nothing needs it.
@@ -192,12 +195,17 @@ enum Verdict {
     Needed { by: String },
     /// Removable: taken. Named for removal by the person, it goes whatever
     /// requires it — the choice is theirs, as it is when the catalog that
-    /// would say what needs it is offline.
-    Removed { named: bool },
+    /// would say what needs it is offline. Withheld for a companion that
+    /// will not run here, it goes whatever the options, since a wrapper
+    /// left armed refuses every call it guards: the row says why.
+    Removed { named: bool, withheld: bool },
 }
 
+/// The row a withheld hook's installed copy leaves as it goes.
+const WITHHELD: &str = "withheld: a hook it requires will not run here — will be removed";
+
 /// `decided_keys` are the records the refusal and withheld passes already
-/// planned for, kept or taken; nothing here asks about them again. `kept`
+/// planned for; nothing here asks about them again. `kept`
 /// is every record an earlier pass kept as it was in place of writing it,
 /// whose requirements this pass keeps with it.
 #[allow(clippy::too_many_arguments)]
@@ -284,13 +292,12 @@ pub(super) fn orphans(
                 ));
                 new_lock.entries.insert(key.clone(), entry.clone());
             }
-            Verdict::Removed { .. } => {
-                drift.push(row(
-                    entry,
-                    DriftState::Orphaned,
-                    "no longer wanted — will be removed".into(),
-                    None,
-                ));
+            Verdict::Removed { withheld, .. } => {
+                let detail = match withheld {
+                    true => WITHHELD,
+                    false => "no longer wanted — will be removed",
+                };
+                drift.push(row(entry, DriftState::Orphaned, detail.into(), None));
                 if entry.kind == ItemKind::PiExtension {
                     match pi_removal(env, scope, entry) {
                         Ok(planned) => guard.extend(ops, planned),
@@ -334,19 +341,31 @@ fn verdicts<'a>(
     origins: &mut Origins,
 ) -> Vec<(&'a String, Verdict)> {
     let desired_keys: BTreeSet<&String> = state.items.iter().map(|d| &d.key).collect();
+    // The copies withheld for a companion that will not run there. A
+    // wrapper left armed refuses every call it guards, so such a copy
+    // comes out whatever the options and whatever its catalog says, the
+    // person's edits with it.
+    let lacking: BTreeSet<String> = state
+        .withheld
+        .iter()
+        .filter(|(_, withheld)| withheld.because == Withholding::Requires)
+        .map(|((kind, name, harness), _)| entry_key(*kind, name, *harness))
+        .collect();
     let mut verdicts = Vec::new();
     for (key, entry) in &lock.entries {
         if desired_keys.contains(key) || decided_keys.contains(key) {
             continue;
         }
+        let withheld = lacking.contains(key);
         // Declared but skipped this pass (pending/disabled source, missing
         // from source): keep the record, it is not an orphan. A declaration
         // that did resolve has already said everything it wants installed,
         // so an entry it did not ask for — a harness dropped from its list —
         // is stranded and must be cleaned up like any other orphan.
         let departed_harness = state.processed.contains(&(entry.kind, entry.name.clone()));
-        let unreachable_source =
-            manifest.declared(entry.kind).contains_key(&entry.name) && !departed_harness;
+        let unreachable_source = !withheld
+            && manifest.declared(entry.kind).contains_key(&entry.name)
+            && !departed_harness;
         let named = options.named_for_removal(entry.kind, &entry.name);
         // An installation something else brought in was derived from a
         // declaration, and the catalog it came from is where that reason is
@@ -355,8 +374,10 @@ fn verdicts<'a>(
         // Being named is not that judgement, and it still goes.
         // `unreachable_source` has already decided to keep this one and is
         // reported per declaration, so asking here would only count it into
-        // a retention it is not part of.
+        // a retention it is not part of, as would asking about a withheld
+        // copy.
         let unreadable_origin = !unreachable_source
+            && !withheld
             && derived_at_all(entry)
             && !named
             && !origins.readable(env, scope, manifest, state, &entry.source);
@@ -366,7 +387,8 @@ fn verdicts<'a>(
         }
         let unneeded = derived_only(entry);
         let unfiltered = options.removal_filter.is_none();
-        let removable = (options.remove_orphans && (named || unfiltered))
+        let removable = withheld
+            || (options.remove_orphans && (named || unfiltered))
             || (options.sweep_unneeded && (unneeded || departed_harness));
         if !removable {
             verdicts.push((key, Verdict::Left { unneeded }));
@@ -380,10 +402,10 @@ fn verdicts<'a>(
         if let Some(emitted) = &mut removable_entry.emitted {
             emitted.paths.retain(|path| !guard.keep.contains(path));
         }
-        let takes_edits = named || options.overwrite_edited;
+        let takes_edits = named || withheld || options.overwrite_edited;
         let verdict = match !takes_edits && edit_holds(env, scope, &removable_entry) {
             true => Verdict::Held,
-            false => Verdict::Removed { named },
+            false => Verdict::Removed { named, withheld },
         };
         verdicts.push((key, verdict));
     }
@@ -399,32 +421,47 @@ fn verdicts<'a>(
 /// every record this pass does not take. A record written this pass is not
 /// among them, in sync with its old one or not: what it requires is
 /// derived afresh, so a stale reason naming it keeps nothing. A record the
-/// person named for removal is not an automatic removal and goes. The
-/// requirer named is the one the row cites.
+/// person named for removal is not an automatic removal and goes, and a
+/// copy withheld for a companion that will not run goes unless its
+/// requirer stays by an answer rather than for want of one
+/// ([`Verdict::Retained`]). The requirer named is the one the row cites.
 fn keep_what_kept_records_require(
     lock: &Lock,
     carried: &KeptAsIs,
     verdicts: &mut [(&String, Verdict)],
 ) {
     loop {
-        let kept: BTreeSet<&str> = verdicts
+        // Every record that stays, and whether an answer keeps it.
+        let kept: BTreeMap<&str, bool> = verdicts
             .iter()
-            .filter(|(_, verdict)| !matches!(verdict, Verdict::Removed { .. }))
-            .map(|(key, _)| key.as_str())
+            .filter_map(|(key, verdict)| match verdict {
+                Verdict::Removed { .. } => None,
+                Verdict::Retained => Some((key.as_str(), false)),
+                Verdict::Left { .. } | Verdict::Held | Verdict::Needed { .. } => {
+                    Some((key.as_str(), true))
+                }
+            })
             .collect();
         let mut changed = false;
         for (key, verdict) in verdicts.iter_mut() {
-            if !matches!(verdict, Verdict::Removed { named: false }) {
+            let Verdict::Removed {
+                named: false,
+                withheld,
+            } = *verdict
+            else {
                 continue;
-            }
+            };
             let requirer = lock.entries[*key]
                 .reasons
                 .iter()
                 .find_map(|reason| match reason {
                     Reason::RequiredBy { by } => {
                         let by_key = entry_key(by.kind, &by.name, by.harness);
-                        (kept.contains(by_key.as_str()) || carried.contains(&by_key))
-                            .then(|| by.name.clone())
+                        let stays = carried.contains(&by_key)
+                            || kept
+                                .get(by_key.as_str())
+                                .is_some_and(|answered| *answered || !withheld);
+                        stays.then(|| by.name.clone())
                     }
                     Reason::Requested | Reason::MemberOf { .. } => None,
                 });

@@ -10,7 +10,6 @@ use crate::lock::{Lock, entry_key};
 use crate::manifest::Manifest;
 use crate::model::Scope;
 
-use super::desired::Withholding;
 use super::item_plan::{KeptAsIs, plan_item};
 use super::{
     DriftCause, DriftRow, DriftState, PlanOptions, config_edits, desired, holds, item_plan,
@@ -202,8 +201,8 @@ fn plan_refusals(
 
 /// The records planned for outside the item pass, because no item is
 /// written for them: what a refusal takes or keeps, then what a
-/// withholding takes or keeps. Returns their keys, so the orphan pass asks
-/// about none of them.
+/// withholding keeps. Returns their keys, so the orphan pass asks about
+/// none of them.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_not_written(
     env: &Env,
@@ -231,23 +230,10 @@ pub(super) fn plan_not_written(
         kept,
     )?;
     decided.extend(plan_withheld(
-        env,
-        scope,
-        manifest,
-        lock,
-        state,
-        guard,
-        drift,
-        ops,
-        config_edits,
-        new_lock,
-        kept,
-    )?);
+        scope, manifest, lock, state, drift, new_lock, kept,
+    ));
     Ok(decided)
 }
-
-/// The row a withheld hook's installed copy leaves as it goes.
-const WITHHELD: &str = "withheld: a hook it requires will not run here — will be removed";
 
 /// A hook withheld from a tool is written there by nothing; the finding
 /// the dependency walk pushed says why. A record under the hook's key that
@@ -255,65 +241,46 @@ const WITHHELD: &str = "withheld: a hook it requires will not run here — will 
 /// from another — is invariant 4's conflict, as it would be for a hook the
 /// plan writes: the record stays, the row says to remove it first, and
 /// nothing of it is taken. Otherwise the reason for withholding
-/// ([`Withholding`]) says what becomes of the copy: one whose companion
-/// will not run comes out whatever the options, since a wrapper left
-/// armed refuses every call it guards; one whose companion's catalog does
-/// not answer keeps its record with no row and no op, since nothing says
-/// the copy is wrong; and one withheld only because its requirers are is
-/// left to `removal::orphans`, the one owner of what an automatic removal
-/// takes under the plan's options. Returns the keys of the records this
-/// pass decided.
-#[allow(clippy::too_many_arguments)]
+/// ([`desired::Withholding`]) says whether the copy stays: one whose
+/// companion's catalog does not answer keeps its record with no row and
+/// no op, since nothing says the copy is wrong. Every copy the withholding
+/// lets go is left to `removal::orphans`, the one owner of what an
+/// automatic removal takes, so a copy a kept record requires is kept with
+/// it there whatever withheld it. Returns the keys of the records this
+/// pass kept.
 fn plan_withheld(
-    env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
     state: &desired::DesiredState,
-    guard: &mut removal::TrashGuard,
     drift: &mut Vec<DriftRow>,
-    ops: &mut Vec<PlannedOp>,
-    config_edits: &mut config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
     kept: &mut KeptAsIs,
-) -> Result<BTreeSet<String>> {
+) -> BTreeSet<String> {
     let mut decided = BTreeSet::new();
     for ((kind, name, harness), withheld) in &state.withheld {
         let key = entry_key(*kind, name, *harness);
         let Some(entry) = lock.entries.get(&key) else {
             continue;
         };
-        let row = |state, detail: String| DriftRow {
-            kind: *kind,
-            name: name.clone(),
-            harness: *harness,
-            scope: scope.clone(),
-            state,
-            detail,
-            cause: None,
-            compared: None,
-            also_in_the_way: Vec::new(),
-        };
         let recorded_fork = manifest.recorded_fork(*kind, name);
         if let Some(detail) = item_plan::rebound(entry, &withheld.provenance, recorded_fork) {
-            decided.insert(key.clone());
-            drift.push(row(DriftState::Conflict, detail));
-            kept.keep(new_lock, &key, entry);
+            drift.push(DriftRow {
+                kind: *kind,
+                name: name.clone(),
+                harness: *harness,
+                scope: scope.clone(),
+                state: DriftState::Conflict,
+                detail,
+                cause: None,
+                compared: None,
+                also_in_the_way: Vec::new(),
+            });
+        } else if withheld.because.takes() {
             continue;
         }
-        if !withheld.because.takes() {
-            decided.insert(key.clone());
-            kept.keep(new_lock, &key, entry);
-            continue;
-        }
-        // Of the reasons that take the copy, an orphan's is the orphan
-        // pass's to take under its options; the rest are this pass's.
-        if withheld.because == Withholding::Orphaned {
-            continue;
-        }
+        kept.keep(new_lock, &key, entry);
         decided.insert(key);
-        drift.push(row(DriftState::Orphaned, WITHHELD.into()));
-        guard.extend(ops, removal::removal_ops(env, scope, entry, config_edits)?);
     }
-    Ok(decided)
+    decided
 }

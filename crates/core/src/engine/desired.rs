@@ -334,15 +334,15 @@ pub enum Withholding {
     Unanswered,
     /// A hook it requires will not run there. A wrapper beside no judge
     /// refuses every call it guards, so an installed copy comes out
-    /// whatever the plan's options, the person's edits with it.
+    /// whatever the plan's options, the person's edits with it
+    /// (`removal::verdicts`), unless a record that stays requires it.
     Requires,
 }
 
 impl Withholding {
-    /// Whether this withholding lets a copy installed under it go: taken
-    /// by the withheld pass, or handed to the orphan pass to dispose of
-    /// under its options. False where the copy stays, record and all. The
-    /// one answer for the pass that disposes of the copy
+    /// Whether this withholding lets a copy installed under it go, to the
+    /// orphan pass that disposes of it. False where the copy stays, record
+    /// and all. The one answer for the pass that keeps the copy
     /// (`plan_pass::plan_withheld`) and for the walk, which counts a
     /// requirer as gone from a tool only where its withholding lets its
     /// copy go (`deps::orphaned`).

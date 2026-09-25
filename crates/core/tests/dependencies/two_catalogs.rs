@@ -198,6 +198,123 @@ fn a_withheld_rebind_reaches_the_provenance_conflict_and_not_the_trash() {
     }
 }
 
+/// A hook above the wrapper, installed from the other catalog, with the
+/// wrapper declared from its own; then the wrapper's judge stops running
+/// on Codex. Rebound to the wrapper's catalog, the hook above is kept on
+/// Codex as the provenance conflict, and a record kept as is keeps what
+/// it requires: the wrapper it runs with, though withheld for a judge
+/// that will not run, and the judge below it, stay with it, on disk,
+/// registered and recorded. Not rebound, the hook above is withheld like
+/// the wrapper, and all three leave Codex.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_kept_rebind_keeps_the_withheld_wrapper_it_requires() {
+    /// Whether the hook above is rebound; the rows the plan leaves on each
+    /// of the three on Codex; and whether the three stay on Codex.
+    type Row = (
+        bool,
+        [&'static [(DriftState, &'static str)]; 3],
+        (bool, bool),
+    );
+    const WITHHELD: (DriftState, &str) = (
+        DriftState::Orphaned,
+        "withheld: a hook it requires will not run here — will be removed",
+    );
+    const REMOVED: (DriftState, &str) =
+        (DriftState::Orphaned, "no longer wanted — will be removed");
+    let kept_by = |by: &str| {
+        (
+            DriftState::Orphaned,
+            format!("needed by {by}, which stays installed — kept with it"),
+        )
+    };
+    let rows: [Row; 2] = [
+        (true, [&[], &[], &[]], (true, true)),
+        (
+            false,
+            [&[WITHHELD], &[WITHHELD], &[REMOVED]],
+            (false, false),
+        ),
+    ];
+    for (rebound, expected, codex) in rows {
+        let (f, other) =
+            two_catalogs("[hooks.top]\nsource = \"other\"\n\n[hooks.deliver]\nsource = \"cat\"\n");
+        // Both catalogs carry the hook above: the rebind is to one that
+        // offers it.
+        fs::write(other.join("hooks/top.sh"), TOP).unwrap();
+        fs::write(f.source.join("hooks/top.sh"), TOP).unwrap();
+        apply_now(&f);
+        for name in ["top", "deliver", "judge"] {
+            assert_eq!(landed(&f, name, HarnessId::Codex), (true, true), "{name}");
+        }
+        fs::write(f.source.join("hooks/judge.sh"), LATE_JUDGE).unwrap();
+        if rebound {
+            declare_two(
+                &f,
+                &other,
+                "[hooks.top]\nsource = \"cat\"\n\n[hooks.deliver]\nsource = \"cat\"\n",
+            );
+        }
+
+        let report = plan_apply(
+            &f.env,
+            &f.scope,
+            &PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            },
+        )
+        .unwrap();
+        let conflict = format!(
+            "installed from {} but now set to come from {} — remove it first",
+            identity(&other),
+            identity(&f.source)
+        );
+        let expected: [Vec<(DriftState, String)>; 3] = match rebound {
+            true => [
+                vec![(DriftState::Conflict, conflict)],
+                vec![kept_by("top")],
+                vec![kept_by("deliver")],
+            ],
+            false => expected.map(|rows| {
+                rows.iter()
+                    .map(|(state, detail)| (*state, (*detail).to_owned()))
+                    .collect()
+            }),
+        };
+        for (name, expected) in ["top", "deliver", "judge"].into_iter().zip(expected) {
+            let rows: Vec<(DriftState, String)> = report
+                .drift
+                .iter()
+                .filter(|row| row.name == name && row.harness == HarnessId::Codex)
+                .map(|row| (row.state, row.detail.clone()))
+                .collect();
+            assert_eq!(
+                rows,
+                expected,
+                "{rebound}: {name}: {:?}",
+                drift_details(&report)
+            );
+            assert_eq!(
+                report
+                    .record
+                    .entries
+                    .contains_key(&format!("hook:{name}:codex")),
+                codex.0,
+                "{rebound}: {name}'s record"
+            );
+        }
+        apply::execute(&f.env, &report.plan).unwrap();
+        for name in ["top", "deliver", "judge"] {
+            assert_eq!(
+                landed(&f, name, HarnessId::Codex),
+                codex,
+                "{rebound}: {name}"
+            );
+        }
+    }
+}
+
 /// The judge declared from a catalog that will not open this pass — its
 /// directory gone — while the wrapper's own catalog reads. A source that
 /// cannot be read never uninstalls a working artifact: the wrapper keeps
