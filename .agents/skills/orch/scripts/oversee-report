@@ -244,7 +244,7 @@ case "$REPORT" in on | off) ;; *) refuse setting "ORCH_REPORT:$REPORT" ;; esac
 # settings turn off judges nothing, so nothing it would have read can fail it.
 [[ "$VERB" != due || "$REPORT" == on ]] || exit 0
 EVERY_MINUTES="${ORCH_REPORT_EVERY_MINUTES-120}"
-[[ "$EVERY_MINUTES" =~ ^(|0|[1-9][0-9]*)$ ]] || refuse setting "ORCH_REPORT_EVERY_MINUTES:$EVERY_MINUTES"
+[[ "$EVERY_MINUTES" =~ ^(0|[1-9][0-9]*)?$ ]] || refuse setting "ORCH_REPORT_EVERY_MINUTES:$EVERY_MINUTES"
 EVERY_ISSUES="${ORCH_REPORT_EVERY_ISSUES-0}"
 [[ "$EVERY_ISSUES" =~ ^(0|[1-9][0-9]*)$ ]] || refuse setting "ORCH_REPORT_EVERY_ISSUES:$EVERY_ISSUES"
 UPCOMING="${ORCH_REPORT_UPCOMING-5}"

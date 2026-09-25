@@ -1035,7 +1035,7 @@ MUTANT="$(mutant derive-tracker 'derive_identity tracker "$(lane_key_tracker "$I
 write_legacy_state running /host; write_panes claude; claude_screen; run_close "$MUTANT"
 assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=KEN-1 tracker= source=derived cause=tracker-unknown$' <<<"$ERR" || true) closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" \
   'rc=1 read=1 closed=0' 'control: dropping the item-key tracker derivation leaves the work item unreadable'
-MUTANT="$(mutant derive-github 'derive_identity tracker "$(lane_key_tracker "$ITEM")"' 'derive_identity tracker "$(case "$ITEM" in issue-*) printf github ;; *) lane_key_tracker "$ITEM" ;; esac)"')"
+MUTANT="$(mutant derive-github 'derive_identity tracker "$(lane_key_tracker "$ITEM")"' 'derive_identity tracker "$(case "$ITEM" in (issue-*) printf github ;; (*) lane_key_tracker "$ITEM" ;; esac)"')"
 write_legacy_state running /host issue-1; write_panes claude; claude_screen; run_close "$MUTANT" --repo owner/repo
 assert_eq "rc=$RC ambiguous=$(grep -c ' cause=key-ambiguous$' <<<"$ERR" || true) gh=$(grep -c '^issue view 1 --repo owner/repo --json state --jq .state$' "$GH_CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=0 ambiguous=0 gh=1 status=done' 'control: deriving github from an issue-N key reads that repository issue and closes the lane on its state'
