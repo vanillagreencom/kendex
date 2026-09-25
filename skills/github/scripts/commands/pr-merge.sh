@@ -33,8 +33,6 @@ Options:
                    scope ("head-run: <ids>" — the runs the CI classification
                    was scoped to) on stderr. On a refusal,
                    ci-classify-refusal names the cause.
-  --force          Skip checks and merge (requires explicit user decision;
-                   cannot be combined with --auto)
   --auto           If immediate merge is blocked, enable GitHub auto-merge
                    (will fire when CI + branch protection clear). Exits 75.
                    Never bypasses actionable unresolved review threads.
@@ -45,7 +43,6 @@ Options:
 Modes:
   (default)        Run checks, block if critical issues, merge if pass
   --check          Run checks, output JSON for workflow to parse
-  --force          Deliberately skip all checks
   --auto           Enable auto-merge when immediate merge is blocked
 
 Merge-mode exit codes:
@@ -95,9 +92,10 @@ Retired settings:
   them, empty value included, refuses every mode before any pull-request read
   or merge call, one first line per key set, and the last line names the keys
   again, so a repository that still expects either route learns it at the
-  first call. Through the github.sh router with GH_TOKEN or GITHUB_TOKEN set,
-  the router's own read-only token check (gh api user) runs before pr-merge
-  does, so that one GitHub call can come first.
+  first call. Through the github.sh router, whenever the router selects a
+  token (GH_TOKEN, GH_BOT_TOKEN or GITHUB_TOKEN, from the environment or a
+  settings layer), the router's own read-only token check (gh api user) runs
+  before pr-merge does, so that one GitHub call can come first.
 
 Terminal and mutation rules:
   After github.sh router setup, MERGED or CLOSED short-circuits pr-merge safety
@@ -135,11 +133,6 @@ Review-thread gate:
 
   The gate is policy, not mechanism. It applies only through pr-merge. A raw
   gh pr merge call or the GitHub UI Merge button bypasses it.
-
-Force rules:
-  --force skips every check, including the thread gate. It is immediate-only
-  and conflicts with --auto. A failed override remains BLOCKED unless the
-  exact-head post-state is MERGED; pending merge state is not success.
 
 --check JSON:
   stdout is one object with these fields:
@@ -184,7 +177,6 @@ Examples:
   github.sh pr-merge 42 --check          # Check only, JSON output
   github.sh pr-merge 42                  # Check + merge if pass
   github.sh pr-merge 42 --auto           # Merge now or queue auto-merge
-  github.sh pr-merge 42 --force          # Explicit local override (DANGEROUS)
 EOF
 }
 
@@ -631,9 +623,9 @@ print_blocked() {
         echo "Hint: github.sh await-mergeable $pr_num && retry" >&2
     fi
     if echo "$check_result" | jq -e '[.issues[] | select(test("^(unresolved_threads|review_threads_fetch_failed):"))] | length > 0' >/dev/null 2>&1; then
-        echo "Resolve the review-thread gate and retry. Use --force only after an explicit decision to override it." >&2
+        echo "Resolve the review-thread gate and retry." >&2
     else
-        echo "Use --auto to queue for auto-merge, or --force after an explicit decision to override safety checks." >&2
+        echo "Use --auto to queue for auto-merge." >&2
     fi
 }
 
@@ -809,7 +801,7 @@ refuse_retired_settings() {
 
 main() {
     local pr_num="" method="--squash" delete_branch=true
-    local check_only=false force=false dry_run=false auto=false supplied_head=""
+    local check_only=false dry_run=false auto=false supplied_head=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -837,7 +829,6 @@ main() {
             check_only=true
             shift
             ;;
-        --force) force=true; shift ;;
         --auto)
             auto=true
             shift
@@ -863,11 +854,6 @@ main() {
     done
 
     refuse_retired_settings
-
-    if [ "$force" = true ] && [ "$auto" = true ]; then
-        echo "Error: --force and --auto cannot be combined; overrides are immediate-only" >&2
-        exit 1
-    fi
 
     if [ -z "$pr_num" ]; then
         echo '{"error": "PR number required"}' >&2
@@ -896,52 +882,52 @@ main() {
     selection=$(load_bot_token)
     local token="${selection#*=}" token_source="${selection%%=*}"
 
-    local check_result=""
-    if [ "$force" = false ]; then
-        local can_merge checked_state checked_merged_at
-        check_result=$(run_checks "$pr_num")
+    local check_result readiness can_merge has_review_thread_gate checked_state checked_merged_at
+    check_result=$(run_checks "$pr_num")
 
-        # The checks re-read a state the up-front lookup could not resolve, so
-        # a PR that is terminal by now must be reported here too. Otherwise
-        # `--auto`, which defers every non-thread blocker, arms a merge on a PR
-        # that has already left OPEN.
-        checked_state=$(echo "$check_result" | jq -r '.state // ""')
-        checked_merged_at=$(echo "$check_result" | jq -r '.merged_at // ""')
-        exit_terminal_state "$checked_state" "$pr_num" "$checked_merged_at"
+    # The checks re-read a state the up-front lookup could not resolve, so
+    # a PR that is terminal by now must be reported here too. Otherwise
+    # `--auto`, which defers every non-thread blocker, arms a merge on a PR
+    # that has already left OPEN.
+    checked_state=$(echo "$check_result" | jq -r '.state // ""')
+    checked_merged_at=$(echo "$check_result" | jq -r '.merged_at // ""')
+    exit_terminal_state "$checked_state" "$pr_num" "$checked_merged_at"
 
-        can_merge=$(echo "$check_result" | jq -r '.can_merge')
+    # run_checks builds its result with jq, so an unreadable one is a broken
+    # invariant, never a verdict: it refuses rather than read as either answer.
+    if ! readiness=$(jq -r '[.can_merge, ([.issues[] | select(test("^(unresolved_threads|review_threads_fetch_failed):"))] | length > 0)] | @tsv' <<<"$check_result"); then
+        echo "pr-merge: readiness-unreadable pr=$pr_num" >&2
+        echo "  The readiness result is not JSON with can_merge and issues; nothing was merged or armed." >&2
+        exit 1
+    fi
+    can_merge="${readiness%%$'\t'*}"
+    has_review_thread_gate="${readiness#*$'\t'}"
 
-        if [ "$can_merge" != "true" ]; then
-            # `--auto` may defer GitHub-enforced blockers, but it must never
-            # bypass local review-thread safety. GitHub can otherwise accept
-            # and immediately merge a PR whose conversations remain open.
-            local has_review_thread_gate
-            has_review_thread_gate=$(echo "$check_result" | jq '[.issues[] | select(test("^(unresolved_threads|review_threads_fetch_failed):"))] | length > 0')
-
-            if [ "$auto" != true ] || [ "$has_review_thread_gate" = "true" ]; then
-                print_blocked "$check_result" "$pr_num"
-                exit 1
-            fi
-        fi
-
-        # Before any other stderr: callers route on this refusal's first line.
-        local gate_gap slug
-        [ "$auto" = false ] || [ "$dry_run" = true ] || gate_gap=$(merge_gate_gap "$pr_num" "$token")
-        if [ -n "${gate_gap:-}" ]; then
-            slug=$(kendex_github_resolve_gh_repo "${PROJECT_ROOT:-$PWD}" 2>/dev/null) || slug=unresolved
-            echo "arm: no-merge-gate=$gate_gap repo=$slug" >&2
-            echo "  Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch." >&2
+    if [ "$can_merge" != "true" ]; then
+        # `--auto` may defer GitHub-enforced blockers, but it must never
+        # bypass local review-thread safety. GitHub can otherwise accept
+        # and immediately merge a PR whose conversations remain open.
+        if [ "$auto" != true ] || [ "$has_review_thread_gate" = "true" ]; then
+            print_blocked "$check_result" "$pr_num"
             exit 1
         fi
+    fi
 
-        local warnings
-        warnings=$(echo "$check_result" | jq -r '.warnings | length')
-        if [ "$warnings" -gt 0 ]; then
-            echo "Warnings:" >&2
-            echo "$check_result" | jq -r '.warnings[]' | sed 's/^/  ⚠ /' >&2
-        fi
-    else
-        echo "⚠ override: Skipping safety checks" >&2
+    # Before any other stderr: callers route on this refusal's first line.
+    local gate_gap slug
+    [ "$auto" = false ] || [ "$dry_run" = true ] || gate_gap=$(merge_gate_gap "$pr_num" "$token")
+    if [ -n "${gate_gap:-}" ]; then
+        slug=$(kendex_github_resolve_gh_repo "${PROJECT_ROOT:-$PWD}" 2>/dev/null) || slug=unresolved
+        echo "arm: no-merge-gate=$gate_gap repo=$slug" >&2
+        echo "  Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch." >&2
+        exit 1
+    fi
+
+    local warnings
+    warnings=$(echo "$check_result" | jq -r '.warnings | length')
+    if [ "$warnings" -gt 0 ]; then
+        echo "Warnings:" >&2
+        echo "$check_result" | jq -r '.warnings[]' | sed 's/^/  ⚠ /' >&2
     fi
 
     if [ "$dry_run" = true ]; then
@@ -998,24 +984,20 @@ main() {
         exit 1
     fi
 
-    # A NONZERO `gh pr merge` exit is only benign outside `--force` when the
-    # authoritative snapshot proves a real success state: an already-enrolled
-    # merge queue entry, classic auto-merge already enabled, or an
-    # already merged PR. Anything else — conflicts, auth failure, CI, no
-    # enrollment — leaves no such proof and stays BLOCKED with the raw gh
-    # output. When the snapshot does prove success, fall through to the shared
-    # classification below so the outcome (MERGED / QUEUED / AUTO-MERGE) is
-    # reported once.
-    # `--force` promises an immediate mutation, so pre-existing pending state
-    # must never convert its failed mutation into success. An
+    # A NONZERO `gh pr merge` exit is only benign when the authoritative
+    # snapshot proves a real success state: an already-enrolled merge queue
+    # entry, classic auto-merge already enabled, or an already merged PR.
+    # Anything else — conflicts, auth failure, CI, no enrollment — leaves no
+    # such proof and stays BLOCKED with the raw gh output. When the snapshot
+    # does prove success, fall through to the shared classification below so
+    # the outcome (MERGED / QUEUED / AUTO-MERGE) is reported once. An
     # exact-head MERGED snapshot remains authoritative even if the CLI returned
     # nonzero after the server completed the merge.
     if [ "$merge_exit" -ne 0 ] \
         && [ "$post_state" != "MERGED" ] \
-        && { [ "$force" = true ] \
-            || { [ "$post_in_queue" != "true" ] \
-                && [ "$post_queue_entry" != "true" ] \
-                && [ "$post_auto" != "true" ]; }; }; then
+        && [ "$post_in_queue" != "true" ] \
+        && [ "$post_queue_entry" != "true" ] \
+        && [ "$post_auto" != "true" ]; then
         echo "BLOCKED PR #$pr_num — gh pr merge failed" >&2
         printf '%s\n' "$merge_output" | sed 's/^/  /' >&2
         exit 1

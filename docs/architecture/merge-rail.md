@@ -34,7 +34,7 @@ The rail carries one change from a consumer pull request to the default branch, 
   at KEN-1778)
             v
   merge-pr.md: the lane arms auto-merge and the
-  merge queue merges, or a user override
+  merge queue merges
             v
           main
 ```
@@ -80,5 +80,5 @@ The classifier answers one five-class verdict, `change_class`, beside the two na
 - The gate is a commit status, not a CI job. Adoption still changes CI: it adds the ungated validate job, and a repository that wants the docs waiver also takes the fast/full split. What stays untouched is that no job is conditioned on the gate's verdict.
 - The consumer train is the current propagation path, and [D003](../decisions/D003-one-merge-path.md) replaces it with a workflow each consumer runs itself. The train enters each consumer's own checkout, refreshes it, and commits the refresh output and nothing else, beyond a manifest edit where a bundle's member list moved, through that repository's branch, review and merge path. On a hosted fleet the train does not run: the orch `merged` event in [../../skills/orch/references/oversee-events.md](../../skills/orch/references/oversee-events.md) § Event kinds sends each consumer's overseer a note and reports that consumer as not refreshed, until KEN-1779 ships a refresh workflow in each consumer's own Actions.
 - In kendex itself the gate's carry-forward and render-only lanes are off: `REVIEW_GATE_CARRY_FORWARD` is empty and `REVIEW_GATE_RENDER_PATHS` takes its empty default. `REVIEW_GATE_DOCS_ONLY` is `none`, so a documentation diff waives reviewer evidence alone.
-- One merge path, per [D003](../decisions/D003-one-merge-path.md): every lane route goes through the merge queue, armed by the lane itself, for the reasons D003 § Rationale gives. The overseer's owner-credential admin merge, the user's `--admin` override and the `ORCH_MERGE_BYPASS` fast path are retired; `pr-merge --help` § Retired settings states how their settings are refused.
+- One merge path, per [D003](../decisions/D003-one-merge-path.md): every lane route goes through the merge queue, armed by the lane itself, for the reasons D003 § Rationale gives. The overseer's owner-credential admin merge, the user's `--admin` and `--force` overrides and the `ORCH_MERGE_BYPASS` fast path are retired; `pr-merge --help` § Retired settings states how their settings are refused.
 - No standing bypass actor means a pull request that repairs a broken gate engine, which cannot turn its own `Review gate` context green, merges by the break-glass procedure [../../skills/review-gate/SKILL.md](../../skills/review-gate/SKILL.md) § 4. Operations states, never by a standing bypass.

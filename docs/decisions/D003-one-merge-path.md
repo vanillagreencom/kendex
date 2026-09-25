@@ -8,7 +8,7 @@
 
 **Research**: —
 
-**Approval**: the owner, directive 1790300329, 2026-09-25; amended by owner directive 1790322161 and owner notes 1790324783, 1790333777 and 1790339825, 2026-09-25; environment provisioning, its job list and the ruleset scope of step 3 settled by the overseer's answer A(i) to lane ask 1790337466, open to owner override
+**Approval**: the owner, directive 1790300329, 2026-09-25; amended by owner directive 1790322161 and owner notes 1790324783, 1790333777, 1790339825 and 1790348336, 2026-09-25; environment provisioning, its job list and the ruleset scope of step 3 settled by the overseer's answer A(i) to lane ask 1790337466, open to owner override
 
 **Applies to**: every repository in the organization and every lane; [../architecture/merge-rail.md](../architecture/merge-rail.md), [../../skills/orch/workflows/merge-pr.md](../../skills/orch/workflows/merge-pr.md), `skills/review-gate/templates/kendex-refresh.yml` (the refresh workflow template KEN-1779 adds)
 
@@ -69,6 +69,7 @@ On a hosted fleet the train stops at KEN-1773: the kendex overseer records the m
 | `ORCH_ADMIN_MERGE_CLASSES` | `kendex.settings.toml`, `skills/github/scripts/commands/pr-merge.sh` | KEN-1777 |
 | `ORCH_MERGE_BYPASS` and its fast path | `kendex.settings.toml`, `skills/orch/workflows/merge-pr.md` | KEN-1777 |
 | The user's admin override | `pr-merge --admin`, `merge_mode: admin` in `skills/orch/workflows/merge-pr.md`, the consumer admin-merge question in `skills/orch/workflows/submit-pr.md` | KEN-1777 |
+| The user's force override, per owner note 1790348336 | `pr-merge --force` in `skills/github/scripts/commands/pr-merge.sh` | KEN-1777 |
 | The merge-ready ask | the overseer's launch brief, `tmp/launch-brief-template.txt` on the control host and not a repository file, whose sentence is deleted the day KEN-1777 merges; `skills/orch/workflows/merge-pr-admin.md`; `skills/orch/references/oversee-events.md` § Admin merges | KEN-1777 |
 | The `vanillagreen-merge-rail` app | the organization's app installations and the ruleset bypass list; nothing in this repository references it | KEN-1777 |
 | The owner credential on the control VM | the gh config directory the retired `ORCH_ADMIN_MERGE_GH_CONFIG_DIR` named, `/home/dev/.config/gh-admin`, holding an organization-admin OAuth token; the owner deletes the directory and revokes the token in GitHub once KEN-1777 merges | KEN-1777, an owner action |

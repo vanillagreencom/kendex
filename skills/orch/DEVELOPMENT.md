@@ -75,7 +75,7 @@ Reruns re-execute the workflow definition and verifier state pinned at the origi
 
 A lane merges its own pull request through the base branch's merge queue, on every change class: `merge-pr.md` § 5 step 1 arms `--auto` on the exact head, under the lanes app's installation token in a lane sandbox, and waits in `queue-wait` to a terminal verdict; a finding that lands while the PR is queued takes it back out through `queue-wait`'s late-findings guard. Why the queue and not a direct merge is kendex decision D003 § Rationale. The direct attempt is reached only from an arm that reports no merge gate to wait on, which is a repository with no queue.
 
-The overseer's owner-credential merge, the `--admin` override and the `ORCH_MERGE_BYPASS` fast path are retired; `pr-merge --help` § Retired settings states how their settings are refused.
+The overseer's owner-credential merge, the `--admin` and `--force` overrides and the `ORCH_MERGE_BYPASS` fast path are retired; `pr-merge --help` § Retired settings states how their settings are refused.
 
 ## Launch lanes
 
