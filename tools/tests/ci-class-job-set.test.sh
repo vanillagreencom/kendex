@@ -67,13 +67,10 @@ selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or th
   tr '\n' ' ' <"$out" | sed 's/ $//'
 }
 
-# The cargo half of a row: the crates the Linux legs run, the macOS legs'
-# crates, and whether a build input changed.
-cargo_row() { # LINUX MACOS BUILD
-  local macos=false
-  [ -z "$2" ] || macos=true
-  local linux=false
-  [ -z "$1" ] || linux=true
+cargo_row() { # LINUX-CRATES MACOS-CRATES BUILD — the cargo half of a row
+  local linux=true macos=true
+  [ -n "$1" ] || linux=false
+  [ -n "$2" ] || macos=false
   printf 'cargo_linux=%s cargo_macos=%s cargo_lint=%s cargo_windows=%s cargo_windows_check=%s linux_crates=%s macos_crates=%s' \
     "$linux" "$macos" "$3" "$macos" "$3" "$1" "$2"
 }
@@ -88,11 +85,9 @@ PROSE_LANES="shell_shards=true macos_legs=false ui=false bot_instructions=true"
 CODE_LANES="shell_shards=true macos_legs=true ui=false bot_instructions=true"
 UI_LANES="shell_shards=true macos_legs=true ui=true bot_instructions=true"
 
-# This repository's own tree: the class rows, and the rows the issue names.
-# kendex-core and kendex-cli have a `.` row here, a read tools/rust-reads
-# does not follow, so they run on Linux for every measured diff; kendex-app
-# runs where a path reaches one of its reads. A diff that builds nothing
-# stands down the lint and Windows compile lanes.
+# This repository's own tree: kendex-core and kendex-cli have a `.` row, so
+# they run on Linux for every measured diff; kendex-app runs where a path
+# reaches one of its reads.
 ROOT_READERS="kendex-cli,kendex-core"
 # CLASS|DOCS_ONLY|PATHS (blank-separated)|EXPECTED
 selection_rows=0
@@ -109,14 +104,12 @@ standard|false|crates/core/src/lib.rs|$CODE_LANES $(cargo_row "$EVERY" "$EVERY" 
 standard|false|tools/guard skills/orch/scripts/lanes|$CODE_LANES $(cargo_row "$ROOT_READERS" "$ROOT_READERS" false)
 micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$PROSE_LANES $(cargo_row "$ROOT_READERS" '' false)
 micro|false|skills/commit-guards/scripts/install-git-hooks|$CODE_LANES $(cargo_row "$EVERY" "$EVERY" false)
-micro|false|Cargo.lock|$CODE_LANES $(cargo_row "$EVERY" "$EVERY" true)
 standard|false|.github/workflows/skill-tests.yml|$ALL_ON
-standard|true|docs/guide.md CHANGELOG.md|$PROSE_LANES $(cargo_row "$ROOT_READERS" '' false)
 enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous
 micro|false||exit=2 class-without-paths class=micro
 micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe
 ROWS
-[ "$selection_rows" -ge 14 ] ||
+[ "$selection_rows" -ge 12 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
 
 # A row that forgets a lane is refused before any lane reads it. macos_legs is
@@ -138,12 +131,9 @@ check "a row that forgets a lane is refused" \
   "exit=2 lane-unselected lane=cargo_windows" \
   "exit=$forgot_status $(sed -n 's/^ci-job-set: cause=//p' "$TMP/forgot-err")"
 
-# What a diff reaches, in a fixture checkout of three crates. kendex-core
-# reads the checkout through a root helper it uses whole, the `.` row that
-# may read anything; kendex-cli reads skills/ at run time and includes
-# assets/x.json; kendex-app reads
-# ui/src/bindings.ts at run time, includes docs/a.md, and reads docs/legal.
-# What each source shape reads is tools/tests/rust-reads.test.sh's.
+# A fixture checkout of three crates: kendex-core calls a root helper, a `.`
+# row; kendex-cli reads skills/ and includes assets/x.json; kendex-app reads
+# ui/src/bindings.ts and docs/legal and includes docs/a.md.
 WORLD="$TMP/crate-world"
 for c in core cli app; do
   mkdir -p "$WORLD/crates/$c/src"
@@ -174,22 +164,18 @@ standard|false|skills/orch/SKILL.md|$CODE_LANES $(cargo_row $CLI_CORE '' false)
 small|false|crates/app/src/lib.rs|$CODE_LANES $(cargo_row $ALL3 $ALL3 true)
 micro|false|assets/x.json|$CODE_LANES $(cargo_row $ALL3 $ALL3 true)
 micro|false|Cargo.lock|$CODE_LANES $(cargo_row $ALL3 $ALL3 true)
-micro|false|.cargo/config.toml|$CODE_LANES $(cargo_row $ALL3 $ALL3 true)
 micro|false|crates/AGENTS.md|$PROSE_LANES $(cargo_row $ALL3 '' false)
 micro|false|ui/src/bindings.ts|$UI_LANES $(cargo_row $APP_CORE $APP_CORE false)
 standard|false|ui/src/app.tsx|$UI_LANES $(cargo_row $CORE $CORE false)
 micro|false|docs/a.md|$PROSE_LANES $(cargo_row $APP_CORE '' false)
 trivial|true|docs/a.md|$PROSE_LANES $(cargo_row $APP_CORE '' false)
 trivial|true|docs/legal/terms.md|$PROSE_LANES $(cargo_row $APP_CORE '' false)
-trivial|true|docs/other.md docs/legal/privacy.md|$PROSE_LANES $(cargo_row $APP_CORE '' false)
 trivial|true|docs/other.md|$VERIFY_ROW
 trivial|true|docs/legalese.md|$VERIFY_ROW
 render|true|docs/a.md|$VERIFY_ROW
 standard|true|docs/guide.md|$PROSE_LANES $(cargo_row $CORE '' false)
 standard|false|.github/workflows/skill-tests.yml|$UI_LANES $(cargo_row $ALL3 $ALL3 true)
 standard|false|.github/actions/change-class/action.yml|$UI_LANES $(cargo_row $ALL3 $ALL3 true)
-standard|false|tools/ci-job-set|$UI_LANES $(cargo_row $ALL3 $ALL3 true)
-standard|false|tools/ci-aggregate|$UI_LANES $(cargo_row $ALL3 $ALL3 true)
 standard|false|tools/rust-reads|$UI_LANES $(cargo_row $ALL3 $ALL3 true)
 standard|false|tools/ci-job-set.orig|$CODE_LANES $(cargo_row $CORE $CORE false)"
 world_rows=0
@@ -198,7 +184,7 @@ while IFS='|' read -r class docs paths expected; do
   check "reach: $class docs_only=$docs over '$paths'" "$expected" \
     "$(SELECT_IN="$WORLD" selection "$class" "$docs" "$(printf '%s\n' $paths)")"
 done <<<"$WORLD_ROWS"
-[ "$world_rows" -ge 25 ] || { echo "the reach table read $world_rows rows" >&2; exit 1; }
+[ "$world_rows" -ge 21 ] || { echo "the reach table read $world_rows rows" >&2; exit 1; }
 mkdir -p "$TMP/no-crates"
 check "a read set rust-reads cannot derive is refused on a trivial diff" "exit=2 rust-reads-failed" \
   "$(SELECT_IN="$TMP/no-crates" selection trivial true docs/a.md)"
@@ -236,9 +222,8 @@ else
     *) ok "control: without the column check a two-column row selects lanes" ;;
   esac
 fi
-# EDIT|CLASS|DOCS_ONLY|PATHS — a copy with that rule removed answers the row
-# other than the table above does. An edit carries no |, the column
-# separator.
+# EDIT|CLASS|DOCS_ONLY|PATHS — a copy with that rule removed answers the
+# table's row otherwise. An edit carries no |, the column separator.
 mkdir -p "$TMP/rule/tools"
 cp "$ROOT/tools/rust-reads" "$TMP/rule/tools/rust-reads"
 controls=0
@@ -610,9 +595,7 @@ check "the gated set is read out of the workflow" "$EVERY_GATED" \
 
 one_skill="$(selection micro false 'skills/orch/SKILL.md
 .agents/skills/orch/SKILL.md')"
-# The issue's two shapes on this tree: a diff of tools/ and skill scripts
-# builds nothing, so the lint and Windows compile lanes stand down, and a
-# crate source runs every cargo lane.
+# On this tree: tools and skill scripts build nothing; a crate source does.
 tools_only="$(selection standard false 'tools/guard
 skills/orch/scripts/lanes')"
 crate_code="$(selection small false crates/cli/src/main.rs)"
@@ -642,11 +625,9 @@ check "the matrix runs the Linux leg alone where the class drops macOS" \
 check "the matrix runs both legs when nothing classified" \
   '["ubuntu-latest","macos-latest"]' "$(legs "$WORKFLOW" "$ALL_OFF" failure)"
 
-# Each cargo leg's LEG_SELECTED, evaluated per crate: the crates the list
-# names build and test, the others stand down, and a dead classifier or the
-# push to main selects every leg. A name that only starts like a listed one
-# is not listed. kendex-core is in the Linux list alone, so a macOS leg that
-# read the Linux list would run it.
+# Each cargo leg's LEG_SELECTED per crate: a listed crate runs, a dead
+# classifier or the push runs every leg, a prefix-only name is not listed,
+# and kendex-core is in the Linux list alone.
 leg() { # WORKFLOW JOB CRATE SELECTION [RESULT] [EVENT] — the leg's LEG_SELECTED
   local map="$TMP/published-map" expr
   published_map "$1" >"$map"

@@ -153,25 +153,20 @@ for member in include:docs/authoring/README.md:kendex-app manifest:ui/src/bindin
     ok "the repository's reads carry $member" ||
     bad "the repository's reads carry $member" "the extractor is broken for that shape: $OUT"
 done
-# kendex-app reads nothing this reader cannot place, so its cargo legs stand
-# down on a diff that reaches none of its reads. On a red, every kendex-app
-# source is emptied in a copy of crates/ and each is put back alone, and the
-# files that bring the row back by themselves are named.
+# kendex-app prints no `.` row. On a red, each kendex-app source is put back
+# alone into a copy whose app sources are empty, and the culprits are named.
 if grep -qFx -- "manifest:.:kendex-app" <<<"$OUT"; then
-  mkdir -p "$TMP/app-dot/kept"
+  mkdir -p "$TMP/app-dot"
   cp -R "$ROOT/crates" "$TMP/app-dot/crates"
-  app_files="$(cd "$ROOT" && git ls-files -- 'crates/app/*.rs')"
-  while IFS= read -r f; do
-    mkdir -p "$TMP/app-dot/kept/$(dirname "$f")"
-    mv "$TMP/app-dot/$f" "$TMP/app-dot/kept/$f"
-    : >"$TMP/app-dot/$f"
-  done <<<"$app_files"
+  cp -R "$ROOT/crates/app" "$TMP/app-dot/kept"
+  app_files="$(cd "$ROOT/crates/app" && git ls-files -- '*.rs')"
+  while IFS= read -r f; do : >"$TMP/app-dot/crates/app/$f"; done <<<"$app_files"
   culprits=""
   while IFS= read -r f; do
-    cp "$TMP/app-dot/kept/$f" "$TMP/app-dot/$f"
+    cp "$TMP/app-dot/kept/$f" "$TMP/app-dot/crates/app/$f"
     rows_now="$(cd "$TMP/app-dot" && "$READS")" || rows_now=""
-    ! grep -qFx -- "$(printf 'manifest\t.\tkendex-app')" <<<"$rows_now" || culprits="$culprits $f"
-    : >"$TMP/app-dot/$f"
+    ! grep -qFx -- "$(printf 'manifest\t.\tkendex-app')" <<<"$rows_now" || culprits="$culprits crates/app/$f"
+    : >"$TMP/app-dot/crates/app/$f"
   done <<<"$app_files"
   bad "kendex-app prints no . row" "a read of kendex-app this reader cannot place, in:${culprits:- no single file}"
 else

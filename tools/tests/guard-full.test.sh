@@ -827,15 +827,14 @@ inherited_row
 [[ "$OUT" == *"inner=micro:false:$PATHS_FILE"* ]] \
   && ok "control: with the selection left exported the suite inherits it" \
   || bad "control: with the selection left exported the suite inherits it" "rc=$RC out=$OUT"
-# A selection of the Linux cargo lane that names no crate is this
-# repository's own ci-job-set broken: refused before any test runs, never
-# read as the workspace. A stub stands in for the selection, since the real
-# one names a crate wherever it selects the lane.
+# The Linux cargo lane selected with no crate named is ci-job-set broken:
+# refused before any test runs. The stub writes each row to the output and
+# to stderr, as the real one does, and the real one always names a crate.
 cp "$LANE_TOOLS/ci-job-set" "$TMP/ci-job-set.real"
 printf '%s\n' '#!/usr/bin/env bash' \
-  'printf "%s\n" shell_shards=false macos_legs=false ui=false bot_instructions=false cargo_linux=true \' \
-  '  cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false linux_crates= macos_crates= >>"$GITHUB_OUTPUT"' \
-  >"$LANE_TOOLS/ci-job-set"
+  'rows="shell_shards=false macos_legs=false ui=false bot_instructions=false cargo_linux=true' \
+  '  cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false linux_crates= macos_crates="' \
+  'printf "%s\n" $rows >>"$GITHUB_OUTPUT"; printf "%s\n" $rows >&2' >"$LANE_TOOLS/ci-job-set"
 chmod +x "$LANE_TOOLS/ci-job-set"
 lane_guard
 run_lanes micro false docs/guide.md

@@ -303,14 +303,20 @@ if [ "$MODE" = full ] && [ -n "$validate_class" ]; then
     say lane-selection paths-unreadable
   elif [ -z "$selected_paths" ]; then
     note lane-selection class-fallback
+  elif ! selection_rows=$(mktemp); then
+    say lane-selection mktemp
   else
+    # The rows come from the output file alone; stderr, which repeats them,
+    # is shown and read for a refusal's cause.
     selection_status=0
     selection=$(CHANGE_CLASS="$validate_class" DOCS_ONLY="$validate_docs_only" \
-      CHANGED_PATHS="$selected_paths" GITHUB_OUTPUT=/dev/stdout "$TOOLS_DIR/ci-job-set" 2>&1) ||
+      CHANGED_PATHS="$selected_paths" GITHUB_OUTPUT="$selection_rows" "$TOOLS_DIR/ci-job-set" 2>&1) ||
       selection_status=$?
     printf '%s\n' "$selection"
+    selected=$(cat -- "$selection_rows") || selection_status=unreadable
+    rm -f -- "${selection_rows:?}"
     case "$selection_status:$selection" in
-      0:*) lanes="$selection" ;;
+      0:*) lanes="$selected" ;;
       *"ci-job-set: cause=unknown-class"*) refuse validate-class "$validate_class" ;;
       *) say lane-selection "$selection_status" ;;
     esac
