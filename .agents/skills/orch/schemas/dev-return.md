@@ -12,7 +12,7 @@ Each delegation stamps a unique token (`workflow-state new-round-id [ISSUE] dev_
 
 Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json` — the delegated item set the orchestrator persists at stamp time, checked against this artifact's `items[]` via `--expect-items-from-round`. Schema: [`dev-round.md`](dev-round.md).
 
-`[ISSUE_ID]` is the workflow-state key where one exists, whose forms `workflow-state --help` § Keys enumerates; a bundled delegation uses the Parent ID. Ad-hoc work runs no workflow-state step and has no key: the orchestrator supplies an opaque id that names the artifact file alone, never an empty or free-form string. Both, and `[ROUND_ID]`, must match `^[A-Za-z0-9._-]+$` with no `..`.
+`[ISSUE_ID]` is the workflow-state key where one exists, whose forms `workflow-state --help` § Keys enumerates; a bundled delegation uses the Parent ID. Work with neither an issue id nor a pull request takes the `local-` key `workflow-state new-local-key` mints, never an empty or free-form string. The command writes nothing: ad-hoc work that runs no workflow-state step uses the key to name the artifact file alone, and a review whose findings enter a fix round inits its state under it. Both, and `[ROUND_ID]`, must match `^[A-Za-z0-9._-]+$` with no `..`.
 
 ## Schema
 

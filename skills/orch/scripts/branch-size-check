@@ -8,9 +8,10 @@
 # --issue is the workflow-state key whose issue states this branch's allowance
 # in its `**Expected delta**` line: `issue-N` for GitHub, the tracker
 # identifier (KEN-123) otherwise. The repository-local `pr-N` fallback that
-# ci-fix, merge-pr and review-pr-comments use for a branch carrying no issue id
-# names no issue, so no tracker is read, the branch is measured, and the
-# verdict is allowance_missing. A key that does name an issue the tracker
+# ci-fix, merge-pr and review-pr-comments use for a branch carrying no issue
+# id, and the `local-` key `workflow-state new-local-key` mints for work with no
+# pull request either, name no issue, so no tracker is read, the branch is
+# measured, and the verdict is allowance_missing. A key that does name an issue the tracker
 # cannot read stays an environment failure: its allowance is unknown, not
 # absent.
 #
@@ -82,7 +83,7 @@ unset _arg
 source "$SCRIPT_DIR/lib/branch-growth.sh"
 
 ID_GRAMMAR='^[A-Za-z0-9._-]+$'
-NO_ISSUE_KEY_GRAMMAR='^pr-[0-9]+$'
+NO_ISSUE_KEY_GRAMMAR='^(pr-[0-9]+|local-[0-9]+-[0-9]+-[0-9]+)$'
 DELTA_GRAMMAR='^(1 line|[2-9] lines|[1-9][0-9]+ lines)(, (1 test line|[2-9] test lines|[1-9][0-9]+ test lines))?$'
 
 # Callers preserve positional values for this diagnostic catalog.
@@ -116,7 +117,7 @@ message() {
       ;;
     missing-issue)
       printf 'branch-size-check: missing-issue option=%s\n' "--issue"
-      printf '%s\n' "--issue is required (the workflow-state key that decides the branch's allowance; a pr-N key names no issue)"
+      printf '%s\n' "--issue is required (the workflow-state key that decides the branch's allowance; a pr-N or local- key names no issue)"
       ;;
     invalid-issue)
       printf 'branch-size-check: invalid-issue issue=%s\n' "$issue"

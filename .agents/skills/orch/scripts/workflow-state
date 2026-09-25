@@ -848,6 +848,21 @@ cmd_new_round_id() {
     echo "$value"
 }
 
+# Mint and print a key for work whose branch carries no issue id and whose PR
+# gives none either: local-<epoch>-<pid>-<random>. The key names no issue, so
+# branch-size-check measures it without reading a tracker, and it matches the
+# path-safe grammar every round writer checks. Nothing is written: the caller
+# that minted it owns the key, inits state under it and removes that state.
+# Seconds rather than %N, which macOS date prints as a literal N; the pid keeps
+# two same-second mints from one repository apart.
+cmd_new_local_key() {
+    local now field=local_key
+    [[ $# -eq 0 ]] || { state_message unknown-option "$@" >&2; return 2; }
+    now=$(date -u +%s) || now=""
+    [[ "$now" =~ ^[0-9]+$ ]] || { state_message clock-unreadable "$@" >&2; return 1; }
+    printf 'local-%s-%s-%s\n' "$now" "$$" "$RANDOM"
+}
+
 cmd_path() {
     local issue_id="$1"
     get_state_file "$issue_id"
@@ -1291,6 +1306,9 @@ EOF
   new-round-id <issue_id> <field>  Generate a unique per-delegation round token,
                                 store it at <field>, and print it (binds a dev
                                 completion artifact to its delegation — kendex#776)
+  new-local-key                 Mint and print a local-<epoch>-<pid>-<random>
+                                key for work with no issue id (Keys below);
+                                writes nothing
   path <issue_id>               Print state file path
   exists [--json] <issue_id>    Exit 0 if exists, 1 if not; --json prints status and exits 0
   handoff-standing <issue_id>   Print one verdict line and exit 0:
@@ -1342,11 +1360,15 @@ EOF
                                 nothing
 
 Keys:
-  Three per-item key forms: the tracker identifier (KEN-123) for a tracked
-  issue, issue-<N> for a GitHub issue, and the repository-local pr-<N> for a
-  branch carrying no issue id. Beside them stands one fixed key, oversee,
-  holding the fleet session state that schemas/workflow-state.md section
-  Oversee state describes. The key is stored as passed and validated by its
+  Four per-item key forms: the tracker identifier (KEN-123) for a tracked
+  issue, issue-<N> for a GitHub issue, the repository-local pr-<N> for a
+  pull request whose branch carries no issue id, and local-<epoch>-<pid>-<random>
+  from new-local-key for work with neither, such as a local review whose fix
+  round needs a key. The workflow that mints a local key owns it: it inits
+  the state, passes the key to every round it stamps, and removes the state
+  when it ends. pr-<N> and local- keys name no issue. Beside them stands one
+  fixed key, oversee, holding the fleet session state that
+  schemas/workflow-state.md section Oversee state describes. The key is stored as passed and validated by its
   callers, not here: every command interpolates <issue_id> into the state
   filename exactly as given, so pass init the spelling every later command
   will use.
@@ -1469,6 +1491,7 @@ case "$1" in
     set-git-head) shift; cmd_set_git_head "$@" ;;
     set-now)   shift; cmd_set_now "$@" ;;
     new-round-id) shift; cmd_new_round_id "$@" ;;
+    new-local-key) shift; cmd_new_local_key "$@" ;;
     path)      shift; cmd_path "$@" ;;
     exists)    shift; cmd_exists "$@" ;;
     handoff-standing) shift; cmd_handoff_standing "$@" ;;

@@ -17,7 +17,7 @@ On-demand review of local changes: review, present findings, and offer to fix th
 .agents/skills/orch/scripts/resolve-base-branch .
 ```
 
-Use the outputs as `BRANCH`, `ISSUE_ID` (empty means skip every workflow-state step), and `BASE_BRANCH`; `WT_PATH` is `git-context repo-root .`.
+Use the outputs as `BRANCH`, `ISSUE_ID` (empty means skip every workflow-state step until § 4 mints a local key), and `BASE_BRANCH`; `WT_PATH` is `git-context repo-root .`.
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the `.` the line above resolves `WT_PATH` from.
 
@@ -133,6 +133,18 @@ Omit empty categories. **Disposition is by rule, not by prompt** — never prese
 
 **Never fix as the main agent.**
 
+With no `ISSUE_ID`, the fix round still needs a workflow-state key. Mint one, take the printed key as `ISSUE_ID` to the end of § 5, and init its state under it. This workflow owns the key:
+
+```bash
+.agents/skills/orch/scripts/workflow-state new-local-key
+```
+
+```bash
+.agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --worktree [WT_PATH] --branch [BRANCH]
+```
+
+Then, with either key:
+
 ```bash
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WT_PATH]
 ```
@@ -151,13 +163,17 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 </output_format>
 
-Apply [references/finding-disposition.md](../references/finding-disposition.md) § Filing bar to every candidate: `category == "issue"` suggestions and the escalated items from the fix round alike. What clears it builds an audit-input file at `tmp/audit-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "review"`, `parent_issue: [ISSUE_ID]` (or null), and `worktree: [WT_PATH]`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 5`.
+Apply [references/finding-disposition.md](../references/finding-disposition.md) § Filing bar to every candidate: `category == "issue"` suggestions and the escalated items from the fix round alike. What clears it builds an audit-input file at `tmp/audit-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "review"`, `parent_issue: [ISSUE_ID]` (null for a minted local key, which names no issue), and `worktree: [WT_PATH]`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 5`.
 
 Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination) before invoking `audit-issues`. A non-delegated primary session runs this wrapper itself; the only delegable part is the `tpm-audit.md` analysis, which audit-issues spawns itself.
 
 ## 5. Summary
 
-Shut the review agents down (wave runs already did).
+Shut the review agents down (wave runs already did). A local key § 4 minted has no later reader, since the next review mints its own; remove its state:
+
+```bash
+.agents/skills/orch/scripts/workflow-state remove [ISSUE_ID]
+```
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 

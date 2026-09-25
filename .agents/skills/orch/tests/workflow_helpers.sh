@@ -140,6 +140,23 @@ r_d="$(ORCH_STATE_DIR="$state_dir" "$WS" new-round-id issue-353 dev_round_id)"
 assert_eq "$(printf '%s\n' "$r_a" "$r_b" "$r_c" "$r_d" | sort -u | wc -l | tr -d ' ')" "4" \
   "four rapid consecutive mints are all distinct"
 
+# A local key is the state key of work with no issue id and no PR, so rapid
+# mints must differ, carry the local- shape branch-size-check reads as naming
+# no issue, and leave no state behind: the minting workflow inits its own.
+local_state_dir="$TMP_ROOT/local-key-state"
+mkdir -p "$local_state_dir"
+k_a="$("$WS" --state-dir "$local_state_dir" new-local-key)"
+k_b="$("$WS" --state-dir "$local_state_dir" new-local-key)"
+assert_eq "$([[ "$k_a" =~ ^local-[0-9]+-[0-9]+-[0-9]+$ ]] && echo ok)" "ok" "new-local-key mints a local-<epoch>-<pid>-<random> key"
+assert_eq "$([[ "$k_a" != "$k_b" ]] && echo uniq)" "uniq" "new-local-key mints a distinct key each call"
+assert_eq "$(find "$local_state_dir" -type f | wc -l | tr -d ' ')" "0" "new-local-key writes no state"
+set +e
+local_key_err="$("$WS" new-local-key stray 2>&1 >/dev/null)"
+local_key_rc=$?
+set -e
+assert_eq "$local_key_rc,${local_key_err%%$'\n'*}" "2,workflow-state: unknown-option arg1=stray" \
+  "new-local-key refuses an argument, since it takes no key"
+
 assert_eq "$(WORKTREE_DEFAULT_BRANCH=trunk "$SKILL_DIR/scripts/resolve-base-branch" "$REPO_ROOT")" "trunk" \
   "resolve-base-branch honors WORKTREE_DEFAULT_BRANCH"
 

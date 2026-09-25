@@ -291,7 +291,7 @@ assert_eq "$near_miss_rc" "2" "a key outside the pr-N shape still reaches the tr
 
 PR_MUTANT_SCRIPTS="$(copy_scripts pr-key-mutant)"
 PR_MUTANT="$PR_MUTANT_SCRIPTS/branch-size-check"
-mutate_file "$PR_MUTANT" 'NO_ISSUE_KEY_GRAMMAR='"'"'^pr-[0-9]+$'"'"'' 'NO_ISSUE_KEY_GRAMMAR='"'"'^$'"'"''
+mutate_file "$PR_MUTANT" 'NO_ISSUE_KEY_GRAMMAR='"'"'^(pr-[0-9]+|local-[0-9]+-[0-9]+-[0-9]+)$'"'"'' 'NO_ISSUE_KEY_GRAMMAR='"'"'^$'"'"''
 set +e
 pr_mutant_error="$(run_pr_check "$PR_MUTANT" 2>&1 >/dev/null)"
 pr_mutant_rc=$?

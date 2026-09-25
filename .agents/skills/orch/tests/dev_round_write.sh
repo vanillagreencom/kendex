@@ -350,6 +350,37 @@ pr_check_rc=$?
 set -e
 assert_eq "$pr_check_rc" "0" "dev-artifact-check reads the pr-N round back" "$ERR"
 
+echo "=== a no-issue local review stamps its fix round under a minted local key ==="
+# ../workflows/review.md § 4 on a branch with no issue id mints a key with
+# `workflow-state new-local-key` and inits state under it, then
+# ../workflows/dev-fix.md § 2 step 4 stamps the round. No tracker holds that
+# key either.
+LW="$(new_repo local-wt)"
+LOCAL_KEY="$("$STATE" new-local-key)"
+init_growth_state "$STATE" "$LW" "$LOCAL_KEY" seed >/dev/null
+LOCAL_RID="$("$STATE" --state-dir "$LW/tmp" new-round-id "$LOCAL_KEY" dev_round_id)"
+run_write --worktree "$LW" --issue "$LOCAL_KEY" --round-id "$LOCAL_RID" --item 1 "local review round" "$OK_REACH"
+E="rc=0 written=yes .issue=$LOCAL_KEY .round_id=$LOCAL_RID .size_check.verdict=allowance_missing"
+assert_eq "$(observe "$E")" "$E" "a round under a minted local key stamps with the measured allowance_missing verdict" "$ERR"
+"$RETURN_WRITE" --worktree "$LW" --kind fix --issue "$LOCAL_KEY" --round-id "$LOCAL_RID" --branch main \
+  --commit "$(git -C "$LW" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
+set +e
+"$CHECK" --worktree "$LW" --issue "$LOCAL_KEY" --round-id "$LOCAL_RID" --expect-items-from-round >/dev/null 2>&1
+local_check_rc=$?
+set -e
+assert_eq "$local_check_rc" "0" "dev-artifact-check reads the local-key round back" "$ERR"
+
+# Control: a size owner that reads only pr-N as naming no issue sends the local
+# key to the tracker, and the round is refused before it is stamped.
+LOCAL_MUTANT_SCRIPTS="$(copy_scripts local-key-mutant)"
+mutate_file "$LOCAL_MUTANT_SCRIPTS/branch-size-check" '|local-[0-9]+-[0-9]+-[0-9]+)$' ')$'
+LIVE_WRITE="$WRITE_BIN"
+WRITE_BIN="$LOCAL_MUTANT_SCRIPTS/dev-round-write"
+run_write --worktree "$LW" --issue "$LOCAL_KEY" --round-id "$LOCAL_RID-control" --item 1 "local review round" "$OK_REACH"
+E="rc=2 written=no stderr~branch-size-check:+linear-read+issue=$LOCAL_KEY=true"
+assert_eq "$(observe "$E")" "$E" "control: without the local key form the round is a tracker-read refusal" "$ERR"
+WRITE_BIN="$LIVE_WRITE"
+
 echo "=== a record the reader cannot use fails acceptance closed ==="
 # A record removed after delegation, a non-string base_sha, an empty path
 # component in adds, and a whitespace path the delegation cannot express each
