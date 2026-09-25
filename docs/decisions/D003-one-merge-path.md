@@ -25,7 +25,7 @@ A merge reached `main` by more than one route, and kendex renders reached consum
 
 ## Decision
 
-This is the target state, and each current route stays in place until the change that retires it lands. The admin merge and the `ORCH_MERGE_BYPASS` fast path stay until KEN-1777, the consumer train until KEN-1779, and each per-repository ruleset until the organization rulesets stand.
+This is the target state, and each current route stays in place until the change that retires it lands. The admin merge and the `ORCH_MERGE_BYPASS` fast path stay until KEN-1777, the consumer train until KEN-1779, and each per-repository ruleset until the organization rulesets stand, the owner action KEN-1778 sequences.
 
 1. **One merge path.** Every repository merges through its merge queue, and the lanes app arms auto-merge. No ruleset has a bypass actor, no admin route remains, and no owner credential sits on the control VM (KEN-1777). The queue serializes concurrent lanes and batches up to five pull requests per CI run, so a pull request behind `main` never restacks to merge. The queue run is cheap by class: the `merge_group` diff classifies like a pull request, a `render` or `trivial` group runs one job, and KEN-1750 removes the cargo lanes where no Rust path changed.
 2. **Consumers pull.** kendex ships a refresh workflow template in its render (KEN-1779). `kendex refresh` never syncs workflow YAML, so the template reaches a consumer's `.github/workflows/` by adoption copy, as the review-gate writer template does per [adoption.md](../../skills/review-gate/references/adoption.md). The lanes app is installed on all repositories at the organization, and a workflow in kendex `main` sends `repository_dispatch` with the lanes app token to every repository the app is installed on. Each consumer's copy runs on that dispatch, on a 30-minute schedule, and on `workflow_dispatch`. It installs a pinned kendex, runs `kendex refresh --scope project --yes --leave` and `kendex verify`, commits to the one rolling branch `kendex/refresh`, opens or updates one rolling pull request, and arms auto-merge with the lanes app token from organization secrets. The pull request is `render` class: no review, one CI job, then the queue. No overseer and no control-VM toolchain take part. kendex never pushes to a consumer.
@@ -64,6 +64,7 @@ This is the target state, and each current route stays in place until the change
 | `consumer-train.md` and its manual steps | `skills/orch/workflows/consumer-train.md` | KEN-1779 |
 | `ORCH_CONSUMER_REPOS` | `skills/orch/workflows/consumer-train.md`, `skills/orch/kendex.settings.toml.example` | KEN-1779 |
 | The create-time sandbox refresh | `kendex update-pi` and `kendex refresh` in `skills/orch/scripts/lane-host-ssh` create, `skills/orch/schemas/lane-host.md` | KEN-1780 |
+| Each per-repository ruleset, kendex's merge-queue ruleset 20569265 among them, with its bypass actors | each repository's ruleset settings in GitHub; nothing in this repository | KEN-1778, as the owner action after it lands in every repository |
 
 - KEN-1777 rewrites [../architecture/merge-rail.md](../architecture/merge-rail.md) § Ownership, § Boundaries and § Decisions to this decision's end state.
 - Each repository reports one aggregate required context `CI` beside `Review gate`, and `merge_group` classifies through the same class job set (KEN-1778).
