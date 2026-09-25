@@ -43,6 +43,8 @@ rule "a hosted merge runs no train and mails each consumer's overseer" \
   "$EVENTS" "## Event kinds" '- `merged` →' 'the train is item work and does not run' \
   "$POINTER" '`lane-mail peer send --repo [NAME_OR_PATH] --file [PATH]`' \
   'until KEN-1779 ships' 'D003 (KEN-1776)'
+rule "a merge runs the train only off a hosted fleet" "$EVENTS" "## Event kinds" \
+  'Off a hosted fleet a match runs [consumer-train.md]'
 rule "the train says it does not run on a hosted fleet" "$TRAIN" \
   "# Consumer train" 'On a hosted fleet it does not run' "$POINTER"
 

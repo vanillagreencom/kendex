@@ -9,7 +9,7 @@ The tier for an item whose whole change is a few lines. One agent reads the item
 
 The runner is a lane in the item's worktree, or the overseer in the main checkout with no worktree for the item. `[WT_PATH]` is that checkout's root throughout. Steps marked **Main checkout only** are the second route's alone.
 
-**Main checkout only.** The run returns that checkout to `[BASE_BRANCH]` before it reports anything: at § 3, at an escape, and at any stop in between. The supported transfer in § Escape moves the item's branch and any uncommitted edit into its worktree first. The fleet runs `sync-base`, `post-merge` and [consumer-train.md](consumer-train.md) in that checkout at every merge ([oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds)), and `sync-base` refuses a tracked-dirty tree. § 5 reports the branch the checkout ends on.
+**Main checkout only.** The run returns that checkout to `[BASE_BRANCH]` before it reports anything: at § 3, at an escape, and at any stop in between. The supported transfer in § Escape moves the item's branch and any uncommitted edit into its worktree first. The fleet runs its merge handling in that checkout at every merge ([oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds), `merged`), and `sync-base` refuses a tracked-dirty tree. § 5 reports the branch the checkout ends on.
 
 ## Budget
 
