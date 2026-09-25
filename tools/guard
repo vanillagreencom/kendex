@@ -173,11 +173,11 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "DEV_VALIDATE_CLASS names a class tools/ci-job-set has no lane selection for; its cause is above." ;;
     lane-unknown)
       echo "tools/ci-job-set selects no value for that lane name: tools/guard is broken." ;;
-    lane-crates)
-      echo "tools/ci-job-set selected the Linux cargo lane and named no crate for it: tools/ci-job-set is broken." ;;
     lane-selection)
       case "$2" in
         class-fallback) echo "DEV_VALIDATE_PATHS names an empty file, the runner's fallback when it could not read a class, so every lane ran." ;;
+        mktemp) echo "no temporary file could be made for tools/ci-job-set's selection rows, so every lane ran." ;;
+        unreadable) echo "the temporary file holding tools/ci-job-set's selection rows could not be read back, so every lane ran." ;;
         *) echo "no lane selection was made — tools/ci-job-set's exit status, or paths-unreadable where DEV_VALIDATE_PATHS names no readable file — so every lane ran." ;;
       esac
       ;;
@@ -263,8 +263,7 @@ case "${1:-}" in
       '--full: full Rust and UI validation for development completion and submit,' \
       '        plus the suites of the skill, hook, tool and Pi-package trees the branch touched.' \
       '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \
-      '        dev-validate-run, stand down the lanes tools/ci-job-set does not select, and' \
-      '        the workspace test run covers the crates it selects.'
+      '        dev-validate-run, stand down the lanes tools/ci-job-set does not select.'
     exit 0
     ;;
 esac
@@ -373,11 +372,6 @@ lane_on() { # LANE — tools/ci-job-set's name for it
   ! grep -Fxq -- "$1=true" <<<"$lanes" || return 0
   grep -Fxq -- "$1=false" <<<"$lanes" || refuse lane-unknown "$1"
   return 1
-}
-lane_crates() { # LIST — the comma-separated crates tools/ci-job-set names in it
-  local line
-  line=$(grep -- "^$1=" <<<"$lanes") || refuse lane-unknown "$1"
-  printf '%s\n' "${line#*=}"
 }
 
 # The staged bot-instructions check is a lane of the commit-guards chain that
@@ -1197,19 +1191,6 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
   fi
 fi
 if [ "$MODE" = full ] && [ -f Cargo.toml ] && lane_on cargo_linux; then
-  # The crates ci-job-set selects for the Linux legs, or the workspace when
-  # no class selected the lanes.
-  test_scope=(--workspace)
-  test_scope_name=workspace
-  if [ "$lanes" != all ]; then
-    test_scope_name=$(lane_crates linux_crates)
-    [ -n "$test_scope_name" ] || refuse lane-crates linux_crates
-    test_scope=()
-    IFS=, read -r -a test_crates <<<"$test_scope_name"
-    for test_crate in "${test_crates[@]}"; do
-      test_scope+=(-p "$test_crate")
-    done
-  fi
   # A test binary that dies by a signal reached no verdict: the runner
   # reports the executable's death, not an assertion. A binary whose code
   # pages come back wrong from disk dies this way, and rebuilding that
@@ -1218,7 +1199,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ] && lane_on cargo_linux; then
   # same death line for a compiler or build script it launched, under
   # "could not compile" instead of "test failed"; only the runner's is one.
   tests_log=$(mktemp)
-  if ! cargo test "${test_scope[@]}" --quiet 2>&1 | tee "$tests_log"; then
+  if ! cargo test --workspace --quiet 2>&1 | tee "$tests_log"; then
     death=""
     if grep -q "^error: test failed" "$tests_log"; then
       death=$(grep -m1 -o "process didn't exit successfully: .*(signal: [^)]*)" "$tests_log")
@@ -1229,7 +1210,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ] && lane_on cargo_linux; then
       say test-binary-signal "$signal"
       printf '%s\n' "${death#*successfully: }"
     else
-      say cargo-test "$test_scope_name"
+      say cargo-test workspace
     fi
   fi
   rm -f "$tests_log"

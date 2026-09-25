@@ -10,16 +10,14 @@ name: Skill Tests
 # first and runs what the first proved. The `changes` job below reads the
 # class once through the change-class composite action, `tools/ci-job-set`
 # turns it and the changed paths into one `<lane>=true|false` line per gated
-# lane and the crates each cargo matrix runs, and every `if:` in this file,
-# and each cargo leg's LEG_SELECTED, reads one of those lines. Of the gated
+# lane, and every `if:` in this file reads one of those lines. Of the gated
 # jobs, a `render` or `trivial` diff runs the bot-instructions job alone,
 # which also carries the document byte ceilings and the work-marker scan.
 # Every other diff, and a `trivial` one changing a path tools/rust-reads
-# names, runs the shell shards and that job, and each other lane and cargo
-# leg as `tools/ci-job-set` selects it; the invariant comment there is the
-# one statement of what each lane runs, a crate's `.` row included. The
-# aggregators still report and accept only the skips the selection
-# authorized. The push to main
+# names, runs the shell shards, that job and each other lane as
+# `tools/ci-job-set` selects it; the invariant comment there is the one
+# statement of what each lane runs. The aggregators still report and accept
+# only the skips the selection authorized. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
 # so it runs only the compile steps: each cargo lane builds its targets with
@@ -123,8 +121,6 @@ jobs:
       cargo_lint: ${{ steps.select.outputs.cargo_lint }}
       cargo_windows: ${{ steps.select.outputs.cargo_windows }}
       cargo_windows_check: ${{ steps.select.outputs.cargo_windows_check }}
-      linux_crates: ${{ steps.select.outputs.linux_crates }}
-      macos_crates: ${{ steps.select.outputs.macos_crates }}
     # THE PINNED BUILD. The tag is a published main build, immutable, and
     # both the installer and the binary are read at that one revision. It is
     # one part of this workflow's trust boundary: the classifier and the orch
@@ -237,11 +233,10 @@ jobs:
           base: ${{ env.BASE }}
           head: ${{ env.HEAD }}
       # The class becomes a job set here and nowhere else. Each lane's `if:`
-      # below, and each cargo leg's LEG_SELECTED, reads one of these lines
-      # rather than re-deriving the selection from the class and the paths, so
-      # there is one place to read what a class runs and one place to change
-      # it. It runs in the workspace root, the pull request's tree, whose
-      # crates/ tools/rust-reads reads for the crates a diff reaches.
+      # below reads one of these lines rather than re-deriving the selection
+      # from the class and the paths, so there is one place to read what a
+      # class runs and one place to change it. It runs in the workspace root,
+      # the pull request's tree, whose crates/ tools/rust-reads reads.
       - id: select
         env:
           CHANGE_CLASS: ${{ steps.classify.outputs.change_class }}
@@ -1315,20 +1310,8 @@ jobs:
       # double what cargo writes.
       RUSTFLAGS: -C debuginfo=0
       CARGO_INCREMENTAL: '0'
-      # Whether this leg's crate is one the diff reaches: tools/ci-job-set,
-      # linux_crates. A job-level `if:` cannot reach `matrix`, so a leg the
-      # diff does not reach still starts and runs its two guards, and every
-      # step that builds or tests reads this instead. A dead classifier and
-      # the push to main select every leg.
-      LEG_SELECTED: ${{ github.event_name == 'push' || needs.changes.result != 'success' || contains(format(',{0},', needs.changes.outputs.linux_crates), format(',{0},', matrix.crate)) }}
     steps:
       - uses: actions/checkout@v4
-      - name: this leg's crate is not selected
-        if: env.LEG_SELECTED != 'true'
-        env:
-          CRATE: ${{ matrix.crate }}
-          SELECTED: ${{ needs.changes.outputs.linux_crates }}
-        run: echo "::notice title=leg stood down::tools/ci-job-set selected no $CRATE leg for this diff (linux_crates=$SELECTED)"
       - uses: dtolnay/rust-toolchain@stable
       # THE load-bearing crate guard, the cargo twin of the shard guard above:
       # a workspace member the matrix does not name compiles under the lint
@@ -1355,14 +1338,12 @@ jobs:
       - name: every test file is compiled by a harness
         run: tools/test-roster
       - uses: Swatinem/rust-cache@v2
-        if: env.LEG_SELECTED == 'true'
         with:
           key: ${{ matrix.crate }}
           save-if: ${{ github.event_name != 'pull_request' }}
       # The keychain store links dbus in every crate; the app shell links
       # webkit and gtk in its own.
       - name: System dependencies
-        if: env.LEG_SELECTED == 'true'
         env:
           CRATE: ${{ matrix.crate }}
         run: |
@@ -1373,11 +1354,10 @@ jobs:
       # pi_carrier.rs runs the `pi-hooks` carrier for its end-to-end case — a
       # hook declared in kendex.toml firing under Pi — and skips without bun.
       - uses: oven-sh/setup-bun@v2
-        if: matrix.crate == 'kendex-core' && env.LEG_SELECTED == 'true'
+        if: matrix.crate == 'kendex-core'
         with:
           bun-version: 1.3.14
       - name: compile
-        if: env.LEG_SELECTED == 'true'
         timeout-minutes: 20
         run: cargo test -p ${{ matrix.crate }} --locked --no-run
       # Tests alone on a warm cache, last ten runs: kendex-cli ~150s
@@ -1386,7 +1366,7 @@ jobs:
       # five-minute Linux trigger the header sets, and the test that costs
       # the macOS leg its own leg costs 103s here.
       - name: test
-        if: github.event_name != 'push' && env.LEG_SELECTED == 'true'
+        if: github.event_name != 'push'
         timeout-minutes: 10
         run: cargo test -p ${{ matrix.crate }} --locked --no-fail-fast
 
@@ -1426,18 +1406,8 @@ jobs:
     # `rest` and on the `whole` legs kendex-core and kendex-app run, so each
     # of those three reserves 20 + 12 + 5 = 37 and takes the 40 below.
     timeout-minutes: ${{ matrix.leg == 'render-lint' && 50 || 40 }}
-    env:
-      # The Linux legs' LEG_SELECTED, read from macos_crates: the crates a
-      # path other than prose reaches.
-      LEG_SELECTED: ${{ github.event_name == 'push' || needs.changes.result != 'success' || contains(format(',{0},', needs.changes.outputs.macos_crates), format(',{0},', matrix.crate)) }}
     steps:
       - uses: actions/checkout@v4
-      - name: this leg's crate is not selected
-        if: env.LEG_SELECTED != 'true'
-        env:
-          CRATE: ${{ matrix.crate }}
-          SELECTED: ${{ needs.changes.outputs.macos_crates }}
-        run: echo "::notice title=leg stood down::tools/ci-job-set selected no $CRATE leg for this diff (macos_crates=$SELECTED)"
       - uses: dtolnay/rust-toolchain@stable
       # The same guard as the Linux shard's, on this file's own crate lines.
       - name: crate matrix agrees with the workspace members
@@ -1453,7 +1423,6 @@ jobs:
             diff <(printf '%s\n' "$members") <(printf '%s\n' "$declared") || { echo "crate matrix [$line] disagrees with the workspace: '<' a member no shard tests; '>' a name that is not a member"; exit 1; }
           done <<<"$lines"
       - uses: Swatinem/rust-cache@v2
-        if: env.LEG_SELECTED == 'true'
         with:
           # The leg is in the key because the two kendex-cli legs compile
           # different target sets and would otherwise race one entry.
@@ -1462,7 +1431,7 @@ jobs:
       # pi_carrier.rs is a unix test, so with bun installed it runs here too
       # instead of skipping on the platform the app ships on.
       - uses: oven-sh/setup-bun@v2
-        if: matrix.crate == 'kendex-core' && env.LEG_SELECTED == 'true'
+        if: matrix.crate == 'kendex-core'
         with:
           bun-version: 1.3.14
       # THE cargo twin of the shell shards' rosters. The crate guard above
@@ -1514,7 +1483,6 @@ jobs:
           echo "CARGO_DOC=$doc" >> "$GITHUB_ENV"
       # 44-210s warm across the three crates; the bound is for a cold cache.
       - name: compile
-        if: env.LEG_SELECTED == 'true'
         timeout-minutes: 20
         run: cargo test -p ${{ matrix.crate }} --locked --no-run $CARGO_TARGETS
       # Measured maxima of the step this bounds, over those same runs: 267s
@@ -1528,7 +1496,7 @@ jobs:
       # reason --no-fail-fast has: one run reports everything. The doc run is
       # 0 tests and half a second today, well inside the bound above.
       - name: test
-        if: github.event_name != 'push' && env.LEG_SELECTED == 'true'
+        if: github.event_name != 'push'
         timeout-minutes: ${{ matrix.leg == 'render-lint' && 25 || 12 }}
         run: |
           set -u

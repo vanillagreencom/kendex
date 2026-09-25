@@ -5,14 +5,11 @@
 use base64::Engine;
 use std::path::Path;
 
-/// The path is handed straight to the read, a shape tools/rust-reads places.
 #[allow(clippy::expect_used)]
 fn config() -> serde_json::Value {
-    serde_json::from_str(
-        &std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json"))
-            .expect("tauri.conf.json"),
-    )
-    .expect("tauri.conf.json parses")
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json");
+    serde_json::from_str(&std::fs::read_to_string(path).expect("tauri.conf.json"))
+        .expect("tauri.conf.json parses")
 }
 
 /// The settings the window and the release path lean on, one row per JSON

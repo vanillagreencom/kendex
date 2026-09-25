@@ -4,10 +4,9 @@
 #
 # The class comes from the change-class composite action and is never decided
 # here; this script maps it, and the changed paths behind it, onto one
-# `<lane>=true|false` line per gated lane and one `<list>=<crates>` line per
-# per-crate cargo matrix. Every lane condition in that workflow reads one of
-# those lines, so the selection is made once instead of re-derived in each
-# `if:`.
+# `<lane>=true|false` line per gated lane. Every lane condition in that
+# workflow reads one of those lines, so the selection is made once instead of
+# re-derived in each `if:`.
 #
 # Environment:
 #   CHANGE_CLASS   render|trivial|micro|small|standard
@@ -18,43 +17,33 @@
 #
 # THE INVARIANT, stated once, with no list of what any lane reads:
 #
-#   - On every measured class (`micro`, `small`, `standard`) shell_shards and
-#     bot_instructions always run.
-#   - A cargo lane runs where the diff reaches a crate, and tools/rust-reads
-#     says which paths reach which crate: a path under one of its rows for
-#     that crate, any path at all for a crate with a `.` row (a read it does
-#     not follow, which may be of anything), and for every crate a build
-#     input, which is a non-prose path under a `build` or an `include` row.
-#     cargo_linux runs the crates reached, in linux_crates. cargo_macos runs
-#     the crates a non-prose path reaches, in macos_crates, and
-#     cargo_windows, the Windows test run, runs where that list is not
-#     empty: a prose file reads the same on every platform. cargo_lint and
-#     cargo_windows_check compile the workspace and run no test, so they run
-#     where a build input changed.
+#   - On every measured class (`micro`, `small`, `standard`) the three Linux
+#     lanes always run: shell_shards, cargo_linux and bot_instructions.
+#   - The platform lanes (macos_legs, cargo_macos, cargo_windows) stand down
+#     only on a diff whose every path is prose, whose content no platform
+#     reads differently, and run on any other diff; a `standard` diff that is
+#     not documentation alone runs them whatever its paths.
+#   - The compile lanes (cargo_lint, cargo_windows_check) run no test, so
+#     they run only where a build input changed: a path other than prose
+#     under a tools/rust-reads `build` or `include` row.
+#   - ui is the lane that narrows to a tree: every ui step runs a
+#     ui/package.json script, and nothing under ui/ imports or configures a
+#     path outside ui/.
 #   - A diff to what defines the lanes, a path under .github/workflows/ or
 #     .github/actions/ or tools/ci-job-set, tools/ci-aggregate or
-#     tools/rust-reads, runs every lane and every crate's cargo legs, so a
-#     change to a lane or to its selection runs on the pull request that
-#     makes it.
-#   - The platform lane macos_legs stands down only on a diff whose every
-#     path is prose, whose content no platform reads differently, except on
-#     a `standard` diff that is not documentation alone, which runs it.
-#   - ui is the lane that narrows to a tree on every measured class: every ui
-#     step runs a ui/package.json script, and nothing under ui/ imports or
-#     configures a path outside ui/.
+#     tools/rust-reads, runs every lane, so a change to a lane or to its
+#     selection runs on the pull request that makes it.
 #   - A `render` or `trivial` diff runs bot_instructions alone, the one
 #     seconds-long verify job: its check, the document byte ceilings and the
 #     work-marker scan. The classifier proved a `render` diff by
 #     re-rendering it, and a `trivial` one is inside the docs path set and its
 #     line ceiling.
 #   - The exception: a `trivial` diff changing a path a tools/rust-reads
-#     include or manifest row names, or a path under a directory row, takes
-#     the measured row, so the cargo lane runs on a docs file the Rust source
-#     reads. The `.` rows do not count here: the classifier's docs path set,
-#     not a read this script can place, is what keeps a `trivial` diff from
-#     the cargo lanes.
-#     tools/rust-reads reads the Rust source of the checkout this script runs
-#     in, and its header states the reads it does not follow.
+#     include or manifest row names, or a path under a directory it names,
+#     takes the measured row its paths select, so the cargo lane runs on a
+#     docs file the Rust source reads. tools/rust-reads reads the Rust source
+#     of the checkout this script runs in, and its header states the reads it
+#     does not follow.
 #
 # The lanes:
 #
@@ -62,27 +51,20 @@
 #   bot_instructions    the rendered review-bot instruction files and the root
 #                       AGENTS.md region they own, the document byte
 #                       ceilings, and the index-wide work-marker scan.
-#   cargo_linux         the workspace tests on Linux, one leg per crate.
+#   cargo_linux         the workspace tests on Linux.
 #   macos_legs          the shell suites again under Bash 3.2 and the BSD
 #                       userland.
-#   cargo_macos         the workspace tests on the platform the app ships on,
-#                       one leg per crate.
+#   cargo_macos         the workspace tests on the platform the app ships on.
 #   cargo_lint          clippy, fmt and doc over the workspace.
 #   cargo_windows       the Windows test run.
 #   cargo_windows_check the Windows compile check of the core and CLI targets.
 #   ui                  the vitest, tsc and biome lane.
 #
-# The lists, each the reached crates' package names joined by commas, empty
-# where the lane beside it is false:
-#
-#   linux_crates   the cargo_linux legs that run.
-#   macos_crates   the cargo_macos legs that run.
-#
 # DOCS_ONLY is read and validated on every class, and it changes one thing: a
 # `standard` diff whose every path the docs verdict accepts (docs/,
-# changelog.d/, root Markdown) takes the row its paths select, with
-# macos_legs standing down on prose, rather than running macos_legs
-# whatever the paths.
+# changelog.d/, root Markdown) takes the row its paths select, with the
+# platform lanes standing down on prose, rather than running them whatever
+# its paths.
 #
 # Every refusal starts `ci-job-set: cause=<name>` and exits 2. A class this
 # table does not name is one of those: the step goes red, every lane's status
@@ -93,9 +75,8 @@ set -euo pipefail
 
 TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# One line per lane, in the order the rows below spell them, and the lists.
+# One line per lane, in the order the rows below spell them.
 LANES="shell_shards macos_legs ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows cargo_windows_check"
-LISTS="linux_crates macos_crates"
 
 die() { # CAUSE MESSAGE
   printf 'ci-job-set: cause=%s\n' "$1" >&2
@@ -116,14 +97,14 @@ esac
 paths="${CHANGED_PATHS-__unset__}"
 [ "$paths" != __unset__ ] || die missing-paths "CHANGED_PATHS is required"
 
-# A row names every lane and every list or ends the step, before any lane has
-# read a selection with one missing from it.
-emit() { # NAME=VALUE ...
-  local name given=" $* "
-  for name in $LANES $LISTS; do
+# A row names every lane or ends the step, before any lane has read a
+# selection with one lane missing from it.
+emit() { # LANE=VALUE ...
+  local lane given=" $* "
+  for lane in $LANES; do
     case "$given" in
-      *" $name="*) ;;
-      *) die "lane-unselected lane=$name" "the row declares no value for this lane" ;;
+      *" $lane="*) ;;
+      *) die "lane-unselected lane=$lane" "the row declares no value for this lane" ;;
     esac
   done
   printf '%s\n' "$@" >>"$GITHUB_OUTPUT"
@@ -143,89 +124,44 @@ any_outside() { # REGEX — is some changed path NOT inside it?
   [ "$hits" -gt 0 ]
 }
 
-# Prose, the one input the platform lanes stand down on.
+# Prose, the one input the platform and compile lanes stand down on.
 PROSE='\.(md|markdown)$'
 # What defines the lanes: the workflows and actions that run them, and the
 # scripts that select them.
 LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|rust-reads)$)'
 
-# What the changed paths reach, from tools/rust-reads' rows, as `key=value`
-# lines: named (an include or manifest row other than `.` names a changed
-# path), build (a build input changed), linux and macos (the crate lists),
-# and all (every crate the rows name).
-# Each crate reached is named once on stderr, with the first path that
-# reached it and the row it came through.
-reach() {
+# Which changed paths tools/rust-reads rows name, as two lines: named=1 where
+# an include or manifest row other than `.` names one, build=1 where a path
+# other than prose sits under a build or include row. Each match is printed
+# on stderr.
+reads() {
   local rows
   rows="$("$TOOLS_DIR/rust-reads" .)" ||
     die "rust-reads-failed" "tools/rust-reads could not derive the paths the Rust source reads"
   PROSE="$PROSE" PATHS="$paths" awk -F '\t' '
-    function under(path, read) {
-      return path == read || index(path, read "/") == 1
-    }
-    function list(set,   n, i, j, tmp, name, names, out) {
-      n = 0
-      for (name in set) names[++n] = name
-      # Sorted, so one diff always prints one list.
-      for (i = 2; i <= n; i++) {
-        for (j = i; j > 1 && names[j - 1] > names[j]; j--) {
-          tmp = names[j]; names[j] = names[j - 1]; names[j - 1] = tmp
-        }
-      }
-      out = ""
-      for (i = 1; i <= n; i++) out = out (i > 1 ? "," : "") names[i]
-      return out
-    }
-    NF == 0 { next }
-    NF != 3 { printf "ci-job-set: rust-reads row with %d fields: %s\n", NF, $0 > "/dev/stderr"; bad = 1; next }
-    {
-      rows++
-      kind[rows] = $1; read[rows] = $2; crate[rows] = $3
-      crates[$3] = 1
-      if ($2 == ".") dot[$3] = 1
-    }
+    { kind[NR] = $1; read[NR] = $2 }
     END {
-      if (bad) exit 3
       n = split(ENVIRON["PATHS"], changed, "\n")
       for (p = 1; p <= n; p++) {
         path = changed[p]
-        if (path == "") continue
-        prose = path ~ ENVIRON["PROSE"]
-        input = 0
-        for (r = 1; r <= rows; r++) {
-          if (read[r] == "." || !under(path, read[r])) continue
+        for (r = 1; r <= NR; r++) {
+          if (path == "" || read[r] == "." || (path != read[r] && index(path, read[r] "/") != 1)) continue
           if (kind[r] != "build") named = 1
-          if (!prose && (kind[r] == "include" || kind[r] == "build")) input = 1
-        }
-        if (input) build = 1
-        for (c in crates) {
-          why = ""
-          if (input) why = "build"
-          else if (c in dot) why = "."
-          else for (r = 1; r <= rows; r++) {
-            if (crate[r] == c && read[r] != "." && under(path, read[r])) { why = kind[r] ":" read[r]; break }
-          }
-          if (why == "") continue
-          if (!(c in linux)) printf "ci-job-set: reach crate=%s path=%s via=%s\n", c, path, why > "/dev/stderr"
-          linux[c] = 1
-          if (!prose) macos[c] = 1
+          if (kind[r] != "manifest" && path !~ ENVIRON["PROSE"]) build = 1
+          printf "ci-job-set: rust-read=%s kind=%s path=%s\n", read[r], kind[r], path > "/dev/stderr"
         }
       }
-      printf "named=%d\nbuild=%d\nlinux=%s\nmacos=%s\nall=%s\n", named, build, list(linux), list(macos), list(crates)
+      printf "named=%d\nbuild=%d\n", named, build
     }
-  ' <<<"$rows" || die "rust-reads-unparsed" "a tools/rust-reads row is not kind, path and crate"
-}
-
-reached() { # KEY — its value in the reach lines
-  printf '%s\n' "$reach_lines" | sed -n "s/^$1=//p"
+  ' <<<"$rows"
 }
 
 row="$CHANGE_CLASS"
 case "$CHANGE_CLASS" in
   render) ;;
   trivial)
-    reach_lines="$(reach)"
-    [ "$(reached named)" != 1 ] || row=trivial-read
+    read_lines="$(reads)"
+    case "$read_lines" in *named=1*) row=trivial-read ;; esac
     ;;
   micro | small | standard)
     # A measured class is reached only after the classifier read a changed
@@ -234,7 +170,7 @@ case "$CHANGE_CLASS" in
     # stand the narrowing lanes down on no evidence.
     [ -n "$paths" ] || die "class-without-paths class=$CHANGE_CLASS" \
       "a measured class arrived with no changed path"
-    reach_lines="$(reach)"
+    read_lines="$(reads)"
     ;;
   *)
     die "unknown-class class=$CHANGE_CLASS" \
@@ -245,8 +181,7 @@ esac
 case "$row" in
   render | trivial)
     emit shell_shards=false macos_legs=false ui=false bot_instructions=true \
-      cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false \
-      linux_crates= macos_crates=
+      cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false
     ;;
   micro | small | standard | trivial-read)
     platform=false
@@ -254,27 +189,15 @@ case "$row" in
     [ "$CHANGE_CLASS:$DOCS_ONLY" != standard:false ] || platform=true
     uitree=false
     any '^ui/' && uitree=true
-    linux_crates="$(reached linux)"
-    macos_crates="$(reached macos)"
-    all_crates="$(reached all)"
     build=false
-    [ "$(reached build)" != 1 ] || build=true
-    # A diff to what defines the lanes runs every lane and every crate's legs,
-    # so a change to a lane is proved by the run that lands it.
+    case "$read_lines" in *build=1*) build=true ;; esac
     if any "$LANE_SOURCES"; then
       platform=true
       uitree=true
       build=true
-      linux_crates="$all_crates"
-      macos_crates="$all_crates"
     fi
-    cargo_linux=false
-    [ -z "$linux_crates" ] || cargo_linux=true
-    cargo_macos=false
-    [ -z "$macos_crates" ] || cargo_macos=true
     emit shell_shards=true "macos_legs=$platform" "ui=$uitree" bot_instructions=true \
-      "cargo_linux=$cargo_linux" "cargo_macos=$cargo_macos" "cargo_lint=$build" \
-      "cargo_windows=$cargo_macos" "cargo_windows_check=$build" \
-      "linux_crates=$linux_crates" "macos_crates=$macos_crates"
+      cargo_linux=true "cargo_macos=$platform" "cargo_lint=$build" \
+      "cargo_windows=$platform" "cargo_windows_check=$build"
     ;;
 esac

@@ -67,28 +67,18 @@ selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or th
   tr '\n' ' ' <"$out" | sed 's/ $//'
 }
 
-cargo_row() { # LINUX-CRATES MACOS-CRATES BUILD — the cargo half of a row
-  local linux=true macos=true
-  [ -n "$1" ] || linux=false
-  [ -n "$2" ] || macos=false
-  printf 'cargo_linux=%s cargo_macos=%s cargo_lint=%s cargo_windows=%s cargo_windows_check=%s linux_crates=%s macos_crates=%s' \
-    "$linux" "$macos" "$3" "$macos" "$3" "$1" "$2"
-}
-EVERY="kendex-app,kendex-cli,kendex-core"
-ALL_OFF="shell_shards=false macos_legs=false ui=false bot_instructions=false $(cargo_row '' '' false)"
-ALL_ON="shell_shards=true macos_legs=true ui=true bot_instructions=true $(cargo_row "$EVERY" "$EVERY" true)"
+ALL_OFF="shell_shards=false macos_legs=false ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false"
+ALL_ON="shell_shards=true macos_legs=true ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true"
 # `render` and `trivial` run the one verify job.
-VERIFY_ROW="shell_shards=false macos_legs=false ui=false bot_instructions=true $(cargo_row '' '' false)"
-# The shell and verify lanes of a measured row: the macOS shell legs stand
-# down on an all-prose diff, and ui off ui/.
-PROSE_LANES="shell_shards=true macos_legs=false ui=false bot_instructions=true"
-CODE_LANES="shell_shards=true macos_legs=true ui=false bot_instructions=true"
-UI_LANES="shell_shards=true macos_legs=true ui=true bot_instructions=true"
+VERIFY_ROW="shell_shards=false macos_legs=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false"
+# Every measured class runs the three Linux lanes. The platform lanes stand
+# down only on an all-prose diff, the compile lanes where no build input
+# changed, and ui off ui/.
+PROSE_ROW="shell_shards=true macos_legs=false ui=false bot_instructions=true cargo_linux=true cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false"
+CODE_ROW="shell_shards=true macos_legs=true ui=false bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=false cargo_windows=true cargo_windows_check=false"
+UI_ROW="shell_shards=true macos_legs=true ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=false cargo_windows=true cargo_windows_check=false"
+BUILD_ROW="shell_shards=true macos_legs=true ui=false bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true"
 
-# This repository's own tree: kendex-core and kendex-cli have a `.` row, so
-# they run on Linux for every measured diff; kendex-app runs where a path
-# reaches one of its reads.
-ROOT_READERS="kendex-cli,kendex-core"
 # CLASS|DOCS_ONLY|PATHS (blank-separated)|EXPECTED
 selection_rows=0
 while IFS='|' read -r class docs paths expected; do
@@ -99,17 +89,34 @@ done <<ROWS
 render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|$VERIFY_ROW
 trivial|true|docs/architecture/overview.md|$VERIFY_ROW
 trivial|true|AGENTS.md|$VERIFY_ROW
-trivial|true|README.md|$PROSE_LANES $(cargo_row "$ROOT_READERS" '' false)
-standard|false|crates/core/src/lib.rs|$CODE_LANES $(cargo_row "$EVERY" "$EVERY" true)
-standard|false|tools/guard skills/orch/scripts/lanes|$CODE_LANES $(cargo_row "$ROOT_READERS" "$ROOT_READERS" false)
-micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$PROSE_LANES $(cargo_row "$ROOT_READERS" '' false)
-micro|false|skills/commit-guards/scripts/install-git-hooks|$CODE_LANES $(cargo_row "$EVERY" "$EVERY" false)
+standard|false|crates/core/src/lib.rs|$BUILD_ROW
+micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$PROSE_ROW
+small|false|crates/cli/src/main.rs|$BUILD_ROW
+micro|false|ui/src/app.tsx|$UI_ROW
+micro|false|clippy.toml|$BUILD_ROW
+micro|false|rust-toolchain.toml|$BUILD_ROW
+standard|false|skills/orch/scripts/lanes tools/guard|$CODE_ROW
 standard|false|.github/workflows/skill-tests.yml|$ALL_ON
+standard|false|tools/rust-reads|$ALL_ON
+standard|false|tools/ci-job-set.orig|$CODE_ROW
+micro|false|install.sh|$CODE_ROW
+micro|false|.gitattributes|$CODE_ROW
+micro|false|skills/orch/scripts/lanes|$CODE_ROW
+micro|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
+small|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
+standard|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
+standard|true|AGENTS.md|$PROSE_ROW
+standard|true|CLAUDE.md|$PROSE_ROW
+standard|true|GEMINI.md|$PROSE_ROW
+standard|true|docs/legal/terms.md|$PROSE_ROW
+trivial|true|docs/legal/terms.md|$PROSE_ROW
+trivial|true|README.md|$PROSE_ROW
+standard|false|docs/guide.md|$CODE_ROW
 enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous
 micro|false||exit=2 class-without-paths class=micro
 micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe
 ROWS
-[ "$selection_rows" -ge 12 ] ||
+[ "$selection_rows" -ge 28 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
 
 # A row that forgets a lane is refused before any lane reads it. macos_legs is
@@ -118,143 +125,95 @@ ROWS
 # from the render row.
 mkdir -p "$TMP/forgot/tools"
 forgot="$TMP/forgot/tools/ci-job-set"
-cp "$ROOT/tools/rust-reads" "$TMP/forgot/tools/rust-reads"
-[ "$(grep -c 'cargo_windows=false cargo_windows_check=false \\$' "$JOB_SET")" -eq 1 ] ||
+[ "$(grep -c 'cargo_lint=false cargo_windows=false cargo_windows_check=false$' "$JOB_SET")" -eq 1 ] ||
   { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
-sed 's/cargo_windows=false cargo_windows_check=false \\$/cargo_windows_check=false \\/' "$JOB_SET" >"$forgot"
+awk '
+  /cargo_lint=false cargo_windows=false cargo_windows_check=false$/ {
+    sub(/ cargo_windows_check=false$/, "")
+  }
+  { print }
+' "$JOB_SET" >"$forgot"
 chmod +x "$forgot"
 ! cmp -s "$JOB_SET" "$forgot" || { echo "the forgotten-lane copy changed nothing" >&2; exit 1; }
 forgot_status=0
 CHANGE_CLASS=render DOCS_ONLY=false CHANGED_PATHS=CLAUDE.md GITHUB_OUTPUT="$TMP/forgot-out" \
   "$forgot" 2>"$TMP/forgot-err" || forgot_status=$?
 check "a row that forgets a lane is refused" \
-  "exit=2 lane-unselected lane=cargo_windows" \
+  "exit=2 lane-unselected lane=cargo_windows_check" \
   "exit=$forgot_status $(sed -n 's/^ci-job-set: cause=//p' "$TMP/forgot-err")"
 
-# A fixture checkout of three crates: kendex-core calls a root helper, a `.`
-# row; kendex-cli reads skills/ and includes assets/x.json; kendex-app reads
-# ui/src/bindings.ts and docs/legal and includes docs/a.md.
-WORLD="$TMP/crate-world"
-for c in core cli app; do
-  mkdir -p "$WORLD/crates/$c/src"
-  printf '[package]\nname = "kendex-%s"\n' "$c" >"$WORLD/crates/$c/Cargo.toml"
-done
-cat >"$WORLD/crates/core/src/lib.rs" <<'RS'
-fn root() -> PathBuf { Path::new(env!("CARGO_MANIFEST_DIR")).join("../..") }
-fn catalog() { open(&root()); }
-RS
-cat >"$WORLD/crates/cli/src/lib.rs" <<'RS'
-fn skills() { scan(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills")); }
-const X: &str = include_str!("../../../assets/x.json");
-RS
-cat >"$WORLD/crates/app/src/lib.rs" <<'RS'
+# A `trivial` diff changing a path tools/rust-reads names takes the measured
+# row. The fixture crate reads docs/a.md and assets/x.json through
+# include_str!, docs/legal and tools/x through a manifest chain, and the
+# checkout root, whose `.` row matches nothing. What each source shape reads
+# is tools/tests/rust-reads.test.sh's.
+READ_WORLD="$TMP/read-world"
+mkdir -p "$READ_WORLD/crates/demo/src"
+printf '[package]\nname = "demo"\n' >"$READ_WORLD/crates/demo/Cargo.toml"
+cat >"$READ_WORLD/crates/demo/src/lib.rs" <<'RS'
 const A: &str = include_str!("../../../docs/a.md");
-const B: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ui/src/bindings.ts");
-fn legal() { read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/legal")); }
+const X: &str = include_str!("../../../assets/x.json");
+fn tool() { read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/x")); }
+fn legal(name: &str) -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/legal").join(name) }
+fn root() -> PathBuf { Path::new(env!("CARGO_MANIFEST_DIR")).join("../..") }
 RS
-CORE=kendex-core
-CLI_CORE=kendex-cli,kendex-core
-APP_CORE=kendex-app,kendex-core
-ALL3=kendex-app,kendex-cli,kendex-core
-# CLASS|DOCS_ONLY|PATHS (blank-separated)|EXPECTED
-WORLD_ROWS="micro|false|tools/guard|$CODE_LANES $(cargo_row $CORE $CORE false)
-standard|false|tools/guard skills/orch/scripts/lanes|$CODE_LANES $(cargo_row $CLI_CORE $CLI_CORE false)
-micro|false|skills/orch/SKILL.md|$PROSE_LANES $(cargo_row $CLI_CORE '' false)
-standard|false|skills/orch/SKILL.md|$CODE_LANES $(cargo_row $CLI_CORE '' false)
-small|false|crates/app/src/lib.rs|$CODE_LANES $(cargo_row $ALL3 $ALL3 true)
-micro|false|assets/x.json|$CODE_LANES $(cargo_row $ALL3 $ALL3 true)
-micro|false|Cargo.lock|$CODE_LANES $(cargo_row $ALL3 $ALL3 true)
-micro|false|crates/AGENTS.md|$PROSE_LANES $(cargo_row $ALL3 '' false)
-micro|false|ui/src/bindings.ts|$UI_LANES $(cargo_row $APP_CORE $APP_CORE false)
-standard|false|ui/src/app.tsx|$UI_LANES $(cargo_row $CORE $CORE false)
-micro|false|docs/a.md|$PROSE_LANES $(cargo_row $APP_CORE '' false)
-trivial|true|docs/a.md|$PROSE_LANES $(cargo_row $APP_CORE '' false)
-trivial|true|docs/legal/terms.md|$PROSE_LANES $(cargo_row $APP_CORE '' false)
-trivial|true|docs/other.md|$VERIFY_ROW
-trivial|true|docs/legalese.md|$VERIFY_ROW
-render|true|docs/a.md|$VERIFY_ROW
-standard|true|docs/guide.md|$PROSE_LANES $(cargo_row $CORE '' false)
-standard|false|.github/workflows/skill-tests.yml|$UI_LANES $(cargo_row $ALL3 $ALL3 true)
-standard|false|.github/actions/change-class/action.yml|$UI_LANES $(cargo_row $ALL3 $ALL3 true)
-standard|false|tools/rust-reads|$UI_LANES $(cargo_row $ALL3 $ALL3 true)
-standard|false|tools/ci-job-set.orig|$CODE_LANES $(cargo_row $CORE $CORE false)"
-world_rows=0
-while IFS='|' read -r class docs paths expected; do
-  world_rows=$((world_rows + 1))
-  check "reach: $class docs_only=$docs over '$paths'" "$expected" \
-    "$(SELECT_IN="$WORLD" selection "$class" "$docs" "$(printf '%s\n' $paths)")"
-done <<<"$WORLD_ROWS"
-[ "$world_rows" -ge 21 ] || { echo "the reach table read $world_rows rows" >&2; exit 1; }
+# CLASS|PATHS (blank-separated)|EXPECTED, every row docs-only.
+READ_ROWS="trivial|docs/a.md|$PROSE_ROW
+trivial|docs/legal/terms.md|$PROSE_ROW
+trivial|docs/other.md docs/legal/privacy.md|$PROSE_ROW
+trivial|docs/other.md|$VERIFY_ROW
+trivial|docs/legalese.md|$VERIFY_ROW
+render|docs/a.md|$VERIFY_ROW"
+read_rows=0
+while IFS='|' read -r class paths expected; do
+  read_rows=$((read_rows + 1))
+  check "read selection: $class over '$paths'" "$expected" \
+    "$(SELECT_IN="$READ_WORLD" selection "$class" true "$(printf '%s\n' $paths)")"
+done <<<"$READ_ROWS"
+[ "$read_rows" -ge 6 ] || { echo "the read table read $read_rows rows" >&2; exit 1; }
 mkdir -p "$TMP/no-crates"
-check "a read set rust-reads cannot derive is refused on a trivial diff" "exit=2 rust-reads-failed" \
+check "a read set rust-reads cannot derive is refused" "exit=2 rust-reads-failed" \
   "$(SELECT_IN="$TMP/no-crates" selection trivial true docs/a.md)"
-check "and on a measured one" "exit=2 rust-reads-failed" \
-  "$(SELECT_IN="$TMP/no-crates" selection micro false tools/guard)"
-# Every crate manifest removed, source left behind: the reader places no
-# crate, and the diff runs every gated job rather than none. The control is a
-# reader without that rule, beside which every cargo lane stands down.
-MANIFESTS_GONE="crates/core/Cargo.toml crates/cli/Cargo.toml crates/app/Cargo.toml"
-mkdir -p "$TMP/no-manifests/crates/core/src"
-printf 'fn a() {}\n' >"$TMP/no-manifests/crates/core/src/lib.rs"
-check "a crates/ that places no crate is refused" "exit=2 rust-reads-failed" \
-  "$(SELECT_IN="$TMP/no-manifests" selection standard false "$(printf '%s\n' $MANIFESTS_GONE)")"
-mkdir -p "$TMP/placeless/tools"
-cp "$JOB_SET" "$TMP/placeless/tools/ci-job-set"
-sed '/^# Every crate placed prints build rows/,/^esac$/d' "$ROOT/tools/rust-reads" >"$TMP/placeless/tools/rust-reads"
-chmod +x "$TMP/placeless/tools/rust-reads"
-check "control: with the reader rule removed every cargo lane stands down" \
-  "$CODE_LANES $(cargo_row '' '' false)" \
-  "$(SELECT_IN="$TMP/no-manifests" SELECT_WITH="$TMP/placeless/tools/ci-job-set" selection standard false "$(printf '%s\n' $MANIFESTS_GONE)")"
-# A reader row that is not kind, path and crate is refused before any crate
-# is named: a reader from before the crate column, beside this script.
-mkdir -p "$TMP/unparsed/tools"
-cp "$JOB_SET" "$TMP/unparsed/tools/ci-job-set"
-printf '#!/usr/bin/env bash\nprintf "include\\tdocs/a.md\\n"\n' >"$TMP/unparsed/tools/rust-reads"
-chmod +x "$TMP/unparsed/tools/rust-reads"
-check "a reader row without a crate column is refused" "exit=2 rust-reads-unparsed" \
-  "$(SELECT_WITH="$TMP/unparsed/tools/ci-job-set" selection micro false docs/a.md)"
-sed 's/^    NF != 3 {/    NF == -1 {/' "$JOB_SET" >"$TMP/unparsed/tools/ci-job-set"
-if cmp -s "$JOB_SET" "$TMP/unparsed/tools/ci-job-set"; then
-  bad "control: the column check could not be removed from a ci-job-set copy"
-else
-  case "$(SELECT_WITH="$TMP/unparsed/tools/ci-job-set" selection micro false docs/a.md)" in
-    "exit=2 rust-reads-unparsed") bad "control: without the column check a two-column row is still refused" ;;
-    *) ok "control: without the column check a two-column row selects lanes" ;;
-  esac
-fi
-# EDIT|CLASS|DOCS_ONLY|PATHS — a copy with that rule removed answers the
-# table's row otherwise. An edit carries no |, the column separator.
+check "and on a measured diff, whose compile lanes it gates" "exit=2 rust-reads-failed" \
+  "$(SELECT_IN="$TMP/no-crates" selection micro true docs/a.md)"
+# A build input is a path other than prose under a build or include row; a
+# run-time read is none.
+check "an included file other than prose is a build input" "$BUILD_ROW" \
+  "$(SELECT_IN="$READ_WORLD" selection micro false assets/x.json)"
+check "a file the Rust source reads at run time is no build input" "$CODE_ROW" \
+  "$(SELECT_IN="$READ_WORLD" selection micro false tools/x)"
+# The platform lanes run on a standard diff that is not documentation alone,
+# prose included; the control drops that rule.
+mkdir -p "$TMP/standard/tools"
+cp "$ROOT/tools/rust-reads" "$TMP/standard/tools/rust-reads"
+sed '/\[ "\$CHANGE_CLASS:\$DOCS_ONLY" != standard:false \] /d' "$JOB_SET" >"$TMP/standard/tools/ci-job-set"
+chmod +x "$TMP/standard/tools/ci-job-set"
+[ "$(SELECT_WITH="$TMP/standard/tools/ci-job-set" selection standard false docs/guide.md)" = "$PROSE_ROW" ] &&
+  ok "control: without the standard rule a standard prose diff stands the platform lanes down" ||
+  bad "control: without the standard rule a standard prose diff stands the platform lanes down"
+# EDIT|CLASS|PATHS|EXPECTED — a copy with that rule removed answers the row
+# other than EXPECTED.
 mkdir -p "$TMP/rule/tools"
 cp "$ROOT/tools/rust-reads" "$TMP/rule/tools/rust-reads"
-controls=0
-while IFS='|' read -r edit class docs paths; do
-  controls=$((controls + 1))
-  expected="$(printf '%s\n' "$WORLD_ROWS" | awk -F '|' -v c="$class" -v d="$docs" -v p="$paths" \
-    '$1 == c && $2 == d && $3 == p { print $4; n++ } END { if (n != 1) exit 1 }')" ||
-    { bad "control: no single reach row for $class $docs $paths"; continue; }
+while IFS='|' read -r edit class paths expected; do
   sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
   chmod +x "$TMP/rule/tools/ci-job-set"
   if cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set"; then
     bad "control: the edit changed nothing in a ci-job-set copy: $edit"
     continue
   fi
-  got="$(SELECT_IN="$WORLD" SELECT_WITH="$TMP/rule/tools/ci-job-set" selection "$class" "$docs" "$(printf '%s\n' $paths)")"
+  got="$(SELECT_IN="$READ_WORLD" SELECT_WITH="$TMP/rule/tools/ci-job-set" selection "$class" true "$paths")"
   [ "$got" != "$expected" ] && ok "control: $edit reddens $class over $paths" ||
     bad "control: $edit reddens $class over $paths (still '$got')"
-done <<'CONTROLS'
-s/else if (c in dot) why = "."/else if (0) why = "."/|micro|false|tools/guard
-s/if (input) why = "build"/if (0) why = "build"/|micro|false|assets/x.json
-s/if (!prose) macos\[c\] = 1/macos[c] = 1/|micro|false|skills/orch/SKILL.md
-s/if (!prose \&\& (kind/if ((kind/|micro|false|docs/a.md
-s/if (crate\[r\] == c \&\& read/if (read/|micro|false|skills/orch/SKILL.md
-/\[ "\$CHANGE_CLASS:\$DOCS_ONLY" != standard:false \] /d|standard|false|skills/orch/SKILL.md
-s/any '^ui\/' \&\& uitree=true/uitree=true/|micro|false|tools/guard
-s/row=trivial-read$/row=trivial/|trivial|true|docs/a.md
-s/index(path, read "\/") == 1/index(path, read) == 1/|trivial|true|docs/legalese.md
-s/if any "\$LANE_SOURCES"; then/if false; then/|standard|false|.github/workflows/skill-tests.yml
-s/ci-aggregate.rust-reads)\$)/ci-aggregate.rust-reads))/|standard|false|tools/ci-job-set.orig
+done <<CONTROLS
+s/row=trivial-read ;;/row=trivial ;;/|trivial|docs/a.md|$PROSE_ROW
+s/index(path, read\[r\] "\/") != 1/index(path, read[r]) != 1/|trivial|docs/legalese.md|$VERIFY_ROW
+s/if (kind\[r\] != "manifest" .*) build = 1/build = 1/|micro|docs/a.md|$PROSE_ROW
+s/kind\[r\] != "manifest" .. //|micro|tools/x|$CODE_ROW
+s/if any "\$LANE_SOURCES"; then/if false; then/|standard|.github/workflows/skill-tests.yml|$ALL_ON
+s/ci-aggregate.rust-reads)\$)/ci-aggregate.rust-reads))/|standard|tools/ci-job-set.orig|$CODE_ROW
+s/any '^ui\/' .. uitree=true/uitree=true/|micro|docs/a.md|$PROSE_ROW
 CONTROLS
-[ "$controls" -ge 11 ] || { echo "the control table read $controls rows" >&2; exit 1; }
 
 # --- 2. The names -----------------------------------------------------------
 # Each reader is extracted with an anchored pattern: a name is the whole run
@@ -292,28 +251,10 @@ gate_pairs() { # WORKFLOW
   done | LC_ALL=C sort -u
 }
 
-# Each cargo leg's LEG_SELECTED expression, `JOB<tab>EXPR`, the `${{ }}`
-# stripped. Only a line at the job env's own indent is read.
-leg_exprs() { # WORKFLOW
-  awk '
-    /^jobs:/ { in_jobs = 1; next }
-    !in_jobs { next }
-    /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job); next }
-    /^      LEG_SELECTED: \$\{\{ .* \}\}$/ {
-      expr = $0
-      sub(/^      LEG_SELECTED: \$\{\{ /, "", expr)
-      sub(/ \}\}$/, "", expr)
-      print job "\t" expr
-    }
-  ' "$1"
-}
-
-# Every lane a gate reads: the job conditions, the platform matrix and the
-# cargo legs' LEG_SELECTED.
+# Every lane a gate reads: the job conditions and the platform matrix.
 lanes_read() { # WORKFLOW
   { gate_pairs "$1" | sed 's/:.*//'
     matrix_expr "$1" | grep -oE "$OUTPUT_NAME" | sed 's/^needs\.changes\.outputs\.//' || true
-    leg_exprs "$1" | grep -oE "$OUTPUT_NAME" | sed 's/^needs\.changes\.outputs\.//' || true
   } | LC_ALL=C sort -u
 }
 
@@ -407,14 +348,6 @@ def tokens(src):
     return out
 
 
-def text(v):
-    if v is None:
-        return ""
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    return str(v)
-
-
 def truthy(v):
     return not (v is None or v is False or v == "" or (type(v) in (int, float) and v == 0))
 
@@ -506,12 +439,6 @@ class Parser:
     def call(self, name, args):
         if name == "fromJSON":
             return json.loads(args[0])
-        if name == "contains":
-            if isinstance(args[0], str) and isinstance(args[1], str):
-                return args[1].lower() in args[0].lower()
-            refuse("cause=contains-operands")
-        if name == "format":
-            return re.sub(r"\{(\d+)\}", lambda m: text(args[1 + int(m.group(1))]), args[0])
         if name == "always":
             return True
         if name == "cancelled":
@@ -530,7 +457,7 @@ class Parser:
         return v
 
 
-def context(event, result, selection, map_file, crate=None):
+def context(event, result, selection, map_file):
     chosen = dict(pair.split("=", 1) for pair in selection.split())
     outputs = {}
     if result == "success":
@@ -539,16 +466,13 @@ def context(event, result, selection, map_file, crate=None):
                 name, source = line.split()
                 if source in chosen:
                     outputs[name] = chosen[source]
-    ctx = {"github": {"event_name": event},
-           "needs": {"changes": {"result": result, "outputs": outputs}}}
-    if crate is not None:
-        ctx["matrix"] = {"crate": crate}
-    return ctx
+    return {"github": {"event_name": event},
+            "needs": {"changes": {"result": result, "outputs": outputs}}}
 
 
 mode, event, result, selection, map_file = sys.argv[1:6]
-ctx = context(event, result, selection, map_file, sys.argv[7] if mode == "leg" else None)
-if mode in ("value", "leg"):
+ctx = context(event, result, selection, map_file)
+if mode == "value":
     print(json.dumps(Parser(tokens(sys.argv[6]), ctx).whole(), separators=(",", ":")))
 elif mode == "jobs":
     for line in sys.stdin:
@@ -595,10 +519,6 @@ check "the gated set is read out of the workflow" "$EVERY_GATED" \
 
 one_skill="$(selection micro false 'skills/orch/SKILL.md
 .agents/skills/orch/SKILL.md')"
-# On this tree: tools and skill scripts build nothing; a crate source does.
-tools_only="$(selection standard false 'tools/guard
-skills/orch/scripts/lanes')"
-crate_code="$(selection small false crates/cli/src/main.rs)"
 # SELECTION|EXPECTED JOBS
 job_rows=0
 while IFS='|' read -r sel expected; do
@@ -608,10 +528,10 @@ done <<ROWS
 $VERIFY_ROW|bot-instructions
 $ALL_ON|$EVERY_GATED
 $one_skill|bot-instructions cargo-linux skill-suites-shard
-$tools_only|bot-instructions cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
-$crate_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
+$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
+$BUILD_ROW|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
 ROWS
-[ "$job_rows" -ge 5 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
+[ "$job_rows" -ge 4 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
 
 # A classifier that died published nothing. Every gated job runs, which is
 # what each condition's status function and result term are for.
@@ -624,57 +544,6 @@ check "the matrix runs the Linux leg alone where the class drops macOS" \
   '["ubuntu-latest"]' "$(legs "$WORKFLOW" "$one_skill")"
 check "the matrix runs both legs when nothing classified" \
   '["ubuntu-latest","macos-latest"]' "$(legs "$WORKFLOW" "$ALL_OFF" failure)"
-
-# Each cargo leg's LEG_SELECTED per crate: a listed crate runs, a dead
-# classifier or the push runs every leg, a prefix-only name is not listed,
-# and kendex-core is in the Linux list alone.
-leg() { # WORKFLOW JOB CRATE SELECTION [RESULT] [EVENT] — the leg's LEG_SELECTED
-  local map="$TMP/published-map" expr
-  published_map "$1" >"$map"
-  expr="$(leg_exprs "$1" | awk -F '\t' -v j="$2" '$1 == j { print $2 }')"
-  [ -n "$expr" ] || { printf 'no-leg-expression'; return 0; }
-  python3 "$TMP/gh-eval.py" leg "${6:-pull_request}" "${5:-success}" "$4" "$map" "$expr" "$3"
-}
-check "the cargo legs are the jobs carrying LEG_SELECTED" "cargo-linux cargo-macos" \
-  "$(leg_exprs "$WORKFLOW" | cut -f1 | tr '\n' ' ' | sed 's/ $//')"
-LEG_SEL="$(cargo_row kendex-app-x,kendex-cli,kendex-core kendex-cli,kendex-core-x true)"
-# JOB|CRATE|RESULT|EVENT|EXPECTED
-leg_rows=0
-while IFS='|' read -r job crate result event expected; do
-  leg_rows=$((leg_rows + 1))
-  check "leg $job $crate under result=${result:-success} event=${event:-pull_request}" "$expected" \
-    "$(leg "$WORKFLOW" "$job" "$crate" "$LEG_SEL" "$result" "$event")"
-done <<'ROWS'
-cargo-linux|kendex-cli|||true
-cargo-linux|kendex-core|||true
-cargo-linux|kendex-app|||false
-cargo-macos|kendex-cli|||true
-cargo-macos|kendex-core|||false
-cargo-macos|kendex-app|||false
-cargo-linux|kendex-app|failure||true
-cargo-macos|kendex-app|failure||true
-cargo-linux|kendex-app|skipped|push|true
-ROWS
-[ "$leg_rows" -ge 9 ] || { echo "the leg table read $leg_rows rows" >&2; exit 1; }
-
-# Every step of a leg that builds or tests reads LEG_SELECTED, or a leg the
-# diff does not reach pays for its crate anyway.
-step_ifs() { # WORKFLOW JOB — `STEP<tab>IF` for the compile and test steps of JOB
-  JOB="$2" awk '
-    /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job); step = ""; next }
-    job != ENVIRON["JOB"] { next }
-    /^      - / { step = ""; if (match($0, /name: (compile|test)$/)) { step = $NF; cond[step] = "" } ; next }
-    step != "" && /^        if: / { c = $0; sub(/^        if: /, "", c); cond[step] = c }
-    END { for (s in cond) print s "\t" cond[s] }
-  ' "$1" | LC_ALL=C sort
-}
-for job in cargo-linux cargo-macos; do
-  ifs="$(step_ifs "$WORKFLOW" "$job")"
-  [ "$(grep -c . <<<"$ifs")" -eq 2 ] ||
-    { echo "the compile and test steps of $job were not read, so the extractor is broken" >&2; exit 1; }
-  check "every build and test step of $job reads LEG_SELECTED" "" \
-    "$(grep -vF "env.LEG_SELECTED == 'true'" <<<"$ifs" || true)"
-done
 
 # The document byte ceilings and the work-marker scan run in the job a
 # `render` or `trivial` diff runs, and in no other, so every class that runs
@@ -734,25 +603,6 @@ plant "'[\"ubuntu-latest\", \"macos-latest\"]' || '[\"ubuntu-latest\"]'" \
   "'[\"ubuntu-latest\"]' || '[\"ubuntu-latest\", \"macos-latest\"]'" "$TMP/wf-swapped.yml"
 check "must-fail: a matrix with its arms swapped expands the wrong legs" \
   '["ubuntu-latest","macos-latest"]' "$(legs "$TMP/wf-swapped.yml" "$one_skill")"
-
-# A LEG_SELECTED that reads no list selects a crate the diff did not reach.
-plant "contains(format(',{0},', needs.changes.outputs.linux_crates), format(',{0},', matrix.crate))" \
-  "true" "$TMP/wf-leg-unread.yml"
-check "must-fail: a Linux leg that reads no crate list runs a crate the diff did not reach" \
-  "true" "$(leg "$TMP/wf-leg-unread.yml" cargo-linux kendex-app "$LEG_SEL")"
-
-# A compile step that forgot LEG_SELECTED builds a crate the diff did not
-# reach.
-awk '
-  /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job) }
-  job == "cargo-linux" && $0 == "      - name: compile" { seen = 1 }
-  seen == 1 && $0 == "        if: env.LEG_SELECTED == '"'"'true'"'"'" { seen = 2; planted++; next }
-  { print }
-  END { if (planted != 1) exit 2 }
-' "$WORKFLOW" >"$TMP/wf-compile-ungated.yml" ||
-  { echo "the compile step condition could not be removed in a copy" >&2; exit 1; }
-check "must-fail: a compile step that forgot LEG_SELECTED is reported" "compile	" \
-  "$(step_ifs "$TMP/wf-compile-ungated.yml" cargo-linux | grep -vF "env.LEG_SELECTED == 'true'" || true)"
 
 # The doc-limits step moved, not deleted, into the shell shards: the scan
 # still runs, but not on the classes that run no shard.

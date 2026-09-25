@@ -6,6 +6,13 @@ fn exporter() -> Typescript {
     Typescript::default().header("// @ts-nocheck")
 }
 
+fn committed_path() -> &'static Path {
+    Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../ui/src/bindings.ts"
+    ))
+}
+
 /// The bindings `specta_builder` emits right now, written somewhere the test
 /// can read them without touching the committed file.
 #[allow(
@@ -26,13 +33,7 @@ fn generated() -> String {
 /// `cargo test -p kendex-app -- --ignored regenerate_bindings`
 #[test]
 fn committed_bindings_are_current() {
-    // The committed file's path is spelled at each use, handed straight to
-    // the call, a shape tools/rust-reads places.
-    let committed = std::fs::read_to_string(Path::new(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../ui/src/bindings.ts"
-    )))
-    .unwrap_or_default();
+    let committed = std::fs::read_to_string(committed_path()).unwrap_or_default();
     assert_eq!(
         committed,
         generated(),
@@ -179,12 +180,6 @@ fn only_the_pinned_commands_bypass_the_transport_fold() {
 #[ignore = "writes ui/src/bindings.ts in place"]
 fn regenerate_bindings() {
     kendex_app::specta_builder()
-        .export(
-            exporter(),
-            Path::new(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../ui/src/bindings.ts"
-            )),
-        )
+        .export(exporter(), committed_path())
         .expect("bindings export");
 }

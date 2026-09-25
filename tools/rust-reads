@@ -1,54 +1,46 @@
 #!/usr/bin/env bash
-# The repository paths each crate under crates/ reads, derived from the Rust
-# source rather than listed by hand. Each row names the shape it came from and
-# the crate that reads it:
+# The repository paths the Rust source under crates/ names as ones it reads,
+# derived from the source rather than listed by hand, and the paths cargo
+# reads to build it. Each row says which shape it came from:
 #
 #   include   an include_str! or include_bytes! literal, resolved against the
 #             including file's directory: a file compiled into the binary or
 #             the test at build time. A literal on the line after its opening
 #             parenthesis, the shape rustfmt gives a long one, counts too.
-#   manifest  a path code or a test reads at run time, resolved against the
-#             reading crate's manifest directory: a chain on
-#             env!("CARGO_MANIFEST_DIR") this reader places, and the path
-#             such a chain reached before a part it does not follow. A read
-#             is of the path and of every path under it.
+#   manifest  a chain of string literals joined onto env!("CARGO_MANIFEST_DIR"),
+#             resolved against that crate's manifest directory: a path code or
+#             a test reads at run time. The chain is the literal arguments of
+#             `.join("...")` calls after it, or the literal arguments beside it
+#             in a `concat!`. A chain that ends with no further argument is a
+#             read of the path it reached, and every path under it when that
+#             is a directory.
 #   build     what cargo reads to build every crate: the crates/ tree, the
 #             workspace manifest and lock, the toolchain pin and the cargo,
 #             clippy and rustfmt configuration, whether or not the checkout
 #             holds each file today, so a diff deleting one still names it.
 #
-# THE RULE: this reader narrows only what it parses whole. It places two
-# chains. One is Path::new or PathBuf::from around env!("CARGO_MANIFEST_DIR"),
-# or around a concat! of it and string literals, then literal `.join("...")`
-# calls, then canonicalize, unwrap or expect at most, handed whole to a call
-# as one argument. The other is a concat! of env!("CARGO_MANIFEST_DIR") and
-# string literals alone, a finished path. A path handed on is a read of that
-# path and of every path under it. Every other use of
-# env!("CARGO_MANIFEST_DIR"), every current_dir(), and every call of a
-# function whose return type names Path and whose body holds
-# env!("CARGO_MANIFEST_DIR"), such as crates/test_util.rs's checkout_root(),
-# prints `.` for its crate: a read this reader does not follow, which may be
-# of any path. Such a function's body is not itself a read.
-#
-# A file under crates/ outside every crate's directory, crates/test_util.rs
-# for one, belongs to each crate whose source reaches it through a
-# `#[path = "..."]` attribute, and its chains resolve against that crate's
-# manifest directory. One no crate reaches is compiled nowhere and read by
-# none. Full-line `//` comments are not source.
+# `.` is the row for what this reader does not follow: a chain that reaches
+# the repository root, and a chain that goes on with an argument that is not
+# a string literal, such as `.join(name)` or `.join(format!(...))`. That
+# second chain also prints the directory it reached, since `.join(name)` most
+# often names a file in it, but the argument can lead out of it too. Code that
+# joins onto a returned path elsewhere is not followed, so a helper like
+# crates/test_util.rs's checkout_root() and every read through it is absent,
+# and a helper returning the manifest directory reads as that crate's
+# directory. A path read by any other route is not here.
 #
 # A resolved path that climbs out of the checkout names no repository path and
 # is not printed.
 #
 # Usage: tools/rust-reads [ROOT]
 #   ROOT   the checkout to read; the current directory when omitted
-# stdout: one `<kind><TAB><path><TAB><crate>` row per distinct read, sorted,
-# the path relative to ROOT and the crate its package name. Exit 0 with the
-# rows, 2 when the source could not be read or the arguments are wrong, and a
-# read that did not run is never printed as an empty set: a run that places
-# no crate is one that could not read crates/. A refusal is one stderr line:
+# stdout: one `<kind><TAB><path>` row per distinct read, sorted, the path
+# relative to ROOT. Exit 0 with the rows, 2 when the source could not be read
+# or the arguments are wrong, and a read that did not run is never printed as
+# an empty set: a crates/ tree holding no Cargo.toml is one that could not be
+# read. A refusal is one stderr line:
 #   rust-reads: unreadable=<path>   ROOT, or the crates/ tree, could not be
-#                                   read or holds no crate, or a Cargo.toml
-#                                   under crates/ names no package
+#                                   read or holds no crate
 #   rust-reads: usage=<usage>       more than one argument
 set -euo pipefail
 
@@ -60,60 +52,21 @@ esac
 cd -- "$root" 2>/dev/null || { printf 'rust-reads: unreadable=%s\n' "$root" >&2; exit 2; }
 [ -d crates ] || { echo 'rust-reads: unreadable=crates' >&2; exit 2; }
 
-if ! manifests=$(find crates -type f -name Cargo.toml) ||
-  ! sources=$(find crates -type f -name '*.rs'); then
+# The manifest directories, for the awk pass to find each file's crate by.
+if ! manifests=$(find crates -type f -name Cargo.toml) || [ -z "$manifests" ]; then
   echo 'rust-reads: unreadable=crates' >&2
   exit 2
 fi
 
-status=0
-rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SOURCES="$sources" awk '
-  # Lists are strings joined by LS.
-  function slurp(file,   line, out, n, r) {
-    out = ""
-    n = 0
-    while ((r = (getline line < file)) > 0) {
-      if (line ~ /^[ \t]*\/\//) line = ""
-      out = (n++ ? out "\n" : "") line
+if ! rows=$(RUST_READS_MANIFESTS="$manifests" find crates -type f -name '*.rs' -exec awk '
+  BEGIN {
+    n = split(ENVIRON["RUST_READS_MANIFESTS"], found, "\n")
+    for (i = 1; i <= n; i++) {
+      if (found[i] == "") continue
+      dir = found[i]
+      sub(/\/?Cargo\.toml$/, "", dir)
+      crate[dir] = 1
     }
-    if (r < 0) exit 2
-    close(file)
-    return out
-  }
-  # The package name the [package] table of MANIFEST declares, in either
-  # quote. A manifest under crates/ declaring none is refused here, naming
-  # it: a crate this reader cannot name is one no selection could run.
-  function package_name(manifest,   line, section, name, quote, at, r) {
-    section = ""
-    name = ""
-    while ((r = (getline line < manifest)) > 0) {
-      if (line ~ /^[ \t]*\[/) {
-        section = line
-        sub(/#.*$/, "", section)
-        gsub(/[ \t]/, "", section)
-        continue
-      }
-      if (section == "[package]" && name == "" && line ~ /^[ \t]*name[ \t]*=[ \t]*["\047]/) {
-        name = line
-        sub(/^[^=]*=[ \t]*/, "", name)
-        quote = substr(name, 1, 1)
-        name = substr(name, 2)
-        at = index(name, quote)
-        name = at > 1 ? substr(name, 1, at - 1) : ""
-      }
-    }
-    if (r < 0) exit 2
-    close(manifest)
-    if (name == "") {
-      printf "rust-reads: unreadable=%s\n", manifest > "/dev/stderr"
-      exit 3
-    }
-    return name
-  }
-  function dirname(file,   dir) {
-    dir = file
-    if (!sub(/\/[^\/]*$/, "", dir)) return "."
-    return dir
   }
   # The repository path BASE/LIT names, or "" when it climbs out of the
   # checkout; "." is the checkout itself.
@@ -130,19 +83,16 @@ rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SOURCES="$sources" awk '
     for (i = 2; i <= k; i++) out = out "/" seg[i]
     return out
   }
+  function emit(kind, path) {
+    if (path != "") printf "%s\t%s\n", kind, path
+  }
   function unquote(tok) {
     sub(/^[^"]*"/, "", tok)
-    sub(/".*$/, "", tok)
+    sub(/"$/, "", tok)
     return tok
   }
-  function add(list, item,   n, i, have) {
-    if (item == "") return list
-    n = split(list, have, LS)
-    for (i = 1; i <= n; i++) if (have[i] == item) return list
-    return list == "" ? item : list LS item
-  }
   # The manifest directory owning FILE: its nearest ancestor holding a
-  # Cargo.toml, or "" for a crates/ file outside every crate.
+  # Cargo.toml. None is a crates/ file outside every crate, and "" says so.
   function manifest_dir(file,   dir) {
     dir = file
     while (sub(/\/[^\/]*$/, "", dir)) {
@@ -150,162 +100,52 @@ rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SOURCES="$sources" awk '
     }
     return ""
   }
-  # The manifest directories of the crates FILE is compiled into.
-  function owners(file,   dir, n, i, via, out, more, m, j, got) {
-    if (file in owner) return owner[file]
-    dir = manifest_dir(file)
-    if (dir != "") return owner[file] = dir
-    owner[file] = ""
-    out = ""
-    n = split(includers[file], via, LS)
-    for (i = 1; i <= n; i++) {
-      m = split(owners(via[i]), got, LS)
-      for (j = 1; j <= m; j++) out = add(out, got[j])
+  function scan(file, text,   dir, rest, lit, chain, owner) {
+    dir = file
+    sub(/\/[^\/]*$/, "", dir)
+    rest = text
+    while (match(rest, /include_(str|bytes)![ \t\n]*\([ \t\n]*"[^"]*"/)) {
+      emit("include", resolve(dir, unquote(substr(rest, RSTART, RLENGTH))))
+      rest = substr(rest, RSTART + RLENGTH)
     }
-    return owner[file] = out
-  }
-  function row(kind, path, dir) {
-    if (path != "") printf "%s\t%s\t%s\n", kind, path, crate[dir]
-  }
-  # One env!("CARGO_MANIFEST_DIR") of the crate at DIR: BEFORE is the text up
-  # to it and AFTER the text past it. Prints what it reads under THE RULE.
-  function chain(before, after, dir,   joined, wrapped, path, lit) {
-    joined = ""
-    wrapped = 0
-    if (sub(/concat![ \t\n]*\([ \t\n]*$/, "", before)) {
-      while (match(after, /^[ \t\n]*,[ \t\n]*"[^"]*"/)) {
-        joined = joined unquote(substr(after, RSTART, RLENGTH))
-        after = substr(after, RLENGTH + 1)
-      }
-      # A trailing comma, then the parenthesis that closes the concat!.
-      if (!match(after, /^[ \t\n]*,?[ \t\n]*\)/)) return unfollowed(dir, joined)
-      after = substr(after, RLENGTH + 1)
-      if (before !~ /(Path::new|PathBuf::from)[ \t\n]*\([ \t\n]*$/) {
-        row("manifest", resolve(dir, joined), dir)
-        return
-      }
-    }
-    if (sub(/(Path::new|PathBuf::from)[ \t\n]*\([ \t\n]*$/, "", before)) wrapped = 1
-    if (!wrapped || !match(after, /^[ \t\n]*\)/)) return unfollowed(dir, joined)
-    after = substr(after, RLENGTH + 1)
-    while (match(after, /^[ \t\n]*\.[ \t\n]*join[ \t\n]*\([ \t\n]*"[^"]*"[ \t\n]*\)/)) {
-      lit = substr(after, RSTART, RLENGTH)
-      sub(/[ \t\n]*\)$/, "", lit)
-      joined = joined "/" unquote(lit)
-      after = substr(after, RLENGTH + 1)
-    }
-    while (match(after, /^[ \t\n]*(\.[ \t\n]*(canonicalize|unwrap)[ \t\n]*\([ \t\n]*\)|\.[ \t\n]*expect[ \t\n]*\([ \t\n]*"[^"]*"[ \t\n]*\))/)) {
-      after = substr(after, RLENGTH + 1)
-    }
-    # Handed whole to a call as one argument, or not placed.
-    if (before !~ /[(,][ \t\n]*&?[ \t\n]*$/ || after !~ /^[ \t\n]*[),]/) return unfollowed(dir, joined)
-    row("manifest", resolve(dir, joined), dir)
-  }
-  function unfollowed(dir, joined) {
-    row("manifest", resolve(dir, joined), dir)
-    row("manifest", ".", dir)
-  }
-  # The span of the body opening at the `{` at position AT of TEXT: its
-  # length through the brace that closes it, or 0 when none does.
-  function body_length(text, at,   depth, i, c) {
-    depth = 0
-    for (i = at; i <= length(text); i++) {
-      c = substr(text, i, 1)
-      if (c == "{") depth++
-      else if (c == "}" && --depth == 0) return i - at + 1
-    }
-    return 0
-  }
-  BEGIN {
-    LS = "\034"
-    ENV = "env![ \t\n]*\\([ \t\n]*\"CARGO_MANIFEST_DIR\"[ \t\n]*\\)"
-    n = split(ENVIRON["RUST_READS_MANIFESTS"], found, "\n")
-    for (i = 1; i <= n; i++) {
-      if (found[i] == "") continue
-      dir = found[i]
-      sub(/\/?Cargo\.toml$/, "", dir)
-      crate[dir] = package_name(found[i])
-    }
-    n = split(ENVIRON["RUST_READS_SOURCES"], found, "\n")
-    for (i = 1; i <= n; i++) {
-      if (found[i] == "") continue
-      file[++files] = found[i]
-      source[found[i]] = text[found[i]] = slurp(found[i])
-    }
-    # Which file reaches which through a path attribute.
-    for (f = 1; f <= files; f++) {
-      rest = text[file[f]]
-      while (match(rest, /#\[path[ \t]*=[ \t]*"[^"]*"[ \t]*\]/)) {
-        target = resolve(dirname(file[f]), unquote(substr(rest, RSTART, RLENGTH)))
-        if (target != "") includers[target] = add(includers[target], file[f])
-        rest = substr(rest, RSTART + RLENGTH)
-      }
-    }
-    # The helpers: a function whose return type names Path and whose body
-    # holds env!("CARGO_MANIFEST_DIR"). Its body is blanked, and its name is
-    # a call every crate the file belongs to may make.
-    for (f = 1; f <= files; f++) {
-      rest = text[file[f]]
-      kept = ""
-      while (match(rest, /fn[ \t\n]+[A-Za-z_][A-Za-z0-9_]*/)) {
-        name = substr(rest, RSTART, RLENGTH)
-        sub(/^fn[ \t\n]+/, "", name)
-        kept = kept substr(rest, 1, RSTART + RLENGTH - 1)
-        rest = substr(rest, RSTART + RLENGTH)
-        if (!match(rest, /[{;]/)) break
-        length_ = substr(rest, RSTART, 1) == "{" ? body_length(rest, RSTART) : 0
-        if (length_ == 0 || substr(rest, 1, RSTART - 1) !~ /->[^{]*Path/ ||
-          substr(rest, RSTART, length_) !~ ENV) continue
-        n = split(owners(file[f]), dirs, LS)
-        for (d = 1; d <= n; d++) helpers[dirs[d]] = add(helpers[dirs[d]], name)
-        kept = kept substr(rest, 1, RSTART) "}"
-        rest = substr(rest, RSTART + length_)
-      }
-      text[file[f]] = kept rest
-    }
-    for (f = 1; f <= files; f++) {
-      n = split(owners(file[f]), dirs, LS)
-      for (d = 1; d <= n; d++) {
-        dir = dirs[d]
-        rest = source[file[f]]
-        while (match(rest, /include_(str|bytes)![ \t\n]*\([ \t\n]*"[^"]*"/)) {
-          row("include", resolve(dirname(file[f]), unquote(substr(rest, RSTART, RLENGTH))), dir)
-          rest = substr(rest, RSTART + RLENGTH)
+    owner = manifest_dir(file)
+    if (owner == "") return
+    rest = text
+    while (match(rest, /env![ \t\n]*\([ \t\n]*"CARGO_MANIFEST_DIR"[ \t\n]*\)/)) {
+      rest = substr(rest, RSTART + RLENGTH)
+      # The closing parentheses of the Path::new or PathBuf::from around it.
+      if (match(rest, /^[ \t\n]*\)+/)) rest = substr(rest, RLENGTH + 1)
+      chain = ""
+      while (1) {
+        if (match(rest, /^[ \t\n]*\.join[ \t\n]*\([ \t\n]*"[^"]*"[ \t\n]*\)/)) {
+          lit = substr(rest, RSTART, RLENGTH)
+          sub(/[ \t\n]*\)$/, "", lit)
+          chain = chain "/" unquote(lit)
+        } else if (match(rest, /^[ \t\n]*,[ \t\n]*"[^"]*"/)) {
+          chain = chain unquote(substr(rest, RSTART, RLENGTH))
+        } else {
+          break
         }
-        calls = helpers[dir]
-        gsub(LS, "|", calls)
-        pattern = ENV "|[^A-Za-z0-9_]current_dir[ \t\n]*\\([ \t\n]*\\)" \
-          (calls == "" ? "" : "|[^A-Za-z0-9_.](" calls ")[ \t\n]*\\(")
-        rest = "\n" text[file[f]]
-        while (match(rest, pattern)) {
-          before = substr(rest, 1, RSTART - 1)
-          token = substr(rest, RSTART, RLENGTH)
-          rest = substr(rest, RSTART + RLENGTH)
-          if (token ~ /^env!/) {
-            chain(before, rest, dir)
-          } else if (token ~ /current_dir/ || (before token) !~ /fn[ \t\n]+[A-Za-z_][A-Za-z0-9_]*[ \t\n]*\($/) {
-            row("manifest", ".", dir)
-          }
-        }
+        rest = substr(rest, RLENGTH + 1)
       }
-    }
-    for (dir in crate) {
-      row("build", "crates", dir)
-      m = split("Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml .cargo clippy.toml .clippy.toml rustfmt.toml .rustfmt.toml", names, " ")
-      for (i = 1; i <= m; i++) row("build", names[i], dir)
+      emit("manifest", resolve(owner, chain))
+      # An argument the chain could not read may lead anywhere from there.
+      if (match(rest, /^[ \t\n]*(\.join[ \t\n]*\(|,)/)) emit("manifest", ".")
     }
   }
-') || status=$?
-# 3 is a refusal the awk pass printed itself; any other failure is the tree's.
-case $status in
-  0) ;;
-  3) exit 2 ;;
-  *) echo 'rust-reads: unreadable=crates' >&2; exit 2 ;;
-esac
-# Every crate placed prints build rows, so a run with none placed no crate.
-case "$rows" in
-  build$'\t'* | *$'\n'build$'\t'*) ;;
-  *) echo 'rust-reads: unreadable=crates' >&2; exit 2 ;;
-esac
+  FNR == 1 {
+    if (NR > 1) scan(prev, text)
+    prev = FILENAME
+    text = $0
+    next
+  }
+  { text = text "\n" $0 }
+  END { if (NR > 0) scan(prev, text) }
+' {} +); then
+  echo 'rust-reads: unreadable=crates' >&2
+  exit 2
+fi
 
-printf '%s\n' "$rows" | LC_ALL=C sort -u
+build=$(printf 'build\t%s\n' crates Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml .cargo \
+  clippy.toml .clippy.toml rustfmt.toml .rustfmt.toml)
+printf '%s\n%s\n' "$build" "$rows" | grep . | LC_ALL=C sort -u

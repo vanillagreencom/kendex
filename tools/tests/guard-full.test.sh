@@ -659,21 +659,8 @@ NPM_CALL_LOG="$TMP/npm-calls"
 mkdir -p "$R/ui"
 printf '[workspace]\n' >"$R/Cargo.toml"
 printf '{}\n' >"$R/ui/package.json"
-# Three crates in the shapes this repository's own take: kendex-core and
-# kendex-cli read the checkout whole through a root helper, the `.` row that
-# may read anything, and kendex-app reads one ui/ file.
-for c in core cli app; do
-  mkdir -p "$R/crates/$c/src"
-  printf '[package]\nname = "kendex-%s"\n\n[lints]\nworkspace = true\n' "$c" >"$R/crates/$c/Cargo.toml"
-done
-for c in core cli; do
-  printf '%s\n' 'fn root() -> PathBuf { Path::new(env!("CARGO_MANIFEST_DIR")).join("../..") }' \
-    'fn catalog() { open(&root()); }' >"$R/crates/$c/src/lib.rs"
-done
-printf '%s\n' 'const B: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ui/src/bindings.ts");' \
-  >"$R/crates/app/src/lib.rs"
-git -C "$R" add Cargo.toml ui/package.json crates
-git -C "$R" commit -q -m "chore: a workspace, three crates and a ui package"
+git -C "$R" add Cargo.toml ui/package.json
+git -C "$R" commit -q -m "chore: a workspace and a ui package"
 lanes_head="$(git -C "$R" rev-parse HEAD)"
 git -C "$R" update-ref refs/remotes/origin/main HEAD
 # The lanes one guard run reached, in a fixed order.
@@ -689,11 +676,6 @@ lanes_ran() {
       test) grep -qFx "test --workspace --quiet" "$CARGO_CALL_LOG" ;;
       ui) [ -s "$NPM_CALL_LOG" ] ;;
     esac && seen="$seen $lane"
-    # The test lane over the crates a selection names, as test:CRATE,...
-    if [ "$lane" = test ] && crates=$(sed -n 's/^test \(\(-p [^ ]* \)*\)--quiet$/\1/p' "$CARGO_CALL_LOG" |
-      grep . | sed 's/-p //g; s/ $//; s/ /,/g'); then
-      seen="$seen test:$crates"
-    fi
   done
   printf '%s' "${seen# }"
 }
@@ -727,22 +709,18 @@ CODE="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh crates/cor
 # A skill and a tool, the diff no build input and no ui/ path is in.
 SKILL_TOOL="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh tools/demo-tool.sh"
 ALL="suites parse lint apple windows test ui"
-# Under a class, the workspace test run names the crates it selects.
-EVERY_CRATE="test:kendex-app,kendex-cli,kendex-core"
-ROOT_READERS="test:kendex-cli,kendex-core"
 # class|docs verdict|changed paths|the lanes that run
 LANE_ROWS=(
   "||$CODE|$ALL"
-  "standard|false|$CODE ui/app.ts|suites parse lint apple windows $EVERY_CRATE ui"
-  "standard|false|$CODE|suites parse lint apple windows $EVERY_CRATE"
-  "standard|false|$SKILL_TOOL|suites parse $ROOT_READERS"
-  "standard|false|$SKILL_TOOL ui/src/bindings.ts|suites parse $EVERY_CRATE ui"
-  "standard|true|docs/guide.md|parse $ROOT_READERS"
+  "standard|false|$CODE ui/app.ts|$ALL"
+  "standard|false|$CODE|suites parse lint apple windows test"
+  "standard|false|$SKILL_TOOL|suites parse test"
+  "standard|true|docs/guide.md|parse test"
   "render|false|$CODE|"
   "trivial|true|$CODE|"
-  "micro|false|$CODE|suites parse lint apple windows $EVERY_CRATE"
-  "small|false|$CODE ui/app.ts|suites parse lint apple windows $EVERY_CRATE ui"
-  "micro|false|docs/guide.md|parse $ROOT_READERS"
+  "micro|false|$CODE|suites parse lint apple windows test"
+  "small|false|$CODE ui/app.ts|$ALL"
+  "micro|false|docs/guide.md|parse test"
 )
 lane_guard
 for row in "${LANE_ROWS[@]}"; do
@@ -791,13 +769,6 @@ run_lanes standard false $SKILL_TOOL
 [ "$(lanes_ran)" = "suites parse lint test ui" ] \
   && ok "control: with standard read as every lane the skill-and-tool row runs every lane" \
   || bad "control: with standard read as every lane the skill-and-tool row runs every lane" "rc=$RC got=$(lanes_ran)"
-# A guard that tests the workspace whatever the selection runs kendex-app on
-# the row that reaches no file it reads.
-lane_guard 's/^  if \[ "\$lanes" != all \]; then$/  if false; then/'
-run_lanes standard false $SKILL_TOOL
-[ "$(lanes_ran)" = "suites parse test" ] \
-  && ok "control: with the crate selection unread the skill-and-tool row tests the workspace" \
-  || bad "control: with the crate selection unread the skill-and-tool row tests the workspace" "rc=$RC got=$(lanes_ran)"
 # A suite a lane runs inherits none of the selection: the outer run's class
 # would otherwise choose the lanes of every guard that suite starts, the way
 # this file's own rows ran under a prose-only micro selection. The touched
@@ -827,25 +798,24 @@ inherited_row
 [[ "$OUT" == *"inner=micro:false:$PATHS_FILE"* ]] \
   && ok "control: with the selection left exported the suite inherits it" \
   || bad "control: with the selection left exported the suite inherits it" "rc=$RC out=$OUT"
-# The Linux cargo lane selected with no crate named is ci-job-set broken:
-# refused before any test runs. The stub writes each row to the output and
-# to stderr, as the real one does, and the real one always names a crate.
+# The lanes come from ci-job-set's output file alone, never its stderr. The
+# stub selects no lane in the file and the lint lane on stderr.
 cp "$LANE_TOOLS/ci-job-set" "$TMP/ci-job-set.real"
 printf '%s\n' '#!/usr/bin/env bash' \
-  'rows="shell_shards=false macos_legs=false ui=false bot_instructions=false cargo_linux=true' \
-  '  cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false linux_crates= macos_crates="' \
-  'printf "%s\n" $rows >>"$GITHUB_OUTPUT"; printf "%s\n" $rows >&2' >"$LANE_TOOLS/ci-job-set"
+  'rows="shell_shards=false macos_legs=false ui=false bot_instructions=false cargo_linux=false' \
+  '  cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false"' \
+  'printf "%s\n" $rows >>"$GITHUB_OUTPUT"; printf "%s\n" $rows cargo_lint=true >&2' >"$LANE_TOOLS/ci-job-set"
 chmod +x "$LANE_TOOLS/ci-job-set"
 lane_guard
 run_lanes micro false docs/guide.md
-[ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: lane-crates=linux_crates"* ]] && ! grep -q '^test' "$CARGO_CALL_LOG" \
-  && ok "a Linux cargo lane selected with no crate named is refused before any test runs" \
-  || bad "a Linux cargo lane selected with no crate named is refused before any test runs" "rc=$RC out=$OUT calls=$(cat "$CARGO_CALL_LOG")"
-lane_guard '/refuse lane-crates linux_crates$/d'
+[ "$RC" -eq 0 ] && [ "$(lanes_ran)" = "" ] \
+  && ok "the lanes are read from the output file alone" \
+  || bad "the lanes are read from the output file alone" "rc=$RC got=$(lanes_ran) out=$OUT"
+lane_guard 's/lanes="\$selected"/lanes="$selection"/'
 run_lanes micro false docs/guide.md
-grep -q '^test' "$CARGO_CALL_LOG" \
-  && ok "control: with the refusal removed the empty selection runs a test" \
-  || bad "control: with the refusal removed the empty selection runs a test" "rc=$RC out=$OUT"
+[ "$(lanes_ran)" = "lint" ] \
+  && ok "control: with the lanes read from both streams stderr selects the lint lane" \
+  || bad "control: with the lanes read from both streams stderr selects the lint lane" "rc=$RC got=$(lanes_ran)"
 cp "$TMP/ci-job-set.real" "$LANE_TOOLS/ci-job-set"
 lane_guard 's/lane_on cargo_linux; then/lane_on cargo_linx; then/'
 run_lanes micro false $CODE
