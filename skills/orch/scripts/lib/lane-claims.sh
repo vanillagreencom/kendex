@@ -30,10 +30,10 @@
 #
 # A reservation is the same record under `.reserve`, with the launcher's pid as
 # its server and `-` as its pane: the place in the count a judged launch holds
-# from its count until its claim or record stands, live while that launcher
-# runs. Its config dir is empty for a launch naming no lane. Only the fleet
-# form of lane_claims_read carries reservations; the lane pickers and the
-# context report read claims alone.
+# from its count until its claim or record stands, or the item ends, live while
+# that launcher runs. Its config dir is empty for a launch naming no lane. Only
+# the count form of lane_claims_read carries reservations; every other reader
+# reads claims alone.
 set -euo pipefail
 
 # Callers preserve positional values for this diagnostic catalog.
@@ -79,14 +79,15 @@ lane_claims_canon() {
 }
 
 # Prune dead claims, print the live ones as `<config dir>\t<window>\t<server
-# pid>\t<pane id>` lines, with `\t<fleet>` after them and the live
-# reservations among them where $2 is `fleet`.
+# pid>\t<pane id>` lines. Where $2 is `count`, the form open-terminal's caps
+# count, each line ends in `\t<fleet>` and the live reservations are among
+# them.
 # The four-field form is the default because lane-context appends its own
 # fifth field. $1: claims directory. Exits 2 when the store cannot be read at
 # all: a caller deciding where to launch must fail closed on that, and only
 # the caller knows whether it is deciding or reporting.
 lane_claims_read() {
-  local dir="$1" with_fleet="${2:-}" live this_server f server pane cfg window fleet rc=0
+  local dir="$1" mode="${2:-}" live this_server f server pane cfg window fleet rc=0
   local rechecked=0 recheck_ok=1 live_now fresh line rest files
   # Absent is genuinely empty; anything else that is not a directory is a
   # misconfiguration, and an unreadable store is not an empty one. Reporting
@@ -107,7 +108,7 @@ lane_claims_read() {
   this_server="${live%%$'\n'*}"
   this_server="${this_server%% *}"
   files=("$dir"/*.claim)
-  [[ "$with_fleet" != fleet ]] || files+=("$dir"/*.reserve)
+  [[ "$mode" != count ]] || files+=("$dir"/*.reserve)
   for f in "${files[@]}"; do
     [[ -f "$f" ]] || continue
     # Cleared every iteration: a failed read must never leave the previous
@@ -138,7 +139,10 @@ lane_claims_read() {
       continue
     fi
     live_now=0
-    if grep -qxF -- "$server $pane" <<<"$live"; then
+    if [[ "$f" == *.reserve ]]; then
+      # A reservation is live while the launcher that wrote it runs.
+      ! kill -0 "$server" 2>/dev/null || live_now=1
+    elif grep -qxF -- "$server $pane" <<<"$live"; then
       live_now=1
     elif [[ "$server" == "$this_server" ]]; then
       # The pane list predates this record: another launcher can create its
@@ -163,8 +167,7 @@ lane_claims_read() {
         live_now=1
       fi
     elif kill -0 "$server" 2>/dev/null; then
-      # A server this process cannot enumerate, or a reservation's launcher,
-      # still running.
+      # A server this process cannot enumerate, still running.
       live_now=1
     fi
     if [[ "$live_now" -eq 0 ]]; then
@@ -174,7 +177,7 @@ lane_claims_read() {
     # Canonical on the way out, whatever spelling the record carries: the
     # count compares strings, and a hand-written or older record must still
     # land on the account discovery reports.
-    if [[ "$with_fleet" == fleet ]]; then
+    if [[ "$mode" == count ]]; then
       printf '%s\t%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane" "$fleet"
     else
       printf '%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane"

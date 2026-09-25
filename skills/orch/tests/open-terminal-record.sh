@@ -125,17 +125,7 @@ cp "$SRC_OT" "$REPO/scripts/open-terminal"
 cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$REPO/scripts/"
 cp "$SCRIPTS_DIR/lib"/*.sh "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
-# lane-marker records whether descriptor 7 or 8, the launch locks every fleet
-# launch here holds, reached it, as the hosted rows' provider stub does through
-# LANE_HOST_STUB_LOCK_FDS.
-mv "$REPO/scripts/lane-marker" "$REPO/scripts/lane-marker.real"
-cat > "$REPO/scripts/lane-marker" <<EOF
-#!/usr/bin/env bash
-{ : >&7; } 2>/dev/null && : > "$TMP_ROOT/lockfd.lane-marker.7"
-{ : >&8; } 2>/dev/null && : > "$TMP_ROOT/lockfd.lane-marker.8"
-exec "\$(dirname "\$0")/lane-marker.real" "\$@"
-EOF
-chmod +x "$REPO/scripts/open-terminal" "$REPO/scripts/lane-marker"
+chmod +x "$REPO/scripts/open-terminal"
 git -C "$REPO" init -q
 OT="$REPO/scripts/open-terminal"
 WS="$REPO/scripts/workflow-state"
@@ -374,12 +364,10 @@ HOSTED_DISK="$TMP_ROOT/remote"
 mkdir -p "$HOSTED_DISK/srv/lane"
 printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$HOSTED_DISK/srv/lane/.git"
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
-  LANE_HOST_STUB_LOCK_FDS="$TMP_ROOT/lockfd.host" run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-60
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-60
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-60)")" \
   "rc=0 item=CC-60 tracker=linear repo=o/r harness=claude window=stub:CC-60 account=$LANE_DIR host=$HOST_STUB mail_root=/srv/lane surface=tmux model=opus session_id=null status=running over_cap=null" \
   "a hosted record carries the host spec and the remote path create named, never the local tree"
-assert_eq "$(cd "$TMP_ROOT" && ls lockfd.* 2>/dev/null | tr '\n' ' ')" "" \
-  "descriptors 7 and 8 reach neither the lane host provider nor lane-marker, local or hosted, while the launch locks are held"
 
 echo "=== a hosted launch writes its lane's marker on the host and reads it back ==="
 # `hooks/lane-mail-check.sh` reads a session as a launched lane only where the

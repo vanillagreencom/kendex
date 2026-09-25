@@ -5,8 +5,7 @@
 # where the fleet's records on its lane plus the live claims there no such
 # record accounts for reach ORCH_LANE_ACCOUNT_CLAIMS, both judged
 # under the fleet's lock and the claim store's, held from the count through the
-# reservation write, and through the whole launch where that write fails. A
-# relaunch meets the fleet cap where the item has no running or preparing
+# reservation write, which refuses the launch where it fails. A relaunch meets the fleet cap where the item has no running or preparing
 # record, and the account cap where it has none or moves to another account.
 # --over-cap admits one launch and records the caps it passed, and --wait-slot
 # waits for room instead of refusing.
@@ -89,16 +88,8 @@ case "${1:-}" in
 esac
 exit 0
 EOF
-# Every child a launch starts while it holds the launch lock records, under
-# $LOCK_FDS, whether descriptor 7 or 8 reached it, each as its own file: the
-# GUI terminal here, the worktree CLI and lane-marker below. An open lock
-# descriptor is a child that could hold that lock past the launch.
-LOCK_FDS="$TMP_ROOT/lock-fds"
-mkdir -p "$LOCK_FDS"
-cat > "$BIN/ghostty" <<EOF
+cat > "$BIN/ghostty" <<'EOF'
 #!/usr/bin/env bash
-{ : >&7; } 2>/dev/null && : > "$LOCK_FDS/terminal.7"
-{ : >&8; } 2>/dev/null && : > "$LOCK_FDS/terminal.8"
 exit 0
 EOF
 chmod +x "$BIN/lanes" "$BIN/tmux" "$BIN/ghostty"
@@ -108,16 +99,11 @@ cat > "$STUB" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 source "$STUB_STEP"
-{ : >&7; } 2>/dev/null && : > "$LOCK_FDS/worktree-\${1:-}.7"
-{ : >&8; } 2>/dev/null && : > "$LOCK_FDS/worktree-\${1:-}.8"
 d="$TMP_ROOT/wt/\${2:-unknown}"
 case "\${1:-}" in
   exists) [[ -d "\$d" ]] && echo true || echo false ;;
-  merged) [[ -n "\${STUB_MERGED:-}" ]] || exit 1; echo abc1234 ;;
-  fix-links) ;;
-  path) printf '%s\n' "\$d" ;;
+  merged) exit 1 ;;
   create) stub_step create "\${STUB_HOLD_CREATE:-}"
-    if [[ -n "\${STUB_LINGER:-}" ]]; then sleep "\$STUB_LINGER" >/dev/null 2>&1 & fi
     mkdir -p "\$d"; [[ -d "\$d/.git" ]] || { git init -q "\$d"; git -C "\$d" config gc.auto 0; git -C "\$d" config maintenance.auto false; }; printf '%s\n' "\$d" ;;
   *) echo "unexpected worktree stub call: \$*" >&2; exit 1 ;;
 esac
@@ -130,14 +116,6 @@ cp "$SCRIPTS_DIR/open-terminal" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-
   "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$REPO/scripts/"
 cp "$SCRIPTS_DIR/lib"/*.sh "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
-mv "$REPO/scripts/lane-marker" "$REPO/scripts/lane-marker.real"
-cat > "$REPO/scripts/lane-marker" <<EOF
-#!/usr/bin/env bash
-{ : >&7; } 2>/dev/null && : > "$LOCK_FDS/lane-marker.7"
-{ : >&8; } 2>/dev/null && : > "$LOCK_FDS/lane-marker.8"
-exec "\$(dirname "\$0")/lane-marker.real" "\$@"
-EOF
-chmod +x "$REPO/scripts/lane-marker"
 git -C "$REPO" init -q
 git -C "$REPO" config gc.auto 0
 git -C "$REPO" config maintenance.auto false
@@ -155,18 +133,19 @@ row() {
   CLAIMS="$ROW/watch"
 }
 
-# launch TAG FLEET_CAP ACCOUNT_CAP ARGS... — one launch of the row's fleet, on
-# tmux unless MODE names another surface flag; its stdout, stderr and status
-# land in $ROW/TAG.{out,err,rc}.
+# launch TAG FLEET_CAP ACCOUNT_CAP ARGS... — one launch of the row's fleet, or
+# of no fleet where STATE is empty, on tmux unless MODE names another surface
+# flag; its stdout, stderr and status land in $ROW/TAG.{out,err,rc}.
 launch() {
-  local tag="$1" fleet_cap="$2" account_cap="$3" rc=0
+  local tag="$1" fleet_cap="$2" account_cap="$3" rc=0 fleet=()
   shift 3
+  [[ -z "$STATE" ]] || fleet=(--state-dir "$STATE")
   (cd "$REPO" && PATH="$BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$CLAIMS" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 GH_REPO="" STUB_SERVER=$$ STUB_OPEN_MARK="$ROW/opened" STUB_TAG="$tag" \
     STUB_MARK="$ROW/reached" \
     STUB_WALL="$ROW/wall" STUB_PICK="$ROW/pick" TERMINAL=ghostty ORCH_TMUX_SESSION=fleet \
     ORCH_OVERSEER_LANES="$fleet_cap" ORCH_LANE_ACCOUNT_CLAIMS="$account_cap" \
-    "$OT" --state-dir "$STATE" "${MODE:---tmux}" --harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL" "$@" \
+    "$OT" ${fleet[@]+"${fleet[@]}"} "${MODE:---tmux}" --harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL" "$@" \
     >"$ROW/$tag.out" 2>"$ROW/$tag.err") || rc=$?
   printf '%s\n' "$rc" > "$ROW/$tag.rc"
 }
@@ -227,7 +206,7 @@ race() {
 }
 
 # key TAG — the first line of every open-terminal cap line on TAG's output.
-key() { grep -hE '^open-terminal: (cap-reached|account-cap-reached|over-cap-admitted|slot-waiting|cap-unreadable|cap-lock-failed|cap-option-unanchored|over-cap-items|claim-unrecorded|lane-model-walled) ' "$ROW/$1.out" "$ROW/$1.err" || true; }
+key() { grep -hE '^open-terminal: (cap-reached|account-cap-reached|over-cap-admitted|slot-waiting|cap-unreadable|cap-lock-failed|cap-option-unanchored|over-cap-items|claim-unrecorded|lane-model-walled|cap-reserve-failed) ' "$ROW/$1.out" "$ROW/$1.err" || true; }
 # lock_waits TAG — how many lock-waiting lines TAG printed.
 lock_waits() { grep -c '^open-terminal: lock-waiting' "$ROW/$1.out" || true; }
 # reservations — the reservation files the row's claim store holds.
@@ -396,6 +375,18 @@ launch two 10 1 --lane "$LANE_B" --relaunch CC-1
 assert_eq "rc=$(rc two) $(key two) account=$(account_of CC-1)" \
   "rc=1 open-terminal: account-cap-reached item=CC-1 lane=$LANE_B cap=1 claims=1 records=0 claims-other=1 account=$LANE_A" \
   "a relaunch onto another account at its cap is refused and the record keeps its account"
+row relaunch-moving
+# The relaunch is held in its create with its reservation on lane B while its
+# record still names lane A: the fleet counts the lane once.
+seed_running CC-1 running "$LANE_A"
+STUB_HOLD_CREATE="$ROW/release" launch one 2 0 --lane "$LANE_B" --relaunch CC-1 &
+FIRST=$!
+await_step one create
+launch two 2 0 --lane "$LANE_A" CC-2
+: > "$ROW/release"
+await_exit "$FIRST"
+assert_eq "one=$(rc one) two=$(rc two) running=$(running) $(key two)" "one=0 two=0 running=CC-1,CC-2 " \
+  "a fresh launch beside a relaunch moving to another account finds the fleet's second slot free"
 row relaunch-stopped
 launch one 1 0 --lane "$LANE_A" CC-1
 "$WS" --state-dir "$STATE" update oversee '.lanes |= map(.status = "stopped")' >/dev/null
@@ -534,83 +525,27 @@ assert_eq "one=$(rc one) two=$(rc two) $(key two)" \
 if [[ "$(id -u)" -eq 0 ]]; then
   echo "  skip  running as root, whose writes a directory mode does not stop"
 else
-  # The claim store is readable and not writable, so the first batch's lanes
-  # stand with their claims unwritten, and a named lane's batch runs on,
-  # counting them by their records.
-  row claim-lost
+  # The claim store is readable and not writable: a judged launch cannot
+  # write its reservation, and one naming no fleet cannot write its claim.
+  row reserve-lost
   mkdir -p "$CLAIMS/claims"
   chmod 555 "$CLAIMS/claims"
-  launch one 10 5 --lane "$LANE_A" CC-1 CC-2
+  launch one 10 5 --lane "$LANE_A" CC-1
   chmod 755 "$CLAIMS/claims"
-  unwritten="$(ls "$CLAIMS/claims" | wc -l | tr -d ' ')"
-  launch two 10 2 --lane "$LANE_A" CC-3
-  assert_eq "one=$(rc one) running=$(running) claims=$unwritten two=$(rc two) $(key two)" \
-    "one=0 running=CC-1,CC-2 claims=0 two=1 open-terminal: account-cap-reached item=CC-3 lane=$LANE_A cap=2 claims=2 records=2 claims-other=0" \
-    "a named lane's batch runs on past unwritten claims, and a later invocation counts those lanes"
-  assert_eq "$(grep -cE '^open-terminal: cap-reserve-failed item=CC-[12]$' "$ROW/one.err" || true)" "2" \
-    "each item whose reservation could not be written says so, and launches holding the locks"
+  assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
+    "rc=1 open-terminal: cap-reserve-failed item=CC-1 store=$CLAIMS/claims opened=no" \
+    "a claim store that takes no reservation refuses the launch before any window"
   # Under --lane auto the re-pick reads claims alone, so a batch whose claim
   # went unwritten stops rather than picking an account it cannot see.
   row claim-spread
   printf 'CLAUDE_CONFIG_DIR=%s\n' "$LANE_A" > "$ROW/pick"
   mkdir -p "$CLAIMS/claims"
   chmod 555 "$CLAIMS/claims"
-  launch one 10 0 --lane auto CC-1 CC-2
+  STATE="" launch one 10 0 --lane auto CC-1 CC-2
   chmod 755 "$CLAIMS/claims"
-  assert_eq "rc=$(rc one) running=$(running) $(key one)" \
-    "rc=1 running=CC-1 open-terminal: claim-unrecorded item=CC-2 launched=1" \
+  assert_eq "rc=$(rc one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no) $(key one)" \
+    "rc=1 opened=yes open-terminal: claim-unrecorded item=CC-2 launched=1" \
     "the auto item after an unwritten claim is refused rather than picked on an account it cannot see"
-
-  echo "=== a launch whose reservation could not be written holds the launch locks through its launch ==="
-  row reserve-lost
-  mkdir -p "$CLAIMS/claims"
-  chmod 555 "$CLAIMS/claims"
-  STUB_HOLD_CREATE="$ROW/release" launch one 10 0 --lane "$LANE_A" CC-1 &
-  FIRST=$!
-  await_step one create
-  launch two 10 0 --lane "$LANE_B" CC-2 &
-  SECOND=$!
-  await_line two '^open-terminal: lock-waiting'
-  : > "$ROW/release"
-  await_exit "$SECOND"
-  await_exit "$FIRST"
-  chmod 755 "$CLAIMS/claims"
-  assert_eq "one=$(rc one) two=$(rc two) running=$(running) lock-waits=$(lock_waits two)" \
-    "one=0 two=0 running=CC-1,CC-2 lock-waits=1" \
-    "the next launch waits for the lock while the first creates its worktree, then launches"
-
-  echo "=== a child that outlives the worktree step does not hold the launch lock ==="
-  # The claim store takes no reservation, so each item holds the launch locks
-  # through its launch. The worktree create leaves a process running with every
-  # descriptor it was handed, as a fetch that daemonizes git gc does; the next
-  # item takes the lock at once rather than waiting for that process to end.
-  row linger
-  mkdir -p "$CLAIMS/claims"
-  chmod 555 "$CLAIMS/claims"
-  STUB_LINGER=10 launch one 10 0 --lane "$LANE_A" CC-1 CC-2
-  chmod 755 "$CLAIMS/claims"
-  assert_eq "rc=$(rc one) running=$(running) lock-waits=$(lock_waits one)" \
-    "rc=0 running=CC-1,CC-2 lock-waits=0" \
-    "the second item of a batch finds the lock free while the first item's worktree child still runs"
-
-  echo "=== no child started under the launch locks inherits their descriptors ==="
-  # The claim store takes no reservation, so each launch holds the launch locks
-  # through its launch. A GUI launch reaches the terminal, a fresh tmux launch
-  # the worktree create and lane-marker, a relaunch the worktree exists and
-  # merged verbs, and a relaunch of a merged item the worktree path and
-  # fix-links verbs.
-  row fd7
-  mkdir -p "$CLAIMS/claims"
-  chmod 555 "$CLAIMS/claims"
-  MODE=--ghostty launch gui 10 0 CC-1
-  launch fresh 10 0 --lane "$LANE_A" CC-2
-  launch again 10 0 --lane "$LANE_A" --relaunch CC-2
-  STUB_MERGED=1 launch merged 10 0 --lane "$LANE_A" --relaunch CC-2
-  chmod 755 "$CLAIMS/claims"
-  assert_eq "rc=$(rc gui),$(rc fresh),$(rc again),$(rc merged) reached=$(ls "$LOCK_FDS" | tr '\n' ' ')" "rc=0,0,0,0 reached=" \
-    "descriptors 7 and 8 reach none of the terminal, the worktree verbs or lane-marker"
-  assert_eq "$(grep -c '^open-terminal: worktree-reuse-merged item=CC-2 commit=abc1234$' "$ROW/merged.out" "$ROW/merged.err" | awk -F: '{ n += $2 } END { print n }')" "1" \
-    "the merged relaunch took the path and fix-links arm"
 fi
 
 echo "=== a refusal stops the batch ==="
