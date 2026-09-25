@@ -297,5 +297,69 @@ else
   fi
 fi
 
+# A lane its monitor wakes: the stand-in arms the watch the prompt names, waits
+# for the announcement the overseer's directive brings, runs the inbox command
+# under it, which moves the cursor, and answers. STANDIN_ECHO=0 answers without
+# repeating the announcement, as a lane that polled its inbox by itself would.
+# Each run waits out the row's own delay before the directive is sent.
+echo "=== a monitored delivery passes, and one with no announcement fails ==="
+cat >"$ROWS_BIN/claude" <<'STANDIN'
+#!/usr/bin/env bash
+set -u
+for prompt; do :; done
+case "$prompt" in *" watch --item "*) ;; *) exit 0 ;; esac
+watch_cmd=$(sed -n 's/.*on the shell command `\([^`]*\)`.*/\1/p' <<<"$prompt")
+events="$PWD/standin-events"
+bash -c "exec $watch_cmd --interval 1" >"$events" 2>&1 &
+watch=$!
+tries=0
+until grep -q '^lane-mail: mail=' "$events" || [ "$tries" -ge 120 ]; do
+  sleep 1
+  tries=$((tries + 1))
+done
+kill -TERM "$watch"
+wait "$watch"
+announcement=$(sed -n '/^lane-mail: mail=/{p;q;}' "$events")
+read_cmd=$(sed -n '/ inbox --item /{p;q;}' "$events")
+[ -n "$announcement" ] && [ -n "$read_cmd" ] || exit 1
+bash -c "exec $read_cmd" >/dev/null || exit 1
+printf 'SMOKE-MAIL-DELIVERED\n'
+[ "$STANDIN_ECHO" = 0 ] || printf '%s\n' "$announcement"
+STANDIN
+chmod +x "$ROWS_BIN/claude"
+wake_run() { # SMOKE ECHO — sets WAKE_ROW to the claude mail-wake row that run printed
+  rm -rf -- "${TMP:?}/rows-dir"
+  mkdir -p "$TMP/rows-dir"
+  (cd "$ROWS_REPO" && PATH="$ROWS_BIN:$PATH" CLAUDE_CONFIG_DIR="$ROWS_CFG" STANDIN_ECHO="$2" \
+    "$BASH" "$1" --only claude --dir "$TMP/rows-dir" >"$TMP/wake-out" 2>&1) || :
+  WAKE_ROW="$(awk '$1 == "claude" && $2 == "mail-wake" { print; exit }' "$TMP/wake-out")"
+}
+wake_case() { # LABEL SMOKE ECHO RESULT CLAUSE — CLAUSE is the text only that verdict's branch prints
+  wake_run "$2" "$3"
+  if [ "$(awk '{ print $3 }' <<<"$WAKE_ROW")" = "$4" ] && grep -qF -- "$5" <<<"$WAKE_ROW"; then
+    ok "$1"
+  else
+    bad "$1" "want $4 with '$5', got: ${WAKE_ROW:--}"
+  fi
+}
+ANNOUNCED_CLAUSE="'lane-mail: mail=SMOKE-2 new=1'"
+wake_case "a lane its monitor woke, that read the directive and repeated the announcement, passes" \
+  "$SMOKE" 1 pass "delivery=monitor:"
+wake_case "a lane that moved the cursor and answered with no announcement fails on it" \
+  "$SMOKE" 0 fail "$ANNOUNCED_CLAUSE"
+
+# The controls run a copy of the script in the stand-in tree, which reaches
+# lane-mail through its own skills directory, with one guard changed.
+ln -s -- "$REPO/skills" "$STAND/skills"
+STAND_SMOKE="$STAND/tools/harness-smoke"
+cp "$STAND_SMOKE" "$STAND_SMOKE.intact"
+plant "$STAND_SMOKE" 's/^WAKE_ANNOUNCED="lane-mail: mail=\$WAKE_ITEM new=1"$/WAKE_ANNOUNCED="lane-mail: mail=$MAIL_ITEM new=1"/'
+wake_case "control: an announcement guard that misses the real announcement fails the monitored delivery" \
+  "$STAND_SMOKE" 1 fail "'lane-mail: mail=SMOKE-1 new=1'"
+plant "$STAND_SMOKE" '/! grep -qF -- "\$WAKE_ANNOUNCED"/s/^  elif /  elif false \&\& /'
+wake_case "control: with no announcement guard an answer with no announcement passes" \
+  "$STAND_SMOKE" 0 pass "delivery=monitor:"
+cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
+
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
