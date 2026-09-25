@@ -254,8 +254,9 @@ codex_screen() { cp -- "$PANE_FIXTURES/codex-composer-idle.txt" "$SCREEN"; }
 # the shared stub pair (lib/process-table.sh) on LOCAL_PATH answers `ps` with a
 # table holding that one pid under the harness name and `readlink` with the
 # lane's worktree as its directory, so another user's session on this box is
-# never read and the read never races the child's exec. Its state and its exit
-# are read from /proc, so these rows run where proc_table_readable holds.
+# never read and the read never races the child's exec. The tmux stub reads its
+# state from /proc and proc_state_after its exit, so these rows run where
+# proc_table_readable holds.
 LANE_ROOT="$TMP_ROOT/lane-worktree"
 HARNESS_BIN="$TMP_ROOT/harness-bin"
 PROC_BIN="$TMP_ROOT/proc-bin"
@@ -276,12 +277,6 @@ start_local_harness() { # HARNESS
   LANE_PIDS+=" $LANE_PID"
   proc_table_write "$PROC_TABLE" "$LANE_PID 1 $1"
   proc_cwd_write "$PROC_CWD_FILE" "$LANE_PID=$LANE_ROOT_REAL"
-}
-source "$LANE_CLOSE_STATE_LIB"
-lane_alive() { # PID
-  local state
-  state="$(lane_process_state "$1")"
-  if [[ -z "$state" || "$state" == Z ]]; then printf gone; else printf alive; fi
 }
 
 run_close() { # SCRIPT [ARGS...]
@@ -330,7 +325,7 @@ lib_mutant() { # NAME OLD NEW [APPEND]
   dir="$TMP_ROOT/libmut-$name"
   mkdir -p "$dir/skills/orch/scripts/lib" "$dir/skills/linear/scripts"
   cp "$SCRIPTS/lane-close" "$SCRIPTS/workflow-state" "$SCRIPTS/lane-host" "$SCRIPTS/lane-mail" \
-    "$dir/skills/orch/scripts/"
+    "$SCRIPTS/dev-validate-run" "$dir/skills/orch/scripts/"
   cp "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
   python3 - "$SCRIPTS/lib/lane-state.sh" "$dir/skills/orch/scripts/lib/lane-state.sh" "$old" "$new" "${4:-}" <<'MUTPY'
 import pathlib, sys
@@ -346,7 +341,7 @@ pathlib.Path(target).write_text(text)
 MUTPY
   chmod +x "$dir/skills/orch/scripts/lane-close" "$dir/skills/orch/scripts/workflow-state" \
     "$dir/skills/orch/scripts/lane-host" "$dir/skills/orch/scripts/lane-mail" \
-    "$dir/skills/linear/scripts/linear.sh"
+    "$dir/skills/orch/scripts/dev-validate-run" "$dir/skills/linear/scripts/linear.sh"
   printf '%s\n' "$dir/skills/orch/scripts/lane-close"
 }
 
@@ -468,7 +463,7 @@ if proc_table_readable; then
       write_panes python; claude_screen
       start_local_harness "$harness"
       PATH="$reader_path" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$reader_script"
-      assert_eq "rc=$RC lane=$(lane_alive "$LANE_PID") typed=$(typed_count) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+      assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") typed=$(typed_count) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
         'rc=0 lane=gone typed=0 host=0 status=done' "a local $harness lane is stopped by SIGTERM to its own process, its directory read through $reader"
     done
   done
@@ -476,7 +471,7 @@ if proc_table_readable; then
   MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
   start_local_harness claude
   PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
-  assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=claude pane=%7 processes=0$' <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+  assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=claude pane=%7 processes=0$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
     'rc=1 timeout=1 lane=alive status=running' 'control: a stop that looks for another harness name signals nothing and the lane outlives the wait'
   kill -KILL "$LANE_PID" 2>/dev/null || true
 
@@ -486,7 +481,7 @@ if proc_table_readable; then
   MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
   start_local_harness claude
   PATH="$NOPROC_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
-  assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=process-read-failed$' <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID")" \
+  assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=process-read-failed$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID")" \
     'rc=1 failed=1 lane=alive' 'control: an lsof answer the reader cannot parse leaves the harness unread and the close refuses'
   kill -KILL "$LANE_PID" 2>/dev/null || true
 
@@ -496,7 +491,7 @@ if proc_table_readable; then
   start_local_harness claude
   MUTANT="$(lib_mutant reader-missing '' '' 'lane_process_cwd() { return 3; }')"
   PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
-  assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=cwd-reader-missing$' <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+  assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=cwd-reader-missing$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
     'rc=1 failed=1 lane=alive status=running' 'a host with neither /proc nor lsof refuses the local stop as cwd-reader-missing'
   MUTANT="$(lib_mutant reader-missing-cause '    3) LANE_STOP_CAUSE=cwd-reader-missing; return 1 ;;
 ' '' 'lane_process_cwd() { return 3; }')"
@@ -511,7 +506,7 @@ if proc_table_readable; then
   start_local_harness claude
   MUTANT="$(lib_mutant signal-refused '' '' 'kill() { return 1; }')"
   PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
-  assert_eq "rc=$RC failed=$(grep -c "^lane-close: stop-failed item=KEN-1 harness=claude pid=$LANE_PID cause=signal-refused\$" <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+  assert_eq "rc=$RC failed=$(grep -c "^lane-close: stop-failed item=KEN-1 harness=claude pid=$LANE_PID cause=signal-refused\$" <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
     'rc=1 failed=1 lane=alive status=running' 'a local stop refused on one process names that process'
   kill -KILL "$LANE_PID" 2>/dev/null || true
 else
