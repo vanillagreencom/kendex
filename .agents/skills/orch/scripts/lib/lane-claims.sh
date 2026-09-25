@@ -222,7 +222,7 @@ lane_claim_put() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$3" "$4" "$cfg" "$6" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$7" > "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$tmp.$suffix" || { rm -f -- "$tmp"; return 1; }
-  # shellcheck disable=SC2034  # read by open-terminal's cap_reserve
+  # shellcheck disable=SC2034  # read by lib/lane-cap.sh's cap_reserve
   LANE_CLAIM_PATH="$tmp.$suffix"
 }
 
