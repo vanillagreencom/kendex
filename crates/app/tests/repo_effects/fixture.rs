@@ -104,19 +104,29 @@ pub fn fixture() -> Fixture {
     let home = rooted(&tmp);
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
-    let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../skills")
-        .canonicalize()
-        .unwrap();
-    // Each source is a literal join, so tools/rust-reads places every read
-    // of this crate.
-    for (source, skill) in [
-        (shipped.join("commit-guards"), "commit-guards"),
-        (shipped.join("doc-limits"), "doc-limits"),
-        (shipped.join("bot-instructions"), "bot-instructions"),
-    ] {
-        copy_tree(&source, &catalog.join("skills").join(skill));
-    }
+    // Each source is handed straight to the copy, a shape tools/rust-reads
+    // places, so no read of this crate goes unplaced.
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../skills/commit-guards")
+            .canonicalize()
+            .unwrap(),
+        &catalog.join("skills/commit-guards"),
+    );
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../skills/doc-limits")
+            .canonicalize()
+            .unwrap(),
+        &catalog.join("skills/doc-limits"),
+    );
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../skills/bot-instructions")
+            .canonicalize()
+            .unwrap(),
+        &catalog.join("skills/bot-instructions"),
+    );
     fs::create_dir_all(catalog.join("skills/deploy")).unwrap();
     fs::write(
         catalog.join("skills/deploy/SKILL.md"),

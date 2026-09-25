@@ -17,10 +17,9 @@ name: Skill Tests
 # Every other diff, and a `trivial` one changing a path tools/rust-reads
 # names, runs the shell shards and that job, and each other lane and cargo
 # leg as `tools/ci-job-set` selects it; the invariant comment there is the
-# one statement of what each lane runs, a crate's `.` row included.
-# kendex-core and kendex-cli carry a `.` row, reads decided at run time
-# through checkout_root() and helpers like it. The aggregators still report
-# and accept only the skips the selection authorized. The push to main
+# one statement of what each lane runs, a crate's `.` row included. The
+# aggregators still report and accept only the skips the selection
+# authorized. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
 # so it runs only the compile steps: each cargo lane builds its targets with

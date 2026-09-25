@@ -41,16 +41,13 @@ const ICNS_TYPES: [IconType; 10] = [
     IconType::RGB24_32x32,
 ];
 
-fn app_crate() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-}
-
 /// The bundled set, read from the config rather than listed here: an icon
 /// the bundle lists and nobody generated is exactly the gap this closes.
 #[allow(clippy::expect_used)]
 fn configured_icons() -> Vec<String> {
     let config: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(app_crate().join("tauri.conf.json")).expect("tauri.conf.json"),
+        &std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json"))
+            .expect("tauri.conf.json"),
     )
     .expect("tauri.conf.json parses");
     let icons = config["bundle"]["icon"]
@@ -64,17 +61,17 @@ fn configured_icons() -> Vec<String> {
 }
 
 /// The bytes of one bundled icon, found by name in `icons/`, the one
-/// directory the bundle's icons live in. Listing that directory rather than
-/// joining the configured path keeps every read of this crate a path
-/// `tools/rust-reads` can place, which is what lets the app's cargo legs
-/// stand down on a diff outside it.
+/// directory the bundle's icons live in. Listing that directory, its path
+/// handed straight to the call, rather than joining the configured path
+/// keeps every read of this crate a path `tools/rust-reads` can place, which
+/// is what lets the app's cargo legs stand down on a diff outside it.
 #[allow(clippy::expect_used)]
 fn icon_bytes(relative: &str) -> Vec<u8> {
     let name = relative
         .strip_prefix("icons/")
         .unwrap_or_else(|| panic!("tauri.conf.json bundles {relative}, which is not under icons/"));
-    let dir = app_crate().join("icons");
-    let entries = std::fs::read_dir(&dir).expect("icons/ lists");
+    let entries = std::fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("icons"))
+        .expect("icons/ lists");
     for entry in entries {
         let entry = entry.expect("an icons/ entry reads");
         if entry.file_name() == name {

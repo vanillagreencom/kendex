@@ -58,33 +58,29 @@ SHAPES='an include_str! literal resolves against the including file|crates/demo/
 an include_bytes! literal resolves the same way|crates/demo/src/lib.rs|const A: &[u8] = include_bytes!("assets/logo.png");|include:crates/demo/src/assets/logo.png:demo
 a literal on the line after the parenthesis counts|crates/demo/src/lib.rs|const A: &str = include_str!(\n    "../../../docs/split.md"\n);|include:docs/split.md:demo
 an include climbing out of the checkout names nothing|crates/demo/src/lib.rs|const A: &str = include_str!("../../../../outside.md");|
-a concat! literal joins the manifest directory|crates/demo/src/lib.rs|const S: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ui/src/bindings.ts");|manifest:ui/src/bindings.ts:demo
-a .join literal joins the manifest directory|crates/demo/src/lib.rs|read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../README.md"));|manifest:README.md:demo
-a chain across lines that goes on with a non-literal prints its directory and the root|crates/demo/src/lib.rs|let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))\n    .join("../../docs/legal")\n    .join(name);|manifest:.:demo;manifest:docs/legal:demo
-a format! argument leaves the read unfollowed|crates/demo/tests/t.rs|let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../{SCRIPT}"));|manifest:.:demo;manifest:crates/demo:demo
-a non-literal concat! argument leaves the read unfollowed|crates/demo/src/lib.rs|const S: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs", SUFFIX);|manifest:.:demo;manifest:docs:demo
-a parent() leaves the read unfollowed|crates/demo/tests/t.rs|read(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap());|manifest:.:demo;manifest:crates/demo:demo
-a comma after a join chain separates arguments and continues nothing|crates/demo/tests/t.rs|read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../README.md"),\n);|manifest:README.md:demo
+a concat! of the manifest directory and literals is a finished path|crates/demo/src/lib.rs|const S: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ui/src/bindings.ts");|manifest:ui/src/bindings.ts:demo
+a concat! inside Path::new handed to a call is placed|crates/demo/tests/t.rs|read(Path::new(concat!(\n    env!("CARGO_MANIFEST_DIR"),\n    "/../../ui/x.ts"\n)));|manifest:ui/x.ts:demo
+a .join literal handed to a call is placed|crates/demo/src/lib.rs|read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../README.md"));|manifest:README.md:demo
 consecutive literal joins resolve together|crates/demo/tests/t.rs|read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join("docs/b.md"));|manifest:docs/b.md:demo
-a chain used at the checkout root prints the root|crates/demo/tests/t.rs|open(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));|manifest:.:demo
+a comma after a join chain ends the argument|crates/demo/tests/t.rs|read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../README.md"),\n);|manifest:README.md:demo
+canonicalize and unwrap after the joins keep the chain placed|crates/demo/tests/t.rs|copy(&PathBuf::from(env!("CARGO_MANIFEST_DIR"))\n    .join("../../skills/x")\n    .canonicalize()\n    .unwrap(), &dest);|manifest:skills/x:demo
+a chain handed to a call at the checkout root reads the root|crates/demo/tests/t.rs|open(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));|manifest:.:demo
 the manifest directory alone is the crate|crates/demo/tests/t.rs|scan(Path::new(env!("CARGO_MANIFEST_DIR")));|manifest:crates/demo:demo
 a file deeper in the crate still joins its manifest directory|crates/demo/src/deep/mod.rs|read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/x.tsv"));|manifest:crates/demo/tests/fixtures/x.tsv:demo
-a let binding is read where it is used|crates/demo/tests/t.rs|let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");\nlet text = read(root.join("docs/b.md"));|manifest:docs/b.md:demo
-a binding used whole at the checkout root reads the root|crates/demo/tests/t.rs|let catalog = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");\ninstall(&catalog);|manifest:.:demo
-a binding goes on through canonicalize and unwrap|crates/demo/tests/t.rs|let docs = Path::new(env!("CARGO_MANIFEST_DIR"))\n    .join("../../docs")\n    .canonicalize()\n    .unwrap();\nread(docs.join("a.md"));|manifest:docs/a.md:demo
-a binding of a helper call through a module path is followed|crates/demo/tests/t.rs|fn root() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")\n}\nfn t() {\n    let base = self::root();\n    read(base.join("docs/a.md"));\n}|manifest:docs/a.md:demo
-a binding of a helper call is followed|crates/demo/tests/t.rs|fn root() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")\n}\nfn t() {\n    let base = root();\n    read(base.join("docs/b.md"));\n}|manifest:docs/b.md:demo
-a bound name that begins a longer name is not a use of it|crates/demo/tests/t.rs|let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");\nread(root_file);|
+a chain that goes on with a non-literal join prints what it reached and the root|crates/demo/src/lib.rs|read(PathBuf::from(env!("CARGO_MANIFEST_DIR"))\n    .join("../../docs/legal")\n    .join(name));|manifest:.:demo;manifest:docs/legal:demo
+a format! join argument is not followed|crates/demo/tests/t.rs|read(Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../{SCRIPT}")));|manifest:.:demo;manifest:crates/demo:demo
+a non-literal concat! argument is not followed|crates/demo/src/lib.rs|const S: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs", SUFFIX);|manifest:.:demo;manifest:docs:demo
+a parent() is not followed|crates/demo/tests/t.rs|read(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap());|manifest:.:demo;manifest:crates/demo:demo
+a chain bound by let is not followed|crates/demo/tests/t.rs|let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");\nread(root.join("a.md"));|manifest:.:demo;manifest:docs:demo
+a concat! in Path::new bound by let is not followed|crates/demo/tests/t.rs|let p = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../ui/x.ts"));|manifest:.:demo;manifest:ui/x.ts:demo
+the manifest directory in a format! is not followed|crates/demo/tests/t.rs|read(format!("{}/../../hooks/x", env!("CARGO_MANIFEST_DIR")));|manifest:.:demo;manifest:crates/demo:demo
+the manifest directory in string concatenation is not followed|crates/demo/tests/t.rs|let p = env!("CARGO_MANIFEST_DIR").to_owned() + "/../../hooks/x";|manifest:.:demo;manifest:crates/demo:demo
+a helper returning String is not followed|crates/demo/tests/t.rs|fn root() -> String {\n    format!("{}/../..", env!("CARGO_MANIFEST_DIR"))\n}\nfn t() {\n    read(Path::new(&root()).join("hooks/x"));\n}|manifest:.:demo;manifest:crates/demo:demo
+current_dir() is not followed|crates/demo/tests/t.rs|read(std::env::current_dir().unwrap().join("../../hooks/x"));|manifest:.:demo
+a call of a Path helper is not followed|crates/demo/tests/t.rs|fn root() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")\n}\nfn t() {\n    read(root().join("hooks/README.md"));\n}|manifest:.:demo
+a Path helper nothing calls reads nothing|crates/demo/tests/t.rs|fn root() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")\n}|
 a commented-out chain is no read|crates/demo/tests/t.rs|// read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/a.md"));\nfn t() {}|
-a binding used nowhere reads nothing|crates/demo/tests/t.rs|let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");|
-a binding ends with the block it was made in|crates/demo/tests/t.rs|fn a() {\n    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");\n    read(root.join("docs/a.md"));\n}\nfn b() {\n    read(root.join("docs/b.md"));\n}|manifest:docs/a.md:demo
-a later let of the name ends its binding|crates/demo/tests/t.rs|let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");\nread(p.join("a.md"));\nlet p = scratch();\nread(p.join("b.md"));|manifest:docs/a.md:demo
-a root helper is followed through each call, and its body is no read|crates/demo/tests/t.rs|fn root() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")\n}\nfn t() {\n    read(root().join("hooks/README.md"));\n}|manifest:hooks/README.md:demo
-a helper calling a helper defined after it is followed|crates/demo/tests/t.rs|fn docs() -> PathBuf {\n    root().join("docs")\n}\nfn root() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")\n}\nfn t() {\n    read(docs().join("a.md"));\n}|manifest:docs/a.md:demo
-a private helper in lib.rs serves the modules under it|crates/demo/src/lib.rs+crates/demo/src/other.rs|fn root() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")\n}~~fn t() {\n    read(crate::root().join("docs/a.md"));\n}|manifest:docs/a.md:demo
-a private helper serves its own module alone|crates/demo/tests/a.rs+crates/demo/tests/b.rs|fn root() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")\n}\nfn t() {\n    read(root().join("docs/a.md"));\n}~~fn u() {\n    read(root().join("docs/b.md"));\n}|manifest:docs/a.md:demo
-a helper whose chain climbs out of the checkout reads anything|crates/demo/tests/t.rs|fn out() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")\n}\nfn t() {\n    read(out());\n}|manifest:.:demo
-a file outside every crate belongs to the crates reaching it through a path attribute|crates/test_util.rs+crates/demo/src/lib.rs+crates/demo/tests/t.rs|pub fn checkout_root() -> PathBuf {\n    let guess = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");\n    canonical(&guess)\n}~~#[path = "../../test_util.rs"]\nmod test_util;~~fn t() {\n    read(test_util::checkout_root().join("hooks"));\n}|manifest:hooks:demo
+a file outside every crate belongs to the crates reaching it through a path attribute|crates/test_util.rs+crates/demo/src/lib.rs|pub fn fixture() {\n    read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/x"));\n}~~#[path = "../../test_util.rs"]\nmod test_util;|manifest:crates/demo/tests/fixtures/x:demo
 a file no crate reaches is read by none|crates/loose.rs|read(Path::new(env!("CARGO_MANIFEST_DIR")).join("x")); const A: &str = include_str!("../docs/c.md");|
 each crate reading a path prints its own row|crates/other/Cargo.toml+crates/other/src/lib.rs+crates/demo/src/lib.rs|[package]\nname = "other"~~const A: &str = include_str!("../../../docs/a.md");~~const A: &str = include_str!("../../../docs/a.md");|include:docs/a.md:demo;include:docs/a.md:other
 two reads of one path print one row|crates/demo/src/lib.rs|const A: &str = include_str!("../../../docs/a.md");\nconst B: &str = include_str!("../../../docs/a.md");|include:docs/a.md:demo
@@ -150,9 +146,9 @@ echo "=== this repository's own reads carry the files its crates are known to re
 # which a reader that lost a shape falls through. What is read beyond them
 # is not held here.
 OUT="$(cd "$ROOT" && "$READS" | tr '\t' ':')" || { bad "the repository's own reads are readable" "rc=$?"; OUT=""; }
-for member in include:docs/authoring/README.md:kendex-app manifest:docs/legal:kendex-core \
-  manifest:README.md:kendex-core manifest:hooks/README.md:kendex-core \
-  manifest:skills/bot-instructions:kendex-core manifest:.:kendex-core manifest:.:kendex-cli; do
+for member in include:docs/authoring/README.md:kendex-app manifest:ui/src/bindings.ts:kendex-app \
+  manifest:docs/legal:kendex-core manifest:README.md:kendex-core \
+  manifest:.:kendex-core manifest:.:kendex-cli; do
   grep -qFx -- "$member" <<<"$OUT" &&
     ok "the repository's reads carry $member" ||
     bad "the repository's reads carry $member" "the extractor is broken for that shape: $OUT"
@@ -243,27 +239,17 @@ while IFS='|' read -r edit shape; do
     bad "control: $shape, with that rule removed" "rc=$RC out=$OUT"
 done <<'ROWS'
 s/\\(\[ \\t\\n\]\*"\[^"\]\*"\/)) {/\\([ \\t]*"[^"]*"\/)) {/|a literal on the line after the parenthesis counts
-s/chain = chain "\/" unquote(lit)/chain = chain/|a .join literal joins the manifest directory
-s/chain = chain unquote(substr(text, RSTART, RLENGTH))/chain = chain/|a concat! literal joins the manifest directory
 s/if (seg\[i\] == "..") { if (k == 0) return ""; k--; continue }/if (seg[i] == "..") { if (k > 0) k--; continue }/|an include climbing out of the checkout names nothing
-s/if (match(after, \/^\[ \\t\\n\]\*\\)+\/)) after = substr(after, RLENGTH + 1)//|a chain across lines that goes on with a non-literal prints its directory and the root
-/if (entry\[2\] + 0) row("manifest", ".", dir)/d|a format! argument leaves the read unfollowed
-s/\(push\).parent/\1/|a parent() leaves the read unfollowed
-s/(in_concat \&\& match(text, \/^\[ \\t\\n\]\*,\/))/match(text, \/^[ \\t\\n]*,\/)/|a comma after a join chain separates arguments and continues nothing
-s/        bound\[name\] = FOUND/        delete bound[name]/|a let binding is read where it is used
-s/canonicalize.unwrap.to_path_buf/to_path_buf/|a binding goes on through canonicalize and unwrap
-s/.(\[A-Za-z_\]\[A-Za-z0-9_\]\*::)\*)\$"$/)$"/|a binding of a helper call through a module path is followed
-s/if (substr(after, 1, 1) ~ \/\[A-Za-z0-9_!\]\/) {/if (0) {/|a bound name that begins a longer name is not a use of it
+s/joined = joined "\/" unquote(lit)/joined = joined/|a .join literal handed to a call is placed
+s/joined = joined unquote(substr(after, RSTART, RLENGTH))/joined = joined/|a concat! of the manifest directory and literals is a finished path
+s/after !~ \/^\[ \\t\\n\]\*\[),\]\//after !~ \/^[ \\t\\n]*[)]\//|a comma after a join chain ends the argument
+s/(canonicalize.unwrap)/(nothing)/|canonicalize and unwrap after the joins keep the chain placed
+/Handed whole to a call as one argument/{n;d;}|a chain bound by let is not followed
+/^    row("manifest", ".", dir)$/d|the manifest directory in a format! is not followed
+s/\]current_dir\[/]nothing_here[/|current_dir() is not followed
+s/(calls == "" ? "" : /("" == "" ? "" : /|a call of a Path helper is not followed
+s/kept = kept substr(rest, 1, RSTART) "}"/kept = kept substr(rest, 1, RSTART + length_ - 1)/|a Path helper nothing calls reads nothing
 s/if (line ~ .*) line = ""/if (0) line = ""/|a commented-out chain is no read
-s/if (cand_body\[k\] !~ ENV \&\& (SEEN == "" .*$/if (cand_body[k] !~ ENV) continue/|a helper calling a helper defined after it is followed
-s/} while (changed)/} while (0)/|a helper calling a helper defined after it is followed
-s/cand_scope\[candidates\] = dirname(file\[f\])/cand_scope[candidates] = file[f]/|a private helper in lib.rs serves the modules under it
-/for (name in bound) if (bound_level\[name\] > LEVEL) delete bound\[name\]/d|a binding ends with the block it was made in
-/^        delete bound\[name\]$/d|a later let of the name ends its binding
-s/if ((tok in SEEN_VALUE) \&\& match/if (0 \&\& match/|a root helper is followed through each call, and its body is no read
-s/if (!helper\[k\]) continue/continue/|a root helper is followed through each call, and its body is no read
-s/if (cand_scope\[k\] != "" \&\& file/if (0 \&\& file/|a private helper serves its own module alone
-/if (ACC == "") ACC = "." FS_ 1/d|a helper whose chain climbs out of the checkout reads anything
 s/if (target != "") includers\[target\]/if (0) includers[target]/|a file outside every crate belongs to the crates reaching it through a path attribute
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the controls" >&2; exit 2; }
