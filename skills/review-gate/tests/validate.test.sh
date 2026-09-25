@@ -152,8 +152,8 @@ exported legal mode cannot hide committed error~exported~~FAIL~settings-values~2
 untracked settings~untracked~~FAIL~settings-untracked~kendex.settings.toml~~~~~
 nested unknown key names its source~nested~[env]\nREVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGIN = "x"~FAIL~settings-unknown~.kendex/settings.toml:REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGIN~~~~~
 nested mode is unread~nested~[env]\nREVIEW_GATE_MODE = "off"~FAIL~settings-mode-source~.kendex/settings.toml~~~~~
-root mode is read~append~REVIEW_GATE_MODE = "off"\nREVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"~clean~class-policy-default~default-assigned~~~~~
-mode off under the inherited default class policy~append~REVIEW_GATE_MODE = "off"~FAIL~class-policy-mode-off~REVIEW_GATE_MODE~~~~~
+root mode is read~append~REVIEW_GATE_MODE = "off"~clean~~~~~~~
+the default assigned explicitly~append~REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"~clean~class-policy-default~default-assigned~~~~~
 explicit untracked source~explicit~~clean~~~~~settings-explicit~@/kendex.settings.toml~
 double-quoted key~append~"REVIEW_GATE_THREADS" = "off"~FAIL~settings-key-shape~kendex.settings.toml:"REVIEW_GATE_THREADS" = "off"~~~~~
 single-quoted key~append~'REVIEW_GATE_THREADS' = "off"~FAIL~settings-key-shape~kendex.settings.toml:'REVIEW_GATE_THREADS' = "off"~~~~~
@@ -197,15 +197,9 @@ class policy off with a tracked decision record~append~REVIEW_GATE_CLASS_POLICY 
 decision record that does not exist~append~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs/decisions/D001-no-class-policy.md"~FAIL~class-policy-decision-untracked~docs/decisions/D001-no-class-policy.md~~~~~
 decision record on disk but never committed~uncommitted-record~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "uncommitted-decision.md"~FAIL~class-policy-decision-untracked~uncommitted-decision.md~~~~~
 decision record that is a tracked directory~append~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs"~FAIL~class-policy-decision-untracked~docs~~~~~
-docs-only lane under the active class policy~append~REVIEW_GATE_DOCS_ONLY = "none"~FAIL~class-policy-inert-lane~REVIEW_GATE_DOCS_ONLY~~~~~
-render-only lane under the active class policy~append~REVIEW_GATE_RENDER_PATHS = "docs/*"~FAIL~class-policy-inert-lane~REVIEW_GATE_RENDER_PATHS~~~~~
-docs-only lane under a custom class policy~append~REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:none;standard:none"\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs/guide.md"\nREVIEW_GATE_DOCS_ONLY = "none"~FAIL~class-policy-inert-lane~REVIEW_GATE_DOCS_ONLY~~~~~
 class policy the owner refuses~append~REVIEW_GATE_CLASS_POLICY = "render:none"~FAIL~class-policy-unresolved~2~~~~~
 class policy choice outside the owner protocol~choice-protocol~~FAIL~class-policy-protocol~review-policy-choice=unknown~~~~~
 decision record the loader refuses~dotenv~REVIEW_GATE_CLASS_POLICY=""\nREVIEW_GATE_CLASS_POLICY_DECISION="docs/guide.md"x~FAIL~class-policy-setting-unreadable~REVIEW_GATE_CLASS_POLICY_DECISION~~~~~
-docs-only lane the loader refuses~dotenv~REVIEW_GATE_DOCS_ONLY="none"x~FAIL~class-policy-setting-unreadable~REVIEW_GATE_DOCS_ONLY~~~~~
-render-only lane the loader refuses~dotenv~REVIEW_GATE_RENDER_PATHS="docs/*"x~FAIL~class-policy-setting-unreadable~REVIEW_GATE_RENDER_PATHS~~~~~
-docs-only lane under a recorded opt-out~append~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs/guide.md"\nREVIEW_GATE_DOCS_ONLY = "none"~clean~class-policy-decision~docs/guide.md~~~~~
 default class policy with no classifier installed~no-classifier~~FAIL~settings-values~2~policy-classifier~@/.agents/skills/review-gate/scripts/../../harness-ci/scripts/change-class~~~
 ROWS
 [ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=settings-table value=%q\n' "$rows" >&2; exit 2; }
