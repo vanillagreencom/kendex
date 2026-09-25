@@ -437,6 +437,10 @@ $(sed 's/^/        /' "$SCRATCH/err")"
 # repository chose it: the default, the default assigned, custom rows, or off.
 # A departure from the default is legal only when the repository names the
 # tracked decision record behind it.
+#
+# Every branch of this block, through the inert-lane checks below, carries one
+# row in tests/validate.test.sh that goes red when the branch is removed. The
+# one exception is the REVIEW_GATE_MODE read, an assertion rather than a path.
 choice_rc=0
 policy_choice="$("${scrub[@]}" "$SKILL_DIR/scripts/review-policy" --check-choice 2>"$SCRATCH/err")" || choice_rc=$?
 policy_active=0
@@ -469,9 +473,11 @@ fi
 # the default by inheritance, and its `bot` row requires a review round the
 # off mode no longer waives. Assigning the policy is the acceptance.
 if [ "$policy_choice" = review-policy-choice=default ]; then
-  if ! read_setting REVIEW_GATE_MODE enforce; then
-    policy_setting_unreadable REVIEW_GATE_MODE
-  elif [ "$SETTING_VALUE" = off ]; then
+  # --check-choice has already validated every source this key reads: the
+  # committed file whole, or the one REVIEW_GATE_SETTINGS_FILE names.
+  read_setting REVIEW_GATE_MODE enforce ||
+    die class-policy-mode-read REVIEW_GATE_MODE "invariant broken: REVIEW_GATE_MODE could not be read from sources --check-choice had already validated"
+  if [ "$SETTING_VALUE" = off ]; then
     bad class-policy-mode-off "REVIEW_GATE_MODE" "REVIEW_GATE_MODE is off, and the default class policy still requires one bot review round for a small change. Assign REVIEW_GATE_CLASS_POLICY explicitly to accept that, or opt out of the class policy with REVIEW_GATE_CLASS_POLICY_DECISION naming the committed decision record"
   fi
 fi

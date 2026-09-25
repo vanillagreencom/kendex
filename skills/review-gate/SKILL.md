@@ -25,7 +25,7 @@ Two greens do NOT mean a review happened. `REVIEW_GATE_MODE = "off"` evaluates n
 
 | Verdict | Status | Meaning |
 |---|---|---|
-| `approved` | `success` | Evidence exists for this head, the whole diff sits under `REVIEW_GATE_RENDER_PATHS`, or `REVIEW_GATE_DOCS_ONLY = "none"` and the shared CI classifier accepts the diff as docs-only; no standing objection; no unresolved threads. For an inactive or `current` class policy, `REVIEW_GATE_MODE = "off"` evaluates no evidence term. Success there means only "gate disabled", stated in the status description. |
+| `approved` | `success` | Evidence exists for this head, the whole diff sits under `REVIEW_GATE_RENDER_PATHS`, or `REVIEW_GATE_DOCS_ONLY = "none"` and the shared CI classifier accepts the diff as docs-only, both lanes only under an inactive class policy; no standing objection; no unresolved threads. For an inactive or `current` class policy, `REVIEW_GATE_MODE = "off"` evaluates no evidence term. Success there means only "gate disabled", stated in the status description. |
 | `awaiting` | `pending` | No review evidence for this head yet. |
 | `threads-open` | `pending` | Evidence exists, but review threads are unresolved. |
 | `changes-requested` | `failure` | A reviewer objects. Red means objection, never a build failure. |
