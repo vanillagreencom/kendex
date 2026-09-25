@@ -179,14 +179,25 @@ out="$(prune "$p" --keep tmp/waiter.run 2>&1)" || rc=$?
   && ok "a prune with nothing to remove prints kept=none" \
   || bad "a prune with nothing to remove prints kept=none" "rc=$rc out=$out"
 
-# No fleet state, no lane records to tell live from closed: refused.
-mkdir -p "$TMP_ROOT/bare/tmp"
+# No fleet state, as on a first session that stops before its first launch:
+# no lane records to tell live from closed, so nothing is judged. The prune
+# prints the one line, touches nothing, archives nothing and writes no state,
+# even over an old file.
+bare="$TMP_ROOT/bare"
+mkdir -p "$bare/tmp"
+printf 'x\n' > "$bare/tmp/directive.md"
+touch -t "$old_touch" "$bare/tmp/directive.md"
+bare_before="$(tree_of "$bare")"
+bare_run() { # SCRIPT
+  (cd "$bare" && env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$bare/fleet" \
+    bash "$1" prune --keep tmp/waiter.run) 2>&1
+}
 rc=0
-(cd "$TMP_ROOT/bare" && "$WS" prune) >/dev/null 2>"$TMP_ROOT/bare.err" || rc=$?
-key="$(head -n 1 "$TMP_ROOT/bare.err")"
-[[ "$rc" -eq 1 && "$key" == "workflow-state: state-missing state-file=$TMP_ROOT/bare/tmp/workflow-state-oversee.json" ]] \
-  && ok "a prune with no fleet state is refused as state-missing" \
-  || bad "a prune with no fleet state is refused as state-missing" "rc=$rc key=$key"
+out="$(bare_run "$WS")" || rc=$?
+[[ "$rc" -eq 0 && "$out" == "pruned fleet-state=none path=$bare/tmp/workflow-state-oversee.json" \
+   && "$(tree_of "$bare")" == "$bare_before" && ! -e "$bare/fleet" ]] \
+  && ok "a prune with no fleet state prints fleet-state=none and touches nothing" \
+  || bad "a prune with no fleet state prints fleet-state=none and touches nothing" "rc=$rc out=$out"
 
 # A step that fails before the archive stands removes nothing and writes no
 # archive: an archive tar cannot write, an archive root that is a file, a find
@@ -285,6 +296,15 @@ control() { # NAME PREFIX EXTRA_ENV CHECK LABEL
     $3 bash "$MUTANT_DIR/$1" prune --keep tmp/waiter.run) >/dev/null 2>&1 || true
   (cd "$mp" && eval "$4") && ok "control: $5" || bad "control: $5"
 }
+
+# Planted: prune's absent-state read made the existence check. A Stop before
+# the first launch then refuses as state-missing.
+mutant absent-refused 'if ! state_file=$(fleet_state_file); then' \
+  'state_file=$(get_state_file oversee); ensure_state_exists "$state_file"; if false; then'
+rc=0
+bare_run "$MUTANT_DIR/absent-refused" >/dev/null || rc=$?
+[[ "$rc" -ne 0 ]] && ok "control: without the absent-state read a prune with no fleet state refuses" \
+  || bad "control: without the absent-state read a prune with no fleet state refuses" "rc=$rc"
 
 mutant no-live '[[ ! "${unit##*/}" =~ $re ]] || kept_by=live' ':'
 control no-live "" "" '[[ ! -e tmp/lane-mail/KEN-1 ]]' \

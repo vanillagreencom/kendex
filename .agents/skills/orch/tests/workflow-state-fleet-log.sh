@@ -78,12 +78,13 @@ got="$(bash "$MUTANT_DIR/workflow-state" --state-dir "$sd" fleet-log takeover | 
 [[ "$got" == "14" ]] && ok "control: without the slice the takeover read prints every row" \
   || bad "control: without the slice the takeover read prints every row" "got=$got"
 
-# Planted: the absent-state arm made the existence check every other reader
-# takes. The first session's takeover then refuses as state-missing.
-anchor='[[ -f "$state_file" ]] || return 0'
+# Planted: takeover's absent-state read made the existence check every other
+# reader takes. The first session's takeover then refuses as state-missing.
+anchor='state_file=$(fleet_state_file) || return 0'
 [[ "$(grep -Fc -- "$anchor" "$WS")" == "1" ]] && ok "the absent-state control finds its arm" \
   || bad "the absent-state control finds its arm"
-awk -v a="$anchor" 'index($0, a) { sub(/[^ ].*/, ""); print $0 "ensure_state_exists \"$state_file\""; next } { print }' \
+A="$anchor" awk 'index($0, ENVIRON["A"]) { sub(/[^ ].*/, "")
+  print $0 "state_file=$(get_state_file oversee); ensure_state_exists \"$state_file\""; next } { print }' \
   "$WS" > "$MUTANT_DIR/absent-refused"
 rc=0
 bash "$MUTANT_DIR/absent-refused" --state-dir "$TMP_ROOT/no-fleet" fleet-log takeover >/dev/null 2>&1 || rc=$?

@@ -956,18 +956,27 @@ project_path() { # PATH
 # The fleet log's two readers, each printing its rows one JSON object per
 # line: the successor overseer's takeover read, the last ORCH_TAKEOVER_ROWS
 # rows, and the audit read, every proposal and ruling row.
+# The fleet state's path, returning 1 where no file is there yet. A first fleet
+# session has none until its first launch writes one, which leaves the verbs
+# that run at a fleet's edges, takeover and prune, nothing to read or remove
+# rather than a missing state to refuse.
+fleet_state_file() {
+    local state_file
+    state_file=$(get_state_file oversee)
+    printf '%s\n' "$state_file"
+    [[ -f "$state_file" ]]
+}
+
 cmd_fleet_log() {
     local reader="${1:-}" state_file rows
-    state_file=$(get_state_file oversee)
     case "$reader" in
         takeover)
-            # A first fleet session has no fleet state until its first launch
-            # writes one, and so no row to take over.
-            [[ -f "$state_file" ]] || return 0
+            state_file=$(fleet_state_file) || return 0
             rows=$("$SCRIPT_DIR/orch-env" ORCH_TAKEOVER_ROWS 10) || return 1
             jq -c --argjson n "$rows" \
                 '(.fleet_log // []) | if $n == 0 then empty else .[-$n:][] end' "$state_file" ;;
         audit)
+            state_file=$(get_state_file oversee)
             ensure_state_exists "$state_file"
             jq -c '(.fleet_log // [])[] | select(.kind == "proposal" or .kind == "ruling")' "$state_file" ;;
         *) state_message fleet-log-reader "$@" >&2; return 2 ;;
@@ -1013,8 +1022,8 @@ cmd_progress_report_path() {
 # state and the directory holding it.
 #
 # Every refusal here rests on telling a live lane from a closed one, which only
-# the fleet state's lane records can do, so a prune with no fleet state is
-# refused rather than judged on file ages alone. The keep list is explicit, and
+# the fleet state's lane records can do, so a prune with no fleet state judges
+# nothing on file ages alone and touches nothing. The keep list is explicit, and
 # a path on it is never a candidate whatever its age. Nothing leaves the disk or
 # the state before one archive holding all of it is written: a failed archive
 # removes nothing, and the rows are dropped from the state before any path is
@@ -1022,7 +1031,8 @@ cmd_progress_report_path() {
 #
 # Output, one keyed line each: `pruned path=PATH` per removed path, then
 # `pruned fleet_log=N lanes=N progress_reports=N paths=N`, then `kept=ARCHIVE`,
-# or `kept=none` where there was nothing to archive.
+# or `kept=none` where there was nothing to archive. With no fleet state it is
+# `pruned fleet-state=none path=STATE_FILE` alone.
 cmd_prune() {
     local -a keeps=() units=() candidates=()
     local keep
@@ -1043,8 +1053,10 @@ cmd_prune() {
     done
 
     local state_file field=fleet_log
-    state_file=$(get_state_file oversee)
-    ensure_state_exists "$state_file"
+    if ! state_file=$(fleet_state_file); then
+        printf 'pruned fleet-state=none path=%s\n' "$state_file"
+        return 0
+    fi
 
     local days progress_dir now_epoch cutoff
     days=$("$SCRIPT_DIR/orch-env" ORCH_RECORD_RETENTION_DAYS 14) || return 1
@@ -1324,7 +1336,10 @@ EOF
                                 directory is or holds the state directory.
                                 Prints "pruned path=PATH" per removed path, a
                                 "pruned fleet_log=N lanes=N progress_reports=N
-                                paths=N" count, then "kept=ARCHIVE" or kept=none
+                                paths=N" count, then "kept=ARCHIVE" or kept=none.
+                                With no fleet state yet it prints "pruned
+                                fleet-state=none path=PATH" alone and touches
+                                nothing
 
 Keys:
   Three per-item key forms: the tracker identifier (KEN-123) for a tracked

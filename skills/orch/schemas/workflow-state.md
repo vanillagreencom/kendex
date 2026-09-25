@@ -209,7 +209,7 @@ The overseer writes one progress report beside each status report it gives in ch
 
 ### Prune
 
-`workflow-state prune [--keep PATH]...` works on the fleet state `workflow-state-oversee.json` and the directory that holds it. With no fleet state it refuses as `state-missing`: only the lane records tell a live lane from a closed one. A progress report directory that is or holds that directory refuses as `prune-progress-overlap`. The overseer runs it at every succession and once at fleet close, as [oversee.md § 5](../workflows/oversee.md#5-stop) directs.
+`workflow-state prune [--keep PATH]...` works on the fleet state `workflow-state-oversee.json` and the directory that holds it. With no fleet state yet, as on a first session that stops before its first launch, it prints `pruned fleet-state=none path=PATH` alone and archives, removes and writes nothing: only the lane records tell a live lane from a closed one. A progress report directory that is or holds that directory refuses as `prune-progress-overlap`. The overseer runs it at every succession and once at fleet close, as [oversee.md § 5](../workflows/oversee.md#5-stop) directs.
 
 The keep list holds whatever the age:
 
