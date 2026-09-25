@@ -56,7 +56,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 - Catalogs are adversarial input: reads are sealed and budgeted, frontmatter is real YAML with aliases and duplicate keys refused, and every interpolated value in a generated file is quoted.
 - Two scores, safety and quality, are never averaged and are advisory everywhere: install, update and apply proceed regardless.
 - Hook events have one vocabulary, Claude Code's names in `crates/core/src/hook.rs::EVENTS`; every other harness maps from it.
-- The kendex app and CLI open no pull request in a consumer. Off a hosted fleet ([merge-rail.md](merge-rail.md)), the consumer train carries each shipped-path merge there; D003 replaces it with a consumer-run workflow.
+- The kendex app and CLI open no pull request in a consumer. Off a hosted fleet the consumer train carries each shipped-path merge there; how, and what replaces the train, is [merge-rail.md](merge-rail.md) § Decisions.
 - Commits walk through the commit-guards package's committed scripts whatever tool makes them; kendex implements no check of its own and `kendex check` relays the package's verdict.
 - A package's declared check runs only under a licence: kendex's arming record, in a git directory git clones for nobody, or a person pressing the control that asks.
 - kendex never emits a pasteable command line: errors, hints and recovery instructions present the verb and its parameters as data. The one exception is the session-start drift report, whose remedies come from a fixed template set with validated identifiers.

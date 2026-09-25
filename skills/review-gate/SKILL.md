@@ -91,7 +91,7 @@ Then add the validate step to the repo's CI as its own job, with no `needs`, no 
       - run: .agents/skills/review-gate/scripts/validate.sh
 ```
 
-Finish with the repo-side wiring of ruleset and merge queue, with no bypass actor, and delete the local machinery the writer supersedes, in the same PR: [references/adoption.md](references/adoption.md).
+Finish with the repo-side wiring of ruleset and merge queue, with no standing bypass actor, and delete the local machinery the writer supersedes, in the same PR: [references/adoption.md](references/adoption.md).
 
 ## 3. Decide and repair
 
@@ -105,7 +105,7 @@ Keys a repo decides: [references/adoption.md](references/adoption.md) § Keys a 
 
 **Reviewers are down / nothing is reviewing.** Run the internal review loop: fix findings, resolve every thread, then post the override status with a real reason. It cannot bypass an objection or an open thread.
 
-**A PR that repairs the gate itself.** The writer always runs the merged engine, so the repair cannot turn its own gate context green, and no ruleset carries a bypass actor to merge it past that. Break-glass: the owner drops the gate context from the ruleset's required checks, merges the repair through the merge queue, and restores the context in the same session. The repair's commit message names the break-glass and the ruleset edit.
+**A PR that repairs the gate itself.** The writer always runs the merged engine, so the repair cannot turn its own gate context green, and no ruleset carries a standing bypass actor to merge it past that. Break-glass: the owner adds one bypass entry for their own account to the merge-queue ruleset, merges the repair through the queue, and removes the entry in the same session. The repair's commit message names the entry.
 
 **A settings-change PR** is judged by the OLD config. A PR adding a trusted login cannot have its own gate honor it. Merge it through normal review.
 
