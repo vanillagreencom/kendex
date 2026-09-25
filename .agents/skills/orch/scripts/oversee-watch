@@ -1156,13 +1156,12 @@ lane_skipped() { # WINDOW
 # The live fleet, read from the oversee workflow state open-terminal writes
 # (schemas/workflow-state.md § Oversee state): a first line counting the
 # records no pass carries, then one line per running lane record, item,
-# window, local|hosted and mail_root joined by the unit separator. `running`
-# is the one answer to which records a pass carries, so the count and the
-# rows cannot describe two different fleets. A file that is not that state,
+# window, local|hosted and mail_root joined by the unit separator. `running`,
+# lib/lane-claims.sh's LANE_RUNNING_JQ, is the one answer to which records a
+# pass carries, so the count and the rows cannot describe two different fleets. A file that is not that state,
 # or a running record with no item, ends the watch: a lane read as absent is
 # a lane nobody watches.
-LANE_ROWS_FILTER='
-  def running: type == "object" and .status == "running";
+LANE_ROWS_FILTER="$LANE_RUNNING_JQ"'
   if type != "object" then error("state-type expected=object actual=\(type)") else . end
   | (.lanes // []) | if type != "array" then error("lanes-type expected=array actual=\(type)") else . end
   | ([.[] | select(running | not)] | length),

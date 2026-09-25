@@ -30,11 +30,22 @@ file_lock_message() {
   esac
 }
 
+# Every mutex this shell holds, one per line: a caller may hold more than one
+# lock at a time, as open-terminal holds a fleet's launch lock and its claim
+# store's together, and a signal must release them all.
 ORCH_LOCK_MUTEX_DIR=""
 
-orch_release_lock() { # release a mutex this shell took; a no-op under flock
-  [ -z "$ORCH_LOCK_MUTEX_DIR" ] || rmdir -- "$ORCH_LOCK_MUTEX_DIR" 2>/dev/null || true
-  ORCH_LOCK_MUTEX_DIR=""
+orch_release_lock() { # release every mutex this shell took; a no-op under flock
+  while [ -n "$ORCH_LOCK_MUTEX_DIR" ]; do
+    rmdir -- "${ORCH_LOCK_MUTEX_DIR%%
+*}" 2>/dev/null || true
+    case "$ORCH_LOCK_MUTEX_DIR" in
+      *'
+'*) ORCH_LOCK_MUTEX_DIR="${ORCH_LOCK_MUTEX_DIR#*
+}" ;;
+      *) ORCH_LOCK_MUTEX_DIR="" ;;
+    esac
+  done
 }
 
 # The disposition a held mutex must never leave: the release, then an exit
@@ -85,5 +96,6 @@ orch_take_lock() { # FD LOCK_FILE WAIT_SECONDS
     fi
     sleep 0.1
   done
-  ORCH_LOCK_MUTEX_DIR="$lock_file.d"
+  ORCH_LOCK_MUTEX_DIR="${ORCH_LOCK_MUTEX_DIR:+$ORCH_LOCK_MUTEX_DIR
+}$lock_file.d"
 }

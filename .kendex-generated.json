@@ -927,6 +927,7 @@
   ".agents/skills/orch/tests/lib/shared-skill-libs.sh",
   ".agents/skills/orch/tests/lib/virtual-clock.sh",
   ".agents/skills/orch/tests/lib/waiter-assertions.sh",
+  ".agents/skills/orch/tests/open-terminal-cap.sh",
   ".agents/skills/orch/tests/open-terminal-claude-handoff.sh",
   ".agents/skills/orch/tests/open-terminal-codex-prompt.sh",
   ".agents/skills/orch/tests/open-terminal-issue-id.sh",

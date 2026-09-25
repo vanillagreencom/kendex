@@ -1942,7 +1942,7 @@ OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
 # gate exists to avoid. Its green row is CC-107 above, on that world's wclaude
 # lane and a provider that holds it.
 mutant_repo ctl-gate-every-shape scripts/open-terminal \
-  'if \[\[ "\$lane_gate" == true \]\]; then' 'if [[ "$lane_gate" == true \&\& "$HOST_RELAUNCH" != true ]]; then'
+  '\[\[ "\$LANE_GATE" != true \]\] || named_lane_judge' '[[ "$LANE_GATE" != true || "$HOST_RELAUNCH" == true ]] || named_lane_judge'
 OPEN_TERMINAL="$TMP_ROOT/ctl-gate-every-shape/scripts/open-terminal"
 run_ot "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-walled.tsv;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
   --harness claude --lane "$H/.wclaude" --repo o/r --relaunch CC-108

@@ -18,7 +18,13 @@
 # until its server is provably gone. Claims are recorded for tmux lanes only —
 # a launch with no pane handle would leave a claim nothing can prune.
 #
-# Record: `<server pid>\t<pane id>\t<config dir>\t<window>\t<created at>`.
+# Record: `<server pid>\t<pane id>\t<config dir>\t<window>\t<created at>\t<fleet>`.
+# The fleet is the oversee state file of the fleet the launch was judged in
+# (`open-terminal --state-dir`), empty for a launch naming no fleet, and it is
+# what lets one store serve several fleets: open-terminal's fleet cap counts
+# only its own fleet's claims, while an account's claims count whatever fleet
+# wrote them. A claim with an empty fleet counts toward its account and toward
+# no fleet's cap.
 set -euo pipefail
 
 # Callers preserve positional values for this diagnostic catalog.
@@ -64,11 +70,13 @@ lane_claims_canon() {
 }
 
 # Prune dead claims, print the live ones as `<config dir>\t<window>\t<server
-# pid>\t<pane id>` lines. $1: claims directory. Exits 2 when the store cannot be read at
+# pid>\t<pane id>` lines, with `\t<fleet>` after them where $2 is `fleet`.
+# The four-field form is the default because lane-context appends its own
+# fifth field. $1: claims directory. Exits 2 when the store cannot be read at
 # all: a caller deciding where to launch must fail closed on that, and only
 # the caller knows whether it is deciding or reporting.
 lane_claims_read() {
-  local dir="$1" live this_server f server pane cfg window created rc=0
+  local dir="$1" with_fleet="${2:-}" live this_server f server pane cfg window created fleet rc=0
   local rechecked=0 recheck_ok=1 live_now fresh
   # Absent is genuinely empty; anything else that is not a directory is a
   # misconfiguration, and an unreadable store is not an empty one. Reporting
@@ -92,7 +100,7 @@ lane_claims_read() {
     [[ -f "$f" ]] || continue
     # Cleared every iteration: a failed read must never leave the previous
     # record's fields standing in for this one.
-    server=""; pane=""; cfg=""; window=""; created=""
+    server=""; pane=""; cfg=""; window=""; created=""; fleet=""
     if [[ ! -r "$f" ]]; then
       # A claim that cannot be read is a launch that cannot be seen: reported,
       # left in place, and carried out as a failure so a caller deciding where
@@ -101,7 +109,7 @@ lane_claims_read() {
       rc=2
       continue
     fi
-    IFS=$'\t' read -r server pane cfg window created < "$f" || true
+    IFS=$'\t' read -r server pane cfg window created fleet < "$f" || true
     if [[ -z "$pane" ]] || [[ ! "$server" =~ ^[0-9]+$ ]]; then
       rm -f -- "$f"
       continue
@@ -142,7 +150,11 @@ lane_claims_read() {
     # Canonical on the way out, whatever spelling the record carries: the
     # count compares strings, and a hand-written or older record must still
     # land on the account discovery reports.
-    printf '%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane"
+    if [[ "$with_fleet" == fleet ]]; then
+      printf '%s\t%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane" "$fleet"
+    else
+      printf '%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane"
+    fi
   done
   return "$rc"
 }
@@ -167,16 +179,27 @@ lane_claims_config_dir() {
 }
 
 # Record one claim. $1: claims dir, $2: server pid, $3: pane id, $4: config
-# dir, $5: window. A missing pane handle or config dir records nothing.
+# dir, $5: window, $6: fleet, empty for none. A missing pane handle or config
+# dir records nothing.
 lane_claim_write() {
-  local dir="$1" server="$2" pane="$3" cfg="$4" window="$5" tmp
+  local dir="$1" server="$2" pane="$3" cfg="$4" window="$5" fleet="${6:-}" tmp
   [[ -n "$server" && -n "$pane" && -n "$cfg" ]] || return 0
   cfg="$(lane_claims_canon "$cfg")"
   mkdir -p -- "$dir" || return 1
   tmp="$(mktemp -- "$dir/claim.XXXXXX")" || return 1
   # Named .claim only once complete: a reader must never see a half-written
   # record and prune a live lane over it.
-  printf '%s\t%s\t%s\t%s\t%s\n' "$server" "$pane" "$cfg" "$window" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$server" "$pane" "$cfg" "$window" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$fleet" > "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$tmp.claim" || { rm -f -- "$tmp"; return 1; }
 }
+
+# The one answer to which oversee lane records are lanes in flight, as jq
+# definitions a caller prefixes to its own program: oversee-watch carries the
+# running records, and open-terminal counts the held ones against both caps,
+# those plus the preparing records of hosted lanes handed to a background job,
+# whose window and host are taken before the lane runs. The watch and the cap
+# cannot describe two different fleets. Hand-appended entries that are not
+# objects are no lane.
+LANE_RUNNING_JQ='def running: type == "object" and .status == "running";
+def held: running or (type == "object" and .status == "preparing");'

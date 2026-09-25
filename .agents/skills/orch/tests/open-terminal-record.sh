@@ -16,6 +16,9 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 export ORCH_LANE_HOST=local
+# Every row launches into one fleet state; the caps have their own suite,
+# open-terminal-cap.sh, and are out of this one's way.
+export ORCH_OVERSEER_LANES=1000 ORCH_LANE_ACCOUNT_CLAIMS=0
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 # shellcheck source=lib/process-table.sh
@@ -117,10 +120,20 @@ mkdir -p "$EXISTS_DIR"
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
 cp "$SRC_OT" "$REPO/scripts/open-terminal"
-cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$REPO/scripts/"
+cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$REPO/scripts/"
 cp "$SCRIPTS_DIR/lib"/*.sh "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
-chmod +x "$REPO/scripts/open-terminal"
+# lane-marker records whether descriptor 7 or 8, the launch locks every fleet
+# launch here holds, reached it, as the hosted rows' provider stub does through
+# LANE_HOST_STUB_LOCK_FDS.
+mv "$REPO/scripts/lane-marker" "$REPO/scripts/lane-marker.real"
+cat > "$REPO/scripts/lane-marker" <<EOF
+#!/usr/bin/env bash
+{ : >&7; } 2>/dev/null && : > "$TMP_ROOT/lockfd.lane-marker.7"
+{ : >&8; } 2>/dev/null && : > "$TMP_ROOT/lockfd.lane-marker.8"
+exec "\$(dirname "\$0")/lane-marker.real" "\$@"
+EOF
+chmod +x "$REPO/scripts/open-terminal" "$REPO/scripts/lane-marker"
 git -C "$REPO" init -q
 OT="$REPO/scripts/open-terminal"
 WS="$REPO/scripts/workflow-state"
@@ -173,7 +186,7 @@ run_ot --ghostty --harness claude --launch-flags "--model opus --verbose" CC-1
 REC="$(record CC-1)"
 assert_eq "rc=$RC records=$(records CC-1)" "rc=0 records=1" "a GUI launch writes one record and the state is created for it"
 assert_eq "$(sed "s/ launched_at=[^ ]*//" <<<"$REC")" \
-  "item=CC-1 tracker=linear repo=null harness=claude window=null account=null host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=null status=running" \
+  "item=CC-1 tracker=linear repo=null harness=claude window=null account=null host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=null status=running over_cap=null" \
   "the record carries the item, no window off tmux, the worktree as mail_root, the flags' model and status running"
 assert_eq "$(stamped "$(field "$REC" launched_at)")" "iso" "launched_at is a UTC timestamp"
 LAUNCHED_AT="$(field "$REC" launched_at)"
@@ -183,10 +196,10 @@ LAUNCHED_AT="$(field "$REC" launched_at)"
 # it, so the model recorded here is the model the harness was started with.
 RUN_TMUX=stub,1,0 run_ot --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high" CC-2
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-2)")" \
-  "rc=0 item=CC-2 tracker=linear repo=null harness=claude window=stub:CC-2 account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=opus session_id=null status=running" \
+  "rc=0 item=CC-2 tracker=linear repo=null harness=claude window=stub:CC-2 account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=opus session_id=null status=running over_cap=null" \
   "a tmux launch under a lane records its window, its account dir, the tmux surface and the model its own command names"
 RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --repo o/r --cmd true 2709
-assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surface|model|session_id|launched_at)=[^ ]*//g')" \
+assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surface|model|session_id|launched_at|over_cap)=[^ ]*//g')" \
   "rc=0 item=issue-2709 tracker=github repo=o/r harness=null window=stub:gh-2709 status=running" \
   "a GitHub item is recorded under its workflow-state id with the window the watch reads it through"
 
@@ -280,19 +293,15 @@ session_row sess-broken CC-117 >/dev/null
 assert_eq "$(RUN_SESSION=fleetx session_row sess-broken CC-118)" \
   "rc=1 target= list= pane= window=none recorded=none refused=session-record-failed+item=CC-118+state=oversee" \
   "a fleet state whose tmux entry cannot be read refuses as session-record-failed and opens nothing"
-# The write of a first launch's session: a state directory this launch can
-# read and not lock takes the same refusal. Root writes through mode 555.
-if [[ "$(id -u)" -eq 0 ]]; then
-  printf '  skip  unwritable fleet state (running as root)\n'
-else
-  "$WS" --state-dir "$TMP_ROOT/sess-ro" init oversee >/dev/null
-  chmod 555 "$TMP_ROOT/sess-ro"
-  RUN_SESSION=fleetx session_row sess-ro CC-128 > "$TMP_ROOT/ro-row"
-  chmod 755 "$TMP_ROOT/sess-ro"
-  assert_eq "$(cat "$TMP_ROOT/ro-row")" \
-    "rc=1 target= list= pane= window=none recorded=none refused=session-record-failed+item=CC-128+state=oversee" \
-    "a fleet state whose tmux entry cannot be written refuses as session-record-failed and opens nothing"
-fi
+# The write of a first launch's session: a fleet state this launch can read
+# and not lock takes the same refusal. The state's own lock path is a
+# directory, which workflow-state cannot open; the fleet launch lock beside it
+# is another file, so the launch reaches the session write.
+"$WS" --state-dir "$TMP_ROOT/sess-ro" init oversee >/dev/null
+mkdir "$TMP_ROOT/sess-ro/workflow-state-oversee.json.lock"
+assert_eq "$(RUN_SESSION=fleetx session_row sess-ro CC-128)" \
+  "rc=1 target= list= pane= window=none recorded=none refused=session-record-failed+item=CC-128+state=oversee" \
+  "a fleet state whose tmux entry cannot be written refuses as session-record-failed and opens nothing"
 # A has-session that fails for another reason than an absent session, the
 # answer a restarted server gives a launch still carrying its $TMUX.
 assert_eq "$(RUN_SESSION=fleetx STUB_HAS_SESSION_ERR='no server running on /tmp/tmux-1000/default' session_row sess-noserver CC-127)" \
@@ -326,15 +335,23 @@ LAUNCHED_AT=2026-01-01T00:00:00Z
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.status = "done" | .launched_at = "'"$LAUNCHED_AT"'")' >/dev/null
 run_ot --relaunch --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "--model opus --effort high" CC-1
 assert_eq "rc=$RC records=$(records CC-1) $(record CC-1)" \
-  "rc=0 records=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running" \
+  "rc=0 records=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null" \
   "a relaunch keeps one record: the resumed session id and the new account land, launched_at stands, and a done lane runs again"
 
 echo "=== a wake rewrites the session it resumed and nothing else ==="
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.session_id = null | .status = "done")' >/dev/null
 run_ot --wake --harness claude CC-1
 assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$OUT" || true) $(record CC-1)" \
-  "rc=0 woken=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running" \
+  "rc=0 woken=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null" \
   "a wake sets the resumed session id and status running and leaves the launch's fields as they were"
+
+echo "=== a wake is not judged on the fleet cap ==="
+# The fleet already runs more lanes than a cap of 1 allows; a wake rouses one of
+# them and adds none.
+ORCH_OVERSEER_LANES=1 run_ot --wake --harness claude CC-1
+assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$OUT" || true) capped=$(grep -c '^open-terminal: cap-' <<<"$OUT$ERR" || true)" \
+  "rc=0 woken=1 capped=0" \
+  "a wake at a full fleet goes through with no cap line"
 
 echo "=== a wake of an item no record names is refused as record-missing, with nothing written ==="
 touch "$EXISTS_DIR/CC-40"
@@ -355,10 +372,12 @@ HOSTED_DISK="$TMP_ROOT/remote"
 mkdir -p "$HOSTED_DISK/srv/lane"
 printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$HOSTED_DISK/srv/lane/.git"
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
-  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-60
+  LANE_HOST_STUB_LOCK_FDS="$TMP_ROOT/lockfd.host" run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-60
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-60)")" \
-  "rc=0 item=CC-60 tracker=linear repo=o/r harness=claude window=stub:CC-60 account=$LANE_DIR host=$HOST_STUB mail_root=/srv/lane surface=tmux model=opus session_id=null status=running" \
+  "rc=0 item=CC-60 tracker=linear repo=o/r harness=claude window=stub:CC-60 account=$LANE_DIR host=$HOST_STUB mail_root=/srv/lane surface=tmux model=opus session_id=null status=running over_cap=null" \
   "a hosted record carries the host spec and the remote path create named, never the local tree"
+assert_eq "$(cd "$TMP_ROOT" && ls lockfd.* 2>/dev/null | tr '\n' ' ')" "" \
+  "descriptors 7 and 8 reach neither the lane host provider nor lane-marker, local or hosted, while the launch locks are held"
 
 echo "=== a hosted launch writes its lane's marker on the host and reads it back ==="
 # `hooks/lane-mail-check.sh` reads a session as a launched lane only where the
@@ -497,7 +516,7 @@ assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened ' <<<"$OUT" 
 fixture_copy() {
   local dir="$TMP_ROOT/$1"
   mkdir -p "$dir/scripts/lib"
-  cp "$SRC_OT" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$dir/scripts/"
+  cp "$SRC_OT" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$dir/scripts/"
   cp "$SCRIPTS_DIR/lib"/*.sh "$dir/scripts/lib/"
   orch_fixture_shared_libs "$dir"
   git -C "$dir" init -q
