@@ -73,9 +73,9 @@ Reruns re-execute the workflow definition and verifier state pinned at the origi
 
 ## Merge route
 
-A lane merges its own pull request through the base branch's merge queue, on every change class: `merge-pr.md` § 5 step 1 arms `--auto` on the exact head, under the lanes app's installation token in a lane sandbox, and waits in `queue-wait` to a terminal verdict. The queue serializes concurrent lanes and puts each PR on top of the base itself, so no lane restacks a PR that fell behind to merge it, and a finding that lands while the PR is queued takes it back out through `queue-wait`'s late-findings guard. The direct attempt is reached only from an explicit user decision (`merge_mode: admin`, a § 3.2 `Force merge`) or from an arm that reports no merge gate to wait on, which is a repository with no queue.
+A lane merges its own pull request through the base branch's merge queue, on every change class: `merge-pr.md` § 5 step 1 arms `--auto` on the exact head, under the lanes app's installation token in a lane sandbox, and waits in `queue-wait` to a terminal verdict; a finding that lands while the PR is queued takes it back out through `queue-wait`'s late-findings guard. Why the queue and not a direct merge is kendex decision D003 § Rationale. The direct attempt is reached only from an arm that reports no merge gate to wait on, which is a repository with no queue.
 
-The overseer's owner-credential merge and the `ORCH_MERGE_BYPASS` fast path were two other routes past the queue, and a direct merge beside a running queue rebuilds every queue group in flight. Their settings are refused rather than ignored: `pr-merge` names each set key on its own first line and merges nothing, so a repository still configured for either route finds out at its first merge instead of silently taking the queue.
+The overseer's owner-credential merge, the `--admin` override and the `ORCH_MERGE_BYPASS` fast path are retired; `pr-merge --help` § Retired settings states how their settings are refused.
 
 ## Launch lanes
 

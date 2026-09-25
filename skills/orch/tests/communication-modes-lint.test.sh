@@ -11,7 +11,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 MODES="$SKILL_DIR/references/communication-modes.md"
 EVENTS="$SKILL_DIR/references/oversee-events.md"
 DISPOSITION="$SKILL_DIR/references/finding-disposition.md"
-SUBMIT="$SKILL_DIR/workflows/submit-pr.md"
 DEV_FIX="$SKILL_DIR/workflows/dev-fix.md"
 REVIEW="$SKILL_DIR/workflows/review.md"
 REVIEW_PR="$SKILL_DIR/workflows/review-pr.md"
@@ -96,16 +95,12 @@ rule "a product decision reaches the user only from that set" "$DISPOSITION" "##
   '§ Ask set names'
 rule "a decline is never re-asked" "$DISPOSITION" "## Filing bar" \
   '§ Ask set keeps out of the set'
-rule "the admin-merge question takes the mode's wording" "$SUBMIT" \
-  "### 6.2 Consumer Admin-Merge Question" '../references/communication-modes.md'
 rule "the fix round reads the ask set from the one file" "$DEV_FIX" \
   "### Fix Items — [ISSUE_ID]" '../references/communication-modes.md' '§ Ask set'
 rule "the internal review reads the ask set from the one file" "$REVIEW" \
   "### Review Items" '../references/communication-modes.md' '§ Ask set'
 rule "the PR review reads the ask set from the one file" "$REVIEW_PR" \
   "### PR Review Items — [ISSUE_ID]" '../references/communication-modes.md' '§ Ask set'
-rule_fenced "the admin-merge gate resolves the mode" "$SUBMIT" \
-  "### 6.2 Consumer Admin-Merge Question" 'orch-env ORCH_USER_MODE ceo'
 rule_fenced "the overseer resolves the mode before it relays" "$OVERSEE" \
   "## 3. Launch" 'orch-env ORCH_USER_MODE ceo'
 rule "the overseer's stop report takes the file's shape" "$OVERSEE" "## 5. Stop" \
@@ -144,13 +139,5 @@ forbid "no ask gate sends a call of its own to the user" \
   'An irreversible call outside the set waits for the user.' \
   "$SKILL_DIR"/*.md "$SKILL_DIR/workflows"/*.md "$EVENTS" "$DISPOSITION" \
   "$SKILL_DIR/references/skill-rules.md"
-
-# The converted gate records two answer tokens. Filling the engineer template
-# around them would emit engineer wording under every mode, so the filled shape
-# is what this row catches.
-forbid "the converted merge gate fills no template of its own" \
-  'with `Continue through the gates` recommended' \
-  'presents `Admin-merge past the unmet gate` | `Continue through the gates`, with `Continue through the gates` recommended.' \
-  "$SUBMIT"
 
 md_report

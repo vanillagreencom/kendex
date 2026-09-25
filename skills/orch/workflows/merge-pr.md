@@ -10,8 +10,6 @@ Run every long `approval-wait`, `ci-wait` and `queue-wait` below through [Waiter
 | `merge-pr [N]` | Merge a specific PR |
 | `merge-pr all` | Merge all ready PRs in sequence |
 
-**Caller context** (via `⤵`): `merge_mode` defaults to `normal`; only `submit-pr.md` § 6.2 sets `admin`, and only on an explicit answer.
-
 ## 1. Identify Candidates
 
 ```bash
@@ -19,8 +17,6 @@ Run every long `approval-wait`, `ci-wait` and `queue-wait` below through [Waiter
 ```
 
 With no argument, present the list and ask which to merge. With `all`, process every ready PR sequentially.
-
-**`merge_mode: admin` goes straight to § 4**, running § 3's per-PR state resolution on the way and nothing else in § 2 or § 3.
 
 Resolve the decision mode once for every post-PR choice in this workflow. Named stops use [SKILL.md § The Cycle](../SKILL.md#the-cycle).
 
@@ -94,7 +90,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 .agents/skills/github/scripts/github.sh pr-merge [PR_NUMBER] --check
 ```
 
-A `--check` exit `1` with no JSON whose first stderr line is `pr-merge: retired-setting key=[NAME]` records the named stop `merge-blocked` and hands back with that line; every later `pr-merge` call refuses the same way. Removing the retired key is the owner's fix.
+A `--check` exit `1` with no JSON whose first stderr line is `pr-merge: retired-setting key=[NAME]` records the named stop `merge-blocked` and hands back with that line (`pr-merge --help` § Retired settings).
 
 ### 3.1 Resolve Transient Blockers First
 
@@ -152,7 +148,7 @@ Bot-specific signals — emoji reactions, sticky-comment prose, checklist text �
 
 Reuse the `[ISSUE]` and `[PR_BRANCH]` § 3 resolved for this PR, and worktree commands only with an `[ISSUE]`. A [micro.md](micro.md) § 4 entry starts here instead, binding those two, `[STATE_KEY]` and § 1's own run-level bindings itself, so nothing waits on CI or on a reviewer before § 5 arms the merge; that entry escapes on a § 5 step 1 return to § 3.2, whose `CHECK` object § 3 never produced for it. When no issue worktree exists, set `[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]`, the root § 1 bound; there is then no issue worktree to dispose of in § 5.
 
-`merge_mode: admin` merges as the current user by design, so skip `bot-token` for it. Otherwise `bot-token` reporting `.configured: false` is an identity decision, not a budget choice: the merge would land under the human's name. `auto-recommended` records `bot-auth-missing` rather than taking that decision; `ask` presents `Merge as current user` | `Abort`, with `Abort` recommended.
+`bot-token` reporting `.configured: false` is an identity decision, not a budget choice: the merge would land under the human's name. `auto-recommended` records `bot-auth-missing` rather than taking that decision; `ask` presents `Merge as current user` | `Abort`, with `Abort` recommended.
 
 ### 4.1 Detach Orphaned Children
 
@@ -218,7 +214,7 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefOid,headRefOid --jq '[.baseRefOid,.headRefOid]|@tsv'
    ```
 
-   That head is `[PREPARED_HEAD]` and that base is `[PREPARED_BASE]`. Resolve the gate mode from them, except `merge_mode: admin` sets it to `off`:
+   That head is `[PREPARED_HEAD]` and that base is `[PREPARED_BASE]`. Resolve the gate mode from them:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait --resolve-mode --base [PREPARED_BASE] --head [PREPARED_HEAD]
@@ -226,28 +222,21 @@ Use the output as `MAIN_REPO_ROOT`.
 
    A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`: the class is measured over both endpoints, and a retarget changes it without moving the head, so the fresh answer is what carries the exemption and the head says it is the same run. Any other answer arms nothing and escapes by micro.md condition 9. Read workflow state `pr.size_check` for `[STATE_KEY]`, and use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.
 
-   **Merge route.** One of two:
+   **Merge route.** One route, on every change class: take the `--auto` arm below, and reach the direct attempt only where that arm answers `arm: no-merge-gate`, a repository with no queue and nothing for auto-merge to wait on. A § 3.2 `Force merge` answer takes the same arm: it ends the wait for a missing gate verdict and skips nothing the arm or the queue checks, so an unresolved thread still refuses it.
 
-   - **Override** — `merge_mode: admin`, or a § 3.2 `Force merge` answer. That answer named one head and one immediate merge: take the direct attempt below.
-   - **Queue** — every other case, on every change class. Take the `--auto` arm below FIRST, and reach the direct attempt only where that arm answers `arm: no-merge-gate`: a repository with no queue and nothing for auto-merge to wait on.
+   The lane arms its own head under the token the `github.sh` router selects, which in a lane sandbox is the lanes app's installation token, and waits in `queue-wait` to a terminal verdict. No overseer merges for it and no setting routes it past the queue (`pr-merge --help` § Retired settings).
 
-   The lane arms its own head under the token the `github.sh` router selects, which in a lane sandbox is the lanes app's installation token, and waits in `queue-wait` to a terminal verdict. No overseer merges for it and no setting routes it past the queue: `pr-merge` refuses a set `ORCH_MERGE_BYPASS`, `ORCH_ADMIN_MERGE_GH_CONFIG_DIR` or `ORCH_ADMIN_MERGE_CLASSES` as retired, before any pull-request read or merge call (`pr-merge --help` § Retired settings).
-
-   **The direct attempt** belongs to Override; Queue reaches it only from the arm below:
+   **The direct attempt** is reached only from the arm's `arm: no-merge-gate`:
 
    ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] [--force|--admin] --expected-head [PREPARED_HEAD]
+   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --expected-head [PREPARED_HEAD]
    ```
-
-   `merge_mode: admin` uses `--admin` and a § 3.2 `Force merge` uses `--force`; no other path adds either.
 
    Exit `0` merged the prepared head — continue to step 2.
 
-   Exit `75` means GitHub queued or armed the PR, as it does for `--force` on a base that requires the merge queue: take the queue-wait block below the `--auto` arm.
+   Exit `75` means GitHub queued or armed the PR: take the queue-wait block below the `--auto` arm.
 
-   Exit `1` from `--admin` records the named stop `merge-blocked` and hands back. It never enters the classification or arms `--auto`; the authorization covers only this head and reason.
-
-   Exit `1` BLOCKED on any other path → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]`. Its `cause: ci_pending` takes the `--auto` arm below. `cause: none` takes it only when the merge output names a queue-requiring base; the class policy waives no GitHub branch rule. Any other state or cause returns to § 3.2 with its detail.
+   Exit `1` BLOCKED → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and return to § 3.2 with its cause and detail.
 
    **The `--auto` arm** takes only that same head:
 

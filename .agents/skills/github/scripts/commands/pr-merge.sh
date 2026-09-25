@@ -35,7 +35,6 @@ Options:
                    ci-classify-refusal names the cause.
   --force          Skip checks and merge (requires explicit user decision;
                    cannot be combined with --auto)
-  --admin          Explicit current-user admin merge; skips checks; conflicts with --auto
   --auto           If immediate merge is blocked, enable GitHub auto-merge
                    (will fire when CI + branch protection clear). Exits 75.
                    Never bypasses actionable unresolved review threads.
@@ -46,7 +45,7 @@ Options:
 Modes:
   (default)        Run checks, block if critical issues, merge if pass
   --check          Run checks, output JSON for workflow to parse
-  --force/--admin  Deliberately skip all checks; --admin passes --admin to GitHub
+  --force          Deliberately skip all checks
   --auto           Enable auto-merge when immediate merge is blocked
 
 Merge-mode exit codes:
@@ -82,11 +81,9 @@ Exit 75 is volatile:
 
 Merge route:
   Every merge goes through the base branch's merge queue where the base
-  requires one. The immediate merge and --auto pass no --admin, so GitHub
-  enrolls the PR in the queue (exit 75) rather than merging past it, under
-  whatever token the auth ladder selected: in a lane sandbox, the lanes app's
-  installation token. Only --admin, an explicit user decision, asks GitHub to
-  bypass the queue, and a ruleset with no bypass actor refuses it.
+  requires one. No mode passes --admin to GitHub, so GitHub enrolls the PR
+  in the queue (exit 75) rather than merging past it, under whatever token the
+  auth ladder selected: in a lane sandbox, the lanes app's installation token.
 
 Retired settings:
   ORCH_ADMIN_MERGE_GH_CONFIG_DIR, ORCH_ADMIN_MERGE_CLASSES and
@@ -140,10 +137,9 @@ Review-thread gate:
   gh pr merge call or the GitHub UI Merge button bypasses it.
 
 Force rules:
-  --force and --admin skip every check, including the thread gate. --admin also
-  requests GitHub's branch-protection bypass. Both are immediate-only and
-  conflict with --auto. A failed override remains BLOCKED unless the exact-head
-  post-state is MERGED; pending merge state is not success.
+  --force skips every check, including the thread gate. It is immediate-only
+  and conflicts with --auto. A failed override remains BLOCKED unless the
+  exact-head post-state is MERGED; pending merge state is not success.
 
 --check JSON:
   stdout is one object with these fields:
@@ -189,7 +185,6 @@ Examples:
   github.sh pr-merge 42                  # Check + merge if pass
   github.sh pr-merge 42 --auto           # Merge now or queue auto-merge
   github.sh pr-merge 42 --force          # Explicit local override (DANGEROUS)
-  github.sh pr-merge 42 --admin          # Explicit admin override (DANGEROUS)
 EOF
 }
 
@@ -636,7 +631,7 @@ print_blocked() {
         echo "Hint: github.sh await-mergeable $pr_num && retry" >&2
     fi
     if echo "$check_result" | jq -e '[.issues[] | select(test("^(unresolved_threads|review_threads_fetch_failed):"))] | length > 0' >/dev/null 2>&1; then
-        echo "Resolve the review-thread gate and retry. Use --force or --admin only after an explicit decision to override it." >&2
+        echo "Resolve the review-thread gate and retry. Use --force only after an explicit decision to override it." >&2
     else
         echo "Use --auto to queue for auto-merge, or --force after an explicit decision to override safety checks." >&2
     fi
@@ -814,7 +809,7 @@ refuse_retired_settings() {
 
 main() {
     local pr_num="" method="--squash" delete_branch=true
-    local check_only=false force=false admin=false dry_run=false auto=false supplied_head=""
+    local check_only=false force=false dry_run=false auto=false supplied_head=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -843,7 +838,6 @@ main() {
             shift
             ;;
         --force) force=true; shift ;;
-        --admin) admin=true; force=true; shift ;;
         --auto)
             auto=true
             shift
@@ -871,7 +865,7 @@ main() {
     refuse_retired_settings
 
     if [ "$force" = true ] && [ "$auto" = true ]; then
-        echo "Error: --force/--admin and --auto cannot be combined; overrides are immediate-only" >&2
+        echo "Error: --force and --auto cannot be combined; overrides are immediate-only" >&2
         exit 1
     fi
 
@@ -879,7 +873,6 @@ main() {
         echo '{"error": "PR number required"}' >&2
         exit 1
     fi
-    [ "$admin" = false ] || unset GH_TOKEN GITHUB_TOKEN
     if [ -n "$supplied_head" ] && ! [[ "$supplied_head" =~ ^[0-9a-fA-F]{40}$ ]]; then
         echo "Error: --expected-head must be a 40-character commit SHA" >&2; exit 1
     fi
@@ -899,8 +892,8 @@ main() {
             "$(jq -r '.mergedAt // ""' <<<"$PR_STATE_JSON")"
     fi
 
-    local selection=""
-    [ "$admin" = true ] || selection=$(load_bot_token)
+    local selection
+    selection=$(load_bot_token)
     local token="${selection#*=}" token_source="${selection%%=*}"
 
     local check_result=""
@@ -937,7 +930,7 @@ main() {
         if [ -n "${gate_gap:-}" ]; then
             slug=$(kendex_github_resolve_gh_repo "${PROJECT_ROOT:-$PWD}" 2>/dev/null) || slug=unresolved
             echo "arm: no-merge-gate=$gate_gap repo=$slug" >&2
-            echo "  Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch, or merge through orch merge-pr with the explicit consumer-only answer under submit-pr.md § 6.2." >&2
+            echo "  Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch." >&2
             exit 1
         fi
 
@@ -948,13 +941,12 @@ main() {
             echo "$check_result" | jq -r '.warnings[]' | sed 's/^/  ⚠ /' >&2
         fi
     else
-        if [ "$admin" = true ]; then echo "⚠ current-user admin mode: Skipping safety checks" >&2; else echo "⚠ override: Skipping safety checks" >&2; fi
+        echo "⚠ override: Skipping safety checks" >&2
     fi
 
     if [ "$dry_run" = true ]; then
         local token_status="not configured"
         [ -n "$token" ] && token_status="configured"
-        [ "$admin" = false ] || token_status="current-user admin mode"
         local mode="immediate"
         [ "$auto" = true ] && mode="auto-merge fallback"
         echo "Would merge PR #$pr_num ($method, mode=$mode, delete_branch=$delete_branch, token=$token_status)"
@@ -975,7 +967,6 @@ main() {
 
     local -a cmd=(pr merge "$pr_num" "$method" --match-head-commit "$expected_head")
     [ "$auto" = true ] && cmd+=(--auto)
-    [ "$admin" = true ] && cmd+=(--admin)
 
     local merge_output merge_exit=0
     if [ -n "$token" ]; then
@@ -984,7 +975,7 @@ main() {
         echo "Using $token_source as $identity" >&2
         merge_output=$(gh_with_token "$token" "${cmd[@]}" 2>&1) || merge_exit=$?
     else
-        [ "$admin" = true ] || echo "Warning: GH_BOT_TOKEN not configured, using current user" >&2
+        echo "Warning: GH_BOT_TOKEN not configured, using current user" >&2
         merge_output=$(gh_with_token "" "${cmd[@]}" 2>&1) || merge_exit=$?
     fi
 

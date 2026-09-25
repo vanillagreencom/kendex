@@ -26,10 +26,13 @@ rule_fenced "ci-fix reads the decision mode" "$CI" "## 3. Classify And Route" 'o
 rule "ci-fix spends retries before its cap" "$CI" "## 5. Verify" '`continue` reruns § 1' '`at-cap` records and returns `ci-fix-cap`'
 rule_fenced "ci-fix spends the ci-fix budget" "$CI" "## 5. Verify" 'head-budget take' 'ci-fix'
 rule_fenced "ci-fix records its cycle cap" "$CI" "## 5. Verify" 'post-pr-stop record' 'ci-fix-cap'
-rule "an admin answer is the only route to admin merge" "$SUBMIT" "### 6.2 Consumer Admin-Merge Question" 'An admin answer invokes' '`merge_mode: admin`' '§ 1-7'
-rule "automatic decisions continue through the gates" "$SUBMIT" "### 6.2 Consumer Admin-Merge Question" 'a question orch poses and never answers' '`auto-recommended`' '`Continue through the gates`'
-rule "admin failure ends in a named stop" "$MERGE" "" 'Exit `1` from `--admin`' 'records the named stop `merge-blocked`'
 rule_fenced "merge renders its stops into a bound path" "$MERGE" "## 1. Identify Candidates" 'post-pr-stop record' '[MAIN_REPO_ROOT]/tmp/post-pr-stop-[STATE_KEY].md'
+# The admin route is retired (kendex decision D003): no workflow sets a merge
+# mode or passes --admin to pr-merge.
+forbid "the retired admin merge route stays gone" \
+  'merge_mode|pr-merge [^`]*--admin([^-]|$)' \
+  'run `pr-merge [PR_NUMBER] --admin` with `merge_mode: admin`.' \
+  "$SKILL_DIR"/*.md "$SKILL_DIR/workflows"/*.md "$SKILL_DIR/references"/*.md
 retired_opened='not merely open''ed'
 retired_wait='Stop and wait for the us''er'
 forbid "the retired brief-level stop prompt stays gone" \

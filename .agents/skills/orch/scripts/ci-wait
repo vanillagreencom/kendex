@@ -784,7 +784,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
   # gh output. The waiter counts EVERY red check, required or not: it reports
   # what ran on the head. Only the github pr-merge readiness check applies the
   # base branch's required-context filter, and it runs in every mode but
-  # --force and --admin, so the two disagree on a red check the base does not
+  # --force, so the two disagree on a red check the base does not
   # require — there the waiter fails while the merge gate does not. The shared
   # run scoping above keeps them agreeing on which run is current; nothing
   # makes them agree on which checks block.
