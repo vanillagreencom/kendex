@@ -578,6 +578,42 @@ else
   pass "must-fail: a start refusal after the handoff resume fails its contract"
 fi
 
+# A guard sees only the top-level call, so every script that reads a listed
+# `setting` through orch-env and runs it needs its own `path` line in the
+# control-host list. The readers are derived from the scripts, never listed.
+toolchain_conf="$SKILL_DIR/references/control-host-toolchain.conf"
+SETTING_RUNNERS_FOUND=0
+setting_runners_listed() { # CONF
+  local keys="" key runners="" runner rc=0 listed=0
+  SETTING_RUNNERS_FOUND=0
+  keys="$(awk '$1 == "setting" { print $2 }' "$1")" || return 2
+  for key in $keys; do
+    rc=0
+    runners="$(grep -rlE "orch-env\"?[[:space:]]+$key([^A-Za-z0-9_]|\$)" "$REPO_ROOT"/skills/*/scripts)" || rc=$?
+    [[ "$rc" -le 1 ]] || return 2
+    for runner in $runners; do
+      SETTING_RUNNERS_FOUND=$((SETTING_RUNNERS_FOUND + 1))
+      grep -Fxq "path .agents/${runner#"$REPO_ROOT"/}" "$1" || listed=1
+    done
+  done
+  return "$listed"
+}
+
+if setting_runners_listed "$toolchain_conf"; then
+  pass "every script running a listed setting has its own path line"
+else
+  fail "every script running a listed setting must have its own path line"
+fi
+if [[ "$SETTING_RUNNERS_FOUND" -ge 2 ]]; then
+  pass "the setting-runner scan finds the orch-env readers"
+else
+  fail "the setting-runner scan found $SETTING_RUNNERS_FOUND orch-env readers (floor 2): its extraction is broken"
+fi
+assert_doc_mutant_fails setting_runners_listed "$toolchain_conf" \
+  'path .agents/skills/orch/scripts/post-merge' \
+  '# post-merge dropped' \
+  "a listed setting whose runner has no path line"
+
 echo
 echo "=== frozen cross-skill contracts ==="
 
