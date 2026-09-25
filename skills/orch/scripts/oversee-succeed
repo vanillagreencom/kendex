@@ -165,16 +165,14 @@
 #        (`workflow-state path oversee`) is named: `watch-absent` where none
 #        runs, and otherwise `watch-handover pid=<N> pane=<pane> log=<path>`
 #        and the runner line of a helper, this script's internal
-#        `--watch-restart` run, started through lib/job-unit.sh, the runner
-#        every long-lived orch job starts through (references/job-units.md):
-#        as the transient systemd user unit orch-watch-handover-<stamp>-<pid>
-#        where a user manager answers, outside the harness and anything it
-#        kills, and in a session of its own under setsid elsewhere. A helper
+#        `--watch-restart` run, started through lib/job-unit.sh
+#        (references/job-units.md) as the job watch-handover-<stamp>, outside
+#        the harness and anything it kills. A helper
 #        the runner could not start is the notice `watch-restart-failed
 #        step=helper` on stderr, and the successor's own watch start taking
 #        over the watch of the closed pane is the recovery. The helper waits
 #        for the caller window to close and starts the watch again through the
-#        same runner, as the unit orch-watch-restart-<stamp>-<pid>, with its
+#        same runner, as the job watch-restart-<stamp>, with its
 #        recorded command in its recorded directory under this run's
 #        environment, except that TMUX_PANE names the successor pane, the
 #        flags after `--` are the successor's, and the account variable names

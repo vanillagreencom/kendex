@@ -397,8 +397,10 @@ Options:
                       references/watch-delivery.md's. However it is sent,
                       TERM on the loop removes the record at once and ends
                       the pass it is running, and the loop exits once that
-                      pass has: a pass part way through a lane-close waits
-                      that close out first. A start on a
+                      pass has: a pass part way through a lane-close runs it
+                      to its end, reports it and commits its lane row first,
+                      and a start that took that watch over notes
+                      watch-finishing and waits for it. A start on a
                       state whose recorded watch still runs is refused as
                       watch-running naming that pid, except where that watch
                       is the one `oversee-succeed` restarted for this same
@@ -636,6 +638,7 @@ ow_message() { # REASON FIELD=VALUE...
     watch-running) text='Another watch already runs on this fleet state, and this start could not show its pane gone: tmux lists it, or this start runs outside tmux, the record names no pane, or the pane list could not be read. Two watches would read one overseer mailbox and each replay what the other drained. Handle its events, or stop it as references/watch-delivery.md states and start again; the pid field is the watch that read finds.' ;;
     watch-replay-failed) text='The output a restarted watch left beside the fleet state could not be printed or removed, so the start stops rather than lose it or print it twice. The path names the file.' ;;
     watch-record-failed) text='The watch could not write its own record beside the fleet state, so a second watch could not be refused and a succession could not restart this one.' ;;
+    watch-finishing) text='The watch taken over is finishing the lane-close its pass had started. This start waits for it to exit, so the close is reported and its lane row committed before this watch reads them.' ;;
     watch-taken-over) text='A live watch on this fleet state was stopped and this one runs in its place. The reason field says why it could be: succession is the watch oversee-succeed restarted for this pane, pane-gone one whose pane tmux no longer lists.' ;;
     watch-replayed) text='A watch oversee-succeed restarted wrote output no session read, and the restart wrote how it went. Both follow, stdout here and stderr on stderr, and are then removed, so no event it reported and no refusal it ended on is lost.' ;;
     mail-read-failed) text='The lane mailbox could not be read. Fix what lane-mail names rather than reading the lane as silent.' ;;
@@ -1416,10 +1419,11 @@ watch_pane_gone() { # PANE
 }
 
 # The repeat loop's pass or delay, the one child a stop has to take with it.
-# The record goes first, so the start that stopped this loop claims the state
-# at once, then the loop waits for that child: a pass part way through a
-# lane-close outlives the TERM until the close ends (close_hosted_lane), and
-# under a job unit whatever still runs when the loop's unit ends is killed.
+# The record goes first, so the start that stopped this loop is not refused,
+# then the loop waits for that child: a pass part way through a lane-close
+# outlives the TERM until the close ends and its outcome is out
+# (close_hosted_lane), and under a job unit whatever still runs when the
+# loop's unit ends is killed.
 REPEAT_CHILD_PID=""
 repeat_stop() { # STATUS
   watch_pid_release "$STATE_FILE"
@@ -1450,7 +1454,7 @@ repeat_stop() { # STATUS
 # them, so nothing a restarted watch reported where no session read it, and
 # no refusal it ended on, is lost.
 watch_claim() { # ARGV...
-  local why=""
+  local why="" taken=""
   if watch_pid_live "$STATE_FILE"; then
     if [[ "$WATCH_ORIGIN" == succession && -n "${TMUX_PANE:-}" && "$WATCH_PANE" == "$TMUX_PANE" ]]; then
       why=succession
@@ -1460,15 +1464,24 @@ watch_claim() { # ARGV...
     [[ -n "$why" ]] && watch_stop "$WATCH_PID" "$STATE_FILE" \
       || die watch-running "" "pid=$WATCH_PID" "pane=$WATCH_PANE" "path=$STATE_FILE"
     ow_message watch-taken-over "pid=$WATCH_PID" "pane=$WATCH_PANE" "reason=$why" >&2
+    taken="$WATCH_PID"
   fi
   watch_pid_write "$STATE_FILE" "${TMUX_PANE:-none}" "${OVERSEE_WATCH_ORIGIN:-hand}" \
     "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" "${@:1:$ARGV_BASE_COUNT}" \
     || die watch-record-failed "" "path=${WATCH_PID_FILE:-$STATE_FILE}"
   trap 'watch_pid_release "$STATE_FILE"' EXIT
   trap 'repeat_stop 143' TERM
-  # Reaches only a loop started in the foreground: a background job ignores
-  # INT from its start, and bash cannot trap a signal ignored on entry.
+  # Reaches a loop started in the foreground or as a job unit: a job a
+  # non-interactive shell starts with & ignores INT from its start, and bash
+  # cannot trap a signal ignored on entry.
   trap 'repeat_stop 130' INT
+  # The watch taken over has given up its record but may still be finishing a
+  # lane-close: its outcome, the lane's row and its output land before this
+  # watch reads or replays any of them.
+  if [[ -n "$taken" ]] && ! watch_exited "$taken"; then
+    ow_message watch-finishing "pid=$taken" >&2
+    until watch_exited "$taken"; do sleep 0.1; done
+  fi
   if [[ "${OVERSEE_WATCH_ORIGIN:-hand}" != succession ]] \
      && [[ -s "$WATCH_LOG_FILE" || -s "$WATCH_ERR_FILE" ]]; then
     ow_message watch-replayed "log=$WATCH_LOG_FILE" "err=$WATCH_ERR_FILE" >&2
@@ -1700,24 +1713,25 @@ item_state_dir() { # ITEM
 # exit returns 1 with its message on stderr: the caller commits the rows it
 # already settled, other lanes' closes among them, before the pass exits 2.
 #
-# A TERM part way through, which is how a repeat loop stops its pass, waits the
-# close out before this pass exits: the lane record the close writes is what
-# the next watch reads, and a close ended midway loses the lane-closed event.
-# The close runs in the background and is waited on, since bash holds a trap
-# until a foreground child returns, and writes to a file, since a pipe whose
-# reader has exited would end it on its next write. The trap is armed before
-# the close starts and waits for every background job, the close being a
-# pass's only one, so a TERM before the close's pid is known still finds it.
-close_term() {
-  wait 2>/dev/null || true
-  exit 143
-}
+# A TERM part way through, which is how a repeat loop stops its pass, is noted
+# in CLOSE_TERMED and the close runs to its end: its outcome is reported as it
+# would have been, and the caller commits the lane's row and ends the pass. A
+# close ended midway would lose that outcome, and a failure the row is reset
+# for would never be retried. The close runs in the background and is waited
+# on, since bash holds a trap until a foreground child returns: a TERM returns
+# the wait early with the close still running, so it is waited on again until
+# it has exited.
+CLOSE_TERMED=""
 close_hosted_lane() { # ITEM
   local out line path="" rc=0 close_pid
-  trap close_term TERM
+  trap 'CLOSE_TERMED=1' TERM
   "$LANE_CLOSE" --state-dir "$FLEET_STATE_DIR" "$1" > "$WORK_DIR/lane-close.out" 2>&1 &
   close_pid=$!
-  wait "$close_pid" || rc=$?
+  while :; do
+    rc=0
+    wait "$close_pid" || rc=$?
+    [[ -n "$CLOSE_TERMED" && "$rc" -gt 128 ]] && kill -0 "$close_pid" 2>/dev/null || break
+  done
   trap - TERM
   out="$(cat -- "$WORK_DIR/lane-close.out")"
   case "$rc" in
@@ -3206,6 +3220,9 @@ check_lanes() {
           asking_state="$(lane_row_set lane-exited "$asking_state" "$lane" "$pane_key")"
           close_failed=1
         fi
+        # Stopped during the close: what it settled is committed, and the
+        # pass ends here, since the watch that stopped it runs the next one.
+        [[ -z "$CLOSE_TERMED" ]] || { lane_row_commit "$asking_state"; exit 143; }
       fi
     else
       asking_state="$(lane_row_set lane-exited "$asking_state" "$lane" "$pane_key")"

@@ -62,8 +62,14 @@ OUT=""
 ERR=""
 RC=0
 # The PATH a row runs the script under. Empty is this host's own; the dependency
-# refusal rows below set it to a farm missing one binary.
+# refusal rows below set it to a farm missing one binary. Every row runs behind
+# a loginctl that says the user manager lingers, the one manager lib/job-unit.sh
+# starts a unit under, which this host's may not.
 RUN_PATH=""
+LINGER_BIN="$TMP_ROOT/linger-bin"
+mkdir -p "$LINGER_BIN"
+printf '#!/bin/sh\necho yes\n' > "$LINGER_BIN/loginctl"
+chmod +x "$LINGER_BIN/loginctl"
 run_script() { # SCRIPT ARG...
   local script="$1" err
   shift
@@ -78,7 +84,7 @@ run_script() { # SCRIPT ARG...
   OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_BASE \
     -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
     ${INHERITED_CLASS:+DEV_VALIDATE_CLASS=$INHERITED_CLASS} \
-    PATH="${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
+    PATH="$LINGER_BIN:${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
   RC=$?
   set -e
   ERR="$(cat "$err")"
@@ -876,11 +882,12 @@ RUN_PATH=""
 
 # --- --stop ends the runs a worktree's run directories record ------------------
 # The run is started detached and still going when --stop is called, as a lane
-# closed mid-validation leaves it. PATH is empty for this host's own runner.
+# closed mid-validation leaves it. PATH is empty for this host's own runner,
+# behind the lingering loginctl run_script uses.
 STOP_CALLER=""
 start_long_run() { # PROJ PATH
   local out="$1.out" n=0
-  setsid bash -c "env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS PATH='${2:-$PATH}' '$RUN' --worktree '$1' --poll 1 > '$out' 2>&1" &
+  setsid bash -c "env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS PATH='$LINGER_BIN:${2:-$PATH}' '$RUN' --worktree '$1' --poll 1 > '$out' 2>&1" &
   STOP_CALLER=$!
   while [[ ! -s "$1/grand.pid" ]] && (( n < 100 )); do sleep 0.1; n=$((n + 1)); done
 }

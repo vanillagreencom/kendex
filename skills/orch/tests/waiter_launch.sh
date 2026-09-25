@@ -78,7 +78,7 @@ for mutant in no-detach ignore-int no-line; do
   fi
 done
 
-mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/project/.agents/skills" "$TMP_ROOT/no-manager"
+mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/project/.agents/skills" "$TMP_ROOT/no-manager" "$TMP_ROOT/lingering"
 git -C "$TMP_ROOT/project" init -q
 # The launch names the runner from the worktree root, as a lane runs it.
 ln -s "$SKILL_DIR" "$TMP_ROOT/project/.agents/skills/orch"
@@ -108,7 +108,12 @@ mutant_runner no-env '    for name in $(compgen -e); do unit_env+=("--setenv=$na
 ROOT_REAL="$(cd "$TMP_ROOT" && pwd -P)"
 # A systemd-run whose probe fails, as it does where no user manager answers.
 printf '#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n' > "$TMP_ROOT/no-manager/systemd-run"
-chmod +x "$TMP_ROOT/no-manager/systemd-run"
+# A loginctl that says the user manager lingers, the one manager the runner
+# starts a unit under, which this host's may not; the no-manager rows carry it
+# too, so what they fall back on is the probe.
+printf '#!/bin/sh\necho yes\n' > "$TMP_ROOT/lingering/loginctl"
+cp "$TMP_ROOT/lingering/loginctl" "$TMP_ROOT/no-manager/loginctl"
+chmod +x "$TMP_ROOT/no-manager/systemd-run" "$TMP_ROOT/no-manager/loginctl" "$TMP_ROOT/lingering/loginctl"
 cat > "$TMP_ROOT/parent.sh" <<'PARENT'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -236,7 +241,7 @@ ROWS
 # another process fails here and signals nothing.
 watch_read_case() { # RUNNER PATH_PREFIX
   local runner="$1" prefix="$2" read_span read_cmd case_dir run_id read_rc read_out read_group attempt follow_leader
-  local line unit main
+  local line unit main stop_cmd stop_rc
   read_span="$(awk 'match($0, /`pgrep -f [^`]*`/) { print substr($0, RSTART + 1, RLENGTH - 2); exit }' \
     "$SKILL_DIR/references/watch-delivery.md")"
   case_dir="$(run_dir "$TMP_ROOT/read dir+x/$runner")"
@@ -274,18 +279,22 @@ watch_read_case() { # RUNNER PATH_PREFIX
         "runner=$runner: line 1 of the log names the setsid runner and why" "$case_dir/watch.log" ;;
   esac
   printf 'stopped\n' > "$case_dir/watch.exit"
-  if [[ -n "$unit" ]]; then
-    "$SKILL_DIR/scripts/lib/job-unit.sh" stop "$unit" || true
-  elif [[ "$read_group" == "$read_out" ]]; then
-    kill -TERM -- "-$read_out" 2>/dev/null || true
-  fi
+  # The documented stop, its span run as written with the placeholders filled.
+  stop_cmd="$(awk 'match($0, /`[.]agents\/skills\/orch\/scripts\/lib\/job-unit[.]sh stop-job [^`]*`/) { print substr($0, RSTART + 1, RLENGTH - 2); exit }' \
+    "$SKILL_DIR/references/watch-delivery.md")"
+  stop_cmd="${stop_cmd//\[RUN_DIR\]/$case_dir}"
+  stop_cmd="${stop_cmd//\[RUN_ID\]/$run_id}"
+  stop_cmd="${stop_cmd//\[PID\]/$read_out}"
+  stop_rc=0
+  [[ "$read_group" == "$read_out" ]] && ( cd "$TMP_ROOT/project" && sh -c "$stop_cmd" ) >/dev/null 2>&1 || stop_rc=$?
+  assert_eq "$stop_rc" 0 "runner=$runner: the documented stop-job on the launch's record stops the watch" "$case_dir/watch.log"
   for ((attempt=0; attempt<500; attempt++)); do
     harness_read >/dev/null || break
     sleep 0.01
   done
   read_rc=0
   harness_read >/dev/null || read_rc=$?
-  assert_eq "$read_rc" 1 "runner=$runner: the read exits 1 once the stop its runner line names ends the job" "$case_dir/watch.log"
+  assert_eq "$read_rc" 1 "runner=$runner: the read exits 1 once the stop ends the job" "$case_dir/watch.log"
   assert_eq "$(<"$case_dir/watch.exit")" stopped "runner=$runner: the stop mark written before the stop survives it" "$case_dir/watch.log"
   follow_leader="$(pgrep -f "waiter[.]$run_id/follo[w] ")" || follow_leader=""
   [[ -z "$follow_leader" || "$follow_leader" == *$'\n'* ]] || kill -TERM -- "-$follow_leader" 2>/dev/null || true
@@ -300,7 +309,7 @@ watch_read_case() { # RUNNER PATH_PREFIX
 }
 
 if systemd-run --user --quiet --collect true </dev/null >/dev/null 2>&1; then
-  runner_cases systemd ""
+  runner_cases systemd "$TMP_ROOT/lingering:"
 else
   printf '  skip  no systemd user manager answers on this host; the runner=systemd rows did not run\n'
 fi

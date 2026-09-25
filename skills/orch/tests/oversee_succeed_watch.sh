@@ -97,11 +97,16 @@ fresh_output() { rm -f -- "${TMP_ROOT:?}/work/tmp/oversee-watch.log" "${TMP_ROOT
 # The orch job runner starts the helper and the restarted watch. Every row but
 # the unit row runs them where no user manager answers: behind a systemd-run
 # whose probe fails, so under setsid. The unit row passes the variables a
-# user manager is reached by instead.
+# user manager is reached by instead. Both run behind a loginctl that says the
+# manager lingers, the one manager the runner starts a unit under, which this
+# host's may not.
 NO_MANAGER="$TMP_ROOT/no-manager"
-mkdir -p "$NO_MANAGER"
+LINGERING="$TMP_ROOT/lingering"
+mkdir -p "$NO_MANAGER" "$LINGERING"
 printf '#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n' > "$NO_MANAGER/systemd-run"
-chmod +x "$NO_MANAGER/systemd-run"
+printf '#!/bin/sh\necho yes\n' > "$LINGERING/loginctl"
+cp "$LINGERING/loginctl" "$NO_MANAGER/loginctl"
+chmod +x "$NO_MANAGER/systemd-run" "$NO_MANAGER/loginctl" "$LINGERING/loginctl"
 SETSID_LINE='runner=setsid reason=probe-failed detail=Failed to connect to bus: No medium found'
 
 # run_succeed [SUCCEED_BIN] — the script from outside the caller's pane, under
@@ -112,7 +117,7 @@ SETSID_LINE='runner=setsid reason=probe-failed detail=Failed to connect to bus: 
 ROW_PATH="" ROW_LAUNCH="" ROW_MANAGER=""
 run_succeed() {
   local manager=(PATH="${ROW_PATH:+$ROW_PATH:}$NO_MANAGER:$BIN:$PATH")
-  [[ "$ROW_MANAGER" != unit ]] || manager=(PATH="${ROW_PATH:+$ROW_PATH:}$BIN:$PATH"
+  [[ "$ROW_MANAGER" != unit ]] || manager=(PATH="${ROW_PATH:+$ROW_PATH:}$LINGERING:$BIN:$PATH"
     XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}")
   RC=0
   OUT="$(cd "$TMP_ROOT/work" && ${ROW_LAUNCH:+"$ROW_LAUNCH"} env -i HOME="$H" "${manager[@]}" \
@@ -351,6 +356,65 @@ check "a restarted watch that never records itself is a notice beside the fleet 
   "$RC|$FAILED_LINE|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
   "0|oversee-succeed: watch-restart-failed step=start log=$(cd "$TMP_ROOT/work/tmp" && pwd -P)/oversee-watch.err|$STARTED"
 watch_stop "$OLD" "$FLEET_STATE" || true
+
+# A launch the runner refuses is a notice carrying the runner's own error,
+# never a handover or a restart. The helper's: a record the runner cannot
+# write, its temporary file's path taken by a directory. The restart's: a
+# setsid that starts the helper and fails every other start. Each with a
+# control that drops the error from its line.
+if command -v setsid >/dev/null 2>&1; then
+  RUNNER_PART="$TMP_ROOT/work/tmp/oversee-watch.runner.part"
+  helper_refused_case() { # [SUCCEED_BIN]
+    new_caller
+    fresh_output
+    start_watch
+    mkdir -p "$RUNNER_PART"
+    STARTED="$(grep -c '^started ' "$TMP_ROOT/watch.log")"
+    run_succeed "${1:-}"
+    rmdir -- "$RUNNER_PART"
+    HELPER_LINE="$(grep '^oversee-succeed: watch-restart-failed step=helper ' <<<"$OUT" || true)"
+  }
+  helper_refused_case
+  check "a helper the runner refuses is a notice with the runner's error, and no handover or restart" \
+    "$RC|$HELPER_LINE|$(grep -c '^oversee-succeed: watch-handover ' <<<"$OUT")|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
+    "0|oversee-succeed: watch-restart-failed step=helper pid=$OLD error=record-unwritable path=$(cd "$TMP_ROOT/work/tmp" && pwd -P)/oversee-watch.runner|0|$STARTED"
+  watch_stop "$OLD" "$FLEET_STATE" || true
+  script_mutant "$TMP_ROOT/helper-bare" \
+    '      message watch-restart-failed step=helper "pid=$old_watch" "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR" >&2' \
+    '      message watch-restart-failed step=helper "pid=$old_watch" >&2'
+  helper_refused_case "$TMP_ROOT/helper-bare/oversee-succeed"
+  check "control: without its error fields the helper's refusal names no cause" \
+    "$HELPER_LINE" "oversee-succeed: watch-restart-failed step=helper pid=$OLD"
+  watch_stop "$OLD" "$FLEET_STATE" || true
+
+  REAL_SETSID="$(command -v setsid)"
+  mkdir -p "$TMP_ROOT/helper-only"
+  printf '#!/bin/sh\ncase "$*" in *--watch-restart*) exec %s "$@" ;; esac\nexit 1\n' "$REAL_SETSID" \
+    > "$TMP_ROOT/helper-only/setsid"
+  chmod +x "$TMP_ROOT/helper-only/setsid"
+  restart_refused_case() { # [SUCCEED_BIN]
+    new_caller
+    fresh_output
+    start_watch
+    STARTED="$(grep -c '^started ' "$TMP_ROOT/watch.log")"
+    ROW_PATH="$TMP_ROOT/helper-only" run_succeed "${1:-}"
+    wait_failed 100
+  }
+  restart_refused_case
+  check "a restart the runner refuses is a notice beside the fleet state with the runner's error, and starts nothing" \
+    "$RC|$FAILED_LINE|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
+    "0|oversee-succeed: watch-restart-failed step=start dir=$TMP_ROOT/work error=launch-failed status=1|$STARTED"
+  watch_stop "$OLD" "$FLEET_STATE" || true
+  script_mutant "$TMP_ROOT/restart-bare" \
+    '    message watch-restart-failed step=start "dir=$WATCH_CWD" "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR"' \
+    '    message watch-restart-failed step=start "dir=$WATCH_CWD"'
+  restart_refused_case "$TMP_ROOT/restart-bare/oversee-succeed"
+  check "control: without its error fields the restart's refusal names no cause" \
+    "$FAILED_LINE" "oversee-succeed: watch-restart-failed step=start dir=$TMP_ROOT/work"
+  watch_stop "$OLD" "$FLEET_STATE" || true
+else
+  printf '  skip  the refused-launch rows need setsid\n'
+fi
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

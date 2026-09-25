@@ -14,6 +14,13 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JOB_UNIT="$TEST_DIR/../scripts/lib/job-unit.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+# A user manager is used only where it lingers, which this host's may not:
+# every row reaches it through a loginctl that says it does, except the rows
+# that plant their own answer.
+mkdir -p "$TMP_ROOT/linger"
+printf '#!/bin/sh\necho yes\n' > "$TMP_ROOT/linger/loginctl"
+chmod +x "$TMP_ROOT/linger/loginctl"
+export PATH="$TMP_ROOT/linger:$PATH"
 
 PASS=0
 FAIL=0
@@ -171,6 +178,7 @@ TIMED_OUT="$TMP_ROOT/timed-out"
 mkdir -p "$TIMED_OUT"
 printf '#!/usr/bin/env bash\n[[ "${*: -1}" == true ]] && exit 0\necho "Failed to start transient service unit: Connection timed out" >&2\nexit 1\n' > "$TIMED_OUT/systemd-run"
 printf '#!/usr/bin/env bash\n[[ "$STUB_LOAD" != none ]] || exit 1\nprintf "%%s\\n" "$STUB_LOAD"\n' > "$TIMED_OUT/systemctl"
+cp "$TMP_ROOT/linger/loginctl" "$TIMED_OUT/loginctl"
 chmod +x "$TIMED_OUT/systemd-run" "$TIMED_OUT/systemctl"
 # What a launch answers, its unit's pid folded to PID: exit, stdout, stderr and
 # the record's runner.
@@ -217,6 +225,29 @@ run "$JOB_UNIT" stop-job "$TMP_ROOT/bogus.record" 1 "*"
 assert_eq "$RC $ERR" "2 job-unit: record-unreadable path=$TMP_ROOT/bogus.record" \
   "stop-job on an unreadable record exits 2 and names it"
 
+# A user manager that does not linger, or whose Linger cannot be read, is
+# passed over for setsid: it would stop every unit when the last login session
+# ends. The stubs stand for a systemd-run that would start anything and for
+# loginctl's answer.
+if command -v setsid >/dev/null 2>&1; then
+  mkdir -p "$TMP_ROOT/no-linger" "$TMP_ROOT/linger-unread"
+  printf '#!/bin/sh\nexit 0\n' > "$TMP_ROOT/no-linger/systemd-run"
+  printf '#!/bin/sh\necho no\n' > "$TMP_ROOT/no-linger/loginctl"
+  cp "$TMP_ROOT/no-linger/systemd-run" "$TMP_ROOT/linger-unread/systemd-run"
+  printf '#!/bin/sh\necho "Failed to connect to bus: No such file or directory" >&2\nexit 1\n' > "$TMP_ROOT/linger-unread/loginctl"
+  chmod +x "$TMP_ROOT"/no-linger/* "$TMP_ROOT"/linger-unread/*
+  mutant linger-ignored '  elif [[ "$linger" != yes ]]; then' '  elif false; then'
+  # launcher|stub dir|the runner line, its unit's pid folded|label
+  while IFS='|' read -r script stub want label; do
+    run env PATH="$TMP_ROOT/$stub:$FARM" "$script" launch validate-linger "$TMP_ROOT/linger.record" -- true
+    assert_eq "$RC $(sed 's/-[0-9]*$/-PID/' <<<"$OUT")" "$want" "$label"
+  done <<ROWS
+$JOB_UNIT|no-linger|0 runner=setsid reason=no-linger|a manager that does not linger is passed over for setsid
+$JOB_UNIT|linger-unread|0 runner=setsid reason=linger-unread detail=Failed to connect to bus: No such file or directory|a Linger loginctl cannot read is no linger, named with loginctl's words
+$MUTANT|no-linger|0 runner=systemd unit=orch-validate-linger-PID|control: without the linger rule a manager that does not linger gets the unit
+ROWS
+fi
+
 # With neither systemd-run nor setsid there is no runner, and the launch says
 # which command is missing.
 NO_RUNNER="$TMP_ROOT/no-runner"
@@ -261,6 +292,22 @@ $JOB_UNIT|--cap 60|0 1min|a launch with --cap sets that RuntimeMaxSec
 $JOB_UNIT||0 infinity|a launch with no --cap sets no RuntimeMaxSec
 $MUTANT|--cap 60|0 infinity|control: a runner that drops --cap leaves the capped unit unbounded
 ROWS
+
+  # A service ignores SIGPIPE by default; a unit job takes it at its default,
+  # as a job the caller starts does. SigIgn bit 13 is SIGPIPE.
+  sigpipe_state() { # SCRIPT
+    local out="$TMP_ROOT/sigign.$RANDOM" n=0
+    run "$1" launch validate-sigpipe "$TMP_ROOT/sigpipe.record" -- sh -c 'sed -n "s/^SigIgn:[[:space:]]*//p" /proc/self/status > "$0"' "$out"
+    while [[ ! -s "$out" ]] && (( n < 50 )); do sleep 0.1; n=$((n + 1)); done
+    if [[ -s "$out" ]]; then
+      (( (16#$(cat "$out") >> 12) & 1 )) && echo ignored || echo default
+    else
+      echo unread
+    fi
+  }
+  assert_eq "$(sigpipe_state "$JOB_UNIT")" "default" "a unit job takes SIGPIPE at its default"
+  mutant sigpipe-ignored ' -p IgnoreSIGPIPE=no' ''
+  assert_eq "$(sigpipe_state "$MUTANT")" "ignored" "control: without IgnoreSIGPIPE=no the unit job ignores SIGPIPE"
   # exit of the first stop, then of a second stop of the same name
   STOP_ROWS=("0|a running unit is stopped by its exact name" "1|a unit that has ended answers not-found, apart from a failure")
   for row in "${STOP_ROWS[@]}"; do

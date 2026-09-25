@@ -23,18 +23,20 @@
 #                       and removes them; the restarted watch, their writer,
 #                       never does
 #   oversee-watch.runner
-#                       lib/job-unit.sh's record of how the succession's
-#                       restart helper, and then the watch it restarted, were
-#                       started; removed with the two above
+#                       lib/job-unit.sh's record of how a succession started
+#                       its restart helper, which the restart then overwrites
+#                       with how it started the watch; removed with the two
+#                       above
 #
 # A record is live only while its pid runs a process whose command line names
 # oversee-watch: a pid read back off disk may by then belong to anything.
 #
 # Sourced, never executed.
 
-# Seconds a stopped watch has to exit before the stop is reported failed. The
-# loop's TERM trap signals the pass it is waiting on and exits at once; the
-# bound is for a host too loaded to schedule it.
+# Seconds a stopped watch has to give up its record, by removing it or
+# exiting, before the stop is reported failed. The loop's TERM trap removes the
+# record first, so the bound is for a host too loaded to schedule it, not for
+# the pass the loop then waits out.
 WATCH_STOP_SECS=10
 
 # The record's paths for fleet state STATE, and STATE itself resolved, so two
@@ -112,14 +114,13 @@ watch_argv_read() { # STATE
 # remove the record naming it, whichever comes first. TERM reaches the loop's
 # trap at once, since the loop waits on its pass and its delay in the
 # background, and the trap removes the record, then signals that pass and
-# waits for it. A pass part way through `lane-close` waits that close out
-# before it exits, because the next watch reads the hosted lane's record the
-# close writes and a close ended midway loses the lane-closed event; that
-# close has no bound of its own here, so the stop waits for the record and not
-# for the exit. Returns 1 when PID still holds its record at the bound, which
-# is read off the shell's own clock rather than counted in sleeps, so a sleep
-# that returns early cannot shorten it, and where STATE's directory does not
-# resolve, before any signal.
+# waits for it. A pass part way through `lane-close` runs that close to its end
+# and reports it before it exits; that close has no bound of its own here, so
+# the stop waits for the record and not for the exit, and watch_exited tells
+# the caller when the rest has happened. Returns 1 when PID still holds its
+# record at the bound, which is read off the shell's own clock rather than
+# counted in sleeps, so a sleep that returns early cannot shorten it, and
+# where STATE's directory does not resolve, before any signal.
 watch_stop() { # PID STATE
   local deadline=$((SECONDS + WATCH_STOP_SECS))
   watch_pid_paths "$2" || return 1
@@ -128,4 +129,13 @@ watch_stop() { # PID STATE
     (( SECONDS < deadline )) || return 1
     sleep 0.1
   done
+}
+
+# Whether PID, a watch that has given up its record, has exited: it no longer
+# runs, runs something that is not oversee-watch, or is a zombie nobody reaped.
+watch_exited() { # PID
+  local line
+  line="$(ps -o stat= -o args= -p "$1" 2>/dev/null)" || return 0
+  [[ "$line" == *oversee-watch* && "${line# }" != Z* ]] && return 1
+  return 0
 }

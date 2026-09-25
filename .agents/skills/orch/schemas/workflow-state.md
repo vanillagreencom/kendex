@@ -215,7 +215,7 @@ The overseer writes one progress report beside each status report it gives in ch
 
 The keep list holds whatever the age:
 
-- `workflow-state-oversee.json` and its lock, and the watch's own files beside it that `scripts/lib/watch-pid.sh` names: `oversee-watch.pid`, `.argv`, and the `.log`, `.err` and `.runner` a succession-restarted watch writes.
+- `workflow-state-oversee.json` and its lock, and the watch's own files beside it that `scripts/lib/watch-pid.sh` names: `oversee-watch.pid`, `.argv`, the `.log` and `.err` a succession-restarted watch writes, and the `.runner` record of how the succession started it.
 - `handoffs/OVERSEER-HANDOFF.md`, the `handoffs/` and progress report directories themselves, and the overseer's own mailbox `lane-mail/overseer/`.
 - Each `--keep PATH`, and each path that holds it. The overseer names the current watch run directory here.
 - Every path of that directory whose name carries, as a whole token, the item of a lane whose record is not `done`: a `running` lane, and a `preparing` or `stopped` lane a relaunch resumes.

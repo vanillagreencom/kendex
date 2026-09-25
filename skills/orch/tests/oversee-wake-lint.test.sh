@@ -33,7 +33,7 @@ rule "a read that fails is never read as no watch" "$WATCH" "$DELIVERY" \
 rule "every delivery and expiry reads the process before the status" \
   "$WATCH" "$DELIVERY" 'run that read first' 'test -s "[RUN_DIR]/watch.exit"'
 rule "a stop signals only the group the read proved" "$WATCH" "$DELIVERY" \
-  '`kill -TERM -- -[PID]`' 'the group it proved'
+  'job-unit.sh stop-job "[RUN_DIR]/watch.runner" [PID]' 'the group the read proved'
 rule "a stop marks the status file before its kill" "$WATCH" "$DELIVERY" \
   'write `stopped` into `[RUN_DIR]/watch.exit`' 'then run the read'
 rule "the stop mark ends oversight with no restart" "$WATCH" "$DELIVERY" \
