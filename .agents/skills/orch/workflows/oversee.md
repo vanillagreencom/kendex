@@ -65,7 +65,7 @@ The caps refuse a launch before its worktree; a `--relaunch` meets them only whe
 
 - `cap-reached`: launch once a lane closes.
 - `account-cap-reached`: launch once a lane on that account closes, or with `--wait-slot`.
-- `cap-unreadable`, `cap-lock-failed`, `claim-unrecorded`: fix what the line names; never launch around it.
+- `cap-unreadable`, `cap-lock-failed`, `cap-reserve-failed`, `claim-unrecorded`: fix what the line names; never launch around it.
 
 A launch queued behind the caps, such as a chain script, passes `--wait-slot`, which waits for room; the overseer writes no counting loop. `--over-cap` admits one deliberate exception, recorded as the lane record's `over_cap`.
 

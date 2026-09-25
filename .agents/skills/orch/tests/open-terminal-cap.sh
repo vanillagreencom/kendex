@@ -268,8 +268,22 @@ await_step one create
 launch two 1 0 CC-2
 : > "$ROW/release"
 await_exit "$FIRST"
-assert_eq "one=$(rc one) two=$(rc two) $(key two)" "one=0 two=1 open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1" \
-  "the reservation of a launch naming no lane fills the fleet's only slot"
+assert_eq "one=$(rc one) two=$(rc two) $(key two) reservations=$(reservations)" \
+  "one=0 two=1 open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1 reservations=0" \
+  "the reservation of a launch naming no lane fills the fleet's only slot, and goes when the launch ends"
+
+echo "=== an --over-cap launch holds no launch lock through its worktree create ==="
+row over-race
+seed_running CC-9
+STUB_HOLD_CREATE="$ROW/release" launch one 1 0 --lane "$LANE_A" --over-cap CC-1 &
+FIRST=$!
+await_step one create
+launch two 1 0 --lane "$LANE_B" CC-2
+: > "$ROW/release"
+await_exit "$FIRST"
+assert_eq "one=$(rc one) two=$(rc two) lock-waits=$(lock_waits two) $(key two)" \
+  "one=0 two=1 lock-waits=0 open-terminal: cap-reached item=CC-2 cap=1 running=1 claims=1" \
+  "the next launch counts at once, the exception's reservation among the lanes it counts"
 
 echo "=== a launch between its claim and its record counts once ==="
 row claimed
@@ -522,6 +536,12 @@ launch two 10 1 --lane "$LANE_A" CC-2
 assert_eq "one=$(rc one) two=$(rc two) $(key two)" \
   "one=0 two=1 open-terminal: account-cap-reached item=CC-2 lane=$LANE_A cap=1 claims=1 records=1 claims-other=0" \
   "a GUI lane recorded on the account fills its cap for the next launch"
+# A GUI record names no window, so only the end of its item drops the
+# reservation the next item would otherwise count beside it.
+row gui-batch
+MODE=--ghostty launch one 2 0 CC-1 CC-2
+assert_eq "rc=$(rc one) running=$(running) $(key one)" "rc=0 running=CC-1,CC-2 " \
+  "a GUI batch at a fleet cap of 2 launches both items"
 if [[ "$(id -u)" -eq 0 ]]; then
   echo "  skip  running as root, whose writes a directory mode does not stop"
 else
@@ -535,6 +555,18 @@ else
   assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo yes || echo no)" \
     "rc=1 open-terminal: cap-reserve-failed item=CC-1 store=$CLAIMS/claims opened=no" \
     "a claim store that takes no reservation refuses the launch before any window"
+  # The store stops taking writes after a launch naming no lane reserved its
+  # place, so the item's end cannot remove the reservation.
+  row reserve-stuck
+  STUB_HOLD_CREATE="$ROW/release" launch one 10 0 CC-1 &
+  FIRST=$!
+  await_step one create
+  chmod 555 "$CLAIMS/claims"
+  : > "$ROW/release"
+  await_exit "$FIRST"
+  chmod 755 "$CLAIMS/claims"
+  assert_eq "rc=$(rc one) $(grep -cxE "open-terminal: reserve-unremoved path=$CLAIMS/claims/claim\.[^/]+\.reserve" "$ROW/one.err" || true)" \
+    "rc=0 1" "a reservation that cannot be removed is reported with its path, and the launch stands"
   # Under --lane auto the re-pick reads claims alone, so a batch whose claim
   # went unwritten stops rather than picking an account it cannot see.
   row claim-spread
