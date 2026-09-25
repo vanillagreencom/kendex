@@ -14,7 +14,7 @@ Held-back jobs report `skipped`, and GitHub counts skipped as satisfied.
 ## What an adoption PR contains
 
 1. **Vendor the skill** (`kendex refresh` places `.agents/skills/review-gate/scripts/` and these references). The consumer's drift check asserts the vendored copy matches the catalog byte-for-byte.
-2. **Copy `.agents/skills/review-gate/templates/review-gate-writer.yml`** into `.github/workflows/`, VERBATIM. It carries no per-repo values. `kendex refresh` updates the vendored template but never writes `.github/workflows/`; a template update reaches the copy through `.agents/skills/review-gate/scripts/validate-workflow.sh --adopt` (§ Updating an already-adopted copy). The one workflow is the ONLY writer of the gate status; every leg that runs the engine runs the DEFAULT-branch one (PR-attached legs relay). Renaming the copy needs no further change. Keep every line of the relay's `env:` block (`GH_REPO`, `DISPATCH_REF`, `WORKFLOW_REF`, `EVENT_NAME`, `CHECK_NAME`).
+2. **Copy `.agents/skills/review-gate/templates/review-gate-writer.yml`** into `.github/workflows/`, VERBATIM. It carries no per-repo values. `kendex refresh` updates the vendored template but never writes `.github/workflows/`; a template update reaches the copy through `.agents/skills/review-gate/scripts/validate-workflow.sh --adopt`, run after `kendex refresh` (§ Updating an already-adopted copy). The one workflow is the ONLY writer of the gate status; every leg that runs the engine runs the DEFAULT-branch one (PR-attached legs relay). Renaming the copy needs no further change. Keep every line of the relay's `env:` block (`GH_REPO`, `DISPATCH_REF`, `WORKFLOW_REF`, `EVENT_NAME`, `CHECK_NAME`).
 3. **Add the validate job** to the repo's CI (below).
 4. **Set the repo's `REVIEW_GATE_*` keys** in `kendex.settings.toml` (decision axes below; full key table in [settings.md](settings.md)).
 5. **Delete everything the writer supersedes in the same PR** — gate jobs that read the predicate to condition CI, rerun/refire/sweep workflows and scripts, local predicate copies, duplicated gate steps.
@@ -62,7 +62,7 @@ After `kendex refresh` brings a new template, run `.agents/skills/review-gate/sc
 - A copy equal to an earlier shipped version is re-installed from the current template, keeping its script path and its `check_run` opt-in: `ok check=workflow-readopted`. The re-install writes the template's bytes, so a comment-only edit to the copy is replaced.
 - A copy whose code lines equal no shipped version is one a person edited. It is left untouched and named on one `FAIL check=workflow-edited` line, with the first divergent line under it. Re-copy the template by hand.
 
-The consumer train runs this step on every refresh of a consumer that vendors this skill ([orch consumer-train.md § 3](../../orch/workflows/consumer-train.md#3-refresh-each-consumer)), so a template change lands in the render pull request and its validate check stays green, including on a later train when the one that shipped the change skipped that consumer.
+Run it after every `kendex refresh`, whatever that refresh changed, so a template change lands in the same pull request as the refresh and its validate check stays green, including when an earlier refresh skipped this repository. The kendex refresh workflow KEN-1779 adds is the step's caller; until it lands, the consumer train runs it ([orch consumer-train.md § 3](../../orch/workflows/consumer-train.md#3-refresh-each-consumer)).
 
 ### The relay/converge split
 
