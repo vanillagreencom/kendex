@@ -189,6 +189,9 @@ function Cycle([string[]]$Seed, [bool]$BinSeeded) {
   } elseif ($after -contains $binDir) {
     Refuse 'path-left' $binDir "the uninstall left $binDir on the user PATH."
   }
+  if (Test-Path -LiteralPath 'HKCU:\Software\ai.kendex.app') {
+    Refuse 'record-left' 'HKCU:\Software\ai.kendex.app' "the uninstall left the setup's PATH record key behind."
+  }
   Write-Output "checked=user-path-after-uninstall"
 }
 

@@ -712,7 +712,7 @@ fn deb_and_rpm_rows() -> Vec<(&'static str, Fake, InstallChannel)> {
 
 /// One row per Linux machine a `/usr/bin/kendex` can sit on outside Arch.
 /// The `.deb` and `.rpm` are named through the distro's own manager, read
-/// off `os-release` (`ID`, then `ID_LIKE`), and only when that manager
+/// off `os-release` by `ID` or any family `ID_LIKE` names, and only when that manager
 /// says the kendex package owns the file: an rpm distro with dpkg beside
 /// it is asked through rpm, whatever is on `PATH`. A distro of no known
 /// family, an owner of another name, a file no package claims, and an

@@ -202,7 +202,7 @@ pub trait HostProbe {
 
     /// The installed package that owns a path, as `manager`'s own query
     /// names it. Which manager to ask is the caller's, decided from the
-    /// distro and what is on `PATH`, so a dpkg machine is never asked
+    /// distro's `os-release` family, so a dpkg machine is never asked
     /// through pacman and answered `None` with an owner in its own
     /// database.
     ///
