@@ -117,17 +117,23 @@ lane_env_prefix() { # HARNESS DIR
 #             value list would take the kickoff prompt after it as one more
 #             tool name. AskUserQuestion asks; EnterPlanMode ends in the plan
 #             approval dialog.
-#   codex     `codex --help`: `--disable <FEATURE>`, `-c features.<name>=false`.
-#             `request_user_input` reaches the model in Default mode only
-#             under the `default_mode_request_user_input` feature, and Plan
-#             mode is the person's own switch; the feature is disabled so a
-#             CLI that turns it on by default changes nothing here.
+#   codex     `codex --help`: `-c features.<name>=false`, which `--disable
+#             <FEATURE>` equals. `request_user_input` reaches the model in
+#             Default mode only under the `default_mode_request_user_input`
+#             feature, and Plan mode is the person's own switch; the feature
+#             is disabled so a CLI that turns it on by default changes nothing
+#             here. The `-c` form, because `--disable` refuses a feature name
+#             the CLI does not know and `-c` sets it silently: a codex build
+#             without the feature still starts.
 #   pi        `pi --help`: `--exclude-tools <tools>`, which applies to
 #             extension tools; `question` is the tool pi-questions registers.
-#   opencode  not measured; the row names none.
+#   opencode  its `question` tool is a permission, and the one per-launch
+#             switch its docs name is the OPENCODE_PERMISSION environment
+#             variable, JSON no flag word carries: the row names none, and an
+#             opencode lane keeps its question tool.
 LAUNCH_CHOICE_FLAGS=(
   'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions|-|--disallowedTools=AskUserQuestion,EnterPlanMode'
-  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false|--disable default_mode_request_user_input'
+  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false|-c features.default_mode_request_user_input=false'
   'opencode|-m --model|-|-|-|-|-|-|-'
   'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question'
 )
@@ -415,12 +421,13 @@ launch_choice_permission_write() { # HARNESS
 
 # The words a launcher builds for HARNESS, left in LAUNCH_CHOICE_KEPT: that
 # harness's launch settings first, with `--question-off` its question-tool
-# words after them, then WORD... in order with every row's settings run and
-# question-tool run taken out wherever it stands whole. A caller's flags handed
-# on keep none of their own: the same harness would carry them twice, another
-# would be handed a config word its launch form may not have, and whether a
-# launch keeps its question tool is the flag's answer rather than the caller's.
-# Runs are matched newline-bounded, since a caller's flag word can hold a space.
+# words after them, then WORD... in order with every row's settings run taken
+# out wherever it stands whole, and with `--question-off` every row's
+# question-tool run too. A caller's flags handed on keep none of the runs this
+# writes: the same harness would carry them twice, and another would be handed a
+# word its launch form may not have. Without `--question-off` a caller's
+# question-tool words stay as the caller wrote them. Runs are matched
+# newline-bounded, since a caller's flag word can hold a space.
 launch_choice_lead_settings() { # [--question-off] HARNESS WORD...
   local question_off=false
   if [[ "${1:-}" == --question-off ]]; then
@@ -432,6 +439,7 @@ launch_choice_lead_settings() { # [--question-off] HARNESS WORD...
   words="$nl$(printf '%s\n' "$@")$nl"
   for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
     IFS='|' read -r name _ _ _ _ _ _ settings question <<<"$row"
+    [[ "$question_off" == true ]] || question=-
     for run in "$settings" "$question"; do
       [[ "$run" != - ]] || continue
       run="${run// /$nl}"
@@ -439,7 +447,7 @@ launch_choice_lead_settings() { # [--question-off] HARNESS WORD...
     done
     [[ "$name" == "$harness" ]] || continue
     [[ "$settings" == - ]] || lead="${settings// /$nl}"
-    [[ "$question_off" != true || "$question" == - ]] || lead="$lead$nl${question// /$nl}"
+    [[ "$question" == - ]] || lead="$lead$nl${question// /$nl}"
   done
   LAUNCH_CHOICE_KEPT=()
   while IFS= read -r line; do

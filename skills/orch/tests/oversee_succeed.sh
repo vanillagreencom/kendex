@@ -1275,14 +1275,15 @@ check "succession off still prints the line: printing launches nothing" \
 
 # A successor overseer keeps its harness question tool unless
 # ORCH_OVERSEER_QUESTION_TOOL is off, which writes the words every lane launch
-# carries. The setting decides either way, so a caller's own copy of the words
-# is dropped while it is on, and a value that is neither refuses before a line
-# is built.
+# carries. While it is on a caller's own flags stay whole, question-tool words
+# included; off carries them once. A value that is neither refuses before a
+# line is built.
 for row in \
   "claude|||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|unset keeps the claude question tool" \
   "claude|off||0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --disallowedTools=AskUserQuestion\\,EnterPlanMode '$BRIEF'|off takes the claude question tool away" \
-  "claude|on|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --verbose '$BRIEF'|on drops the caller's own question-tool words" \
-  "codex|off||0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false --disable default_mode_request_user_input '$BRIEF'|off takes the codex question tool away" \
+  "claude|on|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose '$BRIEF'|on keeps the caller's own question-tool words" \
+  "claude|off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose '$BRIEF'|off carries a caller's own copy of the words once" \
+  "codex|off||0|env CODEX_HOME='$PRINT_HOME' codex -c check_for_update_on_startup=false -c features.default_mode_request_user_input=false '$BRIEF'|off takes the codex question tool away" \
   "claude|sometimes||1|oversee-succeed: invalid-question-tool ORCH_OVERSEER_QUESTION_TOOL=sometimes|a value that is neither on nor off refuses" \
   ; do
   IFS='|' read -r row_harness row_value row_flags row_rc row_want row_what <<<"$row"

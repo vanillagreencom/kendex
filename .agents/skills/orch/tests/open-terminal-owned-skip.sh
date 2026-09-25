@@ -380,7 +380,7 @@ CODEX_SETTINGS="'-c' 'check_for_update_on_startup=false'"
 # Every command it builds also takes the harness question tool away, in the
 # same quoting: a lane asks its overseer through lane-mail ask.
 CLAUDE_QUESTION_OFF="'--disallowedTools=AskUserQuestion,EnterPlanMode'"
-CODEX_QUESTION_OFF="'--disable' 'default_mode_request_user_input'"
+CODEX_QUESTION_OFF="'-c' 'features.default_mode_request_user_input=false'"
 PI_QUESTION_OFF="'--exclude-tools' 'question'"
 # occurrences TEXT NEEDLE — how many times NEEDLE stands in TEXT.
 occurrences() { local rest="${1//"$2"/}"; printf '%s\n' "$(( (${#1} - ${#rest}) / ${#2} ))"; }
@@ -410,13 +410,13 @@ for capture in launch-codex launch-codex-flagged resume-codex fresh; do
 done
 # A --cmd template is the caller's whole command and gains no setting: the
 # pane runs the substituted template exactly as written.
-CMD_TEMPLATE_CODEX="codex -m gpt-6-astra -c model_reasoning_effort=high --disable default_mode_request_user_input {issue}"
+CMD_TEMPLATE_CODEX="codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false {issue}"
 OT_CAPTURE="$TMP_ROOT/launch-codex-cmd.cmd" LANES_HOME="$SESSION_HOME" run_case launch-codex-cmd -- \
   --harness codex --cmd "$CMD_TEMPLATE_CODEX" CC-11
 for _ in {1..10000}; do [[ -f "$TMP_ROOT/launch-codex-cmd.cmd" ]] && break; done
 LAUNCH_CODEX_CMD="$(cat "$TMP_ROOT/launch-codex-cmd.cmd")"
 assert_eq "${LAUNCH_CODEX_CMD##* && }" \
-  "env CODEX_HOME='$(lane_codex_home_path "$SESSION_HOME/.codex" "$TMP_ROOT/wt/CC-11")' codex -m gpt-6-astra -c model_reasoning_effort=high --disable default_mode_request_user_input CC-11" \
+  "env CODEX_HOME='$(lane_codex_home_path "$SESSION_HOME/.codex" "$TMP_ROOT/wt/CC-11")' codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false CC-11" \
   "a codex --cmd launch runs its substituted template exactly, with no update setting added"
 
 OLD_CODEX="$SESSION_HOME/.old-codex"; CROSS_CODEX=55555555-5555-5555-5555-555555555555; mkdir -p "$OLD_CODEX/sessions/2026"
@@ -472,7 +472,7 @@ exit "${WAKE_STUB_RC:-0}"
 EOF
 chmod +x "$BIN/claude"; ln -s claude "$BIN/codex"; ln -s claude "$BIN/pi-bridge"
 WAKE_LINE="Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 and act on every directive it prints."
-for row in "claude|claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE" "codex|codex exec resume -c check_for_update_on_startup=false --disable default_mode_request_user_input $CODEX444 $WAKE_LINE" "pi|pi-bridge send --cwd $TMP_ROOT/wt/CC-1 $WAKE_LINE"; do
+for row in "claude|claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE" "codex|codex exec resume -c check_for_update_on_startup=false -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE" "pi|pi-bridge send --cwd $TMP_ROOT/wt/CC-1 $WAKE_LINE"; do
   IFS='|' read -r harness expected <<<"$row"
   capture="$TMP_ROOT/wake-$harness.cmd"
   OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "wake-$harness" -- --wake --harness "$harness" CC-1
@@ -678,7 +678,7 @@ WT_CC1="$TMP_ROOT/wt/CC-1"; mkdir -p "$WT_CC1"
 # the row.
 WAKE_HOME="$TMP_ROOT/wake-home"; mkdir -p "$WAKE_HOME/.claude/sessions"
 LIVE_RESUME_claude="claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE"
-LIVE_RESUME_codex="codex exec resume -c check_for_update_on_startup=false --disable default_mode_request_user_input $CODEX444 $WAKE_LINE"
+LIVE_RESUME_codex="codex exec resume -c check_for_update_on_startup=false -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE"
 
 # table_wake HARNESS [SCRIPT] — a HARNESS wake on CC-1 through SCRIPT, over the
 # table the caller staged. Nothing is started and nothing is waited for, so the

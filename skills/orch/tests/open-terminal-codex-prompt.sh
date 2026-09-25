@@ -27,7 +27,7 @@ TC=""
 # The words every codex command leads with, quoted per token as start_cmd
 # quotes each flag: the launch-only setting that keeps Codex off its startup
 # update prompt, then the feature switch that keeps its question tool away.
-CODEX_SETTINGS="'-c' 'check_for_update_on_startup=false' '--disable' 'default_mode_request_user_input'"
+CODEX_SETTINGS="'-c' 'check_for_update_on_startup=false' '-c' 'features.default_mode_request_user_input=false'"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"

@@ -110,9 +110,9 @@ echo "=== every command open-terminal builds takes the question tool away ==="
 # A caller's flags that already carry the words keep one copy, ahead of the rest.
 for row in \
   "claude|-|CC-1|claude -n CC-1 '--disallowedTools=AskUserQuestion,EnterPlanMode' '/orch start CC-1'|claude denies AskUserQuestion and EnterPlanMode" \
-  "codex|-|CC-2|codex '-c' 'check_for_update_on_startup=false' '--disable' 'default_mode_request_user_input' 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-2'|codex disables the request_user_input feature after its update setting" \
+  "codex|-|CC-2|codex '-c' 'check_for_update_on_startup=false' '-c' 'features.default_mode_request_user_input=false' 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-2'|codex disables the request_user_input feature after its update setting" \
   "pi|-|CC-3|pi '--exclude-tools' 'question' '/skill:orch start CC-3'|pi excludes the pi-questions tool" \
-  "opencode|-|CC-4|opencode --prompt '/orch start CC-4'|opencode has no words named and renders none" \
+  "opencode|-|CC-4|opencode --prompt '/orch start CC-4'|an opencode lane keeps its question tool: no flag turns it off, so none is rendered" \
   "pi|--model sonnet:high --exclude-tools question|CC-5|pi '--exclude-tools' 'question' '--model' 'sonnet:high' '/skill:orch start CC-5'|a caller's own copy of the words is carried once" \
   ; do
   IFS='|' read -r harness flags item want what <<<"$row"
@@ -128,14 +128,14 @@ echo "=== a --cmd launch that leaves the question tool on is refused ==="
 # naming no harness, has no row to judge it by.
 for row in \
   "claude|true|CC-11|1|open-terminal: launch-question-tool-missing harness=claude word=--disallowedTools=AskUserQuestion,EnterPlanMode|no|a claude template without the words is refused" \
-  "codex|true|CC-12|1|open-terminal: launch-question-tool-missing harness=codex word=--disable word=default_mode_request_user_input|no|a codex template without the words is refused, one word field per word" \
+  "codex|true|CC-12|1|open-terminal: launch-question-tool-missing harness=codex word=-c word=features.default_mode_request_user_input=false|no|a codex template without the words is refused, one word field per word" \
   "pi|true|CC-13|1|open-terminal: launch-question-tool-missing harness=pi word=--exclude-tools word=question|no|a pi template without the words is refused" \
   "pi|true question --exclude-tools|CC-14|1|open-terminal: launch-question-tool-missing harness=pi word=--exclude-tools word=question|no|the words out of order are not the words" \
   "claude|true --disallowedTools=AskUserQuestion,EnterPlanMode|CC-15|0|-|yes|a claude template carrying the words launches" \
   "claude|true '--disallowedTools=AskUserQuestion,EnterPlanMode'|CC-16|0|-|yes|a word the template quotes is still the word" \
-  "codex|true --disable default_mode_request_user_input|CC-17|0|-|yes|a codex template carrying the words launches" \
+  "codex|true -c features.default_mode_request_user_input=false|CC-17|0|-|yes|a codex template carrying the words launches" \
   "pi|true --exclude-tools question|CC-18|0|-|yes|a pi template carrying the words launches" \
-  "opencode|true|CC-19|0|-|yes|an opencode template is not asked for words" \
+  "opencode|true|CC-19|0|-|yes|an opencode template is not asked for words it has none of" \
   "-|true|CC-20|0|-|yes|a template naming no harness is not asked for words" \
   ; do
   IFS='|' read -r harness template item want_rc want_err want_created what <<<"$row"

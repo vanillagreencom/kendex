@@ -324,17 +324,14 @@ Options:
                     so Codex never opens its startup update prompt, where a
                     pasted line would install the update and end the session.
                     EVERY COMMAND BUILT HERE TAKES THE HARNESS QUESTION TOOL
-                    AWAY, ahead of these flags: a lane asks its overseer
-                    through lane-mail ask, and a question dialog in a lane's
-                    pane has nobody to answer it.
+                    AWAY, ahead of these flags; a lane asks through lane-mail.
                       claude    --disallowedTools=AskUserQuestion,EnterPlanMode
-                      codex     --disable default_mode_request_user_input
+                      codex     -c features.default_mode_request_user_input=false
                       pi        --exclude-tools question
-                    opencode has none named. A --cmd launch on a harness with
-                    words carries them inside its command, whether or not it
-                    names a --lane, and is refused as
-                    launch-question-tool-missing, with one word= field per
-                    word, when it does not.
+                    An opencode lane keeps its tool: no flag turns it off. A
+                    --cmd launch on a harness with words carries them in its
+                    command, --lane or not, or is refused as
+                    launch-question-tool-missing, one word= field per word.
   --relaunch        Replace a dead session on items that may already have a
                     worktree: an existing tree is reused instead of being read
                     as another session's claim. The newest matching Claude,
