@@ -105,12 +105,15 @@ reset_world() { # — the seeded commit, an empty index and a clean tree
   git -C "$R" clean -qfd
 }
 
+# The space bounds every guard run takes, low enough that no host's free space
+# refuses a row that is not about space; a row about space overrides them.
+GUARD_TEST_BOUNDS=(GUARD_MIN_FREE_GB=1 GUARD_EXHAUSTED_FREE_MB=1)
 run_guard() { # [VAR=VALUE...] — sets OUT and RC
   OUT=""
   RC=0
   args=()
   [ "${FULL_GUARD:-0}" -eq 0 ] || args+=(--full)
-  OUT="$(cd "$R" && env "$@" "$GUARD" ${args[@]+"${args[@]}"} 2>&1 </dev/null)" || RC=$?
+  OUT="$(cd "$R" && env "${GUARD_TEST_BOUNDS[@]}" "$@" "$GUARD" ${args[@]+"${args[@]}"} 2>&1 </dev/null)" || RC=$?
 }
 
 # A mutant is a copy of guard with one edit, run in place of it: it removes
