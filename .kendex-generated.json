@@ -780,6 +780,7 @@
   ".agents/skills/orch/references/control-host-toolchain.conf",
   ".agents/skills/orch/references/finding-disposition.md",
   ".agents/skills/orch/references/gates.md",
+  ".agents/skills/orch/references/lane-reach.md",
   ".agents/skills/orch/references/narrow-change.conf",
   ".agents/skills/orch/references/oversee-events.md",
   ".agents/skills/orch/references/peer-mail.md",
