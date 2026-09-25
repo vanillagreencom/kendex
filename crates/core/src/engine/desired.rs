@@ -291,12 +291,68 @@ pub struct DesiredState {
     /// identity exists, so nothing is written for these: the plan reports
     /// the conflict and leaves what is installed alone.
     pub rev_conflicts: BTreeSet<(ItemKind, String)>,
-    /// Hooks not written on a tool because a hook they require will not
-    /// run there, for any reason `desired_kinds::not_written` names. A
-    /// wrapper beside no judge refuses every call it guards, so the plan
-    /// leaves the wrapper out, removes one already installed whatever its
-    /// options, and the finding the dependency walk pushed says why.
-    pub withheld: BTreeSet<(ItemKind, String, HarnessId)>,
+    /// Hooks not written on a tool because a hook they run with will not
+    /// run there, for any reason `desired_kinds::not_written` names: a
+    /// companion the hook requires, or every requirer a derived companion
+    /// exists for, or a companion whose catalog does not answer. The walk
+    /// decides each about the declaration the plan writes
+    /// (`deps::wanted_by`), so the planner leaves the hook out on that tool
+    /// and the finding the walk pushed says why. What becomes of a copy
+    /// already installed there is the reason's ([`Withholding`]), behind
+    /// invariant 4's conflict where the record is another catalog's
+    /// (`plan_pass::plan_withheld`).
+    pub withheld: BTreeMap<(ItemKind, String, HarnessId), Withheld>,
+}
+
+/// What the walk recorded about one hook withheld from one tool: the
+/// provenance of the declaration it decided about, carried for invariant
+/// 4's judgement of a copy already installed (`item_plan::rebound`), and
+/// why it is withheld, which decides how that copy is taken out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Withheld {
+    pub provenance: String,
+    pub because: Withholding,
+}
+
+/// Why a hook is withheld from a tool, and so what becomes of a copy
+/// already installed there. Where two reasons reach one hook on one tool,
+/// the later variant outranks the earlier (`Ord`): a wrapper that lacks a
+/// judge comes out whatever else is true of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Withholding {
+    /// Every hook that requires it is withheld there, and nothing asks for
+    /// it by name. It lacks nothing itself, so an installed copy is an
+    /// orphan like any other, disposed of by `removal::orphans` under the
+    /// plan's options: kept, taken, or held for the person's edits.
+    Orphaned,
+    /// A hook it requires is set to come from a catalog that says nothing
+    /// of it this pass (`expansion::Offer::Silent`), and the manifest alone
+    /// does not refuse it. Whether that hook would run cannot be told, so
+    /// nothing is written and nothing is taken: an installed copy keeps its
+    /// record, as an orphan whose declaration's source is unreachable does,
+    /// and a companion this hook alone derives is not orphaned by it.
+    Unanswered,
+    /// A hook it requires will not run there. A wrapper beside no judge
+    /// refuses every call it guards, so an installed copy comes out
+    /// whatever the plan's options, the person's edits with it
+    /// (`removal::verdicts`), unless a record kept by an answer requires
+    /// it (`removal::keep_what_kept_records_require`).
+    Requires,
+}
+
+impl Withholding {
+    /// Whether this withholding lets a copy installed under it go, to the
+    /// orphan pass that disposes of it. False where the copy stays, record
+    /// and all. The one answer for the pass that keeps the copy
+    /// (`plan_pass::plan_withheld`) and for the walk, which counts a
+    /// requirer as gone from a tool only where its withholding lets its
+    /// copy go (`deps::orphaned`).
+    pub fn takes(self) -> bool {
+        match self {
+            Withholding::Orphaned | Withholding::Requires => true,
+            Withholding::Unanswered => false,
+        }
+    }
 }
 
 impl DesiredState {
@@ -511,13 +567,6 @@ impl ItemCtx<'_> {
             verbatim: catalog == artifact.disk_hash(),
             tree,
         })
-    }
-
-    pub(super) fn recorded_fork(&self, kind: ItemKind) -> bool {
-        self.manifest
-            .forks
-            .get(&kind)
-            .is_some_and(|forks| forks.contains_key(self.name))
     }
 }
 

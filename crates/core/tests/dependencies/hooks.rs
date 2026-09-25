@@ -10,9 +10,9 @@ use super::*;
 /// A wrapper that runs the judge from beside itself, and the judge that
 /// names both wrappers back: the same knot the catalog's lane-mail hooks
 /// tie, with the smallest bodies that parse.
-const JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: Stop\n# description: judge the turn end\n# requires: [deliver, halt]\n# ---\nexit 0\n";
-const DELIVER: &str = "#!/usr/bin/env bash\n# ---\n# name: deliver\n# event: PostToolUse\n# description: hand mail over after a tool call\n# requires: [judge]\n# ---\nexit 0\n";
-const HALT: &str = "#!/usr/bin/env bash\n# ---\n# name: halt\n# event: PreToolUse\n# description: refuse a tool call while a halt stands\n# requires: [judge]\n# ---\nexit 0\n";
+pub(super) const JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: Stop\n# description: judge the turn end\n# requires: [deliver, halt]\n# ---\nexit 0\n";
+pub(super) const DELIVER: &str = "#!/usr/bin/env bash\n# ---\n# name: deliver\n# event: PostToolUse\n# description: hand mail over after a tool call\n# requires: [judge]\n# ---\nexit 0\n";
+pub(super) const HALT: &str = "#!/usr/bin/env bash\n# ---\n# name: halt\n# event: PreToolUse\n# description: refuse a tool call while a halt stands\n# requires: [judge]\n# ---\nexit 0\n";
 /// A hook that needs nothing, for the questions about one hook alone.
 const PLAIN: &str = "#!/usr/bin/env bash\n# ---\n# name: plain\n# event: PreToolUse\n# description: run before a tool call\n# ---\nexit 0\n";
 /// A hook that requires the plain one and that nothing requires back: the
@@ -29,14 +29,27 @@ const NARROW_JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: 
 const NARROW_DELIVER: &str = "#!/usr/bin/env bash\n# ---\n# name: deliver\n# event: PostToolUse\n# description: hand mail over after a tool call\n# harnesses: [claude]\n# requires: [judge]\n# ---\nexit 0\n";
 /// The judge and the wrapper each on TaskCompleted, an event Codex never
 /// fires; the judge alone with only the deliver wrapper to name back.
-const LATE_JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: TaskCompleted\n# description: judge the task end\n# requires: [deliver, halt]\n# ---\nexit 0\n";
+pub(super) const LATE_JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: TaskCompleted\n# description: judge the task end\n# requires: [deliver, halt]\n# ---\nexit 0\n";
 const LATE_JUDGE_ALONE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: TaskCompleted\n# description: judge the task end\n# requires: [deliver]\n# ---\nexit 0\n";
 const LATE_DELIVER: &str = "#!/usr/bin/env bash\n# ---\n# name: deliver\n# event: TaskCompleted\n# description: hand mail over after a task\n# requires: [judge]\n# ---\nexit 0\n";
+/// A hook requiring two companions that require nothing back: one with a
+/// harnesses line of its own that leaves Codex out, one with none. The
+/// one-way edges, where nothing spreads upward from the companions.
+pub(super) const BOSS: &str = "#!/usr/bin/env bash\n# ---\n# name: boss\n# event: PreToolUse\n# description: run before a tool call with both companions\n# requires: [narrow, extra]\n# ---\nexit 0\n";
+pub(super) const NARROW: &str = "#!/usr/bin/env bash\n# ---\n# name: narrow\n# event: PreToolUse\n# description: run before a tool call on Claude Code alone\n# harnesses: [claude]\n# ---\nexit 0\n";
+pub(super) const EXTRA: &str = "#!/usr/bin/env bash\n# ---\n# name: extra\n# event: PostToolUse\n# description: run after a tool call\n# ---\nexit 0\n";
+/// The companion with a chain of its own: it requires `mid`, which requires
+/// `last`, which requires nothing — or, once lacking, a hook the catalog
+/// does not offer.
+const EXTRA_CHAIN: &str = "#!/usr/bin/env bash\n# ---\n# name: extra\n# event: PostToolUse\n# description: run after a tool call with mid\n# requires: [mid]\n# ---\nexit 0\n";
+const MID: &str = "#!/usr/bin/env bash\n# ---\n# name: mid\n# event: PostToolUse\n# description: run after a tool call with last\n# requires: [last]\n# ---\nexit 0\n";
+const LAST: &str = "#!/usr/bin/env bash\n# ---\n# name: last\n# event: PostToolUse\n# description: run after a tool call\n# ---\nexit 0\n";
+const LAST_LACKING: &str = "#!/usr/bin/env bash\n# ---\n# name: last\n# event: PostToolUse\n# description: run after a tool call with a hook that is not there\n# requires: [absent]\n# ---\nexit 0\n";
 
 /// The skill fixture's catalog with the hooks added, installing for two
 /// tools so a companion declared for one of them leaves the other short.
 #[allow(clippy::unwrap_used)]
-fn hook_fixture(declarations: &str) -> Fixture {
+pub(super) fn hook_fixture(declarations: &str) -> Fixture {
     let f = fixture(declarations);
     let hooks = f.source.join("hooks");
     fs::create_dir_all(&hooks).unwrap();
@@ -73,14 +86,14 @@ fn hook_paths(harness: HarnessId) -> (&'static str, &'static str) {
     }
 }
 
-fn hook_on_disk(f: &Fixture, harness: HarnessId, file: &str) -> bool {
+pub(super) fn hook_on_disk(f: &Fixture, harness: HarnessId, file: &str) -> bool {
     f.project.join(hook_paths(harness).0).join(file).exists()
 }
 
 /// Whether the tool's settings run the hook: a script kept on disk but not
 /// registered, or registered but not on disk, is a half the plan never
 /// leaves.
-fn registered(f: &Fixture, harness: HarnessId, name: &str) -> bool {
+pub(super) fn registered(f: &Fixture, harness: HarnessId, name: &str) -> bool {
     fs::read_to_string(f.project.join(hook_paths(harness).1))
         .is_ok_and(|settings| settings.contains(&format!("{name}.sh")))
 }
@@ -99,13 +112,13 @@ fn required_by_hook(name: &str) -> Reason {
 /// What the report says, in the words a person reads: warning messages,
 /// notes, and each drift row's name and detail. Assertion messages print
 /// these and never the report, which carries the plan.
-fn messages(report: &kendex_core::engine::EngineReport) -> Vec<String> {
+pub(super) fn messages(report: &kendex_core::engine::EngineReport) -> Vec<String> {
     report.warnings.iter().map(|w| w.message.clone()).collect()
 }
 fn notes(report: &kendex_core::engine::EngineReport) -> Vec<String> {
     report.notes.iter().map(String::clone).collect()
 }
-fn drift_details(report: &kendex_core::engine::EngineReport) -> Vec<(String, String)> {
+pub(super) fn drift_details(report: &kendex_core::engine::EngineReport) -> Vec<(String, String)> {
     report
         .drift
         .iter()
@@ -114,7 +127,7 @@ fn drift_details(report: &kendex_core::engine::EngineReport) -> Vec<(String, Str
 }
 
 /// The findings on one item.
-fn findings_on<'a>(
+pub(super) fn findings_on<'a>(
     report: &'a kendex_core::engine::EngineReport,
     parent: &str,
 ) -> Vec<&'a kendex_core::engine::ItemWarning> {
@@ -750,6 +763,352 @@ fn the_wrappers_come_out_once_the_judge_is_switched_off() {
                 hook_on_disk(&f, harness, "judge.sh.disabled"),
                 "{label}: the judge is not parked for {harness:?}"
             );
+        }
+    }
+}
+
+/// A companion nothing asks for by name exists for its requirers' sake, so
+/// where every hook that requires it is withheld from a tool, it is
+/// withheld there too: the plan writes it beside no requirer, and its
+/// finding names the requirer. On the tool the requirer runs on, the
+/// companion stays. The companion itself lacks nothing, so a copy installed
+/// while it was still asked for by name is an orphan like any other, under
+/// `apply`'s options: taken as no longer wanted, kept as the edit conflict
+/// where the person edited it, and taken with its edits where they asked
+/// for edits to be discarded.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_companion_is_withheld_where_every_hook_that_requires_it_is() {
+    /// Whether the companion's Codex copy was edited by hand; whether the
+    /// plan discards edits; the drift rows the plan leaves on the copy; and
+    /// whether it stays written and registered there.
+    type Row = (
+        bool,
+        bool,
+        &'static [(kendex_core::engine::DriftState, &'static str)],
+        (bool, bool),
+    );
+    const REMOVED: (kendex_core::engine::DriftState, &str) = (
+        kendex_core::engine::DriftState::Orphaned,
+        "no longer wanted — will be removed",
+    );
+    const EDITED: (kendex_core::engine::DriftState, &str) = (
+        kendex_core::engine::DriftState::Conflict,
+        "no longer wanted, but its files were edited on disk — remove it by name to confirm",
+    );
+    let rows: [Row; 3] = [
+        (false, false, &[REMOVED], (false, false)),
+        (true, false, &[REMOVED, EDITED], (true, true)),
+        (true, true, &[REMOVED], (false, false)),
+    ];
+    for (edited, discard, rows, codex) in rows {
+        let label = format!("edited={edited} discard={discard}");
+        let f = boss_fixture(&[("extra.sh", EXTRA)]);
+        if edited {
+            edit_installed(&f, HarnessId::Codex, "extra.sh");
+        }
+
+        declare(&f, "[hooks.boss]\nsource = \"cat\"\n");
+        let report = plan_apply(
+            &f.env,
+            &f.scope,
+            &PlanOptions {
+                remove_orphans: true,
+                overwrite_edited: discard,
+                ..PlanOptions::default()
+            },
+        )
+        .unwrap();
+        let found: Vec<(&str, &str, Option<&str>)> = report
+            .warnings
+            .iter()
+            .map(|w| {
+                (
+                    w.name.as_str(),
+                    w.message.as_str(),
+                    w.remediation.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    "boss",
+                    "missing required dependency: Codex runs boss without narrow, whose own harnesses line leaves Codex out",
+                    Some(
+                        "add Codex to narrow's harnesses line in the catalog, or list boss's harnesses in kendex.toml without Codex"
+                    ),
+                ),
+                (
+                    "extra",
+                    "extra is wanted only by boss, which is withheld from Codex",
+                    Some("settle the finding on boss"),
+                ),
+            ],
+            "{label}: {:?}",
+            messages(&report)
+        );
+        let extra_rows: Vec<(kendex_core::engine::DriftState, &str)> = report
+            .drift
+            .iter()
+            .filter(|row| row.name == "extra" && row.harness == HarnessId::Codex)
+            .map(|row| (row.state, row.detail.as_str()))
+            .collect();
+        assert_eq!(extra_rows, rows, "{label}: {:?}", drift_details(&report));
+        apply::execute(&f.env, &report.plan).unwrap();
+        for (name, on_claude, on_codex) in [
+            ("boss", (true, true), (false, false)),
+            ("narrow", (true, true), (false, false)),
+            ("extra", (true, true), codex),
+        ] {
+            for (harness, lands) in [(HarnessId::Claude, on_claude), (HarnessId::Codex, on_codex)] {
+                assert_eq!(
+                    (
+                        hook_on_disk(&f, harness, &format!("{name}.sh")),
+                        registered(&f, harness, name)
+                    ),
+                    lands,
+                    "{label}: {name} on {harness:?} (written, registered)"
+                );
+            }
+        }
+    }
+}
+
+/// The boss set installed with `extra` asked for by name as well, so its
+/// copy is on Codex before the declaration is dropped: the boss and narrow
+/// hooks, plus the files given, which hold the extra hook and whatever it
+/// requires.
+#[allow(clippy::unwrap_used)]
+fn boss_fixture(files: &[(&str, &str)]) -> Fixture {
+    let f = hook_fixture("[hooks.boss]\nsource = \"cat\"\n\n[hooks.extra]\nsource = \"cat\"\n");
+    fs::write(f.source.join("hooks/boss.sh"), BOSS).unwrap();
+    fs::write(f.source.join("hooks/narrow.sh"), NARROW).unwrap();
+    for (file, body) in files {
+        fs::write(f.source.join("hooks").join(file), body).unwrap();
+    }
+    apply_now(&f);
+    assert!(
+        hook_on_disk(&f, HarnessId::Codex, "extra.sh") && registered(&f, HarnessId::Codex, "extra"),
+        "extra asked for by name did not install on Codex"
+    );
+    f
+}
+
+/// A line appended to one tool's installed copy of a hook.
+#[allow(clippy::unwrap_used)]
+fn edit_installed(f: &Fixture, harness: HarnessId, file: &str) {
+    let path = f.project.join(hook_paths(harness).0).join(file);
+    let mut script = fs::read_to_string(&path).unwrap();
+    script.push_str("echo edited\n");
+    fs::write(&path, script).unwrap();
+}
+
+/// The companion requires a hook of its own, two steps down a chain whose
+/// end names a hook the catalog lacks. A chain is walked one step per
+/// pass of the spread, so the companion is orphaned on Codex before its own
+/// companion is found withheld there. A missing companion outranks being
+/// orphaned whenever it is found: the wrapper beside no judge comes out
+/// with its edits, as it would had the two reasons arrived together.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_missing_companion_outranks_being_orphaned_whenever_it_is_found() {
+    let f = boss_fixture(&[
+        ("extra.sh", EXTRA_CHAIN),
+        ("mid.sh", MID),
+        ("last.sh", LAST),
+    ]);
+    edit_installed(&f, HarnessId::Codex, "extra.sh");
+
+    fs::write(f.source.join("hooks/last.sh"), LAST_LACKING).unwrap();
+    declare(&f, "[hooks.boss]\nsource = \"cat\"\n");
+    let report = audit(&f.env, &f.scope).unwrap();
+    let extra_rows: Vec<(kendex_core::engine::DriftState, &str)> = report
+        .drift
+        .iter()
+        .filter(|row| row.name == "extra" && row.harness == HarnessId::Codex)
+        .map(|row| (row.state, row.detail.as_str()))
+        .collect();
+    assert_eq!(
+        extra_rows,
+        [(
+            kendex_core::engine::DriftState::Orphaned,
+            "withheld: a hook it requires will not run here — will be removed",
+        )],
+        "{:?}",
+        drift_details(&report)
+    );
+    apply::execute(&f.env, &report.plan).unwrap();
+    assert_eq!(
+        (
+            hook_on_disk(&f, HarnessId::Codex, "extra.sh"),
+            registered(&f, HarnessId::Codex, "extra")
+        ),
+        (false, false),
+        "the edited wrapper stayed armed beside a judge that will not run"
+    );
+}
+
+/// One way the head of the chain stays installed: the declarations left
+/// after the install; whether the catalog still offers boss; the options;
+/// whether the Codex copy of extra was edited; the tool whose rows are
+/// read, and the rows there on everything but boss; and whether the chain
+/// stays on Claude Code and on Codex.
+type KeptChainRow = (
+    &'static str,
+    &'static str,
+    bool,
+    PlanOptions,
+    bool,
+    HarnessId,
+    &'static [(&'static str, kendex_core::engine::DriftState, &'static str)],
+    (bool, bool),
+    (bool, bool),
+);
+
+fn kept_chain_rows() -> [KeptChainRow; 4] {
+    use kendex_core::engine::DriftState::{Conflict, Orphaned};
+    const REMOVED: &str = "no longer wanted — will be removed";
+    const EDITED: &str =
+        "no longer wanted, but its files were edited on disk — remove it by name to confirm";
+    const LEFT: &str = "left over from an earlier setup; nothing needs it anymore";
+    const BY_BOSS: &str = "needed by boss, which stays installed — kept with it";
+    const BY_EXTRA: &str = "needed by extra, which stays installed — kept with it";
+    const BY_MID: &str = "needed by mid, which stays installed — kept with it";
+    [
+        (
+            "held under apply, boss still derives the Claude chain",
+            "[hooks.boss]\nsource = \"cat\"\n",
+            true,
+            PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            },
+            true,
+            HarnessId::Codex,
+            &[
+                ("extra", Orphaned, REMOVED),
+                ("extra", Conflict, EDITED),
+                ("last", Orphaned, BY_MID),
+                ("mid", Orphaned, BY_EXTRA),
+            ],
+            (true, true),
+            (true, true),
+        ),
+        (
+            "held under apply, the Claude chain orphaned too",
+            "",
+            true,
+            PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            },
+            true,
+            HarnessId::Codex,
+            &[
+                ("extra", Orphaned, REMOVED),
+                ("extra", Conflict, EDITED),
+                ("last", Orphaned, BY_MID),
+                ("mid", Orphaned, BY_EXTRA),
+            ],
+            (false, false),
+            (true, true),
+        ),
+        (
+            "left over under refresh's sweep",
+            "",
+            true,
+            PlanOptions {
+                sweep_unneeded: true,
+                ..PlanOptions::default()
+            },
+            false,
+            HarnessId::Codex,
+            &[
+                ("extra", Orphaned, LEFT),
+                ("last", Orphaned, BY_MID),
+                ("mid", Orphaned, BY_EXTRA),
+            ],
+            (true, true),
+            (true, true),
+        ),
+        (
+            "boss retained for want of an answer, no longer offered",
+            "[hooks.boss]\nsource = \"cat\"\n",
+            false,
+            PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            },
+            false,
+            HarnessId::Claude,
+            &[
+                ("extra", Orphaned, BY_BOSS),
+                ("last", Orphaned, BY_MID),
+                ("mid", Orphaned, BY_EXTRA),
+                ("narrow", Orphaned, BY_BOSS),
+            ],
+            (true, true),
+            (false, false),
+        ),
+    ]
+}
+
+/// The companion with a chain of its own below it. A record that stays
+/// installed — held for the person's edits, left over under options that
+/// do not remove it, or retained because its catalog no longer offers
+/// what it declares — keeps what it requires on its tool, down the chain,
+/// rather than losing it from beside a hook left armed; a copy of the
+/// same chain on a tool where nothing keeps its head goes with it. The
+/// records of what is kept stay in the lock.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn what_a_kept_orphan_requires_is_kept_with_it() {
+    let rows = kept_chain_rows();
+    for (label, declarations, offered, options, edited, on, expected, claude, codex) in rows {
+        let f = boss_fixture(&[
+            ("extra.sh", EXTRA_CHAIN),
+            ("mid.sh", MID),
+            ("last.sh", LAST),
+        ]);
+        if edited {
+            edit_installed(&f, HarnessId::Codex, "extra.sh");
+        }
+        if !offered {
+            fs::remove_file(f.source.join("hooks/boss.sh")).unwrap();
+        }
+        declare(&f, declarations);
+        let report = plan_apply(&f.env, &f.scope, &options).unwrap();
+        let rows: Vec<(&str, kendex_core::engine::DriftState, &str)> = report
+            .drift
+            .iter()
+            .filter(|row| row.harness == on && row.name != "boss")
+            .map(|row| (row.name.as_str(), row.state, row.detail.as_str()))
+            .collect();
+        assert_eq!(rows, expected, "{label}: {:?}", drift_details(&report));
+        for (harness, stays) in [(HarnessId::Claude, claude), (HarnessId::Codex, codex)] {
+            for name in ["extra", "mid", "last"] {
+                let key = format!("hook:{name}:{}", harness.name());
+                assert_eq!(
+                    report.record.entries.contains_key(&key),
+                    stays.0,
+                    "{label}: the record {key}"
+                );
+            }
+        }
+        apply::execute(&f.env, &report.plan).unwrap();
+        for (harness, stays) in [(HarnessId::Claude, claude), (HarnessId::Codex, codex)] {
+            for name in ["extra", "mid", "last"] {
+                assert_eq!(
+                    (
+                        hook_on_disk(&f, harness, &format!("{name}.sh")),
+                        registered(&f, harness, name)
+                    ),
+                    stays,
+                    "{label}: {name} on {harness:?} (written, registered)"
+                );
+            }
         }
     }
 }

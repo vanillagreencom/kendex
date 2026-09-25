@@ -362,6 +362,15 @@ impl Manifest {
         }
     }
 
+    /// Whether the manifest records this item as a fork: its rebind from a
+    /// remote to the local source is the recorded outcome of forking, which
+    /// invariant 4 lets through, not a provenance clash.
+    pub fn recorded_fork(&self, kind: crate::model::ItemKind, name: &str) -> bool {
+        self.forks
+            .get(&kind)
+            .is_some_and(|forks| forks.contains_key(name))
+    }
+
     pub fn is_suppressed(&self, kind: crate::model::ItemKind, name: &str) -> bool {
         self.suppressed
             .get(&kind)

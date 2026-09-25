@@ -30,7 +30,7 @@ use crate::source::find_item;
 use super::ItemWarning;
 use super::desired::hold::HeldPins;
 use super::desired::{DesiredState, target_harnesses};
-use super::expansion::{Catalogs, Expansion};
+use super::expansion::{Catalogs, Expansion, OpenCatalog};
 
 /// One member, as every set that carries it asked for it.
 struct Carried {
@@ -185,7 +185,9 @@ fn installable(
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
 ) -> Vec<(ItemKind, String, ItemDecl, Vec<HarnessId>)> {
-    let Some((sealed, config, _)) = catalogs.get(&decl.source, decl.rev.as_deref(), state) else {
+    let Some(OpenCatalog { sealed, config, .. }) =
+        catalogs.get(&decl.source, decl.rev.as_deref(), state)
+    else {
         state.mark_incomplete();
         return Vec::new();
     };

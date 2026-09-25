@@ -256,7 +256,7 @@ fn push_installs(
             source_name: ctx.decl.source.clone(),
             provenance: ctx.provenance.to_owned(),
             source_commit: ctx.source_commit.map(str::to_owned),
-            recorded_fork: ctx.recorded_fork(ItemKind::Skill),
+            recorded_fork: ctx.manifest.recorded_fork(ItemKind::Skill, ctx.name),
             hash: installation_hash(
                 ctx.sealed,
                 ctx.item_path,

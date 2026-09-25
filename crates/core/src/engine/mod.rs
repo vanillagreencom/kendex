@@ -170,6 +170,7 @@ pub fn plan_scope(
         crate::pi_ext::RecordBasis::Recorded,
     )?);
     let mut written = written::Written::default();
+    let mut kept = item_plan::KeptAsIs::default();
     let mut config_edits = config_edits::ConfigEditPlan::default();
 
     plan_manifest_write(env, scope, options.manifest_base.as_ref(), &state, &mut ops)?;
@@ -185,62 +186,33 @@ pub fn plan_scope(
         &mut ops,
         &mut config_edits,
         &mut new_lock,
+        &mut kept,
         &mut written,
     )?;
 
-    // Notes about the scope rather than about any one item: what the
-    // settings seed found, what the reserved-name move did, what the git
-    // posture changed.
-    // The order between them is not this caller's to choose, so one entry
-    // point plans all three: `settings_write.rs` says why.
-    let (mut scope_notes, settings_drift) = plan_project_files(scope, &state, options, &mut ops)?;
-    drift.extend(settings_drift);
-    // The shims a project owes its instruction files, read off the
-    // harness list the manifest declares: committed files, never lock
-    // entries, so they are planned beside the settings file rather than
-    // through the item model.
-    let (instruction_shims, shim_drift) = instruction_shims::plan_instruction_shims(
+    let (mut scope_notes, instruction_shims) = plan_scope_files(
         env,
         scope,
-        &manifest.install.harnesses,
-        options,
-        &mut ops,
-        &mut config_edits,
-    )?;
-    drift.extend(shim_drift);
-
-    // Trash ops all pass one guard: writes for this pass are already
-    // planned, so anything still wanted is known, and no path goes to the
-    // trash twice.
-    let mut guard = removal::TrashGuard::new(&state.items, owned::paths(env, scope, &new_lock));
-
-    stale::stale_emitted(lock, &new_lock, &mut guard, &mut ops)?;
-
-    let refused_keys = plan_pass::plan_refusals(
-        env,
-        scope,
-        lock,
+        &manifest,
         &state,
-        &mut guard,
+        options,
         &mut drift,
         &mut ops,
         &mut config_edits,
-        &mut new_lock,
     )?;
 
-    let sweepable = removal::orphans(
+    let sweepable = plan_removals(
         env,
         scope,
         &manifest,
         lock,
         &state,
         options,
-        &refused_keys,
-        &mut guard,
         &mut drift,
         &mut ops,
         &mut config_edits,
         &mut new_lock,
+        &mut kept,
         &mut scope_notes,
     )?;
 
@@ -283,6 +255,96 @@ pub fn plan_scope(
     };
     report.notes.extend(scope_notes);
     settled(env, scope, &manifest, lock, options, &state.items, report)
+}
+
+/// Everything a plan takes away, after every write is planned: stale
+/// emitted files, what a refusal or a withholding takes or keeps, then
+/// the orphans. Returns what a sweep could still take.
+#[allow(clippy::too_many_arguments)]
+fn plan_removals(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+    state: &desired::DesiredState,
+    options: &PlanOptions,
+    drift: &mut Vec<DriftRow>,
+    ops: &mut Vec<PlannedOp>,
+    config_edits: &mut config_edits::ConfigEditPlan,
+    new_lock: &mut Lock,
+    kept: &mut item_plan::KeptAsIs,
+    scope_notes: &mut Vec<String>,
+) -> Result<Vec<SetChange>> {
+    // Trash ops all pass one guard: writes for this pass are already
+    // planned, so anything still wanted is known, and no path goes to the
+    // trash twice.
+    let mut guard = removal::TrashGuard::new(&state.items, owned::paths(env, scope, new_lock));
+    stale::stale_emitted(lock, new_lock, &mut guard, ops)?;
+    let decided_keys = plan_pass::plan_not_written(
+        env,
+        scope,
+        manifest,
+        lock,
+        state,
+        &mut guard,
+        drift,
+        ops,
+        config_edits,
+        new_lock,
+        kept,
+    )?;
+    removal::orphans(
+        env,
+        scope,
+        manifest,
+        lock,
+        state,
+        options,
+        &decided_keys,
+        kept,
+        &mut guard,
+        drift,
+        ops,
+        config_edits,
+        new_lock,
+        scope_notes,
+    )
+}
+
+/// The files a scope owes beside its items: the project files, and the
+/// shims its instruction files carry. Returns the notes about the scope
+/// rather than about any one item — what the settings seed found, what the
+/// reserved-name move did, what the git posture changed — and the shims'
+/// standings.
+#[allow(clippy::too_many_arguments)]
+fn plan_scope_files(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    state: &desired::DesiredState,
+    options: &PlanOptions,
+    drift: &mut Vec<DriftRow>,
+    ops: &mut Vec<PlannedOp>,
+    config_edits: &mut config_edits::ConfigEditPlan,
+) -> Result<(Vec<String>, Vec<instruction_shims::ShimStanding>)> {
+    // The order between the project files is not this caller's to choose,
+    // so one entry point plans all three: `settings_write.rs` says why.
+    let (scope_notes, settings_drift) = plan_project_files(scope, state, options, ops)?;
+    drift.extend(settings_drift);
+    // The shims a project owes its instruction files, read off the
+    // harness list the manifest declares: committed files, never lock
+    // entries, so they are planned beside the settings file rather than
+    // through the item model.
+    let (instruction_shims, shim_drift) = instruction_shims::plan_instruction_shims(
+        env,
+        scope,
+        &manifest.install.harnesses,
+        options,
+        ops,
+        config_edits,
+    )?;
+    drift.extend(shim_drift);
+    Ok((scope_notes, instruction_shims))
 }
 
 /// The report with the rows about content nothing manages added, refused

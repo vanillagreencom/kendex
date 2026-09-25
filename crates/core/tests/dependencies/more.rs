@@ -62,6 +62,41 @@ fn an_optional_dependency_installs_only_once_it_is_chosen() {
             .reasons
             .contains(&Reason::Requested)
     );
+
+    // The choice dropped again: the extra goes, and the record that still
+    // names dev as its requirer keeps nothing, since dev is written this
+    // pass as it is and no pass kept it in place of writing it.
+    fs::write(
+        f.project.join("kendex.toml"),
+        "schema = 6\n\n[sources.cat]\n".to_owned()
+            + &source_path(&f.source)
+            + "\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.dev]\nsource = \"cat\"\n",
+    )
+    .unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            remove_orphans: true,
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        report
+            .set_changes
+            .iter()
+            .any(|c| c.name == "linear" && c.direction == SetDirection::Remove),
+        "{:?}",
+        report.drift
+    );
+    apply::execute(&f.env, &report.plan).unwrap();
+    assert!(
+        !installed(&f, "linear"),
+        "the extra no longer chosen stayed"
+    );
+    assert!(installed(&f, "dev") && installed(&f, "github"));
 }
 
 /// A dependency its own declaration keeps off a tool is honored there, and

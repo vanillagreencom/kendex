@@ -1,15 +1,16 @@
-//! The per-item planning pass and the refusal pass — the two walks over
-//! the desired state that turn it into drift rows and ops.
+//! The per-item planning pass, the refusal pass and the withheld pass —
+//! the walks over the desired state that turn it into drift rows and ops.
 
 use std::collections::BTreeSet;
 
 use crate::apply::PlannedOp;
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::Lock;
+use crate::lock::{Lock, entry_key};
+use crate::manifest::Manifest;
 use crate::model::Scope;
 
-use super::item_plan::plan_item;
+use super::item_plan::{KeptAsIs, plan_item};
 use super::{
     DriftCause, DriftRow, DriftState, PlanOptions, config_edits, desired, holds, item_plan,
     removal, written,
@@ -33,6 +34,7 @@ pub(super) fn plan_items(
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
+    kept: &mut KeptAsIs,
     written: &mut written::Written,
 ) -> Result<(Vec<super::ForkEdit>, Vec<super::report_types::RecordedGone>)> {
     let ownership = super::ownership_for_plan(env, scope, lock, &state.items)?;
@@ -48,6 +50,7 @@ pub(super) fn plan_items(
             ops,
             config_edits,
             new_lock,
+            kept,
             written,
         };
         if holds::hold_rev_conflict(item, scope, lock, &state.rev_conflicts, &mut sink) {
@@ -123,7 +126,7 @@ const EDITS_KEPT: &str =
 /// installation alone holds comes off: the tree a refused tool shares with
 /// a tool that still installs stays exactly where it is.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn plan_refusals(
+fn plan_refusals(
     env: &Env,
     scope: &Scope,
     lock: &Lock,
@@ -133,6 +136,7 @@ pub(super) fn plan_refusals(
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
+    kept: &mut KeptAsIs,
 ) -> Result<BTreeSet<String>> {
     let refused_keys: BTreeSet<String> = state
         .refused
@@ -165,7 +169,7 @@ pub(super) fn plan_refusals(
                 // saying kendex wrote it, and the next pass would read it as
                 // a stranger's directory — refusing, forever, to write the
                 // accepted content over it.
-                new_lock.entries.insert(key, entry.clone());
+                kept.keep(new_lock, &key, entry);
                 continue;
             }
             guard.extend(
@@ -193,4 +197,90 @@ pub(super) fn plan_refusals(
         ops.append(&mut removals);
     }
     Ok(refused_keys)
+}
+
+/// The records planned for outside the item pass, because no item is
+/// written for them: what a refusal takes or keeps, then what a
+/// withholding keeps. Returns their keys, so the orphan pass asks about
+/// none of them.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn plan_not_written(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+    state: &desired::DesiredState,
+    guard: &mut removal::TrashGuard,
+    drift: &mut Vec<DriftRow>,
+    ops: &mut Vec<PlannedOp>,
+    config_edits: &mut config_edits::ConfigEditPlan,
+    new_lock: &mut Lock,
+    kept: &mut KeptAsIs,
+) -> Result<BTreeSet<String>> {
+    let mut decided = plan_refusals(
+        env,
+        scope,
+        lock,
+        state,
+        guard,
+        drift,
+        ops,
+        config_edits,
+        new_lock,
+        kept,
+    )?;
+    decided.extend(plan_withheld(
+        scope, manifest, lock, state, drift, new_lock, kept,
+    ));
+    Ok(decided)
+}
+
+/// A hook withheld from a tool is written there by nothing; the finding
+/// the dependency walk pushed says why. A record under the hook's key that
+/// is another declaration's — installed from one catalog, now set to come
+/// from another — is invariant 4's conflict, as it would be for a hook the
+/// plan writes: the record stays, the row says to remove it first, and
+/// nothing of it is taken. Otherwise the reason for withholding
+/// ([`desired::Withholding`]) says whether the copy stays: one whose
+/// companion's catalog does not answer keeps its record with no row and
+/// no op, since nothing says the copy is wrong. Every copy the withholding
+/// lets go is left to `removal::orphans`, the owner of every take a
+/// withholding leads to, where `removal::keep_what_kept_records_require`
+/// says which kept record keeps it. Returns the keys of the records this
+/// pass kept.
+fn plan_withheld(
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+    state: &desired::DesiredState,
+    drift: &mut Vec<DriftRow>,
+    new_lock: &mut Lock,
+    kept: &mut KeptAsIs,
+) -> BTreeSet<String> {
+    let mut decided = BTreeSet::new();
+    for ((kind, name, harness), withheld) in &state.withheld {
+        let key = entry_key(*kind, name, *harness);
+        let Some(entry) = lock.entries.get(&key) else {
+            continue;
+        };
+        let recorded_fork = manifest.recorded_fork(*kind, name);
+        if let Some(detail) = item_plan::rebound(entry, &withheld.provenance, recorded_fork) {
+            drift.push(DriftRow {
+                kind: *kind,
+                name: name.clone(),
+                harness: *harness,
+                scope: scope.clone(),
+                state: DriftState::Conflict,
+                detail,
+                cause: None,
+                compared: None,
+                also_in_the_way: Vec::new(),
+            });
+        } else if withheld.because.takes() {
+            continue;
+        }
+        kept.keep(new_lock, &key, entry);
+        decided.insert(key);
+    }
+    decided
 }

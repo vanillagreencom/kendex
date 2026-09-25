@@ -39,9 +39,7 @@ pub(super) fn hold_rev_conflict(
         also_in_the_way: Vec::new(),
     });
     if let Some(entry) = lock.entries.get(&item.key) {
-        sink.new_lock
-            .entries
-            .insert(item.key.clone(), entry.clone());
+        sink.kept.keep(sink.new_lock, &item.key, entry);
     }
     true
 }
@@ -274,9 +272,7 @@ pub(super) fn hold_local_edit(
         compared: None,
         also_in_the_way: Vec::new(),
     });
-    sink.new_lock
-        .entries
-        .insert(item.key.clone(), entry.clone());
+    sink.kept.keep(sink.new_lock, &item.key, entry);
     true
 }
 
