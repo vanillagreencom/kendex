@@ -200,8 +200,9 @@ ORCH_LANE_ACCOUNT_CLAIMS = "3"
 
 # The overseer's status report: what landed, what is running, what is next
 # and what waits on you, pasted into its chat and saved as a progress report.
-# "on" writes one on the schedule below; "off" writes none on a schedule. The
-# report at every overseer handover is written whatever this says.
+# "on" writes one on the schedule below; "off" writes none on a schedule. A
+# live overseer's report at its own handover is written whatever this says; a
+# dead or walled overseer's handover writes none.
 # values: on | off
 ORCH_REPORT = "on"
 
