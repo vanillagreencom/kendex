@@ -28,13 +28,16 @@ assert_eq() { # GOT WANT LABEL
   fi
 }
 
-# The clock every case reads: `date -u +%s` answers NOW, every other call is
-# the host's date.
+# The clock every case reads: `date -u +%s` answers the case's now file, else
+# NOW; every other call is the host's date.
 NOW=1790000000
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/date" <<EOF
 #!/usr/bin/env bash
-[[ "\$*" != "-u +%s" ]] || { echo $NOW; exit 0; }
+if [[ "\$*" == "-u +%s" ]]; then
+  if [[ -f "\$CASE/now" ]]; then cat "\$CASE/now"; else echo $NOW; fi
+  exit 0
+fi
 exec "$REAL_DATE" "\$@"
 EOF
 # gh: `pr list --state merged` answers merged.json narrowed to --head and
@@ -70,10 +73,17 @@ esac
 EOF
 # The Linear CLI: `cache issues get ID` answers linear-ID.json in the safe
 # shape under --format=safe, and nested as {issue: ...} otherwise, the raw
-# shape a project's LINEAR_FORMAT=raw gives a call that names no format.
+# shape a project's LINEAR_FORMAT=raw gives a call that names no format. A
+# merge-on-read-ID.json file is a pull request that merges while ID is read:
+# it joins merged.json, once, mid-render.
 cat > "$TMP_ROOT/bin/linear" <<'EOF'
 #!/usr/bin/env bash
 [[ "$1 $2 $3" == "cache issues get" && -f "$CASE/linear-$4.json" ]] || { echo "No cache entry for $4" >&2; exit 1; }
+if [[ -f "$CASE/merge-on-read-$4.json" ]]; then
+  jq -c --slurpfile pr "$CASE/merge-on-read-$4.json" '. + $pr' "$CASE/merged.json" > "$CASE/merged.next" || exit 1
+  mv -- "$CASE/merged.next" "$CASE/merged.json" || exit 1
+  rm -f -- "$CASE/merge-on-read-$4.json"
+fi
 if [[ "${5:-}" == --format=safe ]]; then cat "$CASE/linear-$4.json"; else jq -c '{issue: .}' "$CASE/linear-$4.json"; fi
 EOF
 # github.sh: `pr-list-failing --all` answers failing.<SLUG>.json for the
@@ -386,6 +396,27 @@ assert_eq "$RC|$(awk '/^Waiting on you/' <<<"$OUT")" "0|Waiting on you: none" "a
 rm -f -- "${CASE:?}/host/w/KEN-7/.git"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Waiting on you/' <<<"$OUT")" "0|Waiting on you: none" "a hosted lane whose worktree is gone renders, waiting on nothing"
+
+echo "=== write: each merge lands in exactly one report ==="
+# KEN-3 merged at the second the lists are read, and KEN-2 merges while the
+# render reads KEN-1's issue, after its lists were read. Neither is in this
+# report; both are in the next.
+new_case merge_mid_render
+report -3600
+fleet '' "$(lane KEN-1 running)" "$(lane KEN-2 done)" "$(lane KEN-3 done)"
+for n in 1 2 3; do issue "KEN-$n" "Title $n" "Outcome $n"; done
+echo "[$(merged_pr 9 ken-3 0 9999999aaa)]" > "$CASE/merged.json"
+merged_pr 7 ken-2 1 7777777aaa > "$CASE/merge-on-read-KEN-1.json"
+echo "One lane is running." > "$CASE/summary.txt"
+run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+FILE="$(awk -F= 'NR == 1 { print $2 }' "$CASE/err")"
+STAMPED="$(stat -c %Y -- "$FILE" 2>/dev/null || stat -f %m -- "$FILE")"
+assert_eq "$RC|$(awk '/^Landed/' <<<"$OUT")|$STAMPED|$([[ -f "$CASE/merge-on-read-KEN-1.json" ]] && echo unmerged || echo merged)" \
+  "0|Landed: none|$NOW|merged" "a write covers merges before the moment it read its lists, and its file carries that moment"
+echo "$((NOW + 120))" > "$CASE/now"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^\| KEN-[23] /' <<<"$OUT")" "0|| KEN-3 (#9, 9999999) | Title 3 | Outcome 3 |
+| KEN-2 (#7, 7777777) | Title 2 | Outcome 2 |" "the next report lists both merges the written one left out"
 
 echo "=== write: the chat and the file carry one report ==="
 seed_fleet write_report

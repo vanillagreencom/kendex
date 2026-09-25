@@ -67,7 +67,9 @@ Next, Waiting on you.
 progress-reports/ beside it. The newest file there is the last report: what
 landed since its modification time is news, and its age is what the cadence
 measures. With no report yet, the fleet start, the earliest lanes[] launch,
-stands in for it.
+stands in for it. A report covers merges up to the moment it read its lists,
+and `write` stamps its file with that moment, so each merge lands in exactly
+one report.
 
 due      prints `report-due reason=minutes since=<UTC>` once the last report
          is ORCH_REPORT_EVERY_MINUTES old, else `report-due reason=issues
@@ -214,6 +216,9 @@ if ! STATE_JSON="$(jq -c 'select(type == "object" and ((.lanes // []) | type) ==
 fi
 [[ -n "$STATE_JSON" ]] || refuse state "$STATE"
 REPORT_DIR="$(dirname -- "$STATE")/progress-reports"
+# NOW is read before any list, and a report covers merges before it alone: a
+# written report is stamped NOW, so a merge the lists could not yet see falls
+# in the next one and every merge in exactly one.
 NOW="$(date -u +%s)" || refuse clock now
 
 # MARKER is the epoch the report covers from: the newest report's modification
@@ -236,7 +241,8 @@ fi
 # --- what landed --------------------------------------------------------------
 
 # LANDED holds `item<TAB>number<TAB>sha` per fleet item whose own pull
-# request merged at or after MARKER, in any --repo, oldest merge first. Each
+# request merged at or after MARKER and before NOW, in any --repo, oldest
+# merge first. Each
 # item's branch is listed on its own, as oversee-watch's merged check lists it,
 # so the page counts one branch's merges and never the repository's, and the
 # pull request is judged the lane's own by lib/lane-state.sh's LANE_MERGED_JQ.
@@ -256,9 +262,9 @@ landed_read() {
         refuse pr-list "$repo" "$(cat "$WORK_DIR/gh.err")"
       fi
       if ! rows="$(jq -r --arg item "$item" --arg owner "${repo%%/*}" --argjson since "$MARKER" \
-        --argjson page "$PR_PAGE" "$LANE_MERGED_JQ"'
+        --argjson until "$NOW" --argjson page "$PR_PAGE" "$LANE_MERGED_JQ"'
         if length >= $page then "page-full"
-        else lane_merged($item; $owner; $since)[]
+        else lane_merged($item; $owner; $since)[] | select(.at < $until)
           | [(.at | tostring), $item, (.number | tostring), ((.mergeCommit.oid // "") | .[0:7])] | @tsv
         end' <<<"$list" 2>"$WORK_DIR/jq.err")"; then
         refuse pr-list "$repo" "$(cat "$WORK_DIR/jq.err")"
@@ -532,6 +538,10 @@ TARGET="$REPORT_DIR/$NAME.md"
 mkdir -p -- "$REPORT_DIR" || refuse write "$REPORT_DIR"
 TMP_FILE="$(mktemp "$REPORT_DIR/.report.XXXXXX")" || refuse write "$REPORT_DIR"
 printf '%s\n\n%s\n' "$SUMMARY_TEXT" "$BODY" > "$TMP_FILE" || refuse write "$TMP_FILE"
+# Stamped NOW, not the end of the render: the next report starts where this
+# one's lists were read. touch -t reads its stamp in TZ.
+STAMP="$(from_epoch "$NOW" %Y%m%d%H%M.%S)" || refuse clock "$NOW"
+TZ=UTC touch -t "$STAMP" -- "$TMP_FILE" || refuse write "$TMP_FILE"
 [[ ! -e "$TARGET" ]] || refuse report-exists "$TARGET"
 mv -- "$TMP_FILE" "$TARGET" || refuse write "$TARGET"
 TMP_FILE=""
