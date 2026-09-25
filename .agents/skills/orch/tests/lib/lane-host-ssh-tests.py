@@ -820,14 +820,16 @@ exec git "$@"
 
     def test_stop_answers_a_removed_worktree_with_its_own_status(self):
         # merge-pr removes the item's worktree before its lane goes idle, and
-        # lane-close reads exit 4 as a stop the host close makes unnecessary.
+        # lane-close reads exit 4 as a stop to skip, so no remote-failed line
+        # may sit above its stop-skipped line.
         self.assertEqual(self.create().returncode, 0)
         worktree = Path(self.row["clone"] + "-worktree")
         subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(worktree)],
                        check=True, capture_output=True)
         removed = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((removed.returncode, removed.stdout, b"stop-worktree-removed item=TEST-1\n" in removed.stderr),
-                         (4, b"", True), removed.stderr)
+        self.assertEqual((removed.returncode, removed.stdout, b"stop-worktree-removed item=TEST-1\n" in removed.stderr,
+                          b"remote-failed" in removed.stderr),
+                         (4, b"", True, False), removed.stderr)
         original = self.script.read_text()
         guard = """if ! test -d "$1"; then
   printf 'lane-host-ssh: stop-worktree-removed item=%s\\n' "$4" >&2
