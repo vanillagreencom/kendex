@@ -3,9 +3,12 @@
 #
 # The hook refuses a project-scope kendex write from a linked worktree and
 # passes the same command from the main checkout, with a global scope, outside
-# a repository, and every kendex read. Each part is varied below: the verb,
-# the scope words, the directory the command runs in, and the git that has to
-# answer.
+# a repository, and every kendex read. In a linked worktree, the project
+# kendex resolves from the working directory is the worktree's own where its
+# manifest exists there, and the verbs that write one project by being typed
+# inside it pass. Each part is varied below: the verb,
+# the scope words, the directory the command runs in, whose manifest that
+# worktree has, and the git that has to answer.
 #
 # Every refusal opens with `block-worktree-refresh: <key>=<value>`, and that
 # line is the contract: every row pins it whole beside the exit status, and the
@@ -36,6 +39,10 @@ assert_eq() {
   if [ "$1" = "$2" ]; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
   else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$3" "$2" "$1"; fi
 }
+assert_not_contains() {
+  if ! grep -qF -- "$2" "$1"; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
+  else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        unwanted: %s\n        in:\n%s\n' "$3" "$2" "$(cat "$1")"; fi
+}
 assert_contains() {
   if grep -qF -- "$2" "$1"; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
   else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        wanted: %s\n        in:\n%s\n' "$3" "$2" "$(cat "$1")"; fi
@@ -47,6 +54,60 @@ git init -q "$MAIN"
 git -C "$MAIN" commit -q --allow-empty -m init
 WT="$TMP_ROOT/wt"
 git -C "$MAIN" worktree add -q "$WT" -b lane
+# Two more linked worktrees whose roots carry a kendex.toml of their own, so
+# each is its own project: one that parses and one with conflict markers,
+# which is still the worktree's own file. The first worktree carries none.
+OWN="$TMP_ROOT/own"
+git -C "$MAIN" worktree add -q "$OWN" -b own
+printf 'schema = 6\n' >"$OWN/kendex.toml"
+OWN_BROKEN="$TMP_ROOT/own-broken"
+git -C "$MAIN" worktree add -q "$OWN_BROKEN" -b own-broken
+printf '<<<<<<< HEAD\nschema = 6\n=======\nschema = 5\n' >"$OWN_BROKEN/kendex.toml"
+mkdir -p "$OWN/sub/deeper" "$WT/sub"
+# The project kendex writes is the first directory up from the working one
+# carrying a harness marker, which can sit below the worktree's root: one
+# worktree whose project in app/ declares with none at its root, and a
+# marker-only folder inside the declaring worktree, which is a project with
+# no manifest of its own.
+NESTED="$TMP_ROOT/nested"
+git -C "$MAIN" worktree add -q "$NESTED" -b nested
+mkdir -p "$NESTED/app/.claude"
+printf 'schema = 6\n' >"$NESTED/app/kendex.toml"
+mkdir -p "$OWN/marked/.claude"
+# A source catalog declares in kendex-local.toml, its kendex.toml being the
+# catalog it publishes: one worktree without that file and one with it. The
+# hook reads any kendex.toml naming is_source_catalog as a catalog, so the key
+# inside a table, after a multi-line string holding a table header, or quoted
+# is a catalog too, and with no kendex-local.toml each is refused.
+CATALOG="$TMP_ROOT/catalog"
+git -C "$MAIN" worktree add -q "$CATALOG" -b catalog
+printf 'schema = 6\nis_source_catalog = true\n' >"$CATALOG/kendex.toml"
+CATALOG_LOCAL="$TMP_ROOT/catalog-local"
+git -C "$MAIN" worktree add -q "$CATALOG_LOCAL" -b catalog-local
+printf 'schema = 6\nis_source_catalog = true\n' >"$CATALOG_LOCAL/kendex.toml"
+printf 'schema = 6\n' >"$CATALOG_LOCAL/kendex-local.toml"
+# Claude Code puts a linked worktree inside the main checkout, under
+# `.claude/worktrees/`, so the main checkout's marker and its untracked
+# kendex.toml stand above the worktree's root; the walk stops at that root.
+HOST="$TMP_ROOT/host"
+git init -q "$HOST"
+git -C "$HOST" commit -q --allow-empty -m init
+mkdir -p "$HOST/.claude/worktrees"
+printf 'schema = 6\n' >"$HOST/kendex.toml"
+git -C "$HOST" worktree add -q "$HOST/.claude/worktrees/lane" -b lane
+CATALOG_TABLED="$TMP_ROOT/catalog-tabled"
+git -C "$MAIN" worktree add -q "$CATALOG_TABLED" -b catalog-tabled
+printf 'schema = 6\n[marketplace]\nis_source_catalog = true\n' >"$CATALOG_TABLED/kendex.toml"
+CATALOG_STRING="$TMP_ROOT/catalog-string"
+git -C "$MAIN" worktree add -q "$CATALOG_STRING" -b catalog-string
+printf 'description = """\n[not a table]\n"""\nis_source_catalog = true\n' >"$CATALOG_STRING/kendex.toml"
+CATALOG_QUOTED="$TMP_ROOT/catalog-quoted"
+git -C "$MAIN" worktree add -q "$CATALOG_QUOTED" -b catalog-quoted
+printf '"is_source_catalog" = true\n' >"$CATALOG_QUOTED/kendex.toml"
+# A project path with a space, which the refusal's remedy has to keep one word.
+SPACED="$TMP_ROOT/sp/my app"
+git -C "$MAIN" worktree add -q "$SPACED" -b spaced
+printf 'schema = 6\n' >"$SPACED/kendex.toml"
 OUTSIDE="$TMP_ROOT/outside"
 mkdir -p "$OUTSIDE"
 # precondition: The outside rows prove the not-a-repository branch only where the fixture
@@ -157,6 +218,18 @@ directory_table() {
       broken) dir="$BROKEN" ;;
       absent) dir="$TMP_ROOT/absent" ;;
       malformed) dir="$MALFORMED/sub" ;;
+      own) dir="$OWN" ;;
+      own-sub) dir="$OWN/sub/deeper" ;;
+      own-broken) dir="$OWN_BROKEN" ;;
+      worktree-sub) dir="$WT/sub" ;;
+      nested-app) dir="$NESTED/app" ;;
+      own-marked) dir="$OWN/marked" ;;
+      catalog) dir="$CATALOG" ;;
+      catalog-local) dir="$CATALOG_LOCAL" ;;
+      catalog-tabled) dir="$CATALOG_TABLED" ;;
+      catalog-string) dir="$CATALOG_STRING" ;;
+      catalog-quoted) dir="$CATALOG_QUOTED" ;;
+      hosted) dir="$HOST/.claude/worktrees/lane" ;;
       *) printf 'directory table: unknown world: %s\n' "$world" >&2; exit 1 ;;
     esac
     case "$mode" in
@@ -180,12 +253,12 @@ directory_table() {
 # command position against a quoted argument, a heredoc body, a comment and
 # the quoted argument of `-c` and `eval`. Verb help passes only on a plain
 # tail; the bare source shorthand is not read.
-# A `source add` and a `source remove` reach the values `add` and `remove`:
-# the pattern's earlier alternative ends at the same word, and a POSIX match
-# prefers the longer earlier subexpression, so the second word is the verb it
-# reads. `source enable` and `source disable` have no earlier alternative and
-# keep both words. The write is refused either way; what the value decides is
-# which global option the refusal names.
+# The verb is the first word after `kendex` that names one, so `source add`
+# is read whole and a later verb word is an argument; the value decides which
+# global option the refusal names, and `source` subcommands have none.
+# The scope, target and apply options are the words Bash passes: a
+# redirection's file is not one, a standalone `--` ends them, and a word the
+# shell settles only when it runs grants nothing and counts as `--apply`.
 COMMAND_ROWS=$(cat <<'ROWS'
 kendex refresh from the worktree is refused|2|block-worktree-refresh: refused=refresh|kendex refresh
 kendex apply from the worktree is refused|2|block-worktree-refresh: refused=apply|kendex apply
@@ -196,8 +269,14 @@ kendex pin orch from the worktree is refused|2|block-worktree-refresh: refused=p
 kendex fork orch from the worktree is refused|2|block-worktree-refresh: refused=fork|kendex fork orch
 kendex adopt from the worktree is refused|2|block-worktree-refresh: refused=adopt|kendex adopt
 kendex drift-hook from the worktree is refused|2|block-worktree-refresh: refused=drift-hook|kendex drift-hook
-kendex source add x from the worktree is refused, its second word the verb read|2|block-worktree-refresh: refused=add|kendex source add x
-kendex source remove x from the worktree is refused, its second word the verb read|2|block-worktree-refresh: refused=remove|kendex source remove x
+kendex source add x from the worktree is refused, both words the verb read|2|block-worktree-refresh: refused=source add|kendex source add x
+kendex source remove x from the worktree is refused, both words the verb read|2|block-worktree-refresh: refused=source remove|kendex source remove x
+a later verb word is an argument, not the verb|2|block-worktree-refresh: refused=add|kendex add orch --skill refresh
+a redirection glued to the verb ends the verb word|2|block-worktree-refresh: refused=refresh|kendex refresh>/dev/null
+the same for update-pi|2|block-worktree-refresh: refused=update-pi|kendex update-pi>log
+and for an input redirection|2|block-worktree-refresh: refused=refresh|kendex refresh\0074in
+an operator glued to the verb takes the next word as its file|2|block-worktree-refresh: refused=refresh|kendex refresh> --global
+a global option after a verb with a glued redirection passes|0|-|kendex refresh>out --global
 kendex source enable x from the worktree is refused|2|block-worktree-refresh: refused=source enable|kendex source enable x
 kendex source disable x from the worktree is refused|2|block-worktree-refresh: refused=source disable|kendex source disable x
 kendex marketplace subscribe x from the worktree is refused|2|block-worktree-refresh: refused=marketplace subscribe|kendex marketplace subscribe x
@@ -279,6 +358,37 @@ nor does it exempt remove|2|block-worktree-refresh: refused=remove|kendex remove
 the flag alone passes, a quoted value being cut into its own segment; kendex refuses a flag with no value|0|-|kendex refresh --project-path
 a target on an earlier command does not exempt a later write|2|block-worktree-refresh: refused=refresh|kendex refresh --project-path /elsewhere && kendex refresh
 a target before the verb is a root option the CLI drops and exempts nothing|2|block-worktree-refresh: refused=refresh|kendex --project-path /elsewhere refresh
+a redirection target spelling --global is a file, not the scope|2|block-worktree-refresh: refused=refresh|kendex refresh -y > --global
+a clobbering redirection target is a file, not a target|2|block-worktree-refresh: refused=refresh|kendex refresh -y >| --project-path
+a redirection target spelling --project-path is a file, not a target|2|block-worktree-refresh: refused=refresh|kendex refresh -y > --project-path
+a stderr redirection target is a file, not the scope|2|block-worktree-refresh: refused=refresh|kendex refresh -y 2> --scope=global
+a redirection target glued to its operator is a file|2|block-worktree-refresh: refused=refresh|kendex refresh -y >--global
+a quoted redirection target is a file|2|block-worktree-refresh: refused=refresh|kendex refresh -y > "--global"
+an escaped-space redirection target is one file|2|block-worktree-refresh: refused=refresh|kendex refresh -y >\\ --global
+a standalone -- ends the options before --global|2|block-worktree-refresh: refused=refresh|kendex refresh -y -- --global
+a standalone -- ends the options before --project-path|2|block-worktree-refresh: refused=refresh|kendex refresh -y -- --project-path
+a standalone -- ends the options before --apply|0|-|kendex updates -- --apply
+a real global option before a redirection passes|0|-|kendex refresh --global >out
+a real global option after a redirection passes|0|-|kendex refresh >out --global
+a global option glued to a redirection passes|0|-|kendex refresh --global>out
+a real target before a redirection passes|0|-|kendex refresh --project-path /elsewhere >out
+a real target after a redirection passes|0|-|kendex refresh >out --project-path /elsewhere
+a redirection target spelling --apply leaves updates a read|0|-|kendex updates > --apply
+a real --apply before a redirection is a write|2|block-worktree-refresh: refused=updates|kendex updates --apply >out
+a quoted option is the word bash passes|0|-|kendex remove orch "--global"
+an expansion may be any word, so it grants no global scope|2|block-worktree-refresh: refused=add|kendex add --global \0044SRC
+an expansion may be --apply, so updates is a write|2|block-worktree-refresh: refused=updates|kendex updates \0044ARGS
+an expansion before --project-path may be --, so no target is named|2|block-worktree-refresh: refused=refresh|kendex refresh \0044X --project-path /elsewhere
+an expansion after --project-path leaves the target named|0|-|kendex refresh --project-path /elsewhere \0044X
+a backslash leaves the words unsure, so no global scope is read|2|block-worktree-refresh: refused=add|kendex add --global ./a\\ b
+a > behind a quote may be quoted, so the word is unsure|2|block-worktree-refresh: refused=remove|kendex remove "a>b" --global
+a --scope whose value the segment does not hold is not the global scope|2|block-worktree-refresh: refused=refresh|kendex refresh --global --scope "global"
+the value spelled with an equals sign names a target whatever it holds|0|-|kendex refresh --project-path=\0044PWD -y
+an expansion before --project-path= may be --, so no target is named|2|block-worktree-refresh: refused=refresh|kendex refresh \0044X --project-path=/elsewhere
+--scope project before -g keeps the project scope|2|block-worktree-refresh: refused=refresh|kendex refresh --scope project -g
+--scope=project before --global keeps it too|2|block-worktree-refresh: refused=refresh|kendex refresh --scope=project --global
+--scope project before --scope global keeps it|2|block-worktree-refresh: refused=refresh|kendex refresh --scope project --scope global
+--scope project before --scope=global keeps it|2|block-worktree-refresh: refused=refresh|kendex refresh --scope project --scope=global
 ROWS
 )
 command_table
@@ -298,6 +408,46 @@ outside a repository there is no worktree to protect|payload|outside|0|-|kendex 
 a .git file pointing nowhere is a git that could not answer, and its status is the value|payload|broken|2|block-worktree-refresh: git=128|kendex refresh
 a cwd that does not exist is refused, not read as outside a repository|payload|absent|2|block-worktree-refresh: git=128|kendex refresh
 an empty .git directory above the cwd is a repository git could not read, not the absence of one|payload|malformed|2|block-worktree-refresh: git=unreadable|kendex refresh
+add in a worktree with its own kendex.toml writes that worktree and passes|payload|own|0|-|kendex add orch
+remove there passes|payload|own|0|-|kendex remove orch
+fork there passes|payload|own|0|-|kendex fork skill orch
+pin there passes|payload|own|0|-|kendex pin skill orch v1
+adopt there passes|payload|own|0|-|kendex adopt skill orch
+drift-hook there passes|payload|own|0|-|kendex drift-hook -y
+source add there passes|payload|own|0|-|kendex source add x owner/repo
+source remove there passes|payload|own|0|-|kendex source remove x
+source enable there passes|payload|own|0|-|kendex source enable x
+source disable there passes|payload|own|0|-|kendex source disable x
+marketplace subscribe there passes|payload|own|0|-|kendex marketplace subscribe owner/repo
+marketplace unsubscribe there passes|payload|own|0|-|kendex marketplace unsubscribe x
+refresh there still has to name its target|payload|own|2|block-worktree-refresh: refused=refresh|kendex refresh
+apply there still has to name its target|payload|own|2|block-worktree-refresh: refused=apply|kendex apply
+updates --apply there still has to name its target|payload|own|2|block-worktree-refresh: refused=updates|kendex updates --apply
+refresh there naming its target passes|payload|own|0|-|kendex refresh --project-path $OWN
+update-pi there is refused as before|payload|own|2|block-worktree-refresh: refused=update-pi|kendex update-pi
+update-pi --scope global there passes|payload|own|0|-|kendex update-pi --scope global
+a skill named refresh on an add there is an argument, and the add passes|payload|own|0|-|kendex add orch --skill refresh
+a refresh after an add there is judged on its own|payload|own|2|block-worktree-refresh: refused=refresh|kendex add orch && kendex refresh
+a tool call from a subdirectory of that worktree judges the worktree root|tool-workdir|own-sub|0|-|kendex add orch
+and a refresh from there is still refused|tool-workdir|own-sub|2|block-worktree-refresh: refused=refresh|kendex refresh
+a kendex.toml that will not parse is still the worktree's own|payload|own-broken|0|-|kendex add orch
+a subdirectory of a worktree with no kendex.toml is refused|tool-workdir|worktree-sub|2|block-worktree-refresh: refused=add|kendex add orch
+a cd into the worktree with its own kendex.toml is still a move|payload|main|2|block-worktree-refresh: moved=add|cd $OWN && kendex add orch
+env -C starts kendex in another directory, which is a move|payload|own|2|block-worktree-refresh: moved=add|env -C $MAIN kendex add orch
+env --chdir= is the same move|payload|own|2|block-worktree-refresh: moved=add|env --chdir=$MAIN kendex add orch
+sudo -D is a move too|payload|own|2|block-worktree-refresh: moved=add|sudo -D $MAIN kendex add orch
+sudo --chdir is the same move|payload|own|2|block-worktree-refresh: moved=add|sudo --chdir $MAIN kendex add orch
+an env without a directory option moves nothing|payload|own|0|-|env FOO=1 kendex add orch
+env -C inside a cluster of short options is the same move|payload|own|2|block-worktree-refresh: moved=add|env -iC $MAIN kendex add orch
+sudo -D inside a cluster of short options is the same move|payload|own|2|block-worktree-refresh: moved=add|sudo -ED $MAIN kendex add orch
+a project above the worktree's root is not the worktree's own|payload|hosted|2|block-worktree-refresh: refused=add|kendex add orch
+a project below the worktree root with its own kendex.toml is that worktree's own|payload|nested-app|0|-|kendex remove gh
+a marker-only project inside a declaring worktree has no manifest of its own|payload|own-marked|2|block-worktree-refresh: refused=add|kendex add orch
+a source catalog without kendex-local.toml has no manifest of its own|payload|catalog|2|block-worktree-refresh: refused=add|kendex add orch
+a source catalog with kendex-local.toml has one|payload|catalog-local|0|-|kendex add orch
+is_source_catalog inside a table is read as a catalog, so without kendex-local.toml it is refused|payload|catalog-tabled|2|block-worktree-refresh: refused=add|kendex add orch
+is_source_catalog after a multi-line string holding a table header is a catalog|payload|catalog-string|2|block-worktree-refresh: refused=add|kendex add orch
+a quoted is_source_catalog key is a catalog|payload|catalog-quoted|2|block-worktree-refresh: refused=add|kendex add orch
 ROWS
 )
 directory_table
@@ -317,6 +467,22 @@ assert_contains "$ERR_FILE" 'git worktree list' 'the refusal names the command t
 assert_contains "$ERR_FILE" '--project-path PATH' 'and the refusal names the flag that names the project'
 run_in "$WT" 'kendex add orch'
 assert_contains "$ERR_FILE" 'add has no such form' 'a verb with no named-target form says so rather than offering one'
+run_in "$WT" 'kendex source add x owner/repo'
+assert_not_contains "$ERR_FILE" '--global' 'a source subcommand has no global flag, and the refusal offers none'
+assert_not_contains "$ERR_FILE" '--scope global' 'nor a global scope'
+run_in "$OWN" 'kendex refresh'
+assert_contains "$ERR_FILE" "--project-path $OWN" 'a worktree with its own kendex.toml is named by its own root'
+run_in "$SPACED" 'kendex refresh'
+assert_contains "$ERR_FILE" "Name it in the command: kendex refresh --project-path $TMP_ROOT/sp/my\\ app, or pass" 'a project path with a space is one word in the remedy'
+run_in "$OWN" 'kendex updates --apply'
+assert_contains "$ERR_FILE" "kendex updates --apply --project-path $OWN" 'the updates remedy keeps the --apply that makes it a write'
+run_in "$OWN" 'kendex update-pi --scope project'
+assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: refused=update-pi' 'update-pi at the project scope is refused where the project owns its manifest'
+assert_contains "$ERR_FILE" 'kendex update-pi --scope global' 'and the refusal offers the one form update-pi runs as in a linked worktree'
+assert_not_contains "$ERR_FILE" 'update-pi --project-path' 'never a flag update-pi does not take'
+assert_not_contains "$ERR_FILE" 'main checkout' 'nor the main checkout, whose project is a different one'
+run_in "$OWN/marked" 'kendex add orch'
+assert_contains "$ERR_FILE" "$OWN/marked" 'the refusal names the project kendex would write, not the worktree root'
 set +e
 (cd "$WT" && "$BASH_BIN" "$HOOK" <"$TMP_ROOT" >/dev/null 2>"$ERR_FILE")
 rc=$?
@@ -325,6 +491,42 @@ assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: paylo
   'a stdin that cannot be read refuses with the refusal status, not the read error'
 
 payload_table "$HOOK" 'kendex refresh' 'kendex verify' "$WT"
+
+echo "=== block-worktree-refresh: kendex's own project markers ==="
+# The hook finds the project kendex writes by kendex's markers, so each one
+# discover.rs lists is planted alone in a folder inside the declaring
+# worktree: that folder is a project, kendex.toml aside it has no manifest,
+# and an add typed there is refused. A marker the hook lacked would walk on
+# to the worktree root, which declares, and pass. The set is read from
+# discover.rs itself; a marker the hook adds beyond it only refuses more.
+DISCOVER="$TEST_DIR/../../crates/core/src/discover.rs"
+NL=$'\n'
+discover_markers() { # CONST -> one marker per line
+  sed -n "/^const $1: /,/^];/p" "$DISCOVER" | grep -o '"[^"]*"' | tr -d '"'
+}
+MARKED_DIRS=$(discover_markers MARKER_DIRS) || { echo "markers: MARKER_DIRS could not be read from $DISCOVER" >&2; exit 2; }
+MARKED_FILES=$(discover_markers MARKER_FILES) || { echo "markers: MARKER_FILES could not be read from $DISCOVER" >&2; exit 2; }
+case "$NL$MARKED_DIRS$NL" in *"$NL.claude$NL"*) ;; *) echo "markers: the MARKER_DIRS extractor lost .claude; it is broken" >&2; exit 2 ;; esac
+case "$NL$MARKED_FILES$NL" in *"$NL.kendex-lock.json$NL"*) ;; *) echo "markers: the MARKER_FILES extractor lost .kendex-lock.json; it is broken" >&2; exit 2 ;; esac
+index=0
+while IFS='|' read -r kind marker; do
+  [ -n "$marker" ] || continue
+  index=$((index + 1))
+  at="$OWN/marker-$index"
+  case "$kind" in
+    dir) mkdir -p "$at/$marker" ;;
+    file) mkdir -p "$(dirname "$at/$marker")" && : >"$at/$marker" ;;
+  esac
+  run_in "$at" 'kendex add orch'
+  if [ "$marker" = kendex.toml ]; then
+    assert_eq "rc=$rc first=$(first_line)" 'rc=0 first=-' "the $marker marker is the manifest itself, and the add passes"
+  else
+    assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: refused=add' "the $marker marker alone makes a project with no manifest"
+  fi
+done <<ROWS
+dir|${MARKED_DIRS//$NL/${NL}dir|}
+file|${MARKED_FILES//$NL/${NL}file|}
+ROWS
 
 echo "=== block-worktree-refresh: a missing git refuses ==="
 NOGIT_BIN="$TMP_ROOT/nogit"
