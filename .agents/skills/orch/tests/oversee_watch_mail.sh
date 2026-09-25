@@ -1198,7 +1198,8 @@ assert_eq "$ACK_REFUSED" "rc=0 printed=1 refused=0 cursor=0" \
 # past its answer, as a hosted read that misses once returns it: the drain has
 # no answer to drop the ask by and the receipts read the cursor as missed. The
 # pass reports nothing of the item and moves no row, and once the file reads
-# whole the ask stays answered.
+# whole the ask stays answered. A read failure standing before it is cleared,
+# and stays cleared through the overseer mailbox read after it.
 answered_missed() { # [WATCH_BIN]
   local box="$CASE_REPO_ROOT/tmp/lane-mail/KEN-60" out
   mail_reset KEN-60
@@ -1206,24 +1207,37 @@ answered_missed() { # [WATCH_BIN]
   ANSWERED_ASK="${ANSWERED_ASK#id=}"
   answer KEN-60 "$ANSWERED_ASK" 'Squash.' >/dev/null
   (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" inbox --item KEN-60 >/dev/null)
+  chmod 000 "$box/to-overseer.jsonl"
+  WATCH_BIN="${1:-}" run_watch -- --max-loops 1 --item KEN-60 >/dev/null 2>"$STUB_DIR/answered-f" || true
+  chmod 644 "$box/to-overseer.jsonl"
   mv -- "$box/to-lane.jsonl" "$box/to-lane.jsonl.away"
   out="$(WATCH_BIN="${1:-}" run_watch -- --max-loops 1 --item KEN-60 2>"$STUB_DIR/answered-a")"
   ANSWERED_MISSED="first=$(head -1 <<<"$out") row=$(awk -F'\t' '$1 == "lane-mail" && $2 == "KEN-60" { print $3 }' \
     "$STATE_DIR"/*.mail 2>/dev/null || true)"
+  ANSWERED_MISSED+=" failed=$(awk -F'\t' '$1 == "lane-failed" && $2 == "KEN-60"' "$STATE_DIR"/*.mail | wc -l)"
   mv -- "$box/to-lane.jsonl.away" "$box/to-lane.jsonl"
   out="$(WATCH_BIN="${1:-}" run_watch -- --max-loops 1 --item KEN-60 2>"$STUB_DIR/answered-b")"
   ANSWERED_MISSED+=" after=$(grep -c '^EVENT lane-question ' <<<"$out" || true)"
 }
 new_case mail_answered_missed
 answered_missed
-assert_eq "$ANSWERED_MISSED" "first=$HEARTBEAT row= after=0" \
-  "a to-lane read that missed reports no answered ask as a question and moves no row" "$STUB_DIR/answered-a"
+assert_eq "$ANSWERED_MISSED" "first=$HEARTBEAT row= failed=0 after=0" \
+  "a to-lane read that missed reports no answered ask as a question, moves no row and clears a failure" \
+  "$STUB_DIR/answered-a"
 cadence_mutant deliver-first '    if [[ "$hold" == item ]]; then' '    if false; then'
 new_case mail_answered_missed_mutant
 answered_missed "$MUTANT_DIR/orch/scripts/oversee-watch-deliver-first"
-assert_eq "$ANSWERED_MISSED" "first=EVENT lane-question KEN-60 $ANSWERED_ASK row=1 $ANSWERED_ASK after=0" \
+assert_eq "$ANSWERED_MISSED" "first=EVENT lane-question KEN-60 $ANSWERED_ASK row=1 $ANSWERED_ASK failed=0 after=0" \
   "control: delivered before the missed read is judged, the answered ask is a question and its row moves past it" \
   "$STUB_DIR/answered-a"
+cadence_mutant hold-stale '      state="$(lane_row_clear lane-failed "$state" "$item")"
+      mail_row_commit "$state"
+      continue' '      mail_row_commit "$(lane_row_clear lane-failed "$state" "$item")"
+      continue'
+new_case mail_answered_missed_stale_mutant
+answered_missed "$MUTANT_DIR/orch/scripts/oversee-watch-hold-stale"
+assert_eq "${ANSWERED_MISSED#* row= }" "failed=1 after=0" \
+  "control: a hold that commits the cleared row but keeps its stale state restores the failure" "$STUB_DIR/answered-a"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

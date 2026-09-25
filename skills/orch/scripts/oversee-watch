@@ -2222,7 +2222,8 @@ check_mail() {
     # The drain drops answered asks by the to-lane.jsonl it read, so one that
     # missed would report an answered ask as a fresh question.
     if [[ "$hold" == item ]]; then
-      mail_row_commit "$(lane_row_clear lane-failed "$state" "$item")"
+      state="$(lane_row_clear lane-failed "$state" "$item")"
+      mail_row_commit "$state"
       continue
     fi
     while IFS= read -r line; do
