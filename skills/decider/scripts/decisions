@@ -56,9 +56,11 @@ Actions:
                        and an ID this INDEX.md records for a different
                        document than the base branch's INDEX.md does. The
                        base is read at its fetched tip, not at the merge
-                       base. How a base that could not be read is judged:
-                       DECISIONS_BASE_REF. Exits 0 with no finding; a
-                       notice= line may still print on stderr
+                       base. It also refuses an INDEX row, here or on the
+                       base, that it could not parse
+                       (error=index-row-invalid). How a base that could not
+                       be read is judged: DECISIONS_BASE_REF. Exits 0 with
+                       no finding; a notice= line may still print on stderr
 
 Options:
   --limit N            Max search results (default: 5)
@@ -97,13 +99,11 @@ Environment:
                        be fetched or read prints base-unverified with a
                        reason: not-a-repository, unresolved, fetch-failed
                        (the local copy was read), index-absent or
-                       unreadable. check exits 0 only when it fetched and
-                       read the base now and read both indexes whole: it
-                       refuses every reason but index-absent and
-                       not-a-repository, and a skipped INDEX row is an
-                       error=index-row-invalid, exit 1. Elsewhere each is a
-                       notice, and next-id answers from what it could read,
-                       exit 0
+                       unreadable. check refuses unresolved, unreadable and
+                       fetch-failed, exit 1; index-absent and
+                       not-a-repository are notices, and a local branch is
+                       read without a fetch. next-id prints every reason as
+                       a notice and answers from what it could read, exit 0
 
 Examples:
   decisions search "FFI error handling"
@@ -396,8 +396,11 @@ read_base_index() {
   # Presence is read from the tree, which a blob-filtered clone holds locally;
   # only the read below needs the blob, and may fetch it.
   BASE_PATH="${prefix}INDEX.md"
+  # A copy that could not be fetched says nothing about the base's INDEX.md:
+  # the base may have gained one since.
   if ! git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$BASE_REF:$BASE_PATH" >/dev/null; then
     BASE_REASON=index-absent
+    [[ "$fetch_failed" -eq 0 ]] || BASE_REASON=fetch-failed
     return 0
   fi
   if ! text="$(GIT_TERMINAL_PROMPT=0 git -C "$DECISIONS_DIR" show "$BASE_REF:$BASE_PATH" </dev/null 2>/dev/null)"; then
@@ -411,9 +414,10 @@ read_base_index() {
 }
 
 # Print the outcome of read_base_index as one base-unverified record. The
-# refuse column is the whole check policy: check refuses every base it did not
-# fetch and read now, except one with no INDEX.md or no repository, which holds
-# no number. next-id never refuses. Returns 1 when a refusal was printed.
+# refuse column is the whole check policy: check refuses a remote base it
+# could not fetch, and any base it could not resolve or read; a base with no
+# INDEX.md or no repository holds no number. next-id never refuses. Returns 1
+# when a refusal was printed.
 report_base() { # MODE — next-id or check
   local mode="$1" refuse=0 text
   case "$BASE_REASON" in

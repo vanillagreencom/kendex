@@ -123,6 +123,22 @@ build_malformed_base_row() { # the base's INDEX carries a seven-cell D035 row
   write_index "$1/work" D034:D034-first.md
 }
 
+build_first_index_offline() { # the base gained its first INDEX.md after the lane's last fetch; the remote then broke
+  git init -q "$1/up"
+  git -C "$1/up" symbolic-ref HEAD refs/heads/main
+  git -C "$1/up" config gc.auto 0
+  git -C "$1/up" config maintenance.auto false
+  printf '# fixture\n' >"$1/up/README.md"
+  commit_all "$1/up" base
+  clone_repo "$1/up" "$1/work"
+  mkdir -p "$1/up/docs/decisions"
+  write_index "$1/up" D001:D001-theirs.md
+  commit_all "$1/up" "main records D001"
+  mkdir -p "$1/work/docs/decisions"
+  write_index "$1/work" D001:D001-mine.md
+  git -C "$1/work" remote set-url origin "$1/gone"
+}
+
 build_no_repo() { # a decisions directory outside any repository
   mkdir -p "$1/work/docs/decisions"
   write_index "$1/work" D034:D034-first.md
@@ -346,6 +362,7 @@ check-configured-unresolved~collision~DECISIONS_BASE_REF=origin/mian~check~~1~~e
 check-fetch-failed~unreachable_collision~~check~~1~~error=base-unverified ref=origin/main reason=fetch-failed;error=id-collision id=D035 path=docs/decisions/D035-lane.md base=origin/main:docs/decisions/D035-main.md
 check-malformed-row~malformed_row~~check~~1~~error=index-row-invalid path=docs/decisions/INDEX.md line=4 cells=7
 check-malformed-base-row~malformed_base_row~~check~~1~~error=index-row-invalid path=origin/main:docs/decisions/INDEX.md line=4 cells=7
+check-fetch-failed-index-absent~first_index_offline~~check~~1~~error=base-unverified ref=origin/main reason=fetch-failed
 check-index-absent~index_absent~~check~~0~~notice=base-unverified ref=origin/main reason=index-absent
 check-not-a-repository~no_repo~~check~~0~~notice=base-unverified ref=none reason=not-a-repository
 check-blob-missing~blob_missing~~check~~1~~error=base-unverified ref=origin/main reason=unreadable
@@ -412,6 +429,7 @@ check-edited-record~($held | map(.link) | index($row.link)) == null~true~a colli
 check-duplicate-row~map(select(length > 1))~map(select(length > 99))~a duplicate-row rule that never fires
 check-duplicate-file~file_count=$((file_count + 1))~file_count=$((file_count + 0))~a duplicate-file rule that never counts
 check-unresolved~    unresolved) refuse=1;~    unresolved) refuse=0;~an unresolved base that check passes
+check-fetch-failed-index-absent~    [[ "$fetch_failed" -eq 0 ]] || BASE_REASON=fetch-failed~    :~a stale copy's missing INDEX.md taken as the base's
 check-index-absent~    index-absent) text=~    index-absent) refuse=1; text=~a base without INDEX.md that check refuses
 check-fetch-failed~    fetch-failed) refuse=1; text=~    fetch-failed) text=~a stale base copy that check passes
 check-malformed-row~  ROW_INVALID_KIND=error~  ROW_INVALID_KIND=notice~a skipped working-tree row that check passes
