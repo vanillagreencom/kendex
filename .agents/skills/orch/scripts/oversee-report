@@ -204,7 +204,10 @@ STATE_DIR_SETTING="${ORCH_STATE_DIR:-tmp}"
 
 WORK_DIR="$(mktemp -d)" || refuse clock mktemp
 TMP_FILE=""
-trap 'rm -rf -- "$WORK_DIR"; [[ -z "$TMP_FILE" ]] || rm -f -- "$TMP_FILE"' EXIT
+# The auth ladder's own stderr, a keyring-fallback warning, is held in
+# auth.err and printed at exit, after any keyed refusal line: a refusal's first
+# stderr line is its key whatever the ladder said on the way.
+trap '[[ ! -s "$WORK_DIR/auth.err" ]] || cat -- "$WORK_DIR/auth.err" >&2; rm -rf -- "$WORK_DIR"; [[ -z "$TMP_FILE" ]] || rm -f -- "$TMP_FILE"' EXIT
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh" 2>"$WORK_DIR/gh-auth.err" \
   || refuse auth-helper "$SCRIPT_DIR/lib/gh-auth.sh" "$(cat "$WORK_DIR/gh-auth.err")"
@@ -214,13 +217,21 @@ source "$SCRIPT_DIR/lib/gh-auth.sh" 2>"$WORK_DIR/gh-auth.err" \
 # neither works the project's GH_BOT_TOKEN is the last candidate. Never
 # unauthenticated, since an unauthenticated list would read as nothing landed.
 # Called before the first gh call alone, so a due judged on minutes asks
-# GitHub nothing.
+# GitHub nothing. Its stderr goes to auth.err, which the EXIT trap prints; on
+# auth-failed it is the refusal's cause instead.
 github_auth() {
-  orch_sanitize_gh_env
-  if ! orch_github_auth_status; then
-    unset GH_TOKEN GITHUB_TOKEN
-    { orch_load_env_bot_token "$PROJECT_ROOT" && orch_github_auth_status; } || refuse auth-failed github
-  fi
+  local status=0 cause
+  {
+    orch_sanitize_gh_env
+    if ! orch_github_auth_status; then
+      unset GH_TOKEN GITHUB_TOKEN
+      { orch_load_env_bot_token "$PROJECT_ROOT" && orch_github_auth_status; } || status=$?
+    fi
+  } 2>"$WORK_DIR/auth.err"
+  [[ "$status" -ne 0 ]] || return 0
+  cause="$(cat -- "$WORK_DIR/auth.err")" || cause=""
+  : > "$WORK_DIR/auth.err"
+  refuse auth-failed github "$cause"
 }
 
 # --- settings ----------------------------------------------------------------

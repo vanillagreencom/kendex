@@ -282,6 +282,13 @@ seed_fleet auth_none
 touch "$CASE/auth-fail"
 run GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_stale_bot -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: auth-failed=github" "render, no credential works: refused as auth-failed"
+# A revoked env token the keyring replaces warns on stderr; a later refusal
+# still names its key on the first line, and the warning follows it.
+seed_fleet auth_keyring_refusal
+touch "$CASE/gh-fail"
+run GH_TOKEN=ghp_stale0000 -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)|$(grep -c '^Warning: GH_TOKEN' "$CASE/err" || true)" "2|oversee-report: pr-list=owner/repo|1" \
+  "render, keyring replaces a revoked GH_TOKEN, then the list fails: the key is the first stderr line, the warning after it"
 new_case auth_due_fallback
 report -60
 fleet '' "$(lane KEN-1 running -86400)"
