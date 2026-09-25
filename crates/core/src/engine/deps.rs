@@ -844,7 +844,7 @@ fn silent(
 /// nothing in a companion switched off too. Every tool the companion will
 /// not run on is a finding on the parent as well, in the words of the one
 /// answer the planner gives (`desired_kinds::not_written`); what the
-/// finding then costs the parent is [`derive`]'s to decide.
+/// finding then costs the parent is [`derive()`]'s to decide.
 #[allow(clippy::too_many_arguments)]
 fn companion(
     env: &Env,
