@@ -112,7 +112,7 @@ Every script takes `--help` bar `pr-view-json` and `resolve-base-branch`, whose 
 
 ## Configuration
 
-Non-secret settings go in committed `kendex.settings.toml` under `[env]`; `.env.local` holds secrets and personal overrides. Keys: [README.md](README.md) § Settings; review-gate keys in [references/gates.md](references/gates.md); lane keys in `lanes --help` and `open-terminal --help`. System dependencies: `jq`; `bash` 3.2; `flock` and `setsid` (util-linux); `timeout` or `gtimeout` (coreutils), which bounds the validation run `dev-validate-run` starts. Optional: `systemd-run` with a user manager, which the orch job runner's jobs are contained in; a session-long job, the fleet watch and the waiters, also needs it to linger (`loginctl enable-linger`) ([references/job-units.md](references/job-units.md)); `setsid` stays the fallback elsewhere.
+Non-secret settings go in committed `kendex.settings.toml` under `[env]`; `.env.local` holds secrets and personal overrides. Keys: [README.md](README.md) § Settings; review-gate keys in [references/gates.md](references/gates.md); lane keys in `lanes --help` and `open-terminal --help`. System dependencies: `jq`; `bash` 3.2; `flock` and `setsid` (util-linux); `timeout` or `gtimeout` (coreutils), which bounds the validation run `dev-validate-run` starts. Optional: `systemd-run` with a user manager, which the orch job runner's jobs are contained in; a launch with no `--cap` (the fleet watch, the waiters and the succession's helper) also needs it to linger (`loginctl enable-linger`) ([references/job-units.md](references/job-units.md)); `setsid` stays the fallback elsewhere.
 
 ---
 
