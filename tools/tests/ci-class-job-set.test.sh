@@ -11,7 +11,8 @@
 #
 # Four surfaces:
 #   1. the selection: one row per class and path shape, asserting the whole
-#      lane line, and the refusals beside them.
+#      lane line, and the refusals beside them; then a `trivial` diff of a
+#      path the Rust source reads, in a fixture checkout, with a control.
 #   2. the names: the lanes the gates read, the lanes the changes job
 #      publishes, the lanes ci-job-set selects, and the lane each aggregate
 #      holds each job to are one set, compared by name.
@@ -51,11 +52,13 @@ check() { # DESC EXPECTED ACTUAL
 
 # --- 1. The selection -------------------------------------------------------
 
+# ci-job-set reads the Rust source of the checkout it runs in: this one,
+# unless SELECT_IN names another; SELECT_WITH names a copy to run instead.
 selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or the refusal key
   local class="$1" docs="$2" paths="$3" out="$TMP/selection" status=0
   : >"$out"
-  CHANGE_CLASS="$class" DOCS_ONLY="$docs" CHANGED_PATHS="$paths" \
-    GITHUB_OUTPUT="$out" "$JOB_SET" 2>"$TMP/selection-err" || status=$?
+  (cd "${SELECT_IN:-$ROOT}" && CHANGE_CLASS="$class" DOCS_ONLY="$docs" CHANGED_PATHS="$paths" \
+    GITHUB_OUTPUT="$out" "${SELECT_WITH:-$JOB_SET}" 2>"$TMP/selection-err") || status=$?
   if [ "$status" -ne 0 ]; then
     printf 'exit=%s %s' "$status" \
       "$(sed -n 's/^ci-job-set: cause=//p' "$TMP/selection-err" | head -1)"
@@ -99,12 +102,14 @@ standard|true|AGENTS.md|$PROSE_ROW
 standard|true|CLAUDE.md|$PROSE_ROW
 standard|true|GEMINI.md|$PROSE_ROW
 standard|true|docs/legal/terms.md|$PROSE_ROW
+trivial|true|docs/legal/terms.md|$PROSE_ROW
+trivial|true|README.md|$PROSE_ROW
 standard|false|docs/guide.md|$ALL_ON
 enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous
 micro|false||exit=2 class-without-paths class=micro
 micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe
 ROWS
-[ "$selection_rows" -ge 22 ] ||
+[ "$selection_rows" -ge 24 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
 
 # A row that forgets a lane is refused before any lane reads it. macos_legs is
@@ -129,6 +134,56 @@ CHANGE_CLASS=render DOCS_ONLY=false CHANGED_PATHS=CLAUDE.md GITHUB_OUTPUT="$TMP/
 check "a row that forgets a lane is refused" \
   "exit=2 lane-unselected lane=cargo_windows" \
   "exit=$forgot_status $(sed -n 's/^ci-job-set: cause=//p' "$TMP/forgot-err")"
+
+# A `trivial` diff changing a path tools/rust-reads names takes the measured
+# row. The fixture crate reads docs/a.md through include_str!, docs/legal
+# through a manifest chain, and the checkout root, whose `.` row matches
+# nothing. What each source shape reads is tools/tests/rust-reads.test.sh's.
+READ_WORLD="$TMP/read-world"
+mkdir -p "$READ_WORLD/crates/demo/src"
+printf '[package]\nname = "demo"\n' >"$READ_WORLD/crates/demo/Cargo.toml"
+cat >"$READ_WORLD/crates/demo/src/lib.rs" <<'RS'
+const A: &str = include_str!("../../../docs/a.md");
+fn legal(name: &str) -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/legal").join(name) }
+fn root() -> PathBuf { Path::new(env!("CARGO_MANIFEST_DIR")).join("../..") }
+RS
+# CLASS|PATHS (blank-separated)|EXPECTED, every row docs-only.
+READ_ROWS="trivial|docs/a.md|$PROSE_ROW
+trivial|docs/legal/terms.md|$PROSE_ROW
+trivial|docs/other.md docs/legal/privacy.md|$PROSE_ROW
+trivial|docs/other.md|$VERIFY_ROW
+trivial|docs/legalese.md|$VERIFY_ROW
+render|docs/a.md|$VERIFY_ROW"
+read_rows=0
+while IFS='|' read -r class paths expected; do
+  read_rows=$((read_rows + 1))
+  check "read selection: $class over '$paths'" "$expected" \
+    "$(SELECT_IN="$READ_WORLD" selection "$class" true "$(printf '%s\n' $paths)")"
+done <<<"$READ_ROWS"
+[ "$read_rows" -ge 6 ] || { echo "the read table read $read_rows rows" >&2; exit 1; }
+mkdir -p "$TMP/no-crates"
+check "a read set rust-reads cannot derive is refused" "exit=2 rust-reads-failed" \
+  "$(SELECT_IN="$TMP/no-crates" selection trivial true docs/a.md)"
+check "a read set is derived for a trivial diff alone" "$PROSE_ROW" \
+  "$(SELECT_IN="$TMP/no-crates" selection micro true docs/a.md)"
+# EDIT|CLASS|PATHS|EXPECTED — a copy with that rule removed answers the row
+# other than EXPECTED.
+mkdir -p "$TMP/rule/tools"
+cp "$ROOT/tools/rust-reads" "$TMP/rule/tools/rust-reads"
+while IFS='|' read -r edit class paths expected; do
+  sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
+  chmod +x "$TMP/rule/tools/ci-job-set"
+  if cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set"; then
+    bad "control: the edit changed nothing in a ci-job-set copy: $edit"
+    continue
+  fi
+  got="$(SELECT_IN="$READ_WORLD" SELECT_WITH="$TMP/rule/tools/ci-job-set" selection "$class" true "$paths")"
+  [ "$got" != "$expected" ] && ok "control: $edit reddens $class over $paths" ||
+    bad "control: $edit reddens $class over $paths (still '$got')"
+done <<CONTROLS
+s/touches_rust_read; then\$/false; then/|trivial|docs/a.md|$PROSE_ROW
+s/"\$read"\/\*)/"\$read"*)/|trivial|docs/legalese.md|$VERIFY_ROW
+CONTROLS
 
 # --- 2. The names -----------------------------------------------------------
 # Each reader is extracted with an anchored pattern: a name is the whole run

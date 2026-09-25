@@ -128,6 +128,7 @@ cp "$REPO/tools/bash32-lint" "$MUTANT_TOOLS/bash32-lint"
 cp "$REPO/tools/bash32-parse" "$MUTANT_TOOLS/bash32-parse"
 cp "$REPO/tools/test-roster" "$MUTANT_TOOLS/test-roster"
 cp "$REPO/tools/ci-job-set" "$MUTANT_TOOLS/ci-job-set"
+cp "$REPO/tools/rust-reads" "$MUTANT_TOOLS/rust-reads"
 mutant_guard() { # SED-EXPR — stage a guard copy with that edit applied
   sed "$1" "$GUARD" >"$MUTANT_TOOLS/guard"
   chmod +x "$MUTANT_TOOLS/guard"

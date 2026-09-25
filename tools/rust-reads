@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# The repository paths the Rust source under crates/ names as ones it reads,
+# derived from the source rather than listed by hand, in two shapes. Each row
+# says which shape it came from:
+#
+#   include   an include_str! or include_bytes! literal, resolved against the
+#             including file's directory: a file compiled into the binary or
+#             the test at build time. A literal on the line after its opening
+#             parenthesis, the shape rustfmt gives a long one, counts too.
+#   manifest  a chain of string literals joined onto env!("CARGO_MANIFEST_DIR"),
+#             resolved against that crate's manifest directory: a path code or
+#             a test reads at run time. The chain is the literal arguments of
+#             `.join("...")` calls after it, or the literal arguments beside it
+#             in a `concat!`. A chain that ends with no further argument is a
+#             read of the path it reached, and every path under it when that
+#             is a directory.
+#
+# `.` is the row for what this reader does not follow: a chain that reaches
+# the repository root, and a chain that goes on with an argument that is not
+# a string literal, such as `.join(name)` or `.join(format!(...))`. That
+# second chain also prints the directory it reached, since `.join(name)` most
+# often names a file in it, but the argument can lead out of it too. Code that
+# joins onto a returned path elsewhere is not followed, so a helper like
+# crates/test_util.rs's checkout_root() and every read through it is absent,
+# and a helper returning the manifest directory reads as that crate's
+# directory. A path read by any other route is not here.
+#
+# A resolved path that climbs out of the checkout names no repository path and
+# is not printed.
+#
+# Usage: tools/rust-reads [ROOT]
+#   ROOT   the checkout to read; the current directory when omitted
+# stdout: one `<kind><TAB><path>` row per distinct read, sorted, the path
+# relative to ROOT. Exit 0 with the rows, 2 when the source could not be read
+# or the arguments are wrong, and a read that did not run is never printed as
+# an empty set. A refusal is one stderr line:
+#   rust-reads: unreadable=<path>   ROOT, or the crates/ tree, could not be read
+#   rust-reads: usage=<usage>       more than one argument
+set -euo pipefail
+
+case $# in
+  0) root=. ;;
+  1) root=$1 ;;
+  *) echo "rust-reads: usage=tools/rust-reads [ROOT]" >&2; exit 2 ;;
+esac
+cd -- "$root" 2>/dev/null || { printf 'rust-reads: unreadable=%s\n' "$root" >&2; exit 2; }
+[ -d crates ] || { echo 'rust-reads: unreadable=crates' >&2; exit 2; }
+
+# The manifest directories, for the awk pass to find each file's crate by.
+if ! manifests=$(find crates -type f -name Cargo.toml); then
+  echo 'rust-reads: unreadable=crates' >&2
+  exit 2
+fi
+
+if ! rows=$(RUST_READS_MANIFESTS="$manifests" find crates -type f -name '*.rs' -exec awk '
+  BEGIN {
+    n = split(ENVIRON["RUST_READS_MANIFESTS"], found, "\n")
+    for (i = 1; i <= n; i++) {
+      if (found[i] == "") continue
+      dir = found[i]
+      sub(/\/?Cargo\.toml$/, "", dir)
+      crate[dir] = 1
+    }
+  }
+  # The repository path BASE/LIT names, or "" when it climbs out of the
+  # checkout; "." is the checkout itself.
+  function resolve(base, lit,   n, seg, i, k, out) {
+    n = split(base "/" lit, seg, "/")
+    k = 0
+    for (i = 1; i <= n; i++) {
+      if (seg[i] == "" || seg[i] == ".") continue
+      if (seg[i] == "..") { if (k == 0) return ""; k--; continue }
+      seg[++k] = seg[i]
+    }
+    if (k == 0) return "."
+    out = seg[1]
+    for (i = 2; i <= k; i++) out = out "/" seg[i]
+    return out
+  }
+  function emit(kind, path) {
+    if (path != "") printf "%s\t%s\n", kind, path
+  }
+  function unquote(tok) {
+    sub(/^[^"]*"/, "", tok)
+    sub(/"$/, "", tok)
+    return tok
+  }
+  # The manifest directory owning FILE: its nearest ancestor holding a
+  # Cargo.toml. None is a crates/ file outside every crate, and "" says so.
+  function manifest_dir(file,   dir) {
+    dir = file
+    while (sub(/\/[^\/]*$/, "", dir)) {
+      if (dir in crate) return dir
+    }
+    return ""
+  }
+  function scan(file, text,   dir, rest, lit, chain, owner) {
+    dir = file
+    sub(/\/[^\/]*$/, "", dir)
+    rest = text
+    while (match(rest, /include_(str|bytes)![ \t\n]*\([ \t\n]*"[^"]*"/)) {
+      emit("include", resolve(dir, unquote(substr(rest, RSTART, RLENGTH))))
+      rest = substr(rest, RSTART + RLENGTH)
+    }
+    owner = manifest_dir(file)
+    if (owner == "") return
+    rest = text
+    while (match(rest, /env![ \t\n]*\([ \t\n]*"CARGO_MANIFEST_DIR"[ \t\n]*\)/)) {
+      rest = substr(rest, RSTART + RLENGTH)
+      # The closing parentheses of the Path::new or PathBuf::from around it.
+      if (match(rest, /^[ \t\n]*\)+/)) rest = substr(rest, RLENGTH + 1)
+      chain = ""
+      while (1) {
+        if (match(rest, /^[ \t\n]*\.join[ \t\n]*\([ \t\n]*"[^"]*"[ \t\n]*\)/)) {
+          lit = substr(rest, RSTART, RLENGTH)
+          sub(/[ \t\n]*\)$/, "", lit)
+          chain = chain "/" unquote(lit)
+        } else if (match(rest, /^[ \t\n]*,[ \t\n]*"[^"]*"/)) {
+          chain = chain unquote(substr(rest, RSTART, RLENGTH))
+        } else {
+          break
+        }
+        rest = substr(rest, RLENGTH + 1)
+      }
+      emit("manifest", resolve(owner, chain))
+      # An argument the chain could not read may lead anywhere from there.
+      if (match(rest, /^[ \t\n]*(\.join[ \t\n]*\(|,)/)) emit("manifest", ".")
+    }
+  }
+  FNR == 1 {
+    if (NR > 1) scan(prev, text)
+    prev = FILENAME
+    text = $0
+    next
+  }
+  { text = text "\n" $0 }
+  END { if (NR > 0) scan(prev, text) }
+' {} +); then
+  echo 'rust-reads: unreadable=crates' >&2
+  exit 2
+fi
+
+[ -z "$rows" ] || printf '%s\n' "$rows" | LC_ALL=C sort -u

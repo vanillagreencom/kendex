@@ -991,49 +991,13 @@ if [ "$FULL" -eq 1 ] && lane_on shell_shards; then
 fi
 
 # Every repository path an include_str! or include_bytes! literal under
-# crates/ names, resolved against the including file's directory: the files
-# outside crates/ that compiled code reads at build time. A literal on the
-# line after its opening parenthesis, the shape rustfmt gives a long one,
-# counts too. A file a test reads at run time is not here; the host test run
-# below reads it on every full run.
+# crates/ names: the files outside crates/ that compiled code reads at build
+# time. The derivation is tools/rust-reads' include rows. A file a test reads
+# at run time is not here; the host test run below reads it on every full run.
 compiled_includes() {
-  find crates -type f -name '*.rs' -exec awk '
-    function emit(lit,   path, n, seg, i, k, out) {
-      path = FILENAME
-      sub(/[^\/]*$/, "", path)
-      n = split(path lit, seg, "/")
-      k = 0
-      for (i = 1; i <= n; i++) {
-        if (seg[i] == "" || seg[i] == ".") continue
-        if (seg[i] == "..") { if (k == 0) return; k--; continue }
-        seg[++k] = seg[i]
-      }
-      out = seg[1]
-      for (i = 2; i <= k; i++) out = out "/" seg[i]
-      print out
-    }
-    function literals(text) {
-      while (match(text, /include_(str|bytes)!\([ \t]*"[^"]*"/)) {
-        lit = substr(text, RSTART, RLENGTH)
-        sub(/^[^"]*"/, "", lit)
-        sub(/"$/, "", lit)
-        emit(lit)
-        text = substr(text, RSTART + RLENGTH)
-      }
-      return text
-    }
-    FNR == 1 { pending = 0 }
-    {
-      line = $0
-      if (pending && match(line, /^[ \t]*"[^"]*"/)) {
-        lit = substr(line, RSTART, RLENGTH)
-        sub(/^[^"]*"/, "", lit)
-        sub(/"$/, "", lit)
-        emit(lit)
-      }
-      pending = (literals(line) ~ /include_(str|bytes)!\([ \t]*$/)
-    }
-  ' {} +
+  local rows
+  rows=$("$TOOLS_DIR/rust-reads" .) || return 1
+  printf '%s\n' "$rows" | awk -F '\t' '$1 == "include" { print $2 }'
 }
 
 if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then

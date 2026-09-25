@@ -18,7 +18,7 @@ name: Skill Tests
 # a `render` or `trivial` diff runs the bot-instructions job alone, which
 # also carries the document byte
 # ceilings and the work-marker scan. Every other diff, a `standard` one of documentation alone
-# included, runs the shell shards, the Linux cargo lane and that job; the
+# included, and a `trivial` one changing a path tools/rust-reads names, runs the shell shards, the Linux cargo lane and that job; the
 # macOS, lint and Windows lanes stand down only where every changed path is
 # prose, and the ui lane only where no path is under ui/. `tools/ci-job-set`
 # states that invariant. The aggregators still report and accept only the
@@ -240,7 +240,9 @@ jobs:
       # The class becomes a job set here and nowhere else. Each lane's `if:`
       # below reads one of these lines rather than re-deriving the selection
       # from the class and the paths, so there is one place to read what a
-      # class runs and one place to change it.
+      # class runs and one place to change it. It runs in the workspace root,
+      # the pull request's tree, whose crates/ tools/rust-reads reads for a
+      # `trivial` diff.
       - id: select
         env:
           CHANGE_CLASS: ${{ steps.classify.outputs.change_class }}

@@ -462,7 +462,6 @@ while IFS='|' read -r edit touch setting base extra rc calls text label; do
 done <<'ROWS'
 s/^  rust_input=0$/  rust_input=1/|docs/notes.md||main||0|run||with the touched-set gate removed a prose file runs both
 s/if ! includes=\$(compiled_includes)/if ! includes=$(true)/|docs/authoring/README.md||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the include derivation emptied an included file skips both
-s/if (pending \&\& match/if (0 \&\& match/|docs/split.md||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the next-line literal unread a file named on the line after skips both
 s/if \[ "\$cross_doc" = ci \]; then/if false; then/|crates/app/src/mine.rs|ci|main||0|run||with the ci branch removed the setting at ci runs both
 s/say cross-doc-setting "\$cross_doc"; //|crates/app/src/mine.rs|never|main||0|run||with the refusal removed an unknown setting passes
 /\[ -n "\$touched" \]/d|-||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the empty-set rule removed a branch that touches nothing skips both
@@ -636,7 +635,8 @@ LANE_TOOLS="$TMP/lane-tools"
 LANE_BIN="$TMP/lane-bin"
 mkdir -p "$LANE_TOOLS" "$LANE_BIN"
 cp "$R/fake-bin/rustup" "$LANE_BIN/rustup"
-cp "$REPO/tools/bash32-lint" "$REPO/tools/ci-job-set" "$REPO/tools/test-roster" "$LANE_TOOLS/"
+cp "$REPO/tools/bash32-lint" "$REPO/tools/ci-job-set" "$REPO/tools/test-roster" \
+  "$REPO/tools/rust-reads" "$LANE_TOOLS/"
 printf '#!/usr/bin/env bash\necho "stub: bash32-parse"\n' >"$LANE_TOOLS/bash32-parse"
 chmod +x "$LANE_TOOLS/bash32-parse"
 lane_guard() { # [SED-EXPR] — the guard copy the rows run, edited when given
