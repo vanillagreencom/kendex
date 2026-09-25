@@ -226,7 +226,7 @@ pub(super) fn orphans(
         guard,
         &mut origins,
     );
-    keep_what_kept_records_require(lock, &mut verdicts);
+    keep_what_kept_records_require(lock, new_lock, &mut verdicts);
     let row = |entry: &LockEntry, state, detail: String, cause| DriftRow {
         kind: entry.kind,
         name: entry.name.clone(),
@@ -386,18 +386,33 @@ fn verdicts<'a>(
     verdicts
 }
 
-/// A record that stays installed, for whatever reason, keeps what it
-/// requires on its tool: every record an automatic removal would take
-/// whose own recorded `RequiredBy` reason names a kept record on the same
-/// tool becomes kept, until nothing changes. A record the person named
-/// for removal is not an automatic removal and goes. The requirer named is
-/// the one the row cites.
-fn keep_what_kept_records_require(lock: &Lock, verdicts: &mut [(&String, Verdict)]) {
+/// A record that stays installed with its recorded bytes, for whatever
+/// reason and whichever pass kept it, keeps what it requires on its tool:
+/// every record an automatic removal would take whose own recorded
+/// `RequiredBy` reason names a kept record on the same tool becomes kept,
+/// until nothing changes. What stays is read off one fact and no list of
+/// passes: a record an earlier pass carried into `new_lock` as it was —
+/// a conflict or a hold in the item pass, a refusal's edit hold, a
+/// withheld copy kept — and every record this pass does not take. A
+/// record the person named for removal is not an automatic removal and
+/// goes. The requirer named is the one the row cites.
+fn keep_what_kept_records_require(
+    lock: &Lock,
+    new_lock: &Lock,
+    verdicts: &mut [(&String, Verdict)],
+) {
+    let carried: BTreeSet<&str> = new_lock
+        .entries
+        .iter()
+        .filter(|(key, entry)| lock.entries.get(*key) == Some(entry))
+        .map(|(key, _)| key.as_str())
+        .collect();
     loop {
         let kept: BTreeSet<&str> = verdicts
             .iter()
             .filter(|(_, verdict)| !matches!(verdict, Verdict::Removed { .. }))
             .map(|(key, _)| key.as_str())
+            .chain(carried.iter().copied())
             .collect();
         let mut changed = false;
         for (key, verdict) in verdicts.iter_mut() {

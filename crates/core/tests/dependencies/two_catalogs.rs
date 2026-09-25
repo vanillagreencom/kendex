@@ -122,7 +122,9 @@ fn a_wrapper_is_withheld_where_the_judge_the_plan_writes_is_not() {
 /// the other, whose judge Codex cannot run: on Codex the rebound wrapper is
 /// withheld, and the recorded installation is still the other catalog's.
 /// The plan says so as the provenance conflict a rebind always gets, keeps
-/// the record, and takes nothing of the recorded copy to the trash.
+/// the record, and takes nothing of the recorded copy to the trash — nor
+/// of the judge and the other wrapper the kept copy runs with, which the
+/// orphan pass keeps with it under `apply`'s options, records and all.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_withheld_rebind_reaches_the_provenance_conflict_and_not_the_trash() {
@@ -182,8 +184,18 @@ fn a_withheld_rebind_reaches_the_provenance_conflict_and_not_the_trash() {
         identity(&other),
         "the record was rebound"
     );
+    for name in ["judge", "halt"] {
+        let key = format!("hook:{name}:codex");
+        assert!(
+            report.record.entries.contains_key(&key),
+            "{key} lost its record: {:?}",
+            drift_details(&report)
+        );
+    }
     apply::execute(&f.env, &report.plan).unwrap();
-    assert_eq!(landed(&f, "deliver", HarnessId::Codex), (true, true));
+    for name in ["deliver", "judge", "halt"] {
+        assert_eq!(landed(&f, name, HarnessId::Codex), (true, true), "{name}");
+    }
 }
 
 /// The judge declared from a catalog that will not open this pass — its
