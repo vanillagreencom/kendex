@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, `source add|remove|enable|disable`, `marketplace subscribe|unsubscribe`) when the working directory is a linked git worktree and the command does not name the global scope, and whenever a `cd`, `pushd`, `env -C` or `sudo -D` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. The project a bare verb writes is the one kendex resolves from the working directory; where that project has no manifest of its own in the linked worktree (kendex.toml, or kendex-local.toml for a source catalog), its declarations are the main checkout's, so a project-scope write renders into that checkout and removes what it does not expect there. Where it has one, it is a project in its own right, and the verbs that write one project by being typed inside it (`add`, `remove`, `fork`, `pin`, `adopt`, `drift-hook` and the writing `source` and `marketplace` subcommands) pass there. `refresh`, `apply` and `updates --apply` pass in any worktree once they name their target with `--project-path PATH`: the directory the write lands in is then the command's own word, which is the one thing this guard is missing; `update-pi` is refused in both. Names the forms that are right: `--project-path PATH` where the verb takes it, the same command from the main checkout, or the verb's global form where its parser has one (`--global` for add, `--scope global` for update-pi, none for the `source` subcommands, either for the rest).
 # summary: Stops a kendex command that writes a project from inside a linked git worktree, where the write would land somewhere the command does not name.
-# safety: Reads the command text and asks git whether the tool call's working directory has a git dir that differs from its common dir, which is what makes a worktree linked, and for a linked worktree its root; walks up from the working directory to that root for the project kendex would write, and tests whether its manifest exists, reading its kendex.toml only for `is_source_catalog`; writes nothing. A git that cannot answer refuses. The verb is the first word naming one after a `kendex` word, anywhere in the command except the text the shell would not run: the words inside a quoted span, a heredoc body its command reads as data, and a comment are masked out before the command is read, so prose spelling the pair is not refused, while a span or a heredoc body that a shell, `eval`, `source` or `.` word runs is read as the command it is; a quote that cannot be paired leaves the whole text to be read, so a command this hook could not take apart is refused rather than passed. The command is read by the commit-guards skill's command-position library, found in the install beside the hook; without it every call is refused. The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. A matched verb with `--help` or `--plan` as an argument and no `<`, `>`, backslash, single quote or double quote in its tail, `kendex updates` without `--apply`, `kendex verify`, `list`, `report`, `check` — whose one write, the scope's install record for copies it proves against their source, renders nothing into any checkout — and every other verb pass. `-g`/`--global`, `--scope`, `--project-path` and `--apply` are read from the words Bash passes kendex after the verb in its own segment: a redirection operator and the file it opens are not arguments, a standalone `--` ends the options, and a word there the shell settles only when it runs (a parameter expansion, a glob, a brace, or a backslash) grants no exemption and counts as `--apply`; a command substitution, and a quoted span the command reader opens as command text with the words after it, are cut out of the segment and not read. `--help`, `--plan` and update-pi's `--check` are read from the segment's text. A command carrying `-g`, `--global` or `--scope global` there, with no other `--scope` beside it, passes because it names the scope this hook does not guard, and a `refresh`, `apply` or `updates` carrying `--project-path` there passes because it names the project it writes, the value itself being read by kendex, which refuses the flag without one. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the command text and asks git whether the tool call's working directory has a git dir that differs from its common dir, which is what makes a worktree linked, and for a linked worktree its root; walks up from the working directory to that root for the project kendex would write, and tests whether its manifest exists, reading its kendex.toml only for the text `is_source_catalog`; writes nothing. A git that cannot answer refuses. The verb is the first word naming one after a `kendex` word, anywhere in the command except the text the shell would not run: the words inside a quoted span, a heredoc body its command reads as data, and a comment are masked out before the command is read, so prose spelling the pair is not refused, while a span or a heredoc body that a shell, `eval`, `source` or `.` word runs is read as the command it is; a quote that cannot be paired leaves the whole text to be read, so a command this hook could not take apart is refused rather than passed. The command is read by the commit-guards skill's command-position library, found in the install beside the hook; without it every call is refused. The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. A matched verb with `--help` or `--plan` as an argument and no `<`, `>`, backslash, single quote or double quote in its tail, `kendex updates` without `--apply`, `kendex verify`, `list`, `report`, `check` — whose one write, the scope's install record for copies it proves against their source, renders nothing into any checkout — and every other verb pass. `-g`/`--global`, `--scope`, `--project-path` and `--apply` are read from the words Bash passes kendex after the verb in its own segment: a redirection operator and the file it opens are not arguments, a standalone `--` ends the options, and a word there the shell settles only when it runs (a parameter expansion, a glob, a brace, or a backslash) grants no exemption and counts as `--apply`; a command substitution, and a quoted span the command reader opens as command text with the words after it, are cut out of the segment and not read. `--help`, `--plan` and update-pi's `--check` are read from the segment's text. A command carrying `-g`, `--global` or `--scope global` there, with no other `--scope` beside it, passes because it names the scope this hook does not guard, and a `refresh`, `apply` or `updates` carrying `--project-path` there passes because it names the project it writes, the value itself being read by kendex, which refuses the flag without one. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # ---
 
@@ -107,7 +107,8 @@ refuse() { # KEY VALUE [CAUSE]
           ;;
         worktree:target)
           echo "  The project here, $PROJECT, has its own $MANIFEST, and 'kendex $VERB' writes a whole project scope only where the command names it." >&2
-          echo "  Name it in the command: kendex $WRITE_FORM --project-path $PROJECT, quoted as the shell needs, or pass $GLOBAL_FORM for a global change." >&2
+          printf -v QUOTED '%q' "$PROJECT"
+          echo "  Name it in the command: kendex $WRITE_FORM --project-path $QUOTED, or pass $GLOBAL_FORM for a global change." >&2
           ;;
         main:*)
           echo "  The project here, $PROJECT, has no $MANIFEST of its own in this worktree, so its declarations are the main checkout's (the first line of 'git worktree list'); a project-scope write from here renders into that checkout and removes what it does not expect there." >&2
@@ -532,11 +533,13 @@ fi
 # refusal of the home directory is not repeated, since a walk bounded by a
 # worktree's root does not reach the home directory from below it. The walk
 # stops at the linked worktree's root, since a project above it is not the
-# worktree's own. The file that declares the project is kendex's rule too,
+# worktree's own. The file that declares the project follows kendex's rule,
 # `crates/core/src/manifest/file.rs::project_manifest_path`: kendex-local.toml
-# where its kendex.toml sets `is_source_catalog = true` in its top-level
-# table, kendex.toml otherwise. Where that file exists in the worktree the
-# project is the worktree's own, and the verbs that write one project by
+# for a source catalog, kendex.toml otherwise. This hook does not parse TOML,
+# so any readable kendex.toml whose text names `is_source_catalog` counts as
+# a catalog: every file kendex reads as one is among them, and a file this
+# misreads is refused, never passed. Where that file exists in the worktree
+# the project is the worktree's own, and the verbs that write one project by
 # being typed inside it write that one. The file is not otherwise read: one
 # that will not parse is still this project's, and kendex reports it before
 # it writes. Where it does not exist, or no project is found inside the
@@ -556,18 +559,15 @@ is_project_root() { # DIR -> 0 where kendex takes DIR for a project root
   done
   return 1
 }
-# A file this hook cannot read is no source catalog, as kendex reads it.
-declares_catalog() { # KENDEX_TOML -> 0 where its top-level table sets is_source_catalog = true
-  local line
+# A file that cannot be read is no source catalog, as kendex reads it; one
+# that stops reading part-way counts as one.
+declares_catalog() { # KENDEX_TOML -> 0 where its text names is_source_catalog
+  local text
   [ -r "$1" ] || return 1
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      *[![:space:]]*) ;;
-      *) continue ;;
-    esac
-    [[ $line =~ ^[[:space:]]*\[ ]] && return 1
-    [[ $line =~ ^[[:space:]]*is_source_catalog[[:space:]]*=[[:space:]]*true[[:space:]]*(#.*)?$ ]] && return 0
-  done <"$1"
+  text=$(cat -- "$1" 2>/dev/null) || return 0
+  case "$text" in
+    *is_source_catalog*) return 0 ;;
+  esac
   return 1
 }
 if ! TOP=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null); then

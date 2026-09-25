@@ -75,8 +75,10 @@ mkdir -p "$NESTED/app/.claude"
 printf 'schema = 6\n' >"$NESTED/app/kendex.toml"
 mkdir -p "$OWN/marked/.claude"
 # A source catalog declares in kendex-local.toml, its kendex.toml being the
-# catalog it publishes: one worktree without that file, one with it, and one
-# whose is_source_catalog sits inside a table rather than at the top level.
+# catalog it publishes: one worktree without that file and one with it. The
+# hook reads any kendex.toml naming is_source_catalog as a catalog, so the key
+# inside a table, after a multi-line string holding a table header, or quoted
+# is a catalog too, and with no kendex-local.toml each is refused.
 CATALOG="$TMP_ROOT/catalog"
 git -C "$MAIN" worktree add -q "$CATALOG" -b catalog
 printf 'schema = 6\nis_source_catalog = true\n' >"$CATALOG/kendex.toml"
@@ -96,6 +98,16 @@ git -C "$HOST" worktree add -q "$HOST/.claude/worktrees/lane" -b lane
 CATALOG_TABLED="$TMP_ROOT/catalog-tabled"
 git -C "$MAIN" worktree add -q "$CATALOG_TABLED" -b catalog-tabled
 printf 'schema = 6\n[marketplace]\nis_source_catalog = true\n' >"$CATALOG_TABLED/kendex.toml"
+CATALOG_STRING="$TMP_ROOT/catalog-string"
+git -C "$MAIN" worktree add -q "$CATALOG_STRING" -b catalog-string
+printf 'description = """\n[not a table]\n"""\nis_source_catalog = true\n' >"$CATALOG_STRING/kendex.toml"
+CATALOG_QUOTED="$TMP_ROOT/catalog-quoted"
+git -C "$MAIN" worktree add -q "$CATALOG_QUOTED" -b catalog-quoted
+printf '"is_source_catalog" = true\n' >"$CATALOG_QUOTED/kendex.toml"
+# A project path with a space, which the refusal's remedy has to keep one word.
+SPACED="$TMP_ROOT/sp/my app"
+git -C "$MAIN" worktree add -q "$SPACED" -b spaced
+printf 'schema = 6\n' >"$SPACED/kendex.toml"
 OUTSIDE="$TMP_ROOT/outside"
 mkdir -p "$OUTSIDE"
 # precondition: The outside rows prove the not-a-repository branch only where the fixture
@@ -215,6 +227,8 @@ directory_table() {
       catalog) dir="$CATALOG" ;;
       catalog-local) dir="$CATALOG_LOCAL" ;;
       catalog-tabled) dir="$CATALOG_TABLED" ;;
+      catalog-string) dir="$CATALOG_STRING" ;;
+      catalog-quoted) dir="$CATALOG_QUOTED" ;;
       hosted) dir="$HOST/.claude/worktrees/lane" ;;
       *) printf 'directory table: unknown world: %s\n' "$world" >&2; exit 1 ;;
     esac
@@ -431,7 +445,9 @@ a project below the worktree root with its own kendex.toml is that worktree's ow
 a marker-only project inside a declaring worktree has no manifest of its own|payload|own-marked|2|block-worktree-refresh: refused=add|kendex add orch
 a source catalog without kendex-local.toml has no manifest of its own|payload|catalog|2|block-worktree-refresh: refused=add|kendex add orch
 a source catalog with kendex-local.toml has one|payload|catalog-local|0|-|kendex add orch
-is_source_catalog inside a table does not make a catalog|payload|catalog-tabled|0|-|kendex add orch
+is_source_catalog inside a table is read as a catalog, so without kendex-local.toml it is refused|payload|catalog-tabled|2|block-worktree-refresh: refused=add|kendex add orch
+is_source_catalog after a multi-line string holding a table header is a catalog|payload|catalog-string|2|block-worktree-refresh: refused=add|kendex add orch
+a quoted is_source_catalog key is a catalog|payload|catalog-quoted|2|block-worktree-refresh: refused=add|kendex add orch
 ROWS
 )
 directory_table
@@ -456,6 +472,8 @@ assert_not_contains "$ERR_FILE" '--global' 'a source subcommand has no global fl
 assert_not_contains "$ERR_FILE" '--scope global' 'nor a global scope'
 run_in "$OWN" 'kendex refresh'
 assert_contains "$ERR_FILE" "--project-path $OWN" 'a worktree with its own kendex.toml is named by its own root'
+run_in "$SPACED" 'kendex refresh'
+assert_contains "$ERR_FILE" "Name it in the command: kendex refresh --project-path $TMP_ROOT/sp/my\\ app, or pass" 'a project path with a space is one word in the remedy'
 run_in "$OWN" 'kendex updates --apply'
 assert_contains "$ERR_FILE" "kendex updates --apply --project-path $OWN" 'the updates remedy keeps the --apply that makes it a write'
 run_in "$OWN" 'kendex update-pi --scope project'
