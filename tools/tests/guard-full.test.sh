@@ -175,6 +175,7 @@ SPACE_ROWS=(
   "an unreadable end probe fails the run|DF_FAIL_CALL=2 DF_FREE_KIB_START=$high_free_kib|1|guard: cargo-space-end-unreadable=target|1"
   "a start floor that is not a whole number refuses|GUARD_MIN_FREE_GB=16GiB DF_FREE_KIB_START=$high_free_kib|2|guard: cargo-space-setting=GUARD_MIN_FREE_GB|0"
   "an exhaustion floor that is not a whole number refuses|GUARD_EXHAUSTED_FREE_MB=512MB DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|2|guard: cargo-space-setting=GUARD_EXHAUSTED_FREE_MB|0"
+  "an exhaustion floor of zero refuses|GUARD_EXHAUSTED_FREE_MB=0 DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|2|guard: cargo-space-setting=GUARD_EXHAUSTED_FREE_MB|0"
 )
 space_row_holds() { # N — run row N under $GUARD; succeed when every expectation holds
   local env rc key ran did=0
@@ -217,6 +218,8 @@ done <<'EDITS'
 8|s/^    say cargo-space-end-unreadable/    note cargo-space-end-unreadable/
 9|s/"" | \*\[!0-9\]\*) refuse cargo-space-setting/"") refuse cargo-space-setting/
 10|/^  whole_setting GUARD_EXHAUSTED_FREE_MB/d
+11|s/^    \*\[!0\]\*) ;;$/    *) ;;/
+4|/^  export CARGO_INCREMENTAL=0$/d
 EDITS
 
 # Every other lane fails its own write on a full stream too, so only fmt's

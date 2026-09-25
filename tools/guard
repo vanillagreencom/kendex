@@ -117,7 +117,7 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     cargo-fmt)
       echo "cargo fmt --check refused the workspace." ;;
     cargo-space-setting)
-      printf 'the %s setting is unset, is not a whole number, or could not be read, so the cargo block did not run.\n' "$2" ;;
+      printf 'the %s setting is unset, is not a positive whole number, or could not be read, so the cargo block did not run.\n' "$2" ;;
     cargo-space-free)
       echo "free space on the volume holding $cargo_target is below the exhaustion floor, so the run would fail at its end."
       echo "Run cargo clean, or free space elsewhere on that volume, for example another checkout's target/." ;;
@@ -203,9 +203,12 @@ cargo_target_kib() { # TARGET_PATH — KiB it holds outside any incremental dire
     END { if (bad || NR == 0) exit 1; print kib }' <<<"$output"
 }
 
-whole_setting() { # NAME VALUE — refuse a space bound that is not a whole number
+whole_setting() { # NAME VALUE — refuse a space bound that is not a positive whole number
+  # A zero bound would turn its floor off.
   case "$2" in
     "" | *[!0-9]*) refuse cargo-space-setting "$1" ;;
+    *[!0]*) ;;
+    *) refuse cargo-space-setting "$1" ;;
   esac
 }
 
