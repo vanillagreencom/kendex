@@ -338,65 +338,15 @@ if ! test -r "$lib"; then
   exit 1
 fi
 . "$lib"
-if ! declare -F lane_owned_processes >/dev/null || ! declare -F lane_process_state >/dev/null; then
+if ! declare -F lane_stop_owned >/dev/null; then
   printf 'lane-host-ssh: stop-operation-missing path=%s\n' "$lib" >&2
   exit 1
 fi
-lane_owned_processes "$1" "$2" || {
-  printf 'lane-host-ssh: stop-process-read-failed item=%s\n' "$4" >&2
+lane_stop_owned "$1" "$2" || {
+  printf 'lane-host-ssh: stop-%s item=%s%s\n' "$LANE_STOP_CAUSE" "$4" "${LANE_STOP_PID:+ pid=$LANE_STOP_PID}" >&2
   exit 1
 }
-root=$(cd -- "$1" && pwd -P) || {
-  printf 'lane-host-ssh: stop-worktree-read-failed item=%s\n' "$4" >&2
-  exit 1
-}
-signaled=""
-for pid in $LANE_OWNED_PROCESS_PIDS; do
-  if ! current=$(readlink -- "/proc/$pid/cwd" 2>/dev/null); then
-    state=$(lane_process_state "$pid") || {
-      printf 'lane-host-ssh: stop-state-read-failed item=%s pid=%s\n' "$4" "$pid" >&2
-      exit 1
-    }
-    if test -z "$state" || test "$state" = Z; then continue; fi
-    printf 'lane-host-ssh: stop-cwd-read-failed item=%s pid=%s\n' "$4" "$pid" >&2
-    exit 1
-  fi
-  test "$current" = "$root" || {
-    printf 'lane-host-ssh: stop-owner-changed item=%s pid=%s\n' "$4" "$pid" >&2
-    exit 1
-  }
-  if ! kill -TERM "$pid" 2>/dev/null; then
-    state=$(lane_process_state "$pid") || {
-      printf 'lane-host-ssh: stop-state-read-failed item=%s pid=%s\n' "$4" "$pid" >&2
-      exit 1
-    }
-    if test -z "$state" || test "$state" = Z; then continue; fi
-    printf 'lane-host-ssh: stop-signal-refused item=%s pid=%s\n' "$4" "$pid" >&2
-    exit 1
-  fi
-  signaled+="${signaled:+ }$pid"
-done
-passes=50
-while test "$passes" -gt 0; do
-  live=""
-  for pid in $signaled; do
-    state=$(lane_process_state "$pid") || {
-      printf 'lane-host-ssh: stop-state-read-failed item=%s pid=%s\n' "$4" "$pid" >&2
-      exit 1
-    }
-    test -z "$state" || test "$state" = Z || live+="${live:+ }$pid"
-  done
-  test -n "$live" || break
-  sleep 0.1
-  passes=$((passes - 1))
-done
-test -z "${live:-}" || {
-  printf 'lane-host-ssh: stop-timeout item=%s\n' "$4" >&2
-  exit 1
-}
-count=0
-for pid in $signaled; do count=$((count + 1)); done
-printf 'stopped item=%s processes=%s\n' "$4" "$count"''', path, harness, row["clone"], item)
+printf 'stopped item=%s processes=%s\n' "$4" "$LANE_STOP_COUNT"''', path, harness, row["clone"], item)
     sys.stdout.buffer.write(result.stdout)
 
 

@@ -741,34 +741,30 @@ exec git "$@"
             self.assertEqual((raced.returncode, raced.stdout),
                              (0, b"stopped item=TEST-1 processes=0\n"), raced.stderr)
 
-            original = self.script.read_text()
-            guard = '''  if ! current=$(readlink -- "/proc/$pid/cwd" 2>/dev/null); then
-    state=$(lane_process_state "$pid") || {
-      printf 'lane-host-ssh: stop-state-read-failed item=%s pid=%s\\n' "$4" "$pid" >&2
-      exit 1
-    }
-    if test -z "$state" || test "$state" = Z; then continue; fi'''
-            self.assertEqual(original.count(guard), 1)
-            self.script.write_text(original.replace(guard, guard.replace(
-                'if test -z "$state" || test "$state" = Z; then continue; fi', 'if false; then continue; fi')))
+            guard = '''    if ! current="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)"; then
+      state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
+      if [[ -z "$state" || "$state" == Z ]]; then continue; fi'''
+            self.assertEqual(library_original.count(guard), 1)
+            library.write_text(library_original.replace(guard, guard.replace(
+                'if [[ -z "$state" || "$state" == Z ]]; then continue; fi', 'if false; then continue; fi'))
+                + f'\nlane_owned_processes() {{ LANE_OWNED_PROCESS_PIDS="{zombie}"; }}\n')
             control = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-            self.assertEqual((control.returncode, b"stop-cwd-read-failed" in control.stderr), (1, True), control.stderr)
+            self.assertEqual((control.returncode, f"stop-cwd-read-failed item=TEST-1 pid={zombie}".encode() in control.stderr),
+                             (1, True), control.stderr)
 
-            self.script.write_text(original)
             library.write_text(library_original)
             inverse = self.call("stop", "--item", "TEST-1", "--harness", "codex")
             self.assertEqual((inverse.returncode, inverse.stdout),
                              (0, b"stopped item=TEST-1 processes=0\n"), inverse.stderr)
 
             lane = harness(worktree)
-            guard = 'lane_owned_processes "$1" "$2" || {'
-            self.assertEqual(original.count(guard), 1)
-            self.script.write_text(original.replace(guard, 'lane_owned_processes "$1" claude || {'))
+            guard = 'lane_owned_processes "$root" "$2" || {'
+            self.assertEqual(library_original.count(guard), 1)
+            library.write_text(library_original.replace(guard, 'lane_owned_processes "$root" claude || {'))
             mutant = self.call("stop", "--item", "TEST-1", "--harness", "codex")
             self.assertEqual(mutant.returncode, 0, mutant.stderr)
             lane.wait(timeout=2)
         finally:
-            self.script.write_text(original if 'original' in locals() else self.script.read_text())
             if 'library_original' in locals():
                 library.write_text(library_original)
             for process in (lane, lane_two, outside, holder):
@@ -781,20 +777,17 @@ exec git "$@"
         clone = Path(self.row["clone"])
         library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
         library_original = library.read_text()
-        library.write_text(library_original + '\nunset -f lane_process_state\n')
+        library.write_text(library_original + '\nunset -f lane_stop_owned\n')
         missing = self.call("stop", "--item", "TEST-1", "--harness", "claude")
         self.assertEqual((missing.returncode, b"stop-operation-missing" in missing.stderr), (1, True), missing.stderr)
         library.write_text(library_original + '\nlane_owned_processes() { return 2; }\n')
         refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((refused.returncode, b"stop-process-read-failed item=TEST-1" in refused.stderr),
+        self.assertEqual((refused.returncode, b"stop-process-read-failed item=TEST-1\n" in refused.stderr),
                          (1, True), refused.stderr)
-        original = self.script.read_text()
-        guard = '''lane_owned_processes "$1" "$2" || {
-  printf 'lane-host-ssh: stop-process-read-failed item=%s\\n' "$4" >&2
-  exit 1
-}'''
-        self.assertEqual(original.count(guard), 1)
-        self.script.write_text(original.replace(guard, 'lane_owned_processes "$1" "$2" || :'))
+        guard = 'lane_owned_processes "$root" "$2" || { LANE_STOP_CAUSE=process-read-failed; return 1; }'
+        self.assertEqual(library_original.count(guard), 1)
+        library.write_text(library_original.replace(guard, 'lane_owned_processes "$root" "$2" || :')
+                           + '\nlane_owned_processes() { return 2; }\n')
         mutant = self.call("stop", "--item", "TEST-1", "--harness", "claude")
         self.assertEqual(mutant.returncode, 0, mutant.stderr)
 
@@ -817,12 +810,11 @@ exec git "$@"
                          (1, True), signal_refused.stderr)
         library.write_text(library_original)
         refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((refused.returncode, b"stop-timeout item=TEST-1" in refused.stderr),
+        self.assertEqual((refused.returncode, f"stop-timeout item=TEST-1 pid={process.pid}".encode() in refused.stderr),
                          (1, True), refused.stderr)
-        original = self.script.read_text()
-        guard = 'test -z "${live:-}" || {'
-        self.assertEqual(original.count(guard), 1)
-        self.script.write_text(original.replace(guard, 'true || {'))
+        guard = '[[ -z "$live" ]] || {'
+        self.assertEqual(library_original.count(guard), 1)
+        library.write_text(library_original.replace(guard, 'true || {'))
         mutant = self.call("stop", "--item", "TEST-1", "--harness", "claude")
         self.assertEqual(mutant.returncode, 0, mutant.stderr)
         self.assertIsNone(process.poll())

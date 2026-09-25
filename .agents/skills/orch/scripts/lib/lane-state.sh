@@ -90,16 +90,6 @@ CODEX_MARKER_RE='^›'
 # a -v value.
 DIALOG_ROW_RE='^(❯|›) [0-9]+[.] '
 
-# The live input line with NOTHING typed into it, one signature per harness and
-# both measured off the same running sessions as the signatures above. Claude
-# Code's empty composer is the marker, U+00A0 and nothing else; Codex draws a
-# fixed placeholder into its empty composer
-# (fixtures/oversee-watch/codex-composer-idle.txt), which a draft replaces
-# (codex-composer-draft.txt). Trailing blanks are tmux padding the row it drew,
-# never typed text: `capture-pane -J` keeps them.
-CLAUDE_COMPOSER_EMPTY_RE=$'^\xe2\x9d\xaf\xc2\xa0[[:blank:]]*$'
-CODEX_COMPOSER_EMPTY_RE='^› Ask Codex to do anything[[:blank:]]*$'
-
 # pane_working SCREEN — the turn-in-flight predicate over one captured pane.
 pane_working() { grep -Eq -- "$WORKING_RE" <<<"$1"; }
 
@@ -187,37 +177,6 @@ pane_turn_slice() {
 pane_below_last_turn() { pane_turn_slice "$1" below; }
 pane_turn_identity() { pane_turn_slice "$1" before | cksum; }
 
-# Is the lane's live input line EMPTY — nothing typed and waiting unsent?
-#
-# The rule lives here, beside the composer signatures it reads, because the
-# caller that needs it is about to TYPE into the pane: `lane-close` pastes
-# `/exit` at the cursor, and a composer already holding a draft submits the
-# draft together with it, starting a turn on a lane the fleet has called
-# finished. Asking what a lane is doing needs none of this — `lane_state` calls
-# a lane sitting at its composer idle, draft or no draft — so the two questions
-# stay apart and no caller has to invent this one.
-#
-# The line read is the last marker line below the last turn: the same live
-# input line pane_turn_slice refuses to take as the turn boundary.
-#
-#   0  the line is one of the two measured empty composers
-#   1  the line carries a draft
-#   2  no line below the last turn carries a marker, or the marker line matches
-#      neither harness's composer. Nothing was measured, so a caller about to
-#      type must refuse rather than read it as empty.
-lane_composer_empty() { # SCREEN
-  local slice matched line
-  # Every failure below is status 2, the "nothing measured" answer: a slice the
-  # scan could not take and a slice with no marker in it are equally no reading
-  # of a composer, and neither may reach a caller as permission to type.
-  slice="$(pane_below_last_turn "$1")" || return 2
-  matched="$(grep -E -- "$PANE_MARKER_RE" <<<"$slice")" || return 2
-  line="${matched##*$'\n'}"
-  if grep -Eq -- "$CLAUDE_COMPOSER_EMPTY_RE|$CODEX_COMPOSER_EMPTY_RE" <<<"$line"; then return 0; fi
-  if grep -Eq -- "$CLAUDE_COMPOSER_RE|$CODEX_MARKER_RE" <<<"$line"; then return 1; fi
-  return 2
-}
-
 # The limit banner in SLICE as the ACCOUNT speaking, empty when it is not.
 # A slice with no banner is empty, and so is one on a lane with a turn in
 # flight: limit-shaped text a lane prints mid-turn is its own output, not its
@@ -271,8 +230,8 @@ pane_has_child() {
 }
 
 # The harness processes whose current directory is one worktree. This is the
-# ownership read used before a wake starts a second harness and before a hosted
-# stop signals one. The worktree path is canonical, and a process that still
+# ownership read used before a wake starts a second harness and before
+# lane_stop_owned signals one. The worktree path is canonical, and a process that still
 # exists but whose cwd cannot be read makes the whole answer unreadable.
 #
 # On success LANE_OWNED_PROCESS_TABLE holds `pid ppid name` rows for the host,
@@ -314,6 +273,68 @@ lane_owned_processes() { # WORKTREE HARNESS
     LANE_OWNED_PROCESS_PIDS+="${LANE_OWNED_PROCESS_PIDS:+ }$pid"
   done
   LANE_OWNED_PROCESS_TABLE="$table"
+}
+
+# End one worktree's harness by signal: SIGTERM to every process
+# lane_owned_processes names, each one's directory read again just before its
+# signal, then a bounded wait for every signalled process to exit. The one stop
+# the hosted provider's `stop` verb and a local `lane-close` both run, so
+# nothing ever types into a lane to end it.
+#
+# A process that exits or becomes a zombie before its signal or during the
+# wait counts as stopped. On status 0 LANE_STOP_COUNT is how many were
+# signalled, 0 where none was found. On status 1 LANE_STOP_CAUSE names the step
+# that failed and LANE_STOP_PID the process it failed on, empty where the step
+# reads no single process:
+#   worktree-read-failed  the worktree does not resolve
+#   process-read-failed   the ownership read answered nothing (its status 2)
+#   state-read-failed     a process state could not be read
+#   cwd-read-failed       a live process whose directory cannot be read
+#   owner-changed         a process left the worktree before its signal
+#   signal-refused        the signal failed on a process still live
+#   timeout               a signalled process outlived LANE_STOP_WAIT_PASSES
+LANE_STOP_COUNT=0
+LANE_STOP_CAUSE=""
+LANE_STOP_PID=""
+LANE_STOP_WAIT_PASSES=50
+lane_stop_owned() { # WORKTREE HARNESS
+  local root pid current state signaled="" live="" passes="$LANE_STOP_WAIT_PASSES"
+  LANE_STOP_COUNT=0
+  LANE_STOP_CAUSE=""
+  LANE_STOP_PID=""
+  root="$(cd -- "$1" && pwd -P)" || { LANE_STOP_CAUSE=worktree-read-failed; return 1; }
+  lane_owned_processes "$root" "$2" || { LANE_STOP_CAUSE=process-read-failed; return 1; }
+  for pid in $LANE_OWNED_PROCESS_PIDS; do
+    LANE_STOP_PID="$pid"
+    if ! current="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)"; then
+      state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
+      if [[ -z "$state" || "$state" == Z ]]; then continue; fi
+      LANE_STOP_CAUSE=cwd-read-failed
+      return 1
+    fi
+    [[ "$current" == "$root" ]] || { LANE_STOP_CAUSE=owner-changed; return 1; }
+    if ! kill -TERM "$pid" 2>/dev/null; then
+      state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
+      if [[ -z "$state" || "$state" == Z ]]; then continue; fi
+      LANE_STOP_CAUSE=signal-refused
+      return 1
+    fi
+    signaled+="${signaled:+ }$pid"
+  done
+  LANE_STOP_PID=""
+  while [[ "$passes" -gt 0 ]]; do
+    live=""
+    for pid in $signaled; do
+      state="$(lane_process_state "$pid")" \
+        || { LANE_STOP_CAUSE=state-read-failed; LANE_STOP_PID="$pid"; return 1; }
+      [[ -z "$state" || "$state" == Z ]] || live+="${live:+ }$pid"
+    done
+    [[ -n "$live" ]] || break
+    sleep 0.1
+    passes=$((passes - 1))
+  done
+  [[ -z "$live" ]] || { LANE_STOP_CAUSE=timeout; LANE_STOP_PID="${live%% *}"; return 1; }
+  for pid in $signaled; do LANE_STOP_COUNT=$((LANE_STOP_COUNT + 1)); done
 }
 
 # ---------------------------------------------------------------------------
