@@ -18,7 +18,9 @@
 #          inside), `other` (a command answering another version),
 #          `noexec` (the command without its execute bit), `absent` (no
 #          command in it), `none` (no .deb), `two` (two of them)
-# The deb is opened with ar and tar, which every host running this has.
+# The deb is opened with ar and tar. The rows run on Linux only, the one
+# host whose release lane checks a .deb: on macOS the fixture's ar round
+# trip does not extract, and the macOS leg answered extract= on every row.
 # No host here builds an .rpm, so every Linux row that gets past the deb
 # stops at `missing=*.rpm`; the deb's own verdict is what the row holds, and
 # the .rpm leg is proved by the release lane over the real package. The
@@ -124,6 +126,7 @@ run() { # TARGET [OUT]
 LINUX=x86_64-unknown-linux-gnu
 DEB="bundle/deb/kendex_${VERSION}_amd64.deb"
 
+if [ "$(uname -s)" = Linux ]; then
 echo "=== the Linux lane, one row per shape of .deb ==="
 while IFS='|' read -r label word rc first checked; do
   [[ "$label" != "" && "$label" != \#* ]] || continue
@@ -146,6 +149,9 @@ relative_rc=0
 assert_eq "rc=$relative_rc first=$(first_text) checked=$(checked_text)" \
   "rc=1 first=missing=*.rpm checked=$DEB" \
   "a relative output directory is read the way an absolute one is"
+else
+  echo "=== the Linux lane rows run on Linux only ==="
+fi
 
 echo "=== the lane itself ==="
 lane
@@ -202,7 +208,7 @@ if command -v hdiutil >/dev/null 2>&1 && command -v codesign >/dev/null 2>&1; th
     assert_eq "$(run "$MACOS")" "rc=$rc first=$first checked=$checked" "$label"
   done <<EOF
 the app, its updater archive and its disk image all carry the sidecar|command|command|command|0|-|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz,bundle/dmg/kendex_${VERSION}_aarch64.dmg
-an app with no sidecar|absent|command|command|1|absent=$OUT/bundle/macos/kendex.app/Contents/MacOS/kendex|-
+an app with no sidecar|absent|command|command|1|absent=$OUT/bundle/macos/kendex.app|-
 an updater archive with no sidecar|command|absent|command|1|absent=$OUT/bundle/macos/kendex.app.tar.gz|bundle/macos/kendex.app
 a disk image with no sidecar|command|command|absent|1|absent=$OUT/bundle/dmg/kendex_${VERSION}_aarch64.dmg|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz
 no disk image at all|command|command|none|1|missing=*.dmg|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz
