@@ -953,9 +953,6 @@ project_path() { # PATH
     esac
 }
 
-# The fleet log's two readers, each printing its rows one JSON object per
-# line: the successor overseer's takeover read, the last ORCH_TAKEOVER_ROWS
-# rows, and the audit read, every proposal and ruling row.
 # The fleet state's path, returning 1 where no file is there yet. A first fleet
 # session has none until its first launch writes one, which leaves the verbs
 # that run at a fleet's edges, takeover and prune, nothing to read or remove
@@ -967,6 +964,9 @@ fleet_state_file() {
     [[ -f "$state_file" ]]
 }
 
+# The fleet log's two readers, each printing its rows one JSON object per
+# line: the successor overseer's takeover read, the last ORCH_TAKEOVER_ROWS
+# rows, and the audit read, every proposal and ruling row.
 cmd_fleet_log() {
     local reader="${1:-}" state_file rows
     case "$reader" in
