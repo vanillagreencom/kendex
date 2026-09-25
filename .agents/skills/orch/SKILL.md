@@ -6,7 +6,7 @@ license: MIT
 user-invocable: true
 dependencies:
   required: [github, worktree, dev, project-management, decider, reviewer]
-  optional: [linear, review-gate, second-opinion]
+  optional: [harness-ci, linear, review-gate, second-opinion]
 metadata:
   author: vanillagreen
   source: kendex
@@ -91,7 +91,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `worktree-push` | Push an issue worktree via `worktree push`, reconciling rebased SHAs in workflow state (`.rebase_map`, `fixed_items`, `pr_comment_review.fixes`) in the same call; `--check-live-round` answers whether a fix round is in flight and pushes nothing |
 | `dev-round-write` | Persist a fix round's delegated item set at stamp time; `--cut` records the round that cuts an oversized branch |
 | `dev-artifact-check` | Validate a dev round's completion artifact by round id |
-| `dev-validate-run` | Run `DEV_VALIDATE_CMD` detached under `DEV_VALIDATE_TIMEOUT_SECS` and leave its verdict on disk as one `guard-exit=N` sentinel; `--wait --run-dir` polls that run, exit 3 meaning poll again. The route every harness validates through |
+| `dev-validate-run` | Run `DEV_VALIDATE_CMD` detached under `DEV_VALIDATE_TIMEOUT_SECS`, with the change class as `DEV_VALIDATE_CLASS`, and leave its verdict on disk as one `guard-exit=N` sentinel; `--wait --run-dir` polls that run, exit 3 meaning poll again. The route every harness validates through |
 | `branch-size-check` | Report added production, test and render-mirror lines against the issue's optional `**Expected delta**`. Size never refuses; malformed allowance text exits 3. `--help` |
 | `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the effective gate mode |
 | `ci-wait` | Block until CI completes on a PR |

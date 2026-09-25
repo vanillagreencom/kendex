@@ -11,6 +11,23 @@
 # command, and the wait's cap is that value plus the kill grace plus one poll
 # interval. Neither is chosen at the call site.
 #
+# The runner hands the command what the shipped change classifier says about
+# the diff from the base branch to the worktree as it stands, committed or not,
+# read through lib/change-class.sh, which owns that call:
+#   DEV_VALIDATE_CLASS      the class: render, trivial, micro, small or standard
+#   DEV_VALIDATE_DOCS_ONLY  the docs verdict for the same range: true or false
+#   DEV_VALIDATE_PATHS      a file of the changed paths that verdict read, one
+#                           per line
+# A command that reads them can stand down the lanes the class does not need;
+# which lanes those are is the command's to decide, and the verdict is its exit
+# status whatever it runs. No flag and no inherited value asserts a class. A
+# class that cannot be read, for any cause, is standard with docs-only false
+# and an empty paths file, and the started line names the cause as
+# class-fallback=CAUSE: base-unresolved, worktree-unrecorded, or a cause
+# lib/change-class.sh names. change-class proves render only on a clean tree
+# with no kendex arming record (<git-dir>/kendex/armed), so a run over
+# uncommitted render edits is standard.
+#
 # Usage:
 #   dev-validate-run --worktree PATH [--poll SECS]
 #       Start the run detached, then block until it ends. Prints the run
@@ -22,12 +39,13 @@
 #   dev-validate-run --child --run-dir PATH
 #       Internal. The detached process the start path launches.
 #
-# The run directory holds cmd (the command text), start (the run's bounds), pid
-# (the detached child's process id), log (the command's output) and exit (the
-# sentinel).
+# The run directory holds cmd (the command text), start (the run's bounds and
+# class), class.log (the stderr of the base-branch lookup and the classifier),
+# paths (DEV_VALIDATE_PATHS), pid (the detached child's process id), log (the
+# command's output) and exit (the sentinel).
 #
 # Output protocol — the agent reads these lines and the tests pin them:
-#   state=started run-dir=… log=… sentinel=… timeout-secs=N poll-secs=N cap-secs=N
+#   state=started run-dir=… log=… sentinel=… timeout-secs=N poll-secs=N cap-secs=N class=… docs-only=… [class-fallback=…]
 #   state=done guard-exit=N at=TIME validate=pass|FAILING run-dir=… log=…
 #   state=running elapsed-secs=N cap-secs=N run-dir=…
 #   state=timeout elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
@@ -52,6 +70,8 @@ set -euo pipefail
 PROG="dev-validate-run"
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+# shellcheck source=lib/change-class.sh
+source "$SCRIPT_DIR/lib/change-class.sh"
 
 # The poll granularity, and with it the slack the cap carries over the command's
 # own limit: a command killed at its limit still has one interval in which to
@@ -87,6 +107,7 @@ die() {
       missing-command) printf 'Install it: without it the run carries no bound and no waiter can end.\n' ;;
       no-run) printf 'Start a run with --worktree before polling it.\n' ;;
       sentinel-unreadable) printf 'The sentinel does not carry a guard-exit value.\n' ;;
+      scratch-unavailable) printf 'A scratch directory for reading the change class could not be created.\n' ;;
     esac
   } >&2
   exit 2
@@ -109,6 +130,64 @@ check_seconds() { # LABEL VALUE
 
 start_field() { # FILE KEY
   sed -n "s/^$2=\\(.*\\)\$/\\1/p" < "$1"
+}
+
+# The worktree's diff against the base branch, read once by lib/change-class.sh
+# for everything the command is handed: class, docs_only (the docs verdict for
+# the same range) and the changed paths in class_scratch/paths. Where any of
+# them cannot be read, class is standard, docs_only false, the paths file is
+# empty, and class_fallback names the cause. The worktree is judged as it
+# stands: dev-implement validates before it commits, so HEAD alone would be a
+# diff missing the round's own edit. Its contents are written to one
+# unreferenced commit through a copy of the index, so HEAD, the index and the
+# tree are left as they were. Every object that commit needs is written to the
+# scratch directory, the repository's own store serving as an alternate for
+# what it already holds: an untracked or unstaged file never becomes a loose
+# object in the shared store, where the umask, not the file's own mode, would
+# decide who can read it. The scratch store is exported for the snapshot and
+# the two classifier reads of it, and removed from the environment before
+# anything else runs. A narrow class on no evidence would skip lanes the diff
+# needs, so a failure never guesses one.
+class=standard
+docs_only=false
+class_fallback=""
+class_scratch=""
+classify() {
+  local base index objects
+  class_scratch="$(mktemp -d)" || die scratch-unavailable
+  trap 'rm -rf -- "$class_scratch"' EXIT
+  : > "$class_scratch/class.log"
+  : > "$class_scratch/paths"
+  base="$("$SCRIPT_DIR/resolve-base-branch" "$worktree" 2>>"$class_scratch/class.log")" \
+    || { class_fallback=base-unresolved; return 0; }
+  index="$(git -C "$worktree" rev-parse --path-format=absolute --git-path index 2>/dev/null)" \
+    && objects="$(git -C "$worktree" rev-parse --path-format=absolute --git-path objects 2>/dev/null)" \
+    && mkdir -- "$class_scratch/objects" \
+    || { class_fallback=worktree-unrecorded; return 0; }
+  [[ ! -f "$index" ]] || cp -- "$index" "$class_scratch/index" \
+    || { class_fallback=worktree-unrecorded; return 0; }
+  export GIT_OBJECT_DIRECTORY="$class_scratch/objects" GIT_ALTERNATE_OBJECT_DIRECTORIES="$objects"
+  classify_snapshot "$base"
+  unset GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+}
+classify_snapshot() { # BASE — the snapshot and its two reads, in the scratch store
+  local log="$class_scratch/class.log" tree head
+  if ! tree="$(GIT_INDEX_FILE="$class_scratch/index" git -C "$worktree" add -A 2>/dev/null \
+      && GIT_INDEX_FILE="$class_scratch/index" git -C "$worktree" write-tree 2>/dev/null)" \
+    || ! head="$(GIT_AUTHOR_NAME="$PROG" GIT_AUTHOR_EMAIL="$PROG@localhost" \
+      GIT_COMMITTER_NAME="$PROG" GIT_COMMITTER_EMAIL="$PROG@localhost" \
+      git -C "$worktree" commit-tree "$tree" -p HEAD -m "$PROG: worktree" 2>/dev/null)"; then
+    class_fallback=worktree-unrecorded
+    return 0
+  fi
+  if ! change_class_read "origin/$1" "$head" "$worktree" "$log" \
+    || ! change_class_docs "origin/$1" "$head" "$worktree" "$class_scratch/paths" "$log"; then
+    class_fallback="$CHANGE_CLASS_CAUSE"
+    : > "$class_scratch/paths"
+    return 0
+  fi
+  class="$CHANGE_CLASS"
+  docs_only="$CHANGE_CLASS_DOCS_ONLY"
 }
 
 worktree=""
@@ -192,10 +271,16 @@ if [[ "$mode" == start ]]; then
   # exactly this launch (references/waiter-launch.md).
   command -v setsid >/dev/null 2>&1 || die missing-command commands=setsid
 
+  # Read before the run directory exists, since that directory sits inside the
+  # worktree the class judges.
+  classify
+
   # A fresh directory per start, so a poll can never read the previous round's
   # verdict as this one's.
   run_dir="$worktree/tmp/dev-validate-$(date -u +%Y%m%dT%H%M%SZ)-$$"
   mkdir -p "$run_dir"
+  mv -- "$class_scratch/class.log" "$run_dir/class.log"
+  mv -- "$class_scratch/paths" "$run_dir/paths"
   printf '%s' "$cmd" > "$run_dir/cmd"
   cap_secs=$(( 10#$timeout_secs + KILL_GRACE + 10#$poll ))
   {
@@ -205,12 +290,15 @@ if [[ "$mode" == start ]]; then
     printf 'timeout-secs=%s\n' "$timeout_secs"
     printf 'poll-secs=%s\n' "$poll"
     printf 'cap-secs=%s\n' "$cap_secs"
+    printf 'class=%s\n' "$class"
+    printf 'docs-only=%s\n' "$docs_only"
   } > "$run_dir/start"
 
   setsid -f "$SCRIPT_PATH" --child --run-dir "$run_dir" </dev/null >/dev/null 2>&1
 
-  printf 'state=started run-dir=%s log=%s sentinel=%s timeout-secs=%s poll-secs=%s cap-secs=%s\n' \
-    "$run_dir" "$run_dir/log" "$run_dir/exit" "$timeout_secs" "$poll" "$cap_secs"
+  printf 'state=started run-dir=%s log=%s sentinel=%s timeout-secs=%s poll-secs=%s cap-secs=%s class=%s docs-only=%s%s\n' \
+    "$run_dir" "$run_dir/log" "$run_dir/exit" "$timeout_secs" "$poll" "$cap_secs" \
+    "$class" "$docs_only" "${class_fallback:+ class-fallback=$class_fallback}"
   # Blocking form: the same poll --wait runs, with no per-call budget, so a
   # foreground caller returns only with the verdict.
   mode=wait
@@ -221,10 +309,12 @@ fi
 if [[ "$mode" == child ]]; then
   if ! child_worktree="$(start_field "$run_dir/start" worktree)" \
     || ! child_timeout_bin="$(start_field "$run_dir/start" timeout-bin)" \
-    || ! child_timeout_secs="$(start_field "$run_dir/start" timeout-secs)"; then
+    || ! child_timeout_secs="$(start_field "$run_dir/start" timeout-secs)" \
+    || ! child_class="$(start_field "$run_dir/start" class)" \
+    || ! child_docs_only="$(start_field "$run_dir/start" docs-only)"; then
     die no-run "path=$run_dir/start"
   fi
-  [[ -n "$child_worktree" && -n "$child_timeout_bin" && -n "$child_timeout_secs" ]] \
+  [[ -n "$child_worktree" && -n "$child_timeout_bin" && -n "$child_timeout_secs" && -n "$child_class" && -n "$child_docs_only" ]] \
     || die no-run "path=$run_dir/start"
   child_cmd="$(cat "$run_dir/cmd")"
   # Recorded before the command starts, so a waiter that finds no sentinel can
@@ -239,8 +329,10 @@ if [[ "$mode" == child ]]; then
   # on Debian and Ubuntu sh is dash, where source, [[ ]] and set -o pipefail are
   # errors that would record a false failing verdict. post-merge and
   # open-terminal run a configured command the same way. -k turns the bound from
-  # one ignorable signal into one the command cannot survive.
-  "$child_timeout_bin" -k "$KILL_GRACE" "$child_timeout_secs" bash -c "$child_cmd" > "$run_dir/log" 2>&1 || status=$?
+  # one ignorable signal into one the command cannot survive. The class and its
+  # companions are set over whatever the launching shell exported.
+  DEV_VALIDATE_CLASS="$child_class" DEV_VALIDATE_DOCS_ONLY="$child_docs_only" \
+    DEV_VALIDATE_PATHS="$run_dir/paths" "$child_timeout_bin" -k "$KILL_GRACE" "$child_timeout_secs" bash -c "$child_cmd" > "$run_dir/log" 2>&1 || status=$?
   # Written whole or not at all: a poll that caught a half-written sentinel
   # would read a verdict that is not one.
   printf 'guard-exit=%s at=%s\n' "$status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$run_dir/exit.part"

@@ -67,7 +67,13 @@ run_script() { # SCRIPT ARG...
   # assertion the other run's stderr on exactly the failure that needs it.
   err="$(mktemp "$TMP_ROOT/err.XXXXXX")"
   set +e
-  OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS PATH="${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
+  # A class the caller's shell carries is cleared like the settings are: this
+  # suite also runs under dev-validate-run itself, which sets one. A row that
+  # means to hand one in names it in INHERITED_CLASS.
+  OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS \
+    -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
+    ${INHERITED_CLASS:+DEV_VALIDATE_CLASS=$INHERITED_CLASS} \
+    PATH="${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
   RC=$?
   set -e
   ERR="$(cat "$err")"
@@ -207,9 +213,11 @@ assert_eq "$(cat "$(log_of "$OUT")")" "$(printf 'first\nsecond')" \
   "the log the started line names holds the command's own output, both streams"
 
 # --- Every field of the started and done lines, which the agent reads ---------
+# The fixture has no commit, so no worktree commit can be written to classify
+# and the class falls back to standard, naming why.
 assert_eq "$(sed -n 1p <<<"$OUT")" \
-  "state=started run-dir=$log_dir log=$log_dir/log sentinel=$log_dir/exit timeout-secs=20 poll-secs=1 cap-secs=31" \
-  "the started line names the run directory, its log and sentinel, and all three bounds"
+  "state=started run-dir=$log_dir log=$log_dir/log sentinel=$log_dir/exit timeout-secs=20 poll-secs=1 cap-secs=31 class=standard docs-only=false class-fallback=worktree-unrecorded" \
+  "the started line names the run directory, its log and sentinel, all three bounds and the class"
 assert_eq "$(sed -n 2p <<<"$OUT")" \
   "state=done guard-exit=0 at=$(sed -n 's/^guard-exit=[0-9]* at=//p' "$log_dir/exit") validate=pass run-dir=$log_dir log=$log_dir/log" \
   "and the done line carries the sentinel's own text beside those same two paths"
@@ -402,6 +410,147 @@ run_script "$RUN" --poll 1
 assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: required options=--worktree,--wait,--child" \
   "a call naming no mode is refused"
 assert_eq "$RC" "2" "and exits 2"
+
+# --- The command learns the change class, and only from the classifier --------
+# The classifier and the docs reader are stubs beside a copy of the scripts,
+# laid out as the installed packages are: orch/scripts next to
+# harness-ci/scripts. The classifier records its arguments and answers what
+# the row names; the docs reader answers STUB_DOCS and writes the paths file.
+# The command prints what it was handed, so each row reads the battery's
+# selectors straight off the log.
+LAYOUT="$TMP_ROOT/layout"
+mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/harness-ci/scripts"
+cp "$SCRIPTS_DIR/dev-validate-run" "$SCRIPTS_DIR/orch-env" "$SCRIPTS_DIR/resolve-base-branch" "$LAYOUT/orch/scripts/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$LAYOUT/orch/scripts/lib/"
+cat > "$LAYOUT/harness-ci/scripts/change-class" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$STUB_ARGS"
+# What the head it was handed holds, read while that head still exists: the
+# snapshot lives in a scratch store the runner removes when it exits.
+head="$(sed -n '/^--head$/{n;p;}' "$STUB_ARGS")"
+repo="$(sed -n '/^--repo$/{n;p;}' "$STUB_ARGS")"
+{
+  git -C "$repo" show --name-only --format= "$head"
+  git -C "$repo" rev-parse "$head^"
+} > "$STUB_SEEN" 2>&1
+case "$STUB_ANSWER" in
+  exit-2) echo "wiring-error: cause=stub" >&2; exit 2 ;;
+  *) printf '%s\n' "$STUB_ANSWER" ;;
+esac
+SH
+cat > "$LAYOUT/harness-ci/scripts/harness-only" <<'SH'
+#!/usr/bin/env bash
+prev=""
+for a in "$@"; do
+  [[ "$prev" != --paths-output ]] || printf 'docs/a.md\n' > "$a"
+  prev="$a"
+done
+case "$STUB_DOCS" in
+  exit-2) exit 2 ;;
+  *) printf 'docs_only=%s\n' "$STUB_DOCS" ;;
+esac
+SH
+chmod +x "$LAYOUT/harness-ci/scripts/change-class" "$LAYOUT/harness-ci/scripts/harness-only"
+export STUB_ARGS="$TMP_ROOT/stub-args" STUB_SEEN="$TMP_ROOT/stub-seen"
+proj_class="$(make_proj proj-class 'printf %s:%s:%s ${DEV_VALIDATE_CLASS-unset} ${DEV_VALIDATE_DOCS_ONLY-unset} $(cat ${DEV_VALIDATE_PATHS-/dev/null})' 20)"
+# The run directories land under tmp/, which an orch project ignores.
+printf 'tmp/\n' > "$proj_class/.gitignore"
+git -C "$proj_class" add kendex.settings.toml .gitignore
+git -C "$proj_class" -c user.name=t -c user.email=t@example.com commit -q -m base
+git -C "$proj_class" update-ref refs/remotes/origin/main HEAD
+# classifier answer|docs answer|what the command is handed|the started line's class fields
+CLASS_ROWS=(
+  "change_class=render|false|render:false:docs/a.md|class=render docs-only=false"
+  "change_class=trivial|true|trivial:true:docs/a.md|class=trivial docs-only=true"
+  "change_class=micro|false|micro:false:docs/a.md|class=micro docs-only=false"
+  "change_class=small|false|small:false:docs/a.md|class=small docs-only=false"
+  "change_class=standard|true|standard:true:docs/a.md|class=standard docs-only=true"
+  "exit-2|true|standard:false:|class=standard docs-only=false class-fallback=classifier-exit-2"
+  "change_class=Tiny|true|standard:false:|class=standard docs-only=false class-fallback=classifier-unreadable"
+  "change_class=micro|exit-2|standard:false:|class=standard docs-only=false class-fallback=docs-reader-exit-2"
+)
+for row in "${CLASS_ROWS[@]}"; do
+  IFS='|' read -r answer docs want_handed want_fields <<<"$row"
+  export STUB_ANSWER="$answer" STUB_DOCS="$docs"
+  # An inherited class is what a lane asserting its own would look like.
+  INHERITED_CLASS=trivial run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
+  assert_eq "$(cat "$(log_of "$OUT")" 2>/dev/null)" "$want_handed" \
+    "classifier '$answer' and docs reader '$docs' hand the command $want_handed" "$ERR"
+  assert_eq "$(sed -n 's/^state=started .* cap-secs=[0-9]* //p' <<<"$OUT")" "$want_fields" \
+    "and the started line reports $want_fields" "$ERR"
+done
+
+# The diff classified is the worktree as it stands: a file no commit holds yet
+# is in the head the classifier is handed, and HEAD and the index are not moved.
+# Nothing the snapshot writes lands in the repository's own object store.
+loose_objects() { git -C "$proj_class" count-objects -v | sed -n 's/^count: //p'; }
+printf 'draft\n' > "$proj_class/draft.md"
+export STUB_ANSWER=change_class=trivial STUB_DOCS=true
+objects_before="$(loose_objects)"
+run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
+assert_eq "$(sed -n '/^--event$/{n;p;}' "$STUB_ARGS") $(sed -n '/^--base$/{n;p;}' "$STUB_ARGS")" \
+  "pull_request origin/main" "the classifier judges a pull request against the base branch" "$ERR"
+assert_eq "$(cat "$STUB_SEEN")" "$(printf 'draft.md\n%s' "$(git -C "$proj_class" rev-parse HEAD)")" \
+  "the head it judges carries the uncommitted file and sits on HEAD" "$ERR"
+assert_eq "$(git -C "$proj_class" status --porcelain)" "?? draft.md" \
+  "and HEAD, the index and the tree stay as they were" "$ERR"
+assert_eq "$(loose_objects)" "$objects_before" \
+  "and the repository's object store gains no object from the snapshot" "$ERR"
+
+# Control: with the scratch store never exported the snapshot writes the
+# untracked file's blob, its tree and its commit into the shared store.
+mutant mutant-shared-store 'export GIT_OBJECT_DIRECTORY="$class_scratch/objects" GIT_ALTERNATE_OBJECT_DIRECTORIES="$objects"' 'true'
+cp "$MUTANT" "$LAYOUT/orch/scripts/dev-validate-run"
+objects_before="$(loose_objects)"
+run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
+assert_eq "$(( $(loose_objects) > objects_before ))" "1" \
+  "control: without the scratch store the snapshot adds loose objects to the shared store" "$ERR"
+cp "$SCRIPTS_DIR/dev-validate-run" "$LAYOUT/orch/scripts/dev-validate-run"
+rm -f "$proj_class/draft.md"
+
+# With no classifier installed the class is standard, and says why.
+mv "$LAYOUT/harness-ci" "$LAYOUT/harness-ci.off"
+run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
+assert_eq "$(cat "$(log_of "$OUT")" 2>/dev/null) $(sed -n 's/^state=started .* cap-secs=[0-9]* //p' <<<"$OUT")" \
+  "standard:false: class=standard docs-only=false class-fallback=classifier-absent" \
+  "no classifier runs the whole battery, naming the absence" "$ERR"
+mv "$LAYOUT/harness-ci.off" "$LAYOUT/harness-ci"
+
+# Control: the class is read but never handed to the command, which is the
+# runner before this contract: the trivial row's command sees no class and
+# runs its whole battery.
+mutant mutant-no-class 'DEV_VALIDATE_CLASS="$child_class" DEV_VALIDATE_DOCS_ONLY' 'DEV_VALIDATE_DOCS_ONLY'
+cp "$MUTANT" "$LAYOUT/orch/scripts/dev-validate-run"
+export STUB_ANSWER=change_class=trivial STUB_DOCS=true
+run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
+assert_eq "$(cat "$(log_of "$OUT")" 2>/dev/null)" "unset:true:docs/a.md" \
+  "control: with the class not handed over the trivial row's command runs with no class" "$ERR"
+cp "$SCRIPTS_DIR/dev-validate-run" "$LAYOUT/orch/scripts/dev-validate-run"
+
+# --- The real classifier refuses render over uncommitted edits ------------------
+# change-class proves render only on a clean tree, and dev-implement validates
+# before it commits. A diff of generated files alone, left uncommitted, is
+# standard at dev completion. The kendex on PATH is a stub that fails if run:
+# the dirty-tree refusal comes before any render proof.
+proj_render="$(make_proj proj-render 'printf %s ${DEV_VALIDATE_CLASS-unset}' 20)"
+mkdir -p "$proj_render/.agents/skills/demo"
+printf 'tmp/\n' > "$proj_render/.gitignore"
+printf '# demo\n' > "$proj_render/.agents/skills/demo/SKILL.md"
+printf '%s\n' '[".agents/skills/demo/SKILL.md"]' > "$proj_render/.kendex-generated.json"
+git -C "$proj_render" add -A
+git -C "$proj_render" -c user.name=t -c user.email=t@example.com commit -q -m base
+git -C "$proj_render" update-ref refs/remotes/origin/main HEAD
+printf 'rendered again\n' >> "$proj_render/.agents/skills/demo/SKILL.md"
+mkdir -p "$TMP_ROOT/render-bin"
+printf '#!/usr/bin/env bash\necho "stub kendex ran" >&2\nexit 99\n' > "$TMP_ROOT/render-bin/kendex"
+chmod +x "$TMP_ROOT/render-bin/kendex"
+RUN_PATH="$TMP_ROOT/render-bin:$PATH"
+run_script "$RUN" --worktree "$proj_render" --poll 1
+RUN_PATH=""
+render_dir="$(run_dir_of "$OUT")"
+assert_eq "$(cat "$(log_of "$OUT")" 2>/dev/null) $(sed -n 's/^class: class=\([a-z]*\) \(measured=[a-z]*\) \(cause=[a-z-]*\).*$/\1 \2 \3/p' "$render_dir/class.log")" \
+  "standard standard measured=false cause=judged-tree-dirty" \
+  "an uncommitted render diff runs as standard, the classifier naming the dirty tree" "$ERR"
 
 # --- Control: the cap is not derived from the bound ---------------------------
 # The reported failure: the wait ended before the guard did, so the round had no

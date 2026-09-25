@@ -587,5 +587,162 @@ else
 fi
 rm -f "$R/Cargo.toml"
 
+echo "=== full validation runs the lanes the change class selects ==="
+# dev-validate-run hands over the class, the docs verdict and the changed
+# paths as DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and a DEV_VALIDATE_PATHS
+# file. Each lane is read off the call it makes: cargo and npm log their calls, and the parse
+# lane is a stub here because its real pass needs a Bash 3.2 this row does not
+# judge. A guard copy runs beside that stub under the same package link the
+# mutants use.
+LANE_TOOLS="$TMP/lane-tools"
+# Outside the world, which each row cleans; rustup is the stub above.
+LANE_BIN="$TMP/lane-bin"
+mkdir -p "$LANE_TOOLS" "$LANE_BIN"
+cp "$R/fake-bin/rustup" "$LANE_BIN/rustup"
+cp "$REPO/tools/bash32-lint" "$REPO/tools/ci-job-set" "$REPO/tools/test-roster" "$LANE_TOOLS/"
+printf '#!/usr/bin/env bash\necho "stub: bash32-parse"\n' >"$LANE_TOOLS/bash32-parse"
+chmod +x "$LANE_TOOLS/bash32-parse"
+lane_guard() { # [SED-EXPR] — the guard copy the rows run, edited when given
+  sed "${1:-}" "$GUARD" >"$LANE_TOOLS/guard"
+  chmod +x "$LANE_TOOLS/guard"
+  [ -z "${1:-}" ] || ! cmp -s "$GUARD" "$LANE_TOOLS/guard" ||
+    { echo "lane_guard: the edit '$1' changed nothing" >&2; exit 2; }
+}
+cat >"$LANE_BIN/cargo" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$CARGO_CALL_LOG"
+SH
+cat >"$LANE_BIN/npm" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$NPM_CALL_LOG"
+SH
+chmod +x "$LANE_BIN/cargo" "$LANE_BIN/npm"
+NPM_CALL_LOG="$TMP/npm-calls"
+mkdir -p "$R/ui"
+printf '[workspace]\n' >"$R/Cargo.toml"
+printf '{}\n' >"$R/ui/package.json"
+git -C "$R" add Cargo.toml ui/package.json
+git -C "$R" commit -q -m "chore: a workspace and a ui package"
+lanes_head="$(git -C "$R" rev-parse HEAD)"
+git -C "$R" update-ref refs/remotes/origin/main HEAD
+# The lanes one guard run reached, in a fixed order.
+lanes_ran() {
+  local seen="" lane
+  for lane in suites parse lint apple windows test ui; do
+    case "$lane" in
+      suites) [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] ;;
+      parse) [[ "$OUT" == *"stub: bash32-parse"* ]] ;;
+      lint) grep -qFx "check --workspace --all-targets" "$CARGO_CALL_LOG" ;;
+      apple) grep -qF -- "--target aarch64-apple-darwin" "$CARGO_CALL_LOG" ;;
+      windows) grep -qF -- "--target x86_64-pc-windows-msvc" "$CARGO_CALL_LOG" ;;
+      test) grep -qFx "test --workspace --quiet" "$CARGO_CALL_LOG" ;;
+      ui) [ -s "$NPM_CALL_LOG" ] ;;
+    esac && seen="$seen $lane"
+  done
+  printf '%s' "${seen# }"
+}
+PATHS_FILE="$TMP/changed-paths"
+run_lanes() { # CLASS DOCS PATH... — guard --full with PATHs touched and handed over; sets OUT and RC
+  local class="$1" docs="$2" p
+  local handed=()
+  shift 2
+  git -C "$R" reset -q --hard "$lanes_head"
+  git -C "$R" clean -qfd
+  : >"$PATHS_FILE"
+  for p in "$@"; do
+    mkdir -p "$R/$(dirname "$p")"
+    printf 'touched\n' >>"$R/$p"
+    printf '%s\n' "$p" >>"$PATHS_FILE"
+  done
+  [ -z "$class" ] ||
+    handed=("DEV_VALIDATE_CLASS=$class" "DEV_VALIDATE_DOCS_ONLY=$docs" "DEV_VALIDATE_PATHS=${HANDED_PATHS:-$PATHS_FILE}")
+  : >"$CARGO_CALL_LOG"
+  : >"$NPM_CALL_LOG"
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
+    ${handed[@]+"${handed[@]}"} \
+    PATH="$LANE_BIN:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" NPM_CALL_LOG="$NPM_CALL_LOG" \
+    RUSTUP_INSTALLED_TARGETS="$BOTH" "$LANE_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
+}
+# Path lists are blank-separated and split unquoted on purpose. The crate
+# path is the Rust input the cross-target checks wait for.
+CODE="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh crates/core/src/lib.rs"
+ALL="suites parse lint apple windows test ui"
+# class|docs verdict|changed paths|the lanes that run
+LANE_ROWS=(
+  "||$CODE|$ALL"
+  "standard|false|$CODE|$ALL"
+  "standard|true|docs/guide.md|parse test"
+  "render|false|$CODE|"
+  "trivial|true|$CODE|"
+  "micro|false|$CODE|suites parse lint apple windows test"
+  "small|false|$CODE ui/app.ts|$ALL"
+  "micro|false|docs/guide.md|parse test"
+)
+lane_guard
+for row in "${LANE_ROWS[@]}"; do
+  IFS='|' read -r class docs paths want <<<"$row"
+  run_lanes "$class" "$docs" $paths
+  got="$(lanes_ran)"
+  [ "$RC" -eq 0 ] && [ "$got" = "$want" ] \
+    && ok "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" \
+    || bad "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" "rc=$RC got=$got out=$OUT"
+done
+run_lanes stale false $CODE
+[ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: validate-class=stale"* ]] && [ "$(lanes_ran)" = "" ] \
+  && ok "a class ci-job-set has no selection for is refused before any lane runs" \
+  || bad "a class ci-job-set has no selection for is refused before any lane runs" "rc=$RC out=$OUT"
+# A narrow class whose paths file cannot be read selects nothing: every lane
+# runs and the run is red, never a stand-down on no paths.
+HANDED_PATHS="$TMP/absent-paths" run_lanes micro false $CODE
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: lane-selection=paths-unreadable"* ]] && [ "$(lanes_ran)" = "$ALL" ] \
+  && ok "an unreadable paths file is a finding and every lane runs" \
+  || bad "an unreadable paths file is a finding and every lane runs" "rc=$RC got=$(lanes_ran) out=$OUT"
+# The issue's inverse: a guard that reads no class runs the whole battery on
+# the trivial row.
+lane_guard 's/"$validate_class:$validate_docs_only" != standard:false/standard:false != standard:false/'
+run_lanes trivial true $CODE
+[ "$(lanes_ran)" = "$ALL" ] \
+  && ok "control: with the class unread the trivial row runs every lane" \
+  || bad "control: with the class unread the trivial row runs every lane" "rc=$RC got=$(lanes_ran)"
+# A suite a lane runs inherits none of the selection: the outer run's class
+# would otherwise choose the lanes of every guard that suite starts, the way
+# this file's own rows ran under a prose-only micro selection. The touched
+# demo suite prints what reached it.
+inherited_row() { # — sets OUT and RC
+  local t
+  git -C "$R" reset -q --hard "$lanes_head"
+  git -C "$R" clean -qfd
+  for t in skills/demo/tests/demo.test.sh .agents/skills/demo/tests/demo.test.sh; do
+    printf '%s\n' '#!/usr/bin/env bash' \
+      'echo "inner=${DEV_VALIDATE_CLASS-unset}:${DEV_VALIDATE_DOCS_ONLY-unset}:${DEV_VALIDATE_PATHS-unset}"' >"$R/$t"
+  done
+  printf 'docs/guide.md\n' >"$PATHS_FILE"
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && env DEV_VALIDATE_CLASS=micro DEV_VALIDATE_DOCS_ONLY=false DEV_VALIDATE_PATHS="$PATHS_FILE" \
+    PATH="$LANE_BIN:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" NPM_CALL_LOG="$NPM_CALL_LOG" \
+    RUSTUP_INSTALLED_TARGETS="$BOTH" "$LANE_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
+}
+lane_guard
+inherited_row
+[ "$RC" -eq 0 ] && [[ "$OUT" == *"inner=unset:unset:unset"* ]] \
+  && ok "a suite run under a prose-only micro selection inherits none of it" \
+  || bad "a suite run under a prose-only micro selection inherits none of it" "rc=$RC out=$OUT"
+lane_guard '/^unset DEV_VALIDATE_CLASS DEV_VALIDATE_DOCS_ONLY DEV_VALIDATE_PATHS$/d'
+inherited_row
+[[ "$OUT" == *"inner=micro:false:$PATHS_FILE"* ]] \
+  && ok "control: with the selection left exported the suite inherits it" \
+  || bad "control: with the selection left exported the suite inherits it" "rc=$RC out=$OUT"
+lane_guard 's/lane_on cargo_linux; then/lane_on cargo_linx; then/'
+run_lanes micro false $CODE
+[ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: lane-unknown=cargo_linx"* ]] \
+  && ok "a lane name the selection does not carry is refused, never read as stood down" \
+  || bad "a lane name the selection does not carry is refused, never read as stood down" "rc=$RC out=$OUT"
+git -C "$R" reset -q --hard "$SEED"
+git -C "$R" clean -qfd
+git -C "$R" update-ref -d refs/remotes/origin/main
+
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

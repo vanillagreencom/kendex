@@ -302,7 +302,9 @@ BOT_REMOTE_NAME = ""
 DECISIONS_DIR = "docs/decisions"
 
 # Full validation runs at development completion. Submit reuses that result
-# for the same commit; CI runs the full suites independently.
+# for the same commit; CI runs the full suites independently. dev-validate-run
+# hands over the change class, and tools/guard --full runs the lanes
+# tools/ci-job-set selects for it.
 DEV_VALIDATE_CMD = "tools/guard --full"
 
 # A full run with CARGO_INCREMENTAL=0 writes only deps: the recorded 20 GB

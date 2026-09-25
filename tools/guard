@@ -167,6 +167,12 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       printf 'npm run --prefix ui %s failed.\n' "$2" ;;
     argument)
       echo "that argument is not one this script takes; usage: tools/guard [--full]." ;;
+    validate-class)
+      echo "DEV_VALIDATE_CLASS names a class tools/ci-job-set has no lane selection for; its cause is above." ;;
+    lane-unknown)
+      echo "tools/ci-job-set selects no value for that lane name: tools/guard is broken." ;;
+    lane-selection)
+      echo "no lane selection was made — tools/ci-job-set's exit status, or paths-unreadable where DEV_VALIDATE_PATHS names no readable file — so every lane ran." ;;
     *)
       echo "no explanation is defined for this key: tools/guard is broken." ;;
   esac
@@ -225,15 +231,92 @@ case "${1:-}" in
     printf '%s\n' 'usage: tools/guard [--full]' \
       'Default: repository rules and compile checks for staged product changes.' \
       '--full: full Rust and UI validation for development completion and submit,' \
-      '        plus the suites of the skill, hook, tool and Pi-package trees the branch touched.'
+      '        plus the suites of the skill, hook, tool and Pi-package trees the branch touched.' \
+      '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \
+      '        dev-validate-run, stand down the lanes tools/ci-job-set does not select.'
     exit 0
     ;;
 esac
 [ "$#" -eq 0 ] || refuse argument "$1"
 cd "$(git rev-parse --show-toplevel)"
+
+# The lanes --full runs. dev-validate-run hands over what the classifier and
+# its docs reader answer over one range: DEV_VALIDATE_CLASS,
+# DEV_VALIDATE_DOCS_ONLY and the changed paths in the file DEV_VALIDATE_PATHS
+# names, the three inputs CI's changes job gives tools/ci-job-set. An unset
+# class is a run outside that runner. A standard class that is not docs-only,
+# and an unset one, run every lane; anything else runs the lanes ci-job-set
+# selects from those inputs, so completion validation stands a lane down where
+# the checks judging the pull request do and nowhere else. A class ci-job-set
+# does not know is refused; any other selection failure is a finding, and every
+# lane still runs. The commit chain reads no class.
+#
+# The three are this run's and no one else's: they are read here and removed
+# from the environment before any lane starts, so a suite a lane runs, and any
+# guard that suite runs in turn, never selects its lanes from this diff.
+validate_class="${DEV_VALIDATE_CLASS:-standard}"
+validate_docs_only="${DEV_VALIDATE_DOCS_ONLY:-false}"
+validate_paths="${DEV_VALIDATE_PATHS:-}"
+unset DEV_VALIDATE_CLASS DEV_VALIDATE_DOCS_ONLY DEV_VALIDATE_PATHS
+lanes=all
+if [ "$FULL" -eq 1 ] && [ "$validate_class:$validate_docs_only" != standard:false ]; then
+  if ! selected_paths=$(cat -- "$validate_paths" 2>/dev/null); then
+    say lane-selection paths-unreadable
+  else
+    selection_status=0
+    selection=$(CHANGE_CLASS="$validate_class" DOCS_ONLY="$validate_docs_only" \
+      CHANGED_PATHS="$selected_paths" GITHUB_OUTPUT=/dev/stdout "$TOOLS_DIR/ci-job-set" 2>&1) ||
+      selection_status=$?
+    printf '%s\n' "$selection"
+    case "$selection_status:$selection" in
+      0:*) lanes="$selection" ;;
+      *"ci-job-set: cause=unknown-class"*) refuse validate-class "$validate_class" ;;
+      *) say lane-selection "$selection_status" ;;
+    esac
+  fi
+fi
+
+# Touched is what the suites lane runs suites for, and what the cross-target
+# checks and cargo doc read to learn whether the branch changed any Rust
+# input: the branch against origin/main where that ref exists, plus
+# everything the working tree and index carry, so a render-only sync counts
+# for its source. base_resolved is 0 where no merge base with origin/main was
+# found: the touched set then holds the working tree alone, not what the
+# branch committed. --no-renames: a move between two trees names its source
+# and its destination, so the tree a file left runs its suite too. Each read
+# checks its own status; a group's status is its last command's, which would
+# let a failed diff pass on a good `git status`. The status read adds what the
+# diff against the working tree cannot see: untracked files.
+touched=""
+base_resolved=0
+if [ "$FULL" -eq 1 ]; then
+  suites_base=HEAD
+  if git rev-parse --verify -q origin/main >/dev/null; then
+    if suites_base=$(git merge-base HEAD origin/main); then
+      base_resolved=1
+    else
+      suites_base=HEAD
+    fi
+  fi
+  branch_touched=$(git -c core.quotePath=false diff --no-renames --name-only "$suites_base" --) ||
+    { branch_touched=""; say touched-set branch-diff; }
+  tree_touched=$(git -c core.quotePath=false status --porcelain --untracked-files=all | cut -c4- | sed 's/^.* -> //') ||
+    { tree_touched=""; say touched-set working-tree; }
+  touched=$(printf '%s\n%s\n' "$branch_touched" "$tree_touched" | sort -u) ||
+    { touched=""; say touched-set merge; }
+fi
+# A lane name the selection does not carry is this script's own misspelling,
+# which would otherwise stand that lane down on every narrow class.
+lane_on() { # LANE — tools/ci-job-set's name for it
+  [ "$lanes" != all ] || return 0
+  ! grep -Fxq -- "$1=true" <<<"$lanes" || return 0
+  grep -Fxq -- "$1=false" <<<"$lanes" || refuse lane-unknown "$1"
+  return 1
+}
+
 # The staged bot-instructions check is a lane of the commit-guards chain that
 # runs this script; --full judges the working tree, which the chain does not.
-if [ "$FULL" -eq 1 ]; then
+if [ "$FULL" -eq 1 ] && lane_on bot_instructions; then
   "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts/bot-instructions" check || say bot-instructions "$?"
 fi
 
@@ -595,7 +678,7 @@ fi
 # reported from before the lane existed.
 # One line on purpose, like the lane above it: the must-fail control in
 # tools/tests/guard-full.test.sh removes this lane by deleting it.
-[ "$FULL" -eq 0 ] || "$TOOLS_DIR/bash32-parse" || say bash32-parse "$?"
+[ "$FULL" -eq 0 ] || ! lane_on shell_shards || "$TOOLS_DIR/bash32-parse" || say bash32-parse "$?"
 
 # A render source lands its renders in the same change: skills/<x>/<p>
 # renders to .agents/skills/<x>/<p>, an agent definition to one file per
@@ -720,9 +803,11 @@ workspace_rust_input() { # PATH — the workspace manifest, lock, toolchain pin 
   esac
   return 1
 }
-rust_all="$FULL"
+rust_all=0
+[ "$FULL" -eq 0 ] || ! lane_on cargo_lint || rust_all=1
 rust_manifests=()
-ui_changed="$FULL"
+ui_changed=0
+[ "$FULL" -eq 0 ] || ! lane_on ui || ui_changed=1
 if [ "$FULL" -eq 0 ]; then
   GG_CHECK=guard
   GUARDS="$TOOLS_DIR/../.agents/skills/commit-guards/scripts"
@@ -833,9 +918,7 @@ fi
 # touched, beside the whole-workspace cargo and UI runs below: a skill's own
 # tests, hooks/tests for a hook, tools/tests for a tool, and a Pi package's
 # declared script (`test:ci` where it declares one, `test` otherwise, the
-# rule pi-extensions/package-policy.test.mjs holds CI to). Touched is the
-# branch against origin/main where that ref exists, plus everything the
-# working tree and index carry, so a render-only sync counts for its source.
+# rule pi-extensions/package-policy.test.mjs holds CI to).
 # An untouched suite is not evidence about this change and is not run here;
 # CI runs every suite on the merged tree.
 # A Pi package whose suite value-imports Pi has no lockfile for those peers;
@@ -846,30 +929,7 @@ pi_suite_failed() { # DIR
   [ -d "$1/node_modules" ] || say missing-peers "$1"
   say suite "$1"
 }
-if [ "$FULL" -eq 1 ]; then
-  # base_resolved is 0 where no merge base with origin/main was found: the
-  # touched set then holds the working tree alone, not what the branch
-  # committed.
-  suites_base=HEAD
-  base_resolved=0
-  if git rev-parse --verify -q origin/main >/dev/null; then
-    if suites_base=$(git merge-base HEAD origin/main); then
-      base_resolved=1
-    else
-      suites_base=HEAD
-    fi
-  fi
-  # --no-renames: a move between two trees names its source and its
-  # destination, so the tree a file left runs its suite too. Each read checks
-  # its own status; a group's status is its last command's, which would let a
-  # failed diff pass on a good `git status`. The status read adds what the
-  # diff against the working tree cannot see: untracked files.
-  branch_touched=$(git -c core.quotePath=false diff --no-renames --name-only "$suites_base" --) ||
-    { branch_touched=""; say touched-set branch-diff; }
-  tree_touched=$(git -c core.quotePath=false status --porcelain --untracked-files=all | cut -c4- | sed 's/^.* -> //') ||
-    { tree_touched=""; say touched-set working-tree; }
-  touched=$(printf '%s\n%s\n' "$branch_touched" "$tree_touched" | sort -u) ||
-    { touched=""; say touched-set merge; }
+if [ "$FULL" -eq 1 ] && lane_on shell_shards; then
   suite_dirs=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -1010,22 +1070,31 @@ if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
   elif [ "$rust_input" -eq 0 ]; then
     note cross-doc-skipped no-rust-input
   else
-    # The app needs each platform's C toolchain; core and CLI can cross-check.
-    cross_targets="aarch64-apple-darwin x86_64-pc-windows-msvc"
-    if ! installed_targets=$(rustup target list --installed); then
-      say rustup-targets unreadable
-    else
-      for cross_target in $cross_targets; do
-        if ! grep -Fxq "$cross_target" <<<"$installed_targets"; then
-          say missing-target "$cross_target"
-        else
-          cargo check -p kendex-core -p kendex-cli --all-targets --target "$cross_target" ||
-            say cross-check "$cross_target"
-        fi
-      done
+    # The app needs each platform's C toolchain; core and CLI can
+    # cross-check, each target standing in for its platform's CI lane.
+    cross_targets=""
+    ! lane_on cargo_macos || cross_targets="aarch64-apple-darwin"
+    ! lane_on cargo_windows || cross_targets="$cross_targets x86_64-pc-windows-msvc"
+    if [ -n "$cross_targets" ]; then
+      if ! installed_targets=$(rustup target list --installed); then
+        say rustup-targets unreadable
+      else
+        for cross_target in $cross_targets; do
+          if ! grep -Fxq "$cross_target" <<<"$installed_targets"; then
+            say missing-target "$cross_target"
+          else
+            cargo check -p kendex-core -p kendex-cli --all-targets --target "$cross_target" ||
+              say cross-check "$cross_target"
+          fi
+        done
+      fi
     fi
-    cargo doc --no-deps --document-private-items --workspace --quiet || say cargo-doc workspace
+    if lane_on cargo_lint; then
+      cargo doc --no-deps --document-private-items --workspace --quiet || say cargo-doc workspace
+    fi
   fi
+fi
+if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ] && lane_on cargo_linux; then
   # A test binary that dies by a signal reached no verdict: the runner
   # reports the executable's death, not an assertion. A binary whose code
   # pages come back wrong from disk dies this way, and rebuilding that
