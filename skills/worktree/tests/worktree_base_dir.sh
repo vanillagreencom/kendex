@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Where an issue's worktree lives: the default base directory beside the
-# checkout (<parent>/.worktrees/<checkout name>), the WORKTREE_BASE_DIR
+# checkout (<parent>/.worktrees/<checkout name>), the one lane path a hosted
+# create takes there and every reader follows, the WORKTREE_BASE_DIR
 # overrides and where they are read from, the canonical (symlink-resolved)
 # comparison of the configured path with the registered one, the refusal of
 # another repository's worktree behind that path, the worktrees registered
@@ -108,6 +109,11 @@ step() {
     repo) make_repo "$ROOT" "$NAME" ;;
     repo:*) NAME="${1#repo:}"; MAIN="$ROOT/$NAME"; make_repo "$ROOT" "$NAME" ;;
     create:*) tool create "${1#create:}"; [[ -d "$(tree_of "${1#create:}")" ]] || { echo "FIXTURE: create ${1#create:} left no worktree in $ROOT" >&2; exit 2; } ;;
+    create-hosted:*) tool create "${1#create-hosted:}" --hosted; [[ -d "$(tree_of "${1#create-hosted:}")" ]] || { echo "FIXTURE: create ${1#create-hosted:} --hosted left no worktree in $ROOT" >&2; exit 2; } ;;
+    remove:*)
+      tool remove "${1#remove:}"
+      [[ "$(git -C "$MAIN" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]] || { echo "FIXTURE: remove ${1#remove:} left a worktree in $ROOT" >&2; exit 2; }
+      ;;
     merge:*) merge_branch "$(tree_of "${1#merge:}")" "${1#merge:}" ;;
     # The legacy rows address their layout directly, never through the tool
     # under test, so a resolution defect reddens rows instead of aborting.
@@ -232,6 +238,7 @@ err_text() {
     active:*) id="${spec#active:}"; path="${id#*:}"; printf 'worktree-worktree-owned: %s' "$path" ;;
     foreign-reuse:*) printf 'worktree-path-incomplete: %s' "${spec#foreign-reuse:}" ;;
     foreign-remove:*) printf 'worktree-path-unregistered: %s' "${spec#foreign-remove:}" ;;
+    hosted-name:*) printf 'worktree-hosted-name-invalid: %s' "${spec#hosted-name:}" ;;
     no-paused:*) printf 'worktree-restack-state: path=%s reason=no-paused-state' "${spec#no-paused:}" ;;
     preserved:*) printf 'worktree-cleanup-remove-failed: %s' "${spec#preserved:}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
@@ -272,6 +279,15 @@ a restack control resolves the ID to the legacy worktree and fails only on the m
 push resolves the ID to the legacy worktree and publishes its branch|repo legacy:issue-legacy legacy-commit:issue-legacy|-|push issue-legacy --no-rebase|0|-|-|trees=<root>/trees/issue-legacy@issue-legacy branches=issue-legacy remote=issue-legacy checkout=main@clean dirs=trees,trees/issue-legacy files=trees/issue-legacy/base.txt,trees/issue-legacy/work.txt
 new IDs land in the new default while legacy trees stay unmoved|repo legacy:issue-legacy|-|create issue-fresh|0|<root>/.worktrees/main/issue-fresh|-|trees=<root>/.worktrees/main/issue-fresh@issue-fresh,<root>/trees/issue-legacy@issue-legacy branches=issue-fresh,issue-legacy remote=- checkout=main@clean dirs=.worktrees,.worktrees/main,trees,trees/issue-legacy files=.worktrees/main/issue-fresh/base.txt,trees/issue-legacy/base.txt
 remove resolves the ID to the legacy worktree and deletes its merged branch|repo legacy:issue-legacy legacy-merge:issue-legacy|-|remove issue-legacy|0|removed:<root>/trees/issue-legacy|deleted:issue-legacy|trees=- branches=- remote=- checkout=main@clean dirs=trees files=-
+a hosted create lands at the repository'"'"'s one lane path, not the item-keyed one|repo|-|create issue-a --hosted|0|<root>/.worktrees/main/lane|-|trees=<root>/.worktrees/main/lane@issue-a branches=issue-a remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/lane/base.txt
+a hosted create for another item, once the first lane'"'"'s tree is gone, lands at the same path|repo create-hosted:issue-a merge:issue-a remove:issue-a|-|create issue-b --hosted|0|<root>/.worktrees/main/lane|-|trees=<root>/.worktrees/main/lane@issue-b branches=issue-b remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/lane/base.txt,.worktrees/main/lane/issue-a.txt
+two local creates for different items land at different item-keyed paths|repo create:issue-a|-|create issue-b|0|<root>/.worktrees/main/issue-b|-|trees=<root>/.worktrees/main/issue-a@issue-a,<root>/.worktrees/main/issue-b@issue-b branches=issue-a,issue-b remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/issue-a/base.txt,.worktrees/main/issue-b/base.txt
+a hosted create refuses the lane path while another item'"'"'s tree holds it|repo create-hosted:issue-a|-|create issue-b --hosted|75|-|active:issue-b:<root>/.worktrees/main/lane|trees=<root>/.worktrees/main/lane@issue-a branches=issue-a remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/lane/base.txt
+path follows a hosted tree through its branch, never the item-keyed spelling|repo create-hosted:issue-a|-|path issue-a|0|<root>/.worktrees/main/lane|-|trees=<root>/.worktrees/main/lane@issue-a branches=issue-a remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/lane/base.txt
+--reuse finds a hosted tree through its branch|repo create-hosted:issue-a|-|create issue-a --hosted --reuse|0|<root>/.worktrees/main/lane|-|trees=<root>/.worktrees/main/lane@issue-a branches=issue-a remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/lane/base.txt
+path --hosted names the lane path under the configured base dir|repo local-custom|-|path --hosted|0|<root>/custom-trees/lane|-|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
+WORKTREE_HOSTED_NAME names the lane path'"'"'s last segment|repo|WORKTREE_HOSTED_NAME=shared|path --hosted|0|<root>/.worktrees/main/shared|-|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
+a WORKTREE_HOSTED_NAME that is not one path segment is refused before anything is made|repo|WORKTREE_HOSTED_NAME=../up|create issue-a --hosted|1|-|hosted-name:../up|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
 cleanup under the default layout removes the merged worktree and deletes its branch, never touching the checkout|repo create:issue-default merge:issue-default|-|cleanup|0|cleaned:<root>/.worktrees/main/issue-default|-|trees=- branches=- remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=-
 cleanup reads no setup config: an invalid WORKTREE_SYMLINKS does not stop it|repo create:issue-x merge:issue-x bad-symlinks|-|cleanup|0|cleaned:<root>/.worktrees/main/issue-x|-|trees=- branches=- remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=-
 a worktree git refuses to remove is preserved with its links and branch, and cleanup reports it|repo link-env create:issue-rf merge:issue-rf fail-remove:issue-rf|-|cleanup|1|-|preserved:<root>/.worktrees/main/issue-rf|trees=<root>/.worktrees/main/issue-rf@issue-rf branches=issue-rf remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/issue-rf/.env.local-><main>/.env.local,.worktrees/main/issue-rf/base.txt,.worktrees/main/issue-rf/issue-rf.txt

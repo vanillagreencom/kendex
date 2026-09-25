@@ -804,9 +804,15 @@ strip_trailing_slashes() {
   printf '%s\n' "$path"
 }
 
+# One path segment in the alphabet an issue ID is spelled in: a name composed
+# under the worktree base dir that cannot climb out of it or name a subtree.
+is_path_segment() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$1" != *..* ]]
+}
+
 validate_issue_id() {
   local issue="$1"
-  if [[ ! "$issue" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || "$issue" == *..* ]]; then
+  if ! is_path_segment "$issue"; then
     worktree_message issue-invalid "$issue" "Error: invalid issue ID '$issue'. Use letters, numbers, '.', '_', or '-' only; start with a letter/number and do not include '..'." >&2
     return 1
   fi
@@ -1068,6 +1074,32 @@ fetch_origin() {
 worktree_path() {
   validate_issue_id "$1" || return 1
   echo "$TREES_DIR/$(echo "$1" | tr '[:upper:]' '[:lower:]')"
+}
+
+# The path a NEW worktree takes, by the kind of host it is created on. A local
+# machine holds several worktrees of one repository at once, so each takes the
+# path keyed by its issue. A hosted lane's machine holds exactly one, so every
+# lane of the repository takes the same path: sccache keys a Rust compile by
+# its absolute source path, and only a path identical in every lane lets one
+# lane's build, or the warm snapshot's, answer another's. Every reader finds a
+# hosted tree through its registered branch (worktree_path_for_issue), never
+# through this spelling.
+worktree_new_path() { # HOST_KIND ISSUE
+  local name="${WORKTREE_HOSTED_NAME:-lane}"
+  case "$1" in
+    local) worktree_path "$2" ;;
+    hosted)
+      if ! is_path_segment "$name"; then
+        worktree_message hosted-name-invalid "$name" "Error: WORKTREE_HOSTED_NAME must be one path segment of letters, numbers, '.', '_' or '-', starting with a letter or number and without '..'." >&2
+        return 1
+      fi
+      printf '%s/%s\n' "$TREES_DIR" "$name"
+      ;;
+    *)
+      worktree_message host-kind-invalid "$1" "Error: internal: a new worktree path was asked for host kind '$1'; only local and hosted exist." >&2
+      return 1
+      ;;
+  esac
 }
 
 issue_branch_name() {
@@ -2409,9 +2441,11 @@ case "${1:-}" in
     REUSE=false
     RESTACK=false
     REPLAY=false
+    HOST_KIND=local
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --base) BASE="$2"; shift 2 ;;
+        --hosted) HOST_KIND=hosted; shift ;;
         --from) FROM="$2"; shift 2 ;;
         --pr) PR="$2"; shift 2 ;;
         --transfer) TRANSFER="${2:-}"; [[ -n "$TRANSFER" ]] || { worktree_message transfer-branch-missing "--transfer" "Error: --transfer requires the local branch checked out in the main checkout." >&2; exit 1; }; shift 2 ;;
@@ -2730,6 +2764,11 @@ case "${1:-}" in
     if [[ -e "$WT_PATH" || -L "$WT_PATH" ]]; then
       refuse_incomplete_worktree "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
     fi
+
+    # No tree stands for the issue, so any tree made below is new and takes
+    # the path its host kind gives. A hosted path another issue's tree still
+    # holds is refused by each mode's guard_new_target_path.
+    WT_PATH="$(worktree_new_path "$HOST_KIND" "$ISSUE")" || exit 1
 
     if [[ "$REUSE" == true || "$RESTACK" == true ]]; then
       worktree_message reuse-missing "$WT_PATH" "Error: --reuse/--restack requires an existing worktree at $WT_PATH" >&2
@@ -3289,7 +3328,11 @@ case "${1:-}" in
     ;;
 
   path)
-    worktree_path_for_issue "${2:?Error: path requires an issue ID}"
+    if [[ "${2:-}" == --hosted && $# -eq 2 ]]; then
+      worktree_new_path hosted
+    else
+      worktree_path_for_issue "${2:?Error: path requires an issue ID}"
+    fi
     ;;
 
   exists)

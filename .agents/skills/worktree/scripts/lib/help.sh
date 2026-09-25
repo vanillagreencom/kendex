@@ -9,7 +9,8 @@ Usage: worktree <command> [ID|/path] [options]
 
 Portable git worktree manager. Worktrees live outside the repo root at
 <parent-of-checkout>/.worktrees/<checkout-name>/<id>; WORKTREE_BASE_DIR
-overrides the parent directory.
+overrides the parent directory. A hosted lane's worktree (create --hosted)
+lives at <that parent>/lane, one path in every lane of the repository.
 
 Commands:
   create ID        Claim a new issue worktree. Refuses implicit reuse when a
@@ -21,6 +22,7 @@ Commands:
                    (remove --help)
   cleanup          Remove worktrees whose branches are merged (cleanup --help)
   path ID          Print the worktree path for an issue ID
+  path --hosted    Print the one path a hosted lane's worktree takes
   exists ID        Check whether a worktree exists for an issue ID
   merged ID        Print the commit the issue tree's pull request merged as
   check            Pre-create git state check of the MAIN checkout (JSON:
@@ -40,8 +42,8 @@ Path arguments and canonicalization:
   The project root resolves via git rev-parse (at any depth, inside worktrees
   too). Issue IDs that derive paths must match [A-Za-z0-9][A-Za-z0-9._-]* and
   must not contain '..'. Issue-ID resolution prefers the configured base dir
-  and falls back to the worktree registered for the issue branch; there is no
-  auto-migration. Path comparisons are canonical (physical, symlink-resolved
+  and falls back to the worktree registered for the issue branch, which is
+  how every command finds a hosted lane's tree; there is no auto-migration. Path comparisons are canonical (physical, symlink-resolved
   on both sides). Direct path arguments for mutating commands must be
   registered worktrees of this repository's common Git directory: fix-links,
   codex-setup, codex-branch, claude-setup, and remove refuse the main checkout
@@ -58,6 +60,10 @@ personal overrides):
                               ../.worktrees/<checkout-name>, an external
                               per-repo sibling dir. Do not point it inside the
                               repo root.
+  WORKTREE_HOSTED_NAME        The last segment of the path create --hosted
+                              gives a new worktree under the base dir, one
+                              path segment in the issue-ID alphabet. Default:
+                              lane.
   WORKTREE_DEFAULT_BRANCH     Default branch name (auto-detected if unset;
                               fallback: main)
   WORKTREE_SYMLINKS           Space-separated paths symlinked from the main
@@ -224,6 +230,15 @@ Options:
   --replay        With --reuse/--restack: run the same restack as an ordered
                   cherry-pick replay with no rebase porcelain, for execution
                   policies that reject 'git rebase'
+  --hosted        The create runs for a hosted lane, on a machine that holds
+                  one lane worktree of this repository: a new tree lands at
+                  <base dir>/<WORKTREE_HOSTED_NAME> (path --hosted), the same
+                  path in every lane, so a build there hits compile-cache
+                  entries keyed by another lane's identical source path. A
+                  tree the issue already has is found by its branch and
+                  reused where it stands. A path another issue's tree holds
+                  exits 75. Without it, the new tree is keyed by the issue ID
+                  so several can coexist
 
 Transfer form:
   --transfer BRANCH

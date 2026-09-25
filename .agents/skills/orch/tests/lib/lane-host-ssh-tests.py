@@ -110,9 +110,9 @@ printf 'worktree %s\\n' "$*" >> "$SSH_TEST_LOG"
 path="$PWD-worktree"
 case "$1" in
 create)
-  if [[ -d "$path" ]]; then [[ "${3:-}" == --reuse ]] || exit 75
+  if [[ -d "$path" ]]; then [[ " $* " == *" --reuse "* ]] || exit 75
   else
-    [[ "${3:-}" != --reuse ]] || exit 1
+    [[ " $* " != *" --reuse "* ]] || exit 1
     git worktree add --detach "$path" >&2
   fi
   printf '%s\\n' "$path" ;;
@@ -1089,17 +1089,19 @@ if [[ "$1" == refresh ]]; then
 fi
 ''')
         original = self.script.read_text()
-        fragment = 'made = worktree(row, "create", args.item, *flags)'
+        fragment = 'create_worktree(row, args.item, flags)'
         self.assertEqual(original.count(fragment), 1)
         for name, repair in (("control", False), ("production", True)):
             with self.subTest(name=name):
                 self.row["clone"] = str(self.root / name)
                 self.inventory.write_text(json.dumps([self.row]))
                 subprocess.run([self.env["REAL_GIT"], "clone", "-q", str(self.source), self.row["clone"]], check=True)
-                self.script.write_text(original if repair else original.replace(fragment, 'made = subprocess.CompletedProcess([], 0)'))
+                self.script.write_text(original if repair else original.replace(fragment, 'None'))
                 result = self.create()
                 self.assertEqual(result.returncode, 0, result.stderr)
                 path = Path(dict(field.split("=", 1) for field in result.stdout.decode().strip().split("\t"))["path"])
+                # The hosted lane path, the same in every lane of the repository.
+                self.assertEqual(path, self.root.resolve() / ".worktrees" / name / "lane")
                 for entry in (".env.local", ".agents/skills/prepared/SKILL.md", "copy-config"):
                     with self.subTest(entry=entry):
                         self.assertEqual((path / entry).exists(), repair)

@@ -151,6 +151,15 @@ def worktree(row, *args):
                   row["clone"], *args, accept=(75,) if args[0] == "create" else ())
 
 
+def create_worktree(row, item, flags):
+    """Create the item's tree at the hosted lane path, identical in every lane
+    of the repository, so a build there hits compile-cache entries another
+    lane or the warm snapshot keyed by the same source path."""
+    made = worktree(row, "create", item, "--hosted", *flags)
+    if made.returncode:
+        raise SystemExit(made.returncode)
+
+
 def owned_worktree(row, item, verb):
     """Resolve the item only after the clone marker confirms its owner."""
     owned = remote(row, '''if ! test -f "$1/.git/lane-host-item"; then exit 75; fi
@@ -221,10 +230,7 @@ printf bootstrap''', row["clone"]).stdout
             raise SystemExit(1)
         remote(row, '''test -x "$1/.agents/skills/worktree/scripts/worktree"
 exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
-        made = worktree(row, "create", args.item,
-                        *create_flags(row, args.item, args.relaunch or args.reuse))
-        if made.returncode:
-            raise SystemExit(made.returncode)
+        create_worktree(row, args.item, create_flags(row, args.item, args.relaunch or args.reuse))
     env_file = source / ".env.local"
     put(row, row["clone"] + "/.env.local", env_file.read_bytes() if env_file.exists() else b"")
     cache = source / ".cache/linear"
@@ -262,9 +268,7 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
     # An existing clone acquires ownership before shared files change. Run
     # setup again after preparation so its links, copies and identity are current.
     flags = ["--reuse"] if result.stdout == b"existing" else create_flags(row, args.item, args.relaunch or args.reuse)
-    made = worktree(row, "create", args.item, *flags)
-    if made.returncode:
-        raise SystemExit(made.returncode)
+    create_worktree(row, args.item, flags)
     path = worktree(row, "path", args.item).stdout.decode().strip()
     if not path or "\n" in path or "\t" in path:
         notice("worktree-path-invalid", item=args.item)
@@ -417,6 +421,8 @@ The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
 fields. Existing ownership exits 75; --reuse and --relaunch pass --reuse to the
 worktree command when the target exists; a missing target uses plain create.
+Every create passes --hosted, so the item's worktree sits at the repository's
+one hosted lane path (worktree path --hosted), and path= names it.
 stop --item ID --harness claude|codex|pi resolves the owned worktree through
 the installed worktree command, signals only matching harness processes whose
 current directory is that worktree, waits for them to exit, and prints

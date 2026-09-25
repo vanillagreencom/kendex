@@ -11,6 +11,8 @@ mkdir -p "$REPO/tmp"
 TMP="$(mktemp -d "$REPO/tmp/lane-setup.XXXXXX")"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 
+REAL_GIT="$(command -v git)" || { printf 'the host provides git\n'; exit 1; }
+
 PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
@@ -35,11 +37,18 @@ mutate() {
 }
 
 # fixture NAME [FROM TO]: a clone at $TMP/NAME, its lane-setup mutated when
-# FROM and TO are given.
+# FROM and TO are given. Its worktree skill answers only `path --hosted`, with
+# the hosted lane path a clone of that name has by default, LANE_PATH.
 fixture() {
   R="$TMP/$1"
   EXTRA_BIN=""
-  mkdir -p "$R/tools" "$R/ui" "$R/fake-bin" "$R/home" "$R/src"
+  LANE_PATH="${R%/*}/.worktrees/${R##*/}/lane"
+  mkdir -p "$R/tools" "$R/ui" "$R/fake-bin" "$R/home" "$R/src" "$R/.agents/skills/worktree/scripts"
+  cat >"$R/.agents/skills/worktree/scripts/worktree" <<SH
+#!/usr/bin/env bash
+[ "\$*" = "path --hosted" ] || exit 64
+printf '%s\\n' '$LANE_PATH'
+SH
   cp "$REPO/.fleet-setup" "$R/"
   cp "$TOOLS/lane-setup" "$R/tools/"
   [ $# -eq 1 ] || mutate "$R/tools/lane-setup" "$2" "$3"
@@ -53,9 +62,12 @@ fixture() {
 #!/usr/bin/env bash
 printf 'v22.19.0\n'
 SH
+  # git answers the dependency-input read itself and hands `worktree`, which
+  # the warm build takes, to the real git.
   cat >"$R/fake-bin/git" <<'SH'
 #!/usr/bin/env bash
 set -eu
+if [ "${1-}" = worktree ]; then exec "$REAL_GIT" "$@"; fi
 [ "$*" = "rev-parse HEAD:ui/package.json HEAD:ui/package-lock.json" ]
 printf 'package:'
 cat ui/package.json
@@ -84,7 +96,7 @@ printf '%s\n' "$*" >>"$RUSTUP_LOG"
 [ "${RUSTUP_FAIL:-0}" -eq 0 ] || exit "$RUSTUP_FAIL"
 printf '%s\n' aarch64-apple-darwin x86_64-pc-windows-msvc >"$RUSTUP_STATE"
 SH
-  chmod +x "$R/fake-bin/"*
+  chmod +x "$R/fake-bin/"* "$R/.agents/skills/worktree/scripts/worktree"
   git -C "$R" init -q
   git -C "$R" add -A
   git -C "$R" -c user.name=test -c user.email=test@example.com commit -qm fixture
@@ -99,7 +111,7 @@ run_setup() {
   local command=$1
   shift
   RC=0
-  OUT="$(cd "$R" && env -i HOME="$R/home" PATH="${EXTRA_BIN:+$EXTRA_BIN:}$R/fake-bin:$SYS_BIN" NPM_LOG="$NPM_LOG" RUSTUP_LOG="$RUSTUP_LOG" RUSTUP_STATE="$RUSTUP_STATE" NPM_FAIL="${NPM_FAIL:-0}" RUSTUP_FAIL="${RUSTUP_FAIL:-0}" "$@" "$command" 2>&1)" || RC=$?
+  OUT="$(cd "$R" && env -i HOME="$R/home" PATH="${EXTRA_BIN:+$EXTRA_BIN:}$R/fake-bin:$SYS_BIN" REAL_GIT="$REAL_GIT" NPM_LOG="$NPM_LOG" RUSTUP_LOG="$RUSTUP_LOG" RUSTUP_STATE="$RUSTUP_STATE" NPM_FAIL="${NPM_FAIL:-0}" RUSTUP_FAIL="${RUSTUP_FAIL:-0}" "$@" "$command" 2>&1)" || RC=$?
 }
 
 echo "=== a fresh clone installs both dependency sets ==="
@@ -391,12 +403,13 @@ done
 case "$LINK_TOOLS" in */cc\ * | */cc) ;; *) bad "the host provides cc for the warm build rows" "found:$LINK_TOOLS"; exit 1 ;; esac
 
 # proof_warm WARM SOURCE EXPECT [FROM TO]: the setup with FLEET_WARM=WARM
-# on a toy crate that compiles with a current Cargo.lock (good), does not
-# compile (broken), or has no Cargo.lock for --locked to accept (unlocked),
-# with the real cargo on its PATH and the build kept in the clone's own
-# target dir.
+# on a toy crate, committed, that compiles with a current Cargo.lock (good),
+# does not compile (broken), or has no Cargo.lock for --locked to accept
+# (unlocked), with the real cargo on its PATH and the build kept in the
+# clone's own target dir. A build that ran compiled the crate at LANE_PATH and
+# left no tree there.
 proof_warm() {
-  local warm=$1 source=$2 expect=$3 lock="" exe="" built=no
+  local warm=$1 source=$2 expect=$3 lock="" exe="" built=no trees="" at_lane=no
   shift 3
   lane_fixture "$@"
   case "$source" in
@@ -408,6 +421,8 @@ proof_warm() {
   if [ "$source" != unlocked ]; then
     lock="$(cargo_in "$R" generate-lockfile)" || { WHY="generate-lockfile: $lock"; return 1; }
   fi
+  git -C "$R" add -A || return 1
+  git -C "$R" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m "$source crate" || return 1
   EXTRA_BIN="$R/row-bin"
   mkdir -p "$EXTRA_BIN"
   ln -s "$CARGO_BIN" "$EXTRA_BIN/cargo"
@@ -419,11 +434,14 @@ proof_warm() {
   for exe in "$R"/target/debug/deps/toy-*; do
     case "${exe##*/}" in *.*) ;; *) [ ! -f "$exe" ] || [ ! -x "$exe" ] || built=yes ;; esac
   done
-  WHY="rc=$RC built=$built out=$OUT"
+  trees="$(git -C "$R" worktree list --porcelain | grep -c '^worktree ')" || return 1
+  case "$OUT" in *"Compiling toy v0.1.0 ($LANE_PATH)"*) at_lane=yes ;; esac
+  WHY="rc=$RC built=$built at-lane=$at_lane trees=$trees out=$OUT"
+  [ "$trees" -eq 1 ] && [ ! -e "$LANE_PATH" ] || return 1
   case "$expect" in
-    built) [ "$RC" -eq 0 ] && [ "$built" = yes ] && case "$OUT" in *"lane-setup: warm-build=run"*) true ;; *) false ;; esac ;;
+    built) [ "$RC" -eq 0 ] && [ "$built" = yes ] && [ "$at_lane" = yes ] && case "$OUT" in *"lane-setup: warm-build=run path=$LANE_PATH"*) true ;; *) false ;; esac ;;
     skipped) [ "$RC" -eq 0 ] && [ ! -e "$R/target" ] && case "$OUT" in *"lane-setup: warm-build=skip"*) true ;; *) false ;; esac ;;
-    failed) [ "$RC" -ne 0 ] && case "$OUT" in *"lane-setup: warm-build=run"*) true ;; *) false ;; esac ;;
+    failed) [ "$RC" -ne 0 ] && case "$OUT" in *"lane-setup: warm-build=run path=$LANE_PATH"*) true ;; *) false ;; esac ;;
     *) WHY="unknown expectation $expect"; return 1 ;;
   esac
 }
@@ -500,19 +518,25 @@ proof_wrapper FLEET_SCCACHE_REDIS_ENDPOINT= present unused '  if [ -z "${FLEET_S
   && bad "control: a wrapper on an empty endpoint fails the empty-endpoint row" "$WHY" \
   || ok "control: a wrapper on an empty endpoint fails the empty-endpoint row"
 
-proof_warm 1 good built '  cargo test --workspace --no-run --locked' '  :' \
+proof_warm 1 good built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  :' \
   && bad "control: a warm run that builds nothing fails the built row" "$WHY" \
   || ok "control: a warm run that builds nothing fails the built row"
+proof_warm 1 good built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cargo test --workspace --no-run --locked) || build_status=$?' \
+  && bad "control: a warm build in the clone rather than at the lane path fails the built row" "$WHY" \
+  || ok "control: a warm build in the clone rather than at the lane path fails the built row"
+proof_warm 1 good built '  git worktree remove --force -- "$lane_path"' '  :' \
+  && bad "control: a warm tree left at the lane path fails the built row" "$WHY" \
+  || ok "control: a warm tree left at the lane path fails the built row"
 proof_warm '' good skipped 'if [ "${FLEET_WARM:-}" = 1 ]; then' 'if true; then' \
   && bad "control: a build without FLEET_WARM fails the skipped row" "$WHY" \
   || ok "control: a build without FLEET_WARM fails the skipped row"
 proof_warm 0 good skipped 'if [ "${FLEET_WARM:-}" = 1 ]; then' 'if [ -n "${FLEET_WARM:-}" ]; then' \
   && bad "control: building on any non-empty FLEET_WARM fails the FLEET_WARM=0 row" "$WHY" \
   || ok "control: building on any non-empty FLEET_WARM fails the FLEET_WARM=0 row"
-proof_warm 1 unlocked failed '  cargo test --workspace --no-run --locked' '  cargo test --workspace --no-run' \
+proof_warm 1 unlocked failed '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cd -- "$lane_path" && cargo test --workspace --no-run) || build_status=$?' \
   && bad "control: a warm build without --locked fails the unlocked row" "$WHY" \
   || ok "control: a warm build without --locked fails the unlocked row"
-proof_warm 1 broken failed '  cargo test --workspace --no-run --locked' '  cargo test --workspace --no-run --locked || true' \
+proof_warm 1 broken failed '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || true' \
   && bad "control: a swallowed build failure fails the failed row" "$WHY" \
   || ok "control: a swallowed build failure fails the failed row"
 
