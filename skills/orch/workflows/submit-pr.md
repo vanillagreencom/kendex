@@ -273,7 +273,7 @@ For `off` and for `exempt`, skip the wait and go to § 5 — the internal review
    .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
    ```
 
-   `ask` presents `Triage again` | `Force merge` | `Stop here`, with `Triage again` recommended, before an automatic budget transition. A standing `changes_requested` verdict on the current head outlives a disposition. Only a dismissal or a newer review clears it. Under `ask`, `Triage again` is the user's override for one more pass, `Force merge` records the override and continues to step 2 with the § 6.1 gates applying, and `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
+   `ask` presents `Triage again` | `Stop here`, with `Triage again` recommended, before an automatic budget transition. A standing `changes_requested` verdict on the current head outlives a disposition. Only a dismissal or a newer review clears it. Under `ask`, `Triage again` is the user's override for one more pass, and `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
 
    **On `timeout` under `ask`**: `Keep waiting` goes to the Restart check; `Force merge` records the override and continues to step 2 with the § 6.1 gates still applying; `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
 

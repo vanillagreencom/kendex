@@ -222,7 +222,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`: the class is measured over both endpoints, and a retarget changes it without moving the head, so the fresh answer is what carries the exemption and the head says it is the same run. Any other answer arms nothing and escapes by micro.md condition 9. Read workflow state `pr.size_check` for `[STATE_KEY]`, and use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.
 
-   **Merge route.** One route, on every change class: take the `--auto` arm below, and reach the direct attempt only where that arm answers `arm: no-merge-gate`, a repository with no queue and nothing for auto-merge to wait on. An item whose workflow state carries `pr_approval.forced` takes the same arm.
+   **Merge route.** One route, on every change class: take the `--auto` arm below, and reach the direct attempt only where that arm answers `arm: no-merge-gate`. That answer does not mean the base has no queue: a base that still queues the PR answers the direct attempt with exit `75`, which takes the queue-wait block. An item whose workflow state carries `pr_approval.forced` takes the same arm.
 
    The lane arms its own head under the token the `github.sh` router selects, which in a lane sandbox is the lanes app's installation token, and waits in `queue-wait` to a terminal verdict. No overseer merges for it and no setting routes it past the queue (`pr-merge --help` § Retired settings).
 
@@ -244,7 +244,7 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --auto --expected-head [PREPARED_HEAD]
    ```
 
-   Exit `0` merged the prepared head immediately — continue to step 2. Exit `1` with first line `arm: no-merge-gate=<condition>` means the repository has nothing for auto-merge to wait on, so there is no queue: take the direct attempt above, and never fall back to a raw `gh pr merge --auto`. Exit `1` with first line `pr-merge: retired-setting key=<NAME>` takes § 3's route for that refusal. Any other exit but `0` or `75` is an exact-head arm failure: surface it and return to § 3.2.
+   Exit `0` merged the prepared head immediately — continue to step 2. Exit `1` with first line `arm: no-merge-gate=<condition>` means the arm armed nothing and names why: take the direct attempt above, whose exit `75` routes a base that still queues the PR, and never fall back to a raw `gh pr merge --auto`. Exit `1` with first line `pr-merge: retired-setting key=<NAME>` takes § 3's route for that refusal. Any other exit but `0` or `75` is an exact-head arm failure: surface it and return to § 3.2.
 
    Exit `75` means queued or armed. Run the command below through [Waiter launch](../references/waiter-launch.md), appending `--no-guard` under `exempt`. Keep the lane active while polling the completion file, then route the recorded exit and result. A changes-requested review blocked at § 3.2's readiness check, before this arm; past it no mode reads review state, and `exempt` waives the thread guard alone.
 
