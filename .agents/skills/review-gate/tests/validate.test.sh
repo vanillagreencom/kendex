@@ -26,7 +26,7 @@ settings-known|kendex.settings.toml
 settings-env-table|kendex.settings.toml
 settings-key-shapes|kendex.settings.toml
 settings-values|0
-class-policy-active|REVIEW_GATE_CLASS_POLICY
+class-policy-default|default
 ROWS
 [ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=report-table value=%q\n' "$rows" >&2; exit 2; }
 
@@ -94,6 +94,9 @@ while IFS='~' read -r label action data want check value error_code error_value 
       chmod 000 "$DIR/unreadable.settings.toml"; override=unreadable.settings.toml ;;
     absent) override=absent.settings.toml ;;
     no-classifier) rm -r -- "${DIR:?}/.agents/skills/harness-ci"; commit "$DIR" ;;
+    uncommitted-record)
+      printf '%b\n' "$data" >>"$DIR/kendex.settings.toml"
+      printf 'decision\n' >"$DIR/uncommitted-decision.md" ;;
     settings-symlink)
       mv "$DIR/kendex.settings.toml" "$DIR/real-settings.toml"
       ln -s real-settings.toml "$DIR/kendex.settings.toml"
@@ -109,8 +112,11 @@ while IFS='~' read -r label action data want check value error_code error_value 
   fi
   case "$value" in @/*) value="$DIR/${value#@/}" ;; esac
   case "$note_value" in @/*) note_value="$DIR/${note_value#@/}" ;; esac
+  case "$error_value" in @/*) error_value="$DIR/${error_value#@/}" ;; esac
   expected=''; diagnostic=''; note=''
-  [ -z "$check" ] || printf -v expected '%s check=%s value=%q' "$want" "$check" "$value"
+  verdict="$want"
+  [ "$want" != clean ] || verdict=ok
+  [ -z "$check" ] || printf -v expected '%s check=%s value=%q' "$verdict" "$check" "$value"
   [ -z "$error_code" ] || printf -v diagnostic '        review-gate-error=%s value=%q' "$error_code" "$error_value"
   [ -z "$note_check" ] || printf -v note 'note check=%s value=%q' "$note_check" "$note_value"
   want_rc=1
@@ -139,7 +145,8 @@ exported legal mode cannot hide committed error~exported~~FAIL~settings-values~2
 untracked settings~untracked~~FAIL~settings-untracked~kendex.settings.toml~~~~~
 nested unknown key names its source~nested~[env]\nREVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGIN = "x"~FAIL~settings-unknown~.kendex/settings.toml:REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGIN~~~~~
 nested mode is unread~nested~[env]\nREVIEW_GATE_MODE = "off"~FAIL~settings-mode-source~.kendex/settings.toml~~~~~
-root mode is read~append~REVIEW_GATE_MODE = "off"~clean~~~~~~~
+root mode is read~append~REVIEW_GATE_MODE = "off"\nREVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"~clean~class-policy-default~default-assigned~~~~~
+mode off under the inherited default class policy~append~REVIEW_GATE_MODE = "off"~FAIL~class-policy-mode-off~REVIEW_GATE_MODE~~~~~
 explicit untracked source~explicit~~clean~~~~~settings-explicit~@/kendex.settings.toml~
 double-quoted key~append~"REVIEW_GATE_THREADS" = "off"~FAIL~settings-key-shape~kendex.settings.toml:"REVIEW_GATE_THREADS" = "off"~~~~~
 single-quoted key~append~'REVIEW_GATE_THREADS' = "off"~FAIL~settings-key-shape~kendex.settings.toml:'REVIEW_GATE_THREADS' = "off"~~~~~
@@ -176,10 +183,17 @@ universal exclusion~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*"~FAIL~carry-un
 declared unmatched exclusion is reported~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "no-such-directory/*.md"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "no-such-directory/*.md"~clean~~~~~carry-prophylactic~no-such-directory/*.md~
 orphan declaration~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "AGENTS.md"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "docs/*"~FAIL~carry-declaration-missing~docs/*~~~~~
 declaration now matches~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "docs/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "docs/*"~FAIL~carry-declaration-matched~docs/*~~~~~
-class policy off with no decision record~append~REVIEW_GATE_CLASS_POLICY = ""~FAIL~class-policy-inactive~REVIEW_GATE_CLASS_POLICY~~~~~
-class policy off with an untracked decision record~append~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs/decisions/D001-no-class-policy.md"~FAIL~class-policy-decision-untracked~docs/decisions/D001-no-class-policy.md~~~~~
-class policy off with a tracked decision record~append~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs/guide.md"~clean~~~~~~~
-default class policy with no classifier installed~no-classifier~~FAIL~class-policy-unresolved~2~~~~~
+class policy off with no decision record~append~REVIEW_GATE_CLASS_POLICY = ""~FAIL~class-policy-undecided~off~~~~~
+custom class policy with no decision record~append~REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:none;standard:none"~FAIL~class-policy-undecided~custom~~~~~
+custom class policy with a tracked decision record~append~REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:none;standard:none"\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs/guide.md"~clean~class-policy-decision~docs/guide.md~~~~~
+class policy off with a tracked decision record~append~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs/guide.md"~clean~class-policy-decision~docs/guide.md~~~~~
+decision record that does not exist~append~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs/decisions/D001-no-class-policy.md"~FAIL~class-policy-decision-untracked~docs/decisions/D001-no-class-policy.md~~~~~
+decision record on disk but never committed~uncommitted-record~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "uncommitted-decision.md"~FAIL~class-policy-decision-untracked~uncommitted-decision.md~~~~~
+decision record that is a tracked directory~append~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs"~FAIL~class-policy-decision-untracked~docs~~~~~
+docs-only lane under the active class policy~append~REVIEW_GATE_DOCS_ONLY = "none"~FAIL~class-policy-inert-lane~REVIEW_GATE_DOCS_ONLY~~~~~
+render-only lane under the active class policy~append~REVIEW_GATE_RENDER_PATHS = "docs/*"~FAIL~class-policy-inert-lane~REVIEW_GATE_RENDER_PATHS~~~~~
+docs-only lane under a recorded opt-out~append~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs/guide.md"\nREVIEW_GATE_DOCS_ONLY = "none"~clean~class-policy-decision~docs/guide.md~~~~~
+default class policy with no classifier installed~no-classifier~~FAIL~settings-values~2~policy-classifier~@/.agents/skills/review-gate/scripts/../../harness-ci/scripts/change-class~~~
 ROWS
 [ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=settings-table value=%q\n' "$rows" >&2; exit 2; }
 

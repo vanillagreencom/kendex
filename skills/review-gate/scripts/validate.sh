@@ -60,10 +60,12 @@ Four groups run, in this order:
               legal. Unknown keys, per-invocation seams and repository
               variables are each named as what they are; the value rules come
               from `review-predicate.sh --check-config`, never a copy of them.
-              The class policy is active, or it is off and
+              The class policy is the default, or
               REVIEW_GATE_CLASS_POLICY_DECISION names the tracked decision
-              record that turned it off (`review-policy --check-config`
-              decides which).
+              record behind other rows or an empty value
+              (`review-policy --check-choice` says which). REVIEW_GATE_MODE
+              off beside an unassigned policy, and a legacy docs-only or
+              render-only lane under an active one, are each named.
   carry       every REVIEW_GATE_CARRY_FORWARD_EXCLUDE policy glob matches
               a tracked path and is not universal; every prophylactic
               declaration names an active exclusion that still matches
@@ -410,39 +412,83 @@ else
   fi
 fi
 
-# Every repository runs one class policy. review-policy owns whether the
-# resolved value is active; an inactive one is an opt-out, and an opt-out is
-# legal only when the repository names the tracked decision record behind it.
 SCRATCH="$(mktemp -d)" || die scratch "${TMPDIR:-/tmp}" "could not create a scratch directory"
 trap 'rm -rf -- "${SCRATCH:?}"' EXIT
-policy_rc=0
-policy_state="$("${scrub[@]}" "$SKILL_DIR/scripts/review-policy" --check-config 2>"$SCRATCH/policy-err")" || policy_rc=$?
-policy_diag="$(cat -- "$SCRATCH/policy-err")"
-if [ "$policy_rc" -ne 0 ]; then
-  bad class-policy-unresolved "$policy_rc" "the class policy could not be resolved (scripts/review-policy --check-config):"
-  printf '%s\n' "$policy_diag" | sed 's/^/        /'
+
+# read_setting KEY DEFAULT — sets SETTING_VALUE to the key as the committed
+# sources resolve it, through the engine's own loader under the scrubbed
+# environment. A refused load returns nonzero with the loader's diagnostic in
+# $SCRATCH/err; the caller reports it, and never reads it as an empty value.
+read_setting() {
+  SETTING_VALUE="$("${scrub[@]}" bash -c '
+    . "$1/scripts/lib/settings.sh"
+    rg_setting "$2" "$3"
+  ' _ "$SKILL_DIR" "$1" "$2" 2>"$SCRATCH/err")"
+}
+
+# Reports a refused class-policy read and its diagnostic. A key that cannot be
+# read decides nothing below.
+policy_setting_unreadable() { # KEY
+  bad class-policy-setting-unreadable "$1" "$1 could not be read, so the class-policy check cannot judge it:
+$(sed 's/^/        /' "$SCRATCH/err")"
+}
+
+# Every repository runs one class policy. review-policy owns how the
+# repository chose it: the default, the default assigned, custom rows, or off.
+# A departure from the default is legal only when the repository names the
+# tracked decision record behind it.
+choice_rc=0
+policy_choice="$("${scrub[@]}" "$SKILL_DIR/scripts/review-policy" --check-choice 2>"$SCRATCH/err")" || choice_rc=$?
+policy_active=0
+if [ "$choice_rc" -ne 0 ]; then
+  bad class-policy-unresolved "$choice_rc" "the class policy could not be resolved (scripts/review-policy --check-choice):
+$(sed 's/^/        /' "$SCRATCH/err")"
 else
-  case "$policy_state" in
-    review-policy=active) ok class-policy-active "REVIEW_GATE_CLASS_POLICY" "the class policy is active" ;;
-    review-policy=inactive)
-      decision_rc=0
-      decision="$("${scrub[@]}" bash -c '
-        . "$1/scripts/lib/settings.sh"
-        rg_setting REVIEW_GATE_CLASS_POLICY_DECISION ""
-      ' _ "$SKILL_DIR" 2>&1)" || decision_rc=$?
-      if [ "$decision_rc" -ne 0 ]; then
-        bad class-policy-decision-unreadable "REVIEW_GATE_CLASS_POLICY_DECISION" "REVIEW_GATE_CLASS_POLICY_DECISION could not be read, so the opt-out from the class policy names no decision record:"
-        printf '%s\n' "$decision" | sed 's/^/        /'
-      elif [ -z "$decision" ]; then
-        bad class-policy-inactive "REVIEW_GATE_CLASS_POLICY" "the class policy is turned off with no decision record behind it. Every repository runs the default class policy (README.md § Class policy): delete the empty REVIEW_GATE_CLASS_POLICY assignment, or set REVIEW_GATE_CLASS_POLICY_DECISION to the tracked decision record that turned it off"
-      elif [ -f "$decision" ] && git ls-files --error-unmatch -- "$decision" >/dev/null 2>&1; then
-        ok class-policy-opt-out "$decision" "the class policy is off, as the decision record $decision says"
+  case "$policy_choice" in
+    review-policy-choice=default | review-policy-choice=default-assigned)
+      policy_active=1
+      ok class-policy-default "${policy_choice#review-policy-choice=}" "the class policy is the default (README.md § Class policy)"
+      ;;
+    review-policy-choice=custom | review-policy-choice=off)
+      [ "$policy_choice" = review-policy-choice=off ] || policy_active=1
+      if ! read_setting REVIEW_GATE_CLASS_POLICY_DECISION ""; then
+        policy_setting_unreadable REVIEW_GATE_CLASS_POLICY_DECISION
+      elif [ -z "$SETTING_VALUE" ]; then
+        bad class-policy-undecided "${policy_choice#review-policy-choice=}" "REVIEW_GATE_CLASS_POLICY departs from the default class policy with no decision record behind it. Every repository runs the default (README.md § Class policy): delete the REVIEW_GATE_CLASS_POLICY assignment, or set REVIEW_GATE_CLASS_POLICY_DECISION to the tracked decision record that made this choice"
+      elif [ -f "$SETTING_VALUE" ] && git ls-files --error-unmatch -- "$SETTING_VALUE" >/dev/null 2>&1; then
+        ok class-policy-decision "$SETTING_VALUE" "REVIEW_GATE_CLASS_POLICY_DECISION names the committed file $SETTING_VALUE as the decision record for this class policy"
       else
-        bad class-policy-decision-untracked "$decision" "REVIEW_GATE_CLASS_POLICY_DECISION names $decision, which is not a tracked file in this repository; name the decision record by its path from the repository root"
+        bad class-policy-decision-untracked "$SETTING_VALUE" "REVIEW_GATE_CLASS_POLICY_DECISION names $SETTING_VALUE, which is not a tracked file in this repository; name the decision record by its path from the repository root"
       fi
       ;;
-    *) bad class-policy-protocol "$policy_state" "scripts/review-policy --check-config printed a record that is neither review-policy=active nor review-policy=inactive" ;;
+    *) bad class-policy-protocol "$policy_choice" "scripts/review-policy --check-choice printed a record it does not define" ;;
   esac
+fi
+
+# A repository that turned the gate off and never chose a class policy got
+# the default by inheritance, and its `bot` row requires a review round the
+# off mode no longer waives. Assigning the policy is the acceptance.
+if [ "$policy_choice" = review-policy-choice=default ]; then
+  if ! read_setting REVIEW_GATE_MODE enforce; then
+    policy_setting_unreadable REVIEW_GATE_MODE
+  elif [ "$SETTING_VALUE" = off ]; then
+    bad class-policy-mode-off "REVIEW_GATE_MODE" "REVIEW_GATE_MODE is off, and the default class policy still requires one bot review round for a small change. Assign REVIEW_GATE_CLASS_POLICY explicitly to accept that, or opt out of the class policy with REVIEW_GATE_CLASS_POLICY_DECISION naming the committed decision record"
+  fi
+fi
+
+# The docs-only and render-only lanes run only under an inactive class
+# policy, so under an active one a configured lane waives nothing.
+if [ "$policy_active" -eq 1 ]; then
+  if ! read_setting REVIEW_GATE_DOCS_ONLY bot; then
+    policy_setting_unreadable REVIEW_GATE_DOCS_ONLY
+  elif [ "$SETTING_VALUE" = none ]; then
+    bad class-policy-inert-lane "REVIEW_GATE_DOCS_ONLY" "REVIEW_GATE_DOCS_ONLY = \"none\" is inert under the active class policy, which judges a docs-only change by its change class instead. Delete the assignment, or opt out of the class policy with a decision record"
+  fi
+  if ! read_setting REVIEW_GATE_RENDER_PATHS ""; then
+    policy_setting_unreadable REVIEW_GATE_RENDER_PATHS
+  elif [ -n "$SETTING_VALUE" ]; then
+    bad class-policy-inert-lane "REVIEW_GATE_RENDER_PATHS" "REVIEW_GATE_RENDER_PATHS is inert under the active class policy, which judges a render-only change by its change class instead. Delete the assignment, or opt out of the class policy with a decision record"
+  fi
 fi
 
 # ----------------------------------------------------------------- carry ---
@@ -455,13 +501,11 @@ group "review-policy exclusions"
 # validates — the predicate never reads it — so here is its only reader.
 CARRY_LOAD_FAILED=0
 carry_setting() { # KEY — sets CARRY_VALUE; a refusal is a FAIL row, not ""
-  local rc=0
   CARRY_VALUE=""
-  CARRY_VALUE="$("${scrub[@]}" bash -c '
-    . "$1/scripts/lib/settings.sh"
-    rg_setting "$2" ""
-  ' _ "$SKILL_DIR" "$1" 2>"$SCRATCH/err")" || rc=$?
-  [ "$rc" -eq 0 ] && return 0
+  if read_setting "$1" ""; then
+    CARRY_VALUE="$SETTING_VALUE"
+    return 0
+  fi
   CARRY_LOAD_FAILED=1
   CARRY_VALUE=""
   bad carry-load "$1" "$SETTINGS_FILE: $1 could not be read — a refused load is a configuration error, never an empty value:

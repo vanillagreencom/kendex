@@ -100,6 +100,31 @@ EMPTY_CONFIG="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE REVIEW_
   "$WHOLE/review-gate/scripts/review-policy" --check-config 2>"$TMP/err")" || EMPTY_RC=$?
 assert_eq "$EMPTY_RC:$EMPTY_CONFIG" "0:review-policy=inactive" "an explicit empty assignment turns the policy off"
 
+echo "=== --check-choice says how the repository chose its policy ==="
+
+# One row per choice. UNSET assigns nothing in any layer, EMPTY assigns the
+# empty string, and every other value is assigned as written, in the
+# environment. Rows compare normalized, so the reordered and
+# spaced default still reads as the default assigned.
+while IFS='|' read -r label value want; do
+  CHOICE_RC=0
+  [ "$value" != EMPTY ] || value=""
+  if [ "$value" = UNSET ]; then
+    CHOICE="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY \
+      "$WHOLE/review-gate/scripts/review-policy" --check-choice 2>"$TMP/err")" || CHOICE_RC=$?
+  else
+    CHOICE="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE REVIEW_GATE_CLASS_POLICY="$value" \
+      "$WHOLE/review-gate/scripts/review-policy" --check-choice 2>"$TMP/err")" || CHOICE_RC=$?
+  fi
+  assert_eq "$CHOICE_RC:$CHOICE" "$want" "$label"
+done <<'ROWS'
+no assignment is the default|UNSET|0:review-policy-choice=default
+the default assigned|render:none;trivial:none;micro:none;small:bot;standard:current|0:review-policy-choice=default-assigned
+the default assigned in another order and spacing|standard:current; small:bot;micro:none ;trivial:none;render:none|0:review-policy-choice=default-assigned
+other rows are custom|render:none;trivial:none;micro:none;small:none;standard:none|0:review-policy-choice=custom
+an empty assignment is off|EMPTY|0:review-policy-choice=off
+ROWS
+
 # The same repository, judged by a catalog with no orch skill beside
 # harness-ci. The classifier cannot read the narrow-change list, so its
 # `standard` is the fallback. The harness-note on the way there carries a

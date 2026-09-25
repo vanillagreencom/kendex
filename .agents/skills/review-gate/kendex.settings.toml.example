@@ -110,18 +110,21 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 # How much review each size of change needs before it can merge. Generated
 # files, trivial and micro changes need no review; a small change needs one
 # bot review round; a standard change keeps the full review gate. Every
-# repository runs this same value unless it opts out.
-# To opt out, set the key to "" and set REVIEW_GATE_CLASS_POLICY_DECISION.
+# repository runs this same value unless a decision record says otherwise.
+# To use other rows, or "" to turn it off, also set
+# REVIEW_GATE_CLASS_POLICY_DECISION. With REVIEW_GATE_MODE = "off", assign
+# this key to accept the bot round on small changes.
 REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"
 
-# The decision record that turned the class policy off, as a path from the
-# repository root. The configuration check refuses an empty class policy
-# without it, and refuses a path the repository does not track.
+# The decision record behind a class policy other than the default, as a
+# path from the repository root. The configuration check refuses such a
+# policy without it, and refuses a path the repository does not track.
 REVIEW_GATE_CLASS_POLICY_DECISION = ""
 
 # "bot" requires normal review evidence for a docs-only diff. "none" lets
 # harness-ci's shared docs classifier substitute for missing evidence.
-# Objections, suppressed findings, and unresolved threads still block.
+# Objections, suppressed findings, and unresolved threads still block. Used
+# only when the class policy is off.
 REVIEW_GATE_DOCS_ONLY = "bot"
 
 # The render-only lane: the harness render trees this repo commits as
@@ -130,7 +133,7 @@ REVIEW_GATE_DOCS_ONLY = "bot"
 # evidence; CI still decides the merge. Any file outside the set, or a diff
 # that cannot be enumerated, takes the normal gate path. Not a carry class:
 # the exclusion list does not apply, so list no policy-bearing path here.
-# Empty disables the lane.
+# Empty disables the lane. Used only when the class policy is off.
 REVIEW_GATE_RENDER_PATHS = ""
 
 # "off" disables an inactive or "current" class policy before evidence
