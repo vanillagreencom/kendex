@@ -23,6 +23,7 @@ pub mod bot_instructions;
 pub(crate) mod capture;
 pub mod check_catalog;
 pub mod clock;
+pub mod command_link;
 pub mod command_update;
 pub mod commit_offer;
 pub mod configedit;

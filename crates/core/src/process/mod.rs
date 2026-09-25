@@ -347,7 +347,7 @@ impl Hardened {
     }
 
     #[cfg(test)]
-    fn program(program: &str, args: &[&str]) -> Hardened {
+    pub(crate) fn program(program: &str, args: &[&str]) -> Hardened {
         Hardened::new(program, owned(args))
     }
 

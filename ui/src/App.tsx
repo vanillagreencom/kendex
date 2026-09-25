@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Toaster } from "sonner";
 import { commands } from "@/bindings";
+import { CommandLinkDialog } from "@/components/command-link-dialog";
 import { CommitOfferDialog } from "@/components/commit-offer-dialog";
 import { ErrorDialog } from "@/components/error-dialog";
 import { InstallDialog } from "@/components/install/install-dialog";
@@ -267,6 +268,9 @@ export default function App() {
         {/* The question a write leaves behind: what to do with the files
             kendex wrote in a git project. */}
         <CommitOfferDialog />
+        {/* The macOS app's first-launch question; last in the order
+            `lib/asks-first.ts` holds, and drawn nowhere else. */}
+        <CommandLinkDialog />
         <div className="flex flex-1 overflow-hidden">
           <Sidebar />
           <main className="relative flex flex-1 flex-col overflow-hidden">

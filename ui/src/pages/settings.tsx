@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { Appearance } from "@/bindings";
 import { commands, LEGAL, ZOOM } from "@/bindings";
 import { AccountSection } from "@/components/account-section";
+import { CommandLinkSection } from "@/components/command-link-section";
 import { ExternalLink } from "@/components/external-link";
 import { PageHeader } from "@/components/page-header";
 import { Section, SettingRow } from "@/components/section";
@@ -126,6 +127,8 @@ export function SettingsPage() {
               />
             </SettingRow>
           </Section>
+
+          <CommandLinkSection />
 
           <AccountSection />
 

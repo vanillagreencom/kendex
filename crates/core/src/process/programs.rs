@@ -8,7 +8,7 @@
 //! whose stdin is the caller's, and how a shell script is spawned on a
 //! platform whose kernel does not read `#!`.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::Stdio;
 
@@ -168,6 +168,16 @@ impl Hardened {
                 path.as_os_str().to_owned(),
             ],
         )
+    }
+
+    /// `osascript` running `script`, with `args` as the script's `argv`.
+    /// The macOS administrator prompt is reached this way, from a
+    /// `do shell script ... with administrator privileges` inside the
+    /// script; nothing a caller passes is spliced into the script's text.
+    pub fn osascript(script: &str, args: Vec<OsString>) -> Hardened {
+        let mut argv = vec![OsString::from("-e"), OsString::from(script)];
+        argv.extend(args);
+        Hardened::spawning(OsStr::new("/usr/bin/osascript"), argv)
     }
 
     /// The person's login shell, asked what `PATH` is and nothing else.

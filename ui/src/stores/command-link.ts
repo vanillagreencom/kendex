@@ -1,0 +1,110 @@
+import { toast } from "sonner";
+import { create } from "zustand";
+import { type CommandLink, type CommandLinkState, commands } from "@/bindings";
+import { answerNotRecorded } from "@/lib/copy-command-link";
+import { isShapedRefusal } from "@/lib/refusal";
+import { settled } from "@/lib/settled";
+
+type Offered = Extract<CommandLink, { kind: "offered" }>;
+
+/** Where the last install attempt stands. One value, so the dialog and the
+ *  Settings row draw the same moment. */
+export type Stage =
+  | { at: "idle" }
+  | { at: "working" }
+  | { at: "done" }
+  | { at: "cancelled" }
+  /** What is at the link now took no install; `command` says what. */
+  | { at: "refused"; command: CommandLink }
+  | { at: "failed"; message: string };
+
+interface CommandLinkStore {
+  /** Null until the first read lands, and after a read that failed: the
+   *  question is never put, and the row never drawn, on a state nobody
+   *  read. */
+  state: CommandLinkState | null;
+  /** Why the read failed, for the Settings row. */
+  readError: string | null;
+  stage: Stage;
+  /** The offer the first-launch question is on screen about, from the read
+   *  that said to ask until the question is answered. Held apart from
+   *  `state`, which an install replaces with an answer that no longer asks
+   *  while the dialog still has to say how the install went. */
+  question: Offered | null;
+  /** The question was answered in this window. The record normally says
+   *  so too; this covers a record that could not be written. */
+  answered: boolean;
+  load: () => Promise<void>;
+  install: () => Promise<void>;
+  /** Close the first-launch question and record that it was answered. */
+  answer: () => Promise<void>;
+}
+
+/**
+ * The kendex command the macOS app carries, and the one link that puts it
+ * on `PATH`.
+ *
+ * Whether to ask, what to offer, and what an install may replace are all
+ * `kendex_core::command_link`'s answers; this holds them and the stage of
+ * the attempt in flight.
+ */
+export const useCommandLinkStore = create<CommandLinkStore>((set, get) => ({
+  state: null,
+  readError: null,
+  stage: { at: "idle" },
+  question: null,
+  answered: false,
+
+  load: async () => {
+    const read = await settled(commands.commandLinkState());
+    if (read.status !== "ok") {
+      set({ state: null, readError: read.error });
+      return;
+    }
+    set({ state: read.data, readError: null });
+    const { command, ask } = read.data;
+    if (ask && command.kind === "offered" && !get().answered) {
+      if (get().question === null) set({ question: command });
+    }
+  },
+
+  install: async () => {
+    if (get().stage.at === "working") return;
+    set({ stage: { at: "working" } });
+    const run = await settled(commands.commandLinkInstall());
+    if (run.status === "ok") {
+      set({ state: run.data, stage: { at: "done" } });
+      return;
+    }
+    const refusal = run.error;
+    if (!isShapedRefusal(refusal)) {
+      set({ stage: { at: "failed", message: refusal } });
+      return;
+    }
+    switch (refusal.kind) {
+      case "cancelled":
+        set({ stage: { at: "cancelled" } });
+        return;
+      case "notOffered":
+        set({ stage: { at: "refused", command: refusal.command } });
+        // The row redraws from what is there now rather than from what
+        // was offered when it was drawn.
+        await get().load();
+        return;
+      case "failed":
+        set({ stage: { at: "failed", message: refusal.message } });
+        return;
+      default: {
+        const unreachable: never = refusal;
+        return unreachable;
+      }
+    }
+  },
+
+  answer: async () => {
+    set({ question: null, answered: true, stage: { at: "idle" } });
+    const recorded = await settled(commands.commandLinkPromptAnswered());
+    if (recorded.status === "ok") set({ state: recorded.data });
+    else toast.error(answerNotRecorded(recorded.error));
+  },
+}));

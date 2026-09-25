@@ -50,9 +50,9 @@ pub use record::{
 /// and macOS, and on Windows the setup's `bin\kendex.exe`, which the search
 /// finds there and judges as the app's own.
 #[cfg(windows)]
-const COMMAND_NAME: &str = "kendex.exe";
+pub(crate) const COMMAND_NAME: &str = "kendex.exe";
 #[cfg(not(windows))]
-const COMMAND_NAME: &str = "kendex";
+pub(crate) const COMMAND_NAME: &str = "kendex";
 
 /// The command binary a running desktop app would bring across with it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,8 +101,8 @@ pub enum CommandHalf {
 /// script itself and fails when the two drift, so a change of destination
 /// there cannot quietly leave app-driven updates unable to find the
 /// command on a machine whose launcher `PATH` omits it.
-const INSTALLER_HOME_BIN: &str = ".local/bin";
-const INSTALLER_SYSTEM_BIN: &str = "/usr/local/bin";
+pub(crate) const INSTALLER_HOME_BIN: &str = ".local/bin";
+pub(crate) const INSTALLER_SYSTEM_BIN: &str = "/usr/local/bin";
 
 /// Where the `kendex` command may be, in the order a shell resolves it:
 /// everything on `PATH` first, then the two directories `install.sh`
