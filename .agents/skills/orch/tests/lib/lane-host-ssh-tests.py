@@ -622,34 +622,51 @@ exec git "$@"
         self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
 
     def test_clone_without_committed_render_refuses_create(self):
-        """A checkout missing a render script is named before create makes a worktree."""
+        """A render script absent from the checkout, or present but not
+        committed at HEAD, is named before create makes a worktree."""
         git = [self.env["REAL_GIT"], "-C", str(self.source)]
         commit = ["-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm"]
+        render = self.root / "render"
+        shutil.copytree(self.source / ".agents", render, symlinks=True)
         original = self.script.read_text()
-        fragment = "    require_render(row)\n"
-        self.assertEqual(original.count(fragment), 1)
-        for script in ("orch/scripts/sync-base", "worktree/scripts/worktree"):
-            relative = ".agents/skills/" + script
-            subprocess.run([*git, "rm", "-q", "--", relative], check=True)
-            subprocess.run([*git, *commit, "drop " + script], check=True)
-            # The control drops the check: the clone then fails later, or not
-            # at all where create never runs the missing script, and unnamed.
+        loop = "for script in orch/scripts/sync-base worktree/scripts/worktree; do"
+        # Per rule: the path the source drops, the clones it applies to, the
+        # keyed line and the script it names, and the control that keeps the
+        # call and its diagnostics and removes only that rule.
+        rules = (
+            ("orch/scripts/sync-base", ("new", "existing"), "render-missing", "orch/scripts/sync-base",
+             (loop, "for script in worktree/scripts/worktree; do")),
+            ("worktree/scripts/worktree", ("new", "existing"), "render-missing", "worktree/scripts/worktree",
+             (loop, "for script in orch/scripts/sync-base; do")),
+            (None, ("untracked",), "render-untracked", "orch/scripts/sync-base",
+             ('if test -z "$committed"; then', "if false; then")),
+        )
+        for dropped, kinds, key, named, (fragment, replacement) in rules:
+            relative = ".agents/skills/" + dropped if dropped else ".agents"
+            subprocess.run([*git, "rm", "-rq", "--", relative], check=True)
+            subprocess.run([*git, *commit, "drop " + relative], check=True)
+            self.assertEqual(original.count(fragment), 1)
+            mutant = original.replace(fragment, replacement)
+            self.assertNotEqual(mutant, original)
             for control in (False, True):
-                self.script.write_text(original.replace(fragment, "") if control else original)
-                for kind in ("new", "existing"):
-                    with self.subTest(script=script, control=control, clone=kind):
-                        self.row["clone"] = str(self.root / f"{script.split('/')[0]}-{kind}-{control}")
+                self.script.write_text(mutant if control else original)
+                for kind in kinds:
+                    with self.subTest(rule=key, named=named, control=control, clone=kind):
+                        self.row["clone"] = str(self.root / f"{named.split('/')[0]}-{kind}-{control}")
                         self.inventory.write_text(json.dumps([self.row]))
-                        if kind == "existing":
+                        if kind != "new":
                             subprocess.run([self.env["REAL_GIT"], "clone", "-q", str(self.source), self.row["clone"]], check=True)
+                        if kind == "untracked":
+                            # What the retired bootstrap's refresh left behind.
+                            shutil.copytree(render, Path(self.row["clone"], ".agents"), symlinks=True)
                         result = self.create()
-                        line = f"lane-host-ssh: render-missing path={self.row['clone']}/{relative}".encode()
+                        line = f"lane-host-ssh: {key} path={self.row['clone']}/.agents/skills/{named}".encode()
                         self.assertEqual(line in result.stderr.splitlines(), not control, result.stderr)
                         if not control:
                             self.assertEqual(result.returncode, 1, result.stderr)
                             self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
             subprocess.run([*git, "checkout", "-q", "HEAD~1", "--", relative], check=True)
-            subprocess.run([*git, *commit, "restore " + script], check=True)
+            subprocess.run([*git, *commit, "restore " + relative], check=True)
         self.script.write_text(original)
 
     def test_file_lifecycle_and_dirty_close(self):

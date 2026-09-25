@@ -198,11 +198,21 @@ def require_render(row):
     bash's 127. A fetch does not repair the second: this check runs before
     sync-base, which is itself part of the render, so the checkout has to be
     fast-forwarded by hand or the clone removed for create to clone afresh.
+    A script present but not committed at HEAD is the render an earlier
+    create's refresh left untracked in a clone of a repository that committed
+    none; git never updates it, and a pull collides with it, so only removing
+    it or the clone repairs that clone.
     """
     remote(row, '''for script in orch/scripts/sync-base worktree/scripts/worktree; do
   if ! test -x "$1/.agents/skills/$script"; then
     printf 'lane-host-ssh: render-missing path=%s\\n' "$1/.agents/skills/$script" >&2
     printf 'create renders nothing; fast-forward this checkout past the commit that added the render (git -C CLONE pull --ff-only), or remove the clone so create clones it afresh\\n' >&2
+    exit 1
+  fi
+  committed=$(git -C "$1" ls-tree --name-only HEAD -- ".agents/skills/$script") || exit 1
+  if test -z "$committed"; then
+    printf 'lane-host-ssh: render-untracked path=%s\\n' "$1/.agents/skills/$script" >&2
+    printf 'this render is not committed at HEAD and git never updates it; remove the clone, or delete its untracked .agents render, before create runs again\\n' >&2
     exit 1
   fi
 done''', row["clone"])
@@ -402,8 +412,9 @@ create copies its .env.local and, for a fresh clone, .cache/linear without locks
 An existing clone must have an origin for the configured repository. Its base
 branch is fast-forwarded before setup; local changes or divergence stop create.
 create renders nothing and installs no Pi package: the worktree carries the
-render its base branch commits, and a clone whose checkout holds no render
-exits 1 with render-missing.
+render its base branch commits. A clone whose checkout lacks that render exits
+1 with render-missing, and one whose render is not committed at HEAD exits 1
+with render-untracked.
 Claude reads ACCOUNT/setup-token; Codex and Pi read ACCOUNT/auth.json. When present,
 ACCOUNT/lane-host/.claude.json merges into the remote home's .claude.json (its
 top-level keys set, its project entries merged key by key), and
