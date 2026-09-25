@@ -859,7 +859,7 @@ fi
 exec "$REAL_LANE_MAIL" "$@"
 EOF
 # A pr-watch that marks its start and end in the same log, holding its first
-# call open, with LONG_HOLD set, until two mail passes have logged under it or
+# call open, with LONG_HOLD set, until three mail passes have logged under it or
 # twenty seconds pass: the long pass that overruns its interval, staged on
 # what the mail pass does rather than on how fast the machine is.
 cat > "$TMP_ROOT/bin/pr-watch-slow.sh" <<'EOF'
@@ -869,7 +869,7 @@ n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/prwatch.calls.owner_repo"
 printf 'long start %s\n' "$n" >> "$STUB_DIR/cadence.log"
 if [[ "$n" -eq 1 && -n "${LONG_HOLD:-}" ]]; then
   waited=0
-  until [[ "$(awk '$0 == "long start 1" { on = 1; next } on && /^mail drain / { k++ } END { print k + 0 }' "$STUB_DIR/cadence.log")" -ge 2 \
+  until [[ "$(awk '$0 == "long start 1" { on = 1; next } on && /^mail drain / { k++ } END { print k + 0 }' "$STUB_DIR/cadence.log")" -ge 3 \
     || "$waited" -ge 200 ]]; do
     waited=$((waited + 1)); sleep 0.1
   done
@@ -878,13 +878,14 @@ printf 'long end %s\n' "$n" >> "$STUB_DIR/cadence.log"
 EOF
 chmod +x "$TMP_ROOT/bin/lane-mail-logging.sh" "$TMP_ROOT/bin/pr-watch-slow.sh"
 cadence_run() { # [WATCH_BIN] [ENV...] -- ARGS...
-  local bin="$1"
+  local bin="$1" began="$SECONDS"
   shift
   mail_reset KEN-70
   CADENCE_OUT="$(WATCH_BIN="$bin" run_watch ORCH_WATCH_MAIL_INTERVAL=1 \
     OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-logging.sh" REAL_LANE_MAIL="$LANE_MAIL" \
     OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-slow.sh" "$@" 2>"$STUB_DIR/cadence.err")" || true
   CADENCE_LOG="$(cat "$STUB_DIR/cadence.log" 2>/dev/null)" || CADENCE_LOG=""
+  CADENCE_SECS=$((SECONDS - began))
 }
 # How the note was reported: its event count, the drain it landed on, and the
 # long passes started by the time the run ended.
@@ -919,9 +920,11 @@ cadence_run "" LONG_HOLD=1 -- --interval 1 --max-loops 2 --item KEN-70
 assert_eq "$(overrun_facts)" "mail-during=several overlap=0" \
   "a long pass overrunning its interval holds up no mail pass and overlaps no long pass" "$STUB_DIR/cadence.err"
 
-# Must-fail inverses. Mail on the long cadence reports the note only with the
-# next long pass: run at a four-second interval, since at the hour the row
-# above runs at that mutant would not end. A long pass run in line holds every
+# Must-fail inverses. Mail on the long cadence reports the note only once the
+# long interval is out: run at a four-second interval, since at the hour the
+# row above runs at that mutant would not end. Whether the next long pass has
+# started by then depends on the second its start was stamped in, so the row
+# counts no long pass. A long pass run in line holds every
 # mail pass up behind it; one started without waiting for the last overlaps it.
 cadence_mutant() { # NAME OLD NEW
   python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MUTANT_DIR/orch/scripts/oversee-watch-$1" "$2" "$3" <<'PY'
@@ -938,8 +941,9 @@ cadence_mutant in-line '>"$LONG_OUT" 2>"$LONG_ERR" &' '>"$LONG_OUT" 2>"$LONG_ERR
 cadence_mutant overlapping '[[ -z "$LONG_PID" && "$LONG_PASSES" -lt "$MAX_LOOPS" ]]' '[[ "$LONG_PASSES" -lt "$MAX_LOOPS" ]]'
 new_case mail_cadence_mutant
 cadence_run "$MUTANT_DIR/orch/scripts/oversee-watch-long-cadence" NOTE_AT=2 -- --interval 4 --max-loops 2 --item KEN-70
-assert_eq "$(cadence_facts)" "notices=1 drains=2 long=2" \
-  "control: mail read on the long cadence reports the note only with the next long pass" "$STUB_DIR/cadence.err"
+assert_eq "$(cadence_facts | sed 's/ long=.*//') waited=$([[ "$CADENCE_SECS" -ge 3 ]] && echo interval || echo "${CADENCE_SECS}s")" \
+  "notices=1 drains=2 waited=interval" \
+  "control: mail read on the long cadence reports the note only once the long interval is out" "$STUB_DIR/cadence.err"
 new_case mail_cadence_overrun_inline
 cadence_run "$MUTANT_DIR/orch/scripts/oversee-watch-in-line" LONG_HOLD=1 -- --interval 1 --max-loops 2 --item KEN-70
 assert_eq "$(overrun_facts)" "mail-during=0 overlap=0" \
@@ -1189,6 +1193,37 @@ new_case mail_ack_refused_mutant
 ack_refused "$MUTANT_DIR/orch/scripts/oversee-watch-ack-unreported"
 assert_eq "$ACK_REFUSED" "rc=0 printed=1 refused=0 cursor=0" \
   "control: without the failure arm a refused ack passes in silence" "$STUB_DIR/ack.err"
+
+# An answered ask read while to-lane.jsonl reads as not there beside a cursor
+# past its answer, as a hosted read that misses once returns it: the drain has
+# no answer to drop the ask by and the receipts read the cursor as missed. The
+# pass reports nothing of the item and moves no row, and once the file reads
+# whole the ask stays answered.
+answered_missed() { # [WATCH_BIN]
+  local box="$CASE_REPO_ROOT/tmp/lane-mail/KEN-60" out
+  mail_reset KEN-60
+  ANSWERED_ASK="$(say KEN-60 ask 'Squash or merge?')"
+  ANSWERED_ASK="${ANSWERED_ASK#id=}"
+  answer KEN-60 "$ANSWERED_ASK" 'Squash.' >/dev/null
+  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" inbox --item KEN-60 >/dev/null)
+  mv -- "$box/to-lane.jsonl" "$box/to-lane.jsonl.away"
+  out="$(WATCH_BIN="${1:-}" run_watch -- --max-loops 1 --item KEN-60 2>"$STUB_DIR/answered-a")"
+  ANSWERED_MISSED="first=$(head -1 <<<"$out") row=$(awk -F'\t' '$1 == "lane-mail" && $2 == "KEN-60" { print $3 }' \
+    "$STATE_DIR"/*.mail 2>/dev/null || true)"
+  mv -- "$box/to-lane.jsonl.away" "$box/to-lane.jsonl"
+  out="$(WATCH_BIN="${1:-}" run_watch -- --max-loops 1 --item KEN-60 2>"$STUB_DIR/answered-b")"
+  ANSWERED_MISSED+=" after=$(grep -c '^EVENT lane-question ' <<<"$out" || true)"
+}
+new_case mail_answered_missed
+answered_missed
+assert_eq "$ANSWERED_MISSED" "first=$HEARTBEAT row= after=0" \
+  "a to-lane read that missed reports no answered ask as a question and moves no row" "$STUB_DIR/answered-a"
+cadence_mutant deliver-first '    if [[ "$missed" -eq 1 ]]; then' '    if false; then'
+new_case mail_answered_missed_mutant
+answered_missed "$MUTANT_DIR/orch/scripts/oversee-watch-deliver-first"
+assert_eq "$ANSWERED_MISSED" "first=EVENT lane-question KEN-60 $ANSWERED_ASK row=1 $ANSWERED_ASK after=0" \
+  "control: delivered before the missed read is judged, the answered ask is a question and its row moves past it" \
+  "$STUB_DIR/answered-a"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

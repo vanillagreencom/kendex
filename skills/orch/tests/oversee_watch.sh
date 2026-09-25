@@ -1135,6 +1135,34 @@ assert_eq "$AUTH_RECOVERY" "failed=2 prwatch=none" \
   "control: a start committed before the credential check holds the next long pass back" \
   "$TMP_ROOT/e-auth_recovery_start_first"
 
+# The long-pass start kept is the fork's clock: under the stub clock the mail
+# pass's lane-mail moves time on before the fork, and the start is that later
+# reading, not the turn's.
+start_clock_case() { # NAME [WATCH_BIN]
+  new_case "$1"
+  printf '1790000000\n' > "$STUB_DIR/now.epoch"
+  printf '#!/usr/bin/env bash\nprintf "1790000500\\n" > "$STUB_DIR/now.epoch"\nexec "%s" "$@"\n' \
+    "$REPO_ROOT/skills/orch/scripts/lane-mail" > "$STUB_DIR/lane-mail-slow"
+  chmod +x "$STUB_DIR/lane-mail-slow"
+  WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_LANE_MAIL="$STUB_DIR/lane-mail-slow" -- --max-loops 1 \
+    >/dev/null 2>"$TMP_ROOT/e-$1" || true
+  START_CLOCK="start=$(awk -F'\t' '$1 == "long-pass" && $2 == "fleet" { print $3 }' \
+    "$STATE_DIR"/*.mail 2>/dev/null || true)"
+}
+start_clock_case start_clock
+assert_eq "$START_CLOCK" "start=1790000500" "the long-pass start is the clock read at the fork" "$TMP_ROOT/e-start_clock"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = '  started="$(date -u +%s)" || die time-failed "" "clock=UTC"\n'
+assert s.count(old) == 1, "turn-clock start mutant pattern"
+open(out, "w").write(s.replace(old, '  started="$PASS_NOW"\n'))
+PY
+start_clock_case start_clock_turn "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$START_CLOCK" "start=1790000000" "control: a start stamped with the turn's clock is the earlier reading" \
+  "$TMP_ROOT/e-start_clock_turn"
+
 # A run that ends on a lane's notice before any long pass is due asks GitHub
 # nothing, not even its credential.
 mail_only_case() { # NAME [WATCH_BIN]

@@ -128,10 +128,10 @@ PY
   chmod +x "$MUTANT_DIR/orch/scripts/oversee-watch-$1"
 }
 receipts_mutant cursorless '    lane_read="${BASH_REMATCH[1]}"' '    lane_read=0'
-receipts_mutant forgetful '          unread_at="$line"' '          :'
-receipts_mutant replacement-kept '    elif [[ -n "$to_first" && -n "$seen" && "$to_first" != "$seen" ]]; then
-      read_at=0; unread_at=0' '    elif [[ -n "$to_first" && -n "$seen" && "$to_first" != "$seen" ]]; then
-      :'
+receipts_mutant forgetful '        unread_at="$line"' '        :'
+receipts_mutant replacement-kept '      elif [[ -n "$to_first" && -n "$seen" && "$to_first" != "$seen" ]]; then
+        read_at=0; unread_at=0' '      elif [[ -n "$to_first" && -n "$seen" && "$to_first" != "$seen" ]]; then
+        :'
 # lane-mail numbering the directive lines alone, off the cursor's scale.
 DIRONLY="$MUTANT_DIR/orch/scripts/lane-mail-dironly"
 python3 - "$REPO_ROOT/skills/orch/scripts/lane-mail" "$DIRONLY" <<'PY'
@@ -159,13 +159,13 @@ lane_mail_mutant missed-zero '        [ "$LM_FETCH_ABSENT" -eq 1 ] || SEEN=misse
 lane_mail_mutant missed-always '        [ "$LM_FETCH_ABSENT" -eq 1 ] || SEEN=missed' '        SEEN=missed'
 # The watch judging an empty listing a missed read itself, so a row is never
 # seeded from one; and lane-mail clamping a cursor over one to 0.
-receipts_mutant seed-skips-empty '    elif ! [[ "$read_at" =~ ^[0-9]+$ && "$unread_at" =~ ^[0-9]+$ ]]; then
-      read_at="$lane_read"; unread_at=0' '    elif ! [[ "$read_at" =~ ^[0-9]+$ && "$unread_at" =~ ^[0-9]+$ ]]; then
-      if [[ "$header" == *" count=0 "* ]]; then missed=1; else read_at="$lane_read"; unread_at=0; fi'
+receipts_mutant seed-skips-empty '      elif ! [[ "$read_at" =~ ^[0-9]+$ && "$unread_at" =~ ^[0-9]+$ ]]; then
+        read_at="$lane_read"; unread_at=0' '      elif ! [[ "$read_at" =~ ^[0-9]+$ && "$unread_at" =~ ^[0-9]+$ ]]; then
+        if [[ "$header" == *" count=0 "* ]]; then missed=1; else read_at="$lane_read"; unread_at=0; fi'
 lane_mail_mutant empty-clamped '      if [ "$SEEN" -gt 0 ] && [ "$COUNT" -eq 0 ]; then' '      if false; then'
-receipts_mutant reset-on-short '    elif [[ "$lane_read" -lt "$read_at" ]]; then
-      missed=1' '    elif [[ "$lane_read" -lt "$read_at" ]]; then
-      read_at=0; unread_at=0'
+receipts_mutant reset-on-short '      elif [[ "$lane_read" -lt "$read_at" ]]; then
+        missed=1' '      elif [[ "$lane_read" -lt "$read_at" ]]; then
+        read_at=0; unread_at=0'
 # A hosted lane whose cursor read comes back short once, in either shape: the
 # provider's read of to-lane.cursor exits as a file not there while its probe
 # answers, or the file reads lower than the count reported. That pass is a
