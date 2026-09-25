@@ -205,8 +205,8 @@ The long pass's events, checked and reported in this order:
   EVENT report-due reason=<minutes|issues> since=<utc> [landed=<N>]
                              the overseer's status report is due, as
                              `oversee-report due --state` judges it from the
-                             newest file beside the fleet state and the
-                             ORCH_REPORT settings. Reported on every long pass
+                             newest file in progress-reports/ beside the fleet
+                             state and the ORCH_REPORT settings. Reported on every long pass
                              while it stays due, so it stops once a report is
                              written; read only with --state
   EVENT heartbeat            --max-loops long passes with no event. A line
@@ -1913,15 +1913,11 @@ check_merged() {
     for repo in "${REPOS[@]}"; do
       list="$(gh pr list --repo "$repo" --head "$branch" --state merged --limit 10 --json number,headRefName,headRepositoryOwner,mergedAt 2>"$errf")" \
         || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "branch=$branch"
-      hit="$(jq -r --arg branch "$branch" --arg owner "${repo%%/*}" --arg repo "$repo" --argjson since "$SINCE_EPOCH" '
-        [ .[]
-          | select(.headRefName | ascii_downcase == $branch)
-          | select(((.headRepositoryOwner.login // "") | ascii_downcase) == $owner)
-          | select(.mergedAt != null)
-          | select((.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $since)
-          | "\(.number) \(.headRefName) \($repo)" ]
-        | .[]' <<<"$list" 2>"$errf")" \
-        || die pr-list-invalid "$(cat "$errf")" "repo=$repo" "branch=$branch"
+      if ! hit="$(jq -r --arg branch "$branch" --arg owner "${repo%%/*}" --arg repo "$repo" --argjson since "$SINCE_EPOCH" \
+        "$LANE_MERGED_JQ"' lane_merged($branch; $owner; $since)[] | "\(.number) \(.headRefName) \($repo)"' \
+        <<<"$list" 2>"$errf")"; then
+        die pr-list-invalid "$(cat "$errf")" "repo=$repo" "branch=$branch"
+      fi
       [[ -z "$hit" ]] || hits+="$hit"$'\n'
     done
     if [[ -z "$hits" ]]; then

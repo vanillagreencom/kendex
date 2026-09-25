@@ -37,30 +37,62 @@ cat > "$TMP_ROOT/bin/date" <<EOF
 [[ "\$*" != "-u +%s" ]] || { echo $NOW; exit 0; }
 exec "$REAL_DATE" "\$@"
 EOF
-# gh: `pr list --state merged` answers merged.json, `pr list --state open`
-# open.json, and `issue view N` issue-N.json, each from the case directory.
+# gh: `pr list --state merged` answers merged.json narrowed to --head and
+# capped at --limit, as gh narrows it; `pr list --state open` open.json, and
+# `issue view N` issue-N.json, each from the case directory.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 case "${1:-} ${2:-}" in
   "pr list")
-    state=""
-    while [[ $# -gt 0 ]]; do [[ "$1" != --state ]] || state="$2"; shift; done
+    state=""; head=""; limit=1000
+    while [[ $# -gt 0 ]]; do
+      case "$1" in --state) state="$2" ;; --head) head="$2" ;; --limit) limit="$2" ;; esac
+      shift
+    done
     [[ ! -f "$CASE/gh-fail" ]] || { echo "HTTP 502" >&2; exit 1; }
-    if [[ -f "$CASE/$state.json" ]]; then cat "$CASE/$state.json"; else echo '[]'; fi ;;
+    [[ -f "$CASE/$state.json" ]] || { echo '[]'; exit 0; }
+    jq -c --arg head "$head" --argjson limit "$limit"       '[.[] | select($head == "" or .headRefName == $head)] | .[:$limit]' "$CASE/$state.json" ;;
   "issue view")
     [[ -f "$CASE/issue-$3.json" ]] || { echo "no issue $3" >&2; exit 1; }
     cat "$CASE/issue-$3.json" ;;
   *) echo "unexpected gh call: $*" >&2; exit 1 ;;
 esac
 EOF
-# The Linear CLI: `cache issues get ID` answers linear-ID.json.
+# The Linear CLI: `cache issues get ID` answers linear-ID.json in the safe
+# shape under --format=safe, and nested as {issue: ...} otherwise, the raw
+# shape a project's LINEAR_FORMAT=raw gives a call that names no format.
 cat > "$TMP_ROOT/bin/linear" <<'EOF'
 #!/usr/bin/env bash
 [[ "$1 $2 $3" == "cache issues get" && -f "$CASE/linear-$4.json" ]] || { echo "No cache entry for $4" >&2; exit 1; }
-cat "$CASE/linear-$4.json"
+if [[ "${5:-}" == --format=safe ]]; then cat "$CASE/linear-$4.json"; else jq -c '{issue: .}' "$CASE/linear-$4.json"; fi
 EOF
-chmod +x "$TMP_ROOT/bin/date" "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/linear"
+# github.sh: `pr-list-failing --all` answers failing.json, [] without one.
+cat > "$TMP_ROOT/bin/github" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == "pr-list-failing --all" ]] || { echo "unexpected github.sh call: $*" >&2; exit 1; }
+if [[ -f "$CASE/failing.json" ]]; then cat "$CASE/failing.json"; else echo '[]'; fi
+EOF
+# lane-mail: `pending --item ITEM` answers pending-ITEM.jsonl, nothing
+# without one; mail-fail makes it fail.
+cat > "$TMP_ROOT/bin/lane-mail" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1 $2" == "pending --item" ]] || { echo "unexpected lane-mail call: $*" >&2; exit 2; }
+[[ ! -f "$CASE/mail-fail" ]] || { echo "lane-mail: mail-read-failed" >&2; exit 2; }
+[[ ! -f "$CASE/pending-$3.jsonl" ]] || cat "$CASE/pending-$3.jsonl"
+EOF
+# lane-host: `cat --item ITEM PATH` answers host/PATH, exit 2 without it;
+# `touch` succeeds.
+cat > "$TMP_ROOT/bin/lane-host" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  cat) [[ -f "$CASE/host$4" ]] || exit 2; cat "$CASE/host$4" ;;
+  touch) exit 0 ;;
+  *) echo "unexpected lane-host call: $*" >&2; exit 1 ;;
+esac
+EOF
+chmod +x "$TMP_ROOT/bin/date" "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/linear" "$TMP_ROOT/bin/github" \
+  "$TMP_ROOT/bin/lane-mail" "$TMP_ROOT/bin/lane-host"
 
 # at OFFSET — the UTC ISO stamp OFFSET seconds from NOW.
 at() { "$REAL_DATE" -u -d "@$((NOW + $1))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || "$REAL_DATE" -u -r "$((NOW + $1))" +%Y-%m-%dT%H:%M:%SZ; }
@@ -79,20 +111,31 @@ issue() {
     '{title: $title, description: ("Context first.\n\n## Done when\n\n* " + $why + "\n* A second line.\n\n## Context\n\nMore.")}' \
     > "$CASE/linear-$1.json"
 }
-# lane ITEM STATUS [LAUNCH_OFFSET] — one lanes[] record.
+# lane ITEM STATUS [LAUNCH_OFFSET] [HOST] [TRACKER] [REPO] — one lanes[]
+# record; an empty HOST, TRACKER or REPO is recorded as null.
 lane() {
-  jq -cn --arg item "$1" --arg status "$2" --arg at "$(at "${3:--86400}")" \
-    '{item: $item, status: $status, launched_at: $at, window: null, host: null}'
+  jq -cn --arg item "$1" --arg status "$2" --arg at "$(at "${3:--86400}")" --arg host "${4:-}" \
+    --arg tracker "${5:-}" --arg repo "${6:-}" \
+    'def opt: if . == "" then null else . end;
+     {item: $item, status: $status, launched_at: $at, window: null, mail_root: "/w/\($item)",
+      host: ($host | opt), tracker: ($tracker | opt), repo: ($repo | opt)}'
+}
+# item_state ITEM JSON — the item's own workflow state on this host.
+item_state() {
+  mkdir -p "$CASE/ws"
+  printf '%s\n' "$2" > "$CASE/ws/workflow-state-$1.json"
 }
 # fleet [JQ_EXTRA] LANE... — the case's fleet state; JQ_EXTRA adds fields.
 fleet() {
   local extra="$1"; shift
   printf '%s\n' "$@" | jq -s "{issue_id: \"oversee\", triaged: [], lanes: .} $extra" > "$CASE/state.json"
 }
-# merged NUMBER BRANCH OFFSET SHA — one merged pull request.
+# merged NUMBER BRANCH OFFSET SHA [OWNER] — one merged pull request; OWNER
+# `-` is a head GitHub returns with no owner.
 merged_pr() {
-  jq -cn --argjson n "$1" --arg b "$2" --arg at "$(at "$3")" --arg sha "$4" \
-    '{number: $n, headRefName: $b, headRepositoryOwner: {login: "owner"}, mergedAt: $at, mergeCommit: {oid: $sha}}'
+  jq -cn --argjson n "$1" --arg b "$2" --arg at "$(at "$3")" --arg sha "$4" --arg owner "${5:-owner}" \
+    '{number: $n, headRefName: $b, headRepositoryOwner: (if $owner == "-" then null else {login: $owner} end),
+      mergedAt: $at, mergeCommit: {oid: $sha}}'
 }
 CASE=""
 new_case() {
@@ -111,20 +154,29 @@ run() {
   OUT="$(cd "$CASE" && env -u ORCH_REPORT -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES \
     -u ORCH_REPORT_UPCOMING -u ORCH_REPORT_COLUMNS -u GH_TOKEN -u GITHUB_TOKEN \
     PATH="$TMP_ROOT/bin:$PATH" CASE="$CASE" OVERSEE_REPORT_TRACKER="$TMP_ROOT/bin/linear" \
+    OVERSEE_REPORT_GITHUB="$TMP_ROOT/bin/github" OVERSEE_REPORT_LANE_MAIL="$TMP_ROOT/bin/lane-mail" \
+    OVERSEE_REPORT_LANE_HOST="$TMP_ROOT/bin/lane-host" ORCH_STATE_DIR="$CASE/ws" \
     ${envs[@]+"${envs[@]}"} "${REPORT_UNDER_TEST:-$REPORT_BIN}" "$@" 2>"$CASE/err")" || RC=$?
 }
 first_err() { awk 'NR == 1' "$CASE/err"; }
 
-# A fleet with one of each: KEN-1 landed after the last report, KEN-3 landed
+# A fleet with one of each: KEN-1 landed after the last report, and a fork's
+# PR on the ken-1 branch name and one with no head owner did not, KEN-3 landed
 # before it, KEN-9 is no fleet item, KEN-2 and KEN-3 still run, KEN-2 with an
-# open PR; KEN-4 to KEN-6 wait in the queue and one question is open.
+# open PR; KEN-4 to KEN-6 wait in the queue and one question is open. KEN-2
+# waits on an ask and on red checks, KEN-3 on a post-PR stop.
 seed_fleet() {
   new_case "$1"
   report -3600
-  fleet '+ {launch_queue: ["KEN-4", "KEN-5", "KEN-6"], owner_items: [{id: "a", text: "Merge the pricing change?"}, {id: "b", text: "Answered one", answered_at: "2026-09-01T00:00:00Z"}]}' \
+  fleet '+ {launch_queue: ["KEN-4", "KEN-5", "KEN-6"], owner_items: [{id: "a", text: "Merge the pricing change?"}]}' \
     "$(lane KEN-1 done)" "$(lane KEN-2 running)" "$(lane KEN-3 running)"
+  echo '{"id":"1790000000-1-a","kind":"ask","text":"Which schema?"}' > "$CASE/pending-KEN-2.jsonl"
+  echo '[{"number": 12, "branch": "ken-2", "failed_checks": ["test", "lint"]}]' > "$CASE/failing.json"
+  item_state KEN-3 '{"post_pr_stop": {"name": "review-round-cap", "gate": "review", "remaining": ["one unresolved review thread"]}}'
+  item_state KEN-2 '{"post_pr_stop": null}'
   printf '%s\n' "$(merged_pr 11 ken-1 -60 abcdef1234)" "$(merged_pr 13 ken-3 -7200 1234567abc)" \
-    "$(merged_pr 19 ken-9 -60 9999999aaa)" | jq -s . > "$CASE/merged.json"
+    "$(merged_pr 19 ken-9 -60 9999999aaa)" "$(merged_pr 21 ken-1 -30 2121212aaa someone-else)" \
+    "$(merged_pr 23 ken-1 -30 2323232aaa -)" | jq -s . > "$CASE/merged.json"
   echo '[{"number": 12, "headRefName": "ken-2"}]' > "$CASE/open.json"
   local n
   for n in 1 2 3 4 5 6; do issue "KEN-$n" "Title $n" "Outcome $n | kept"; done
@@ -152,9 +204,12 @@ Next:
 | KEN-6 | Title 6 | Outcome 6 \\| kept |
 
 Waiting on you:
-- Merge the pricing change?"
+- Question for you: Merge the pricing change?
+- KEN-2 waits on the overseer to answer: Which schema?
+- KEN-2 waits on red checks on #12: test, lint
+- KEN-3 waits on a stopped review gate, review-round-cap: one unresolved review thread"
 assert_eq "$RC|$OUT" "0|$WANT" \
-  "Landed holds only the fleet item merged since the last report, Running each live lane with its PR, Next the queue, Waiting on you the open question"
+  "Landed holds only the fleet item merged since the last report, Running each live lane with its PR, Next the queue, Waiting on you the open question then each lane's blockers"
 
 echo "=== render: nothing since the last report ==="
 new_case render_empty
@@ -188,14 +243,57 @@ assert_eq "$RC|$(awk 'NR <= 4' <<<"$OUT")" "0|Landed:
 | --- | --- |
 | Outcome 1 \\| kept | KEN-1 (#11, abcdef1) |" "a custom column list renders those columns in its order"
 
-echo "=== render: a GitHub item reads its issue from GitHub ==="
-new_case github_item
-report -60
-fleet '' "$(lane issue-7 running)"
-jq -n '{title: "GitHub title", body: "## Done when\n- GitHub outcome"}' > "$CASE/issue-7.json"
+echo "=== render: the tracker is the record's, else the key's, and never a guess ==="
+# Rows: tracker | repo | the issue-7 row it renders.
+while IFS='|' read -r tracker repo want; do
+  new_case "identity_${tracker:-none}_${repo:-none}"
+  report -60
+  fleet '' "$(lane issue-7 running -86400 "" "$tracker" "$repo")"
+  jq -n '{title: "GitHub title", body: "## Done when\n- GitHub outcome"}' > "$CASE/issue-7.json"
+  run -- render --state "$CASE/state.json" --repo owner/repo
+  assert_eq "$RC|$(awk '/^\| issue-7/' <<<"$OUT")" "0|$want" \
+    "an issue-N lane with tracker '${tracker:-none}' and repo '${repo:-none}' renders '$want'"
+done <<'ROWS'
+github|owner/repo|| issue-7 (no PR, running) | GitHub title | GitHub outcome |
+||| issue-7 (no PR, running) | - | - |
+github||| issue-7 (no PR, running) | - | - |
+ROWS
+
+echo "=== render: Landed lists each fleet branch on its own ==="
+# Unrelated merges past a whole page never reach the report, which asks for
+# the fleet's branches alone; one branch's own page filling refuses.
+new_case landed_busy_repo
+report -3600
+fleet '' "$(lane KEN-1 done)"
+issue KEN-1 "Title 1" "Outcome 1"
+jq -n --arg at "$(at -60)" '[range(600) | {number: (1000 + .), headRefName: "other-\(.)", headRepositoryOwner: {login: "owner"}, mergedAt: $at, mergeCommit: {oid: "ffffffffff"}}]
+  + [{number: 11, headRefName: "ken-1", headRepositoryOwner: {login: "owner"}, mergedAt: $at, mergeCommit: {oid: "abcdef1234"}}]' > "$CASE/merged.json"
 run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(awk '/^\| issue-7/' <<<"$OUT")" "0|| issue-7 (no PR, running) | GitHub title | GitHub outcome |" \
-  "an issue-N lane with no tracker recorded reads title and Done-when through gh"
+assert_eq "$RC|$(awk 'NR == 4' <<<"$OUT")" "0|| KEN-1 (#11, abcdef1) | Title 1 | Outcome 1 |" \
+  "600 merges on other branches leave the fleet's own merge rendered"
+for row in "499|0" "500|2"; do
+  IFS='|' read -r count want <<<"$row"
+  jq -n --arg at "$(at -60)" --argjson n "$count" '[range($n) | {number: (1000 + .), headRefName: "ken-1", headRepositoryOwner: {login: "owner"}, mergedAt: $at, mergeCommit: {oid: "ffffffffff"}}]' > "$CASE/merged.json"
+  run -- render --state "$CASE/state.json" --repo owner/repo
+  got="$RC"; [[ "$RC" -eq 0 ]] || got="$RC|$(first_err)"
+  [[ "$want" == 0 ]] || want="2|oversee-report: pr-list-truncated=owner/repo:KEN-1"
+  assert_eq "$got" "$want" "$count merges on one fleet branch against a page of 500"
+done
+
+echo "=== render: a hosted lane's stop is read from its clone ==="
+new_case hosted_stop
+report -60
+fleet '' "$(lane KEN-7 running -86400 ssh-a)"
+issue KEN-7 "Title 7" "Outcome 7"
+mkdir -p "$CASE/host/w/KEN-7" "$CASE/host/clone/tmp"
+echo "gitdir: /clone/.git/worktrees/KEN-7" > "$CASE/host/w/KEN-7/.git"
+echo '{"post_pr_stop": {"name": "ci-fix-cap", "gate": "ci", "remaining": ["test"]}}' > "$CASE/host/clone/tmp/workflow-state-KEN-7.json"
+run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^Waiting on you/ { on = 1; next } on' <<<"$OUT")" "0|- KEN-7 waits on a stopped ci gate, ci-fix-cap: test" \
+  "a hosted lane's post-PR stop is read from the clone its worktree's .git names"
+rm -f -- "${CASE:?}/host/clone/tmp/workflow-state-KEN-7.json"
+run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^Waiting on you/' <<<"$OUT")" "0|Waiting on you: none" "a hosted lane with no state file on its host waits on nothing"
 
 echo "=== write: the chat and the file carry one report ==="
 seed_fleet write_report
@@ -261,22 +359,56 @@ seed_fleet refuse_gh
 touch "$CASE/gh-fail"
 run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" "a failing merged list refuses rather than render Landed as none"
+seed_fleet refuse_mail
+touch "$CASE/mail-fail"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: mail-read=KEN-2" "a mailbox that cannot be read refuses rather than render the lane as waiting on nothing"
+seed_fleet refuse_title
+echo '{"description": "## Done when\n- no title here"}' > "$CASE/linear-KEN-2.json"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: tracker-read=KEN-2" "a tracker read with no title refuses rather than render a blank cell"
 seed_fleet refuse_tracker
 rm -f "$CASE/linear-KEN-2.json"
 run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: tracker-read=KEN-2" "an issue the tracker cannot read refuses"
 
-echo "=== must-fail control ==="
-# Without the since filter, a merge older than the last report is news again.
+echo "=== must-fail controls ==="
+# Without the shared filter's since clause, a merge older than the last report
+# is news again. The clause lives in lib/lane-state.sh, which the watch's
+# merged check reads too.
 MUTANT="$TMP_ROOT/mutant/scripts/oversee-report"
+LIB="$(cd "$TEST_DIR/../scripts/lib" && pwd)/lane-state.sh"
 mkdir -p "$TMP_ROOT/mutant"
 cp -R "$TEST_DIR/../scripts" "$TMP_ROOT/mutant/scripts"
-filter='          | select(.at >= $since) ]'
-assert_eq "$(grep -cxF -- "$filter" "$REPORT_BIN")" "1" "control: the since filter is one line to strip"
-awk -v line="$filter" '$0 == line { print "          ]"; next } { print }' "$REPORT_BIN" > "$MUTANT"
+filter="    | select(.at >= \$since) ];'"
+assert_eq "$(grep -cxF -- "$filter" "$LIB")" "1" "control: the since clause is one line to strip"
+awk -v line="$filter" '$0 == line { print "    ];'"'"'"; next } { print }' "$LIB" > "$TMP_ROOT/mutant/scripts/lib/lane-state.sh"
 seed_fleet render_mutant
 REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$(grep -c '^| KEN-3 (#13, 1234567)' <<<"$OUT")" "1" "control: without the filter Landed carries the merge from before the last report"
+assert_eq "$(grep -c '^| KEN-3 (#13, 1234567)' <<<"$OUT")" "1" "control: without the clause Landed carries the merge from before the last report"
+cp -- "$LIB" "$TMP_ROOT/mutant/scripts/lib/lane-state.sh"
+
+# Without the page guard, one branch's full page renders as if it were whole.
+guard='        if length >= $page then "page-full"'
+assert_eq "$(grep -cxF -- "$guard" "$REPORT_BIN")" "1" "control: the page guard is one line to strip"
+awk -v line="$guard" '$0 == line { print "        if false then \"page-full\""; next } { print }' "$REPORT_BIN" > "$MUTANT"
+new_case page_mutant
+report -3600
+fleet '' "$(lane KEN-1 done)"
+issue KEN-1 "Title 1" "Outcome 1"
+jq -n --arg at "$(at -60)" '[range(500) | {number: (1000 + .), headRefName: "ken-1", headRepositoryOwner: {login: "owner"}, mergedAt: $at, mergeCommit: {oid: "ffffffffff"}}]' > "$CASE/merged.json"
+REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC" "0" "control: without the guard a full page of one branch renders instead of refusing"
+
+# Without the stop line, a lane held by a post-PR stop reads as waiting on
+# nothing.
+line='      [[ -z "$stop" ]] || BLOCKERS+="$stop"$'"'"'\n'"'"''
+assert_eq "$(grep -cxF -- "$line" "$REPORT_BIN")" "1" "control: the stop line is one line to strip"
+# ENVIRON, not -v: awk -v would turn the line's backslash-n into a newline.
+line="$line" awk '$0 == ENVIRON["line"] { print "      :"; next } { print }' "$REPORT_BIN" > "$MUTANT"
+seed_fleet render_stop_mutant
+REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(grep -c '^- KEN-3 waits on a stopped' <<<"$OUT")" "0|0" "control: without it the stopped lane is missing from Waiting on you"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

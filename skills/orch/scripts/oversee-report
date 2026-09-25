@@ -15,8 +15,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COLUMN_VOCABULARY="issue|what it is|why it matters"
 # Most characters one prose cell keeps; a longer title or Done-when line is cut.
 CELL_MAX=160
-# Page size of every pull request list. A merged list that fills it refuses,
-# since the merges past it would be missing from Landed.
+# Page size of every pull request list. One branch's merged list that fills it
+# refuses, since the merges past it would be missing from Landed.
 PR_PAGE=500
 
 # Every line this script writes to stderr, and the only place its text lives:
@@ -30,10 +30,14 @@ message() { # KEY VALUE [CAUSE]
       state) echo "The fleet state file could not be read as workflow-state JSON, so no report is judged or rendered from a partial fleet." ;;
       setting) echo "The setting holds a value it does not take. oversee-report --help lists the values." ;;
       clock) echo "The current UTC time, a file time or a scratch file could not be had." ;;
+      sort) echo "sort failed over the landed rows, so their order is unknown." ;;
       pr-list) echo "The GitHub pull request list failed, so what landed or what is open is unknown:" ;;
-      pr-list-truncated) echo "The merged list filled its page, so a merge past it would be missing from the report. Nothing is rendered from a partial list." ;;
+      pr-list-truncated) echo "One branch's merged list filled its page, so a merge past it would be missing from the report. Nothing is rendered from a partial list." ;;
+      settings-load) echo "The project's settings or private env file could not be loaded; the kendex-env lines above name the file and the fault." ;;
       tracker-missing) echo "The Linear CLI is not executable, so the issue's title and Done-when cannot be read. Install the linear skill or set OVERSEE_REPORT_TRACKER." ;;
       tracker-read) echo "The issue could not be read from the tracker:" ;;
+      mail-read) echo "The lane's mailbox could not be read, so whether it waits on an answer is unknown:" ;;
+      item-state) echo "The lane's own workflow state could not be read, so whether a post-PR stop holds it is unknown:" ;;
       summary) echo "The summary file is missing or empty. The report opens with the overseer's own summary, so nothing is written without one." ;;
       report-exists) echo "A report under this name already stands, and it is never overwritten. Write again in the next minute." ;;
       write) echo "The report file could not be written." ;;
@@ -69,7 +73,8 @@ due      prints `report-due reason=minutes since=<UTC>` once the last report
          is ORCH_REPORT_EVERY_MINUTES old, else `report-due reason=issues
          since=<UTC> landed=<N>` once ORCH_REPORT_EVERY_ISSUES fleet items
          landed since it, else nothing. Nothing under ORCH_REPORT=off, and
-         nothing for a state with no lane record.
+         nothing where progress-reports/ holds no report and no lanes[]
+         record has a launched_at.
 render   prints the four rows.
 write    prints the summary file's text, a blank line and the four rows, and
          writes the same bytes to progress-reports/MM-DD-HH-MM.md, in UTC,
@@ -77,19 +82,25 @@ write    prints the summary file's text, a blank line and the four rows, and
          next report's starting point. A name that already stands is refused.
 
 Rows:
-  Landed          each fleet item, a lanes[] record of any status, whose pull
-                  request merged since the last report, in any --repo. The
-                  issue cell carries the PR number and the merge commit.
+  Landed          each fleet item, a lanes[] record of any status, whose own
+                  branch, the key lower-cased, has a pull request merged since
+                  the last report, in any --repo. The issue cell carries the
+                  PR number and the merge commit.
   Running         each lanes[] record reading running or preparing. The issue
                   cell carries its open PR, or `no PR`, and that status.
   Next            the first ORCH_REPORT_UPCOMING keys of launch_queue.
-  Waiting on you  the text of each owner_items entry with no answered_at.
+  Waiting on you  each owner_items entry, as `Question for you: <text>`,
+                  then one line per thing a running lane waits on, naming the
+                  item: an ask `lane-mail pending` lists, the post_pr_stop its
+                  own workflow state holds, and failing checks on its open PR
+                  as `github.sh pr-list-failing --all` judges them.
 A row with nothing in it reads `none`. Landed, Running and Next are tables
 whose columns ORCH_REPORT_COLUMNS lists: `issue`; `what it is`, the issue's
-title; `why it matters`, the first line of its `## Done when` section. An
-issue is read from GitHub where its lane record says tracker github, or its
-key is issue-N and the record names no tracker, in the record's repo or the
-first --repo; every other issue from the linear skill's cache.
+title; `why it matters`, the first line of its `## Done when` section. The
+tracker is the lane record's, else the one the key names (lib/lane-state.sh,
+lane_key_tracker). A Linear issue is read from the linear skill's cache, a
+GitHub issue-N from the record's repo. An item whose tracker neither answers,
+or a GitHub item whose record names no repo, renders `-` in both cells.
 
 Settings, read through the kendex settings ladder:
   ORCH_REPORT                on | off, default on
@@ -101,6 +112,10 @@ Settings, read through the kendex settings ladder:
   ORCH_REPORT_COLUMNS        comma-separated column names, default
                              `issue,what it is,why it matters`
   OVERSEE_REPORT_TRACKER     path to the Linear CLI
+  OVERSEE_REPORT_GITHUB      path to the github skill's github.sh
+  OVERSEE_REPORT_LANE_MAIL, OVERSEE_REPORT_LANE_HOST,
+  OVERSEE_REPORT_WORKFLOW_STATE
+                             paths to lane-mail, lane-host and workflow-state
 
 Exit status:
   0  the line, the rows or the report was printed, or nothing was due
@@ -141,10 +156,20 @@ fi
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
-kendex_load_project_env "$PROJECT_ROOT"
+kendex_load_project_env "$PROJECT_ROOT" || refuse settings-load "$PROJECT_ROOT"
 # shellcheck source=lib/date-ladder.sh
 source "$SCRIPT_DIR/lib/date-ladder.sh"
-TRACKER="${OVERSEE_REPORT_TRACKER:-$PROJECT_ROOT/.agents/skills/linear/scripts/linear.sh}"
+# shellcheck source=lib/lane-gitfile.sh
+source "$SCRIPT_DIR/lib/lane-gitfile.sh"
+# shellcheck source=lib/lane-state.sh
+source "$SCRIPT_DIR/lib/lane-state.sh"
+TRACKER="${OVERSEE_REPORT_TRACKER:-$SCRIPT_DIR/../../linear/scripts/linear.sh}"
+GITHUB="${OVERSEE_REPORT_GITHUB:-$SCRIPT_DIR/../../github/scripts/github.sh}"
+LANE_MAIL="${OVERSEE_REPORT_LANE_MAIL:-$SCRIPT_DIR/lane-mail}"
+LANE_HOST="${OVERSEE_REPORT_LANE_HOST:-$SCRIPT_DIR/lane-host}"
+WORKFLOW_STATE="${OVERSEE_REPORT_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
+# Relative to a clone's root on a lane's host, as workflow-state joins it.
+STATE_DIR_SETTING="${ORCH_STATE_DIR:-tmp}"
 
 WORK_DIR="$(mktemp -d)" || refuse clock mktemp
 TMP_FILE=""
@@ -156,6 +181,9 @@ trap 'rm -rf -- "$WORK_DIR"; [[ -z "$TMP_FILE" ]] || rm -f -- "$TMP_FILE"' EXIT
 # setting that turns the trigger off, not an absent one.
 REPORT="${ORCH_REPORT-on}"
 case "$REPORT" in on | off) ;; *) refuse setting "ORCH_REPORT:$REPORT" ;; esac
+# Off is decided before any other setting or the state is read: a cadence the
+# settings turn off judges nothing, so nothing it would have read can fail it.
+[[ "$VERB" != due || "$REPORT" == on ]] || exit 0
 EVERY_MINUTES="${ORCH_REPORT_EVERY_MINUTES-120}"
 [[ "$EVERY_MINUTES" =~ ^(|0|[1-9][0-9]*)$ ]] || refuse setting "ORCH_REPORT_EVERY_MINUTES:$EVERY_MINUTES"
 EVERY_ISSUES="${ORCH_REPORT_EVERY_ISSUES-0}"
@@ -176,10 +204,6 @@ for column in ${column_list[@]+"${column_list[@]}"}; do
   COLUMNS+=("$column")
 done
 [[ ${#COLUMNS[@]} -gt 0 ]] || refuse setting "ORCH_REPORT_COLUMNS:$COLUMNS_SETTING"
-
-# Off is decided before the state is read: a cadence the settings turn off
-# judges nothing, so no state it would have read can fail it.
-[[ "$VERB" != due || "$REPORT" == on ]] || exit 0
 
 # --- fleet state and the last report -----------------------------------------
 
@@ -209,35 +233,43 @@ fi
 
 # --- what landed --------------------------------------------------------------
 
-# LANDED holds `item<TAB>number<TAB>sha` per fleet item whose pull request
-# merged at or after MARKER, in any --repo, oldest merge first. The item is
-# spelled as its lane record spells it; the branch is that key lower-cased.
+# LANDED holds `item<TAB>number<TAB>sha` per fleet item whose own pull
+# request merged at or after MARKER, in any --repo, oldest merge first. Each
+# item's branch is listed on its own, as oversee-watch's merged check lists it,
+# so the page counts one branch's merges and never the repository's, and the
+# pull request is judged the lane's own by lib/lane-state.sh's LANE_MERGED_JQ.
 LANDED=""
 landed_read() {
-  local repo list since rows
+  local repo item items list rows found=""
   [[ -n "$MARKER" ]] || return 0
-  since="$(from_epoch "$MARKER" %Y-%m-%dT%H:%M:%SZ)" || refuse clock "$MARKER"
-  for repo in "${REPOS[@]}"; do
-    list="$(gh pr list --repo "$repo" --state merged --search "merged:>=$since" --limit "$PR_PAGE" \
-      --json number,headRefName,headRepositoryOwner,mergedAt,mergeCommit 2>"$WORK_DIR/gh.err")" \
-      || refuse pr-list "$repo" "$(cat "$WORK_DIR/gh.err")"
-    rows="$(jq -r --argjson state "$STATE_JSON" --arg owner "${repo%%/*}" --argjson since "$MARKER" --argjson page "$PR_PAGE" '
-      if length >= $page then error("page full") else . end
-      | ($state.lanes | map(.item // empty) | map({key: ascii_downcase, value: .}) | from_entries) as $items
-      | [ .[]
-          | select($items[.headRefName | ascii_downcase] != null)
-          | select(((.headRepositoryOwner.login // $owner) | ascii_downcase) == ($owner | ascii_downcase))
-          | select(.mergedAt != null)
-          | . + {at: (.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}
-          | select(.at >= $since) ]
-      | sort_by(.at)[]
-      | [$items[.headRefName | ascii_downcase], (.number | tostring), ((.mergeCommit.oid // "") | .[0:7])]
-      | @tsv' <<<"$list" 2>"$WORK_DIR/jq.err")" || {
-      grep -q 'page full' "$WORK_DIR/jq.err" && refuse pr-list-truncated "$repo"
-      refuse pr-list "$repo" "$(cat "$WORK_DIR/jq.err")"
-    }
-    [[ -z "$rows" ]] || LANDED+="$rows"$'\n'
-  done
+  if ! items="$(jq -r '[.lanes[] | .item // empty] | unique[]' <<<"$STATE_JSON")"; then
+    refuse state "$STATE"
+  fi
+  while IFS= read -r item; do
+    [[ -n "$item" ]] || continue
+    for repo in "${REPOS[@]}"; do
+      if ! list="$(gh pr list --repo "$repo" --head "$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')" \
+        --state merged --limit "$PR_PAGE" \
+        --json number,headRefName,headRepositoryOwner,mergedAt,mergeCommit 2>"$WORK_DIR/gh.err")"; then
+        refuse pr-list "$repo" "$(cat "$WORK_DIR/gh.err")"
+      fi
+      if ! rows="$(jq -r --arg item "$item" --arg owner "${repo%%/*}" --argjson since "$MARKER" \
+        --argjson page "$PR_PAGE" "$LANE_MERGED_JQ"'
+        if length >= $page then "page-full"
+        else lane_merged($item; $owner; $since)[]
+          | [(.at | tostring), $item, (.number | tostring), ((.mergeCommit.oid // "") | .[0:7])] | @tsv
+        end' <<<"$list" 2>"$WORK_DIR/jq.err")"; then
+        refuse pr-list "$repo" "$(cat "$WORK_DIR/jq.err")"
+      fi
+      [[ "$rows" != page-full ]] || refuse pr-list-truncated "$repo:$item"
+      [[ -z "$rows" ]] || found+="$rows"$'\n'
+    done
+  done <<<"$items"
+  [[ -n "$found" ]] || return 0
+  if ! LANDED="$(sort -n -k1,1 <<<"$found" | cut -f2-)"; then
+    refuse sort landed
+  fi
+  LANDED+=$'\n'
 }
 
 # --- due -----------------------------------------------------------------------
@@ -259,29 +291,47 @@ fi
 # --- render ----------------------------------------------------------------------
 
 # issue_cells ITEM — sets TITLE and WHY from the item's issue, read from the
-# tracker its lane record names, else the one its key implies.
+# tracker its lane record names, else the one lane_key_tracker says its key
+# names. Where neither answers, or a GitHub record names no repository, both
+# stay empty and render `-`: the report never guesses a tracker or a repo.
 TITLE=""
 WHY=""
 issue_cells() {
   local item="$1" fields tracker repo json
-  fields="$(jq -r --arg item "$item" --arg repo "${REPOS[0]}" '
+  TITLE=""
+  WHY=""
+  if ! fields="$(jq -r --arg item "$item" '
     [.lanes[] | select(.item == $item)] | first // {}
-    | "\(.tracker // "")\u001f\(.repo // $repo)"' <<<"$STATE_JSON")" || refuse state "$STATE"
+    | "\(.tracker // "")\u001f\(.repo // "")"' <<<"$STATE_JSON")"; then
+    refuse state "$STATE"
+  fi
   # A unit separator, not a tab: IFS whitespace would fold an empty tracker
   # into the repo that follows it.
   IFS=$'\x1f' read -r tracker repo <<<"$fields"
-  if [[ "$tracker" == github || ( -z "$tracker" && "$item" =~ ^issue-[0-9]+$ ) ]]; then
-    json="$(gh issue view "${item#issue-}" --repo "$repo" --json title,body 2>"$WORK_DIR/tracker.err")" \
-      || refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
-    json="$(jq -c '{title, description: .body}' <<<"$json" 2>"$WORK_DIR/tracker.err")" \
-      || refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
-  else
-    [[ -x "$TRACKER" ]] || refuse tracker-missing "$TRACKER"
-    json="$("$TRACKER" cache issues get "$item" 2>"$WORK_DIR/tracker.err")" \
-      || refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
+  [[ -n "$tracker" ]] || tracker="$(lane_key_tracker "$item")"
+  case "$tracker" in
+    github)
+      [[ "$item" =~ ^issue-[0-9]+$ && -n "$repo" ]] || return 0
+      if ! json="$(gh issue view "${item#issue-}" --repo "$repo" --json title,body 2>"$WORK_DIR/tracker.err")"; then
+        refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
+      fi
+      if ! json="$(jq -c '{title, description: .body}' <<<"$json" 2>"$WORK_DIR/tracker.err")"; then
+        refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
+      fi ;;
+    linear)
+      [[ -x "$TRACKER" ]] || refuse tracker-missing "$TRACKER"
+      # --format=safe pins the shape: LINEAR_FORMAT from the project's settings
+      # would otherwise nest the issue or drop its description.
+      if ! json="$("$TRACKER" cache issues get "$item" --format=safe 2>"$WORK_DIR/tracker.err")"; then
+        refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
+      fi ;;
+    *) return 0 ;;
+  esac
+  # A read that answered with no title answered nothing this report can use.
+  if ! TITLE="$(jq -r 'if (.title | type) == "string" and .title != "" then .title else error("no title") end' \
+    <<<"$json" 2>"$WORK_DIR/tracker.err")"; then
+    refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
   fi
-  TITLE="$(jq -r '.title // ""' <<<"$json" 2>"$WORK_DIR/tracker.err")" \
-    || refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
   WHY="$(jq -r '(("\n" + (.description // "")) | gsub("\r\n"; "\n") | split("\n## Done when\n")) as $s
     | if ($s | length) > 1 then ($s[1] | split("\n## ")[0]) else "" end
     | [split("\n")[] | select(test("\\S"))] | first // ""
@@ -326,6 +376,88 @@ table() {
   done <<<"$rows"
 }
 
+# item_state ITEM HOST MAIL_ROOT — sets ITEM_STATE to the item's own
+# workflow-state JSON, empty where the lane has written none. A local lane's
+# state is under this project's state directory; a hosted lane's is in its
+# clone, which the worktree's `.git` names, read through lane-host.
+ITEM_STATE=""
+item_state() {
+  local item="$1" host="$2" root="$3" path line common rc=0
+  ITEM_STATE=""
+  if [[ -z "$host" ]]; then
+    path="$("$WORKFLOW_STATE" path "$item" 2>"$WORK_DIR/state.err")" \
+      || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
+    [[ -f "$path" ]] || return 0
+    ITEM_STATE="$(jq -c . -- "$path" 2>"$WORK_DIR/state.err")" \
+      || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
+    return 0
+  fi
+  line="$(ORCH_LANE_HOST="$host" "$LANE_HOST" cat --item "$item" "$root/.git" 2>"$WORK_DIR/state.err")" \
+    || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
+  common="$(lane_gitfile_common_dir "$line")" || refuse item-state "$item" "$root/.git: $line"
+  path="${common%/.git}/$STATE_DIR_SETTING/workflow-state-$item.json"
+  [[ "$STATE_DIR_SETTING" != /* ]] || path="$STATE_DIR_SETTING/workflow-state-$item.json"
+  ITEM_STATE="$(ORCH_LANE_HOST="$host" "$LANE_HOST" cat --item "$item" "$path" 2>"$WORK_DIR/state.err")" || rc=$?
+  case "$rc" in
+    0) ITEM_STATE="$(jq -c . <<<"$ITEM_STATE" 2>"$WORK_DIR/state.err")" \
+         || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")" ;;
+    # 2 is a missing file and also every dispatcher refusal; a touch that
+    # succeeds is what tells the first from the second.
+    2) ITEM_STATE=""
+       ORCH_LANE_HOST="$host" "$LANE_HOST" touch --item "$item" >/dev/null 2>"$WORK_DIR/state.err" \
+         || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")" ;;
+    *) refuse item-state "$item" "$(cat "$WORK_DIR/state.err")" ;;
+  esac
+}
+
+# blockers — sets BLOCKERS to one line per thing a running lane waits on: an
+# ask the overseer has not answered, a post-PR stop its state records, and red
+# checks on its open pull request. Each line names the item and what it waits
+# on, so it reads apart from a question for the user.
+BLOCKERS=""
+blockers() {
+  local lanes item host root args asks failing="" repo list stop
+  BLOCKERS=""
+  for repo in "${REPOS[@]}"; do
+    if ! list="$(GH_REPO="$repo" "$GITHUB" pr-list-failing --all 2>"$WORK_DIR/gh.err")"; then
+      refuse pr-list "$repo" "$(cat "$WORK_DIR/gh.err")"
+    fi
+    if ! list="$(jq -r '.[] | "\(.branch | ascii_downcase)\t#\(.number)\t\(.failed_checks | join(", "))"' <<<"$list" 2>"$WORK_DIR/gh.err")"; then
+      refuse pr-list "$repo" "$(cat "$WORK_DIR/gh.err")"
+    fi
+    [[ -z "$list" ]] || failing+="$list"$'\n'
+  done
+  lanes="$(jq -r '.lanes[] | select(.status == "running") | "\(.item)\u001f\(.host // "")\u001f\(.mail_root // "")"' <<<"$STATE_JSON")" \
+    || refuse state "$STATE"
+  while IFS=$'\x1f' read -r item host root; do
+    [[ -n "$item" ]] || continue
+    [[ -n "$root" ]] || refuse state "$STATE"
+    args=(pending --item "$item" --root "$root")
+    [[ -z "$host" ]] || args+=(--host)
+    if ! asks="$(ORCH_LANE_HOST="$host" "$LANE_MAIL" "${args[@]}" 2>"$WORK_DIR/mail.err")"; then
+      refuse mail-read "$item" "$(cat "$WORK_DIR/mail.err")"
+    fi
+    if ! asks="$(jq -r -R --arg item "$item" 'fromjson? | objects | "- \($item) waits on the overseer to answer: \(.text // "" | gsub("\n"; " "))"' <<<"$asks" 2>"$WORK_DIR/mail.err")"; then
+      refuse mail-read "$item" "$(cat "$WORK_DIR/mail.err")"
+    fi
+    [[ -z "$asks" ]] || BLOCKERS+="$asks"$'\n'
+    item_state "$item" "$host" "$root"
+    if [[ -n "$ITEM_STATE" ]]; then
+      if ! stop="$(jq -r --arg item "$item" '.post_pr_stop // empty
+        | "- \($item) waits on a stopped \(.gate // "post-PR") gate, \(.name // "unnamed"): \((.remaining // []) | join("; "))"' <<<"$ITEM_STATE")"; then
+        refuse item-state "$item" "$ITEM_STATE"
+      fi
+      [[ -z "$stop" ]] || BLOCKERS+="$stop"$'\n'
+    fi
+    if ! list="$(awk -F'\t' -v item="$item" \
+      'tolower(item) == $1 { print "- " item " waits on red checks on " $2 ": " $3 }' <<<"$failing")"; then
+      refuse pr-list "${REPOS[0]}" "the failing-check list could not be matched to $item"
+    fi
+    [[ -z "$list" ]] || BLOCKERS+="$list"$'\n'
+  done <<<"$lanes"
+  BLOCKERS="${BLOCKERS%$'\n'}"
+}
+
 render() {
   local rows="" item number sha repo list open="" pr status
   landed_read
@@ -362,9 +494,11 @@ render() {
   table Next "$list"
   echo
 
-  if ! list="$(jq -r '(.owner_items // [])[] | select(.answered_at == null) | "- \(.text | gsub("\n"; " "))"' <<<"$STATE_JSON")"; then
+  if ! list="$(jq -r '(.owner_items // [])[] | "- Question for you: \(.text | gsub("\n"; " "))"' <<<"$STATE_JSON")"; then
     refuse state "$STATE"
   fi
+  blockers
+  list+="${list:+${BLOCKERS:+$'\n'}}$BLOCKERS"
   if [[ -z "$list" ]]; then
     echo "Waiting on you: none"
   else
