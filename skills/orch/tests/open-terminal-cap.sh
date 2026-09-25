@@ -60,9 +60,11 @@ EOF
 # names a file, holds it there until that file exists, 10 seconds at most:
 # a launch held for as long as the row needs it rather than for a guessed
 # time. The steps are count (the read of a claim store that exists, under the
-# launch locks), create
-# (the worktree create), window (the new window, ahead of its claim) and paste
-# (the first line typed into the pane, after its claim and before its record).
+# launch locks), recheck (the second pane listing of one launch, which the
+# claims reader takes when a claim names the listed server and a pane it did
+# not list), create (the worktree create), window (the new window, ahead of
+# its claim) and paste (the first line typed into the pane, after its claim
+# and before its record). The pane listing prints STUB_PANES where set.
 STUB_STEP="$TMP_ROOT/stub-step.sh"
 cat > "$STUB_STEP" <<'EOF'
 stub_step() {
@@ -78,7 +80,15 @@ EOF
 cat >> "$BIN/tmux" <<'EOF'
 case "${1:-}" in
   list-windows) echo 1 ;;
-  list-panes) stub_step count "${STUB_HOLD_COUNT:-}" ;;
+  list-panes)
+    n=1
+    if [[ -n "${STUB_MARK:-}" ]]; then
+      calls="$STUB_MARK.list-panes.$STUB_TAG"
+      n=$(( $(cat -- "$calls" 2>/dev/null || echo 0) + 1 ))
+      echo "$n" > "$calls"
+    fi
+    if [[ "$n" -eq 2 ]]; then stub_step recheck "${STUB_HOLD_RECHECK:-}"; else stub_step count "${STUB_HOLD_COUNT:-}"; fi
+    [[ -z "${STUB_PANES:-}" ]] || printf '%s\n' "$STUB_PANES" ;;
   new-window)
     : > "$STUB_OPEN_MARK.$STUB_TAG"
     stub_step window "${STUB_HOLD_WINDOW:-}"
@@ -304,6 +314,28 @@ await_exit "$SECOND"
 assert_eq "one=$(rc one) two=$(rc two) running=$(running) $(key two)" \
   "one=0 two=1 running=CC-1 open-terminal: cap-reached item=CC-2 cap=1 running=1 claims=0" \
   "the second count finds the first lane by its record once its reservation is gone"
+
+echo "=== a count that lists the claims before a launch claims sees the lane in its reservations ==="
+# The first launch writes its claim and drops its reservation while the second
+# count is held inside its claim pass: a stale claim on the listed server sends
+# it to list the panes again, where it waits. The first launch is then held
+# after its claim and before its record.
+row reserve-to-claim
+STUB_HOLD_CREATE="$ROW/release" STUB_HOLD_PASTE="$ROW/pasted" launch one 1 0 --lane "$LANE_A" CC-1 &
+FIRST=$!
+await_step one create
+seed_claim CC-8 "$LANE_A"
+STUB_PANES="$$ %0" STUB_HOLD_RECHECK="$ROW/counted" launch two 1 0 --lane "$LANE_B" CC-2 &
+SECOND=$!
+await_step two recheck
+: > "$ROW/release"
+await_step one paste
+: > "$ROW/counted"
+await_exit "$SECOND"
+: > "$ROW/pasted"
+await_exit "$FIRST"
+assert_eq "one=$(rc one) two=$(rc two) $(key two)" "one=0 two=1 open-terminal: cap-reached item=CC-2 cap=1 running=0 claims=1" \
+  "the second count holds the first lane by the reservation it read before the claim landed"
 
 echo "=== a reservation whose launcher has exited holds no place ==="
 row reserve-dead
