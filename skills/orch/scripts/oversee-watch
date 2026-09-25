@@ -3594,8 +3594,10 @@ long_collect() { # [wait]
 # and --interval gone by since the last one started, in this run or an earlier
 # one. A run with news ends at run_end before a later turn reaches here, so a
 # long pass due on the turn the news came is the last one. long_start keeps the
-# start in the mail pass's file, so with every repository named by --repo an
-# hour's long passes and GitHub calls are the interval's alone.
+# start of a pass it forked in the mail pass's file, so with every repository
+# named by --repo an hour's long passes and GitHub calls are the interval's
+# alone; while the credential check fails no pass starts, and each run probes
+# GitHub auth again, once per --repeat.
 LONG_DUE=0
 long_due() {
   local last
