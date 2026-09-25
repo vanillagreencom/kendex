@@ -677,6 +677,14 @@ seed_fleet refuse_tracker
 rm -f "$CASE/linear-KEN-2.json"
 run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: tracker-read=KEN-2" "an issue the tracker cannot read refuses"
+# The settings loader names the file and the fault on stderr before the
+# refusal runs; that text is held, so the key is still the first line and the
+# loader's line follows it.
+seed_fleet refuse_settings
+echo '[env] # a comment' > "$CASE/kendex.settings.toml"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)|$(grep -c '^kendex-env: table-header ' "$CASE/err" || true)" "2|oversee-report: settings-load=$CASE|1" \
+  "a malformed settings file refuses as settings-load, the loader's line after the key"
 
 echo "=== must-fail controls ==="
 # Without the shared filter's since clause, a merge older than the last report
@@ -755,16 +763,27 @@ touch "$CASE/auth-fail"
 REPORT_UNDER_TEST="$MUTANT" run ORCH_REPORT_EVERY_ISSUES=1 GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_bot00000 -- due --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" "control: without the ladder due's count fails on a revoked GH_TOKEN"
 
+# Without the hold, the settings loader's line reaches the caller first and the
+# refusal's key is no longer the first stderr line.
+hold='exec 2>"$WORK_DIR/held.err"'
+assert_eq "$(grep -cxF -- "$hold" "$REPORT_BIN")" "1" "control: the stderr hold is one line to strip"
+awk -v line="$hold" '$0 == line { print ":"; next } { print }' "$REPORT_BIN" > "$MUTANT"
+seed_fleet refuse_settings_mutant
+echo '[env] # a comment' > "$CASE/kendex.settings.toml"
+REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|kendex-env: table-header file=$CASE/kendex.settings.toml lineno=1" \
+  "control: without the hold the loader's line comes before the key"
+
 # Without the empty GH_BOT_TOKEN, github.sh picks the inherited bot token over
 # the keyring the ladder settled on, and the failing-check list fails.
-hold="GH_BOT_TOKEN='' GH_REPO="
-assert_eq "$(grep -cF -- "$hold" "$REPORT_BIN")" "1" "control: the bot-token hold is one assignment to strip"
-hold="$hold" awk '{ i = index($0, ENVIRON["hold"]); if (i) $0 = substr($0, 1, i - 1) "GH_REPO=" substr($0, i + length(ENVIRON["hold"])); print }' \
+blank="GH_BOT_TOKEN='' GH_REPO="
+assert_eq "$(grep -cF -- "$blank" "$REPORT_BIN")" "1" "control: the empty GH_BOT_TOKEN is one assignment to strip"
+blank="$blank" awk '{ i = index($0, ENVIRON["blank"]); if (i) $0 = substr($0, 1, i - 1) "GH_REPO=" substr($0, i + length(ENVIRON["blank"])); print }' \
   "$REPORT_BIN" > "$MUTANT"
 seed_fleet auth_keyring_stale_bot_mutant
 REPORT_UNDER_TEST="$MUTANT" run GH_BOT_TOKEN=ghp_stale_bot -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" \
-  "control: without the hold an inherited revoked GH_BOT_TOKEN fails the list the keyring would read"
+  "control: without the empty GH_BOT_TOKEN an inherited revoked GH_BOT_TOKEN fails the list the keyring would read"
 
 # Without the kind filter, an unread directive reads as a question the lane
 # waits on the overseer to answer.

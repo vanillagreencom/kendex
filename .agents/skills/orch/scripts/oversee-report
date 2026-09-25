@@ -8,6 +8,8 @@
 # the report itself, the text the overseer pastes into its chat; `write` puts
 # the same bytes in the report file, so the chat and the file cannot differ.
 set -euo pipefail
+# The caller's stderr, which this script's own lines alone are written to.
+exec 3>&2
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -27,7 +29,8 @@ LANDED_LOOKBACK=604800
 
 # Every line this script writes to stderr, and the only place its text lives:
 # a stable key and the value acted on, then the English under it, then what a
-# command this script ran wrote.
+# command this script ran wrote. What its helpers write is held until exit and
+# printed after it (§ held stderr).
 message() { # KEY VALUE [CAUSE]
   {
     printf 'oversee-report: %s=%s\n' "$1" "$2"
@@ -41,7 +44,7 @@ message() { # KEY VALUE [CAUSE]
       auth-failed) echo "No configured GitHub credential works: not the env token, the keyring or the project's GH_BOT_TOKEN. Run gh auth login." ;;
       pr-list) echo "The GitHub pull request list failed, so what landed or what is open is unknown:" ;;
       pr-list-truncated) echo "The repository's merged search reached GitHub's ceiling, so a merge past it would be missing from the report. Nothing is rendered from a partial list." ;;
-      settings-load) echo "The project's settings or private env file could not be loaded; the kendex-env lines above name the file and the fault." ;;
+      settings-load) echo "The project's settings or private env file could not be loaded; the kendex-env lines below name the file and the fault." ;;
       tracker-missing) echo "The Linear CLI is not executable, so the issue's title and Done-when cannot be read. Install the linear skill or set OVERSEE_REPORT_TRACKER." ;;
       tracker-read) echo "The issue could not be read from the tracker:" ;;
       mail-read) echo "The lane's mailbox could not be read, so whether it waits on an answer is unknown:" ;;
@@ -53,7 +56,7 @@ message() { # KEY VALUE [CAUSE]
       report-path) echo "workflow-state progress-report-path gave no path, so where reports live is unknown:" ;;
     esac
     [ -z "${3:-}" ] || printf '%s\n' "$3"
-  } >&2
+  } >&3
 }
 
 refuse() { # KEY VALUE [CAUSE]
@@ -184,6 +187,18 @@ elif [[ -n "$SUMMARY" || "$SUCCESSION" -eq 1 ]]; then
   refuse args write-only-option
 fi
 
+# --- held stderr -------------------------------------------------------------
+
+# From here on every helper's stderr, the settings loader's, the auth ladder's
+# and that of any command whose refusal passes no cause, goes to one file,
+# printed to the caller at exit after this script's own lines: a refusal's
+# first stderr line is its key whatever ran before it. mktemp's own stderr,
+# with nowhere yet to hold it, is dropped; the key names it.
+WORK_DIR="$(mktemp -d 2>/dev/null)" || refuse clock mktemp
+TMP_FILE=""
+trap '[[ ! -s "$WORK_DIR/held.err" ]] || cat -- "$WORK_DIR/held.err" >&3; rm -rf -- "${WORK_DIR:?}"; [[ -z "$TMP_FILE" ]] || rm -f -- "$TMP_FILE"' EXIT
+exec 2>"$WORK_DIR/held.err"
+
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
@@ -202,12 +217,6 @@ WORKFLOW_STATE="${OVERSEE_REPORT_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
 # Relative to a clone's root on a lane's host, as workflow-state joins it.
 STATE_DIR_SETTING="${ORCH_STATE_DIR:-tmp}"
 
-WORK_DIR="$(mktemp -d)" || refuse clock mktemp
-TMP_FILE=""
-# The auth ladder's own stderr, a keyring-fallback warning, is held in
-# auth.err and printed at exit, after any keyed refusal line: a refusal's first
-# stderr line is its key whatever the ladder said on the way.
-trap '[[ ! -s "$WORK_DIR/auth.err" ]] || cat -- "$WORK_DIR/auth.err" >&2; rm -rf -- "$WORK_DIR"; [[ -z "$TMP_FILE" ]] || rm -f -- "$TMP_FILE"' EXIT
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh" 2>"$WORK_DIR/gh-auth.err" \
   || refuse auth-helper "$SCRIPT_DIR/lib/gh-auth.sh" "$(cat "$WORK_DIR/gh-auth.err")"
@@ -217,21 +226,13 @@ source "$SCRIPT_DIR/lib/gh-auth.sh" 2>"$WORK_DIR/gh-auth.err" \
 # neither works the project's GH_BOT_TOKEN is the last candidate. Never
 # unauthenticated, since an unauthenticated list would read as nothing landed.
 # Called before the first gh call alone, so a due judged on minutes asks
-# GitHub nothing. Its stderr goes to auth.err, which the EXIT trap prints; on
-# auth-failed it is the refusal's cause instead.
+# GitHub nothing. What the ladder writes, a keyring-fallback warning or why
+# each credential failed, is held stderr.
 github_auth() {
-  local status=0 cause
-  {
-    orch_sanitize_gh_env
-    if ! orch_github_auth_status; then
-      unset GH_TOKEN GITHUB_TOKEN
-      { orch_load_env_bot_token "$PROJECT_ROOT" && orch_github_auth_status; } || status=$?
-    fi
-  } 2>"$WORK_DIR/auth.err"
-  [[ "$status" -ne 0 ]] || return 0
-  cause="$(cat -- "$WORK_DIR/auth.err")" || cause=""
-  : > "$WORK_DIR/auth.err"
-  refuse auth-failed github "$cause"
+  orch_sanitize_gh_env
+  orch_github_auth_status && return 0
+  unset GH_TOKEN GITHUB_TOKEN
+  { orch_load_env_bot_token "$PROJECT_ROOT" && orch_github_auth_status; } || refuse auth-failed github
 }
 
 # --- settings ----------------------------------------------------------------
@@ -470,7 +471,7 @@ table() {
         issue) line+=" $(cell "$label") |" ;;
         "what it is") line+=" $(cell "$TITLE") |" ;;
         "why it matters") line+=" $(cell "$WHY") |" ;;
-        *) echo "oversee-report: column $column passed the vocabulary check and has no renderer" >&2; exit 2 ;;
+        *) echo "oversee-report: column $column passed the vocabulary check and has no renderer" >&3; exit 2 ;;
       esac
     done
     printf '%s\n' "$line"
