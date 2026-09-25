@@ -309,15 +309,13 @@ restack_hook_libraries() {
 
 # Print the commit being replayed, whose cleanly applied changes are in the
 # worktree: REBASE_HEAD for the rebase engine, CHERRY_PICK_HEAD for the replay
-# engine. Nothing when Git recorded no pick, its pseudo-ref file being absent;
-# the status is non-zero when that file's path cannot be read or a recorded pick
-# does not resolve to a commit.
+# engine, resolved through the ref store, which may hold neither as a file. Git
+# records one for every pick a conflict stops, so a pick that does not resolve
+# to a commit is a failed read and the status is non-zero.
 restack_replayed_commit() {
-  local wt="$1" pick=REBASE_HEAD recorded=""
+  local wt="$1" pick=REBASE_HEAD
   [[ "$(restack_state_get "$wt" mode)" != replay ]] || pick=CHERRY_PICK_HEAD
-  recorded="$(git -C "$wt" rev-parse --git-path "$pick")" || return 1
-  [[ "$recorded" == /* ]] || recorded="$wt/$recorded"
-  [[ ! -e "$recorded" ]] || git -C "$wt" rev-parse --verify -q "$pick^{commit}"
+  git -C "$wt" rev-parse --verify -q "$pick^{commit}"
 }
 
 # The conflicted paths (one per line) that a harness hook declaration names or

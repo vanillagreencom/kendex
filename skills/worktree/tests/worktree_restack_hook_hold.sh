@@ -214,7 +214,7 @@ step() {
     # A git that fails the one discovery read named after the colon, ahead of
     # the real one: the grep and the read of the declarations, the listing of
     # tracked files, the read of the Claude hook as a sourcing script, and the
-    # lookup and resolution of the commit being rebased.
+    # resolution of the commit being rebased.
     broken-git:*)
       local read
       case "${1#broken-git:}" in
@@ -222,7 +222,6 @@ step() {
         declaration) read='*" cat-file -p "*":.claude/settings.json "*' ;;
         ls-tree) read='*" ls-tree -r --name-only "*' ;;
         sourcing) read="*\" cat-file -p \"*\":$CLAUDE_HOOK \"*" ;;
-        pick-path) read='*" rev-parse --git-path REBASE_HEAD "*' ;;
         pick) read='*" rev-parse --verify -q REBASE_HEAD^{commit} "*' ;;
         *) echo "UNKNOWN-READ: $1" >&2; exit 2 ;;
       esac
@@ -379,7 +378,6 @@ a declaration grep that fails holds every conflicted path, an ordinary one inclu
 a declaration that cannot be read holds every conflicted path, an ordinary one included|source broken-git:declaration|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$S markers=$S body=base,base ordinary=-
 a tracked-file listing that fails holds every conflicted path, an ordinary one included|source broken-git:ls-tree|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$S markers=$S body=base,base ordinary=-
 a sourcing script that cannot be read holds every conflicted path, an ordinary one included|source broken-git:sourcing|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$S markers=$S body=base,base ordinary=-
-a pick lookup that fails holds every conflicted path, an ordinary one included|source broken-git:pick-path|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$S markers=$S body=base,base ordinary=-
 a recorded pick that does not resolve holds every conflicted path, an ordinary one included|source broken-git:pick|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$S markers=$S body=base,base ordinary=-
 declarations that cannot be read hold every conflicted path, an ordinary one included|source broken-jq|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$S markers=$S body=base,base ordinary=-
 a hook declared only at the pre-restack head is held|branch-declared|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CURSOR_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$U markers=$U body=base,base ordinary=-
@@ -424,7 +422,6 @@ without the declaration grep failing the hold an ordinary path keeps its markers
 without the declaration read failing the hold an ordinary path keeps its markers@scripts/lib/restack-state.sh@2>/dev/null)\"\$'\\n' || return 1@1@2>/dev/null)\"\$'\\n'@source broken-git:declaration@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$SOURCE_HOOK body=base,base ordinary=$SOURCE_HOOK
 without the tracked-file listing failing the hold an ordinary path keeps its markers@scripts/lib/restack-state.sh@--name-only \"\$rev\")\" || return 1@1@--name-only \"\$rev\")\"@source broken-git:ls-tree@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$SOURCE_HOOK body=base,base ordinary=$SOURCE_HOOK
 without the sourcing-script read failing the hold an ordinary path keeps its markers@scripts/lib/restack-state.sh@\\1/p')\" || return 1@1@\\1/p')\"@source broken-git:sourcing@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$SOURCE_HOOK body=base,base ordinary=$SOURCE_HOOK
-without the pick lookup failing the hold an ordinary path keeps its markers@scripts/lib/restack-state.sh@rev-parse --git-path \"\$pick\")\" || return 1@1@rev-parse --git-path \"\$pick\")\" || return 0@source broken-git:pick-path@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$SOURCE_HOOK body=base,base ordinary=$SOURCE_HOOK
 without the recorded pick failing the hold an ordinary path keeps its markers@scripts/lib/restack-state.sh@-q \"\$pick^{commit}\"@1@-q \"\${pick}^{commit}\" || true@source broken-git:pick@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$SOURCE_HOOK body=base,base ordinary=$SOURCE_HOOK
 without the pre-restack head a branch-declared hook keeps its markers@scripts/lib/restack-state.sh@\"\$(restack_state_get \"\$wt\" originalHead)\" HEAD \${paused@1@HEAD \${paused@branch-declared@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$CURSOR_HOOK body=base,base ordinary=$CURSOR_HOOK
 without the paused HEAD a base-declared hook keeps its markers@scripts/lib/restack-state.sh@originalHead)\" HEAD \${paused@1@originalHead)\" \${paused@base-declared@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,ok saved=- markers=$CURSOR_HOOK body=base,base ordinary=$CURSOR_HOOK
