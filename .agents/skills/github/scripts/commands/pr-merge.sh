@@ -67,15 +67,12 @@ Merge-mode exit codes:
   1    pr-merge: retired-setting key=<NAME>
        A retired merge setting is set. Every mode, --check included, refuses
        before any GitHub call; see Retired settings below.
-  1    pr-merge: settings-unreadable root=<project root>
-       The project settings could not be loaded, so no retired setting can be
-       ruled out. Every mode refuses before any GitHub call.
 
 --check exit:
   --check exits 0 after any valid readiness JSON, including can_merge=false for
   blocked or CLOSED. Argument or dispatch failures before JSON remain nonzero,
-  and so do the retired-setting and settings-unreadable refusals: exit 1, no
-  JSON on stdout, the refusal's first line on stderr.
+  and so does the retired-setting refusal: exit 1, no JSON on stdout, the
+  refusal's first line on stderr.
 
 Exit 75 is volatile:
   A queue ejection can disarm merge state. Block on .agents/skills/orch/scripts/queue-wait <N> <poll> <budget> --json before returning; it produces the verdict for the head just armed. Size the poll and budget as orch merge-pr.md § 5 step 1 does: the default budget outlives any foreground call an agent harness holds, so a call without them is killed before the verdict.
@@ -791,22 +788,17 @@ RETIRED_SETTINGS="ORCH_ADMIN_MERGE_GH_CONFIG_DIR ORCH_ADMIN_MERGE_CLASSES ORCH_M
 # changes nothing this command later reads: the router exports the settings
 # files' keys but sources the private env file without exporting it, so a key
 # set there never reaches this process otherwise. A load the loader rejects
-# refuses too, since an unread file can hold a retired key.
+# exits 1 on the loader's own diagnostics, as the router's load does.
 refuse_retired_settings() {
-    local found status=0 key keys=""
+    local found key keys=""
     # shellcheck disable=SC1091 # the loader is this package's own lib
     found=$(
-        source "$SCRIPT_DIR/../lib/kendex-env.sh" || exit 2
-        kendex_load_project_env "$PROJECT_ROOT" >&2 || exit 2
+        source "$SCRIPT_DIR/../lib/kendex-env.sh" || exit 1
+        kendex_load_project_env "$PROJECT_ROOT" >&2 || exit 1
         for key in $RETIRED_SETTINGS; do
             [ -z "${!key+set}" ] || printf '%s\n' "$key"
         done
-    ) || status=$?
-    if [ "$status" -ne 0 ]; then
-        echo "pr-merge: settings-unreadable root=${PROJECT_ROOT:-<none>}" >&2
-        echo "  The project settings failed to load (the loader's own line is above), so no retired merge setting can be ruled out. Repair the file it names, then retry." >&2
-        exit 1
-    fi
+    ) || exit 1
     [ -n "$found" ] || return 0
     for key in $found; do
         echo "pr-merge: retired-setting key=$key" >&2

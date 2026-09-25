@@ -94,7 +94,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 .agents/skills/github/scripts/github.sh pr-merge [PR_NUMBER] --check
 ```
 
-A `--check` exit `1` with no JSON whose first stderr line is `pr-merge: retired-setting key=[NAME]` or `pr-merge: settings-unreadable root=[PATH]` records the named stop `merge-blocked` and hands back with that line; every later `pr-merge` call refuses the same way. Removing the retired key, or repairing the settings file, is the owner's fix.
+A `--check` exit `1` with no JSON whose first stderr line is `pr-merge: retired-setting key=[NAME]` records the named stop `merge-blocked` and hands back with that line; every later `pr-merge` call refuses the same way. Removing the retired key is the owner's fix.
 
 ### 3.1 Resolve Transient Blockers First
 
@@ -253,7 +253,7 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --auto --expected-head [PREPARED_HEAD]
    ```
 
-   Exit `0` merged the prepared head immediately — continue to step 2. Exit `1` with first line `arm: no-merge-gate=<condition>` means the repository has nothing for auto-merge to wait on, so there is no queue: take the direct attempt above, and never fall back to a raw `gh pr merge --auto`. Exit `1` with first line `pr-merge: retired-setting key=<NAME>` or `pr-merge: settings-unreadable root=<PATH>` takes § 3's route for that refusal, which a [micro.md](micro.md) § 4 entry meets here first. Any other exit but `0` or `75` is an exact-head arm failure: surface it and return to § 3.2.
+   Exit `0` merged the prepared head immediately — continue to step 2. Exit `1` with first line `arm: no-merge-gate=<condition>` means the repository has nothing for auto-merge to wait on, so there is no queue: take the direct attempt above, and never fall back to a raw `gh pr merge --auto`. Exit `1` with first line `pr-merge: retired-setting key=<NAME>` takes § 3's route for that refusal. Any other exit but `0` or `75` is an exact-head arm failure: surface it and return to § 3.2.
 
    Exit `75` means queued or armed. Run the command below through [Waiter launch](../references/waiter-launch.md), appending `--no-guard` under `exempt`. Keep the lane active while polling the completion file, then route the recorded exit and result. A changes-requested review blocked at § 3.2's readiness check, before this arm; past it no mode reads review state, and `exempt` waives the thread guard alone.
 

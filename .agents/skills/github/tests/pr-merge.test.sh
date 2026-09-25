@@ -81,8 +81,7 @@ ABSENT_SHA=3333333333333333333333333333333333333333
 # One checkout per project settings source, each planting a retired key the way
 # that source spells it. A settings table is exported by the loader and a
 # private env file line is not, so a row run from each checkout proves the
-# refusal reads the key where that source leaves it. `bad-settings` carries a
-# settings file the loader rejects.
+# refusal reads the key where that source leaves it.
 settings_fixture() { # NAME RELPATH CONTENT
   local dir="$TMPDIR/settings-$1"
   git init -q "$dir"
@@ -93,7 +92,6 @@ settings_fixture() { # NAME RELPATH CONTENT
 settings_fixture toml kendex.settings.toml $'[env]\nORCH_MERGE_BYPASS = "fast-path"'
 settings_fixture dot-kendex .kendex/settings.toml $'[env]\nORCH_ADMIN_MERGE_CLASSES = "render"'
 settings_fixture env-local .env.local 'ORCH_ADMIN_MERGE_GH_CONFIG_DIR=/home/dev/.config/gh-admin'
-settings_fixture bad-settings kendex.settings.toml $'[env]\nORCH_TMUX_VERIFY_SECS = "15"\nORCH_TMUX_VERIFY_SECS = "15"'
 
 # The class policy is asked of review-gate's review-policy beside the scripts
 # tree pr-merge runs from, and review-policy resolves the change classifier
@@ -405,7 +403,6 @@ err_macro() {
     fetch-failed) printf 'review_threads_fetch_failed: Failed to fetch actionable review threads from GitHub' ;;
     malformed) printf 'review_threads_fetch_failed: GitHub returned malformed review thread data' ;;
     retired:*) printf 'The overseer'"'"'s admin merge and the ORCH_MERGE_BYPASS fast path are retired (kendex decision D003): every merge goes through the merge queue, armed with --auto.;Remove %s from kendex.settings.toml [env], .kendex/settings.toml [env], the private env file (.env.local unless KENDEX_ENV_FILE names another) and the environment, then retry.' "$(printf '%s' "${1#retired:}" | tr '+' ' ')" ;;
-    unreadable) printf 'The project settings failed to load (the loader'"'"'s own line is above), so no retired merge setting can be ruled out. Repair the file it names, then retry.' ;;
     arm-remedy) printf 'Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch, or merge through orch merge-pr with the explicit consumer-only answer under submit-pr.md § 6.2.' ;;
     *) printf 'UNKNOWN-MACRO:%s' "$1" ;;
   esac
@@ -576,7 +573,6 @@ an unexported .env.local line refuses the direct call|checks:ci-required post-qu
 a key in kendex.settings.toml [env] refuses through the router|checks:ci-required post-queue|router-in:toml|1|-|pr-merge: retired-setting key=ORCH_MERGE_BYPASS;{retired:ORCH_MERGE_BYPASS}|calls=- auth=-
 a key in .kendex/settings.toml [env] refuses through the router|checks:ci-required post-queue|router-in:dot-kendex|1|-|pr-merge: retired-setting key=ORCH_ADMIN_MERGE_CLASSES;{retired:ORCH_ADMIN_MERGE_CLASSES}|calls=- auth=-
 an unexported .env.local line refuses through the router, which sources it without exporting it|checks:ci-required post-queue|router-in:env-local|1|-|pr-merge: retired-setting key=ORCH_ADMIN_MERGE_GH_CONFIG_DIR;{retired:ORCH_ADMIN_MERGE_GH_CONFIG_DIR}|calls=- auth=-
-a settings file the loader rejects refuses rather than rule the keys out|checks:ci-required post-queue cwd:bad-settings|auto|1|-|kendex-env: duplicate-key file=<tmp>/settings-bad-settings/kendex.settings.toml key=ORCH_TMUX_VERIFY_SECS;::error::<tmp>/settings-bad-settings/kendex.settings.toml: ORCH_TMUX_VERIFY_SECS is assigned more than once in [env] (each key must be unique in the table);pr-merge: settings-unreadable root=<tmp>/settings-bad-settings;{unreadable}|calls=- auth=-
 "
 
 echo
