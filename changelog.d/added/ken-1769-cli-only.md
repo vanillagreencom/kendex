@@ -1,0 +1,1 @@
+- Install only the `kendex` command with `install.sh --cli-only` (`curl -fsSL https://kendex.ai/install.sh | sh -s -- --cli-only`), on Linux as well as macOS.

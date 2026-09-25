@@ -184,6 +184,36 @@ fn linux_picks_the_appimage_built_for_its_architecture() {
     assert!(!urls.contains(".AppImage"), "{urls}");
 }
 
+/// `--cli-only` installs the command and nothing else, alone or beside a
+/// channel choice: no AppImage is fetched and no launcher entry written.
+/// The linux row above without the flag is its inverse.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn cli_only_installs_the_command_and_no_app() {
+    for args in [
+        &["--cli-only"][..],
+        &["--cli-only", "--version", "v9.9.9"][..],
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let root = rooted(&home);
+        let (output, urls) =
+            run_install_in_args("Linux", "x86_64", None, &root, &[], SUDO_STUB, args);
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        assert!(
+            urls.contains("/kendex-x86_64-unknown-linux-gnu\n"),
+            "{args:?} fetched:\n{urls}"
+        );
+        assert!(!urls.contains(".AppImage"), "{args:?} fetched:\n{urls}");
+        assert_eq!(value(&output.stdout, "app-skipped"), Some("cli-only"));
+        assert!(
+            !root
+                .join(".local/share/applications/kendex.desktop")
+                .exists(),
+            "{args:?} wrote a launcher entry"
+        );
+    }
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn git_channel_resolves_one_immutable_main_build() {
