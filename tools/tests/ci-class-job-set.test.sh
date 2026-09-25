@@ -204,6 +204,21 @@ check "a read set rust-reads cannot derive is refused on a trivial diff" "exit=2
   "$(SELECT_IN="$TMP/no-crates" selection trivial true docs/a.md)"
 check "and on a measured one" "exit=2 rust-reads-failed" \
   "$(SELECT_IN="$TMP/no-crates" selection micro false tools/guard)"
+# Every crate manifest removed, source left behind: the reader places no
+# crate, and the diff runs every gated job rather than none. The control is a
+# reader without that rule, beside which every cargo lane stands down.
+MANIFESTS_GONE="crates/core/Cargo.toml crates/cli/Cargo.toml crates/app/Cargo.toml"
+mkdir -p "$TMP/no-manifests/crates/core/src"
+printf 'fn a() {}\n' >"$TMP/no-manifests/crates/core/src/lib.rs"
+check "a crates/ that places no crate is refused" "exit=2 rust-reads-failed" \
+  "$(SELECT_IN="$TMP/no-manifests" selection standard false "$(printf '%s\n' $MANIFESTS_GONE)")"
+mkdir -p "$TMP/placeless/tools"
+cp "$JOB_SET" "$TMP/placeless/tools/ci-job-set"
+sed '/^# Every crate placed prints build rows/,/^esac$/d' "$ROOT/tools/rust-reads" >"$TMP/placeless/tools/rust-reads"
+chmod +x "$TMP/placeless/tools/rust-reads"
+check "control: with the reader rule removed every cargo lane stands down" \
+  "$CODE_LANES $(cargo_row '' '' false)" \
+  "$(SELECT_IN="$TMP/no-manifests" SELECT_WITH="$TMP/placeless/tools/ci-job-set" selection standard false "$(printf '%s\n' $MANIFESTS_GONE)")"
 # A reader row that is not kind, path and crate is refused before any crate
 # is named: a reader from before the crate column, beside this script.
 mkdir -p "$TMP/unparsed/tools"

@@ -53,11 +53,11 @@
 # stdout: one `<kind><TAB><path><TAB><crate>` row per distinct read, sorted,
 # the path relative to ROOT and the crate its package name. Exit 0 with the
 # rows, 2 when the source could not be read or the arguments are wrong, and a
-# read that did not run is never printed as an empty set. A refusal is one
-# stderr line:
+# read that did not run is never printed as an empty set: a run that places
+# no crate is one that could not read crates/. A refusal is one stderr line:
 #   rust-reads: unreadable=<path>   ROOT, or the crates/ tree, could not be
-#                                   read, or a Cargo.toml under crates/ names
-#                                   no package
+#                                   read or holds no crate, or a Cargo.toml
+#                                   under crates/ names no package
 #   rust-reads: usage=<usage>       more than one argument
 set -euo pipefail
 
@@ -475,5 +475,10 @@ case $status in
   3) exit 2 ;;
   *) echo 'rust-reads: unreadable=crates' >&2; exit 2 ;;
 esac
+# Every crate placed prints build rows, so a run with none placed no crate.
+case "$rows" in
+  build$'\t'* | *$'\n'build$'\t'*) ;;
+  *) echo 'rust-reads: unreadable=crates' >&2; exit 2 ;;
+esac
 
-[ -z "$rows" ] || printf '%s\n' "$rows" | LC_ALL=C sort -u
+printf '%s\n' "$rows" | LC_ALL=C sort -u

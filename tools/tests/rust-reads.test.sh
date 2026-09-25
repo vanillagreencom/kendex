@@ -196,6 +196,20 @@ OUT=""
 RC=0
 OUT="$(cd "$W" && PATH="$TMP/fake-bin:$PATH" "$READS" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && [ "$OUT" = "rust-reads: unreadable=crates" ] && ok "a failed source walk exits 2 naming crates" || bad "a failed source walk exits 2 naming crates" "rc=$RC out=$OUT"
+# crates/ holding source and no manifest places no crate: a run that read
+# nothing, never an empty set. The control removes that rule.
+rm -f -- "$W/crates/demo/Cargo.toml"
+run_reads
+[ "$RC" -eq 2 ] && [ "$OUT" = "rust-reads: unreadable=crates" ] && ok "a crates/ that places no crate exits 2 naming crates" || bad "a crates/ that places no crate exits 2 naming crates" "rc=$RC out=$OUT"
+sed '/^# Every crate placed prints build rows/,/^esac$/d' "$READS" >"$TMP/rust-reads-placeless"
+chmod +x "$TMP/rust-reads-placeless"
+if cmp -s "$READS" "$TMP/rust-reads-placeless"; then
+  bad "control: a crates/ that places no crate exits 2" "the edit changed nothing in a reader copy"
+else
+  run_reads "$TMP/rust-reads-placeless"
+  [ "$RC" -eq 0 ] && ok "control: a crates/ that places no crate exits 2, with that rule removed" ||
+    bad "control: a crates/ that places no crate exits 2, with that rule removed" "rc=$RC out=$OUT"
+fi
 rm -rf -- "${W:?}/crates"
 run_reads
 [ "$RC" -eq 2 ] && [ "$OUT" = "rust-reads: unreadable=crates" ] && ok "a checkout with no crates/ exits 2 naming it" || bad "a checkout with no crates/ exits 2 naming it" "rc=$RC out=$OUT"
