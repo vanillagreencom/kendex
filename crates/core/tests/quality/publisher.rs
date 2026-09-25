@@ -272,3 +272,58 @@ fn every_observation_of_a_shared_tree_reads_as_its_recorded_source() {
         }
     }
 }
+
+/// A tool that reads two skill surfaces observes a hand copy at the one
+/// kendex did not write under the same name and tool as the recorded
+/// install. The recorded row wrote elsewhere, so it accounts for nothing
+/// at the copy's path: every observation of the copy keeps the finding,
+/// on the declaring tool's row like every other, while the tree kendex
+/// wrote reads as kendex's.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_copy_at_a_surface_no_row_wrote_is_nobodys_on_every_row() {
+    let w = world();
+    let scope = project_for(&w, "app", KENDEX, "cursor");
+    let report = audit(&w.env, &scope).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+    let Scope::Project { root } = &scope else {
+        unreachable!("a project scope");
+    };
+    let written = root.join(".cursor/skills").join(PACKAGE);
+    assert!(written.join("SKILL.md").exists(), "{}", written.display());
+    let copy = root.join(".agents/skills").join(PACKAGE);
+    copy_tree(&written, &copy);
+
+    let observed = observed_rows(&w.env, &scope).unwrap();
+    let at = |path: &Path| -> Vec<&kendex_core::engine::ItemSafety> {
+        let location = kendex_core::paths::slashed(path);
+        observed
+            .iter()
+            .filter(|row| {
+                row.name == PACKAGE && row.targets.iter().any(|target| target.location == location)
+            })
+            .collect()
+    };
+    let (kendexs, copies) = (at(&written), at(&copy));
+    assert!(!kendexs.is_empty(), "{observed:#?}");
+    assert!(
+        copies.len() > 1,
+        "the copy is observed by the declaring tool and others: {observed:#?}"
+    );
+    for row in kendexs {
+        assert_eq!(
+            standing(&row.advisory),
+            (vec![], vec!["rce"]),
+            "written: {}",
+            row.targets[0].harness.name()
+        );
+    }
+    for row in copies {
+        assert_eq!(
+            standing(&row.advisory),
+            (vec!["rce"], vec![]),
+            "copy: {}",
+            row.targets[0].harness.name()
+        );
+    }
+}

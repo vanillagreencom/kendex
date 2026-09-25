@@ -87,8 +87,13 @@ fn publishers(env: &Env, scope: &Scope, items: &[&ObservedItem]) -> Result<Vec<P
                     false => Publisher::Other,
                 };
             }
+            // Only a row that recorded no paths answers by the observing
+            // tool's key: a row that did record them, and does not name
+            // this path, wrote somewhere else, and what sits here is a
+            // copy it does not account for.
             entries
                 .get(&crate::lock::entry_key(item.kind, &item.name, item.harness))
+                .filter(|entry| entry.emitted.is_none())
                 .map_or(Publisher::Other, |entry| Publisher::of(&entry.source_repo))
         })
         .collect())
