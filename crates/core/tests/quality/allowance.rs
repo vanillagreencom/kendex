@@ -315,30 +315,30 @@ fn interleaved_rows() -> Allowance {
 
 /// The refresh reads every listed row again whatever order the rules
 /// interleave in: each rule once, one finding per row, written back in
-/// line order with the file's hash. A file listing fewer rows of a rule
-/// than it raises is refused by name.
+/// line order with the file's hash. An edit that moves the findings moves
+/// the rows with it: the next refresh writes the new hash and lines, the
+/// messages unchanged, and a refresh of its own output is a fixed point.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_refresh_reads_interleaved_rules_once_each_and_refuses_a_short_list() {
+fn the_refresh_reads_interleaved_rules_once_each_and_follows_a_moved_finding() {
     let (_tmp, sealed) = interleaved_catalog();
     let config = kendex_core::source::source_config(&sealed, "cat").unwrap();
+    let script = sealed.root().join("skills/launch/scripts/launch.sh");
     let refreshed = interleaved_rows().refreshed(&sealed, &config).unwrap();
     let file = &refreshed.packages[0].files[0];
-    let script = sealed
-        .read(&sealed.root().join("skills/launch/scripts/launch.sh"))
-        .unwrap();
-    assert_eq!(file.hash, hash_bytes(&script));
-    let rows: Vec<(&str, Option<u32>)> = file
-        .accepted
-        .iter()
-        .map(|row| (row.rule.as_str(), row.line))
-        .collect();
+    assert_eq!(file.hash, hash_bytes(&std::fs::read(&script).unwrap()));
+    let rows = |file: &AcceptedFile| -> Vec<(String, Option<u32>)> {
+        file.accepted
+            .iter()
+            .map(|row| (row.rule.clone(), row.line))
+            .collect()
+    };
     assert_eq!(
-        rows,
+        rows(file),
         vec![
-            ("safety-bypass", Some(2)),
-            ("rce", Some(3)),
-            ("safety-bypass", Some(4)),
+            ("safety-bypass".to_owned(), Some(2)),
+            ("rce".to_owned(), Some(3)),
+            ("safety-bypass".to_owned(), Some(4)),
         ],
         "{:#?}",
         file.accepted
@@ -348,14 +348,86 @@ fn the_refresh_reads_interleaved_rules_once_each_and_refuses_a_short_list() {
         "{:#?}",
         file.accepted
     );
-    // Read again from its own output, the refresh is a fixed point.
     assert_eq!(refreshed.refreshed(&sealed, &config).unwrap(), refreshed);
 
-    let mut short = interleaved_rows();
-    short.packages[0].files[0].accepted.pop();
-    let refused = short.refreshed(&sealed, &config).unwrap_err().to_string();
-    assert!(
-        refused.contains("scripts/launch.sh") && refused.contains("safety-bypass"),
-        "{refused}"
+    // A comment above the first switch moves every finding down a line
+    // and changes the text; nothing the rules match changes.
+    let mut edited = std::fs::read(&script).unwrap();
+    edited.splice(0..0, b"# launches the lane\n".iter().copied());
+    std::fs::write(&script, &edited).unwrap();
+    let moved = refreshed.refreshed(&sealed, &config).unwrap();
+    let file_moved = &moved.packages[0].files[0];
+    assert_eq!(file_moved.hash, hash_bytes(&edited));
+    assert_ne!(file_moved.hash, file.hash);
+    assert_eq!(
+        rows(file_moved),
+        vec![
+            ("safety-bypass".to_owned(), Some(3)),
+            ("rce".to_owned(), Some(4)),
+            ("safety-bypass".to_owned(), Some(5)),
+        ],
+        "{:#?}",
+        file_moved.accepted
     );
+    let messages = |file: &AcceptedFile| -> Vec<String> {
+        file.accepted
+            .iter()
+            .map(|row| row.message.clone())
+            .collect()
+    };
+    assert_eq!(messages(file_moved), messages(file));
+}
+
+/// One row per refusal the refresh makes, each with the words the error
+/// names its cause by: a package the catalog does not offer, a file the
+/// package does not hold as text, and a file whose findings under a rule
+/// are not one per listed row, in either direction. A refusal in place of
+/// a rewrite is what keeps a finding nobody accepted out of the table.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_refresh_refuses_each_row_the_catalog_no_longer_warrants() {
+    let (_tmp, sealed) = interleaved_catalog();
+    let config = kendex_core::source::source_config(&sealed, "cat").unwrap();
+    let with = |edit: fn(&mut Allowance)| {
+        let mut table = interleaved_rows();
+        edit(&mut table);
+        table
+    };
+    let rows: Vec<(&str, Allowance, &[&str])> = vec![
+        (
+            "a package the catalog does not offer",
+            with(|table| table.packages[0].name = "launcher".to_owned()),
+            &["launcher"],
+        ),
+        (
+            "a file the package does not hold",
+            with(|table| table.packages[0].files[0].path = "scripts/gone.sh".to_owned()),
+            &["launch", "scripts/gone.sh", "does not hold"],
+        ),
+        (
+            "a rule raised once more than listed",
+            with(|table| {
+                table.packages[0].files[0].accepted.pop();
+            }),
+            &[
+                "scripts/launch.sh",
+                "1 accepted safety-bypass",
+                "now holds 2",
+            ],
+        ),
+        (
+            "a rule listed once more than raised",
+            with(|table| {
+                let extra = table.packages[0].files[0].accepted[1].clone();
+                table.packages[0].files[0].accepted.push(extra);
+            }),
+            &["scripts/launch.sh", "2 accepted rce", "now holds 1"],
+        ),
+    ];
+    for (row, table, expected) in rows {
+        let refused = table.refreshed(&sealed, &config).unwrap_err().to_string();
+        for words in expected {
+            assert!(refused.contains(words), "{row}: {refused}");
+        }
+    }
 }
