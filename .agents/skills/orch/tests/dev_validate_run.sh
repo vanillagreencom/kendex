@@ -334,7 +334,7 @@ for row in "${MODE_ROWS[@]}"; do
   mode_dir="$(run_dir_of "$OUT")"
   got_base=no
   [[ "$(start_line "$mode_dir" validate-base)" != "$head_sha" ]] || got_base=yes
-  assert_eq "$(verdict_of "$OUT") $(cat "$mode_dir/log")" "state=done guard-exit=0 validate=pass $want_log" "$label" "$ERR"
+  assert_eq "$(verdict_of "$OUT") $(output_of "$OUT")" "state=done guard-exit=0 validate=pass $want_log" "$label" "$ERR"
   assert_eq "$(start_line "$mode_dir" validate-mode) base=$got_base" "$want_mode base=$want_base" \
     "$label — the start record names the mode and base that ran" "$ERR"
   run_script "$RUN" --record --run-dir "$mode_dir"
@@ -353,7 +353,7 @@ assert_eq "$(sed -n '1s/ class=[a-z]* docs-only=[a-z]*\( class-fallback=[a-z0-9-
 # battery under a range record, and the log row reddens on it.
 mutant mutant-range-reads-full '"$SCRIPT_DIR/orch-env" DEV_VALIDATE_RANGE_CMD ""' '"$SCRIPT_DIR/orch-env" DEV_VALIDATE_CMD ""'
 run_script "$MUTANT" --worktree "$proj" --poll 1 --validate-mode range --base HEAD
-assert_eq "$(cat "$(run_dir_of "$OUT")/log")" "full" \
+assert_eq "$(output_of "$OUT")" "full" \
   "control: with the range setting unread the range run logs the full battery" "$ERR"
 
 # --- A command that ignores SIGTERM is still ended inside the bound -----------
@@ -644,6 +644,8 @@ MODE_REFUSALS=(
   "a base that names no commit is refused, naming it|--worktree $proj_refuse --validate-mode range --base no-such-ref|dev-validate-run: invalid-base base=no-such-ref"
   "a validation mode handed to the waiter is refused|--wait --run-dir $stale --validate-mode range|dev-validate-run: option-unused option=--validate-mode mode=wait"
   "a base handed to the waiter is refused|--wait --run-dir $stale --base HEAD|dev-validate-run: option-unused option=--base mode=wait"
+  "a validation mode handed to --stop is refused|--stop --worktree $proj_refuse --validate-mode range|dev-validate-run: option-unused option=--validate-mode mode=stop"
+  "a base handed to --stop is refused|--stop --worktree $proj_refuse --base HEAD|dev-validate-run: option-unused option=--base mode=stop"
   "a record of a directory no run started is refused|--record --run-dir $TMP_ROOT/unstarted|dev-validate-run: no-run path=$TMP_ROOT/unstarted/start"
   "a record whose start names no mode is refused|--record --run-dir $stale|dev-validate-run: record-unreadable path=$stale/start validate-mode="
   "a call budget handed to the record is refused|--record --run-dir $stale --budget 5|dev-validate-run: option-unused option=--budget mode=record"
