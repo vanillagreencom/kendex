@@ -6,8 +6,8 @@
 //! copy of the judge.
 
 use super::hooks::{
-    BOSS, DELIVER, EXTRA, HALT, JUDGE, LATE_JUDGE, drift_details, findings_on, hook_fixture,
-    hook_on_disk, messages, registered,
+    BOSS, DELIVER, EXTRA, HALT, JUDGE, LATE_JUDGE, NARROW as NARROW_CLAUDE, drift_details,
+    findings_on, hook_fixture, hook_on_disk, messages, registered,
 };
 use super::*;
 
@@ -23,6 +23,16 @@ const NARROW: &str = "#!/usr/bin/env bash\n# ---\n# name: narrow\n# event: PreTo
 /// A control file that will not parse: the catalog opens and hides its
 /// content.
 const UNPARSABLE: &str = "is_source_catalog = [\n";
+
+/// A chain below the boss's extra companion: extra requires mid and the
+/// head of a chain x → y → z, or mid and y, one step shorter; z is the
+/// hook the other catalog declares.
+const EXTRA_MID_X: &str = "#!/usr/bin/env bash\n# ---\n# name: extra\n# event: PostToolUse\n# description: run after a tool call with mid and x\n# requires: [mid, x]\n# ---\nexit 0\n";
+const EXTRA_MID_Y: &str = "#!/usr/bin/env bash\n# ---\n# name: extra\n# event: PostToolUse\n# description: run after a tool call with mid and y\n# requires: [mid, y]\n# ---\nexit 0\n";
+const MID: &str = "#!/usr/bin/env bash\n# ---\n# name: mid\n# event: PostToolUse\n# description: run after a tool call\n# ---\nexit 0\n";
+const X: &str = "#!/usr/bin/env bash\n# ---\n# name: x\n# event: PostToolUse\n# description: run after a tool call with y\n# requires: [y]\n# ---\nexit 0\n";
+const Y: &str = "#!/usr/bin/env bash\n# ---\n# name: y\n# event: PostToolUse\n# description: run after a tool call with z\n# requires: [z]\n# ---\nexit 0\n";
+const Z: &str = "#!/usr/bin/env bash\n# ---\n# name: z\n# event: PostToolUse\n# description: run after a tool call\n# ---\nexit 0\n";
 
 /// The other catalog's judge: on an event Codex never fires, and needing
 /// nothing back, so the question is about the judge alone.
@@ -501,6 +511,72 @@ fn a_silent_companion_catalog_takes_nothing_and_yields_to_a_missing_one() {
             landed(&f, "narrow", HarnessId::Codex),
             (true, true),
             "{extra_offered}: narrow"
+        );
+    }
+}
+
+/// The silence reaches the boss's extra companion up a chain, one step per
+/// pass of the spread, while the boss itself is withheld from Codex at
+/// once, its narrow companion's harnesses line having dropped Codex since
+/// the install. Whether extra's own companion mid is orphaned on Codex is
+/// read off extra's final withholding — a silence, which takes nothing —
+/// and never off the orphaning that a shorter chain would have let extra
+/// hold first: mid stays on Codex whatever the chain's length.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_companion_is_orphaned_only_by_its_requirers_final_withholding() {
+    for (label, extra) in [("three steps", EXTRA_MID_X), ("one step", EXTRA_MID_Y)] {
+        let (f, other) =
+            two_catalogs("[hooks.boss]\nsource = \"cat\"\n\n[hooks.z]\nsource = \"other\"\n");
+        for (file, body) in [
+            ("boss.sh", BOSS),
+            ("narrow.sh", NARROW),
+            ("extra.sh", extra),
+            ("mid.sh", MID),
+            ("x.sh", X),
+            ("y.sh", Y),
+            ("z.sh", Z),
+        ] {
+            fs::write(f.source.join("hooks").join(file), body).unwrap();
+        }
+        fs::write(other.join("hooks/z.sh"), Z).unwrap();
+        apply_now(&f);
+        for name in ["extra", "mid", "y", "z"] {
+            assert_eq!(
+                landed(&f, name, HarnessId::Codex),
+                (true, true),
+                "{label}: {name}"
+            );
+        }
+        fs::write(f.source.join("hooks/narrow.sh"), NARROW_CLAUDE).unwrap();
+        fs::write(other.join("kendex.toml"), UNPARSABLE).unwrap();
+
+        let report = plan_apply(
+            &f.env,
+            &f.scope,
+            &PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            },
+        )
+        .unwrap();
+        let rows: Vec<(DriftState, &str)> = report
+            .drift
+            .iter()
+            .filter(|row| row.name == "mid")
+            .map(|row| (row.state, row.detail.as_str()))
+            .collect();
+        assert_eq!(rows, Vec::new(), "{label}: {:?}", drift_details(&report));
+        apply::execute(&f.env, &report.plan).unwrap();
+        assert_eq!(
+            landed(&f, "extra", HarnessId::Codex),
+            (true, true),
+            "{label}: extra"
+        );
+        assert_eq!(
+            landed(&f, "mid", HarnessId::Codex),
+            (true, true),
+            "{label}: mid"
         );
     }
 }

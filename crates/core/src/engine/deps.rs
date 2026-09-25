@@ -278,38 +278,40 @@ struct Dep {
     header: Option<HookSpec>,
 }
 
-/// One more withholding the loop found, and the finding that explains it.
-enum Spread {
-    /// A companion the hook requires, read from the catalog `source`, is
-    /// withheld from these tools, for a reason the hook takes on.
-    Companion {
-        dep: String,
-        source: String,
-        tools: Vec<HarnessId>,
-        because: Withholding,
-    },
-    /// Every hook that requires this derived companion is withheld from
-    /// these tools, and nothing asks for it by name.
-    Orphaned {
-        requirers: BTreeSet<String>,
-        tools: Vec<HarnessId>,
-    },
-}
-
 /// A hook withheld from a tool is not written there, so a hook that
 /// requires it is withheld there too, and so is a companion that exists
-/// only for hooks withheld there — until nothing changes: the lane-mail
-/// knot goes together whichever member's fault it is, and a one-way edge
-/// leaves no companion armed beside a requirer that is gone. A requirer
-/// takes on its companion's reason — missing, or from a catalog that says
-/// nothing — whenever the spread reaches it, a chain one step per pass,
-/// and a reason outranking the one already held for the tool replaces it
-/// ([`Withholding`]); a companion orphaned by this very requirer's
-/// withholding spreads nothing back. Skills are not in this: a skill runs
-/// without what it lacks, and its finding is the whole consequence.
+/// only for hooks gone from there: the lane-mail knot goes together
+/// whichever member's fault it is, and a one-way edge leaves no companion
+/// armed beside a requirer that is gone. Two phases, each run until
+/// nothing changes, and in this order: first the requirers take on their
+/// companions' reasons, up every chain; only then, off the withholdings
+/// that leaves, are companions orphaned. Whether a requirer's withholding
+/// lets its copy go can change as the upward spread climbs a chain, so an
+/// orphaning read off an earlier answer would be read off the wrong one.
+/// Skills are not in this: a skill runs without what it lacks, and its
+/// finding is the whole consequence.
 fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion) {
+    spread_upward(wanted);
+    withhold_orphans(wanted, expansion);
+}
+
+/// A companion the hook requires, read from the catalog `source`, is
+/// withheld from these tools for a reason the hook takes on.
+struct Companion {
+    dep: String,
+    source: String,
+    tools: Vec<HarnessId>,
+    because: Withholding,
+}
+
+/// A requirer takes on its companion's reason — missing, or from a catalog
+/// that says nothing — whenever the spread reaches it, a chain one step
+/// per pass, and a reason outranking the one already held for the tool
+/// replaces it ([`Withholding`]). A companion orphaned by its requirers'
+/// withholding spreads nothing back.
+fn spread_upward(wanted: &mut BTreeMap<Node, Wanted>) {
     loop {
-        let mut spread: Vec<(Node, Spread)> = Vec::new();
+        let mut spread: Vec<(Node, Companion)> = Vec::new();
         for ((kind, parent), found) in wanted.iter() {
             if *kind != ItemKind::Hook || !found.armed {
                 continue;
@@ -338,7 +340,7 @@ fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion
                 for (because, tools) in taken {
                     spread.push((
                         (*kind, parent.clone()),
-                        Spread::Companion {
+                        Companion {
                             dep: dep.clone(),
                             source: source.clone(),
                             tools,
@@ -346,6 +348,44 @@ fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion
                         },
                     ));
                 }
+            }
+        }
+        if spread.is_empty() {
+            return;
+        }
+        for ((kind, parent), companion) in spread {
+            let Some(found) = wanted.get_mut(&(kind, parent.clone())) else {
+                unreachable!("{parent} was read from this map a moment ago");
+            };
+            let Companion {
+                dep,
+                source,
+                tools,
+                because,
+            } = companion;
+            found.withhold(tools.iter().copied(), because);
+            found.findings.push(finding(
+                &NotWritten::Withheld,
+                kind,
+                &parent,
+                &dep,
+                &tools,
+                &source,
+            ));
+        }
+    }
+}
+
+/// A derived companion is withheld from a tool where every hook that
+/// requires it there is gone from it ([`orphaned`]), and its own derived
+/// companions follow, until nothing changes. Read off the withholdings the
+/// upward spread settled on, and never before it has.
+fn withhold_orphans(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion) {
+    loop {
+        let mut spread: Vec<(Node, BTreeSet<String>, Vec<HarnessId>)> = Vec::new();
+        for ((kind, parent), found) in wanted.iter() {
+            if *kind != ItemKind::Hook || !found.armed {
+                continue;
             }
             let mut requirers = BTreeSet::new();
             let tools: Vec<HarnessId> = expansion
@@ -357,35 +397,20 @@ fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion
                 })
                 .collect();
             if !tools.is_empty() {
-                spread.push((
-                    (*kind, parent.clone()),
-                    Spread::Orphaned { requirers, tools },
-                ));
+                spread.push(((*kind, parent.clone()), requirers, tools));
             }
         }
         if spread.is_empty() {
             return;
         }
-        for ((kind, parent), more) in spread {
+        for ((kind, parent), requirers, tools) in spread {
             let Some(found) = wanted.get_mut(&(kind, parent.clone())) else {
                 unreachable!("{parent} was read from this map a moment ago");
             };
-            let warning = match more {
-                Spread::Companion {
-                    dep,
-                    source,
-                    tools,
-                    because,
-                } => {
-                    found.withhold(tools.iter().copied(), because);
-                    finding(&NotWritten::Withheld, kind, &parent, &dep, &tools, &source)
-                }
-                Spread::Orphaned { requirers, tools } => {
-                    found.withhold(tools.iter().copied(), Withholding::Orphaned);
-                    orphaned_finding(kind, &parent, &requirers, &tools)
-                }
-            };
-            found.findings.push(warning);
+            found.withhold(tools.iter().copied(), Withholding::Orphaned);
+            found
+                .findings
+                .push(orphaned_finding(kind, &parent, &requirers, &tools));
         }
     }
 }
