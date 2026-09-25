@@ -1,16 +1,11 @@
-// What a removal did about the repository the packages leaving with it had
-// armed. The lines are Rust's, the same ones the terminal prints, so the
-// window and the terminal say one thing about one repository — this side
-// only puts them on the screen.
+// The lines a write's answer accounts for. They are Rust's; this side only
+// puts them on the screen.
 import { toast } from "sonner";
 
-/** Show a removal's account, every line of it. Silent when the removal
- *  took no declaring package away, which is almost every removal.
- *
- *  Every line, uncut. Nothing below the window can tell kendex's own
- *  stand-down notices from a departing package's output by the time the
- *  account reaches here, so a cut by position would eat whichever line
- *  happens to fall past it — a later package's "declares no uninstaller"
+/** Show the account, every line of it, uncut. Nothing below the window
+ *  can tell kendex's own notices from a departing package's output by the
+ *  time the account reaches here, so a cut by position would eat whichever
+ *  line happens to fall past it — a package's "declares no uninstaller"
  *  notice, the only place kendex says an effect was left standing and
  *  names the manual remedy. */
 export function sayUndone(undone: string[] | undefined) {

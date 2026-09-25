@@ -887,14 +887,9 @@ export type AuditView_Deserialize = {
 	 */
 	exits: RowExits[],
 	/**
-	 *  The account of the write: what a removal in this action did about
-	 *  the repository effects of the packages that left with it, and what
-	 *  the trash pass that closes every write removed, or why it stopped.
-	 *  The same lines the terminal prints, so the window says what ran
-	 *  rather than leaving a repository armed against scripts that are
-	 *  gone. Empty on a plain read and on every action that took no
-	 *  declaring package away and left the trash as it was — and left off
-	 *  the wire entirely when it is empty, which is almost every read.
+	 *  The account of the write: the lines the executor handed back, which
+	 *  `crates/app/src/repo_effects.rs::execute` states. Empty on a plain
+	 *  read, and left off the wire entirely when it is empty.
 	 */
 	undone: string[],
 	/**
@@ -938,14 +933,9 @@ export type AuditView_Serialize = {
 	 */
 	exits: RowExits[],
 	/**
-	 *  The account of the write: what a removal in this action did about
-	 *  the repository effects of the packages that left with it, and what
-	 *  the trash pass that closes every write removed, or why it stopped.
-	 *  The same lines the terminal prints, so the window says what ran
-	 *  rather than leaving a repository armed against scripts that are
-	 *  gone. Empty on a plain read and on every action that took no
-	 *  declaring package away and left the trash as it was — and left off
-	 *  the wire entirely when it is empty, which is almost every read.
+	 *  The account of the write: the lines the executor handed back, which
+	 *  `crates/app/src/repo_effects.rs::execute` states. Empty on a plain
+	 *  read, and left off the wire entirely when it is empty.
 	 */
 	undone?: string[],
 	/**
@@ -4963,19 +4953,13 @@ export type SourceRow = {
 
 /**
  *  What a source action leaves: every declared source across every scope,
- *  and what the removal did about the repository effects of any package
- *  that left with it — the same account the terminal prints, so the window
- *  says what ran rather than leaving a repository armed against scripts
- *  that are gone.
+ *  and the account of the write (`crates/app/src/repo_effects.rs::execute`).
  */
 export type SourcesAfter = SourcesAfter_Serialize | SourcesAfter_Deserialize;
 
 /**
  *  What a source action leaves: every declared source across every scope,
- *  and what the removal did about the repository effects of any package
- *  that left with it — the same account the terminal prints, so the window
- *  says what ran rather than leaving a repository armed against scripts
- *  that are gone.
+ *  and the account of the write (`crates/app/src/repo_effects.rs::execute`).
  */
 export type SourcesAfter_Deserialize = {
 	sources: SourceRow[],
@@ -4984,10 +4968,7 @@ export type SourcesAfter_Deserialize = {
 
 /**
  *  What a source action leaves: every declared source across every scope,
- *  and what the removal did about the repository effects of any package
- *  that left with it — the same account the terminal prints, so the window
- *  says what ran rather than leaving a repository armed against scripts
- *  that are gone.
+ *  and the account of the write (`crates/app/src/repo_effects.rs::execute`).
  */
 export type SourcesAfter_Serialize = {
 	sources: SourceRow[],
@@ -5103,10 +5084,9 @@ export type SubscribeOutcome_Deserialize = {
 	lead: string | null,
 	notes: string[],
 	/**
-	 *  What a package leaving with this plan had undone, if one did, and
-	 *  what the trash pass closing the write said. Its own field rather
-	 *  than more notes, so the account a write owes has one name across
-	 *  every command that can make one.
+	 *  The account of the write (`crates/app/src/repo_effects.rs::execute`).
+	 *  Its own field rather than more notes, so the account a write owes
+	 *  has one name across every command that can make one.
 	 */
 	undone: string[],
 };
@@ -5124,10 +5104,9 @@ export type SubscribeOutcome_Serialize = {
 	lead: string | null,
 	notes: string[],
 	/**
-	 *  What a package leaving with this plan had undone, if one did, and
-	 *  what the trash pass closing the write said. Its own field rather
-	 *  than more notes, so the account a write owes has one name across
-	 *  every command that can make one.
+	 *  The account of the write (`crates/app/src/repo_effects.rs::execute`).
+	 *  Its own field rather than more notes, so the account a write owes
+	 *  has one name across every command that can make one.
 	 */
 	undone?: string[],
 };

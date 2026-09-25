@@ -996,12 +996,9 @@ pub fn restore(env: &Env, root: PathBuf, paths: Vec<String>) -> Result<RestoreRe
             done: failure.done.into(),
         },
     };
-    // A restore's removals land in the trash without a plan, so the pass
-    // that closes every write closes this one here, after the removals and
-    // whether or not one of them stopped. Its lines have no channel: the
-    // answer is the paths the restore moved, which the window states as
-    // its own sentences, and the pass's outcome reaches the person from
-    // the next command that answers with an account.
+    // A restore's removals land in the trash with no plan behind them, so
+    // the pass closes this write here, after the removals, and its lines
+    // are dropped: the answer is paths alone.
     crate::trash::tidy(env);
     Ok(result)
 }

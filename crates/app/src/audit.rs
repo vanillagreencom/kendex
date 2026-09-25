@@ -61,14 +61,9 @@ pub struct AuditView {
     /// it never works them out from the cause, which is how one surface
     /// ends up offering an action the plan rejects.
     pub exits: Vec<engine::exits::RowExits>,
-    /// The account of the write: what a removal in this action did about
-    /// the repository effects of the packages that left with it, and what
-    /// the trash pass that closes every write removed, or why it stopped.
-    /// The same lines the terminal prints, so the window says what ran
-    /// rather than leaving a repository armed against scripts that are
-    /// gone. Empty on a plain read and on every action that took no
-    /// declaring package away and left the trash as it was — and left off
-    /// the wire entirely when it is empty, which is almost every read.
+    /// The account of the write: the lines the executor handed back, which
+    /// `crates/app/src/repo_effects.rs::execute` states. Empty on a plain
+    /// read, and left off the wire entirely when it is empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub undone: Vec<String>,
     /// Set when this one scope couldn't be read at all — a corrupt or

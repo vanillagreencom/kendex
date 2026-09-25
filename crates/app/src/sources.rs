@@ -16,10 +16,7 @@ fn list_all_sources(env: &Env) -> Result<Vec<SourceRow>, String> {
 }
 
 /// What a source action leaves: every declared source across every scope,
-/// and what the removal did about the repository effects of any package
-/// that left with it — the same account the terminal prints, so the window
-/// says what ran rather than leaving a repository armed against scripts
-/// that are gone.
+/// and the account of the write (`crates/app/src/repo_effects.rs::execute`).
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SourcesAfter {

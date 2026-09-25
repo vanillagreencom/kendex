@@ -226,10 +226,9 @@ impl std::fmt::Display for ExecuteError {
 /// ran carries those lines on the failure too: the repository is disarmed
 /// by then, and a bare refusal would say nothing happened.
 ///
-/// The trash pass closes the write here as well: once the plan is on
-/// disk, `crate::trash::tidy` brings the trash within its bounds, holding
-/// what this plan moved there, and its line rides on the same account. A
-/// plan that refused runs no pass; the next write retries it.
+/// The trash pass closes the write here too: once the plan is on disk,
+/// `crate::trash::tidy` runs and its lines join the account
+/// (`docs/architecture/trash.md` § Boundaries).
 ///
 /// Once `execute` has returned, everything a command reads back is
 /// enrichment — `after_writing` is how that read's failure carries the
@@ -262,9 +261,6 @@ pub fn execute(env: &Env, report: &EngineReport) -> Result<Vec<String>, ExecuteE
     }
     match kendex_core::apply::execute(env, &report.plan) {
         Ok(_) => {
-            // The plan's own removals are on disk and held, so this is
-            // the end of the command's writes: the pass runs here and its
-            // line rides on the same account.
             said.extend(crate::trash::tidy(env));
             Ok(said)
         }
