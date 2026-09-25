@@ -161,11 +161,14 @@ lane_mail_mutant missed-always '        [ "$LM_FETCH_ABSENT" -eq 1 ] || SEEN=mis
 # seeded from one; and lane-mail clamping a cursor over one to 0.
 receipts_mutant seed-skips-empty '      elif ! [[ "$read_at" =~ ^[0-9]+$ && "$unread_at" =~ ^[0-9]+$ ]]; then
         read_at="$lane_read"; unread_at=0' '      elif ! [[ "$read_at" =~ ^[0-9]+$ && "$unread_at" =~ ^[0-9]+$ ]]; then
-        if [[ "$header" == *" count=0 "* ]]; then missed=1; else read_at="$lane_read"; unread_at=0; fi'
+        if [[ "$header" == *" count=0 "* ]]; then hold=directives; else read_at="$lane_read"; unread_at=0; fi'
 lane_mail_mutant empty-clamped '      if [ "$SEEN" -gt 0 ] && [ "$COUNT" -eq 0 ]; then' '      if false; then'
 receipts_mutant reset-on-short '      elif [[ "$lane_read" -lt "$read_at" ]]; then
-        missed=1' '      elif [[ "$lane_read" -lt "$read_at" ]]; then
+        hold=directives' '      elif [[ "$lane_read" -lt "$read_at" ]]; then
         read_at=0; unread_at=0'
+receipts_mutant short-holds-item '      elif [[ "$lane_read" -lt "$read_at" ]]; then
+        hold=directives' '      elif [[ "$lane_read" -lt "$read_at" ]]; then
+        hold=item'
 # A hosted lane whose cursor read comes back short once, in either shape: the
 # provider's read of to-lane.cursor exits as a file not there while its probe
 # answers, or the file reads lower than the count reported. That pass is a
@@ -265,6 +268,27 @@ replaced_mailbox
 assert_eq "$REPLACED" "EVENT directive-read KEN-84 $REPLACED_ID" \
   "a mailbox opening on another id starts the counts over, so its first directive is read" "$STUB_DIR/receipts.err"
 
+# A lane relaunched onto a fresh mailbox after reading a directive: its empty
+# to-lane.jsonl reads a cursor of 0, below the one reported, until a directive
+# lands. That holds its directive lines alone, so its first ask is reported.
+relaunch_ask() { # [WATCH_BIN]
+  local out
+  mail_reset KEN-86
+  receipts KEN-86 "${1:-}"
+  direct KEN-86 'Old mailbox.' >/dev/null
+  lane_reads KEN-86
+  receipts KEN-86 "${1:-}"
+  mail_reset KEN-86
+  printf 'Squash or merge?\n' > "$TMP_ROOT/ask.txt"
+  RELAUNCH_ASK="$(cd "$CASE_REPO_ROOT" && "$LANE_MAIL" ask --item KEN-86 --file "$TMP_ROOT/ask.txt")"
+  out="$(WATCH_BIN="${1:-}" run_watch -- --max-loops 1 --item KEN-86 2>"$STUB_DIR/receipts.err")"
+  RELAUNCHED="$(head -1 <<<"$out")"
+}
+new_case receipts_relaunch_ask
+relaunch_ask
+assert_eq "$RELAUNCHED" "EVENT lane-question KEN-86 ${RELAUNCH_ASK#id=}" \
+  "a cursor below the one reported still reports the relaunched lane's ask" "$STUB_DIR/receipts.err"
+
 # An answer the lane read sits on a line the cursor counts: the directive sent
 # after it is on the line past the cursor, unread, never taken for read.
 answered_first() { # [LANE_MAIL]
@@ -306,6 +330,11 @@ new_case receipts_short_cursor_low_mutant
 short_cursor low "$MUTANT_DIR/orch/scripts/oversee-watch-reset-on-short"
 assert_eq "${SHORT##*|}" "EVENT directive-read KEN-83 old-1" \
   "control: a lower cursor taken as a replacement reports the old directive read again" "$STUB_DIR/receipts.err"
+new_case receipts_relaunch_ask_mutant
+relaunch_ask "$MUTANT_DIR/orch/scripts/oversee-watch-short-holds-item"
+assert_eq "$RELAUNCHED" "$HEARTBEAT" \
+  "control: a cursor below the one reported holding the item never reports the relaunched lane's ask" \
+  "$STUB_DIR/receipts.err"
 # No control of its own for the absent shape past a first pass: the lower
 # cursor rule above also holds it, since a cursor lane-mail read as 0 sits
 # below the one reported; the first-pass rows below are where `missed` alone

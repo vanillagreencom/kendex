@@ -1218,7 +1218,7 @@ new_case mail_answered_missed
 answered_missed
 assert_eq "$ANSWERED_MISSED" "first=$HEARTBEAT row= after=0" \
   "a to-lane read that missed reports no answered ask as a question and moves no row" "$STUB_DIR/answered-a"
-cadence_mutant deliver-first '    if [[ "$missed" -eq 1 ]]; then' '    if false; then'
+cadence_mutant deliver-first '    if [[ "$hold" == item ]]; then' '    if false; then'
 new_case mail_answered_missed_mutant
 answered_missed "$MUTANT_DIR/orch/scripts/oversee-watch-deliver-first"
 assert_eq "$ANSWERED_MISSED" "first=EVENT lane-question KEN-60 $ANSWERED_ASK row=1 $ANSWERED_ASK after=0" \

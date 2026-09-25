@@ -297,8 +297,8 @@ first watched, directive-read are keyed in the mail pass's own file beside
 it, owner-note and peer-note by the overseer mailbox's cursor, each
 committed only once printed, so a stop between the two reports a line
 twice: a repeated id is one already seen. A lane whose to-lane read
-missed, by lane-mail's `missed` or a cursor below the one reported, has
-nothing reported or moved that pass. Each repeats only when what it reports changes: another PR, a
+lane-mail reports `missed` has nothing reported or moved that pass; a cursor
+below the one reported holds only its directive lines. Each repeats only when what it reports changes: another PR, a
 different wall or a reset gone by, a replacement pane, a different screen, a
 new record, another account state. An unchanged standing overseer-mark is the one keyed line that
 comes back on a timer: it is reported every ORCH_OVERSEER_MARK_REPEAT passes
@@ -2100,7 +2100,7 @@ mail_read() { # ITEM LANE_MAIL_ARGS...
 # printed, so a stopped pass leaves them unread rather than taken and unsaid.
 check_mail() {
   local item stored prior seen header count first line fields id kind options text rest root cursor from re
-  local envelopes receipts replaced missed lane_read to_first read_at unread_at at
+  local envelopes receipts replaced hold lane_read to_first read_at unread_at at
   local mail_items host_flag args
   local state="$MAIL_SEEN"
   HOSTED_GONE_ITEMS=""
@@ -2139,7 +2139,7 @@ check_mail() {
     args=(--item "$item")
     [[ -z "$root" ]] || args+=(--root "$root" ${host_flag[@]+"${host_flag[@]}"})
     replaced=0
-    missed=0
+    hold=none
     count=0
     prior=0
     if [[ "$item" == overseer ]]; then
@@ -2202,26 +2202,26 @@ check_mail() {
       # opened with. A lane with no row yet is taken as having read up to its
       # cursor, so a first pass does not replay every directive it ever read.
       # Only a mailbox opening with another envelope is a replacement, and
-      # starts both counts over. A cursor lane-mail found `missed`, or one lower
-      # than the one reported, is a read that missed.
+      # starts both counts over. A cursor lane-mail found `missed` holds the
+      # item, one lower than the one reported its directive lines: a lane
+      # relaunched onto an empty mailbox reads 0 there until a directive lands.
       if ! stored="$(lane_row_get directive "$state" "$cursor")"; then
         die state-read-failed "" "item=$item" "row=directive"
       fi
       read -r read_at unread_at seen <<<"$stored"
       if [[ "$lane_read" == missed ]]; then
-        missed=1
+        hold=item
       elif ! [[ "$read_at" =~ ^[0-9]+$ && "$unread_at" =~ ^[0-9]+$ ]]; then
         read_at="$lane_read"; unread_at=0
       elif [[ -n "$to_first" && -n "$seen" && "$to_first" != "$seen" ]]; then
         read_at=0; unread_at=0
       elif [[ "$lane_read" -lt "$read_at" ]]; then
-        missed=1
+        hold=directives
       fi
     fi
-    # A read that missed reports and moves nothing of its item this pass: the
-    # drain drops answered asks by the to-lane.jsonl it read, so a to-lane read
-    # that missed would report an answered ask as a fresh question.
-    if [[ "$missed" -eq 1 ]]; then
+    # The drain drops answered asks by the to-lane.jsonl it read, so one that
+    # missed would report an answered ask as a fresh question.
+    if [[ "$hold" == item ]]; then
       mail_row_commit "$(lane_row_clear lane-failed "$state" "$item")"
       continue
     fi
@@ -2279,29 +2279,27 @@ check_mail() {
       mail_row_commit "$state"
       continue
     fi
-    # A read shorter than what was already drained moves no position, since
-    # lowering it would report the lines between again once the file reads
-    # whole.
-    #
-    # No prune, unlike every other row kind: those hold a pane key a pane
-    # replaces, this one how far the overseer has read a lane's mailbox. An
-    # item out of --item for one run and back in the next would otherwise
-    # drain from zero and report every message that lane ever sent.
+    # A read shorter than what was drained moves no position: lowering it
+    # would report the lines between again once the file reads whole. Never
+    # pruned, as pane-keyed rows are: an item out of --item for one run would
+    # otherwise drain from zero and report every message that lane ever sent.
     [[ "$replaced" -eq 0 && "$count" -lt "$prior" ]] \
       || state="$(lane_row_set lane-mail "$state" "$cursor" "$count $first")"
-    while read -r line id at; do
-      [[ -n "$line" ]] || continue
-      if [[ "$line" -le "$lane_read" ]]; then
-        [[ "$line" -gt "$read_at" ]] || continue
-        echo "EVENT directive-read $item $id"
-        PASS_EVENT=1
-      elif [[ "$line" -gt "$unread_at" && -n "$at" ]] && (( PASS_NOW - at >= UNREAD_SECS )); then
-        echo "EVENT directive-unread $item $id age=$((PASS_NOW - at))"
-        unread_at="$line"
-        PASS_EVENT=1
-      fi
-    done <<<"$(tail -n +2 <<<"$receipts")"
-    state="$(lane_row_set directive "$state" "$cursor" "$lane_read $unread_at ${to_first:-$seen}")"
+    if [[ "$hold" == none ]]; then
+      while read -r line id at; do
+        [[ -n "$line" ]] || continue
+        if [[ "$line" -le "$lane_read" ]]; then
+          [[ "$line" -gt "$read_at" ]] || continue
+          echo "EVENT directive-read $item $id"
+          PASS_EVENT=1
+        elif [[ "$line" -gt "$unread_at" && -n "$at" ]] && (( PASS_NOW - at >= UNREAD_SECS )); then
+          echo "EVENT directive-unread $item $id age=$((PASS_NOW - at))"
+          unread_at="$line"
+          PASS_EVENT=1
+        fi
+      done <<<"$(tail -n +2 <<<"$receipts")"
+      state="$(lane_row_set directive "$state" "$cursor" "$lane_read $unread_at ${to_first:-$seen}")"
+    fi
     # Committed here, per item and after its lines are out: a later mailbox
     # can fail without discarding this read, and a row left uncommitted would
     # re-report this item's messages on the re-run that follows.
