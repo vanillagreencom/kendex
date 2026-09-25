@@ -115,8 +115,8 @@ Concrete per-consumer values are tracked on the org adoption issue, not here. Ev
 | `REVIEW_GATE_VENDORED_PATHS` | The render trees `vendored` trusts as kendex output, e.g. `.agents/*;.claude/skills/*`. A hand-edit under them rides; keep hook scripts and instruction markdown in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, which wins. |
 | `REVIEW_GATE_CLASS_POLICY` | Leave it unassigned. The built-in default is the active value in the [README class table](../README.md#class-policy): it exempts `render`, `trivial` and `micro`, requires one bot round for `small`, and keeps the current policy for `standard`. An adoption never writes an empty value. |
 | `REVIEW_GATE_CLASS_POLICY_DECISION` | Leave it empty. A repository that assigns other rows, or `REVIEW_GATE_CLASS_POLICY = ""` to turn the policy off, names here, by its path from the repository root, the tracked decision record behind that choice. |
-| `REVIEW_GATE_DOCS_ONLY` | Leave it unassigned under the default class policy. The lane applies only after a recorded opt-out from the class policy; otherwise `validate.sh` reports `none` as `class-policy-inert-lane`. After an opt-out, `bot` keeps review evidence mandatory, and `none` lets the shared CI docs classifier replace missing bot evidence while objections, suppressed findings, unresolved threads, and excluded paths still block. |
-| `REVIEW_GATE_RENDER_PATHS` | Leave it unassigned under the default class policy. The lane applies only after a recorded opt-out from the class policy; otherwise `validate.sh` reports a non-empty value as `class-policy-inert-lane`. After an opt-out, it names render trees that may merge on CI alone. Empty disables the lane. |
+| `REVIEW_GATE_DOCS_ONLY` | Leave it unassigned under the default class policy. The lane applies only after a recorded opt-out from the class policy. After an opt-out, `bot` keeps review evidence mandatory, and `none` lets the shared CI docs classifier replace missing bot evidence while objections, suppressed findings, unresolved threads, and excluded paths still block. |
+| `REVIEW_GATE_RENDER_PATHS` | Leave it unassigned under the default class policy. The lane applies only after a recorded opt-out from the class policy. After an opt-out, it names render trees that may merge on CI alone. Empty disables the lane. |
 | `REVIEW_GATE_MODE` | `enforce`. `off` disables an inactive or `current` class policy and attests rather than evaluates. A `bot` class still requires review. |
 
 ## Repair by verdict line
@@ -132,8 +132,6 @@ Concrete per-consumer values are tracked on the org adoption issue, not here. Ev
 | `workflow-edited` | A person edited the copy. Re-copy `templates/review-gate-writer.yml` over it; the line named under the verdict says where it diverges. Keep only the `check_run` opt-in's two trigger lines if that opt-in is on. |
 | `class-policy-undecided` | Delete the `REVIEW_GATE_CLASS_POLICY` assignment so the default applies. A departure from the default needs a decision record named in `REVIEW_GATE_CLASS_POLICY_DECISION`. |
 | `class-policy-decision-untracked` | Commit the decision record, or correct the path in `REVIEW_GATE_CLASS_POLICY_DECISION`. |
-| `class-policy-mode-off` | Assign `REVIEW_GATE_CLASS_POLICY` explicitly to accept a bot round on `small` changes, or opt out of the class policy with a decision record. |
-| `class-policy-inert-lane` | Delete the named key, or opt out of the class policy with a decision record. |
 | `class-policy-unresolved` | Read the indented `review-policy` diagnostic. |
 | `settings-values` with `policy-classifier` | The `harness-ci` skill is not installed beside review-gate: install it with `kendex add`. |
 | `carry-load` | Read the nested `settings-unreadable` or `settings-syntax` diagnostic. It names the key and the shape the loader rejected. Fix the assignment; an unreadable value is never an empty one. |

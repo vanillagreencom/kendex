@@ -112,8 +112,7 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 # bot review round; a standard change keeps the full review gate. Every
 # repository runs this same value unless a decision record says otherwise.
 # To use other rows, or "" to turn it off, also set
-# REVIEW_GATE_CLASS_POLICY_DECISION. With REVIEW_GATE_MODE = "off", assign
-# this key to accept the bot round on small changes.
+# REVIEW_GATE_CLASS_POLICY_DECISION.
 REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"
 
 # The decision record behind a class policy other than the default, as a

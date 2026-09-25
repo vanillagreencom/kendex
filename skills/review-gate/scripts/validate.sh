@@ -63,9 +63,7 @@ Four groups run, in this order:
               The class policy is the default, or
               REVIEW_GATE_CLASS_POLICY_DECISION names the tracked decision
               record behind other rows or an empty value
-              (`review-policy --check-choice` says which). REVIEW_GATE_MODE
-              off beside an unassigned policy, and a legacy docs-only or
-              render-only lane under an active one, are each named.
+              (`review-policy --check-choice` says which).
   carry       every REVIEW_GATE_CARRY_FORWARD_EXCLUDE policy glob matches
               a tracked path and is not universal; every prophylactic
               declaration names an active exclusion that still matches
@@ -426,37 +424,27 @@ read_setting() {
   ' _ "$SKILL_DIR" "$1" "$2" 2>"$SCRATCH/err")"
 }
 
-# Reports a refused class-policy read and its diagnostic. A key that cannot be
-# read decides nothing below.
-policy_setting_unreadable() { # KEY
-  bad class-policy-setting-unreadable "$1" "$1 could not be read, so the class-policy check cannot judge it:
-$(sed 's/^/        /' "$SCRATCH/err")"
-}
-
 # Every repository runs one class policy. review-policy owns how the
 # repository chose it: the default, the default assigned, custom rows, or off.
 # A departure from the default is legal only when the repository names the
 # tracked decision record behind it.
 #
-# Every branch of this block, through the inert-lane checks below, carries one
-# row in tests/validate.test.sh that goes red when the branch is removed. The
-# one exception is the REVIEW_GATE_MODE read, an assertion rather than a path.
+# Every branch of this block carries one row in tests/validate.test.sh that
+# goes red when the branch is removed.
 choice_rc=0
 policy_choice="$("${scrub[@]}" "$SKILL_DIR/scripts/review-policy" --check-choice 2>"$SCRATCH/err")" || choice_rc=$?
-policy_active=0
 if [ "$choice_rc" -ne 0 ]; then
   bad class-policy-unresolved "$choice_rc" "the class policy could not be resolved (scripts/review-policy --check-choice):
 $(sed 's/^/        /' "$SCRATCH/err")"
 else
   case "$policy_choice" in
     review-policy-choice=default | review-policy-choice=default-assigned)
-      policy_active=1
       ok class-policy-default "${policy_choice#review-policy-choice=}" "the class policy is the default (README.md § Class policy)"
       ;;
     review-policy-choice=custom | review-policy-choice=off)
-      [ "$policy_choice" = review-policy-choice=off ] || policy_active=1
       if ! read_setting REVIEW_GATE_CLASS_POLICY_DECISION ""; then
-        policy_setting_unreadable REVIEW_GATE_CLASS_POLICY_DECISION
+        bad class-policy-setting-unreadable REVIEW_GATE_CLASS_POLICY_DECISION "REVIEW_GATE_CLASS_POLICY_DECISION could not be read, so the class-policy check cannot judge it:
+$(sed 's/^/        /' "$SCRATCH/err")"
       elif [ -z "$SETTING_VALUE" ]; then
         bad class-policy-undecided "${policy_choice#review-policy-choice=}" "REVIEW_GATE_CLASS_POLICY departs from the default class policy with no decision record behind it. Every repository runs the default (README.md § Class policy): delete the REVIEW_GATE_CLASS_POLICY assignment, or set REVIEW_GATE_CLASS_POLICY_DECISION to the tracked decision record that made this choice"
       elif [ -f "$SETTING_VALUE" ] && git ls-files --error-unmatch -- "$SETTING_VALUE" >/dev/null 2>&1; then
@@ -467,34 +455,6 @@ else
       ;;
     *) bad class-policy-protocol "$policy_choice" "scripts/review-policy --check-choice printed a record it does not define" ;;
   esac
-fi
-
-# A repository that turned the gate off and never chose a class policy got
-# the default by inheritance, and its `bot` row requires a review round the
-# off mode no longer waives. Assigning the policy is the acceptance.
-if [ "$policy_choice" = review-policy-choice=default ]; then
-  # --check-choice has already validated every source this key reads: the
-  # committed file whole, or the one REVIEW_GATE_SETTINGS_FILE names.
-  read_setting REVIEW_GATE_MODE enforce ||
-    die class-policy-mode-read REVIEW_GATE_MODE "invariant broken: REVIEW_GATE_MODE could not be read from sources --check-choice had already validated"
-  if [ "$SETTING_VALUE" = off ]; then
-    bad class-policy-mode-off "REVIEW_GATE_MODE" "REVIEW_GATE_MODE is off, and the default class policy still requires one bot review round for a small change. Assign REVIEW_GATE_CLASS_POLICY explicitly to accept that, or opt out of the class policy with REVIEW_GATE_CLASS_POLICY_DECISION naming the committed decision record"
-  fi
-fi
-
-# The docs-only and render-only lanes run only under an inactive class
-# policy, so under an active one a configured lane waives nothing.
-if [ "$policy_active" -eq 1 ]; then
-  if ! read_setting REVIEW_GATE_DOCS_ONLY bot; then
-    policy_setting_unreadable REVIEW_GATE_DOCS_ONLY
-  elif [ "$SETTING_VALUE" = none ]; then
-    bad class-policy-inert-lane "REVIEW_GATE_DOCS_ONLY" "REVIEW_GATE_DOCS_ONLY = \"none\" is inert under the active class policy, which judges a docs-only change by its change class instead. Delete the assignment, or opt out of the class policy with a decision record"
-  fi
-  if ! read_setting REVIEW_GATE_RENDER_PATHS ""; then
-    policy_setting_unreadable REVIEW_GATE_RENDER_PATHS
-  elif [ -n "$SETTING_VALUE" ]; then
-    bad class-policy-inert-lane "REVIEW_GATE_RENDER_PATHS" "REVIEW_GATE_RENDER_PATHS is inert under the active class policy, which judges a render-only change by its change class instead. Delete the assignment, or opt out of the class policy with a decision record"
-  fi
 fi
 
 # ----------------------------------------------------------------- carry ---

@@ -125,6 +125,56 @@ other rows are custom|render:none;trivial:none;micro:none;small:none;standard:no
 an empty assignment is off|EMPTY|0:review-policy-choice=off
 ROWS
 
+echo "=== every shipped statement of the default is the default ==="
+
+# The default review-policy prints is the reference. The shipped settings
+# example must resolve to it, and README.md and references/settings.md must
+# state it. Each row names a file and what it must answer; the drift rows run
+# the same reader over a copy carrying other rows, and must not match.
+DEFAULT="$("$WHOLE/review-gate/scripts/review-policy" --help | sed -n '/the default is:/{n;n;p;}' | sed 's/^[[:space:]]*//')"
+case "$DEFAULT" in
+  render:*) ;;
+  *) bad "control: the default extractor read no policy from review-policy --help" "got [$DEFAULT]" ;;
+esac
+CUSTOM="${DEFAULT/small:bot/small:none}"
+assert_eq "$([ "$CUSTOM" != "$DEFAULT" ] && echo changed || echo same)" "changed" \
+  "control: the drift fixtures carry other rows than the default"
+
+stated() { # KIND FILE — what FILE says the default is
+  case "$1" in
+    readme) sed -n 's/.*built-in default of `REVIEW_GATE_CLASS_POLICY`, `\([^`]*\)`.*/\1/p' "$2" ;;
+    settings) sed -n 's/^| `REVIEW_GATE_CLASS_POLICY` | `\([^`]*\)` |.*/\1/p' "$2" ;;
+    example)
+      (cd "$TMP/whole-repo" && env -u REVIEW_GATE_CLASS_POLICY REVIEW_GATE_SETTINGS_FILE="$2" \
+        "$WHOLE/review-gate/scripts/review-policy" --check-choice 2>"$TMP/err") || printf 'exit=%s' "$?" ;;
+    *) printf 'unknown-kind' ;;
+  esac
+}
+drift() { # FILE OUT — OUT is a copy of FILE with the default replaced by other rows
+  local content
+  content="$(cat -- "$1")"
+  printf '%s\n' "${content/"$DEFAULT"/"$CUSTOM"}" >"$2"
+}
+while IFS='|' read -r label kind file mode want; do
+  case "$want" in DEFAULT) want="$DEFAULT" ;; CUSTOM) want="$CUSTOM" ;; esac
+  path="$SKILL_DIR/$file"
+  if [ "$mode" != shipped ]; then
+    drift "$path" "$TMP/drift.${file##*/}"
+    if cmp -s -- "$path" "$TMP/drift.${file##*/}"; then
+      bad "control: the drift copy of $file kept the default"
+    fi
+    path="$TMP/drift.${file##*/}"
+  fi
+  assert_eq "$(stated "$kind" "$path")" "$want" "$label"
+done <<'ROWS'
+the shipped settings example assigns the default|example|kendex.settings.toml.example|shipped|review-policy-choice=default-assigned
+README.md states the default|readme|README.md|shipped|DEFAULT
+references/settings.md states the default|settings|references/settings.md|shipped|DEFAULT
+must-fail: an example carrying other rows is custom|example|kendex.settings.toml.example|drift|review-policy-choice=custom
+must-fail: a README carrying other rows states them|readme|README.md|drift|CUSTOM
+must-fail: a settings reference carrying other rows states them|settings|references/settings.md|drift|CUSTOM
+ROWS
+
 # The same repository, judged by a catalog with no orch skill beside
 # harness-ci. The classifier cannot read the narrow-change list, so its
 # `standard` is the fallback. The harness-note on the way there carries a
