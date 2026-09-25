@@ -903,6 +903,7 @@
   ".agents/skills/orch/tests/gh-repo-resolve.test.sh",
   ".agents/skills/orch/tests/git-env-isolation.test.sh",
   ".agents/skills/orch/tests/github-ci-wait-lint.test.sh",
+  ".agents/skills/orch/tests/hosted-overseer-lint.test.sh",
   ".agents/skills/orch/tests/job_unit.sh",
   ".agents/skills/orch/tests/kendex-env-precedence.sh",
   ".agents/skills/orch/tests/lane-claims-messages.sh",

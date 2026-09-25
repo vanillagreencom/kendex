@@ -1,6 +1,6 @@
 # Consumer train
 
-Run this workflow from the package repository's base checkout. It refreshes every subscribed repository that `ORCH_CONSUMER_REPOS` or `kendex project list` names.
+Run this workflow from the package repository's base checkout; on a hosted fleet that is a hosted lane's checkout, never the control VM's ([SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes). It refreshes every subscribed repository that `ORCH_CONSUMER_REPOS` or `kendex project list` names.
 
 ## 1. Resolve the train
 
