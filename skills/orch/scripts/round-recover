@@ -190,12 +190,18 @@ no_report() { # REASON
 # Claude Code and Pi record a turn under .message, Codex under .payload; each
 # line parses alone, so a line the harness was still writing is skipped. The
 # round starts at the last user turn whose text names its round id, the id
-# followed by a character outside the id grammar.
+# followed by a character outside the id grammar. Codex records a delegated
+# prompt as a user_message event, the record open-terminal's kickoff match
+# reads, beside its user response items.
 if ! report="$(jq -R -n -r --arg rid "$round_id" '
   def said: .content
     | if type == "string" then .
       else [arrays | .[] | objects | select(.type == "text" or .type == "input_text") | .text | strings] | join("\n")
       end;
+  def asked:
+    if .role == "user" then said
+    elif .type == "user_message" then .message | strings
+    else empty end;
   def returned:
     if .role == "assistant" then
       .content | arrays | .[] | objects
@@ -207,7 +213,7 @@ if ! report="$(jq -R -n -r --arg rid "$round_id" '
     else empty end;
   ("Round ID: " + ($rid | gsub("\\."; "\\.")) + "([^A-Za-z0-9._-]|$)") as $marker
   | [inputs | fromjson? | objects | (.message // .payload) | objects] as $turns
-  | ([range(0; $turns | length) | select($turns[.].role == "user" and ($turns[.] | said | test($marker)))] | last) as $start
+  | ([range(0; $turns | length) | select($turns[.] | asked | test($marker))] | last) as $start
   | if $start == null then empty
     else [$turns[$start + 1:][] | returned | select(.text | test("\\S"))] as $out
       | (([$out[] | select(.sent)] | last) // ([$out[] | select(.sent | not)] | last)) | .text // empty

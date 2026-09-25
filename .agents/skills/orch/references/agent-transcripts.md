@@ -1,6 +1,6 @@
 # Agent transcripts
 
-Where each harness records a delegated agent's turns, for `round-recover --transcript` in a stalled round ([skill-rules.md § Round Closure](skill-rules.md#round-closure)). `round-recover` reads only the turns after the last user turn carrying the round's `Round ID:` line.
+Where each harness records a delegated agent's turns, for `round-recover --transcript` in a stalled round ([skill-rules.md § Round Closure](skill-rules.md#round-closure)). `round-recover` reads only the turns after the last user turn carrying the round's `Round ID:` line. A Codex user turn is either a `.payload` whose `role` is `user` or an `event_msg` payload of `type` `user_message`, whose `message` is its text; Codex records a delegated prompt as the latter.
 
 | Harness | Transcript | Record that carries the report |
 |---|---|---|

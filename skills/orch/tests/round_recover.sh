@@ -97,10 +97,13 @@ new_fix_round() { # NAME N RID EXIT [COMMITTED] [CUT]
 }
 
 # One transcript line: a user turn saying TEXT, or the agent returning TEXT
-# through HARNESS's channel.
+# through HARNESS's channel. Codex records a delegated prompt as a user_message
+# event and its injected instructions as user response items; codex-item is the
+# latter shape carrying the delegation.
 user_turn() { # HARNESS TEXT
   case "$1" in
-    codex) jq -cn --arg t "$2" '{type: "response_item", payload: {type: "message", role: "user", content: [{type: "input_text", text: $t}]}}' ;;
+    codex) jq -cn --arg t "$2" '{type: "event_msg", payload: {type: "user_message", message: $t}}' ;;
+    codex-item) jq -cn --arg t "$2" '{type: "response_item", payload: {type: "message", role: "user", content: [{type: "input_text", text: $t}]}}' ;;
     pi) jq -cn --arg t "$2" '{type: "message", message: {role: "user", content: [{type: "text", text: $t}]}}' ;;
     *) jq -cn --arg t "$2" '{type: "user", message: {role: "user", content: $t}}' ;;
   esac
@@ -116,7 +119,7 @@ report_turn() { # HARNESS TEXT
       ;;
     claude-text) jq -cn --arg t "$2" '{type: "assistant", message: {role: "assistant", content: [{type: "text", text: $t}]}}' ;;
     pi) jq -cn --arg t "$2" '{type: "message", message: {role: "assistant", content: [{type: "text", text: $t}]}}' ;;
-    codex)
+    codex | codex-item)
       jq -cn --arg t "$2" '{type: "response_item", payload: {type: "function_call", name: "send_input", arguments: ({id: "lead", message: $t} | tojson)}}'
       jq -cn '{type: "response_item", payload: {type: "message", role: "assistant", content: [{type: "output_text", text: "Reported."}]}}'
       ;;
@@ -169,8 +172,9 @@ artifact_has() { # PATH JQ
 
 echo "=== a report through each harness's return channel closes the round ==="
 # Claude Code's report is a SendMessage call's message, followed here by prose
-# the text fallback would pick; Codex's is a send_input call's message.
-for harness in claude-send claude-text pi codex; do
+# the text fallback would pick; Codex's is a send_input call's message, after
+# a delegation in either Codex user-turn record.
+for harness in claude-send claude-text pi codex codex-item; do
   new_round "impl-$harness" "KEN-$harness" 1-1 0
   transcript "$TMP_ROOT/$harness.jsonl" "$harness" 1-1 "$(implement_report "$HEAD_SHA" pass needs-review)"
   run --worktree "$WT" --issue "KEN-$harness" --round-id 1-1 --transcript "$TMP_ROOT/$harness.jsonl"
