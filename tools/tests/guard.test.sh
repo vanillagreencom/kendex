@@ -355,8 +355,8 @@ run_guard
 echo "=== commit compile scheduling follows product changes ==="
 mkdir -p "$R/crates/core/src" "$R/crates/cli/src" "$R/ui" "$R/fake-bin"
 printf '[workspace]\n' >"$R/Cargo.toml"
-printf '[lints]\nworkspace = true\n' >"$R/crates/core/Cargo.toml"
-printf '[lints]\nworkspace = true\n' >"$R/crates/cli/Cargo.toml"
+printf '[package]\nname = "kendex-core"\n\n[lints]\nworkspace = true\n' >"$R/crates/core/Cargo.toml"
+printf '[package]\nname = "kendex-cli"\n\n[lints]\nworkspace = true\n' >"$R/crates/cli/Cargo.toml"
 printf 'fn first() {}\n' >"$R/crates/core/src/lib.rs"
 printf 'fn first() {}\n' >"$R/crates/cli/src/lib.rs"
 printf '{}\n' >"$R/ui/package.json"
@@ -437,6 +437,34 @@ run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
   && ! grep -Eq 'cargo (test|doc)' "$COMPILE_LOG" \
   && ok "shared Rust inputs compile the workspace without running tests" \
   || bad "shared Rust input scheduling" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
+git -C "$R" reset -q HEAD -- Cargo.toml
+git -C "$R" checkout -q -- Cargo.toml
+# An underivable reader is a finding, and every path an input: all compiles.
+printf '#!/usr/bin/env bash\n[ "${FAIL_FIND:-0}" = 1 ] && [ "$1" = crates ] && [ "${5:-}" = "*.rs" ] && exit 1\nexec %s "$@"\n' \
+  "$(command -v find)" >"$R/fake-bin/find"
+chmod +x "$R/fake-bin/find"
+mkdir -p "$R/packaging"
+printf 'data\n' >"$R/packaging/recipe.txt"
+git -C "$R" add packaging/recipe.txt
+unreadable_inputs() { # [GUARD] — the staged recipe with the reader failing; sets OUT and RC
+  : >"$COMPILE_LOG"
+  GUARD="${1:-$GUARD}" run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" FAIL_FIND=1
+}
+unreadable_inputs
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: rust-reads=crates"* ]] \
+  && grep -Fxq 'cargo check --workspace --all-targets' "$COMPILE_LOG" \
+  && ok "an underivable set of shared inputs is a finding, and the workspace compiles" \
+  || bad "an underivable set of shared inputs is a finding, and the workspace compiles" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
+if mutant_guard '/^  workspace_every=1$/d'; then
+  unreadable_inputs "$MUTANT_TOOLS/guard"
+  grep -Fxq 'cargo check --workspace --all-targets' "$COMPILE_LOG" \
+    && bad "control: with every path no longer an input the recipe compiles nothing" "calls=$(cat "$COMPILE_LOG")" \
+    || ok "control: with every path no longer an input the recipe compiles nothing"
+else
+  bad "control: the fail-closed input could not be cut from a guard copy"
+fi
+git -C "$R" reset -q HEAD -- packaging/recipe.txt
+rm -f -- "$R/packaging/recipe.txt"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

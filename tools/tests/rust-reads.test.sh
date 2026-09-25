@@ -29,12 +29,12 @@ seed_world() { # FILE SOURCE
   printf '%b\n' "$2" >"$W/$1"
 }
 
-run_reads() { # [READER] — sets OUT and RC; the rows as KIND:PATH, joined by ;
+run_reads() { # [READER] — sets OUT and RC; the rows but build as KIND:PATH, joined by ;
   local out
   OUT=""
   RC=0
   out="$(cd "$W" && "${1:-$READS}" 2>&1)" || RC=$?
-  OUT="$(printf '%s' "$out" | tr '\t\n' ':;')"
+  OUT="$(printf '%s\n' "$out" | grep -v '^build	' | tr '\t' ':' | paste -sd ';' -)" || OUT=""
 }
 
 # LABEL|FILE|SOURCE|ROWS — ROWS is every row the reader prints, in its order.
@@ -90,6 +90,16 @@ OUT=""
 RC=0
 OUT="$(cd "$W" && PATH="$TMP/fake-bin:$PATH" "$READS" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && [ "$OUT" = "rust-reads: unreadable=crates" ] && ok "a failed source walk exits 2 naming crates" || bad "a failed source walk exits 2 naming crates" "rc=$RC out=$OUT"
+# crates/ with source and no manifest is refused; the control drops the rule.
+rm -f -- "$W/crates/demo/Cargo.toml"
+run_reads
+[ "$RC" -eq 2 ] && [ "$OUT" = "rust-reads: unreadable=crates" ] && ok "a crates/ holding no crate exits 2 naming crates" || bad "a crates/ holding no crate exits 2 naming crates" "rc=$RC out=$OUT"
+sed 's/ || \[ -z "\$manifests" \]; then$/; then/' "$READS" >"$TMP/rust-reads-crateless"
+chmod +x "$TMP/rust-reads-crateless"
+run_reads "$TMP/rust-reads-crateless"
+! cmp -s "$READS" "$TMP/rust-reads-crateless" && [ "$RC" -eq 0 ] &&
+  ok "control: a crates/ holding no crate exits 2, with that rule removed" ||
+  bad "control: a crates/ holding no crate exits 2, with that rule removed" "rc=$RC out=$OUT"
 rm -rf -- "${W:?}/crates"
 run_reads
 [ "$RC" -eq 2 ] && [ "$OUT" = "rust-reads: unreadable=crates" ] && ok "a checkout with no crates/ exits 2 naming it" || bad "a checkout with no crates/ exits 2 naming it" "rc=$RC out=$OUT"
@@ -101,6 +111,7 @@ OUT=""
 RC=0
 OUT="$("$READS" one two 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && [[ "$OUT" == "rust-reads: usage="* ]] && ok "a second argument is refused with the usage line" || bad "a second argument is refused with the usage line" "rc=$RC out=$OUT"
+
 
 echo "=== each derivation rule has a control ==="
 # EDIT|SHAPE LABEL — a reader copy with EDIT applied prints something other

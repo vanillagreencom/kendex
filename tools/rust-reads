@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The repository paths the Rust source under crates/ names as ones it reads,
-# derived from the source rather than listed by hand, in two shapes. Each row
-# says which shape it came from:
+# derived from the source rather than listed by hand, and the paths cargo
+# reads to build it. Each row says which shape it came from:
 #
 #   include   an include_str! or include_bytes! literal, resolved against the
 #             including file's directory: a file compiled into the binary or
@@ -14,6 +14,10 @@
 #             in a `concat!`. A chain that ends with no further argument is a
 #             read of the path it reached, and every path under it when that
 #             is a directory.
+#   build     what cargo reads to build every crate: the crates/ tree, the
+#             workspace manifest and lock, the toolchain pin and the cargo,
+#             clippy and rustfmt configuration, whether or not the checkout
+#             holds each file today, so a diff deleting one still names it.
 #
 # `.` is the row for what this reader does not follow: a chain that reaches
 # the repository root, and a chain that goes on with an argument that is not
@@ -33,8 +37,10 @@
 # stdout: one `<kind><TAB><path>` row per distinct read, sorted, the path
 # relative to ROOT. Exit 0 with the rows, 2 when the source could not be read
 # or the arguments are wrong, and a read that did not run is never printed as
-# an empty set. A refusal is one stderr line:
-#   rust-reads: unreadable=<path>   ROOT, or the crates/ tree, could not be read
+# an empty set: a crates/ tree holding no Cargo.toml is one that could not be
+# read. A refusal is one stderr line:
+#   rust-reads: unreadable=<path>   ROOT, or the crates/ tree, could not be
+#                                   read or holds no crate
 #   rust-reads: usage=<usage>       more than one argument
 set -euo pipefail
 
@@ -47,7 +53,7 @@ cd -- "$root" 2>/dev/null || { printf 'rust-reads: unreadable=%s\n' "$root" >&2;
 [ -d crates ] || { echo 'rust-reads: unreadable=crates' >&2; exit 2; }
 
 # The manifest directories, for the awk pass to find each file's crate by.
-if ! manifests=$(find crates -type f -name Cargo.toml); then
+if ! manifests=$(find crates -type f -name Cargo.toml) || [ -z "$manifests" ]; then
   echo 'rust-reads: unreadable=crates' >&2
   exit 2
 fi
@@ -140,4 +146,6 @@ if ! rows=$(RUST_READS_MANIFESTS="$manifests" find crates -type f -name '*.rs' -
   exit 2
 fi
 
-[ -z "$rows" ] || printf '%s\n' "$rows" | LC_ALL=C sort -u
+build=$(printf 'build\t%s\n' crates Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml .cargo \
+  clippy.toml .clippy.toml rustfmt.toml .rustfmt.toml)
+printf '%s\n%s\n' "$build" "$rows" | grep . | LC_ALL=C sort -u

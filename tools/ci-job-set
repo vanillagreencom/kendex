@@ -19,43 +19,52 @@
 #
 #   - On every measured class (`micro`, `small`, `standard`) the three Linux
 #     lanes always run: shell_shards, cargo_linux and bot_instructions.
-#   - The platform and lint lanes (macos_legs, cargo_macos, cargo_lint,
-#     cargo_windows) stand down only on a diff whose every path is prose,
-#     whose content no platform and no lint tool reads differently, and run
-#     on any other diff.
-#   - ui is the one lane that narrows to a tree: every ui step runs a
+#   - The platform lanes (macos_legs, cargo_macos, cargo_windows) stand down
+#     only on a diff whose every path is prose, whose content no platform
+#     reads differently, and run on any other diff; a `standard` diff that is
+#     not documentation alone runs them whatever its paths.
+#   - The compile lanes (cargo_lint, cargo_windows_check) run no test, so
+#     they run only where a build input changed: a path other than prose
+#     under a tools/rust-reads `build` or `include` row.
+#   - ui is the lane that narrows to a tree: every ui step runs a
 #     ui/package.json script, and nothing under ui/ imports or configures a
 #     path outside ui/.
+#   - A diff to what defines the lanes, a path under .github/workflows/ or
+#     .github/actions/ or tools/ci-job-set, tools/ci-aggregate or
+#     tools/rust-reads, runs every lane, so a change to a lane or to its
+#     selection runs on the pull request that makes it.
 #   - A `render` or `trivial` diff runs bot_instructions alone, the one
 #     seconds-long verify job: its check, the document byte ceilings and the
 #     work-marker scan. The classifier proved a `render` diff by
 #     re-rendering it, and a `trivial` one is inside the docs path set and its
 #     line ceiling.
-#   - The exception: a `trivial` diff changing a path tools/rust-reads names,
-#     or a path under a directory it names, takes the measured row its paths
-#     select, so the cargo lane runs on a docs file the Rust source reads.
-#     tools/rust-reads reads the Rust source of the checkout this script runs
-#     in, and its header states the reads it does not follow.
+#   - The exception: a `trivial` diff changing a path a tools/rust-reads
+#     include or manifest row names, or a path under a directory it names,
+#     takes the measured row its paths select, so the cargo lane runs on a
+#     docs file the Rust source reads. tools/rust-reads reads the Rust source
+#     of the checkout this script runs in, and its header states the reads it
+#     does not follow.
 #
 # The lanes:
 #
-#   shell_shards     the skill, hook and tool suites.
-#   bot_instructions the rendered review-bot instruction files and the root
-#                    AGENTS.md region they own, the document byte ceilings,
-#                    and the index-wide work-marker scan.
-#   cargo_linux      the workspace tests on Linux.
-#   macos_legs       the shell suites again under Bash 3.2 and the BSD
-#                    userland.
-#   cargo_macos      the workspace tests on the platform the app ships on.
-#   cargo_lint       clippy, fmt and doc over the workspace.
-#   cargo_windows    the Windows compile and test lanes.
-#   ui               the vitest, tsc and biome lane.
+#   shell_shards        the skill, hook and tool suites.
+#   bot_instructions    the rendered review-bot instruction files and the root
+#                       AGENTS.md region they own, the document byte
+#                       ceilings, and the index-wide work-marker scan.
+#   cargo_linux         the workspace tests on Linux.
+#   macos_legs          the shell suites again under Bash 3.2 and the BSD
+#                       userland.
+#   cargo_macos         the workspace tests on the platform the app ships on.
+#   cargo_lint          clippy, fmt and doc over the workspace.
+#   cargo_windows       the Windows test run.
+#   cargo_windows_check the Windows compile check of the core and CLI targets.
+#   ui                  the vitest, tsc and biome lane.
 #
 # DOCS_ONLY is read and validated on every class, and it changes one thing: a
 # `standard` diff whose every path the docs verdict accepts (docs/,
-# changelog.d/, root Markdown) takes the measured row its paths select rather
-# than every lane, whatever cause made it `standard`. Under `micro` and
-# `small` that row is already the one taken.
+# changelog.d/, root Markdown) takes the row its paths select, with the
+# platform lanes standing down on prose, rather than running them whatever
+# its paths.
 #
 # Every refusal starts `ci-job-set: cause=<name>` and exits 2. A class this
 # table does not name is one of those: the step goes red, every lane's status
@@ -67,7 +76,7 @@ set -euo pipefail
 TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # One line per lane, in the order the rows below spell them.
-LANES="shell_shards macos_legs ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows"
+LANES="shell_shards macos_legs ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows cargo_windows_check"
 
 die() { # CAUSE MESSAGE
   printf 'ci-job-set: cause=%s\n' "$1" >&2
@@ -115,60 +124,80 @@ any_outside() { # REGEX — is some changed path NOT inside it?
   [ "$hits" -gt 0 ]
 }
 
-# Prose, the one input the platform and lint lanes stand down on.
+# Prose, the one input the platform and compile lanes stand down on.
 PROSE='\.(md|markdown)$'
+# What defines the lanes: the workflows and actions that run them, and the
+# scripts that select them.
+LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|rust-reads)$)'
 
-# Does some changed path equal a path tools/rust-reads names, or sit under
-# one? Its `.` row matches nothing: a changed path never starts with `./`.
-touches_rust_read() {
-  local rows kind read path
+# Which changed paths tools/rust-reads rows name, as two lines: named=1 where
+# an include or manifest row other than `.` names one, build=1 where a path
+# other than prose sits under a build or include row. Each match is printed
+# on stderr.
+reads() {
+  local rows
   rows="$("$TOOLS_DIR/rust-reads" .)" ||
     die "rust-reads-failed" "tools/rust-reads could not derive the paths the Rust source reads"
-  while IFS="$(printf '\t')" read -r kind read; do
-    [ -n "$read" ] || continue
-    while IFS= read -r path; do
-      case "$path" in
-        "$read" | "$read"/*)
-          printf 'ci-job-set: rust-read=%s kind=%s path=%s\n' "$read" "$kind" "$path" >&2
-          return 0 ;;
-      esac
-    done <<<"$paths"
-  done <<<"$rows"
-  return 1
+  PROSE="$PROSE" PATHS="$paths" awk -F '\t' '
+    { kind[NR] = $1; read[NR] = $2 }
+    END {
+      n = split(ENVIRON["PATHS"], changed, "\n")
+      for (p = 1; p <= n; p++) {
+        path = changed[p]
+        for (r = 1; r <= NR; r++) {
+          if (path == "" || read[r] == "." || (path != read[r] && index(path, read[r] "/") != 1)) continue
+          if (kind[r] != "build") named = 1
+          if (kind[r] != "manifest" && path !~ ENVIRON["PROSE"]) build = 1
+          printf "ci-job-set: rust-read=%s kind=%s path=%s\n", read[r], kind[r], path > "/dev/stderr"
+        }
+      }
+      printf "named=%d\nbuild=%d\n", named, build
+    }
+  ' <<<"$rows"
 }
 
 row="$CHANGE_CLASS"
-if [ "$CHANGE_CLASS" = trivial ] && touches_rust_read; then
-  row=trivial-read
-fi
-
-case "$row" in
-  render | trivial)
-    emit shell_shards=false macos_legs=false ui=false bot_instructions=true \
-      cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false
+case "$CHANGE_CLASS" in
+  render) ;;
+  trivial)
+    read_lines="$(reads)"
+    case "$read_lines" in *named=1*) row=trivial-read ;; esac
     ;;
-  micro | small | standard | trivial-read)
-    if [ "$CHANGE_CLASS" = standard ] && [ "$DOCS_ONLY" = false ]; then
-      emit shell_shards=true macos_legs=true ui=true bot_instructions=true \
-        cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true
-    else
-      # A measured class is reached only after the classifier read a changed
-      # path, and so is a docs verdict of true, so an empty list here is a
-      # state no classifier emits. Reading it as "nothing matches" would
-      # stand the narrowing lanes down on no evidence.
-      [ -n "$paths" ] || die "class-without-paths class=$CHANGE_CLASS" \
-        "a measured class arrived with no changed path"
-      platform=false
-      any_outside "$PROSE" && platform=true
-      uitree=false
-      any '^ui/' && uitree=true
-      emit shell_shards=true "macos_legs=$platform" "ui=$uitree" \
-        bot_instructions=true cargo_linux=true "cargo_macos=$platform" \
-        "cargo_lint=$platform" "cargo_windows=$platform"
-    fi
+  micro | small | standard)
+    # A measured class is reached only after the classifier read a changed
+    # path, and so is a docs verdict of true, so an empty list here is a
+    # state no classifier emits. Reading it as "nothing matches" would
+    # stand the narrowing lanes down on no evidence.
+    [ -n "$paths" ] || die "class-without-paths class=$CHANGE_CLASS" \
+      "a measured class arrived with no changed path"
+    read_lines="$(reads)"
     ;;
   *)
     die "unknown-class class=$CHANGE_CLASS" \
       "no lane selection is declared for this class"
+    ;;
+esac
+
+case "$row" in
+  render | trivial)
+    emit shell_shards=false macos_legs=false ui=false bot_instructions=true \
+      cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false
+    ;;
+  micro | small | standard | trivial-read)
+    platform=false
+    any_outside "$PROSE" && platform=true
+    [ "$CHANGE_CLASS:$DOCS_ONLY" != standard:false ] || platform=true
+    uitree=false
+    any '^ui/' && uitree=true
+    build=false
+    case "$read_lines" in *build=1*) build=true ;; esac
+    if any "$LANE_SOURCES"; then
+      platform=true
+      uitree=true
+      build=true
+    fi
+    emit shell_shards=true "macos_legs=$platform" "ui=$uitree" bot_instructions=true \
+      cargo_linux=true "cargo_macos=$platform" "cargo_lint=$build" \
+      "cargo_windows=$platform" "cargo_windows_check=$build"
     ;;
 esac

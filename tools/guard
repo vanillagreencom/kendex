@@ -144,8 +144,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "that suite failed; its own output above names the case." ;;
     cross-doc-setting)
       echo "GUARD_FULL_CROSS_DOC is run or ci, and that value is neither or could not be read; the cross-target checks and cargo doc ran as under run." ;;
-    compiled-includes)
-      echo "the include_str! and include_bytes! paths under crates/ could not be read, so what they narrow ran whole: the cross-target checks and cargo doc under --full, the workspace compile under --range." ;;
+    rust-reads)
+      echo "tools/rust-reads could not read the Rust source, so every path counted as a shared compiler input and what its rows narrow ran whole: the workspace compile, and the cross-target checks and cargo doc under --full." ;;
     cross-doc-skipped)
       case "$2" in
         ci) echo "GUARD_FULL_CROSS_DOC=ci leaves the cross-target checks and cargo doc to CI." ;;
@@ -174,7 +174,13 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     lane-unknown)
       echo "tools/ci-job-set selects no value for that lane name: tools/guard is broken." ;;
     lane-selection)
-      echo "no lane selection was made — tools/ci-job-set's exit status, or paths-unreadable where DEV_VALIDATE_PATHS names no readable file — so every lane ran." ;;
+      case "$2" in
+        class-fallback) echo "DEV_VALIDATE_PATHS names an empty file, the runner's fallback when it could not read a class, so every lane ran." ;;
+        mktemp) echo "no temporary file could be made for tools/ci-job-set's selection rows, so every lane ran." ;;
+        unreadable) echo "the temporary file holding tools/ci-job-set's selection rows could not be read back, so every lane ran." ;;
+        *) echo "no lane selection was made — tools/ci-job-set's exit status, or paths-unreadable where DEV_VALIDATE_PATHS names no readable file — so every lane ran." ;;
+      esac
+      ;;
     range-base)
       echo "that --range base names no commit in this repository." ;;
     *)
@@ -274,32 +280,42 @@ fi
 # its docs reader answer over one range: DEV_VALIDATE_CLASS,
 # DEV_VALIDATE_DOCS_ONLY and the changed paths in the file DEV_VALIDATE_PATHS
 # names, the three inputs CI's changes job gives tools/ci-job-set. An unset
-# class is a run outside that runner. A standard class that is not docs-only,
-# and an unset one, run every lane; anything else runs the lanes ci-job-set
-# selects from those inputs, so completion validation stands a lane down where
-# the checks judging the pull request do and nowhere else. A class ci-job-set
-# does not know is refused; any other selection failure is a finding, and every
-# lane still runs. The commit chain reads no class.
+# class is a run outside that runner, and runs every lane. So does a class
+# with an empty paths file: the runner's fallback when it could not read a
+# class, which it hands over as standard, docs-only false and no paths. Any
+# other class runs the lanes ci-job-set selects from those inputs, so
+# completion validation stands a lane down where the checks judging the pull
+# request do and nowhere else. A class ci-job-set does not know is refused;
+# any other selection failure is a finding, and every lane still runs. The
+# commit chain reads no class.
 #
 # The three are this run's and no one else's: they are read here and removed
 # from the environment before any lane starts, so a suite a lane runs, and any
 # guard that suite runs in turn, never selects its lanes from this diff.
-validate_class="${DEV_VALIDATE_CLASS:-standard}"
+validate_class="${DEV_VALIDATE_CLASS:-}"
 validate_docs_only="${DEV_VALIDATE_DOCS_ONLY:-false}"
 validate_paths="${DEV_VALIDATE_PATHS:-}"
 unset DEV_VALIDATE_CLASS DEV_VALIDATE_DOCS_ONLY DEV_VALIDATE_PATHS
 lanes=all
-if [ "$MODE" = full ] && [ "$validate_class:$validate_docs_only" != standard:false ]; then
+if [ "$MODE" = full ] && [ -n "$validate_class" ]; then
   if ! selected_paths=$(cat -- "$validate_paths" 2>/dev/null); then
     say lane-selection paths-unreadable
+  elif [ -z "$selected_paths" ]; then
+    note lane-selection class-fallback
+  elif ! selection_rows=$(mktemp); then
+    say lane-selection mktemp
   else
+    # The rows come from the output file alone; stderr, which repeats them,
+    # is shown and read for a refusal's cause.
     selection_status=0
     selection=$(CHANGE_CLASS="$validate_class" DOCS_ONLY="$validate_docs_only" \
-      CHANGED_PATHS="$selected_paths" GITHUB_OUTPUT=/dev/stdout "$TOOLS_DIR/ci-job-set" 2>&1) ||
+      CHANGED_PATHS="$selected_paths" GITHUB_OUTPUT="$selection_rows" "$TOOLS_DIR/ci-job-set" 2>&1) ||
       selection_status=$?
     printf '%s\n' "$selection"
+    selected=$(cat -- "$selection_rows") || selection_status=unreadable
+    rm -f -- "${selection_rows:?}"
     case "$selection_status:$selection" in
-      0:*) lanes="$selection" ;;
+      0:*) lanes="$selected" ;;
       *"ci-job-set: cause=unknown-class"*) refuse validate-class "$validate_class" ;;
       *) say lane-selection "$selection_status" ;;
     esac
@@ -874,11 +890,24 @@ done <<<"$render_changed"
 }
 
 # The changelog gate owns commit change collection and product-path matching.
-# Shared compiler inputs outside those product paths still affect all crates.
-workspace_rust_input() { # PATH — the workspace manifest, lock, toolchain pin, cargo or clippy configuration
-  case "$1" in
-    Cargo.toml | Cargo.lock | rust-toolchain.toml | .cargo/* | clippy.toml) return 0 ;;
-  esac
+# Shared compiler inputs outside those product paths still affect all crates:
+# tools/rust-reads' build rows outside crates/. Its rows are read once here. A
+# derivation or filter that fails is a finding and makes every path an input,
+# so the whole workspace compiles.
+workspace_inputs=""
+workspace_every=0
+if ! { reads_rows=$("$TOOLS_DIR/rust-reads" .) &&
+  workspace_inputs=$(awk -F '\t' '$1 == "build" && $2 !~ /^crates(\/|$)/ { print $2 }' <<<"$reads_rows"); }; then
+  say rust-reads crates
+  workspace_every=1
+fi
+workspace_rust_input() { # PATH — the workspace manifest, lock, toolchain pin, cargo, clippy or rustfmt configuration
+  local input
+  [ "$workspace_every" -eq 0 ] || return 0
+  while IFS= read -r input; do
+    [ -n "$input" ] || continue
+    case "$1" in "$input" | "$input"/*) return 0 ;; esac
+  done <<<"$workspace_inputs"
   return 1
 }
 rust_all=0
@@ -888,12 +917,12 @@ ui_changed=0
 [ "$MODE" != full ] || ! lane_on ui || ui_changed=1
 # Every repository path an include_str! or include_bytes! literal under
 # crates/ names: the files outside crates/ that compiled code reads at build
-# time. The derivation is tools/rust-reads' include rows. A file a test reads
-# at run time is not here; the full run's host test run reads it.
+# time. The derivation is tools/rust-reads' include rows, and a failed read of
+# them is a failure here. A file a test reads at run time is not here; the
+# full run's host test run reads it.
 compiled_includes() {
-  local rows
-  rows=$("$TOOLS_DIR/rust-reads" .) || return 1
-  printf '%s\n' "$rows" | awk -F '\t' '$1 == "include" { print $2 }'
+  [ "$workspace_every" -eq 0 ] || return 1
+  awk -F '\t' '$1 == "include" { print $2 }' <<<"$reads_rows"
 }
 
 classify_product() { # PATH — widen the compile set for one changed path
@@ -956,10 +985,7 @@ fi
 # away first, so one inside a crate compiles nothing and one under ui/ runs no
 # UI check.
 if [ "$MODE" = range ]; then
-  if ! range_includes=$(compiled_includes); then
-    say compiled-includes range
-    rust_all=1
-  fi
+  range_includes=$(compiled_includes) || rust_all=1
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     classify_product "$f"
@@ -1102,7 +1128,7 @@ fi
 if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
   # The cross-target checks and cargo doc each write a target tree of their
   # own, and CI covers both on the pull requests tools/ci-job-set selects
-  # its cargo_lint, cargo_macos and cargo_windows lanes for. Here they are
+  # its cargo_lint, cargo_macos and cargo_windows_check lanes for. Here they are
   # skipped only when the touched set shows the branch changed no Rust
   # input: no crate, no workspace compiler input, no file compiled code
   # includes. A touched set that cannot show that runs them: an empty one,
@@ -1128,10 +1154,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
     esac
   done <<<"$touched"
   if [ "$rust_input" -eq 0 ] && [ "$cross_doc" = run ]; then
-    if ! includes=$(compiled_includes); then
-      say compiled-includes crates
-      rust_input=1
-    fi
+    includes=$(compiled_includes) || rust_input=1
     while IFS= read -r f; do
       [ -n "$f" ] || continue
       if grep -Fxq -- "$f" <<<"$includes"; then rust_input=1; fi
@@ -1146,7 +1169,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
     # cross-check, each target standing in for its platform's CI lane.
     cross_targets=""
     ! lane_on cargo_macos || cross_targets="aarch64-apple-darwin"
-    ! lane_on cargo_windows || cross_targets="$cross_targets x86_64-pc-windows-msvc"
+    ! lane_on cargo_windows_check || cross_targets="$cross_targets x86_64-pc-windows-msvc"
     if [ -n "$cross_targets" ]; then
       if ! installed_targets=$(rustup target list --installed); then
         say rustup-targets unreadable

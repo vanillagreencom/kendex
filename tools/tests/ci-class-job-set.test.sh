@@ -67,14 +67,17 @@ selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or th
   tr '\n' ' ' <"$out" | sed 's/ $//'
 }
 
-ALL_OFF="shell_shards=false macos_legs=false ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false"
-ALL_ON="shell_shards=true macos_legs=true ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true"
+ALL_OFF="shell_shards=false macos_legs=false ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false"
+ALL_ON="shell_shards=true macos_legs=true ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true"
 # `render` and `trivial` run the one verify job.
-VERIFY_ROW="shell_shards=false macos_legs=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false"
-# Every measured class runs the three Linux lanes. The platform and lint
-# lanes stand down only on an all-prose diff, and ui only off ui/.
-PROSE_ROW="shell_shards=true macos_legs=false ui=false bot_instructions=true cargo_linux=true cargo_macos=false cargo_lint=false cargo_windows=false"
-CODE_ROW="shell_shards=true macos_legs=true ui=false bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true"
+VERIFY_ROW="shell_shards=false macos_legs=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false"
+# Every measured class runs the three Linux lanes. The platform lanes stand
+# down only on an all-prose diff, the compile lanes where no build input
+# changed, and ui off ui/.
+PROSE_ROW="shell_shards=true macos_legs=false ui=false bot_instructions=true cargo_linux=true cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false"
+CODE_ROW="shell_shards=true macos_legs=true ui=false bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=false cargo_windows=true cargo_windows_check=false"
+UI_ROW="shell_shards=true macos_legs=true ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=false cargo_windows=true cargo_windows_check=false"
+BUILD_ROW="shell_shards=true macos_legs=true ui=false bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true"
 
 # CLASS|DOCS_ONLY|PATHS (blank-separated)|EXPECTED
 selection_rows=0
@@ -86,12 +89,12 @@ done <<ROWS
 render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|$VERIFY_ROW
 trivial|true|docs/architecture/overview.md|$VERIFY_ROW
 trivial|true|AGENTS.md|$VERIFY_ROW
-standard|false|crates/core/src/lib.rs|$ALL_ON
+standard|false|crates/core/src/lib.rs|$BUILD_ROW
 micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$PROSE_ROW
-small|false|crates/cli/src/main.rs|$CODE_ROW
-micro|false|ui/src/app.tsx|$ALL_ON
-micro|false|clippy.toml|$CODE_ROW
-micro|false|rust-toolchain.toml|$CODE_ROW
+small|false|crates/cli/src/main.rs|$BUILD_ROW
+micro|false|ui/src/app.tsx|$UI_ROW
+standard|false|skills/orch/scripts/lanes tools/guard|$CODE_ROW
+standard|false|tools/ci-job-set.orig|$CODE_ROW
 micro|false|install.sh|$CODE_ROW
 micro|false|.gitattributes|$CODE_ROW
 micro|false|skills/orch/scripts/lanes|$CODE_ROW
@@ -104,7 +107,7 @@ standard|true|GEMINI.md|$PROSE_ROW
 standard|true|docs/legal/terms.md|$PROSE_ROW
 trivial|true|docs/legal/terms.md|$PROSE_ROW
 trivial|true|README.md|$PROSE_ROW
-standard|false|docs/guide.md|$ALL_ON
+standard|false|docs/guide.md|$CODE_ROW
 enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous
 micro|false||exit=2 class-without-paths class=micro
 micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe
@@ -112,17 +115,49 @@ ROWS
 [ "$selection_rows" -ge 24 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
 
+# Each declared lane source runs every lane and each declared build name is a
+# build input; both lists are read from the scripts and pinned here.
+lane_sources() { # SCRIPT — a path per LANE_SOURCES alternative
+  sed -n "s/^LANE_SOURCES='^(\(.*\))'\$/\1/p" "$1" | awk '{
+    for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); d += (c == "(") - (c == ")")
+      if (c == "|" && !d) { alt[++n] = cur; cur = "" } else cur = cur c }; alt[++n] = cur
+    for (k = 1; k <= n; k++) { a = alt[k]; gsub(/\\/, "", a); sub(/\$$/, "", a); split("", opt)
+      if (match(a, /\([^)]*\)/)) m = split(substr(a, RSTART + 1, RLENGTH - 2), opt, "|")
+      else { m = 1; RSTART = length(a) + 1; RLENGTH = 0 }
+      for (j = 1; j <= m; j++) print substr(a, 1, RSTART - 1) opt[j] substr(a, RSTART + RLENGTH) (a ~ /\/$/ ? "x" : "") } }'
+}
+build_names() { # SCRIPT — the names its build list declares
+  awk '/^build=\$\(printf/ { on = 1; sub(/.*%s\\n. /, "") } on { last = /\)$/; gsub(/[\\)]/, ""); print; if (last) exit }' "$1" | tr -s ' ' '\n' | grep .
+}
+SOURCES=".github/workflows/x .github/actions/x tools/ci-job-set tools/ci-aggregate tools/rust-reads"
+NAMES="crates Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml .cargo clippy.toml .clippy.toml rustfmt.toml .rustfmt.toml"
+pins() { echo "$(echo $(lane_sources "$1"))|$(echo $(build_names "$2"))"; } # JOB-SET READER
+check "the declared lists are the pinned sets" "$SOURCES|$NAMES" "$(pins "$JOB_SET" "$ROOT/tools/rust-reads")"
+sources="$(lane_sources "$JOB_SET")" names="$(build_names "$ROOT/tools/rust-reads")"
+while IFS= read -r p; do check "lane source $p runs every lane" "$ALL_ON" "$(selection standard false "$p")"; done <<<"$sources"
+while IFS= read -r p; do check "build name $p is a build input" "$BUILD_ROW" "$(selection micro false "$p")"; done <<<"$names"
+mkdir -p "$TMP/member/tools"
+sed 's/(\(ci-job-set.\)ci-aggregate/(\1nothing/' "$JOB_SET" >"$TMP/member/tools/ci-job-set"
+sed 's/ \.cargo \\$/ \\/' "$ROOT/tools/rust-reads" >"$TMP/member/tools/rust-reads"
+chmod +x "$TMP/member/tools/ci-job-set" "$TMP/member/tools/rust-reads"
+check "control: a copy without a member fails each pin" "${SOURCES/ci-aggregate/nothing}|$(echo ${NAMES/.cargo /})" \
+  "$(pins "$TMP/member/tools/ci-job-set" "$TMP/member/tools/rust-reads")"
+for row in "standard tools/ci-aggregate" "micro .cargo"; do
+  check "control: copies without the member $row run it as no lane source or build input" "$CODE_ROW" \
+    "$(SELECT_WITH="$TMP/member/tools/ci-job-set" selection ${row% *} false "${row#* }")"
+done
+
 # A row that forgets a lane is refused before any lane reads it. macos_legs is
 # the lane no aggregate holds, so this refusal is what keeps a forgotten
 # platform lane from collapsing the matrix in silence. The copy drops one lane
 # from the render row.
 mkdir -p "$TMP/forgot/tools"
 forgot="$TMP/forgot/tools/ci-job-set"
-[ "$(grep -c 'cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false$' "$JOB_SET")" -eq 1 ] ||
+[ "$(grep -c 'cargo_lint=false cargo_windows=false cargo_windows_check=false$' "$JOB_SET")" -eq 1 ] ||
   { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
 awk '
-  /cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false$/ {
-    sub(/ cargo_windows=false$/, "")
+  /cargo_lint=false cargo_windows=false cargo_windows_check=false$/ {
+    sub(/ cargo_windows_check=false$/, "")
   }
   { print }
 ' "$JOB_SET" >"$forgot"
@@ -132,18 +167,21 @@ forgot_status=0
 CHANGE_CLASS=render DOCS_ONLY=false CHANGED_PATHS=CLAUDE.md GITHUB_OUTPUT="$TMP/forgot-out" \
   "$forgot" 2>"$TMP/forgot-err" || forgot_status=$?
 check "a row that forgets a lane is refused" \
-  "exit=2 lane-unselected lane=cargo_windows" \
+  "exit=2 lane-unselected lane=cargo_windows_check" \
   "exit=$forgot_status $(sed -n 's/^ci-job-set: cause=//p' "$TMP/forgot-err")"
 
 # A `trivial` diff changing a path tools/rust-reads names takes the measured
-# row. The fixture crate reads docs/a.md through include_str!, docs/legal
-# through a manifest chain, and the checkout root, whose `.` row matches
-# nothing. What each source shape reads is tools/tests/rust-reads.test.sh's.
+# row. The fixture crate reads docs/a.md and assets/x.json through
+# include_str!, docs/legal and tools/x through a manifest chain, and the
+# checkout root, whose `.` row matches nothing. What each source shape reads
+# is tools/tests/rust-reads.test.sh's.
 READ_WORLD="$TMP/read-world"
 mkdir -p "$READ_WORLD/crates/demo/src"
 printf '[package]\nname = "demo"\n' >"$READ_WORLD/crates/demo/Cargo.toml"
 cat >"$READ_WORLD/crates/demo/src/lib.rs" <<'RS'
 const A: &str = include_str!("../../../docs/a.md");
+const X: &str = include_str!("../../../assets/x.json");
+fn tool() { read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/x")); }
 fn legal(name: &str) -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/legal").join(name) }
 fn root() -> PathBuf { Path::new(env!("CARGO_MANIFEST_DIR")).join("../..") }
 RS
@@ -164,8 +202,22 @@ done <<<"$READ_ROWS"
 mkdir -p "$TMP/no-crates"
 check "a read set rust-reads cannot derive is refused" "exit=2 rust-reads-failed" \
   "$(SELECT_IN="$TMP/no-crates" selection trivial true docs/a.md)"
-check "a read set is derived for a trivial diff alone" "$PROSE_ROW" \
+check "and on a measured diff, whose compile lanes it gates" "exit=2 rust-reads-failed" \
   "$(SELECT_IN="$TMP/no-crates" selection micro true docs/a.md)"
+# A build input is a non-prose path under a build or include row, not a read.
+check "an included file other than prose is a build input" "$BUILD_ROW" \
+  "$(SELECT_IN="$READ_WORLD" selection micro false assets/x.json)"
+check "a file the Rust source reads at run time is no build input" "$CODE_ROW" \
+  "$(SELECT_IN="$READ_WORLD" selection micro false tools/x)"
+# The platform lanes run on a standard diff that is not documentation alone,
+# prose included; the control drops that rule.
+mkdir -p "$TMP/standard/tools"
+cp "$ROOT/tools/rust-reads" "$TMP/standard/tools/rust-reads"
+sed '/\[ "\$CHANGE_CLASS:\$DOCS_ONLY" != standard:false \] /d' "$JOB_SET" >"$TMP/standard/tools/ci-job-set"
+chmod +x "$TMP/standard/tools/ci-job-set"
+[ "$(SELECT_WITH="$TMP/standard/tools/ci-job-set" selection standard false docs/guide.md)" = "$PROSE_ROW" ] &&
+  ok "control: without the standard rule a standard prose diff stands the platform lanes down" ||
+  bad "control: without the standard rule a standard prose diff stands the platform lanes down"
 # EDIT|CLASS|PATHS|EXPECTED — a copy with that rule removed answers the row
 # other than EXPECTED.
 mkdir -p "$TMP/rule/tools"
@@ -181,8 +233,13 @@ while IFS='|' read -r edit class paths expected; do
   [ "$got" != "$expected" ] && ok "control: $edit reddens $class over $paths" ||
     bad "control: $edit reddens $class over $paths (still '$got')"
 done <<CONTROLS
-s/touches_rust_read; then\$/false; then/|trivial|docs/a.md|$PROSE_ROW
-s/"\$read"\/\*)/"\$read"*)/|trivial|docs/legalese.md|$VERIFY_ROW
+s/row=trivial-read ;;/row=trivial ;;/|trivial|docs/a.md|$PROSE_ROW
+s/index(path, read\[r\] "\/") != 1/index(path, read[r]) != 1/|trivial|docs/legalese.md|$VERIFY_ROW
+s/if (kind\[r\] != "manifest" .*) build = 1/build = 1/|micro|docs/a.md|$PROSE_ROW
+s/kind\[r\] != "manifest" .. //|micro|tools/x|$CODE_ROW
+s/if any "\$LANE_SOURCES"; then/if false; then/|standard|.github/workflows/skill-tests.yml|$ALL_ON
+s/ci-aggregate.rust-reads)\$)/ci-aggregate.rust-reads))/|standard|tools/ci-job-set.orig|$CODE_ROW
+s/any '^ui\/' .. uitree=true/uitree=true/|micro|docs/a.md|$PROSE_ROW
 CONTROLS
 
 # --- 2. The names -----------------------------------------------------------
@@ -498,7 +555,8 @@ done <<ROWS
 $VERIFY_ROW|bot-instructions
 $ALL_ON|$EVERY_GATED
 $one_skill|bot-instructions cargo-linux skill-suites-shard
-$CODE_ROW|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
+$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
+$BUILD_ROW|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
 ROWS
 [ "$job_rows" -ge 4 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
 

@@ -366,6 +366,7 @@ chmod +x "$R/fake-bin/find"
 # A crate that includes two files outside crates/: one literal on the macro's
 # own line, one on the line after it, the shape rustfmt gives a long one.
 mkdir -p "$R/crates/app/src" "$R/docs/authoring"
+printf '[package]\nname = "kendex-app"\n\n[lints]\nworkspace = true\n' >"$R/crates/app/Cargo.toml"
 printf 'const GUIDE: &str = include_str!("../../../docs/authoring/README.md");\n' >"$R/crates/app/src/mine.rs"
 printf 'const SPLIT: &str = include_str!(\n    "../../../docs/split.md"\n);\n' >"$R/crates/app/src/split.rs"
 printf '# guide\n' >"$R/docs/authoring/README.md"
@@ -439,7 +440,7 @@ crates/app/src/mine.rs|ci|main||0|skip|guard-note: cross-doc-skipped=ci|the sett
 crates/app/src/mine.rs|run|main||0|run||the setting at run keeps both for a crate source
 crates/app/src/mine.rs|never|main||1|run|guard: cross-doc-setting=never|a setting that is neither run nor ci is refused, and both still run
 -||main||0|run||a branch at its base with a clean tree touches nothing, and both run
-docs/notes.md||main|FAIL_FIND=1|1|run|guard: compiled-includes=crates|a failed include read is refused, and both still run
+docs/notes.md||main|FAIL_FIND=1|1|run|guard: rust-reads=crates|a failed include read is refused, and both still run
 docs/notes.md||none||0|run||a committed crate change with no origin/main to diff against runs both
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the cross-doc gate" >&2; exit 2; }
@@ -461,11 +462,11 @@ while IFS='|' read -r edit touch setting base extra rc calls text label; do
   fi
 done <<'ROWS'
 s/^  rust_input=0$/  rust_input=1/|docs/notes.md||main||0|run||with the touched-set gate removed a prose file runs both
-s/if ! includes=\$(compiled_includes)/if ! includes=$(true)/|docs/authoring/README.md||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the include derivation emptied an included file skips both
+s/^    includes=\$(compiled_includes)/    includes=$(true)/|docs/authoring/README.md||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the include derivation emptied an included file skips both
 s/if \[ "\$cross_doc" = ci \]; then/if false; then/|crates/app/src/mine.rs|ci|main||0|run||with the ci branch removed the setting at ci runs both
 s/say cross-doc-setting "\$cross_doc"; //|crates/app/src/mine.rs|never|main||0|run||with the refusal removed an unknown setting passes
 /\[ -n "\$touched" \]/d|-||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the empty-set rule removed a branch that touches nothing skips both
-/say compiled-includes crates/{n;d;}|docs/notes.md||main|FAIL_FIND=1|1|skip|guard: compiled-includes=crates|with the failed read left undecided a prose file skips both
+/^  workspace_every=1$/d|docs/notes.md||main|FAIL_FIND=1|1|skip|guard: rust-reads=crates|with the failed read left undecided a prose file skips both
 /\[ "\$base_resolved" -eq 1 \]/d|docs/notes.md||none||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the base rule removed a committed crate change with no origin/main skips both
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the cross-doc gate controls" >&2; exit 2; }
@@ -705,11 +706,15 @@ run_lanes() { # CLASS DOCS PATH... — guard --full with PATHs touched and hande
 # Path lists are blank-separated and split unquoted on purpose. The crate
 # path is the Rust input the cross-target checks wait for.
 CODE="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh crates/core/src/lib.rs"
+# A skill and a tool, the diff no build input and no ui/ path is in.
+SKILL_TOOL="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh tools/demo-tool.sh"
 ALL="suites parse lint apple windows test ui"
 # class|docs verdict|changed paths|the lanes that run
 LANE_ROWS=(
   "||$CODE|$ALL"
-  "standard|false|$CODE|$ALL"
+  "standard|false|$CODE ui/app.ts|$ALL"
+  "standard|false|$CODE|suites parse lint apple windows test"
+  "standard|false|$SKILL_TOOL|suites parse test"
   "standard|true|docs/guide.md|parse test"
   "render|false|$CODE|"
   "trivial|true|$CODE|"
@@ -730,6 +735,18 @@ run_lanes stale false $CODE
 [ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: validate-class=stale"* ]] && [ "$(lanes_ran)" = "" ] \
   && ok "a class ci-job-set has no selection for is refused before any lane runs" \
   || bad "a class ci-job-set has no selection for is refused before any lane runs" "rc=$RC out=$OUT"
+# The runner's class fallback, an empty paths file, runs every lane, green.
+: >"$TMP/empty-paths"
+HANDED_PATHS="$TMP/empty-paths" run_lanes standard false $SKILL_TOOL
+[ "$RC" -eq 0 ] && [[ "$OUT" == *"guard-note: lane-selection=class-fallback"* ]] && [ "$(lanes_ran)" = "suites parse lint test ui" ] \
+  && ok "the runner's class fallback, an empty paths file, runs every lane and passes" \
+  || bad "the runner's class fallback, an empty paths file, runs every lane and passes" "rc=$RC got=$(lanes_ran) out=$OUT"
+lane_guard '/^  elif \[ -z "\$selected_paths" \]; then$/,/^    note lane-selection class-fallback$/d'
+HANDED_PATHS="$TMP/empty-paths" run_lanes standard false $SKILL_TOOL
+[ "$RC" -ne 0 ] \
+  && ok "control: with the fallback unread the empty paths file reds the run" \
+  || bad "control: with the fallback unread the empty paths file reds the run" "rc=$RC out=$OUT"
+lane_guard
 # A narrow class whose paths file cannot be read selects nothing: every lane
 # runs and the run is red, never a stand-down on no paths.
 HANDED_PATHS="$TMP/absent-paths" run_lanes micro false $CODE
@@ -738,11 +755,19 @@ HANDED_PATHS="$TMP/absent-paths" run_lanes micro false $CODE
   || bad "an unreadable paths file is a finding and every lane runs" "rc=$RC got=$(lanes_ran) out=$OUT"
 # The issue's inverse: a guard that reads no class runs the whole battery on
 # the trivial row.
-lane_guard 's/"$validate_class:$validate_docs_only" != standard:false/standard:false != standard:false/'
+lane_guard 's/\[ "\$MODE" = full \] \&\& \[ -n "\$validate_class" \]; then/[ "$MODE" = full ] \&\& false; then/'
 run_lanes trivial true $CODE
 [ "$(lanes_ran)" = "$ALL" ] \
   && ok "control: with the class unread the trivial row runs every lane" \
   || bad "control: with the class unread the trivial row runs every lane" "rc=$RC got=$(lanes_ran)"
+# A guard that asks the lane table for every class but standard, as it once
+# did, runs every lane on the skill-and-tool row CI narrows.
+lane_guard 's/\[ "\$MODE" = full \] \&\& \[ -n "\$validate_class" \]; then/[ "$MODE" = full ] \&\& [ "$validate_class" != standard ]; then/'
+# The cross targets wait for a Rust input, which this row has none of.
+run_lanes standard false $SKILL_TOOL
+[ "$(lanes_ran)" = "suites parse lint test ui" ] \
+  && ok "control: with standard read as every lane the skill-and-tool row runs every lane" \
+  || bad "control: with standard read as every lane the skill-and-tool row runs every lane" "rc=$RC got=$(lanes_ran)"
 # A suite a lane runs inherits none of the selection: the outer run's class
 # would otherwise choose the lanes of every guard that suite starts, the way
 # this file's own rows ran under a prose-only micro selection. The touched
@@ -772,6 +797,24 @@ inherited_row
 [[ "$OUT" == *"inner=micro:false:$PATHS_FILE"* ]] \
   && ok "control: with the selection left exported the suite inherits it" \
   || bad "control: with the selection left exported the suite inherits it" "rc=$RC out=$OUT"
+# Lanes come from the output file, not stderr, where the stub selects lint.
+cp "$LANE_TOOLS/ci-job-set" "$TMP/ci-job-set.real"
+printf '%s\n' '#!/usr/bin/env bash' \
+  'rows="shell_shards=false macos_legs=false ui=false bot_instructions=false cargo_linux=false' \
+  '  cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false"' \
+  'printf "%s\n" $rows >>"$GITHUB_OUTPUT"; printf "%s\n" $rows cargo_lint=true >&2' >"$LANE_TOOLS/ci-job-set"
+chmod +x "$LANE_TOOLS/ci-job-set"
+lane_guard
+run_lanes micro false docs/guide.md
+[ "$RC" -eq 0 ] && [ "$(lanes_ran)" = "" ] \
+  && ok "the lanes are read from the output file alone" \
+  || bad "the lanes are read from the output file alone" "rc=$RC got=$(lanes_ran) out=$OUT"
+lane_guard 's/lanes="\$selected"/lanes="$selection"/'
+run_lanes micro false docs/guide.md
+[ "$(lanes_ran)" = "lint" ] \
+  && ok "control: with the lanes read from both streams stderr selects the lint lane" \
+  || bad "control: with the lanes read from both streams stderr selects the lint lane" "rc=$RC got=$(lanes_ran)"
+cp "$TMP/ci-job-set.real" "$LANE_TOOLS/ci-job-set"
 lane_guard 's/lane_on cargo_linux; then/lane_on cargo_linx; then/'
 run_lanes micro false $CODE
 [ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: lane-unknown=cargo_linx"* ]] \

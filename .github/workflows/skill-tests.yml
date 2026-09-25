@@ -5,24 +5,19 @@ name: Skill Tests
 # gating here is what lets consuming repos drop tracked vendoring: quality is
 # proven at the source, not re-proven per consumer.
 #
-# WHAT RUNS IS KEYED TO THE CHANGE CLASS, on pull_request and merge_group
-# alike, so the second pass shrinks with the first. The `changes` job below
-# reads the class once through the change-class composite action, `tools/
-# ci-job-set` turns it into one `<lane>=true|false` line per gated lane, and
-# every `if:` in this file reads one of those lines. A `standard` diff that
-# is not documentation alone runs the full battery — every shard, the
-# aggregators over them, the ui lane and every cargo lane — so a green PR has
-# proven what the queue re-proves and an ejection — dequeue, fix, requeue,
-# pay the merge latency again — is rare instead of routine; one of
-# documentation alone takes the narrower selection below. Of the gated jobs,
-# a `render` or `trivial` diff runs the bot-instructions job alone, which
-# also carries the document byte
-# ceilings and the work-marker scan. Every other diff, a `standard` one of documentation alone
-# included, and a `trivial` one changing a path tools/rust-reads names, runs the shell shards, the Linux cargo lane and that job; the
-# macOS, lint and Windows lanes stand down only where every changed path is
-# prose, and the ui lane only where no path is under ui/. `tools/ci-job-set`
-# states that invariant. The aggregators still report and accept only the
-# skips the class authorized. The push to main
+# WHAT RUNS IS KEYED TO THE CHANGE CLASS AND THE PATHS BEHIND IT, on
+# pull_request and merge_group alike, so the second pass shrinks with the
+# first and runs what the first proved. The `changes` job below reads the
+# class once through the change-class composite action, `tools/ci-job-set`
+# turns it and the changed paths into one `<lane>=true|false` line per gated
+# lane, and every `if:` in this file reads one of those lines. Of the gated
+# jobs, a `render` or `trivial` diff runs the bot-instructions job alone,
+# which also carries the document byte ceilings and the work-marker scan.
+# Every other diff, and a `trivial` one changing a path tools/rust-reads
+# names, runs the shell shards, that job and each other lane as
+# `tools/ci-job-set` selects it; the invariant comment there is the one
+# statement of what each lane runs. The aggregators still report and accept
+# only the skips the selection authorized. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
 # so it runs only the compile steps: each cargo lane builds its targets with
@@ -125,6 +120,7 @@ jobs:
       cargo_macos: ${{ steps.select.outputs.cargo_macos }}
       cargo_lint: ${{ steps.select.outputs.cargo_lint }}
       cargo_windows: ${{ steps.select.outputs.cargo_windows }}
+      cargo_windows_check: ${{ steps.select.outputs.cargo_windows_check }}
     # THE PINNED BUILD. The tag is a published main build, immutable, and
     # both the installer and the binary are read at that one revision. It is
     # one part of this workflow's trust boundary: the classifier and the orch
@@ -240,8 +236,7 @@ jobs:
       # below reads one of these lines rather than re-deriving the selection
       # from the class and the paths, so there is one place to read what a
       # class runs and one place to change it. It runs in the workspace root,
-      # the pull request's tree, whose crates/ tools/rust-reads reads for a
-      # `trivial` diff.
+      # the pull request's tree, whose crates/ tools/rust-reads reads.
       - id: select
         env:
           CHANGE_CLASS: ${{ steps.classify.outputs.change_class }}
@@ -1593,12 +1588,13 @@ jobs:
           CARGO_LINUX: ${{ needs.changes.outputs.cargo_linux }}
           CARGO_LINT: ${{ needs.changes.outputs.cargo_lint }}
           CARGO_WINDOWS: ${{ needs.changes.outputs.cargo_windows }}
+          CARGO_WINDOWS_CHECK: ${{ needs.changes.outputs.cargo_windows_check }}
         run: |
           echo "$RESULTS"
           tools/ci-aggregate --results "$RESULTS" --classifier changes \
             --lane "$CARGO_LINUX:cargo-linux" \
             --lane "$CARGO_LINT:cargo-lint" \
-            --lane "$CARGO_WINDOWS:cargo-check-windows" \
+            --lane "$CARGO_WINDOWS_CHECK:cargo-check-windows" \
             --lane "$CARGO_WINDOWS:cargo-tests-windows"
 
   cargo-tests-macos:
@@ -1630,7 +1626,8 @@ jobs:
   cargo-check-windows:
     name: Windows cargo (core and CLI targets compile)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows == 'true') }}
+    # What selects this lane, and why: tools/ci-job-set, cargo_windows_check.
+    if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows_check == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

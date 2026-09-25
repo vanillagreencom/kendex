@@ -56,6 +56,8 @@ printf '%s\n' \
   '    let tmp = tempfile::tempdir().unwrap();' \
   '    drop(tmp);' \
   '}' >"$R/crates/core/tests/existing_temp.rs"
+# A crate tools/rust-reads places, which every guard run reads.
+printf '[package]\nname = "kendex-core"\n\n[lints]\nworkspace = true\n' >"$R/crates/core/Cargo.toml"
 # The bash32-lint lane runs on every pass and resolves its exception entries
 # and its hand-named roster entries against the repository it runs in, so the
 # fixture derives each rather than copying a list that goes stale with it. An
