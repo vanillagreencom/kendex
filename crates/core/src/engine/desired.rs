@@ -329,12 +329,28 @@ pub enum Withholding {
     /// of it this pass (`expansion::Offer::Silent`), and the manifest alone
     /// does not refuse it. Whether that hook would run cannot be told, so
     /// nothing is written and nothing is taken: an installed copy keeps its
-    /// record, as an orphan whose declaration's source is unreachable does.
+    /// record, as an orphan whose declaration's source is unreachable does,
+    /// and a companion this hook alone derives is not orphaned by it.
     Unanswered,
     /// A hook it requires will not run there. A wrapper beside no judge
     /// refuses every call it guards, so an installed copy comes out
     /// whatever the plan's options, the person's edits with it.
     Requires,
+}
+
+impl Withholding {
+    /// Whether a copy installed under this withholding comes out — taken
+    /// by the withheld pass, or by the orphan pass where the copy is an
+    /// orphan — rather than staying, record and all. The one answer for
+    /// the pass that disposes of the copy (`plan_pass::plan_withheld`) and
+    /// for the walk, which counts a requirer as gone from a tool only
+    /// where its withholding takes its copy (`deps::orphaned`).
+    pub fn takes(self) -> bool {
+        match self {
+            Withholding::Orphaned | Withholding::Requires => true,
+            Withholding::Unanswered => false,
+        }
+    }
 }
 
 impl DesiredState {

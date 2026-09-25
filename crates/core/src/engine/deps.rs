@@ -15,7 +15,7 @@ use crate::source_read::SealedSource;
 
 use super::ItemWarning;
 use super::desired::{DesiredState, Withheld, Withholding};
-use super::desired_kinds::{NotWritten, not_written};
+use super::desired_kinds::{NotWritten, manifest_refusal, not_written};
 use super::expansion::{CatalogKey, Catalogs, Expansion, Offer, OpenCatalog};
 
 /// One item's declared dependencies. Names are as the author wrote them.
@@ -390,10 +390,11 @@ fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion
     }
 }
 
-/// Whether this hook is wanted on `harness` only by hooks withheld from it:
-/// every reason for its installation there is a requirer that is withheld,
-/// and none is the person asking for it or a set carrying it. The
-/// requirers found are added to `requirers`, for the finding.
+/// Whether this hook is wanted on `harness` only by hooks gone from it:
+/// every reason for its installation there is a requirer whose withholding
+/// takes its copy ([`Withholding::takes`]), and none is the person asking
+/// for it or a set carrying it. The requirers found are added to
+/// `requirers`, for the finding.
 fn orphaned(
     wanted: &BTreeMap<Node, Wanted>,
     kind: ItemKind,
@@ -411,7 +412,12 @@ fn orphaned(
         Reason::RequiredBy { by } => {
             let theirs = wanted.get(&(by.kind, by.name.clone()));
             let held = by.kind == kind
-                && theirs.is_some_and(|theirs| theirs.withheld.contains_key(&by.harness));
+                && theirs.is_some_and(|theirs| {
+                    theirs
+                        .withheld
+                        .get(&by.harness)
+                        .is_some_and(|because| because.takes())
+                });
             if held {
                 withheld_by.insert(by.name.clone());
             }
@@ -746,15 +752,12 @@ fn derive(
                 Withholding::Requires
             }
             Offer::Silent => silent(
-                env,
-                scope,
                 kind,
                 &dep,
                 parent,
                 harnesses,
                 wanted.armed,
                 manifest,
-                state,
                 source,
                 found,
             ),
@@ -767,32 +770,24 @@ fn derive(
 
 /// A companion whose catalog says nothing of it this pass. What the
 /// manifest alone says holds without a catalog: kept removed or switched
-/// off, the companion is missing, as a finding on the parent in the words
-/// of the one answer (`desired_kinds::not_written`, asked with no header,
-/// which answers those two before anything a catalog decides), except
-/// that a parent switched off itself misses nothing in a companion
-/// switched off too. Otherwise nothing says whether the companion would
-/// run: the finding names the catalog's silence, and the parent is
-/// withheld for it and nothing of it taken.
+/// off (`desired_kinds::manifest_refusal`, the answers the one answer
+/// gives before anything a catalog decides), the companion is missing, as
+/// a finding on the parent, except that a parent switched off itself
+/// misses nothing in a companion switched off too. Otherwise nothing says
+/// whether the companion would run: the finding names the catalog's
+/// silence, and the parent is withheld for it and nothing of it taken.
 #[allow(clippy::too_many_arguments)]
 fn silent(
-    env: &Env,
-    scope: &Scope,
     kind: ItemKind,
     dep: &str,
     parent: &str,
     harnesses: &[HarnessId],
     armed: bool,
     manifest: &Manifest,
-    state: &DesiredState,
     source: &str,
     found: &mut Vec<ItemWarning>,
 ) -> Withholding {
-    let refused = harnesses
-        .first()
-        .and_then(|harness| not_written(env, scope, manifest, state, kind, dep, Ok(None), *harness))
-        .filter(|reason| matches!(reason, NotWritten::KeptRemoved | NotWritten::SwitchedOff));
-    match refused {
+    match manifest_refusal(manifest, kind, dep) {
         Some(reason) => {
             let quiet = reason == NotWritten::SwitchedOff && !armed;
             if !quiet {

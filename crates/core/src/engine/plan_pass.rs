@@ -294,18 +294,19 @@ fn plan_withheld(
             new_lock.entries.insert(key, entry.clone());
             continue;
         }
-        match withheld.because {
-            Withholding::Orphaned => {}
-            Withholding::Unanswered => {
-                decided.insert(key.clone());
-                new_lock.entries.insert(key, entry.clone());
-            }
-            Withholding::Requires => {
-                decided.insert(key);
-                drift.push(row(DriftState::Orphaned, WITHHELD.into()));
-                guard.extend(ops, removal::removal_ops(env, scope, entry, config_edits)?);
-            }
+        if !withheld.because.takes() {
+            decided.insert(key.clone());
+            new_lock.entries.insert(key, entry.clone());
+            continue;
         }
+        // Of the reasons that take the copy, an orphan's is the orphan
+        // pass's to take under its options; the rest are this pass's.
+        if withheld.because == Withholding::Orphaned {
+            continue;
+        }
+        decided.insert(key);
+        drift.push(row(DriftState::Orphaned, WITHHELD.into()));
+        guard.extend(ops, removal::removal_ops(env, scope, entry, config_edits)?);
     }
     Ok(decided)
 }

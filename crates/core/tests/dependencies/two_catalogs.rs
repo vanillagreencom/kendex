@@ -6,14 +6,23 @@
 //! copy of the judge.
 
 use super::hooks::{
-    DELIVER, HALT, JUDGE, LATE_JUDGE, drift_details, findings_on, hook_fixture, hook_on_disk,
-    messages, registered,
+    BOSS, DELIVER, EXTRA, HALT, JUDGE, LATE_JUDGE, drift_details, findings_on, hook_fixture,
+    hook_on_disk, messages, registered,
 };
 use super::*;
 
 use kendex_core::apply::Op;
 use kendex_core::engine::DriftState;
 use kendex_core::source::declared_path_identity;
+
+/// A hook above the wrapper: it requires deliver and nothing requires it.
+const TOP: &str = "#!/usr/bin/env bash\n# ---\n# name: top\n# event: PreToolUse\n# description: run before a tool call with deliver\n# requires: [deliver]\n# ---\nexit 0\n";
+/// The boss's narrow companion as the other catalog offers it, with no
+/// harnesses line, so nothing but its catalog decides where it runs.
+const NARROW: &str = "#!/usr/bin/env bash\n# ---\n# name: narrow\n# event: PreToolUse\n# description: run before a tool call\n# ---\nexit 0\n";
+/// A control file that will not parse: the catalog opens and hides its
+/// content.
+const UNPARSABLE: &str = "is_source_catalog = [\n";
 
 /// The other catalog's judge: on an event Codex never fires, and needing
 /// nothing back, so the question is about the judge alone.
@@ -231,51 +240,67 @@ fn a_companion_whose_catalog_will_not_open_keeps_the_wrapper_installed() {
 
 /// The judge declared from a catalog that never opened — its directory
 /// gone before the first apply. The plan cannot tell whether the judge
-/// would run, so it writes the wrapper nowhere: a fresh machine gets
-/// neither hook, and the finding on the wrapper says why.
+/// would run, so it writes the wrapper nowhere, and the hook above the
+/// wrapper nowhere either, since a wrapper not written is a wrapper it
+/// lacks: a fresh machine gets none of the three, and the findings say
+/// why.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_companion_whose_catalog_never_opened_withholds_a_fresh_install() {
-    let (f, other) =
-        two_catalogs("[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"other\"\n");
+    let (f, other) = two_catalogs(
+        "[hooks.top]\nsource = \"cat\"\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"other\"\n",
+    );
+    fs::write(f.source.join("hooks/top.sh"), TOP).unwrap();
     fs::remove_dir_all(&other).unwrap();
 
     let report = audit(&f.env, &f.scope).unwrap();
-    let found: Vec<&str> = findings_on(&report, "deliver")
+    let found: Vec<(&str, &str)> = report
+        .warnings
         .iter()
-        .map(|w| w.message.as_str())
+        .map(|w| (w.name.as_str(), w.message.as_str()))
         .collect();
     assert_eq!(
         found,
         [
-            "deliver requires judge, which is set to come from the catalog 'other', and that catalog cannot be read"
+            (
+                "deliver",
+                "deliver requires judge, which is set to come from the catalog 'other', and that catalog cannot be read"
+            ),
+            (
+                "top",
+                "missing required dependency: top requires deliver, which is withheld from Claude Code and Codex"
+            ),
         ],
         "{:?}",
         messages(&report)
     );
     apply::execute(&f.env, &report.plan).unwrap();
     for harness in [HarnessId::Claude, HarnessId::Codex] {
-        assert_eq!(
-            landed(&f, "deliver", harness),
-            (false, false),
-            "{harness:?}"
-        );
-        assert_eq!(landed(&f, "judge", harness), (false, false), "{harness:?}");
+        for name in ["top", "deliver", "judge"] {
+            assert_eq!(
+                landed(&f, name, harness),
+                (false, false),
+                "{name} on {harness:?}"
+            );
+        }
     }
 }
 
 /// The judge's catalog opens but hides its content — its own kendex.toml
-/// will not parse — after both hooks were installed. The same silence as a
-/// catalog that will not open: the wrapper keeps its finding and its
-/// installed copy on every tool, and so does the judge.
+/// will not parse — after the hooks were installed. The same silence as a
+/// catalog that will not open: the wrapper keeps its finding, its
+/// installed copy and its record on every tool, and so do the judge and
+/// the hook above the wrapper.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_companion_whose_catalog_hides_its_content_keeps_the_wrapper_installed() {
-    let (f, other) =
-        two_catalogs("[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"other\"\n");
+    let (f, other) = two_catalogs(
+        "[hooks.top]\nsource = \"cat\"\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"other\"\n",
+    );
+    fs::write(f.source.join("hooks/top.sh"), TOP).unwrap();
     apply_now(&f);
     assert_eq!(landed(&f, "deliver", HarnessId::Codex), (true, true));
-    fs::write(other.join("kendex.toml"), "is_source_catalog = [\n").unwrap();
+    fs::write(other.join("kendex.toml"), UNPARSABLE).unwrap();
 
     let report = plan_apply(
         &f.env,
@@ -286,47 +311,196 @@ fn a_companion_whose_catalog_hides_its_content_keeps_the_wrapper_installed() {
         },
     )
     .unwrap();
+    let found: Vec<(&str, &str)> = report
+        .warnings
+        .iter()
+        .map(|w| (w.name.as_str(), w.message.as_str()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (
+                "deliver",
+                "deliver requires judge, which is set to come from the catalog 'other', and that catalog cannot be read"
+            ),
+            (
+                "top",
+                "missing required dependency: top requires deliver, which is withheld from Claude Code and Codex"
+            ),
+        ],
+        "{:?}",
+        messages(&report)
+    );
+    assert_eq!(report.drift, Vec::new(), "{:?}", drift_details(&report));
+    assert_eq!(trash_ops(&report), Vec::<&PathBuf>::new());
+    for harness in [HarnessId::Claude, HarnessId::Codex] {
+        for name in ["top", "deliver", "judge"] {
+            let key = format!("hook:{name}:{}", harness.name());
+            assert!(
+                report.record.entries.contains_key(&key),
+                "{key} lost its record"
+            );
+        }
+    }
+    apply::execute(&f.env, &report.plan).unwrap();
+    for harness in [HarnessId::Claude, HarnessId::Codex] {
+        for name in ["top", "deliver", "judge"] {
+            assert_eq!(
+                landed(&f, name, harness),
+                (true, true),
+                "{name} on {harness:?}"
+            );
+        }
+    }
+}
+
+/// Every hook file a plan moves to the trash.
+fn trash_ops(report: &kendex_core::engine::EngineReport) -> Vec<&PathBuf> {
+    report
+        .plan
+        .ops
+        .iter()
+        .filter_map(|op| match &op.op {
+            Op::Trash { path, .. } if path.extension().is_some_and(|ext| ext == "sh") => Some(path),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The judge from the silent catalog switched off in kendex.toml after the
+/// hooks were installed. What the manifest says holds without a catalog:
+/// the judge will not run, so the wrapper is withheld for a companion it
+/// lacks, its finding names the switch, and its installed copy comes out.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_manifest_refusal_holds_when_the_companion_catalog_is_silent() {
+    let (f, other) =
+        two_catalogs("[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"other\"\n");
+    apply_now(&f);
+    assert_eq!(landed(&f, "deliver", HarnessId::Codex), (true, true));
+    fs::write(other.join("kendex.toml"), UNPARSABLE).unwrap();
+    declare_two(
+        &f,
+        &other,
+        "[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"other\"\nenabled = false\n",
+    );
+
+    let report = audit(&f.env, &f.scope).unwrap();
     let found: Vec<&str> = findings_on(&report, "deliver")
         .iter()
         .map(|w| w.message.as_str())
         .collect();
     assert_eq!(
         found,
-        [
-            "deliver requires judge, which is set to come from the catalog 'other', and that catalog cannot be read"
-        ],
+        ["missing required dependency: deliver requires judge, which is switched off"],
         "{:?}",
         messages(&report)
     );
     let rows: Vec<(DriftState, &str)> = report
         .drift
         .iter()
-        .filter(|row| row.name == "deliver")
+        .filter(|row| row.name == "deliver" && row.harness == HarnessId::Codex)
         .map(|row| (row.state, row.detail.as_str()))
         .collect();
-    assert_eq!(rows, Vec::new(), "{:?}", drift_details(&report));
-    let trashed: Vec<&PathBuf> = report
-        .plan
-        .ops
-        .iter()
-        .filter_map(|op| match &op.op {
-            Op::Trash { path, .. }
-                if path.ends_with("hooks/deliver.sh") || path.ends_with("hooks/judge.sh") =>
-            {
-                Some(path)
-            }
-            _ => None,
-        })
-        .collect();
     assert_eq!(
-        trashed,
-        Vec::<&PathBuf>::new(),
-        "an installed hook is trashed: {:?}",
+        rows,
+        [(
+            DriftState::Orphaned,
+            "withheld: a hook it requires will not run here — will be removed"
+        )],
+        "{:?}",
         drift_details(&report)
     );
     apply::execute(&f.env, &report.plan).unwrap();
-    for harness in [HarnessId::Claude, HarnessId::Codex] {
-        assert_eq!(landed(&f, "deliver", harness), (true, true), "{harness:?}");
-        assert_eq!(landed(&f, "judge", harness), (true, true), "{harness:?}");
+    assert_eq!(landed(&f, "deliver", HarnessId::Codex), (false, false));
+}
+
+/// A hook with one companion from the other catalog and one from its own,
+/// installed, and then the other catalog falls silent. The hook is
+/// withheld for what cannot be told and keeps its copy; the companion its
+/// own catalog offers is not orphaned by that, since a withholding that
+/// takes nothing leaves nothing behind, and stays installed under
+/// `apply`'s options. Where the own companion goes missing as well, what
+/// is known outranks what is not: the hook lacks a companion, and its copy
+/// comes out.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_silent_companion_catalog_takes_nothing_and_yields_to_a_missing_one() {
+    /// Whether the hook's own catalog still offers `extra`; the rows the
+    /// plan leaves on the hook; and whether the hook and `extra` stay on
+    /// Codex.
+    type Row = (
+        bool,
+        &'static [(DriftState, &'static str)],
+        (bool, bool),
+        (bool, bool),
+    );
+    let rows: [Row; 2] = [
+        (true, &[], (true, true), (true, true)),
+        (
+            false,
+            &[(
+                DriftState::Orphaned,
+                "withheld: a hook it requires will not run here — will be removed",
+            )],
+            (false, false),
+            (false, false),
+        ),
+    ];
+    for (extra_offered, expected, boss, extra) in rows {
+        let (f, other) =
+            two_catalogs("[hooks.boss]\nsource = \"cat\"\n\n[hooks.narrow]\nsource = \"other\"\n");
+        fs::write(f.source.join("hooks/boss.sh"), BOSS).unwrap();
+        fs::write(f.source.join("hooks/extra.sh"), EXTRA).unwrap();
+        // Both catalogs carry narrow, as both carry the judge above: the
+        // hook's own copy is the one the plan does not write.
+        fs::write(f.source.join("hooks/narrow.sh"), NARROW).unwrap();
+        fs::write(other.join("hooks/narrow.sh"), NARROW).unwrap();
+        apply_now(&f);
+        for name in ["boss", "narrow", "extra"] {
+            assert_eq!(landed(&f, name, HarnessId::Codex), (true, true), "{name}");
+        }
+        fs::write(other.join("kendex.toml"), UNPARSABLE).unwrap();
+        if !extra_offered {
+            fs::remove_file(f.source.join("hooks/extra.sh")).unwrap();
+        }
+
+        let report = plan_apply(
+            &f.env,
+            &f.scope,
+            &PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            },
+        )
+        .unwrap();
+        let rows: Vec<(DriftState, &str)> = report
+            .drift
+            .iter()
+            .filter(|row| row.name == "boss" && row.harness == HarnessId::Codex)
+            .map(|row| (row.state, row.detail.as_str()))
+            .collect();
+        assert_eq!(
+            rows,
+            expected,
+            "{extra_offered}: {:?}",
+            drift_details(&report)
+        );
+        apply::execute(&f.env, &report.plan).unwrap();
+        assert_eq!(
+            landed(&f, "boss", HarnessId::Codex),
+            boss,
+            "{extra_offered}: boss"
+        );
+        assert_eq!(
+            landed(&f, "extra", HarnessId::Codex),
+            extra,
+            "{extra_offered}: extra"
+        );
+        assert_eq!(
+            landed(&f, "narrow", HarnessId::Codex),
+            (true, true),
+            "{extra_offered}: narrow"
+        );
     }
 }

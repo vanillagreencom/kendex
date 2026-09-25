@@ -67,8 +67,9 @@ pub(super) fn declared(
 /// - declared for other tools: the manifest's `harnesses` on its
 ///   declaration leave the tool out (`expansion::target_harnesses`);
 /// - withheld: a hook it runs with will not run there — one it requires,
-///   or every requirer a derived companion exists for
-///   (`DesiredState::withheld`, spread by `deps::withhold_requirers`);
+///   every requirer a derived companion exists for, or a companion whose
+///   catalog does not answer (`DesiredState::withheld`, spread by
+///   `deps::withhold_requirers`);
 /// - its own harnesses line leaves the tool out (`HookSpec::applies_to`);
 /// - undeliverable: `hook::delivery` answers `NotInstallable`, which is an
 ///   event the tool never fires (`codex_event`, `pi_listener`, the Gemini,
@@ -86,9 +87,9 @@ pub(super) fn declared(
 /// decided before the question is asked, by `find_item` for the planner
 /// and `deps::resolve` and `deps::companion` for the walk, and a source
 /// that is pending, disabled or unreadable, or whose own manifest hides
-/// its content, stops the requirer with the companion where both come
-/// from it, and withholds the requirer (`Withholding::Unanswered`) where
-/// the companion alone does. The question is asked about the declaration
+/// its content and the companion is not found, stops the requirer with
+/// the companion where both come from it, and withholds the requirer
+/// (`Withholding::Unanswered`) where the companion alone does. The question is asked about the declaration
 /// the plan writes, the header being that declaration's catalog's, so
 /// where a manifest names the companion from another catalog than the
 /// requirer's, the walk reads the copy the planner will write and never
@@ -125,13 +126,10 @@ pub(super) fn not_written(
     header: std::result::Result<Option<&HookSpec>, &str>,
     harness: HarnessId,
 ) -> Option<NotWritten> {
-    if manifest.is_held_back(kind, name) {
-        return Some(NotWritten::KeptRemoved);
+    if let Some(refused) = manifest_refusal(manifest, kind, name) {
+        return Some(refused);
     }
     let declared = manifest.declared(kind).get(name);
-    if declared.is_some_and(|decl| !decl.enabled) {
-        return Some(NotWritten::SwitchedOff);
-    }
     let header = match header {
         Ok(header) => header,
         Err(problem) => return Some(NotWritten::UnreadableHeader(problem.to_owned())),
@@ -162,6 +160,25 @@ pub(super) fn not_written(
         return Some(NotWritten::RevConflict);
     }
     None
+}
+
+/// The two answers of [`not_written`] the manifest gives alone, before any
+/// tool or catalog is consulted: kept removed, and switched off. Asked on
+/// their own for a companion whose catalog says nothing of it
+/// (`deps::silent`), where they are all that can be known.
+pub(super) fn manifest_refusal(
+    manifest: &Manifest,
+    kind: ItemKind,
+    name: &str,
+) -> Option<NotWritten> {
+    if manifest.is_held_back(kind, name) {
+        return Some(NotWritten::KeptRemoved);
+    }
+    let switched_off = manifest
+        .declared(kind)
+        .get(name)
+        .is_some_and(|decl| !decl.enabled);
+    switched_off.then_some(NotWritten::SwitchedOff)
 }
 
 pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()> {

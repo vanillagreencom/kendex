@@ -35,9 +35,9 @@ const LATE_DELIVER: &str = "#!/usr/bin/env bash\n# ---\n# name: deliver\n# event
 /// A hook requiring two companions that require nothing back: one with a
 /// harnesses line of its own that leaves Codex out, one with none. The
 /// one-way edges, where nothing spreads upward from the companions.
-const BOSS: &str = "#!/usr/bin/env bash\n# ---\n# name: boss\n# event: PreToolUse\n# description: run before a tool call with both companions\n# requires: [narrow, extra]\n# ---\nexit 0\n";
+pub(super) const BOSS: &str = "#!/usr/bin/env bash\n# ---\n# name: boss\n# event: PreToolUse\n# description: run before a tool call with both companions\n# requires: [narrow, extra]\n# ---\nexit 0\n";
 const NARROW: &str = "#!/usr/bin/env bash\n# ---\n# name: narrow\n# event: PreToolUse\n# description: run before a tool call on Claude Code alone\n# harnesses: [claude]\n# ---\nexit 0\n";
-const EXTRA: &str = "#!/usr/bin/env bash\n# ---\n# name: extra\n# event: PostToolUse\n# description: run after a tool call\n# ---\nexit 0\n";
+pub(super) const EXTRA: &str = "#!/usr/bin/env bash\n# ---\n# name: extra\n# event: PostToolUse\n# description: run after a tool call\n# ---\nexit 0\n";
 /// The companion with a chain of its own: it requires `mid`, which requires
 /// `last`, which requires nothing — or, once lacking, a hook the catalog
 /// does not offer.
