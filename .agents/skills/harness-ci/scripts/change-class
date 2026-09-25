@@ -183,14 +183,15 @@ answer() { # CLASS FIELDS [measured]
 }
 
 # harness-only owns the diff range for every event, its endpoint refusals, the
-# revision the base end of that range resolves to, and the generated-path
-# ownership rules the render class needs. Its changed-path and base-rev lines
-# are repeated as they stand, and the cause inside its verdict notice is
-# repeated as a note: it is the only account of why a path set is empty, where
-# it becomes this script's cause, the only account of an inventory this script
-# cannot stand on, where it becomes this script's cause too, and the only
-# account of why the render class was out of reach on a diff of generated
-# files, where the class a size earns would otherwise be the whole log.
+# revisions both ends of that range resolve to, and the generated-path
+# ownership rules the render class needs. Its changed-path, base-rev and
+# head-rev lines are repeated as they stand, and the cause inside its verdict
+# notice is repeated as a note: it is the only account of why a path set is
+# empty, where it becomes this script's cause, the only account of an
+# inventory this script cannot stand on, where it becomes this script's cause
+# too, and the only account of why the render class was out of reach on a
+# diff of generated files, where the class a size earns would otherwise be
+# the whole log.
 harness_args=(--event "$event" --head "$head" --repo "$repo")
 [ -z "$base" ] || harness_args=("${harness_args[@]}" --base "$base")
 if ! harness_verdict="$("$HARNESS_ONLY" --mode harness "${harness_args[@]}" \
