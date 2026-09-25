@@ -887,12 +887,14 @@ export type AuditView_Deserialize = {
 	 */
 	exits: RowExits[],
 	/**
-	 *  What a removal in this action did about the repository effects of
-	 *  the packages that left with it: the same lines the terminal prints,
-	 *  so the window says what ran rather than leaving a repository armed
-	 *  against scripts that are gone. Empty on a plain read and on every
-	 *  action that took no declaring package away — and left off the wire
-	 *  entirely when it is empty, which is almost every read.
+	 *  The account of the write: what a removal in this action did about
+	 *  the repository effects of the packages that left with it, and what
+	 *  the trash pass that closes every write removed, or why it stopped.
+	 *  The same lines the terminal prints, so the window says what ran
+	 *  rather than leaving a repository armed against scripts that are
+	 *  gone. Empty on a plain read and on every action that took no
+	 *  declaring package away and left the trash as it was — and left off
+	 *  the wire entirely when it is empty, which is almost every read.
 	 */
 	undone: string[],
 	/**
@@ -936,12 +938,14 @@ export type AuditView_Serialize = {
 	 */
 	exits: RowExits[],
 	/**
-	 *  What a removal in this action did about the repository effects of
-	 *  the packages that left with it: the same lines the terminal prints,
-	 *  so the window says what ran rather than leaving a repository armed
-	 *  against scripts that are gone. Empty on a plain read and on every
-	 *  action that took no declaring package away — and left off the wire
-	 *  entirely when it is empty, which is almost every read.
+	 *  The account of the write: what a removal in this action did about
+	 *  the repository effects of the packages that left with it, and what
+	 *  the trash pass that closes every write removed, or why it stopped.
+	 *  The same lines the terminal prints, so the window says what ran
+	 *  rather than leaving a repository armed against scripts that are
+	 *  gone. Empty on a plain read and on every action that took no
+	 *  declaring package away and left the trash as it was — and left off
+	 *  the wire entirely when it is empty, which is almost every read.
 	 */
 	undone?: string[],
 	/**
@@ -5099,9 +5103,10 @@ export type SubscribeOutcome_Deserialize = {
 	lead: string | null,
 	notes: string[],
 	/**
-	 *  What a package leaving with this plan had undone, if one did. Its
-	 *  own field rather than more notes, so the account a removal owes has
-	 *  one name across every command that can make one.
+	 *  What a package leaving with this plan had undone, if one did, and
+	 *  what the trash pass closing the write said. Its own field rather
+	 *  than more notes, so the account a write owes has one name across
+	 *  every command that can make one.
 	 */
 	undone: string[],
 };
@@ -5119,9 +5124,10 @@ export type SubscribeOutcome_Serialize = {
 	lead: string | null,
 	notes: string[],
 	/**
-	 *  What a package leaving with this plan had undone, if one did. Its
-	 *  own field rather than more notes, so the account a removal owes has
-	 *  one name across every command that can make one.
+	 *  What a package leaving with this plan had undone, if one did, and
+	 *  what the trash pass closing the write said. Its own field rather
+	 *  than more notes, so the account a write owes has one name across
+	 *  every command that can make one.
 	 */
 	undone?: string[],
 };

@@ -61,12 +61,14 @@ pub struct AuditView {
     /// it never works them out from the cause, which is how one surface
     /// ends up offering an action the plan rejects.
     pub exits: Vec<engine::exits::RowExits>,
-    /// What a removal in this action did about the repository effects of
-    /// the packages that left with it: the same lines the terminal prints,
-    /// so the window says what ran rather than leaving a repository armed
-    /// against scripts that are gone. Empty on a plain read and on every
-    /// action that took no declaring package away — and left off the wire
-    /// entirely when it is empty, which is almost every read.
+    /// The account of the write: what a removal in this action did about
+    /// the repository effects of the packages that left with it, and what
+    /// the trash pass that closes every write removed, or why it stopped.
+    /// The same lines the terminal prints, so the window says what ran
+    /// rather than leaving a repository armed against scripts that are
+    /// gone. Empty on a plain read and on every action that took no
+    /// declaring package away and left the trash as it was — and left off
+    /// the wire entirely when it is empty, which is almost every read.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub undone: Vec<String>,
     /// Set when this one scope couldn't be read at all — a corrupt or
@@ -164,32 +166,6 @@ pub(crate) fn settle_report(
     Ok(settled)
 }
 
-/// The pass the desktop's apply and remove close on, the mirror of the
-/// terminal's `tidy_trash`; the call sites are the list and
-/// `docs/architecture/trash.md` § Boundaries owns it. The trash is brought
-/// within its bounds (`kendex_core::trash::retain`) once the command's own
-/// writes are done, and what went is said in the view's notes, so a person
-/// who never runs `kendex trash` still learns that kendex is reclaiming. A
-/// pass that stopped is a note too, never a failure of the command: the
-/// writes are on disk, and the next of those commands retries it.
-fn tidy_trash(env: &Env, settled: &mut AuditView) {
-    let (removed, stopped) = match kendex_core::trash::retain(env) {
-        Ok(removed) => (removed, None),
-        Err(kendex_core::trash::Stopped { removed, reason }) => (removed, Some(reason)),
-    };
-    if removed > 0 {
-        settled.notes.push(format!(
-            "trash: removed {removed} older entr{}",
-            if removed == 1 { "y" } else { "ies" }
-        ));
-    }
-    if let Some(reason) = stopped {
-        settled
-            .notes
-            .push(format!("trash: older entries kept ({reason})"));
-    }
-}
-
 #[tauri::command(async)]
 #[specta::specta]
 pub fn audit_all() -> Result<Vec<AuditView>, String> {
@@ -222,9 +198,7 @@ pub fn apply_scope(env: &Env, scope: &Scope, remove_orphans: bool) -> Result<Aud
         ..PlanOptions::default()
     };
     let report = engine::plan_apply(env, scope, &options).map_err(|e| e.to_string())?;
-    let mut settled = settle_report(env, scope, &report)?;
-    tidy_trash(env, &mut settled);
-    Ok(settled)
+    settle_report(env, scope, &report)
 }
 
 #[tauri::command(async)]
@@ -322,9 +296,7 @@ pub fn toggle_item(
 pub fn remove(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<AuditView, String> {
     let report = ops::remove(env, scope, &[name.to_owned()], Some(kind), false)
         .map_err(|e| e.to_string())?;
-    let mut settled = settle_report(env, scope, &report)?;
-    tidy_trash(env, &mut settled);
-    Ok(settled)
+    settle_report(env, scope, &report)
 }
 
 #[tauri::command(async)]

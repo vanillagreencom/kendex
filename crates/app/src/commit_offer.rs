@@ -977,25 +977,33 @@ pub fn project_changes_restore_plan(
 #[tauri::command(async)]
 #[specta::specta]
 pub fn project_changes_restore(root: String, paths: Vec<String>) -> Result<RestoreResult, String> {
-    let env = env()?;
-    let scope = Scope::Project {
-        root: PathBuf::from(root),
-    };
-    let generated = generated(&env, &scope)?;
+    restore(&env()?, PathBuf::from(root), paths)
+}
+
+/// The restore itself, against the environment it is given.
+pub fn restore(env: &Env, root: PathBuf, paths: Vec<String>) -> Result<RestoreResult, String> {
+    let scope = Scope::Project { root };
+    let generated = generated(env, &scope)?;
     let chosen: BTreeSet<String> = paths.into_iter().collect();
-    Ok(
-        match commit_offer::restore(&env, &scope, &generated, &chosen) {
-            Ok(plan) => RestoreResult::Effect {
-                effect: plan.into(),
-            },
-            // What the run had already written travels with the refusal: a
-            // failure among the removals leaves every restored path on disk.
-            Err(failure) => RestoreResult::Refused {
-                refused: Refused::from(&failure.failed),
-                done: failure.done.into(),
-            },
+    let result = match commit_offer::restore(env, &scope, &generated, &chosen) {
+        Ok(plan) => RestoreResult::Effect {
+            effect: plan.into(),
         },
-    )
+        // What the run had already written travels with the refusal: a
+        // failure among the removals leaves every restored path on disk.
+        Err(failure) => RestoreResult::Refused {
+            refused: Refused::from(&failure.failed),
+            done: failure.done.into(),
+        },
+    };
+    // A restore's removals land in the trash without a plan, so the pass
+    // that closes every write closes this one here, after the removals and
+    // whether or not one of them stopped. Its lines have no channel: the
+    // answer is the paths the restore moved, which the window states as
+    // its own sentences, and the pass's outcome reaches the person from
+    // the next command that answers with an account.
+    crate::trash::tidy(env);
+    Ok(result)
 }
 
 #[tauri::command(async)]

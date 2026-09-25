@@ -1,9 +1,10 @@
-//! The pass the desktop's apply and remove close on: the trash is brought
-//! within its bounds once the command's own writes are done, what the
-//! command itself moved there stays whatever the bounds say, and a pass
-//! that stops is a note on the view rather than a failure of the command.
+//! The pass the desktop's writes close on: the trash is brought within its
+//! bounds once a command's own writes are done, what the command itself
+//! moved there stays whatever the bounds say, and a pass that stops is a
+//! line on the account rather than a failure of the command.
 #![cfg(unix)]
 
+use crate::repo_effects::fixture::git;
 use crate::test_util;
 use test_util::{rooted, source_path};
 
@@ -11,34 +12,42 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
-use kendex_app::audit::{AuditView, apply_scope, remove};
+use kendex_app::audit::{apply_scope, remove};
+use kendex_app::commit_offer::{RestoreResult, restore};
+use kendex_app::unsubscribe::unsubscribe;
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::trash::{KEEP_DAYS_VAR, KEEP_MB_VAR};
 
 const DAY: u64 = 86_400;
 
+/// The rendered skill, relative to the project.
+const RENDERED: &str = ".claude/skills/deploy/SKILL.md";
+
 struct Fixture {
     _tmp: tempfile::TempDir,
     env: Env,
     scope: Scope,
-    manifest: PathBuf,
-    catalog: PathBuf,
+    project: PathBuf,
 }
 
-/// The two desktop commands that close on the pass.
+/// Three commands that move a copy into the trash, one per call site of
+/// the pass and one more through the same site.
 #[derive(Clone, Copy, Debug)]
 enum Verb {
-    /// The Audit page's apply, with orphan removal on, over a manifest
-    /// the person has since taken the skill out of.
-    Apply,
-    /// The package page's remove.
+    /// The package page's remove: a report through the one executor.
     Remove,
+    /// The marketplace's unsubscribe without keeping the packages: a
+    /// report through the same executor, answered with its own shape.
+    Unsubscribe,
+    /// The project-changes restore of the rendered skill, which moves it
+    /// to the trash with no plan behind it.
+    Restore,
 }
 
-/// A project with skill `deploy` installed by copy from a local catalog,
-/// then the machine a fresh command gets, holding nothing of the install's
-/// own and reading these two bounds.
+/// A git project with skill `deploy` installed by copy from a local
+/// catalog and not committed, then the machine a fresh command gets,
+/// holding nothing of the install's own and reading these two bounds.
 #[allow(clippy::unwrap_used)]
 fn installed(days: &str, mb: &str) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
@@ -52,8 +61,18 @@ fn installed(days: &str, mb: &str) -> Fixture {
     )
     .unwrap();
     fs::create_dir_all(project.join(".claude")).unwrap();
-    let manifest = project.join("kendex.toml");
-    fs::write(&manifest, declaring(&catalog, true)).unwrap();
+    git(&project, &["init", "--quiet", "-b", "main"]);
+    fs::write(project.join("README.md"), "the app\n").unwrap();
+    git(&project, &["add", "."]);
+    git(&project, &["commit", "--quiet", "-m", "start"]);
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            source_path(&catalog)
+        ),
+    )
+    .unwrap();
     let scope = Scope::Project {
         root: project.clone(),
     };
@@ -67,30 +86,16 @@ fn installed(days: &str, mb: &str) -> Fixture {
             .map(|error| error.message)
             .unwrap_or_default()
     );
-    assert!(project.join(".claude/skills/deploy/SKILL.md").is_file());
+    assert!(project.join(RENDERED).is_file());
     Fixture {
         env: env
             .next_invocation()
             .with_var(KEEP_DAYS_VAR, days)
             .with_var(KEEP_MB_VAR, mb),
         scope,
-        manifest,
-        catalog,
+        project,
         _tmp: tmp,
     }
-}
-
-/// The manifest with skill `deploy` declared, or with the declaration
-/// taken out by hand.
-fn declaring(catalog: &std::path::Path, deploy: bool) -> String {
-    let declaration = match deploy {
-        true => "\n\n[skills.deploy]\nsource = \"cat\"",
-        false => "",
-    };
-    format!(
-        "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"{declaration}\n",
-        source_path(catalog)
-    )
 }
 
 /// An entry an earlier command moved into the trash `age` seconds ago
@@ -114,52 +119,75 @@ fn names(f: &Fixture) -> BTreeSet<String> {
         .collect()
 }
 
+/// Run the command and hand back the account it answered with; a restore
+/// answers with paths alone, so its account is empty.
 #[allow(clippy::unwrap_used)]
-fn run(f: &Fixture, verb: Verb) -> AuditView {
+fn run(f: &Fixture, verb: Verb) -> Vec<String> {
     match verb {
-        Verb::Apply => {
-            fs::write(&f.manifest, declaring(&f.catalog, false)).unwrap();
-            apply_scope(&f.env, &f.scope, true).unwrap()
+        Verb::Remove => {
+            remove(&f.env, &f.scope, ItemKind::Skill, "deploy")
+                .unwrap()
+                .undone
         }
-        Verb::Remove => remove(&f.env, &f.scope, ItemKind::Skill, "deploy").unwrap(),
+        Verb::Unsubscribe => {
+            unsubscribe(&f.env, &f.scope, "cat", false, false)
+                .unwrap()
+                .undone
+        }
+        Verb::Restore => {
+            let result = restore(&f.env, f.project.clone(), vec![RENDERED.to_owned()]).unwrap();
+            match result {
+                RestoreResult::Effect { effect } => {
+                    assert!(
+                        effect.removed.contains(&RENDERED.to_owned()),
+                        "the rendered skill was not taken away: {effect:?}"
+                    );
+                }
+                RestoreResult::Refused { .. } => panic!("the restore refused: {result:?}"),
+            }
+            Vec::new()
+        }
     }
 }
 
-/// Both commands close on the pass after their own writes: under a size
-/// bound of zero every entry an earlier command left goes, the tree this
-/// command moved aside stays, and the view says what went. Under a bound
-/// that is not a count the pass stops with everything intact, the command
-/// still answers, and the view says why the entries were kept. One row per
-/// command and per outcome.
+/// Every command closes on the pass after its own writes: under a size
+/// bound of zero every entry an earlier command left goes, what this
+/// command moved aside stays, and the account says what went where the
+/// command answers with one. Under a bound that is not a count the pass
+/// stops with everything intact, the command still answers, and the
+/// account says why the entries were kept. One row per command and per
+/// outcome.
 #[test]
-fn apply_and_remove_close_on_the_pass_and_say_what_it_did() {
-    /// What the row is, the command, its two bounds, the line the view
-    /// says, and whether the planted entries stay.
-    type Row<'a> = (&'a str, Verb, (&'a str, &'a str), &'a str, bool);
-    let rows: [Row; 3] = [
-        (
-            "apply",
-            Verb::Apply,
-            ("7", "0"),
-            "trash: removed 3 older entries",
-            false,
-        ),
+fn every_write_closes_on_the_pass_and_the_account_says_what_it_did() {
+    /// What the row is, the command, its two bounds, the line the account
+    /// carries where the command has one, and whether the planted entries
+    /// stay.
+    type Row<'a> = (&'a str, Verb, (&'a str, &'a str), Option<&'a str>, bool);
+    let rows: [Row; 4] = [
         (
             "remove",
             Verb::Remove,
             ("7", "0"),
-            "trash: removed 3 older entries",
+            Some("trash: removed 3 older entries"),
             false,
         ),
         (
-            "apply under a bound that is not a count",
-            Verb::Apply,
+            "unsubscribe",
+            Verb::Unsubscribe,
+            ("7", "0"),
+            Some("trash: removed 3 older entries"),
+            false,
+        ),
+        ("restore", Verb::Restore, ("7", "0"), None, false),
+        (
+            "remove under a bound that is not a count",
+            Verb::Remove,
             ("7", "lots"),
-            "trash: older entries kept (KENDEX_TRASH_KEEP_MB=\"lots\" is not a count)",
+            Some("trash: older entries kept (KENDEX_TRASH_KEEP_MB=\"lots\" is not a count)"),
             true,
         ),
     ];
-    for (what, verb, (days, mb), note, planted_stay) in rows {
+    for (what, verb, (days, mb), line, planted_stay) in rows {
         let f = installed(days, mb);
         let planted: BTreeSet<String> = [
             plant(&f, DAY, "young", 10),
@@ -169,27 +197,23 @@ fn apply_and_remove_close_on_the_pass_and_say_what_it_did() {
         .into_iter()
         .collect();
 
-        let view = run(&f, verb);
+        let account = run(&f, verb);
 
-        assert!(
-            view.error.is_none(),
-            "{what}: {}",
-            view.error.map(|error| error.message).unwrap_or_default()
-        );
-        assert!(
-            view.notes.iter().any(|line| line == note),
-            "{what}: {:?}",
-            view.notes
+        assert_eq!(
+            account.iter().find(|said| said.starts_with("trash:")),
+            line.map(str::to_owned).as_ref(),
+            "{what}: {account:?}"
         );
         let kept = names(&f);
-        let moved_aside: Vec<&String> = kept
-            .iter()
-            .filter(|name| name.ends_with("-deploy"))
-            .collect();
-        assert_eq!(
-            moved_aside.len(),
-            1,
-            "{what}: the tree this command moved aside: {kept:?}"
+        let own: BTreeSet<&String> = kept.difference(&planted).collect();
+        assert!(
+            own.iter()
+                .any(|name| name.ends_with("-deploy") || name.ends_with("-SKILL.md")),
+            "{what}: what this command moved aside is gone: {kept:?}"
+        );
+        assert!(
+            !f.project.join(RENDERED).exists(),
+            "{what}: the rendered skill is still installed"
         );
         let planted_kept: BTreeSet<&String> = kept.intersection(&planted).collect();
         match planted_stay {
