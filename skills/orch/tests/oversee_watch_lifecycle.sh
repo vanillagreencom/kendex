@@ -5,8 +5,10 @@
 # keeps of itself beside the fleet state (lib/watch-pid.sh) — the one pid a
 # stop reaches with its pass, the refusal of a second watch on one fleet, the
 # takeover of the watch a succession restarted for this pane or of one whose
-# pane is gone, and the output a restarted watch left for the next start. The
-# restart itself is oversee-succeed's, in oversee_succeed_watch.sh.
+# pane is gone, and the output a restarted watch left for the next start; and
+# the watch the launch fence starts through the orch job runner, a unit or a
+# setsid group, read, stopped and taken over part way through a lane-close.
+# The restart itself is oversee-succeed's, in oversee_succeed_watch.sh.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -30,12 +32,15 @@ trap lifecycle_cleanup EXIT
 
 # mutant NAME FILE FROM TO — a copy of the script tree whose FILE (relative to
 # scripts/) has the one line FROM replaced by TO; MUTANT is its oversee-watch.
-# Refuses unless FROM is exactly one line of the shipped file.
+# The tree copied is MUTANT_BASE where set, a mutant's own scripts directory
+# for a second edit, and the shipped one otherwise. Refuses unless FROM is
+# exactly one line of the copied file.
 mutant() { # NAME FILE FROM TO
-  local dir="$TMP_ROOT/mutant-$1" src="$REPO_ROOT/skills/orch/scripts/$2"
+  local dir="$TMP_ROOT/mutant-$1" base="${MUTANT_BASE:-$REPO_ROOT/skills/orch/scripts}"
+  local src="$base/$2"
   [[ "$(grep -cxF -- "$3" "$src")" == 1 ]] || { echo "mutant $1: the line to replace is not one line of $2" >&2; exit 1; }
   mkdir -p "$dir/orch"
-  cp -R "$REPO_ROOT/skills/orch/scripts" "$dir/orch/scripts"
+  cp -R "$base" "$dir/orch/scripts"
   ln -s "$REPO_ROOT/skills/github" "$dir/github"
   # Through the environment, never -v, which would read each backslash as an
   # escape and match nothing.
@@ -279,7 +284,7 @@ assert_eq "rc=$rc refused=$(grep -c "^oversee-watch: watch-running pid=$LOOP pan
 
 # Stopped through the record's pid, the loop ends at once and removes it.
 stop_rc=0
-watch_stop "$LOOP" || stop_rc=$?
+watch_stop "$LOOP" "$STUB_DIR/state.json" || stop_rc=$?
 wait "$LAUNCHER" 2>/dev/null || true
 assert_eq "stop=$stop_rc rc=$(cat "$STUB_DIR/loop.rc") record=$([[ -f "$STUB_DIR/oversee-watch.pid" ]] && echo left || echo removed)" \
   "stop=0 rc=143 record=removed" "a stopped loop exits 143 and removes its record" "$TMP_ROOT/e-record_loop"
@@ -293,7 +298,7 @@ mutant record_parent lib/watch-pid.sh \
 record_case record_parent_mutant "$MUTANT"
 assert_eq "read=${LOOP:+yes}|$(loop_args "$LOOP")" "read=yes|0" \
   "control: a record naming its parent names no repeat loop"
-for pid in $(pgrep -P "$LOOP" 2>/dev/null || true); do watch_stop "$pid" || true; done
+for pid in $(pgrep -P "$LOOP" 2>/dev/null || true); do watch_stop "$pid" "$STUB_DIR/state.json" || true; done
 
 mutant record_whole_argv oversee-watch \
   '    "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" "${@:1:$ARGV_BASE_COUNT}" \' \
@@ -301,7 +306,7 @@ mutant record_whole_argv oversee-watch \
 record_case record_whole_argv_mutant "$MUTANT"
 assert_contains "$(tr '\0' ' ' < "$STUB_DIR/oversee-watch.argv")" "-- --model old --verbose" \
   "control: recording every word keeps the overseer's flags a restart must replace"
-watch_stop "$LOOP" || true
+watch_stop "$LOOP" "$STUB_DIR/state.json" || true
 
 mutant record_unrefused oversee-watch \
   '      || die watch-running "" "pid=$WATCH_PID" "pane=$WATCH_PANE" "path=$STATE_FILE"' '      || :'
@@ -310,11 +315,14 @@ err="$TMP_ROOT/e-record_unrefused"
 WATCH_BIN="$MUTANT" repeat_watch_run LIFECYCLE_SLEEP_FAIL=1 -- >/dev/null 2>"$err" || true
 assert_eq "first=$(kill -0 "$LOOP" 2>/dev/null && echo alive || echo gone) refused=$(grep -c '^oversee-watch: watch-running' "$err")" \
   "first=alive refused=0" "control: without the refusal a second watch starts beside the live one" "$err"
-watch_stop "$LOOP" || true
+watch_stop "$LOOP" "$STUB_DIR/state.json" || true
 
-mutant record_unreleased oversee-watch "  trap 'watch_pid_release \"\$STATE_FILE\"' EXIT" '  :'
+# The loop releases its record at a stop and again on its way out; the control
+# takes both.
+mutant record_unreleased_exit oversee-watch "  trap 'watch_pid_release \"\$STATE_FILE\"' EXIT" '  :'
+MUTANT_BASE="$(dirname "$MUTANT")" mutant record_unreleased oversee-watch '  watch_pid_release "$STATE_FILE"' '  :'
 record_case record_unreleased "$MUTANT"
-watch_stop "$LOOP" || true
+watch_stop "$LOOP" "$STUB_DIR/state.json" || true
 wait "$LAUNCHER" 2>/dev/null || true
 assert_eq "$([[ -f "$STUB_DIR/oversee-watch.pid" ]] && echo left || echo removed)" "left" \
   "control: a loop that does not release its record leaves it behind when stopped"
@@ -767,6 +775,200 @@ if command -v perl >/dev/null 2>&1; then
   end_leader
 else
   printf '  skip  the restarted-watch rows need perl\n'
+fi
+
+# --- the watch as a job unit ---------------------------------------------------
+# The repeat watch started as an overseer starts it: through the launch fence
+# of references/waiter-launch.md, which runs it under the orch job runner, once
+# as a systemd user unit where a user manager answers on this host and once
+# under setsid behind a systemd-run that fails, as a host with no manager has.
+# A host with no manager skips the unit rows and says so; a host with no setsid
+# has no runner and skips them all.
+awk '/^```sh$/ { a = 1; n++; next } /^```$/ && a { a = 0; next } a { print } END { if (n != 1) exit 1 }' \
+  "$REPO_ROOT/skills/orch/references/waiter-launch.md" > "$TMP_ROOT/launch.sh"
+mkdir -p "$TMP_ROOT/no-manager"
+printf '#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n' > "$TMP_ROOT/no-manager/systemd-run"
+chmod +x "$TMP_ROOT/no-manager/systemd-run"
+# The fence, run as the watch command's launcher: FENCE_RUN_DIR is the run
+# directory and FENCE_TARGET the oversee-watch it starts.
+cat > "$TMP_ROOT/bin/fence-watch.sh" <<EOF
+#!/usr/bin/env bash
+exec sh "$TMP_ROOT/launch.sh" "\$FENCE_RUN_DIR/watch" "\$FENCE_TARGET" "\$@"
+EOF
+# A close that takes SLOW_CLOSE_SECS, noting its start and its end.
+cat > "$TMP_ROOT/bin/slow-close.sh" <<EOF
+#!/usr/bin/env bash
+printf 'started\n' >> "\$STUB_DIR/close.log"
+"$REAL_SLEEP" "\${SLOW_CLOSE_SECS:-3}"
+printf 'done\n' >> "\$STUB_DIR/close.log"
+EOF
+chmod +x "$TMP_ROOT/bin/fence-watch.sh" "$TMP_ROOT/bin/slow-close.sh"
+# The repeat delay a fifth of a second, so a pass follows a pass; a start with
+# LIFECYCLE_SLEEP_FAIL=1 ends after its first pass as sleep-failed. While the
+# case's hold file exists the delay notes that it is held and waits, so a case
+# can change the world between two passes.
+unit_sleep_stub() {
+  mkdir -p "$STUB_DIR/bin"
+  cat > "$STUB_DIR/bin/sleep" <<EOF
+#!/usr/bin/env bash
+if [[ "\${OVERSEE_WATCH_SLEEP:-}" == repeat ]]; then
+  [[ -z "\${LIFECYCLE_SLEEP_FAIL:-}" ]] || exit 3
+  if [[ -f "\$STUB_DIR/hold" ]]; then
+    echo held > "\$STUB_DIR/held"
+    while [[ -f "\$STUB_DIR/hold" ]]; do "$REAL_SLEEP" 0.1; done
+  fi
+  exec "$REAL_SLEEP" 0.2
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/bin/sleep"
+}
+wait_file() { # PATH TRIES
+  local i
+  for (( i = 0; i < $2; i++ )); do
+    [[ ! -s "$1" ]] || return 0
+    "$REAL_SLEEP" 0.1
+  done
+  return 1
+}
+# fence_start RUNNER TARGET RUN_DIR [ENV=VAL...] -- [WATCH ARGS...] — the
+# watch TARGET launched through the fence into RUN_DIR from pane %9.
+fence_start() {
+  local runner="$1" target="$2" dir="$3" prefix=""
+  shift 3
+  [[ "$runner" == systemd ]] || prefix="$TMP_ROOT/no-manager:"
+  WATCH_BIN="$TMP_ROOT/bin/fence-watch.sh" repeat_watch_run \
+    PATH="$prefix$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" FENCE_RUN_DIR="$dir" FENCE_TARGET="$target" \
+    TMUX_PANE=%9 "$@" >/dev/null 2>&1
+}
+# The unit a run directory's log names, or empty under setsid.
+log_unit() { sed -n '1s/^runner=systemd unit=//p' "$1/watch.log"; }
+# The documented stop: the mark, then the unit by its name or the group the
+# read proves.
+fence_stop() { # RUN_DIR
+  local unit leader
+  printf 'stopped\n' > "$1/watch.exit"
+  unit="$(log_unit "$1")"
+  if [[ -n "$unit" ]]; then
+    systemctl --user stop -- "$unit.service" >/dev/null 2>&1 || true
+  else
+    leader="$(pgrep -f "waiter[.]${1##*/waiter.}/watc[h] " || true)"
+    [[ -z "$leader" || "$leader" == *$'\n'* ]] || kill -TERM -- "-$leader" 2>/dev/null || true
+  fi
+}
+
+# A unit-started watch: its record names the pane TMUX_PANE gave it and the
+# directory it was launched from, the log's first line names its runner and,
+# under a unit, the run id; the documented read finds its launch shell, which
+# leads the loop's group; a second start on the state is refused while it
+# runs; and the documented stop ends it and its record.
+unit_start_case() { # RUNNER
+  local runner="$1" dir second read_out first
+  new_case "unit_start_$runner"
+  unit_sleep_stub
+  fleet_state
+  printf '7000 %%9\n' > "$STUB_DIR/panes.txt"
+  dir="$(mktemp -d "$STUB_DIR/waiter.XXXXXX")"
+  fence_start "$runner" "$WATCH_SRC" "$dir" --
+  LOOP="$(wait_for_record)"
+  LIVE_PIDS+=" $LOOP"
+  first="$(sed -n 1p "$dir/watch.log")"
+  case "$runner" in
+    systemd) first="${first%-*}" ;;
+    setsid) first="${first%% detail=*}" ;;
+  esac
+  assert_eq "record=${LOOP:+yes} $(sed -n 's/^pane=//p; s/^cwd=//p' "$STUB_DIR/oversee-watch.pid" | tr '\n' ' ')first=$first" \
+    "record=yes %9 $TMP_ROOT/repo first=$( [[ "$runner" == systemd ]] && echo "runner=systemd unit=orch-watch-${dir##*/waiter.}" || echo "runner=setsid reason=probe-failed")" \
+    "runner=$runner: a watch the fence starts serves the pane TMUX_PANE names, from the launch directory, and its log names the runner" "$dir/watch.log"
+  read_out="$(pgrep -f "waiter[.]${dir##*/waiter.}/watc[h] " || true)"
+  assert_eq "$([[ -n "$read_out" && "$read_out" != *$'\n'* ]] && ps -o pgid= -p "$LOOP" | tr -d ' ')" "$read_out" \
+    "runner=$runner: the documented read finds one launch shell, which leads the loop's group"
+  second="$(mktemp -d "$STUB_DIR/waiter.XXXXXX")"
+  fence_start "$runner" "$WATCH_SRC" "$second" --
+  wait_file "$second/watch.exit" 100 || true
+  assert_eq "exit=$(cat "$second/watch.exit" 2>/dev/null) refused=$(grep -c "^oversee-watch: watch-running pid=$LOOP " "$second/watch.log") first=$(kill -0 "$LOOP" 2>/dev/null && echo alive || echo gone)" \
+    "exit=2 refused=1 first=alive" "runner=$runner: a second fence start on the state is refused and the first runs on" "$second/watch.log"
+  fence_stop "$dir"
+  for _ in $(seq 1 100); do kill -0 "$LOOP" 2>/dev/null || break; "$REAL_SLEEP" 0.1; done
+  assert_eq "loop=$(kill -0 "$LOOP" 2>/dev/null && echo alive || echo gone) read=$(pgrep -f "waiter[.]${dir##*/waiter.}/watc[h] " >/dev/null && echo live || echo none) record=$([[ -f "$STUB_DIR/oversee-watch.pid" ]] && echo left || echo removed) exit=$(cat "$dir/watch.exit")" \
+    "loop=gone read=none record=removed exit=stopped" "runner=$runner: the documented stop ends the watch and its record, and the mark stands" "$dir/watch.log"
+}
+
+# A takeover while the old watch's pass is part way through a hosted lane's
+# close: the close outlasts WATCH_STOP_SECS, which a copy of the tree sets to
+# 1, so the takeover also shows the stop waits for the record and not for the
+# close. The old watch is the one a succession restarted for %9, which a start
+# from %9 takes over. Its first pass learns the lane's clone from the worktree
+# and sees the lane exit; the worktree then goes, and the second pass reports
+# the exit and closes the lane. Sets CLOSE, TAKEN and OLD_EXIT.
+unit_takeover_case() { # NAME RUNNER TARGET
+  local name="$1" runner="$2" target="$3" dir err host_env
+  new_case "$name"
+  unit_sleep_stub
+  fleet_state
+  printf '7000 %%9\n' > "$STUB_DIR/panes.txt"
+  mkdir -p "$STUB_DIR/remote/srv/clone/tmp/lane-mail/issue-1" "$STUB_DIR/remote/srv/lane/issue-1"
+  printf 'gitdir: /srv/clone/.git/worktrees/issue-1\n' > "$STUB_DIR/remote/srv/lane/issue-1/.git"
+  touch "$STUB_DIR/hold"
+  printf '{"handoff":{"written_at":"t"}}\n' > "$STUB_DIR/remote/srv/clone/tmp/workflow-state-issue-1.json"
+  printf 'bash\n' > "$STUB_DIR/cmd-gh-1.txt"
+  printf '[{"number": 1, "headRefName": "issue-1", "mergedAt": "2026-09-14T10:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+  host_env=(ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote"
+    OVERSEE_WATCH_LANE_CLOSE="$TMP_ROOT/bin/slow-close.sh" SLOW_CLOSE_SECS=3)
+  dir="$(mktemp -d "$STUB_DIR/waiter.XXXXXX")"
+  fence_start "$runner" "$target" "$dir" OVERSEE_WATCH_ORIGIN=succession "${host_env[@]}" \
+    -- --item issue-1 --hosted issue-1=/srv/lane/issue-1 gh-1
+  wait_file "$STUB_DIR/held" 200 || true
+  rm -rf -- "${STUB_DIR:?}/remote/srv/lane/issue-1" "${STUB_DIR:?}/hold"
+  wait_file "$STUB_DIR/close.log" 200 || true
+  err="$TMP_ROOT/e-$name"
+  WATCH_BIN="$target" repeat_watch_run PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" TMUX_PANE=%9 LIFECYCLE_SLEEP_FAIL=1 \
+    "${host_env[@]}" -- --item issue-1 --hosted issue-1=/srv/lane/issue-1 gh-1 >/dev/null 2>"$err" || true
+  TAKEN="$(grep -c '^oversee-watch: watch-taken-over .* reason=succession$' "$err" || true)"
+  wait_file "$dir/watch.exit" 100 || true
+  OLD_EXIT="$(cat "$dir/watch.exit" 2>/dev/null || echo none)"
+  # Past the close's own end, so a close still running is not read as lost.
+  "$REAL_SLEEP" 1
+  CLOSE="$(tr '\n' ' ' 2>/dev/null < "$STUB_DIR/close.log" || true)"
+  fence_stop "$dir"
+}
+
+if command -v setsid >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1; then
+  mutant short_stop lib/watch-pid.sh 'WATCH_STOP_SECS=10' 'WATCH_STOP_SECS=1'
+  SHORT="$(dirname "$MUTANT")"
+  MUTANT_BASE="$SHORT" mutant unit_nowait oversee-watch '    wait "$REPEAT_CHILD_PID" 2>/dev/null || true' '    :'
+  NOWAIT="$MUTANT"
+  MUTANT_BASE="$SHORT" mutant unit_notrap oversee-watch '  trap close_term TERM' '  :'
+  NOTRAP="$MUTANT"
+  MUTANT_BASE="$SHORT" mutant unit_late_release oversee-watch '  watch_pid_release "$STATE_FILE"' '  :'
+  LATE="$MUTANT"
+  RUNNERS=setsid
+  if systemd-run --user --quiet --collect true </dev/null >/dev/null 2>&1; then
+    RUNNERS="systemd setsid"
+  else
+    printf '  skip  no systemd user manager answers on this host; the runner=systemd rows did not run\n'
+  fi
+  for runner in $RUNNERS; do
+    unit_start_case "$runner"
+    unit_takeover_case "takeover_$runner" "$runner" "$SHORT/oversee-watch"
+    assert_eq "taken=$TAKEN old=$OLD_EXIT close=$CLOSE" "taken=1 old=143 close=started done " \
+      "runner=$runner: a takeover during a lane-close outlasting the stop bound takes over, and the old watch exits once the close completes" "$TMP_ROOT/e-takeover_$runner"
+  done
+  # Under setsid alone a close its pass leaves behind outlives the watch, so
+  # only the unit shows the pass and the loop waiting for it.
+  if [[ "$RUNNERS" == *systemd* ]]; then
+    unit_takeover_case takeover_nowait systemd "$NOWAIT"
+    assert_eq "taken=$TAKEN close=$CLOSE" "taken=1 close=started " \
+      "control: a loop that does not wait for its pass ends its unit mid-close" "$TMP_ROOT/e-takeover_nowait"
+    unit_takeover_case takeover_notrap systemd "$NOTRAP"
+    assert_eq "taken=$TAKEN close=$CLOSE" "taken=1 close=started " \
+      "control: a pass that takes TERM's default mid-close leaves the close to die with the unit" "$TMP_ROOT/e-takeover_notrap"
+  fi
+  unit_takeover_case takeover_late setsid "$LATE"
+  assert_eq "taken=$TAKEN" "taken=0" \
+    "control: a loop that keeps its record until the close ends is refused as a live watch" "$TMP_ROOT/e-takeover_late"
+else
+  printf '  skip  the job-unit rows need setsid and pgrep\n'
 fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

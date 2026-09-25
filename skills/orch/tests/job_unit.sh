@@ -62,6 +62,17 @@ assert_eq "$(grep -c -E '^  job-unit\.sh (name|launch|end|stop|kill-group|stop-j
   "and names every subcommand"
 run "$JOB_UNIT" launch validate-x
 assert_eq "$RC $ERR" "3 job-unit: usage subcommand=launch" "a launch missing its arguments is refused as usage"
+# A cap is optional and, given, a positive whole number; a launch names a job.
+# launch arguments|label
+while IFS='|' read -r args label; do
+  # shellcheck disable=SC2086 # the arguments column is words
+  run "$JOB_UNIT" launch $args
+  assert_eq "$RC $ERR" "3 job-unit: usage subcommand=launch" "$label"
+done <<ROWS
+validate-x $TMP_ROOT/usage.record --cap 0 -- true|a zero cap is refused as usage
+validate-x $TMP_ROOT/usage.record --cap -- true|a cap with no number is refused as usage
+validate-x $TMP_ROOT/usage.record --|a launch with no command is refused as usage
+ROWS
 
 # --- The unit name shape ---------------------------------------------------------
 # name|pid|unit name
@@ -230,6 +241,26 @@ if [[ "$(sed -n 's/^runner=//p' "$record" 2>/dev/null)" == systemd ]]; then
     "and records that runner, unit and line"
   assert_eq "$(systemctl --user is-active -- "$unit.service" 2>/dev/null || true)" "active" \
     "and that unit is running the job"
+
+  # --cap is the unit's RuntimeMaxSec, and a launch with none, the repeat
+  # watch's, sets none.
+  # launcher|cap arguments|RuntimeMaxUSec|label
+  cap_bound() { # SCRIPT [--cap SECS]
+    local rec="$TMP_ROOT/cap.record" u
+    run "$@" -- sleep 30
+    u="$(sed -n 's/^unit=//p' "$rec" 2>/dev/null)"
+    printf '%s %s' "$RC" "$(systemctl --user show -p RuntimeMaxUSec --value -- "${u:-none}.service" 2>/dev/null)"
+    [[ -z "$u" ]] || "$JOB_UNIT" stop "$u" >/dev/null 2>&1 || true
+  }
+  mutant cap-ignored '    unit_props+=(-p "RuntimeMaxSec=$2")' '    :'
+  while IFS='|' read -r script cap want label; do
+    # shellcheck disable=SC2086 # the cap column is words
+    assert_eq "$(cap_bound "$script" launch validate-cap "$TMP_ROOT/cap.record" $cap)" "$want" "$label"
+  done <<ROWS
+$JOB_UNIT|--cap 60|0 1min|a launch with --cap sets that RuntimeMaxSec
+$JOB_UNIT||0 infinity|a launch with no --cap sets no RuntimeMaxSec
+$MUTANT|--cap 60|0 infinity|control: a runner that drops --cap leaves the capped unit unbounded
+ROWS
   # exit of the first stop, then of a second stop of the same name
   STOP_ROWS=("0|a running unit is stopped by its exact name" "1|a unit that has ended answers not-found, apart from a failure")
   for row in "${STOP_ROWS[@]}"; do

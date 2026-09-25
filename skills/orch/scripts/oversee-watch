@@ -395,8 +395,10 @@ Options:
                       succession's handover read; how an overseer launches,
                       finds and stops its watch is
                       references/watch-delivery.md's. However it is sent,
-                      TERM on the loop ends it and the pass it is running,
-                      and the record goes with it. A start on a
+                      TERM on the loop removes the record at once and ends
+                      the pass it is running, and the loop exits once that
+                      pass has: a pass part way through a lane-close waits
+                      that close out first. A start on a
                       state whose recorded watch still runs is refused as
                       watch-running naming that pid, except where that watch
                       is the one `oversee-succeed` restarted for this same
@@ -406,9 +408,10 @@ Options:
                       then prints, under a watch-replayed note, and removes
                       oversee-watch.log and oversee-watch.err beside the
                       state: what a restarted watch printed where no session
-                      read it, and what the restart itself said. A watch a
-                      succession started writes those two files, so it never
-                      prints or removes them
+                      read it, and what the restart itself said; it removes
+                      the restart's oversee-watch.runner with them. A watch
+                      a succession started writes those two files, so it
+                      never prints or removes them
   --state PATH        the oversee workflow-state file open-terminal records
                       every lane in (`workflow-state path oversee`), re-read
                       before every loop of the run and, in repeat mode,
@@ -460,9 +463,10 @@ outside tmux or outside any resolved session, a hosted lane with no host), a
 tmux window list that fails, a watch already running on its state, a record
 it cannot write, or a repeat delay it cannot sleep. TERM ends it at 143,
 stopping the pass it was running and that pass's long pass; TERM is the stop
-signal on every start. A watch started as a background job, the one a
-succession restarts among them, ignores INT from its start, and no trap can
-take that back.
+signal on every start. A watch started as a background job ignores INT from
+its start, and no trap can take that back; one the orch job runner starts, as
+references/waiter-launch.md and a succession's restart do, carries no ignore
+the runner added.
 
 Which mode fits the overseer's harness:
   repeat       a harness that delivers a detached log's lines as they are
@@ -1412,9 +1416,17 @@ watch_pane_gone() { # PANE
 }
 
 # The repeat loop's pass or delay, the one child a stop has to take with it.
+# The record goes first, so the start that stopped this loop claims the state
+# at once, then the loop waits for that child: a pass part way through a
+# lane-close outlives the TERM until the close ends (close_hosted_lane), and
+# under a job unit whatever still runs when the loop's unit ends is killed.
 REPEAT_CHILD_PID=""
 repeat_stop() { # STATUS
-  [[ -z "$REPEAT_CHILD_PID" ]] || kill -TERM "$REPEAT_CHILD_PID" 2>/dev/null || true
+  watch_pid_release "$STATE_FILE"
+  if [[ -n "$REPEAT_CHILD_PID" ]]; then
+    kill -TERM "$REPEAT_CHILD_PID" 2>/dev/null || true
+    wait "$REPEAT_CHILD_PID" 2>/dev/null || true
+  fi
   exit "$1"
 }
 
@@ -1434,8 +1446,9 @@ repeat_stop() { # STATUS
 # through its own stdout and stderr. A start of that origin is reading files it
 # writes, so it never prints or removes them. Any other start gets here only
 # once their writer is stopped above or gone, a live one being refused, and
-# prints and removes them, so nothing a restarted watch reported where no
-# session read it, and no refusal it ended on, is lost.
+# prints and removes them, with the runner record the restart wrote beside
+# them, so nothing a restarted watch reported where no session read it, and
+# no refusal it ended on, is lost.
 watch_claim() { # ARGV...
   local why=""
   if watch_pid_live "$STATE_FILE"; then
@@ -1444,7 +1457,7 @@ watch_claim() { # ARGV...
     elif watch_pane_gone "$WATCH_PANE"; then
       why=pane-gone
     fi
-    [[ -n "$why" ]] && watch_stop "$WATCH_PID" \
+    [[ -n "$why" ]] && watch_stop "$WATCH_PID" "$STATE_FILE" \
       || die watch-running "" "pid=$WATCH_PID" "pane=$WATCH_PANE" "path=$STATE_FILE"
     ow_message watch-taken-over "pid=$WATCH_PID" "pane=$WATCH_PANE" "reason=$why" >&2
   fi
@@ -1465,7 +1478,7 @@ watch_claim() { # ARGV...
     if [[ -f "$WATCH_ERR_FILE" ]]; then
       cat -- "$WATCH_ERR_FILE" >&2 || die watch-replay-failed "" "path=$WATCH_ERR_FILE"
     fi
-    rm -f -- "${WATCH_LOG_FILE:?}" "${WATCH_ERR_FILE:?}" \
+    rm -f -- "${WATCH_LOG_FILE:?}" "${WATCH_ERR_FILE:?}" "${WATCH_RUNNER_FILE:?}" \
       || die watch-replay-failed "" "path=$WATCH_LOG_FILE"
   fi
 }
@@ -1686,9 +1699,27 @@ item_state_dir() { # ITEM
 # the user settles it, so it is reported and never retried or forced. Any other
 # exit returns 1 with its message on stderr: the caller commits the rows it
 # already settled, other lanes' closes among them, before the pass exits 2.
+#
+# A TERM part way through, which is how a repeat loop stops its pass, waits the
+# close out before this pass exits: the lane record the close writes is what
+# the next watch reads, and a close ended midway loses the lane-closed event.
+# The close runs in the background and is waited on, since bash holds a trap
+# until a foreground child returns, and writes to a file, since a pipe whose
+# reader has exited would end it on its next write. The trap is armed before
+# the close starts and waits for every background job, the close being a
+# pass's only one, so a TERM before the close's pid is known still finds it.
+close_term() {
+  wait 2>/dev/null || true
+  exit 143
+}
 close_hosted_lane() { # ITEM
-  local out line path="" rc=0
-  out="$("$LANE_CLOSE" --state-dir "$FLEET_STATE_DIR" "$1" 2>&1)" || rc=$?
+  local out line path="" rc=0 close_pid
+  trap close_term TERM
+  "$LANE_CLOSE" --state-dir "$FLEET_STATE_DIR" "$1" > "$WORK_DIR/lane-close.out" 2>&1 &
+  close_pid=$!
+  wait "$close_pid" || rc=$?
+  trap - TERM
+  out="$(cat -- "$WORK_DIR/lane-close.out")"
   case "$rc" in
     0)
       echo "EVENT lane-closed $1"

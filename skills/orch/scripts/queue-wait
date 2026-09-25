@@ -367,8 +367,10 @@ Environment (orch-env ladder: parent env > .env.local > .kendex/settings.toml /
                 own clock (default 120).
 
 Long waiter launch:
-  Run under setsid with the exit written to a completion file, then poll
-  that file while keeping the lane active. Follow orch's
+  Start through the orch job runner, lib/job-unit.sh (a systemd user unit
+  where a user manager answers, setsid elsewhere), with the exit written to a
+  completion file, then poll that file while keeping the lane active. Follow
+  orch's
   references/waiter-launch.md for the saved launch script and commands.
   Never start a long waiter as a harness background command. A missing
   completion file is no verdict and does not authorize a duplicate waiter.
