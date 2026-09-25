@@ -770,7 +770,9 @@ fi
 # renders to .agents/skills/<x>/<p>, an agent definition to one file per
 # harness, and a hook to whichever harness hook directories already carry it.
 # Presence, not byte equality — a render can carry an injected block the
-# source has no copy of, so bytes cannot be compared. Rendered is judged at
+# source has no copy of, so bytes cannot be compared. The one allowance is a
+# render left unchanged by a source change that only moves a frontmatter key
+# between values its harness renders to nothing, the render_blind rows below. Rendered is judged at
 # the tree: a skill with anything tracked under .agents/skills/<x> renders
 # every file, so each source there owes a render, and an agent owes a
 # file to each harness directory that tracks any. Hooks are judged per file
@@ -788,12 +790,26 @@ fi
 agent_roots=(.claude/agents:md .codex/agents:toml .pi/agents:md)
 hook_roots=(.claude/hooks .codex/hooks .pi/kendex/hooks)
 render_roots=(.agents/skills "${agent_roots[@]%:*}" "${hook_roots[@]}")
+# The whole rule reads one tree. The commit chain reads the index, which is
+# what the commit records whatever the worktree holds beside it; --range and
+# --full read the worktree. render_diff is that tree's diff against the base,
+# render_has and render_read a path's existence and bytes in it.
+if [ "$MODE" = default ]; then
+  render_diff=(--cached)
+  [ "$have_head" = 0 ] || render_diff+=(HEAD)
+  render_has() { git cat-file -e ":$1" 2>/dev/null; }
+  render_read() { git show ":$1"; }
+else
+  render_diff=("${diff_against[@]}")
+  render_has() { [ -e "$1" ]; }
+  render_read() { cat -- "$1"; }
+fi
 # range reads its one changed set, untracked files included, so a new source
 # and its new render are judged alike however each sits in the index.
 if [ "$MODE" = range ]; then
   render_changed=$touched
 else
-  render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${diff_against[@]}") ||
+  render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${render_diff[@]}") ||
     { render_changed=""; say render-changed-set unreadable; }
 fi
 # Tracked is the index UNION what HEAD carries: the index alone drops a render
@@ -856,8 +872,54 @@ for render in sys.stdin.read().splitlines():
   show "$instruction_hits" | sed -n '1,5p'
 }
 
+# Frontmatter a harness renders to nothing, one ROOT KEY VALUE row each: a
+# source change that only moves a key between listed values leaves that
+# root's render byte-identical, so the render owes no change. The model rows
+# mirror resolve_model in crates/core/src/harness/models.rs, is_inherit and
+# the (HarnessId::Pi, "fable" | "opus") arm; the models.rs test
+# guard_render_blind_rows_are_the_pi_values_that_render_no_model holds the
+# copy to it both ways. The guard cannot render a source itself, since no
+# kendex verb renders one source for one harness.
+render_blind='.pi/agents model fable
+.pi/agents model opus
+.pi/agents model inherit
+.pi/agents model current
+.pi/agents model parent'
+frontmatter_end() { # — the line number of the closing --- of the text on stdin, 0 with none
+  awk 'NR == 1 { open = $0 == "---"; next } open && !end && $0 == "---" { end = NR } END { print end + 0 }'
+}
+render_unchanged_by() { # SOURCE RENDER — every changed SOURCE line is a frontmatter row render_blind lists for RENDER's root, and each key it removes it adds back
+  # A key removed or added outright moves it to or from its absent default,
+  # which the table does not judge: a Pi agent with no model renders sonnet.
+  [ "$have_head" = 1 ] && render_has "$1" && render_has "$2" || return 1
+  local old_source new_source old_end new_end source_diff
+  new_source=$(render_read "$1") || return 1
+  old_source=$(git show "${diff_against[0]}:$1" 2>/dev/null) || return 1
+  old_end=$(frontmatter_end <<<"$old_source") || return 1
+  new_end=$(frontmatter_end <<<"$new_source") || return 1
+  source_diff=$(git -c core.quotePath=false diff --no-color --no-ext-diff --unified=0 "${render_diff[@]}" -- "$1") || return 1
+  # The rows ride the environment: BSD awk refuses a newline in a -v value.
+  RENDER_BLIND="$render_blind" awk -v root="${2%/*}" -v old_end="$old_end" -v new_end="$new_end" '
+    function blind(text, line, end,   value) {
+      key = ""
+      if (line <= 1 || line >= end + 0 || !match(text, /^[A-Za-z0-9_-]+:/)) return 0
+      key = substr(text, 1, RLENGTH - 1)
+      value = substr(text, RLENGTH + 1)
+      gsub(/^[ \t]+|[ \t]+$/, "", value)
+      return (root " " key " " value) in listed
+    }
+    BEGIN { n = split(ENVIRON["RENDER_BLIND"], r, "\n"); for (i = 1; i <= n; i++) listed[r[i]] = 1 }
+    /^@@ / { split($2, a, ","); o = substr(a[1], 2) + 0; split($3, c, ","); w = substr(c[1], 2) + 0; hunk = 1; next }
+    !hunk { next }
+    /^-/ { if (!blind(substr($0, 2), o++, old_end)) { bad = 1; exit } moved[key]--; changed++; next }
+    /^\+/ { if (!blind(substr($0, 2), w++, new_end)) { bad = 1; exit } moved[key]++; changed++; next }
+    { bad = 1; exit }
+    END { if (!bad) for (k in moved) if (moved[k]) bad = 1; exit (bad || !changed) }
+  ' <<<"$source_diff"
+}
 require_render() { # SOURCE RENDER — RENDER changes with SOURCE and outlives it
-  { grep -Fxq -- "$2" <<<"$render_changed" && { [ ! -e "$1" ] || [ -e "$2" ]; }; } ||
+  { grep -Fxq -- "$2" <<<"$render_changed" && { ! render_has "$1" || render_has "$2"; }; } ||
+    render_unchanged_by "$1" "$2" ||
     render_hits="$render_hits$1 -> $2
 "
 }

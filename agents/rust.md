@@ -1,7 +1,7 @@
 ---
 name: rust
 description: Rust engineer for performance-critical systems. Use for zero-allocation hot paths, lock-free algorithms, SIMD optimization, and systems programming.
-model: opus
+model: inherit
 role: engineer
 effort: high
 color: orange
