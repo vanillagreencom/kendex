@@ -425,8 +425,8 @@ assert_eq "long=${LONG_PASS_PID:+found} $LONG_PASS_STATE pass=$PASS_STATE loop=$
 assert_eq "held=${HELD_PID:+found} $HELD_STATE" "held=found gone" \
   "and the command that long pass was waiting on" "$TMP_ROOT/e-term_long_pass"
 mutant long_pass_alone oversee-watch \
-  '    || for pid in $(tree_pids "$LONG_PID"); do kill -TERM "$pid" 2>/dev/null || :; done' \
-  '    || kill -TERM "$LONG_PID" 2>/dev/null || :'
+  '    for pid in $(tree_pids "$LONG_PID"); do' \
+  '    for pid in "$LONG_PID"; do'
 # Only the held command is read: under bash 3.2 a TERM to the long pass alone
 # does not end it while it waits on that command.
 term_long_case term_long_alone_mutant "$MUTANT"
@@ -991,10 +991,10 @@ if command -v setsid >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1; then
     "a close that fails during a takeover is reported, and the watch that took over retries it" "$TMP_ROOT/e-takeover_failed"
 
   # Controls, one per rule the takeover rows hold, each a mutant of the same
-  # short-bound tree: the loop not waiting for its pass, the pass taking TERM's
-  # default mid-close, the pass ending at TERM without reporting the close, the
-  # record kept until the loop exits, and the new start not waiting for the
-  # old watch's exit.
+  # short-bound tree: the loop not waiting for its pass, the pass stop
+  # signalling the close, the long pass taking TERM's default mid-close, the
+  # pass ending at TERM without reporting the close, the record kept until the
+  # loop exits, and the new start not waiting for the old watch's exit.
   # name%file%line%replacement%close exit%what the row reads%expected%label
   while IFS='%' read -r cname cfile cline cnew crc cread cwant clabel; do
     MUTANT_BASE="$SHORT" mutant "$cname" "$cfile" "$cline" "$cnew"
@@ -1008,6 +1008,7 @@ if command -v setsid >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1; then
     assert_eq "$got" "$cwant" "control: $clabel" "$TMP_ROOT/e-takeover_$cname"
   done <<'ROWS'
 unit_nowait%oversee-watch%    wait "$REPEAT_CHILD_PID" 2>/dev/null || true%    :%0%at-exit%started %a loop that does not wait for its pass exits mid-close
+unit_unspared%oversee-watch%      [[ "$spared" != *" $pid "* ]] || continue%      :%0%at-exit%started %a pass stop that signals the close with the rest of the long pass kills it mid-close
 unit_notrap%oversee-watch%  trap 'CLOSE_TERMED=1' TERM%  :%0%at-exit%started %a pass that takes TERM's default dies mid-close
 unit_unreported%oversee-watch%  trap 'CLOSE_TERMED=1' TERM%  trap 'wait; exit 143' TERM%0%event%0%a pass that ends at TERM once the close is done never reports it
 unit_late_release%oversee-watch%  watch_pid_release "$STATE_FILE"%  :%0%taken%0%a loop that keeps its record until the close ends is refused as a live watch

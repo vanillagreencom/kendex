@@ -1421,10 +1421,8 @@ watch_pane_gone() { # PANE
 
 # The repeat loop's pass or delay, the one child a stop has to take with it.
 # The record goes first, so the start that stopped this loop is not refused,
-# then the loop waits for that child: a pass part way through a lane-close
-# outlives the TERM until the close ends and its outcome is out
-# (close_hosted_lane), and under a job unit whatever still runs when the
-# loop's unit ends is killed.
+# then the loop waits for that child, which outlives the TERM while it ends a
+# lane-close (close_hosted_lane); a job unit's end kills what still runs.
 REPEAT_CHILD_PID=""
 repeat_stop() { # STATUS
   watch_pid_release "$STATE_FILE"
@@ -1476,11 +1474,8 @@ watch_claim() { # ARGV...
   # non-interactive shell starts with & ignores INT from its start, and bash
   # cannot trap a signal ignored on entry.
   trap 'repeat_stop 130' INT
-  # The watch taken over has given up its record but may still be finishing a
-  # lane-close: the lane row that close settles is committed before this
-  # watch's first pass reads it, and what a restarted watch printed is whole
-  # before the replay below. A watch waiter-launch.md started prints into its
-  # own run directory's log, which no replay reads.
+  # The watch taken over may still be finishing a lane-close: waiting commits
+  # its lane row before the first pass here and makes the replay below whole.
   if [[ -n "$taken" ]] && watch_pid_runs "$taken"; then
     ow_message watch-finishing "pid=$taken" >&2
     while watch_pid_runs "$taken"; do sleep 0.1; done
@@ -1556,10 +1551,8 @@ repeat_watch() { # ARGV...
     # LAST, after every lane window: `--` ends this parser, so anything appended
     # after the overseer's flags would reach the harness instead of the watch.
     [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || args+=(-- "${OVERSEER_FLAGS[@]}")
-    # The pass and the delay run in the background and are waited on, so a
-    # TERM on this loop reaches its trap at once and the trap stops the pass:
-    # bash holds a trap until a FOREGROUND child returns, and a stopped loop
-    # would otherwise leave its pass reading the fleet for its whole run.
+    # The pass and the delay are waited on in the background (tick_sleep), so
+    # a TERM on this loop reaches its trap at once and the trap stops the pass.
     pass_rc=0
     OVERSEE_WATCH_FLEET_STATE_DIR="$fleet_state_dir" \
       OVERSEE_WATCH_REPEAT_OWNER="$$" \
@@ -1716,25 +1709,25 @@ item_state_dir() { # ITEM
 # exit returns 1 with its message on stderr: the caller commits the rows it
 # already settled, other lanes' closes among them, before the pass exits 2.
 #
-# A TERM part way through, which is how a repeat loop stops its pass, is noted
-# in CLOSE_TERMED and the close runs to its end: its outcome is reported as it
-# would have been, and the caller commits the lane's row and ends the pass. A
-# close ended midway would lose that outcome, and a failure the row is reset
-# for would never be retried. The close runs in the background and is waited
-# on, since bash holds a trap until a foreground child returns: a TERM returns
-# the wait early with the close still running, so it is waited on again until
-# it has exited.
+# A TERM part way through, how a repeat loop stops its pass, is noted in
+# CLOSE_TERMED and the close runs to its end: its outcome is reported, and the
+# caller commits the lane's row and ends the long pass. A close ended midway
+# would lose a failure the row is reset to retry. The close is waited on in the
+# background, for tick_sleep's reason, and again after a TERM returns the wait
+# early. pass_stop spares it and its tree by its pid in CLOSE_PID_FILE.
 CLOSE_TERMED=""
 close_hosted_lane() { # ITEM
   local out line path="" rc=0 close_pid
   trap 'CLOSE_TERMED=1' TERM
   "$LANE_CLOSE" --state-dir "$FLEET_STATE_DIR" "$1" > "$WORK_DIR/lane-close.out" 2>&1 &
   close_pid=$!
+  printf '%s\n' "$close_pid" > "$CLOSE_PID_FILE"
   while :; do
     rc=0
     wait "$close_pid" || rc=$?
     [[ -n "$CLOSE_TERMED" && "$rc" -gt 128 ]] && kill -0 "$close_pid" 2>/dev/null || break
   done
+  rm -f -- "$CLOSE_PID_FILE"
   trap - TERM
   out="$(cat -- "$WORK_DIR/lane-close.out")"
   case "$rc" in
@@ -1767,13 +1760,14 @@ command -v jq >/dev/null 2>&1 || die command-missing "" "command=jq"
 command -v cksum >/dev/null 2>&1 || die command-missing "" "command=cksum"
 
 WORK_DIR="$(mktemp -d)"
-# Where the long pass the main loop forks spools its lines, named here for the
-# EXIT trap below.
+# Where the long pass the main loop forks spools its lines and names the
+# lane-close it runs, named here for the EXIT and TERM traps below.
 LONG_PID=""
 LONG_OUT="$WORK_DIR/long.out"
 LONG_ERR="$WORK_DIR/long.err"
 LONG_STATUS="$WORK_DIR/long.status"
 LONG_DONE="$WORK_DIR/long.done"
+CLOSE_PID_FILE="$WORK_DIR/close.pid"
 # Waits for the long pass and prints what it said. The EXIT trap's half of
 # long_collect, so it prints and never exits.
 long_drain() {
@@ -1821,7 +1815,8 @@ trap on_exit EXIT
 # TERM, the stop every start takes, ends a long pass in flight and its whole
 # tree, `timeout`'s own process group among it, parent first so nothing new
 # starts under it, rather than on_exit waiting it out beside the next watch;
-# what it spooled is still printed. One that has ended is not signalled.
+# what it spooled is still printed. One that has ended is not signalled. Its
+# lane-close is spared, which it waits out and reports (close_hosted_lane).
 tree_pids() { # PID
   ps -A -o pid= -o ppid= 2>/dev/null | awk -v root="$1" '{ kids[$2] = kids[$2] " " $1 }
     END { q[n = 1] = root; for (i = 1; i <= n; i++) { print q[i]
@@ -1829,10 +1824,15 @@ tree_pids() { # PID
 }
 TICK_SLEEP_PID=""
 pass_stop() {
-  local pid
+  local pid spared=" "
   [[ -z "$TICK_SLEEP_PID" ]] || kill -TERM "$TICK_SLEEP_PID" 2>/dev/null || :
-  [[ -z "$LONG_PID" || -e "$LONG_DONE" ]] \
-    || for pid in $(tree_pids "$LONG_PID"); do kill -TERM "$pid" 2>/dev/null || :; done
+  if [[ -n "$LONG_PID" && ! -e "$LONG_DONE" ]]; then
+    [[ ! -s "$CLOSE_PID_FILE" ]] || spared+="$(tree_pids "$(cat -- "$CLOSE_PID_FILE")" | tr '\n' ' ')"
+    for pid in $(tree_pids "$LONG_PID"); do
+      [[ "$spared" != *" $pid "* ]] || continue
+      kill -TERM "$pid" 2>/dev/null || :
+    done
+  fi
   exit 143
 }
 trap pass_stop TERM
