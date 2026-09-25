@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-25
 
-**Status**: Active
+**Status**: Active (measurement → D005)
 
 **Research**: —
 

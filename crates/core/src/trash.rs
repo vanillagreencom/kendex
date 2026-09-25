@@ -16,13 +16,18 @@
 //! pass with everything intact; an entry it cannot measure or remove
 //! stops it where it is, with what went before already gone.
 //!
+//! Nothing writes into an entry after it lands, so its bytes are
+//! measured once: the pass records them in [`SIZES_FILE`] beside the
+//! entries and reads them back on every later pass, until the entry
+//! goes and its record with it.
+//!
 //! [`empty`] is the person's own request, through `kendex trash empty`:
 //! every entry, or every entry past an age, this invocation's excepted.
 //!
 //! A name that does not open with kendex's stamp is not kendex's entry:
 //! it is neither listed nor removed.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -47,6 +52,11 @@ pub const KEEP_MB_VAR: &str = "KENDEX_TRASH_KEEP_MB";
 
 /// MB the trash may hold when [`KEEP_MB_VAR`] names no count.
 pub const DEFAULT_KEEP_MB: u64 = 512;
+
+/// The file inside the trash recording each entry's bytes by name, as
+/// the retention pass measured them. Its name opens with no stamp, so it
+/// is not an entry: `kendex trash` neither lists nor removes it.
+pub const SIZES_FILE: &str = "sizes.json";
 
 /// One entry as the trash holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -231,6 +241,67 @@ fn bounds(env: &Env) -> std::result::Result<Bounds, String> {
     })
 }
 
+/// Each entry's bytes by name, as [`SIZES_FILE`] holds them. An entry
+/// is measured the first time a pass needs its size and read back from
+/// here on every later pass, so a kept entry costs one lookup, not one
+/// walk of its files. A name the listing no longer holds is dropped on
+/// the next write, and an entry's record goes before its removal is
+/// tried, so a removal that stops halfway leaves no number for what is
+/// left of it.
+struct Sizes {
+    path: PathBuf,
+    /// As the file held it, so a pass that learned nothing writes nothing:
+    /// a no-op apply on a trash within its bounds touches no file.
+    read: BTreeMap<String, u64>,
+    known: BTreeMap<String, u64>,
+}
+
+impl Sizes {
+    /// The record as the trash holds it, narrowed to `present`. No file
+    /// is an empty record; one that will not read or does not parse is
+    /// judged like a trash that will not read, and the pass stops on it.
+    fn read(trash: &Path, present: &[Entry]) -> std::result::Result<Self, String> {
+        let path = trash.join(SIZES_FILE);
+        let read: BTreeMap<String, u64> = match fs::read_to_string(&path) {
+            Ok(text) => {
+                serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
+            Err(error) => return Err(format!("{}: {error}", path.display())),
+        };
+        let listed: BTreeSet<&str> = present.iter().map(|entry| entry.name.as_str()).collect();
+        let mut known = read.clone();
+        known.retain(|name, _| listed.contains(name.as_str()));
+        Ok(Sizes { path, read, known })
+    }
+
+    /// The entry's bytes: as recorded, or measured now and recorded.
+    fn bytes(&mut self, entry: &Entry) -> std::result::Result<u64, String> {
+        if let Some(bytes) = self.known.get(&entry.name) {
+            return Ok(*bytes);
+        }
+        let bytes = bytes_under(&entry.path)?;
+        self.known.insert(entry.name.clone(), bytes);
+        Ok(bytes)
+    }
+
+    fn forget(&mut self, entry: &Entry) {
+        self.known.remove(&entry.name);
+    }
+
+    /// Write the record back where a pass changed it. A record that will
+    /// not write is reported: the pass's decisions stand, and the next
+    /// pass measures again what this one could not record.
+    fn store(&self) -> std::result::Result<(), String> {
+        if self.known == self.read {
+            return Ok(());
+        }
+        let text = serde_json::to_string_pretty(&self.known)
+            .map_err(|e| format!("{}: {e}", self.path.display()))?;
+        crate::fs::atomic_write_no_follow(&self.path, &text).map_err(|e| e.to_string())
+    }
+}
+
 /// Remove what the bounds do not keep. The keep set is every entry this
 /// invocation wrote, plus, newest first, every entry within the age
 /// bound while the running total of bytes stays within the size bound.
@@ -238,43 +309,69 @@ fn bounds(env: &Env) -> std::result::Result<Bounds, String> {
 /// older than it goes unmeasured: once the newer entries fill the bound
 /// there is nothing an older one's size could change.
 ///
-/// One directory listing and one measurement of the kept entries per
-/// pass, and no measurement at all of what the age bound or the
-/// crossing already decided. A trash the pass cannot read, measure or
-/// remove from stops it where it is, with the count of what went before;
-/// `Ok` carries the count of what went.
+/// One directory listing per pass, one read of the size record, and one
+/// measurement of each kept entry the record does not yet hold, which
+/// is none on a trash the last pass already judged; no measurement at
+/// all of what the age bound or the crossing already decided. A trash
+/// the pass cannot read, measure or remove from stops it where it is,
+/// with the count of what went before, and so does a record it cannot
+/// read or write back; `Ok` carries the count of what went.
 pub fn retain(env: &Env) -> std::result::Result<usize, Stopped> {
-    let judged = bounds(env).and_then(|bounds| entries(env).map(|entries| (bounds, entries)));
-    let (bounds, entries) = match judged {
+    let judged = bounds(env).and_then(|bounds| {
+        let entries = entries(env)?;
+        let sizes = Sizes::read(&env.trash_dir(), &entries)?;
+        Ok((bounds, entries, sizes))
+    });
+    let (bounds, entries, mut sizes) = match judged {
         Ok(judged) => judged,
         Err(reason) => return Err(Stopped { removed: 0, reason }),
     };
+    let outcome = judge(env, &bounds, &entries, &mut sizes);
+    match (outcome, sizes.store()) {
+        (Ok(removed), Ok(())) => Ok(removed),
+        (Ok(removed), Err(reason)) => Err(Stopped { removed, reason }),
+        (Err(stopped), Ok(())) => Err(stopped),
+        (Err(Stopped { removed, reason }), Err(unstored)) => Err(Stopped {
+            removed,
+            reason: format!("{reason}; {unstored}"),
+        }),
+    }
+}
+
+/// The pass over the listing, newest first, once the bounds, the
+/// listing and the record are in hand: [`retain`] without its reading
+/// and its writing back.
+fn judge(
+    env: &Env,
+    bounds: &Bounds,
+    entries: &[Entry],
+    sizes: &mut Sizes,
+) -> std::result::Result<usize, Stopped> {
     let held = env.held().trashed;
     let now = clock::unix_now();
     let mut total = 0u64;
     let mut over = false;
     let mut removed = 0;
-    for entry in &entries {
-        let measured = |total: &mut u64| -> std::result::Result<(), String> {
-            *total = total.saturating_add(bytes_under(&entry.path)?);
-            Ok(())
-        };
+    for entry in entries {
         if held.contains(&entry.path) {
-            if let Err(reason) = measured(&mut total) {
-                return Err(Stopped { removed, reason });
+            match sizes.bytes(entry) {
+                Ok(bytes) => total = total.saturating_add(bytes),
+                Err(reason) => return Err(Stopped { removed, reason }),
             }
             continue;
         }
         let aged = now.saturating_sub(entry.trashed_at) > bounds.max_age_secs;
         if !over && !aged {
-            if let Err(reason) = measured(&mut total) {
-                return Err(Stopped { removed, reason });
+            match sizes.bytes(entry) {
+                Ok(bytes) => total = total.saturating_add(bytes),
+                Err(reason) => return Err(Stopped { removed, reason }),
             }
             if total <= bounds.max_bytes {
                 continue;
             }
             over = true;
         }
+        sizes.forget(entry);
         if let Err(reason) = remove(&entry.path) {
             return Err(Stopped { removed, reason });
         }

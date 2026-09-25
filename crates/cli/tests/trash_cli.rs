@@ -61,12 +61,14 @@ fn plant(home: &Path, age: u64, base: &str, bytes: usize) -> String {
     name
 }
 
+/// Every name the trash directory holds but the size record's.
 #[allow(clippy::unwrap_used)]
 fn names(home: &Path) -> Vec<String> {
     let mut names: Vec<String> = match fs::read_dir(trash_dir(home)) {
         Ok(listing) => listing
             .flatten()
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name != kendex_core::trash::SIZES_FILE)
             .collect(),
         Err(_) => Vec::new(),
     };
