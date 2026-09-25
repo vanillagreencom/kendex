@@ -1,7 +1,7 @@
 ---
 name: reviewer-arch
 description: Architecture reviewer for design reviews, module boundary validation, spec/proposal review, and technical debt assessment.
-model: opus
+model: inherit
 role: reviewer
 effort: high
 color: yellow

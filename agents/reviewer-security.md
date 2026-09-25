@@ -1,7 +1,7 @@
 ---
 name: reviewer-security
 description: Application security reviewer. Auth logic, input handling, trust/ownership gating, path containment, and secret exposure.
-model: opus
+model: inherit
 role: reviewer
 effort: high
 color: red

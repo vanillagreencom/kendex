@@ -2,7 +2,7 @@
 name: reviewer-arch
 description: "Architecture reviewer for design reviews, module boundary validation, spec/proposal review, and technical debt assessment."
 tags: review
-model: opus
+model: inherit
 effort: high
 background: true
 disallowedTools: Agent, AskUserQuestion

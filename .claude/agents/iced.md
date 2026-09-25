@@ -2,7 +2,7 @@
 name: iced
 description: "Iced UI specialist. Use for Iced widgets, Canvas/Shader rendering, pane_grid layout, Theme system, Subscription-based data flow, or Elm Architecture patterns."
 tags: ui
-model: fable
+model: inherit
 effort: high
 background: false
 disallowedTools: Agent, AskUserQuestion

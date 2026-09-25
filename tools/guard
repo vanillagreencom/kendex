@@ -754,7 +754,9 @@ fi
 # renders to .agents/skills/<x>/<p>, an agent definition to one file per
 # harness, and a hook to whichever harness hook directories already carry it.
 # Presence, not byte equality — a render can carry an injected block the
-# source has no copy of, so bytes cannot be compared. Rendered is judged at
+# source has no copy of, so bytes cannot be compared. The one allowance is a
+# render left unchanged by a source change that touches only frontmatter its
+# harness renders to nothing, the render_blind rows below. Rendered is judged at
 # the tree: a skill with anything tracked under .agents/skills/<x> renders
 # every file, so each source there owes a render, and an agent owes a
 # file to each harness directory that tracks any. Hooks are judged per file
@@ -840,8 +842,47 @@ for render in sys.stdin.read().splitlines():
   show "$instruction_hits" | sed -n '1,5p'
 }
 
+# Frontmatter a harness renders to nothing, one ROOT KEY VALUE row each: a
+# source change that only moves a key between listed values leaves that
+# root's render byte-identical, so the render owes no change. The model rows
+# mirror resolve_model in crates/core/src/harness/models.rs, is_inherit and
+# the (HarnessId::Pi, "fable" | "opus") arm; the guard cannot render a source
+# itself, since no kendex verb renders one source for one harness.
+render_blind='.pi/agents model fable
+.pi/agents model opus
+.pi/agents model inherit
+.pi/agents model current
+.pi/agents model parent'
+frontmatter_end() { # — the line number of the closing --- of the text on stdin, 0 with none
+  awk 'NR == 1 { open = $0 == "---"; next } open && !end && $0 == "---" { end = NR } END { print end + 0 }'
+}
+render_unchanged_by() { # SOURCE RENDER — every changed SOURCE line is a frontmatter row render_blind lists for RENDER's root, old and new alike
+  [ "$have_head" = 1 ] && [ -e "$1" ] && [ -e "$2" ] || return 1
+  local old_source old_end new_end source_diff
+  old_source=$(git show "${diff_against[0]}:$1" 2>/dev/null) || return 1
+  old_end=$(frontmatter_end <<<"$old_source") || return 1
+  new_end=$(frontmatter_end <"$1") || return 1
+  source_diff=$(git -c core.quotePath=false diff --no-color --no-ext-diff --unified=0 "${diff_against[@]}" -- "$1") || return 1
+  awk -v root="${2%/*}" -v old_end="$old_end" -v new_end="$new_end" -v rows="$render_blind" '
+    function blind(text, line, end,   key, value) {
+      if (line <= 1 || line >= end + 0 || !match(text, /^[A-Za-z0-9_-]+:/)) return 0
+      key = substr(text, 1, RLENGTH - 1)
+      value = substr(text, RLENGTH + 1)
+      gsub(/^[ \t]+|[ \t]+$/, "", value)
+      return (root " " key " " value) in listed
+    }
+    BEGIN { n = split(rows, r, "\n"); for (i = 1; i <= n; i++) listed[r[i]] = 1 }
+    /^@@ / { split($2, a, ","); o = substr(a[1], 2) + 0; split($3, c, ","); w = substr(c[1], 2) + 0; hunk = 1; next }
+    !hunk { next }
+    /^-/ { if (!blind(substr($0, 2), o++, old_end)) { bad = 1; exit } changed++; next }
+    /^\+/ { if (!blind(substr($0, 2), w++, new_end)) { bad = 1; exit } changed++; next }
+    { bad = 1; exit }
+    END { exit (bad || !changed) }
+  ' <<<"$source_diff"
+}
 require_render() { # SOURCE RENDER — RENDER changes with SOURCE and outlives it
   { grep -Fxq -- "$2" <<<"$render_changed" && { [ ! -e "$1" ] || [ -e "$2" ]; }; } ||
+    render_unchanged_by "$1" "$2" ||
     render_hits="$render_hits$1 -> $2
 "
 }

@@ -1,7 +1,7 @@
 ---
 name: generalist
 description: General-purpose agent for documentation, cleanup, stale references, code organization, and miscellaneous maintenance tasks.
-model: opus
+model: inherit
 role: engineer
 effort: high
 color: green

@@ -2,7 +2,7 @@
 name: generalist
 description: "General-purpose agent for documentation, cleanup, stale references, code organization, and miscellaneous maintenance tasks."
 tags: docs, refactoring
-model: opus
+model: inherit
 effort: high
 background: false
 disallowedTools: Agent, AskUserQuestion

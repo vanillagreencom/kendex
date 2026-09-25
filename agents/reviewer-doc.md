@@ -1,7 +1,7 @@
 ---
 name: reviewer-doc
 description: Documentation accuracy reviewer. Verifies changed doc claims against implementation, re-derives transcribed values, checks citations resolve, audits drift.
-model: opus
+model: inherit
 role: reviewer
 effort: high
 color: yellow
