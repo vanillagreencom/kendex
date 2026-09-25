@@ -105,6 +105,24 @@ build_unreachable_collision() { # as unreachable, and the lane records its own D
   write_index "$1/work" D034:D034-first.md D035:D035-lane.md
 }
 
+MALFORMED_ROW='| 2026-01-11 | D035 | PROJ-1 | Decision D035 | Reason | Never | Active |'
+
+build_malformed_row() { # the lane's INDEX gains a seven-cell D035 row; local main is the base
+  new_repo "$1/work" main
+  write_index "$1/work" D034:D034-first.md
+  commit_all "$1/work" base
+  printf '%s\n' "$MALFORMED_ROW" >>"$1/work/docs/decisions/INDEX.md"
+}
+
+build_malformed_base_row() { # the base's INDEX carries a seven-cell D035 row
+  new_repo "$1/up" main
+  write_index "$1/up" D034:D034-first.md
+  printf '%s\n' "$MALFORMED_ROW" >>"$1/up/docs/decisions/INDEX.md"
+  commit_all "$1/up" base
+  clone_repo "$1/up" "$1/work"
+  write_index "$1/work" D034:D034-first.md
+}
+
 build_no_repo() { # a decisions directory outside any repository
   mkdir -p "$1/work/docs/decisions"
   write_index "$1/work" D034:D034-first.md
@@ -325,7 +343,9 @@ check-duplicate-row~dup_rows~~check~~1~~error=id-duplicate-row id=D035 rows=4,5 
 check-duplicate-file~dup_files~~check~~1~~error=id-duplicate-file id=D035 paths=docs/decisions/D035-a.md,docs/decisions/D035-b.md
 check-unresolved~no_remote~~check~~1~~error=base-unverified ref=origin/HEAD,origin/main,main reason=unresolved
 check-configured-unresolved~collision~DECISIONS_BASE_REF=origin/mian~check~~1~~error=base-unverified ref=origin/mian reason=unresolved
-check-fetch-failed~unreachable_collision~~check~~1~~notice=base-unverified ref=origin/main reason=fetch-failed;error=id-collision id=D035 path=docs/decisions/D035-lane.md base=origin/main:docs/decisions/D035-main.md
+check-fetch-failed~unreachable_collision~~check~~1~~error=base-unverified ref=origin/main reason=fetch-failed;error=id-collision id=D035 path=docs/decisions/D035-lane.md base=origin/main:docs/decisions/D035-main.md
+check-malformed-row~malformed_row~~check~~1~~error=index-row-invalid path=docs/decisions/INDEX.md line=4 cells=7
+check-malformed-base-row~malformed_base_row~~check~~1~~error=index-row-invalid path=origin/main:docs/decisions/INDEX.md line=4 cells=7
 check-index-absent~index_absent~~check~~0~~notice=base-unverified ref=origin/main reason=index-absent
 check-not-a-repository~no_repo~~check~~0~~notice=base-unverified ref=none reason=not-a-repository
 check-blob-missing~blob_missing~~check~~1~~error=base-unverified ref=origin/main reason=unreadable
@@ -393,7 +413,9 @@ check-duplicate-row~map(select(length > 1))~map(select(length > 99))~a duplicate
 check-duplicate-file~file_count=$((file_count + 1))~file_count=$((file_count + 0))~a duplicate-file rule that never counts
 check-unresolved~    unresolved) refuse=1;~    unresolved) refuse=0;~an unresolved base that check passes
 check-index-absent~    index-absent) text=~    index-absent) refuse=1; text=~a base without INDEX.md that check refuses
-check-fetch-failed~    fetch-failed) text=~    fetch-failed) refuse=1; text=~a failed fetch that check refuses
+check-fetch-failed~    fetch-failed) refuse=1; text=~    fetch-failed) text=~a stale base copy that check passes
+check-malformed-row~  ROW_INVALID_KIND=error~  ROW_INVALID_KIND=notice~a skipped working-tree row that check passes
+check-malformed-base-row~|| BASE_ROWS_SKIPPED=1~|| BASE_ROWS_SKIPPED=0~a skipped base row that check passes
 check-not-a-repository~    not-a-repository) text=~    not-a-repository) refuse=1; text=~a directory outside a repository that check refuses
 check-configured-unresolved~  if [[ -n "${DECISIONS_BASE_REF:-}" ]]; then~  if false; then~a configured base ref that is ignored
 check-blob-missing~rev-parse --verify --quiet "$BASE_REF:$BASE_PATH"~cat-file -e "$BASE_REF:$BASE_PATH"~a presence test that needs the blob

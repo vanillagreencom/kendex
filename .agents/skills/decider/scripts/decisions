@@ -97,9 +97,13 @@ Environment:
                        be fetched or read prints base-unverified with a
                        reason: not-a-repository, unresolved, fetch-failed
                        (the local copy was read), index-absent or
-                       unreadable. check refuses unresolved and unreadable,
-                       exit 1; every other record is a notice, and next-id
-                       answers from what it could read, exit 0
+                       unreadable. check exits 0 only when it fetched and
+                       read the base now and read both indexes whole: it
+                       refuses every reason but index-absent and
+                       not-a-repository, and a skipped INDEX row is an
+                       error=index-row-invalid, exit 1. Elsewhere each is a
+                       notice, and next-id answers from what it could read,
+                       exit 0
 
 Examples:
   decisions search "FFI error handling"
@@ -257,13 +261,16 @@ parse_index() {
   parse_rows "$(<"$INDEX_FILE")" "$INDEX_FILE" "$DECISIONS_DIR/"
 }
 
-parse_rows() { # TEXT LABEL PATH_PREFIX — LABEL names the INDEX in notices
-  local text="$1" label="$2" prefix="$3"
+# ROW_INVALID_KIND is notice, or error under check, which may pass only an
+# INDEX it read whole; parse_rows then returns 1 when it skipped a row.
+ROW_INVALID_KIND=notice
+parse_rows() { # TEXT LABEL PATH_PREFIX — LABEL names the INDEX in records
+  local text="$1" label="$2" prefix="$3" invalid parsed
   # A row that opens `| YYYY-` but misses the eight-cell contract is dropped
   # from the results. Dropped silently it reads downstream as a decision nobody
   # ever recorded, so every such row is named on stderr. stdout still carries
   # exactly the rows that parse.
-  jq -R -s -r --arg f "$label" '
+  invalid="$(jq -R -s -r --arg f "$label" --arg kind "$ROW_INVALID_KIND" '
     def cells:
       split("|")
       | if .[0] == "" then .[1:] else . end
@@ -272,9 +279,14 @@ parse_rows() { # TEXT LABEL PATH_PREFIX — LABEL names the INDEX in notices
     | to_entries[]
     | select(.value | test("^\\| [0-9]{4}-"))
     | select((.value | cells | length) < 8)
-    | "notice=index-row-invalid path=\($f) line=\(.key + 1) cells=\(.value | cells | length)\nINDEX row needs at least 8 columns and was skipped: \(.value)"
-  ' <<<"$text" >&2
-  jq -R -s -c --arg prefix "$prefix" '
+    | "\($kind)=index-row-invalid path=\($f) line=\(.key + 1) cells=\(.value | cells | length)\nINDEX row needs at least 8 columns and was skipped: \(.value)"
+  ' <<<"$text")" || return 1
+  if [[ -n "$invalid" ]]; then
+    printf '%s\n' "$invalid" >&2
+  fi
+  # Each jq status is checked here: callers run this inside a command
+  # substitution, where errexit does not reach.
+  parsed="$(jq -R -s -c --arg prefix "$prefix" '
     def cells:
       split("|")
       | if .[0] == "" then .[1:] else . end
@@ -296,7 +308,9 @@ parse_rows() { # TEXT LABEL PATH_PREFIX — LABEL names the INDEX in notices
       | { id: .[1], research: .[2], decision: .[3], rationale: .[4],
           status: .[6], link: (.[7] | cell_path), line: $line }
       | .path = (if .link == "" then "" else $prefix + .link end)
-    ]' <<<"$text"
+    ]' <<<"$text")" || return 1
+  printf '%s\n' "$parsed"
+  [[ -z "$invalid" || "$ROW_INVALID_KIND" == notice ]]
 }
 
 # The base branch's INDEX.md, parsed into BASE_ROWS. Nothing is printed here:
@@ -308,6 +322,7 @@ BASE_ROWS='[]'
 BASE_REF=""
 BASE_PATH=""
 BASE_REASON=""
+BASE_ROWS_SKIPPED=0
 read_base_index() {
   local prefix cand short remote branch remotes r text line listing found fetch_failed=0
   local candidates=()
@@ -389,23 +404,23 @@ read_base_index() {
     BASE_REASON=unreadable
     return 0
   fi
-  BASE_ROWS="$(parse_rows "$text" "$BASE_REF:$BASE_PATH" "$BASE_REF:$prefix")"
+  BASE_ROWS="$(parse_rows "$text" "$BASE_REF:$BASE_PATH" "$BASE_REF:$prefix")" || BASE_ROWS_SKIPPED=1
   if [[ "$fetch_failed" -eq 1 ]]; then
     BASE_REASON=fetch-failed
   fi
 }
 
 # Print the outcome of read_base_index as one base-unverified record. The
-# refuse column is the whole check policy: check refuses a base that did not
-# resolve or could not be read, and every other outcome is a notice. next-id
-# never refuses. Returns 1 when a refusal was printed.
+# refuse column is the whole check policy: check refuses every base it did not
+# fetch and read now, except one with no INDEX.md or no repository, which holds
+# no number. next-id never refuses. Returns 1 when a refusal was printed.
 report_base() { # MODE — next-id or check
   local mode="$1" refuse=0 text
   case "$BASE_REASON" in
     "") return 0 ;;
     not-a-repository) text="The decisions directory is not inside a git repository, so no base branch was read." ;;
     unresolved) refuse=1; text="None of these resolved to a commit, so no base branch was read. Set DECISIONS_BASE_REF to the base branch, or correct its value." ;;
-    fetch-failed) text="The base branch could not be fetched, so its local copy was read and may be behind the remote." ;;
+    fetch-failed) refuse=1; text="The base branch could not be fetched, so its local copy was read and may be behind the remote." ;;
     index-absent) text="The base branch has no $BASE_PATH, so it holds no decision number." ;;
     unreadable) refuse=1; text="The base branch's $BASE_PATH exists but could not be read, so no base number was read." ;;
   esac
@@ -732,7 +747,8 @@ cmd_check() {
   fi
 
   local rows dups dup ids id f files fields file_count found=0
-  rows="$(parse_index)"
+  ROW_INVALID_KIND=error
+  rows="$(parse_index)" || found=1
 
   dups="$(jq -c 'group_by(.id) | map(select(length > 1)) | .[]' <<<"$rows")"
   while IFS= read -r dup; do
@@ -763,6 +779,7 @@ cmd_check() {
   # not. The same ID under another link is a second decision.
   read_base_index
   report_base check || found=1
+  [[ "$BASE_ROWS_SKIPPED" -eq 0 ]] || found=1
   local collisions collision
   collisions="$(jq -c --argjson base "$BASE_ROWS" '
     .[] | . as $row

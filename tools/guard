@@ -49,7 +49,7 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     bot-instructions)
       echo "the bot instruction check refused the working tree; its own report above names each file." ;;
     decision-ids)
-      echo "decisions check refused; its own records above say why. An error=id-* record names a decision ID two records share: renumber per the decider skill's workflows/create-decision.md. An error=base-unverified record means the base branch could not be read; its reason and guidance follow it." ;;
+      echo "decisions check refused; its own records above say why. An error=id-* record names a decision ID two records share: renumber per the decider skill's workflows/create-decision.md. An error=base-unverified record means the base branch could not be fetched or read, and an error=index-row-invalid record names an INDEX row check could not parse; the reason and guidance follow each." ;;
     homebrew-formula)
       echo "a Homebrew formula claims the plain kendex name — the cask owns it; name the formula KendexCli." ;;
     catalog-fs-read)
