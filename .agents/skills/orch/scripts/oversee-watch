@@ -235,8 +235,8 @@ mailbox last:
                              reports `missed` seeds nothing
   EVENT directive-unread <item> <id> age=<seconds>
                              a directive the cursor has not passed is older
-                             than ORCH_DIRECTIVE_UNREAD_SECS; reported once,
-                             on the first mail pass past that age, and again
+                             than ORCH_DIRECTIVE_UNREAD_SECS; reported on
+                             the first mail pass past that age, and again
                              as directive-read once the lane reads it
   EVENT peer-note <repo> <id> kind=<kind> [re=<ask id>]
                              a note, ask or answer another repository's
@@ -292,10 +292,11 @@ A line already delivered is not delivered again by a re-run: overseer-dead,
 overseer-walled, merged, lane-asking, usage-limit, model-capacity,
 lane-exited, idle-after-return, handoff and account are keyed in that
 baseline. Mail is reported at least once and never lost: lane-question,
-lane-notice, directive-read and directive-unread are keyed in the mail pass's
-own file beside it, owner-note and peer-note by the overseer mailbox's
-cursor, each committed only once printed, so a stop between the two reports
-a line twice: a repeated id is one already seen. Each repeats only when what it reports changes: another PR, a
+lane-notice, directive-unread and, for a directive read after its lane is
+first watched, directive-read are keyed in the mail pass's own file beside
+it, owner-note and peer-note by the overseer mailbox's cursor, each
+committed only once printed, so a stop between the two reports a line
+twice: a repeated id is one already seen. Each repeats only when what it reports changes: another PR, a
 different wall or a reset gone by, a replacement pane, a different screen, a
 new record, another account state. An unchanged standing overseer-mark is the one keyed line that
 comes back on a timer: it is reported every ORCH_OVERSEER_MARK_REPEAT passes
