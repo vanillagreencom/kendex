@@ -206,9 +206,9 @@ The long pass's events, checked and reported in this order:
                              the overseer's status report is due, as
                              `oversee-report due --state` judges it from the
                              newest owner progress report and the ORCH_REPORT
-                             settings. Reported on every long pass
-                             while it stays due, so it stops once a report is
-                             written; read only with --state
+                             settings. Reported on every long pass while it
+                             stays due, so it stops once a report is written;
+                             read only with --state
   EVENT heartbeat            --max-loops long passes with no event. A line
                              `  failing <item> <key>` follows for every lane
                              of the current fleet whose failure still stands,
@@ -3462,7 +3462,7 @@ check_accounts() {
 
 # The status report's cadence, judged by oversee-report alone. No row is kept:
 # the report file the overseer writes is what ends the event, so an overseer
-# that has not written one is told again on the next pass.
+# that has not written one is told again on the next long pass.
 check_report() {
   [[ -n "$STATE_FILE" ]] || return 0
   local errf="$WORK_DIR/report.err" out rc=0 repo repo_args=()
