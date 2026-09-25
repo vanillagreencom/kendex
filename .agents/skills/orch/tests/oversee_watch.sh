@@ -1233,9 +1233,9 @@ out="$(run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --rep
 assert_eq "rc=$rc named=$(grep -c '^oversee-watch: sleep-failed secs=0$' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" \
   "rc=2 named=1 events=heartbeat" "a failed repeat delay ends the watch as sleep-failed after the pass it followed" "$err"
 # The must-fail control: the bare sleep, whose failure is the watch's own exit.
-sleep_line='    OVERSEE_WATCH_SLEEP=repeat sleep "$REPEAT" || die sleep-failed "" "secs=$REPEAT"'
+sleep_line='    wait "$REPEAT_CHILD_PID" || die sleep-failed "" "secs=$REPEAT"'
 assert_eq "$(grep -cxF -- "$sleep_line" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the guarded delay is one line to strip"
-awk -v line="$sleep_line" '$0 == line { print "    OVERSEE_WATCH_SLEEP=repeat sleep \"$REPEAT\""; next } { print }' \
+awk -v line="$sleep_line" '$0 == line { print "    wait \"$REPEAT_CHILD_PID\""; next } { print }' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 new_case repeat_sleep_fails_unguarded
 write_state "$STUB_DIR/state.json" "$(lane_record issue-1 '' '' /w/issue-1 running)"

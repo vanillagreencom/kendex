@@ -246,7 +246,8 @@ assert_eq "$(cmp -s "$UNCHECKED" "$REPO_ROOT/skills/orch/scripts/oversee-watch" 
 new_case mail_hosted_unchecked
 mail_reset KEN-10
 err="$TMP_ROOT/hosted-unchecked"
-out="$(WATCH_BIN="$UNCHECKED" run_watch -- --max-loops 1 --item KEN-10 --hosted 'KEN-11=/srv' 2>"$err")" && rc=0 || rc=$?
+# A host is named, so the hosted-without-host refusal has no say in this row.
+out="$(WATCH_BIN="$UNCHECKED" run_watch ORCH_LANE_HOST="$FIXTURE_HOST" -- --max-loops 1 --item KEN-10 --hosted 'KEN-11=/srv' 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "control: without the check the entry for an unwatched item is accepted"
 
 KEPT="$MUTANT_DIR/orch/scripts/oversee-watch-kept"

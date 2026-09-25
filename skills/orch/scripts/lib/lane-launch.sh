@@ -954,3 +954,23 @@ lane_account_check() { # PANE LANE_VAR PICKED FORM BOUND
   LANE_ACCOUNT_RESULT=mismatch
   return 1
 }
+
+# lane_run_detached OUT ERR COMMAND... — COMMAND started so it outlives this
+# script and its terminal, stdin from /dev/null, stdout appended to OUT and
+# stderr to ERR (one path may be both). setsid puts the child in a session of
+# its own, clear of this script's terminal and of a kill of its process group.
+# macOS ships none — it is util-linux — and with stderr redirected the shell's
+# `setsid: command not found` would be swallowed, the launch never made and the
+# caller still saying it had; nohup is what every platform has, and it clears
+# the child of the hangup this script's exit would deliver, though not of a
+# process-group kill. The environment is the caller's own: what a child must
+# not inherit, the caller strips at the head of COMMAND.
+lane_run_detached() { # OUT ERR COMMAND...
+  local out="$1" err="$2"
+  shift 2
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@" </dev/null >>"$out" 2>>"$err" &
+  else
+    nohup "$@" </dev/null >>"$out" 2>>"$err" &
+  fi
+}

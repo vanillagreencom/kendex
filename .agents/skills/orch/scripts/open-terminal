@@ -2278,23 +2278,15 @@ open_gui() {
   ot_message terminal-opened "item=$title" "path=$dir"
 }
 
-# setsid puts the child in its own session so it outlives this script and its
-# terminal. macOS ships none — it is util-linux — and with stderr already
-# redirected the shell's `setsid: command not found` was swallowed, so the
-# launch never happened and the caller still said it had. nohup is what every
-# platform has: it detaches the child from the hangup this script's exit would
-# otherwise deliver. The environment is scrubbed: a child started from inside
-# tmux or Claude Code otherwise inherits TMUX, TMUX_PANE and CLAUDECODE, reads
-# as a tmux pane or a nested session, and pane-aware tools in it act on the
-# controller's server.
+# Detached through lib/lane-launch.sh's lane_run_detached, which owns how a
+# child outlives this script. The environment is scrubbed: a child started
+# from inside tmux or Claude Code otherwise inherits TMUX, TMUX_PANE and
+# CLAUDECODE, reads as a tmux pane or a nested session, and pane-aware tools in
+# it act on the controller's server.
 run_detached() { # LOG COMMAND...
   local log="$1"
   shift
-  if command -v setsid >/dev/null 2>&1; then
-    setsid env -u CLAUDECODE -u TMUX -u TMUX_PANE "$@" </dev/null >>"$log" 2>&1 &
-  else
-    nohup env -u CLAUDECODE -u TMUX -u TMUX_PANE "$@" </dev/null >>"$log" 2>&1 &
-  fi
+  lane_run_detached "$log" "$log" env -u CLAUDECODE -u TMUX -u TMUX_PANE "$@"
 }
 
 # A resumed turn can run for a long time, so it runs detached from the caller,

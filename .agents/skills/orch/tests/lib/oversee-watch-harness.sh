@@ -151,7 +151,15 @@ EOF
 
 # tmux stub: windows.txt lists the caller's window names and
 # windows-<session>.txt another session's (`list-windows -t <session>`, absent
-# meaning no such session); pane-<lane>.txt is a lane's screen;
+# meaning no such session). The caller's session is session.txt, default main:
+# `display-message -p '#S'` answers it, session-fail making that read fail, and
+# a target `=<that session>:<lane>` reads the same files as a bare <lane>, so
+# a lane's fixtures are named for the lane whichever way the watch spells it.
+# session-fail is the calling pane gone, and there a `list-windows` naming no
+# session answers the session tmux falls back to, windows-fallback.txt, empty
+# when absent, and a bare lane target reads that session's fixtures, named
+# fallback-<lane>, never the recorded lane's;
+# pane-<lane>.txt is a lane's screen;
 # cmd-<lane>.txt is the pane's foreground command (#{pane_current_command}) and
 # panepid-<lane>.txt its #{pane_pid} (default 9000), returned together as the
 # lane's one liveness read; panes.txt is `list-panes -a` (`<server pid> <pane
@@ -167,16 +175,33 @@ set -uo pipefail
 # The pane or lane a call names, read from its own argv: every format arm below
 # asks the same question, and a scan each arm kept for itself shared one cursor
 # and so depended on the order the arms were written in.
+current_session() { if [[ -f "$STUB_DIR/session.txt" ]]; then cat "$STUB_DIR/session.txt"; else echo main; fi; }
+# A target in the caller's own session, spelled exactly, names the same lane as
+# its bare window name.
+lane_name() {
+  local t="${1#=}" cur
+  cur="$(current_session)"
+  if [[ -f "$STUB_DIR/session-fail" && "$1" != *:* && "$1" != %* ]]; then
+    printf 'fallback-%s\n' "$1"
+    return 0
+  fi
+  [[ "$t" != "$cur:"* ]] || t="${t#"$cur":}"
+  printf '%s\n' "$t"
+}
 dash_t() {
   local prev="" out="" x
   for x in "$@"; do [[ "$prev" == "-t" ]] && out="$x"; prev="$x"; done
-  printf '%s\n' "$out"
+  lane_name "$out"
 }
 case "${1:-}" in
   list-windows)
     s=""
     while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && s="${2#=}"; shift; done
-    [[ -n "$s" ]] || { cat "$STUB_DIR/windows.txt"; exit 0; }
+    if [[ -z "$s" && -f "$STUB_DIR/session-fail" ]]; then
+      [[ ! -f "$STUB_DIR/windows-fallback.txt" ]] || cat "$STUB_DIR/windows-fallback.txt"
+      exit 0
+    fi
+    [[ -n "$s" && "$s" != "$(current_session)" ]] || { cat "$STUB_DIR/windows.txt"; exit 0; }
     [[ -f "$STUB_DIR/windows-$s.txt" ]] || { echo "can't find session: $s" >&2; exit 1; }
     cat "$STUB_DIR/windows-$s.txt"; exit 0 ;;
   list-panes)
@@ -184,7 +209,7 @@ case "${1:-}" in
     exit 0 ;;
   capture-pane)
     lane=""; join=0
-    while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$2"; [[ "$1" == *J* && "$1" == -* ]] && join=1; shift; done
+    while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$(lane_name "$2")"; [[ "$1" == *J* && "$1" == -* ]] && join=1; shift; done
     n=0; [[ -f "$STUB_DIR/pane-$lane.calls" ]] && n="$(cat "$STUB_DIR/pane-$lane.calls")"
     n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/pane-$lane.calls"
     [[ -f "$STUB_DIR/capture-fail-$lane" ]] && { printf 'E_CAPTURE lane=%s\n' "$lane" >&2; exit 1; }
@@ -198,6 +223,13 @@ case "${1:-}" in
     if [[ "$w" -gt 0 && "$join" -eq 0 ]]; then fold -w "$w" -- "$src"; else cat "$src"; fi
     exit 0 ;;
   display-message)
+    # `-p [-t <pane>] '#S'` asks which session the caller is in.
+    for a in "$@"; do
+      [[ "$a" == '#S' ]] || continue
+      [[ ! -f "$STUB_DIR/session-fail" ]] || { echo "can't find pane: ${TMUX_PANE:-none}" >&2; exit 1; }
+      current_session
+      exit 0
+    done
     # `-p -t <pane> '#{pid}'` asks which tmux server a pane belongs to, the
     # first half of the key lib/lane-context.sh builds a session's own row on.
     # Answered from the same pane-key file the pair above is answered from, so
@@ -241,8 +273,7 @@ case "${1:-}" in
       if [[ -f "$key" ]]; then cat "$key"; else printf '7000 %%%s\n' "$lane"; fi
       exit 0
     done
-    lane=""
-    while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$2"; shift; done
+    lane="$(dash_t "$@")"
     n=0; [[ -f "$STUB_DIR/cmd-$lane.calls" ]] && n="$(cat "$STUB_DIR/cmd-$lane.calls")"
     n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/cmd-$lane.calls"
     src="$STUB_DIR/cmd-$lane.$n.txt"; [[ -f "$src" ]] || src="$STUB_DIR/cmd-$lane.txt"
