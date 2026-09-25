@@ -25,4 +25,4 @@ Provider-backed research and the report it produces. Not production code, not ar
 
 ## Output
 
-`findings.md` at the exact requested path, raw provider metadata in its sidecar, and exactly one completion message, sent after the report exists and its validation passes.
+`findings.md` at the exact requested path, or given none at `docs/plans/<slug>.md` per the planner agent's § Plan Artifacts, raw provider metadata in its sidecar, and exactly one completion message, sent after the report exists and its validation passes.

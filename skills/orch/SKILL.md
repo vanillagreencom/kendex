@@ -150,7 +150,7 @@ An `ISSUE_ID` starting with `issue-` is GitHub (`TRACKER=github`, issue number `
 
 Durable data lives in workflow state through the `workflow-state` CLI only (`set-git-head`/`set-now`, never inline substitution). Location: `<state-dir>/workflow-state-[ID].json`, where `<state-dir>` is the `--state-dir` flag, then `$ORCH_STATE_DIR`, then `tmp/`.
 
-For workflow state, use the preceding location rule; other temporary session state, including handoffs, lane status, and reviews, defaults to the repository's `tmp/`, which kendex's managed ignore block covers in every consumer, while `docs/` holds tracked repository content and never receives a kendex ignore rule.
+For workflow state, use the preceding location rule; other temporary session state, including handoffs, lane status, and reviews, defaults to the repository's `tmp/`, which kendex's managed ignore block covers in every consumer, while `docs/` holds tracked repository content and never receives a kendex ignore rule. A plan or research report is not session state: it goes to `docs/plans/<slug>.md` (the planner agent's § Plan Artifacts), never to `tmp/`.
 
 After compaction, resume from the step after the last completed one: read workflow state, re-send delegations by stored ID, respawn only an agent silent through one idle cycle. Never repeat completed actions.
 
