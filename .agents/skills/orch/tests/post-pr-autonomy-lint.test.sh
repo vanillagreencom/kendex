@@ -18,6 +18,9 @@ rule_fenced "submission reads the decision mode" "$SUBMIT" "" 'orch-env ORCH_DEC
 rule "submission spends review retries before its cap" "$SUBMIT" "## 4. Review Gate" '`continue` restarts step 1' '`at-cap` records `review-round-cap`'
 rule_fenced "submission spends the review-wait budget" "$SUBMIT" "## 4. Review Gate" 'head-budget take' 'review-wait'
 rule_fenced "submission records the review-round cap" "$SUBMIT" "## 4. Review Gate" 'post-pr-stop record' 'review-round-cap'
+rule "one override paragraph records Force merge for timeout and unreviewable" "$SUBMIT" "## 4. Review Gate" \
+  '**On `timeout` or `unreviewable` under `ask`**' '`Force merge` records `pr_approval.forced`'
+rule_fenced "the override paragraph runs the forced record" "$SUBMIT" "## 4. Review Gate" 'workflow-state set' 'pr_approval.forced true'
 rule "start-worktree preserves the upstream stop before summaries" "$START" "## 5. Finalize" "preserves submit-pr's stop" '`merge-gates-unmet`'
 rule_fenced "start-worktree records the unmet merge gates" "$START" "## 5. Finalize" 'post-pr-stop record-if-empty' 'merge-gates-unmet'
 rule_fenced "merge reads the decision mode" "$MERGE" "" 'orch-env ORCH_DECISION_MODE auto-recommended'
