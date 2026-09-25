@@ -1,6 +1,6 @@
 # Wiring shapes
 
-Four shapes cover the repositories this package targets. Copy one, keep the repository's own job names and required contexts, and change nothing else.
+Four shapes cover the repositories this package targets. Copy one, keep the repository's own job names and required contexts, and change nothing else. A repository under the organization ruleset, which requires one `CI` context beside `Review gate`, copies [the CI template](#the-ci-template) instead, which assembles shapes 3 and 4 under that name.
 
 Every shape passes the event and the endpoints through `env:` rather than interpolating `${{ }}` into the shell — a workflow expression pasted into a command line is an injection surface.
 
@@ -262,6 +262,17 @@ The classify step can instead call the composite action kendex publishes, which 
 - **`--base` must name a commit the `subject` checkout holds**, which `fetch-depth: 0` gives. The classifier measures the range this call names, so nothing depends on what the runner thinks the default branch is called.
 
 **The class is never asserted by the change's author.** The script reads no label, branch name or pull request title, takes no flag that would carry one, and reads no configuration out of the tree it judges.
+
+## The CI template
+
+[`../templates/ci.yml`](../templates/ci.yml) is the workflow a repository copies to `.github/workflows/ci.yml`. The organization ruleset requires two contexts on every repository, `Review gate` and `CI`, so the template fixes the names every repository reports: the job carrying `CI`, and the classifying job `Classify the diff`. Keep both names and change the rest to fit.
+
+- **Every lane goes in this workflow.** A job can wait only on jobs in its own workflow, so a lane left in another workflow is a lane no required context holds. Replace the placeholder `test` job with the repository's lanes, one job each, and give each lane the same `needs:` and `if:`. Name each lane in CI's `needs:` and in a `--skippable` of CI's aggregate step. Copied as it stands, the placeholder fails, and `CI` fails with it.
+- **The merge queue runs the class job set its pull request ran.** The template runs on `pull_request` and `merge_group`, the classifier judges each event's own diff, and every lane reads the classifier's one `lanes` output on both. A `render` or `trivial` diff runs no lane, and every other class runs them all. The `lanes` output is the one place that set is spelled, and CI's waiver reads the same output.
+- **The render prerequisites are Shape 4's.** The template pins a kendex main build and reads its installer at the same sha. Move both together, to a build whose `kendex verify --json` prints a version 1 document. Neither network step fails the job: without them the class falls to `standard`, and every lane runs.
+- **CI is Shape 3's aggregate.** It runs under `always()`, and `aggregate-needs` accepts a skipped lane only where the classifier succeeded and its `lanes` output stood the lanes down.
+
+`tests/ci-template.test.sh` evaluates the template's job conditions per event and class and hands its waiver to the real `aggregate-needs`.
 
 ## Verifying an adoption
 

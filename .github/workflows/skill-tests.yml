@@ -17,7 +17,8 @@ name: Skill Tests
 # names, runs the shell shards, that job and each other lane as
 # `tools/ci-job-set` selects it; the invariant comment there is the one
 # statement of what each lane runs. The aggregators still report and accept
-# only the skips the selection authorized. The push to main
+# only the skips the selection authorized, and the last job, `CI`, is the one
+# every other job reports into. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
 # so it runs only the compile steps: each cargo lane builds its targets with
@@ -1162,9 +1163,13 @@ jobs:
         working-directory: ui
         run: npm run check:lint
 
-  # AGGREGATOR — this job's name is the ruleset's required context, so the
-  # `(shell + node)` in it is frozen history: renaming it to match today's
-  # shards leaves the ruleset waiting on a context nothing creates. It runs on
+  # AGGREGATOR — this job's name is the per-repository ruleset's required
+  # context, so the `(shell + node)` in it is frozen history: renaming it to
+  # match today's shards leaves the ruleset waiting on a context nothing
+  # creates. It and the two cargo aggregators stand until the organization
+  # ruleset, which requires `CI` alone beside `Review gate`, replaces the
+  # per-repository one (docs/decisions/D003-one-merge-path.md item 3); `CI`
+  # holds every lane they hold, so retiring them is deleting them. It runs on
   # pull_request and merge_group, the two events the ruleset gates; not on
   # push, where the shards are skipped and nothing requires a context. GitHub
   # counts a SKIPPED required context as satisfied, so on the gated events no
@@ -1232,7 +1237,7 @@ jobs:
     # against; its findings (fail-open bash, dead doc citations, broken
     # JSON/TOML) are the classes that otherwise surface as bot-review
     # round-trips. It is required on pull requests. It skips merge groups,
-    # where a skipped required job satisfies the queue.
+    # where `CI` accepts the skip against this same event condition.
     name: Preflight (diff-scoped deterministic checks)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -1251,8 +1256,8 @@ jobs:
     # The range scan checks the PR change. The full scan keeps the repository's
     # configured all-tree push scope. This required PR check prevents a hook
     # bypass from putting Markdown on main that the next local push must refuse.
-    # It skips merge groups because GitHub treats a skipped required job as
-    # satisfied there.
+    # It skips merge groups, where `CI` accepts the skip against this same
+    # event condition.
     name: Markdown (format + references)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -1280,10 +1285,11 @@ jobs:
   # step in that job gives. Every lane compiles in a step of its own
   # (`--no-run`) so a compile failure reads as one, and on the push to main
   # that step is the whole job (see the header). The aggregators after the
-  # shards carry the ruleset's required contexts, `Cargo (workspace tests)`
-  # and `macOS cargo (workspace tests)`: frozen names, for the reason the
-  # Skill suites aggregator gives. Splitting a lane adds legs under one of
-  # those two contexts and changes neither name.
+  # shards carry the per-repository ruleset's required contexts, `Cargo
+  # (workspace tests)` and `macOS cargo (workspace tests)`: frozen names, for
+  # the reason the Skill suites aggregator gives, and retired with it.
+  # Splitting a lane adds legs under one of those two contexts and under `CI`
+  # and changes no name.
   #
   # One compile cache per shard, keyed by the action on the lockfile, the
   # toolchain and RUSTFLAGS, plus the crate — and on macOS the leg — through
@@ -1682,3 +1688,53 @@ jobs:
           [ "$n" != 0 ] || { echo "no test file under crates/*/tests is gated off Windows"; exit 0; }
           printf '%s\n' "$gated"
           echo "::warning title=platform-gated tests::$n files under crates/*/tests carry a whole-file cfg gate that excludes Windows; the list is in this step"
+
+  # THE ONE REQUIRED CONTEXT beside `Review gate`, under the organization
+  # ruleset of docs/decisions/D003-one-merge-path.md item 3, and the job name
+  # skills/harness-ci/templates/ci.yml gives every repository. Every other job
+  # in this workflow reports into it, the three aggregators above excepted:
+  # they hold the same lanes under the per-repository ruleset's names until
+  # that ruleset is retired. The shape and the reasons are the Skill suites
+  # aggregator's: `always()` so a failed or skipped need fails this context
+  # rather than skipping it, and not on push, where nothing requires it.
+  #
+  # tools/ci-aggregate accepts a skipped lane only where the changes job
+  # selected it `false`, on pull_request and merge_group alike, so a merge
+  # group runs the class job set its pull request ran. The two diff checks
+  # read a pull request's base and run on no other event: each is held to
+  # the event condition it runs under, spelled as its own `if:` spells it.
+  ci:
+    name: CI
+    needs: [changes, bot-instructions, skill-suites-shard, ui-tests, gate-selftest, preflight, markdown, cargo-linux, cargo-macos, cargo-lint, cargo-check-windows, cargo-tests-windows]
+    if: always() && github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: every needed job succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          SHELL_SHARDS: ${{ needs.changes.outputs.shell_shards }}
+          UI: ${{ needs.changes.outputs.ui }}
+          BOT_INSTRUCTIONS: ${{ needs.changes.outputs.bot_instructions }}
+          CARGO_LINUX: ${{ needs.changes.outputs.cargo_linux }}
+          CARGO_MACOS: ${{ needs.changes.outputs.cargo_macos }}
+          CARGO_LINT: ${{ needs.changes.outputs.cargo_lint }}
+          CARGO_WINDOWS: ${{ needs.changes.outputs.cargo_windows }}
+          CARGO_WINDOWS_CHECK: ${{ needs.changes.outputs.cargo_windows_check }}
+          PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+        run: |
+          echo "$RESULTS"
+          tools/ci-aggregate --results "$RESULTS" --classifier changes \
+            --lane "$SHELL_SHARDS:skill-suites-shard" \
+            --lane "$UI:ui-tests" \
+            --lane "$BOT_INSTRUCTIONS:bot-instructions" \
+            --lane "$CARGO_LINUX:cargo-linux" \
+            --lane "$CARGO_MACOS:cargo-macos" \
+            --lane "$CARGO_LINT:cargo-lint" \
+            --lane "$CARGO_WINDOWS_CHECK:cargo-check-windows" \
+            --lane "$CARGO_WINDOWS:cargo-tests-windows" \
+            --lane "$PULL_REQUEST:preflight" \
+            --lane "$PULL_REQUEST:markdown"
