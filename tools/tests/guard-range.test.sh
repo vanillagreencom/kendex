@@ -100,6 +100,7 @@ ROWS=(
   "a crate's source file checks and lints that crate alone|worktree|crates/core/src/lib.rs|$CORE_CALLS"
   "a crate change committed after the base is in the range too|commit|crates/core/src/lib.rs|$CORE_CALLS"
   "an untracked shared compiler input checks and lints the workspace|worktree|Cargo.lock|$WORKSPACE_CALLS"
+  "the clippy configuration checks and lints the workspace|worktree|clippy.toml|$WORKSPACE_CALLS"
   "a UI file runs the UI checks and the UI suite|worktree|ui/src/main.ts|$UI_CALLS"
   "a markdown file under ui/ runs no UI check|worktree|ui/README.md|"
   "a crate's non-Rust file checks and lints that crate|worktree|crates/core/assets/data.txt|$CORE_CALLS"
@@ -137,6 +138,7 @@ back_to_base
 # compiles nothing.
 # label|path appended to|sed expression deleting the arm
 ARM_CONTROLS=(
+  "control: without the clippy entry a clippy.toml change compiles nothing|clippy.toml|s/ | clippy.toml) return 0 ;;$/) return 0 ;;/"
   "control: without the crate-file arm the crate asset compiles nothing|crates/core/assets/data.txt|/^      crates\/\*\/\*) add_crate \"\$f\" ;;$/d"
   "control: without the include arm the included file compiles nothing|docs/note.txt|/^    if grep -Fxq -- \"\$f\" <<<\"\$range_includes\"; then rust_all=1; fi$/d"
 )

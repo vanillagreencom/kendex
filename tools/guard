@@ -873,9 +873,9 @@ done <<<"$render_changed"
 
 # The changelog gate owns commit change collection and product-path matching.
 # Shared compiler inputs outside those product paths still affect all crates.
-workspace_rust_input() { # PATH — the workspace manifest, lock, toolchain pin or cargo configuration
+workspace_rust_input() { # PATH — the workspace manifest, lock, toolchain pin, cargo or clippy configuration
   case "$1" in
-    Cargo.toml | Cargo.lock | rust-toolchain.toml | .cargo/*) return 0 ;;
+    Cargo.toml | Cargo.lock | rust-toolchain.toml | .cargo/* | clippy.toml) return 0 ;;
   esac
   return 1
 }
