@@ -4,7 +4,8 @@
 # changes touch, the UI checks and suite for a UI change, and the suites of
 # the trees they touch, and none of what --full adds beyond that: the
 # workspace test run, cross-target checks, the documentation build, the Bash
-# 3.2 parse and the working-tree bot-instructions check. Every compiler and
+# 3.2 parse, the working-tree bot-instructions check, the cargo free-space
+# floor and the class lane selection. Every compiler and
 # toolchain call is a stub in fake-bin that logs what it was asked.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -62,7 +63,7 @@ run_range "$BASE"
 OUT=""
 RC=0
 : >"$CALLS"
-OUT="$(cd "$R" && env PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$GUARD" --full 2>&1 </dev/null)" || RC=$?
+OUT="$(cd "$R" && env "${GUARD_TEST_BOUNDS[@]}" PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$GUARD" --full 2>&1 </dev/null)" || RC=$?
 grep -qFx "cargo test --workspace --quiet" "$CALLS" \
   && ok "inverse: the same skill-only diff under --full runs the workspace tests" \
   || bad "inverse: the same skill-only diff under --full runs the workspace tests" "rc=$RC log=$(cat "$CALLS")"
@@ -123,6 +124,58 @@ if mutant_guard '/^    \*\.md) return 0 ;;$/d'; then
     || bad "control: without the markdown exclusion the ui/ markdown file runs the UI checks" "rc=$RC log=$LOG"
 else
   bad "control: the markdown exclusion could not be deleted from a guard copy"
+fi
+back_to_base
+
+echo "=== a range keeps its own selection whatever class it is handed ==="
+# dev-validate-run hands every run the branch's change class; the lane
+# selection that reads it is the full run's, and a range selects from its own
+# touched set.
+printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
+printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
+printf '%s\n' skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh >"$TMP/class-paths"
+range_classed() { # GUARD
+  OUT=""
+  RC=0
+  : >"$CALLS"
+  OUT="$(cd "$R" && env DEV_VALIDATE_CLASS=render DEV_VALIDATE_DOCS_ONLY=false DEV_VALIDATE_PATHS="$TMP/class-paths" \
+    PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$1" --range "$BASE" 2>&1 </dev/null)" || RC=$?
+}
+range_classed "$GUARD"
+[ "$RC" -eq 0 ] && [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] \
+  && ok "a range handed a render class still runs the touched skill's suite" \
+  || bad "a range handed a render class still runs the touched skill's suite" "rc=$RC out=$OUT"
+if mutant_guard 's/^if \[ "\$MODE" = full \] && \[ "\$validate_class:\$validate_docs_only" != standard:false \]; then$/if [ "$MODE" != default ] \&\& [ "$validate_class:$validate_docs_only" != standard:false ]; then/'; then
+  range_classed "$MUTANT_TOOLS/guard"
+  [[ "$OUT" != *"=== skills/demo/tests/demo.test.sh"* ]] \
+    && ok "control: with the class selection applied to range the suite stands down" \
+    || bad "control: with the class selection applied to range the suite stands down" "rc=$RC out=$OUT"
+else
+  bad "control: the class selection could not be widened to range in a guard copy"
+fi
+back_to_base
+
+echo "=== the cargo space floor is the full run's, not the range's ==="
+# The floor is sized for one full run: its workspace tests and target trees.
+# A range compiles only the crates it touched, so unreachable floors leave it
+# compiling.
+printf 'x\n' >>"$R/crates/core/src/lib.rs"
+OUT=""
+RC=0
+: >"$CALLS"
+OUT="$(cd "$R" && env GUARD_MIN_FREE_GB=1000000 GUARD_EXHAUSTED_FREE_MB=1000000000 PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$GUARD" --range "$BASE" 2>&1 </dev/null)" || RC=$?
+[ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: cargo-space-"* ]] && grep -qFx "cargo check --manifest-path crates/core/Cargo.toml --all-targets" "$CALLS" \
+  && ok "a range under unreachable space floors still checks its crate" \
+  || bad "a range under unreachable space floors still checks its crate" "rc=$RC out=$OUT"
+if mutant_guard 's/^if \[ "\$MODE" = full \] && \[ -f Cargo.toml \]; then$/if [ "$MODE" != default ] \&\& [ -f Cargo.toml ]; then/'; then
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && env GUARD_MIN_FREE_GB=1000000 GUARD_EXHAUSTED_FREE_MB=1000000000 PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$MUTANT_TOOLS/guard" --range "$BASE" 2>&1 </dev/null)" || RC=$?
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-space-"* ]] \
+    && ok "control: with the floor applied to range the same run stops on space" \
+    || bad "control: with the floor applied to range the same run stops on space" "rc=$RC out=$OUT"
+else
+  bad "control: the space floor could not be widened to range in a guard copy"
 fi
 back_to_base
 

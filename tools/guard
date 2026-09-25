@@ -249,7 +249,8 @@ case "${1:-}" in
       '        input), the UI checks and suite when they touch ui/, and the suites of the' \
       '        skill, hook, tool and Pi-package trees they touch. None of what --full adds' \
       '        beyond that: the workspace test run, cross-target checks, the documentation' \
-      '        build, the Bash 3.2 parse and the working-tree bot-instructions check.' \
+      '        build, the Bash 3.2 parse, the working-tree bot-instructions check,' \
+      '        the cargo free-space floor and the class lane selection.' \
       '--full: full Rust and UI validation for development completion and submit,' \
       '        plus the suites of the skill, hook, tool and Pi-package trees the branch touched.' \
       '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \
@@ -679,49 +680,6 @@ else
   have_head=0
 fi
 
-# What range and full validation touched: every path changed since the base,
-# plus everything the working tree and index carry, so a render-only sync
-# counts for its source and a fix not yet committed counts at all. full's base
-# is the branch's merge base with origin/main where that ref exists; range's
-# is the base it was given. This is range's one changed set: its compile and
-# suite selection and its render and fixture rules all read it. full compiles
-# everything whatever it holds. base_resolved is 0 where full found no merge
-# base with origin/main: the touched set then holds the working tree alone,
-# not what the branch committed.
-touched=""
-untracked_touched=""
-base_resolved=0
-if [ "$MODE" != default ]; then
-  if [ "$MODE" = range ]; then
-    suites_base=$range_base
-    base_resolved=1
-  else
-    suites_base=HEAD
-    if git rev-parse --verify -q origin/main >/dev/null; then
-      if suites_base=$(git merge-base HEAD origin/main); then
-        base_resolved=1
-      else
-        suites_base=HEAD
-      fi
-    fi
-  fi
-  # --no-renames: a move between two trees names its source and its
-  # destination, so the tree a file left runs its suite too. Each read checks
-  # its own status; a group's status is its last command's, which would let a
-  # failed diff pass on a good `git status`. The status read adds what the
-  # diff against the working tree cannot see: untracked files.
-  branch_touched=$(git -c core.quotePath=false diff --no-renames --name-only "$suites_base" --) ||
-    { branch_touched=""; say touched-set branch-diff; }
-  tree_status=$(git -c core.quotePath=false status --porcelain --untracked-files=all) ||
-    { tree_status=""; say touched-set working-tree; }
-  tree_touched=$(printf '%s\n' "$tree_status" | cut -c4- | sed 's/^.* -> //') ||
-    { tree_touched=""; say touched-set working-tree; }
-  untracked_touched=$(printf '%s\n' "$tree_status" | sed -n 's/^?? //p') ||
-    { untracked_touched=""; say touched-set working-tree; }
-  touched=$(printf '%s\n%s\n' "$branch_touched" "$tree_touched" | sort -u) ||
-    { touched=""; say touched-set merge; }
-fi
-
 # Integration-test temp roots take their canonical spelling immediately
 # through the shared rooted() helper, on the next source line, and that call
 # must take the root just declared — the follow-line test is built from the
@@ -990,6 +948,8 @@ case "$cargo_target" in
   /*) cargo_target_path="$cargo_target" ;;
   *) cargo_target_path="./$cargo_target" ;;
 esac
+# The full run's alone: its floors size one full run, and a range compiles
+# only the crates it touched, incrementally, with no workspace test run.
 if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
   # The fresh Linux cargo shards in .github/workflows/skill-tests.yml explain
   # why no later compile can reuse incremental artifacts from this run.
