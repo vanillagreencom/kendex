@@ -276,6 +276,38 @@ else
 fi
 git -C "$R" reset -q --hard HEAD
 
+# macOS runs BSD awk, which refuses a newline in a -v value; the shim below
+# refuses the same way, so a Linux run judges the allowance as macOS does.
+mkdir -p "$TMP/bsd-awk"
+cat >"$TMP/bsd-awk/awk" <<'SH'
+#!/usr/bin/env bash
+prev=""
+for a in "$@"; do
+  if [ "$prev" = -v ] && [[ "$a" == *$'\n'* ]]; then
+    echo "awk: newline in string ${a%%$'\n'*}... at source line 1" >&2
+    exit 2
+  fi
+  prev=$a
+done
+exec "$REAL_AWK" "$@"
+SH
+chmod +x "$TMP/bsd-awk/awk"
+land_pinned inherit opus
+run_guard PATH="$TMP/bsd-awk:$PATH" REAL_AWK="$REAL_AWK"
+[ "$RC" -eq 0 ] \
+  && ok "under an awk refusing a newline in a -v value the opus -> inherit edit passes" \
+  || bad "under an awk refusing a newline in a -v value the opus -> inherit edit passes" "rc=$RC out=$OUT"
+if mutant_guard 's/^  RENDER_BLIND="\$render_blind" awk -v root="\${2%\/\*}" -v old_end="\$old_end" -v new_end="\$new_end" '"'"'$/  awk -v root="${2%\/*}" -v old_end="$old_end" -v new_end="$new_end" -v rows="$render_blind" '"'"'/; s/split(ENVIRON\["RENDER_BLIND"\], r,/split(rows, r,/'; then
+  PATH="$TMP/bsd-awk:$PATH" REAL_AWK="$REAL_AWK" run_mutant
+  [ "$RC" -ne 0 ] && [[ "$OUT" == *"awk: newline in string"* ]] \
+    && [[ "$OUT" == *"agents/pinned.md -> .pi/agents/pinned.md"* ]] \
+    && ok "control: with the rows passed through -v the same edit reds under that awk" \
+    || bad "control: with the rows passed through -v the same edit reds under that awk" "rc=$RC out=$OUT"
+else
+  bad "control: the rows could not be moved back into a -v value in a guard copy"
+fi
+git -C "$R" reset -q --hard HEAD
+
 # The commit records the index: a staged sonnet owes the Pi render though the
 # worktree beside it has moved on to inherit.
 land_pinned sonnet opus

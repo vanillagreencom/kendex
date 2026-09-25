@@ -882,7 +882,8 @@ render_unchanged_by() { # SOURCE RENDER — every changed SOURCE line is a front
   old_end=$(frontmatter_end <<<"$old_source") || return 1
   new_end=$(frontmatter_end <<<"$new_source") || return 1
   source_diff=$(git -c core.quotePath=false diff --no-color --no-ext-diff --unified=0 "${render_diff[@]}" -- "$1") || return 1
-  awk -v root="${2%/*}" -v old_end="$old_end" -v new_end="$new_end" -v rows="$render_blind" '
+  # The rows ride the environment: BSD awk refuses a newline in a -v value.
+  RENDER_BLIND="$render_blind" awk -v root="${2%/*}" -v old_end="$old_end" -v new_end="$new_end" '
     function blind(text, line, end,   value) {
       key = ""
       if (line <= 1 || line >= end + 0 || !match(text, /^[A-Za-z0-9_-]+:/)) return 0
@@ -891,7 +892,7 @@ render_unchanged_by() { # SOURCE RENDER — every changed SOURCE line is a front
       gsub(/^[ \t]+|[ \t]+$/, "", value)
       return (root " " key " " value) in listed
     }
-    BEGIN { n = split(rows, r, "\n"); for (i = 1; i <= n; i++) listed[r[i]] = 1 }
+    BEGIN { n = split(ENVIRON["RENDER_BLIND"], r, "\n"); for (i = 1; i <= n; i++) listed[r[i]] = 1 }
     /^@@ / { split($2, a, ","); o = substr(a[1], 2) + 0; split($3, c, ","); w = substr(c[1], 2) + 0; hunk = 1; next }
     !hunk { next }
     /^-/ { if (!blind(substr($0, 2), o++, old_end)) { bad = 1; exit } moved[key]--; changed++; next }
