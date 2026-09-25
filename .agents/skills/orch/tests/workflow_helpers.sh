@@ -41,6 +41,38 @@ assert_file_contains() {
   fi
 }
 
+# Plants one literal substitution in a copy of a workflow doc and asserts the
+# contract PREDICATE, green on the real doc, goes red on the copy. OLD must
+# occur on exactly one line, and the copy must differ from the source.
+DOC_MUTANT_SEQ=0
+assert_doc_mutant_fails() {
+  local predicate="$1" source="$2" old="$3" new="$4" label="$5" mutant count
+  DOC_MUTANT_SEQ=$((DOC_MUTANT_SEQ + 1))
+  mutant="$TMP_ROOT/doc-mutant-$DOC_MUTANT_SEQ.md"
+  count="$(grep -Fc -- "$old" "$source" || true)"
+  assert_eq "$count" "1" "control: $label has one mutation target"
+  if [[ -L "$source" ]]; then
+    fail "control: $label mutation source must not be a symlink"
+    return 0
+  fi
+  # Literal, through the environment and index/substr: sub() reads its
+  # pattern as a regex, and these rules carry brackets and backticks.
+  MUT_OLD="$old" MUT_NEW="$new" awk '
+    {
+      old = ENVIRON["MUT_OLD"]
+      at = index($0, old)
+      if (at) { $0 = substr($0, 1, at - 1) ENVIRON["MUT_NEW"] substr($0, at + length(old)) }
+      print
+    }' "$source" >"$mutant"
+  assert_eq "$(cmp -s "$mutant" "$source" && echo same || echo differs)" "differs" \
+    "control: the mutant for $label changes the file"
+  if "$predicate" "$mutant"; then
+    fail "must-fail: $label must fail its contract"
+  else
+    pass "must-fail: $label fails its contract"
+  fi
+}
+
 orch_docs() {
   printf '%s\n' "$SKILL_DIR/SKILL.md" "$SKILL_DIR/README.md" "$SKILL_DIR/DEVELOPMENT.md"
   find "$SKILL_DIR/workflows" "$SKILL_DIR/references" "$SKILL_DIR/schemas" -type f -name '*.md'
@@ -383,30 +415,10 @@ else
   fail "merge-pr must continue a micro entry only on a fresh exempt answer at the classified head"
 fi
 
-micro_head_mutant="$TMP_ROOT/merge-pr-unpinned-micro.md"
-micro_head_rule='A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`'
-micro_head_count="$(grep -Fc -- "$micro_head_rule" "$merge_workflow" || true)"
-assert_eq "$micro_head_count" "1" "control: the micro head test has one mutation target"
-if [[ -L "$merge_workflow" ]]; then
-  fail "control: the merge workflow mutation source must not be a symlink"
-else
-  # Literal, through the environment and index/substr: sub() reads its pattern
-  # as a regex and this rule carries `[MICRO_ENTRY]`, which is a bracket class.
-  MUT_OLD="$micro_head_rule" MUT_NEW='A `[MICRO_ENTRY]` run continues' awk '
-    {
-      old = ENVIRON["MUT_OLD"]
-      at = index($0, old)
-      if (at) { $0 = substr($0, 1, at - 1) ENVIRON["MUT_NEW"] substr($0, at + length(old)) }
-      print
-    }' "$merge_workflow" >"$micro_head_mutant"
-  assert_eq "$(cmp -s "$micro_head_mutant" "$merge_workflow" && echo same || echo differs)" "differs" \
-    "control: the mutant drops the micro head test"
-  if micro_head_is_pinned "$micro_head_mutant"; then
-    fail "must-fail: a micro entry continued on a stale answer must fail the contract"
-  else
-    pass "must-fail: a micro entry continued on a stale answer fails the contract"
-  fi
-fi
+assert_doc_mutant_fails micro_head_is_pinned "$merge_workflow" \
+  'A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`' \
+  'A `[MICRO_ENTRY]` run continues' \
+  "a micro entry continued on a stale answer"
 
 micro_workflow="$SKILL_DIR/workflows/micro.md"
 micro_policy_is_closed() { # micro-doc
@@ -487,6 +499,120 @@ else
     pass "must-fail: leaving dirty edits in main fails the transfer contract"
   fi
 fi
+
+# On a hosted fleet the overseer's main-checkout route runs on the control VM,
+# which runs none of the toolchain the rest of the route starts: the refusal
+# stands between START and STOP, scoped to that route, ahead of the first
+# tracker read, handoff resume or route step, so nothing is resumed,
+# activated or created first.
+refuses_control_host() { # FILE KEY START STOP
+  local head=""
+  if ! head=$(START="$3" STOP="$4" awk '
+    !inside && $0 ~ ENVIRON["START"] { inside = 1; print; next }
+    inside && $0 ~ ENVIRON["STOP"] { exit }
+    inside { print }
+  ' "$1"); then
+    return 1
+  fi
+  [[ -n "$head" ]] &&
+    grep -Fxq '**Main checkout only.** Read the lane host before anything else:' <<<"$head" &&
+    grep -Fxq '.agents/skills/orch/scripts/lane-host resolve' <<<"$head" &&
+    grep -Fq 'Any answer but `local` refuses the run here' <<<"$head" &&
+    grep -Fq "\`$2 host=[HOST]\`" <<<"$head" &&
+    grep -Fq 'launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement' <<<"$head"
+}
+micro_refuses_control_host() { refuses_control_host "$1" micro-control-host '^## 1\. ' 'linear\.sh|^## 2\.'; } # micro-doc
+start_workflow="$SKILL_DIR/workflows/start.md"
+# start.md's head runs to its first section, so the refusal precedes § 0's
+# handoff resume and its `handoff.resumed_at` stamp.
+start_refuses_control_host() { refuses_control_host "$1" start-control-host '^# ' '^## '; } # start-doc
+
+if micro_refuses_control_host "$micro_workflow"; then
+  pass "micro refuses the main-checkout route on a resolved remote lane host"
+else
+  fail "micro must refuse the main-checkout route on a resolved remote lane host"
+fi
+if start_refuses_control_host "$start_workflow"; then
+  pass "start refuses the main-checkout route on a resolved remote lane host"
+else
+  fail "start must refuse the main-checkout route on a resolved remote lane host"
+fi
+
+assert_doc_mutant_fails micro_refuses_control_host "$micro_workflow" \
+  'Any answer but `local` refuses the run here, with nothing read, activated or changed;' \
+  'Any answer continues the run;' \
+  "a micro run continuing on a remote lane host"
+assert_doc_mutant_fails micro_refuses_control_host "$micro_workflow" \
+  '**Main checkout only.** Read the lane host before anything else:' \
+  'Read the lane host before anything else:' \
+  "a micro refusal that also binds a lane"
+assert_doc_mutant_fails start_refuses_control_host "$start_workflow" \
+  'Any answer but `local` refuses the run here, with no handoff resumed and nothing read, activated or created;' \
+  'Any answer continues the run;' \
+  "a start run continuing on a remote lane host"
+assert_doc_mutant_fails start_refuses_control_host "$start_workflow" \
+  '**Main checkout only.** Read the lane host before anything else:' \
+  'Read the lane host before anything else:' \
+  "a start refusal that also binds a lane"
+
+# The refusal moved back below § 0 keeps every pinned line and lets a handoff
+# resume first.
+start_move_mutant="$TMP_ROOT/start-refusal-after-resume.md"
+start_marker='**Main checkout only.** Read the lane host before anything else:'
+assert_eq "$(grep -Fxc -- "$start_marker" "$start_workflow" || true)" "1" \
+  "control: the start refusal has one block to move"
+MARKER="$start_marker" awk '
+  $0 == ENVIRON["MARKER"] { held = 1 }
+  held && /^## 0\. / { held = 0 }
+  held { block = block $0 "\n"; next }
+  /^## 1\. / { printf "%s", block }
+  { print }
+' "$start_workflow" >"$start_move_mutant"
+assert_eq "$(grep -Fxc -- "$start_marker" "$start_move_mutant" || true)" "1" \
+  "control: the moved start refusal keeps its marker"
+assert_eq "$(cmp -s "$start_move_mutant" "$start_workflow" && echo same || echo differs)" "differs" \
+  "control: the mutant moves the start refusal below § 0"
+if start_refuses_control_host "$start_move_mutant"; then
+  fail "must-fail: a start refusal after the handoff resume must fail its contract"
+else
+  pass "must-fail: a start refusal after the handoff resume fails its contract"
+fi
+
+# A guard sees only the top-level call, so every script that reads a listed
+# `setting` through orch-env and runs it needs its own `path` line in the
+# control-host list. The readers are derived from the scripts, never listed.
+toolchain_conf="$SKILL_DIR/references/control-host-toolchain.conf"
+SETTING_RUNNERS_FOUND=0
+setting_runners_listed() { # CONF
+  local keys="" key runners="" runner rc=0 listed=0
+  SETTING_RUNNERS_FOUND=0
+  keys="$(awk '$1 == "setting" { print $2 }' "$1")" || return 2
+  for key in $keys; do
+    rc=0
+    runners="$(grep -rlE "orch-env\"?[[:space:]]+$key([^A-Za-z0-9_]|\$)" "$REPO_ROOT"/skills/*/scripts)" || rc=$?
+    [[ "$rc" -le 1 ]] || return 2
+    for runner in $runners; do
+      SETTING_RUNNERS_FOUND=$((SETTING_RUNNERS_FOUND + 1))
+      grep -Fxq "path .agents/${runner#"$REPO_ROOT"/}" "$1" || listed=1
+    done
+  done
+  return "$listed"
+}
+
+if setting_runners_listed "$toolchain_conf"; then
+  pass "every script running a listed setting has its own path line"
+else
+  fail "every script running a listed setting must have its own path line"
+fi
+if [[ "$SETTING_RUNNERS_FOUND" -ge 2 ]]; then
+  pass "the setting-runner scan finds the orch-env readers"
+else
+  fail "the setting-runner scan found $SETTING_RUNNERS_FOUND orch-env readers (floor 2): its extraction is broken"
+fi
+assert_doc_mutant_fails setting_runners_listed "$toolchain_conf" \
+  'path .agents/skills/orch/scripts/post-merge' \
+  '# post-merge dropped' \
+  "a listed setting whose runner has no path line"
 
 echo
 echo "=== frozen cross-skill contracts ==="

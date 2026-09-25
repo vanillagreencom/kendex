@@ -17,6 +17,14 @@ The runner is a lane in the item's worktree, or the overseer in the main checkou
 
 ## 1. Open The Session
 
+**Main checkout only.** Read the lane host before anything else:
+
+```bash
+.agents/skills/orch/scripts/lane-host resolve
+```
+
+Any answer but `local` refuses the run here, with nothing read, activated or changed; [SKILL.md](../SKILL.md) § The Cycle, The overseer reads results, holds the reason. The report's first line is `micro-control-host host=[HOST]`, and its next line is the fix: launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement, with its `/orch micro [ISSUE_ID]` brief.
+
 Resolve `TRACKER` and `ISSUE_REF` from `[ISSUE_ID]` per [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution), then the main checkout:
 
 ```bash
@@ -170,7 +178,7 @@ A `dequeued` verdict routes to that step's late-findings triage. A finding there
 
 ## 5. Return
 
-Output: [Lane Output](../references/skill-rules.md#lane-output).
+Output: [Lane Output](../references/skill-rules.md#lane-output). The § 1 control-host refusal is the one return that is not this table: it returns its own two-line report.
 
 <output_format>
 
@@ -200,6 +208,8 @@ The tier holds only while the item and its change stay inside it. Each condition
 7. § 4 cannot prove both halves of its precheck. Either the review gate does not answer exactly `change_class=micro review_evidence=none policy=active` — an inactive policy, an unresolved class, another class, another evidence policy, or an unreadable result — or `pr-merge --check` returns no valid readiness object for an open pull request.
 8. merge-pr.md § 5 step 1 returns to its § 3.2.
 9. merge-pr.md § 5 step 1 refuses: the mode it resolves over the prepared endpoints is not `exempt`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`. The endpoints moved between § 4's classification and that step, by a push or by a retarget that changes the class without moving the head.
+
+The § 1 control-host refusal also ends the run, before any condition above can apply. It is not an escape: the item stays at the `micro` tier and launches as a hosted lane.
 
 Ending the run leaves the branch and its commits where they stand and reports the condition in § 5. **Main checkout only**, use the route below before reporting. It owns the base-branch restore this file opens with.
 

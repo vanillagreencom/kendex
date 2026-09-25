@@ -9,6 +9,14 @@ Prepare one work item from the main repo. Never watches or manages other session
 | `start github OWNER/REPO#N` | prepare GitHub issue |
 | `start new ...` | `workflows/start-new.md` |
 
+**Main checkout only.** Read the lane host before anything else:
+
+```bash
+.agents/skills/orch/scripts/lane-host resolve
+```
+
+A worktree cwd skips this read; § 1 step 3 routes it on. Any answer but `local` refuses the run here, with no handoff resumed and nothing read, activated or created; [SKILL.md](../SKILL.md) § The Cycle, The overseer reads results, holds the reason. The report's first line is `start-control-host host=[HOST]`, and its next line is the fix: launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement, with its `/orch start [ISSUE_ID]` brief; for `start new`, create the issue first, then launch it that way.
+
 ## 0. Resume From A Handoff
 
 **Skip if** no work item was named (`start` alone, or `start new`), or the read below prints `workflow-state: handoff-standing=none`, the one verdict that means no record stands. For `start github OWNER/REPO#N`, `[ISSUE_ID]` is `issue-[N]` (§ 1).
