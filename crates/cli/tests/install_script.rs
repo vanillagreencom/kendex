@@ -193,6 +193,7 @@ fn cli_only_installs_the_command_and_no_app() {
     for args in [
         &["--cli-only"][..],
         &["--cli-only", "--version", "v9.9.9"][..],
+        &["--cli-only", "--git"][..],
     ] {
         let home = tempfile::tempdir().unwrap();
         let root = rooted(&home);
