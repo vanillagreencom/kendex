@@ -28,21 +28,15 @@
 # with no kendex arming record (<git-dir>/kendex/armed), so a run over
 # uncommitted render edits is standard.
 #
-# No process the run starts outlives it. Where a systemd user manager starts a
-# transient unit (a user reached only over SSH has one while it holds a session
-# or has lingering on), the child runs as the unit validate-<id>-<run>: <id> is
-# the worktree directory's name, for a lane its item in lower case, and <run> the
-# run directory's stamp. When the child exits the unit ends and systemd kills
-# every process left in it, one that detached into its own session included.
-# The unit carries RuntimeMaxSec at the cap, a backstop above the bound that
-# still leaves the bound to produce the verdict, and the caller's environment
-# and open-file limits, which a user unit does not inherit. Elsewhere the child
-# runs under setsid in its own process group, and kills that group once the
-# verdict is recorded: a process that started its own session escapes it there.
-# The log's first line names which, `runner=systemd unit=NAME` or
-# `runner=setsid reason=WHY`, WHY being no-systemd-run, probe-failed (the probe
-# unit did not start) or unit-launch-failed (the probe did and the run's unit
-# did not); the two failures add detail=, systemd-run's first line of stderr.
+# No process the run starts outlives it. The child is started through
+# lib/job-unit.sh, as a transient systemd user unit of kind `validate` where a
+# user manager answers, named from the worktree directory (for a lane its item
+# in lower case) and the run directory's stamp; references/job-units.md is the
+# name shape, the runner line and the stop rule. The unit's RuntimeMaxSec is
+# the cap, a backstop above the bound that still leaves the bound to produce
+# the verdict. Elsewhere the child runs under setsid in its own process group,
+# and kills that group once the verdict is recorded: a process that started its
+# own session escapes it there. The log's first line is the runner line.
 #
 # Usage:
 #   dev-validate-run --worktree PATH [--poll SECS]
@@ -54,18 +48,18 @@
 #       poll, repeated while it exits 3.
 #   dev-validate-run --stop --worktree PATH
 #       End every run that worktree's run directories record with no verdict:
-#       a unit by the name its start record names, a setsid run by its process
-#       group. lane-close calls it for a local lane. Prints one line naming how
+#       a unit by the exact name its runner record names, a setsid run by its
+#       process group. lane-close calls it for a local lane. Prints one line naming how
 #       many of each were still running:
 #         state=stopped units=N groups=N
 #   dev-validate-run --child --run-dir PATH
 #       Internal. The detached process the start path launches.
 #
-# The run directory holds cmd (the command text), start (the run's bounds,
-# class and runner), class.log (the stderr of the base-branch lookup and the
-# classifier), paths (DEV_VALIDATE_PATHS), pid (the detached child's process
-# id), log (the runner line, then the command's output) and exit (the
-# sentinel).
+# The run directory holds cmd (the command text), start (the run's bounds and
+# class), runner (lib/job-unit.sh's record of how the child runs), class.log
+# (the stderr of the base-branch lookup and the classifier), paths
+# (DEV_VALIDATE_PATHS), pid (the detached child's process id), log (the runner
+# line, then the command's output) and exit (the sentinel).
 #
 # Output protocol — the agent reads these lines and the tests pin them:
 #   state=started run-dir=… log=… sentinel=… timeout-secs=N poll-secs=N cap-secs=N class=… docs-only=… [class-fallback=…]
@@ -96,6 +90,8 @@ SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SO
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 # shellcheck source=lib/change-class.sh
 source "$SCRIPT_DIR/lib/change-class.sh"
+# shellcheck source=lib/job-unit.sh
+source "$SCRIPT_DIR/lib/job-unit.sh"
 
 # The poll granularity, and with it the slack the cap carries over the command's
 # own limit: a command killed at its limit still has one interval in which to
@@ -103,18 +99,14 @@ source "$SCRIPT_DIR/lib/change-class.sh"
 POLL_DEFAULT=30
 # The gap between the SIGTERM the bound sends and the SIGKILL behind it. Without
 # one the bound is a single signal, which a command that ignores SIGTERM simply
-# outlives; tools/bash32-parse bounds its own container run with the same ten
-# seconds. The cap carries the grace, so the sentinel still lands inside a wait.
-KILL_GRACE=10
+# outlives. It is the job-unit library's grace, so a unit's stop and the bound
+# give a process the same time. The cap carries it, so the sentinel still lands
+# inside a wait.
+KILL_GRACE="$JOB_UNIT_KILL_GRACE"
 # One --wait call returns within this many seconds whatever the run is doing, so
 # the poll reports `state=running` instead of being cut off by the harness's own
 # foreground ceiling with nothing said. The run's total cap is unaffected.
 BUDGET_DEFAULT=540
-# The unit's ceiling on processes and threads together, so a runaway fork in a
-# validation stops at the unit rather than exhausting the host's own limit. No
-# memory cap is set: a cap under 1G has frozen hosts, which is why
-# kendex.settings.toml COMMAND_SAFETY_DENY_PATTERN refuses one.
-TASKS_MAX=4096
 
 die() {
   local reason="$1"
@@ -138,6 +130,7 @@ die() {
       no-run) printf 'Start a run with --worktree before polling it.\n' ;;
       sentinel-unreadable) printf 'The sentinel does not carry a guard-exit value.\n' ;;
       scratch-unavailable) printf 'A scratch directory for reading the change class could not be created.\n' ;;
+      runner-unrecorded) printf 'The record of how the run is started could not be written, so no run was started.\n' ;;
     esac
   } >&2
   exit 2
@@ -170,30 +163,6 @@ check_seconds() { # LABEL VALUE
 
 start_field() { # FILE KEY
   sed -n "s/^$2=\\(.*\\)\$/\\1/p" < "$1"
-}
-
-# validate-<id>- for a worktree, <id> being its directory name with anything a
-# unit name cannot carry replaced by `_`. It makes a unit readable in
-# `systemctl --user list-units`; --stop finds units by the name each start
-# record carries, never by this prefix, which two repositories' lanes share.
-unit_prefix() { # WORKTREE
-  local id
-  id="$(basename -- "$1" | LC_ALL=C tr -c 'A-Za-z0-9_.\n-' '_')" || return 1
-  printf 'validate-%s-' "$id"
-}
-
-# An open-file limit as systemd spells it.
-nofile_limit() { # ulimit FLAG
-  local n
-  n="$(ulimit "$1" -n)" || return 1
-  [[ "$n" != unlimited ]] || n=infinity
-  printf '%s' "$n"
-}
-
-# An argument as the service manager reads it: it expands ${NAME} in a unit's
-# command line, and $$ is its spelling of one literal $.
-unit_arg() { # VALUE
-  printf '%s' "${1//\$/\$\$}"
 }
 
 # The worktree's diff against the base branch, read once by lib/change-class.sh
@@ -342,23 +311,6 @@ if [[ "$mode" == start ]]; then
     fi
   done
   [[ -n "$timeout_bin" ]] || die missing-command commands=timeout,gtimeout
-  # The run has to outlive the shell that launched it, because that shell is
-  # what a harness kills. A user unit does, and so does a setsid launch, which
-  # is the orch skill's declared dependency for exactly this (references/
-  # waiter-launch.md) and is needed only where no user manager answers. The
-  # probe starts a unit, since that is the question: `systemctl
-  # is-system-running` exits non-zero on a degraded manager that still runs
-  # units. What it said on failure is kept for the log's first line.
-  runner=setsid
-  if ! command -v systemd-run >/dev/null 2>&1; then
-    runner_line="runner=setsid reason=no-systemd-run"
-  elif probe_err="$(systemd-run --user --quiet --collect true </dev/null 2>&1 >/dev/null)"; then
-    runner=systemd
-  else
-    runner_line="runner=setsid reason=probe-failed detail=${probe_err%%$'\n'*}"
-  fi
-  [[ "$runner" == systemd ]] || command -v setsid >/dev/null 2>&1 || die missing-command commands=setsid
-
   # Read before the run directory exists, since that directory sits inside the
   # worktree the class judges.
   classify
@@ -367,60 +319,34 @@ if [[ "$mode" == start ]]; then
   # verdict as this one's.
   run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
   run_dir="$worktree/tmp/dev-validate-$run_id"
-  unit="$(unit_prefix "$worktree")$run_id"
-  [[ "$runner" != systemd ]] || runner_line="runner=systemd unit=$unit"
   mkdir -p "$run_dir"
   mv -- "$class_scratch/class.log" "$run_dir/class.log"
   mv -- "$class_scratch/paths" "$run_dir/paths"
   printf '%s' "$cmd" > "$run_dir/cmd"
   cap_secs=$(( 10#$timeout_secs + KILL_GRACE + 10#$poll ))
-  run_start="$(date +%s)"
-  record_start() {
-    {
-      printf 'worktree=%s\n' "$worktree"
-      printf 'timeout-bin=%s\n' "$timeout_bin"
-      printf 'start=%s\n' "$run_start"
-      printf 'timeout-secs=%s\n' "$timeout_secs"
-      printf 'poll-secs=%s\n' "$poll"
-      printf 'cap-secs=%s\n' "$cap_secs"
-      printf 'class=%s\n' "$class"
-      printf 'docs-only=%s\n' "$docs_only"
-      printf 'runner=%s\n' "$runner"
-      [[ "$runner" != systemd ]] || printf 'unit=%s\n' "$unit"
-      printf 'runner-line=%s\n' "$runner_line"
-    } > "$run_dir/start"
-  }
-  record_start
+  {
+    printf 'worktree=%s\n' "$worktree"
+    printf 'timeout-bin=%s\n' "$timeout_bin"
+    printf 'start=%s\n' "$(date +%s)"
+    printf 'timeout-secs=%s\n' "$timeout_secs"
+    printf 'poll-secs=%s\n' "$poll"
+    printf 'cap-secs=%s\n' "$cap_secs"
+    printf 'class=%s\n' "$class"
+    printf 'docs-only=%s\n' "$docs_only"
+  } > "$run_dir/start"
 
-  if [[ "$runner" == systemd ]]; then
-    # A user unit inherits the manager's environment and resource limits, not
-    # this one's, so every exported name is handed over (--setenv=NAME takes
-    # the value from systemd-run's own environment) and so are the open-file
-    # limits, which a build and test battery exhausts first; the manager caps a
-    # value above its own ceiling at that ceiling. RuntimeMaxSec sits at the
-    # cap, above the bound and its kill grace, so a run at its bound records
-    # guard-exit=124 before the backstop fires. TimeoutStopSec is the grace a
-    # process left in the unit gets between SIGTERM and SIGKILL when the unit
-    # ends.
-    unit_env=()
-    for name in $(compgen -e); do unit_env+=("--setenv=$name"); done
-    nofile="$(nofile_limit -S):$(nofile_limit -H)"
-    if ! launch_err="$(systemd-run --user --quiet --collect --unit="$unit" \
-      -p "TasksMax=$TASKS_MAX" -p "RuntimeMaxSec=$cap_secs" -p "TimeoutStopSec=$KILL_GRACE" \
-      -p "LimitNOFILE=$nofile" ${unit_env[@]+"${unit_env[@]}"} \
-      -- "$(unit_arg "$SCRIPT_PATH")" --child --run-dir "$(unit_arg "$run_dir")" </dev/null 2>&1 >/dev/null)"; then
-      # The manager answered the probe and refused the unit. The run still
-      # happens, contained as far as a process group reaches, and its log says
-      # why it is not a unit.
-      command -v setsid >/dev/null 2>&1 || die missing-command commands=setsid
-      runner=setsid
-      runner_line="runner=setsid reason=unit-launch-failed detail=${launch_err%%$'\n'*}"
-      record_start
-    fi
-  fi
-  if [[ "$runner" == setsid ]]; then
-    setsid -f "$SCRIPT_PATH" --child --run-dir "$run_dir" </dev/null >/dev/null 2>&1
-  fi
+  # The run has to outlive the shell that launched it, because that shell is
+  # what a harness kills. A user unit does, and so does a setsid launch, which
+  # is the orch skill's declared dependency for exactly this (references/
+  # waiter-launch.md) and is needed only where no user manager answers.
+  launch_rc=0
+  job_unit_launch validate "${worktree##*/}" "$run_id" "$cap_secs" "$run_dir/runner" \
+    -- "$SCRIPT_PATH" --child --run-dir "$run_dir" || launch_rc=$?
+  case "$launch_rc" in
+    0) ;;
+    2) die missing-command commands=setsid ;;
+    *) die runner-unrecorded "path=$run_dir/runner" ;;
+  esac
 
   printf 'state=started run-dir=%s log=%s sentinel=%s timeout-secs=%s poll-secs=%s cap-secs=%s class=%s docs-only=%s%s\n' \
     "$run_dir" "$run_dir/log" "$run_dir/exit" "$timeout_secs" "$poll" "$cap_secs" \
@@ -433,32 +359,31 @@ fi
 
 # --- Stop: end what a worktree's runs left running ---------------------------
 # Every run the worktree's run directories record with no verdict. A unit is
-# stopped by the name its start record carries; a unit the manager no longer
-# has ended on its own, and is not counted. A systemctl that cannot answer is a
-# failure, never a unit found stopped. A setsid run is ended by its process
-# group, the child having led one since setsid -f started it, and only while
-# its pid is still the child of that run directory: a pid the system has since
-# reused for anything else is left alone. A directory that records no runner
-# names nothing to stop by.
+# stopped by the exact name its runner record carries, never by a pattern (two
+# repositories' lanes for one item share every prefix); a unit the manager no
+# longer has ended on its own, and is not counted. A manager that cannot answer
+# is a failure, never a unit found stopped. A setsid run is ended by its
+# process group, the child having led one since setsid -f started it, and only
+# while its pid is still the child of that run directory: a pid the system has
+# since reused for anything else is left alone.
 if [[ "$mode" == stop ]]; then
   worktree="$(cd "$worktree" && pwd)"
   units=0
   groups=0
-  for start_file in "$worktree"/tmp/dev-validate-*/start; do
-    [[ -f "$start_file" ]] || continue
-    dir="${start_file%/start}"
+  for runner_file in "$worktree"/tmp/dev-validate-*/runner; do
+    [[ -f "$runner_file" ]] || continue
+    dir="${runner_file%/runner}"
     [[ ! -s "$dir/exit" ]] || continue
-    case "$(start_field "$start_file" runner)" in
+    case "$(start_field "$runner_file" runner)" in
       systemd)
-        unit="$(start_field "$start_file" unit).service"
-        if stop_err="$(systemctl --user stop -- "$unit" 2>&1)"; then
-          units=$(( units + 1 ))
-        elif load="$(systemctl --user show -p LoadState --value -- "$unit" 2>/dev/null)" \
-          && [[ "$load" == not-found ]]; then
-          :
-        else
-          stop_failed "run-dir=$dir" "unit=$unit" "detail=${stop_err%%$'\n'*}"
-        fi
+        unit="$(start_field "$runner_file" unit)"
+        stop_rc=0
+        job_unit_stop "$unit" || stop_rc=$?
+        case "$stop_rc" in
+          0) units=$(( units + 1 )) ;;
+          1) ;;
+          *) stop_failed "run-dir=$dir" "unit=$unit.service" "detail=$JOB_UNIT_ERROR" ;;
+        esac
         ;;
       setsid)
         pid="$(cat "$dir/pid" 2>/dev/null)" || continue
@@ -474,7 +399,7 @@ if [[ "$mode" == stop ]]; then
           || stop_failed "run-dir=$dir" "pid=$pid" step=kill
         groups=$(( groups + 1 ))
         ;;
-      *) ;;
+      *) stop_failed "run-dir=$dir" step=read-runner ;;
     esac
   done
   printf 'state=stopped units=%s groups=%s\n' "$units" "$groups"
@@ -487,16 +412,18 @@ if [[ "$mode" == child ]]; then
     || ! child_timeout_bin="$(start_field "$run_dir/start" timeout-bin)" \
     || ! child_timeout_secs="$(start_field "$run_dir/start" timeout-secs)" \
     || ! child_class="$(start_field "$run_dir/start" class)" \
-    || ! child_docs_only="$(start_field "$run_dir/start" docs-only)" \
-    || ! child_runner="$(start_field "$run_dir/start" runner)" \
-    || ! child_runner_line="$(start_field "$run_dir/start" runner-line)"; then
+    || ! child_docs_only="$(start_field "$run_dir/start" docs-only)"; then
     die no-run "path=$run_dir/start"
   fi
   [[ -n "$child_worktree" && -n "$child_timeout_bin" && -n "$child_timeout_secs" && -n "$child_class" && -n "$child_docs_only" ]] \
     || die no-run "path=$run_dir/start"
+  if ! child_runner="$(start_field "$run_dir/runner" runner)" \
+    || ! child_runner_line="$(start_field "$run_dir/runner" line)"; then
+    die no-run "path=$run_dir/runner"
+  fi
   case "$child_runner" in
     systemd|setsid) ;;
-    *) die no-run "path=$run_dir/start" "runner=$child_runner" ;;
+    *) die no-run "path=$run_dir/runner" "runner=$child_runner" ;;
   esac
   child_cmd="$(cat "$run_dir/cmd")"
   # Recorded before the command starts, so a waiter that finds no sentinel can

@@ -47,13 +47,14 @@ make_proj() { # NAME CMD TIMEOUT_SECS
 }
 
 # A run directory's start file, the bounds a waiter reads, polled every second,
-# and the change class a child hands its command. Its runner is a unit's: a
-# child run directly here is what a unit's main process is, one that leaves
-# containment to the unit and kills nothing itself.
+# and the change class a child hands its command. Its runner record is a
+# unit's: a child run directly here is what a unit's main process is, one that
+# leaves containment to the unit and kills nothing itself.
 write_start() { # DIR WORKTREE TIMEOUT_BIN START TIMEOUT_SECS CAP_SECS
   mkdir -p "$1"
-  printf 'worktree=%s\ntimeout-bin=%s\nstart=%s\ntimeout-secs=%s\npoll-secs=1\ncap-secs=%s\nclass=standard\ndocs-only=false\nrunner=systemd\nunit=validate-fixture\nrunner-line=runner=systemd unit=validate-fixture\n' \
+  printf 'worktree=%s\ntimeout-bin=%s\nstart=%s\ntimeout-secs=%s\npoll-secs=1\ncap-secs=%s\nclass=standard\ndocs-only=false\n' \
     "$2" "$3" "$4" "$5" "$6" > "$1/start"
+  printf 'runner=systemd\nunit=validate-fixture\nline=runner=systemd unit=validate-fixture\n' > "$1/runner"
 }
 
 OUT=""
@@ -111,26 +112,27 @@ output_of() { # OUTPUT
   sed 1d "$(log_of "$1")"
 }
 
-# A copy of the script with one literal substitution applied, for the controls.
+# A copy of the scripts with one literal substitution applied to one of them,
+# dev-validate-run unless MUTANT_FILE names lib/job-unit.sh, for the controls.
 # The count assertions are the edit's proof: a pattern that stopped matching
 # would otherwise leave the control running the shipped code and passing. The
 # copy's path lands in MUTANT rather than on stdout, which the assertions own.
 MUTANT=""
 mutant() { # NAME OLD NEW
-  local dir="$TMP_ROOT/$1"
+  local dir="$TMP_ROOT/$1" file="${MUTANT_FILE:-dev-validate-run}"
   mkdir -p "$dir/lib"
   cp "$SCRIPTS_DIR/dev-validate-run" "$SCRIPTS_DIR/orch-env" "$dir/"
   cp "$SCRIPTS_DIR/lib"/*.sh "$dir/lib/"
   chmod +x "$dir/dev-validate-run" "$dir/orch-env"
-  assert_eq "$(grep -c -F -- "$2" "$dir/dev-validate-run")" "1" "control $1 finds one line to mutate"
+  assert_eq "$(grep -c -F -- "$2" "$dir/$file")" "1" "control $1 finds one line to mutate"
   awk -v old="$2" -v new="$3" '{
     i = index($0, old)
     if (i > 0) { $0 = substr($0, 1, i - 1) new substr($0, i + length(old)) }
     print
-  }' "$dir/dev-validate-run" > "$dir/mutated"
-  mv "$dir/mutated" "$dir/dev-validate-run"
+  }' "$dir/$file" > "$dir/mutated"
+  mv "$dir/mutated" "$dir/$file"
   chmod +x "$dir/dev-validate-run"
-  assert_eq "$(grep -c -F -- "$2" "$dir/dev-validate-run")" "0" "control $1 applied its mutation"
+  assert_eq "$(grep -c -F -- "$2" "$dir/$file")" "0" "control $1 applied its mutation"
   MUTANT="$dir/dev-validate-run"
 }
 
@@ -646,10 +648,10 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
 
   # Control: the run launched under setsid on this same host, which is the
   # runner before units. The grandchild that left the group outlives it.
-  mutant mutant-no-unit '    runner=systemd' '    runner_line="runner=setsid reason=no-systemd-run"'
+  MUTANT_FILE=lib/job-unit.sh mutant mutant-no-unit 'elif probe_err="$(systemd-run --user --quiet --collect true </dev/null 2>&1 >/dev/null)"; then' 'elif false; then'
   proj_nounit="$(make_proj proj-no-unit 'setsid sleep 300 & echo $! > grand.pid; exit 0' 20)"
   run_script "$MUTANT" --worktree "$proj_nounit" --poll 1
-  assert_eq "$(runner_line "$OUT") $(grandchild_state "$proj_nounit")" "runner=setsid reason=no-systemd-run alive" \
+  assert_eq "$(runner_line "$OUT") $(grandchild_state "$proj_nounit")" "runner=setsid reason=probe-failed detail= alive" \
     "control: outside a unit the grandchild that started its own session outlives the run" "$ERR"
 
   # The unit carries what a user unit does not inherit: the caller's exported
@@ -660,11 +662,11 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   run_script bash -c 'ulimit -Sn 777 && exec "$0" "$@"' "$RUN" --worktree "$proj_inherit" --poll 1
   assert_eq "$(output_of "$OUT")" "x:777" \
     "a unit's command sees the caller's exported variable and open-file soft limit" "$ERR"
-  mutant mutant-no-env ' ${unit_env[@]+"${unit_env[@]}"}' ''
+  MUTANT_FILE=lib/job-unit.sh mutant mutant-no-env ' ${unit_env[@]+"${unit_env[@]}"}' ''
   run_script bash -c 'ulimit -Sn 777 && exec "$0" "$@"' "$MUTANT" --worktree "$proj_inherit" --poll 1
   assert_eq "$(output_of "$OUT" | cut -d: -f1)" "unset" \
     "control: with no environment handed over the command sees no such variable" "$ERR"
-  mutant mutant-no-nofile '-p "LimitNOFILE=$nofile" ' ''
+  MUTANT_FILE=lib/job-unit.sh mutant mutant-no-nofile '-p "LimitNOFILE=$nofile" ' ''
   run_script bash -c 'ulimit -Sn 777 && exec "$0" "$@"' "$MUTANT" --worktree "$proj_inherit" --poll 1
   assert_eq "$([[ "$(output_of "$OUT")" == x:777 ]] && echo caller || echo manager)" "manager" \
     "control: with no limit handed over the command runs under the manager's" "$ERR"
@@ -681,7 +683,7 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   run_script "$RUN" --worktree "$proj_nosetsid" --poll 1
   assert_eq "$(verdict_of "$OUT") $(runner_line "$OUT")" "state=done guard-exit=0 validate=pass runner=systemd unit=validate-proj-no-setsid-RUN" \
     "a host with a user manager and no setsid runs its validation in a unit" "$ERR"
-  mutant mutant-setsid-first '  [[ "$runner" == systemd ]] || command -v setsid' '  command -v setsid'
+  MUTANT_FILE=lib/job-unit.sh mutant mutant-setsid-first '  [[ "$JOB_UNIT_RUNNER" == systemd ]] || command -v setsid' '  command -v setsid'
   run_script "$MUTANT" --worktree "$proj_nosetsid" --poll 1
   assert_eq "$(sed -n 1p <<<"$ERR") $RC" "dev-validate-run: missing-command commands=setsid 2" \
     "control: with setsid required ahead of the probe that host is refused" "$ERR"
@@ -694,7 +696,7 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   run_script "$RUN" --worktree "$proj_dollar" --poll 1
   assert_eq "$(verdict_of "$OUT") $(runner_line "$OUT")" "state=done guard-exit=0 validate=pass runner=systemd unit=validate-proj-__HOME_-RUN" \
     "a worktree whose path carries a \$ runs in a unit and passes" "$ERR"
-  mutant mutant-unescaped '--run-dir "$(unit_arg "$run_dir")"' '--run-dir "$run_dir"'
+  MUTANT_FILE=lib/job-unit.sh mutant mutant-unescaped 'unit_argv+=("$(job_unit_arg "$arg")")' 'unit_argv+=("$arg")'
   run_script "$MUTANT" --worktree "$proj_dollar" --poll 1
   assert_eq "$(verdict_of "$OUT")" "state=lost cap-secs=31 validate=FAILING" \
     "control: unescaped, the manager rewrites that path and the child never finds its run" "$ERR"
@@ -744,10 +746,10 @@ for row in "${FALLBACK_ROWS[@]}"; do
     "and the log names why, in systemd-run's words" "$ERR"
 done
 
-# Control: the refused unit is not replaced, so nothing runs and the run is lost.
-mutant mutant-no-fallback '      runner=setsid' '      :'
+# Control: the refused unit is not replaced, so no run is started at all.
+MUTANT_FILE=lib/job-unit.sh mutant mutant-no-fallback '    command -v setsid >/dev/null 2>&1 || return 2' '    return 2'
 run_script "$MUTANT" --worktree "$proj_refused" --poll 1
-assert_eq "$(verdict_of "$OUT")" "state=lost cap-secs=31 validate=FAILING" \
+assert_eq "$(verdict_of "$OUT")|$RC" "|2" \
   "control: without the fallback a refused unit leaves no run at all" "$ERR"
 RUN_PATH=""
 
@@ -779,7 +781,7 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
 
   # Control: the unit is never stopped, so the running one keeps its
   # grandchild.
-  mutant mutant-no-unit-stop 'stop_err="$(systemctl --user stop -- "$unit" 2>&1)"' 'stop_err="$(true)"'
+  MUTANT_FILE=lib/job-unit.sh mutant mutant-no-unit-stop 'out="$(systemctl --user stop -- "$1.service" 2>&1)"' 'out="$(true)"'
   proj_stop_kept="$(make_proj proj-stop-kept "setsid $long_cmd" 600)"
   start_long_run "$proj_stop_kept" ""
   run_script "$MUTANT" --stop --worktree "$proj_stop_kept"
@@ -805,7 +807,7 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   proj_nobus="$(make_proj proj-no-bus "setsid $long_cmd" 600)"
   start_long_run "$proj_nobus" ""
   nobus_dir="$(ls -d "$proj_nobus"/tmp/dev-validate-*)"
-  nobus_unit="$(sed -n 's/^unit=//p' "$nobus_dir/start").service"
+  nobus_unit="$(sed -n 's/^unit=//p' "$nobus_dir/runner").service"
   set +e
   nobus_err="$(env -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS "$RUN" --stop --worktree "$proj_nobus" 2>&1 >/dev/null)"
   nobus_rc=$?
@@ -858,7 +860,7 @@ plant() { # NAME RUNNER VERDICT PROCESS
   PLANT_PROJ="$TMP_ROOT/planted/$1"
   dir="$PLANT_PROJ/tmp/dev-validate-planted-$1"
   mkdir -p "$dir"
-  printf 'runner=%s\nunit=validate-planted-%s\nrunner-line=planted\n' "$2" "$1" > "$dir/start"
+  printf 'runner=%s\nunit=validate-planted-%s\nline=planted\n' "$2" "$1" > "$dir/runner"
   [[ "$3" == no ]] || printf 'guard-exit=0 at=now\n' > "$dir/exit"
   case "$4" in
     child) setsid bash -c 'sleep 300; :' planted --child --run-dir "$dir" </dev/null >/dev/null 2>&1 & PLANTED=$!; disown "$PLANTED" ;;
@@ -880,7 +882,7 @@ PLANT_ROWS=(
 PLANT_CONTROLS=(
   'reused-pid%        [[ "$args" == *" --child --run-dir "*"/tmp/${dir##*/}" ]] || continue%state=stopped units=0 groups=1 0 gone'
   'has-verdict%    [[ ! -s "$dir/exit" ]] || continue%state=stopped units=0 groups=1 0 gone'
-  'unit-run%    case "$(start_field "$start_file" runner)" in%state=stopped units=0 groups=1 0 gone'
+  'unit-run%    case "$(start_field "$runner_file" runner)" in%state=stopped units=0 groups=1 0 gone'
   'gone-pid%          kill -0 "$pid" 2>/dev/null || continue% 1 gone'
 )
 RUN_PATH="$TMP_ROOT/stop-bin:$PATH"
