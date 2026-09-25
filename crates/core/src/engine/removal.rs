@@ -185,12 +185,14 @@ enum Verdict {
     /// Removable, but the person's edits are in it: the removed row, the
     /// edit conflict, and the record kept.
     Held,
-    /// Removable, but a record kept for its edits requires it on this
+    /// Removable, but a record that stays installed requires it on this
     /// tool, directly or through others kept the same way: kept with it,
-    /// since a hook held armed must not lose what it runs with.
+    /// since a hook left armed must not lose what it runs with.
     Needed { by: String },
-    /// Removable: taken.
-    Removed,
+    /// Removable: taken. Named for removal by the person, it goes whatever
+    /// requires it — the choice is theirs, as it is when the catalog that
+    /// would say what needs it is offline.
+    Removed { named: bool },
 }
 
 /// `decided_keys` are the records the refusal and withheld passes already
@@ -224,7 +226,7 @@ pub(super) fn orphans(
         guard,
         &mut origins,
     );
-    keep_what_held_records_require(lock, &mut verdicts);
+    keep_what_kept_records_require(lock, &mut verdicts);
     let row = |entry: &LockEntry, state, detail: String, cause| DriftRow {
         kind: entry.kind,
         name: entry.name.clone(),
@@ -273,12 +275,12 @@ pub(super) fn orphans(
                 drift.push(row(
                     entry,
                     DriftState::Orphaned,
-                    format!("needed by {by}, which was kept for its edits — kept with it"),
+                    format!("needed by {by}, which stays installed — kept with it"),
                     None,
                 ));
                 new_lock.entries.insert(key.clone(), entry.clone());
             }
-            Verdict::Removed => {
+            Verdict::Removed { .. } => {
                 drift.push(row(
                     entry,
                     DriftState::Orphaned,
@@ -377,27 +379,29 @@ fn verdicts<'a>(
         let takes_edits = named || options.overwrite_edited;
         let verdict = match !takes_edits && edit_holds(env, scope, &removable_entry) {
             true => Verdict::Held,
-            false => Verdict::Removed,
+            false => Verdict::Removed { named },
         };
         verdicts.push((key, verdict));
     }
     verdicts
 }
 
-/// A record kept for its edits keeps what it requires on its tool: every
-/// removable record a held one's recorded `RequiredBy` reason names as its
-/// requirer, and every one those require in turn, until nothing changes.
-/// The requirer named is the one the row cites.
-fn keep_what_held_records_require(lock: &Lock, verdicts: &mut [(&String, Verdict)]) {
+/// A record that stays installed, for whatever reason, keeps what it
+/// requires on its tool: every record an automatic removal would take
+/// whose own recorded `RequiredBy` reason names a kept record on the same
+/// tool becomes kept, until nothing changes. A record the person named
+/// for removal is not an automatic removal and goes. The requirer named is
+/// the one the row cites.
+fn keep_what_kept_records_require(lock: &Lock, verdicts: &mut [(&String, Verdict)]) {
     loop {
         let kept: BTreeSet<&str> = verdicts
             .iter()
-            .filter(|(_, verdict)| matches!(verdict, Verdict::Held | Verdict::Needed { .. }))
+            .filter(|(_, verdict)| !matches!(verdict, Verdict::Removed { .. }))
             .map(|(key, _)| key.as_str())
             .collect();
         let mut changed = false;
         for (key, verdict) in verdicts.iter_mut() {
-            if !matches!(verdict, Verdict::Removed) {
+            if !matches!(verdict, Verdict::Removed { named: false }) {
                 continue;
             }
             let requirer = lock.entries[*key]

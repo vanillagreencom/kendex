@@ -950,72 +950,154 @@ fn a_missing_companion_outranks_being_orphaned_whenever_it_is_found() {
     );
 }
 
-/// The companion with a chain of its own below it, its Codex copy edited
-/// by hand and its declaration dropped: the orphan pass holds the edited
-/// copy for the person to confirm, so what it requires there is kept with
-/// it, down the chain, rather than removed from beside a hook left armed.
+/// One way the head of the chain stays installed: the declarations left
+/// after the install; the options; whether the Codex copy of extra was
+/// edited; the rows on Codex for the chain; and whether the chain stays on
+/// Claude Code and on Codex.
+type KeptChainRow = (
+    &'static str,
+    &'static str,
+    PlanOptions,
+    bool,
+    &'static [(&'static str, kendex_core::engine::DriftState, &'static str)],
+    (bool, bool),
+    (bool, bool),
+);
+
+fn kept_chain_rows() -> [KeptChainRow; 3] {
+    use kendex_core::engine::DriftState::{Conflict, Orphaned};
+    const REMOVED: &str = "no longer wanted — will be removed";
+    const EDITED: &str =
+        "no longer wanted, but its files were edited on disk — remove it by name to confirm";
+    const LEFT: &str = "left over from an earlier setup; nothing needs it anymore";
+    [
+        (
+            "held under apply, boss still derives the Claude chain",
+            "[hooks.boss]\nsource = \"cat\"\n",
+            PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            },
+            true,
+            &[
+                ("extra", Orphaned, REMOVED),
+                ("extra", Conflict, EDITED),
+                (
+                    "last",
+                    Orphaned,
+                    "needed by mid, which stays installed — kept with it",
+                ),
+                (
+                    "mid",
+                    Orphaned,
+                    "needed by extra, which stays installed — kept with it",
+                ),
+            ],
+            (true, true),
+            (true, true),
+        ),
+        (
+            "held under apply, the Claude chain orphaned too",
+            "",
+            PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            },
+            true,
+            &[
+                ("extra", Orphaned, REMOVED),
+                ("extra", Conflict, EDITED),
+                (
+                    "last",
+                    Orphaned,
+                    "needed by mid, which stays installed — kept with it",
+                ),
+                (
+                    "mid",
+                    Orphaned,
+                    "needed by extra, which stays installed — kept with it",
+                ),
+            ],
+            (false, false),
+            (true, true),
+        ),
+        (
+            "left over under refresh's sweep",
+            "",
+            PlanOptions {
+                sweep_unneeded: true,
+                ..PlanOptions::default()
+            },
+            false,
+            &[
+                ("extra", Orphaned, LEFT),
+                (
+                    "last",
+                    Orphaned,
+                    "needed by mid, which stays installed — kept with it",
+                ),
+                (
+                    "mid",
+                    Orphaned,
+                    "needed by extra, which stays installed — kept with it",
+                ),
+            ],
+            (true, true),
+            (true, true),
+        ),
+    ]
+}
+
+/// The companion with a chain of its own below it. A record that stays
+/// installed — held for the person's edits, or left over under options
+/// that do not remove it — keeps what it requires on its tool, down the
+/// chain, rather than losing it from beside a hook left armed; a copy of
+/// the same chain on a tool where nothing keeps its head goes with it. The
+/// records of what is kept stay in the lock.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn what_a_held_orphan_requires_is_kept_with_it() {
-    let f = boss_fixture(&[
-        ("extra.sh", EXTRA_CHAIN),
-        ("mid.sh", MID),
-        ("last.sh", LAST),
-    ]);
-    edit_installed(&f, HarnessId::Codex, "extra.sh");
-
-    declare(&f, "[hooks.boss]\nsource = \"cat\"\n");
-    let report = plan_apply(
-        &f.env,
-        &f.scope,
-        &PlanOptions {
-            remove_orphans: true,
-            ..PlanOptions::default()
-        },
-    )
-    .unwrap();
-    let rows: Vec<(&str, kendex_core::engine::DriftState, &str)> = report
-        .drift
-        .iter()
-        .filter(|row| row.harness == HarnessId::Codex && row.name != "boss")
-        .map(|row| (row.name.as_str(), row.state, row.detail.as_str()))
-        .collect();
-    assert_eq!(
-        rows,
-        [
-            (
-                "extra",
-                kendex_core::engine::DriftState::Orphaned,
-                "no longer wanted — will be removed",
-            ),
-            (
-                "extra",
-                kendex_core::engine::DriftState::Conflict,
-                "no longer wanted, but its files were edited on disk — remove it by name to confirm",
-            ),
-            (
-                "last",
-                kendex_core::engine::DriftState::Orphaned,
-                "needed by mid, which was kept for its edits — kept with it",
-            ),
-            (
-                "mid",
-                kendex_core::engine::DriftState::Orphaned,
-                "needed by extra, which was kept for its edits — kept with it",
-            ),
-        ],
-        "{:?}",
-        drift_details(&report)
-    );
-    apply::execute(&f.env, &report.plan).unwrap();
-    for name in ["extra", "mid", "last"] {
-        assert_eq!(
-            (
-                hook_on_disk(&f, HarnessId::Codex, &format!("{name}.sh")),
-                registered(&f, HarnessId::Codex, name)
-            ),
-            (true, true),
-            "{name} on Codex (written, registered)"
-        );
+fn what_a_kept_orphan_requires_is_kept_with_it() {
+    let rows = kept_chain_rows();
+    for (label, declarations, options, edited, expected, claude, codex) in rows {
+        let f = boss_fixture(&[
+            ("extra.sh", EXTRA_CHAIN),
+            ("mid.sh", MID),
+            ("last.sh", LAST),
+        ]);
+        if edited {
+            edit_installed(&f, HarnessId::Codex, "extra.sh");
+        }
+        declare(&f, declarations);
+        let report = plan_apply(&f.env, &f.scope, &options).unwrap();
+        let rows: Vec<(&str, kendex_core::engine::DriftState, &str)> = report
+            .drift
+            .iter()
+            .filter(|row| row.harness == HarnessId::Codex && row.name != "boss")
+            .map(|row| (row.name.as_str(), row.state, row.detail.as_str()))
+            .collect();
+        assert_eq!(rows, expected, "{label}: {:?}", drift_details(&report));
+        for (harness, stays) in [(HarnessId::Claude, claude), (HarnessId::Codex, codex)] {
+            for name in ["extra", "mid", "last"] {
+                let key = format!("hook:{name}:{}", harness.name());
+                assert_eq!(
+                    report.record.entries.contains_key(&key),
+                    stays.0,
+                    "{label}: the record {key}"
+                );
+            }
+        }
+        apply::execute(&f.env, &report.plan).unwrap();
+        for (harness, stays) in [(HarnessId::Claude, claude), (HarnessId::Codex, codex)] {
+            for name in ["extra", "mid", "last"] {
+                assert_eq!(
+                    (
+                        hook_on_disk(&f, harness, &format!("{name}.sh")),
+                        registered(&f, harness, name)
+                    ),
+                    stays,
+                    "{label}: {name} on {harness:?} (written, registered)"
+                );
+            }
+        }
     }
 }
