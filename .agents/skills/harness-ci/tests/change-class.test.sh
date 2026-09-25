@@ -941,6 +941,26 @@ PATH="$stub_bin:$PATH" assert_class "a checkout at the base still classifies --h
 assert_eq "and the verifier weighed --head, not the checkout's own commit" \
   "head=$elsewhere_head records=0" "$(cat "$KENDEX_STUB_TREES")"
 
+# A private checkout that cannot be made is refused, and the verifier never
+# runs in a partial tree. harness-only reads the trees and the inventory blob,
+# never the changed file's own blob, so deleting that loose object leaves the
+# range readable and the checkout impossible.
+unmade="$(new_repo change-class-unmade-checkout)"
+commit_paths "$unmade" baseline seed.txt
+unmade_base="$(git -C "$unmade" rev-parse HEAD)"
+commit_paths "$unmade" "a render whose blob goes missing" .agents/skills/orch/SKILL.md
+unmade_head="$(git -C "$unmade" rev-parse HEAD)"
+unmade_blob="$(git -C "$unmade" rev-parse "HEAD:.agents/skills/orch/SKILL.md")"
+rm -- "${unmade:?}/.git/objects/${unmade_blob:0:2}/${unmade_blob:2}"
+set_verifier clean
+unmade_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$unmade" \
+  --event pull_request --base "$unmade_base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a head that cannot be checked out is refused, naming it" \
+  "class: class=standard measured=false cause=head-checkout-failed head=$unmade_head" \
+  "$(printf '%s\n' "$unmade_err" | grep '^class: ')"
+assert_eq "and the verifier was not run" "0" \
+  "$(wc -l <"$KENDEX_STUB_CALLS" | tr -d ' ')"
+
 # An installed package layout: harness-ci's scripts, and orch beside them
 # where the case wants one, so a classifier standing there resolves the same
 # siblings the shipped one does. A case that needs a mutant writes its own
@@ -1279,13 +1299,14 @@ TOML
   rm -rf -- "${consumer:?}/.git/kendex"
 
   # The proof weighs --head wherever the judged checkout sits. Sitting at the
-  # base, whose renders all match, the hand edit at --head is still refused;
-  # sitting at the hand edit, the pure refresh at --head is still a render.
+  # pure refresh, whose renders verify clean against the primed mirror, the
+  # hand edit at --head is still refused; sitting at the hand edit, the pure
+  # refresh at --head is still a render.
   hand_edited="$(git -C "$consumer" rev-parse HEAD)"
-  git -C "$consumer" checkout -q --detach "$consumer_base"
+  git -C "$consumer" checkout -q --detach refreshed
   elsewhere_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$consumer_base" --head "$hand_edited")"
-  assert_eq "a checkout at the base has verify weigh the hand edit at --head" \
+  assert_eq "a checkout at the pure refresh has verify weigh the hand edit at --head" \
     "class=standard measured=false cause=verify-refused" \
     "$(printf '%s\n' "$elsewhere_err" | sed -n 's/^class: //p')"
   git -C "$consumer" checkout -q hand-edited

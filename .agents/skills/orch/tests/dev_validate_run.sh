@@ -614,8 +614,8 @@ cp "$SCRIPTS_DIR/dev-validate-run" "$LAYOUT/orch/scripts/dev-validate-run"
 # classifier a snapshot commit of the worktree as the range's head, and
 # change-class checks that commit out privately for its render proof. The
 # kendex on PATH is a stub that passes the proof only where the tree it runs
-# in holds the uncommitted edit, so a classifier weighing anything but the
-# snapshot answers standard.
+# in holds the uncommitted edit, so a classifier weighing the worktree's
+# committed HEAD answers standard.
 proj_render="$(make_proj proj-render 'printf %s ${DEV_VALIDATE_CLASS-unset}' 20)"
 mkdir -p "$proj_render/.agents/skills/demo"
 printf 'tmp/\n' > "$proj_render/.gitignore"

@@ -30,10 +30,10 @@
 # stderr also carries `changed-path: path=<q>` per changed path and, in
 # harness mode once the range's base end is resolved, one `base-rev: <rev>`
 # line naming the revision the diff was taken from — the merge base on a
-# pull request, the base endpoint on the others — and one `head-rev: <rev>`
-# line naming the commit the head endpoint resolved to. A caller that must
-# read the same range's committed state reads those lines rather than
-# resolving either endpoint a second time.
+# pull request, the commit the base endpoint resolved to on the others — and
+# one `head-rev: <rev>` line naming the commit the head endpoint resolved to.
+# A caller that must read the same range's committed state reads those lines
+# rather than resolving either endpoint a second time.
 #
 # Exit 0 on any verdict. Exit 2 on a WIRING error — an unknown flag, a missing
 # --event, a flag where a value belongs, an unwritable --output. Those are
@@ -266,6 +266,11 @@ fi
 if [ "$range_style" = merge_base ]; then
   base="$(git_repo merge-base "$base" "$head")" || verdict false \
     "cause=unreadable-merge-base" "merge base is unreadable"
+else
+  named_base="$base"
+  base="$(git_repo rev-parse --verify --quiet "${base}^{commit}")" || verdict false \
+    "cause=unresolved-endpoint endpoint=$(stable_value "$named_base")" \
+    "endpoint '$named_base' does not resolve to a commit"
 fi
 # Both ends of the range, resolved. Published on every verdict from here on,
 # so a caller reading the same range's committed state takes these revisions

@@ -328,14 +328,20 @@ REGISTRY_GLOBS='.claude/settings.json .claude/settings.local.json .mcp.json
 # included, so a `git worktree add` would inherit it. With a record present,
 # `kendex verify` runs the package's declared checker out of the tree it
 # checks, and that checker is a file this diff can change.
+#
+# `git checkout` exits 0 when it cannot read a blob and leaves that file out,
+# so the checkout is held to its head afterwards: a status naming anything is
+# a tree that is not the commit, and is refused like a checkout that failed.
 proof_tree="$work/proof"
 checkout_head() {
-  local objects
+  local objects left
   objects="$(git -C "$repo" rev-parse --path-format=absolute --git-path objects 2>"$work/proof-stderr")" &&
     git init -q "$proof_tree" 2>>"$work/proof-stderr" &&
     mkdir -p "$proof_tree/.git/objects/info" &&
     printf '%s\n' "$objects" >"$proof_tree/.git/objects/info/alternates" &&
-    git -C "$proof_tree" checkout -q --detach "$head_rev" 2>>"$work/proof-stderr"
+    git -C "$proof_tree" checkout -q --detach "$head_rev" 2>>"$work/proof-stderr" &&
+    left="$(git -C "$proof_tree" status --porcelain 2>>"$work/proof-stderr")" || return 1
+  [ -z "$left" ] || { printf '%s\n' "$left" >>"$work/proof-stderr"; return 1; }
 }
 
 # `kendex verify` weighs the manifest and render bytes of every installed
