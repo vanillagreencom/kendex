@@ -5,11 +5,11 @@
 //! different bytes. Advisory only — the rows inform the audit and every
 //! package surface, and nothing acts on them.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::LockFile;
+use crate::lock::{LockEntry, LockFile};
 use crate::model::{ObservedItem, Scope};
 use crate::quality::Publisher;
 
@@ -49,28 +49,47 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
         .collect())
 }
 
-/// Whose catalog each installation came from, as the scope's record says:
-/// the source it recorded for that item on that tool, or nobody's for an
-/// installation the record does not name, which is what a hand-placed copy
-/// is. An absent record names nothing; one this build refuses is refused
-/// here too, as the audit over the same scope refuses it.
+/// Whose catalog each installation came from, as the scope's record says.
+///
+/// The bytes at one path are one installation whichever tool reads them:
+/// a skill tree under the shared directory is observed once per adapter
+/// that reads it, while the record holds one row per declared tool, so
+/// the rows that wrote the observed path (`emitted`) answer for every
+/// observation of it, and only where all of them name kendex is it
+/// kendex's. A kind that records no paths (an agent, a hook, a server, a
+/// plugin) lands at a place of its own per tool, so its row is the one
+/// keyed by the observing tool. An installation no row accounts for is
+/// nobody's, which is what a hand-placed copy is. An absent record names
+/// nothing; one this build refuses is refused here too, as the audit over
+/// the same scope refuses it.
 fn publishers(env: &Env, scope: &Scope, items: &[&ObservedItem]) -> Result<Vec<Publisher>> {
-    let recorded: HashMap<String, Publisher> =
+    let entries: BTreeMap<String, LockEntry> =
         match crate::lock::load_file(&super::lock_path(env, scope))? {
-            LockFile::Absent => HashMap::new(),
-            LockFile::Current(lock) => lock
-                .entries
-                .iter()
-                .map(|(key, entry)| (key.clone(), Publisher::of(&entry.source_repo)))
-                .collect(),
+            LockFile::Absent => BTreeMap::new(),
+            LockFile::Current(lock) => lock.entries,
         };
     Ok(items
         .iter()
         .map(|item| {
-            recorded
+            let wrote_it: Vec<Publisher> = entries
+                .values()
+                .filter(|entry| {
+                    entry
+                        .emitted
+                        .as_ref()
+                        .is_some_and(|emitted| emitted.paths.contains(&item.path))
+                })
+                .map(|entry| Publisher::of(&entry.source_repo))
+                .collect();
+            if !wrote_it.is_empty() {
+                return match wrote_it.iter().all(|owner| *owner == Publisher::Kendex) {
+                    true => Publisher::Kendex,
+                    false => Publisher::Other,
+                };
+            }
+            entries
                 .get(&crate::lock::entry_key(item.kind, &item.name, item.harness))
-                .copied()
-                .unwrap_or(Publisher::Other)
+                .map_or(Publisher::Other, |entry| Publisher::of(&entry.source_repo))
         })
         .collect())
 }

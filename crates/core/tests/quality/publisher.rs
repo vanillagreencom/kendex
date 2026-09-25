@@ -108,15 +108,20 @@ fn world() -> World {
     }
 }
 
-/// A project declaring the package from `repo`, synced.
-#[allow(clippy::unwrap_used)]
+/// A project declaring the package from `repo` for Claude Code, synced.
 fn project(w: &World, dir: &str, repo: &str) -> Scope {
+    project_for(w, dir, repo, "claude")
+}
+
+/// A project declaring the package from `repo` for one tool, synced.
+#[allow(clippy::unwrap_used)]
+fn project_for(w: &World, dir: &str, repo: &str, harness: &str) -> Scope {
     let root = w.home.join(dir);
-    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::create_dir_all(root.join(format!(".{harness}"))).unwrap();
     fs::write(
         root.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{repo}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.{PACKAGE}]\nsource = \"cat\"\n"
+            "schema = 6\n\n[sources.cat]\nrepo = \"{repo}\"\n\n[install]\nharnesses = [\"{harness}\"]\nmethod = \"copy\"\n\n[skills.{PACKAGE}]\nsource = \"cat\"\n"
         ),
     )
     .unwrap();
@@ -226,4 +231,44 @@ fn a_hand_placed_copy_of_kendexs_own_install_keeps_its_finding() {
         "{:#?}",
         row.advisory
     );
+}
+
+/// A skill installed for one tool that reads the shared skills directory
+/// is observed once per adapter that reads that directory, and the record
+/// holds a row for the declaring tool alone. Every observation of the one
+/// path reads as the recorded source: set aside for kendex's copy, kept
+/// for the fork's, on every row alike.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn every_observation_of_a_shared_tree_reads_as_its_recorded_source() {
+    let w = world();
+    let rows: [(&str, &str, Standing<'_>); 2] = [
+        ("kendex", KENDEX, (vec![], vec!["rce"])),
+        ("fork", FORK, (vec!["rce"], vec![])),
+    ];
+    for (dir, repo, expected) in rows {
+        let scope = project_for(&w, dir, repo, "codex");
+        let report = audit(&w.env, &scope).unwrap();
+        apply::execute(&w.env, &report.plan).unwrap();
+        let observed = observed_rows(&w.env, &scope).unwrap();
+        let rows: Vec<&kendex_core::engine::ItemSafety> =
+            observed.iter().filter(|row| row.name == PACKAGE).collect();
+        let paths: std::collections::BTreeSet<&str> = rows
+            .iter()
+            .flat_map(|row| row.targets.iter().map(|target| target.location.as_str()))
+            .collect();
+        assert_eq!(paths.len(), 1, "{dir}: one shared tree: {paths:?}");
+        assert!(
+            rows.len() > 1,
+            "{dir}: the shared tree is observed by more than one adapter: {rows:#?}"
+        );
+        for row in rows {
+            assert_eq!(
+                standing(&row.advisory),
+                expected,
+                "{dir}: {}",
+                row.targets[0].harness.name()
+            );
+        }
+    }
 }

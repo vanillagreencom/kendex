@@ -1,0 +1,1 @@
+- The installed audit reads every adapter's view of one shared skill tree as the source that installed it, so an accepted finding stays set aside for tools other than Claude Code.
