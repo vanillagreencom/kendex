@@ -23,7 +23,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::model::{HarnessId, ItemKind};
-use crate::quality::{self, AuditInput, Content};
+use crate::quality::{self, AuditInput, Content, Publisher};
 use crate::render::validate;
 use crate::source::{CatalogMode, SourceConfig};
 use crate::source_read::SealedSource;
@@ -50,7 +50,7 @@ pub const SAFETY_PASS: &str = "safety";
 pub const CATALOG_PASS: &str = "catalog";
 
 /// Every kind a catalog can offer, in report order.
-pub(crate) const CHECKED_KINDS: [ItemKind; 5] = [
+const CHECKED_KINDS: [ItemKind; 5] = [
     ItemKind::Agent,
     ItemKind::Skill,
     ItemKind::Hook,
@@ -216,9 +216,9 @@ impl CatalogCheck {
 /// Both passes over everything the catalog offers. `display` names a
 /// one-skill repo whose SKILL.md does not name itself — pass the directory
 /// or repository leaf.
-pub fn check(sealed: &SealedSource, display: &str) -> Result<CatalogCheck> {
+pub fn check(sealed: &SealedSource, display: &str, publisher: Publisher) -> Result<CatalogCheck> {
     let config = crate::source::source_config(sealed, display)?;
-    check_with(sealed, &config, display)
+    check_with(sealed, &config, display, publisher)
 }
 
 /// Both passes over the items one already-read catalog offers. The item set
@@ -229,6 +229,7 @@ pub fn check_with(
     sealed: &SealedSource,
     config: &SourceConfig,
     display: &str,
+    publisher: Publisher,
 ) -> Result<CatalogCheck> {
     let catalog = config
         .findings()
@@ -279,7 +280,9 @@ pub fn check_with(
     for kind in CHECKED_KINDS {
         for name in crate::source::list_items(sealed, config, kind) {
             match crate::source::find_item(sealed, config, kind, &name) {
-                Some(path) => report.items.push(check_item(sealed, kind, &name, &path)?),
+                Some(path) => report
+                    .items
+                    .push(check_item(sealed, kind, &name, &path, publisher)?),
                 // A listed name every lookup refuses (an illegal spelling,
                 // say) is a catalog problem, not content to score.
                 None => report.catalog.push(CheckFinding {
@@ -301,26 +304,29 @@ pub fn check_with(
 }
 
 /// Both passes over one item at its catalog path — the unit the indexer
-/// scores packages with.
+/// scores packages with. `publisher` is whose repository the catalog is,
+/// as the caller established it; a catalog checked by directory name is
+/// nobody's.
 pub fn check_item(
     sealed: &SealedSource,
     kind: ItemKind,
     name: &str,
     path: &Path,
+    publisher: Publisher,
 ) -> Result<CheckedItem> {
-    let content = content(sealed, kind, path)?;
-    let file = sealed.catalog_path(path);
-    let mut structural = structural(kind, name, &file, &content);
-    structural.extend(settings::findings(sealed, kind, name, &file, path)?);
+    let input = audit_input(sealed, kind, name, path, publisher)?;
+    let mut structural = structural(kind, name, &input.location, &input.content);
+    structural.extend(settings::findings(
+        sealed,
+        kind,
+        name,
+        &input.location,
+        path,
+    )?);
+    let file = input.location.clone();
     // The safety half of the authoring check: the same rules an install
     // runs, over the same content.
-    let advisory = quality::audit(AuditInput {
-        kind,
-        name: name.to_owned(),
-        harness: None,
-        location: file.clone(),
-        content,
-    });
+    let advisory = quality::audit(input);
     Ok(CheckedItem {
         kind,
         name: name.to_owned(),
@@ -330,10 +336,30 @@ pub fn check_item(
     })
 }
 
+/// What the safety rules read of one offered item at its catalog path:
+/// the one construction this check and the accepted-findings refresh
+/// share, so the two cannot read one package differently.
+pub(crate) fn audit_input(
+    sealed: &SealedSource,
+    kind: ItemKind,
+    name: &str,
+    path: &Path,
+    publisher: Publisher,
+) -> Result<AuditInput> {
+    Ok(AuditInput {
+        kind,
+        name: name.to_owned(),
+        harness: None,
+        location: sealed.catalog_path(path),
+        publisher,
+        content: content(sealed, kind, path)?,
+    })
+}
+
 /// A skill's whole tree; anything else is one file. Read through the same
 /// constructor every install-side reading uses, over the same whole tree,
 /// so this check scores the content the install-side passes read back.
-pub(crate) fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Content> {
+fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Content> {
     if kind != ItemKind::Skill {
         return Ok(Content::Document {
             text: sealed.read_to_string(path)?,

@@ -17,7 +17,7 @@
 use std::path::{Path, PathBuf};
 
 use kendex_core::model::ItemKind;
-use kendex_core::quality::{AuditInput, AuditResult, Content, Severity, audit, observe};
+use kendex_core::quality::{AuditInput, AuditResult, Content, Publisher, Severity, audit, observe};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills")
@@ -33,6 +33,7 @@ fn shipped(name: &str) -> AuditResult {
         kind: ItemKind::Skill,
         name: name.to_owned(),
         harness: None,
+        publisher: Publisher::Kendex,
         location: format!("skills/{name}"),
         content: observe::tree_content_from_bytes(&files),
     })
@@ -54,8 +55,11 @@ fn walk(dir: &Path, rel: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
 
 /// What was found, without the line numbers: rule, severity, file.
 fn found(result: &AuditResult) -> Vec<(&str, Severity, &str)> {
-    result
-        .findings
+    found_in(&result.findings)
+}
+
+fn found_in(findings: &[kendex_core::quality::Finding]) -> Vec<(&str, Severity, &str)> {
+    findings
         .iter()
         .map(|finding| {
             (
@@ -114,6 +118,7 @@ fn the_guard_hooks_scan_clean() {
             kind: ItemKind::Hook,
             name: hook.to_owned(),
             harness: None,
+            publisher: Publisher::Kendex,
             location: format!("hooks/{hook}"),
             content: Content::Hook {
                 event: "PreToolUse".to_owned(),
@@ -140,42 +145,35 @@ fn the_guard_hooks_scan_clean() {
 /// only when every definition is.
 ///
 /// That is the cost of the reading, pinned to a real tree: one Critical
-/// finding in production and thirty High findings in supporting files,
-/// every one of them accepted by kendex's own table for exactly these
-/// bytes, so the skill scores clean and a verbose reading still lists
-/// them. A reading that went quiet on them would be reading an argument
-/// list again, and this is where that fails; so does a table that lets an
-/// edit to one of these files keep its acceptance
-/// (`allowance.rs::a_finding_is_accepted_only_for_the_exact_text_the_table_names`).
+/// finding in production, which kendex's own table accepts for exactly
+/// those bytes and a verbose reading still lists, and thirty High
+/// findings in supporting files, which stay findings: a fixture string is
+/// nobody's to accept. A reading that went quiet on them would be reading
+/// an argument list again, and this is where that fails; so does a table
+/// that lets an edit to the launcher keep its acceptance
+/// (`allowance.rs::a_finding_is_accepted_only_for_kendex_at_the_exact_text_the_table_names`).
 #[test]
-fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
+fn orch_keeps_its_fixture_findings_and_its_launcher_row_is_accepted() {
     let result = shipped("orch");
     let lane_launch = "skills/orch/scripts/lib/lane-launch.sh";
     let open_terminal = "skills/orch/tests/open-terminal-claude-handoff.sh";
     let oversee_succeed = "skills/orch/tests/oversee_succeed.sh";
     let overseer_watch = "skills/orch/tests/oversee_watch_overseer.sh";
-    assert_eq!(found(&result), vec![], "{:#?}", result.findings);
-    assert_eq!(result.safety.score, 100);
-    let accepted: Vec<(&str, Severity, &str)> = result
-        .accepted
-        .iter()
-        .map(|finding| {
-            (
-                finding.rule.as_str(),
-                finding.severity,
-                finding.location.as_str(),
-            )
-        })
-        .collect();
     assert_eq!(
-        accepted,
+        found(&result),
         [
-            vec![("safety-bypass", Severity::Critical, lane_launch); 1],
             vec![("safety-bypass", Severity::High, open_terminal); 6],
             vec![("safety-bypass", Severity::High, oversee_succeed); 20],
             vec![("safety-bypass", Severity::High, overseer_watch); 4],
         ]
         .concat(),
+        "{:#?}",
+        result.findings
+    );
+    assert_eq!(result.safety.score, 70);
+    assert_eq!(
+        found_in(&result.accepted),
+        vec![("safety-bypass", Severity::Critical, lane_launch)],
         "{:#?}",
         result.accepted
     );

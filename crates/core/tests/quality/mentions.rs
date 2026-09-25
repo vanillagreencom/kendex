@@ -3,7 +3,7 @@
 //! and one case that moves a guard's own operand out of its comment.
 
 use kendex_core::model::ItemKind;
-use kendex_core::quality::{AuditInput, AuditResult, Content, audit};
+use kendex_core::quality::{AuditInput, AuditResult, Content, Publisher, audit};
 
 use super::rules::{document, skill};
 
@@ -12,6 +12,7 @@ fn hook(script: &str) -> AuditResult {
         kind: ItemKind::Hook,
         name: "guard".to_owned(),
         harness: None,
+        publisher: Publisher::Other,
         location: "hooks/guard.sh".to_owned(),
         content: Content::Hook {
             event: "PreToolUse".to_owned(),

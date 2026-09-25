@@ -90,7 +90,8 @@ pub fn status(path: &Path) -> Result<MineRow> {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "marketplace".to_owned());
     let config = crate::source::source_config(&sealed, &leaf)?;
-    let report = check_catalog::check_with(&sealed, &config, &leaf)?;
+    let report =
+        check_catalog::check_with(&sealed, &config, &leaf, crate::quality::Publisher::Other)?;
 
     let mut counts: BTreeMap<String, u32> = BTreeMap::new();
     for item in &report.items {
@@ -134,7 +135,7 @@ fn shape(finding: CheckFinding) -> StatusFinding {
 
 /// Ask git, read-only, tolerating its absence: a folder without git — or a
 /// machine without git — is an honest `repository: false`, never an error.
-fn git_readiness(path: &Path) -> GitReadiness {
+pub fn git_readiness(path: &Path) -> GitReadiness {
     let Some(inside) = git_line(path, &["rev-parse", "--is-inside-work-tree"]) else {
         return GitReadiness::default();
     };

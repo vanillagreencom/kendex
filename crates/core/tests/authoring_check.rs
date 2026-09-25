@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use kendex_core::check_catalog::check;
 use kendex_core::model::ItemKind;
+use kendex_core::quality::Publisher;
 use kendex_core::source::index::index;
 use kendex_core::source_read::SealedSource;
 
@@ -42,7 +43,7 @@ fn a_discovered_repo_is_checked_the_way_it_installs() {
     let (_tmp, root) = repo();
     skill_at(&root, ".claude/skills", "review");
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
+    let report = check(&sealed, "repo", Publisher::Other).unwrap();
     let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
     assert_eq!(names, ["review"]);
     assert_eq!(report.items[0].kind, ItemKind::Skill);
@@ -60,7 +61,7 @@ fn a_one_skill_repo_is_one_checked_item() {
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
+    let report = check(&sealed, "repo", Publisher::Other).unwrap();
     assert_eq!(report.items.len(), 1);
     assert_eq!(report.items[0].name, "repo");
 }
@@ -74,7 +75,7 @@ fn a_broken_control_file_is_breakage_not_an_empty_pass() {
     skill_at(&root, "skills", "review");
     fs::write(root.join("kendex.toml"), "not [valid toml").unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
+    let report = check(&sealed, "repo", Publisher::Other).unwrap();
     assert!(report.items.is_empty());
     assert!(report.tally().breakage >= 1);
     assert!(report.failing(false) >= 1);
@@ -93,7 +94,7 @@ fn an_undeclared_hooks_dir_is_not_checked() {
     fs::create_dir_all(root.join("hooks")).unwrap();
     fs::write(root.join("hooks/deploy.sh"), "#!/bin/sh\n").unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
+    let report = check(&sealed, "repo", Publisher::Other).unwrap();
     assert!(
         report.items.iter().all(|item| item.kind != ItemKind::Hook),
         "a hook was checked out of a repo that never declared kendex's layout"
@@ -117,7 +118,7 @@ fn check_and_index_agree_on_the_offered_set() {
     .unwrap();
     fs::write(root.join("kendex.toml"), "[marketplace]\nname = \"demo\"\n").unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
+    let report = check(&sealed, "repo", Publisher::Other).unwrap();
     let summary = index(&sealed, "repo").unwrap();
     let mut checked: Vec<(String, String)> = report
         .items
@@ -153,7 +154,7 @@ fn hook_test_suites_are_not_catalog_items() {
     fs::write(root.join("hooks/tests/guard.test.sh"), "#!/bin/sh\n").unwrap();
     fs::write(root.join("kendex.toml"), "[marketplace]\nname = \"demo\"\n").unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
+    let report = check(&sealed, "repo", Publisher::Other).unwrap();
     let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
     assert!(names.contains(&"guard"));
     assert!(
@@ -205,7 +206,7 @@ fn a_safety_finding_is_reported_and_fails_nothing() {
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
+    let report = check(&sealed, "repo", Publisher::Other).unwrap();
     let found = report
         .findings()
         .filter(|finding| finding.rule.is_some())
@@ -291,7 +292,7 @@ fn a_broken_body_is_that_sets_breakage(body: &str, named: &str, fix_names: &[&st
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
+    let report = check(&sealed, "repo", Publisher::Other).unwrap();
     assert!(report.failing(false) >= 1, "the check passed it: {body}");
     let finding = &report.catalog[0];
     assert_eq!(finding.severity, "error", "{body}: {}", finding.message);
@@ -337,7 +338,7 @@ fn a_broken_bundles_table_is_the_catalogs_breakage(body: &str) {
     skill_at(&root, "skills", "gh");
     fs::write(root.join("kendex.toml"), body).unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
+    let report = check(&sealed, "repo", Publisher::Other).unwrap();
     assert!(report.failing(false) >= 1, "the check passed it: {body}");
     let finding = &report.catalog[0];
     assert_eq!(finding.severity, "error", "{body}: {}", finding.message);
@@ -377,7 +378,7 @@ fn a_bundle_written_in_the_shape_the_reader_reads_is_clean() {
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
+    let report = check(&sealed, "repo", Publisher::Other).unwrap();
     assert_eq!(report.failing(true), 0, "{:?}", report.catalog);
     let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
     let sets = kendex_core::source::bundles::offered(&sealed, &config).unwrap();
@@ -410,7 +411,7 @@ fn every_unoffered_bundle_member_is_breakage() {
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
+    let report = check(&sealed, "repo", Publisher::Other).unwrap();
     let missing = [
         "gone-agent",
         "gone-skill",
@@ -457,7 +458,7 @@ fn a_projects_own_install_record_is_not_its_catalogs_breakage() {
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
+    let report = check(&sealed, "repo", Publisher::Other).unwrap();
     assert_eq!(report.failing(false), 0, "{:?}", report.catalog);
     let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
     assert!(
@@ -487,6 +488,6 @@ fn a_source_beside_a_member_list_is_still_that_sets_breakage() {
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
+    let report = check(&sealed, "repo", Publisher::Other).unwrap();
     assert!(report.failing(false) >= 1, "{:?}", report.catalog);
 }

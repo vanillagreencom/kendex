@@ -16,7 +16,8 @@ use crate::model::Scope;
 #[allow(clippy::unwrap_used)]
 fn checked(target: &Path) -> (usize, Vec<String>) {
     let sealed = crate::source_read::SealedSource::open(target).unwrap();
-    let check = crate::check_catalog::check(&sealed, "mine").unwrap();
+    let check =
+        crate::check_catalog::check(&sealed, "mine", crate::quality::Publisher::Other).unwrap();
     let breakage = check
         .findings()
         .filter(|finding| finding.is_breakage() && !finding.is_note())

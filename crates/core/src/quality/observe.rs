@@ -18,8 +18,8 @@ use crate::model::{HarnessId, ItemKind, ObservedItem};
 use crate::source_read::{TREE_BOUND, TreeBound};
 
 use super::{
-    AuditInput, AuditResult, Content, McpEntry, PluginSources, TreeFile, UNREAD_MCP_ENTRY,
-    UNREADABLE_PLUGIN,
+    AuditInput, AuditResult, Content, McpEntry, PluginSources, Publisher, TreeFile,
+    UNREAD_MCP_ENTRY, UNREADABLE_PLUGIN,
 };
 
 struct HashWriter(Sha256);
@@ -40,6 +40,7 @@ impl AuditInput {
             name: _,
             harness: _,
             location: _,
+            publisher: _,
             content,
         } = self;
         let mut hash = HashWriter(Sha256::new());
@@ -80,8 +81,10 @@ pub fn tree_content_from_bytes(files: &[(PathBuf, Vec<u8>)]) -> Content {
     }
 }
 
-/// What this observation carries, read as an audit input.
-pub fn input_for(item: &ObservedItem) -> AuditInput {
+/// What this observation carries, read as an audit input. `publisher` is
+/// whose catalog the scope's record says the installation came from;
+/// an installation the record does not name is nobody's.
+pub fn input_for(item: &ObservedItem, publisher: Publisher) -> AuditInput {
     let location = crate::paths::slashed(&item.path);
     let content = match item.kind {
         ItemKind::Skill => read_tree(&item.path),
@@ -95,6 +98,7 @@ pub fn input_for(item: &ObservedItem) -> AuditInput {
         name: item.name.clone(),
         harness: Some(item.harness),
         location,
+        publisher,
         content,
     }
 }
@@ -111,15 +115,24 @@ pub fn input_for(item: &ObservedItem) -> AuditInput {
 /// for the hook's harness, so the harness decides the bytes there and is
 /// part of the key. Two observations that agree here score the same by
 /// construction, never by guess.
-pub fn same_reading(item: &ObservedItem) -> (ItemKind, PathBuf, String, Option<HarnessId>) {
+pub fn same_reading(
+    item: &ObservedItem,
+    publisher: Publisher,
+) -> (ItemKind, PathBuf, String, Option<HarnessId>, Publisher) {
     let parser = (item.kind == ItemKind::Hook).then_some(item.harness);
-    (item.kind, item.path.clone(), item.name.clone(), parser)
+    (
+        item.kind,
+        item.path.clone(),
+        item.name.clone(),
+        parser,
+        publisher,
+    )
 }
 
 /// Read what this observation points at and score it. Pure over the bytes
 /// on disk, so it can run on any thread and in any order.
-pub fn score(item: &ObservedItem) -> AuditResult {
-    super::audit(input_for(item))
+pub fn score(item: &ObservedItem, publisher: Publisher) -> AuditResult {
+    super::audit(input_for(item, publisher))
 }
 
 const UNREADABLE_FILE: &str = "the installed file could not be read from disk";

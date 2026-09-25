@@ -2,7 +2,7 @@
 
 use crate::configedit::ConfigEdit;
 use crate::model::ItemKind;
-use crate::quality::{AuditInput, Content, McpEntry, UNREADABLE_PLUGIN};
+use crate::quality::{AuditInput, Content, McpEntry, Publisher, UNREADABLE_PLUGIN};
 
 use super::super::desired::{Artifact, Desired};
 
@@ -30,6 +30,7 @@ pub(super) fn input_for(item: &Desired) -> AuditInput {
         name: item.name.clone(),
         harness: Some(item.harness),
         location,
+        publisher: Publisher::of(&item.provenance),
         content,
     }
 }

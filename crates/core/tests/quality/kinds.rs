@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use kendex_core::model::ItemKind;
 use kendex_core::quality::{
-    AuditInput, AuditResult, Content, McpEntry, PluginSources, Severity, audit,
+    AuditInput, AuditResult, Content, McpEntry, PluginSources, Publisher, Severity, audit,
 };
 
 use super::rules::{mcp, rules_hit, severity_of, skill};
@@ -17,6 +17,7 @@ fn plugin(sources: PluginSources) -> AuditResult {
         kind: ItemKind::Plugin,
         name: "sample@market".into(),
         harness: None,
+        publisher: Publisher::Other,
         location: "plugins/sample".into(),
         content: Content::Plugin(sources),
     })
@@ -74,6 +75,7 @@ fn plugin_rules_are_not_applicable_without_readable_sources() {
         kind: ItemKind::Plugin,
         name: "sample@market".into(),
         harness: None,
+        publisher: Publisher::Other,
         location: "settings.json".into(),
         content: Content::Unread {
             why: kendex_core::quality::UNREADABLE_PLUGIN,
@@ -115,6 +117,7 @@ fn an_unread_mcp_entry_reports_its_three_rules_as_not_applicable() {
         kind: ItemKind::McpServer,
         name: "sample".into(),
         harness: None,
+        publisher: Publisher::Other,
         location: ".mcp.json".into(),
         content: Content::Unread {
             why: kendex_core::quality::UNREAD_MCP_ENTRY,

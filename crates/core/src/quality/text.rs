@@ -294,13 +294,15 @@ fn tree_docs(
 ) -> Vec<TreeFile> {
     // The location a deobfuscation report is filed under is the one every
     // line rule cites, spelled once here for both.
-    let placed: Vec<(TreeFile, String, Option<String>)> = files
+    let placed: Vec<(TreeFile, String, Option<Cleaned>)> = files
         .into_iter()
         .map(|file| {
             let location = format!("{root}/{}", crate::paths::slashed(&file.path));
-            let digest = file.text.as_deref().map(digest);
-            let text = file.text.map(|text| clean(location.clone(), &text));
-            (TreeFile { text, ..file }, location, digest)
+            let cleaned = file.text.map(|text| Cleaned {
+                digest: digest(&text),
+                text: clean(location.clone(), &text),
+            });
+            (TreeFile { text: None, ..file }, location, cleaned)
         })
         .collect();
     // A script calls the message helpers its tree's library files define,
@@ -309,21 +311,28 @@ fn tree_docs(
     // language is decided once, here, for both passes.
     let languages: Vec<Option<Language>> = placed
         .iter()
-        .map(|(file, location, _)| file.text.as_deref().map(|text| language(location, text)))
+        .map(|(_, location, cleaned)| {
+            cleaned
+                .as_ref()
+                .map(|cleaned| language(location, &cleaned.text))
+        })
         .collect();
     let shell: Vec<&str> = placed
         .iter()
         .zip(&languages)
         .filter(|(_, language)| **language == Some(Language::Shell))
-        .filter_map(|((file, _, _), _)| file.text.as_deref())
+        .filter_map(|((_, _, cleaned), _)| cleaned.as_ref().map(|cleaned| cleaned.text.as_str()))
         .collect();
     let diagnostic = shell::diagnostic_functions(&shell);
     placed
         .into_iter()
         .zip(languages)
-        .map(|((file, location, digest), language)| {
-            if let (Some(text), Some(language), Some(digest)) = (&file.text, language, digest) {
-                let split = lines(text, language.reading(&diagnostic));
+        .map(|((file, location, cleaned), language)| {
+            let Some(cleaned) = cleaned else {
+                return file;
+            };
+            if let Some(language) = language {
+                let split = lines(&cleaned.text, language.reading(&diagnostic));
                 docs.push(Doc {
                     lines: match is_supporting(&file.path) {
                         true => split.into_iter().map(Line::as_description).collect(),
@@ -331,10 +340,13 @@ fn tree_docs(
                     },
                     role: super::DocRole::Text,
                     location,
-                    digest,
+                    digest: cleaned.digest,
                 });
             }
-            file
+            TreeFile {
+                text: Some(cleaned.text),
+                ..file
+            }
         })
         .collect()
 }
@@ -422,6 +434,14 @@ fn hook_docs(
         body
     });
     (command, values, script)
+}
+
+/// One tree file's text as the rules read it, beside the name of the text
+/// it was read from: the digest is taken before deobfuscation, so it is
+/// the hash a file of exactly the author's text has on disk.
+struct Cleaned {
+    text: String,
+    digest: String,
 }
 
 /// What names a document's text wherever a reading has to say which text

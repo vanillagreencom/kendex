@@ -1,6 +1,7 @@
 //! The compiled-in table of accepted findings against the catalog this
-//! repository is: the table is what the catalog warrants right now, or
-//! the build fails until it is regenerated and the diff reviewed.
+//! repository is: every row still names a finding the catalog raises, at
+//! the text, line and message it has now, or the build fails until the
+//! table is refreshed and the diff reviewed.
 
 use std::path::{Path, PathBuf};
 
@@ -12,7 +13,8 @@ fn committed_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/quality/allowance.toml")
 }
 
-/// The table this catalog warrants, in its file form.
+/// The committed table with every row read again off this catalog, in
+/// its file form.
 #[allow(
     clippy::expect_used,
     reason = "a catalog that will not open or a table that will not serialize is the test's own fixture, and the panic names which"
@@ -21,7 +23,12 @@ fn regenerated() -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let sealed = SealedSource::open(&root).expect("the repository opens as a catalog");
     let config = source_config(&sealed, "kendex").expect("its layout reads");
-    let table = Allowance::regenerate(&sealed, &config).expect("its packages read");
+    let committed =
+        Allowance::parse(&std::fs::read_to_string(committed_path()).unwrap_or_default())
+            .expect("the committed table reads");
+    let table = committed
+        .refreshed(&sealed, &config)
+        .expect("every accepted finding is still raised");
     let text = table.to_toml().expect("the table serializes");
     assert_eq!(
         Allowance::parse(&text).expect("the table reads back"),
@@ -31,12 +38,13 @@ fn regenerated() -> String {
     text
 }
 
-/// `cargo test` fails whenever the committed table drifts from what the
-/// catalog warrants: a finding nobody accepted, a row nothing raises any
-/// more, a package whose hash moved. Regenerate with:
+/// `cargo test` fails whenever a listed finding moved, changed its
+/// message, or sits in a file whose text changed, and the refresh itself
+/// refuses a listed finding the catalog no longer raises or a file that
+/// raises more of that rule than the table lists. Refresh with:
 /// `cargo test -p kendex-core -- --ignored regenerate_allowance`
 #[test]
-fn the_committed_table_is_what_the_catalog_warrants() {
+fn the_committed_table_is_current_for_every_row_it_holds() {
     let committed = std::fs::read_to_string(committed_path()).unwrap_or_default();
     assert_eq!(
         committed,

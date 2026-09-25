@@ -32,7 +32,7 @@ mod score;
 mod secret;
 mod text;
 
-pub use allowance::{Accepted, AcceptedFile, Allowance, Package as AllowedPackage};
+pub use allowance::{Accepted, AcceptedFile, Allowance, Package as AllowedPackage, Publisher};
 pub use dimensions::{AntiPattern, DimensionScore, QualityScore};
 pub use finding::Finding;
 pub use score::{Deduction, SafetyScore, safety};
@@ -280,6 +280,9 @@ pub struct AuditInput {
     /// The artifact's path, or the config file holding the entry, `/`-spelled
     /// so a finding from the plan and one from disk name the same place.
     pub location: String,
+    /// Whose catalog the bytes came from, read off the item's recorded
+    /// source; only kendex's own is eligible for the [`Allowance`].
+    pub publisher: Publisher,
     pub content: Content,
 }
 
@@ -311,10 +314,11 @@ pub struct Doc {
 }
 
 /// Where `location` stands inside `root`, kept with the separator that
-/// joins it back on: `/SKILL.md` in a tree, ` (command)` for a hook's
-/// command line, empty where the location is the root itself. `None`
-/// where the location is not inside this root, which the separator
-/// decides: `/a/bc.md` starts with the root `/a/b` and is not in it.
+/// joins it back on: `/SKILL.md` for a file in a tree, ` (command)` or
+/// ` (entry)` for the labelled documents beside a hook's script, empty
+/// where the location is the root itself. `None` where the location is
+/// not inside this root, which the separator decides: `/a/bc.md` starts
+/// with the root `/a/b` and is not in it.
 pub fn place_within<'a>(location: &'a str, root: &str) -> Option<&'a str> {
     let rest = location.strip_prefix(root)?;
     (rest.is_empty() || rest.starts_with(['/', ' '])).then_some(rest)
@@ -436,16 +440,11 @@ pub struct AuditResult {
 
 /// Deobfuscate, then run every rule, then score. The same call serves every
 /// path: what a plan would write, what a scan found on disk, what a catalog
-/// offers. Findings kendex's own table accepts are set aside before the
-/// score is taken; a table this build cannot read accepts nothing.
+/// offers. Findings kendex's own table accepts in kendex's own item are set
+/// aside before the score is taken.
 pub fn audit(input: AuditInput) -> AuditResult {
-    audit_with(input, Allowance::builtin().unwrap_or(&EMPTY_ALLOWANCE))
+    audit_with(input, Allowance::builtin())
 }
-
-static EMPTY_ALLOWANCE: Allowance = Allowance {
-    ruleset: RULESET_VERSION,
-    packages: Vec::new(),
-};
 
 /// What every rule said about one prepared input, before any of it is
 /// accepted or scored.
