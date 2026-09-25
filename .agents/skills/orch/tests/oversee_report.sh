@@ -538,6 +538,7 @@ issues_before_marker|60|ORCH_REPORT_EVERY_ISSUES=1|-120|
 issues_under|60|ORCH_REPORT_EVERY_ISSUES=2|-30|
 issues_one_item_two_prs|60|ORCH_REPORT_EVERY_ISSUES=2|-30 -20|
 issues_past_lookback|691200|ORCH_REPORT_EVERY_MINUTES=0 ORCH_REPORT_EVERY_ISSUES=2|-86400|report-due reason=issues since=@AGE landed=1
+issues_past_lookback_none|691200|ORCH_REPORT_EVERY_MINUTES=0 ORCH_REPORT_EVERY_ISSUES=2||
 issues_inside_lookback|259200|ORCH_REPORT_EVERY_MINUTES=0 ORCH_REPORT_EVERY_ISSUES=2|-86400|
 ROWS
 new_case due_issues_two_items
