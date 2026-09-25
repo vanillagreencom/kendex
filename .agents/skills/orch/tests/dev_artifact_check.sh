@@ -470,8 +470,9 @@ receipt_table \
   "a validate_mode outside full and range is invalid^impl^.validate_mode=\"class\"^$FILE_ARGS^reason=invalid" \
   "a null validate_mode beside a pass is invalid^impl^.validate_mode=null^$FILE_ARGS^reason=invalid" \
   "a null validate_mode beside a failing validate is valid^impl^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null^$FILE_ARGS^reason=valid validate_mode=null" \
-  "a null validate_mode beside no-verdict is invalid^impl^.validate=\"no-verdict\" | .validate_mode=null^$FILE_ARGS^reason=invalid" \
-  "a no-verdict validate, a battery the timeout cut off, is accepted^impl^.validate=\"no-verdict\"^$FILE_ARGS^verdict=accept reason=valid validate=no-verdict" \
+  "a null validate_mode beside no-verdict is invalid^impl^.validate=\"no-verdict\" | .validate_note=\"$NOTE\" | .validate_mode=null^$FILE_ARGS^reason=invalid" \
+  "a no-verdict validate, a battery the timeout cut off, is accepted with its suites named^impl^.validate=\"no-verdict\" | .validate_note=\"$NOTE\"^$FILE_ARGS^verdict=accept reason=valid validate=no-verdict" \
+  "a no-verdict validate naming no suites is invalid^impl^.validate=\"no-verdict\"^$FILE_ARGS^verdict=retry reason=invalid" \
   "a failing validate on the same receipt is retried^impl^.validate=\"FAILING: lint\"^$FILE_ARGS^verdict=retry reason=valid" \
   "an empty validate_note is invalid^impl^.validate_note=\"\"^$FILE_ARGS^reason=invalid" \
   "a numeric validate_note is invalid^impl^.validate_note=42^$FILE_ARGS^reason=invalid" \

@@ -39,13 +39,18 @@ NOW="$(date +%s)"
 DEAD_PID="$(sh -c 'printf "%s" $$')"
 
 # A full validation run started AGE seconds ago whose child recorded
-# guard-exit=EXIT, or with EXIT "-" none recorded, its pid file naming PID.
+# guard-exit=EXIT, or with EXIT "-" none recorded and with "no-verdict" the
+# bound's cut-off, its pid file naming PID.
 add_run() { # WORKTREE NAME AGE EXIT PID
   local run="$1/tmp/dev-validate-$2"
   mkdir -p "$run"
   printf 'start=%s\ncap-secs=3640\npoll-secs=30\nvalidate-mode=full\n' "$(( NOW - $3 ))" > "$run/start"
   printf '%s\n' "$5" > "$run/pid"
-  [[ "$4" == - ]] || printf 'guard-exit=%s at=2026-01-01T00:00:00Z\n' "$4" > "$run/exit"
+  case "$4" in
+    -) ;;
+    no-verdict) printf 'guard-exit=124 at=2026-01-01T00:00:00Z verdict=no-verdict\n' > "$run/exit" ;;
+    *) printf 'guard-exit=%s at=2026-01-01T00:00:00Z\n' "$4" > "$run/exit" ;;
+  esac
 }
 
 # A worktree on its own branch one commit past main, a workflow state for
@@ -186,14 +191,14 @@ for harness in claude-send claude-text pi codex codex-item; do
     "$harness: dev-artifact-check accepts the recovered round"
 done
 
-# A run the bound ended proves a no-verdict report, which is accepted, since it
-# is neither a pass nor a failure.
-new_round cut KEN-3 1-1 124
-printf 'guard-exit=124 at=2026-01-01T00:00:00Z verdict=timeout\n' > "$WT/tmp/dev-validate-1/exit"
-transcript "$TMP_ROOT/cut.jsonl" claude-send 1-1 "$(implement_report "$HEAD_SHA" no-verdict none)"
+# A run the bound ended proves a no-verdict report naming its scoped suites,
+# which is accepted, since it is neither a pass nor a failure, and the suites
+# become the receipt's note.
+new_round cut KEN-3 1-1 no-verdict
+transcript "$TMP_ROOT/cut.jsonl" claude-send 1-1 "$(implement_report "$HEAD_SHA" "no-verdict: dev_validate_run.sh" none)"
 run --worktree "$WT" --issue KEN-3 --round-id 1-1 --transcript "$TMP_ROOT/cut.jsonl"
-assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-KEN-3-1-1.json" .validate) $("$CHECK" --worktree "$WT" --issue KEN-3 --round-id 1-1 | jq -r .verdict)" \
-  "rc=0 no-verdict accept" "a no-verdict report beside a run the timeout ended is recovered and accepted" "$TMP_ROOT/stderr"
+assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-KEN-3-1-1.json" '"\(.validate)|\(.validate_note)"') $("$CHECK" --worktree "$WT" --issue KEN-3 --round-id 1-1 | jq -r .verdict)" \
+  "rc=0 no-verdict|scoped suites green: dev_validate_run.sh accept" "a no-verdict report beside a run the timeout ended is recovered with its suites and accepted" "$TMP_ROOT/stderr"
 
 echo "=== only this round's turns hold its report ==="
 # A persistent agent's earlier round reported above this round's delegation,
@@ -312,8 +317,9 @@ row=0
 for case in \
   "commit-mismatch|implement|0|%B|pass|needs-review|b" \
   "validate-unproven|implement|1|%H|pass|needs-review|b" \
-  "validate-unproven|implement|1|%H|no-verdict|needs-review|b" \
-  "validate-unproven|implement|0|%H|no-verdict|needs-review|b" \
+  "validate-unproven|implement|1|%H|no-verdict: dev_validate_run.sh|needs-review|b" \
+  "validate-unproven|implement|0|%H|no-verdict: dev_validate_run.sh|needs-review|b" \
+  "validate-unproven|implement|no-verdict|%H|no-verdict|needs-review|b" \
   "unparsed|implement|0|%H|passing|needs-review|b" \
   "unparsed|implement|0|%H|pass|needs-review|-" \
   "unparsed|implement|0|-|pass|needs-review|b" \

@@ -56,7 +56,7 @@
 #       Print the run's record, read-only: the mode it ran under and its
 #       verdict. The one reader of the run directory for anything outside this
 #       script; dev-return-write takes a receipt's mode from it, and a
-#       receipt's pass needs its pass.
+#       receipt's pass needs its pass and its no-verdict its no-verdict.
 #   dev-validate-run --child --run-dir PATH
 #       Internal. The detached process the start path launches.
 #
@@ -79,23 +79,22 @@
 #
 # Output protocol — the agent reads these lines and the tests pin them:
 #   state=started run-dir=… log=… sentinel=… timeout-secs=N poll-secs=N cap-secs=N class=… docs-only=… [class-fallback=…]
-#   state=done guard-exit=N at=TIME [verdict=timeout] validate=pass|FAILING|no-verdict run-dir=… log=…
+#   state=done guard-exit=N at=TIME validate=pass|FAILING|no-verdict run-dir=… log=…
 #   state=running elapsed-secs=N cap-secs=N run-dir=…
 #   state=timeout elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
 #   state=lost elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
-#   validate-mode=full|range verdict=pass|FAILING|timeout|unfinished      (--record)
+#   validate-mode=full|range verdict=pass|FAILING|no-verdict|unfinished      (--record)
 #
-# --record's verdict is pass only for a sentinel of guard-exit=0, timeout for a
-# sentinel carrying verdict=timeout, FAILING for any other exit, and unfinished
-# where no sentinel exists: a run still going, past its cap or lost. Only pass
-# is a passing validation.
+# --record's verdict is pass only for a sentinel of guard-exit=0, no-verdict
+# for a sentinel carrying verdict=no-verdict, FAILING for any other exit, and
+# unfinished where no sentinel exists: a run still going, past its cap or lost.
+# Only pass is a passing validation.
 #
 # A run the bound ended is no verdict, neither pass nor FAILING: the command
-# was cut off, not refuted, so --wait prints validate=no-verdict for it. The
-# child records verdict=timeout only when the exit is timeout's own, 124 for
-# the bound or 137 for the kill behind it, and the bound has elapsed; a command
-# that exits 124 by itself before then is a failing command. state=timeout
-# below is not this: it is a waiter whose cap passed with no sentinel written.
+# was cut off, not refuted. The child records verdict=no-verdict only when the
+# exit is timeout's own and the bound has elapsed: 124 once the bound has run
+# out, 137 once the kill grace behind it has too. A command that exits either
+# by itself before then is a failing command.
 #
 # state=lost is the detached child gone with no verdict recorded: a host or
 # low-memory kill, or a launch that never ran. It is a failed validation, and it
@@ -104,7 +103,7 @@
 # only where that file exists, so no reader is sent to a path nothing created.
 #
 # The sentinel file holds exactly one line, `guard-exit=N at=TIME`, with
-# ` verdict=timeout` after it for a run the bound ended, written by the
+# ` verdict=no-verdict` after it for a run the bound ended, written by the
 # detached child. A harness that kills the launching shell or drops its
 # completion notice changes neither the verdict nor where it is recorded.
 #
@@ -504,10 +503,16 @@ if [[ "$mode" == child ]]; then
     DEV_VALIDATE_PATHS="$run_dir/paths" "$child_timeout_bin" --foreground -k "$KILL_GRACE" "$child_timeout_secs" bash -c "$child_cmd" >> "$run_dir/log" 2>&1 || status=$?
   # Written whole or not at all: a poll that caught a half-written sentinel
   # would read a verdict that is not one.
+  # timeout exits 124 when the bound fired and 137 when the kill a grace later
+  # did, so each is the bound's only once its own time has passed. The elapsed
+  # time is wall time and the bound runs on the monotonic clock, so a clock
+  # stepped forward can still read a command's own exit as the bound's.
   ended_by=""
+  bound_secs=$(( 10#$child_timeout_secs ))
+  [[ "$status" != 137 ]] || bound_secs=$(( bound_secs + KILL_GRACE ))
   if [[ "$status" == 124 || "$status" == 137 ]] \
-    && (( $(date +%s) - child_started >= 10#$child_timeout_secs )); then
-    ended_by=" verdict=timeout"
+    && (( $(date +%s) - child_started >= bound_secs )); then
+    ended_by=" verdict=no-verdict"
   fi
   printf 'guard-exit=%s at=%s%s\n' "$status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ended_by" > "$run_dir/exit.part"
   mv "$run_dir/exit.part" "$run_dir/exit"
@@ -520,20 +525,23 @@ if [[ "$mode" == child ]]; then
   exit 0
 fi
 
-# The exit status the sentinel records, in SENTINEL_EXIT, its whole line in
-# SENTINEL_LINE, and what it decided, pass, FAILING or timeout, in
+# The exit status the sentinel records, in SENTINEL_EXIT, its time in
+# SENTINEL_AT, and what it decided, pass, FAILING or no-verdict, in
 # SENTINEL_VERDICT. Every reader of the sentinel goes through here, so it has
 # one parse, and a refusal here ends the script rather than a subshell.
 SENTINEL_EXIT=""
-SENTINEL_LINE=""
+SENTINEL_AT=""
 SENTINEL_VERDICT=""
 read_sentinel() {
-  SENTINEL_LINE="$(cat "$run_dir/exit")"
-  SENTINEL_EXIT="${SENTINEL_LINE#guard-exit=}"
+  local line
+  line="$(cat "$run_dir/exit")"
+  SENTINEL_EXIT="${line#guard-exit=}"
   SENTINEL_EXIT="${SENTINEL_EXIT%% *}"
-  [[ "$SENTINEL_EXIT" =~ ^[0-9]+$ ]] || die sentinel-unreadable "path=$run_dir/exit" "line=$SENTINEL_LINE"
-  case "$SENTINEL_LINE" in
-    *" verdict=timeout") SENTINEL_VERDICT=timeout ;;
+  [[ "$SENTINEL_EXIT" =~ ^[0-9]+$ ]] || die sentinel-unreadable "path=$run_dir/exit" "line=$line"
+  SENTINEL_AT="${line#* at=}"
+  SENTINEL_AT="${SENTINEL_AT%% *}"
+  case "$line" in
+    *" verdict=no-verdict") SENTINEL_VERDICT=no-verdict ;;
     "guard-exit=0 "*) SENTINEL_VERDICT=pass ;;
     *) SENTINEL_VERDICT=FAILING ;;
   esac
@@ -600,14 +608,9 @@ run_deadline=$(( 10#$run_start + 10#$cap_secs ))
 while :; do
   if [[ -s "$run_dir/exit" ]]; then
     read_sentinel
-    case "$SENTINEL_VERDICT" in
-      pass) verdict=pass ;;
-      FAILING) verdict=FAILING ;;
-      timeout) verdict=no-verdict ;;
-    esac
-    printf 'state=done %s validate=%s run-dir=%s log=%s\n' \
-      "$SENTINEL_LINE" "$verdict" "$run_dir" "$run_dir/log"
-    [[ "$verdict" == pass ]] || exit 1
+    printf 'state=done guard-exit=%s at=%s validate=%s run-dir=%s log=%s\n' \
+      "$SENTINEL_EXIT" "$SENTINEL_AT" "$SENTINEL_VERDICT" "$run_dir" "$run_dir/log"
+    [[ "$SENTINEL_VERDICT" == pass ]] || exit 1
     exit 0
   fi
   now="$(date +%s)"

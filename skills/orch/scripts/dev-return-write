@@ -49,8 +49,9 @@
 # `dev-validate-run --record` owns that directory's format and answers for it:
 # validate_mode is its mode, never typed by the agent, and a --validate pass
 # needs a run whose sentinel is guard-exit=0. no-verdict needs a run the bound
-# ended, whose record is verdict=timeout: that run was cut off, not refuted,
-# so it is neither a pass nor a failure. A FAILING result is accepted beside
+# ended, whose record is verdict=no-verdict: that run was cut off, not refuted,
+# so it is neither a pass nor a failure, and the scoped suites the round ran in
+# its place are its evidence, named in --validate-note, which it requires. A FAILING result is accepted beside
 # any run: --validate judges every gate of the round, and a passing run
 # with another gate failing is still a failed round. Submit reuses only a full
 # pass, so a range pass recorded as full, or a failed run recorded as a pass,
@@ -172,8 +173,8 @@ failing validation ends the round and is never re-run into a pass.
 --validate-run-dir RUN_DIR is the run directory dev-validate-run printed;
 validate_mode is the mode dev-validate-run --record reports for it, full or
 range, and a --validate pass needs a run that passed, no-verdict a run the
-timeout ended; a FAILING result is accepted beside any run. A pass or
-no-verdict requires it; a FAILING round with no run omits it and
+timeout ended and a --validate-note naming the scoped suites that passed; a
+FAILING result is accepted beside any run. A pass or no-verdict requires it; a FAILING round with no run omits it and
 records validate_mode null. Submit reuses only a full pass.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
 content. --recovered-text PATH embeds the report round-recover read from a
@@ -351,10 +352,8 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
   validate_mode="${run_record#validate-mode=}"
   validate_mode="${validate_mode%% *}"
   run_verdict="${run_record##* verdict=}"
-  case "$run_verdict:$validate" in
-    pass:pass | timeout:no-verdict | *:FAILING*) ;;
-    *) die validate-disagrees "validate=$validate" "run=$run_verdict" ;;
-  esac
+  [[ "$validate" == FAILING:* || "$validate" == "$run_verdict" ]] \
+    || die validate-disagrees "validate=$validate" "run=$run_verdict"
 elif [[ "$validate" != FAILING:* ]]; then
   die required option=--validate-run-dir "validate=$validate"
 fi
@@ -364,6 +363,9 @@ if [[ -n "${validate_note+set}" && -n "$validate_note" ]]; then
   [[ -n "${validate_note//[[:space:]]/}" ]] \
     || die empty-text option=--validate-note
 fi
+# A no-verdict with no suites named would accept a round on no evidence.
+[[ "$validate" != no-verdict || -n "$validate_note" ]] \
+  || die required option=--validate-note validate=no-verdict
 # One summary source only — accepting both would need a precedence rule, and a
 # silently ignored flag is exactly the class of quiet misrecording this writer
 # exists to prevent. Exclusion is by flag PRESENCE, not value: "--summary-file
