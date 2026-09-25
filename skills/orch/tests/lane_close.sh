@@ -2,6 +2,7 @@
 # lane-close resolves one recorded pane, refuses live lanes, and closes in order.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git -C "$TEST_DIR" rev-parse --show-toplevel)"
@@ -162,11 +163,13 @@ printf '%s\n' "$*" >>"$LANE_CLOSE_TMUX_CALLS"
 # A local lane's harness leaving its pane once its process has gone: the
 # screen goes blank and the pane process falls back to the bare shell the
 # window keeps, which is what the lane judge reads as exited. A zombie is gone.
+# The state is read from /proc, never through ps, which the local rows stub.
 harness_gone() {
-  local stat
+  local state
   [[ -n "${LANE_CLOSE_LANE_PID:-}" ]] || return 1
-  stat="$(ps -o stat= -p "$LANE_CLOSE_LANE_PID" 2>/dev/null)" || return 0
-  [[ "$stat" == Z* ]]
+  source "$LANE_CLOSE_STATE_LIB"
+  state="$(lane_process_state "$LANE_CLOSE_LANE_PID")"
+  [[ -z "$state" || "$state" == Z ]]
 }
 if [[ "$(cat "$LANE_CLOSE_PHASE")" != exited ]] && harness_gone; then
   printf 'exited\n' >"$LANE_CLOSE_PHASE"
@@ -244,25 +247,41 @@ write_panes() { # COMMAND [DUPLICATE] [SESSION]
 claude_screen() { printf '%s%s\n' "$CLAUDE_COMPOSER" "${1:-}" >"$SCREEN"; }
 codex_screen() { cp -- "$PANE_FIXTURES/codex-composer-idle.txt" "$SCREEN"; }
 
-# A local lane's harness: a copy of bash under the harness's own name running
-# in the lane's worktree, so the library's ownership read finds it by name and
-# directory as it finds the real one. It is started detached, so init reaps it
-# rather than this shell holding it as a zombie. LANE_PID is its pid, which the
-# tmux stub reads as LANE_CLOSE_LANE_PID.
+# A local lane's harness: a real process, so the SIGTERM and its exit are
+# real, started detached so init reaps it rather than this shell holding it as
+# a zombie. LANE_PID is its pid, which the tmux stub reads as
+# LANE_CLOSE_LANE_PID. What the ownership read sees is staged, not the host's:
+# the shared stub pair (lib/process-table.sh) on LOCAL_PATH answers `ps` with a
+# table holding that one pid under the harness name and `readlink` with the
+# lane's worktree as its directory, so another user's session on this box is
+# never read and the read never races the child's exec. Its state and its exit
+# are read from /proc, so these rows run where proc_table_readable holds.
 LANE_ROOT="$TMP_ROOT/lane-worktree"
 HARNESS_BIN="$TMP_ROOT/harness-bin"
+PROC_BIN="$TMP_ROOT/proc-bin"
 mkdir -p "$LANE_ROOT" "$HARNESS_BIN"
+LANE_ROOT_REAL="$(cd -- "$LANE_ROOT" && pwd -P)"
+PROC_TABLE="$TMP_ROOT/proc-table"
+PROC_CWD_FILE="$TMP_ROOT/proc-cwd"
+export PROC_TABLE PROC_CWD_FILE
+LANE_CLOSE_STATE_LIB="$SCRIPTS/lib/lane-state.sh"
+export LANE_CLOSE_STATE_LIB
+proc_table_install "$PROC_BIN"
+LOCAL_PATH="$PROC_BIN:$PATH"
 LANE_PID=""
 start_local_harness() { # HARNESS
   [[ -x "$HARNESS_BIN/$1" ]] || cp -- "$(command -v bash)" "$HARNESS_BIN/$1"
   LANE_PID="$( (cd -- "$LANE_ROOT" && exec "$HARNESS_BIN/$1" -c 'trap "exit 0" TERM; while :; do sleep 0.1; done' \
     </dev/null >/dev/null 2>&1 & printf '%s' "$!") )"
   LANE_PIDS+=" $LANE_PID"
+  proc_table_write "$PROC_TABLE" "$LANE_PID 1 $1"
+  proc_cwd_write "$PROC_CWD_FILE" "$LANE_PID=$LANE_ROOT_REAL"
 }
+source "$LANE_CLOSE_STATE_LIB"
 lane_alive() { # PID
-  local stat
-  stat="$(ps -o stat= -p "$1" 2>/dev/null)" || { printf gone; return; }
-  if [[ "$stat" == Z* ]]; then printf gone; else printf alive; fi
+  local state
+  state="$(lane_process_state "$1")"
+  if [[ -z "$state" || "$state" == Z ]]; then printf gone; else printf alive; fi
 }
 
 run_close() { # SCRIPT [ARGS...]
@@ -333,14 +352,11 @@ MUTPY
 
 # A host without /proc, macOS among them, reads a process's directory through
 # lsof. NOPROC is lane-close over a library that says this host has no /proc,
-# which is the host itself where there is none. Where /proc exists the lsof on
-# NOPROC_PATH answers as lsof does, from the directory /proc holds, and the
-# rows run under both readers; elsewhere the host's own lsof answers.
+# and the lsof on NOPROC_PATH answers as lsof does, from the directory the
+# staged readlink holds, so the local rows run under both readers.
 NO_PROC='lane_proc_readable() { return 1; }'
 NOPROC="$(lib_mutant no-proc '' '' "$NO_PROC")"
-NOPROC_PATH="$PATH"
-LOCAL_READERS=("lsof|$NOPROC")
-if [[ -d /proc/self ]]; then
+if proc_table_readable; then
   mkdir -p "$TMP_ROOT/lsof-bin"
   cat >"$TMP_ROOT/lsof-bin/lsof" <<'EOF'
 #!/usr/bin/env bash
@@ -353,8 +369,7 @@ cwd="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)" || exit 1
 printf 'p%s\nfcwd\nn%s\n' "$pid" "$cwd"
 EOF
   chmod +x "$TMP_ROOT/lsof-bin/lsof"
-  NOPROC_PATH="$TMP_ROOT/lsof-bin:$PATH"
-  LOCAL_READERS=("proc|$SCRIPT" "lsof|$NOPROC")
+  NOPROC_PATH="$TMP_ROOT/lsof-bin:$LOCAL_PATH"
 fi
 
 echo '=== lane-close refuses ambiguous and live panes ==='
@@ -431,60 +446,77 @@ assert_eq "rc=$RC refusal=$(grep -c '^lane-host-ssh: close-refused path=/srv/clo
   'rc=3 refusal=1 kill=0 status=running' 'lane-host exit 3 reaches the caller unchanged and kills nothing'
 
 echo '=== an idle harness ends by signal, nothing typed into its pane ==='
-for harness in claude codex pi; do
+# HARNESS|DRAFT: a draft in the composer no longer stands in the way, since
+# nothing is typed for it to be sent with.
+for row in 'claude|' 'codex|' 'pi|' 'claude|finish this later'; do
+  IFS='|' read -r harness draft <<<"$row"
   write_state running "$harness" /host
   write_panes python
-  if [[ "$harness" == codex ]]; then codex_screen; else claude_screen; fi
+  if [[ "$harness" == codex ]]; then codex_screen; else claude_screen "$draft"; fi
   run_close "$SCRIPT"
   assert_eq "rc=$RC stop=$(stop_count KEN-1 "$harness") typed=$(typed_count) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
-    'rc=0 stop=1 typed=0 kill=1 close=1 status=done' "a hosted $harness lane is stopped by its provider, then closed"
+    'rc=0 stop=1 typed=0 kill=1 close=1 status=done' "a hosted $harness lane${draft:+ whose composer holds a draft} is stopped by its provider, then closed"
 done
 
 # A local lane: the same stop, run here against the worktree its record names,
-# ends the harness process itself, under every directory reader this host has.
-for reader_row in "${LOCAL_READERS[@]}"; do
-  IFS='|' read -r reader reader_script <<<"$reader_row"
-  for harness in claude codex pi; do
-    MAIL_ROOT="$LANE_ROOT" write_state running "$harness" ""
-    write_panes python; claude_screen
-    start_local_harness "$harness"
-    PATH="$NOPROC_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$reader_script"
-    assert_eq "rc=$RC lane=$(lane_alive "$LANE_PID") typed=$(typed_count) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
-      'rc=0 lane=gone typed=0 host=0 status=done' "a local $harness lane is stopped by SIGTERM to its own process, its directory read through $reader"
+# ends the harness process itself, under both directory readers.
+if proc_table_readable; then
+  for reader_row in "proc|$SCRIPT|$LOCAL_PATH" "lsof|$NOPROC|$NOPROC_PATH"; do
+    IFS='|' read -r reader reader_script reader_path <<<"$reader_row"
+    for harness in claude codex pi; do
+      MAIL_ROOT="$LANE_ROOT" write_state running "$harness" ""
+      write_panes python; claude_screen
+      start_local_harness "$harness"
+      PATH="$reader_path" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$reader_script"
+      assert_eq "rc=$RC lane=$(lane_alive "$LANE_PID") typed=$(typed_count) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+        'rc=0 lane=gone typed=0 host=0 status=done' "a local $harness lane is stopped by SIGTERM to its own process, its directory read through $reader"
+    done
   done
-done
-MUTANT="$(mutant local-stop '    if ! lane_stop_owned "$mail_root" "$harness"; then' '    if ! lane_stop_owned "$mail_root" none; then')"
-MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
-start_local_harness claude
-LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
-assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=claude pane=%7 processes=0$' <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 timeout=1 lane=alive status=running' 'control: a stop that looks for another harness name signals nothing and the lane outlives the wait'
-kill -KILL "$LANE_PID" 2>/dev/null || true
+  MUTANT="$(mutant local-stop '    if ! lane_stop_owned "$mail_root" "$harness"; then' '    if ! lane_stop_owned "$mail_root" none; then')"
+  MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+  start_local_harness claude
+  PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
+  assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=claude pane=%7 processes=0$' <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 timeout=1 lane=alive status=running' 'control: a stop that looks for another harness name signals nothing and the lane outlives the wait'
+  kill -KILL "$LANE_PID" 2>/dev/null || true
 
-# The lsof reader is what answers without /proc: an answer it cannot parse is a
-# live harness whose directory nothing read, and the close refuses.
-MUTANT="$(lib_mutant lsof-parse "'/^n/ { print substr(\$0, 2); exit }'" "'/^x/ { print substr(\$0, 2); exit }'" "$NO_PROC")"
-MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
-start_local_harness claude
-PATH="$NOPROC_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
-assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=process-read-failed$' <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID")" \
-  'rc=1 failed=1 lane=alive' 'control: an lsof answer the reader cannot parse leaves the harness unread and the close refuses'
-kill -KILL "$LANE_PID" 2>/dev/null || true
+  # The lsof reader is what answers without /proc: an answer it cannot parse is
+  # a live harness whose directory nothing read, and the close refuses.
+  MUTANT="$(lib_mutant lsof-parse "'/^n/ { print substr(\$0, 2); exit }'" "'/^x/ { print substr(\$0, 2); exit }'" "$NO_PROC")"
+  MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+  start_local_harness claude
+  PATH="$NOPROC_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
+  assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=process-read-failed$' <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID")" \
+    'rc=1 failed=1 lane=alive' 'control: an lsof answer the reader cannot parse leaves the harness unread and the close refuses'
+  kill -KILL "$LANE_PID" 2>/dev/null || true
 
-# A host with no directory reader at all refuses under its own cause, never as a
-# failed process read.
-MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
-start_local_harness claude
-MUTANT="$(lib_mutant reader-missing '' '' 'lane_process_cwd() { return 3; }')"
-LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
-assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=cwd-reader-missing$' <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 failed=1 lane=alive status=running' 'a host with neither /proc nor lsof refuses the local stop as cwd-reader-missing'
-MUTANT="$(lib_mutant reader-missing-cause '    3) LANE_STOP_CAUSE=cwd-reader-missing; return 1 ;;
+  # A host with no directory reader at all refuses under its own cause, never
+  # as a failed process read.
+  MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+  start_local_harness claude
+  MUTANT="$(lib_mutant reader-missing '' '' 'lane_process_cwd() { return 3; }')"
+  PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
+  assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=cwd-reader-missing$' <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 failed=1 lane=alive status=running' 'a host with neither /proc nor lsof refuses the local stop as cwd-reader-missing'
+  MUTANT="$(lib_mutant reader-missing-cause '    3) LANE_STOP_CAUSE=cwd-reader-missing; return 1 ;;
 ' '' 'lane_process_cwd() { return 3; }')"
-LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
-assert_eq "missing=$(grep -c ' cause=cwd-reader-missing$' <<<"$ERR" || true) read=$(grep -c ' cause=process-read-failed$' <<<"$ERR" || true)" \
-  'missing=0 read=1' 'control: without its own cause a host lacking any directory reader is blamed on the process read'
-kill -KILL "$LANE_PID" 2>/dev/null || true
+  PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
+  assert_eq "missing=$(grep -c ' cause=cwd-reader-missing$' <<<"$ERR" || true) read=$(grep -c ' cause=process-read-failed$' <<<"$ERR" || true)" \
+    'missing=0 read=1' 'control: without its own cause a host lacking any directory reader is blamed on the process read'
+  kill -KILL "$LANE_PID" 2>/dev/null || true
+
+  # A local stop that fails on one process names it: a signal refused to a
+  # harness that is still live.
+  MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+  start_local_harness claude
+  MUTANT="$(lib_mutant signal-refused '' '' 'kill() { return 1; }')"
+  PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
+  assert_eq "rc=$RC failed=$(grep -c "^lane-close: stop-failed item=KEN-1 harness=claude pid=$LANE_PID cause=signal-refused\$" <<<"$ERR" || true) lane=$(lane_alive "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 failed=1 lane=alive status=running' 'a local stop refused on one process names that process'
+  kill -KILL "$LANE_PID" 2>/dev/null || true
+else
+  printf '  skip  the local lane rows stage their process read through procfs\n'
+fi
 
 # A local stop that cannot run refuses, naming the step, rather than waiting
 # the lane out: a record whose worktree is not on this machine resolves none.
@@ -492,13 +524,6 @@ write_state running claude ""; write_panes python; claude_screen
 run_close "$SCRIPT"
 assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=worktree-read-failed$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 failed=1 kill=0 status=running' 'a local stop that cannot resolve the worktree refuses and keeps the window'
-
-# A draft in the composer no longer stands in the way: nothing is typed, so
-# there is nothing for it to be sent with.
-write_state running claude /host; write_panes python; claude_screen 'finish this later'
-run_close "$SCRIPT"
-assert_eq "rc=$RC stop=$(stop_count KEN-1 claude) typed=$(typed_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=0 stop=1 typed=0 status=done' 'a lane whose composer holds a draft closes by signal, the draft never sent'
 
 echo '=== a failed stop keeps the lane and its record ==='
 write_state running codex /host; write_panes python; codex_screen
@@ -654,11 +679,13 @@ LANE_CLOSE_MAIL_PENDING="$ASK" run_close "$SCRIPT"
 assert_eq "rc=$RC ask=$(grep -cE "^lane-close: ask-unanswered item=KEN-1 ask=$ASK_ID age=360[0-9]s count=1\$" <<<"$ERR" || true) hosted=$(grep -c -- '^pending --item KEN-1 --root /srv/worktree --host host=/host$' "$MAIL_CALLS" || true) stop=$(stop_count KEN-1 claude) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 ask=1 hosted=1 stop=0 status=running' 'an idle lane whose ask nobody answered refuses, naming the ask and its wait, and stops nothing'
 
-MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
-start_local_harness claude
-LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$SCRIPT"
-assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") local=$(grep -c -- "^pending --item KEN-1 --root $LANE_ROOT host=\$" "$MAIL_CALLS" || true)" \
-  'rc=0 status=done local=1' 'the same lane closes once the answer lands, a local mailbox read on this disk'
+if proc_table_readable; then
+  MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+  start_local_harness claude
+  PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$SCRIPT"
+  assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") local=$(grep -c -- "^pending --item KEN-1 --root $LANE_ROOT host=\$" "$MAIL_CALLS" || true)" \
+    'rc=0 status=done local=1' 'the same lane closes once the answer lands, a local mailbox read on this disk'
+fi
 
 write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_MAIL_STATUS=2 run_close "$SCRIPT"

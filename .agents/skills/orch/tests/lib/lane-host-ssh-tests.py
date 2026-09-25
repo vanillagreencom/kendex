@@ -772,6 +772,33 @@ exec git "$@"
                     process.terminate()
                 process.wait(timeout=2)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
+    def test_stop_refuses_a_process_that_left_the_worktree(self):
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        shutil.copy2(shutil.which("bash"), self.bin / "claude")
+        (self.bin / "claude").chmod(0o755)
+        # The ownership read named this pid, and by the signal its directory is
+        # the clone, not the worktree: a process that moved, or a reused pid.
+        moved = subprocess.Popen([str(self.bin / "claude"), "-c", "trap 'exit 0' TERM; while :; do sleep 1; done"],
+                                 cwd=clone, env=self.env)
+        self.addCleanup(moved.wait, 2)
+        self.addCleanup(lambda: moved.poll() is None and moved.kill())
+        library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
+        library_original = library.read_text()
+        staged = f'\nlane_owned_processes() {{ LANE_OWNED_PROCESS_PIDS="{moved.pid}"; }}\n'
+        library.write_text(library_original + staged)
+        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((refused.returncode, f"stop-owner-changed item=TEST-1 pid={moved.pid}\n".encode() in refused.stderr),
+                         (1, True), refused.stderr)
+        self.assertIsNone(moved.poll())
+        guard = '[[ "$current" == "$root" ]] || { LANE_STOP_CAUSE=owner-changed; return 1; }'
+        self.assertEqual(library_original.count(guard), 1)
+        library.write_text(library_original.replace(guard, ':') + staged)
+        mutant = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((mutant.returncode, mutant.stdout), (0, b"stopped item=TEST-1 processes=1\n"), mutant.stderr)
+        moved.wait(timeout=2)
+
     def test_stop_refuses_an_unreadable_owned_process_set(self):
         self.assertEqual(self.create().returncode, 0)
         clone = Path(self.row["clone"])
