@@ -10,7 +10,7 @@ Inputs: summary, reasons, and revisit conditions (required); research reference 
 .agents/skills/decider/scripts/decisions next-id
 ```
 
-`next-id` also reads the base branch's INDEX, so it skips a number another branch already merged. A `notice=base-unverified` line says the base was not fully read. With `reason=fetch-failed`, the number is checked against the base's local copy, which may be behind the remote. With any other reason, it is checked against this branch alone.
+`next-id` also reads the base branch's INDEX, so it skips a number another branch already merged. A `notice=base-unverified` line says the base was not fully read; its reason is listed under `DECISIONS_BASE_REF` in `decisions --help`.
 
 Without the script: take the last populated INDEX ID value and increment its numeric suffix. If it has none, ask for the project's scheme.
 

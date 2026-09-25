@@ -56,9 +56,9 @@ Actions:
                        and an ID this INDEX.md records for a different
                        document than the base branch's INDEX.md does. The
                        base is read at its fetched tip, not at the merge
-                       base. A base that could not be judged is refused too
-                       (see DECISIONS_BASE_REF). Exits 0 with no finding;
-                       a notice= line may still print on stderr
+                       base. How a base that could not be read is judged:
+                       DECISIONS_BASE_REF. Exits 0 with no finding; a
+                       notice= line may still print on stderr
 
 Options:
   --limit N            Max search results (default: 5)
@@ -93,11 +93,9 @@ Environment:
                        cannot be fetched or read prints base-unverified with
                        a reason: not-a-repository, unresolved, fetch-failed
                        (the local copy was read), index-absent or
-                       unreadable. next-id prints it as a notice and answers
-                       from what it could read, exit 0. check prints
-                       unresolved and unreadable as an error, exit 1, and
-                       index-absent as a notice; the others are errors when
-                       this variable is set and notices when it is not
+                       unreadable. check refuses unresolved and unreadable,
+                       exit 1; every other record is a notice, and next-id
+                       answers from what it could read, exit 0
 
 Examples:
   decisions search "FFI error handling"
@@ -298,17 +296,16 @@ parse_rows() { # TEXT LABEL PATH_PREFIX — LABEL names the INDEX in notices
 }
 
 # The base branch's INDEX.md, parsed into BASE_ROWS. Nothing is printed here:
-# the outcome is left in BASE_REASON (empty when the base was read whole) and
-# BASE_FETCH_FAILED, and report_base turns it into records, because next-id
-# and check judge the same outcome differently. BASE_ROWS keeps what could be
-# read: nothing, or the local copy of a ref whose fetch failed.
+# the outcome is left in BASE_REASON (empty when the base was fetched and read
+# whole), and report_base turns it into a record, because next-id and check
+# judge the same outcome differently. BASE_ROWS keeps what could be read:
+# nothing, or the local copy of a ref whose fetch failed.
 BASE_ROWS='[]'
 BASE_REF=""
 BASE_PATH=""
 BASE_REASON=""
-BASE_FETCH_FAILED=0
 read_base_index() {
-  local prefix cand short remote branch remotes r text
+  local prefix cand short remote branch remotes r text fetch_failed=0
   local candidates=()
 
   if ! prefix="$(git -C "$DECISIONS_DIR" rev-parse --show-prefix 2>/dev/null)"; then
@@ -343,7 +340,7 @@ read_base_index() {
       # instead of degrading to a reported outcome. A failure stays recorded
       # for every later candidate, which may be a stale local branch.
       if ! GIT_TERMINAL_PROMPT=0 git -C "$DECISIONS_DIR" fetch --quiet --no-tags "$remote" "+refs/heads/$branch:refs/remotes/$remote/$branch" </dev/null >/dev/null 2>&1; then
-        BASE_FETCH_FAILED=1
+        fetch_failed=1
       fi
     fi
     if git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$cand^{commit}" >/dev/null; then
@@ -370,70 +367,30 @@ read_base_index() {
     return 0
   fi
   BASE_ROWS="$(parse_rows "$text" "$BASE_REF:$BASE_PATH" "$BASE_REF:$prefix")"
+  if [[ "$fetch_failed" -eq 1 ]]; then
+    BASE_REASON=fetch-failed
+  fi
 }
 
-# Print the outcome of read_base_index. Under check, a base that was not
-# judged is a refusal: its only job beyond the working-tree checks is the base
-# comparison. That holds for a base that did not resolve or could not be read,
-# and for every outcome but index-absent when DECISIONS_BASE_REF names the
-# base. A base with no INDEX.md holds no number to collide with, so it passes.
-# Returns 1 when a refusal was printed.
+# Print the outcome of read_base_index as one base-unverified record. The
+# refuse column is the whole check policy: check refuses a base that did not
+# resolve or could not be read, and every other outcome is a notice. next-id
+# never refuses. Returns 1 when a refusal was printed.
 report_base() { # MODE — next-id or check
-  local mode="$1" configured=0 kind text
-  [[ -z "${DECISIONS_BASE_REF:-}" ]] || configured=1
-
-  if [[ "$BASE_FETCH_FAILED" -eq 1 && -z "$BASE_REASON" ]]; then
-    kind=notice
-    if [[ "$mode" == check && "$configured" -eq 1 ]]; then
-      kind=error
-    fi
-    base_record "$kind" "ref=$BASE_REF reason=fetch-failed" "The base branch could not be fetched, so its local copy was read and may be behind the remote."
-    [[ "$kind" == notice ]] || return 1
-  fi
-
+  local mode="$1" refuse=0 text
   case "$BASE_REASON" in
     "") return 0 ;;
-    not-a-repository)
-      kind=notice
-      [[ "$mode" != check || "$configured" -eq 0 ]] || kind=error
-      text="The decisions directory is not inside a git repository, so no base branch was read."
-      ;;
-    unresolved)
-      kind=notice
-      [[ "$mode" != check ]] || kind=error
-      if [[ "$configured" -eq 1 ]]; then
-        text="DECISIONS_BASE_REF does not resolve to a commit, so no base branch was read."
-      else
-        text="None of these resolved to a commit, so no base branch was read. Set DECISIONS_BASE_REF to name the base branch."
-      fi
-      ;;
-    index-absent)
-      kind=notice
-      text="The base branch has no $BASE_PATH, so it holds no decision number."
-      ;;
-    unreadable)
-      kind=notice
-      [[ "$mode" != check ]] || kind=error
-      text="The base branch's $BASE_PATH exists but could not be read, so no base number was read."
-      ;;
-    *)
-      emit_error base-reason-unknown "reason=$BASE_REASON" "read_base_index set a reason report_base does not know: the script is broken."
-      return 1
-      ;;
+    not-a-repository) text="The decisions directory is not inside a git repository, so no base branch was read." ;;
+    unresolved) refuse=1; text="None of these resolved to a commit, so no base branch was read. Set DECISIONS_BASE_REF to the base branch, or correct its value." ;;
+    fetch-failed) text="The base branch could not be fetched, so its local copy was read and may be behind the remote." ;;
+    index-absent) text="The base branch has no $BASE_PATH, so it holds no decision number." ;;
+    unreadable) refuse=1; text="The base branch's $BASE_PATH exists but could not be read, so no base number was read." ;;
   esac
-  if [[ "$BASE_FETCH_FAILED" -eq 1 ]]; then
-    text="$text The fetch of the base branch also failed."
+  if [[ "$mode" == check && "$refuse" -eq 1 ]]; then
+    emit_error base-unverified "ref=$BASE_REF reason=$BASE_REASON" "$text"
+    return 1
   fi
-  base_record "$kind" "ref=$BASE_REF reason=$BASE_REASON" "$text"
-  [[ "$kind" == notice ]]
-}
-
-base_record() { # notice|error FIELD EXPLANATION
-  if [[ "$1" == error ]]; then
-    emit_error base-unverified "$2" "$3"
-  else
-    emit_notice base-unverified "$2" "$3"
-  fi
+  emit_notice base-unverified "ref=$BASE_REF reason=$BASE_REASON" "$text"
 }
 
 

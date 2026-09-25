@@ -74,6 +74,8 @@ FULL_GUARD=1
 run_guard
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: decision-ids=1"* ]] \
   && [[ "$OUT" == *"error=id-duplicate-row id=D035 rows=3,4"* ]] \
+  && [[ "$OUT" == *"notice=base-unverified ref=main reason=index-absent"* ]] \
+  && [[ "$OUT" != *$'\n'"error=base-unverified"* ]] \
   && ok "full validation reds through the decision-ID lane, naming the rows" \
   || bad "full validation reds through the decision-ID lane, naming the rows" "rc=$RC out=$OUT"
 if mutant_guard 's/decisions" check || say decision-ids "\$?"/decisions" check || :/'; then

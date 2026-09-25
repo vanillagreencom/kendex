@@ -25,6 +25,8 @@ fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 # insteadOf rewrite or a signing requirement would change what is fetched or
 # committed.
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+# A world that is not a repository stays one wherever TMPDIR points.
+export GIT_CEILING_DIRECTORIES="$TMP_ROOT"
 git_q() {
   git -c user.email=test@example.com -c user.name=test -c commit.gpgsign=false "$@"
 }
@@ -96,6 +98,16 @@ build_unreachable() { # the lane fetched D035 once; then its remote broke
   build_ahead "$1"
   git -C "$1/work" fetch -q origin
   git -C "$1/work" remote set-url origin "$1/gone"
+}
+
+build_unreachable_collision() { # as unreachable, and the lane records its own D035
+  build_unreachable "$1"
+  write_index "$1/work" D034:D034-first.md D035:D035-lane.md
+}
+
+build_no_repo() { # a decisions directory outside any repository
+  mkdir -p "$1/work/docs/decisions"
+  write_index "$1/work" D034:D034-first.md
 }
 
 build_stale_main() { # the fetch fails and only the lane's stale main resolves
@@ -299,7 +311,9 @@ check-duplicate-row~dup_rows~~check~~1~~error=id-duplicate-row id=D035 rows=4,5 
 check-duplicate-file~dup_files~~check~~1~~error=id-duplicate-file id=D035 paths=docs/decisions/D035-a.md,docs/decisions/D035-b.md
 check-unresolved~no_remote~~check~~1~~error=base-unverified ref=origin/main,main reason=unresolved
 check-configured-unresolved~collision~DECISIONS_BASE_REF=origin/mian~check~~1~~error=base-unverified ref=origin/mian reason=unresolved
-check-fetch-failed-configured~unreachable~DECISIONS_BASE_REF=origin/main~check~~1~~error=base-unverified ref=origin/main reason=fetch-failed
+check-fetch-failed~unreachable_collision~~check~~1~~notice=base-unverified ref=origin/main reason=fetch-failed;error=id-collision id=D035 path=docs/decisions/D035-lane.md base=origin/main:docs/decisions/D035-main.md
+check-index-absent~index_absent~~check~~0~~notice=base-unverified ref=origin/main reason=index-absent
+check-not-a-repository~no_repo~~check~~0~~notice=base-unverified ref=none reason=not-a-repository
 check-blob-missing~blob_missing~~check~~1~~error=base-unverified ref=origin/main reason=unreadable
 get-ambiguous~dup_rows~~get~D035~1~~error=id-ambiguous id=D035 rows=4,5 paths=docs/decisions/D035-a.md,docs/decisions/D035-b.md
 get-unique~dup_rows~~get~D034~0~@get-keys@~
@@ -347,9 +361,9 @@ while IFS='~' read -r row old new label; do
 done <<'CONTROLS'
 next-id-base-ahead~  for id in ${ids[@]+"${ids[@]}"} ${base_ids[@]+"${base_ids[@]}"}; do~  for id in ${ids[@]+"${ids[@]}"}; do~a maximum over the working tree alone
 next-id-base-ahead~      if ! GIT_TERMINAL_PROMPT=0 git~      if false && ! GIT_TERMINAL_PROMPT=0 git~a base read without a fetch
-next-id-no-remote~    emit_notice base-unverified "$2" "$3"~    emit_notice base-unread "$2" "$3"~a renamed base notice
-next-id-fetch-failed~        BASE_FETCH_FAILED=1~        BASE_FETCH_FAILED=1; return 0~a failed fetch that drops the local copy
-next-id-fetch-failed-local-main~    short="${cand#refs/remotes/}"~    BASE_FETCH_FAILED=0; short="${cand#refs/remotes/}"~a fetch failure forgotten by the next candidate
+next-id-no-remote~  emit_notice base-unverified "ref=~  emit_notice base-unread "ref=~a renamed base notice
+next-id-fetch-failed~        fetch_failed=1~        fetch_failed=1; return 0~a failed fetch that drops the local copy
+next-id-fetch-failed-local-main~    short="${cand#refs/remotes/}"~    fetch_failed=0; short="${cand#refs/remotes/}"~a fetch failure forgotten by the next candidate
 next-id-origin-head~      candidates+=("$cand")~      :~a default ladder without origin/HEAD
 next-id-configured-ref~    candidates=("$DECISIONS_BASE_REF")~    candidates=(origin/main main)~a configured base ref that is ignored
 next-id-local-ref~    candidates=("$DECISIONS_BASE_REF")~    candidates=(origin/main main)~a configured local base branch that is ignored
@@ -360,9 +374,11 @@ check-collision~select(($held | length) > 0 and~select(($held | length) > 99 and
 check-edited-record~($held | map(.link) | index($row.link)) == null~true~a collision rule blind to record identity
 check-duplicate-row~map(select(length > 1))~map(select(length > 99))~a duplicate-row rule that never fires
 check-duplicate-file~file_count=$((file_count + 1))~file_count=$((file_count + 0))~a duplicate-file rule that never counts
-check-unresolved~    unresolved)\n      kind=notice\n      [[ "$mode" != check ]] || kind=error~    unresolved)\n      kind=notice\n      [[ "$mode" != check ]] || kind=notice~an unresolved base that check passes
+check-unresolved~    unresolved) refuse=1;~    unresolved) refuse=0;~an unresolved base that check passes
+check-index-absent~    index-absent) text=~    index-absent) refuse=1; text=~a base without INDEX.md that check refuses
+check-fetch-failed~    fetch-failed) text=~    fetch-failed) refuse=1; text=~a failed fetch that check refuses
+check-not-a-repository~    not-a-repository) text=~    not-a-repository) refuse=1; text=~a directory outside a repository that check refuses
 check-configured-unresolved~  if [[ -n "${DECISIONS_BASE_REF:-}" ]]; then~  if false; then~a configured base ref that is ignored
-check-fetch-failed-configured~    if [[ "$mode" == check && "$configured" -eq 1 ]]; then~    if false; then~a configured base whose failed fetch check passes
 check-blob-missing~rev-parse --verify --quiet "$BASE_REF:$BASE_PATH"~cat-file -e "$BASE_REF:$BASE_PATH"~a presence test that needs the blob
 get-ambiguous~  if [[ "$count" -gt 1 ]]; then~  if [[ "$count" -gt 99 ]]; then~a get that answers with the first of several rows
 get-unique~del(.line, .link)~del(.line)~a get that leaks the parser's link field
