@@ -57,17 +57,36 @@ esac
 # beside the target and are counted against what the sender declared, because a
 # local process that dies mid-feed closes the stream and the remote `cat` reads
 # that as an ordinary end of input, so the count is what tells a whole transfer
-# from a truncated one. Neither verb lets a short transfer reach the target.
+# from a truncated one. Neither verb lets a short transfer reach the target,
+# and the EXIT trap removes the staged file however the script ends, which is
+# a no-op once `put` has renamed it into place.
+#
+# A write that fails is `<verb>-failed path=... reason=...`, the failing
+# command's own report below it. `no-space` is a full disk, freed on the host
+# rather than chased through SSH; `write-failed` is every other cause. The C
+# locale is what holds that report to the wording `write_cause` matches.
 # Arguments: `$1` target, `$2` declared count, `$3` remote clone, `$4` staging
-# suffix, `$5` diagnostic key. The staged path is left in `$staged`.
+# suffix, `$5` the verb opening each diagnostic key. The staged path is left in
+# `$staged`.
 STAGE_AND_COUNT = '''umask 077
+export LC_ALL=C
+write_cause() { # REPORT
+  case "$1" in *'No space left on device'*) printf no-space ;; *) printf write-failed ;; esac
+}
+failed() { # VERB PATH REASON REPORT
+  printf 'lane-host-ssh: %s-failed path=%s reason=%s\\n' "$1" "$2" "$3" >&2
+  if [ -n "$4" ]; then printf '%s\\n' "$4" >&2; fi
+  exit 1
+}
 mkdir -p -- "$(dirname -- "$1")"
 staged=$(mktemp -- "$1.$4.XXXXXX")
-cat > "$staged"
+trap 'rm -f -- "${staged:?}"' EXIT
+staging=0
+report=$(cat 2>&1 > "$staged") || staging=$?
+if [ "$staging" -ne 0 ]; then failed "$5" "$1" "$(write_cause "$report")" "$report"; fi
 arrived=$(wc -c < "$staged")
 if [ "$((arrived + 0))" -ne "$2" ]; then
-  rm -f -- "${staged:?}"
-  printf 'lane-host-ssh: %s expected=%s arrived=%s\\n' "$5" "$2" "$((arrived + 0))" >&2
+  printf 'lane-host-ssh: %s-short expected=%s arrived=%s\\n' "$5" "$2" "$((arrived + 0))" >&2
   exit 1
 fi
 '''
@@ -102,7 +121,7 @@ def put(row, path, data):
     """
     remote(row, MAILBOX_GUARD + STAGE_AND_COUNT + '''case "$staged" in /*) permission_path="$staged" ;; *) permission_path="./$staged" ;; esac
 chmod 600 "$permission_path"
-mv -f -- "$staged" "$1"''', path, str(len(data)), row["clone"], "kendex-put", "put-short", data=data)
+mv -f -- "$staged" "$1"''', path, str(len(data)), row["clone"], "kendex-put", "put", data=data)
 
 
 def append(row, path, data):
@@ -115,15 +134,18 @@ def append(row, path, data):
     rather than a second spelling of them, so the hosted path and the lane's
     own local one cannot drift apart. `umask 077` above is what makes a
     mailbox this creates private.
+
+    The library runs in a command substitution, which captures its report
+    for the keyed line and keeps the EXIT trap its lock arms where flock is
+    absent from replacing the one that removes the staged file.
     """
     remote(row, MAILBOX_GUARD + APPEND_LIBRARIES + STAGE_AND_COUNT + '''appended=0
-mailbox_append_locked "$1" 30 < "$staged" || appended=$?
-rm -f -- "${staged:?}"
-if [ "$appended" -ne 0 ]; then
-  case "$appended" in 3) why=lock-timeout ;; *) why=write-failed ;; esac
-  printf 'lane-host-ssh: append-failed path=%s reason=%s\\n' "$1" "$why" >&2
-  exit 1
-fi''', path, str(len(data)), row["clone"], "kendex-append", "append-short", data=data)
+report=$(mailbox_append_locked "$1" 30 < "$staged" 2>&1) || appended=$?
+case "$appended" in
+  0) ;;
+  3) failed append "$1" lock-timeout "$report" ;;
+  *) failed append "$1" "$(write_cause "$report")" "$report" ;;
+esac''', path, str(len(data)), row["clone"], "kendex-append", "append", data=data)
 
 
 def read(row, path):
@@ -372,7 +394,9 @@ ACCOUNT/lane-host/config.toml (Codex) or ACCOUNT/lane-host/trust.json (Pi) in th
 remote account directory, so folder trust and hook approval precede the first turn. Bytes
 travel on stdin. cat exits 2 for a path that is not there. put stages beside
 the target and renames only once the byte count the sender declared has
-arrived, so a transfer cut short replaces nothing and exits 1. append stages
+arrived, so a transfer cut short replaces nothing and exits 1. Neither verb
+leaves its staged file behind, and a failed write exits 1 as put-failed or
+append-failed with reason=no-space for a full disk. append stages
 and counts the same way, then hands the bytes to the clone's own
 lib/mailbox-append.sh, which adds them under a lock taken on the host, so
 writers on several machines each keep their line; it creates the file with
