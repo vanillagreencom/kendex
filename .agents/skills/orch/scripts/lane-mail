@@ -1027,7 +1027,7 @@ case "$VERB" in
       jq -c --argjson seen "$SEEN" 'select(.line > $seen) | .envelope' <"$WORK_DIR/directives" ||
         refuse file-unreadable "$TO_LANE"
     elif [ "$RECEIPTS" -eq 1 ]; then
-      COUNT="$(lm_count "$WORK_DIR/lane.jsonl")"
+      COUNT="$(lm_count "$WORK_DIR/lane.jsonl")" || refuse file-unreadable "$TO_LANE"
       # The cursor counts lines of an append-only file, so one above 0 over a
       # listing of no line is a listing that missed. Over one that has lines
       # it is a directive appended and read after the listing, clamped to it.
