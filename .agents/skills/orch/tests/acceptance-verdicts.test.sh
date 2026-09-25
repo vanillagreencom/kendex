@@ -10,6 +10,8 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS="$TEST_DIR/../scripts"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
+VRUN="$(validate_run_dir "$TMP/validate-run" full)"
 
 PASS=0
 FAIL=0
@@ -34,7 +36,7 @@ v() { "$SCRIPTS/dev-artifact-check" --worktree "$WT" --issue T-1 --round-id "$1"
 check "no artifact for the round → wait" "wait" "$(v r-none || true)"
 
 "$SCRIPTS/dev-return-write" --worktree "$WT" --kind implement --issue T-1 --round-id r-good \
-  --branch main --commit "$SHA" --validate pass --no-summary --summary ok >/dev/null
+  --branch main --commit "$SHA" --validate pass --validate-run-dir "$VRUN" --no-summary --summary ok >/dev/null
 check "valid artifact → accept" "accept" "$(v r-good)"
 
 "$SCRIPTS/dev-return-write" --worktree "$WT" --kind implement --issue T-1 --round-id r-failing \

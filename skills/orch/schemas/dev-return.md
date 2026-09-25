@@ -26,6 +26,7 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
   "commit": "abc123f",
   "baseline_lines": 138,
   "validate": "FAILING: cargo test",
+  "validate_mode": "full",
   "validate_note": "Test-only validation ceiling: the suite failed at 34m; the failed target passed alone under load",
   "qa_labels": ["needs-review"],
   "near_ceiling": ["byte-ceiling: near-ceiling=crates/core/src/engine/deps.rs:189000:204800:92"],
@@ -49,7 +50,8 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 | `branch` | Yes | `--branch` | Git branch (non-empty string) |
 | `commit` | Yes | `--commit` | HEAD SHA after the commit, or the prior HEAD when no commit was needed |
 | `baseline_lines` | implement | measured by writer | Additions plus deletions against the base branch at `commit`, omitting binary rows and render mirrors whose source changed in the same diff, floored at 1. **Absent for `fix`** |
-| `validate` | Yes | `--validate` | `pass` or `FAILING: check1,check2` — a closed enumeration |
+| `validate` | Yes | `--validate` | `pass` or `FAILING: check1,check2` — a closed enumeration. With `--validate-run-dir`, `pass` needs a run that passed; `FAILING` is accepted beside any run, because it judges every gate of the round |
+| `validate_mode` | Yes | read from `--validate-run-dir` | The mode `dev-validate-run --record` reports for the run directory: `full`, the whole battery, or `range`, a fix round's changes since its base. `null` only beside a failing `validate` with no run, which omits the flag; a `pass` without the flag is refused. `dev-artifact-check` echoes it and refuses a missing key or any other value. Submit reuses only a `full` pass |
 | `validate_note` | Optional | `--validate-note` | A free-text qualifier the enumeration cannot express, or `null` |
 | `qa_labels` | Optional | `--qa-label` (repeatable) | Applied QA labels; `[]` when none |
 | `near_ceiling` | Optional | `--near-ceiling-base` | One `byte-ceiling` `near-ceiling` line per file within reach of the byte ceiling, as the lane reports the branch AT ARTIFACT TIME; `[]` when none. The writer runs the worktree's installed lane with `--base REF` and keeps its near-ceiling lines on exit 0 or 1; a repository with nothing at the lane path has no byte ceiling and records `[]`. An omitted `--near-ceiling-base`, a dangling link at or above the lane, a lane that is not executable, or a lane that exits otherwise records `null`, which means unknown, never none. A file that first enters the warn band in work landed afterwards, including one the pre-push lane names on a rebased or squashed state, is not in the list, so the list is not a completeness claim about the branch as pushed. `dev-artifact-check` echoes it, and the orchestrator stores it as workflow state's `near_ceiling` so the next round's brief plans the split before a later commit meets the ceiling |

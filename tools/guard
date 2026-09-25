@@ -145,7 +145,7 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     cross-doc-setting)
       echo "GUARD_FULL_CROSS_DOC is run or ci, and that value is neither or could not be read; the cross-target checks and cargo doc ran as under run." ;;
     compiled-includes)
-      echo "the include_str! and include_bytes! paths under crates/ could not be read, so the cross-target checks and cargo doc ran whatever the branch touched." ;;
+      echo "the include_str! and include_bytes! paths under crates/ could not be read, so what they narrow ran whole: the cross-target checks and cargo doc under --full, the workspace compile under --range." ;;
     cross-doc-skipped)
       case "$2" in
         ci) echo "GUARD_FULL_CROSS_DOC=ci leaves the cross-target checks and cargo doc to CI." ;;
@@ -168,13 +168,15 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     ui-check)
       printf 'npm run --prefix ui %s failed.\n' "$2" ;;
     argument)
-      echo "that argument is not one this script takes; usage: tools/guard [--full]." ;;
+      echo "that argument is not one this script takes; usage: tools/guard [--full | --range BASE]." ;;
     validate-class)
       echo "DEV_VALIDATE_CLASS names a class tools/ci-job-set has no lane selection for; its cause is above." ;;
     lane-unknown)
       echo "tools/ci-job-set selects no value for that lane name: tools/guard is broken." ;;
     lane-selection)
       echo "no lane selection was made — tools/ci-job-set's exit status, or paths-unreadable where DEV_VALIDATE_PATHS names no readable file — so every lane ran." ;;
+    range-base)
+      echo "that --range base names no commit in this repository." ;;
     *)
       echo "no explanation is defined for this key: tools/guard is broken." ;;
   esac
@@ -226,12 +228,32 @@ space_stop() { # KEY VALUE — a full run without room ends here, before any lat
   exit 1
 }
 
-FULL=0
+# default is the commit chain's lane: the staged change. range is a fix
+# round's validation: what changed since BASE, working tree included. full is
+# development completion and submit: everything, plus the touched trees.
+MODE=default
+range_base=""
 case "${1:-}" in
-  --full) FULL=1; shift ;;
+  --full) MODE=full; shift ;;
+  --range)
+    [ "$#" -ge 2 ] || refuse argument "$1"
+    MODE=range
+    range_base=$2
+    shift 2
+    ;;
   --help | -h)
-    printf '%s\n' 'usage: tools/guard [--full]' \
+    printf '%s\n' 'usage: tools/guard [--full | --range BASE]' \
       'Default: repository rules and compile checks for staged product changes.' \
+      '--range BASE: the default rules over the changes since BASE, working tree included,' \
+      '        cargo check and clippy for the crates they touch, any non-Markdown file inside' \
+      '        one included (the workspace for a shared input or a file compiled code includes),' \
+      '        the UI checks and suite when they touch a non-Markdown file under ui/, and the' \
+      '        suites of the skill, hook, tool and Pi-package trees they touch. A Markdown file' \
+      '        compiles nothing unless compiled code includes it, and runs no UI check.' \
+      '        None of what --full adds beyond that: the workspace test run, cross-target' \
+      '        checks, the documentation build, the Bash 3.2 parse, the working-tree' \
+      '        bot-instructions check, the decision-ID check, the cargo free-space floor' \
+      '        and the class lane selection.' \
       '--full: full Rust and UI validation for development completion and submit,' \
       '        plus the suites of the skill, hook, tool and Pi-package trees the branch touched.' \
       '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \
@@ -241,6 +263,12 @@ case "${1:-}" in
 esac
 [ "$#" -eq 0 ] || refuse argument "$1"
 cd "$(git rev-parse --show-toplevel)"
+if [ "$MODE" = range ]; then
+  # Resolved once, so every read below judges the same commit however the
+  # name moves while the run is going.
+  range_sha=$(git rev-parse --verify -q "$range_base^{commit}") || refuse range-base "$range_base"
+  range_base=$range_sha
+fi
 
 # The lanes --full runs. dev-validate-run hands over what the classifier and
 # its docs reader answer over one range: DEV_VALIDATE_CLASS,
@@ -261,7 +289,7 @@ validate_docs_only="${DEV_VALIDATE_DOCS_ONLY:-false}"
 validate_paths="${DEV_VALIDATE_PATHS:-}"
 unset DEV_VALIDATE_CLASS DEV_VALIDATE_DOCS_ONLY DEV_VALIDATE_PATHS
 lanes=all
-if [ "$FULL" -eq 1 ] && [ "$validate_class:$validate_docs_only" != standard:false ]; then
+if [ "$MODE" = full ] && [ "$validate_class:$validate_docs_only" != standard:false ]; then
   if ! selected_paths=$(cat -- "$validate_paths" 2>/dev/null); then
     say lane-selection paths-unreadable
   else
@@ -278,32 +306,46 @@ if [ "$FULL" -eq 1 ] && [ "$validate_class:$validate_docs_only" != standard:fals
   fi
 fi
 
-# Touched is what the suites lane runs suites for, and what the cross-target
-# checks and cargo doc read to learn whether the branch changed any Rust
-# input: the branch against origin/main where that ref exists, plus
-# everything the working tree and index carry, so a render-only sync counts
-# for its source. base_resolved is 0 where no merge base with origin/main was
-# found: the touched set then holds the working tree alone, not what the
-# branch committed. --no-renames: a move between two trees names its source
-# and its destination, so the tree a file left runs its suite too. Each read
-# checks its own status; a group's status is its last command's, which would
-# let a failed diff pass on a good `git status`. The status read adds what the
-# diff against the working tree cannot see: untracked files.
+# What range and full validation touched: every path changed since the base,
+# plus everything the working tree and index carry, so a render-only sync
+# counts for its source and a fix not yet committed counts at all. full's base
+# is the branch's merge base with origin/main where that ref exists; range's
+# is the base it was given. This is range's one changed set: its compile and
+# suite selection and its render and fixture rules all read it. full reads it
+# for its suites and for whether the branch changed any Rust input.
+# base_resolved is 0 where full found no merge base with origin/main: the
+# touched set then holds the working tree alone, not what the branch
+# committed.
 touched=""
+untracked_touched=""
 base_resolved=0
-if [ "$FULL" -eq 1 ]; then
-  suites_base=HEAD
-  if git rev-parse --verify -q origin/main >/dev/null; then
-    if suites_base=$(git merge-base HEAD origin/main); then
-      base_resolved=1
-    else
-      suites_base=HEAD
+if [ "$MODE" != default ]; then
+  if [ "$MODE" = range ]; then
+    suites_base=$range_base
+    base_resolved=1
+  else
+    suites_base=HEAD
+    if git rev-parse --verify -q origin/main >/dev/null; then
+      if suites_base=$(git merge-base HEAD origin/main); then
+        base_resolved=1
+      else
+        suites_base=HEAD
+      fi
     fi
   fi
+  # --no-renames: a move between two trees names its source and its
+  # destination, so the tree a file left runs its suite too. Each read checks
+  # its own status; a group's status is its last command's, which would let a
+  # failed diff pass on a good `git status`. The status read adds what the
+  # diff against the working tree cannot see: untracked files.
   branch_touched=$(git -c core.quotePath=false diff --no-renames --name-only "$suites_base" --) ||
     { branch_touched=""; say touched-set branch-diff; }
-  tree_touched=$(git -c core.quotePath=false status --porcelain --untracked-files=all | cut -c4- | sed 's/^.* -> //') ||
+  tree_status=$(git -c core.quotePath=false status --porcelain --untracked-files=all) ||
+    { tree_status=""; say touched-set working-tree; }
+  tree_touched=$(printf '%s\n' "$tree_status" | cut -c4- | sed 's/^.* -> //') ||
     { tree_touched=""; say touched-set working-tree; }
+  untracked_touched=$(printf '%s\n' "$tree_status" | sed -n 's/^?? //p') ||
+    { untracked_touched=""; say touched-set working-tree; }
   touched=$(printf '%s\n%s\n' "$branch_touched" "$tree_touched" | sort -u) ||
     { touched=""; say touched-set merge; }
 fi
@@ -318,14 +360,14 @@ lane_on() { # LANE — tools/ci-job-set's name for it
 
 # The staged bot-instructions check is a lane of the commit-guards chain that
 # runs this script; --full judges the working tree, which the chain does not.
-if [ "$FULL" -eq 1 ] && lane_on bot_instructions; then
+if [ "$MODE" = full ] && lane_on bot_instructions; then
   "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts/bot-instructions" check || say bot-instructions "$?"
 fi
 # Decision IDs are judged before merge and not per commit: the check fetches
 # the base branch and reads its tip, since a merge base older than another
 # branch's merged record cannot show the collision. No CI lane runs it, so no
-# change class stands it down.
-if [ "$FULL" -eq 1 ]; then
+# change class stands it down. A range run leaves it to that full run.
+if [ "$MODE" = full ]; then
   "$TOOLS_DIR/../.agents/skills/decider/scripts/decisions" check || say decision-ids "$?"
 fi
 
@@ -627,9 +669,13 @@ fi
 # in tools/tests/guard.test.sh removes this lane by deleting it.
 "$TOOLS_DIR/test-roster" || say test-roster "$?"
 
-# What the diff-scoped rules below diff against: HEAD, or on an unborn
-# branch the index against nothing, so the first commit is judged too.
-if git cat-file -e 'HEAD^{commit}' 2>/dev/null; then
+# What the diff-scoped rules below diff against: the range's base, HEAD, or
+# on an unborn branch the index against nothing, so the first commit is
+# judged too.
+if [ "$MODE" = range ]; then
+  diff_against=("$range_base")
+  have_head=1
+elif git cat-file -e 'HEAD^{commit}' 2>/dev/null; then
   diff_against=(HEAD)
   have_head=1
 else
@@ -644,6 +690,21 @@ fi
 # older fixtures predate the helper and are not rewritten to satisfy it.
 temp_fixture_diff=$(git diff --no-color --unified=100000 --no-ext-diff --text "${diff_against[@]}" -- 'crates/*/tests/*.rs') ||
   say fixture-diff unreadable
+# A diff against the range's base cannot show a file git does not track, so
+# each untracked test file in the range joins the diff whole, as a new file.
+# The no-index diff exits 1 when the two sides differ, which a new file always
+# does; anything above 1 is the diff's own failure.
+if [ "$MODE" = range ]; then
+  while IFS= read -r f; do
+    case "$f" in crates/*/tests/*.rs) ;; *) continue ;; esac
+    new_file_status=0
+    new_file_diff=$(git diff --no-index --no-color --unified=100000 --no-ext-diff --text -- /dev/null "$f") ||
+      new_file_status=$?
+    [ "$new_file_status" -le 1 ] || say fixture-diff unreadable
+    temp_fixture_diff="$temp_fixture_diff
+$new_file_diff"
+  done <<<"$untracked_touched"
+fi
 if ! temp_fixture_hits=$(awk '
   function flush() { if (pending) print file ":" pending ": " pending_text; pending = 0 }
   /^diff --git / { flush(); file = $4; sub(/^b\//, "", file); next }
@@ -687,7 +748,7 @@ fi
 # reported from before the lane existed.
 # One line on purpose, like the lane above it: the must-fail control in
 # tools/tests/guard-full.test.sh removes this lane by deleting it.
-[ "$FULL" -eq 0 ] || ! lane_on shell_shards || "$TOOLS_DIR/bash32-parse" || say bash32-parse "$?"
+[ "$MODE" != full ] || ! lane_on shell_shards || "$TOOLS_DIR/bash32-parse" || say bash32-parse "$?"
 
 # A render source lands its renders in the same change: skills/<x>/<p>
 # renders to .agents/skills/<x>/<p>, an agent definition to one file per
@@ -711,8 +772,14 @@ fi
 agent_roots=(.claude/agents:md .codex/agents:toml .pi/agents:md)
 hook_roots=(.claude/hooks .codex/hooks .pi/kendex/hooks)
 render_roots=(.agents/skills "${agent_roots[@]%:*}" "${hook_roots[@]}")
-render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${diff_against[@]}") ||
-  { render_changed=""; say render-changed-set unreadable; }
+# range reads its one changed set, untracked files included, so a new source
+# and its new render are judged alike however each sits in the index.
+if [ "$MODE" = range ]; then
+  render_changed=$touched
+else
+  render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${diff_against[@]}") ||
+    { render_changed=""; say render-changed-set unreadable; }
+fi
 # Tracked is the index UNION what HEAD carries: the index alone drops a render
 # staged for deletion, which is the moment the outlives clause below exists to
 # judge, and skipping the rule there would accept the drift.
@@ -739,8 +806,10 @@ render_is_tracked() { # PATH — PATH itself is tracked, PATH read literally
 # A configured instruction is visible only in the managed render: its source
 # deliberately has no copy. Judge the same candidate for configuration,
 # source existence, and render bytes: the index at commit time, the worktree
-# under --full. One ordered-pair reader owns both instruction block shapes;
+# under --full and --range. One ordered-pair reader owns both instruction block shapes;
 # kendex verify owns the rendered bytes inside them.
+worktree_reads=1
+[ "$MODE" != default ] || worktree_reads=0
 render_skill_paths=$(printf '%s\n' "$render_tracked" | sort -u) ||
   { render_skill_paths=""; say render-tracked-set unreadable; }
 instruction_hits=$(python3 -c '
@@ -764,7 +833,7 @@ for render in sys.stdin.read().splitlines():
         continue
     if not has_block(text, "project") or shared and not has_block(text, "shared"):
         print(render)
-' "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts" "$FULL" 2>/dev/null <<<"$render_skill_paths") ||
+' "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts" "$worktree_reads" 2>/dev/null <<<"$render_skill_paths") ||
   { instruction_hits=""; say skill-instruction-config unreadable; }
 [ -n "$instruction_hits" ] && {
   say missing-skill-instructions "$(count_lines "$instruction_hits")"
@@ -806,18 +875,53 @@ done <<<"$render_changed"
 
 # The changelog gate owns commit change collection and product-path matching.
 # Shared compiler inputs outside those product paths still affect all crates.
-workspace_rust_input() { # PATH — the workspace manifest, lock, toolchain pin or cargo configuration
+workspace_rust_input() { # PATH — the workspace manifest, lock, toolchain pin, cargo or clippy configuration
   case "$1" in
-    Cargo.toml | Cargo.lock | rust-toolchain.toml | .cargo/*) return 0 ;;
+    Cargo.toml | Cargo.lock | rust-toolchain.toml | .cargo/* | clippy.toml) return 0 ;;
   esac
   return 1
 }
 rust_all=0
-[ "$FULL" -eq 0 ] || ! lane_on cargo_lint || rust_all=1
 rust_manifests=()
 ui_changed=0
-[ "$FULL" -eq 0 ] || ! lane_on ui || ui_changed=1
-if [ "$FULL" -eq 0 ]; then
+[ "$MODE" != full ] || ! lane_on cargo_lint || rust_all=1
+[ "$MODE" != full ] || ! lane_on ui || ui_changed=1
+# Every repository path an include_str! or include_bytes! literal under
+# crates/ names: the files outside crates/ that compiled code reads at build
+# time. The derivation is tools/rust-reads' include rows. A file a test reads
+# at run time is not here; the full run's host test run reads it.
+compiled_includes() {
+  local rows
+  rows=$("$TOOLS_DIR/rust-reads" .) || return 1
+  printf '%s\n' "$rows" | awk -F '\t' '$1 == "include" { print $2 }'
+}
+
+classify_product() { # PATH — widen the compile set for one changed path
+  local f=$1
+  case "$f" in
+    *.md) return 0 ;;
+    crates/*/*) ;;
+    crates/*.rs) rust_all=1; return 0 ;;
+  esac
+  if workspace_rust_input "$f"; then rust_all=1; return 0; fi
+  case "$f" in
+    crates/*/*.rs | crates/*/Cargo.toml) add_crate "$f" ;;
+    ui/*) ui_changed=1 ;;
+  esac
+}
+add_crate() { # PATH — under crates/<c>/: that crate's manifest joins the compile set
+  local crate manifest existing seen
+  crate="${1#crates/}"
+  manifest="crates/${crate%%/*}/Cargo.toml"
+  if [ ! -f "$manifest" ]; then rust_all=1; return 0; fi
+  seen=0
+  # Guarded: an empty array is unbound under set -u on Bash 3.2.
+  for existing in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
+    [ "$existing" != "$manifest" ] || seen=1
+  done
+  [ "$seen" -eq 1 ] || rust_manifests+=("$manifest")
+}
+if [ "$MODE" = default ]; then
   GG_CHECK=guard
   GUARDS="$TOOLS_DIR/../.agents/skills/commit-guards/scripts"
   source "$GUARDS/lib/common.sh"
@@ -841,27 +945,30 @@ if [ "$FULL" -eq 0 ]; then
     exit "$fail"
   fi
   while IFS= read -r -d '' f; do
-    case "$f" in
-      *.md) continue ;;
-      crates/*/*) ;;
-      crates/*.rs) rust_all=1; continue ;;
-    esac
-    if workspace_rust_input "$f"; then rust_all=1; continue; fi
-    case "$f" in
-      crates/*/*.rs | crates/*/Cargo.toml)
-        crate="${f#crates/}"
-        manifest="crates/${crate%%/*}/Cargo.toml"
-        if [ ! -f "$manifest" ]; then rust_all=1; continue; fi
-        seen=0
-        # Guarded: an empty array is unbound under set -u on Bash 3.2.
-        for existing in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
-          [ "$existing" != "$manifest" ] || seen=1
-        done
-        [ "$seen" -eq 1 ] || rust_manifests+=("$manifest")
-        ;;
-      ui/*) ui_changed=1 ;;
-    esac
+    classify_product "$f"
   done <"$GUARD_TMP/product.z"
+fi
+
+# A range compiles what the commit chain's product paths leave out as well:
+# any other non-Markdown file inside a crate, which its build or its tests may
+# read, and any file compiled code includes, Markdown or not, through the full
+# run's derivation of them. classify_product turns every other Markdown file
+# away first, so one inside a crate compiles nothing and one under ui/ runs no
+# UI check.
+if [ "$MODE" = range ]; then
+  if ! range_includes=$(compiled_includes); then
+    say compiled-includes range
+    rust_all=1
+  fi
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    classify_product "$f"
+    case "$f" in
+      *.md) ;;
+      crates/*/*) add_crate "$f" ;;
+    esac
+    if grep -Fxq -- "$f" <<<"$range_includes"; then rust_all=1; fi
+  done <<<"$touched"
 fi
 
 cargo_target="${CARGO_TARGET_DIR:-target}"
@@ -871,7 +978,9 @@ case "$cargo_target" in
   /*) cargo_target_path="$cargo_target" ;;
   *) cargo_target_path="./$cargo_target" ;;
 esac
-if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
+# The full run's alone: its floors size one full run, and a range compiles
+# only the crates it touched, incrementally, with no workspace test run.
+if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
   # The fresh Linux cargo shards in .github/workflows/skill-tests.yml explain
   # why no later compile can reuse incremental artifacts from this run.
   export CARGO_INCREMENTAL=0
@@ -923,13 +1032,13 @@ if [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt
   [ -z "$fmt_out" ] || printf '%s\n' "$fmt_out"
 fi
 
-# Completion validation runs the suites CI runs for the trees this branch
-# touched, beside the whole-workspace cargo and UI runs below: a skill's own
-# tests, hooks/tests for a hook, tools/tests for a tool, and a Pi package's
-# declared script (`test:ci` where it declares one, `test` otherwise, the
-# rule pi-extensions/package-policy.test.mjs holds CI to).
-# An untouched suite is not evidence about this change and is not run here;
-# CI runs every suite on the merged tree.
+# Range and full validation run the suites CI runs for the trees the touched
+# set names, beside the cargo and UI runs: a skill's own tests, hooks/tests
+# for a hook, tools/tests for a tool, and a Pi package's declared script
+# (`test:ci` where it declares one, `test` otherwise, the rule
+# pi-extensions/package-policy.test.mjs holds CI to). An untouched suite is
+# not evidence about this change and is not run here; CI runs every suite on
+# the merged tree.
 # A Pi package whose suite value-imports Pi has no lockfile for those peers;
 # CI installs them in the step before its suite, so a checkout without that
 # install names the missing peers beside the failing suite rather than in
@@ -938,7 +1047,7 @@ pi_suite_failed() { # DIR
   [ -d "$1/node_modules" ] || say missing-peers "$1"
   say suite "$1"
 }
-if [ "$FULL" -eq 1 ] && lane_on shell_shards; then
+if [ "$MODE" != default ] && lane_on shell_shards; then
   suite_dirs=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -990,17 +1099,7 @@ if [ "$FULL" -eq 1 ] && lane_on shell_shards; then
   done
 fi
 
-# Every repository path an include_str! or include_bytes! literal under
-# crates/ names: the files outside crates/ that compiled code reads at build
-# time. The derivation is tools/rust-reads' include rows. A file a test reads
-# at run time is not here; the host test run below reads it on every full run.
-compiled_includes() {
-  local rows
-  rows=$("$TOOLS_DIR/rust-reads" .) || return 1
-  printf '%s\n' "$rows" | awk -F '\t' '$1 == "include" { print $2 }'
-}
-
-if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
+if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
   # The cross-target checks and cargo doc each write a target tree of their
   # own, and CI covers both on the pull requests tools/ci-job-set selects
   # its cargo_lint, cargo_macos and cargo_windows lanes for. Here they are
@@ -1067,7 +1166,7 @@ if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
     fi
   fi
 fi
-if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ] && lane_on cargo_linux; then
+if [ "$MODE" = full ] && [ -f Cargo.toml ] && lane_on cargo_linux; then
   # A test binary that dies by a signal reached no verdict: the runner
   # reports the executable's death, not an assertion. A binary whose code
   # pages come back wrong from disk dies this way, and rebuilding that
@@ -1100,7 +1199,7 @@ fi
 if [ "$ui_changed" -eq 1 ] && [ -f ui/package.json ]; then
   npm run --prefix ui check:types || say ui-check check:types
   npm run --prefix ui check:lint || say ui-check check:lint
-  if [ "$FULL" -eq 1 ]; then
+  if [ "$MODE" != default ]; then
     npm run --prefix ui test -- --silent || say ui-check test
   fi
 fi

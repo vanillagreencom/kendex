@@ -75,7 +75,7 @@ run_script() { # SCRIPT ARG...
   # A class the caller's shell carries is cleared like the settings are: this
   # suite also runs under dev-validate-run itself, which sets one. A row that
   # means to hand one in names it in INHERITED_CLASS.
-  OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS \
+  OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_BASE \
     -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
     ${INHERITED_CLASS:+DEV_VALIDATE_CLASS=$INHERITED_CLASS} \
     PATH="${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
@@ -217,6 +217,16 @@ assert_eq "$(sed 's/ at=.*$//' "$timeout_dir/exit")" "guard-exit=124" \
   "the sentinel file carries the guard-exit line on its own"
 assert_eq "$(sed -n 's/^guard-exit=[0-9]* at=\(.*\)$/\1/p' "$timeout_dir/exit" | grep -c -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')" "1" \
   "and one UTC timestamp beside it"
+run_script "$RUN" --record --run-dir "$timeout_dir"
+assert_eq "$OUT rc=$RC" "validate-mode=full verdict=FAILING rc=0" \
+  "the record of a run killed at its bound reads FAILING, never pass" "$ERR"
+
+# Control: a record that reads every finished run as a pass hands the receipt a
+# pass for that same killed run.
+mutant mutant-record-pass 'record_verdict=FAILING' 'record_verdict=pass'
+run_script "$MUTANT" --record --run-dir "$timeout_dir"
+assert_eq "$OUT" "validate-mode=full verdict=pass" \
+  "control: with the sentinel's status unread the killed run's record reads pass" "$ERR"
 
 # --- The command's output goes to the log, never into the verdict -------------
 proj_log="$(make_proj proj-log "echo first; echo second >&2; exit 0" 20)"
@@ -290,6 +300,62 @@ assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
 assert_eq "$(output_of "$OUT")" "ran-under-bash" \
   "and the log names the shell that ran it, not a POSIX one that refused the line"
 
+# --- The mode picks the command, and the run records the mode that ran --------
+# A committed project whose full battery and range command each print which one
+# ran; the range command also prints the base it was handed.
+make_mode_proj() { # NAME RANGE_CMD — RANGE_CMD empty leaves the setting unset
+  local dir
+  dir="$(make_proj "$1" "echo full" 20)"
+  [[ -z "$2" ]] || printf 'DEV_VALIDATE_RANGE_CMD = "%s"\n' "$2" >> "$dir/kendex.settings.toml"
+  git -C "$dir" config gc.auto 0
+  git -C "$dir" config maintenance.auto false
+  git -C "$dir" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m base
+  printf '%s\n' "$dir"
+}
+start_line() { # RUN_DIR KEY — one line of the run's start record
+  sed -n "s/^$2=//p" "$1/start"
+}
+RANGE_CMD='echo range $DEV_VALIDATE_BASE'
+# label|project's range command|arguments|log|validate-mode|validate-base is the head (yes/no)
+MODE_ROWS=(
+  "a run given no mode runs the whole battery and records full|$RANGE_CMD||full|full|no"
+  "a range run runs the range command against the commit its base names|$RANGE_CMD|--validate-mode range --base HEAD|range HEAD|range|yes"
+  "a range run in a project with no range command runs the whole battery and records full||--validate-mode range --base HEAD|full|full|no"
+)
+n=0
+for row in "${MODE_ROWS[@]}"; do
+  IFS='|' read -r label range_cmd args want_log want_mode want_base <<<"$row"
+  n=$((n + 1))
+  proj="$(make_mode_proj "proj-mode-$n" "$range_cmd")"
+  head_sha="$(git -C "$proj" rev-parse HEAD)"
+  want_log="${want_log/HEAD/$head_sha}"
+  # shellcheck disable=SC2086 # the row's argument list, split on purpose
+  run_script "$RUN" --worktree "$proj" --poll 1 $args
+  mode_dir="$(run_dir_of "$OUT")"
+  got_base=no
+  [[ "$(start_line "$mode_dir" validate-base)" != "$head_sha" ]] || got_base=yes
+  assert_eq "$(verdict_of "$OUT") $(output_of "$OUT")" "state=done guard-exit=0 validate=pass $want_log" "$label" "$ERR"
+  assert_eq "$(start_line "$mode_dir" validate-mode) base=$got_base" "$want_mode base=$want_base" \
+    "$label — the start record names the mode and base that ran" "$ERR"
+  run_script "$RUN" --record --run-dir "$mode_dir"
+  assert_eq "$OUT" "validate-mode=$want_mode verdict=pass" "$label — the run's record names that mode and the pass" "$ERR"
+done
+# The last range run's started line keeps the shape every waiter reads; the
+# class fields that close it are the classifier rows' to pin.
+proj="$(make_mode_proj proj-mode-line "$RANGE_CMD")"
+run_script "$RUN" --worktree "$proj" --poll 1 --validate-mode range --base HEAD
+mode_dir="$(run_dir_of "$OUT")"
+assert_eq "$(sed -n '1s/ class=[a-z]* docs-only=[a-z]*\( class-fallback=[a-z0-9-]*\)\{0,1\}$//p' <<<"$OUT")" \
+  "state=started run-dir=$mode_dir log=$mode_dir/log sentinel=$mode_dir/exit timeout-secs=20 poll-secs=1 cap-secs=31" \
+  "a range run prints the same started line as a full one" "$ERR"
+
+# Control: a range run that reads the full battery's setting runs the full
+# battery under a range record, and the log row reddens on it.
+mutant mutant-range-reads-full '"$SCRIPT_DIR/orch-env" DEV_VALIDATE_RANGE_CMD ""' '"$SCRIPT_DIR/orch-env" DEV_VALIDATE_CMD ""'
+run_script "$MUTANT" --worktree "$proj" --poll 1 --validate-mode range --base HEAD
+assert_eq "$(output_of "$OUT")" "full" \
+  "control: with the range setting unread the range run logs the full battery" "$ERR"
+
 # --- A command that ignores SIGTERM is still ended inside the bound -----------
 # A bound with no kill escalation is one signal, which such a command outlives:
 # the run holds open past the setting with no verdict, no sentinel and no owner,
@@ -342,6 +408,9 @@ assert_eq "$(timed_line "$OUT")" "state=running elapsed-secs=N cap-secs=90 run-d
 assert_eq "$RC" "3" "and exits 3, which is the instruction to poll again" "$ERR"
 assert_eq "$([[ "$slow_elapsed" -le 5 ]] && echo within || echo "over:$slow_elapsed")" "within" \
   "and it returns on its own budget rather than a whole poll interval past it"
+run_script "$RUN" --record --run-dir "$slow_dir"
+assert_eq "$OUT rc=$RC" "validate-mode=full verdict=unfinished rc=0" \
+  "the record of a run still going reads unfinished, never pass" "$ERR"
 kill -KILL -- "-$started" 2>/dev/null || kill -KILL "$started" 2>/dev/null || true
 wait "$started" 2>/dev/null || true
 
@@ -420,7 +489,7 @@ assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: option-unused option=--bud
 assert_eq "$RC" "2" "and exits 2"
 
 run_script "$RUN" --poll 1
-assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: required options=--worktree,--wait,--stop,--child" \
+assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: required options=--worktree,--wait,--stop,--record,--child" \
   "a call naming no mode is refused"
 assert_eq "$RC" "2" "and exits 2"
 
@@ -564,6 +633,29 @@ render_dir="$(run_dir_of "$OUT")"
 assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^class: class=\([a-z]*\) \(measured=[a-z]*\) \(cause=[a-z-]*\).*$/\1 \2 \3/p' "$render_dir/class.log")" \
   "standard standard measured=false cause=judged-tree-dirty" \
   "an uncommitted render diff runs as standard, the classifier naming the dirty tree" "$ERR"
+
+
+# label|arguments after the worktree or run directory|refusal's first line
+proj_refuse="$(make_mode_proj proj-mode-refuse "$RANGE_CMD")"
+MODE_REFUSALS=(
+  "a validation mode outside the two is refused, naming it|--worktree $proj_refuse --validate-mode fast|dev-validate-run: invalid-mode option=--validate-mode value=fast"
+  "a range run with no base is refused|--worktree $proj_refuse --validate-mode range|dev-validate-run: required option=--base validate-mode=range"
+  "a base handed to a full run is refused, never silently dropped|--worktree $proj_refuse --base HEAD|dev-validate-run: option-unused option=--base validate-mode=full"
+  "a base that names no commit is refused, naming it|--worktree $proj_refuse --validate-mode range --base no-such-ref|dev-validate-run: invalid-base base=no-such-ref"
+  "a validation mode handed to the waiter is refused|--wait --run-dir $stale --validate-mode range|dev-validate-run: option-unused option=--validate-mode mode=wait"
+  "a base handed to the waiter is refused|--wait --run-dir $stale --base HEAD|dev-validate-run: option-unused option=--base mode=wait"
+  "a validation mode handed to --stop is refused|--stop --worktree $proj_refuse --validate-mode range|dev-validate-run: option-unused option=--validate-mode mode=stop"
+  "a base handed to --stop is refused|--stop --worktree $proj_refuse --base HEAD|dev-validate-run: option-unused option=--base mode=stop"
+  "a record of a directory no run started is refused|--record --run-dir $TMP_ROOT/unstarted|dev-validate-run: no-run path=$TMP_ROOT/unstarted/start"
+  "a record whose start names no mode is refused|--record --run-dir $stale|dev-validate-run: record-unreadable path=$stale/start validate-mode="
+  "a call budget handed to the record is refused|--record --run-dir $stale --budget 5|dev-validate-run: option-unused option=--budget mode=record"
+)
+for row in "${MODE_REFUSALS[@]}"; do
+  IFS='|' read -r label args want <<<"$row"
+  # shellcheck disable=SC2086 # the row's argument list, split on purpose
+  run_script "$RUN" $args
+  assert_eq "$(sed -n 1p <<<"$ERR") rc=$RC" "$want rc=2" "$label"
+done
 
 # --- Control: the cap is not derived from the bound ---------------------------
 # The reported failure: the wait ended before the guard did, so the round had no

@@ -33,7 +33,9 @@
 # dev_delegated_at. A FAILING report needs no proof: it ends the round, never
 # passes it. A report that holds is written through dev-return-write
 # --recovered-text, so the artifact records recovered_from: transcript and
-# dev-artifact-check judges it before this script reports it. Only a refusal of
+# dev-artifact-check judges it before this script reports it. That run is the
+# receipt's --validate-run-dir, from which the writer takes validate_mode and
+# which a pass needs; a FAILING report with no run records validate_mode null. Only a refusal of
 # the report's own shape (incomplete: a fix report whose rows miss, repeat or
 # invent a delegated item; invalid) removes it and re-delegates as unparsed.
 # Every other verdict, a FAILING validation or a gate such as cut_not_shrunk or
@@ -329,6 +331,7 @@ else
   fi
 fi
 args+=(--no-summary)
+[[ -z "$run" ]] || args+=(--validate-run-dir "$run")
 
 if [[ "$validate" == pass && "$run_verdict" != pass ]]; then
   no_report validate-unproven

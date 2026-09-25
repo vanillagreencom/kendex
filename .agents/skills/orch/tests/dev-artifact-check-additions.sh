@@ -21,6 +21,7 @@ source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+VRUN="$(validate_run_dir "$TMP_ROOT/validate-run" full)"
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
@@ -98,7 +99,7 @@ commit_files "$WT" helpers existing/workflow_helpers.sh .workflow_helpers.sh adv
   adversarial/name_test-util_more/file.rs adversarial/name_test_util_more/file.rs \
   tests/workflow_helpers.sh __tests__/workflow_helpers.sh tests/unit/support/shared.rs __tests__/integration/utils/shared.ts
 "$RETURN_WRITE" --worktree "$WT" --kind fix --issue issue-826 --round-id 30-30 --branch linked \
-  --commit "$(git -C "$WT" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+  --commit "$(git -C "$WT" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
 run_check "$CHECK" --worktree "$WT" --issue issue-826 --round-id 30-30 --expect-items-from-round
 E='rc=1 reason=unapproved_additions files=["__tests__/integration/utils/shared.ts","__tests__/workflow_helpers.sh","adversarial/name_test-helper_more/file.rs","adversarial/name_test-util_more/file.rs","adversarial/name_test_helper_more/file.rs","adversarial/name_test_util_more/file.rs","tests/unit/support/shared.rs","tests/workflow_helpers.sh"]'
 assert_eq "$(observe "$E")" "$E" "the public checker refuses the explicit substrings and the test-context helper suffixes, and names each"
@@ -127,7 +128,7 @@ echo "=== product and documentation helper basenames are outside the protected s
 round_write --worktree "$WT" --issue issue-826 --round-id 32-32 --item 1 product "$OK_REACH" >/dev/null
 commit_files "$WT" product-helpers docs/render_helpers.md src/ProductHelper.rs src/render.helper.ts .workflow_helpers.md
 "$RETURN_WRITE" --worktree "$WT" --kind fix --issue issue-826 --round-id 32-32 --branch linked \
-  --commit "$(git -C "$WT" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+  --commit "$(git -C "$WT" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
 run_check "$CHECK" --worktree "$WT" --issue issue-826 --round-id 32-32 --expect-items-from-round
 assert_eq "$(observe "rc=0 reason=valid")" "rc=0 reason=valid" "docs, capitalised and dotted helper basenames and a dotfile .md are not protected additions"
 
@@ -139,7 +140,7 @@ init_growth_state "$STATE" "$WR" issue-826 seed 1000000 >/dev/null
 seed_allowance "$WR"
 round_write --worktree "$WR" --issue issue-826 --round-id 21-21 --item 1 wait "$OK_REACH" >/dev/null
 ( sleep 2; "$RETURN_WRITE" --worktree "$WR" --kind fix --issue issue-826 --round-id 21-21 --branch main \
-    --commit "$(git -C "$WR" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null ) &
+    --commit "$(git -C "$WR" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null ) &
 writer_pid=$!
 run_check "$CHECK" --worktree "$WR" --issue issue-826 --round-id 21-21 --expect-items-from-round --wait 20 --interval 1
 wait "$writer_pid"

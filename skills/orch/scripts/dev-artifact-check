@@ -20,6 +20,8 @@
 #   { "schema_version": 1, "round_id": "…", "kind": "implement"|"fix",
 #     "issue": "…", "branch": "…", "commit": "…", "validate": "pass"|"FAILING: …",
 #     "baseline_lines": 138 (implement only),
+#     "validate_mode": "full"|"range"|null (the validation mode that ran;
+#       null only beside a failing validate),
 #     "validate_note": "…"|null (optional free-text qualifier),
 #     "qa_labels": […], "near_ceiling": […]|null (byte-ceiling near-ceiling lines,
 #     null when the probe did not answer), "near_ceiling_error": "…"|null,
@@ -162,6 +164,7 @@ Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               hint: usage diagnosis (count-vs-set --expect-items misuse)|null,
               files: [repo-relative paths],
               validate: the recorded validate string|null,
+              validate_mode: the recorded validation mode|null,
               validate_note: the recorded note|null,
               near_ceiling: [byte-ceiling near-ceiling lines]|null (null: the
                             probe did not answer; keep the carried list),
@@ -182,7 +185,9 @@ reason meanings when ok=false:
   invalid     round_id != expected, OR not parseable JSON, OR a required field is
               wrong-typed/empty: .kind ∈ {implement,fix}; .issue/.branch
               non-empty strings; .round_id non-empty string; .schema_version a
-              number; .commit/.validate non-empty strings; implement requires
+              number; .commit/.validate non-empty strings; .validate_mode
+              present and full or range, or null beside a failing .validate;
+              implement requires
               integer .baseline_lines >= 1, and fix forbids that field
   commit_unresolvable
               the artifact's .commit names no object in the worktree's repo
@@ -395,17 +400,18 @@ check_id_token() {
     || die invalid-id "$@"
 }
 
-# `validate`, `validate_note`, `near_ceiling` and `near_ceiling_error` are
-# surfaced here, not just stored in the file: this output IS what the
-# orchestrator reads to accept a completion, so a qualified result or a file
-# within reach of the byte ceiling recorded in the artifact and never echoed
-# would be as lost as one that was never recorded. The scalars are null and the
+# `validate`, `validate_mode`, `validate_note`, `near_ceiling` and
+# `near_ceiling_error` are surfaced here, not just stored in the file: this
+# output IS what the orchestrator reads to accept a completion, so a qualified
+# result, a range pass submit must not reuse, or a file within reach of the byte
+# ceiling recorded in the artifact and never echoed would be as lost as one
+# that was never recorded. The scalars are null and the
 # list empty when the artifact is missing or unparseable. A recorded null
 # near_ceiling is echoed as null, never as []: it means the writer's probe did
 # not answer, and the orchestrator keeps the list it carries rather than replacing
 # it with an empty one.
 emit() {
-  local ok="$1" path="$2" reason="$3" warning="${4:-}" hint="${5:-}" files="${6:-[]}" validate=null validate_note=null near_ceiling='[]' near_ceiling_error=null surfaced=""
+  local ok="$1" path="$2" reason="$3" warning="${4:-}" hint="${5:-}" files="${6:-[]}" validate=null validate_mode=null validate_note=null near_ceiling='[]' near_ceiling_error=null surfaced=""
   if [[ -n "$path" && -f "$path" ]]; then
     # One read for every surfaced field, so the process count stays flat as
     # fields are added: one line of tab-separated compact JSON values, in this
@@ -413,6 +419,7 @@ emit() {
     # rather than literal and the split is exact.
     surfaced="$(jq -r '[
         (if (.validate? | type) == "string" then .validate else null end),
+        (if (.validate_mode? | type) == "string" then .validate_mode else null end),
         (if (.validate_note? | type) == "string" then .validate_note else null end),
         (if (.near_ceiling? | type) == "array" then [.near_ceiling[] | select(type == "string")]
          elif has("near_ceiling") and .near_ceiling == null then null
@@ -420,7 +427,7 @@ emit() {
         (if (.near_ceiling_error? | type) == "string" then .near_ceiling_error else null end)
       ] | map(tojson) | join("\t")' "$path" 2>/dev/null)" || surfaced=""
     if [[ -n "$surfaced" ]]; then
-      IFS=$'\t' read -r validate validate_note near_ceiling near_ceiling_error <<<"$surfaced"
+      IFS=$'\t' read -r validate validate_mode validate_note near_ceiling near_ceiling_error <<<"$surfaced"
     fi
   fi
   # verdict is the one-word acceptance answer the orchestrator acts on:
@@ -444,13 +451,13 @@ emit() {
   # push it to second. The cause is not lost: the refusal names it.
   jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" --arg warning "$warning" \
     --arg hint "$hint" --arg verdict "$verdict" \
-    --argjson files "$files" --argjson validate "${validate:-null}" --argjson validate_note "${validate_note:-null}" \
+    --argjson files "$files" --argjson validate "${validate:-null}" --argjson validate_mode "${validate_mode:-null}" --argjson validate_note "${validate_note:-null}" \
     --argjson near_ceiling "${near_ceiling:-[]}" --argjson near_ceiling_error "${near_ceiling_error:-null}" \
     '{ok: $ok, verdict: $verdict, path: (if $path == "" then null else $path end), reason: $reason,
       warning: (if $warning == "" then null else $warning end),
       hint: (if $hint == "" then null else $hint end),
       files: $files,
-      validate: $validate, validate_note: $validate_note,
+      validate: $validate, validate_mode: $validate_mode, validate_note: $validate_note,
       near_ceiling: $near_ceiling, near_ceiling_error: $near_ceiling_error}' 2>/dev/null
 }
 
@@ -465,7 +472,8 @@ round_id_matches() {
 # Type-strict required scalars: .kind ∈ {implement,fix}; .issue/.branch
 # non-empty STRINGS (arrays/objects/bools/numbers fail, not just ""); .round_id a
 # non-empty string; .schema_version a number; .commit/.validate non-empty
-# strings. A truncated or half-written receipt fails this gate → reason=invalid.
+# strings; .validate_mode present and full or range, or null beside a failing
+# .validate. A truncated or half-written receipt fails this gate → reason=invalid.
 has_required_fields() {
   jq -e '
     (.kind? // "") as $k
@@ -476,6 +484,9 @@ has_required_fields() {
       and ((.schema_version? | type) == "number")
       and ((.commit? | type) == "string") and (.commit != "")
       and ((.validate? | type) == "string") and (.validate != "")
+      and has("validate_mode")
+      and (.validate_mode == "full" or .validate_mode == "range"
+           or (.validate_mode == null and .validate != "pass"))
       and ((.validate_note? | type) as $t | $t == "null" or $t == null
            or ($t == "string" and (.validate_note != "")))
       and (if $k == "implement"

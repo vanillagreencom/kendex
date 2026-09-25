@@ -19,7 +19,7 @@
 # Usage:
 #   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
 #     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
-#     [--qa-label LABEL]... [--near-ceiling-base REF] \
+#     [--validate-run-dir RUN_DIR] [--qa-label LABEL]... [--near-ceiling-base REF] \
 #     [--bundled] [--no-summary] \
 #     [--summary TEXT | --summary-file PATH | --recovered-text PATH] \
 #     [--item N DECISION REASONING]...
@@ -45,6 +45,18 @@
 # Without it the caveat is lost from the record orch treats as authoritative,
 # surviving only if the agent happens to mention it conversationally.
 #
+# --validate-run-dir is the run directory the round's dev-validate-run printed.
+# `dev-validate-run --record` owns that directory's format and answers for it:
+# validate_mode is its mode, never typed by the agent, and a --validate pass
+# needs a run whose sentinel is guard-exit=0. A FAILING result is accepted
+# beside any run: --validate judges every gate of the round, and a passing run
+# with another gate failing is still a failed round. Submit reuses only a full
+# pass, so a range pass recorded as full, or a failed run recorded as a pass,
+# would stand in for the whole battery. A pass requires the
+# run. A failing round may omit it, because dev-validate-run refuses some
+# failures, an empty DEV_VALIDATE_CMD among them, before any run directory
+# exists; validate_mode is then null.
+#
 # Writes PATH/tmp/dev-return-ID-RID.json and prints its absolute path (one line).
 #
 # Artifact schema — canonical source of truth: skills/orch/schemas/dev-return.md
@@ -58,6 +70,9 @@
 #     "baseline_lines": 138,                  // implement only; additions + deletions
 #                                             // outside the render mirror, floor 1
 #     "validate": "pass" | "FAILING: c1,c2",  // required
+#     "validate_mode": "full" | "range" | null, // read from --validate-run-dir;
+#                                             // null only for a FAILING round
+#                                             // with no run
 #     "validate_note": "…" | null,            // --validate-note
 #     "qa_labels": ["needs-review"],          // [] when no --qa-label given
 #     "near_ceiling": ["…"] | null,           // byte-ceiling near-ceiling lines
@@ -120,6 +135,8 @@ die() {
       not-directory) printf 'The worktree path is not a directory.\n' ;;
       invalid-kind) printf 'The kind must be implement or fix.\n' ;;
       invalid-validate) printf 'The validation result must be pass or start with FAILING:.\n' ;;
+      run-record-unreadable) printf 'dev-validate-run --record could not read the run; its refusal follows.\n' ;;
+      validate-disagrees) printf 'A pass needs a run that passed; this run did not.\n' ;;
       empty-text) printf 'The text must contain a non-whitespace character.\n' ;;
       summary-conflict) printf 'Supply one summary source.\n' ;;
       missing-file) printf 'The summary or recovered-text file does not exist.\n' ;;
@@ -135,7 +152,7 @@ usage() {
 Usage:
   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
-    [--qa-label LABEL]... [--near-ceiling-base REF] \
+    [--validate-run-dir RUN_DIR] [--qa-label LABEL]... [--near-ceiling-base REF] \
     [--bundled] [--no-summary] \
     [--summary TEXT | --summary-file PATH | --recovered-text PATH] \
     [--item N DECISION REASONING]...
@@ -149,6 +166,11 @@ REASONING must be non-empty. --validate is "pass" or begins with "FAILING:".
 test-only validation-ceiling re-run dev-implement.md section 5 names, a flake
 worth recording); it never relaxes --validate. Outside that named ceiling a
 failing validation ends the round and is never re-run into a pass.
+--validate-run-dir RUN_DIR is the run directory dev-validate-run printed;
+validate_mode is the mode dev-validate-run --record reports for it, full or
+range, and a --validate pass needs a run that passed; a FAILING result is
+accepted beside any run. A pass requires it; a FAILING round with no run omits it and
+records validate_mode null. Submit reuses only a full pass.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
 content. --recovered-text PATH embeds the report round-recover read from a
 stalled agent's transcript and records recovered_from: transcript. The three
@@ -177,7 +199,7 @@ EOF
 is_own_flag() {
   case "$1" in
     --worktree|--kind|--issue|--round-id|--branch|--commit|--validate|\
-    --validate-note|--summary|--summary-file|--recovered-text|--qa-label|\
+    --validate-note|--validate-run-dir|--summary|--summary-file|--recovered-text|--qa-label|\
     --near-ceiling-base|--bundled|\
     --no-summary|--item|-h|--help) return 0 ;;
     *) return 1 ;;
@@ -219,6 +241,8 @@ branch=""
 commit=""
 validate=""
 validate_note=""
+validate_mode=""
+validate_run_dir=""
 baseline_lines=null
 summary_file=""
 summary_file_given=false
@@ -243,6 +267,7 @@ branch_given=false
 commit_given=false
 validate_given=false
 validate_note_given=false
+validate_run_dir_given=false
 near_ceiling_base=""
 near_ceiling_base_given=false
 
@@ -256,6 +281,7 @@ while (( $# > 0 )); do
     --commit)       need "$1" $# "${2:-}"; no_dup "$1" "$commit_given";       commit_given=true;       commit="$2"; shift 2 ;;
     --validate)     need "$1" $# "${2:-}"; no_dup "$1" "$validate_given";     validate_given=true;     validate="$2"; shift 2 ;;
     --validate-note) need "$1" $# "${2:-}"; no_dup "$1" "$validate_note_given"; validate_note_given=true; validate_note="$2"; shift 2 ;;
+    --validate-run-dir) need "$1" $# "${2:-}"; no_dup "$1" "$validate_run_dir_given"; validate_run_dir_given=true; validate_run_dir="$2"; shift 2 ;;
     --summary)      need "$1" $# "${2:-}"; no_dup "$1" "$summary_given";      summary_given=true;      summary_text="$2"; shift 2 ;;
     --summary-file) need "$1" $# "${2:-}"; no_dup "$1" "$summary_file_given"; summary_file_given=true; summary_file="$2"; shift 2 ;;
     --recovered-text) need "$1" $# "${2:-}"; no_dup "$1" "$recovered_given"; recovered_given=true; recovered_text="$2"; shift 2 ;;
@@ -311,6 +337,23 @@ check_id_token --round-id "$round_id"
 [[ -n "$validate" ]] || die required option=--validate
 [[ "$validate" == "pass" || "$validate" == FAILING:* ]] \
   || die invalid-validate "value=$validate"
+if [[ "$validate_run_dir_given" == "true" ]]; then
+  [[ -n "$validate_run_dir" ]] || die required option=--validate-run-dir
+  if ! run_record="$("$SCRIPT_DIR/dev-validate-run" --record --run-dir "$validate_run_dir" 2>&1)"; then
+    IFS= read -r run_cause <<<"$run_record" || true
+    die run-record-unreadable "path=$validate_run_dir" "cause=$run_cause"
+  fi
+  # The one line --record prints: validate-mode=M verdict=V.
+  validate_mode="${run_record#validate-mode=}"
+  validate_mode="${validate_mode%% *}"
+  run_verdict="${run_record##* verdict=}"
+  case "$run_verdict:$validate" in
+    pass:pass | *:FAILING*) ;;
+    *) die validate-disagrees "validate=$validate" "run=$run_verdict" ;;
+  esac
+elif [[ "$validate" == "pass" ]]; then
+  die required option=--validate-run-dir validate=pass
+fi
 # An empty or whitespace-only note is worse than none: it looks like a recorded
 # caveat while carrying nothing. Reject it rather than storing "".
 if [[ -n "${validate_note+set}" && -n "$validate_note" ]]; then
@@ -464,6 +507,7 @@ jq -n \
   --arg commit "$commit" \
   --argjson baseline_lines "$baseline_lines" \
   --arg validate "$validate" \
+  --arg validate_mode "$validate_mode" \
   --arg validate_note "$validate_note" \
   --argjson qa_labels "$qa_json" \
   --argjson near_ceiling "$near_json" \
@@ -481,6 +525,7 @@ jq -n \
      branch: $branch,
      commit: $commit,
      validate: $validate,
+     validate_mode: (if $validate_mode == "" then null else $validate_mode end),
      validate_note: (if $validate_note == "" then null else $validate_note end),
      qa_labels: $qa_labels,
      near_ceiling: $near_ceiling,

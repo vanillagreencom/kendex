@@ -282,8 +282,10 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 `[BASE_BRANCH]` is what § 1's `resolve-base-branch` reported; `--near-ceiling-base` takes it as `origin/[BASE_BRANCH]` because § 1 fetched that remote ref and left the local branch where it was.
 
 ```bash
-.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
+.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR]] [--validate-note [TEXT]] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
 ```
+
+`[RUN_DIR]` is the `run-dir=` value `dev-validate-run` printed, and a `pass` needs that run to have passed; omit the flag only when validation failed before any run started.
 
 One `--qa-label` per § 8 signal, none if nothing triggered.
 
@@ -331,7 +333,7 @@ Summary: [ISSUE_ID] ✓
 3. **Write the artifact**, keyed to the Parent ID, with that group's `Round ID:` when the bundle was delegated in groups:
 
    ```bash
-   .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --summary-file tmp/bundle-summary-[PARENT_ID].md --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
+   .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR]] [--validate-note [TEXT]] --summary-file tmp/bundle-summary-[PARENT_ID].md --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
    ```
 
    `--bundled` requires one `--item` per sub-issue result — `DECISION` is Applied, Skipped, or Blocked and `REASONING` non-empty plain text with no backticks — populated from the sub-issue tree. `--commit` is the last sub-issue's HEAD.

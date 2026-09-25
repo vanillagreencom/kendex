@@ -38,12 +38,12 @@ export PATH="$TMP_ROOT/bin:$PATH"
 NOW="$(date +%s)"
 DEAD_PID="$(sh -c 'printf "%s" $$')"
 
-# A validation run started AGE seconds ago whose child recorded guard-exit=EXIT,
-# or with EXIT "-" none recorded, its pid file naming PID.
+# A full validation run started AGE seconds ago whose child recorded
+# guard-exit=EXIT, or with EXIT "-" none recorded, its pid file naming PID.
 add_run() { # WORKTREE NAME AGE EXIT PID
   local run="$1/tmp/dev-validate-$2"
   mkdir -p "$run"
-  printf 'start=%s\ncap-secs=3640\npoll-secs=30\n' "$(( NOW - $3 ))" > "$run/start"
+  printf 'start=%s\ncap-secs=3640\npoll-secs=30\nvalidate-mode=full\n' "$(( NOW - $3 ))" > "$run/start"
   printf '%s\n' "$5" > "$run/pid"
   [[ "$4" == - ]] || printf 'guard-exit=%s at=2026-01-01T00:00:00Z\n' "$4" > "$run/exit"
 }
@@ -180,8 +180,8 @@ for harness in claude-send claude-text pi codex codex-item; do
   run --worktree "$WT" --issue "KEN-$harness" --round-id 1-1 --transcript "$TMP_ROOT/$harness.jsonl"
   ARTIFACT="$WT/tmp/dev-return-KEN-$harness-1-1.json"
   assert_eq "rc=$RC $OUT" "rc=0 round-recover: recovered artifact=$ARTIFACT" "$harness: the report is written as the round's artifact" "$TMP_ROOT/stderr"
-  assert_eq "$(artifact_has "$ARTIFACT" '"\(.recovered_from) \(.commit) \(.validate) \(.qa_labels | join(","))"')" \
-    "transcript $HEAD_SHA pass needs-review" "$harness: the artifact carries the report's fields and recovered_from"
+  assert_eq "$(artifact_has "$ARTIFACT" '"\(.recovered_from) \(.commit) \(.validate) \(.validate_mode) \(.qa_labels | join(","))"')" \
+    "transcript $HEAD_SHA pass full needs-review" "$harness: the artifact carries the report's fields, the run's mode and recovered_from"
   assert_eq "$("$CHECK" --worktree "$WT" --issue "KEN-$harness" --round-id 1-1 | jq -r .verdict)" "accept" \
     "$harness: dev-artifact-check accepts the recovered round"
 done

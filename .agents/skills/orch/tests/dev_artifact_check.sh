@@ -20,6 +20,7 @@ source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+VRUN="$(validate_run_dir "$TMP_ROOT/validate-run" full)"
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
@@ -135,8 +136,8 @@ R="1750000000-4242"
 ARTIFACT="$WT/tmp/dev-return-$ISSUE-$R.json"
 "$STATE" --state-dir "$WT/tmp" init "$ISSUE" --worktree "$WT" --branch test >/dev/null
 export ORCH_STATE_DIR="$WT/tmp"
-VALID_IMPL='{"schema_version":1,"round_id":"1750000000-4242","kind":"implement","issue":"issue-770","branch":"issue-770","commit":"abc123f","baseline_lines":1,"validate":"pass","qa_labels":["needs-review"],"summary_posted":true,"summary":null,"bundled":false,"items":[]}'
-VALID_FIX='{"schema_version":1,"round_id":"1750000000-4242","kind":"fix","issue":"issue-770","branch":"issue-770","commit":"def456a","validate":"FAILING: lint","summary_posted":true,"summary":null,"bundled":false,"items":[{"n":1,"decision":"Applied","reasoning":"fixed nil deref"},{"n":2,"decision":"Skipped","reasoning":"contradicts D010"}]}'
+VALID_IMPL='{"schema_version":1,"round_id":"1750000000-4242","kind":"implement","issue":"issue-770","branch":"issue-770","commit":"abc123f","baseline_lines":1,"validate":"pass","validate_mode":"full","qa_labels":["needs-review"],"summary_posted":true,"summary":null,"bundled":false,"items":[]}'
+VALID_FIX='{"schema_version":1,"round_id":"1750000000-4242","kind":"fix","issue":"issue-770","branch":"issue-770","commit":"def456a","validate":"FAILING: lint","validate_mode":"range","summary_posted":true,"summary":null,"bundled":false,"items":[{"n":1,"decision":"Applied","reasoning":"fixed nil deref"},{"n":2,"decision":"Skipped","reasoning":"contradicts D010"}]}'
 ROUND_ARGS="--worktree $WT --issue $ISSUE --round-id $R"
 
 # receipt_table ROW... — one artifact shape, one run, one assertion per row:
@@ -250,11 +251,11 @@ echo "=== the writers round-trip and the persisted round record is the delegated
 # empty means the set cannot be established: exit 2, never a weaker gate.
 RT="$(new_repo rt issue-9 5-6)"
 RT_HEAD="$(git -C "$RT" rev-parse HEAD)"
-rt_impl="$("$WRITE" --worktree "$RT" --kind implement --issue issue-9 --round-id 5-6 --branch b --commit "$RT_HEAD" --validate pass)"
+rt_impl="$("$WRITE" --worktree "$RT" --kind implement --issue issue-9 --round-id 5-6 --branch b --commit "$RT_HEAD" --validate pass --validate-run-dir "$VRUN")"
 assert_eq "$([[ -f "$rt_impl" ]] && echo yes || echo no)" "yes" "the writer produced the round-scoped implement artifact"
 ORCH_STATE_DIR="$RT/tmp" run_check --worktree "$RT" --issue issue-9 --round-id 5-6
 assert_eq "$(observe "reason=valid")" "reason=valid" "the writer's implement output round-trips as valid" "$ERR"
-"$WRITE" --worktree "$RT" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$RT_HEAD" --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
+"$WRITE" --worktree "$RT" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$RT_HEAD" --validate pass --validate-run-dir "$VRUN" --item 1 Applied a --item 2 Skipped b >/dev/null
 run_check --file "$RT/tmp/dev-return-issue-9-7-8.json" --expect-items 1,2
 assert_eq "$(observe "reason=valid")" "reason=valid" "the writer's fix output round-trips through file-mode --expect-items" "$ERR"
 
@@ -262,12 +263,12 @@ RR="$(new_repo rr issue-9 seed 1000000)"
 RR_HEAD="$(git -C "$RR" rev-parse HEAD)"
 round_write --worktree "$RR" --issue issue-9 --round-id 7-8 \
   --item 1 "fix nil deref" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tests/auth.rs expiry case" >/dev/null
-"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$RR_HEAD" --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
+"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$RR_HEAD" --validate pass --validate-run-dir "$VRUN" --item 1 Applied a --item 2 Skipped b >/dev/null
 run_check --worktree "$RR" --issue issue-9 --round-id 7-8 --expect-items-from-round
 assert_eq "$(observe "reason=valid")" "reason=valid" "an artifact covering the persisted round set is valid" "$ERR"
 run_check --worktree "$RR" --issue issue-9 --round-id 7-8 --expect-items-from-round
 assert_eq "$(observe "reason=valid")" "reason=valid" "the record is not consumed: a repeat check stays valid" "$ERR"
-"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit "$RR_HEAD" --validate pass --item 1 Applied a >/dev/null
+"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit "$RR_HEAD" --validate pass --validate-run-dir "$VRUN" --item 1 Applied a >/dev/null
 round_write --worktree "$RR" --issue issue-9 --round-id 8-9 \
   --item 1 "fix nil deref" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tests/auth.rs expiry case" >/dev/null
 run_check --worktree "$RR" --issue issue-9 --round-id 8-9 --expect-items-from-round
@@ -293,7 +294,7 @@ done
 # The count-vs-set hint diagnoses a TYPED --expect-items count; a set read from
 # the record cannot be that misuse, so the from-round path never emits it even
 # when the shapes coincide (the inline form is the control).
-"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 16-16 --branch b --commit "$RR_HEAD" --validate pass --item 1 Applied a --item 2 Applied b --item 3 Applied c >/dev/null
+"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 16-16 --branch b --commit "$RR_HEAD" --validate pass --validate-run-dir "$VRUN" --item 1 Applied a --item 2 Applied b --item 3 Applied c >/dev/null
 run_check --file "$RR/tmp/dev-return-issue-9-16-16.json" --expect-items 3
 assert_eq "$(observe "reason=incomplete hint_present=true")" "reason=incomplete hint_present=true" "control: file-mode --expect-items 3 against items 1..3 fires the count-vs-set hint" "$ERR"
 round_write --worktree "$RR" --issue issue-9 --round-id 16-16 --item 3 "only item three" "tools/guard on a staged render" >/dev/null
@@ -320,7 +321,7 @@ for f in .agents/skills/orch/scripts/installed-check crates/new-parser/lib.rs he
   git -C "$AD" add "$f"
 done
 git -C "$AD" commit -q -m additions
-"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 1-1 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 1-1 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
 run_check --worktree "$AD" --issue issue-826 --round-id 1-1 --expect-items-from-round
 ADDS_EXPECT="rc=1 ok=false verdict=retry path=$AD/tmp/dev-return-issue-826-1-1.json reason=unapproved_additions files=[\".agents/skills/orch/scripts/installed-check\",\"crates/new-parser/lib.rs\",\"helpers/root-helper.ts\",\"pkg/test_helpers/nested.ts\",\"skills/orch/scripts/new-check\",\"src/test_utils.rs\",\"test/support/root-support.sh\",\"tools/new\\nline\",\"tools/new-tool\",\"ui/src/test/round-helper.ts\"]"
 assert_eq "$(observe "$ADDS_EXPECT")" "$ADDS_EXPECT" "unlisted protected additions refuse the round, route to retry and name every file" "$ERR"
@@ -333,7 +334,7 @@ for f in crates/allowed/lib.rs skills/orch/scripts/allowed-check "tools/allowed;
   git -C "$AD" add "$f"
 done
 git -C "$AD" commit -q -m allowed-additions
-"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 2-2 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 2-2 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
 run_check --worktree "$AD" --issue issue-826 --round-id 2-2 --expect-items-from-round
 assert_eq "$(observe "reason=valid")" "reason=valid" "each addition the round named is accepted" "$ERR"
 
@@ -343,7 +344,7 @@ git -C "$AD" commit -q -m pre-move
 round_write --worktree "$AD" --issue issue-826 --round-id 3-3 --item 1 "move existing file" "tools/guard on a staged render" >/dev/null
 git -C "$AD" mv ordinary.txt tools/moved.txt
 git -C "$AD" commit -q -m move
-"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 3-3 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 3-3 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
 run_check --worktree "$AD" --issue issue-826 --round-id 3-3 --expect-items-from-round
 assert_eq "$(observe "reason=valid")" "reason=valid" "a moved file is not an addition" "$ERR"
 
@@ -391,7 +392,7 @@ git -C "$RB" add crates/upstream/lib.rs
 git -C "$RB" commit -q -m upstream-advance
 git -C "$RB" checkout -q feature
 git -C "$RB" rebase -q main >/dev/null
-"$WRITE" --worktree "$RB" --kind fix --issue issue-944 --round-id 1-1 --branch feature --commit "$(git -C "$RB" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$RB" --kind fix --issue issue-944 --round-id 1-1 --branch feature --commit "$(git -C "$RB" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
 run_check --worktree "$RB" --issue issue-944 --round-id 1-1 --expect-items-from-round
 assert_eq "$(observe "ok=false verdict=retry reason=additions_unattributable files=[]")" "ok=false verdict=retry reason=additions_unattributable files=[]" "an orphaned base refuses the round and names no file" "$ERR"
 # Control: without the stop the round is billed the file main merged, which
@@ -410,7 +411,7 @@ mkdir -p "$RB/tools"
 printf 'round machinery\n' > "$RB/tools/round-tool"
 git -C "$RB" add tools/round-tool
 git -C "$RB" commit -q -m round-addition
-"$WRITE" --worktree "$RB" --kind fix --issue issue-944 --round-id 2-2 --branch feature --commit "$(git -C "$RB" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$RB" --kind fix --issue issue-944 --round-id 2-2 --branch feature --commit "$(git -C "$RB" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
 run_check --worktree "$RB" --issue issue-944 --round-id 2-2 --expect-items-from-round
 assert_eq "$(observe 'reason=unapproved_additions files=["tools/round-tool"]')" 'reason=unapproved_additions files=["tools/round-tool"]' "a round whose base survived the restack is gated on its own addition alone" "$ERR"
 
@@ -464,6 +465,11 @@ run_check --file "$ARTIFACT"
 assert_eq "$(json .validate_note)" "$REAL_NOTE" "a note with spaces and punctuation is echoed verbatim" "$ERR"
 receipt_table \
   "a validate_note is echoed with the verdict^impl^.validate_note=\"$NOTE\"^$FILE_ARGS^reason=valid validate=pass validate_note=$NOTE" \
+  "a range validate_mode is echoed beside the verdict, for submit to refuse reusing^impl^.validate_mode=\"range\"^$FILE_ARGS^reason=valid validate=pass validate_mode=range" \
+  "a missing validate_mode is invalid^impl^del(.validate_mode)^$FILE_ARGS^reason=invalid" \
+  "a validate_mode outside full and range is invalid^impl^.validate_mode=\"class\"^$FILE_ARGS^reason=invalid" \
+  "a null validate_mode beside a pass is invalid^impl^.validate_mode=null^$FILE_ARGS^reason=invalid" \
+  "a null validate_mode beside a failing validate is valid^impl^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null^$FILE_ARGS^reason=valid validate_mode=null" \
   "an empty validate_note is invalid^impl^.validate_note=\"\"^$FILE_ARGS^reason=invalid" \
   "a numeric validate_note is invalid^impl^.validate_note=42^$FILE_ARGS^reason=invalid" \
   "a boolean validate_note is invalid^impl^.validate_note=true^$FILE_ARGS^reason=invalid" \
