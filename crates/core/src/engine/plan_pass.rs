@@ -11,7 +11,7 @@ use crate::manifest::Manifest;
 use crate::model::Scope;
 
 use super::desired::Withholding;
-use super::item_plan::plan_item;
+use super::item_plan::{KeptAsIs, plan_item};
 use super::{
     DriftCause, DriftRow, DriftState, PlanOptions, config_edits, desired, holds, item_plan,
     removal, written,
@@ -35,6 +35,7 @@ pub(super) fn plan_items(
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
+    kept: &mut KeptAsIs,
     written: &mut written::Written,
 ) -> Result<(Vec<super::ForkEdit>, Vec<super::report_types::RecordedGone>)> {
     let ownership = super::ownership_for_plan(env, scope, lock, &state.items)?;
@@ -50,6 +51,7 @@ pub(super) fn plan_items(
             ops,
             config_edits,
             new_lock,
+            kept,
             written,
         };
         if holds::hold_rev_conflict(item, scope, lock, &state.rev_conflicts, &mut sink) {
@@ -135,6 +137,7 @@ fn plan_refusals(
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
+    kept: &mut KeptAsIs,
 ) -> Result<BTreeSet<String>> {
     let refused_keys: BTreeSet<String> = state
         .refused
@@ -167,7 +170,7 @@ fn plan_refusals(
                 // saying kendex wrote it, and the next pass would read it as
                 // a stranger's directory — refusing, forever, to write the
                 // accepted content over it.
-                new_lock.entries.insert(key, entry.clone());
+                kept.keep(new_lock, &key, entry);
                 continue;
             }
             guard.extend(
@@ -213,6 +216,7 @@ pub(super) fn plan_not_written(
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
+    kept: &mut KeptAsIs,
 ) -> Result<BTreeSet<String>> {
     let mut decided = plan_refusals(
         env,
@@ -224,6 +228,7 @@ pub(super) fn plan_not_written(
         ops,
         config_edits,
         new_lock,
+        kept,
     )?;
     decided.extend(plan_withheld(
         env,
@@ -236,6 +241,7 @@ pub(super) fn plan_not_written(
         ops,
         config_edits,
         new_lock,
+        kept,
     )?);
     Ok(decided)
 }
@@ -269,6 +275,7 @@ fn plan_withheld(
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
+    kept: &mut KeptAsIs,
 ) -> Result<BTreeSet<String>> {
     let mut decided = BTreeSet::new();
     for ((kind, name, harness), withheld) in &state.withheld {
@@ -291,12 +298,12 @@ fn plan_withheld(
         if let Some(detail) = item_plan::rebound(entry, &withheld.provenance, recorded_fork) {
             decided.insert(key.clone());
             drift.push(row(DriftState::Conflict, detail));
-            new_lock.entries.insert(key, entry.clone());
+            kept.keep(new_lock, &key, entry);
             continue;
         }
         if !withheld.because.takes() {
             decided.insert(key.clone());
-            new_lock.entries.insert(key, entry.clone());
+            kept.keep(new_lock, &key, entry);
             continue;
         }
         // Of the reasons that take the copy, an orphan's is the orphan

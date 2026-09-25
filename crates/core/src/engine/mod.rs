@@ -170,6 +170,7 @@ pub fn plan_scope(
         crate::pi_ext::RecordBasis::Recorded,
     )?);
     let mut written = written::Written::default();
+    let mut kept = item_plan::KeptAsIs::default();
     let mut config_edits = config_edits::ConfigEditPlan::default();
 
     plan_manifest_write(env, scope, options.manifest_base.as_ref(), &state, &mut ops)?;
@@ -185,6 +186,7 @@ pub fn plan_scope(
         &mut ops,
         &mut config_edits,
         &mut new_lock,
+        &mut kept,
         &mut written,
     )?;
 
@@ -199,39 +201,18 @@ pub fn plan_scope(
         &mut config_edits,
     )?;
 
-    // Trash ops all pass one guard: writes for this pass are already
-    // planned, so anything still wanted is known, and no path goes to the
-    // trash twice.
-    let mut guard = removal::TrashGuard::new(&state.items, owned::paths(env, scope, &new_lock));
-
-    stale::stale_emitted(lock, &new_lock, &mut guard, &mut ops)?;
-
-    let decided_keys = plan_pass::plan_not_written(
-        env,
-        scope,
-        &manifest,
-        lock,
-        &state,
-        &mut guard,
-        &mut drift,
-        &mut ops,
-        &mut config_edits,
-        &mut new_lock,
-    )?;
-
-    let sweepable = removal::orphans(
+    let sweepable = plan_removals(
         env,
         scope,
         &manifest,
         lock,
         &state,
         options,
-        &decided_keys,
-        &mut guard,
         &mut drift,
         &mut ops,
         &mut config_edits,
         &mut new_lock,
+        &mut kept,
         &mut scope_notes,
     )?;
 
@@ -274,6 +255,60 @@ pub fn plan_scope(
     };
     report.notes.extend(scope_notes);
     settled(env, scope, &manifest, lock, options, &state.items, report)
+}
+
+/// Everything a plan takes away, after every write is planned: stale
+/// emitted files, what a refusal or a withholding takes or keeps, then
+/// the orphans. Returns what a sweep could still take.
+#[allow(clippy::too_many_arguments)]
+fn plan_removals(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+    state: &desired::DesiredState,
+    options: &PlanOptions,
+    drift: &mut Vec<DriftRow>,
+    ops: &mut Vec<PlannedOp>,
+    config_edits: &mut config_edits::ConfigEditPlan,
+    new_lock: &mut Lock,
+    kept: &mut item_plan::KeptAsIs,
+    scope_notes: &mut Vec<String>,
+) -> Result<Vec<SetChange>> {
+    // Trash ops all pass one guard: writes for this pass are already
+    // planned, so anything still wanted is known, and no path goes to the
+    // trash twice.
+    let mut guard = removal::TrashGuard::new(&state.items, owned::paths(env, scope, new_lock));
+    stale::stale_emitted(lock, new_lock, &mut guard, ops)?;
+    let decided_keys = plan_pass::plan_not_written(
+        env,
+        scope,
+        manifest,
+        lock,
+        state,
+        &mut guard,
+        drift,
+        ops,
+        config_edits,
+        new_lock,
+        kept,
+    )?;
+    removal::orphans(
+        env,
+        scope,
+        manifest,
+        lock,
+        state,
+        options,
+        &decided_keys,
+        kept,
+        &mut guard,
+        drift,
+        ops,
+        config_edits,
+        new_lock,
+        scope_notes,
+    )
 }
 
 /// The files a scope owes beside its items: the project files, and the

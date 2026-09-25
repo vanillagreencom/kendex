@@ -18,6 +18,26 @@ use super::tree_plan::plan_tree;
 use super::written::Written;
 use crate::configedit::ConfigEdit;
 
+/// The records a pass kept in the new lock as they were, in place of
+/// writing them: a conflict or a hold in the item pass, a refusal's edit
+/// hold, a withheld copy kept. The one account of that fact, which the
+/// orphan pass reads to keep what such a record requires; a record written
+/// this pass, in sync with its old one or not, is never in it.
+#[derive(Default)]
+pub(super) struct KeptAsIs(std::collections::BTreeSet<String>);
+
+impl KeptAsIs {
+    /// Keep `entry` under `key` in the new lock as it was, and say so.
+    pub(super) fn keep(&mut self, new_lock: &mut Lock, key: &str, entry: &LockEntry) {
+        new_lock.entries.insert(key.to_owned(), entry.clone());
+        self.0.insert(key.to_owned());
+    }
+
+    pub(super) fn contains(&self, key: &str) -> bool {
+        self.0.contains(key)
+    }
+}
+
 /// Everything one pass over the desired items accumulates.
 pub(super) struct PlanSink<'a> {
     pub(super) drift: &'a mut Vec<DriftRow>,
@@ -31,6 +51,7 @@ pub(super) struct PlanSink<'a> {
     pub(super) ops: &'a mut Vec<PlannedOp>,
     pub(super) config_edits: &'a mut ConfigEditPlan,
     pub(super) new_lock: &'a mut Lock,
+    pub(super) kept: &'a mut KeptAsIs,
     pub(super) written: &'a mut Written,
 }
 
@@ -52,6 +73,7 @@ pub(super) fn plan_item(
         ops,
         config_edits,
         new_lock,
+        kept,
         written,
         ..
     } = sink;
@@ -62,7 +84,7 @@ pub(super) fn plan_item(
         && let Some(detail) = rebound(entry, &item.provenance, item.recorded_fork)
     {
         drift.push(row(DriftState::Conflict, detail));
-        new_lock.entries.insert(item.key.clone(), entry.clone());
+        kept.keep(new_lock, &item.key, entry);
         return Ok(());
     }
 
@@ -134,7 +156,7 @@ pub(super) fn plan_item(
         conflict.also_in_the_way = also;
         drift.push(conflict);
         if let Some(entry) = existing {
-            new_lock.entries.insert(item.key.clone(), entry.clone());
+            kept.keep(new_lock, &item.key, entry);
         }
         return Ok(());
     }
