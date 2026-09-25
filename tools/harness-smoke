@@ -766,10 +766,10 @@ mail_row() { # HARNESS LABEL LISTED [CMD...]
 # the directive lands once that turn is over; the directive asks the lane to
 # repeat the announcement that woke it, which a lane that polled its inbox by
 # itself never sees. A session that answers `armed` and exits is print mode
-# ending with the turn, not a monitor that failed, and is unanswerable. The
-# verdict reads only what was recorded as it happened, the sender's log and the
-# session's output, never the mailbox after the session: the watch withdraws
-# its liveness record when it is stopped, so a monitor that ran leaves none. It runs
+# ending with the turn, not a monitor that failed, and is unanswerable. Whether
+# the monitor armed is read from the sender's log, recorded while the session
+# ran, never from to-lane.watch after it: the watch withdraws that record when
+# it is stopped. It runs
 # before the lane-mail row, whose install adds the hook that would hand the
 # directive over at the turn's end instead, and on an item of its own, so
 # neither row reads the other's cursor. Codex has no row to run: Codex starts
