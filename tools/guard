@@ -212,6 +212,12 @@ whole_setting() { # NAME VALUE — refuse a space bound that is not a positive w
   esac
 }
 
+space_stop() { # KEY VALUE — a full run without room ends here, before any later
+  # step can compile into the volume: a touched suite may run cargo too.
+  say "$1" "$2"
+  exit 1
+}
+
 FULL=0
 case "${1:-}" in
   --full) FULL=1; shift ;;
@@ -764,7 +770,6 @@ if [ "$FULL" -eq 0 ]; then
   done <"$GUARD_TMP/product.z"
 fi
 
-cargo_space_ok=1
 cargo_target="${CARGO_TARGET_DIR:-target}"
 # The path df, du and find read: a relative target never reaches them as an
 # option.
@@ -792,17 +797,15 @@ if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
   if ! cargo_free_start_kib=$(cargo_free_kib "$cargo_target_path"); then
     note cargo-space-unreadable "$cargo_target"
   elif [ "$cargo_free_start_kib" -lt "$((10#$guard_exhausted_free_mb * 1024))" ]; then
-    say cargo-space-free "free-kib=$cargo_free_start_kib min-free-mib=$guard_exhausted_free_mb"
-    cargo_space_ok=0
+    space_stop cargo-space-free "free-kib=$cargo_free_start_kib min-free-mib=$guard_exhausted_free_mb"
   elif ! cargo_target_start_kib=$(cargo_target_kib "$cargo_target_path"); then
     note cargo-target-unreadable "$cargo_target"
   elif [ "$((cargo_free_start_kib + cargo_target_start_kib))" -lt "$((10#$guard_min_free_gb * 1024 * 1024))" ]; then
-    say cargo-space-start "free-kib=$cargo_free_start_kib target-kib=$cargo_target_start_kib min-gib=$guard_min_free_gb"
-    cargo_space_ok=0
+    space_stop cargo-space-start "free-kib=$cargo_free_start_kib target-kib=$cargo_target_start_kib min-gib=$guard_min_free_gb"
   fi
 fi
 
-if [ "$cargo_space_ok" -eq 1 ] && [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt 0 ]; }; then
+if [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt 0 ]; }; then
   if cargo tree -p kendex-core -e normal 2>/dev/null | grep -qE '\btauri v'; then
     say tauri-dependency crates/core
   fi
@@ -964,7 +967,7 @@ compiled_includes() {
   ' {} +
 }
 
-if [ "$FULL" -eq 1 ] && [ "$cargo_space_ok" -eq 1 ] && [ -f Cargo.toml ]; then
+if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
   # The cross-target checks and cargo doc each write a target tree of their
   # own, and CI covers both on the pull requests tools/ci-job-set selects
   # its cargo_lint, cargo_macos and cargo_windows lanes for. Here they are

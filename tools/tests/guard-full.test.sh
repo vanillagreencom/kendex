@@ -177,19 +177,28 @@ SPACE_ROWS=(
   "an exhaustion floor that is not a whole number refuses|GUARD_EXHAUSTED_FREE_MB=512MB DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|2|guard: cargo-space-setting=GUARD_EXHAUSTED_FREE_MB|0"
   "an exhaustion floor of zero refuses|GUARD_EXHAUSTED_FREE_MB=0 DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|2|guard: cargo-space-setting=GUARD_EXHAUSTED_FREE_MB|0"
 )
+# A touched suite that leaves a marker: a refused start must end the run before
+# the suite lane, where a suite may run cargo of its own.
+SUITE_MARKER="$TMP/suite-ran"
+for f in skills/demo/tests/demo.test.sh .agents/skills/demo/tests/demo.test.sh; do
+  printf ': >"$SUITE_MARKER"\n' >>"$R/$f"
+done
 space_row_holds() { # N — run row N under $GUARD; succeed when every expectation holds
-  local env rc key ran did=0
+  local env rc key ran did=0 suite=0
   IFS='|' read -r _ env rc key ran <<<"${SPACE_ROWS[$1]}"
   read -ra row_env <<<"$env"
   : >"$DF_CALL_LOG"
   : >"$CARGO_CALL_LOG"
   : >"$CARGO_ENV_LOG"
-  run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" CARGO_ENV_LOG="$CARGO_ENV_LOG" \
+  rm -f -- "${SUITE_MARKER:?}"
+  run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" CARGO_ENV_LOG="$CARGO_ENV_LOG" SUITE_MARKER="$SUITE_MARKER" \
     DF_CALL_LOG="$DF_CALL_LOG" DF_FREE_KIB_END="$high_free_kib" RUSTUP_INSTALLED_TARGETS="$BOTH" \
     GUARD_MIN_FREE_GB=24 GUARD_EXHAUSTED_FREE_MB=512 CARGO_INCREMENTAL=1 "${row_env[@]}"
   [ ! -s "$CARGO_CALL_LOG" ] || did=1
-  # Every cargo call that ran inherited the guard's CARGO_INCREMENTAL=0.
-  [ "$RC" -eq "$rc" ] && [ "$did" -eq "$ran" ] && { [ -z "$key" ] || [[ "$OUT" == *"$key"$'\n'* ]]; } &&
+  [ ! -e "$SUITE_MARKER" ] || suite=1
+  # The touched demo suite runs exactly where cargo does, and every cargo
+  # call that ran inherited the guard's CARGO_INCREMENTAL=0.
+  [ "$RC" -eq "$rc" ] && [ "$did" -eq "$ran" ] && [ "$suite" -eq "$ran" ] && { [ -z "$key" ] || [[ "$OUT" == *"$key"$'\n'* ]]; } &&
     ! grep -qvF '|incremental=0' "$CARGO_ENV_LOG" &&
     [ "$(wc -l <"$CARGO_ENV_LOG")" -eq "$(wc -l <"$CARGO_CALL_LOG")" ]
 }
@@ -208,7 +217,7 @@ while IFS='|' read -r n edit; do
     bad "control: the edit changed no guard line: $edit"
   fi
 done <<'EDITS'
-0|s/^    cargo_space_ok=0$/    :/
+0|/^space_stop() {/,/^}/s/^  exit 1$/  :/
 0|/^  while \[ ! -e "\$path" \]; do$/,/^  done$/d
 1|s/"\$((cargo_free_start_kib + cargo_target_start_kib))"/"$cargo_free_start_kib"/
 2|s/^  elif \[ "\$cargo_free_start_kib" -lt/  elif false \&\& [ "$cargo_free_start_kib" -lt/
@@ -221,6 +230,7 @@ done <<'EDITS'
 11|s/^    \*\[!0\]\*) ;;$/    *) ;;/
 4|/^  export CARGO_INCREMENTAL=0$/d
 EDITS
+git -C "$R" checkout -q -- skills/demo/tests/demo.test.sh .agents/skills/demo/tests/demo.test.sh
 
 # Every other lane fails its own write on a full stream too, so only fmt's
 # write straight to the guard's stream lands on the device.
