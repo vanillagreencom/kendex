@@ -54,10 +54,11 @@
 #       many of each were still running:
 #         state=stopped units=N groups=N
 #   dev-validate-run --record --run-dir PATH
-#       Print the run's record, read-only: the mode it ran under and its
-#       verdict. The one reader of the run directory for anything outside this
-#       script; dev-return-write takes a receipt's mode from it, and a
-#       receipt's pass needs its pass and its no-verdict its no-verdict.
+#       Print the run's record, read-only: the mode it ran under, its verdict
+#       and, for a finished run, its wall time. The one reader of the run
+#       directory for anything outside this script; dev-return-write takes a
+#       receipt's mode and wall time from it, and a receipt's pass needs its
+#       pass and its no-verdict its no-verdict.
 #   dev-validate-run --child --run-dir PATH
 #       Internal. The detached process the start path launches.
 #
@@ -66,7 +67,14 @@
 # the child runs), class.log (the stderr of the base-branch lookup and the
 # classifier), paths (DEV_VALIDATE_PATHS), pid (the detached child's process
 # id), log (the runner line, then the command's output), own-exit (present
-# once the command returned by itself) and exit (the sentinel).
+# once the command returned by itself), timing (the command's wall time) and
+# exit (the sentinel).
+#
+# timing holds three lines, written whole by the detached child just before
+# the sentinel, so a run with a sentinel has one:
+#   started-at=TIME   when the command started, UTC
+#   ended-at=TIME     when it ended, the sentinel's own at= value
+#   seconds=N         ended-at less started-at
 #
 # Validation modes, --validate-mode, recorded as the validate-mode= line of
 # start:
@@ -84,12 +92,15 @@
 #   state=running elapsed-secs=N cap-secs=N run-dir=…
 #   state=timeout elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
 #   state=lost elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
-#   validate-mode=full|range verdict=pass|FAILING|no-verdict|unfinished      (--record)
+#   validate-mode=full|range verdict=pass|FAILING|no-verdict|unfinished [seconds=N started-at=TIME ended-at=TIME]   (--record)
 #
 # --record's verdict is pass only for a sentinel of guard-exit=0, no-verdict
 # for a sentinel carrying verdict=no-verdict, FAILING for any other exit, and
 # unfinished where no sentinel exists: a run still going, past its cap or lost.
-# Only pass is a passing validation.
+# Only pass is a passing validation. The timing fields follow every verdict a
+# sentinel carries, a no-verdict run's included, since the bound's end is
+# still an end, and never an unfinished one, which has none; a sentinel with
+# no readable timing file is refused as timing-unreadable.
 #
 # A run the bound ended is no verdict, neither pass nor FAILING: the command
 # was cut off, not refuted. The child records verdict=no-verdict only for
@@ -162,6 +173,7 @@ die() {
       missing-command) printf 'Install it: without it the run carries no bound and no waiter can end.\n' ;;
       no-run) printf 'Start a run with --worktree before polling it.\n' ;;
       sentinel-unreadable) printf 'The sentinel does not carry a guard-exit value.\n' ;;
+      timing-unreadable) printf 'The run has a verdict but no started-at, ended-at and seconds record of its wall time.\n' ;;
       scratch-unavailable) printf 'A scratch directory for reading the change class could not be created.\n' ;;
       runner-unrecorded) printf 'The record of how the run is started could not be written, so no run was started.\n' ;;
       launch-failed) printf 'The run could not be started, so there is no verdict to wait for.\n' ;;
@@ -490,6 +502,8 @@ if [[ "$mode" == child ]]; then
   # written loses that line and never the verdict, as it loses the command's
   # output below.
   printf '%s\n' "$JOB_UNIT_LINE" 2>/dev/null > "$run_dir/log" || :
+  # Epoch and UTC time from one date call, so the two cannot straddle a second.
+  started="$(date -u '+%s %Y-%m-%dT%H:%M:%SZ')"
   # bash, not sh: DEV_VALIDATE_CMD is written for the harness's own shell, and
   # on Debian and Ubuntu sh is dash, where source, [[ ]] and set -o pipefail are
   # errors that would record a false failing verdict. post-merge and
@@ -508,13 +522,18 @@ if [[ "$mode" == child ]]; then
   DEV_VALIDATE_CLASS="$child_class" DEV_VALIDATE_DOCS_ONLY="$child_docs_only" \
     DEV_VALIDATE_PATHS="$run_dir/paths" "$child_timeout_bin" --foreground -k "$KILL_GRACE" "$child_timeout_secs" \
     bash -c 'bash -c "$1"; rc=$?; : > "$2"; exit "$rc"' _ "$child_cmd" "$run_dir/own-exit" >> "$run_dir/log" 2>&1 || status=$?
+  ended="$(date -u '+%s %Y-%m-%dT%H:%M:%SZ')"
   ended_by=""
   if [[ ( "$status" == 124 || "$status" == 137 ) && ! -e "$run_dir/own-exit" ]]; then
     ended_by=" verdict=no-verdict"
   fi
-  # Written whole or not at all: a poll that caught a half-written sentinel
+  # The wall time lands before the sentinel, so every verdict has one. Both
+  # are written whole or not at all: a poll that caught a half-written sentinel
   # would read a verdict that is not one.
-  printf 'guard-exit=%s at=%s%s\n' "$status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ended_by" > "$run_dir/exit.part"
+  printf 'started-at=%s\nended-at=%s\nseconds=%s\n' "${started#* }" "${ended#* }" \
+    "$(( ${ended%% *} - ${started%% *} ))" > "$run_dir/timing.part"
+  mv "$run_dir/timing.part" "$run_dir/timing"
+  printf 'guard-exit=%s at=%s%s\n' "$status" "${ended#* }" "$ended_by" > "$run_dir/exit.part"
   mv "$run_dir/exit.part" "$run_dir/exit"
   # The verdict is on disk, so nothing the command left behind is still owed a
   # run. Under setsid, setsid -f made this process its group's leader, and the
@@ -557,11 +576,20 @@ if [[ "$mode" == record ]]; then
     *) die record-unreadable "path=$run_dir/start" "validate-mode=$record_mode" ;;
   esac
   record_verdict=unfinished
+  record_timing=""
   if [[ -s "$run_dir/exit" ]]; then
     read_sentinel
     record_verdict="$SENTINEL_VERDICT"
+    [[ -f "$run_dir/timing" ]] || die timing-unreadable "path=$run_dir/timing"
+    timing_started="$(start_field "$run_dir/timing" started-at)"
+    timing_ended="$(start_field "$run_dir/timing" ended-at)"
+    timing_seconds="$(start_field "$run_dir/timing" seconds)"
+    utc='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+    [[ "$timing_started" =~ $utc && "$timing_ended" =~ $utc && "$timing_seconds" =~ ^[0-9]+$ ]] \
+      || die timing-unreadable "path=$run_dir/timing"
+    record_timing=" seconds=$timing_seconds started-at=$timing_started ended-at=$timing_ended"
   fi
-  printf 'validate-mode=%s verdict=%s\n' "$record_mode" "$record_verdict"
+  printf 'validate-mode=%s verdict=%s%s\n' "$record_mode" "$record_verdict" "$record_timing"
   exit 0
 fi
 

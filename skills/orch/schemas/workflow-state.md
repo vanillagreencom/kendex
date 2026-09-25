@@ -17,6 +17,7 @@ Persistent state file for orch workflows. Survives context compaction.
   "branch": "user/proj-123",
   "qa_labels": ["needs-perf-test", "needs-safety-audit"],
   "near_ceiling": ["byte-ceiling: near-ceiling=crates/core/src/engine/deps.rs:189000:204800:92"],
+  "validate_rounds": [{ "round_id": "1769600000123456789-1837", "kind": "implement", "mode": "full", "seconds": 3300 }],
   "child_sessions": {
     "backend": { "status": "active", "agent_id": "agent_abc123", "runtime_agent_type": "backend", "agent_type_fallback": null, "spawned_at": "[ISO_8601_UTC]" },
     "frontend": { "status": "closed", "agent_id": "agent_def456", "runtime_agent_type": "worker", "agent_type_fallback": "spawn_rejected_or_unavailable", "spawned_at": "[ISO_8601_UTC]" }
@@ -142,6 +143,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `review_agents` | string[] | Reviewer names currently expected to stay alive across fix/re-review cycles; in wave mode (`REVIEWER_SLOT_BUDGET` exceeded) only the currently launched wave |
 | `review_agent_ids` | object | Reviewer session IDs keyed by name — reuse before spawning `{"name":"id",...}` |
 | `review_agent_runtime_types` | object | Reviewer runtime agent metadata keyed by logical reviewer name: `{name: {agent_type, task_name?, fallback}}`; records a Codex `worker` fallback and, when the runtime `task_name` schema forced a hyphens-to-underscores spelling, the translated `task_name` — without changing the logical keys |
+| `validate_rounds` | object[] | One `{round_id, kind, mode, seconds}` entry per dev round whose artifact recorded a validation wall time: the round id, `implement` or `fix`, the `validate_mode` that ran, and the run's `seconds`. [`dev-start.md` § Store Validation Time](../workflows/dev-start.md#store-validation-time) is the one writer; it appends, replacing an entry with the same `round_id`. The lane status file and `oversee-report`'s Validation row read it |
 | `review_wave_done` | string[] | Wave mode only: reviewers whose report artifact validated (or who went unresponsive) in the current review cycle. Reset at each new cycle's first wave; the next wave launches the first budget-sized batch of `[AGENTS]` not listed here |
 | `reviewer_slots_observed` | number | Effective wave size proven by the runtime when a persistent (unlimited-budget) launch hit the thread limit. While set, `review-pr.md` § 2 enters wave mode at this size even though `REVIEWER_SLOT_BUDGET` is `0` |
 | `pre_delegate_sha` | string\|null | HEAD before delegation — scopes re-review diffs. review-pr § 2.2 sends it to a re-review re-entry as `Diff-range`, a boundary no reviewer can derive from its own delegation. review-pr-comments § 6.1 writes it before a fix set and sends it as the verification pass's `Diff-range` |

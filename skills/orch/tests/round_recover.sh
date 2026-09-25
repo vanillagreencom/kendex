@@ -38,14 +38,16 @@ export PATH="$TMP_ROOT/bin:$PATH"
 NOW="$(date +%s)"
 DEAD_PID="$(sh -c 'printf "%s" $$')"
 
-# A full validation run started AGE seconds ago whose child recorded
-# guard-exit=EXIT, or with EXIT "-" none recorded and with "no-verdict" the
-# bound's cut-off, its pid file naming PID.
+# A full validation run started AGE seconds ago whose child recorded its wall
+# time and guard-exit=EXIT, with "no-verdict" the bound's cut-off, or with EXIT
+# "-" neither, its pid file naming PID.
 add_run() { # WORKTREE NAME AGE EXIT PID
   local run="$1/tmp/dev-validate-$2"
   mkdir -p "$run"
   printf 'start=%s\ncap-secs=3640\npoll-secs=30\nvalidate-mode=full\n' "$(( NOW - $3 ))" > "$run/start"
   printf '%s\n' "$5" > "$run/pid"
+  [[ "$4" == - ]] \
+    || printf 'started-at=2026-01-01T00:00:00Z\nended-at=2026-01-01T00:00:00Z\nseconds=0\n' > "$run/timing"
   case "$4" in
     -) ;;
     no-verdict) printf 'guard-exit=124 at=2026-01-01T00:00:00Z verdict=no-verdict\n' > "$run/exit" ;;

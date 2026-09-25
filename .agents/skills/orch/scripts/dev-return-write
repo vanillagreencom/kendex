@@ -58,7 +58,9 @@
 # would stand in for the whole battery. A pass or no-verdict requires the
 # run. A failing round may omit it, because dev-validate-run refuses some
 # failures, an empty DEV_VALIDATE_CMD among them, before any run directory
-# exists; validate_mode is then null.
+# exists; validate_mode is then null. validate_time is the run's wall time as
+# --record reports it, a no-verdict run's included, and null where no run is
+# named or the run is unfinished.
 #
 # Writes PATH/tmp/dev-return-ID-RID.json and prints its absolute path (one line).
 #
@@ -76,6 +78,10 @@
 #     "validate_mode": "full" | "range" | null, // read from --validate-run-dir;
 #                                             // null only for a FAILING round
 #                                             // with no run
+#     "validate_time": {"started_at": "…", "ended_at": "…", "seconds": 3300} | null,
+#                                             // read from --validate-run-dir;
+#                                             // null with no run or an
+#                                             // unfinished one
 #     "validate_note": "…" | null,            // --validate-note
 #     "qa_labels": ["needs-review"],          // [] when no --qa-label given
 #     "near_ceiling": ["…"] | null,           // byte-ceiling near-ceiling lines
@@ -175,7 +181,9 @@ validate_mode is the mode dev-validate-run --record reports for it, full or
 range, and a --validate pass needs a run that passed, no-verdict a run the
 timeout ended and a --validate-note naming the scoped suites that passed; a
 FAILING result is accepted beside any run. A pass or no-verdict requires it; a FAILING round with no run omits it and
-records validate_mode null. Submit reuses only a full pass.
+records validate_mode null. Submit reuses only a full pass. validate_time is
+the run's wall time --record reports, a no-verdict run's included, and null
+with no run or an unfinished one.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
 content. --recovered-text PATH embeds the report round-recover read from a
 stalled agent's transcript and records recovered_from: transcript. The three
@@ -248,6 +256,9 @@ validate=""
 validate_note=""
 validate_mode=""
 validate_run_dir=""
+validate_seconds=""
+validate_started_at=""
+validate_ended_at=""
 baseline_lines=null
 summary_file=""
 summary_file_given=false
@@ -348,10 +359,19 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
     IFS= read -r run_cause <<<"$run_record" || true
     die run-record-unreadable "path=$validate_run_dir" "cause=$run_cause"
   fi
-  # The one line --record prints: validate-mode=M verdict=V.
-  validate_mode="${run_record#validate-mode=}"
-  validate_mode="${validate_mode%% *}"
-  run_verdict="${run_record##* verdict=}"
+  # The one line --record prints: validate-mode=M verdict=V, then seconds=N
+  # started-at=T ended-at=T where the run finished, the bound's end included.
+  run_verdict=""
+  read -r -a run_fields <<<"$run_record"
+  for field in ${run_fields[@]+"${run_fields[@]}"}; do
+    case "$field" in
+      validate-mode=*) validate_mode="${field#*=}" ;;
+      verdict=*) run_verdict="${field#*=}" ;;
+      seconds=*) validate_seconds="${field#*=}" ;;
+      started-at=*) validate_started_at="${field#*=}" ;;
+      ended-at=*) validate_ended_at="${field#*=}" ;;
+    esac
+  done
   [[ "$validate" == FAILING:* || "$validate" == "$run_verdict" ]] \
     || die validate-disagrees "validate=$validate" "run=$run_verdict"
 elif [[ "$validate" != FAILING:* ]]; then
@@ -514,6 +534,9 @@ jq -n \
   --argjson baseline_lines "$baseline_lines" \
   --arg validate "$validate" \
   --arg validate_mode "$validate_mode" \
+  --arg validate_seconds "$validate_seconds" \
+  --arg validate_started_at "$validate_started_at" \
+  --arg validate_ended_at "$validate_ended_at" \
   --arg validate_note "$validate_note" \
   --argjson qa_labels "$qa_json" \
   --argjson near_ceiling "$near_json" \
@@ -532,6 +555,8 @@ jq -n \
      commit: $commit,
      validate: $validate,
      validate_mode: (if $validate_mode == "" then null else $validate_mode end),
+     validate_time: (if $validate_seconds == "" then null
+       else {started_at: $validate_started_at, ended_at: $validate_ended_at, seconds: ($validate_seconds | tonumber)} end),
      validate_note: (if $validate_note == "" then null else $validate_note end),
      qa_labels: $qa_labels,
      near_ceiling: $near_ceiling,

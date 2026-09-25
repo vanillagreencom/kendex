@@ -71,9 +71,9 @@ Usage: oversee-report due    --state PATH --repo OWNER/REPO [--repo ...]
        oversee-report write  --state PATH --repo OWNER/REPO [--repo ...]
                              --summary-file PATH [--succession]
 
-The overseer's status report, in the four rows
+The overseer's status report, in the rows
 references/communication-modes.md § Status report gives: Landed, Running,
-Next, Waiting on you.
+Validation, Next, Waiting on you.
 
 --state is the oversee workflow-state file the watch reads. The report is
 the owner progress report record schemas/workflow-state.md § Recording policy
@@ -96,8 +96,8 @@ due      prints `report-due reason=minutes since=<UTC>` once the last report
          enough, and landed= counts the lookback alone. Nothing under
          ORCH_REPORT=off, and nothing where no report exists and no lanes[]
          record has a launched_at.
-render   prints the four rows.
-write    prints the summary file's text, a blank line and the four rows, and
+render   prints the rows.
+write    prints the summary file's text, a blank line and the rows, and
          writes the same bytes to the path `workflow-state
          progress-report-path` prints, with --succession passed on to it.
          The new file is the next report's starting point. A path that
@@ -111,6 +111,11 @@ Rows:
                   PR number and the merge commit.
   Running         each lanes[] record reading running or preparing. The issue
                   cell carries its open PR, or `no PR`, and that status.
+  Validation      one line per lanes[] record reading running: the minutes
+                  its validation runs took, in total and per dev round, from
+                  the validate_rounds its own workflow state holds
+                  (schemas/workflow-state.md), each rounded to the nearest
+                  minute; `no validation run recorded` where it holds none.
   Next            the first ORCH_REPORT_UPCOMING keys of launch_queue that
                   have no lanes[] record, whatever its status: a record is
                   written at launch, so a key with one has launched.
@@ -516,14 +521,18 @@ item_state() {
   esac
 }
 
-# blockers — sets BLOCKERS to one line per thing a running lane waits on: an
-# ask the overseer has not answered, a post-PR stop its state records, and red
-# checks on its open pull request. Each line names the item and what it waits
-# on, so it reads apart from a question for the user.
+# running_lanes — reads each running lane once for two rows. BLOCKERS gets one
+# line per thing the lane waits on: an ask the overseer has not answered, a
+# post-PR stop its state records, and red checks on its open pull request.
+# Each line names the item and what it waits on, so it reads apart from a
+# question for the user. VALIDATION gets one line per lane: the minutes its
+# recorded validation runs took, in total and per round.
 BLOCKERS=""
-blockers() {
-  local lanes item host root args asks failing="" repo list stop
+VALIDATION=""
+running_lanes() {
+  local lanes item host root args asks failing="" repo list stop minutes
   BLOCKERS=""
+  VALIDATION=""
   for repo in "${REPOS[@]}"; do
     # github.sh picks its own token, and puts GH_BOT_TOKEN, inherited or from
     # the project's env files, ahead of the keyring and of GITHUB_TOKEN.
@@ -562,6 +571,14 @@ blockers() {
       fi
       [[ -z "$stop" ]] || BLOCKERS+="$stop"$'\n'
     fi
+    if ! minutes="$(jq -r --arg item "$item" 'def min: (. + 30) / 60 | floor;
+      (if . == null then [] else .validate_rounds // [] end) as $rounds
+      | if ($rounds | length) == 0 then "- \($item): no validation run recorded"
+        else "- \($item): \([$rounds[].seconds] | add | min) min over \($rounds | length) round\(if ($rounds | length) == 1 then "" else "s" end): \([$rounds[] | "\(.kind) \(.mode) \(.seconds | min)"] | join(", "))"
+        end' <<<"${ITEM_STATE:-null}" 2>"$WORK_DIR/state.err")"; then
+      refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
+    fi
+    VALIDATION+="$minutes"$'\n'
     if ! list="$(awk -F'\t' -v item="$item" \
       'tolower(item) == $1 { print "- " item " waits on red checks on " $2 ": " $3 }' <<<"$failing")"; then
       refuse pr-list "${REPOS[0]}" "the failing-check list could not be matched to $item"
@@ -569,6 +586,7 @@ blockers() {
     [[ -z "$list" ]] || BLOCKERS+="$list"$'\n'
   done <<<"$lanes"
   BLOCKERS="${BLOCKERS%$'\n'}"
+  VALIDATION="${VALIDATION%$'\n'}"
 }
 
 render() {
@@ -598,6 +616,7 @@ render() {
     fi
     [[ -z "$list" ]] || open+="$list"$'\n'
   done
+  running_lanes
   list="$(jq -r '.lanes[] | select(.status == "running" or .status == "preparing") | [.item, .status] | @tsv' <<<"$STATE_JSON")" \
     || refuse state "$STATE"
   rows=""
@@ -607,6 +626,13 @@ render() {
     rows+="$item"$'\t'"$item (${pr:-no PR}, $status)"$'\n'
   done <<<"$list"
   table Running "$rows"
+  echo
+
+  if [[ -z "$VALIDATION" ]]; then
+    echo "Validation: none"
+  else
+    printf 'Validation:\n%s\n' "$VALIDATION"
+  fi
   echo
 
   # A queued item with any lanes[] record has launched, and a done one stays
@@ -621,7 +647,6 @@ render() {
   if ! list="$(jq -r '(.owner_items // [])[] | "- Question for you: \(.text | gsub("\n"; " "))"' <<<"$STATE_JSON")"; then
     refuse state "$STATE"
   fi
-  blockers
   list+="${list:+${BLOCKERS:+$'\n'}}$BLOCKERS"
   if [[ -z "$list" ]]; then
     echo "Waiting on you: none"

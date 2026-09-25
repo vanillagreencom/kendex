@@ -171,11 +171,11 @@ A round that meets the Stalled round conditions of [references/skill-rules.md §
 
 | A (verdict) | B (git/tracker) | Action |
 |---|---|---|
-| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
+| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store Proposed Rules, then Store Near-Ceiling Lines, then Store Validation Time, then Store QA State. |
 | `accept` | fail | Re-read ONCE after a brief pause; if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
 | `wait` | pass | Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
 | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). |
-| `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. For a structurally valid artifact with a failing `validate`, run Store Proposed Rules and Store Near-Ceiling Lines, then end the workflow and report without another validation round. An identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
+| `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. For a structurally valid artifact with a failing `validate`, run Store Proposed Rules, Store Near-Ceiling Lines and Store Validation Time, then end the workflow and report without another validation round. An identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
 
 Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-checks.md](../references/artifact-checks.md)).
 
@@ -218,6 +218,18 @@ The accept paths, implement and fix alike, and the retry path for a structurally
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.near_ceiling = [NEAR_CEILING_ARRAY]'
 ```
+
+### Store Validation Time
+
+The accept paths, implement and fix alike, and the retry path for a structurally valid artifact with a failing `validate` run this subsection. It is the one writer of `.validate_rounds`, which the lane status file and `oversee-report`'s Validation row read.
+
+`[VALIDATE_TIME]` is the artifact's `validate_time` as `dev-artifact-check` echoed it. On `null` the round named no run, or its run is unfinished, and there is no wall time to record: skip the write. A `no-verdict` run the timeout ended carries its time and is recorded like any other. Otherwise `[SECONDS]` is its `seconds`, `[VALIDATE_MODE]` the echoed `validate_mode`, and `[KIND]` the round's `implement` or `fix`. The write appends one entry per round and replaces an entry already carrying this round id, so a re-run of this step never counts a round twice.
+
+```bash
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --arg round [DEV_ROUND_ID] --arg kind [KIND] --arg mode [VALIDATE_MODE] --argjson seconds [SECONDS] '.validate_rounds = ([(.validate_rounds // [])[] | select(.round_id != $round)] + [{round_id: $round, kind: $kind, mode: $mode, seconds: $seconds}])'
+```
+
+A lane under an overseer then rewrites its status file's validation line from `.validate_rounds`, per [oversee.md § 3 Lane directive](oversee.md#lane-directive).
 
 ### Store QA State
 
