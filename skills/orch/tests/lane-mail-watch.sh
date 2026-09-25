@@ -133,8 +133,8 @@ assert_eq "$(sed -n 1p "$WATCH_OUT")" "lane-mail: mail=KEN-1 new=2" \
 assert_eq "$(sed -n 2p "$WATCH_OUT")" \
   "Overseer mail landed in this lane mailbox. Run the command below and act on every directive it prints." \
   "the announcement tells the woken lane to run the command under it"
-assert_eq "$(sed -n 3p "$WATCH_OUT")" "$(printf '%q inbox --item KEN-1' "$LANE_MAIL")" \
-  "the command is the literal inbox read of this lane's mailbox"
+assert_eq "$(sed -n 3p "$WATCH_OUT")" "$(printf '%q inbox --item KEN-1 --root %q' "$LANE_MAIL" "$LANE")" \
+  "the command is the literal inbox read of this lane's mailbox, naming the root the watch resolved"
 send_directive 'Then merge.'
 assert_eq "${SENT##* }" "monitor=live" "a send to a mailbox under a running watch reads its monitor as live"
 await_announced 2
@@ -152,18 +152,26 @@ assert_eq "${SENT##* }" "monitor=none" "so a send after the stop reads no monito
 # The row the delivery claim stands on: the lane is idle, with nothing running
 # but its watch; a directive lands; the command the announcement names, run as
 # the woken turn runs it, hands the directive over; and nothing wrote to a pane.
+# The woken turn runs it from another checkout, where a read that resolved its
+# own root would open that checkout's mailbox and leave the lane's unread.
 new_lane idle
+OTHER="$TMP_ROOT/other-checkout"
+mkdir -p "$OTHER"
+git -C "$OTHER" init -q
+git -C "$OTHER" config gc.auto 0
+git -C "$OTHER" config maintenance.auto false
 start_watch
 await_polls 1
 send_directive 'Hold the PR.'
 await_announced 1
 READ=""
 if [ "$(announced)" -ge 1 ]; then
-  READ="$(cd "$LANE" && PATH="$STUB_BIN:$PATH" eval "$(sed -n 3p "$WATCH_OUT")")"
+  READ="$(cd "$OTHER" && PATH="$STUB_BIN:$PATH" eval "$(sed -n 3p "$WATCH_OUT")")"
 fi
 assert_eq "$(jq -r '.kind + " " + .text' <<<"${READ:-null}" 2>/dev/null)" "directive Hold the PR." \
-  "a directive sent to an idle lane is read by the command its watch's announcement names"
-assert_eq "$(cat "$BOX/to-lane.cursor")" "1" "that inbox read advances the cursor"
+  "a directive sent to an idle lane is read by the command its watch's announcement names, from any checkout"
+assert_eq "$(cat "$BOX/to-lane.cursor")=$([ -e "$OTHER/tmp" ] && echo stray || echo clean)" "1=clean" \
+  "that inbox read advances the lane's cursor and opens no mailbox in the checkout it ran from"
 assert_eq "$(wc -l <"$TMUX_LOG" | tr -d ' ')" "0" "the directive reached the idle lane with no pane write"
 send_directive 'Then merge.'
 await_announced 2

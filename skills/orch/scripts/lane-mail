@@ -56,7 +56,8 @@ Lane side, rooted at the lane's own git worktree:
               background wake. Every --interval, when envelopes `inbox` would
               print have landed past to-lane.cursor since the last poll, print
               `lane-mail: mail=<item> new=<n>`, one line of instruction and
-              the `inbox` command that reads them, so each arrival wakes the
+              the `inbox` command that reads them, with --root naming the
+              mailbox this watch reads, so each arrival wakes the
               lane once. An answer prints nothing: its `wait` hands it over.
               Each poll rewrites to-lane.watch, the liveness record a send's
               receipt reads. Moves no cursor, runs until it is stopped, and
@@ -1067,11 +1068,10 @@ case "$VERB" in
     # an empty mailbox forever and read as armed, and one whose mailbox is
     # removed under it, its worktree gone, has no lane left to wake.
     [ -d "$BOX" ] || refuse mailbox-missing "$BOX"
-    # The command the woken turn runs, spelled for the root this watch reads.
-    case "$OPTS_GIVEN" in
-      *"--root$NL"*) printf -v WATCH_READ '%q inbox --item %q --root %q' "$SCRIPT_DIR/lane-mail" "$ITEM" "$ROOT" ;;
-      *) printf -v WATCH_READ '%q inbox --item %q' "$SCRIPT_DIR/lane-mail" "$ITEM" ;;
-    esac
+    # The command the woken turn runs, always naming the root this watch
+    # resolved: the turn may run it from another checkout, where a read with
+    # no root would open that checkout's mailbox instead.
+    printf -v WATCH_READ '%q inbox --item %q --root %q' "$SCRIPT_DIR/lane-mail" "$ITEM" "$ROOT"
     # A trapped signal ends the wait below at once, and the EXIT trap then
     # withdraws the liveness record, so a send stops reading this monitor as
     # live the moment it is stopped. A KILL runs no trap: the record then goes
