@@ -152,9 +152,8 @@ jobs:
       # because there the action's own tree IS kendex at main.
       #
       # `classifier` and `subject` are siblings under the root checkout rather
-      # than nested inside the judged tree: the classifier refuses a `subject`
-      # whose working tree differs from its own HEAD, and a checkout written
-      # into it would cost every diff its `render` class.
+      # than nested inside the judged tree, so neither checkout writes into
+      # the other.
       - uses: actions/checkout@v4
         with:
           persist-credentials: false

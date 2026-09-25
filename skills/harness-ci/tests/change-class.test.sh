@@ -9,8 +9,9 @@
 # the script delegates to, not a copy of it: what these rows pin is that the
 # script calls it with `--json` and the base harness-only resolved, answers to
 # its verdict, to the counts its document reports AND to the positions its
-# passing rows print, and never calls it against a tree whose checkout could
-# hand it a script to run, nor against a working tree that is not the commit.
+# passing rows print, and calls it only in a private checkout of the head
+# commit: never in the judged checkout, whose git directory could hand it a
+# script to run and whose working tree need not be that commit.
 #
 # The binary those rows run is the one the workflow that supplies it builds
 # from the checkout: `.github/workflows/skill-tests.yml` § kendex, for the
@@ -24,13 +25,20 @@ repo="$(new_repo change-class)"
 commit_paths "$repo" baseline seed.txt
 base="$(git -C "$repo" rev-parse HEAD)"
 
-# The dependency double. It records every invocation, prints the ledger line
-# the row chose, and exits with the row's status.
+# The dependency double. It records every invocation and the tree it ran in,
+# the commit checked out there and how many arming records its git
+# directories hold, prints the ledger line the row chose, and exits with the
+# row's status.
 stub_bin="$SANDBOX/stub-bin"
 mkdir -p "$stub_bin"
 cat >"$stub_bin/kendex" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$KENDEX_STUB_CALLS"
+records=0
+for dir in "$(git rev-parse --git-common-dir)" "$(git rev-parse --git-dir)"; do
+  [ ! -d "$dir/kendex/armed" ] || records=$((records + 1))
+done
+printf 'head=%s records=%s\n' "$(git rev-parse HEAD)" "$records" >>"$KENDEX_STUB_TREES"
 cat "$KENDEX_STUB_LEDGER"
 cat "$KENDEX_STUB_SAYS" >&2
 exit "$(cat "$KENDEX_STUB_STATUS")"
@@ -39,6 +47,7 @@ chmod +x "$stub_bin/kendex"
 export KENDEX_STUB_STATUS="$SANDBOX/kendex-status"
 export KENDEX_STUB_LEDGER="$SANDBOX/kendex-ledger"
 export KENDEX_STUB_CALLS="$SANDBOX/kendex-calls"
+export KENDEX_STUB_TREES="$SANDBOX/kendex-trees"
 # What the stub says on stderr beside the document: verify's human rows,
 # for the row that pins them being carried to a refusal.
 export KENDEX_STUB_SAYS="$SANDBOX/kendex-says"
@@ -76,6 +85,7 @@ document() { # FOREIGN AGENT_STATE FAILED [without]
 # so a bookkeeping diff has no position to be owned from.
 set_verifier() { # MODE
   : >"$KENDEX_STUB_CALLS"
+  : >"$KENDEX_STUB_TREES"
   : >"$KENDEX_STUB_SAYS"
   case "$1" in
     clean) echo 0 >"$KENDEX_STUB_STATUS"
@@ -530,9 +540,9 @@ while IFS='|' read -r expected git_read; do
   assert_eq "the header names what it reads: $git_read" "$expected" \
     "$(grep -qF -- "$git_read" <<<"$help_text" && echo present || echo absent)"
 done <<'GIT_READS'
-present|two reads and no write
-present|where its git directory is
-present|whether its working tree is clean
+present|one read and no write
+present|where its object store is
+present|never the judged checkout's working tree
 present|cause=render-path-unowned
 present|cause=render-path-partial
 present|--json
@@ -542,18 +552,21 @@ require_rows change-class-git-reads "$git_read_count"
 
 # `git -C "$repo"` is the one spelling the script runs against the tree it
 # judges, which the first row establishes, so counting those call sites
-# counts the reads. The count and the word the header prints are asserted
-# against one expected pair: a read added while the sentence stands reds
-# here, and so does a sentence reworded while the code stands. A maintainer
-# changing either on purpose moves the pair with it.
+# counts the reads. The only other git the script runs writes the private
+# checkout the proof weighs, and every such line names that checkout. The
+# count and the word the header prints are asserted against one expected
+# pair: a read added while the sentence stands reds here, and so does a
+# sentence reworded while the code stands. A maintainer changing either on
+# purpose moves the pair with it.
 assert_eq "every git the script runs on the judged tree carries --repo" "0" \
-  "$(awk '/^[[:space:]]*#/ { next } /git / && !/git -C "\$repo"/ { n++ }
+  "$(awk '/^[[:space:]]*#/ { next }
+     /git / && !/git -C "\$repo"/ && !/"\$proof_tree"/ { n++ }
      END { print n + 0 }' "$CHANGE_CLASS")"
 git_read_sites="$(grep -c 'git -C "$repo"' "$CHANGE_CLASS" | tr -d ' ')"
-git_read_word="$(grep -o '[a-z]* reads and no write' <<<"$help_text" |
+git_read_word="$(grep -oE '[a-z]+ reads? and no write' <<<"$help_text" |
   tail -1 | cut -d' ' -f1)"
 assert_eq "the header spells the number of git call sites the script holds" \
-  "2 two" "$git_read_sites $git_read_word"
+  "1 one" "$git_read_sites $git_read_word"
 
 # A refresh that adds a rendered file gains an inventory entry, and the shipped
 # harness-only rule refuses a gain: a branch could otherwise name a product
@@ -857,28 +870,40 @@ assert_eq "a ceiling that is not a whole number is refused" \
   "wiring-error: cause=invalid-setting setting=HARNESS_CI_TRIVIAL_MAX_LINES exit 2" \
   "$(printf '%s\n' "$out" | grep '^wiring-error: ') exit $status"
 
-# A checkout carrying an arming record is one kendex verify would run a
-# package's declared checker in, out of the tree under judgement. The class is
-# refused and the verifier is never called.
+# The proof weighs a private checkout of --head, never the judged checkout.
+# A judged checkout carrying an arming record is one kendex verify would run a
+# package's declared checker in, out of the tree under judgement, so the
+# private checkout's git directory holds no record and the class is still
+# earned there. Each row reads the tree the verifier ran in off the stub: the
+# commit checked out and how many records its git directories hold.
 reset_case
 set_verifier clean
 write_lines "$repo" .agents/skills/orch/SKILL.md 4
 git -C "$repo" add -A
 git -C "$repo" commit -q -m "render in an armed checkout"
+armed_head="$(git -C "$repo" rev-parse HEAD)"
 mkdir -p "$repo/.git/kendex/armed/commit-guards"
 : >"$repo/.git/kendex/armed/commit-guards/-record"
-PATH="$stub_bin:$PATH" assert_class "an armed checkout is never verified" standard \
-  --repo "$repo" --event pull_request --base "$base" --head HEAD
-assert_eq "and the verifier was not run there" "0" \
-  "$(wc -l <"$KENDEX_STUB_CALLS" | tr -d ' ')"
+armed_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "an armed checkout's render-only range is a render" \
+  "class: class=render measured=true cause=renders-match-their-sources" \
+  "$(printf '%s\n' "$armed_err" | grep '^class: ')"
+assert_eq "and the verifier ran once, at the head, where no record is" \
+  "head=$armed_head records=0" "$(cat "$KENDEX_STUB_TREES")"
+# Must-fail control: the same armed fixture with the render hand-edited away
+# from its source, which the verifier fails, is not a render.
+set_verifier dirty
+PATH="$stub_bin:$PATH" assert_class "a hand edit in an armed checkout is not a render" \
+  standard --repo "$repo" --event pull_request --base "$base" --head HEAD
 rm -rf -- "${repo:?}/.git/kendex"
 
-# The record can sit where only ONE of the two questions reaches it. In a
-# linked worktree --git-dir answers .git/worktrees/<name>, which holds no
+# The record can sit where only ONE of the two git directories reaches it. In
+# a linked worktree --git-dir answers .git/worktrees/<name>, which holds no
 # record, while --git-common-dir answers the main checkout's .git, which does.
-# That is the shape this repository is checked out in, and it is the only
-# shape the common-dir arm decides; a plain repository answers both the same
-# and would keep the row green with that arm removed.
+# That is the shape this repository is checked out in, and the reason the
+# proof's checkout is not a `git worktree add`: one would read the record
+# through the common directory.
 armed_main="$(new_repo change-class-armed-main)"
 commit_paths "$armed_main" baseline seed.txt
 armed_base="$(git -C "$armed_main" rev-parse HEAD)"
@@ -887,6 +912,7 @@ git -C "$armed_main" worktree add -q -b armed-case "$armed_case" "$armed_base"
 write_lines "$armed_case" .agents/skills/orch/SKILL.md 4
 git -C "$armed_case" add -A
 git -C "$armed_case" commit -q -m "a render inside a linked worktree"
+armed_case_head="$(git -C "$armed_case" rev-parse HEAD)"
 mkdir -p "$armed_main/.git/kendex/armed/commit-guards"
 : >"$armed_main/.git/kendex/armed/commit-guards/-record"
 armed_case_gitdir="$(cd -- "$armed_case" && git rev-parse --git-dir)"
@@ -895,9 +921,44 @@ assert_eq "the worktree's own git directory holds no record" "absent" \
   "$([ -d "$armed_case_gitdir/kendex/armed" ] && echo present || echo absent)"
 set_verifier clean
 PATH="$stub_bin:$PATH" \
-  assert_class "an armed main checkout is never verified through its worktree" \
-  standard --repo "$armed_case" --event pull_request --base "$armed_base" --head HEAD
-assert_eq "and the verifier was not run in the worktree either" "0" \
+  assert_class "a worktree of an armed main checkout is a render" \
+  render --repo "$armed_case" --event pull_request --base "$armed_base" --head HEAD
+assert_eq "and the verifier ran at the head, where no record is" \
+  "head=$armed_case_head records=0" "$(cat "$KENDEX_STUB_TREES")"
+
+# The judged checkout's own commit is not what the proof weighs either: a
+# checkout sitting at the base while --head names the branch has verify weigh
+# --head, and a render there is still a render.
+reset_case
+set_verifier clean
+write_lines "$repo" .agents/skills/orch/SKILL.md 4
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "a render the checkout does not sit at"
+elsewhere_head="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -q --detach "$base"
+PATH="$stub_bin:$PATH" assert_class "a checkout at the base still classifies --head" \
+  render --repo "$repo" --event pull_request --base "$base" --head "$elsewhere_head"
+assert_eq "and the verifier weighed --head, not the checkout's own commit" \
+  "head=$elsewhere_head records=0" "$(cat "$KENDEX_STUB_TREES")"
+
+# A private checkout that cannot be made is refused, and the verifier never
+# runs in a partial tree. harness-only reads the trees and the inventory blob,
+# never the changed file's own blob, so deleting that loose object leaves the
+# range readable and the checkout impossible.
+unmade="$(new_repo change-class-unmade-checkout)"
+commit_paths "$unmade" baseline seed.txt
+unmade_base="$(git -C "$unmade" rev-parse HEAD)"
+commit_paths "$unmade" "a render whose blob goes missing" .agents/skills/orch/SKILL.md
+unmade_head="$(git -C "$unmade" rev-parse HEAD)"
+unmade_blob="$(git -C "$unmade" rev-parse "HEAD:.agents/skills/orch/SKILL.md")"
+rm -- "${unmade:?}/.git/objects/${unmade_blob:0:2}/${unmade_blob:2}"
+set_verifier clean
+unmade_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$unmade" \
+  --event pull_request --base "$unmade_base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a head that cannot be checked out is refused, naming it" \
+  "class: class=standard measured=false cause=head-checkout-failed head=$unmade_head" \
+  "$(printf '%s\n' "$unmade_err" | grep '^class: ')"
+assert_eq "and the verifier was not run" "0" \
   "$(wc -l <"$KENDEX_STUB_CALLS" | tr -d ' ')"
 
 # An installed package layout: harness-ci's scripts, and orch beside them
@@ -1193,16 +1254,31 @@ TOML
     "$(printf '%s\n' "$refresh_err" | sed -n 's/^class: //p')"
 
   # A priming step that writes into the checkout would be weighing its own
-  # repair rather than the commit. Anything uncommitted refuses the class,
-  # untracked content included: that is the shape a branch that DELETED a
-  # render leaves behind after an install pass puts it back.
+  # repair rather than the commit, had the proof run there. It runs in a
+  # private checkout of --head, so nothing uncommitted reaches it, untracked
+  # content included: that is the shape a branch that DELETED a render leaves
+  # behind after an install pass puts it back.
   printf 'a file no commit holds\n' >"$consumer/.claude/skills/second/spare.md"
   dirty_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$consumer_base" --head HEAD)"
-  assert_eq "a working tree that is not the commit is never verified" \
-    "cause=judged-tree-dirty entries=1" \
-    "$(printf '%s\n' "$dirty_err" | sed -n 's/^class: class=standard measured=[a-z]* //p')"
+  assert_eq "uncommitted content in the judged checkout is never weighed" \
+    "class=render measured=true cause=renders-match-their-sources" \
+    "$(printf '%s\n' "$dirty_err" | sed -n 's/^class: //p')"
   rm -- "$consumer/.claude/skills/second/spare.md"
+
+  # An armed consumer, the shape every checkout with the commit chain armed
+  # through kendex has. The record sits in the judged checkout's git
+  # directory, where kendex verify would run the armed package's checker out
+  # of the judged tree; the proof's own checkout carries none, so the pure
+  # refresh is still a render. The hand-edit row below is its must-fail
+  # control, run on the same armed checkout.
+  mkdir -p "$consumer/.git/kendex/armed/commit-guards"
+  : >"$consumer/.git/kendex/armed/commit-guards/-record"
+  armed_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base "$consumer_base" --head HEAD)"
+  assert_eq "an armed consumer's pure refresh is a render" \
+    "class=render measured=true cause=renders-match-their-sources" \
+    "$(printf '%s\n' "$armed_err" | sed -n 's/^class: //p')"
 
   # The same refresh with one rendered file hand-edited. There is no sibling
   # row for a hand edit whose install record was recomputed to agree with it:
@@ -1217,9 +1293,28 @@ TOML
   git -C "$consumer" commit -q -m "a hand edit inside a render"
   hand_edit_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$consumer_base" --head HEAD)"
-  assert_eq "a hand edit inside that refresh is not a render" \
+  assert_eq "a hand edit inside that refresh, in the armed consumer, is not a render" \
     "class=standard measured=false cause=verify-refused" \
     "$(printf '%s\n' "$hand_edit_err" | sed -n 's/^class: //p')"
+  rm -rf -- "${consumer:?}/.git/kendex"
+
+  # The proof weighs --head wherever the judged checkout sits. Sitting at the
+  # pure refresh, whose renders verify clean against the primed mirror, the
+  # hand edit at --head is still refused; sitting at the hand edit, the pure
+  # refresh at --head is still a render.
+  hand_edited="$(git -C "$consumer" rev-parse HEAD)"
+  git -C "$consumer" checkout -q --detach refreshed
+  elsewhere_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base "$consumer_base" --head "$hand_edited")"
+  assert_eq "a checkout at the pure refresh has verify weigh the hand edit at --head" \
+    "class=standard measured=false cause=verify-refused" \
+    "$(printf '%s\n' "$elsewhere_err" | sed -n 's/^class: //p')"
+  git -C "$consumer" checkout -q hand-edited
+  elsewhere_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base "$consumer_base" --head refreshed)"
+  assert_eq "and a checkout at the hand edit has verify weigh the refresh at --head" \
+    "class=render measured=true cause=renders-match-their-sources" \
+    "$(printf '%s\n' "$elsewhere_err" | sed -n 's/^class: //p')"
 
   # The de-listing half of the chain KEN-1637's security finding walks, on the
   # real binary: a commit that drops one render from the inventory and its
@@ -1272,8 +1367,8 @@ TOML
   # refuses on an unowned path. Both answer standard, so the rows read the
   # cause: without that the inverse would pass on a verdict it never earned.
   catalog_mutant="$(plant_package "$SANDBOX/catalog-byte-mutant" link)"
-  proof_call='  if ! VERIFY_JSON="$( (cd -- "$repo" && kendex "${verify_args[@]}") 2>"$work/verify-stderr" )"; then'
-  catalog_call='  if ! VERIFY_JSON="$(cmp -s "$repo/$CATALOG_RENDER" "$CATALOG_SOURCE" && printf "%s" "{\"version\":1,\"clean\":true,\"checked\":2,\"failed\":0,\"rows\":[{\"kind\":\"skill\",\"name\":\"demo\",\"state\":\"ok\",\"positions\":[{\"path\":\".claude/skills/demo\",\"owns\":\"tree\"}]}]}")"; then'
+  proof_call='  if ! VERIFY_JSON="$( (cd -- "$proof_tree" && kendex "${verify_args[@]}") 2>"$work/verify-stderr" )"; then'
+  catalog_call='  if ! VERIFY_JSON="$(cmp -s "$proof_tree/$CATALOG_RENDER" "$CATALOG_SOURCE" && printf "%s" "{\"version\":1,\"clean\":true,\"checked\":2,\"failed\":0,\"rows\":[{\"kind\":\"skill\",\"name\":\"demo\",\"state\":\"ok\",\"positions\":[{\"path\":\".claude/skills/demo\",\"owns\":\"tree\"}]}]}")"; then'
   assert_eq "the inverse replaces exactly one proof call" 1 \
     "$(grep -cxF "$proof_call" "$CHANGE_CLASS")"
   # Line by line rather than by sed: both spellings carry the slashes and

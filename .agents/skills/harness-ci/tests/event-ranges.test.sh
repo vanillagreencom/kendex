@@ -63,4 +63,28 @@ default-head-mixed|false|$mg|merge_group|$mg_base|default:$mg_mixed_head
 CASES
 require_rows event-ranges "$event_row_count"
 
+# Each verdict names the commits its range was read between, so a caller
+# reading the same range's committed state resolves neither end itself: the
+# merge base on a pull request, the commit the base endpoint resolved to on
+# the others, and the commit the head endpoint resolved to, symbolic names
+# included.
+pr_merge_base="$(git -C "$pr" merge-base "$pr_base" "$pr_head")"
+git -C "$mg" checkout -q --detach "$mg_render_head"
+git -C "$mg" tag mg-base "$mg_base"
+# label | repository | event | base | head | expected lines
+resolved_row_count=0
+while IFS='|' read -r label case_repo event case_base case_head expected; do
+  resolved_row_count=$((resolved_row_count + 1))
+  resolved="$("$HARNESS_ONLY" --repo "$case_repo" --event "$event" \
+    --base "$case_base" --head "$case_head" 2>&1 >/dev/null |
+    sed -n '/^base-rev: /p; /^head-rev: /p' | tr '\n' ' ')"
+  assert_eq "$label" "$expected " "$resolved"
+done <<CASES
+a pull request names its merge base and head|$pr|pull_request|$pr_base|$pr_head|base-rev: $pr_merge_base head-rev: $pr_head
+a merge group names its endpoints|$mg|merge_group|$mg_base|$mg_mixed_head|base-rev: $mg_base head-rev: $mg_mixed_head
+a symbolic head is named by the commit it resolved to|$mg|merge_group|$mg_base|HEAD|base-rev: $mg_base head-rev: $mg_render_head
+a symbolic base is named by the commit it resolved to|$mg|merge_group|mg-base|$mg_mixed_head|base-rev: $mg_base head-rev: $mg_mixed_head
+CASES
+require_rows event-ranges-resolved "$resolved_row_count"
+
 report event-ranges

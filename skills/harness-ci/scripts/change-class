@@ -7,10 +7,11 @@
 #
 # Flags carry the meanings `harness-only --help` gives them, except --mode and
 # --paths-output, which this script does not take. Every read of a diff range
-# is that shipped classifier's or orch's branch measurement, the revision the
-# base end of the range resolves to included. The git this script runs on the
-# judged checkout itself is two reads and no write: where its git directory is,
-# and whether its working tree is clean.
+# is that shipped classifier's or orch's branch measurement, the revisions both
+# ends of the range resolve to included. The git this script runs on the judged
+# checkout itself is one read and no write: where its object store is. The
+# render proof weighs a private checkout of the head revision, never the judged
+# checkout's working tree.
 # stdout carries change_class=render|trivial|micro|small|standard and nothing
 # else, stderr the changed paths and the reason, and exit 2 a wiring error
 # that carries no verdict. The stderr `class:` line also carries `measured=`,
@@ -19,8 +20,9 @@
 # measured=false, and only this script can tell the two apart: the cause alone
 # does not, so a consumer that must not treat a fallback as a class reads the
 # marker rather than a list of causes of its own. The render proof runs `kendex verify --scope
-# project --json`, with `--base` set to the base-rev: line harness-only
-# printed, and reads its document. The classes, first match winning:
+# project --json` in that private checkout, with `--base` set to the base-rev:
+# line harness-only printed, and reads its document. The classes, first match
+# winning:
 #
 #   render   every changed path is a file kendex generated, `kendex verify`
 #            reports files checked and none failed, and every changed path is
@@ -181,14 +183,15 @@ answer() { # CLASS FIELDS [measured]
 }
 
 # harness-only owns the diff range for every event, its endpoint refusals, the
-# revision the base end of that range resolves to, and the generated-path
-# ownership rules the render class needs. Its changed-path and base-rev lines
-# are repeated as they stand, and the cause inside its verdict notice is
-# repeated as a note: it is the only account of why a path set is empty, where
-# it becomes this script's cause, the only account of an inventory this script
-# cannot stand on, where it becomes this script's cause too, and the only
-# account of why the render class was out of reach on a diff of generated
-# files, where the class a size earns would otherwise be the whole log.
+# revisions both ends of that range resolve to, and the generated-path
+# ownership rules the render class needs. Its changed-path, base-rev and
+# head-rev lines are repeated as they stand, and the cause inside its verdict
+# notice is repeated as a note: it is the only account of why a path set is
+# empty, where it becomes this script's cause, the only account of an
+# inventory this script cannot stand on, where it becomes this script's cause
+# too, and the only account of why the render class was out of reach on a
+# diff of generated files, where the class a size earns would otherwise be
+# the whole log.
 harness_args=(--event "$event" --head "$head" --repo "$repo")
 [ -z "$base" ] || harness_args=("${harness_args[@]}" --base "$base")
 if ! harness_verdict="$("$HARNESS_ONLY" --mode harness "${harness_args[@]}" \
@@ -199,15 +202,19 @@ if ! harness_verdict="$("$HARNESS_ONLY" --mode harness "${harness_args[@]}" \
 fi
 sed -n '/^changed-path: /p' "$harness_err" >&2
 sed -n '/^base-rev: /p' "$harness_err" >&2
+sed -n '/^head-rev: /p' "$harness_err" >&2
 sed -n 's/^fallback: /harness-note: /p' "$harness_err" >&2
 if ! harness_note="$(sed -n 's/^fallback: //p' "$harness_err" | tail -1)"; then
   harness_note=""
 fi
-# The revision the range's base end resolved to, read off the line harness-only
-# printed for it and resolved nowhere else: the render proof hands it to
-# `kendex verify --base`, which is the one base-dependent read left here.
+# The revisions the range's two ends resolved to, read off the lines
+# harness-only printed for them and resolved nowhere else: the render proof
+# checks the head out and hands the base to `kendex verify --base`.
 if ! base_rev="$(sed -n 's/^base-rev: //p' "$harness_err" | tail -1)"; then
   base_rev=""
+fi
+if ! head_rev="$(sed -n 's/^head-rev: //p' "$harness_err" | tail -1)"; then
+  head_rev=""
 fi
 
 # The committed inventory is the file every rule below is judged by: generated
@@ -305,20 +312,37 @@ REGISTRY_GLOBS='.claude/settings.json .claude/settings.local.json .mcp.json
   .pi/settings.json .pi/kendex/hooks.json
   opencode.json opencode.jsonc'
 
-# kendex records arming a package's repository effect under the checkout's git
-# directory, and with that record `kendex verify` runs the package's declared
-# checker out of the tree it is checking. That checker is a file this diff can
-# change, so a checkout carrying a record is one this script will not verify.
-armed_record() { # -> prints the record directory it found
-  local which dir found=""
-  for which in --git-common-dir --git-dir; do
-    if ! dir="$(git -C "$repo" rev-parse "$which" 2>/dev/null)"; then
-      return 1
-    fi
-    case "$dir" in /*) ;; *) dir="$repo/$dir" ;; esac
-    [ ! -d "$dir/kendex/armed" ] || found="$dir/kendex/armed"
-  done
-  printf '%s' "$found"
+# The render proof weighs the tree at the range's head and no other: the
+# commit harness-only resolved --head to, checked out into a directory of this
+# script's own. The judged checkout's working tree is never weighed. Anything
+# uncommitted there, such as a file an earlier step wrote back or an untracked
+# render standing in for one the branch deleted, would be weighed in place of
+# what the pull request would merge. And the commit it sits at is not always
+# --head: references/wiring.md § Shape 4 checks the subject out at the pull
+# request's merge ref, and a local caller's checkout can sit anywhere.
+#
+# The private checkout has a git directory of its own, which `git init`
+# writes, and it borrows the judged repository's objects through an
+# alternates file. It never shares a git directory with the judged checkout,
+# and that is what keeps kendex's arming records out of it. kendex records
+# arming a package's repository effect under a git directory, the common one
+# included, so a `git worktree add` would inherit it. With a record present,
+# `kendex verify` runs the package's declared checker out of the tree it
+# checks, and that checker is a file this diff can change.
+#
+# `git checkout` exits 0 when it cannot read a blob and leaves that file out,
+# so the checkout is held to its head afterwards: a status naming anything is
+# a tree that is not the commit, and is refused like a checkout that failed.
+proof_tree="$work/proof"
+checkout_head() {
+  local objects left
+  objects="$(git -C "$repo" rev-parse --path-format=absolute --git-path objects 2>"$work/proof-stderr")" &&
+    git init -q "$proof_tree" 2>>"$work/proof-stderr" &&
+    mkdir -p "$proof_tree/.git/objects/info" &&
+    printf '%s\n' "$objects" >"$proof_tree/.git/objects/info/alternates" &&
+    git -C "$proof_tree" checkout -q --detach "$head_rev" 2>>"$work/proof-stderr" &&
+    left="$(git -C "$proof_tree" status --porcelain 2>>"$work/proof-stderr")" || return 1
+  [ -z "$left" ] || { printf '%s\n' "$left" >>"$work/proof-stderr"; return 1; }
 }
 
 # `kendex verify` weighs the manifest and render bytes of every installed
@@ -329,19 +353,6 @@ armed_record() { # -> prints the record directory it found
 # document are the evidence, and the class is granted only where it checked
 # something and nothing failed.
 #
-# The verdict describes the working tree, not a commit, so the tree has to be
-# one: anything uncommitted — a file an earlier step wrote back, an untracked
-# render standing in for one the branch deleted — would be weighed in place of
-# what the pull request would merge. A dirty checkout is refused rather than
-# measured.
-#
-# What `git status --porcelain` proves is that the tree matches the CHECKOUT'S
-# OWN HEAD, which is not always --head: references/wiring.md § Shape 4 checks
-# the subject out at the pull request's merge ref while the changed paths come
-# from a range ending at --head. Every way those two commits differ costs a
-# package its row, so the gap between the two is conservative rather than
-# exact, and closing it would cost the shape its merge-ref checkout.
-#
 # The base revision handed to `kendex verify --base` is the one harness-only
 # resolved for the range the changed paths came from, read off its base-rev:
 # line and never derived here a second time: it is what a shared file's rest
@@ -351,31 +362,26 @@ armed_record() { # -> prints the record directory it found
 RENDER_REFUSAL=""
 VERIFY_JSON=""
 renders_match() {
-  local armed dirty verify_args counts checked failed version
+  local verify_args counts checked failed version
   if ! command -v kendex >/dev/null 2>&1; then
     RENDER_REFUSAL="cause=no-verifier"
     return 1
   fi
-  if ! armed="$(armed_record)"; then
-    RENDER_REFUSAL="cause=repository-unreadable"
+  # harness-only prints head-rev: on every verdict it reaches after resolving
+  # both ends, harness_only=true included, so an absent line is a
+  # harness-only that broke that promise.
+  if [ -z "$head_rev" ]; then
+    RENDER_REFUSAL="cause=head-rev-missing"
     return 1
   fi
-  if [ -n "$armed" ]; then
-    RENDER_REFUSAL="cause=arming-record-present dir=$armed"
-    return 1
-  fi
-  if ! dirty="$(git -C "$repo" status --porcelain 2>/dev/null)"; then
-    RENDER_REFUSAL="cause=repository-unreadable"
-    return 1
-  fi
-  if [ -n "$dirty" ]; then
-    printf '%s\n' "$dirty" >&2
-    RENDER_REFUSAL="cause=judged-tree-dirty entries=$(printf '%s\n' "$dirty" | grep -c '')"
+  if ! checkout_head; then
+    cat "$work/proof-stderr" >&2
+    RENDER_REFUSAL="cause=head-checkout-failed head=$head_rev"
     return 1
   fi
   verify_args=(verify --scope project --json)
   [ -z "$base_rev" ] || verify_args=("${verify_args[@]}" --base "$base_rev")
-  if ! VERIFY_JSON="$( (cd -- "$repo" && kendex "${verify_args[@]}") 2>"$work/verify-stderr" )"; then
+  if ! VERIFY_JSON="$( (cd -- "$proof_tree" && kendex "${verify_args[@]}") 2>"$work/verify-stderr" )"; then
     cat "$work/verify-stderr" >&2
     RENDER_REFUSAL="cause=verify-refused"
     return 1
