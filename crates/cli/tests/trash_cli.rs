@@ -40,6 +40,14 @@ fn trash_dir(home: &Path) -> PathBuf {
     Env::host_rooted(home).trash_dir()
 }
 
+/// Whether `first` is printed before `second`, both present.
+fn before(text: &str, first: &str, second: &str) -> bool {
+    match (text.find(first), text.find(second)) {
+        (Some(a), Some(b)) => a < b,
+        _ => false,
+    }
+}
+
 /// An entry an earlier invocation moved into the trash `age` seconds ago
 /// under `base`, holding one file of `bytes` bytes.
 #[allow(clippy::unwrap_used)]
@@ -213,8 +221,14 @@ fn an_apply_brings_the_trash_within_its_bounds_and_keeps_what_it_wrote() {
         &["apply", "-y", "--replace-unmanaged"],
     );
     assert!(applied.status.success(), "{}", said(&applied));
+    // Said before the line the run closes on, so the closing line stays
+    // the last thing the run says.
     assert!(
-        said(&applied).contains("trash: removed 2 older entries"),
+        before(
+            &said(&applied),
+            "trash: removed 2 older entries",
+            &format!("{}: applied", project.display())
+        ),
         "{}",
         said(&applied)
     );
@@ -227,14 +241,19 @@ fn an_apply_brings_the_trash_within_its_bounds_and_keeps_what_it_wrote() {
     );
 }
 
-/// `refresh` and `remove` close on the same pass, after their own writes.
+/// `refresh` and `remove` close on the same pass, after their own writes
+/// and before their closing line.
 #[test]
 fn refresh_and_remove_close_on_the_pass_too() {
-    let rows: [(&str, &[&str]); 2] = [
-        ("refresh", &["refresh", "-y", "--scope", "project"]),
-        ("remove", &["remove", "deploy"]),
+    let rows: [(&str, &[&str], &str); 2] = [
+        (
+            "refresh",
+            &["refresh", "-y", "--scope", "project"],
+            "up to date",
+        ),
+        ("remove", &["remove", "deploy"], "removed 3 changes"),
     ];
-    for (verb, args) in rows {
+    for (verb, args, closing) in rows {
         let (_tmp, home) = fixture();
         let project = migrating_project(&home);
         let installed = kendex(
@@ -251,7 +270,11 @@ fn refresh_and_remove_close_on_the_pass_too() {
         let closed = kendex(&home, &project, &bounds, args);
         assert!(closed.status.success(), "{verb}: {}", said(&closed));
         assert!(
-            said(&closed).contains("trash: removed 1 older entry"),
+            before(
+                &said(&closed),
+                "trash: removed 1 older entry",
+                &format!("{}: {closing}", project.display())
+            ),
             "{verb}: {}",
             said(&closed)
         );
@@ -262,6 +285,52 @@ fn refresh_and_remove_close_on_the_pass_too() {
             "{verb}: {kept:?}"
         );
     }
+}
+
+/// A plan writes nothing, so it closes on no pass: the aged entry stays
+/// and the run says nothing about the trash.
+#[test]
+fn a_plan_only_apply_leaves_the_trash_alone() {
+    let (_tmp, home) = fixture();
+    let project = migrating_project(&home);
+    let old = plant(&home, 40 * DAY, "old", 10);
+
+    let planned = kendex(
+        &home,
+        &project,
+        &[("KENDEX_TRASH_KEEP_DAYS", "7")],
+        &["apply", "--plan"],
+    );
+    assert!(planned.status.success(), "{}", said(&planned));
+    assert!(!said(&planned).contains("trash:"), "{}", said(&planned));
+    assert_eq!(names(&home), [old]);
+}
+
+/// An emptying that stops is a failure of the verb: it exits nonzero
+/// naming what went and why, and the newest entries are still there.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_empty_that_stops_exits_nonzero_naming_what_went() {
+    use std::os::unix::fs::PermissionsExt as _;
+    if test_util::no_record_on_this_runner() {
+        return;
+    }
+    let (_tmp, home) = fixture();
+    let newest = plant(&home, DAY, "newest", 10);
+    let stuck = plant(&home, 2 * DAY, "stuck", 10);
+    plant(&home, 3 * DAY, "oldest", 10);
+    let stuck_dir = trash_dir(&home).join(&stuck);
+    fs::set_permissions(&stuck_dir, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let stopped = kendex(&home, &home, &[], &["trash", "empty", "--yes"]);
+    fs::set_permissions(&stuck_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!stopped.status.success(), "{}", said(&stopped));
+    let text = said(&stopped);
+    assert!(
+        text.contains("trash: removed 1 entry, then stopped:") && text.contains("stuck"),
+        "{text}"
+    );
+    assert_eq!(names(&home), [stuck, newest]);
 }
 
 /// A scope that fails after an earlier one wrote stops the run, never

@@ -75,7 +75,8 @@ fn entries_past_the_age_bound_go_and_the_rest_stay() {
 }
 
 /// The size bound alone, newest first: the entry that takes the running
-/// total past the bound goes, and every older one with it.
+/// total past the bound goes, and every older one with it, however small
+/// and however far inside the age bound.
 #[test]
 fn entries_past_the_size_bound_go_oldest_first() {
     let f = bounded("365", "1");
@@ -84,12 +85,30 @@ fn entries_past_the_size_bound_go_oldest_first() {
     let second = plant(&f, 2 * DAY, "b", quarter);
     let third = plant(&f, 3 * DAY, "c", quarter);
     plant(&f, 4 * DAY, "d", quarter);
+    plant(&f, 5 * DAY, "e", 10);
 
-    assert_eq!(retain(&f.env), Ok(1));
+    assert_eq!(retain(&f.env), Ok(2));
     assert_eq!(
         names(&f),
         BTreeSet::from([name_of(&newest), name_of(&second), name_of(&third)])
     );
+}
+
+/// What this invocation wrote is kept and still counted: its bytes fill
+/// the bound, and a younger entry nobody holds goes to make room.
+#[test]
+fn a_held_entrys_bytes_count_toward_the_bound() {
+    let f = bounded("365", "1");
+    let small = plant(&f, DAY, "small", 300 * 1024);
+    let removed = f._tmp.path().join("removed");
+    fs::create_dir_all(&removed).unwrap();
+    fs::write(removed.join("blob"), vec![b'x'; 900 * 1024]).unwrap();
+    move_to_trash(&f.env, &removed).unwrap();
+
+    assert_eq!(retain(&f.env), Ok(1));
+    let kept = names(&f);
+    assert!(!kept.contains(&name_of(&small)), "{kept:?}");
+    assert_eq!(kept.len(), 1, "{kept:?}");
 }
 
 /// What this invocation moved to the trash is never a candidate, however
@@ -188,6 +207,59 @@ fn a_removal_that_fails_stops_the_pass_and_reports_what_went_before() {
     );
 }
 
+/// An entry that will not measure stops the pass where it is, with
+/// nothing removed and the unreadable path named, and stops the listing
+/// the same way: a size left out would read as a trash smaller than it
+/// is. A held entry is measured too, so one that will not measure stops
+/// the pass just the same.
+#[cfg(unix)]
+#[test]
+fn an_entry_that_will_not_measure_stops_the_pass_and_the_listing() {
+    use std::os::unix::fs::PermissionsExt as _;
+    if crate::test_util::no_record_on_this_runner() {
+        return;
+    }
+    for held in [false, true] {
+        let f = bounded("7", "1024");
+        let readable = plant(&f, DAY, "readable", 10);
+        plant(&f, 40 * DAY, "aged", 10);
+        let sealed = match held {
+            false => plant(&f, 2 * DAY, "sealed", 10),
+            true => {
+                let removed = f._tmp.path().join("sealed");
+                fs::create_dir_all(&removed).unwrap();
+                move_to_trash(&f.env, &removed).unwrap();
+                f.env.held().trashed.into_iter().next().unwrap()
+            }
+        };
+        let locked = sealed.join("locked");
+        fs::create_dir_all(&locked).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let outcome = retain(&f.env);
+        let listed = list(&f.env);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        let Err(Stopped { removed, reason }) = outcome else {
+            panic!("held={held}: {outcome:?}");
+        };
+        assert_eq!(removed, 0, "held={held}");
+        assert!(
+            reason.contains(&locked.display().to_string()),
+            "held={held}: {reason}"
+        );
+        let kept = names(&f);
+        assert_eq!(kept.len(), 3, "held={held}: {kept:?}");
+        assert!(kept.contains(&name_of(&readable)), "held={held}: {kept:?}");
+        let Err(reason) = listed else {
+            panic!("held={held}: {listed:?}");
+        };
+        assert!(
+            reason.contains(&locked.display().to_string()),
+            "held={held}: {reason}"
+        );
+    }
+}
+
 /// A trash that will not read is not an empty trash: the pass stops and
 /// names it.
 #[cfg(unix)]
@@ -236,6 +308,35 @@ fn empty_takes_every_entry_or_every_entry_past_an_age() {
     assert!(
         kept.iter().all(|name| name.ends_with("-removed")),
         "{kept:?}"
+    );
+}
+
+/// An emptying goes oldest first, so one that stops leaves the newest
+/// entries, the ones a person is most likely to want back.
+#[cfg(unix)]
+#[test]
+fn an_empty_that_stops_leaves_the_newest_entries() {
+    use std::os::unix::fs::PermissionsExt as _;
+    if crate::test_util::no_record_on_this_runner() {
+        return;
+    }
+    let f = fixture();
+    let newest = plant(&f, DAY, "newest", 10);
+    let stuck = plant(&f, 2 * DAY, "stuck", 10);
+    plant(&f, 3 * DAY, "oldest", 10);
+    // A directory nothing may write in cannot lose the file it holds.
+    fs::set_permissions(&stuck, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let outcome = empty(&f.env, None);
+    fs::set_permissions(&stuck, fs::Permissions::from_mode(0o755)).unwrap();
+    let Err(Stopped { removed, reason }) = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert_eq!(removed, 1);
+    assert!(reason.contains("stuck"), "{reason}");
+    assert_eq!(
+        names(&f),
+        BTreeSet::from([name_of(&newest), name_of(&stuck)])
     );
 }
 
@@ -308,6 +409,7 @@ fn a_name_is_dated_by_the_stamp_it_opens_with() {
         "2026-09-14 11-26-54Z-skill",
         "2026-13-14T11-26-54Z-skill",
         "2026-09-14T11:26:54Z-skill",
+        "2026-09-14T11-26-54X-skill",
         "not-a-stamp-at-all-xx-skill",
     ] {
         assert_eq!(trashed_at(name), None, "{name:?}");

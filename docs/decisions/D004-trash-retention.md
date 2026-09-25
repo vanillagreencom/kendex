@@ -10,7 +10,7 @@
 
 **Context**: Removal never deletes: every removed or replaced installation moves to `<data>/kendex/trash`, and nothing took entries out again. A host that reinstalls Pi extensions deposits a whole `node_modules` tree per replacement, and the control VM reached 540 MB across 137 entries in eight days with 2.2 GB free. The source cache's snapshots already had a bound (KEN-1629); the bare mirrors under `sources/mirrors` had none and no statement of one.
 
-**Decision**: The trash is bounded by two settings read the way `KENDEX_SOURCE_CACHE_KEEP` is: `KENDEX_TRASH_KEEP_DAYS` (default 30) and `KENDEX_TRASH_KEEP_MB` (default 512). The pass runs at the end of `apply`, `refresh` and `remove`, keeps every entry the invocation itself wrote, measures entries newest first and removes from the one that crosses the size bound without measuring the rest. Mirrors are not bounded: `docs/architecture/sources.md` states that a mirror is kept for the life of the install and that the whole source cache may be removed by hand.
+**Decision**: The trash is bounded by two settings read the way `KENDEX_SOURCE_CACHE_KEEP` is: `KENDEX_TRASH_KEEP_DAYS` (default 30) and `KENDEX_TRASH_KEEP_MB` (default 512). The pass runs at the end of `apply`, `refresh` and `remove`, keeps every entry the invocation itself wrote, measures entries newest first and removes from the one that crosses the size bound without measuring the rest. Mirrors are not bounded: `docs/architecture/sources.md` states that a mirror is kept for the life of the install and may be removed by hand at the cost of any pin the upstream no longer references, since a fresh clone carries only what upstream refs reach.
 
 **Rationale**:
 

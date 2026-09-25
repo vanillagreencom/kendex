@@ -194,7 +194,13 @@ fn update_reinstalls_from_the_declared_source() {
         "export const version = 2;\n"
     );
     let said = String::from_utf8_lossy(&output.stderr);
-    assert!(said.contains("trash: removed 1 older entry"), "{said}");
+    // Said before the line the run closes on.
+    let pass = said.find("trash: removed 1 older entry");
+    let closing = said.find("updated 1 package(s)");
+    assert!(
+        matches!((pass, closing), (Some(pass), Some(closing)) if pass < closing),
+        "{said}"
+    );
     assert!(!stale.exists());
     let held: Vec<String> = fs::read_dir(&trash)
         .unwrap()
