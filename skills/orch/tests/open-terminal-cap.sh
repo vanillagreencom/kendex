@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # open-terminal's fleet caps: a fresh launch under --state-dir is refused as
-# cap-reached where the fleet's running records plus its unrecorded live claims
-# reach ORCH_OVERSEER_LANES, and as account-cap-reached where the live claims
+# cap-reached where the fleet's running and preparing records plus its
+# unrecorded live claims reach ORCH_OVERSEER_LANES, and as account-cap-reached where the live claims
 # on its lane reach ORCH_LANE_ACCOUNT_CLAIMS, both judged under one lock held
 # from the count through the record write. A relaunch meets the fleet cap
 # where the item has no running record, and the account cap where it has none
@@ -200,11 +200,14 @@ seed_claim() {
   printf '%s\t%%9\t%s\t%s\t2026-01-01T00:00:00Z\t%s\n' "$$" "$2" "$1" "${3-$STATE/workflow-state-oversee.json}" \
     > "$CLAIMS/claims/$1.claim"
 }
-# seed_running ITEM — a running record for a lane this suite never launched.
+# seed_running ITEM [STATUS] — a record, running by default, for a lane this
+# suite never launched.
 seed_running() {
   "$WS" --state-dir "$STATE" exists oversee >/dev/null 2>&1 || "$WS" --state-dir "$STATE" init oversee >/dev/null
-  "$WS" --state-dir "$STATE" append oversee lanes '{"item":"'"$1"'","window":"'"$1"'","status":"running"}' >/dev/null
+  "$WS" --state-dir "$STATE" append oversee lanes '{"item":"'"$1"'","window":"'"$1"'","status":"'"${2:-running}"'"}' >/dev/null
 }
+# status_of ITEM — the status of ITEM's record.
+status_of() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .status'; }
 
 echo "=== two concurrent launches against a fleet cap of 1 admit one ==="
 row fleet-race
@@ -239,6 +242,35 @@ launch two 5 2 --lane "$LANE_A" CC-2
 assert_eq "rc=$(rc two) $(key two)" "rc=1 open-terminal: account-cap-reached item=CC-2 lane=$LANE_A cap=2 claims=2" \
   "the account cap still counts the other fleet's claim and the fleetless one"
 
+echo "=== a hosted lane handed to a background job holds its slot, and the job holds no launch lock ==="
+# The host accepts CC-1 and keeps preparing it: the launch returns with its
+# window, claim and preparing record in place and the job waiting on the host.
+# A second launch, started while the job waits, takes the lock at once and
+# counts the preparing lane. The seeded row is the same record with no claim
+# beside it, which only the record itself can count.
+row hosted
+HOST_STUB="$TEST_DIR/fixtures/lane-host"
+LANE_HOST_STUB_LOG="$ROW/host.log" LANE_HOST_STUB_WAIT_GATE="$ROW/gate" LANE_HOST_STUB_WAIT_STATUS=1 \
+  LANE_HOST_STUB_CREATE_LINE=$'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc\tstate=preparing' \
+  launch one 1 0 --lane "$LANE_A" --host "$HOST_STUB" --repo o/r CC-1
+launch two 1 0 --lane "$LANE_B" CC-2 &
+SECOND=$!
+n=0
+while kill -0 "$SECOND" 2>/dev/null && ! grep -q '^open-terminal: lock-waiting' "$ROW/two.out" 2>/dev/null && (( n < 50 )); do sleep 0.1; n=$((n + 1)); done
+: > "$ROW/gate"
+await_exit "$SECOND"
+assert_eq "one=$(rc one) handed=$(grep -c '^open-terminal: lane-preparing item=CC-1 ' "$ROW/one.out" || true) two=$(rc two) lock-waits=$(grep -c '^open-terminal: lock-waiting' "$ROW/two.out" || true) $(key two)" \
+  "one=0 handed=1 two=1 lock-waits=0 open-terminal: cap-reached item=CC-2 cap=1 running=1 claims=0" \
+  "the next launch finds the lock free while the job waits on the host, and the preparing lane fills the fleet's only slot"
+n=0
+while [[ "$(status_of CC-1)" == preparing ]] && (( n < 200 )); do sleep 0.1; n=$((n + 1)); done
+assert_eq "$(status_of CC-1)" stopped "the job ends on the host's failed preparation, recording the lane stopped"
+row preparing
+seed_running CC-9 preparing
+launch one 1 0 --lane "$LANE_A" CC-1
+assert_eq "rc=$(rc one) $(key one)" "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0" \
+  "a preparing record with no claim beside it fills the fleet's only slot"
+
 echo "=== a relaunch is judged on the lane or account it adds ==="
 # The same account's claim and the item's running record are the lane being
 # replaced, so that relaunch passes at both caps.
@@ -264,6 +296,11 @@ launch two 1 0 --lane "$LANE_A" --relaunch CC-1
 assert_eq "rc=$(rc two) $(key two) running=$(running)" \
   "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 running=CC-9" \
   "a relaunch of a stopped record adds a lane, and at the fleet cap it is refused"
+row relaunch-preparing
+seed_running CC-1 preparing
+launch one 1 0 --lane "$LANE_A" --relaunch CC-1
+assert_eq "rc=$(rc one) cap-lines=$(key one | wc -l | tr -d ' ') running=$(running)" "rc=0 cap-lines=0 running=CC-1" \
+  "a relaunch of a preparing record replaces the lane it holds, and at the fleet cap it proceeds"
 
 echo "=== --over-cap admits one launch at the fleet cap and records it ==="
 row over-fleet

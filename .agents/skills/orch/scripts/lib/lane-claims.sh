@@ -194,9 +194,12 @@ lane_claim_write() {
   mv -f -- "$tmp" "$tmp.claim" || { rm -f -- "$tmp"; return 1; }
 }
 
-# The one answer to which oversee lane records are lanes in flight, as a jq
-# definition a caller prefixes to its own program: oversee-watch carries these
-# records and open-terminal counts them against the fleet cap, so the watch and
-# the cap cannot describe two different fleets. Hand-appended entries that are
-# not objects are no lane.
-LANE_RUNNING_JQ='def running: type == "object" and .status == "running";'
+# The one answer to which oversee lane records are lanes in flight, as jq
+# definitions a caller prefixes to its own program: oversee-watch carries the
+# running records, and open-terminal counts the held ones against the fleet cap,
+# those plus the preparing records of hosted lanes handed to a background job,
+# whose window and host are taken before the lane runs. The watch and the cap
+# cannot describe two different fleets. Hand-appended entries that are not
+# objects are no lane.
+LANE_RUNNING_JQ='def running: type == "object" and .status == "running";
+def held: running or (type == "object" and .status == "preparing");'

@@ -67,7 +67,7 @@ ot_message() { # REASON FIELD=VALUE...
     record-write-failed) text='The lane launched and its window stands, but its record could not be written to the oversee workflow state, so the watch cannot carry it. Fix what workflow-state names, then record the lane by hand per oversee.md § 3 Lane record, or close the window before relaunching the item with --relaunch.' ;;
     record-missing) text='No lane record names the item, so this launcher never launched it and the wake recorded nothing; the woken session runs. Record the lane per oversee.md § 3 Lane record, or close its window and relaunch the item with --relaunch.' ;;
     state-unwritable) text='The oversee workflow state could not be created, so no lane would be watched. Nothing launched; fix what workflow-state names.' ;;
-    cap-reached) text='A launch here would put the fleet over ORCH_OVERSEER_LANES. cap names that setting, running the lane records in the fleet state whose status is running, and claims the live launch claims this fleet wrote that no running record names, a lane whose record is not running while its pane still is. Nothing was launched. Wait for a lane to close, launch with --wait-slot to wait for one here, or pass --over-cap for one deliberate exception.' ;;
+    cap-reached) text='A launch here would put the fleet over ORCH_OVERSEER_LANES. cap names that setting, running the lane records in the fleet state whose status is running or preparing, and claims the live launch claims this fleet wrote that no such record names, a lane whose record is neither while its pane still runs. Nothing was launched. Wait for a lane to close, launch with --wait-slot to wait for one here, or pass --over-cap for one deliberate exception.' ;;
     account-cap-reached) text='A launch here would put the account over ORCH_LANE_ACCOUNT_CLAIMS. lane names the account, cap that setting, and claims the live launch claims on that account. Nothing was launched. Wait for a lane on that account to close, launch with --wait-slot to wait for one here (under --lane auto it moves to an account with room), name a lane on another account, or pass --over-cap for one deliberate exception. 0 turns this cap off.' ;;
     cap-unreadable) text='The lanes in flight could not be counted, so neither cap can be judged. Nothing was launched. source=state is the fleet state named by --state-dir; source=claims is the claim store, whose own keyed lane-claims line above names what failed.' ;;
     cap-lock-failed) text='The fleet launch lock was not taken inside its bound, so the count and the record write cannot be one step. Nothing was launched. Another launch holds it; the lock line above names a stale mutex where flock is absent.' ;;
@@ -450,11 +450,12 @@ worktree, under one lock beside the fleet state that is held from the count
 through the item's record write, so two launchers cannot both pass on one
 count; a launch that finds the lock held prints lock-waiting and waits for it.
 The fleet cap, ORCH_OVERSEER_LANES (default 3), counts the records whose
-status is running plus the live launch claims this fleet wrote that no
-running record names (a claim store several fleets share counts each fleet's
+status is running or preparing (a hosted lane handed to a background job,
+see --host) plus the live launch claims this fleet wrote that no such
+record names (a claim store several fleets share counts each fleet's
 own claims here, and every fleet's toward an account); a
-launch that would pass it is refused as cap-reached, naming the cap, the
-running records and the claims. The account cap, ORCH_LANE_ACCOUNT_CLAIMS
+launch that would pass it is refused as cap-reached, naming the cap, those
+records and the claims. The account cap, ORCH_LANE_ACCOUNT_CLAIMS
 (default 3, 0 turns it off), counts the live claims on the lane the launch
 would use, as `lanes` counts its claims column; a launch that would pass it
 is refused as account-cap-reached, naming the lane, the cap and the claims.
@@ -462,8 +463,8 @@ Both settings are read through orch-env. A refusal stops the batch, and so
 does a claim this run failed to write while the account cap is on, as
 claim-unrecorded. A store that cannot be read refuses as cap-unreadable, and
 a lock not taken as cap-lock-failed. A --relaunch meets the fleet cap where
-the item has no running record, and the account cap where it has none or
-moves to another account. --wake is not judged. Both flags below need
+the item has no running or preparing record, and the account cap where it
+has none or moves to another account. --wake is not judged. Both flags below need
 --state-dir, and are refused as cap-option-unanchored without it:
   --wait-slot       Wait for room instead of refusing: count again every 5
                     seconds, holding no lock between counts, and launch under
@@ -2515,7 +2516,10 @@ prepare_record_write() { # STATUS LOG [REASON]
 # return or on timeout. run_detached execs a command, and this job is this
 # script's own functions over the item it resolved, so job control puts it in
 # a process group of its own instead, with the hangup ignored and none of the
-# caller's descriptors held. Its pid, that group's id, goes into the record for
+# caller's descriptors held, the fleet launch lock's descriptor 7 among them:
+# the launch that started the job still holds that lock until the loop moves
+# on, and a job holding it would stall every launch into the fleet for as long
+# as the host prepares. Its pid, that group's id, goes into the record for
 # lane-close to stop it by; a record that cannot carry it stops the job here.
 launch_handoff() {
   local log job
@@ -2523,7 +2527,7 @@ launch_handoff() {
   tmux_window_open "$CLAIM_ROOT" "$title" || return 1
   prepare_record_write preparing "$log" || { tmux_window_close "$LAUNCH_PANE" "$title"; return 1; }
   set -m
-  (trap '' HUP; launch_prepared "$log") </dev/null >>"$log" 2>&1 &
+  (trap '' HUP; launch_prepared "$log") </dev/null >>"$log" 2>&1 7>&- &
   job=$!
   set +m
   if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update oversee \
@@ -2559,7 +2563,8 @@ launch_prepared() { # LOG
 # every lane on one account and wall it inside one usage window. A launch naming
 # no fleet has no records to count, and a wake rouses a lane the fleet already
 # counts, so neither is judged. A relaunch is judged on what it adds: a lane
-# where the item has no running record, an account where it lands on another.
+# where the item has no running or preparing record, an account where it lands
+# on another.
 #
 # The count and the record write are one step under one lock, taken per item
 # and held from the count through that item's record write: two launchers that
@@ -2581,8 +2586,9 @@ fi
 # The lock is held on descriptor 7, and a flock stays held while any copy of
 # that descriptor is open. So every child started while it is held runs with
 # 7>&-: a child that outlives the launch, a detached terminal, a provider's
-# process or the `git gc --auto` a worktree fetch daemonizes, would otherwise
-# hold the lock past cap_release.
+# process, the `git gc --auto` a worktree fetch daemonizes or the job a hosted
+# launch hands its host's preparation to, would otherwise hold the lock past
+# cap_release.
 CAP_LOCK=""
 # The fleet a judged launch belongs to: its oversee state file, canonical, which
 # every claim it writes carries so a claim store several fleets share still
@@ -2623,26 +2629,26 @@ cap_take() { # ITEM
   CAP_HELD=true
 }
 
-# Sets CAP_RUNNING (records lib/lane-claims.sh's LANE_RUNNING_JQ calls running),
-# CAP_INFLIGHT (live claims naming this fleet whose window no running record
-# names: a lane whose pane outlived its record's running status; a record's
+# Sets CAP_RUNNING (records lib/lane-claims.sh's LANE_RUNNING_JQ calls held,
+# running or preparing), CAP_INFLIGHT (live claims naming this fleet whose
+# window no held record names: a lane whose pane outlived its record's running status; a record's
 # window is `SESSION:WINDOW`, or bare where written by hand, and a claim's is
 # the bare name, so the two are compared on the name),
 # CAP_ACCOUNT (live claims on LANE, counted by the reader `lanes` counts with),
-# and CAP_ITEM_RUNNING and CAP_ITEM_ACCOUNT (whether KEY's own record is
-# running, and the account it names). Returns 1 on a store it could not read: a
+# and CAP_ITEM_HELD and CAP_ITEM_ACCOUNT (whether KEY's own record is held,
+# and the account it names). Returns 1 on a store it could not read: a
 # count missing a lane is a cap that admits one lane too many.
 cap_count() { # ITEM KEY LANE
   local lanes out windows claims rc=0
   lanes="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.lanes // []')" || rc=$?
   [[ "$rc" -eq 0 ]] && out="$(jq -r --arg key "$2" "$LANE_RUNNING_JQ"'
     ([.[] | objects | select(.item == $key)] | first) as $own
-    | ([.[] | select(running)] | length),
-      (if $own == null then "absent" elif ($own | running) then "running" else "stopped" end),
+    | ([.[] | select(held)] | length),
+      (if $own == null then "absent" elif ($own | held) then "held" else "stopped" end),
       ($own.account // ""),
-      (.[] | select(running) | .window // empty | sub("^[^:]*:"; ""))' <<<"$lanes")" || rc=1
+      (.[] | select(held) | .window // empty | sub("^[^:]*:"; ""))' <<<"$lanes")" || rc=1
   [[ "$rc" -eq 0 ]] || { ot_message cap-unreadable "item=$1" "source=state" >&2; return 1; }
-  { read -r CAP_RUNNING; read -r CAP_ITEM_RUNNING; read -r CAP_ITEM_ACCOUNT; windows="$(cat)"; } <<<"$out"
+  { read -r CAP_RUNNING; read -r CAP_ITEM_HELD; read -r CAP_ITEM_ACCOUNT; windows="$(cat)"; } <<<"$out"
   claims="$(lane_claims_read "$(lane_claims_dir "$CLAIM_ROOT")" fleet)" || rc=$?
   [[ "$rc" -eq 0 ]] || { ot_message cap-unreadable "item=$1" "source=claims" >&2; return 1; }
   CAP_INFLIGHT="$(CAP_WINDOWS="$windows" CAP_FLEET="$CAP_FLEET" awk -F'\t' '
@@ -2688,13 +2694,13 @@ cap_gate() { # ITEM KEY
     cap_take "$item" || { ot_message cap-lock-failed "item=$item" "lock=$CAP_LOCK" >&2; return 1; }
     cap_count "$item" "$key" "$lane" || { cap_release; return 1; }
     over=""
-    # A relaunch of a running record replaces its lane, and on the same account
+    # A relaunch of a held record replaces its lane, and on the same account
     # its claim.
-    if [[ "$RELAUNCH" != true || "$CAP_ITEM_RUNNING" != running ]]; then
+    if [[ "$RELAUNCH" != true || "$CAP_ITEM_HELD" != held ]]; then
       (( CAP_RUNNING + CAP_INFLIGHT < FLEET_CAP )) || over=fleet
     fi
     if [[ -n "$lane" ]] && (( ACCOUNT_CAP > 0 && CAP_ACCOUNT >= ACCOUNT_CAP )) &&
-      [[ "$RELAUNCH" != true || "$CAP_ITEM_RUNNING" != running || "$(lane_claims_canon "$CAP_ITEM_ACCOUNT")" != "$lane" ]]; then
+      [[ "$RELAUNCH" != true || "$CAP_ITEM_HELD" != held || "$(lane_claims_canon "$CAP_ITEM_ACCOUNT")" != "$lane" ]]; then
       over="${over:+$over,}account"
     fi
     if [[ -z "$over" ]]; then
