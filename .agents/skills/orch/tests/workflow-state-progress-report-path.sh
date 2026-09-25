@@ -76,9 +76,9 @@ MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_DIR"
 cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$MUTANT_DIR/lib"
 cp "$REPO_ROOT/skills/orch/scripts/orch-env" "$REPO_ROOT/skills/orch/scripts/git-context" "$MUTANT_DIR/"
-[[ "$(grep -Fc '1:--succession) suffix=-succession ;;' "$WS")" == "1" ]] \
+[[ "$(grep -Fc '1:--succession) suffix=$PROGRESS_REPORT_SUFFIX ;;' "$WS")" == "1" ]] \
   && ok "the suffix control finds the succession arm" || bad "the suffix control finds the succession arm"
-sed 's/1:--succession) suffix=-succession ;;/1:--succession) ;;/' "$WS" > "$MUTANT_DIR/workflow-state"
+sed 's/1:--succession) suffix=$PROGRESS_REPORT_SUFFIX ;;/1:--succession) ;;/' "$WS" > "$MUTANT_DIR/workflow-state"
 got="$(cd "$TMP_ROOT" && bash "$MUTANT_DIR/workflow-state" progress-report-path --succession)"
 [[ "$got" =~ /[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}\.md$ ]] && ok "control: without the suffix the succession report loses its name" \
   || bad "control: without the suffix the succession report loses its name" "got=$got"

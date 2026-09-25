@@ -974,8 +974,14 @@ cmd_fleet_log() {
     esac
 }
 
-# The owner progress report directory, ORCH_PROGRESS_REPORT_DIR joined to the
-# project, which the report's writer and the prune both resolve here.
+# The owner progress report record, which the writer and the prune both read
+# here: its directory, ORCH_PROGRESS_REPORT_DIR joined to the project, and its
+# name, a UTC stamp, the suffix of the one a succession writes, then .md. The
+# pattern is derived from the stamp format, each field two digits.
+PROGRESS_REPORT_STAMP='%m-%d-%H-%M'
+PROGRESS_REPORT_SUFFIX=-succession
+PROGRESS_REPORT_RE='[0-9]{2}'
+PROGRESS_REPORT_RE="^${PROGRESS_REPORT_STAMP//%?/$PROGRESS_REPORT_RE}($PROGRESS_REPORT_SUFFIX)?\\.md\$"
 progress_report_dir() {
     local setting
     setting=$("$SCRIPT_DIR/orch-env" ORCH_PROGRESS_REPORT_DIR tmp/progress-reports) || return 1
@@ -989,12 +995,12 @@ cmd_progress_report_path() {
     local suffix="" dir now_epoch stamp err field=progress_report
     case "$#:${1:-}" in
         0:) ;;
-        1:--succession) suffix=-succession ;;
+        1:--succession) suffix=$PROGRESS_REPORT_SUFFIX ;;
         *) state_message unknown-option "$@" >&2; return 2 ;;
     esac
     dir=$(progress_report_dir) || return 1
     now_epoch=$(date -u +%s) || now_epoch=""
-    stamp=$(from_epoch "$now_epoch" '%m-%d-%H-%M') || stamp=""
+    stamp=$(from_epoch "$now_epoch" "$PROGRESS_REPORT_STAMP") || stamp=""
     if [[ -z "$now_epoch" || -z "$stamp" ]]; then
         state_message clock-unreadable "$@" >&2; return 1
     fi
@@ -1083,7 +1089,7 @@ cmd_prune() {
     done
     if [[ -n "$pd" ]]; then
         for f in "$pd"/*; do
-            [[ ! "${f##*/}" =~ ^[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}(-succession)?\.md$ ]] || units+=("$f")
+            [[ ! "${f##*/}" =~ $PROGRESS_REPORT_RE ]] || units+=("$f")
         done
     fi
     shopt -u nullglob dotglob

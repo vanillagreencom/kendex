@@ -58,7 +58,7 @@ build() { # DIR
     workflow-state-KEN-1.json workflow-state-KEN-2.json workflow-state-KEN-12.json lane-status-KEN-1.md \
     directive.md workflow-state-oversee.json.lock oversee-watch.pid oversee-watch.argv oversee-watch.log \
     oversee-watch.err handoffs/OVERSEER-HANDOFF.md handoffs/session-1.md progress-reports/01-01-00-00.md \
-    progress-reports/notes.md waiter.run/watch.log; do
+    progress-reports/01-01-00-00-succession.md progress-reports/notes.md waiter.run/watch.log; do
     printf 'x\n' > "$sd/$f"
   done
   find "$sd" -mindepth 1 -exec touch -t "$old_touch" {} +
@@ -102,6 +102,7 @@ removed|workflow-state-KEN-12.json|a closed lane's file whose item extends a liv
 removed|lane-mail/KEN-2|a closed lane's mailbox
 removed|handoffs/session-1.md|an old handoff archive
 removed|progress-reports/01-01-00-00.md|an old progress report
+removed|progress-reports/01-01-00-00-succession.md|an old succession progress report
 kept|workflow-state-KEN-1.json|a running lane's workflow state
 kept|lane-mail/KEN-1/to-lane.jsonl|a running lane's mailbox
 kept|lane-status-KEN-1.md|a running lane's status file
@@ -141,7 +142,7 @@ start_after="$(jq -r '.lanes[0].launched_at' "$sd/workflow-state-oversee.json")"
   || bad "the fleet start, the first lane record's launched_at, is unchanged" "before=$start_before after=$start_after"
 
 count="$(grep '^pruned fleet_log=' "$TMP_ROOT/main.out" || true)"
-[[ "$count" == "pruned fleet_log=1 lanes=2 progress_reports=1 paths=6" ]] \
+[[ "$count" == "pruned fleet_log=1 lanes=2 progress_reports=2 paths=7" ]] \
   && ok "the count line names each record removed" \
   || bad "the count line names each record removed" "got=$count"
 
@@ -157,7 +158,7 @@ modes="$(ls -ld "$archive" | cut -c1-10) $(ls -ld "${archive%/*}" | cut -c1-10)"
 listing="$(tar -tzf "$archive" 2>/dev/null || true)"
 missing=""
 for path in directive.md workflow-state-KEN-2.json workflow-state-KEN-12.json lane-mail/KEN-2/to-lane.jsonl \
-  handoffs/session-1.md progress-reports/01-01-00-00.md; do
+  handoffs/session-1.md progress-reports/01-01-00-00.md progress-reports/01-01-00-00-succession.md; do
   grep -qxF -- "${sd#/}/$path" <<<"$listing" || missing="$missing $path"
 done
 [[ -z "$missing" ]] \
@@ -190,7 +191,7 @@ key="$(head -n 1 "$TMP_ROOT/bare.err")"
 # A step that fails before the archive stands removes nothing and writes no
 # archive: an archive tar cannot write, an archive root that is a file, a find
 # that cannot read an age, and a progress directory that is the state
-# directory. Rows: the case, the refusal key and its label.
+# directory or holds it. Rows: the case, the refusal key and its label.
 TAR_BIN="$TMP_ROOT/tar-bin"
 FIND_BIN="$TMP_ROOT/find-bin"
 mkdir -p "$TAR_BIN" "$FIND_BIN"
@@ -206,6 +207,8 @@ refused() { # DIR CASE
     find) run_prune "$1" "$WS" "$FIND_BIN:" ;;
     overlap) (cd "$1" && ORCH_PROGRESS_REPORT_DIR=tmp ORCH_RECORD_RETENTION_DAYS=2 \
                FLEET_DIR="$1/fleet" "$WS" prune) ;;
+    overlap-holds) (cd "$1" && ORCH_PROGRESS_REPORT_DIR=. ORCH_RECORD_RETENTION_DAYS=2 \
+                     FLEET_DIR="$1/fleet" "$WS" prune) ;;
   esac
 }
 while IFS='|' read -r case_name want label; do
@@ -226,6 +229,7 @@ tar|prune-archive-failed path=$TMP_ROOT/fail-tar/fleet/archive/fail-tar/oversee|
 root|prune-archive-failed path=$TMP_ROOT/fail-root/fleet-file/archive/fail-root/oversee|an archive root that is a file
 find|prune-age-unreadable path=$TMP_ROOT/fail-find/tmp/|a find that cannot read an age
 overlap|prune-progress-overlap path=$TMP_ROOT/fail-overlap/tmp state-dir=$TMP_ROOT/fail-overlap/tmp|a progress directory that is the state directory
+overlap-holds|prune-progress-overlap path=$TMP_ROOT/fail-overlap-holds state-dir=$TMP_ROOT/fail-overlap-holds/tmp|a progress directory that holds the state directory
 ROWS
 grep -qxF 'tar: planted failure' "$TMP_ROOT/fail-tar.err" \
   && ok "the archive refusal carries tar's own words" || bad "the archive refusal carries tar's own words"
@@ -299,7 +303,7 @@ mutant first-lane "lanes: [(.lanes // [])[1:][] | select(.status == \"done\" and
 control first-lane "" "" '[[ "$(jq -r ".lanes[0].item" tmp/workflow-state-oversee.json)" != KEN-0 ]]' \
   "without the first-record exception the fleet start is pruned"
 
-mutant report-names '[[ ! "${f##*/}" =~ ^[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}(-succession)?\.md$ ]] || units+=("$f")' \
+mutant report-names '[[ ! "${f##*/}" =~ $PROGRESS_REPORT_RE ]] || units+=("$f")' \
   'units+=("$f")'
 control report-names "" "" '[[ ! -e tmp/progress-reports/notes.md ]]' \
   "without the report-name filter an unrelated old file in the progress directory is pruned"
