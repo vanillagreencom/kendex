@@ -23,7 +23,7 @@ In Pi with the `web_research` tool active, use that tool, passing `outputPath` w
 ## Rules
 
 - Exa is the research source. Substitute a general web search only when Exa is unavailable and the user approves the fallback.
-- Write `findings.md` to the path the caller requested, exactly. Given no path, write it where the planner agent's § Plan Artifacts puts a report.
+- Write `findings.md` to the path the caller requested, exactly. Given no path, write it to `docs/plans/<slug>-research.md`, tracked; the full rule, with its roadmap exception, is `agents/planner.md` § Plan Artifacts.
 - Cite sources for material claims. Provider payloads go in the sidecar JSON (`findings.raw.json` beside the report by default), never inline. Sanitize evidence excerpts: source-page headings must not render as headings.
 - Once the report and its sidecar exist, run `validate` and stop. No local reproduction, benchmarks, tests, code inspection, or implementation unless the caller asked for it.
 - A missing `EXA_API_KEY` fails with setup instructions. Set it on this package's Customize tab in the kendex app, or by hand in the project's private env file — `.env.local` unless `KENDEX_ENV_FILE` names another. The value may be a key or a 1Password `op://vault/item/field` reference when the `op` CLI is installed and signed in.
