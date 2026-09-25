@@ -111,11 +111,13 @@ fn plant(f: &Fixture, age: u64, base: &str, bytes: usize) -> String {
     name
 }
 
+/// Every name the trash directory holds but the size record's.
 #[allow(clippy::unwrap_used)]
 fn names(f: &Fixture) -> BTreeSet<String> {
     fs::read_dir(f.env.trash_dir())
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name != kendex_core::trash::SIZES_FILE)
         .collect()
 }
 
@@ -183,7 +185,7 @@ fn every_write_closes_on_the_pass_and_the_account_says_what_it_did() {
             "remove under a bound that is not a count",
             Verb::Remove,
             ("7", "lots"),
-            Some("trash: older entries kept (KENDEX_TRASH_KEEP_MB=\"lots\" is not a count)"),
+            Some("trash: pass stopped (KENDEX_TRASH_KEEP_MB=\"lots\" is not a count)"),
             true,
         ),
     ];

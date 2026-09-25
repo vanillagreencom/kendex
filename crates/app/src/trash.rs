@@ -21,7 +21,7 @@ pub(crate) fn tidy(env: &Env) -> Vec<String> {
         ));
     }
     if let Some(reason) = stopped {
-        said.push(format!("trash: older entries kept ({reason})"));
+        said.push(format!("trash: pass stopped ({reason})"));
     }
     said
 }
