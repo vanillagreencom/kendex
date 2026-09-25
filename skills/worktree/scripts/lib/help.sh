@@ -170,8 +170,9 @@ each 'source' or '.' line, at the pre-restack head, the paused HEAD and the
 commit being replayed. A directive resolves against the sourcing file's
 directory; one that climbs out of it ('../skills/<skill>/...') matches every
 tracked path ending in the rest of it, since the hook finds that library by
-searching. When the declarations or a sourcing script cannot be
-read, for example with jq missing, every conflicted path is held the same way.
+searching. When any read that discovery makes fails, the lookup of the
+commit being replayed included, or jq is missing, every conflicted path is
+held the same way.
 Conflicts in every other path keep their markers in place.
 
 On completion, continue and skip report one 'rebase-map: <old-sha>

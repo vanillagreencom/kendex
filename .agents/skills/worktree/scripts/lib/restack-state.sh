@@ -243,8 +243,8 @@ resolve_restack_worktree() {
 # .codex/hooks.json and .pi/kendex/hooks.json share. Print each word of those
 # commands with a leading `$VAR/`, `${VAR}/` or `./` root dropped, so a word
 # equal to a repository path names that path, then the libraries those paths
-# source (restack_hook_libraries). The status is non-zero when any declaration
-# or sourcing script could not be read: jq missing or failing, or git erroring.
+# source (restack_hook_libraries). The status is non-zero when jq is missing or
+# fails, or any git read here or in restack_hook_libraries fails.
 restack_hook_words() {
   local wt="$1" rev="" files="" file="" words="" rc=0
   shift
@@ -307,19 +307,29 @@ restack_hook_libraries() {
   done
 }
 
+# Print the commit being replayed, whose cleanly applied changes are in the
+# worktree: REBASE_HEAD for the rebase engine, CHERRY_PICK_HEAD for the replay
+# engine. Nothing when Git recorded no pick, its pseudo-ref file being absent;
+# the status is non-zero when that file's path cannot be read or a recorded pick
+# does not resolve to a commit.
+restack_replayed_commit() {
+  local wt="$1" pick=REBASE_HEAD recorded=""
+  [[ "$(restack_state_get "$wt" mode)" != replay ]] || pick=CHERRY_PICK_HEAD
+  recorded="$(git -C "$wt" rev-parse --git-path "$pick")" || return 1
+  [[ "$recorded" == /* ]] || recorded="$wt/$recorded"
+  [[ ! -e "$recorded" ]] || git -C "$wt" rev-parse --verify -q "$pick^{commit}"
+}
+
 # The conflicted paths (one per line) that a harness hook declaration names or
 # that a named hook sources, read at the pre-restack head the running harness
-# loaded, at the paused HEAD, and at the commit being replayed, whose cleanly
-# applied changes are in the worktree too: REBASE_HEAD for the rebase engine,
-# CHERRY_PICK_HEAD for the replay engine, read only when Git recorded one.
-# Declarations or sourcing scripts that cannot be read make every conflicted
-# path a held path: holding an ordinary path costs a step, leaving markers in a
-# hook or its library strands the caller.
+# loaded, at the paused HEAD, and at the commit being replayed. A git read in
+# that discovery that fails, or declarations jq cannot read, make every
+# conflicted path a held path: holding an ordinary path costs a step, leaving
+# markers in a hook or its library strands the caller.
 restack_conflicted_hooks() {
-  local wt="$1" conflicts="$2" words="" path="" pick=REBASE_HEAD paused=""
-  [[ "$(restack_state_get "$wt" mode)" != replay ]] || pick=CHERRY_PICK_HEAD
-  paused="$(git -C "$wt" rev-parse --verify -q "$pick^{commit}")" || paused=""
-  if ! words="$(restack_hook_words "$wt" "$(restack_state_get "$wt" originalHead)" HEAD ${paused:+"$paused"})"; then
+  local wt="$1" conflicts="$2" words="" path="" paused=""
+  if ! paused="$(restack_replayed_commit "$wt")" || \
+     ! words="$(restack_hook_words "$wt" "$(restack_state_get "$wt" originalHead)" HEAD ${paused:+"$paused"})"; then
     printf '%s\n' "$conflicts"
     return 0
   fi
