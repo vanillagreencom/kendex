@@ -324,19 +324,54 @@ BASE_PATH=""
 BASE_REASON=""
 BASE_ROWS_SKIPPED=0
 
+BASE_FETCH_CAUSE=""
+
 # Every git call that may reach the remote runs through git_remote, so no
 # prompt can wait on a terminal nobody watches. GIT_TERMINAL_PROMPT stops
-# git's own credential prompt; ssh opens /dev/tty itself for a host key,
-# password or passphrase, so BatchMode joins the ssh command the caller chose
-# (GIT_SSH_COMMAND, else core.sshCommand, else plain ssh), keeping any deploy
-# key or jump host that command names.
+# git's own credential prompt. ssh opens /dev/tty itself for a host key,
+# password or passphrase, so when the ssh program git would run is OpenSSH,
+# BASE_SSH_COMMAND is that same command with BatchMode added. Any other program
+# (a plink, a proxy wrapper) rejects the option, so BASE_SSH_COMMAND stays
+# empty and git runs the caller's transport untouched.
 BASE_SSH_COMMAND=""
 git_remote() { # GIT-ARGS...
-  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$BASE_SSH_COMMAND" git -C "$DECISIONS_DIR" "$@" </dev/null
+  if [[ -n "$BASE_SSH_COMMAND" ]]; then
+    GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$BASE_SSH_COMMAND" git -C "$DECISIONS_DIR" "$@" </dev/null
+  else
+    GIT_TERMINAL_PROMPT=0 git -C "$DECISIONS_DIR" "$@" </dev/null
+  fi
+}
+
+# Sets BASE_SSH_COMMAND from the ssh program git would run, in git's own order:
+# GIT_SSH_COMMAND, core.sshCommand, GIT_SSH, ssh. The program is OpenSSH when
+# the variant (GIT_SSH_VARIANT, else ssh.variant) says ssh, or is unset or auto
+# and the program's basename is ssh.
+resolve_ssh_command() {
+  local ssh_cmd ssh_prog variant rest
+  BASE_SSH_COMMAND=""
+  if [[ "${GIT_SSH_COMMAND:-}" =~ [^[:space:]] ]]; then
+    ssh_cmd="$GIT_SSH_COMMAND"
+  else
+    ssh_cmd="$(git -C "$DECISIONS_DIR" config --get core.sshCommand)" || ssh_cmd=""
+  fi
+  if [[ "$ssh_cmd" =~ [^[:space:]] ]]; then
+    read -r ssh_prog rest <<<"$ssh_cmd"
+    ssh_prog="${ssh_prog//[\"\']/}"
+  else
+    ssh_prog="${GIT_SSH:-ssh}"
+    printf -v ssh_cmd '%q' "$ssh_prog"
+  fi
+  variant="${GIT_SSH_VARIANT:-}"
+  if [[ -z "$variant" ]]; then
+    variant="$(git -C "$DECISIONS_DIR" config --get ssh.variant)" || variant=""
+  fi
+  case "$variant:${ssh_prog##*/}" in
+    ssh:* | :ssh | :ssh.exe | auto:ssh | auto:ssh.exe) BASE_SSH_COMMAND="$ssh_cmd -oBatchMode=yes" ;;
+  esac
 }
 
 read_base_index() {
-  local prefix cand short remote branch remotes r text line listing found fetch_failed=0
+  local prefix cand short remote branch remotes r text line listing found fetched fetch_failed=0
   local candidates=()
 
   if ! prefix="$(git -C "$DECISIONS_DIR" rev-parse --show-prefix 2>/dev/null)"; then
@@ -351,14 +386,7 @@ read_base_index() {
     candidates=(origin/HEAD origin/main main)
   fi
 
-  BASE_SSH_COMMAND="${GIT_SSH_COMMAND:-}"
-  if [[ ! "$BASE_SSH_COMMAND" =~ [^[:space:]] ]]; then
-    BASE_SSH_COMMAND="$(git -C "$DECISIONS_DIR" config --get core.sshCommand)" || BASE_SSH_COMMAND=""
-  fi
-  if [[ ! "$BASE_SSH_COMMAND" =~ [^[:space:]] ]]; then
-    BASE_SSH_COMMAND=ssh
-  fi
-  BASE_SSH_COMMAND="$BASE_SSH_COMMAND -oBatchMode=yes"
+  resolve_ssh_command
 
   remotes="$(git -C "$DECISIONS_DIR" remote)" || remotes=""
   for cand in "${candidates[@]}"; do
@@ -376,7 +404,9 @@ read_base_index() {
       # names now, and whether the named branch exists. A branch the remote
       # lacks is skipped: a local ref of that name is stale for good, so it is
       # never read in place of the next candidate.
-      if listing="$(git_remote ls-remote --symref "$remote" HEAD "refs/heads/$branch" 2>/dev/null)"; then
+      # stderr joins the listing: a warning line matches no pattern below, and
+      # on failure its first line is the cause the record names.
+      if listing="$(git_remote ls-remote --symref "$remote" HEAD "refs/heads/$branch" 2>&1)"; then
         found=""
         while IFS= read -r line; do
           case "$line" in
@@ -387,13 +417,15 @@ read_base_index() {
         found="${found%$'\t'HEAD}"
         [[ -n "$found" ]] || continue
         cand="$remote/$found"
-        if ! git_remote fetch --quiet --no-tags "$remote" "+refs/heads/$found:refs/remotes/$remote/$found" >/dev/null 2>&1; then
+        if ! fetched="$(git_remote fetch --quiet --no-tags "$remote" "+refs/heads/$found:refs/remotes/$remote/$found" 2>&1)"; then
+          [[ -n "$BASE_FETCH_CAUSE" ]] || BASE_FETCH_CAUSE="${fetched%%$'\n'*}"
           fetch_failed=1
         fi
       else
         # The remote did not answer. That stays recorded for every later
         # candidate, which may be a stale local branch; a <remote>/HEAD falls
         # back to the default branch this clone last recorded.
+        [[ -n "$BASE_FETCH_CAUSE" ]] || BASE_FETCH_CAUSE="${listing%%$'\n'*}"
         fetch_failed=1
         if [[ "$branch" == HEAD ]]; then
           cand="$(git -C "$DECISIONS_DIR" symbolic-ref --quiet --short "refs/remotes/$remote/HEAD")" || continue
@@ -443,7 +475,7 @@ report_base() { # MODE — next-id or check
     "") return 0 ;;
     not-a-repository) text="The decisions directory is not inside a git repository, so no base branch was read." ;;
     unresolved) refuse=1; text="None of these resolved to a commit, so no base branch was read. Set DECISIONS_BASE_REF to the base branch, or correct its value." ;;
-    fetch-failed) refuse=1; text="The base branch could not be fetched, so its local copy was read and may be behind the remote." ;;
+    fetch-failed) refuse=1; text="The base branch could not be fetched, so its local copy was read and may be behind the remote.${BASE_FETCH_CAUSE:+ Cause: $BASE_FETCH_CAUSE}" ;;
     index-absent) text="The base branch has no $BASE_PATH, so it holds no decision number." ;;
     unreadable) refuse=1; text="The base branch's $BASE_PATH exists but could not be read, so no base number was read." ;;
   esac

@@ -411,7 +411,7 @@ while IFS='~' read -r row old new label; do
   fi
 done <<'CONTROLS'
 next-id-base-ahead~  for id in ${ids[@]+"${ids[@]}"} ${base_ids[@]+"${base_ids[@]}"}; do~  for id in ${ids[@]+"${ids[@]}"}; do~a maximum over the working tree alone
-next-id-base-ahead~        if ! git_remote fetch~        if false && ! git_remote fetch~a base read without a fetch
+next-id-base-ahead~        if ! fetched="$(git_remote fetch~        if false && ! fetched="$(git_remote fetch~a base read without a fetch
 next-id-no-remote~  emit_notice base-unverified "ref=~  emit_notice base-unread "ref=~a renamed base notice
 next-id-fetch-failed~        fetch_failed=1\n        if [[ "$branch" == HEAD ]]; then~        fetch_failed=1; return 0\n        if [[ "$branch" == HEAD ]]; then~a failed fetch that drops the local copy
 next-id-fetch-failed-local-main~    short="${cand#refs/remotes/}"~    fetch_failed=0; short="${cand#refs/remotes/}"~a fetch failure forgotten by the next candidate
@@ -444,81 +444,154 @@ if [[ "$control_seq" -eq 0 ]]; then
   fail "the control table planted no defect"
 fi
 
-echo "=== ssh never prompts, and keeps the caller's ssh command ==="
+echo "=== ssh never prompts, and runs the transport the caller chose ==="
 # git runs the ssh command itself, and ssh opens the terminal on its own for a
-# host key, password or passphrase, so BatchMode must reach ssh's argv. The
-# stub records each argv and fails, as an unreachable host does.
-SSH_STUB="$TMP_ROOT/ssh-stub"
-printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*" >>"$SSH_CAPTURE"' 'exit 255' >"$SSH_STUB"
-chmod +x "$SSH_STUB"
+# host key, password or passphrase, so BatchMode must reach an OpenSSH argv.
+# Every stub records its name and argv. The two named ssh fail, as an
+# unreachable host does, naming themselves on stderr; the wrapper, which is
+# not OpenSSH, runs the remote command locally so its fetch succeeds. The ssh
+# first on PATH is a stub, so no row dials a real host.
+SSH_PATH_BIN="$TMP_ROOT/ssh-path-bin"
+SSH_GIT_BIN="$TMP_ROOT/ssh-git-bin"
+SSH_WRAP_BIN="$TMP_ROOT/ssh-wrap-bin"
+mkdir -p "$SSH_PATH_BIN" "$SSH_GIT_BIN" "$SSH_WRAP_BIN"
+for stub in path-ssh:"$SSH_PATH_BIN/ssh" git-ssh:"$SSH_GIT_BIN/ssh"; do
+  printf '%s\n' '#!/usr/bin/env bash' \
+    "printf '${stub%%:*}:%s\\n' \"\$*\" >>\"\$SSH_CAPTURE\"" \
+    "printf '%s\\n' 'stub-ssh: refused' >&2" 'exit 255' >"${stub#*:}"
+  chmod +x "${stub#*:}"
+done
+printf '%s\n' '#!/usr/bin/env bash' \
+  'printf "wrapper:%s\n" "$*" >>"$SSH_CAPTURE"' \
+  'for last; do :; done' 'exec sh -c "$last"' >"$SSH_WRAP_BIN/deploy-wrapper"
+chmod +x "$SSH_WRAP_BIN/deploy-wrapper"
 
-ssh_verdict() { # SCRIPT SOURCE — SOURCE is env or config; prints ok or what was captured
-  local script="$1" source="$2" world capture captured line build_rc
+ssh_run() { # SCRIPT SETUP ACTION — sets rc, err and captured
+  local script="$1" setup="$2" action="$3" world build_rc
   local ssh_env=()
+  rc=""
+  err=""
+  captured=""
   if ! world="$(mktemp -d "$TMP_ROOT/ssh.XXXXXX")"; then
-    printf 'mktemp-failed'
+    rc=mktemp-failed
     return
   fi
-  capture="$world/ssh-args"
   set +e
   ( set -e
-    build_ahead "$world"
-    git -C "$world/work" remote set-url origin ssh://git@example.invalid/repo.git
-    if [[ "$source" == config ]]; then
-      git -C "$world/work" config core.sshCommand "$SSH_STUB -i fixture-key"
-    fi ) >/dev/null 2>&1
+    if [[ "$setup" == wrapper ]]; then
+      build_collision "$world"
+      git -C "$world/work" remote set-url origin "ssh://git@example.invalid$world/up"
+    else
+      build_ahead "$world"
+      git -C "$world/work" remote set-url origin ssh://git@example.invalid/repo.git
+    fi
+    case "$setup" in
+      config | both) git -C "$world/work" config core.sshCommand "ssh -i config-key" ;;
+    esac ) >/dev/null 2>&1
   build_rc=$?
   set -e
   if [[ "$build_rc" -ne 0 ]]; then
-    printf 'build-failed:%s' "$build_rc"
+    rc="build-failed:$build_rc"
     return
   fi
-  [[ "$source" != env ]] || ssh_env=("GIT_SSH_COMMAND=$SSH_STUB -i fixture-key")
-  (cd "$world/work" && env -u GIT_SSH_COMMAND -u DECISIONS_DIR -u DECISIONS_BASE_REF \
-    DECISIONS_DIR=docs/decisions SSH_CAPTURE="$capture" ${ssh_env[@]+"${ssh_env[@]}"} \
-    "$script" next-id) >/dev/null 2>&1 || true
-  captured=""
-  [[ ! -f "$capture" ]] || captured="$(<"$capture")"
-  if [[ -z "$captured" ]]; then
-    printf 'ssh-not-run'
-    return
-  fi
-  while IFS= read -r line; do
-    if [[ "$line" != "-i fixture-key "* || "$line" != *" -oBatchMode=yes "* ]]; then
-      printf 'argv: %s' "$line"
-      return
-    fi
-  done <<<"$captured"
-  printf 'ok'
+  case "$setup" in
+    env | both) ssh_env=("GIT_SSH_COMMAND=ssh -i env-key") ;;
+    git_ssh) ssh_env=("GIT_SSH=$SSH_GIT_BIN/ssh") ;;
+    wrapper) ssh_env=("GIT_SSH=$SSH_WRAP_BIN/deploy-wrapper") ;;
+  esac
+  set +e
+  (cd "$world/work" && env -u GIT_SSH_COMMAND -u GIT_SSH -u GIT_SSH_VARIANT -u DECISIONS_DIR -u DECISIONS_BASE_REF \
+    PATH="$SSH_PATH_BIN:$PATH" DECISIONS_DIR=docs/decisions SSH_CAPTURE="$world/ssh-args" \
+    ${ssh_env[@]+"${ssh_env[@]}"} "$script" "$action") >/dev/null 2>"$world/stderr"
+  rc=$?
+  set -e
+  err="$(<"$world/stderr")"
+  [[ ! -f "$world/ssh-args" ]] || captured="$(<"$world/ssh-args")"
 }
 
-for source in env config; do
-  verdict="$(ssh_verdict "$DECISIONS" "$source")"
-  if [[ "$verdict" == ok ]]; then
-    pass "ssh from $source keeps its arguments and gains BatchMode"
-  else
-    fail "ssh from $source keeps its arguments and gains BatchMode ($verdict)"
-  fi
-done
+glob_match() { # TEXT GLOB
+  # $2 must expand unquoted to act as a glob.
+  # shellcheck disable=SC2254
+  case "$1" in
+    $2) return 0 ;;
+  esac
+  return 1
+}
 
-# Columns: source, text to replace, its replacement, what the defect removes.
-while IFS='~' read -r source old new label; do
+# Columns: row, setup, action, exit status, a glob the first captured argv
+# matches, whether every argv carries BatchMode, and a glob stderr matches.
+evaluate_ssh_rows() { # SCRIPT MODE [ROW]
+  local script="$1" mode="$2" only_row="${3:-}" name setup action want_rc want_first want_batch want_err
+  local batch line executed_rows=0
+  table_failures=""
+  while IFS='~' read -r name setup action want_rc want_first want_batch want_err; do
+    if [[ -n "$only_row" && "$name" != "$only_row" ]]; then
+      continue
+    fi
+    executed_rows=$((executed_rows + 1))
+    ssh_run "$script" "$setup" "$action"
+    batch=none
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      case "$line:$batch" in
+        *-oBatchMode=yes*:none | *-oBatchMode=yes*:yes) batch=yes ;;
+        *) batch=no ;;
+      esac
+    done <<<"$captured"
+    if [[ "$rc" == "$want_rc" && "$batch" == "$want_batch" ]] && glob_match "${captured%%$'\n'*}" "$want_first" &&
+      glob_match "$err" "$want_err"; then
+      [[ "$mode" != normal ]] || pass "$name"
+    elif [[ "$mode" == normal ]]; then
+      fail "$name (rc=$rc batch=$batch argv=${captured%%$'\n'*} stderr=${err%%$'\n'*})"
+    else
+      table_failures+="|$name|"
+    fi
+  done <<'SSH_CASES'
+ssh-env~env~next-id~0~path-ssh:-i env-key *~yes~*Cause: stub-ssh: refused*
+ssh-config~config~next-id~0~path-ssh:-i config-key *~yes~*
+ssh-both~both~next-id~0~path-ssh:-i env-key *~yes~*
+ssh-default~none~next-id~0~path-ssh:-oBatchMode=yes *~yes~*
+ssh-git-ssh~git_ssh~next-id~0~git-ssh:-oBatchMode=yes *~yes~*
+ssh-wrapper~wrapper~check~1~wrapper:*~no~*error=id-collision id=D035*
+SSH_CASES
+  if [[ "$executed_rows" -eq 0 ]]; then
+    if [[ "$mode" == normal ]]; then
+      fail "ssh table executed no rows"
+    else
+      printf 'TABLE_GUARD:ssh table selected no row: %s' "$only_row"
+    fi
+    return 1
+  fi
+  if [[ "$mode" == control ]]; then
+    printf '%s' "$table_failures"
+  fi
+}
+
+evaluate_ssh_rows "$DECISIONS" normal
+
+# Columns: row, text to replace, its replacement, what the defect removes.
+while IFS='~' read -r row old new label; do
   control_seq=$((control_seq + 1))
   if ! mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/control-$control_seq/decisions" "$old" "$new" 1)"; then
     fail "control $label could not be planted"
     continue
   fi
-  verdict="$(ssh_verdict "$mutant" "$source")"
-  if [[ "$verdict" != ok ]]; then
-    pass "$label fails ssh from $source"
+  set +e
+  failures="$(evaluate_ssh_rows "$mutant" control "$row")"
+  set -e
+  if [[ "$failures" == *"|$row|"* ]]; then
+    pass "$label fails $row"
   else
-    fail "$label did not fail ssh from $source"
+    fail "$label did not fail $row"
   fi
 done <<'SSH_CONTROLS'
-env~  BASE_SSH_COMMAND="$BASE_SSH_COMMAND -oBatchMode=yes"~  BASE_SSH_COMMAND="$BASE_SSH_COMMAND"~an ssh command without BatchMode
-config~  BASE_SSH_COMMAND="$BASE_SSH_COMMAND -oBatchMode=yes"~  BASE_SSH_COMMAND="$BASE_SSH_COMMAND"~an ssh command without BatchMode
-env~  BASE_SSH_COMMAND="${GIT_SSH_COMMAND:-}"~  BASE_SSH_COMMAND=""~an inherited GIT_SSH_COMMAND that is dropped
-config~    BASE_SSH_COMMAND="$(git -C "$DECISIONS_DIR" config --get core.sshCommand)" || BASE_SSH_COMMAND=""~    BASE_SSH_COMMAND=""~a configured core.sshCommand that is dropped
+ssh-env~BASE_SSH_COMMAND="$ssh_cmd -oBatchMode=yes"~BASE_SSH_COMMAND="$ssh_cmd"~an OpenSSH command without BatchMode
+ssh-env~${BASE_FETCH_CAUSE:+ Cause: $BASE_FETCH_CAUSE}~~a fetch failure that does not name its cause
+ssh-config~    ssh_cmd="$(git -C "$DECISIONS_DIR" config --get core.sshCommand)" || ssh_cmd=""~    ssh_cmd=""~a core.sshCommand that is dropped
+ssh-both~    ssh_cmd="$GIT_SSH_COMMAND"~    ssh_cmd="$(git -C "$DECISIONS_DIR" config --get core.sshCommand)"~a GIT_SSH_COMMAND outranked by core.sshCommand
+ssh-default~    ssh_prog="${GIT_SSH:-ssh}"~    ssh_prog="${GIT_SSH:-}"~a default that is not ssh
+ssh-git-ssh~    ssh_prog="${GIT_SSH:-ssh}"~    ssh_prog=ssh~a GIT_SSH program that is ignored
+ssh-wrapper~  case "$variant:${ssh_prog##*/}" in~  case "ssh:" in~BatchMode forced on a program that is not OpenSSH
 SSH_CONTROLS
 
 echo
