@@ -339,8 +339,9 @@ Options:
                     as another session's claim. The newest matching Claude,
                     Codex, or Pi session resumes natively, and the resumed
                     command carries one continuation line telling the lane to
-                    resume its orch workflow and read `lane-mail inbox`, so no
-                    follow-up is pasted into the pane. A hosted codex lane is
+                    resume its orch workflow, read `lane-mail inbox` and re-arm
+                    its mailbox monitor (`lane-mail watch`), so no follow-up is
+                    pasted into the pane. A hosted codex lane is
                     the exception: it resumes with no line, reported as
                     resume-lineless, and its line is pasted into the pane
                     afterwards — see --host. With no match the normal brief
@@ -1585,7 +1586,7 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
     exec="exec "
     print=" -p"
   elif [[ "$RELAUNCH" == true ]]; then
-    line=" 'Resume the orch workflow for $mail_id from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id first and act on every directive it prints.'"
+    line=" 'Resume the orch workflow for $mail_id from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id first and act on every directive it prints, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item $mail_id through your harness background wake.'"
   fi
   if [[ -n "$wake_dir" && "$HARNESS" == pi ]]; then printf 'pi-bridge send --cwd %q%s\n' "$wake_dir" "$line"; return; fi
   # claude and pi take the line as a trailing positional on their own resume

@@ -984,7 +984,7 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=
 # the variable Qopus, which under `set -u` empties the whole substitution the
 # expectation was built in and leaves the row comparing against nothing.
 Q="'\\''"
-hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every directive it prints.' "$1" "$1"; }
+hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every directive it prints, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item %s through your harness background wake.' "$1" "$1" "$1"; }
 HOSTED_LINE="$(hosted_line CC-41)"
 run_ot "$CHOICE" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch CC-41
 assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q --continue $Q$HOSTED_LINE$Q'")" \

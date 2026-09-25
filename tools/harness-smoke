@@ -11,7 +11,9 @@
 # MCP server and the Pi extension write when the harness runs them.
 #
 # It also asks what reaches a lane when the fleet overseer sends it a
-# directive, on every harness kendex installs the lane-mail-check hook on.
+# directive, on every harness kendex installs the lane-mail-check hook on,
+# and whether a lane idle at its prompt is woken for that directive by its own
+# mailbox monitor, on the harnesses whose background wake starts a turn.
 # Where the harness runs that hook, the lane-mail row runs a one-turn lane
 # session that makes two tool calls, sends the directive at the first of them,
 # and passes only where the lane read it and its cursor moved. Where the
@@ -22,7 +24,8 @@
 # One row per harness per question, and only for the kinds that harness
 # installs: skill and hook everywhere; agent everywhere but Antigravity;
 # command on Claude, Codex, OpenCode, Pi and Gemini; mcp on every harness but
-# Pi; pi-ext on Pi alone; lane-mail everywhere. Plugin has no row anywhere —
+# Pi; pi-ext on Pi alone; lane-mail everywhere; mail-wake on Claude, Codex
+# and Pi. Plugin has no row anywhere —
 # `Plugin` has `install: NONE` on all eight harnesses, so kendex renders no
 # plugin for one to load — and Antigravity has no agent row for the same
 # reason: agy reads agents from its global root alone, so kendex renders no
@@ -62,8 +65,8 @@
 # Exit 0 when every row passed (advisory and skipped included), 1 when any
 # row failed, 2 when the fixture could not be installed or `kendex verify`
 # refused it, 3 when nothing failed but a row was unanswerable, so a harness
-# that died on the render never reads as a clean run. Model turns: four on
-# claude, two each on codex, pi and antigravity, one each on gemini and
+# that died on the render never reads as a clean run. Model turns: five on
+# claude, two each on codex and antigravity, three on pi, one each on gemini and
 # copilot, two on cursor when logged in.
 #
 # The report is the row table: one aligned line per row as it is decided, then
@@ -748,12 +751,68 @@ mail_row() { # HARNESS LABEL LISTED [CMD...]
 # here because no arm row can be run on this machine: the accounts these rows
 # need are at their usage limits.
 
+# ---- the mail-wake row -----------------------------------------------------
+# A lane idle at its prompt runs no hook, so the lane-mail row above never
+# reaches it: its own mailbox monitor, `lane-mail watch` under the harness's
+# background wake (skills/orch/references/watch-delivery.md § Lane mailbox
+# monitor), is what starts its next turn. The row asks the lane to arm that
+# monitor and end its turn, and sends the directive WAKE_DELAY seconds after
+# the lane's first tool call, the monitor's own arming, so it lands once the
+# turn is over. It passes only where the session said the directive's answer
+# and the lane's own inbox read moved the cursor. It runs before the lane-mail
+# row, whose install adds the hook that would hand the directive over at the
+# turn's end instead, and on an item of its own, so neither row reads the
+# other's cursor. Codex has no row to run: Codex starts no turn for output that
+# arrives after a turn ended, and a Codex lane is reached by `open-terminal
+# --wake`.
+WAKE_ITEM=SMOKE-2
+WAKE_DELAY=30
+WAKE_READER="$SELF/skills/orch/scripts/lane-mail"
+WAKE_SKIPPED='Codex starts no turn for output that arrives after a turn ended; a Codex lane is reached by open-terminal --wake'
+wake_task() { # ARM — the lane session's prompt, ARM naming the harness's background wake
+  printf '%s on the shell command `%q watch --item %s --root %q`. Then reply with exactly: armed, and end your turn. When the monitor reports mail, run the shell command `%q inbox --item %s --root %q`, do what the directive it prints says, and then stop the monitor.' \
+    "$1" "$WAKE_READER" "$WAKE_ITEM" "$PROJECT" "$WAKE_READER" "$WAKE_ITEM" "$PROJECT"
+}
+wake_row() { # HARNESS LABEL CMD...
+  local harness=$1 label=$2 waited=0 moved=1 log="$PROJECT/smoke-wake.log"
+  shift 2
+  MAIL_BOX="$PROJECT/tmp/lane-mail/$WAKE_ITEM"
+  # %q on every value, as for the lane-mail row's sentinel: this is shell
+  # source the fixture hook runs.
+  printf '#!/usr/bin/env bash\ncd %q || exit 1\n( sleep %s; exec %q send --item %q --root %q --directive --file %q ) </dev/null >>%q 2>&1 &\n' \
+    "$PROJECT" "$WAKE_DELAY" "$WAKE_READER" "$WAKE_ITEM" "$PROJECT" "$DIR/mail-directive.txt" "$log" \
+    >"$PROJECT/smoke-sentinel"
+  chmod +x "$PROJECT/smoke-sentinel"
+  run "$harness-mail-wake" "$@"
+  # The send is detached from the hook, so it can outlive a session that ended
+  # early; waiting for it keeps its write out of a scratch tree already removed.
+  if [ ! -e "$PROJECT/smoke-sentinel" ]; then
+    while ! grep -q '^lane-mail: sent ' "$log" 2>/dev/null && [ "$waited" -le "$WAKE_DELAY" ]; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+  fi
+  rm -f -- "${PROJECT:?}/smoke-sentinel"
+  mail_moved || moved=0
+  if [ "$STATUS" -ne 0 ]; then
+    row "$harness" mail-wake unanswerable "harness=$harness $label exited $STATUS: $(clip "$(last_line)")"
+  elif ! grep -q '^lane-mail: sent ' "$log" 2>/dev/null; then
+    row "$harness" mail-wake fail "harness=$harness delivery=none: the directive was never sent, so the lane made no tool call to arm a monitor; its last line: $(clip "$(last_line)")"
+  elif ! grep -qE -e "^$MAIL_ANSWER\$" <<<"$OUT"; then
+    row "$harness" mail-wake fail "harness=$harness delivery=none: $label never said $MAIL_ANSWER after the directive landed on the idle lane (to-lane.cursor: ${MAIL_CURSOR:-unset}); its last line: $(clip "$(last_line)")"
+  elif [ "$moved" -eq 1 ]; then
+    row "$harness" mail-wake pass "harness=$harness delivery=monitor: $label said $MAIL_ANSWER, and to-lane.cursor advanced to $MAIL_CURSOR"
+  else
+    row "$harness" mail-wake fail "harness=$harness delivery=none: $label said $MAIL_ANSWER, and to-lane.cursor did not advance (to-lane.cursor: ${MAIL_CURSOR:-unset})"
+  fi
+}
+
 questions() { # HARNESS — the rows this harness answers, in the order it answers them
   case "$1" in
-    claude) printf '%s' 'skill hook agent command mcp lane-mail' ;;
+    claude) printf '%s' 'skill hook agent command mcp mail-wake lane-mail' ;;
     opencode | gemini) printf '%s' 'skill agent hook command mcp lane-mail' ;;
-    codex) printf '%s' 'skill command agent hook mcp lane-mail' ;;
-    pi) printf '%s' 'skill agent command pi-ext hook lane-mail' ;;
+    codex) printf '%s' 'skill command agent hook mcp mail-wake lane-mail' ;;
+    pi) printf '%s' 'skill agent command pi-ext hook mail-wake lane-mail' ;;
     antigravity) printf '%s' 'skill hook mcp lane-mail' ;;
     *) printf '%s' 'skill agent hook mcp lane-mail' ;;
   esac
@@ -763,10 +822,12 @@ every_row() { # HARNESS RESULT EVIDENCE — one row per question this harness an
   cell=$(mail_cell "$1")
   for q in $(questions "$1"); do
     # A harness the hook does not run on has its lane-mail answer from the
-    # table, which nothing about this machine changes.
-    case "$q:$cell" in
-      lane-mail:enforced | lane-mail:advisory) row "$1" "$q" "$2" "$3" ;;
-      lane-mail:*) mail_skipped "$1" "$cell" ;;
+    # table, and Codex its mail-wake answer from its runtime, neither of which
+    # anything about this machine changes.
+    case "$1:$q:$cell" in
+      codex:mail-wake:*) row "$1" "$q" skipped "$WAKE_SKIPPED" ;;
+      *:lane-mail:enforced | *:lane-mail:advisory) row "$1" "$q" "$2" "$3" ;;
+      *:lane-mail:*) mail_skipped "$1" "$cell" ;;
       *) row "$1" "$q" "$2" "$3" ;;
     esac
   done
@@ -819,6 +880,8 @@ claude_rows() {
   run claude-mcp env CLAUDE_CONFIG_DIR="$home" claude mcp list
   judge claude mcp 'smoke-mcp: .* Connected' 'smoke-mcp: .*(Pending approval|Failed)' \
     'claude mcp list' "McpStart $PROJECT"
+  wake_row claude 'claude -p (arms Monitor, ends its turn)' \
+    env CLAUDE_CONFIG_DIR="$home" claude -p "$(wake_task 'Start a Monitor with timeout_ms 120000')"
   mail_row claude 'claude -p (two tool calls, then the turn ends)' '' \
     env CLAUDE_CONFIG_DIR="$home" claude -p "$MAIL_TASK"
 }
@@ -852,6 +915,7 @@ codex_rows() {
   # A config reading and not a connection, so there is no marker to pin.
   run codex-mcp env CODEX_HOME="$home" codex mcp list
   judge codex mcp '^smoke-mcp .*enabled' '' 'codex mcp list (CODEX_HOME trusting the scratch project)'
+  row codex mail-wake skipped "$WAKE_SKIPPED"
   mail_row codex 'codex exec (two tool calls, then the turn ends)' '' \
     env CODEX_HOME="$home" codex exec --ephemeral --dangerously-bypass-hook-trust "$MAIL_TASK"
 }
@@ -979,6 +1043,8 @@ pi_rows() {
   run pi-hook pi -p --approve --no-session \
     'Run the shell command true with your bash tool, then reply with exactly: ok'
   fired pi PreToolUse .pi/kendex/hooks/smoke-tool.sh 'pi -p (one tool call)'
+  wake_row pi 'pi -p (arms bg_task, ends its turn)' \
+    pi -p --approve --no-session "$(wake_task 'Spawn a background task with your bg_task tool, notifyOnOutput true, notifyMode always,')"
   mail_row pi 'pi -p (two tool calls, then the turn ends)' '' \
     pi -p --approve --no-session "$MAIL_TASK"
 }

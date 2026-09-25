@@ -16,6 +16,17 @@ On re-delegation to a pane agent, use `steer_subagent` only for true mid-run cor
 
 Use `get_subagent_result` only as a recovery/status reader for missed or truncated pane completions; it does not affect ownership or delivery. If it returns `needs_completion`, the child finished a turn without the durable `complete_subagent` record — do not count it as a return; use the verbose diagnostics/outbox path to send one recovery instruction asking the same pane to call `complete_subagent` for the stored `taskId`. Treat Pi custom completion notifications as agent returns only when the task ID matches stored workflow state; repeated display is not a second return.
 
+## Lane mailbox monitor (Pi)
+
+A Pi lane arms its mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)) through the `pi-background-tasks` output wake that [§ Standing watch (Pi)](#standing-watch-pi) also uses.
+
+| Step | Call |
+|------|------|
+| Arm | `bg_task action: "spawn"` on `lane-mail watch --item [ISSUE_ID]`, with `notifyOnOutput: true`, `notifyMode: "always"` and `notifyOnExit: true`. Keep the pid the spawn returns. |
+| Wake | Run `lane-mail inbox --item [ISSUE_ID]` and act on every directive it prints. The inbox is the read; the wake's inline tail only says mail landed. |
+| Re-arm | At the "wake budget exhausted" notice, stop the monitor with `bg_status action: "stop"` on the kept pid, then spawn a new one. |
+| Exit | At every exit wake, `bg_status action: "list"`, and spawn a new monitor only when the list does not show the kept pid as running. |
+
 ## Standing watch (Pi)
 
 The oversee watch ([watch-delivery.md](watch-delivery.md)) reaches a Pi overseer through a `pi-background-tasks` output wake. The spawn parameters are the package's [instructions](https://github.com/vanillagreencom/kendex/blob/main/pi-extensions/pi-background-tasks/instructions.md).

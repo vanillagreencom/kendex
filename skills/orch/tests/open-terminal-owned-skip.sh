@@ -384,7 +384,7 @@ CODEX_QUESTION_OFF="'-c' 'features.default_mode_request_user_input=false'"
 PI_QUESTION_OFF="'--exclude-tools' 'question'"
 # occurrences TEXT NEEDLE — how many times NEEDLE stands in TEXT.
 occurrences() { local rest="${1//"$2"/}"; printf '%s\n' "$(( (${#1} - ${#rest}) / ${#2} ))"; }
-RELAUNCH_LINE="Resume the orch workflow for CC-1 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 first and act on every directive it prints."
+RELAUNCH_LINE="Resume the orch workflow for CC-1 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 first and act on every directive it prints, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item CC-1 through your harness background wake."
 for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222" "codex|codex resume $CODEX_SETTINGS $CODEX_QUESTION_OFF $CODEX444" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"; do
   IFS='|' read -r harness expected <<<"$row"
   capture="$TMP_ROOT/resume-$harness.cmd"

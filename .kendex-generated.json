@@ -911,6 +911,7 @@
   ".agents/skills/orch/tests/lane-host-ssh.sh",
   ".agents/skills/orch/tests/lane-host.sh",
   ".agents/skills/orch/tests/lane-launch-trust.sh",
+  ".agents/skills/orch/tests/lane-mail-watch.sh",
   ".agents/skills/orch/tests/lane-mail.sh",
   ".agents/skills/orch/tests/lane-marker.sh",
   ".agents/skills/orch/tests/lane-output-lint.test.sh",

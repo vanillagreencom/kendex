@@ -24,7 +24,7 @@ NL='
 
 usage() {
   cat <<'USAGE'
-Usage: lane-mail ask|notice|wait|inbox --item ITEM [options]
+Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail send|drain|pending --item ITEM [--root ROOT] [--host] [options]
        lane-mail peer ask|send --repo REPO [--host] [options]
 
@@ -51,6 +51,14 @@ Lane side, rooted at the lane's own git worktree:
               moving no cursor. With --ack N, print nothing and advance
               to-lane.cursor to N, the count a --peek printed, never back and
               never past an unread halt
+  watch --item ITEM [--root ROOT] [--interval S]
+              the lane's standing mailbox monitor, run under its harness's
+              background wake. Every --interval, when envelopes `inbox` would
+              print have landed past to-lane.cursor since the last poll, print
+              `lane-mail: mail=<item> new=<n>` and one line telling the lane
+              to run `inbox`, so each arrival wakes the lane once. An answer
+              prints nothing: its `wait` hands it over. Moves no cursor and
+              runs until it is stopped
 
 Overseer side:
   send --item ITEM (--re MSGID | --directive | --halt) --file PATH
@@ -106,10 +114,11 @@ Options:
                 Without it, `worktree path ITEM` answers where that worktree
                 exists, and the project root otherwise. `--item overseer`
                 is the overseer's own mailbox, rooted at the project's main
-                checkout from any of its checkouts. On `inbox` it names the
-                lane's worktree from a shell in another checkout, as the
-                lane-mail-check hook does for a lane working from the main
-                clone; without it `inbox` reads the caller's own checkout
+                checkout from any of its checkouts. On `inbox` and `watch`
+                it names the lane's worktree from a shell in another
+                checkout, as the lane-mail-check hook does for a lane working
+                from the main clone; without it they read the caller's own
+                checkout
   --repo REPO   peer only: ANOTHER repository's main checkout. A value
                 holding `/` is a path; a bare name is a checkout beside the
                 caller's own. A value resolving to this checkout is refused as
@@ -126,7 +135,7 @@ Options:
                 envelopes were handed over
   --halt        send only: a directive that halts the lane, as above
   --timeout S   seconds before `wait` exits 124; 0 never times out
-  --interval S  seconds between `wait` polls (default 5)
+  --interval S  seconds between `wait` and `watch` polls (default 5)
 
 Header, the first line drain and inbox --peek print: `count=<complete lines>
 first=<id>`, the id carried by the file's first line, empty when that line is
@@ -254,6 +263,7 @@ lm_message() { # KEY VALUE
     host-unreachable) text='The lane host could not be reached, so the mailbox state is unknown: a read is refused rather than reported as empty, and a write rather than reported as delivered. A stopped host is started; a gone one is relaunched.' ;;
     mail-read-failed) text='The hosted mailbox could not be read and its host answers, so the read is refused rather than reported as empty. A send stopped here appended nothing: a mailbox no read could judge is one no send can be judged against.' ;;
     timeout) text='No answer to this ask arrived before --timeout.' ;;
+    mail) text='Overseer mail landed in this lane mailbox. Run .agents/skills/orch/scripts/lane-mail inbox --item with the item above, and act on every directive it prints.' ;;
     duplicate) sep=' id='; text='This envelope was sent to this item less than a minute ago: every field of it but its own id and its stamp matches the envelope the id above names, so the send is a retry of a delivery that already landed rather than a second message. Change any field of the message, or wait out the minute, to send it again.' ;;
     *) printf 'lane-mail: message-invalid key=%s\n' "$1" >&2; return 2 ;;
   esac
@@ -282,7 +292,7 @@ if [ "$VERB" = peer ]; then
   esac
 fi
 case "$VERB" in
-  ask | notice | wait | inbox | send | drain | pending | peer) ;;
+  ask | notice | wait | inbox | watch | send | drain | pending | peer) ;;
   *) refuse verb-invalid "$VERB" ;;
 esac
 
@@ -807,6 +817,16 @@ lm_after() { # VALUE
   esac
 }
 
+# The envelopes among FILE's lines that `inbox` hands over. An answer is handed
+# to the `wait` that asked for it, never to the inbox, so a lane is not told
+# twice about a reply it already acted on. The overseer mailbox is the
+# exception: an overseer runs the watch for its whole session rather than
+# blocking in `wait`, and that watch reads this mailbox with `inbox`, so a
+# peer's answer would otherwise reach nothing.
+lm_inbox_objects() { # FILE
+  lm_objects "$1" | jq -c --arg item "$ITEM" 'select($item == "overseer" or .kind != "answer")'
+}
+
 # Replaced by rename, so a reader never meets a half-written count.
 # lm_cursor_put answers with its status alone, for the one caller that must
 # not refuse; lm_cursor_write refuses where it fails.
@@ -1006,18 +1026,38 @@ case "$VERB" in
     COUNT="$(lm_count "$WORK_DIR/lane.jsonl")"
     [ "$PEEK" -eq 0 ] || lm_header "$WORK_DIR/lane.jsonl"
     awk -v seen="$SEEN" 'NR > seen' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/unread"
-    # An answer is handed to the `wait` that asked for it, never to the inbox,
-    # so a lane is not told twice about a reply it already acted on. The
-    # overseer mailbox is the exception: an overseer runs the watch for its
-    # whole session rather than blocking in `wait`, and that watch reads this
-    # mailbox with `inbox`, so a peer's answer would otherwise reach nothing.
-    lm_objects "$WORK_DIR/unread" | jq -c --arg item "$ITEM" '
-      select($item == "overseer" or .kind != "answer")'
+    lm_inbox_objects "$WORK_DIR/unread"
     # Rewritten only when it moves, so a read that found nothing new leaves
     # the file as it was.
     [ "$PEEK" -eq 1 ] || [ "$COUNT" = "$SEEN" ] || lm_cursor_write "$COUNT"
     exec 9>&-
     orch_release_lock
+    ;;
+
+  watch)
+    lm_seconds --interval "$INTERVAL"
+    # A harness stops its monitor with a signal. Trapped, so the EXIT trap
+    # still removes the work directory a monitor re-armed at every expiry
+    # would otherwise leave behind each time.
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    # Lines up to here are announced, or read before this watch started; the
+    # cursor the lane's own `inbox` moves raises it, so mail already read is
+    # never announced, and a fresh watch announces what stands unread.
+    ANNOUNCED=0
+    while :; do
+      lm_cursor_read
+      [ "$ANNOUNCED" -ge "$SEEN" ] || ANNOUNCED="$SEEN"
+      lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
+      lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
+      awk -v seen="$ANNOUNCED" 'NR > seen' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/unread"
+      NEW="$(lm_inbox_objects "$WORK_DIR/unread" | awk 'END { print NR + 0 }')" ||
+        refuse file-unreadable "$TO_LANE"
+      [ "$NEW" -eq 0 ] || REFUSE_EXTRA="new=$NEW" lm_message mail "$ITEM"
+      ANNOUNCED="$(lm_count "$WORK_DIR/lane.jsonl")"
+      sleep "$INTERVAL"
+    done
     ;;
 
   drain | pending)

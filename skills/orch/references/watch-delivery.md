@@ -1,6 +1,6 @@
 # Watch delivery
 
-Load from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) before launching the watch.
+Load from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) before launching the watch, and from [skill-rules.md § Coordination](skill-rules.md#coordination), Lane mail, before a lane arms its mailbox monitor.
 
 Oversight stands from the first watch launch until oversee.md § 5 Stop, and every watch line reaches this session as it is written, through the runtime's own event mechanism. Where the runtime has no asynchronous wake, the turn is the wait: hold a blocking follow of the watch log, re-arm it on every return, and never end the turn while any lane record is `running`.
 
@@ -32,3 +32,13 @@ The [oversee.md § 5](../workflows/oversee.md#5-stop) handoff names the mechanis
 ## Single passes
 
 Run the oversee.md § 4 command without `--repeat`, as the harness's background command: no detach, no `[RUN_DIR]`, no follow, no process read. Its exit is the wake. Handle every line it printed, then start the next pass, with `--skip-lane [WINDOW]` per window reported `window-gone` until tmux lists it again. An exit the § 4 stop rules name ends the passes. Nothing reports `overseer-dead`, since no watch outlives the session. At § 5 Stop, start no further pass and stop a running one through the harness's own background-task control. The handoff's Watch row reads `single passes` alone, and a successor starts its own passes.
+
+## Lane mailbox monitor
+
+A lane arms one standing monitor on its own mailbox as its first step, from its worktree and on its own host, a hosted lane inside its sandbox. The monitor runs `.agents/skills/orch/scripts/lane-mail watch --item [ISSUE_ID]`, which prints a `lane-mail: mail=[ISSUE_ID]` line once for each arrival of anything but an answer (`lane-mail --help`). Each line wakes an idle lane, and the woken turn runs `lane-mail inbox --item [ISSUE_ID]` and acts on every directive it prints. An answer wakes nothing, so the ask gate's `lane-mail wait` keeps it. A lane whose monitor stands needs no wake after a send.
+
+| Harness | Arm | Re-arm |
+|---------|-----|--------|
+| Claude Code | `Monitor` on the watch command, `timeout_ms` at its maximum. | Whenever the monitor ends: at its expiry, or when it is stopped. |
+| Codex | None. Codex starts no turn for output that arrives after a turn ended, so the overseer wakes the lane: [codex-runtime.md § Lane mailbox](codex-runtime.md#lane-mailbox). | None. |
+| Pi | `bg_task` output wakes on the watch command: [pi-runtime.md § Lane mailbox monitor (Pi)](pi-runtime.md#lane-mailbox-monitor-pi). | Respawn in the cases its Re-arm and Exit rows name. |
