@@ -57,7 +57,9 @@ Overseer side:
               append to to-lane.jsonl the answer to MSGID, or a directive that
               answers no ask. --halt sends a directive the lane-mail-halt
               hook refuses every lane tool call on until a plain inbox read
-              acknowledges it. Prints the receipt below on stdout
+              acknowledges it. Prints the receipt below on stdout. No halt
+              goes to `--item overseer`: no hook halts an overseer on it, and
+              the watch acknowledges that mailbox with --ack
   drain --item ITEM --after N [--receipts]
               print the header below, then every to-overseer.jsonl
               envelope after line N, skipping asks to-lane.jsonl answers.
@@ -65,8 +67,8 @@ Overseer side:
               lines> first=<id>` for to-lane.jsonl, N being the count
               to-lane.cursor holds and never more than the lines listed, 0
               where the lane has never read, or `missed` where the cursor
-              was not there beside the lock its reads leave: a read that
-              missed. Then `<line> <id> <epoch>` for every to-lane.jsonl
+              was not there beside the lock its reads leave, or reads above
+              0 over a listing of no line: a read that missed. Then `<line> <id> <epoch>` for every to-lane.jsonl
               directive: its line number, its id, and its `at` in epoch
               seconds, empty where `at` does not parse. The cursor is the
               receipt: a directive on a line at or below N is one the lane
@@ -854,6 +856,7 @@ case "$VERB" in
     if [ "$DIRECTIVE" -eq 0 ] && [ -z "$MSGID" ]; then
       refuse option-required --re
     fi
+    [ "$HALT" -eq 0 ] || [ "$ITEM" != overseer ] || refuse option-conflict '--item=overseer,--halt'
     # The envelope is built first and judged whole; lm_envelope writes the id
     # into the work directory and prints the line, so a refusal below leaves
     # nothing in any mailbox.
@@ -1025,7 +1028,14 @@ case "$VERB" in
         refuse file-unreadable "$TO_LANE"
     elif [ "$RECEIPTS" -eq 1 ]; then
       COUNT="$(lm_count "$WORK_DIR/lane.jsonl")"
-      [ "$SEEN" -le "$COUNT" ] || SEEN="$COUNT"
+      # The cursor counts lines of an append-only file, so one above 0 over a
+      # listing of no line is a listing that missed. Over one that has lines
+      # it is a directive appended and read after the listing, clamped to it.
+      if [ "$SEEN" -gt 0 ] && [ "$COUNT" -eq 0 ]; then
+        SEEN=missed
+      else
+        [ "$SEEN" -le "$COUNT" ] || SEEN="$COUNT"
+      fi
       # A cursor that is not there is one of two things, told apart here once:
       # a lane that has never read, whose inbox has made neither the cursor
       # nor its lock, or a read of it that missed, beside the lock every read

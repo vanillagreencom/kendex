@@ -251,6 +251,18 @@ cursor_lane() { # NAME
   lm drain --item KEN-1 --root "$LANE" --after 0 --receipts
   CLAMPED="$(grep '^receipts ' <<<"$OUT" | sed 's/ first=.*//')"
 }
+# A cursor above 0 over a listing of no line: the append-only file was read
+# short, so the receipts line says missed rather than clamping to 0.
+empty_listing() { # NAME
+  new_lane "$1"
+  mkdir -p "$LANE/tmp/lane-mail/KEN-1"
+  printf '3\n' > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
+  lm drain --item KEN-1 --root "$LANE" --after 0 --receipts
+  EMPTY_LISTING="$RC=$(grep '^receipts ' <<<"$OUT" | sed 's/ first=.*//')"
+}
+empty_listing receipts_empty_listing
+assert_eq "$EMPTY_LISTING" "0=receipts cursor=missed count=0" \
+  "drain --receipts reports a cursor over a listing of no line as missed"
 cursor_lane inbox_quiet
 assert_eq "$QUIET" "kept" "an inbox that hands nothing over leaves the cursor file alone"
 assert_eq "$CLAMPED" "receipts cursor=1 count=1" "drain --receipts lists the cursor no further than the lines it read"
@@ -357,6 +369,15 @@ assert_eq "$(jq -r '.from' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "overse
 lm send --item overseer --directive --file "$(text d 'Owner note.')"
 assert_eq "$(jq -r '.from' < "$LANE/tmp/lane-mail/overseer/to-lane.jsonl")" "owner" \
   "a send into the overseer's own mailbox is the owner's"
+# No hook halts an overseer, and the watch acknowledges this mailbox with
+# --ack, which stops short of an unread halt: one would stand for good.
+overseer_halt() {
+  lm send --item overseer --halt --file "$(text d 'Stop.')"
+  HALT_SENT="$RC=$ERR lines=$(wc -l < "$LANE/tmp/lane-mail/overseer/to-lane.jsonl" | tr -d ' ')"
+}
+overseer_halt
+assert_eq "$HALT_SENT" "2=lane-mail: option-conflict=--item=overseer,--halt lines=1" \
+  "a halt into the overseer mailbox is refused before any append"
 
 lm peer ask --repo peer_b --file "$(text q 'Do you own KEN-9?')" --options yes,no
 PEER_ASK="${OUT#id=}"
@@ -996,9 +1017,20 @@ mutant directives-alone 's@foreach inputs as \$raw (0; \. + 1;@foreach (inputs |
 answered_lane control_pending_answer
 assert_eq "$PENDING_DIRECTIVE" "" "control: directive lines numbered alone drop an unread directive from pending"
 
-mutant receipts-unclamped 's@^      \[ "\$SEEN" -le "\$COUNT" \] || SEEN="\$COUNT"$@      :@'
+mutant receipts-unclamped 's@^        \[ "\$SEEN" -le "\$COUNT" \] || SEEN="\$COUNT"$@        :@'
 cursor_lane control_clamp
 assert_eq "$CLAMPED" "receipts cursor=5 count=1" "control: an unclamped cursor claims lines the read never listed"
+
+mutant receipts-empty-clamped 's@^      if \[ "\$SEEN" -gt 0 \] && \[ "\$COUNT" -eq 0 \]; then$@      if false; then@'
+empty_listing control_empty_listing
+assert_eq "$EMPTY_LISTING" "0=receipts cursor=0 count=0" \
+  "control: a cursor clamped over an empty listing reads as a lane that has read nothing"
+
+mutant overseer-halt 's@^    \[ "\$HALT" -eq 0 \] || \[ "\$ITEM" != overseer \] || refuse option-conflict .*$@    :@'
+new_lane control_overseer_halt
+lm send --item overseer --directive --file "$(text d 'Owner note.')"
+overseer_halt
+assert_eq "$HALT_SENT" "0= lines=2" "control: without the refusal the halt lands in the overseer mailbox"
 
 mutant ack-backward 's@^      \[ "\$ACK" -le "\$SEEN" \] || lm_cursor_write "\$ACK"$@      lm_cursor_write "$ACK"@'
 stale_ack control_ack

@@ -94,6 +94,23 @@ lane_reads KEN-82
 receipts KEN-82
 assert_eq "$RECEIPTS" "$HEARTBEAT" "a lane first watched is taken as having read up to its cursor" "$STUB_DIR/receipts.err"
 
+# A lane never sent a directive is watched on its empty mailbox, and that read
+# seeds its row at 0: a first directive the lane reads before the next mail
+# pass is still reported read, not taken for one read before it was watched.
+first_directive() { # [WATCH_BIN]
+  local bin="${1:-}"
+  mail_reset KEN-90
+  receipts KEN-90 "$bin"
+  FIRST_ID="$(direct KEN-90 'First word.')"
+  lane_reads KEN-90
+  receipts KEN-90 "$bin"
+  FIRST_READ="$RECEIPTS"
+}
+new_case receipts_first_directive
+first_directive
+assert_eq "$FIRST_READ" "EVENT directive-read KEN-90 $FIRST_ID" \
+  "a first directive read within one mail pass of an empty mailbox is directive-read" "$STUB_DIR/receipts.err"
+
 # Must-fail inverses: the cursor not read, so no directive is ever read; and
 # the unread line not remembered, so it comes back on every run.
 MUTANT_DIR="$TMP_ROOT/mutant"
@@ -140,13 +157,14 @@ PY
 }
 lane_mail_mutant missed-zero '        [ "$LM_FETCH_ABSENT" -eq 1 ] || SEEN=missed' '        :'
 lane_mail_mutant missed-always '        [ "$LM_FETCH_ABSENT" -eq 1 ] || SEEN=missed' '        SEEN=missed'
-receipts_mutant seed-empty '      if [[ "$to_count" -eq 0 ]]; then
-        missed=1
-      else
-        read_at="$lane_read"; unread_at=0
-      fi' '      read_at="$lane_read"; unread_at=0'
-receipts_mutant reset-on-short '    elif [[ "$to_count" -eq 0 || "$lane_read" -lt "$read_at" ]]; then
-      missed=1' '    elif [[ "$to_count" -eq 0 || "$lane_read" -lt "$read_at" ]]; then
+# The watch judging an empty listing a missed read itself, so a row is never
+# seeded from one; and lane-mail clamping a cursor over one to 0.
+receipts_mutant seed-skips-empty '    elif ! [[ "$read_at" =~ ^[0-9]+$ && "$unread_at" =~ ^[0-9]+$ ]]; then
+      read_at="$lane_read"; unread_at=0' '    elif ! [[ "$read_at" =~ ^[0-9]+$ && "$unread_at" =~ ^[0-9]+$ ]]; then
+      if [[ "$header" == *" count=0 "* ]]; then missed=1; else read_at="$lane_read"; unread_at=0; fi'
+lane_mail_mutant empty-clamped '      if [ "$SEEN" -gt 0 ] && [ "$COUNT" -eq 0 ]; then' '      if false; then'
+receipts_mutant reset-on-short '    elif [[ "$lane_read" -lt "$read_at" ]]; then
+      missed=1' '    elif [[ "$lane_read" -lt "$read_at" ]]; then
       read_at=0; unread_at=0'
 # A hosted lane whose cursor read comes back short once, in either shape: the
 # provider's read of to-lane.cursor exits as a file not there while its probe
@@ -281,8 +299,8 @@ assert_eq "$REPLACED" "$HEARTBEAT" \
   "control: counts kept across a replacement leave its first directive unreported" "$STUB_DIR/receipts.err"
 new_case receipts_after_answer_mutant
 answered_first "$DIRONLY"
-assert_eq "$ANSWERED" "$HEARTBEAT" \
-  "control: directive lines numbered alone take an unread directive for one the cursor passed" "$STUB_DIR/receipts.err"
+assert_eq "$ANSWERED" "EVENT directive-read KEN-85 $ANSWERED_ID" \
+  "control: directive lines numbered alone report an unread directive as read" "$STUB_DIR/receipts.err"
 
 new_case receipts_short_cursor_low_mutant
 short_cursor low "$MUTANT_DIR/orch/scripts/oversee-watch-reset-on-short"
@@ -293,9 +311,14 @@ assert_eq "${SHORT##*|}" "EVENT directive-read KEN-83 old-1" \
 # below the one reported; the first-pass rows below are where `missed` alone
 # decides.
 new_case receipts_first_watch_missed_lane_mutant
-first_watch_missed to-lane.jsonl "$MUTANT_DIR/orch/scripts/oversee-watch-seed-empty"
+first_watch_missed to-lane.jsonl "" "$MUTANT_DIR/orch/scripts/lane-mail-empty-clamped"
 assert_eq "$MISSED_FIRST" "$HEARTBEAT|EVENT directive-read KEN-87 old-1|EVENT directive-read KEN-87 old-2" \
-  "control: a row seeded from an empty read replays both directives as read" "$STUB_DIR/receipts.err"
+  "control: a cursor clamped over an empty read seeds a row that replays both directives as read" "$STUB_DIR/receipts.err"
+new_case receipts_first_directive_mutant
+first_directive "$MUTANT_DIR/orch/scripts/oversee-watch-seed-skips-empty"
+assert_eq "$FIRST_READ" "$HEARTBEAT" \
+  "control: an empty mailbox left unseeded takes a first directive read within a pass for one read before" \
+  "$STUB_DIR/receipts.err"
 new_case receipts_first_watch_missed_cursor_mutant
 first_watch_missed to-lane.cursor "" "$MUTANT_DIR/orch/scripts/lane-mail-missed-zero"
 assert_eq "$MISSED_FIRST" "EVENT directive-unread KEN-87 old-1 age=N|EVENT directive-unread KEN-87 old-2 age=N|EVENT directive-read KEN-87 old-1|EVENT directive-read KEN-87 old-2" \

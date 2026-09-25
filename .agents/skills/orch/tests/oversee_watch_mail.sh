@@ -369,8 +369,7 @@ import sys
 src, out = sys.argv[1:]
 s = open(src).read()
 for old, new in (
-    ('mail_read "$item" inbox "${args[@]}";', 'mail_read "$item" inbox "${args[@]}" --peek;'),
-    ('      envelopes="$MAIL_OUT"\n', '      envelopes="$(tail -n +2 <<<"$MAIL_OUT")"\n'),
+    ('      if mail_read "$item" inbox "${args[@]}" --ack "$count"; then\n', '      if :; then\n'),
 ):
     assert s.count(old) == 1, "peeking mutant pattern: " + old
     s = s.replace(old, new)
@@ -996,9 +995,9 @@ python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$WHOLE" <<'PY'
 import sys
 src, out = sys.argv[1:]
 s = open(src).read()
-old = 'if ! mail_read "$item" inbox "${args[@]}"; then'
+old = 'if ! mail_read "$item" inbox "${args[@]}" --peek; then'
 assert s.count(old) == 1, "whole mutant pattern"
-open(out, "w").write(s.replace(old, 'if ! MAIL_OUT="$(cat -- "$PROJECT_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")"; then'))
+open(out, "w").write(s.replace(old, 'if ! MAIL_OUT="$(printf \'count=0 first=\\n\'; cat -- "$PROJECT_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")"; then'))
 PY
 chmod +x "$WHOLE"
 new_case mail_session_start_mutant
