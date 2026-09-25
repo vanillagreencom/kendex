@@ -84,13 +84,15 @@ printf '%s\n' "$* host=$ORCH_LANE_HOST" >>"$LANE_CLOSE_HOST_CALLS"
 # stop is the provider signalling the lane's harness on its host: the harness
 # ends, and the pane falls back to the bare shell its window keeps, which the
 # lane judge reads as exited. LANE_CLOSE_NO_EXIT is a harness that outlives the
-# signal, LANE_CLOSE_STOP_STATUS a stop that fails and LANE_CLOSE_STOP_OUT
-# the answer it prints in place of the protocol's line.
+# signal, LANE_CLOSE_STOP_STATUS a stop that fails, 4 being the protocol's
+# answer for an item whose worktree is gone, and LANE_CLOSE_STOP_OUT the answer
+# it prints in place of the protocol's line.
 if [[ "$1" == stop ]]; then
-  if [[ "${LANE_CLOSE_STOP_STATUS:-0}" -ne 0 ]]; then
-    printf 'lane-host-ssh: stop-timeout item=%s\n' "$3" >&2
-    exit "$LANE_CLOSE_STOP_STATUS"
-  fi
+  case "${LANE_CLOSE_STOP_STATUS:-0}" in
+    0) ;;
+    4) printf 'lane-host-ssh: stop-worktree-removed item=%s\n' "$3" >&2; exit 4 ;;
+    *) printf 'lane-host-ssh: stop-timeout item=%s\n' "$3" >&2; exit "$LANE_CLOSE_STOP_STATUS" ;;
+  esac
   if [[ "${LANE_CLOSE_NO_EXIT:-0}" != 1 ]]; then
     printf 'exited\n' >"$LANE_CLOSE_PHASE"
     awk -F'\t' 'BEGIN { OFS = "\t" } { $5 = "bash"; print }' "$LANE_CLOSE_ROWS" >"$LANE_CLOSE_ROWS.next"
@@ -522,14 +524,32 @@ assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=
 
 echo '=== a failed stop keeps the lane and its record ==='
 write_state running codex /host; write_panes python; codex_screen
-LANE_CLOSE_STOP_STATUS=4 run_close "$SCRIPT"
-assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=codex cause=provider status=4$' <<<"$ERR" || true) relay=$(grep -c '^lane-host-ssh: stop-timeout item=KEN-1$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+LANE_CLOSE_STOP_STATUS=1 run_close "$SCRIPT"
+assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=codex cause=provider status=1$' <<<"$ERR" || true) relay=$(grep -c '^lane-host-ssh: stop-timeout item=KEN-1$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 failed=1 relay=1 kill=0 close=0 status=running' 'a provider stop that fails refuses, relaying its words, and closes nothing'
 
 write_state running codex /host; write_panes python; codex_screen
 LANE_CLOSE_STOP_OUT='' run_close "$SCRIPT"
 assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=codex cause=answer-unparsed$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 failed=1 kill=0 status=running' 'a provider stop that prints no stopped line refuses as unparsed'
+
+echo '=== a finished hosted lane whose worktree is gone closes without a stop ==='
+# The provider's removed-worktree answer signals nothing, so the harness still
+# runs and the pane never reads exited: the host close and the window kill are
+# what end it. On a nonterminal item the stop is never reached, and under
+# --keep-sandbox nothing would end the harness, so both refuse.
+write_state running claude /host; write_panes python; claude_screen
+LANE_CLOSE_STOP_STATUS=4 run_close "$SCRIPT"
+assert_eq "rc=$RC skipped=$(grep -c '^lane-close: stop-skipped item=KEN-1 harness=claude cause=worktree-removed$' <<<"$OUT" || true) stop=$(stop_count KEN-1 claude) close=$(close_call_count) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 skipped=1 stop=1 close=1 kill=1 status=done' 'a terminal idle lane whose worktree is gone skips the stop, closes the host and window and records done'
+write_state running claude /host; write_panes python; claude_screen
+LANE_CLOSE_STOP_STATUS=4 LANE_CLOSE_TRACKER_STATE=Todo LANE_CLOSE_TRACKER_STATE_TYPE=unstarted run_close "$SCRIPT"
+assert_eq "rc=$RC live=$(grep -c '^lane-close: lane-live item=KEN-1 state=idle pane=%7$' <<<"$ERR" || true) stop=$(stop_count KEN-1 claude) close=$(close_call_count) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 live=1 stop=0 close=0 kill=0 status=running' 'the same provider answer on a nonterminal item is never asked for: the lane refuses as live'
+write_state running claude /host; write_panes python; claude_screen
+LANE_CLOSE_STOP_STATUS=4 run_close "$SCRIPT" --keep-sandbox
+assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=provider status=4$' <<<"$ERR" || true) skipped=$(grep -c '^lane-close: stop-skipped ' <<<"$OUT" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 failed=1 skipped=0 kill=0 status=running' 'under --keep-sandbox the removed-worktree answer refuses, since the kept sandbox keeps the harness'
 
 echo '=== --keep-sandbox leaves a stopped record for later close ==='
 write_state running codex /host
@@ -939,9 +959,22 @@ write_state running claude /host; write_panes python; claude_screen; run_close "
 assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=claude pane=%7 processes=0$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=1 timeout=1 status=running' \
   'control: without the stop an idle hosted lane never exits and the close times out'
 MUTANT="$(mutant provider-status '    [[ "$rc" -eq 0 ]] || { message stop-failed "${fields[@]}" "cause=provider" "status=$rc" >&2; exit 1; }' '    :')"
-write_state running codex /host; write_panes python; codex_screen; LANE_CLOSE_STOP_STATUS=4 run_close "$MUTANT"
+write_state running codex /host; write_panes python; codex_screen; LANE_CLOSE_STOP_STATUS=1 run_close "$MUTANT"
 assert_eq "provider=$(grep -c ' cause=provider ' <<<"$ERR" || true) unparsed=$(grep -c ' cause=answer-unparsed$' <<<"$ERR" || true)" 'provider=0 unparsed=1' \
   'control: ignoring the provider status blames its missing answer rather than the stop that failed'
+MUTANT="$(mutant worktree-removed '    if [[ "$rc" -eq "$STOP_WORKTREE_REMOVED" && "$KEEP_SANDBOX" == false ]]; then' '    if false; then')"
+write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_STOP_STATUS=4 run_close "$MUTANT"
+assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=provider status=4$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=1 failed=1 status=running' \
+  'control: without the removed-worktree skip a merged hosted lane refuses as stop-failed'
+MUTANT="$(mutant worktree-removed-kept '    if [[ "$rc" -eq "$STOP_WORKTREE_REMOVED" && "$KEEP_SANDBOX" == false ]]; then' '    if [[ "$rc" -eq "$STOP_WORKTREE_REMOVED" ]]; then')"
+write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_STOP_STATUS=4 run_close "$MUTANT" --keep-sandbox
+assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 status=stopped' \
+  'control: skipping under --keep-sandbox records stopped over a harness nothing ended'
+MUTANT="$(mutant skip-wait '  [[ "$STOP_SKIPPED" == false ]] || finish_close
+' '')"
+write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_STOP_STATUS=4 run_close "$MUTANT"
+assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=claude pane=%7 processes=$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=1 timeout=1 status=running' \
+  'control: waiting on a skipped stop times out on a harness nothing signalled'
 MUTANT="$(mutant unparsed $'      message stop-failed "${fields[@]}" "cause=answer-unparsed" >&2\n      exit 1' '      STOPPED_COUNT=0')"
 write_state running codex /host; write_panes python; codex_screen; LANE_CLOSE_STOP_OUT='' run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \

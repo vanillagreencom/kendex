@@ -818,6 +818,28 @@ exec git "$@"
         mutant = self.call("stop", "--item", "TEST-1", "--harness", "claude")
         self.assertEqual(mutant.returncode, 0, mutant.stderr)
 
+    def test_stop_answers_a_removed_worktree_with_its_own_status(self):
+        # merge-pr removes the item's worktree before its lane goes idle, and
+        # lane-close reads exit 4 as a stop the host close makes unnecessary.
+        self.assertEqual(self.create().returncode, 0)
+        worktree = Path(self.row["clone"] + "-worktree")
+        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(worktree)],
+                       check=True, capture_output=True)
+        removed = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((removed.returncode, removed.stdout, b"stop-worktree-removed item=TEST-1\n" in removed.stderr),
+                         (4, b"", True), removed.stderr)
+        original = self.script.read_text()
+        guard = """if ! test -d "$1"; then
+  printf 'lane-host-ssh: stop-worktree-removed item=%s\\n' "$4" >&2
+  exit 4
+fi
+"""
+        self.assertEqual(original.count(guard), 1)
+        self.script.write_text(original.replace(guard, ""))
+        mutant = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((mutant.returncode, b"stop-worktree-read-failed item=TEST-1" in mutant.stderr),
+                         (1, True), mutant.stderr)
+
     @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
     def test_stop_refuses_when_a_signaled_process_stays_live(self):
         self.assertEqual(self.create().returncode, 0)

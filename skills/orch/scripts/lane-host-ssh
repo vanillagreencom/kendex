@@ -330,9 +330,17 @@ exec tar -chzf - -C / -- "${paths[@]}"''', row["clone"], worktree_path).stdout
 
 
 def stop(row, item, harness):
-    """Stop the named harness only when its process belongs to the item worktree."""
+    """Stop the named harness only when its process belongs to the item worktree.
+
+    An item whose worktree its own close-out already removed exits 4: no
+    process can be matched to a directory that is gone, and lane-close reads
+    that status as a stop its host close makes unnecessary."""
     path = owned_worktree(row, item, "stop")
-    result = remote(row, '''lib="$3/.agents/skills/orch/scripts/lib/lane-state.sh"
+    result = remote(row, '''if ! test -d "$1"; then
+  printf 'lane-host-ssh: stop-worktree-removed item=%s\n' "$4" >&2
+  exit 4
+fi
+lib="$3/.agents/skills/orch/scripts/lib/lane-state.sh"
 if ! test -r "$lib"; then
   printf 'lane-host-ssh: stop-library-missing path=%s\n' "$lib" >&2
   exit 1
@@ -346,7 +354,9 @@ lane_stop_owned "$1" "$2" || {
   printf 'lane-host-ssh: stop-%s item=%s%s\n' "$LANE_STOP_CAUSE" "$4" "${LANE_STOP_PID:+ pid=$LANE_STOP_PID}" >&2
   exit 1
 }
-printf 'stopped item=%s processes=%s\n' "$4" "$LANE_STOP_COUNT"''', path, harness, row["clone"], item)
+printf 'stopped item=%s processes=%s\n' "$4" "$LANE_STOP_COUNT"''', path, harness, row["clone"], item, accept=(4,))
+    if result.returncode == 4:
+        raise SystemExit(4)
     sys.stdout.buffer.write(result.stdout)
 
 
@@ -392,7 +402,8 @@ hosted lane path (worktree path --hosted), and path= names it.
 stop --item ID --harness claude|codex|pi resolves the owned worktree through
 the installed worktree command, signals only matching harness processes whose
 current directory is that worktree, waits for them to exit, and prints
-stopped item=ID processes=COUNT. close preserves render-only drift as a binary patch under clone/tmp, restores
+stopped item=ID processes=COUNT. A worktree that is no longer a directory exits
+4 with stop-worktree-removed and signals nothing. close preserves render-only drift as a binary patch under clone/tmp, restores
 the generated paths, refreshes the clone, and then closes. An untracked render,
 a skill symlink a post-launch kendex apply added among them, enters the patch
 through a temporary index rather than a working-tree comparison, so a link to a
