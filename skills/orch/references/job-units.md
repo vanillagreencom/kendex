@@ -21,7 +21,7 @@ Every character outside `A-Za-z0-9_.-` in the name becomes `_`. Example: `orch-v
 | Property | Value |
 |---|---|
 | `RuntimeMaxSec` | The launch's `--cap`, from the timeout the caller already has, set above that bound plus the kill grace so the job's own bound ends it first. `dev-validate-run` passes `DEV_VALIDATE_TIMEOUT_SECS` + kill grace + one poll interval. |
-| `TimeoutStopSec` | `JOB_UNIT_KILL_GRACE`, the grace `dev-validate-run`'s own bound also gives |
+| `TimeoutStopSec` | `JOB_UNIT_KILL_GRACE`: the seconds between SIGTERM and SIGKILL for what the unit still holds when it stops. A `setsid` job's `end` gives its group the same grace, and `dev-validate-run`'s own bound gives its command the same. |
 | `LimitNOFILE` | The launching process's own soft and hard open-file limits (`unlimited` as `infinity`) |
 | Environment | Every variable the launching process exports |
 
@@ -34,9 +34,9 @@ The launch prints the runner line and records it; `dev-validate-run` writes it a
 | `runner=systemd unit=UNIT` | The job is the unit `UNIT` |
 | `runner=setsid reason=no-systemd-run` | No `systemd-run` is installed |
 | `runner=setsid reason=probe-failed detail=TEXT` | `systemd-run` could not start the probe unit; `TEXT` is its first line of stderr |
-| `runner=setsid reason=unit-launch-failed detail=TEXT` | The probe unit started and the job's unit did not |
+| `runner=setsid reason=unit-launch-failed detail=TEXT` | The probe unit started, the job's `systemd-run` failed, and the manager has no unit of that name. A failed call for a unit the manager does have leaves the job as that unit; a manager that does not answer fails the launch. |
 
-A unit holds every process the job starts, and systemd kills what remains when the job's main process exits or reaches `RuntimeMaxSec`. Under `setsid` nothing bounds the job: it leads its own process group and calls `job-unit.sh end` when it finishes, which kills that group. A job killed before `end`, and a process that starts its own session, escape it.
+A unit holds every process the job starts, and systemd kills what remains when the job's main process exits or reaches `RuntimeMaxSec`. Under `setsid` nothing bounds the job: it leads its own process group and calls `job-unit.sh end` when it finishes, which sends that group SIGTERM, waits up to the kill grace for it to empty, then sends SIGKILL. A job killed before `end`, and a process that starts its own session, escape it.
 
 ## Stopping
 

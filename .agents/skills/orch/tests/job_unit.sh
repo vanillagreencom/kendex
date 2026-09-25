@@ -151,6 +151,42 @@ else
   echo "  skip  setsid is not installed; the setsid launch rows did not run"
 fi
 
+# A systemd-run that fails after the probe answered, as a client-side timeout
+# does while the manager may still start the unit. The manager's word on the
+# recorded name decides: a unit it has is the job, one it has no record of
+# falls back to setsid, and no answer fails the launch rather than risk a
+# second copy of the job. The stubs stand for systemd-run and for the manager.
+TIMED_OUT="$TMP_ROOT/timed-out"
+mkdir -p "$TIMED_OUT"
+printf '#!/usr/bin/env bash\n[[ "${*: -1}" == true ]] && exit 0\necho "Failed to start transient service unit: Connection timed out" >&2\nexit 1\n' > "$TIMED_OUT/systemd-run"
+printf '#!/usr/bin/env bash\n[[ "$STUB_LOAD" != none ]] || exit 1\nprintf "%%s\\n" "$STUB_LOAD"\n' > "$TIMED_OUT/systemctl"
+chmod +x "$TIMED_OUT/systemd-run" "$TIMED_OUT/systemctl"
+# What a launch answers, its unit's pid folded to PID: exit, stdout, stderr and
+# the record's runner.
+timed_out_launch() { # SCRIPT STUB_LOAD
+  record="$TMP_ROOT/timed-out.record"
+  rm -f -- "$record"
+  run env PATH="$TIMED_OUT:$FARM" STUB_LOAD="$2" "$1" launch validate-id-9 "$record" --cap 60 -- bash -c :
+  printf '%s|%s|%s|%s' "$RC" "$OUT" "$ERR" "$(sed -n 's/^runner=//p' "$record" 2>/dev/null)" \
+    | sed 's/orch-validate-id-9-[0-9]*/orch-validate-id-9-PID/g'
+}
+if command -v setsid >/dev/null 2>&1; then
+  detail="detail=Failed to start transient service unit: Connection timed out"
+  # manager's answer|what the launch answers|label|the line a control removes|what replaces it
+  TIMED_OUT_ROWS=(
+    "loaded%0|runner=systemd unit=orch-validate-id-9-PID||systemd%a unit the manager has after a failed call is the job, never a second copy%      loaded) return 0 ;;%      loaded) ;;"
+    "not-found%0|runner=setsid reason=unit-launch-failed $detail||setsid%a unit the manager has no record of falls back to setsid%      not-found) ;;%"
+    "none%4||job-unit: launch-failed unit=orch-validate-id-9-PID.service step=show $detail|systemd%a manager that does not answer fails the launch%    if ! load=\"\$(systemctl --user show -p LoadState --value -- \"\$JOB_UNIT_NAME.service\" 2>/dev/null)\"; then%    if ! load=\"\$(echo not-found)\"; then"
+  )
+  for row in "${TIMED_OUT_ROWS[@]}"; do
+    IFS='%' read -r load want label line new <<<"$row"
+    assert_eq "$(timed_out_launch "$JOB_UNIT" "$load")" "$want" "$label"
+    mutant "timed-out-$load" "$line" "$new"
+    assert_eq "$([[ "$(timed_out_launch "$MUTANT" "$load")" == "$want" ]] && echo same || echo changed)" "changed" \
+      "control: without that rule the $load answer launches otherwise"
+  done
+fi
+
 # stop-job on a record the library cannot read is a failure, named.
 printf 'runner=bogus\n' > "$TMP_ROOT/bogus.record"
 run "$JOB_UNIT" stop-job "$TMP_ROOT/bogus.record" 1 "*"

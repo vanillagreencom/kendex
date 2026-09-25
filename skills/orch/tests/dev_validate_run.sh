@@ -706,10 +706,27 @@ assert_eq "$(grandchild_state "$proj_group")" "gone" \
   "and a grandchild left in its process group is gone once it completes" "$ERR"
 
 # Control: the child records its verdict and exits without ending its group.
-MUTANT_FILE=lib/job-unit.sh mutant mutant-no-group-kill 'kill -KILL -- "-$2" 2>/dev/null || job_unit_fail kill-group-failed "pid=$2 step=kill"' ':'
+MUTANT_FILE=lib/job-unit.sh mutant mutant-no-group-kill '    systemd) return 0 ;;' '    systemd|setsid) return 0 ;;'
 run_script "$MUTANT" --worktree "$proj_group" --poll 1
 assert_eq "$(grandchild_state "$proj_group")" "alive" \
   "control: without the group kill that grandchild outlives the run" "$ERR"
+
+# The group's end is SIGTERM first, a kill grace before SIGKILL, as a unit's
+# stop is: a grandchild of a run killed at its bound runs its TERM trap.
+proj_term_group="$(make_proj proj-term-group 'bash grand.sh & echo $! > grand.pid; sleep 30' 2)"
+printf '%s\n' "trap 'echo got-term > term.flag; exit 0' TERM" 'while :; do sleep 1; done' > "$proj_term_group/grand.sh"
+run_script "$RUN" --worktree "$proj_term_group" --poll 1
+assert_eq "$(verdict_of "$OUT") $(cat "$proj_term_group/term.flag" 2>/dev/null || echo no-term)" \
+  "state=done guard-exit=124 validate=FAILING got-term" \
+  "a setsid run's grandchild gets SIGTERM, and runs its trap, when the run ends at its bound" "$ERR"
+grandchild_state "$proj_term_group" >/dev/null
+# Control: SIGKILL alone, which no trap sees.
+rm -f -- "$proj_term_group/term.flag"
+MUTANT_FILE=lib/job-unit.sh mutant mutant-no-term '      kill -TERM -- "-$2" 2>/dev/null || true' '      :'
+run_script "$MUTANT" --worktree "$proj_term_group" --poll 1
+assert_eq "$(cat "$proj_term_group/term.flag" 2>/dev/null || echo no-term)" "no-term" \
+  "control: without the SIGTERM step the grandchild is killed with no trap run" "$ERR"
+grandchild_state "$proj_term_group" >/dev/null
 
 # Where systemd-run is installed and fails, the run is still made under setsid
 # and its log carries systemd-run's own first line. The stubs fail the probe
@@ -718,7 +735,9 @@ FALLBACK_PATH="$RUN_PATH"
 mkdir -p "$TMP_ROOT/probe-bin" "$TMP_ROOT/refusing-bin"
 printf '#!/usr/bin/env bash\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n' > "$TMP_ROOT/probe-bin/systemd-run"
 printf '#!/usr/bin/env bash\n[[ "${*: -1}" == true ]] && exit 0\necho "Failed to start transient service unit: refused" >&2\nexit 1\n' > "$TMP_ROOT/refusing-bin/systemd-run"
-chmod +x "$TMP_ROOT/probe-bin/systemd-run" "$TMP_ROOT/refusing-bin/systemd-run"
+# The manager the refusing stub stands for has no unit of the refused name.
+printf '#!/usr/bin/env bash\necho not-found\n' > "$TMP_ROOT/refusing-bin/systemctl"
+chmod +x "$TMP_ROOT/probe-bin/systemd-run" "$TMP_ROOT/refusing-bin/systemd-run" "$TMP_ROOT/refusing-bin/systemctl"
 proj_refused="$(make_proj proj-refused "echo ran" 20)"
 # stub dir|the log's first line
 FALLBACK_ROWS=(

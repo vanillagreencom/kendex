@@ -98,9 +98,9 @@ source "$SCRIPT_DIR/lib/job-unit.sh"
 POLL_DEFAULT=30
 # The gap between the SIGTERM the bound sends and the SIGKILL behind it. Without
 # one the bound is a single signal, which a command that ignores SIGTERM simply
-# outlives. It is the job-unit library's grace, so a unit's stop and the bound
-# give a process the same time. The cap carries it, so the sentinel still lands
-# inside a wait.
+# outlives. It is the job-unit library's grace, so the bound, a unit's stop and
+# a setsid group's end give a process the same time. The cap carries it, so the
+# sentinel still lands inside a wait.
 KILL_GRACE="$JOB_UNIT_KILL_GRACE"
 # One --wait call returns within this many seconds whatever the run is doing, so
 # the poll reports `state=running` instead of being cut off by the harness's own

@@ -9,9 +9,10 @@
 #
 # A unit holds every process the job starts: when the job's main process exits
 # or reaches the unit's RuntimeMaxSec, systemd kills every process left in it,
-# one that detached into its own session included. Under setsid the job leads
-# its own process group and calls `end` when it finishes, which kills that
-# group; nothing bounds it, and a job killed before `end`, or a process that
+# one that detached into its own session included, SIGTERM first and SIGKILL
+# a kill grace later. Under setsid the job leads its own process group and
+# calls `end` when it finishes, which gives that group the same SIGTERM and
+# SIGKILL; nothing bounds it, and a job killed before `end`, or a process that
 # started its own session, escapes. The unit name shape, the runner lines, the
 # unit properties, the stop rule and the orch launches that use their own
 # mechanism are references/job-units.md.
@@ -30,13 +31,18 @@
 #       --cap is the unit's RuntimeMaxSec, from the timeout the caller already
 #       has: set above that bound plus the kill grace, so the job's own bound
 #       fires first.
+#       A systemd-run that fails after the probe answered falls back to setsid
+#       only where the manager has no unit of that name: its call can time out
+#       while the manager still starts the unit, which is then the job.
 #       Exit 0 launched; 1 RECORD could not be written (record-unwritable); 2
 #       no setsid where the fallback needs it (missing-command); 3 usage; 4
-#       setsid could not start the job (launch-failed, with its exit status).
+#       the job was not started (launch-failed: setsid's exit status, or a
+#       unit the manager would not describe).
 #   job-unit.sh end RECORD LEADER_PID
-#       The job's own last call. Under setsid, kill the process group
-#       LEADER_PID leads, the caller included; under a unit, nothing, since the
-#       unit's end does it. Exit 0 done; 2 RECORD could not be read
+#       The job's own last call. Under setsid, send the process group
+#       LEADER_PID leads SIGTERM, wait up to the kill grace for every other
+#       member to exit, then SIGKILL it, the caller included; under a unit,
+#       nothing, since the unit's end does the same. Exit 0 done; 2 RECORD could not be read
 #       (record-unreadable) or the group could not be killed.
 #   job-unit.sh stop UNIT
 #       Stop the unit UNIT. Exit 0 it was running and is stopped; 1 the
@@ -122,7 +128,7 @@ job_unit_read() { # RECORD
 }
 
 job_unit_launch() { # NAME RECORD --cap SECS -- ARGV...
-  local job="$1" record="$2" cap="${4:-}" probe_err="" launch_err="" nofile name arg
+  local job="$1" record="$2" cap="${4:-}" probe_err="" launch_err="" load nofile name arg
   local unit_env=() unit_argv=()
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
   [[ $# -ge 6 && "$3" == --cap && "$5" == -- && "$cap" =~ ^[1-9][0-9]*$ ]] \
@@ -162,8 +168,20 @@ job_unit_launch() { # NAME RECORD --cap SECS -- ARGV...
       -- "${unit_argv[@]}" </dev/null 2>&1 >/dev/null)"; then
       return 0
     fi
-    # The manager answered the probe and refused the unit. The job still runs,
-    # contained as far as a process group reaches, and its record says why.
+    # The call failed after the probe answered. A client-side timeout reports
+    # that while the manager may still start the unit, so only a unit the
+    # manager has no record of did not start; one it has is the job. The job
+    # then still runs, contained as far as a process group reaches, and its
+    # record says why.
+    if ! load="$(systemctl --user show -p LoadState --value -- "$JOB_UNIT_NAME.service" 2>/dev/null)"; then
+      job_unit_fail launch-failed "unit=$JOB_UNIT_NAME.service step=show detail=${launch_err%%$'\n'*}" 4
+      return
+    fi
+    case "$load" in
+      not-found) ;;
+      loaded) return 0 ;;
+      *) job_unit_fail launch-failed "unit=$JOB_UNIT_NAME.service load=$load detail=${launch_err%%$'\n'*}" 4; return ;;
+    esac
     command -v setsid >/dev/null 2>&1 || { job_unit_fail missing-command commands=setsid; return; }
     JOB_UNIT_RUNNER=setsid
     JOB_UNIT_NAME=""
@@ -215,12 +233,42 @@ job_unit_stop_job() { # RECORD PID ARGV_GLOB
   esac
 }
 
+# How many processes of group PGID are still running, leaving out this process
+# and what it forked to ask: the caller of `end` is in the group it signals.
+job_unit_group_others() { # PGID
+  local table
+  table="$(ps -A -o pid= -o ppid= -o pgid=)" || return 1
+  awk -v g="$1" -v me="$$" '
+    { pid[NR] = $1; ppid[NR] = $2; pg[NR] = $3; if ($2 == me) mine[$1] = 1 }
+    END {
+      n = 0
+      for (i = 1; i <= NR; i++)
+        if (pg[i] == g && pid[i] != me && !(pid[i] in mine) && !(ppid[i] in mine)) n++
+      print n
+    }' <<<"$table"
+}
+
 job_unit_end() { # RECORD LEADER_PID
+  local n=0 others
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
   job_unit_read "$1" || { job_unit_fail record-unreadable "path=$1"; return; }
   case "$JOB_UNIT_RUNNER" in
     systemd) return 0 ;;
-    setsid) kill -KILL -- "-$2" 2>/dev/null || job_unit_fail kill-group-failed "pid=$2 step=kill" ;;
+    setsid)
+      # SIGTERM first, as a unit's stop sends it, so what remains runs its
+      # traps; this process ignores it, being a member of the group.
+      trap '' TERM
+      kill -TERM -- "-$2" 2>/dev/null || true
+      while (( n < JOB_UNIT_KILL_GRACE * 5 )); do
+        others="$(job_unit_group_others "$2")" || break
+        [[ "$others" != 0 ]] || break
+        sleep 0.2
+        n=$((n + 1))
+      done
+      # An empty group has nothing left to kill.
+      kill -KILL -- "-$2" 2>/dev/null || ! kill -0 -- "-$2" 2>/dev/null \
+        || job_unit_fail kill-group-failed "pid=$2 step=kill"
+      ;;
   esac
 }
 
