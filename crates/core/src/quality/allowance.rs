@@ -71,6 +71,15 @@ impl Publisher {
             false => Publisher::Other,
         }
     }
+
+    /// Whose checkout the catalog at `root` is, by its `origin` remote and
+    /// nothing else: the one answer every reader of a local catalog (the
+    /// authoring check, the directory index, the Mine row) gives, so a
+    /// checkout of kendex's own repository reads as kendex's in each and a
+    /// folder with no git, no repository or no `origin` is nobody's.
+    pub fn of_checkout(root: &std::path::Path) -> Publisher {
+        crate::author::status::origin_url(root).map_or(Publisher::Other, |url| Publisher::of(&url))
+    }
 }
 
 /// Every accepted finding, under the rule set it was accepted for.
@@ -176,10 +185,11 @@ impl Allowance {
 
     /// This table with every row read again off the catalog at `sealed`:
     /// each file's hash, and each row's line and message, as the finding
-    /// stands there now. A row is never added; a listed file whose
-    /// findings under a row's rule are not one per row is refused by
-    /// name, since a finding that is gone is a row nobody should still
-    /// carry, and one that appeared is a row nobody accepted.
+    /// stands there now, the rows of a file in line order. A row is never
+    /// added; a listed file whose findings under a row's rule are not one
+    /// per row is refused by name, since a finding that is gone is a row
+    /// nobody should still carry, and one that appeared is a row nobody
+    /// accepted.
     pub fn refreshed(&self, sealed: &SealedSource, config: &SourceConfig) -> Result<Allowance> {
         let mut packages = Vec::with_capacity(self.packages.len());
         for package in &self.packages {
@@ -257,7 +267,10 @@ impl AcceptedFile {
                 "which the package does not hold as a text file".to_owned(),
             ));
         };
+        // Every rule the rows name, once each, in whatever order the rows
+        // were written: a hand-written table may interleave them.
         let mut rules: Vec<&str> = self.accepted.iter().map(|row| row.rule.as_str()).collect();
+        rules.sort_unstable();
         rules.dedup();
         let mut accepted = Vec::with_capacity(self.accepted.len());
         for rule in rules {
@@ -282,6 +295,8 @@ impl AcceptedFile {
                 message: finding.message.clone(),
             }));
         }
+        // Rows in the order the file holds them, whatever the table had.
+        accepted.sort_by(|a, b| a.line.cmp(&b.line).then_with(|| a.rule.cmp(&b.rule)));
         Ok(AcceptedFile {
             path: self.path.clone(),
             hash: digest,

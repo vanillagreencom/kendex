@@ -90,8 +90,7 @@ pub fn status(path: &Path) -> Result<MineRow> {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "marketplace".to_owned());
     let config = crate::source::source_config(&sealed, &leaf)?;
-    let report =
-        check_catalog::check_with(&sealed, &config, &leaf, crate::quality::Publisher::Other)?;
+    let report = check_catalog::check_with(&sealed, &config, &leaf)?;
 
     let mut counts: BTreeMap<String, u32> = BTreeMap::new();
     for item in &report.items {
@@ -133,9 +132,17 @@ fn shape(finding: CheckFinding) -> StatusFinding {
     }
 }
 
+/// The `origin` remote's URL of the checkout at `path`, read-only and
+/// touching nothing else in the repository: `None` where there is no git,
+/// no repository, or no such remote. The one read every reader of "whose
+/// checkout is this" makes.
+pub(crate) fn origin_url(path: &Path) -> Option<String> {
+    git_line(path, &["remote", "get-url", "origin"]).filter(|url| !url.is_empty())
+}
+
 /// Ask git, read-only, tolerating its absence: a folder without git — or a
 /// machine without git — is an honest `repository: false`, never an error.
-pub fn git_readiness(path: &Path) -> GitReadiness {
+fn git_readiness(path: &Path) -> GitReadiness {
     let Some(inside) = git_line(path, &["rev-parse", "--is-inside-work-tree"]) else {
         return GitReadiness::default();
     };
@@ -143,7 +150,7 @@ pub fn git_readiness(path: &Path) -> GitReadiness {
         return GitReadiness::default();
     }
     let porcelain = git_line(path, &["status", "--porcelain"]);
-    let remote = git_line(path, &["remote", "get-url", "origin"]).filter(|url| !url.is_empty());
+    let remote = origin_url(path);
     // Submission sends `origin`, so "ahead" must measure against origin's
     // copy of this branch — not `@{upstream}`, which on a fork tracks the
     // upstream and would call a branch pushed to origin's fork clean while

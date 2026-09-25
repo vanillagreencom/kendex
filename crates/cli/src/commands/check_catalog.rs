@@ -9,7 +9,6 @@
 use std::path::Path;
 
 use kendex_core::check_catalog::{CHECK_SCHEMA, CatalogCheck, CheckFinding};
-use kendex_core::quality::Publisher;
 use kendex_core::source_read::SealedSource;
 
 use super::engine_common::{ScoredAt, print_advisory};
@@ -21,14 +20,7 @@ pub fn run(catalog: &Path, strict: bool, json: bool) -> CliResult {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "marketplace".to_owned());
-    // A checkout of kendex's own repository is checked as kendex's, so the
-    // findings its table accepts read here as they read on an install
-    // from it; the origin remote says whose checkout this is, and a folder
-    // with none is nobody's.
-    let publisher = kendex_core::author::status::git_readiness(catalog)
-        .remote
-        .map_or(Publisher::Other, |remote| Publisher::of(&remote));
-    let report = kendex_core::check_catalog::check(&sealed, &display, publisher)?;
+    let report = kendex_core::check_catalog::check(&sealed, &display)?;
     let failing = report.failing(strict);
     match json {
         true => machine(&report, failing == 0)?,

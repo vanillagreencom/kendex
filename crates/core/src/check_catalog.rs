@@ -216,9 +216,9 @@ impl CatalogCheck {
 /// Both passes over everything the catalog offers. `display` names a
 /// one-skill repo whose SKILL.md does not name itself — pass the directory
 /// or repository leaf.
-pub fn check(sealed: &SealedSource, display: &str, publisher: Publisher) -> Result<CatalogCheck> {
+pub fn check(sealed: &SealedSource, display: &str) -> Result<CatalogCheck> {
     let config = crate::source::source_config(sealed, display)?;
-    check_with(sealed, &config, display, publisher)
+    check_with(sealed, &config, display)
 }
 
 /// Both passes over the items one already-read catalog offers. The item set
@@ -229,8 +229,12 @@ pub fn check_with(
     sealed: &SealedSource,
     config: &SourceConfig,
     display: &str,
-    publisher: Publisher,
 ) -> Result<CatalogCheck> {
+    // Whose checkout this is decides which accepted findings are set
+    // aside, and it is decided here, once, for every reader of a local
+    // catalog: the check, the directory index and the Mine row all come
+    // through this pass, so none can score a package another would not.
+    let publisher = Publisher::of_checkout(sealed.root());
     let catalog = config
         .findings()
         .map(|finding| CheckFinding {

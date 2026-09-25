@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 
 use kendex_core::check_catalog::check;
 use kendex_core::model::ItemKind;
-use kendex_core::quality::Publisher;
 use kendex_core::source::index::index;
 use kendex_core::source_read::SealedSource;
 
@@ -43,7 +42,7 @@ fn a_discovered_repo_is_checked_the_way_it_installs() {
     let (_tmp, root) = repo();
     skill_at(&root, ".claude/skills", "review");
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo", Publisher::Other).unwrap();
+    let report = check(&sealed, "repo").unwrap();
     let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
     assert_eq!(names, ["review"]);
     assert_eq!(report.items[0].kind, ItemKind::Skill);
@@ -61,7 +60,7 @@ fn a_one_skill_repo_is_one_checked_item() {
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo", Publisher::Other).unwrap();
+    let report = check(&sealed, "repo").unwrap();
     assert_eq!(report.items.len(), 1);
     assert_eq!(report.items[0].name, "repo");
 }
@@ -75,7 +74,7 @@ fn a_broken_control_file_is_breakage_not_an_empty_pass() {
     skill_at(&root, "skills", "review");
     fs::write(root.join("kendex.toml"), "not [valid toml").unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo", Publisher::Other).unwrap();
+    let report = check(&sealed, "repo").unwrap();
     assert!(report.items.is_empty());
     assert!(report.tally().breakage >= 1);
     assert!(report.failing(false) >= 1);
@@ -94,7 +93,7 @@ fn an_undeclared_hooks_dir_is_not_checked() {
     fs::create_dir_all(root.join("hooks")).unwrap();
     fs::write(root.join("hooks/deploy.sh"), "#!/bin/sh\n").unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo", Publisher::Other).unwrap();
+    let report = check(&sealed, "repo").unwrap();
     assert!(
         report.items.iter().all(|item| item.kind != ItemKind::Hook),
         "a hook was checked out of a repo that never declared kendex's layout"
@@ -118,7 +117,7 @@ fn check_and_index_agree_on_the_offered_set() {
     .unwrap();
     fs::write(root.join("kendex.toml"), "[marketplace]\nname = \"demo\"\n").unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo", Publisher::Other).unwrap();
+    let report = check(&sealed, "repo").unwrap();
     let summary = index(&sealed, "repo").unwrap();
     let mut checked: Vec<(String, String)> = report
         .items
@@ -143,6 +142,74 @@ fn check_and_index_agree_on_the_offered_set() {
     }
 }
 
+/// Every file under `from`, copied to `to`.
+#[allow(clippy::unwrap_used)]
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        match entry.file_type().unwrap().is_dir() {
+            true => copy_tree(&entry.path(), &target),
+            false => {
+                fs::copy(entry.path(), &target).unwrap();
+            }
+        }
+    }
+}
+
+/// The check, the index and the Mine row read one checkout the same way
+/// where they can differ: a checkout whose `origin` is kendex's own
+/// repository has its accepted finding set aside in all three, and one
+/// whose `origin` is a fork keeps it in all three. The package is this
+/// repository's `harness-ci`, whose one accepted finding the table names.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_index_and_mine_agree_on_the_checkout() {
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/harness-ci");
+    let rows: [(&str, &str, u32, usize); 2] = [
+        (
+            "kendex",
+            "https://github.com/vanillagreencom/kendex.git",
+            100,
+            0,
+        ),
+        ("fork", "https://github.com/someone/kendex.git", 85, 1),
+    ];
+    for (row, origin, score, findings) in rows {
+        let (_tmp, root) = repo();
+        copy_tree(&shipped, &root.join("skills/harness-ci"));
+        fs::write(root.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+        for args in [
+            &["init", "--quiet", "-b", "main"][..],
+            &["remote", "add", "origin", origin][..],
+        ] {
+            let output = kendex_core::process::Hardened::git(args, Some(&root))
+                .run()
+                .unwrap();
+            assert!(output.status.success(), "{row}: git {args:?}");
+        }
+        let sealed = SealedSource::open(&root).unwrap();
+        let checked = check(&sealed, "repo").unwrap();
+        let item = checked
+            .items
+            .iter()
+            .find(|item| item.name == "harness-ci")
+            .unwrap();
+        assert_eq!(item.advisory.safety.score, score, "{row}: check");
+        assert_eq!(item.advisory.findings.len(), findings, "{row}: check");
+        let indexed = index(&sealed, "repo").unwrap();
+        let package = indexed
+            .packages
+            .iter()
+            .find(|package| package.name == "harness-ci")
+            .unwrap();
+        assert_eq!(package.safety.score, score, "{row}: index");
+        let mine = kendex_core::author::status::status(&root).unwrap();
+        assert_eq!(mine.safety_findings as usize, findings, "{row}: mine");
+    }
+}
+
 /// A kind dir's support directories (tests, fixtures) hold suites about the
 /// items, not items — the check must not list them as installable names.
 #[test]
@@ -154,7 +221,7 @@ fn hook_test_suites_are_not_catalog_items() {
     fs::write(root.join("hooks/tests/guard.test.sh"), "#!/bin/sh\n").unwrap();
     fs::write(root.join("kendex.toml"), "[marketplace]\nname = \"demo\"\n").unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo", Publisher::Other).unwrap();
+    let report = check(&sealed, "repo").unwrap();
     let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
     assert!(names.contains(&"guard"));
     assert!(
@@ -206,7 +273,7 @@ fn a_safety_finding_is_reported_and_fails_nothing() {
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo", Publisher::Other).unwrap();
+    let report = check(&sealed, "repo").unwrap();
     let found = report
         .findings()
         .filter(|finding| finding.rule.is_some())
@@ -292,7 +359,7 @@ fn a_broken_body_is_that_sets_breakage(body: &str, named: &str, fix_names: &[&st
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo", Publisher::Other).unwrap();
+    let report = check(&sealed, "repo").unwrap();
     assert!(report.failing(false) >= 1, "the check passed it: {body}");
     let finding = &report.catalog[0];
     assert_eq!(finding.severity, "error", "{body}: {}", finding.message);
@@ -338,7 +405,7 @@ fn a_broken_bundles_table_is_the_catalogs_breakage(body: &str) {
     skill_at(&root, "skills", "gh");
     fs::write(root.join("kendex.toml"), body).unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo", Publisher::Other).unwrap();
+    let report = check(&sealed, "repo").unwrap();
     assert!(report.failing(false) >= 1, "the check passed it: {body}");
     let finding = &report.catalog[0];
     assert_eq!(finding.severity, "error", "{body}: {}", finding.message);
@@ -378,7 +445,7 @@ fn a_bundle_written_in_the_shape_the_reader_reads_is_clean() {
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo", Publisher::Other).unwrap();
+    let report = check(&sealed, "repo").unwrap();
     assert_eq!(report.failing(true), 0, "{:?}", report.catalog);
     let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
     let sets = kendex_core::source::bundles::offered(&sealed, &config).unwrap();
@@ -411,7 +478,7 @@ fn every_unoffered_bundle_member_is_breakage() {
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo", Publisher::Other).unwrap();
+    let report = check(&sealed, "repo").unwrap();
     let missing = [
         "gone-agent",
         "gone-skill",
@@ -458,7 +525,7 @@ fn a_projects_own_install_record_is_not_its_catalogs_breakage() {
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo", Publisher::Other).unwrap();
+    let report = check(&sealed, "repo").unwrap();
     assert_eq!(report.failing(false), 0, "{:?}", report.catalog);
     let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
     assert!(
@@ -488,6 +555,6 @@ fn a_source_beside_a_member_list_is_still_that_sets_breakage() {
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo", Publisher::Other).unwrap();
+    let report = check(&sealed, "repo").unwrap();
     assert!(report.failing(false) >= 1, "{:?}", report.catalog);
 }

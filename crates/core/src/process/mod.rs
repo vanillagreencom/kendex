@@ -86,8 +86,11 @@ const GIT_REDIRECTS: &[&str] = &[
 /// — can reopen it.
 ///
 /// The `ext::` transport runs a shell command named in the URL, and a
-/// manifest's `repo` string is what reaches `git clone`.
-const PINNED: &[&str] = &["protocol.ext.allow=never"];
+/// manifest's `repo` string is what reaches `git clone`. `core.fsmonitor`
+/// names a command git runs on any call that refreshes the index, and a
+/// checkout kendex reads may carry one in its own `.git/config`; settled
+/// off, no read kendex makes of a repository runs that repository's hook.
+const PINNED: &[&str] = &["protocol.ext.allow=never", "core.fsmonitor=false"];
 
 /// Settled on top of [`PINNED`], for the one call that writes catalog
 /// content this machine then reads.

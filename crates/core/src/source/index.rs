@@ -12,7 +12,6 @@ use serde::Serialize;
 
 use crate::check_catalog;
 use crate::error::Result;
-use crate::quality::Publisher;
 use crate::source_read::SealedSource;
 use crate::tags::Tag;
 
@@ -112,9 +111,7 @@ pub struct IndexFinding {
 pub fn index(sealed: &SealedSource, display: &str) -> Result<MarketplaceIndex> {
     let config = super::source_config(sealed, display)?;
     let about = super::about(sealed, &config);
-    // The directory is indexed by its checkout, which names no repository
-    // the table could be honoured for.
-    let report = check_catalog::check_with(sealed, &config, display, Publisher::Other)?;
+    let report = check_catalog::check_with(sealed, &config, display)?;
     let findings: Vec<IndexFinding> = report
         .catalog
         .iter()

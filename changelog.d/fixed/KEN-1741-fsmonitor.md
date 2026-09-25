@@ -1,0 +1,1 @@
+- No git call kendex makes runs the `core.fsmonitor` command a repository names in its own config; a catalog checkout kendex reads cannot run code through it.
