@@ -8,9 +8,10 @@
 # segment is the text between two of `;`, `&`, `|`, `(`, `)`, `` ` `` and a
 # line end, with a backslash-newline continuing it, and without the comment a
 # `#` beginning a word starts. What the shell would not run as a command is
-# masked out before the cut: the whitespace and the `<` inside a quoted span
-# become \001, so no word inside a span reaches a caller's pattern, and a
-# heredoc body its command reads as data is dropped. A span or a body that a
+# masked out before the cut: the whitespace, the `<` and the separators inside
+# a quoted span become \001, so no word inside a span reaches a caller's
+# pattern and no character inside one starts or ends a segment, and a heredoc
+# body its command reads as data is dropped. A span or a body that a
 # shell, `eval`, `source` or `.` word runs is kept as the command text it is,
 # and a command substitution is kept wherever it stands. A quote or a
 # substitution that cannot be paired leaves the whole text to be cut unmasked,
@@ -152,17 +153,20 @@ lift_substitutions() { # TEXT -> 0 with SUBS and OUTSIDE set, 1 when one does no
 # the ampersand stands before the semicolon here so the two do not spell the
 # Bash 4 case terminator that tools/bash32-lint reads.
 SEP='[&;|()`'$NL']'
+# What a quoted span the shell does not run has masked: its whitespace, so no
+# word inside it reads as a word of the command; its `<`, so a `<<` written in
+# it arms no heredoc; and the separators, so a `(` or a `;` written in it
+# neither opens a command position for the next span nor cuts the segment.
+SPAN_MASK='[[:space:]<&;|()`]'
 # The one judge of what the shell would not run, masking only that and leaving
 # a caller's patterns their whole-text reach over everything else, so there is
 # no list of words that may precede a command to be incomplete.
 #
 # Each quoted span keeps its quotes, since a command word may be quoted whole
-# (`"/path/kendex" refresh`), while the whitespace and the `<` inside it are
-# masked: that is what keeps the span from reading as a command, keeps a word
-# inside it from reaching a verb, and keeps a `<<` written inside it from
-# arming a heredoc. A span the shell does run — the argument of a shell,
-# `eval`, `source` or `.` word in the same segment — is opened as its own
-# command position with its whitespace intact. A quote the shell hands on as a
+# (`"/path/kendex" refresh`), while the characters SPAN_MASK names inside it
+# are masked. A span the shell does run — the argument of a shell, `eval`,
+# `source` or `.` word in the same segment — is opened as its own command
+# position with its whitespace intact. A quote the shell hands on as a
 # literal argument is not a boundary and opens no span, which is what keeps two
 # escaped quotes from pairing around a real command. MASKED holds the result; a
 # quote that still does not pair is a span the reader could not read, and the
@@ -193,10 +197,10 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
       # A single-quoted span expands nothing, so all of it is masked; a
       # double-quoted one has its substitutions lifted out first.
       if [ "$quote" = "'" ]; then
-        out=$out$quote${span//[[:space:]<]/$MASK}$quote
+        out=$out$quote${span//$SPAN_MASK/$MASK}$quote
       else
         lift_substitutions "$span" || return 1
-        out=$out$quote${OUTSIDE//[[:space:]<]/$MASK}$quote$SUBS
+        out=$out$quote${OUTSIDE//$SPAN_MASK/$MASK}$quote$SUBS
       fi
     else
       out=$out$NL$span$NL

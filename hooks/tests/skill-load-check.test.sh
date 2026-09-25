@@ -273,6 +273,8 @@ a markdown edit without docs-writing refuses, naming it|edit|docs/guide.md|$LOAD
 a source edit with docs-writing loaded and code-quality not refuses, naming code-quality|edit|src/lib.rs|$DOCS_T|-|rc=2 first=skill-load-check: unloaded=code-quality
 a linear.sh read without linear refuses, naming it|bash|$LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
 the same call inside a quoted string is no command|bash|echo \"run $LINEAR_CALL\"|$NONE_T|-|rc=0 first=-
+a closing parenthesis inside an earlier quoted string opens no command position for the next|bash|echo \"pass (CI).\" \"run $LINEAR_CALL\"|$NONE_T|-|rc=0 first=-
+an unquoted separator after a quoted string still starts a command|bash|echo \"pass (CI).\" ; $LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
 linear.sh as another command's argument is judged as the command it may be|bash|echo /tmp/linear.sh|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
 reading the script is judged as the command it may be|bash|cat .agents/skills/linear/scripts/linear.sh|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
 linear.sh behind a launcher word without linear refuses, naming it|bash|env $LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
