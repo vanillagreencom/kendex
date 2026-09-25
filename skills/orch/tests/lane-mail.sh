@@ -1090,11 +1090,19 @@ assert_eq "$RC=$(jq -r '.text' < "$LANE/tmp/lane-mail/overseer/to-lane.jsonl")" 
   "control: without the self-target rule a caller writes its own overseer mailbox as a peer"
 LANE="$PEER_A"
 
-mutant answer-hidden 's@\$item == "overseer" or @@'
+# The overseer exception through the cursor-backed read the watch makes, from
+# the start of PEER_A's mailbox: its peek hands the peer's answer over.
+overseer_peek_answers() {
+  rm -f -- "${PEER_A:?}/tmp/lane-mail/overseer/to-lane.cursor"
+  lm inbox --item overseer --peek
+  PEEK_ANSWERS="$RC=$(tail -n +2 <<<"$OUT" | jq -rs 'map(select(.kind == "answer")) | length')"
+}
 LANE="$PEER_A"
-LANE_MAIL_BIN="$MUTANT_DIR/answer-hidden" lm inbox --item overseer --after 0
-assert_eq "$(tail -n +2 <<<"$OUT" | jq -rs 'map(select(.kind == "answer")) | length')" "0" \
-  "control: without the overseer exception the peer's answer reaches nothing"
+LANE_MAIL_BIN="$LANE_MAIL" overseer_peek_answers
+assert_eq "$PEEK_ANSWERS" "0=1" "an overseer inbox --peek hands over the peer's answer"
+mutant answer-hidden 's@\$item == "overseer" or @@'
+overseer_peek_answers
+assert_eq "$PEEK_ANSWERS" "0=0" "control: without the overseer exception the peer's answer reaches nothing"
 
 mutant answered-ignored 's@index(\$envelope\.id)@index("no-such-id")@'
 new_lane control_answered

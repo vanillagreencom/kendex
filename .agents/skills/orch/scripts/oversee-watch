@@ -36,10 +36,13 @@ Blocks until the fleet needs the overseer, then prints every event it found
 as one block, each line prefixed with its kind, and exits once. Re-run after
 handling every line with the live fleet in scope.
 
-Two passes run on one clock. The mail pass reads every lane mailbox, the
-overseer mailbox and the lane records every ORCH_WATCH_MAIL_INTERVAL seconds
-and prints what it finds as it finds it: lane-question, lane-notice,
-directive-read, directive-unread, peer-note and owner-note. The long pass
+Two passes run on one clock. The mail pass starts every
+ORCH_WATCH_MAIL_INTERVAL seconds, reads every lane mailbox, the overseer
+mailbox and the lane records one after another, and prints what it finds as
+it finds it: lane-question, lane-notice, directive-read, directive-unread,
+peer-note and owner-note. A read that waits on a lock or a slow host delays
+the mailboxes after it past that interval, as does the overseer pane below.
+The long pass
 reads everything else every --interval seconds, counted from the start of one
 long pass to the start of the next and kept across runs in the state
 directory, so a run that ends on mail news does not bring the next long pass
@@ -251,10 +254,13 @@ mailbox last:
                              begins with EVENT
 The overseer mailbox is read through its own to-lane.cursor, which a session
 start's `lane-mail inbox --item overseer` moves too, acknowledged only once
-its notes are printed: a note any reader has taken is not reported again,
-whatever state directory, --since or checkout this watch runs with. Before
-every mail pass the overseer's own pane is read once; while it reads exited, or walled with a wall its own account confirms,
-no mailbox is read, so a successor finds what was sent in the meantime. A wall
+its notes are printed, whatever state directory, --since or checkout this
+watch runs with: each note is reported at least once and never lost. A stop
+between the print and the acknowledgement, or a session start's read between
+the peek and it, reports a note twice: a repeated id is one already seen.
+Before every mail pass the overseer's own pane is read once; while it reads
+exited, or walled with a wall its own account confirms, no mailbox is read,
+so a successor finds what was sent in the meantime. A wall
 the account refutes, or one no judgement could settle, reads live: its mail
 is read, and the long pass starts no successor for it. Off tmux there is no
 such pane and the mail is read; a pane that cannot be read reads live too,
@@ -290,7 +296,7 @@ overseer-walled, merged, lane-asking, usage-limit, model-capacity,
 lane-exited, idle-after-return, handoff and account are keyed in that
 baseline; lane-question, lane-notice, directive-read and directive-unread in
 the mail pass's own file beside it; owner-note and peer-note by the overseer
-mailbox's cursor. Each repeats only when what it reports changes: another PR, a
+mailbox's cursor, at least once as above. Each repeats only when what it reports changes: another PR, a
 different wall or a reset gone by, a replacement pane, a different screen, a
 new record, another account state. An unchanged standing overseer-mark is the one keyed line that
 comes back on a timer: it is reported every ORCH_OVERSEER_MARK_REPEAT passes
@@ -531,19 +537,15 @@ Environment:
                               position and when the last long pass started,
                               plus claims/ and usage/, both shared across the
                               repositories that point here
-  ORCH_WATCH_MAIL_INTERVAL    seconds from one mail pass to the next, a whole
-                              number, default 20, and the most --repeat waits
-                              between two runs after one that did not exit 2.
-                              A run exits 2 on the first report of a lane read
-                              failure, on a hosted lane close that fails (each
-                              long pass until it succeeds) and on any global
-                              failure; after those runs --repeat waits in
-                              full, and otherwise a note lands within one
-                              interval of the pass after it, unless the
-                              overseer pane reads down (see the overseer
-                              mailbox paragraph under the mail pass's events). 0 reads the mail on
-                              every turn of the loop and waits out a long pass
-                              in flight rather than polling it
+  ORCH_WATCH_MAIL_INTERVAL    seconds from the start of one mail pass to the
+                              next, a whole number, default 20, and the most
+                              --repeat waits between two runs after one that
+                              did not exit 2: a lane read failure first
+                              reported, a hosted lane close that fails, or a
+                              global failure. The mail pass paragraph above
+                              names when a note lands later. 0 reads the mail
+                              on every turn of the loop and waits out a long
+                              pass in flight rather than polling it
   ORCH_DIRECTIVE_UNREAD_SECS  age in seconds past which a directive the lane
                               has not read is reported directive-unread, a
                               whole number, default 300
@@ -1050,12 +1052,8 @@ WATCH_TAIL_LINES="${ORCH_WATCH_TAIL_LINES:-12}"
 # leaves it several times that before a record nothing finished is named.
 PREPARE_SECS="${ORCH_WATCH_PREPARE_SECS:-1800}"
 [[ "$PREPARE_SECS" =~ ^[1-9][0-9]*$ ]] || die prepare-secs-invalid "" "value=$PREPARE_SECS"
-# The mail pass's own cadence, apart from --interval: mail is a file read per
-# local lane and four provider reads per hosted one (its .git, and its
-# to-overseer.jsonl, to-lane.jsonl and to-lane.cursor through one lane-mail
-# call), none of them GitHub's; a run asks GitHub nothing until a long pass
-# or the heartbeat needs it. So a note reaches the overseer within this many
-# seconds of the pass after it lands, whatever --interval costs.
+# The mail pass's own cadence, apart from --interval: its reads are files and
+# provider reads, none of them GitHub's, so a shorter one costs no GitHub call.
 MAIL_INTERVAL="${ORCH_WATCH_MAIL_INTERVAL:-20}"
 [[ "$MAIL_INTERVAL" =~ ^(0|[1-9][0-9]*)$ ]] || die mail-interval-invalid "" "value=$MAIL_INTERVAL"
 UNREAD_SECS="${ORCH_DIRECTIVE_UNREAD_SECS:-300}"
@@ -1785,13 +1783,21 @@ on_exit() {
   exit "$rc"
 }
 trap on_exit EXIT
-# TERM, the stop every start takes, ends a long pass in flight too, rather
-# than on_exit waiting it out beside the next watch; what it spooled is still
-# printed. One that has ended is not signalled, its pid being free for reuse.
+# TERM, the stop every start takes, ends a long pass in flight and its whole
+# tree, `timeout`'s own process group among it, parent first so nothing new
+# starts under it, rather than on_exit waiting it out beside the next watch;
+# what it spooled is still printed. One that has ended is not signalled.
+tree_pids() { # PID
+  ps -A -o pid= -o ppid= 2>/dev/null | awk -v root="$1" '{ kids[$2] = kids[$2] " " $1 }
+    END { q[n = 1] = root; for (i = 1; i <= n; i++) { print q[i]
+      m = split(kids[q[i]], k, " "); for (j = 1; j <= m; j++) q[++n] = k[j] } }'
+}
 TICK_SLEEP_PID=""
 pass_stop() {
+  local pid
   [[ -z "$TICK_SLEEP_PID" ]] || kill -TERM "$TICK_SLEEP_PID" 2>/dev/null || :
-  [[ -z "$LONG_PID" || -e "$LONG_DONE" ]] || kill -TERM "$LONG_PID" 2>/dev/null || :
+  [[ -z "$LONG_PID" || -e "$LONG_DONE" ]] \
+    || for pid in $(tree_pids "$LONG_PID"); do kill -TERM "$pid" 2>/dev/null || :; done
   exit 143
 }
 trap pass_stop TERM
@@ -3583,9 +3589,8 @@ long_collect() { # [wait]
 # and --interval gone by since the last one started, in this run or an earlier
 # one. A run with news ends at run_end before a later turn reaches here, so a
 # long pass due on the turn the news came is the last one. The start is kept
-# in the mail pass's file, so a run that ended on mail news does not bring the next long
-# pass forward: how many long passes an hour holds, and so how many GitHub
-# calls, is the interval's alone.
+# in the mail pass's file, so how many long passes, and GitHub calls, an hour
+# holds is the interval's alone, however many runs end on mail news.
 LONG_DUE=0
 long_due() {
   local last
@@ -3601,8 +3606,7 @@ long_due() {
 }
 
 # Whether the overseer's pane reads down now, before every mail pass: no
-# mailbox is read then, so the successor, or the overseer once it reads live
-# again, finds that mail rather than a log nobody reads. Down is the verdict
+# mailbox is read then, so that mail waits for a successor or a live overseer. Down is the verdict
 # overseer_judge gives the long pass, on this pass's own pane reading. A
 # walled screen's account judgement is reused while the banner stays the one
 # it judged and --interval has not gone by, so a banner that stands costs one
@@ -3640,18 +3644,18 @@ overseer_down() {
   [[ "$OV_VERDICT" != live ]]
 }
 
-# Until the next mail pass or long pass is due. A long pass in flight is looked
-# at each second, so its block goes out within a second of its end. With no
-# mail interval the mail pass runs once a turn: a long pass in flight is waited
-# for, and with none the turn waits for the next one to come due.
-# A tick's sleep runs in the background and is waited on, so a TERM reaches
-# pass_stop at once: bash holds a trap until a FOREGROUND child returns.
+# A tick's sleep, waited on in the background: bash holds a trap until a
+# FOREGROUND child returns, and a TERM must reach pass_stop at once.
 tick_sleep() { # SECS
   sleep "$1" &
   TICK_SLEEP_PID=$!
   wait "$TICK_SLEEP_PID"
   TICK_SLEEP_PID=""
 }
+# Until the next mail pass or long pass is due. A long pass in flight is
+# checked each second, so its block goes out within a second of its end. With no
+# mail interval the mail pass runs once a turn: a long pass in flight is waited
+# for, and with none the turn waits for the next one to come due.
 tick_wait() {
   local now next
   while :; do

@@ -241,8 +241,9 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # before oversee-watch reports it as lane-prepare-stuck.
 # ORCH_WATCH_PREPARE_SECS = "1800"
 
-# Seconds between oversee-watch mail passes, which read every lane mailbox
-# and the overseer's own apart from the --interval pass that reads GitHub.
+# Seconds from the start of one oversee-watch mail pass to the next; a mail
+# pass reads every lane mailbox and the overseer's own apart from the
+# --interval pass that reads GitHub.
 # When a note arrives, and the exceptions to that: oversee-watch --help,
 # section Environment.
 # ORCH_WATCH_MAIL_INTERVAL = "20"

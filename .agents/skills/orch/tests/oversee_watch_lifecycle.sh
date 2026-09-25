@@ -350,48 +350,6 @@ assert_eq "pass=${PASS_PID:+found} $PASS_STATE" "pass=found alive" \
   "control: with no TERM trap the loop dies and its pass runs on"
 kill -TERM "$PASS_PID" 2>/dev/null || true
 
-# The same stop while the pass has a long pass in flight, held in its account
-# read: the long pass ends with its pass rather than being waited out, which
-# would leave it reading the fleet, and committing baselines, beside the next
-# watch.
-watch_child() { # PARENT — the one oversee-watch process PARENT started, or empty
-  local pid
-  for pid in $(pgrep -P "$1" 2>/dev/null || true); do
-    [[ "$(ps -o args= -p "$pid" 2>/dev/null)" != *oversee-watch* ]] || { printf '%s\n' "$pid"; return 0; }
-  done
-}
-term_long_case() { # NAME [WATCH_BIN]
-  RECORD_LANES_SLEEP=30 record_case "$1" "${2:-}" --interval 30 --max-loops 2
-  PASS_PID=""
-  LONG_PASS_PID=""
-  for _ in $(seq 1 100); do
-    [[ ! -s "$STUB_DIR/lanes.args" ]] || {
-      PASS_PID="$(watch_child "$LOOP")"
-      [[ -z "$PASS_PID" ]] || LONG_PASS_PID="$(watch_child "$PASS_PID")"
-      [[ -z "$LONG_PASS_PID" ]] || break
-    }
-    "$REAL_SLEEP" 0.1
-  done
-  LIVE_PIDS+=" $PASS_PID $LONG_PASS_PID"
-  kill -TERM "$LOOP"
-  for _ in $(seq 1 50); do
-    { kill -0 "$LONG_PASS_PID" || kill -0 "$PASS_PID" || kill -0 "$LOOP"; } 2>/dev/null || break
-    "$REAL_SLEEP" 0.1
-  done
-  LONG_PASS_STATE="$(kill -0 "$LONG_PASS_PID" 2>/dev/null && echo alive || echo gone)"
-  PASS_STATE="$(kill -0 "$PASS_PID" 2>/dev/null && echo alive || echo gone)"
-  LOOP_STATE="$(kill -0 "$LOOP" 2>/dev/null && echo alive || echo gone)"
-}
-term_long_case term_long_pass
-assert_eq "long=${LONG_PASS_PID:+found} $LONG_PASS_STATE pass=$PASS_STATE loop=$LOOP_STATE" \
-  "long=found gone pass=gone loop=gone" \
-  "a TERM on the loop pid ends the long pass its pass has in flight" "$TMP_ROOT/e-term_long_pass"
-mutant pass_untrapped oversee-watch 'trap pass_stop TERM' ':'
-term_long_case term_long_untrapped_mutant "$MUTANT"
-assert_eq "long=${LONG_PASS_PID:+found} $LONG_PASS_STATE" "long=found alive" \
-  "control: with no TERM trap on the pass its long pass runs on"
-kill -TERM "$LONG_PASS_PID" "$PASS_PID" 2>/dev/null || true
-
 # descendant ROOT PATTERN — the first process under ROOT, breadth first, whose
 # command line matches the extended regex PATTERN; empty when none does.
 descendant() {
@@ -417,6 +375,59 @@ gone_within() {
   done
   STATES="${STATES# }"
 }
+
+# The same stop while the pass has a long pass in flight, held in its account
+# read: the long pass ends with its pass rather than being waited out, which
+# would leave it reading the fleet, and committing baselines, beside the next
+# watch.
+watch_child() { # PARENT — the one oversee-watch process PARENT started, or empty
+  local pid
+  for pid in $(pgrep -P "$1" 2>/dev/null || true); do
+    [[ "$(ps -o args= -p "$pid" 2>/dev/null)" != *oversee-watch* ]] || { printf '%s\n' "$pid"; return 0; }
+  done
+}
+term_long_case() { # NAME [WATCH_BIN]
+  RECORD_LANES_SLEEP=30 record_case "$1" "${2:-}" --interval 30 --max-loops 2
+  PASS_PID=""
+  LONG_PASS_PID=""
+  for _ in $(seq 1 100); do
+    [[ ! -s "$STUB_DIR/lanes.args" ]] || {
+      PASS_PID="$(watch_child "$LOOP")"
+      [[ -z "$PASS_PID" ]] || LONG_PASS_PID="$(watch_child "$PASS_PID")"
+      [[ -z "$LONG_PASS_PID" ]] || break
+    }
+    "$REAL_SLEEP" 0.1
+  done
+  # The account read's own child: the lanes stub's sleep, under `timeout`,
+  # which runs it in a process group of its own.
+  HELD_PID=""
+  for _ in $(seq 1 50); do
+    HELD_PID="$(descendant "${LONG_PASS_PID:-0}" 'sleep 30$')"
+    [[ -z "$HELD_PID" ]] || break
+    "$REAL_SLEEP" 0.1
+  done
+  LIVE_PIDS+=" $PASS_PID $LONG_PASS_PID $HELD_PID"
+  kill -TERM "$LOOP"
+  gone_within "$LONG_PASS_PID" "$PASS_PID" "$LOOP" "$HELD_PID"
+  read -r LONG_PASS_STATE PASS_STATE LOOP_STATE HELD_STATE <<<"$STATES"
+}
+term_long_case term_long_pass
+assert_eq "long=${LONG_PASS_PID:+found} $LONG_PASS_STATE pass=$PASS_STATE loop=$LOOP_STATE" \
+  "long=found gone pass=gone loop=gone" \
+  "a TERM on the loop pid ends the long pass its pass has in flight" "$TMP_ROOT/e-term_long_pass"
+assert_eq "held=${HELD_PID:+found} $HELD_STATE" "held=found gone" \
+  "and the command that long pass was waiting on" "$TMP_ROOT/e-term_long_pass"
+mutant long_pass_alone oversee-watch \
+  '    || for pid in $(tree_pids "$LONG_PID"); do kill -TERM "$pid" 2>/dev/null || :; done' \
+  '    || kill -TERM "$LONG_PID" 2>/dev/null || :'
+term_long_case term_long_alone_mutant "$MUTANT"
+assert_eq "long=$LONG_PASS_STATE held=${HELD_PID:+found} $HELD_STATE" "long=gone held=found alive" \
+  "control: a TERM on the long pass's own pid leaves the command it waits on running"
+mutant pass_untrapped oversee-watch 'trap pass_stop TERM' ':'
+term_long_case term_long_untrapped_mutant "$MUTANT"
+assert_eq "long=${LONG_PASS_PID:+found} $LONG_PASS_STATE" "long=found alive" \
+  "control: with no TERM trap on the pass its long pass runs on"
+kill -TERM "$LONG_PASS_PID" "$PASS_PID" 2>/dev/null || true
 
 # A pass waiting out its mail interval in a tick sleep: a TERM ends it within
 # the bound and takes the sleep with it.
@@ -488,6 +499,45 @@ mutant mid_read_taken oversee-watch '      if ! mail_read "$item" inbox "${args[
 mid_read_case mid_read_taken_mutant "$MUTANT"
 assert_eq "$MID_READ" "read=found pass=gone note=lost" \
   "control: a read that moves the cursor itself loses the note to the stop"
+
+# A stop between the print and the ack, as a takeover's group stop makes: the
+# ack is held in a lane-mail wrapper and killed with its pass. The note is
+# printed, the cursor stays, and the next reader prints it again: at least
+# once, never lost.
+ack_stop_case() { # NAME [WATCH_BIN]
+  local ack pass held
+  new_case "$1"
+  rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
+  (cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/orch/scripts/lane-mail" send --item overseer --directive \
+    --file "$TMP_ROOT/note.txt" >/dev/null)
+  printf '#!/usr/bin/env bash\ncase " $* " in *" --ack "*) "%s" 30 ;; esac\nexec "%s" "$@"\n' \
+    "$REAL_SLEEP" "$REPO_ROOT/skills/orch/scripts/lane-mail" > "$STUB_DIR/lane-mail-held"
+  chmod +x "$STUB_DIR/lane-mail-held"
+  ( WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_LANE_MAIL="$STUB_DIR/lane-mail-held" -- --max-loops 1 \
+      >"$TMP_ROOT/o-$1" 2>"$TMP_ROOT/e-$1" ) &
+  LIVE_PIDS+=" $!"
+  ack=""
+  for _ in $(seq 1 100); do
+    ack="$(descendant "$!" 'lane-mail-held .*--ack')"
+    [[ -z "$ack" ]] || break
+    "$REAL_SLEEP" 0.1
+  done
+  pass="$(descendant "$!" 'oversee-watch --interval')"
+  held="$(descendant "${ack:-0}" 'sleep 30$')"
+  LIVE_PIDS+=" $held"
+  kill -TERM "$ack" "$held" "$pass" 2>/dev/null || true
+  gone_within "$pass"
+  ACK_STOP="ack=${ack:+found} pass=$STATES printed=$(grep -c '^EVENT owner-note ' "$TMP_ROOT/o-$1" || true)"
+  ACK_STOP+=" again=$(WATCH_BIN="${2:-}" run_watch -- --max-loops 1 2>/dev/null | grep -c '^EVENT owner-note ' || true)"
+}
+ack_stop_case ack_stop
+assert_eq "$ACK_STOP" "ack=found pass=gone printed=1 again=1" \
+  "a stop between the print and the ack reports the note, and the next reader reports it again" "$TMP_ROOT/e-ack_stop"
+mutant ack_first oversee-watch '      envelopes="$(tail -n +2 <<<"$MAIL_OUT")"' \
+  '      envelopes="$(tail -n +2 <<<"$MAIL_OUT")"; mail_read "$item" inbox "${args[@]}" --ack "$count"'
+ack_stop_case ack_first_mutant "$MUTANT"
+assert_eq "$ACK_STOP" "ack=found pass=gone printed=0 again=1" \
+  "control: an ack before the print leaves a stopped pass having reported nothing"
 
 # --- taking over a watch ------------------------------------------------------
 # A stand-in for a watch another start left running: it records itself as the
