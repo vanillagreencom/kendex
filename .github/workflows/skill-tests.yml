@@ -676,6 +676,14 @@ jobs:
         if: matrix.shard == 'guards-scans'
         run: tools/bash32-parse
 
+      # No file the Rust source reads can take the `trivial` class alone, the
+      # class that runs no cargo lane. The shell shards run on every diff
+      # changing a file under crates/, which is where a new read comes from.
+      # tools/tests/trivial-reads.test.sh proves its teeth.
+      - name: trivial-reads (no file the Rust source reads classifies trivial)
+        if: matrix.shard == 'guards-scans'
+        run: tools/trivial-reads
+
       # py-names.test.sh and install-git-hooks.test.sh run the lane's tool.
       # Pinned, so a ruff release cannot change the suites unreviewed; --force
       # because pipx leaves an existing install in place, and the version check

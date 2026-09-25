@@ -82,6 +82,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       printf 'the per-file scan behind the %s lane could not run, so its files were not judged.\n' "$2" ;;
     binary-home)
       echo "a launch in a test naming the kendex binary carries no fixture home before it runs — give its builder fixture_env() from crates/test_util.rs, or a HOME with KENDEX_REAL_HOME beside it; a release-profile test run otherwise drives the real machine." ;;
+    trivial-reads)
+      echo "tools/trivial-reads refused the tree — a file the Rust source reads that a diff changing it alone would classify trivial, which runs no cargo lane, or a judgement that could not run; its own first line above names which." ;;
     test-roster)
       echo "tools/test-roster refused the tree — a file or directory under a crate's tests/ that no [[test]] root declares compiles nowhere under autotests = false, or the scan could not run; its own first line above names which." ;;
     fixture-diff)
@@ -991,50 +993,23 @@ if [ "$FULL" -eq 1 ] && lane_on shell_shards; then
 fi
 
 # Every repository path an include_str! or include_bytes! literal under
-# crates/ names, resolved against the including file's directory: the files
-# outside crates/ that compiled code reads at build time. A literal on the
-# line after its opening parenthesis, the shape rustfmt gives a long one,
-# counts too. A file a test reads at run time is not here; the host test run
-# below reads it on every full run.
+# crates/ names: the files outside crates/ that compiled code reads at build
+# time. The derivation is tools/rust-reads' include rows. A file a test reads
+# at run time is not here; the host test run below reads it on every full run.
 compiled_includes() {
-  find crates -type f -name '*.rs' -exec awk '
-    function emit(lit,   path, n, seg, i, k, out) {
-      path = FILENAME
-      sub(/[^\/]*$/, "", path)
-      n = split(path lit, seg, "/")
-      k = 0
-      for (i = 1; i <= n; i++) {
-        if (seg[i] == "" || seg[i] == ".") continue
-        if (seg[i] == "..") { if (k == 0) return; k--; continue }
-        seg[++k] = seg[i]
-      }
-      out = seg[1]
-      for (i = 2; i <= k; i++) out = out "/" seg[i]
-      print out
-    }
-    function literals(text) {
-      while (match(text, /include_(str|bytes)!\([ \t]*"[^"]*"/)) {
-        lit = substr(text, RSTART, RLENGTH)
-        sub(/^[^"]*"/, "", lit)
-        sub(/"$/, "", lit)
-        emit(lit)
-        text = substr(text, RSTART + RLENGTH)
-      }
-      return text
-    }
-    FNR == 1 { pending = 0 }
-    {
-      line = $0
-      if (pending && match(line, /^[ \t]*"[^"]*"/)) {
-        lit = substr(line, RSTART, RLENGTH)
-        sub(/^[^"]*"/, "", lit)
-        sub(/"$/, "", lit)
-        emit(lit)
-      }
-      pending = (literals(line) ~ /include_(str|bytes)!\([ \t]*$/)
-    }
-  ' {} +
+  local rows
+  rows=$("$TOOLS_DIR/rust-reads" .) || return 1
+  printf '%s\n' "$rows" | awk -F '\t' '$1 == "include" { print $2 }'
 }
+
+# No file the Rust source reads can take the trivial change class alone, the
+# class that runs no cargo lane. The rule and what it judges are
+# tools/trivial-reads', which CI runs in its guards-scans shard, a shell
+# shard, so this lane stands down where that one does; exit 1 is a read file
+# that classifies trivial, exit 2 a judgement that could not be made, and
+# neither is a pass. One line on purpose: the must-fail control in
+# tools/tests/guard-full.test.sh removes this lane by deleting it.
+[ "$FULL" -eq 0 ] || ! lane_on shell_shards || "$TOOLS_DIR/trivial-reads" || say trivial-reads "$?"
 
 if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
   # The cross-target checks and cargo doc each write a target tree of their

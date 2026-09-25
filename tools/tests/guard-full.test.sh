@@ -351,6 +351,17 @@ pre_gated_head="$(git -C "$R" rev-parse HEAD)"
 # reads an empty one.
 cp "$R/.git/info/exclude" "$TMP/exclude.saved"
 printf 'fake-bin/\n' >>"$R/.git/info/exclude"
+# The classifier tools/trivial-reads puts each file the crate below reads to,
+# and the narrow-change list beside it: the shipped list, which already names
+# docs/authoring/README.md, and a line for docs/split.md. Out of every
+# touched set, like the stubs.
+CLASS_CONF="$R/skills/orch/references/narrow-change.conf"
+mkdir -p "$R/skills/harness-ci" "$R/skills/orch/references" "$R/skills/orch/scripts"
+cp -R "$REPO/skills/harness-ci/scripts" "$R/skills/harness-ci/scripts"
+cp -R "$REPO/skills/orch/scripts/lib" "$R/skills/orch/scripts/lib"
+cp "$REPO/skills/orch/references/narrow-change.conf" "$CLASS_CONF"
+printf 'path docs/split.md\n' >>"$CLASS_CONF"
+printf 'skills/harness-ci/\nskills/orch/\n' >>"$R/.git/info/exclude"
 # A find that fails the include derivation's walk under FAIL_FIND=1 and is
 # the real find for every other caller.
 REAL_FIND="$(command -v find)"
@@ -462,7 +473,6 @@ while IFS='|' read -r edit touch setting base extra rc calls text label; do
 done <<'ROWS'
 s/^  rust_input=0$/  rust_input=1/|docs/notes.md||main||0|run||with the touched-set gate removed a prose file runs both
 s/if ! includes=\$(compiled_includes)/if ! includes=$(true)/|docs/authoring/README.md||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the include derivation emptied an included file skips both
-s/if (pending \&\& match/if (0 \&\& match/|docs/split.md||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the next-line literal unread a file named on the line after skips both
 s/if \[ "\$cross_doc" = ci \]; then/if false; then/|crates/app/src/mine.rs|ci|main||0|run||with the ci branch removed the setting at ci runs both
 s/say cross-doc-setting "\$cross_doc"; //|crates/app/src/mine.rs|never|main||0|run||with the refusal removed an unknown setting passes
 /\[ -n "\$touched" \]/d|-||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the empty-set rule removed a branch that touches nothing skips both
@@ -470,7 +480,28 @@ s/say cross-doc-setting "\$cross_doc"; //|crates/app/src/mine.rs|never|main||0|r
 /\[ "\$base_resolved" -eq 1 \]/d|docs/notes.md||none||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the base rule removed a committed crate change with no origin/main skips both
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the cross-doc gate controls" >&2; exit 2; }
+
+echo "=== a read file the narrow-change list leaves out reds full validation through the trivial-reads lane ==="
+# The rule is tools/trivial-reads' and its rows are tools/tests/
+# trivial-reads.test.sh; this proves guard runs it and forwards its verdict.
+# Every row above ran with the list naming both files, which is the inverse.
+grep -vFx 'path docs/split.md' "$CLASS_CONF" >"$TMP/conf.cut"
+cp "$TMP/conf.cut" "$CLASS_CONF"
+gated_run "$GUARD" docs/notes.md main
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: trivial-reads=1"* ]] \
+  && [[ "$OUT" == *"trivial-reads: trivial=1"$'\n'"docs/split.md"$'\n'* ]] \
+  && ok "a read file no list line names reds full validation, naming the file" \
+  || bad "a read file no list line names reds full validation, naming the file" "rc=$RC out=$OUT"
+if mutant_guard '/TOOLS_DIR\/trivial-reads/d'; then
+  gated_run "$MUTANT_TOOLS/guard" docs/notes.md main
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the trivial-reads lane deleted the unlisted file passes" \
+    || bad "control: with the trivial-reads lane deleted the unlisted file passes" "rc=$RC out=$OUT"
+else
+  bad "control: the trivial-reads lane could not be deleted from a guard copy"
+fi
 rm -f "$R/fake-bin/find"
+rm -rf -- "${R:?}/skills/harness-ci" "${R:?}/skills/orch"
 cp "$TMP/exclude.saved" "$R/.git/info/exclude"
 git -C "$R" reset -q --hard "$pre_gated_head"
 git -C "$R" update-ref -d refs/remotes/origin/main
@@ -636,7 +667,8 @@ LANE_TOOLS="$TMP/lane-tools"
 LANE_BIN="$TMP/lane-bin"
 mkdir -p "$LANE_TOOLS" "$LANE_BIN"
 cp "$R/fake-bin/rustup" "$LANE_BIN/rustup"
-cp "$REPO/tools/bash32-lint" "$REPO/tools/ci-job-set" "$REPO/tools/test-roster" "$LANE_TOOLS/"
+cp "$REPO/tools/bash32-lint" "$REPO/tools/ci-job-set" "$REPO/tools/test-roster" \
+  "$REPO/tools/rust-reads" "$REPO/tools/trivial-reads" "$LANE_TOOLS/"
 printf '#!/usr/bin/env bash\necho "stub: bash32-parse"\n' >"$LANE_TOOLS/bash32-parse"
 chmod +x "$LANE_TOOLS/bash32-parse"
 lane_guard() { # [SED-EXPR] — the guard copy the rows run, edited when given
