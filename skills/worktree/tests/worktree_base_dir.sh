@@ -110,6 +110,18 @@ step() {
     repo:*) NAME="${1#repo:}"; MAIN="$ROOT/$NAME"; make_repo "$ROOT" "$NAME" ;;
     create:*) tool create "${1#create:}"; [[ -d "$(tree_of "${1#create:}")" ]] || { echo "FIXTURE: create ${1#create:} left no worktree in $ROOT" >&2; exit 2; } ;;
     create-hosted:*) tool create "${1#create-hosted:}" --hosted; [[ -d "$(tree_of "${1#create-hosted:}")" ]] || { echo "FIXTURE: create ${1#create-hosted:} --hosted left no worktree in $ROOT" >&2; exit 2; } ;;
+    # The tree and main each change base.txt, and a hosted --restack pauses on
+    # the conflict with the tree's HEAD detached.
+    conflict:*)
+      wt="$(tree_of "${1#conflict:}")"
+      printf 'tree\n' >"$wt/base.txt"
+      must git -C "$wt" commit -q -a -m tree
+      printf 'main\n' >"$MAIN/base.txt"
+      must git -C "$MAIN" commit -q -a -m main
+      must git -C "$MAIN" push -q origin main
+      tool create "${1#conflict:}" --hosted --restack
+      [[ -z "$(git -C "$wt" branch --show-current)" ]] || { echo "FIXTURE: restack of ${1#conflict:} did not pause detached in $ROOT" >&2; exit 2; }
+      ;;
     remove:*)
       tool remove "${1#remove:}"
       [[ "$(git -C "$MAIN" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]] || { echo "FIXTURE: remove ${1#remove:} left a worktree in $ROOT" >&2; exit 2; }
@@ -250,6 +262,7 @@ out_text() {
     -) printf '' ;;
     removed:*) printf 'worktree-removed: %s' "${1#removed:}" ;;
     cleaned:*) printf 'worktree-cleaned: %s' "${1#cleaned:}" ;;
+    aborted:*) printf 'worktree-restack-aborted: %s' "${1#aborted:}" ;;
     *) printf '%s' "$1" ;;
   esac
 }
@@ -285,7 +298,11 @@ two local creates for different items land at different item-keyed paths|repo cr
 a hosted create refuses the lane path while another item'"'"'s tree holds it|repo create-hosted:issue-a|-|create issue-b --hosted|75|-|active:issue-b:<root>/.worktrees/main/lane|trees=<root>/.worktrees/main/lane@issue-a branches=issue-a remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/lane/base.txt
 path follows a hosted tree through its branch, never the item-keyed spelling|repo create-hosted:issue-a|-|path issue-a|0|<root>/.worktrees/main/lane|-|trees=<root>/.worktrees/main/lane@issue-a branches=issue-a remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/lane/base.txt
 --reuse finds a hosted tree through its branch|repo create-hosted:issue-a|-|create issue-a --hosted --reuse|0|<root>/.worktrees/main/lane|-|trees=<root>/.worktrees/main/lane@issue-a branches=issue-a remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/lane/base.txt
-path --hosted names the lane path under the configured base dir|repo local-custom|-|path --hosted|0|<root>/custom-trees/lane|-|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
+path --hosted sits beside the checkout whatever the configured base dir|repo local-custom|-|path --hosted|0|<root>/.worktrees/main/lane|-|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
+an absolute base dir shared by two clones still gives each its own lane path|repo|WORKTREE_BASE_DIR=<root>/abs-base|path --hosted|0|<root>/.worktrees/main/lane|-|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
+the second clone under that absolute base dir gets the lane path beside itself|repo:repo-b|WORKTREE_BASE_DIR=<root>/abs-base|path --hosted|0|<root>/.worktrees/repo-b/lane|-|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
+path finds a hosted tree a paused restack detached, through the issue it records|repo create-hosted:issue-a conflict:issue-a|-|path issue-a|0|<root>/.worktrees/main/lane|-|trees=<root>/.worktrees/main/lane@detached branches=issue-a remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/lane/base.txt
+a restack control by issue ID reaches a hosted tree a paused restack detached|repo create-hosted:issue-a conflict:issue-a|-|restack abort issue-a|0|aborted:<root>/.worktrees/main/lane|-|trees=<root>/.worktrees/main/lane@issue-a branches=issue-a remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=.worktrees/main/lane/base.txt
 WORKTREE_HOSTED_NAME names the lane path'"'"'s last segment|repo|WORKTREE_HOSTED_NAME=shared|path --hosted|0|<root>/.worktrees/main/shared|-|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
 a WORKTREE_HOSTED_NAME that is not one path segment is refused before anything is made|repo|WORKTREE_HOSTED_NAME=../up|create issue-a --hosted|1|-|hosted-name:../up|trees=- branches=- remote=- checkout=main@clean dirs=- files=-
 cleanup under the default layout removes the merged worktree and deletes its branch, never touching the checkout|repo create:issue-default merge:issue-default|-|cleanup|0|cleaned:<root>/.worktrees/main/issue-default|-|trees=- branches=- remote=- checkout=main@clean dirs=.worktrees,.worktrees/main files=-

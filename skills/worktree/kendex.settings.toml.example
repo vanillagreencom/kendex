@@ -16,9 +16,10 @@ WORKTREE_DEFAULT_BRANCH = ""
 # inotify.
 WORKTREE_BASE_DIR = ""
 
-# The directory under WORKTREE_BASE_DIR that `create --hosted` puts a hosted
-# lane's worktree in, one path segment; empty = lane. One name for every
-# lane keeps its build paths identical across lanes.
+# The directory `create --hosted` puts a hosted lane's worktree in, one path
+# segment under <parent-of-checkout>/.worktrees/<checkout-name> whatever
+# WORKTREE_BASE_DIR says; empty = lane. One name for every lane keeps its
+# build paths identical across lanes.
 WORKTREE_HOSTED_NAME = ""
 
 # Space-separated paths symlinked into every worktree: list only what git

@@ -29,7 +29,7 @@ Put project defaults in committed `kendex.settings.toml` under `[env]`; `.env.lo
 | Variable | Purpose |
 |----------|---------|
 | `WORKTREE_BASE_DIR` | Parent directory for created worktrees; never inside the repository root |
-| `WORKTREE_HOSTED_NAME` | Directory name under that parent for a hosted lane's worktree (`create --hosted`); default `lane` |
+| `WORKTREE_HOSTED_NAME` | Directory name for a hosted lane's worktree (`create --hosted`), always under `<parent-of-checkout>/.worktrees/<checkout-name>`; default `lane` |
 | `WORKTREE_DEFAULT_BRANCH` | Overrides default-branch detection |
 | `WORKTREE_SYMLINKS` | Space-separated paths symlinked from the main checkout into each worktree |
 | `WORKTREE_RELATIVE_SYMLINKS` | Space-separated `link=target` pairs created inside each worktree |

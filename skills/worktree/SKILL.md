@@ -20,7 +20,7 @@ tags: [git]
 .agents/skills/worktree/scripts/worktree <command> [options]
 ```
 
-Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outside the repo root. A hosted lane's worktree, made by `create --hosted` on a machine holding one lane of the repository, lives at `.../<checkout-name>/lane` instead, the same path in every lane, so a compile cache keyed by absolute source path hits across lanes. Every command's contract is its `--help`: flags, exit codes, failure semantics, recovery. The top-level `worktree --help` carries the command index, path and issue-ID rules, configuration variables, and setup-path hardening.
+Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outside the repo root. A hosted lane's worktree, made by `create --hosted` on a clone holding one lane, lives at `<parent-of-checkout>/.worktrees/<checkout-name>/<WORKTREE_HOSTED_NAME>` (default `lane`) whatever `WORKTREE_BASE_DIR` says, the same path in every lane whose clone sits at the same path, so a compile cache keyed by absolute source path hits across lanes. Every command's contract is its `--help`: flags, exit codes, failure semantics, recovery. The top-level `worktree --help` carries the command index, path and issue-ID rules, configuration variables, and setup-path hardening.
 
 ## Commands
 

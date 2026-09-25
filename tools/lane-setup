@@ -52,7 +52,8 @@ fi
 # The cargo file is .cargo/config.toml in the directory holding this clone.
 # Cargo reads the config of every ancestor of its working directory, so that
 # one file reaches the clone and every worktree created beside it under
-# <parent>/.worktrees/; a worktree placed elsewhere by WORKTREE_BASE_DIR does
+# <parent>/.worktrees/, the hosted lane path included whatever
+# WORKTREE_BASE_DIR says; a worktree placed elsewhere by WORKTREE_BASE_DIR does
 # not read it. ~/.cargo/config.toml belongs to the lane image, and cargo
 # merges the two files.
 #
@@ -112,6 +113,7 @@ incremental = false"
     printf 'lane-setup: rustc-wrapper=none:sccache-absent\n'
   else
     printf 'lane-setup: rustc-wrapper=%s\n' "$sccache_path"
+    lane_wrapper=$sccache_path
     cargo_config="$cargo_config
 rustc-wrapper = $(toml_string "$sccache_path")"
     write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" "[cache.redis]
@@ -151,6 +153,8 @@ rustflags = [\"-C\", \"link-arg=-fuse-ld=$linker\"]"
   write_owned cargo-config "$lanes_dir/.cargo/config.toml" "$cargo_config"
 }
 
+# The rustc wrapper the lane cargo config names; empty when it names none.
+lane_wrapper=""
 if [ -z "${DAYTONA_SANDBOX_ID:-}" ]; then
   printf 'lane-setup: cargo-config=not-sandbox\n'
 else
@@ -163,14 +167,19 @@ fi
 # one path every lane of this repository builds in: sccache keys a Rust
 # compile by its absolute source path, so only a build at that path stores
 # entries a lane's own build hits. The tree is removed once the build ends,
-# so a lane's hosted create finds the path free; the snapshot keeps the
-# registry cache under CARGO_HOME, and the compiled units live in the shared
-# sccache. The build is the compile step of the `cargo test --workspace` that
-# every lane's `tools/guard --full` runs; `cargo build --workspace
+# so a lane's hosted create finds the path free; the compiled units survive
+# only in the shared sccache, where sccache wraps rustc. With no wrapper they
+# would be deleted with the tree, so the build is skipped by name and only
+# the registry cache under CARGO_HOME is filled, which the snapshot keeps
+# either way. The build is the compile step of the `cargo test --workspace`
+# that every lane's `tools/guard --full` runs; `cargo build --workspace
 # --all-targets` would add bench units under the bench profile, which no lane
 # step builds. It builds HEAD, the tree a lane starts from. --locked keeps a
 # stale Cargo.lock from being rewritten into the snapshot.
-if [ "${FLEET_WARM:-}" = 1 ]; then
+if [ "${FLEET_WARM:-}" = 1 ] && [ -z "$lane_wrapper" ]; then
+  printf 'lane-setup: warm-build=fetch-only:no-wrapper\n'
+  cargo fetch --locked
+elif [ "${FLEET_WARM:-}" = 1 ]; then
   lane_path=""
   lane_path="$(.agents/skills/worktree/scripts/worktree path --hosted)" || exit $?
   printf 'lane-setup: warm-build=run path=%s\n' "$lane_path"

@@ -945,17 +945,21 @@ mkdir_inside_worktree() {
   fi
 }
 
+# An external per-repo dir beside the checkout. Worktrees (and their build
+# outputs) must not live under the repo root — an editor recursively watching
+# the repo would ingest every worktree's build artifacts and can exhaust the
+# per-user inotify budget. A shared sibling like ../trees would collide across
+# repos (two repos' issue-1 would resolve to the same path), so the repo name
+# disambiguates.
+checkout_worktrees_dir() {
+  printf '%s/.worktrees/%s\n' "$(dirname "$PROJECT_ROOT")" "$(basename "$PROJECT_ROOT")"
+}
+
 resolve_worktree_base_dir() {
   local raw="${WORKTREE_BASE_DIR:-}"
   local path
   if [[ -z "$raw" ]]; then
-    # Default: an external per-repo dir beside the checkout. Worktrees (and
-    # their build outputs) must not live under the repo root — an editor
-    # recursively watching the repo would ingest every worktree's build
-    # artifacts and can exhaust the per-user inotify budget. A shared sibling
-    # like ../trees would collide across repos (two repos' issue-1 would
-    # resolve to the same path), so the repo name disambiguates.
-    path="$(dirname "$PROJECT_ROOT")/.worktrees/$(basename "$PROJECT_ROOT")"
+    path="$(checkout_worktrees_dir)"
   else
     if [[ "$raw" == "~" ]]; then
       raw="${HOME:?WORKTREE_BASE_DIR uses ~ but HOME is not set}"
@@ -1078,12 +1082,16 @@ worktree_path() {
 
 # The path a NEW worktree takes, by the kind of host it is created on. A local
 # machine holds several worktrees of one repository at once, so each takes the
-# path keyed by its issue. A hosted lane's machine holds exactly one, so every
+# path keyed by its issue. A hosted lane's clone holds exactly one, so every
 # lane of the repository takes the same path: sccache keys a Rust compile by
 # its absolute source path, and only a path identical in every lane lets one
-# lane's build, or the warm snapshot's, answer another's. Every reader finds a
-# hosted tree through its registered branch (worktree_path_for_issue), never
-# through this spelling.
+# lane's build, or the warm snapshot's, answer another's. That path is
+# composed from the clone's own location, never WORKTREE_BASE_DIR: an absolute
+# base dir names one directory for every clone on a machine, and two clones of
+# a repository on one host would then share one lane path. The fleet puts each
+# clone at the same path on every host, so the result still matches across
+# lanes. Every reader finds a hosted tree through worktree_path_for_issue,
+# never through this spelling.
 worktree_new_path() { # HOST_KIND ISSUE
   local name="${WORKTREE_HOSTED_NAME:-lane}"
   case "$1" in
@@ -1093,7 +1101,7 @@ worktree_new_path() { # HOST_KIND ISSUE
         worktree_message hosted-name-invalid "$name" "Error: WORKTREE_HOSTED_NAME must be one path segment of letters, numbers, '.', '_' or '-', starting with a letter or number and without '..'." >&2
         return 1
       fi
-      printf '%s/%s\n' "$TREES_DIR" "$name"
+      printf '%s/%s\n' "$(checkout_worktrees_dir)" "$name"
       ;;
     *)
       worktree_message host-kind-invalid "$1" "Error: internal: a new worktree path was asked for host kind '$1'; only local and hosted exist." >&2
@@ -1104,6 +1112,28 @@ worktree_new_path() { # HOST_KIND ISSUE
 
 issue_branch_name() {
   echo "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+# The issue a worktree was created for, in lower case, recorded in the tree's
+# private git dir. It is the one route from an issue ID to a hosted tree that
+# does not go through HEAD: the hosted path carries no issue ID, and a paused
+# restack leaves the tree detached, so its branch is not registered to it.
+readonly WORKTREE_ISSUE_RECORD="kendex-issue"
+
+record_worktree_issue() { # WT ISSUE
+  local git_dir=""
+  if ! git_dir="$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)" ||
+     ! printf '%s\n' "$(issue_branch_name "$2")" >"$git_dir/$WORKTREE_ISSUE_RECORD"; then
+    worktree_message issue-record-failed "$1" "Error: could not record issue '$2' in the git dir of $1, so the issue ID cannot find this tree while its HEAD is detached." >&2
+    return 1
+  fi
+}
+
+recorded_worktree_issue() { # WT
+  local git_dir=""
+  git_dir="$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)" || return 1
+  [[ -f "$git_dir/$WORKTREE_ISSUE_RECORD" ]] || return 1
+  cat -- "$git_dir/$WORKTREE_ISSUE_RECORD"
 }
 
 current_checkout_path_for_issue() {
@@ -1376,10 +1406,12 @@ worktree_for_branch() {
 # Resolve an issue ID to its worktree path. Prefers the configured
 # WORKTREE_BASE_DIR target; when nothing exists there, falls back to the
 # worktree registered for the issue branch so trees created under a different
-# WORKTREE_BASE_DIR keep working unmoved (no auto-migration). The main
-# checkout is never a fallback target.
+# WORKTREE_BASE_DIR keep working unmoved (no auto-migration), then to the
+# hosted lane path when the tree there records the issue, which finds a hosted
+# tree whose HEAD a paused restack detached. The main checkout is never a
+# fallback target.
 worktree_path_for_issue() {
-  local issue="$1" configured="" registered=""
+  local issue="$1" configured="" registered="" hosted=""
   validate_issue_id "$issue" || return 1
   configured="$(worktree_path "$issue")"
   if [[ -e "$configured" || -L "$configured" ]]; then
@@ -1389,6 +1421,14 @@ worktree_path_for_issue() {
   registered="$(worktree_for_branch "$(issue_branch_name "$issue")" 2>/dev/null || true)"
   if [[ -n "$registered" ]] && ! same_canonical_dir "$registered" "$PROJECT_ROOT"; then
     printf '%s\n' "$registered"
+    return 0
+  fi
+  # An invalid WORKTREE_HOSTED_NAME names no path a hosted create could have
+  # made, so it leaves nothing to find here.
+  hosted="$(worktree_new_path hosted 2>/dev/null)" || hosted=""
+  if [[ -n "$hosted" && -d "$hosted" ]] && is_registered_project_worktree "$hosted" &&
+     [[ "$(recorded_worktree_issue "$hosted" || true)" == "$(issue_branch_name "$issue")" ]]; then
+    printf '%s\n' "$hosted"
     return 0
   fi
   printf '%s\n' "$configured"
@@ -2854,6 +2894,7 @@ case "${1:-}" in
         fi
       fi
       release_issue_claim_lock
+      record_worktree_issue "$WT_PATH" "$ISSUE" || exit 1
       setup_app_worktree "$WT_PATH"
       if [[ -n "$TRANSFER_STASH" && "$(git -C "$WT_PATH" rev-parse --verify refs/stash 2>/dev/null || true)" == "$TRANSFER_STASH" ]]; then
         git -C "$WT_PATH" stash drop 'stash@{0}' >/dev/null 2>&1 || \
@@ -2889,6 +2930,7 @@ case "${1:-}" in
       mkdir -p "$TREES_DIR"
       git -C "$PROJECT_ROOT" worktree add --no-track -b "$BRANCH" "$WT_PATH" "$START_POINT" >/dev/null 2>&1
       release_issue_claim_lock
+      record_worktree_issue "$WT_PATH" "$ISSUE" || exit 1
       setup_app_worktree "$WT_PATH"
       echo "$WT_PATH"
       exit 0
@@ -2983,6 +3025,7 @@ case "${1:-}" in
       fi
     fi
 
+    record_worktree_issue "$WT_PATH" "$ISSUE" || exit 1
     setup_app_worktree "$WT_PATH"
     echo "$WT_PATH"
     ;;

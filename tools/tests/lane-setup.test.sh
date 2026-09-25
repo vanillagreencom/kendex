@@ -6,7 +6,9 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS="$(cd "$TEST_DIR/.." && pwd)"
-REPO="$(cd "$TOOLS/.." && pwd)"
+# Physical, because cargo names a crate's directory by its physical path and
+# the warm rows compare that name with the lane path built from this one.
+REPO="$(cd "$TOOLS/.." && pwd -P)"
 mkdir -p "$REPO/tmp"
 TMP="$(mktemp -d "$REPO/tmp/lane-setup.XXXXXX")"
 trap 'rm -rf -- "${TMP:?}"' EXIT
@@ -402,15 +404,17 @@ for tool in cc ld ld.mold mold ld.lld; do
 done
 case "$LINK_TOOLS" in */cc\ * | */cc) ;; *) bad "the host provides cc for the warm build rows" "found:$LINK_TOOLS"; exit 1 ;; esac
 
-# proof_warm WARM SOURCE EXPECT [FROM TO]: the setup with FLEET_WARM=WARM
-# on a toy crate, committed, that compiles with a current Cargo.lock (good),
-# does not compile (broken), or has no Cargo.lock for --locked to accept
-# (unlocked), with the real cargo on its PATH and the build kept in the
-# clone's own target dir. A build that ran compiled the crate at LANE_PATH and
-# left no tree there.
+# proof_warm WARM SOURCE WRAPPER EXPECT [FROM TO]: the setup with
+# FLEET_WARM=WARM on a toy crate, committed, that compiles with a current
+# Cargo.lock (good), does not compile (broken), or has no Cargo.lock for
+# --locked to accept (unlocked), with the real cargo on its PATH and the build
+# kept in the clone's own target dir. WRAPPER sccache gives the lane config a
+# pass-through sccache and an endpoint; none gives it no wrapper. A build that
+# ran compiled the crate at LANE_PATH and left no tree there.
 proof_warm() {
-  local warm=$1 source=$2 expect=$3 lock="" exe="" built=no trees="" at_lane=no
-  shift 3
+  local warm=$1 source=$2 wrapper=$3 expect=$4 lock="" exe="" built=no trees="" at_lane=no
+  local -a endpoint=()
+  shift 4
   lane_fixture "$@"
   case "$source" in
     good) ;;
@@ -430,7 +434,16 @@ proof_warm() {
   for tool in $LINK_TOOLS; do
     ln -s "$tool" "$EXTRA_BIN/${tool##*/}"
   done
-  run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test CARGO_TARGET_DIR="$R/target" ${warm:+FLEET_WARM="$warm"}
+  case "$wrapper" in
+    sccache)
+      printf '#!/usr/bin/env bash\nexec "$@"\n' >"$EXTRA_BIN/sccache"
+      chmod +x "$EXTRA_BIN/sccache"
+      endpoint=(FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379)
+      ;;
+    none) ;;
+    *) WHY="unknown wrapper $wrapper"; return 1 ;;
+  esac
+  run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test CARGO_TARGET_DIR="$R/target" ${endpoint[@]+"${endpoint[@]}"} ${warm:+FLEET_WARM="$warm"}
   for exe in "$R"/target/debug/deps/toy-*; do
     case "${exe##*/}" in *.*) ;; *) [ ! -f "$exe" ] || [ ! -x "$exe" ] || built=yes ;; esac
   done
@@ -441,6 +454,7 @@ proof_warm() {
   case "$expect" in
     built) [ "$RC" -eq 0 ] && [ "$built" = yes ] && [ "$at_lane" = yes ] && case "$OUT" in *"lane-setup: warm-build=run path=$LANE_PATH"*) true ;; *) false ;; esac ;;
     skipped) [ "$RC" -eq 0 ] && [ ! -e "$R/target" ] && case "$OUT" in *"lane-setup: warm-build=skip"*) true ;; *) false ;; esac ;;
+    fetched) [ "$RC" -eq 0 ] && [ "$built" = no ] && [ "$at_lane" = no ] && case "$OUT" in *"lane-setup: warm-build=fetch-only:no-wrapper"*) true ;; *) false ;; esac ;;
     failed) [ "$RC" -ne 0 ] && case "$OUT" in *"lane-setup: warm-build=run path=$LANE_PATH"*) true ;; *) false ;; esac ;;
     *) WHY="unknown expectation $expect"; return 1 ;;
   esac
@@ -474,14 +488,15 @@ FLEET_SCCACHE_REDIS_ENDPOINT=|present|unused
 FLEET_SCCACHE_REDIS_ENDPOINT=tcp://cache.test:6379|absent|unused
 ROWS
 
-while IFS='|' read -r warm source expect; do
-  proof_warm "$warm" "$source" "$expect" && ok "warm: FLEET_WARM=[$warm] on a $source crate is $expect" || bad "warm: FLEET_WARM=[$warm] on a $source crate is $expect" "$WHY"
+while IFS='|' read -r warm source wrapper expect; do
+  proof_warm "$warm" "$source" "$wrapper" "$expect" && ok "warm: FLEET_WARM=[$warm] on a $source crate with wrapper $wrapper is $expect" || bad "warm: FLEET_WARM=[$warm] on a $source crate with wrapper $wrapper is $expect" "$WHY"
 done <<'ROWS'
-1|good|built
-|good|skipped
-0|good|skipped
-1|broken|failed
-1|unlocked|failed
+1|good|sccache|built
+|good|sccache|skipped
+0|good|sccache|skipped
+1|broken|sccache|failed
+1|unlocked|sccache|failed
+1|good|none|fetched
 ROWS
 
 echo "=== must-fail controls: each cargo proof fails against its mutant ==="
@@ -518,27 +533,30 @@ proof_wrapper FLEET_SCCACHE_REDIS_ENDPOINT= present unused '  if [ -z "${FLEET_S
   && bad "control: a wrapper on an empty endpoint fails the empty-endpoint row" "$WHY" \
   || ok "control: a wrapper on an empty endpoint fails the empty-endpoint row"
 
-proof_warm 1 good built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  :' \
+proof_warm 1 good sccache built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  :' \
   && bad "control: a warm run that builds nothing fails the built row" "$WHY" \
   || ok "control: a warm run that builds nothing fails the built row"
-proof_warm 1 good built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cargo test --workspace --no-run --locked) || build_status=$?' \
+proof_warm 1 good sccache built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cargo test --workspace --no-run --locked) || build_status=$?' \
   && bad "control: a warm build in the clone rather than at the lane path fails the built row" "$WHY" \
   || ok "control: a warm build in the clone rather than at the lane path fails the built row"
-proof_warm 1 good built '  git worktree remove --force -- "$lane_path"' '  :' \
+proof_warm 1 good sccache built '  git worktree remove --force -- "$lane_path"' '  :' \
   && bad "control: a warm tree left at the lane path fails the built row" "$WHY" \
   || ok "control: a warm tree left at the lane path fails the built row"
-proof_warm '' good skipped 'if [ "${FLEET_WARM:-}" = 1 ]; then' 'if true; then' \
+proof_warm '' good sccache skipped 'elif [ "${FLEET_WARM:-}" = 1 ]; then' 'elif true; then' \
   && bad "control: a build without FLEET_WARM fails the skipped row" "$WHY" \
   || ok "control: a build without FLEET_WARM fails the skipped row"
-proof_warm 0 good skipped 'if [ "${FLEET_WARM:-}" = 1 ]; then' 'if [ -n "${FLEET_WARM:-}" ]; then' \
+proof_warm 0 good sccache skipped 'elif [ "${FLEET_WARM:-}" = 1 ]; then' 'elif [ -n "${FLEET_WARM:-}" ]; then' \
   && bad "control: building on any non-empty FLEET_WARM fails the FLEET_WARM=0 row" "$WHY" \
   || ok "control: building on any non-empty FLEET_WARM fails the FLEET_WARM=0 row"
-proof_warm 1 unlocked failed '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cd -- "$lane_path" && cargo test --workspace --no-run) || build_status=$?' \
+proof_warm 1 unlocked sccache failed '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cd -- "$lane_path" && cargo test --workspace --no-run) || build_status=$?' \
   && bad "control: a warm build without --locked fails the unlocked row" "$WHY" \
   || ok "control: a warm build without --locked fails the unlocked row"
-proof_warm 1 broken failed '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || true' \
+proof_warm 1 broken sccache failed '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || true' \
   && bad "control: a swallowed build failure fails the failed row" "$WHY" \
   || ok "control: a swallowed build failure fails the failed row"
+proof_warm 1 good none fetched 'if [ "${FLEET_WARM:-}" = 1 ] && [ -z "$lane_wrapper" ]; then' 'if false; then' \
+  && bad "control: a warm build with no wrapper fails the fetched row" "$WHY" \
+  || ok "control: a warm build with no wrapper fails the fetched row"
 
 echo "=== the script starts under a real Bash 3.2 when one is reachable ==="
 RUNTIMES="$(sed -n 's/^RUNTIMES="\(.*\)"$/\1/p' "$TOOLS/bash32-parse")"
