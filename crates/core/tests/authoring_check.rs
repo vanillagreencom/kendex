@@ -163,13 +163,23 @@ fn copy_tree(from: &Path, to: &Path) {
 /// repository has its accepted finding set aside in all three, and one
 /// whose `origin` is a fork, one with no `origin`, and a folder that is
 /// no repository keep it in all three. The package is this repository's
-/// `harness-ci`, whose one accepted finding the table names.
+/// `harness-ci`, whose accepted finding in `references/wiring.md` the
+/// table names; what the rest of the package scores is the rules'
+/// business, so the index's score and the Mine row's count are held to
+/// the check's rather than to a number.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_index_and_mine_agree_on_the_checkout() {
     let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/harness-ci");
     let init: &[&str] = &["init", "--quiet", "-b", "main"];
-    let rows: [(&str, Vec<&[&str]>, u32, usize); 4] = [
+    let at_wiring = |findings: &[kendex_core::quality::Finding]| -> Vec<String> {
+        findings
+            .iter()
+            .filter(|finding| finding.location.ends_with("references/wiring.md"))
+            .map(|finding| finding.rule.clone())
+            .collect()
+    };
+    let rows: [(&str, Vec<&[&str]>, bool); 4] = [
         (
             "kendex",
             vec![
@@ -181,8 +191,7 @@ fn check_index_and_mine_agree_on_the_checkout() {
                     "https://github.com/vanillagreencom/kendex.git",
                 ],
             ],
-            100,
-            0,
+            true,
         ),
         (
             "fork",
@@ -195,13 +204,12 @@ fn check_index_and_mine_agree_on_the_checkout() {
                     "https://github.com/someone/kendex.git",
                 ],
             ],
-            85,
-            1,
+            false,
         ),
-        ("no origin", vec![init], 85, 1),
-        ("no git", vec![], 85, 1),
+        ("no origin", vec![init], false),
+        ("no git", vec![], false),
     ];
-    for (row, git, score, findings) in rows {
+    for (row, git, accepted) in rows {
         let (_tmp, root) = repo();
         copy_tree(&shipped, &root.join("skills/harness-ci"));
         fs::write(root.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
@@ -218,17 +226,32 @@ fn check_index_and_mine_agree_on_the_checkout() {
             .iter()
             .find(|item| item.name == "harness-ci")
             .unwrap();
-        assert_eq!(item.advisory.safety.score, score, "{row}: check");
-        assert_eq!(item.advisory.findings.len(), findings, "{row}: check");
+        let (flagged, set_aside) = match accepted {
+            true => (vec![], vec!["rce".to_owned()]),
+            false => (vec!["rce".to_owned()], vec![]),
+        };
+        assert_eq!(at_wiring(&item.advisory.findings), flagged, "{row}: check");
+        assert_eq!(
+            at_wiring(&item.advisory.accepted),
+            set_aside,
+            "{row}: check"
+        );
         let indexed = index(&sealed, "repo").unwrap();
         let package = indexed
             .packages
             .iter()
             .find(|package| package.name == "harness-ci")
             .unwrap();
-        assert_eq!(package.safety.score, score, "{row}: index");
+        assert_eq!(
+            package.safety.score, item.advisory.safety.score,
+            "{row}: index"
+        );
         let mine = kendex_core::author::status::status(&root).unwrap();
-        assert_eq!(mine.safety_findings as usize, findings, "{row}: mine");
+        assert_eq!(
+            mine.safety_findings as usize,
+            item.advisory.findings.len(),
+            "{row}: mine"
+        );
     }
 }
 
