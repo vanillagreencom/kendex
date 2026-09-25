@@ -1587,8 +1587,8 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
     exec="exec "
     print=" -p"
   elif [[ "$RELAUNCH" == true ]]; then
-    # The mailbox monitor is a background wake only claude and pi run a turn
-    # on; codex starts none for its output, and opencode has no such wake.
+    # The harnesses whose row in the orch watch-delivery.md § Lane mailbox
+    # monitor names an Arm; that table is the rule.
     local rearm=""
     case "$HARNESS" in
       claude | pi) rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item $mail_id through your harness background wake" ;;
