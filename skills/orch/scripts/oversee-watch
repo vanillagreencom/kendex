@@ -398,9 +398,10 @@ Options:
                       TERM on the loop removes the record at once and ends
                       the pass it is running, and the loop exits once that
                       pass has: a pass part way through a lane-close runs it
-                      to its end, reports it and commits its lane row first,
-                      and a start that took that watch over notes
-                      watch-finishing and waits for it. A start on a
+                      to its end, prints its outcome to that watch's own
+                      output and commits its lane row first, and a start
+                      that took that watch over notes watch-finishing and
+                      waits for it before its first pass. A start on a
                       state whose recorded watch still runs is refused as
                       watch-running naming that pid, except where that watch
                       is the one `oversee-succeed` restarted for this same
@@ -638,7 +639,7 @@ ow_message() { # REASON FIELD=VALUE...
     watch-running) text='Another watch already runs on this fleet state, and this start could not show its pane gone: tmux lists it, or this start runs outside tmux, the record names no pane, or the pane list could not be read. Two watches would read one overseer mailbox and each replay what the other drained. Handle its events, or stop it as references/watch-delivery.md states and start again; the pid field is the watch that read finds.' ;;
     watch-replay-failed) text='The output a restarted watch left beside the fleet state could not be printed or removed, so the start stops rather than lose it or print it twice. The path names the file.' ;;
     watch-record-failed) text='The watch could not write its own record beside the fleet state, so a second watch could not be refused and a succession could not restart this one.' ;;
-    watch-finishing) text='The watch taken over is finishing the lane-close its pass had started. This start waits for it to exit, so the close is reported and its lane row committed before this watch reads them.' ;;
+    watch-finishing) text='The watch taken over is finishing the lane-close its pass had started. This start waits for it to exit, so the lane row that close settles is committed before this watch reads it, and the output of a watch a succession restarted is replayed whole. The close outcome goes to the output of the watch taken over, which for one started through references/waiter-launch.md is the log in its run directory.' ;;
     watch-taken-over) text='A live watch on this fleet state was stopped and this one runs in its place. The reason field says why it could be: succession is the watch oversee-succeed restarted for this pane, pane-gone one whose pane tmux no longer lists.' ;;
     watch-replayed) text='A watch oversee-succeed restarted wrote output no session read, and the restart wrote how it went. Both follow, stdout here and stderr on stderr, and are then removed, so no event it reported and no refusal it ended on is lost.' ;;
     mail-read-failed) text='The lane mailbox could not be read. Fix what lane-mail names rather than reading the lane as silent.' ;;
@@ -1476,11 +1477,13 @@ watch_claim() { # ARGV...
   # cannot trap a signal ignored on entry.
   trap 'repeat_stop 130' INT
   # The watch taken over has given up its record but may still be finishing a
-  # lane-close: its outcome, the lane's row and its output land before this
-  # watch reads or replays any of them.
-  if [[ -n "$taken" ]] && ! watch_exited "$taken"; then
+  # lane-close: the lane row that close settles is committed before this
+  # watch's first pass reads it, and what a restarted watch printed is whole
+  # before the replay below. A watch waiter-launch.md started prints into its
+  # own run directory's log, which no replay reads.
+  if [[ -n "$taken" ]] && watch_pid_runs "$taken"; then
     ow_message watch-finishing "pid=$taken" >&2
-    until watch_exited "$taken"; do sleep 0.1; done
+    while watch_pid_runs "$taken"; do sleep 0.1; done
   fi
   if [[ "${OVERSEE_WATCH_ORIGIN:-hand}" != succession ]] \
      && [[ -s "$WATCH_LOG_FILE" || -s "$WATCH_ERR_FILE" ]]; then

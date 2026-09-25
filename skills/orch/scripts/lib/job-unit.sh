@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # job-unit.sh — start a long-lived orch job as a transient systemd user unit
-# where a lingering user manager answers, under setsid elsewhere, and stop it
-# by what its launch recorded. It bounds a job's lifetime and nothing else: no
+# where a user manager answers, under setsid elsewhere, and stop it by what
+# its launch recorded. It bounds a job's lifetime and nothing else: no
 # memory, CPU or task limit. It holds the manager probe, the unit name, the
 # systemd-run launch, the setsid fallback, the unit stop and the process-group
 # kill for the jobs that use it: dev-validate-run, every job
-# references/waiter-launch.md
-# starts (the repeat watch among them), and oversee-succeed's watch restart.
-# A unit is used only where the user manager lingers, since one that does not
-# is stopped, with its units, when the user's last login session ends.
+# references/waiter-launch.md starts (the repeat watch among them), and
+# oversee-succeed's watch restart.
+# A job with no --cap, one that runs for the session, is a unit only where the
+# user manager lingers, since one that does not is stopped, with its units,
+# when the user's last login session ends.
 # Run it, or source it for the same functions; Bash 3.2.
 #
 # A unit holds every process the job starts: when the job's main process exits
@@ -25,10 +26,10 @@
 #   job-unit.sh name NAME PID
 #       Print the unit name orch-NAME-PID.
 #   job-unit.sh launch NAME RECORD [--cap SECS] -- ARGV...
-#       Start ARGV detached, as the unit orch-NAME-PID where a lingering
-#       manager answers, PID being this launch's own process, in this
-#       launch's own working directory and environment, and print its runner
-#       line. RECORD
+#       Start ARGV detached, as the unit orch-NAME-PID where a manager
+#       answers (and, with no --cap, lingers), PID being this launch's own
+#       process, in this launch's own working directory and environment, and
+#       print its runner line. RECORD
 #       is written whole before each launch attempt, so the job can read how it
 #       runs the moment it starts:
 #         runner=systemd|setsid
@@ -139,12 +140,13 @@ job_unit_read() { # RECORD
 }
 
 job_unit_launch() { # NAME RECORD [--cap SECS] -- ARGV...
-  local job="${1:-}" record="${2:-}" probe_err="" launch_err="" linger load nofile name arg
+  local job="${1:-}" record="${2:-}" probe_err="" launch_err="" linger capped="" load nofile name arg
   local unit_props=() unit_env=() unit_argv=()
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
   [[ $# -lt 2 ]] || shift 2
   if [[ "${1:-}" == --cap && "${2:-}" =~ ^[1-9][0-9]*$ ]]; then
     unit_props+=(-p "RuntimeMaxSec=$2")
+    capped=yes
     shift 2
   fi
   [[ -n "$job" && -n "$record" && $# -ge 2 && "$1" == -- ]] \
@@ -155,16 +157,18 @@ job_unit_launch() { # NAME RECORD [--cap SECS] -- ARGV...
   # A user manager that does not linger is stopped when the user's last
   # login session ends, SSH disconnects included, and every unit in it with
   # it, while tmux and the lanes in the login session run on: a job there
-  # would die with no status written. So a unit is used only where the
-  # manager lingers, and a Linger that cannot be read is no linger. The probe
+  # would die with no status written. So a job with no --cap, which runs for
+  # the session, is a unit only where the manager lingers, and a Linger that
+  # cannot be read is no linger. A capped job is bounded anyway and keeps its
+  # unit, so nothing it starts outlives it. The probe
   # then starts a unit, since that is the question: `systemctl
   # is-system-running` exits non-zero on a degraded manager that still runs
   # units.
   if ! command -v systemd-run >/dev/null 2>&1; then
     JOB_UNIT_LINE="runner=setsid reason=no-systemd-run"
-  elif ! linger="$(loginctl show-user "$UID" -p Linger --value </dev/null 2>&1)"; then
+  elif [[ -z "$capped" ]] && ! linger="$(loginctl show-user "$UID" -p Linger --value </dev/null 2>&1)"; then
     JOB_UNIT_LINE="runner=setsid reason=linger-unread detail=${linger%%$'\n'*}"
-  elif [[ "$linger" != yes ]]; then
+  elif [[ -z "$capped" && "$linger" != yes ]]; then
     JOB_UNIT_LINE="runner=setsid reason=no-linger"
   elif probe_err="$(systemd-run --user --quiet --collect true </dev/null 2>&1 >/dev/null)"; then
     JOB_UNIT_RUNNER=systemd

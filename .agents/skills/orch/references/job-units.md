@@ -6,7 +6,7 @@ The runner bounds a job's lifetime and nothing else; it sets no memory, CPU or t
 
 ## Unit name
 
-A job runs as the transient systemd user unit `orch-NAME-PID.service` where a user manager answers and lingers (`loginctl enable-linger`). A manager that does not linger is stopped when the user's last login session ends, an SSH disconnect included, and every unit in it with it, while tmux and the lanes in that session run on; there the job runs under `setsid`.
+A job runs as the transient systemd user unit `orch-NAME-PID.service` where a user manager answers. A launch with no `--cap`, a job that runs for the session (the waiters, the repeat watch and `oversee-succeed`'s helper and restart), also needs the manager to linger (`loginctl enable-linger`): one that does not is stopped when the user's last login session ends, an SSH disconnect included, and every unit in it with it, while tmux and the lanes in that session run on, so there such a job runs under `setsid`. A capped launch, `dev-validate-run`'s, is bounded anyway and keeps its unit whether the manager lingers or not.
 
 | Component | Meaning | Example |
 |---|---|---|
@@ -35,8 +35,8 @@ The launch prints the runner line and records it. `dev-validate-run` and a waite
 |---|---|
 | `runner=systemd unit=UNIT` | The job is the unit `UNIT` |
 | `runner=setsid reason=no-systemd-run` | No `systemd-run` is installed |
-| `runner=setsid reason=no-linger` | `loginctl` reports that the user manager does not linger |
-| `runner=setsid reason=linger-unread detail=TEXT` | `loginctl` could not report whether it lingers; `TEXT` is its first line of output. Unread is no linger. |
+| `runner=setsid reason=no-linger` | A launch with no `--cap`, and `loginctl` reports that the user manager does not linger |
+| `runner=setsid reason=linger-unread detail=TEXT` | A launch with no `--cap`, and `loginctl` could not report whether it lingers; `TEXT` is its first line of output. Unread is no linger. |
 | `runner=setsid reason=probe-failed detail=TEXT` | `systemd-run` could not start the probe unit; `TEXT` is its first line of stderr |
 | `runner=setsid reason=unit-launch-failed detail=TEXT` | The probe unit started, the job's `systemd-run` failed, and the manager has no unit of that name. A failed call for a unit the manager does have leaves the job as that unit; a manager that does not answer fails the launch. |
 

@@ -29,7 +29,8 @@
 #                       above
 #
 # A record is live only while its pid runs a process whose command line names
-# oversee-watch: a pid read back off disk may by then belong to anything.
+# oversee-watch (watch_pid_runs): a pid read back off disk may by then belong
+# to anything.
 #
 # Sourced, never executed.
 
@@ -58,7 +59,7 @@ watch_pid_paths() { # STATE
 # there is no record, its state is another file, or its pid runs no
 # oversee-watch.
 watch_pid_live() { # STATE
-  local line args state=""
+  local line state=""
   WATCH_PID="" WATCH_PANE="" WATCH_ORIGIN="" WATCH_SCRIPT="" WATCH_CWD=""
   watch_pid_paths "$1" || return 1
   [[ -f "$WATCH_PID_FILE" ]] || return 1
@@ -73,9 +74,16 @@ watch_pid_live() { # STATE
     esac
   done < "$WATCH_PID_FILE"
   [[ "$WATCH_PID" =~ ^[1-9][0-9]*$ && "$state" == "$WATCH_STATE_CANON" ]] || return 1
-  kill -0 "$WATCH_PID" 2>/dev/null || return 1
-  args="$(ps -o args= -p "$WATCH_PID" 2>/dev/null)" || return 1
-  [[ "$args" == *oversee-watch* ]]
+  watch_pid_runs "$WATCH_PID"
+}
+
+# Whether PID runs an oversee-watch: it is running, is no zombie nobody has
+# reaped, and its command line names oversee-watch.
+watch_pid_runs() { # PID
+  local line
+  kill -0 "$1" 2>/dev/null || return 1
+  line="$(ps -o stat= -o args= -p "$1" 2>/dev/null)" || return 1
+  [[ "${line# }" != Z* && "$line" == *oversee-watch* ]]
 }
 
 # Write the record for STATE as this process: its pid, PANE, ORIGIN, and the
@@ -116,7 +124,7 @@ watch_argv_read() { # STATE
 # background, and the trap removes the record, then signals that pass and
 # waits for it. A pass part way through `lane-close` runs that close to its end
 # and reports it before it exits; that close has no bound of its own here, so
-# the stop waits for the record and not for the exit, and watch_exited tells
+# the stop waits for the record and not for the exit, and watch_pid_runs tells
 # the caller when the rest has happened. Returns 1 when PID still holds its
 # record at the bound, which is read off the shell's own clock rather than
 # counted in sleeps, so a sleep that returns early cannot shorten it, and
@@ -131,11 +139,3 @@ watch_stop() { # PID STATE
   done
 }
 
-# Whether PID, a watch that has given up its record, has exited: it no longer
-# runs, runs something that is not oversee-watch, or is a zombie nobody reaped.
-watch_exited() { # PID
-  local line
-  line="$(ps -o stat= -o args= -p "$1" 2>/dev/null)" || return 0
-  [[ "$line" == *oversee-watch* && "${line# }" != Z* ]] && return 1
-  return 0
-}

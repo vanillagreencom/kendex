@@ -729,7 +729,7 @@ TAKE_PANES=$'7000 %8\n7000 %9' take_case take_any_pane_mutant succession %8 "$MU
 assert_eq "$(grep -c '^oversee-watch: watch-taken-over' "$err")|$(stopped)" "1|stopped" \
   "control: without the pane match a start takes the watch of another live pane" "$err"
 
-mutant take_any_pid lib/watch-pid.sh '  [[ "$args" == *oversee-watch* ]]' '  :'
+mutant take_any_pid lib/watch-pid.sh '  [[ "${line# }" != Z* && "$line" == *oversee-watch* ]]' '  :'
 reused_case take_any_pid_mutant "$MUTANT"
 assert_eq "$(grep -c '^oversee-watch: watch-running' "$err")" "1" \
   "control: without the command-line check a reused pid is taken for a live watch" "$err"
@@ -947,6 +947,7 @@ unit_takeover_case() { # NAME RUNNER TARGET CLOSE_RC
     "$REAL_SLEEP" 0.1
   done
   TAKEN="$(grep -c '^oversee-watch: watch-taken-over .* reason=succession$' "$err" || true)"
+  OLD_LOOP="$(sed -n 's/^oversee-watch: watch-taken-over pid=\([0-9]*\) .*/\1/p' "$err")"
   # The close is held until the old watch exits, which reads close.log at that
   # exit, or the new start ends, or three seconds pass with neither; then it is
   # released, and read when the old watch exits.
@@ -963,6 +964,7 @@ unit_takeover_case() { # NAME RUNNER TARGET CLOSE_RC
   fi
   OLD_EXIT="$(cat "$dir/watch.exit" 2>/dev/null || echo none)"
   wait "$new_pid" 2>/dev/null || true
+  FINISHING="$(grep -c "^oversee-watch: watch-finishing pid=${OLD_LOOP:-none}\$" "$err" || true)"
   CLOSES="$(grep -c '^started$' "$STUB_DIR/close.log" || true)"
   EVENT="$(grep -c '^EVENT lane-closed issue-1$' "$dir/watch.log" || true)"
   FAILED="$(grep -c "^oversee-watch: lane-close-failed item=issue-1 exit=$4\$" "$dir/watch.log" || true)"
@@ -981,11 +983,11 @@ if command -v setsid >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1; then
   for runner in $RUNNERS; do
     unit_start_case "$runner"
     unit_takeover_case "takeover_$runner" "$runner" "$SHORT/oversee-watch" 0
-    assert_eq "taken=$TAKEN old=$OLD_EXIT at-exit=$AT_EXIT event=$EVENT" "taken=1 old=143 at-exit=started done  event=1" \
+    assert_eq "taken=$TAKEN finishing=$FINISHING old=$OLD_EXIT at-exit=$AT_EXIT event=$EVENT" "taken=1 finishing=1 old=143 at-exit=started done  event=1" \
       "runner=$runner: a takeover during a lane-close outlasting the stop bound takes over, and the old watch reports the close before it exits" "$TMP_ROOT/e-takeover_$runner"
   done
   unit_takeover_case takeover_failed setsid "$SHORT/oversee-watch" 5
-  assert_eq "taken=$TAKEN failed=$FAILED closes=$CLOSES" "taken=1 failed=1 closes=2" \
+  assert_eq "taken=$TAKEN finishing=$FINISHING failed=$FAILED closes=$CLOSES" "taken=1 finishing=1 failed=1 closes=2" \
     "a close that fails during a takeover is reported, and the watch that took over retries it" "$TMP_ROOT/e-takeover_failed"
 
   # Controls, one per rule the takeover rows hold, each a mutant of the same
@@ -1001,7 +1003,7 @@ if command -v setsid >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1; then
       at-exit) got="$AT_EXIT" ;;
       event) got="$EVENT" ;;
       taken) got="$TAKEN" ;;
-      closes) got="$CLOSES" ;;
+      closes-finishing) got="$CLOSES $FINISHING" ;;
     esac
     assert_eq "$got" "$cwant" "control: $clabel" "$TMP_ROOT/e-takeover_$cname"
   done <<'ROWS'
@@ -1009,7 +1011,7 @@ unit_nowait%oversee-watch%    wait "$REPEAT_CHILD_PID" 2>/dev/null || true%    :
 unit_notrap%oversee-watch%  trap 'CLOSE_TERMED=1' TERM%  :%0%at-exit%started %a pass that takes TERM's default dies mid-close
 unit_unreported%oversee-watch%  trap 'CLOSE_TERMED=1' TERM%  trap 'wait; exit 143' TERM%0%event%0%a pass that ends at TERM once the close is done never reports it
 unit_late_release%oversee-watch%  watch_pid_release "$STATE_FILE"%  :%0%taken%0%a loop that keeps its record until the close ends is refused as a live watch
-unit_no_exit_wait%oversee-watch%  if [[ -n "$taken" ]] && ! watch_exited "$taken"; then%  if false; then%5%closes%1%a start that does not wait for the old watch reads the lane row before the failed close resets it
+unit_no_exit_wait%oversee-watch%  if [[ -n "$taken" ]] && watch_pid_runs "$taken"; then%  if false; then%5%closes-finishing%1 0%a start that does not wait for the old watch reads the lane row before the failed close resets it
 ROWS
 else
   printf '  skip  the job-unit rows need setsid and pgrep\n'

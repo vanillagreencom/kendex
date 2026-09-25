@@ -62,14 +62,8 @@ OUT=""
 ERR=""
 RC=0
 # The PATH a row runs the script under. Empty is this host's own; the dependency
-# refusal rows below set it to a farm missing one binary. Every row runs behind
-# a loginctl that says the user manager lingers, the one manager lib/job-unit.sh
-# starts a unit under, which this host's may not.
+# refusal rows below set it to a farm missing one binary.
 RUN_PATH=""
-LINGER_BIN="$TMP_ROOT/linger-bin"
-mkdir -p "$LINGER_BIN"
-printf '#!/bin/sh\necho yes\n' > "$LINGER_BIN/loginctl"
-chmod +x "$LINGER_BIN/loginctl"
 run_script() { # SCRIPT ARG...
   local script="$1" err
   shift
@@ -84,7 +78,7 @@ run_script() { # SCRIPT ARG...
   OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_BASE \
     -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
     ${INHERITED_CLASS:+DEV_VALIDATE_CLASS=$INHERITED_CLASS} \
-    PATH="$LINGER_BIN:${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
+    PATH="${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
   RC=$?
   set -e
   ERR="$(cat "$err")"
@@ -743,6 +737,16 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   # runner before units. The grandchild that left the group outlives it.
   MUTANT_FILE=lib/job-unit.sh mutant mutant-no-unit 'elif probe_err="$(systemd-run --user --quiet --collect true </dev/null 2>&1 >/dev/null)"; then' 'elif false; then'
   proj_nounit="$(make_proj proj-no-unit 'setsid sleep 300 & echo $! > grand.pid; exit 0' 20)"
+  # A capped run keeps its unit where the manager does not linger: linger is
+  # asked only of a session-long job.
+  mkdir -p "$TMP_ROOT/no-linger-bin"
+  printf '#!/bin/sh\necho no\n' > "$TMP_ROOT/no-linger-bin/loginctl"
+  chmod +x "$TMP_ROOT/no-linger-bin/loginctl"
+  RUN_PATH="$TMP_ROOT/no-linger-bin:$PATH"
+  run_script "$RUN" --worktree "$proj_nounit" --poll 1
+  RUN_PATH=""
+  assert_eq "$(runner_line "$OUT") $(grandchild_state "$proj_nounit")" "runner=systemd unit=orch-validate-proj-no-unit-PID gone" \
+    "a validation run where the manager does not linger is still a unit, and no grandchild outlives it" "$ERR"
   run_script "$MUTANT" --worktree "$proj_nounit" --poll 1
   assert_eq "$(runner_line "$OUT") $(grandchild_state "$proj_nounit")" "runner=setsid reason=probe-failed detail= alive" \
     "control: outside a unit the grandchild that started its own session outlives the run" "$ERR"
@@ -882,12 +886,11 @@ RUN_PATH=""
 
 # --- --stop ends the runs a worktree's run directories record ------------------
 # The run is started detached and still going when --stop is called, as a lane
-# closed mid-validation leaves it. PATH is empty for this host's own runner,
-# behind the lingering loginctl run_script uses.
+# closed mid-validation leaves it. PATH is empty for this host's own runner.
 STOP_CALLER=""
 start_long_run() { # PROJ PATH
   local out="$1.out" n=0
-  setsid bash -c "env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS PATH='$LINGER_BIN:${2:-$PATH}' '$RUN' --worktree '$1' --poll 1 > '$out' 2>&1" &
+  setsid bash -c "env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS PATH='${2:-$PATH}' '$RUN' --worktree '$1' --poll 1 > '$out' 2>&1" &
   STOP_CALLER=$!
   while [[ ! -s "$1/grand.pid" ]] && (( n < 100 )); do sleep 0.1; n=$((n + 1)); done
 }

@@ -236,7 +236,7 @@ if command -v setsid >/dev/null 2>&1; then
   cp "$TMP_ROOT/no-linger/systemd-run" "$TMP_ROOT/linger-unread/systemd-run"
   printf '#!/bin/sh\necho "Failed to connect to bus: No such file or directory" >&2\nexit 1\n' > "$TMP_ROOT/linger-unread/loginctl"
   chmod +x "$TMP_ROOT"/no-linger/* "$TMP_ROOT"/linger-unread/*
-  mutant linger-ignored '  elif [[ "$linger" != yes ]]; then' '  elif false; then'
+  mutant linger-ignored '  elif [[ -z "$capped" && "$linger" != yes ]]; then' '  elif false; then'
   # launcher|stub dir|the runner line, its unit's pid folded|label
   while IFS='|' read -r script stub want label; do
     run env PATH="$TMP_ROOT/$stub:$FARM" "$script" launch validate-linger "$TMP_ROOT/linger.record" -- true
@@ -246,6 +246,15 @@ $JOB_UNIT|no-linger|0 runner=setsid reason=no-linger|a manager that does not lin
 $JOB_UNIT|linger-unread|0 runner=setsid reason=linger-unread detail=Failed to connect to bus: No such file or directory|a Linger loginctl cannot read is no linger, named with loginctl's words
 $MUTANT|no-linger|0 runner=systemd unit=orch-validate-linger-PID|control: without the linger rule a manager that does not linger gets the unit
 ROWS
+  # A capped job, bounded anyway, keeps its unit where the manager does not
+  # linger.
+  run env PATH="$TMP_ROOT/no-linger:$FARM" "$JOB_UNIT" launch validate-linger "$TMP_ROOT/linger.record" --cap 60 -- true
+  assert_eq "$RC $(sed 's/-[0-9]*$/-PID/' <<<"$OUT")" "0 runner=systemd unit=orch-validate-linger-PID" \
+    "a capped launch keeps its unit where the manager does not linger"
+  mutant linger-capped '    capped=yes' '    :'
+  run env PATH="$TMP_ROOT/no-linger:$FARM" "$MUTANT" launch validate-linger "$TMP_ROOT/linger.record" --cap 60 -- true
+  assert_eq "$RC $OUT" "0 runner=setsid reason=no-linger" \
+    "control: with the linger rule on every launch a capped job loses its unit"
 fi
 
 # With neither systemd-run nor setsid there is no runner, and the launch says
