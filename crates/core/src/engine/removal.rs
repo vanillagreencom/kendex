@@ -8,7 +8,7 @@ use super::{DriftRow, DriftState, PlanOptions};
 use crate::apply::{Description, Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::{Lock, LockEntry, Reason};
+use crate::lock::{Lock, LockEntry, Reason, entry_key};
 use crate::manifest::Manifest;
 use crate::model::{ItemKind, Scope};
 
@@ -172,6 +172,27 @@ impl TrashGuard {
     }
 }
 
+/// What the orphan pass decided for one record, before any row or op is
+/// written: every verdict is known before the first is acted on, so a
+/// record a held one requires can be kept with it.
+enum Verdict {
+    /// Kept with no row: its declaration's source is unreachable, or its
+    /// origin will not read.
+    Retained,
+    /// Not removable under the options: the left-over row, and offered to
+    /// a sweep where nothing needs it.
+    Left { unneeded: bool },
+    /// Removable, but the person's edits are in it: the removed row, the
+    /// edit conflict, and the record kept.
+    Held,
+    /// Removable, but a record kept for its edits requires it on this
+    /// tool, directly or through others kept the same way: kept with it,
+    /// since a hook held armed must not lose what it runs with.
+    Needed { by: String },
+    /// Removable: taken.
+    Removed,
+}
+
 /// `decided_keys` are the records the refusal and withheld passes already
 /// planned for, kept or taken; nothing here asks about them again.
 #[allow(clippy::too_many_arguments)]
@@ -190,10 +211,124 @@ pub(super) fn orphans(
     new_lock: &mut Lock,
     notes: &mut Vec<String>,
 ) -> Result<Vec<super::SetChange>> {
-    let desired_keys: BTreeSet<&String> = state.items.iter().map(|d| &d.key).collect();
     let mut sweepable = Vec::new();
     let mut origins = Origins::default();
+    let mut verdicts = verdicts(
+        env,
+        scope,
+        manifest,
+        lock,
+        state,
+        options,
+        decided_keys,
+        guard,
+        &mut origins,
+    );
+    keep_what_held_records_require(lock, &mut verdicts);
+    let row = |entry: &LockEntry, state, detail: String, cause| DriftRow {
+        kind: entry.kind,
+        name: entry.name.clone(),
+        harness: entry.harness,
+        scope: scope.clone(),
+        state,
+        detail,
+        cause,
+        compared: None,
+        also_in_the_way: Vec::new(),
+    };
+    for (key, verdict) in verdicts {
+        let entry = &lock.entries[key];
+        match verdict {
+            Verdict::Retained => {
+                new_lock.entries.insert(key.clone(), entry.clone());
+            }
+            Verdict::Left { unneeded } => {
+                drift.push(row(
+                    entry,
+                    DriftState::Orphaned,
+                    "left over from an earlier setup; nothing needs it anymore".into(),
+                    None,
+                ));
+                if unneeded {
+                    sweepable.push(super::SetChange::dropped(entry));
+                }
+                new_lock.entries.insert(key.clone(), entry.clone());
+            }
+            Verdict::Held => {
+                drift.push(row(
+                    entry,
+                    DriftState::Orphaned,
+                    "no longer wanted — will be removed".into(),
+                    None,
+                ));
+                drift.push(row(
+                    entry,
+                    DriftState::Conflict,
+                    "no longer wanted, but its files were edited on disk — remove it by name to confirm".into(),
+                    Some(super::DriftCause::LocalEdit),
+                ));
+                new_lock.entries.insert(key.clone(), entry.clone());
+            }
+            Verdict::Needed { by } => {
+                drift.push(row(
+                    entry,
+                    DriftState::Orphaned,
+                    format!("needed by {by}, which was kept for its edits — kept with it"),
+                    None,
+                ));
+                new_lock.entries.insert(key.clone(), entry.clone());
+            }
+            Verdict::Removed => {
+                drift.push(row(
+                    entry,
+                    DriftState::Orphaned,
+                    "no longer wanted — will be removed".into(),
+                    None,
+                ));
+                if entry.kind == ItemKind::PiExtension {
+                    match pi_removal(env, scope, entry) {
+                        Ok(planned) => guard.extend(ops, planned),
+                        // A removal planned over what it could not read
+                        // would be one nobody looked at; the record stays
+                        // until it can be.
+                        Err(unread) => {
+                            drift.push(row(
+                                entry,
+                                DriftState::Conflict,
+                                format!(
+                                    "Pi carrier cleanup could not read what it would take: {unread}; package and record were kept"
+                                ),
+                                None,
+                            ));
+                            new_lock.entries.insert(key.clone(), entry.clone());
+                        }
+                    }
+                    continue;
+                }
+                guard.extend(ops, removal_ops(env, scope, entry, config_edits)?);
+            }
+        }
+    }
+    origins.notes(notes);
+    Ok(sweepable)
+}
 
+/// The verdict on every record no pass has planned for, in key order,
+/// before the dependency closure of the held ones is applied.
+#[allow(clippy::too_many_arguments)]
+fn verdicts<'a>(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &'a Lock,
+    state: &desired::DesiredState,
+    options: &PlanOptions,
+    decided_keys: &BTreeSet<String>,
+    guard: &TrashGuard,
+    origins: &mut Origins,
+) -> Vec<(&'a String, Verdict)> {
+    let desired_keys: BTreeSet<&String> = state.items.iter().map(|d| &d.key).collect();
+    let mut verdicts = Vec::new();
     for (key, entry) in &lock.entries {
         if desired_keys.contains(key) || decided_keys.contains(key) {
             continue;
@@ -220,33 +355,15 @@ pub(super) fn orphans(
             && !named
             && !origins.readable(env, scope, manifest, state, &entry.source);
         if unreachable_source || unreadable_origin {
-            new_lock.entries.insert(key.clone(), entry.clone());
+            verdicts.push((key, Verdict::Retained));
             continue;
         }
         let unneeded = derived_only(entry);
         let unfiltered = options.removal_filter.is_none();
         let removable = (options.remove_orphans && (named || unfiltered))
             || (options.sweep_unneeded && (unneeded || departed_harness));
-        drift.push(DriftRow {
-            kind: entry.kind,
-            name: entry.name.clone(),
-            harness: entry.harness,
-            scope: scope.clone(),
-            state: DriftState::Orphaned,
-            detail: if removable {
-                "no longer wanted — will be removed".into()
-            } else {
-                "left over from an earlier setup; nothing needs it anymore".into()
-            },
-            cause: None,
-            compared: None,
-            also_in_the_way: Vec::new(),
-        });
         if !removable {
-            if unneeded {
-                sweepable.push(super::SetChange::dropped(entry));
-            }
-            new_lock.entries.insert(key.clone(), entry.clone());
+            verdicts.push((key, Verdict::Left { unneeded }));
             continue;
         }
         // An automatic removal (a sweep, an unfiltered orphan cleanup)
@@ -258,49 +375,49 @@ pub(super) fn orphans(
             emitted.paths.retain(|path| !guard.keep.contains(path));
         }
         let takes_edits = named || options.overwrite_edited;
-        if !takes_edits && edit_holds(env, scope, &removable_entry) {
-            drift.push(DriftRow {
-                kind: entry.kind,
-                name: entry.name.clone(),
-                harness: entry.harness,
-                scope: scope.clone(),
-                state: DriftState::Conflict,
-                detail: "no longer wanted, but its files were edited on disk — remove it by name to confirm".into(),
-                cause: Some(super::DriftCause::LocalEdit),
-                compared: None,
-                also_in_the_way: Vec::new(),
-            });
-            new_lock.entries.insert(key.clone(), entry.clone());
-            continue;
-        }
-        if entry.kind == ItemKind::PiExtension {
-            match pi_removal(env, scope, entry) {
-                Ok(planned) => guard.extend(ops, planned),
-                // A removal planned over what it could not read would be
-                // one nobody looked at; the record stays until it can be.
-                Err(unread) => {
-                    drift.push(DriftRow {
-                        kind: entry.kind,
-                        name: entry.name.clone(),
-                        harness: entry.harness,
-                        scope: scope.clone(),
-                        state: DriftState::Conflict,
-                        detail: format!(
-                            "Pi carrier cleanup could not read what it would take: {unread}; package and record were kept"
-                        ),
-                        cause: None,
-                        compared: None,
-                        also_in_the_way: Vec::new(),
-                    });
-                    new_lock.entries.insert(key.clone(), entry.clone());
-                }
-            }
-            continue;
-        }
-        guard.extend(ops, removal_ops(env, scope, entry, config_edits)?);
+        let verdict = match !takes_edits && edit_holds(env, scope, &removable_entry) {
+            true => Verdict::Held,
+            false => Verdict::Removed,
+        };
+        verdicts.push((key, verdict));
     }
-    origins.notes(notes);
-    Ok(sweepable)
+    verdicts
+}
+
+/// A record kept for its edits keeps what it requires on its tool: every
+/// removable record a held one's recorded `RequiredBy` reason names as its
+/// requirer, and every one those require in turn, until nothing changes.
+/// The requirer named is the one the row cites.
+fn keep_what_held_records_require(lock: &Lock, verdicts: &mut [(&String, Verdict)]) {
+    loop {
+        let kept: BTreeSet<&str> = verdicts
+            .iter()
+            .filter(|(_, verdict)| matches!(verdict, Verdict::Held | Verdict::Needed { .. }))
+            .map(|(key, _)| key.as_str())
+            .collect();
+        let mut changed = false;
+        for (key, verdict) in verdicts.iter_mut() {
+            if !matches!(verdict, Verdict::Removed) {
+                continue;
+            }
+            let requirer = lock.entries[*key]
+                .reasons
+                .iter()
+                .find_map(|reason| match reason {
+                    Reason::RequiredBy { by } => kept
+                        .contains(entry_key(by.kind, &by.name, by.harness).as_str())
+                        .then(|| by.name.clone()),
+                    Reason::Requested | Reason::MemberOf { .. } => None,
+                });
+            if let Some(by) = requirer {
+                *verdict = Verdict::Needed { by };
+                changed = true;
+            }
+        }
+        if !changed {
+            return;
+        }
+    }
 }
 
 /// One Pi package's removal: the op that takes its registrations and its
