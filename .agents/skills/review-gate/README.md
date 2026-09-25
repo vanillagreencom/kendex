@@ -30,7 +30,7 @@ Set `REVIEW_GATE_*` values in `kendex.settings.toml` under `[env]`. Environment 
 
 ## Class policy
 
-Set `REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"` to apply this policy to the class from the shared `harness-ci` classifier.
+Every repository applies this policy to the class from the shared `harness-ci` classifier. It is the built-in default of `REVIEW_GATE_CLASS_POLICY`, `render:none;trivial:none;micro:none;small:bot;standard:current`, so a repository assigns nothing to get it.
 
 | Change class | Review evidence | Review threads | Objections and suppressed findings |
 |---|---|---|---|
@@ -46,7 +46,13 @@ The table is applied only where the shared classifier measured a class, which it
 
 CI's writer workflow runs the review predicate for each open PR and posts the gate status. A control host running orch's `oversee-watch` runs the same predicate locally on each `pr-watch.sh --heal` pass to find a stale status, and posts nothing itself. On both hosts the predicate refreshes the PR's kendex sources only when every changed path is a generated file, because only the `render` check reads them. Every other diff is classified without refreshing kendex sources. A refresh that passes its time limit fails that PR's evaluation with `predicate-policy-refresh-deadline`, naming the PR and the limit, and the next pass tries again. CI shows that line in the writer's job log. The control host shows it in the `error` line `pr-watch.sh` prints for that PR.
 
-The empty default disables this table and preserves the existing gate behavior. Every consumer of `scripts/review-policy` applies the same answer: the orch skill's reviewer wait and thread gates, orch's micro admission, and the `pr-merge` review-thread gate.
+A missing package is refused, never read as an inactive policy. `review-policy` exits 2 as `policy-classifier` when the `harness-ci` classifier is not installed beside this skill, and as `policy-unmeasured` when the classifier could not measure a class: no `orch` narrow-change list or measurer, or no `kendex` command to prove a render diff (`cause=no-verifier`). `validate.sh` reports the first under `settings-values`, with the `policy-classifier` diagnostic indented below it.
+
+A repository leaves this default only by a recorded choice. It can assign other rows, or assign `REVIEW_GATE_CLASS_POLICY = ""`, which turns this table off and keeps the gate behavior from before the class policy. Either way it also sets `REVIEW_GATE_CLASS_POLICY_DECISION` to the tracked decision record that gives the reason. `validate.sh` refuses a departure with no decision record as `class-policy-undecided`. Assigning the default value itself needs no record.
+
+The active default applies whatever `REVIEW_GATE_MODE` says, and the docs-only and render-only lanes below run only under an inactive policy.
+
+Every consumer of `scripts/review-policy` applies the same answer: the orch skill's reviewer wait and thread gates, orch's micro admission, and the `pr-merge` review-thread gate.
 
 - `REVIEW_GATE_CONTEXT` names the required commit status.
 - Select trusted reviewer logins and check names using [references/settings.md](references/settings.md).

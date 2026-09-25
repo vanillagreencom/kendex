@@ -79,6 +79,112 @@ run "$WHOLE/review-gate/scripts/review-policy" "$TMP/whole-repo"
 assert_eq "$RC" "0" "a measurable tree answers"
 assert_eq "${OUT%% *}" "change_class=micro" "and the record names the class the rules earned"
 
+echo "=== the policy is active by default ==="
+
+# No settings layer assigns the key: the fixture repository has no settings
+# file and no .env.local, and the environment carries neither the key nor a
+# settings-file override. The default policy answers.
+DEFAULT_RC=0
+DEFAULT_CONFIG="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY \
+  "$WHOLE/review-gate/scripts/review-policy" --check-config 2>"$TMP/err")" || DEFAULT_RC=$?
+assert_eq "$DEFAULT_RC:$DEFAULT_CONFIG" "0:review-policy=active" "with no assignment anywhere the policy is active"
+DEFAULT_RC=0
+DEFAULT_RECORD="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY \
+  "$WHOLE/review-gate/scripts/review-policy" --event pull_request --base HEAD~1 --head HEAD --repo . 2>"$TMP/err")" || DEFAULT_RC=$?
+assert_eq "$DEFAULT_RC:$DEFAULT_RECORD" "0:change_class=micro review_evidence=none policy=active" \
+  "and a micro diff needs no review evidence under it"
+
+# The inverse: an explicit empty assignment is the one way to turn it off.
+EMPTY_RC=0
+EMPTY_CONFIG="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE REVIEW_GATE_CLASS_POLICY= \
+  "$WHOLE/review-gate/scripts/review-policy" --check-config 2>"$TMP/err")" || EMPTY_RC=$?
+assert_eq "$EMPTY_RC:$EMPTY_CONFIG" "0:review-policy=inactive" "an explicit empty assignment turns the policy off"
+
+echo "=== --check-choice says how the repository chose its policy ==="
+
+# One row per choice. UNSET assigns nothing in any layer, EMPTY assigns the
+# empty string, and every other value is assigned as written, in the
+# environment. Rows compare normalized, so the reordered and
+# spaced default still reads as the default assigned.
+while IFS='|' read -r label value want; do
+  CHOICE_RC=0
+  [ "$value" != EMPTY ] || value=""
+  if [ "$value" = UNSET ]; then
+    CHOICE="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY \
+      "$WHOLE/review-gate/scripts/review-policy" --check-choice 2>"$TMP/err")" || CHOICE_RC=$?
+  else
+    CHOICE="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE REVIEW_GATE_CLASS_POLICY="$value" \
+      "$WHOLE/review-gate/scripts/review-policy" --check-choice 2>"$TMP/err")" || CHOICE_RC=$?
+  fi
+  assert_eq "$CHOICE_RC:$CHOICE" "$want" "$label"
+done <<'ROWS'
+no assignment is the default|UNSET|0:review-policy-choice=default
+the default assigned|render:none;trivial:none;micro:none;small:bot;standard:current|0:review-policy-choice=default-assigned
+the default assigned in another order and spacing|standard:current; small:bot;micro:none ;trivial:none;render:none|0:review-policy-choice=default-assigned
+other rows are custom|render:none;trivial:none;micro:none;small:none;standard:none|0:review-policy-choice=custom
+an empty assignment is off|EMPTY|0:review-policy-choice=off
+ROWS
+
+echo "=== every shipped statement of the default is the default ==="
+
+# The default review-policy prints is the reference. The shipped settings
+# example must resolve to it, and README.md and references/settings.md must
+# state it. Each row names a file and what it must answer; the drift rows run
+# the same reader over a copy carrying other rows, and must not match.
+DEFAULT="$("$WHOLE/review-gate/scripts/review-policy" --help | sed -n '/the default is:/{n;n;p;}' | sed 's/^[[:space:]]*//')"
+case "$DEFAULT" in
+  render:*) ;;
+  *) bad "control: the default extractor read no policy from review-policy --help" "got [$DEFAULT]" ;;
+esac
+CUSTOM="${DEFAULT/small:bot/small:none}"
+assert_eq "$([ "$CUSTOM" != "$DEFAULT" ] && echo changed || echo same)" "changed" \
+  "control: the drift fixtures carry other rows than the default"
+
+stated() { # KIND FILE — what FILE says the default is
+  case "$1" in
+    readme) sed -n 's/.*built-in default of `REVIEW_GATE_CLASS_POLICY`, `\([^`]*\)`.*/\1/p' "$2" ;;
+    settings) sed -n 's/^| `REVIEW_GATE_CLASS_POLICY` | `\([^`]*\)` |.*/\1/p' "$2" ;;
+    example)
+      (cd "$TMP/whole-repo" && env -u REVIEW_GATE_CLASS_POLICY REVIEW_GATE_SETTINGS_FILE="$2" \
+        "$WHOLE/review-gate/scripts/review-policy" --check-choice 2>"$TMP/err") || printf 'exit=%s' "$?" ;;
+    *) printf 'unknown-kind' ;;
+  esac
+}
+# Literal, through the environment and index/substr, as the marker mutant
+# below does: a quoted replacement word in ${var/pat/rep} keeps its quotes
+# under Bash 3.2, so the copy would carry text no reader was asked about.
+drift() { # FILE OUT — OUT is FILE with the default replaced by other rows
+  DRIFT_OLD="$DEFAULT" DRIFT_NEW="$CUSTOM" awk '
+    {
+      old = ENVIRON["DRIFT_OLD"]
+      at = index($0, old)
+      if (at) { $0 = substr($0, 1, at - 1) ENVIRON["DRIFT_NEW"] substr($0, at + length(old)) }
+      print
+    }' "$1" >"$2"
+}
+while IFS='|' read -r label kind file mode want; do
+  case "$want" in DEFAULT) want="$DEFAULT" ;; CUSTOM) want="$CUSTOM" ;; esac
+  path="$SKILL_DIR/$file"
+  if [ "$mode" != shipped ]; then
+    out="$TMP/drift.${file##*/}"
+    drift "$path" "$out"
+    # The copy is the original with exactly the one string swapped: no
+    # default left, one custom string, and no byte added around it.
+    want_bytes=$(( $(wc -c <"$path") - ${#DEFAULT} + ${#CUSTOM} ))
+    assert_eq "$(grep -cF -- "$DEFAULT" "$out" || true):$(grep -cF -- "$CUSTOM" "$out" || true):$(( $(wc -c <"$out") ))" \
+      "0:1:$want_bytes" "control: the drift copy of $file swaps the default for other rows and nothing else"
+    path="$out"
+  fi
+  assert_eq "$(stated "$kind" "$path")" "$want" "$label"
+done <<'ROWS'
+the shipped settings example assigns the default|example|kendex.settings.toml.example|shipped|review-policy-choice=default-assigned
+README.md states the default|readme|README.md|shipped|DEFAULT
+references/settings.md states the default|settings|references/settings.md|shipped|DEFAULT
+must-fail: an example carrying other rows is custom|example|kendex.settings.toml.example|drift|review-policy-choice=custom
+must-fail: a README carrying other rows states them|readme|README.md|drift|CUSTOM
+must-fail: a settings reference carrying other rows states them|settings|references/settings.md|drift|CUSTOM
+ROWS
+
 # The same repository, judged by a catalog with no orch skill beside
 # harness-ci. The classifier cannot read the narrow-change list, so its
 # `standard` is the fallback. The harness-note on the way there carries a

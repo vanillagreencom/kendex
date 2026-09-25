@@ -513,7 +513,9 @@ export PR_REVIEW_ON_TIMEOUT=block
 # how production invokes it, in the fixture repo with the stub PATH. ENV is a
 # comma-separated list of `env` arguments (assignments or `-u NAME`), so a
 # value may carry a space. Every run gets its own count, log and stderr files
-# under $RUN, so no row reads another's polls or posts. Sets OUT and RC.
+# under $RUN, so no row reads another's polls or posts. The class policy is
+# assigned empty: an active one answers per pull request and needs a range
+# these rows do not pass. Sets OUT and RC.
 RUN=""
 run_wait() {
   local env_list="$1" env_args=()
@@ -525,6 +527,7 @@ run_wait() {
   OUT=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
     env -u GH_REPO -u PR_REVIEW_GATE -u PR_APPROVAL_GATE \
         -u REVIEW_GATE_MODE -u REVIEW_GATE_SETTINGS_FILE ${env_args[@]+"${env_args[@]}"} \
+        REVIEW_GATE_CLASS_POLICY= \
         STUB_APPROVAL_COUNT_FILE="$RUN/approval-polls" \
         STUB_REVIEWS_COUNT_FILE="$RUN/review-polls" \
         STUB_HEAD_COUNT_FILE="$RUN/head-polls" \

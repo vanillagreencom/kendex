@@ -517,10 +517,11 @@ run() {
   while IFS= read -r line; do argv+=("$line"); done < <(argv_for "$1")
   # Every token name and GH_REPO come off: a row pins whole stderr lines and
   # the token each call saw, so a lane's own environment would decide them.
+  # The class policy is assigned empty unless the row's W_ENV assigns it.
   (cd "$REPO" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO \
     -u ORCH_ADMIN_MERGE_GH_CONFIG_DIR -u ORCH_ADMIN_MERGE_CLASSES -u GH_CONFIG_DIR \
     -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u REVIEW_GATE_CONTEXT \
-    -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY \
+    -u REVIEW_GATE_SETTINGS_FILE REVIEW_GATE_CLASS_POLICY= \
     STUB_CALL_LOG="$CALL_LOG" STUB_AUTH_LOG="$AUTH_LOG" STUB_QUEUE_CLEARED_FILE="$QUEUE_CLEARED" \
     CHECKOUT_ENV_LOG="$CHECKOUT_ENV_LOG" \
     ${W_ENV[@]+"${W_ENV[@]}"} "${argv[@]}" >"$TMPDIR/stdout" 2>"$TMPDIR/stderr") || rc=$?

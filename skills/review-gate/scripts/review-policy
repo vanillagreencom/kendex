@@ -14,18 +14,43 @@ fi
 # caller an exit 2 naming nothing.
 . "$SETTINGS" || exit 2
 
+# The policy every repository gets unless it assigns the key. Any other
+# value, the empty opt-out included, is a departure validate.sh refuses unless
+# the repository names the decision record behind it.
+DEFAULT_POLICY='render:none;trivial:none;micro:none;small:bot;standard:current'
+
 usage() {
   cat <<'USAGE'
-Usage: review-policy [--check-config]
+Usage: review-policy [--check-config | --check-choice]
        review-policy --event EVENT [--base REF] [--head REF] [--repo DIR]
 
-REVIEW_GATE_CLASS_POLICY is empty by default. Empty prints `policy=inactive`
-without calling the classifier. An active policy has one entry per class:
+REVIEW_GATE_CLASS_POLICY is active by default. An active policy has one entry
+per class, and the default is:
 
-  render:none;trivial:none;micro:none;small:bot;standard:current
+USAGE
+  printf '  %s\n' "$DEFAULT_POLICY"
+  cat <<'USAGE'
 
 `none` skips review evidence and review threads. `bot` requires both even when
 REVIEW_GATE_MODE is off. `current` keeps the gate's existing behavior.
+
+An explicit empty assignment turns the policy off: it prints `policy=inactive`
+without calling the classifier.
+
+--check-config prints `review-policy=active` or `review-policy=inactive`. An
+active policy with no executable harness-ci classifier beside this skill exits
+2 as `policy-classifier`.
+
+--check-choice prints how the repository chose its policy, one record:
+
+  review-policy-choice=default           no settings layer assigns the key
+  review-policy-choice=default-assigned  assigned, with the default's rows
+  review-policy-choice=custom            assigned, with other rows
+  review-policy-choice=off               assigned empty
+
+Rows compare after normalization, so order and spacing do not matter. The
+review-gate validate.sh reads it: `custom` and `off` need
+REVIEW_GATE_CLASS_POLICY_DECISION to name the decision record behind them.
 
 The live form calls the sibling harness-ci change classifier. It prints:
 
@@ -50,12 +75,12 @@ fail() { # CODE VALUE MESSAGE
 }
 
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
-POLICY="$(rg_setting REVIEW_GATE_CLASS_POLICY "")" || exit 2
+POLICY="$(rg_setting REVIEW_GATE_CLASS_POLICY "$DEFAULT_POLICY")" || exit 2
 
 # Normalize and validate once. Every active policy names the closed class set
 # exactly once, so a missing row cannot inherit a less strict neighbor.
-if [ -n "$POLICY" ]; then
-  if ! POLICY_ROWS="$(awk -v raw="$POLICY" '
+policy_rows() { # VALUE — one CLASS<TAB>DECISION row per class, in class order
+  awk -v raw="$1" '
     function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
     BEGIN {
       n = split(raw, entries, ";")
@@ -72,11 +97,33 @@ if [ -n "$POLICY" ]; then
         if (!(class in policy)) exit 1
         print class "\t" policy[class]
       }
-    }')"; then
+    }'
+}
+if [ -n "$POLICY" ]; then
+  POLICY_ROWS="$(policy_rows "$POLICY")" ||
     fail policy-invalid "$POLICY" "REVIEW_GATE_CLASS_POLICY must name each class once with none, bot, or current"
-  fi
 else
   POLICY_ROWS=""
+fi
+
+if [ "${1:-}" = "--check-choice" ]; then
+  [ "$#" -eq 1 ] || fail policy-arguments "$*" "--check-choice takes no other arguments"
+  # Resolved once more against an empty default: an assignment answers the
+  # same whatever the default, so an empty answer beside a non-empty policy
+  # means no layer assigned the key.
+  ASSIGNED="$(rg_setting REVIEW_GATE_CLASS_POLICY "")" || exit 2
+  DEFAULT_ROWS="$(policy_rows "$DEFAULT_POLICY")" ||
+    fail policy-invalid "$DEFAULT_POLICY" "the built-in default policy does not parse"
+  if [ -z "$POLICY" ]; then
+    printf 'review-policy-choice=off\n'
+  elif [ -z "$ASSIGNED" ]; then
+    printf 'review-policy-choice=default\n'
+  elif [ "$POLICY_ROWS" = "$DEFAULT_ROWS" ]; then
+    printf 'review-policy-choice=default-assigned\n'
+  else
+    printf 'review-policy-choice=custom\n'
+  fi
+  exit 0
 fi
 
 CLASSIFIER="$SCRIPT_DIR/../../harness-ci/scripts/change-class"

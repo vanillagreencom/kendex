@@ -291,10 +291,6 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 # skills/review-gate/README.md § Class policy.
 REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"
 
-# Docs-only PRs use the same classifier as CI and do not wait for bot review
-# evidence. Review objections and unresolved threads still block.
-REVIEW_GATE_DOCS_ONLY = "none"
-
 # ── Skill settings ───────────────────────────────────────────────────────
 # What the installed skills read for repo-specific names, paths and commands.
 

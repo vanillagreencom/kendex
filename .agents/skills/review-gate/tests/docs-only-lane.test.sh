@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # REVIEW_GATE_DOCS_ONLY delegates the PR diff to harness-ci's docs classifier.
 # A true result can replace missing review evidence. Objections and unresolved
-# threads still win, and a non-docs diff takes the normal evidence path.
+# threads still win, and a non-docs diff takes the normal evidence path. The
+# lane runs only under an explicitly empty REVIEW_GATE_CLASS_POLICY, which
+# every case assigns.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -87,7 +89,7 @@ run_case() { # NAME MODE HEAD EFFECT WANT
   esac
   rc=0
   line="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
-    REVIEW_GATE_SETTINGS_FILE=/dev/null REVIEW_GATE_DOCS_ONLY="$mode" \
+    REVIEW_GATE_SETTINGS_FILE=/dev/null REVIEW_GATE_CLASS_POLICY="" REVIEW_GATE_DOCS_ONLY="$mode" \
     REVIEW_GATE_MODE=enforce REVIEW_GATE_THREADS=enforce \
     REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="" REVIEW_GATE_COMMENT_REVIEWERS="" \
     REVIEW_GATE_REVIEW_OBJECT_MIN_STATE="$min_state" \

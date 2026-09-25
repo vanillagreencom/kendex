@@ -139,8 +139,11 @@ failures=0
 run() { # case-name, expected-verdict, expected-exit
   local name="$1" want="$2" want_exit="${3:-0}" line rc verdict
   cases=$((cases + 1))
+  # The class policy is assigned empty: this table pins the evidence engine,
+  # and an active policy would ask the classifier for a local git range these
+  # fixtures do not have. class-policy-gate.test.sh drives the active policy.
   line="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
-    REVIEW_GATE_SETTINGS_FILE=/dev/null \
+    REVIEW_GATE_SETTINGS_FILE=/dev/null REVIEW_GATE_CLASS_POLICY="" \
     REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="$CFG_CONTEXTS" \
     REVIEW_GATE_CHECKRUN_SKIP_PATTERNS="$CFG_SKIPS" \
     REVIEW_GATE_COMMENT_REVIEWERS="$CFG_REVIEWERS" \
