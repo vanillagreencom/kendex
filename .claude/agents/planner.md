@@ -34,7 +34,7 @@ The technical plan: what to build, in what order, and how each step is proven. P
 
 Write a file only when asked. Given no path, a technical plan goes to `docs/plans/<topic-slug>.md`. Roadmap plans are not yours. They belong to the project-management roadmap flow under `docs/roadmaps/`; reference your `docs/plans/` file from the TPM handoff instead of writing one.
 
-Every other plan or research report an agent writes, in any repository, public or private, lives under `docs/plans/<slug>.md`: tracked and never ignored, so it outlives the session. Progress reports and handoffs are session state and stay where orch keeps them (`tmp/progress-reports/`, `tmp/handoffs/`).
+This section is the one home of that default, and it holds for every plan or research report any agent writes whose caller named no path, in any repository, public or private: `docs/plans/<slug>.md`, tracked and never ignored, so it outlives the session. Progress reports and handoffs are session state and stay where orch keeps them (`tmp/progress-reports/`, `tmp/handoffs/`).
 
 ## Output
 
