@@ -122,7 +122,9 @@ no repo `(repo unknown)`, one whose key is not issue-N `(no issue number)`,
 each with `-` as why it matters: that issue was not read.
 
 Settings, read through the kendex settings ladder:
-  ORCH_REPORT                on | off, default on
+  ORCH_REPORT                on | off, default on; off silences due alone,
+                             and write, the handover report's route,
+                             still writes
   ORCH_REPORT_EVERY_MINUTES  minutes between reports, default 120; 0 or empty
                              turns this trigger off
   ORCH_REPORT_EVERY_ISSUES   landed items that make a report due, default 0,

@@ -504,6 +504,11 @@ assert_eq "$RC|$(first_err)" "2|oversee-report: report-exists=$FILE" "a second r
 : > "$CASE/empty.txt"
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/empty.txt"
 assert_eq "$RC|$(first_err)" "2|oversee-report: summary=$CASE/empty.txt" "a write with an empty summary is refused"
+seed_fleet write_report_off
+echo "The overseer hands over." > "$CASE/summary.txt"
+run ORCH_REPORT=off -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt" --succession
+assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$CASE/progress-reports/$NAME" \
+  "ORCH_REPORT=off silences due alone: a succession write still writes"
 
 echo "=== due: the cadence ==="
 # Rows: case | report age in seconds, or none | settings | merged PR offsets | want.
