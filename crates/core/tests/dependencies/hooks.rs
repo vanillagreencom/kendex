@@ -951,47 +951,47 @@ fn a_missing_companion_outranks_being_orphaned_whenever_it_is_found() {
 }
 
 /// One way the head of the chain stays installed: the declarations left
-/// after the install; the options; whether the Codex copy of extra was
-/// edited; the rows on Codex for the chain; and whether the chain stays on
-/// Claude Code and on Codex.
+/// after the install; whether the catalog still offers boss; the options;
+/// whether the Codex copy of extra was edited; the tool whose rows are
+/// read, and the rows there on everything but boss; and whether the chain
+/// stays on Claude Code and on Codex.
 type KeptChainRow = (
     &'static str,
     &'static str,
+    bool,
     PlanOptions,
     bool,
+    HarnessId,
     &'static [(&'static str, kendex_core::engine::DriftState, &'static str)],
     (bool, bool),
     (bool, bool),
 );
 
-fn kept_chain_rows() -> [KeptChainRow; 3] {
+fn kept_chain_rows() -> [KeptChainRow; 4] {
     use kendex_core::engine::DriftState::{Conflict, Orphaned};
     const REMOVED: &str = "no longer wanted — will be removed";
     const EDITED: &str =
         "no longer wanted, but its files were edited on disk — remove it by name to confirm";
     const LEFT: &str = "left over from an earlier setup; nothing needs it anymore";
+    const BY_BOSS: &str = "needed by boss, which stays installed — kept with it";
+    const BY_EXTRA: &str = "needed by extra, which stays installed — kept with it";
+    const BY_MID: &str = "needed by mid, which stays installed — kept with it";
     [
         (
             "held under apply, boss still derives the Claude chain",
             "[hooks.boss]\nsource = \"cat\"\n",
+            true,
             PlanOptions {
                 remove_orphans: true,
                 ..PlanOptions::default()
             },
             true,
+            HarnessId::Codex,
             &[
                 ("extra", Orphaned, REMOVED),
                 ("extra", Conflict, EDITED),
-                (
-                    "last",
-                    Orphaned,
-                    "needed by mid, which stays installed — kept with it",
-                ),
-                (
-                    "mid",
-                    Orphaned,
-                    "needed by extra, which stays installed — kept with it",
-                ),
+                ("last", Orphaned, BY_MID),
+                ("mid", Orphaned, BY_EXTRA),
             ],
             (true, true),
             (true, true),
@@ -999,24 +999,18 @@ fn kept_chain_rows() -> [KeptChainRow; 3] {
         (
             "held under apply, the Claude chain orphaned too",
             "",
+            true,
             PlanOptions {
                 remove_orphans: true,
                 ..PlanOptions::default()
             },
             true,
+            HarnessId::Codex,
             &[
                 ("extra", Orphaned, REMOVED),
                 ("extra", Conflict, EDITED),
-                (
-                    "last",
-                    Orphaned,
-                    "needed by mid, which stays installed — kept with it",
-                ),
-                (
-                    "mid",
-                    Orphaned,
-                    "needed by extra, which stays installed — kept with it",
-                ),
+                ("last", Orphaned, BY_MID),
+                ("mid", Orphaned, BY_EXTRA),
             ],
             (false, false),
             (true, true),
@@ -1024,41 +1018,55 @@ fn kept_chain_rows() -> [KeptChainRow; 3] {
         (
             "left over under refresh's sweep",
             "",
+            true,
             PlanOptions {
                 sweep_unneeded: true,
                 ..PlanOptions::default()
             },
             false,
+            HarnessId::Codex,
             &[
                 ("extra", Orphaned, LEFT),
-                (
-                    "last",
-                    Orphaned,
-                    "needed by mid, which stays installed — kept with it",
-                ),
-                (
-                    "mid",
-                    Orphaned,
-                    "needed by extra, which stays installed — kept with it",
-                ),
+                ("last", Orphaned, BY_MID),
+                ("mid", Orphaned, BY_EXTRA),
             ],
             (true, true),
             (true, true),
+        ),
+        (
+            "boss retained for want of an answer, no longer offered",
+            "[hooks.boss]\nsource = \"cat\"\n",
+            false,
+            PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            },
+            false,
+            HarnessId::Claude,
+            &[
+                ("extra", Orphaned, BY_BOSS),
+                ("last", Orphaned, BY_MID),
+                ("mid", Orphaned, BY_EXTRA),
+                ("narrow", Orphaned, BY_BOSS),
+            ],
+            (true, true),
+            (false, false),
         ),
     ]
 }
 
 /// The companion with a chain of its own below it. A record that stays
-/// installed — held for the person's edits, or left over under options
-/// that do not remove it — keeps what it requires on its tool, down the
-/// chain, rather than losing it from beside a hook left armed; a copy of
-/// the same chain on a tool where nothing keeps its head goes with it. The
+/// installed — held for the person's edits, left over under options that
+/// do not remove it, or retained because its catalog no longer offers
+/// what it declares — keeps what it requires on its tool, down the chain,
+/// rather than losing it from beside a hook left armed; a copy of the
+/// same chain on a tool where nothing keeps its head goes with it. The
 /// records of what is kept stay in the lock.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn what_a_kept_orphan_requires_is_kept_with_it() {
     let rows = kept_chain_rows();
-    for (label, declarations, options, edited, expected, claude, codex) in rows {
+    for (label, declarations, offered, options, edited, on, expected, claude, codex) in rows {
         let f = boss_fixture(&[
             ("extra.sh", EXTRA_CHAIN),
             ("mid.sh", MID),
@@ -1067,12 +1075,15 @@ fn what_a_kept_orphan_requires_is_kept_with_it() {
         if edited {
             edit_installed(&f, HarnessId::Codex, "extra.sh");
         }
+        if !offered {
+            fs::remove_file(f.source.join("hooks/boss.sh")).unwrap();
+        }
         declare(&f, declarations);
         let report = plan_apply(&f.env, &f.scope, &options).unwrap();
         let rows: Vec<(&str, kendex_core::engine::DriftState, &str)> = report
             .drift
             .iter()
-            .filter(|row| row.harness == HarnessId::Codex && row.name != "boss")
+            .filter(|row| row.harness == on && row.name != "boss")
             .map(|row| (row.name.as_str(), row.state, row.detail.as_str()))
             .collect();
         assert_eq!(rows, expected, "{label}: {:?}", drift_details(&report));

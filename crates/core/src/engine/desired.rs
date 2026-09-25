@@ -335,7 +335,8 @@ pub enum Withholding {
     /// A hook it requires will not run there. A wrapper beside no judge
     /// refuses every call it guards, so an installed copy comes out
     /// whatever the plan's options, the person's edits with it
-    /// (`removal::verdicts`), unless a record that stays requires it.
+    /// (`removal::verdicts`), unless a record kept by an answer requires
+    /// it (`removal::keep_what_kept_records_require`).
     Requires,
 }
 

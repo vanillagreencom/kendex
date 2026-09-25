@@ -244,9 +244,9 @@ pub(super) fn plan_not_written(
 /// ([`desired::Withholding`]) says whether the copy stays: one whose
 /// companion's catalog does not answer keeps its record with no row and
 /// no op, since nothing says the copy is wrong. Every copy the withholding
-/// lets go is left to `removal::orphans`, the one owner of what an
-/// automatic removal takes, so a copy a kept record requires is kept with
-/// it there whatever withheld it. Returns the keys of the records this
+/// lets go is left to `removal::orphans`, the owner of every take a
+/// withholding leads to, where `removal::keep_what_kept_records_require`
+/// says which kept record keeps it. Returns the keys of the records this
 /// pass kept.
 fn plan_withheld(
     scope: &Scope,

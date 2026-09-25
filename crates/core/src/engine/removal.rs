@@ -356,17 +356,25 @@ fn verdicts<'a>(
         if desired_keys.contains(key) || decided_keys.contains(key) {
             continue;
         }
-        let withheld = lacking.contains(key);
+        let named = options.named_for_removal(entry.kind, &entry.name);
+        if lacking.contains(key) {
+            verdicts.push((
+                key,
+                Verdict::Removed {
+                    named,
+                    withheld: true,
+                },
+            ));
+            continue;
+        }
         // Declared but skipped this pass (pending/disabled source, missing
         // from source): keep the record, it is not an orphan. A declaration
         // that did resolve has already said everything it wants installed,
         // so an entry it did not ask for — a harness dropped from its list —
         // is stranded and must be cleaned up like any other orphan.
         let departed_harness = state.processed.contains(&(entry.kind, entry.name.clone()));
-        let unreachable_source = !withheld
-            && manifest.declared(entry.kind).contains_key(&entry.name)
-            && !departed_harness;
-        let named = options.named_for_removal(entry.kind, &entry.name);
+        let unreachable_source =
+            manifest.declared(entry.kind).contains_key(&entry.name) && !departed_harness;
         // An installation something else brought in was derived from a
         // declaration, and the catalog it came from is where that reason is
         // written down. With that catalog offline, "nothing requires it" is not
@@ -374,10 +382,8 @@ fn verdicts<'a>(
         // Being named is not that judgement, and it still goes.
         // `unreachable_source` has already decided to keep this one and is
         // reported per declaration, so asking here would only count it into
-        // a retention it is not part of, as would asking about a withheld
-        // copy.
+        // a retention it is not part of.
         let unreadable_origin = !unreachable_source
-            && !withheld
             && derived_at_all(entry)
             && !named
             && !origins.readable(env, scope, manifest, state, &entry.source);
@@ -387,8 +393,7 @@ fn verdicts<'a>(
         }
         let unneeded = derived_only(entry);
         let unfiltered = options.removal_filter.is_none();
-        let removable = withheld
-            || (options.remove_orphans && (named || unfiltered))
+        let removable = (options.remove_orphans && (named || unfiltered))
             || (options.sweep_unneeded && (unneeded || departed_harness));
         if !removable {
             verdicts.push((key, Verdict::Left { unneeded }));
@@ -402,10 +407,13 @@ fn verdicts<'a>(
         if let Some(emitted) = &mut removable_entry.emitted {
             emitted.paths.retain(|path| !guard.keep.contains(path));
         }
-        let takes_edits = named || withheld || options.overwrite_edited;
+        let takes_edits = named || options.overwrite_edited;
         let verdict = match !takes_edits && edit_holds(env, scope, &removable_entry) {
             true => Verdict::Held,
-            false => Verdict::Removed { named, withheld },
+            false => Verdict::Removed {
+                named,
+                withheld: false,
+            },
         };
         verdicts.push((key, verdict));
     }

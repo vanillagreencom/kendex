@@ -198,6 +198,45 @@ fn a_withheld_rebind_reaches_the_provenance_conflict_and_not_the_trash() {
     }
 }
 
+/// A row the plan leaves on a hook, spelled before the fixture exists:
+/// the conflict names the fixture's catalogs.
+#[derive(Clone, Copy)]
+enum Expected {
+    Conflict,
+    Withheld,
+    Removed,
+    KeptBy(&'static str),
+}
+
+impl Expected {
+    /// The row as the plan writes it, for a record from `other` set to
+    /// come from `source`.
+    fn spelled(self, other: &Path, source: &Path) -> (DriftState, String) {
+        match self {
+            Expected::Conflict => (
+                DriftState::Conflict,
+                format!(
+                    "installed from {} but now set to come from {} — remove it first",
+                    identity(other),
+                    identity(source)
+                ),
+            ),
+            Expected::Withheld => (
+                DriftState::Orphaned,
+                "withheld: a hook it requires will not run here — will be removed".to_owned(),
+            ),
+            Expected::Removed => (
+                DriftState::Orphaned,
+                "no longer wanted — will be removed".to_owned(),
+            ),
+            Expected::KeptBy(by) => (
+                DriftState::Orphaned,
+                format!("needed by {by}, which stays installed — kept with it"),
+            ),
+        }
+    }
+}
+
 /// A hook above the wrapper, installed from the other catalog, with the
 /// wrapper declared from its own; then the wrapper's judge stops running
 /// on Codex. Rebound to the wrapper's catalog, the hook above is kept on
@@ -211,28 +250,24 @@ fn a_withheld_rebind_reaches_the_provenance_conflict_and_not_the_trash() {
 fn a_kept_rebind_keeps_the_withheld_wrapper_it_requires() {
     /// Whether the hook above is rebound; the rows the plan leaves on each
     /// of the three on Codex; and whether the three stay on Codex.
-    type Row = (
-        bool,
-        [&'static [(DriftState, &'static str)]; 3],
-        (bool, bool),
-    );
-    const WITHHELD: (DriftState, &str) = (
-        DriftState::Orphaned,
-        "withheld: a hook it requires will not run here — will be removed",
-    );
-    const REMOVED: (DriftState, &str) =
-        (DriftState::Orphaned, "no longer wanted — will be removed");
-    let kept_by = |by: &str| {
-        (
-            DriftState::Orphaned,
-            format!("needed by {by}, which stays installed — kept with it"),
-        )
-    };
+    type Row = (bool, [&'static [Expected]; 3], (bool, bool));
     let rows: [Row; 2] = [
-        (true, [&[], &[], &[]], (true, true)),
+        (
+            true,
+            [
+                &[Expected::Conflict],
+                &[Expected::KeptBy("top")],
+                &[Expected::KeptBy("deliver")],
+            ],
+            (true, true),
+        ),
         (
             false,
-            [&[WITHHELD], &[WITHHELD], &[REMOVED]],
+            [
+                &[Expected::Withheld],
+                &[Expected::Withheld],
+                &[Expected::Removed],
+            ],
             (false, false),
         ),
     ];
@@ -265,29 +300,16 @@ fn a_kept_rebind_keeps_the_withheld_wrapper_it_requires() {
             },
         )
         .unwrap();
-        let conflict = format!(
-            "installed from {} but now set to come from {} — remove it first",
-            identity(&other),
-            identity(&f.source)
-        );
-        let expected: [Vec<(DriftState, String)>; 3] = match rebound {
-            true => [
-                vec![(DriftState::Conflict, conflict)],
-                vec![kept_by("top")],
-                vec![kept_by("deliver")],
-            ],
-            false => expected.map(|rows| {
-                rows.iter()
-                    .map(|(state, detail)| (*state, (*detail).to_owned()))
-                    .collect()
-            }),
-        };
         for (name, expected) in ["top", "deliver", "judge"].into_iter().zip(expected) {
             let rows: Vec<(DriftState, String)> = report
                 .drift
                 .iter()
                 .filter(|row| row.name == name && row.harness == HarnessId::Codex)
                 .map(|row| (row.state, row.detail.clone()))
+                .collect();
+            let expected: Vec<(DriftState, String)> = expected
+                .iter()
+                .map(|row| row.spelled(&other, &f.source))
                 .collect();
             assert_eq!(
                 rows,
