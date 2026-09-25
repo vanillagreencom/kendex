@@ -18,6 +18,7 @@
 #          inside), `other` (a command answering another version),
 #          `noexec` (the command without its execute bit), `absent` (no
 #          command in it), `none` (no .deb), `two` (two of them)
+# The deb is opened with ar and tar, which every host running this has.
 # No host here builds an .rpm, so every Linux row that gets past the deb
 # stops at `missing=*.rpm`; the deb's own verdict is what the row holds, and
 # the .rpm leg is proved by the release lane over the real package. The
@@ -27,7 +28,9 @@
 # column `command`, `absent` or `none` as above, and runs only where hdiutil
 # and codesign are on PATH: the disk image is made and mounted by hdiutil,
 # and the signature check asks codesign whether the app is signed. Every
-# fixture app is unsigned, so the signed arm is the release lane's.
+# fixture app is unsigned: the lane-without-secrets row warns and passes,
+# the lane-that-signs row (APPLE_SIGNING_IDENTITY set) refuses, and a
+# signed app is the release lane's alone to prove.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -198,7 +201,14 @@ EOF
   build_macos command command command
   run "$MACOS" >/dev/null
   assert_eq "$(grep -c '^unsigned=' "$TMP/std" || true)" "1" \
-    "an unsigned app is named as unsigned and its signature is not asked for"
+    "an unsigned app on a lane without signing secrets is named as unsigned"
+  # The same fixture on a lane that signs: the workflow exports
+  # APPLE_SIGNING_IDENTITY only with every secret set, so an app it left
+  # unsigned is refused rather than warned about.
+  rc=0
+  APPLE_SIGNING_IDENTITY="Developer ID Application: kendex" "$CHECK" "$MACOS" "$OUT" >"$TMP/std" 2>"$TMP/err" || rc=$?
+  assert_eq "rc=$rc first=$(first_text)" "rc=1 first=unsigned=$OUT/bundle/macos/kendex.app" \
+    "an unsigned app on a lane that signs is refused"
 else
   echo "skipped: the macOS rows need hdiutil and codesign, which this host has none of"
 fi

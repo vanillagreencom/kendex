@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::env::Env;
-use crate::install_channel::Host;
+use crate::install_channel::{Host, PackageManager};
 use record::{Write, record_as};
 
 mod described;
@@ -358,7 +358,9 @@ impl HostProbe for Machine {
         !self.unwritable.iter().any(|p| p == path)
     }
 
-    fn pacman_owner(&self, path: &Path) -> Option<String> {
+    /// Answered for whichever manager asks: every machine here that names
+    /// an owner is an Arch one, so pacman is the manager that reaches it.
+    fn owning_package(&self, _: PackageManager, path: &Path) -> Option<String> {
         self.owners
             .iter()
             .find(|(owned, _)| owned == path)

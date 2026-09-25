@@ -151,11 +151,15 @@ fn the_app_and_the_cli_pin_one_updater_key() {
     );
 }
 
-/// The JSON pointer of every leaf under `value`, prefixed by `at`.
+/// The JSON pointer of every leaf under `value`, prefixed by `at`. A key
+/// is escaped the way RFC 6901 reads it back, `~` as `~0` then `/` as
+/// `~1`, so the `/usr/bin/kendex` keys of the Linux file maps point at
+/// the entry rather than at a path of three missing objects.
 fn leaves(value: &serde_json::Value, at: &str, out: &mut Vec<String>) {
     match value.as_object() {
         Some(map) if !map.is_empty() => {
             for (key, inner) in map {
+                let key = key.replace('~', "~0").replace('/', "~1");
                 leaves(inner, &format!("{at}/{key}"), out);
             }
         }
@@ -208,6 +212,11 @@ fn release_only_bundle_settings_stay_out_of_the_base_config() {
             path.display()
         );
         for pointer in set {
+            assert!(
+                overlay.pointer(&pointer).is_some(),
+                "leaves produced {pointer}, which does not resolve in {}",
+                path.display()
+            );
             assert_eq!(
                 config.pointer(&pointer),
                 None,

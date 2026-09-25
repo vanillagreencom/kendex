@@ -264,10 +264,10 @@ fn command_beside(
 /// What this process is, and what it is about to replace. Neither is ever
 /// the command it carries across, and neither stands in for the other: an
 /// AppImage's executable lives inside a mount that is not the image the
-/// updater judged, and the Windows installer judges no path at all while
-/// the desktop executable is `kendex.exe`, the name the command carries
-/// too. Excluded only by the updater's path, a Windows install whose
-/// directory is on `PATH` would take its own executable for the command.
+/// updater judged, and the Windows installer judges no path at all, so
+/// the running `kendex-app.exe` is the only path that names the app there.
+/// The search looks for `kendex.exe` alone and never lands on it by name;
+/// it is excluded by identity, the way every running executable is.
 fn not_the_command(install: &AppInstall, running: Option<PathBuf>) -> Vec<PathBuf> {
     running
         .into_iter()

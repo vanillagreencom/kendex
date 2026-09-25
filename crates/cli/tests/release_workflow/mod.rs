@@ -630,18 +630,6 @@ fn every_lane_the_staging_step_stages_reaches_the_manifest() {
     }
 }
 
-/// The `.msi` is not built, so a staging glob for one would stage nothing
-/// today and, the day a config change brought it back, a second signed
-/// Windows artifact the manifest step would take for the setup. The
-/// bundle-target list that leaves it out is `crates/app/tests/tauri_config.rs`'s.
-#[test]
-fn no_step_stages_an_msi() {
-    let workflow = workflow();
-    for line in step(&workflow, "name: Stage release assets") {
-        assert!(!line.contains("msi"), "{}", line.trim());
-    }
-}
-
 /// Where the command a lane staged for its bundle lands, per the overlay
 /// `tauri build --config` reads. Every path is relative to `crates/app`,
 /// the directory `tauri build` runs in.

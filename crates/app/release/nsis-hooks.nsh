@@ -2,8 +2,10 @@
 ; hook macros that template inserts: the kendex command ships as
 ; bin\kendex.exe under the install directory (bundle.resources in
 ; release/windows.json, which also names this file), so the install puts
-; that directory on the user's PATH and the uninstall takes it off again.
-; The file itself is written and removed by the template's resource steps.
+; that directory on the user's PATH, the uninstall takes it off again when
+; the install put it there, and a command still running when the setup
+; writes the new one is moved aside first. The file itself is written and
+; removed by the template's resource steps.
 ;
 ; The user's PATH, because the setup installs per user: Tauri's default
 ; installMode is currentUser and $INSTDIR sits under %LOCALAPPDATA%.
@@ -38,12 +40,30 @@
   SendMessage ${KENDEX_HWND_BROADCAST} ${KENDEX_WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 !macroend
 
-!define KENDEX_PATH_OPEN "$$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $$true); $$p = [string]$$k.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames); $$d = $$env:KENDEX_BIN_DIR;"
+!define KENDEX_PATH_OPEN "$$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $$true); $$p = [string]$$k.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames); $$d = $$env:KENDEX_BIN_DIR; $$r = 'Software\ai.kendex.app';"
 
+; The PATH entry is the setup's to remove only when the setup added it. A
+; directory already on the PATH before the install stays there after the
+; uninstall, so the install records what it added under the app's own key
+; (the template deletes the uninstall key before this hook runs) and the
+; uninstall reads that record back.
 !macro NSIS_HOOK_POSTINSTALL
-  !insertmacro KENDEX_EDIT_USER_PATH "${KENDEX_PATH_OPEN} $$parts = @($$p -split ';' | Where-Object { $$_ -ne '' }); if ($$parts -notcontains $$d) { $$k.SetValue('Path', (($$parts + $$d) -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString) }" "added to"
+  !insertmacro KENDEX_EDIT_USER_PATH "${KENDEX_PATH_OPEN} $$parts = @($$p -split ';' | Where-Object { $$_ -ne '' }); if ($$parts -notcontains $$d) { $$k.SetValue('Path', (($$parts + $$d) -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString); $$a = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($$r); $$a.SetValue('CommandPathAdded', $$d); $$a.Close() }" "added to"
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  !insertmacro KENDEX_EDIT_USER_PATH "${KENDEX_PATH_OPEN} $$parts = @($$p -split ';' | Where-Object { $$_ -ne '' -and $$_ -ne $$d }); if ($$parts.Count -eq 0) { $$k.DeleteValue('Path', $$false) } else { $$k.SetValue('Path', ($$parts -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString) }" "removed from"
+  !insertmacro KENDEX_EDIT_USER_PATH "${KENDEX_PATH_OPEN} $$a = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($$r, $$true); $$added = if ($$a) { [string]$$a.GetValue('CommandPathAdded', '') } else { '' }; if ($$added -eq $$d) { $$parts = @($$p -split ';' | Where-Object { $$_ -ne '' -and $$_ -ne $$d }); if ($$parts.Count -eq 0) { $$k.DeleteValue('Path', $$false) } else { $$k.SetValue('Path', ($$parts -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString) }; $$a.DeleteValue('CommandPathAdded', $$false); $$a.Close() }" "removed from"
+!macroend
+
+; Tauri's template checks only kendex-app.exe for a running process before
+; it writes bin\kendex.exe, so a kendex.exe still running (a refresh the
+; session hook spawned, say) would make that write fail. Windows lets a
+; running image be renamed, so the old command is moved aside first and the
+; moved file removed at the next reboot where it cannot be removed now.
+!macro NSIS_HOOK_PREINSTALL
+  ${If} ${FileExists} "$INSTDIR\bin\kendex.exe"
+    Delete "$INSTDIR\bin\kendex.exe.old"
+    Rename "$INSTDIR\bin\kendex.exe" "$INSTDIR\bin\kendex.exe.old"
+    Delete /REBOOTOK "$INSTDIR\bin\kendex.exe.old"
+  ${EndIf}
 !macroend

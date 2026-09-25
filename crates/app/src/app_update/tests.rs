@@ -234,7 +234,11 @@ impl kendex_core::install_channel::HostProbe for OnlyWritable {
 
     /// The bundle this fake approves is a macOS one, which no package
     /// manager owns.
-    fn pacman_owner(&self, _: &std::path::Path) -> Option<String> {
+    fn owning_package(
+        &self,
+        _: kendex_core::install_channel::PackageManager,
+        _: &std::path::Path,
+    ) -> Option<String> {
         None
     }
 
@@ -353,13 +357,11 @@ fn the_app_s_own_image_is_never_the_command_it_carries() {
 /// The two paths a family update must never write over, and why naming one
 /// is not enough. An AppImage's executable lives inside a mount that is not
 /// the image the updater judged, so the judged path is needed; the Windows
-/// installer judges no path at all while the desktop executable carries the
-/// command's own name, so the running executable is needed. Excluded by the
-/// judged path alone, a Windows install on `PATH` would replace itself with
-/// the CLI binary.
+/// installer judges no path at all, so the running executable is the only
+/// one that names the app there.
 #[test]
 fn the_running_executable_is_excluded_where_the_updater_names_no_path() {
-    let exe = PathBuf::from("C:/Program Files/kendex/kendex.exe");
+    let exe = PathBuf::from("C:/Program Files/kendex/kendex-app.exe");
     assert_eq!(
         not_the_command(&AppInstall::WindowsInstaller, Some(exe.clone())),
         vec![exe.clone()],

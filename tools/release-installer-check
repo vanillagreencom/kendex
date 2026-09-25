@@ -16,9 +16,10 @@
 #   OUT     the lane's output directory, target/<triple>/release: the command
 #           at OUT/kendex and the bundles under OUT/bundle
 #
-# Each installer is taken apart into a directory of its own and the command
-# inside it is run with --version; the answer has to be the line OUT/kendex
-# answers. Every installer this lane's target produces is required, and one
+# Each installer is taken apart into a directory of its own (the .deb with
+# ar and tar, the .rpm with bsdtar, the .app.tar.gz with tar, the .dmg
+# mounted by hdiutil) and the command inside it is run with --version; the
+# answer has to be the line OUT/kendex answers. Every installer this lane's target produces is required, and one
 # that is missing is a refusal: a bundle step that stopped making one would
 # otherwise pass here by producing nothing to check.
 #
@@ -32,8 +33,13 @@
 # prints one `checked=<installer>` line per installer to stdout. An unsigned
 # macOS build prints `unsigned=<app>` and skips the signature checks: no
 # APPLE_* secrets is a build the workflow allows, not a dependency that
-# failed.
+# failed; a lane that exports APPLE_SIGNING_IDENTITY has to have signed.
 set -euo pipefail
+
+# The disk image a macOS check has mounted, detached on exit whatever the
+# answer, so a refusal never leaves it mounted on the runner or under the
+# directory the trap removes.
+MOUNTED=""
 
 message_text() { # KEY VALUE [EXTRA...] — the English for one key, one line
   case "$1" in
@@ -63,6 +69,8 @@ message_text() { # KEY VALUE [EXTRA...] — the English for one key, one line
       printf 'the kendex command inside %s answers "%s" and the command this lane built answers "%s"; the installer carries another build.\n' "$2" "$3" "$4" ;;
     signature)
       printf '%s carries a signature the sidecar does not check out under, so the notarized app would refuse to run its command.\n' "$2" ;;
+    unsigned)
+      printf '%s carries no signature on a lane that signs (APPLE_SIGNING_IDENTITY is set); the bundler skipped signing.\n' "$2" ;;
     *)
       printf 'no explanation is defined for this key: tools/release-installer-check is broken.\n' ;;
   esac
@@ -89,7 +97,11 @@ built="$out/kendex"
 expected=$("$built" --version) || die version-unreadable "$built"
 
 TMP=$(mktemp -d)
-trap 'rm -rf -- "${TMP:?}"' EXIT
+cleanup() {
+  [ -z "$MOUNTED" ] || hdiutil detach "$MOUNTED" >/dev/null 2>&1 || true
+  rm -rf -- "${TMP:?}"
+}
+trap cleanup EXIT
 
 # Exactly one match or none: two debs under the bundle directory is a lane
 # that built another release's package beside its own, and checking either
@@ -130,32 +142,40 @@ opened() { # NAME — an empty directory under TMP
 check_deb() {
   local deb dir
   deb=$(only_match "$out/bundle/deb" "*.deb")
+  need ar
   dir=$(opened deb)
-  # A deb is an ar archive holding the data tarball; bsdtar reads both.
-  bsdtar -xf "$deb" -C "$dir" 2>/dev/null || die extract "$deb"
+  # A deb is an ar archive holding the data tarball; ar and tar are on
+  # every host that runs this, where bsdtar would be a package of its own.
+  (cd "$dir" && ar x "$deb") 2>/dev/null || die extract "$deb"
   mkdir -p "$dir/root"
-  bsdtar -xf "$dir"/data.tar.* -C "$dir/root" 2>/dev/null || die extract "$deb"
+  tar -xf "$dir"/data.tar.* -C "$dir/root" 2>/dev/null || die extract "$deb"
   answers "$deb" "$dir/root/usr/bin/kendex"
 }
 
 check_rpm() {
   local rpm dir
   rpm=$(only_match "$out/bundle/rpm" "*.rpm")
+  need bsdtar
   dir=$(opened rpm)
   # bsdtar reads the cpio payload through the rpm header.
   bsdtar -xf "$rpm" -C "$dir" 2>/dev/null || die extract "$rpm"
   answers "$rpm" "$dir/usr/bin/kendex"
 }
 
-# The signed app also has to check out with its sidecar: codesign verifies
-# the bundle's seal, --deep every nested code it holds, and --strict under
-# the rules notarization applies.
+# Whether this lane signs: the workflow exports APPLE_SIGNING_IDENTITY only
+# when every signing secret is set, so it is the fact rather than a guess
+# read off the bundle. A signed app also has to check out with its
+# sidecar: codesign verifies the bundle's seal, --deep every nested code it
+# holds, and --strict under the rules notarization applies. An unsigned
+# build is one the workflow allows, and is said as a warning.
 check_signature() { # APP SIDECAR
   local app=$1 sidecar=$2
-  if ! codesign -d "$app" >/dev/null 2>&1; then
+  if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
     printf 'unsigned=%s\n' "$app"
+    printf '::warning::%s is unsigned: no APPLE_* secrets on this lane.\n' "$app"
     return 0
   fi
+  codesign -d "$app" >/dev/null 2>&1 || die unsigned "$app"
   codesign --verify --strict "$sidecar" >/dev/null 2>&1 || die signature "$sidecar"
   codesign --verify --strict --deep "$app" >/dev/null 2>&1 || die signature "$app"
 }
@@ -181,17 +201,16 @@ check_dmg() {
   mount=$(opened dmg-mount)
   hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg" >/dev/null 2>&1 ||
     die extract "$dmg"
-  # Detached whatever the answer, so a refusal does not leave the image
-  # mounted on the runner; the refusal itself still ends the run.
-  status=0
-  answers "$dmg" "$mount/kendex.app/Contents/MacOS/kendex" || status=$?
+  # The EXIT trap detaches it, so a refusal inside answers cannot leave
+  # the image mounted.
+  MOUNTED=$mount
+  answers "$dmg" "$mount/kendex.app/Contents/MacOS/kendex"
   hdiutil detach "$mount" >/dev/null 2>&1 || true
-  return "$status"
+  MOUNTED=""
 }
 
 case "$target" in
   x86_64-unknown-linux-gnu | aarch64-unknown-linux-gnu)
-    need bsdtar
     check_deb
     check_rpm
     ;;

@@ -17,7 +17,9 @@ struct Fake {
     replaceable: Vec<String>,
     /// Paths this machine would run.
     commands: Vec<String>,
-    owners: Vec<(String, String)>,
+    /// What each package manager says owns a path; a manager not asked
+    /// about a path answers nothing, the way a machine without it does.
+    owners: Vec<(PackageManager, String, String)>,
     on_path: Vec<String>,
     os_release: Option<String>,
     links: Vec<(String, String)>,
@@ -29,9 +31,24 @@ impl Fake {
         self
     }
 
-    /// The package this machine's package manager says owns a path.
+    /// The package pacman says owns a path.
     fn owned_by(mut self, path: &str, package: &str) -> Self {
-        self.owners.push((path.to_owned(), package.to_owned()));
+        self.owners
+            .push((PackageManager::Pacman, path.to_owned(), package.to_owned()));
+        self
+    }
+
+    /// The package dpkg says owns a path.
+    fn dpkg_owned_by(mut self, path: &str, package: &str) -> Self {
+        self.owners
+            .push((PackageManager::Dpkg, path.to_owned(), package.to_owned()));
+        self
+    }
+
+    /// The package rpm says owns a path.
+    fn rpm_owned_by(mut self, path: &str, package: &str) -> Self {
+        self.owners
+            .push((PackageManager::Rpm, path.to_owned(), package.to_owned()));
         self
     }
 
@@ -68,11 +85,11 @@ impl HostProbe for Fake {
         self.replaceable.iter().any(|p| Path::new(p) == path)
     }
 
-    fn pacman_owner(&self, path: &Path) -> Option<String> {
+    fn owning_package(&self, manager: PackageManager, path: &Path) -> Option<String> {
         self.owners
             .iter()
-            .find(|(owned, _)| Path::new(owned) == path)
-            .map(|(_, package)| package.clone())
+            .find(|(asked, owned, _)| *asked == manager && Path::new(owned) == path)
+            .map(|(_, _, package)| package.clone())
     }
 
     fn on_path(&self, command: &str) -> bool {
@@ -538,10 +555,16 @@ fn a_command_inside_the_app_is_the_apps_to_move() {
             own(InstallChannel::Unknown),
         ),
         (
-            "the command the .deb and .rpm install, on Debian",
+            "the command the .deb installs, which dpkg owns",
             PACKAGED_COMMAND,
-            Fake::default().os_release(DEBIAN),
-            own(InstallChannel::Unknown),
+            Fake::default()
+                .os_release(DEBIAN)
+                .on_path("dpkg-query")
+                .dpkg_owned_by(PACKAGED_COMMAND, "kendex"),
+            own(managed(
+                DEB_PACKAGE,
+                "install the new release's .deb from https://kendex.ai/download",
+            )),
         ),
     ];
     for (label, exe, probe, expected) in rows {
@@ -591,46 +614,206 @@ fn nothing_read_from_the_machine_reaches_a_command_string() {
     }
 }
 
-/// One row per answer a `pacman -Qoq` run can give: whether pacman said it
-/// found an owner, the bytes it printed, and the name this build takes from
-/// them. A refusal names nobody even with a package name on stdout, bytes
-/// that are not text name nobody, one name is read from the first line
-/// whatever follows it, and a line that is blank once trimmed is no name.
+/// One row per Linux machine a `/usr/bin/kendex` can sit on outside Arch.
+/// The `.deb` and `.rpm` are named through the manager on `PATH`, dpkg
+/// before rpm, and only when that manager says the kendex package owns
+/// the file; a machine with neither manager, an owner of another name, a
+/// file no package claims, and a manager that is on `PATH` but was not the
+/// one that would answer all name nobody. Arch is still pacman's, even
+/// with dpkg-query beside it. The app's own binary from the `.deb` gets the
+/// same answer through `for_app`, since neither package updates itself.
+#[test]
+fn the_deb_and_rpm_command_is_named_by_the_manager_that_installed_it() {
+    const FEDORA: &str = "NAME=\"Fedora Linux\"\nID=fedora\n";
+    let deb = managed(
+        DEB_PACKAGE,
+        "install the new release's .deb from https://kendex.ai/download",
+    );
+    let rpm = managed(
+        RPM_PACKAGE,
+        "install the new release's .rpm from https://kendex.ai/download",
+    );
+    let rows: Vec<(&str, Fake, InstallChannel)> = vec![
+        (
+            "Debian, dpkg owns it",
+            Fake::default()
+                .os_release(DEBIAN)
+                .on_path("dpkg-query")
+                .dpkg_owned_by(PACKAGED_COMMAND, "kendex"),
+            deb.clone(),
+        ),
+        (
+            "Fedora, rpm owns it",
+            Fake::default()
+                .os_release(FEDORA)
+                .on_path("rpm")
+                .rpm_owned_by(PACKAGED_COMMAND, "kendex"),
+            rpm,
+        ),
+        (
+            "dpkg first where both managers are on PATH",
+            Fake::default()
+                .os_release(DEBIAN)
+                .on_path("dpkg-query")
+                .on_path("rpm")
+                .dpkg_owned_by(PACKAGED_COMMAND, "kendex")
+                .rpm_owned_by(PACKAGED_COMMAND, "kendex-extra"),
+            deb.clone(),
+        ),
+        (
+            "dpkg naming another package",
+            Fake::default()
+                .os_release(DEBIAN)
+                .on_path("dpkg-query")
+                .dpkg_owned_by(PACKAGED_COMMAND, "kendex-extra"),
+            InstallChannel::Unknown,
+        ),
+        (
+            "dpkg claiming nothing",
+            Fake::default().os_release(DEBIAN).on_path("dpkg-query"),
+            InstallChannel::Unknown,
+        ),
+        (
+            "rpm owning it where only dpkg is asked",
+            Fake::default()
+                .os_release(DEBIAN)
+                .on_path("dpkg-query")
+                .rpm_owned_by(PACKAGED_COMMAND, "kendex"),
+            InstallChannel::Unknown,
+        ),
+        (
+            "no package manager on PATH",
+            Fake::default()
+                .os_release(DEBIAN)
+                .dpkg_owned_by(PACKAGED_COMMAND, "kendex"),
+            InstallChannel::Unknown,
+        ),
+        (
+            "Arch with dpkg-query beside pacman",
+            Fake::default()
+                .os_release(ARCH)
+                .on_path("dpkg-query")
+                .on_path("paru")
+                .owned_by(PACKAGED_COMMAND, "kendex-bin"),
+            aur("paru -S kendex-bin"),
+        ),
+    ];
+    for (label, probe, expected) in rows {
+        assert_eq!(
+            for_cli(Path::new(PACKAGED_COMMAND), &probe),
+            own(expected),
+            "{label}"
+        );
+    }
+
+    let app = Fake::default()
+        .os_release(DEBIAN)
+        .on_path("dpkg-query")
+        .dpkg_owned_by("/usr/bin/kendex-app", "kendex");
+    assert_eq!(for_app(&app_binary("/usr/bin/kendex-app"), &app), deb);
+}
+
+/// One row per answer an owner query can give: the manager asked, whether
+/// it said it found an owner, the bytes it printed, and the name this
+/// build takes from them. A refusal names nobody even with a package name
+/// on stdout, bytes that are not text name nobody, one name is read from
+/// the first line whatever follows it, and a line that is blank once
+/// trimmed is no name. dpkg prints the name before a colon, and a diverted
+/// file naming two packages there names nobody.
 ///
 /// The remaining way to reach `None` is a run that never happened, which is
 /// the `ok()?` on `Hardened::run` in `Host::pacman_owner`; this suite has no
 /// pacman to fail, and that branch carries no logic of its own.
 #[test]
 fn the_printed_owner_is_read_off_one_run() {
-    let rows: [(&str, bool, &[u8], Option<&str>); 9] = [
+    use PackageManager::{Dpkg, Pacman, Rpm};
+    /// The manager asked, its status, its stdout, and the name taken.
+    type Row = (
+        &'static str,
+        PackageManager,
+        bool,
+        &'static [u8],
+        Option<&'static str>,
+    );
+    let rows: [Row; 14] = [
         (
             "the owning package",
+            Pacman,
             true,
             b"kendex-git\n",
             Some("kendex-git"),
         ),
-        ("no trailing newline", true, b"kendex", Some("kendex")),
-        ("a padded name", true, b"  kendex  \n", Some("kendex")),
+        (
+            "no trailing newline",
+            Pacman,
+            true,
+            b"kendex",
+            Some("kendex"),
+        ),
+        (
+            "a padded name",
+            Pacman,
+            true,
+            b"  kendex  \n",
+            Some("kendex"),
+        ),
         (
             "a second line after it",
+            Pacman,
             true,
             b"kendex-git\nkendex\n",
             Some("kendex-git"),
         ),
         (
             "a refusal naming a package anyway",
+            Pacman,
             false,
             b"kendex\n",
             None,
         ),
-        ("a refusal saying nothing", false, b"", None),
-        ("bytes that are not text", true, b"kendex-\xff\n", None),
-        ("nothing printed", true, b"", None),
-        ("a blank line", true, b"   \n", None),
+        ("a refusal saying nothing", Pacman, false, b"", None),
+        (
+            "bytes that are not text",
+            Pacman,
+            true,
+            b"kendex-\xff\n",
+            None,
+        ),
+        ("nothing printed", Pacman, true, b"", None),
+        ("a blank line", Pacman, true, b"   \n", None),
+        (
+            "dpkg names the package before the path",
+            Dpkg,
+            true,
+            b"kendex: /usr/bin/kendex\n",
+            Some("kendex"),
+        ),
+        (
+            "dpkg naming two packages for a diverted file",
+            Dpkg,
+            true,
+            b"diversion by kendex-extra, kendex: /usr/bin/kendex\n",
+            None,
+        ),
+        ("dpkg with no colon", Dpkg, true, b"kendex\n", None),
+        (
+            "dpkg refusing with a name on stdout",
+            Dpkg,
+            false,
+            b"kendex: /usr/bin/kendex\n",
+            None,
+        ),
+        (
+            "rpm names the package alone",
+            Rpm,
+            true,
+            b"kendex\n",
+            Some("kendex"),
+        ),
     ];
-    for (label, success, stdout, expected) in rows {
+    for (label, manager, success, stdout, expected) in rows {
         assert_eq!(
-            printed_owner(success, stdout).as_deref(),
+            printed_owner(manager, success, stdout).as_deref(),
             expected,
             "{label}"
         );

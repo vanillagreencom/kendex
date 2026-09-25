@@ -148,10 +148,10 @@ pub fn command_candidates(home: &Path, path_var: Option<&OsStr>) -> Vec<PathBuf>
 /// `running` is this process and whatever it is about to replace, and
 /// neither is ever the command. Both have to be named, because neither
 /// covers the other: on Linux the AppImage the updater judged is not the
-/// executable inside it, and on Windows the updater judges no path at all
-/// while the desktop executable is `kendex.exe` — the same name the
-/// command carries. Written over, the command binary lands on the app and
-/// the app is then written back over it, leaving no command at all.
+/// executable inside it, and on Windows the updater judges no path at all,
+/// so the running `kendex-app.exe` is the only thing that names the app.
+/// Written over, the command binary lands on the app and the app is then
+/// written back over it, leaving no command at all.
 ///
 /// `installed` is what an installer recorded, and it is what makes a
 /// candidate ours. Everything else here is about the file's shape, and

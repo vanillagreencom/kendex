@@ -11,7 +11,9 @@ The headline install is the curl script. The rest are package-manager entries th
 | Arch (from source) | `yay -S kendex` | app + CLI | [`arch/kendex/`](arch/kendex/) |
 | Arch (latest commit) | `yay -S kendex-git` | app + CLI | [`arch/kendex-git/`](arch/kendex-git/) |
 | Arch (latest commit, CLI) | `yay -S kendex-cli-git` | CLI | [`arch/kendex-cli-git/`](arch/kendex-cli-git/) |
-| App bundles | download from the release | app + CLI | built by `release.yml` |
+| deb, rpm, Windows setup | download from the release | app + CLI | built by `release.yml` |
+| dmg | download from the release | app (CLI inside the bundle) | built by `release.yml` |
+| AppImage | download from the release | app | built by `release.yml` |
 
 The desktop app binary is named `kendex-app`, after its cargo package, and every channel that installs both keeps it off `PATH` (on Linux the AppImage or the plain `kendex-app` binary, on macOS the `.app` bundle) so the `kendex` command is the CLI. That name is also what a Linux launcher matches a running window against, which is why both the curl script and the Arch packages put `StartupWMClass=kendex-app` in the desktop entry they write.
 
@@ -32,7 +34,7 @@ Every recipe carries `epoch=1`. kendex 1.0.0 follows 5.0.1, so the version numbe
 
 `kendex` and `kendex-git`, the two desktop packages built from source, build the frontend themselves (`npm ci` then `npm run build` under `ui/`) before `cargo build`, because the desktop binary embeds `ui/dist` and only `cargo tauri build` would run that step on its own. Those two install the app as a plain binary at `/usr/lib/kendex/kendex-app`, where `kendex-bin` installs the released AppImage at `/usr/lib/kendex/kendex.AppImage`; both are off `PATH`. `kendex-cli-git` builds from source too and runs neither npm step, which is why it carries no `npm` makedepend and installs no app. The desktop packages depend on `desktop-file-utils` and `xdg-utils` because the app makes itself the `kendex://` handler on first launch through `update-desktop-database` and `xdg-mime`. `kendex-cli-git` depends only on git and `dbus`. All four declare `dbus` because the command links libdbus-1 through keyring’s `sync-secret-service` backend; Arch’s `dbus` also supplies the headers and `dbus-1.pc` for source builds. The Linux Homebrew formula installs `dbus` and patches the command to find its library.
 
-Which package owns a running install is asked of pacman (`pacman -Qoq`) rather than read off the layout, in `crates/core/src/install_channel.rs`: all four install the same command, two track `main` where the other two track a release, and the update guidance names the package that is actually installed. A name pacman prints that is none of the four names nobody and offers no command.
+Which package owns a running install is asked of the package manager (`pacman -Qoq`; `dpkg-query -S` and `rpm -qf` for the deb and rpm) rather than read off the layout, in `crates/core/src/install_channel.rs`: all four Arch packages install the same command, two track `main` where the other two track a release, and the update guidance names the package that is actually installed. A name that is none of these names nobody and offers no command.
 
 ## Per release
 
@@ -70,6 +72,6 @@ Nothing pulls from this repository: two workflows push the recipes out, and a ha
 
 ## Caveats
 
-- Releases through v5.0.1 predate Apple notarization, so Gatekeeper calls those "damaged" on first launch; the cask's caveat gives the one-time fix (`xattr -cr /Applications/kendex.app`). Later releases are Developer ID signed and notarized by the release workflow.
+- Releases through v5.0.1 predate notarization; the cask's `caveats` block carries the one-time fix.
 - The Linux AppImage needs FUSE (`fuse2`) to run.
-- The release workflow publishes as a **draft**, and `install.sh` resolves `--version latest` through GitHub's latest-release API, which skips drafts. So `curl … | sh` only works after the release is published (`gh release edit vX --draft=false`).
+- `install.sh` resolves `--version latest` through GitHub's latest-release API, which skips drafts, so `curl … | sh` works only once the draft release is published.

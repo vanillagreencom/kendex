@@ -24,11 +24,18 @@ use std::process::{Command, Output};
 /// The command copied to `at`, made runnable, under a fixture home whose
 /// only feed is a file that is not there: a run that reached the feed
 /// fails loudly instead of passing as one that never asked.
+///
+/// The copy is what makes the spawn racy: every test in this binary forks
+/// from one process, and a child forked by another test while this copy's
+/// write handle is open holds that handle until its own exec, so this exec
+/// meets `ETXTBSY` for a file nothing is writing any more. Retried, since
+/// the other child's exec closes it within moments.
 #[allow(clippy::expect_used)]
 fn run_from(home: &Path, at: &Path, args: &[&str]) -> Output {
     fs::create_dir_all(at.parent().expect("a layout has a directory")).expect("layout created");
     fs::copy(env!("CARGO_BIN_EXE_kendex"), at).expect("the built command copies");
-    Command::new(at)
+    let mut command = Command::new(at);
+    command
         .current_dir(home)
         .env_clear()
         .envs(test_util::fixture_env(home))
@@ -38,9 +45,18 @@ fn run_from(home: &Path, at: &Path, args: &[&str]) -> Output {
             format!("file://{}/no-feed-here.json", home.display()),
         )
         .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .args(args)
-        .output()
-        .expect("kendex binary runs")
+        .args(args);
+    const ETXTBSY: i32 = 26;
+    let mut tries = 0;
+    loop {
+        match command.output() {
+            Err(error) if error.raw_os_error() == Some(ETXTBSY) && tries < 200 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            outcome => return outcome.expect("kendex binary runs"),
+        }
+    }
 }
 
 /// The two layouts, each under `root`: the sidecar of a bundle, and the
@@ -70,7 +86,9 @@ fn update_from_inside_the_app_stops_with_the_app_and_touches_nothing() {
     if no_record_on_this_runner() {
         return;
     }
-    for (label, at) in layouts(&rooted(&tempfile::tempdir().unwrap())) {
+    let layouts_dir = tempfile::tempdir().unwrap();
+    let root = rooted(&layouts_dir);
+    for (label, at) in layouts(&root) {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let env = kendex_core::env::Env::host_rooted(&home);
@@ -105,7 +123,8 @@ fn no_verb_records_a_command_that_sits_inside_the_app() {
     if no_record_on_this_runner() {
         return;
     }
-    let root = rooted(&tempfile::tempdir().unwrap());
+    let layouts_dir = tempfile::tempdir().unwrap();
+    let root = rooted(&layouts_dir);
     for (label, at) in layouts(&root) {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);

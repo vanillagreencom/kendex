@@ -13,17 +13,28 @@ usage: tools/release-installer-check.ps1 -Target <triple> -Out <dir>
 
 The setup is run silently into a directory of its own (/S, and /D= names
 the directory; NSIS reads it as the last argument, unquoted). Afterwards
-Out\bin\kendex.exe has to answer --version with the line the built command
-answers, and the user PATH has to carry that bin directory as a REG_EXPAND_SZ
-value. Then the uninstaller runs silently, and both have to be gone: the
-command from disk, the directory from the PATH. The PATH is read raw, with
-environment names unexpanded, the way the hook writes it.
+<install dir>\bin\kendex.exe has to answer --version with the line the built
+command answers and, run as `kendex update`, answer that it is part of the
+app and exit 0 without reading any feed; the app's own kendex-app.exe has to
+sit in the install directory; and the user PATH has to carry that bin
+directory as a REG_EXPAND_SZ value. Then the uninstaller runs silently, and
+both have to be gone: the command from disk, the directory from the PATH.
+
+The PATH is seeded before the install with a REG_EXPAND_SZ value longer than
+an NSIS string holds (1024 bytes), carrying %USERPROFILE% entries past that
+byte, and read raw with environment names unexpanded, the way the hook
+writes it: after the install and after the uninstall the kind is still
+ExpandString and every seeded entry is still there, unexpanded. A hook that
+read the value through an NSIS string, or expanded it, or wrote REG_SZ,
+fails here. A second cycle seeds the bin directory itself onto the PATH
+before the install, and the uninstall has to leave it there: the entry is
+the setup's to remove only when the setup added it.
 
 A refusal prints one stable line, `release-installer-check: <key>=<value>`,
 then one `::error::` annotation carrying the English, and exits 1. Each
 passing stage prints `checked=<what>`. The user PATH the runner started
 with is put back whatever the outcome, so a refusal does not leave the
-runner's environment carrying the install.
+runner's environment carrying the install or the seed.
 #>
 param(
   [Parameter(Mandatory = $true)][string]$Target,
@@ -57,7 +68,7 @@ function UserPathKind {
   }
 }
 
-function RestoreUserPath([string]$Kind, [string]$Raw) {
+function WriteUserPath([string]$Kind, [string]$Raw) {
   $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
   try {
     if ($Kind -eq 'absent') {
@@ -67,6 +78,25 @@ function RestoreUserPath([string]$Kind, [string]$Raw) {
     }
   } finally {
     $key.Close()
+  }
+}
+
+function UserPathEntries {
+  return @((UserPathRaw) -split ';' | Where-Object { $_ -ne '' })
+}
+
+# The seeded PATH survived a hook's rewrite: still REG_EXPAND_SZ, every
+# seeded entry still present and unexpanded.
+function AssertSeedIntact([string[]]$Seed, [string]$Stage) {
+  $kind = UserPathKind
+  if ($kind -ne 'ExpandString') {
+    Refuse 'path-kind' "$kind ($Stage)" "the user PATH is $kind after the $Stage; the setup has to write it as REG_EXPAND_SZ."
+  }
+  $entries = UserPathEntries
+  foreach ($entry in $Seed) {
+    if ($entries -cnotcontains $entry) {
+      Refuse 'path-lost' "$entry ($Stage)" "the user PATH lost or rewrote the entry $entry on $Stage; the setup rewrote the value short or expanded it."
+    }
   }
 }
 
@@ -98,7 +128,11 @@ $binDir = Join-Path $installDir 'bin'
 $pathKindBefore = UserPathKind
 $pathBefore = UserPathRaw
 
-try {
+# One install and uninstall over a seeded user PATH. $Seed is what the PATH
+# holds before the install; $BinSeeded says whether the bin directory is
+# among it, which decides whether the uninstall may remove it.
+function Cycle([string[]]$Seed, [bool]$BinSeeded) {
+  WriteUserPath 'ExpandString' ($Seed -join ';')
   $install = Start-Process -FilePath $setup -ArgumentList @('/S', "/D=$installDir") -Wait -PassThru
   if ($install.ExitCode -ne 0) {
     Refuse 'install' $install.ExitCode "$setup exited $($install.ExitCode) on a silent install into $installDir."
@@ -107,6 +141,10 @@ try {
   if (-not (Test-Path -LiteralPath $command -PathType Leaf)) {
     Refuse 'absent' $command "$setup installs no kendex command at $command; the download would install the app alone."
   }
+  $app = Join-Path $installDir 'kendex-app.exe'
+  if (-not (Test-Path -LiteralPath $app -PathType Leaf)) {
+    Refuse 'no-app' $app "$setup installs no desktop app at $app, which is what makes the command beside it the app's own."
+  }
   $answer = & $command --version
   if ($LASTEXITCODE -ne 0) {
     Refuse 'unrunnable' $command "the kendex command $setup installed does not run; an install from it would have a command that fails on first use."
@@ -114,24 +152,19 @@ try {
   if ($answer -ne $expected) {
     Refuse 'version-mismatch' $answer "the kendex command $setup installed answers `"$answer`" and the command this lane built answers `"$expected`"; the setup carries another build."
   }
+  # The real judge over the real layout: a command inside the app answers
+  # that it updates with the app, before any feed is read, and exits 0.
+  $update = & $command update 2>&1 | Out-String
+  if ($LASTEXITCODE -ne 0 -or $update -notmatch 'kendex desktop app') {
+    Refuse 'update-inside-the-app' $LASTEXITCODE "kendex update from $command did not stop as a command inside the app (exit $LASTEXITCODE): $update"
+  }
   Write-Output "checked=$setup"
 
-  $kind = UserPathKind
-  if ($kind -ne 'ExpandString') {
-    Refuse 'path-kind' $kind "the user PATH is $kind after the install; the setup has to write it as REG_EXPAND_SZ."
-  }
-  $entries = @((UserPathRaw) -split ';' | Where-Object { $_ -ne '' })
-  if ($entries -notcontains $binDir) {
+  AssertSeedIntact $Seed 'install'
+  if ((UserPathEntries) -notcontains $binDir) {
     Refuse 'path-missing' $binDir "the user PATH does not carry $binDir after the install."
   }
-  if ($pathBefore -ne '') {
-    foreach ($entry in @($pathBefore -split ';' | Where-Object { $_ -ne '' })) {
-      if ($entries -notcontains $entry) {
-        Refuse 'path-lost' $entry "the user PATH lost the entry $entry on install; the setup rewrote the value short."
-      }
-    }
-  }
-  Write-Output "checked=user-path-added"
+  Write-Output "checked=user-path-after-install"
 
   $uninstaller = Join-Path $installDir 'uninstall.exe'
   if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
@@ -147,13 +180,31 @@ try {
   if (Test-Path -LiteralPath $command) {
     Refuse 'left-behind' $command "the uninstall left the kendex command at $command."
   }
-  $entriesAfter = @((UserPathRaw) -split ';' | Where-Object { $_ -ne '' })
-  if ($entriesAfter -contains $binDir) {
+  AssertSeedIntact $Seed 'uninstall'
+  $after = UserPathEntries
+  if ($BinSeeded) {
+    if ($after -notcontains $binDir) {
+      Refuse 'path-taken' $binDir "the uninstall removed $binDir from the user PATH, which was there before the install."
+    }
+  } elseif ($after -contains $binDir) {
     Refuse 'path-left' $binDir "the uninstall left $binDir on the user PATH."
   }
-  Write-Output "checked=user-path-removed"
+  Write-Output "checked=user-path-after-uninstall"
+}
+
+try {
+  # Longer than an NSIS string, with unexpanded entries past that length.
+  $seed = @('%USERPROFILE%\seed-first')
+  $i = 0
+  while (($seed -join ';').Length -le 1100) {
+    $i += 1
+    $seed += "C:\kendex-installer-check\seed-$i"
+  }
+  $seed += '%USERPROFILE%\seed-last'
+  Cycle $seed $false
+  Cycle ($seed + $binDir) $true
 } finally {
-  RestoreUserPath $pathKindBefore $pathBefore
+  WriteUserPath $pathKindBefore $pathBefore
   if (Test-Path -LiteralPath $installDir) {
     Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction SilentlyContinue
   }

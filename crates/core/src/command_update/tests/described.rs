@@ -103,44 +103,6 @@ fn nothing_installed_and_the_running_app_both_read_absent() {
     );
 }
 
-/// Windows is the case the updater's own path cannot cover. It judges no
-/// path there, so nothing but the running executable itself keeps the app
-/// out of the search — and the desktop executable is `kendex.exe`, the
-/// name the command carries, so an install directory on `PATH` puts the
-/// app first in line. Taken for the command, it would be overwritten with
-/// the CLI binary before the updater ever ran.
-#[test]
-fn a_windows_app_on_path_is_never_taken_for_the_command() {
-    let exe = PathBuf::from("C:/Program Files/kendex/kendex.exe");
-    let machine = Machine {
-        present: vec![exe.clone()],
-        ..Machine::default()
-    };
-    let probed = vec![exe.clone()];
-
-    // What the updater offers on Windows: no path at all. Recorded, so
-    // the fixture reaches the app and the exclusion is what stops it.
-    assert_eq!(
-        command_beside_app(
-            &machine,
-            &probed,
-            &[],
-            Some(&recorded(&exe.display().to_string()))
-        ),
-        CommandBeside::Ours(exe.clone()),
-        "the fixture has to reach the app before the exclusion can be what stops it"
-    );
-    assert_eq!(
-        command_beside_app(
-            &machine,
-            &probed,
-            std::slice::from_ref(&exe),
-            Some(&recorded(&exe.display().to_string()))
-        ),
-        CommandBeside::Absent
-    );
-}
-
 /// A command inside the app is the app's to move, and the search stops on
 /// it: the Windows setup puts `bin\kendex.exe` on `PATH` beside its own
 /// executable, and a macOS bundle's sidecar is reached through whatever
