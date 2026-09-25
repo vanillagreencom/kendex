@@ -70,14 +70,14 @@ git -C "[WORKTREE_PATH]" push
 
 Infer the agent from the component paths or issue labels. A test failure in concurrent code that passes locally is a flaky-test candidate — check the project's testing conventions (missing barriers, iteration-based waits, static mutable state) before treating it as a real regression.
 
-Stamp the round as separate tool calls immediately before delegating, the round-start prune between the two stamps, and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). The prune names its tree because a standalone state records none: `[WORKTREE_PATH]` resolves as § 3.1 resolves it, and `[LEASE_OWNER]` is the issue ID the worktree was claimed under, or `[STATE_KEY]` when the PR names no issue.
+Stamp the round as separate tool calls immediately before delegating, the round-start prune between the two stamps, and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). All three take the one state key as `[ISSUE_ID]`: the caller's `issue_id` when managed, § 1's `[STATE_KEY]` standalone.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
 ```bash
-.agents/skills/orch/scripts/round-prune --worktree [WORKTREE_PATH] --owner [LEASE_OWNER] [STATE_KEY]
+.agents/skills/orch/scripts/round-prune [ISSUE_ID]
 ```
 
 ```bash

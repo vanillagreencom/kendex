@@ -227,6 +227,11 @@ step() {
     own-lease) "$SESSION_GUARD" claim "$WT" --owner KEN-1 >/dev/null ;;
     # A native git lock the session guard did not write.
     hand-lock) git -C "$MAIN" worktree lock --reason 'held by hand' "$WT" ;;
+    # target/ itself a link to a directory outside the worktree.
+    symlink-target)
+      mv "$WT/target" "$ROOT/elsewhere-target"
+      ln -s "$ROOT/elsewhere-target" "$WT/target"
+      ;;
     hold-lock)
       local await_marker="$ROOT/lock-held"
       flock -x "$WT/target/debug/.cargo-lock" -c "touch '$await_marker'; sleep 120" &
@@ -374,6 +379,7 @@ out_text() {
     owned-apply) printf '%s;' "$OWNED"; report pruned apply debug release ;;
     owned-release-apply) printf '%s;' "$OWNED"; report pruned apply release ;;
     owned-only) printf '%s' "$OWNED" ;;
+    owned-empty) printf '%s;' "$OWNED"; report pruned apply ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }
@@ -422,6 +428,8 @@ err_text() {
     owner-pair) printf 'worktree-cleanup-targets-owner-pair: --worktree' ;;
     owner-pair-owner) printf 'worktree-cleanup-targets-owner-pair: --owner' ;;
     owned-lock-held) printf '%s;worktree-output-prune-units-kept: worktree=<wt>' "$(unit_record kept debug lock-held)" ;;
+    owned-live-holder) printf '%s;worktree-output-prune-units-kept: worktree=<wt>' "$(unit_record kept debug live-holder)" ;;
+    owned-symlink-target) printf '%s;worktree-output-prune-units-kept: worktree=<wt>' "$(unit_record kept target symlink)" ;;
     unmanaged) printf 'worktree-output-prune-lease-blocked: worktree=<wt> state=unmanaged' ;;
     owner-retention) printf 'worktree-cleanup-targets-owner-retention: --older-than-days' ;;
     worktree-unknown) printf 'worktree-output-prune-worktree-unknown: <main>' ;;
@@ -484,6 +492,9 @@ case "$(uname -s)" in
     # output is kept for want of one rather than for the holder in it.
     P_LATE_REASON=holder-probe-unavailable
     P_WORKSPACE_OUT=empty;          P_WORKSPACE_ERR=workspace-unprobed
+    # The owner-scoped prune the same way: the profile's lock answers.
+    P_OWNED_EXE_RC=0; P_OWNED_EXE_OUT=owned-apply; P_OWNED_EXE_ERR=-
+    P_OWNED_EXE_LEFT="$DOT,$CARGO_SRC,$BASE,$CARGO_SHELL"
     ;;
   *)
     P_APPLY_OUT=both-apply;         P_APPLY_ERR=-
@@ -497,6 +508,8 @@ case "$(uname -s)" in
     P_NESTED_OUT=cargo-and-ui;      P_NESTED_ERR=-
     P_LATE_REASON=live-holder
     P_WORKSPACE_OUT=workspace;      P_WORKSPACE_ERR=-
+    P_OWNED_EXE_RC=1; P_OWNED_EXE_OUT=owned-release-apply; P_OWNED_EXE_ERR=owned-live-holder
+    P_OWNED_EXE_LEFT="$DOT,$CARGO_SRC,$BASE,target,target/<triple>,target/<triple>/release,target/<triple>/release/.cargo-lock,target/debug,target/debug/.cargo-lock,target/debug/deps,target/debug/deps/big.o,target/debug/sleeper"
     ;;
 esac
 
@@ -531,6 +544,8 @@ the owner-scoped prune never takes a lock-free node_modules or .next|cargo js tr
 a HEAD that moves mid-run fails the owner-scoped prune|cargo tree cargo-out fresh own-lease drift|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|1|owned-only|head-moved|$CARGO_TREE
 a lock outside the guard fails the owner-scoped prune|cargo tree cargo-out hand-lock|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|1|-|unmanaged|$CARGO_TREE
 --owner without --worktree is refused|cargo tree cargo-out|cleanup --targets-only --apply --owner KEN-1|1|-|owner-pair-owner|$CARGO_TREE
+a process executing a profile's artifact keeps it and fails the owner-scoped prune|cargo tree cargo-out exe-holder own-lease|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|$P_OWNED_EXE_RC|$P_OWNED_EXE_OUT|$P_OWNED_EXE_ERR|$P_OWNED_EXE_LEFT
+a symlinked target/ is kept and fails the owner-scoped prune|cargo tree cargo-out own-lease symlink-target|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|1|owned-empty|owned-symlink-target|$DOT,$CARGO_SRC,$BASE,target
 an unleased worktree is pruned for the owner that names it|cargo tree cargo-out fresh|cleanup --targets-only --apply --worktree @WT@ --owner KEN-1|0|cargo-apply|-|$CARGO_PRUNED
 --worktree without --owner is refused|cargo tree cargo-out|cleanup --targets-only --worktree @WT@|1|-|owner-pair|$CARGO_TREE
 a retention window is refused beside --owner|cargo tree cargo-out fresh|cleanup --targets-only --worktree @WT@ --owner KEN-1 --older-than-days 3|1|-|owner-retention|$CARGO_TREE

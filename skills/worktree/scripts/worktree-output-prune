@@ -47,7 +47,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, FrozenSet, List, NamedTuple, Optional, Tuple
+from typing import Callable, Dict, FrozenSet, List, NamedTuple, Optional, Tuple
 
 try:
     import fcntl
@@ -514,54 +514,49 @@ def relative(worktree: Path, directory: Path) -> str:
     return directory.relative_to(worktree).as_posix()
 
 
-def keep(worktree: Path, unit: Unit, reason: str) -> None:
-    emit(
-        "err",
-        "kept",
-        ecosystem=unit.ecosystem,
-        output=relative(worktree, unit.directory),
-        reason=reason,
-    )
-
-
-def discover(worktree: Path, locked_only: bool) -> Tuple[Unit, ...]:
+def discover(worktree: Path, locked_only: bool,
+             kept: Callable[..., None]) -> Tuple[Unit, ...]:
     """Every prunable unit in the worktree, reporting each path it keeps.
 
-    locked_only leaves every output with no build lock out of scope unreported:
-    it is not a path this mode keeps but one it never takes."""
+    Every keep goes through `kept`, the caller's one record and count of what it
+    held back. locked_only leaves every output with no build lock out of scope
+    unreported: it is not a path this mode keeps but one it never takes, and a
+    layout with no locked output is never walked into."""
     roots = package_roots(worktree)
     if not roots:
         emit("err", "no-layout", reason="no-ecosystem-marker")
         return ()
     units: List[Unit] = []
     for root, layout in roots:
+        if locked_only and all(output.lock is None for output in layout.outputs):
+            continue
         if not reportable(relative(worktree, root)):
             # The path cannot appear in its own refusal, so the record names
             # only what it can. Nothing under this root is inspected, which is
             # what keeps a lock-free output there from being deleted ahead of a
             # record that could not have described it.
-            emit("err", "kept", ecosystem=layout.name, reason="unreportable-root-name")
+            kept(ecosystem=layout.name, reason="unreportable-root-name")
             continue
         for output in layout.outputs:
             if locked_only and output.lock is None:
                 continue
             path = root / output.path
             shown = relative(worktree, path)
-            kept = None
+            refusal = None
             if path.is_symlink():
-                kept = "symlink"
+                refusal = "symlink"
             elif not path.exists():
                 continue
             elif not path.is_dir():
-                kept = "not-a-directory"
+                refusal = "not-a-directory"
             # A resolved worktree root plus a resolved output path differ only
             # through a symlinked ancestor, which a nested root can have.
             elif path.resolve() != path:
-                kept = "outside-worktree"
+                refusal = "outside-worktree"
             elif tracks_content(worktree, shown):
-                kept = "tracked"
-            if kept is not None:
-                emit("err", "kept", ecosystem=layout.name, output=shown, reason=kept)
+                refusal = "tracked"
+            if refusal is not None:
+                kept(ecosystem=layout.name, output=shown, reason=refusal)
                 continue
             if output.lock is None:
                 units.append(Unit(layout.name, path, None))
@@ -570,18 +565,18 @@ def discover(worktree: Path, locked_only: bool) -> Tuple[Unit, ...]:
             for directory in profiles.symlinked:
                 refused = relative(worktree, directory)
                 if not reportable(refused):
-                    emit("err", "kept", ecosystem=layout.name,
+                    kept(ecosystem=layout.name,
                          reason="unreportable-unit-name")
                     continue
-                emit("err", "kept", ecosystem=layout.name, output=refused, reason="symlink")
+                kept(ecosystem=layout.name, output=refused, reason="symlink")
             if not profiles.units:
                 if not profiles.symlinked:
-                    emit("err", "kept", ecosystem=layout.name, output=shown,
+                    kept(ecosystem=layout.name, output=shown,
                          reason="no-lock-unit")
                 continue
             for directory, lock in profiles.units:
                 if not reportable(relative(worktree, directory)):
-                    emit("err", "kept", ecosystem=layout.name, output=shown,
+                    kept(ecosystem=layout.name, output=shown,
                          reason="unreportable-unit-name")
                     continue
                 units.append(Unit(layout.name, directory, lock))
@@ -614,15 +609,20 @@ def run(worktree: Path, head: str, older_than_days: Optional[int], apply_prune: 
     # No retention window leaves no unit recent: every unit is aged, and only
     # its lock, its holders and a change under the measurement can keep it.
     cutoff = math.inf if owned else time.time() - older_than_days * 86400
-    kept_units = 0
+    # The one count of what this run held back, from discovery and from each
+    # unit alike: under --owned any keep at all is the prune's failure.
+    kept_count = 0
+
+    def kept(**fields: object) -> None:
+        nonlocal kept_count
+        kept_count += 1
+        emit("err", "kept", **fields)
 
     def keep_unit(unit: Unit, reason: str) -> None:
-        nonlocal kept_units
-        kept_units += 1
-        keep(worktree, unit, reason)
+        kept(ecosystem=unit.ecosystem, output=relative(worktree, unit.directory), reason=reason)
 
     aged: List[Unit] = []
-    for unit in discover(worktree, locked_only=owned):
+    for unit in discover(worktree, locked_only=owned, kept=kept):
         measured = survey(unit, collect=False)
         if measured is None or measured.newest_mtime > cutoff:
             keep_unit(unit, "changed" if measured is None else "recent")
@@ -723,7 +723,7 @@ def run(worktree: Path, head: str, older_than_days: Optional[int], apply_prune: 
         bytes=total,
         uninspected_processes=uninspected,
     )
-    return UNITS_KEPT if owned and kept_units else 0
+    return UNITS_KEPT if owned and kept_count else 0
 
 
 def positive_days(text: str) -> int:
