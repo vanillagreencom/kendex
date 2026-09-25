@@ -26,9 +26,10 @@
 # the body's chain reached. A `let` binding a chain or a helper call, through
 # a Path::new, a PathBuf::from or a module path at most and with nothing but
 # canonicalize, unwrap, expect and the like after it, is not a read either:
-# each later use of the name in that file is a chain starting where it
-# reached, and a later `let` of the same name ends it. Any other use of a
-# chain is a read of what it reached.
+# each later use of the name in the block it was made in is a chain starting
+# where it reached. The binding ends when that block closes, or at a later
+# `let` of the same name. Any other use of a chain is a read of what it
+# reached.
 #
 # `.` is the row for what this reader does not follow: a chain that reaches
 # the repository root and is used there, and a chain that goes on with an
@@ -54,7 +55,9 @@
 # rows, 2 when the source could not be read or the arguments are wrong, and a
 # read that did not run is never printed as an empty set. A refusal is one
 # stderr line:
-#   rust-reads: unreadable=<path>   ROOT, or the crates/ tree, could not be read
+#   rust-reads: unreadable=<path>   ROOT, or the crates/ tree, could not be
+#                                   read, or a Cargo.toml under crates/ names
+#                                   no package
 #   rust-reads: usage=<usage>       more than one argument
 set -euo pipefail
 
@@ -72,7 +75,8 @@ if ! manifests=$(find crates -type f -name Cargo.toml) ||
   exit 2
 fi
 
-if ! rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SOURCES="$sources" awk '
+status=0
+rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SOURCES="$sources" awk '
   # Lists are strings joined by LS; a value is a list of `path FS open`
   # entries, open being 1 where the chain went on with an argument this
   # reader does not follow.
@@ -87,20 +91,35 @@ if ! rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SOURCES="$sources" awk 
     close(file)
     return out
   }
-  function package_name(manifest, dir,   line, section, name, r) {
+  # The package name the [package] table of MANIFEST declares, in either
+  # quote. A manifest under crates/ declaring none is refused here, naming
+  # it: a crate this reader cannot name is one no selection could run.
+  function package_name(manifest,   line, section, name, quote, at, r) {
     section = ""
     name = ""
     while ((r = (getline line < manifest)) > 0) {
-      if (line ~ /^[ \t]*\[/) { section = line; gsub(/[ \t]/, "", section); continue }
-      if (section == "[package]" && name == "" && line ~ /^[ \t]*name[ \t]*=[ \t]*"/) {
+      if (line ~ /^[ \t]*\[/) {
+        section = line
+        sub(/#.*$/, "", section)
+        gsub(/[ \t]/, "", section)
+        continue
+      }
+      if (section == "[package]" && name == "" && line ~ /^[ \t]*name[ \t]*=[ \t]*["\047]/) {
         name = line
-        sub(/^[^"]*"/, "", name)
-        sub(/".*$/, "", name)
+        sub(/^[^=]*=[ \t]*/, "", name)
+        quote = substr(name, 1, 1)
+        name = substr(name, 2)
+        at = index(name, quote)
+        name = at > 1 ? substr(name, 1, at - 1) : ""
       }
     }
     if (r < 0) exit 2
     close(manifest)
-    return name == "" ? dir : name
+    if (name == "") {
+      printf "rust-reads: unreadable=%s\n", manifest > "/dev/stderr"
+      exit 3
+    }
+    return name
   }
   function dirname(file,   dir) {
     dir = file
@@ -343,7 +362,7 @@ if ! rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SOURCES="$sources" awk 
       if (found[i] == "") continue
       dir = found[i]
       sub(/\/?Cargo\.toml$/, "", dir)
-      crate[dir] = package_name(found[i], dir)
+      crate[dir] = package_name(found[i])
     }
     n = split(ENVIRON["RUST_READS_SOURCES"], found, "\n")
     for (i = 1; i <= n; i++) {
@@ -449,9 +468,12 @@ if ! rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SOURCES="$sources" awk 
       for (i = 1; i <= m; i++) row("build", names[i], dir)
     }
   }
-'); then
-  echo 'rust-reads: unreadable=crates' >&2
-  exit 2
-fi
+') || status=$?
+# 3 is a refusal the awk pass printed itself; any other failure is the tree's.
+case $status in
+  0) ;;
+  3) exit 2 ;;
+  *) echo 'rust-reads: unreadable=crates' >&2; exit 2 ;;
+esac
 
 [ -z "$rows" ] || printf '%s\n' "$rows" | LC_ALL=C sort -u

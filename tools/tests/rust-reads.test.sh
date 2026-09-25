@@ -70,11 +70,18 @@ a chain used at the checkout root prints the root|crates/demo/tests/t.rs|open(&P
 the manifest directory alone is the crate|crates/demo/tests/t.rs|scan(Path::new(env!("CARGO_MANIFEST_DIR")));|manifest:crates/demo:demo
 a file deeper in the crate still joins its manifest directory|crates/demo/src/deep/mod.rs|read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/x.tsv"));|manifest:crates/demo/tests/fixtures/x.tsv:demo
 a let binding is read where it is used|crates/demo/tests/t.rs|let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");\nlet text = read(root.join("docs/b.md"));|manifest:docs/b.md:demo
-a binding through canonicalize and unwrap used whole reads the root|crates/demo/tests/t.rs|let catalog = Path::new(env!("CARGO_MANIFEST_DIR"))\n    .join("../..")\n    .canonicalize()\n    .unwrap();\ninstall(&catalog);|manifest:.:demo
+a binding used whole at the checkout root reads the root|crates/demo/tests/t.rs|let catalog = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");\ninstall(&catalog);|manifest:.:demo
+a binding goes on through canonicalize and unwrap|crates/demo/tests/t.rs|let docs = Path::new(env!("CARGO_MANIFEST_DIR"))\n    .join("../../docs")\n    .canonicalize()\n    .unwrap();\nread(docs.join("a.md"));|manifest:docs/a.md:demo
+a binding of a helper call through a module path is followed|crates/demo/tests/t.rs|fn root() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")\n}\nfn t() {\n    let base = self::root();\n    read(base.join("docs/a.md"));\n}|manifest:docs/a.md:demo
+a binding of a helper call is followed|crates/demo/tests/t.rs|fn root() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")\n}\nfn t() {\n    let base = root();\n    read(base.join("docs/b.md"));\n}|manifest:docs/b.md:demo
+a bound name that begins a longer name is not a use of it|crates/demo/tests/t.rs|let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");\nread(root_file);|
+a commented-out chain is no read|crates/demo/tests/t.rs|// read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/a.md"));\nfn t() {}|
 a binding used nowhere reads nothing|crates/demo/tests/t.rs|let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");|
 a binding ends with the block it was made in|crates/demo/tests/t.rs|fn a() {\n    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");\n    read(root.join("docs/a.md"));\n}\nfn b() {\n    read(root.join("docs/b.md"));\n}|manifest:docs/a.md:demo
 a later let of the name ends its binding|crates/demo/tests/t.rs|let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");\nread(p.join("a.md"));\nlet p = scratch();\nread(p.join("b.md"));|manifest:docs/a.md:demo
 a root helper is followed through each call, and its body is no read|crates/demo/tests/t.rs|fn root() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")\n}\nfn t() {\n    read(root().join("hooks/README.md"));\n}|manifest:hooks/README.md:demo
+a helper calling a helper defined after it is followed|crates/demo/tests/t.rs|fn docs() -> PathBuf {\n    root().join("docs")\n}\nfn root() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")\n}\nfn t() {\n    read(docs().join("a.md"));\n}|manifest:docs/a.md:demo
+a private helper in lib.rs serves the modules under it|crates/demo/src/lib.rs+crates/demo/src/other.rs|fn root() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")\n}~~fn t() {\n    read(crate::root().join("docs/a.md"));\n}|manifest:docs/a.md:demo
 a private helper serves its own module alone|crates/demo/tests/a.rs+crates/demo/tests/b.rs|fn root() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")\n}\nfn t() {\n    read(root().join("docs/a.md"));\n}~~fn u() {\n    read(root().join("docs/b.md"));\n}|manifest:docs/a.md:demo
 a helper whose chain climbs out of the checkout reads anything|crates/demo/tests/t.rs|fn out() -> PathBuf {\n    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")\n}\nfn t() {\n    read(out());\n}|manifest:.:demo
 a file outside every crate belongs to the crates reaching it through a path attribute|crates/test_util.rs+crates/demo/src/lib.rs+crates/demo/tests/t.rs|pub fn checkout_root() -> PathBuf {\n    let guess = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");\n    canonical(&guess)\n}~~#[path = "../../test_util.rs"]\nmod test_util;~~fn t() {\n    read(test_util::checkout_root().join("hooks"));\n}|manifest:hooks:demo
@@ -109,6 +116,35 @@ for member in $BUILD_MEMBERS; do
     bad "the build rows carry $member for the crate" "the build rows are broken: $BUILD"
 done
 
+echo "=== a crate is named by its package, and a manifest naming none is refused ==="
+# MANIFEST|RC|OUTPUT — OUTPUT is the non-build rows, or the refusal line.
+before=$((PASS + FAIL))
+while IFS='|' read -r manifest rc want; do
+  [ -n "$manifest" ] || continue
+  seed_world crates/demo/Cargo.toml+crates/demo/src/lib.rs "$manifest~~const A: &str = include_str!(\"../../../docs/a.md\");"
+  run_reads
+  [ "$RC" -eq "$rc" ] && [ "$OUT" = "$want" ] && ok "manifest $manifest: rc=$rc" ||
+    bad "manifest $manifest: rc=$rc" "rc=$RC want=$want out=$OUT"
+done <<'ROWS'
+[package] # the core library\nname = "demo"|0|include:docs/a.md:demo
+[package]\nname = 'demo'|0|include:docs/a.md:demo
+[package]\nversion = "1"|2|rust-reads: unreadable=crates/demo/Cargo.toml
+[workspace]|2|rust-reads: unreadable=crates/demo/Cargo.toml
+ROWS
+[ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the manifests" >&2; exit 2; }
+# The refusal's control: with a missing name read as the directory, the crate
+# prints under a name no cargo matrix leg carries.
+sed 's/^    if (name == "") {$/    if (0) {/' "$READS" >"$TMP/rust-reads-unnamed"
+chmod +x "$TMP/rust-reads-unnamed"
+if cmp -s "$READS" "$TMP/rust-reads-unnamed"; then
+  bad "control: a manifest naming no package is refused" "the edit changed nothing in a reader copy"
+else
+  seed_world crates/demo/Cargo.toml+crates/demo/src/lib.rs '[workspace]~~fn main() {}'
+  run_reads "$TMP/rust-reads-unnamed"
+  [ "$RC" -eq 0 ] && ok "control: a manifest naming no package is refused, with the refusal removed" ||
+    bad "control: a manifest naming no package is refused, with the refusal removed" "rc=$RC out=$OUT"
+fi
+
 echo "=== this repository's own reads carry the files its crates are known to read ==="
 # Required members, one per shape the tree holds: a floor on the extractor,
 # which a reader that lost a shape falls through. What is read beyond them
@@ -121,6 +157,30 @@ for member in include:docs/authoring/README.md:kendex-app manifest:docs/legal:ke
     ok "the repository's reads carry $member" ||
     bad "the repository's reads carry $member" "the extractor is broken for that shape: $OUT"
 done
+# kendex-app reads nothing this reader cannot place, so its cargo legs stand
+# down on a diff that reaches none of its reads. On a red, every kendex-app
+# source is emptied in a copy of crates/ and each is put back alone, and the
+# files that bring the row back by themselves are named.
+if grep -qFx -- "manifest:.:kendex-app" <<<"$OUT"; then
+  mkdir -p "$TMP/app-dot/kept"
+  cp -R "$ROOT/crates" "$TMP/app-dot/crates"
+  app_files="$(cd "$ROOT" && git ls-files -- 'crates/app/*.rs')"
+  while IFS= read -r f; do
+    mkdir -p "$TMP/app-dot/kept/$(dirname "$f")"
+    mv "$TMP/app-dot/$f" "$TMP/app-dot/kept/$f"
+    : >"$TMP/app-dot/$f"
+  done <<<"$app_files"
+  culprits=""
+  while IFS= read -r f; do
+    cp "$TMP/app-dot/kept/$f" "$TMP/app-dot/$f"
+    rows_now="$(cd "$TMP/app-dot" && "$READS")" || rows_now=""
+    ! grep -qFx -- "$(printf 'manifest\t.\tkendex-app')" <<<"$rows_now" || culprits="$culprits $f"
+    : >"$TMP/app-dot/$f"
+  done <<<"$app_files"
+  bad "kendex-app prints no . row" "a read of kendex-app this reader cannot place, in:${culprits:- no single file}"
+else
+  ok "kendex-app prints no . row"
+fi
 
 echo "=== a read that cannot run is never an empty set ==="
 seed_world crates/demo/src/lib.rs 'fn main() {}'
@@ -177,6 +237,13 @@ s/if (match(after, \/^\[ \\t\\n\]\*\\)+\/)) after = substr(after, RLENGTH + 1)//
 s/\(push\).parent/\1/|a parent() leaves the read unfollowed
 s/(in_concat \&\& match(text, \/^\[ \\t\\n\]\*,\/))/match(text, \/^[ \\t\\n]*,\/)/|a comma after a join chain separates arguments and continues nothing
 s/        bound\[name\] = FOUND/        delete bound[name]/|a let binding is read where it is used
+s/canonicalize.unwrap.to_path_buf/to_path_buf/|a binding goes on through canonicalize and unwrap
+s/.(\[A-Za-z_\]\[A-Za-z0-9_\]\*::)\*)\$"$/)$"/|a binding of a helper call through a module path is followed
+s/if (substr(after, 1, 1) ~ \/\[A-Za-z0-9_!\]\/) {/if (0) {/|a bound name that begins a longer name is not a use of it
+s/if (line ~ .*) line = ""/if (0) line = ""/|a commented-out chain is no read
+s/if (cand_body\[k\] !~ ENV \&\& (SEEN == "" .*$/if (cand_body[k] !~ ENV) continue/|a helper calling a helper defined after it is followed
+s/} while (changed)/} while (0)/|a helper calling a helper defined after it is followed
+s/cand_scope\[candidates\] = dirname(file\[f\])/cand_scope[candidates] = file[f]/|a private helper in lib.rs serves the modules under it
 /for (name in bound) if (bound_level\[name\] > LEVEL) delete bound\[name\]/d|a binding ends with the block it was made in
 /^        delete bound\[name\]$/d|a later let of the name ends its binding
 s/if ((tok in SEEN_VALUE) \&\& match/if (0 \&\& match/|a root helper is followed through each call, and its body is no read

@@ -63,11 +63,28 @@ fn configured_icons() -> Vec<String> {
     icons
 }
 
+/// The bytes of one bundled icon, found by name in `icons/`, the one
+/// directory the bundle's icons live in. Listing that directory rather than
+/// joining the configured path keeps every read of this crate a path
+/// `tools/rust-reads` can place, which is what lets the app's cargo legs
+/// stand down on a diff outside it.
+#[allow(clippy::expect_used)]
 fn icon_bytes(relative: &str) -> Vec<u8> {
-    let path: PathBuf = app_crate().join(relative);
-    std::fs::read(&path).unwrap_or_else(|error| {
-        panic!("tauri.conf.json bundles {relative}, which is not there: {error}")
-    })
+    let name = relative
+        .strip_prefix("icons/")
+        .unwrap_or_else(|| panic!("tauri.conf.json bundles {relative}, which is not under icons/"));
+    let dir = app_crate().join("icons");
+    let entries = std::fs::read_dir(&dir).expect("icons/ lists");
+    for entry in entries {
+        let entry = entry.expect("an icons/ entry reads");
+        if entry.file_name() == name {
+            let path: PathBuf = entry.path();
+            return std::fs::read(&path).unwrap_or_else(|error| {
+                panic!("tauri.conf.json bundles {relative}, which does not read: {error}")
+            });
+        }
+    }
+    panic!("tauri.conf.json bundles {relative}, which is not there")
 }
 
 #[test]

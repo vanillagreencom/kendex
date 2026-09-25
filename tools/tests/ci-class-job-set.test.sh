@@ -89,9 +89,11 @@ CODE_LANES="shell_shards=true macos_legs=true ui=false bot_instructions=true"
 UI_LANES="shell_shards=true macos_legs=true ui=true bot_instructions=true"
 
 # This repository's own tree: the class rows, and the rows the issue names.
-# Every crate here has a `.` row, a read tools/rust-reads does not follow, so
-# every crate runs on Linux for every measured diff; what a diff that builds
-# nothing stands down is the lint and Windows compile lanes.
+# kendex-core and kendex-cli have a `.` row here, a read tools/rust-reads
+# does not follow, so they run on Linux for every measured diff; kendex-app
+# runs where a path reaches one of its reads. A diff that builds nothing
+# stands down the lint and Windows compile lanes.
+ROOT_READERS="kendex-cli,kendex-core"
 # CLASS|DOCS_ONLY|PATHS (blank-separated)|EXPECTED
 selection_rows=0
 while IFS='|' read -r class docs paths expected; do
@@ -102,17 +104,19 @@ done <<ROWS
 render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|$VERIFY_ROW
 trivial|true|docs/architecture/overview.md|$VERIFY_ROW
 trivial|true|AGENTS.md|$VERIFY_ROW
-trivial|true|README.md|$PROSE_LANES $(cargo_row "$EVERY" '' false)
+trivial|true|README.md|$PROSE_LANES $(cargo_row "$ROOT_READERS" '' false)
 standard|false|crates/core/src/lib.rs|$CODE_LANES $(cargo_row "$EVERY" "$EVERY" true)
-standard|false|tools/guard skills/orch/scripts/lanes|$CODE_LANES $(cargo_row "$EVERY" "$EVERY" false)
-micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$PROSE_LANES $(cargo_row "$EVERY" '' false)
+standard|false|tools/guard skills/orch/scripts/lanes|$CODE_LANES $(cargo_row "$ROOT_READERS" "$ROOT_READERS" false)
+micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$PROSE_LANES $(cargo_row "$ROOT_READERS" '' false)
+micro|false|skills/commit-guards/scripts/install-git-hooks|$CODE_LANES $(cargo_row "$EVERY" "$EVERY" false)
 micro|false|Cargo.lock|$CODE_LANES $(cargo_row "$EVERY" "$EVERY" true)
-standard|true|docs/guide.md CHANGELOG.md|$PROSE_LANES $(cargo_row "$EVERY" '' false)
+standard|false|.github/workflows/skill-tests.yml|$ALL_ON
+standard|true|docs/guide.md CHANGELOG.md|$PROSE_LANES $(cargo_row "$ROOT_READERS" '' false)
 enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous
 micro|false||exit=2 class-without-paths class=micro
 micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe
 ROWS
-[ "$selection_rows" -ge 12 ] ||
+[ "$selection_rows" -ge 14 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
 
 # A row that forgets a lane is refused before any lane reads it. macos_legs is
@@ -181,19 +185,42 @@ trivial|true|docs/other.md docs/legal/privacy.md|$PROSE_LANES $(cargo_row $APP_C
 trivial|true|docs/other.md|$VERIFY_ROW
 trivial|true|docs/legalese.md|$VERIFY_ROW
 render|true|docs/a.md|$VERIFY_ROW
-standard|true|docs/guide.md|$PROSE_LANES $(cargo_row $CORE '' false)"
+standard|true|docs/guide.md|$PROSE_LANES $(cargo_row $CORE '' false)
+standard|false|.github/workflows/skill-tests.yml|$UI_LANES $(cargo_row $ALL3 $ALL3 true)
+standard|false|.github/actions/change-class/action.yml|$UI_LANES $(cargo_row $ALL3 $ALL3 true)
+standard|false|tools/ci-job-set|$UI_LANES $(cargo_row $ALL3 $ALL3 true)
+standard|false|tools/ci-aggregate|$UI_LANES $(cargo_row $ALL3 $ALL3 true)
+standard|false|tools/rust-reads|$UI_LANES $(cargo_row $ALL3 $ALL3 true)
+standard|false|tools/ci-job-set.orig|$CODE_LANES $(cargo_row $CORE $CORE false)"
 world_rows=0
 while IFS='|' read -r class docs paths expected; do
   world_rows=$((world_rows + 1))
   check "reach: $class docs_only=$docs over '$paths'" "$expected" \
     "$(SELECT_IN="$WORLD" selection "$class" "$docs" "$(printf '%s\n' $paths)")"
 done <<<"$WORLD_ROWS"
-[ "$world_rows" -ge 19 ] || { echo "the reach table read $world_rows rows" >&2; exit 1; }
+[ "$world_rows" -ge 25 ] || { echo "the reach table read $world_rows rows" >&2; exit 1; }
 mkdir -p "$TMP/no-crates"
 check "a read set rust-reads cannot derive is refused on a trivial diff" "exit=2 rust-reads-failed" \
   "$(SELECT_IN="$TMP/no-crates" selection trivial true docs/a.md)"
 check "and on a measured one" "exit=2 rust-reads-failed" \
   "$(SELECT_IN="$TMP/no-crates" selection micro false tools/guard)"
+# A reader row that is not kind, path and crate is refused before any crate
+# is named: a reader from before the crate column, beside this script.
+mkdir -p "$TMP/unparsed/tools"
+cp "$JOB_SET" "$TMP/unparsed/tools/ci-job-set"
+printf '#!/usr/bin/env bash\nprintf "include\\tdocs/a.md\\n"\n' >"$TMP/unparsed/tools/rust-reads"
+chmod +x "$TMP/unparsed/tools/rust-reads"
+check "a reader row without a crate column is refused" "exit=2 rust-reads-unparsed" \
+  "$(SELECT_WITH="$TMP/unparsed/tools/ci-job-set" selection micro false docs/a.md)"
+sed 's/^    NF != 3 {/    NF == -1 {/' "$JOB_SET" >"$TMP/unparsed/tools/ci-job-set"
+if cmp -s "$JOB_SET" "$TMP/unparsed/tools/ci-job-set"; then
+  bad "control: the column check could not be removed from a ci-job-set copy"
+else
+  case "$(SELECT_WITH="$TMP/unparsed/tools/ci-job-set" selection micro false docs/a.md)" in
+    "exit=2 rust-reads-unparsed") bad "control: without the column check a two-column row is still refused" ;;
+    *) ok "control: without the column check a two-column row selects lanes" ;;
+  esac
+fi
 # EDIT|CLASS|DOCS_ONLY|PATHS — a copy with that rule removed answers the row
 # other than the table above does. An edit carries no |, the column
 # separator.
@@ -224,8 +251,10 @@ s/if (crate\[r\] == c \&\& read/if (read/|micro|false|skills/orch/SKILL.md
 s/any '^ui\/' \&\& uitree=true/uitree=true/|micro|false|tools/guard
 s/row=trivial-read$/row=trivial/|trivial|true|docs/a.md
 s/index(path, read "\/") == 1/index(path, read) == 1/|trivial|true|docs/legalese.md
+s/if any "\$LANE_SOURCES"; then/if false; then/|standard|false|.github/workflows/skill-tests.yml
+s/ci-aggregate.rust-reads)\$)/ci-aggregate.rust-reads))/|standard|false|tools/ci-job-set.orig
 CONTROLS
-[ "$controls" -ge 9 ] || { echo "the control table read $controls rows" >&2; exit 1; }
+[ "$controls" -ge 11 ] || { echo "the control table read $controls rows" >&2; exit 1; }
 
 # --- 2. The names -----------------------------------------------------------
 # Each reader is extracted with an anchored pattern: a name is the whole run
@@ -601,7 +630,8 @@ check "the matrix runs both legs when nothing classified" \
 # Each cargo leg's LEG_SELECTED, evaluated per crate: the crates the list
 # names build and test, the others stand down, and a dead classifier or the
 # push to main selects every leg. A name that only starts like a listed one
-# is not listed.
+# is not listed. kendex-core is in the Linux list alone, so a macOS leg that
+# read the Linux list would run it.
 leg() { # WORKFLOW JOB CRATE SELECTION [RESULT] [EVENT] — the leg's LEG_SELECTED
   local map="$TMP/published-map" expr
   published_map "$1" >"$map"
@@ -611,7 +641,7 @@ leg() { # WORKFLOW JOB CRATE SELECTION [RESULT] [EVENT] — the leg's LEG_SELECT
 }
 check "the cargo legs are the jobs carrying LEG_SELECTED" "cargo-linux cargo-macos" \
   "$(leg_exprs "$WORKFLOW" | cut -f1 | tr '\n' ' ' | sed 's/ $//')"
-LEG_SEL="$(cargo_row kendex-cli,kendex-core-x kendex-cli true)"
+LEG_SEL="$(cargo_row kendex-app-x,kendex-cli,kendex-core kendex-cli,kendex-core-x true)"
 # JOB|CRATE|RESULT|EVENT|EXPECTED
 leg_rows=0
 while IFS='|' read -r job crate result event expected; do
@@ -620,15 +650,16 @@ while IFS='|' read -r job crate result event expected; do
     "$(leg "$WORKFLOW" "$job" "$crate" "$LEG_SEL" "$result" "$event")"
 done <<'ROWS'
 cargo-linux|kendex-cli|||true
-cargo-linux|kendex-core|||false
+cargo-linux|kendex-core|||true
 cargo-linux|kendex-app|||false
 cargo-macos|kendex-cli|||true
 cargo-macos|kendex-core|||false
+cargo-macos|kendex-app|||false
 cargo-linux|kendex-app|failure||true
 cargo-macos|kendex-app|failure||true
 cargo-linux|kendex-app|skipped|push|true
 ROWS
-[ "$leg_rows" -ge 8 ] || { echo "the leg table read $leg_rows rows" >&2; exit 1; }
+[ "$leg_rows" -ge 9 ] || { echo "the leg table read $leg_rows rows" >&2; exit 1; }
 
 # Every step of a leg that builds or tests reads LEG_SELECTED, or a leg the
 # diff does not reach pays for its crate anyway.

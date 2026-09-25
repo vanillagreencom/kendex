@@ -176,7 +176,11 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     lane-crates)
       echo "tools/ci-job-set selected the Linux cargo lane and named no crate for it: tools/ci-job-set is broken." ;;
     lane-selection)
-      echo "no lane selection was made — tools/ci-job-set's exit status, or paths-unreadable where DEV_VALIDATE_PATHS names no readable file — so every lane ran." ;;
+      case "$2" in
+        class-fallback) echo "DEV_VALIDATE_PATHS names an empty file, the runner's fallback when it could not read a class, so every lane ran." ;;
+        *) echo "no lane selection was made — tools/ci-job-set's exit status, or paths-unreadable where DEV_VALIDATE_PATHS names no readable file — so every lane ran." ;;
+      esac
+      ;;
     range-base)
       echo "that --range base names no commit in this repository." ;;
     *)
@@ -277,11 +281,14 @@ fi
 # its docs reader answer over one range: DEV_VALIDATE_CLASS,
 # DEV_VALIDATE_DOCS_ONLY and the changed paths in the file DEV_VALIDATE_PATHS
 # names, the three inputs CI's changes job gives tools/ci-job-set. An unset
-# class is a run outside that runner, and runs every lane; any class runs the
-# lanes ci-job-set selects from those inputs, so completion validation stands
-# a lane down where the checks judging the pull request do and nowhere else. A
-# class ci-job-set does not know is refused; any other selection failure is a
-# finding, and every lane still runs. The commit chain reads no class.
+# class is a run outside that runner, and runs every lane. So does a class
+# with an empty paths file: the runner's fallback when it could not read a
+# class, which it hands over as standard, docs-only false and no paths. Any
+# other class runs the lanes ci-job-set selects from those inputs, so
+# completion validation stands a lane down where the checks judging the pull
+# request do and nowhere else. A class ci-job-set does not know is refused;
+# any other selection failure is a finding, and every lane still runs. The
+# commit chain reads no class.
 #
 # The three are this run's and no one else's: they are read here and removed
 # from the environment before any lane starts, so a suite a lane runs, and any
@@ -294,6 +301,8 @@ lanes=all
 if [ "$MODE" = full ] && [ -n "$validate_class" ]; then
   if ! selected_paths=$(cat -- "$validate_paths" 2>/dev/null); then
     say lane-selection paths-unreadable
+  elif [ -z "$selected_paths" ]; then
+    note lane-selection class-fallback
   else
     selection_status=0
     selection=$(CHANGE_CLASS="$validate_class" DOCS_ONLY="$validate_docs_only" \

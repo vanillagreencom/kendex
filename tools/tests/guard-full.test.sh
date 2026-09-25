@@ -757,6 +757,19 @@ run_lanes stale false $CODE
 [ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: validate-class=stale"* ]] && [ "$(lanes_ran)" = "" ] \
   && ok "a class ci-job-set has no selection for is refused before any lane runs" \
   || bad "a class ci-job-set has no selection for is refused before any lane runs" "rc=$RC out=$OUT"
+# The runner's fallback when it could not read a class: standard, docs-only
+# false and an empty paths file. Every lane runs and the run is green.
+: >"$TMP/empty-paths"
+HANDED_PATHS="$TMP/empty-paths" run_lanes standard false $SKILL_TOOL
+[ "$RC" -eq 0 ] && [[ "$OUT" == *"guard-note: lane-selection=class-fallback"* ]] && [ "$(lanes_ran)" = "suites parse lint test ui" ] \
+  && ok "the runner's class fallback, an empty paths file, runs every lane and passes" \
+  || bad "the runner's class fallback, an empty paths file, runs every lane and passes" "rc=$RC got=$(lanes_ran) out=$OUT"
+lane_guard '/^  elif \[ -z "\$selected_paths" \]; then$/,/^    note lane-selection class-fallback$/d'
+HANDED_PATHS="$TMP/empty-paths" run_lanes standard false $SKILL_TOOL
+[ "$RC" -ne 0 ] \
+  && ok "control: with the fallback unread the empty paths file reds the run" \
+  || bad "control: with the fallback unread the empty paths file reds the run" "rc=$RC out=$OUT"
+lane_guard
 # A narrow class whose paths file cannot be read selects nothing: every lane
 # runs and the run is red, never a stand-down on no paths.
 HANDED_PATHS="$TMP/absent-paths" run_lanes micro false $CODE
@@ -814,6 +827,27 @@ inherited_row
 [[ "$OUT" == *"inner=micro:false:$PATHS_FILE"* ]] \
   && ok "control: with the selection left exported the suite inherits it" \
   || bad "control: with the selection left exported the suite inherits it" "rc=$RC out=$OUT"
+# A selection of the Linux cargo lane that names no crate is this
+# repository's own ci-job-set broken: refused before any test runs, never
+# read as the workspace. A stub stands in for the selection, since the real
+# one names a crate wherever it selects the lane.
+cp "$LANE_TOOLS/ci-job-set" "$TMP/ci-job-set.real"
+printf '%s\n' '#!/usr/bin/env bash' \
+  'printf "%s\n" shell_shards=false macos_legs=false ui=false bot_instructions=false cargo_linux=true \' \
+  '  cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false linux_crates= macos_crates= >>"$GITHUB_OUTPUT"' \
+  >"$LANE_TOOLS/ci-job-set"
+chmod +x "$LANE_TOOLS/ci-job-set"
+lane_guard
+run_lanes micro false docs/guide.md
+[ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: lane-crates=linux_crates"* ]] && ! grep -q '^test' "$CARGO_CALL_LOG" \
+  && ok "a Linux cargo lane selected with no crate named is refused before any test runs" \
+  || bad "a Linux cargo lane selected with no crate named is refused before any test runs" "rc=$RC out=$OUT calls=$(cat "$CARGO_CALL_LOG")"
+lane_guard '/refuse lane-crates linux_crates$/d'
+run_lanes micro false docs/guide.md
+grep -q '^test' "$CARGO_CALL_LOG" \
+  && ok "control: with the refusal removed the empty selection runs a test" \
+  || bad "control: with the refusal removed the empty selection runs a test" "rc=$RC out=$OUT"
+cp "$TMP/ci-job-set.real" "$LANE_TOOLS/ci-job-set"
 lane_guard 's/lane_on cargo_linux; then/lane_on cargo_linx; then/'
 run_lanes micro false $CODE
 [ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: lane-unknown=cargo_linx"* ]] \

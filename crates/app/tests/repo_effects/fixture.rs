@@ -108,8 +108,14 @@ pub fn fixture() -> Fixture {
         .join("../../skills")
         .canonicalize()
         .unwrap();
-    for skill in ["commit-guards", "doc-limits", "bot-instructions"] {
-        copy_tree(&shipped.join(skill), &catalog.join("skills").join(skill));
+    // Each source is a literal join, so tools/rust-reads places every read
+    // of this crate.
+    for (source, skill) in [
+        (shipped.join("commit-guards"), "commit-guards"),
+        (shipped.join("doc-limits"), "doc-limits"),
+        (shipped.join("bot-instructions"), "bot-instructions"),
+    ] {
+        copy_tree(&source, &catalog.join("skills").join(skill));
     }
     fs::create_dir_all(catalog.join("skills/deploy")).unwrap();
     fs::write(

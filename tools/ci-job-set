@@ -31,6 +31,11 @@
 #     empty: a prose file reads the same on every platform. cargo_lint and
 #     cargo_windows_check compile the workspace and run no test, so they run
 #     where a build input changed.
+#   - A diff to what defines the lanes, a path under .github/workflows/ or
+#     .github/actions/ or tools/ci-job-set, tools/ci-aggregate or
+#     tools/rust-reads, runs every lane and every crate's cargo legs, so a
+#     change to a lane or to its selection runs on the pull request that
+#     makes it.
 #   - The platform lane macos_legs stands down only on a diff whose every
 #     path is prose, whose content no platform reads differently, except on
 #     a `standard` diff that is not documentation alone, which runs it.
@@ -140,10 +145,14 @@ any_outside() { # REGEX — is some changed path NOT inside it?
 
 # Prose, the one input the platform lanes stand down on.
 PROSE='\.(md|markdown)$'
+# What defines the lanes: the workflows and actions that run them, and the
+# scripts that select them.
+LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|rust-reads)$)'
 
 # What the changed paths reach, from tools/rust-reads' rows, as `key=value`
 # lines: named (an include or manifest row other than `.` names a changed
-# path), build (a build input changed), linux and macos (the crate lists).
+# path), build (a build input changed), linux and macos (the crate lists),
+# and all (every crate the rows name).
 # Each crate reached is named once on stderr, with the first path that
 # reached it and the row it came through.
 reach() {
@@ -202,7 +211,7 @@ reach() {
           if (!prose) macos[c] = 1
         }
       }
-      printf "named=%d\nbuild=%d\nlinux=%s\nmacos=%s\n", named, build, list(linux), list(macos)
+      printf "named=%d\nbuild=%d\nlinux=%s\nmacos=%s\nall=%s\n", named, build, list(linux), list(macos), list(crates)
     }
   ' <<<"$rows" || die "rust-reads-unparsed" "a tools/rust-reads row is not kind, path and crate"
 }
@@ -247,8 +256,18 @@ case "$row" in
     any '^ui/' && uitree=true
     linux_crates="$(reached linux)"
     macos_crates="$(reached macos)"
+    all_crates="$(reached all)"
     build=false
     [ "$(reached build)" != 1 ] || build=true
+    # A diff to what defines the lanes runs every lane and every crate's legs,
+    # so a change to a lane is proved by the run that lands it.
+    if any "$LANE_SOURCES"; then
+      platform=true
+      uitree=true
+      build=true
+      linux_crates="$all_crates"
+      macos_crates="$all_crates"
+    fi
     cargo_linux=false
     [ -z "$linux_crates" ] || cargo_linux=true
     cargo_macos=false
