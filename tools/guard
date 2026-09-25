@@ -245,13 +245,15 @@ case "${1:-}" in
     printf '%s\n' 'usage: tools/guard [--full | --range BASE]' \
       'Default: repository rules and compile checks for staged product changes.' \
       '--range BASE: the default rules over the changes since BASE, working tree included,' \
-      '        cargo check and clippy for the crates they touch, any file inside one included' \
-      '        (the workspace for a shared input or a file compiled code includes), the UI' \
-      '        checks and suite when they touch ui/, and the suites of the' \
-      '        skill, hook, tool and Pi-package trees they touch. None of what --full adds' \
-      '        beyond that: the workspace test run, cross-target checks, the documentation' \
-      '        build, the Bash 3.2 parse, the working-tree bot-instructions check, the' \
-      '        decision-ID check, the cargo free-space floor and the class lane selection.' \
+      '        cargo check and clippy for the crates they touch, any non-Markdown file inside' \
+      '        one included (the workspace for a shared input or a file compiled code includes),' \
+      '        the UI checks and suite when they touch a non-Markdown file under ui/, and the' \
+      '        suites of the skill, hook, tool and Pi-package trees they touch. A Markdown file' \
+      '        compiles nothing unless compiled code includes it, and runs no UI check.' \
+      '        None of what --full adds beyond that: the workspace test run, cross-target' \
+      '        checks, the documentation build, the Bash 3.2 parse, the working-tree' \
+      '        bot-instructions check, the decision-ID check, the cargo free-space floor' \
+      '        and the class lane selection.' \
       '--full: full Rust and UI validation for development completion and submit,' \
       '        plus the suites of the skill, hook, tool and Pi-package trees the branch touched.' \
       '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \
@@ -948,8 +950,11 @@ if [ "$MODE" = default ]; then
 fi
 
 # A range compiles what the commit chain's product paths leave out as well:
-# any other file inside a crate, which its build or its tests may read, and
-# any file compiled code includes, through the full run's derivation of them.
+# any other non-Markdown file inside a crate, which its build or its tests may
+# read, and any file compiled code includes, Markdown or not, through the full
+# run's derivation of them. classify_product turns every other Markdown file
+# away first, so one inside a crate compiles nothing and one under ui/ runs no
+# UI check.
 if [ "$MODE" = range ]; then
   if ! range_includes=$(compiled_includes); then
     say compiled-includes range

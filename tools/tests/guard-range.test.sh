@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # tools/guard --range BASE, a fix round's validation: the default rules read
 # over the changes since BASE, cargo check and clippy for the crates those
-# changes touch, the UI checks and suite for a UI change, and the suites of
-# the trees they touch, and none of what --full adds beyond that: the
+# changes touch, the UI checks and suite for a non-Markdown UI change, and the
+# suites of the trees they touch, and none of what --full adds beyond that: the
 # workspace test run, cross-target checks, the documentation build, the Bash
 # 3.2 parse, the working-tree bot-instructions check, the decision-ID check,
 # the cargo free-space floor and the class lane selection. Every compiler and
