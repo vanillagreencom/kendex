@@ -31,8 +31,10 @@ fn resolved(id: Option<&str>) -> ResolvedModel {
 
 /// Bare aliases a source may use. `current`/`parent` are v1 spellings of
 /// `inherit` and stay accepted.
+const INHERIT_ALIASES: [&str; 3] = ["inherit", "current", "parent"];
+
 fn is_inherit(value: &str) -> bool {
-    matches!(value, "inherit" | "current" | "parent")
+    INHERIT_ALIASES.contains(&value)
 }
 
 /// How a harness's agent file names a model. One table, read by the
@@ -207,6 +209,40 @@ mod tests {
         let codex = resolve_model(HarnessId::Codex, "o9-preview");
         assert_eq!(codex.id.as_deref(), Some("o9-preview"));
         assert_eq!(codex.warning, None);
+    }
+
+    /// tools/guard's render_blind table copies the values Pi renders no
+    /// model for; this holds that copy to resolve_model in both directions.
+    #[test]
+    fn guard_render_blind_rows_are_the_pi_values_that_render_no_model() {
+        let guard = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/guard"),
+        )
+        .expect("tools/guard is readable");
+        let table = guard
+            .split_once("render_blind='")
+            .and_then(|(_, rest)| rest.split_once('\''))
+            .expect("tools/guard declares render_blind as one quoted table")
+            .0;
+        let rows: std::collections::BTreeSet<&str> = table
+            .lines()
+            .map(|row| {
+                row.strip_prefix(".pi/agents model ").unwrap_or_else(|| {
+                    panic!("render_blind row {row:?} is not one this test knows")
+                })
+            })
+            .collect();
+        assert!(
+            !rows.is_empty(),
+            "the render_blind reader found no rows; the reader is broken"
+        );
+        let silent: std::collections::BTreeSet<&str> = INHERIT_ALIASES
+            .iter()
+            .chain(TIERS.iter())
+            .copied()
+            .filter(|value| resolve_model(HarnessId::Pi, value).id.is_none())
+            .collect();
+        assert_eq!(rows, silent);
     }
 
     #[test]

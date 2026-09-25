@@ -205,20 +205,32 @@ rm -f "$R/agents/fresh.md" "$R/.claude/agents/fresh.md" "$R/.codex/agents/fresh.
 
 echo "=== a render the source change leaves unchanged ==="
 # Pi renders no model for opus or inherit, so moving between them leaves the
-# Pi render byte-identical and owes it nothing. Every other changed line owes
-# the render: a model Pi does render, and a model: line in the body.
-printf -- '---\nname: pinned\nmodel: opus\n---\n# pinned agent\nmodel: opus\n' >"$R/agents/pinned.md"
-for r in .claude/agents/pinned.md .codex/agents/pinned.toml .pi/agents/pinned.md; do
-  printf '# pinned render\n' >"$R/$r"
-done
-git -C "$R" add -A agents .claude/agents .codex/agents .pi/agents
-git -C "$R" commit -q -m "chore: an agent with a model in its frontmatter"
-land_pinned_edit() { # SED-EXPR — apply it to the source, land the Claude and Codex renders, leave Pi
-  sed -i.bak "$1" "$R/agents/pinned.md" && rm -f "$R/agents/pinned.md.bak"
+# Pi render byte-identical and owes it nothing. Every other change owes the
+# render: a value Pi does render, on either side, a model line removed or
+# added outright (an absent model is sonnet), and a model: line in the body.
+write_pinned() { # FRONTMATTER-MODEL BODY-MODEL — an empty frontmatter model writes no line
+  {
+    printf -- '---\nname: pinned\n'
+    [ -z "$1" ] || printf 'model: %s\n' "$1"
+    printf -- '---\n# pinned agent\nmodel: %s\n' "$2"
+  } >"$R/agents/pinned.md"
+}
+seed_pinned() { # FRONTMATTER-MODEL BODY-MODEL — commit that source with every render
+  write_pinned "$1" "$2"
+  for r in .claude/agents/pinned.md .codex/agents/pinned.toml .pi/agents/pinned.md; do
+    printf '# pinned render %s\n' "$1" >"$R/$r"
+  done
+  git -C "$R" add -A agents .claude/agents .codex/agents .pi/agents
+  git -C "$R" commit -q -m "chore: an agent with a model in its frontmatter"
+}
+land_pinned() { # FRONTMATTER-MODEL BODY-MODEL — write that source, land the Claude and Codex renders, leave Pi
+  write_pinned "$1" "$2"
   printf '# amended\n' >>"$R/.claude/agents/pinned.md"
   printf '# amended\n' >>"$R/.codex/agents/pinned.toml"
 }
-land_pinned_edit '3s/opus/inherit/'
+
+seed_pinned opus opus
+land_pinned inherit opus
 run_guard
 [ "$RC" -eq 0 ] \
   && ok "an opus -> inherit frontmatter edit leaving the Pi render unchanged passes" \
@@ -233,33 +245,51 @@ else
 fi
 git -C "$R" checkout -q -- agents .claude/agents .codex .pi
 
-# ROW: sed expression | guard edit that lets the row pass ("" for none)
+# The allowance is per render root: the Claude render does carry the model.
+write_pinned inherit opus
+printf '# amended\n' >>"$R/.codex/agents/pinned.toml"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/pinned.md -> .claude/agents/pinned.md"* ]] \
+  && [[ "$OUT" != *"-> .pi/agents/pinned.md"* ]] \
+  && ok "the same edit leaving the Claude render unchanged reds, naming Claude and not Pi" \
+  || bad "the same edit leaving the Claude render unchanged reds, naming Claude and not Pi" "rc=$RC out=$OUT"
+if mutant_guard 's/return (root " " key " " value) in listed/return (".pi\/agents " key " " value) in listed/'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with every root read as .pi/agents the unchanged Claude render passes" \
+    || bad "control: with every root read as .pi/agents the unchanged Claude render passes" "rc=$RC out=$OUT"
+else
+  bad "control: the root scope could not be removed from a guard copy"
+fi
+git -C "$R" reset -q --hard HEAD~1
+
+# ROW: seeded model | seeded body model | edited model | edited body model | guard edit that removes the row's rule
 PINNED_ROWS=(
-  "3s/opus/sonnet/|s/^\.pi\/agents model parent'\$/.pi\/agents model parent\n.pi\/agents model sonnet'/"
-  "6s/opus/inherit/|s/ || line >= end + 0 / /"
-  "5s/pinned agent/renamed agent/|"
+  "opus|opus|sonnet|opus|s/^\.pi\/agents model parent'\$/.pi\/agents model parent\n.pi\/agents model sonnet'/"
+  "sonnet|opus|inherit|opus|s/^    \/^-\/ { if (!blind(substr(\$0, 2), o++, old_end)) { bad = 1; exit } /    \/^-\/ { blind(substr(\$0, 2), o++, old_end); /"
+  "opus|opus||opus|s/ if (!bad) for (k in moved) if (moved\[k\]) bad = 1;//"
+  "|opus|inherit|opus|s/ if (!bad) for (k in moved) if (moved\[k\]) bad = 1;//"
+  "opus|opus|opus|inherit|s/ || line >= end + 0 / /"
 )
 for row in "${PINNED_ROWS[@]}"; do
-  expr="${row%%|*}"
-  control="${row#*|}"
-  land_pinned_edit "$expr"
+  IFS='|' read -r seed_model seed_body model body control <<<"$row"
+  edit="model '$seed_model' -> '$model', body model '$seed_body' -> '$body'"
+  seed_pinned "$seed_model" "$seed_body"
+  land_pinned "$model" "$body"
   run_guard
   [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/pinned.md -> .pi/agents/pinned.md"* ]] \
-    && ok "source edit $expr with the Pi render unchanged reds, naming it" \
-    || bad "source edit $expr with the Pi render unchanged reds, naming it" "rc=$RC out=$OUT"
-  if [ -n "$control" ]; then
-    if mutant_guard "$control"; then
-      run_mutant
-      [ "$RC" -eq 0 ] \
-        && ok "control: source edit $expr passes with its rule removed" \
-        || bad "control: source edit $expr passes with its rule removed" "rc=$RC out=$OUT"
-    else
-      bad "control: the rule behind source edit $expr could not be removed from a guard copy"
-    fi
+    && ok "$edit with the Pi render unchanged reds, naming it" \
+    || bad "$edit with the Pi render unchanged reds, naming it" "rc=$RC out=$OUT"
+  if mutant_guard "$control"; then
+    run_mutant
+    [ "$RC" -eq 0 ] \
+      && ok "control: $edit passes with its rule removed" \
+      || bad "control: $edit passes with its rule removed" "rc=$RC out=$OUT"
+  else
+    bad "control: the rule behind $edit could not be removed from a guard copy"
   fi
-  git -C "$R" checkout -q -- agents .claude/agents .codex .pi
+  git -C "$R" reset -q --hard HEAD~1
 done
-git -C "$R" reset -q --hard HEAD~1
 
 echo "=== a hook lands the renders it already has ==="
 # Hooks are judged per file: the two harness copies this hook already has
