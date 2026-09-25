@@ -9,7 +9,6 @@ echo "=== orch post-PR autonomy lint ==="
 rule "decision mode defaults to automatic continuation" "$SETTINGS" "" 'ORCH_DECISION_MODE = "auto-recommended"'
 rule "merge consent defaults to automatic after gates" "$SETTINGS" "" 'ORCH_MERGE_AUTONOMY = "auto"'
 rule "reviewer silence defaults to proceed" "$SETTINGS" "" 'PR_REVIEW_ON_TIMEOUT = "proceed"'
-rule "the merge bypass defaults to off" "$SETTINGS" "" 'ORCH_MERGE_BYPASS = "off"'
 rule 'overseer handoff default' "$SKILL_DIR/workflows/oversee.md" \
   '## 1. Resolve The Launch Surface' 'tmp/handoffs/OVERSEER-HANDOFF.md'
 rule "the skill owns the named-stop record" "$SKILL_DIR/SKILL.md" "## The Cycle" '**Post-PR autonomy.**' '`workflow-state post-pr-stop record`' '`ORCH_MERGE_AUTONOMY` controls merge consent only'
@@ -22,7 +21,6 @@ rule_fenced "submission records the review-round cap" "$SUBMIT" "## 4. Review Ga
 rule "start-worktree preserves the upstream stop before summaries" "$START" "## 5. Finalize" "preserves submit-pr's stop" '`merge-gates-unmet`'
 rule_fenced "start-worktree records the unmet merge gates" "$START" "## 5. Finalize" 'post-pr-stop record-if-empty' 'merge-gates-unmet'
 rule_fenced "merge reads the decision mode" "$MERGE" "" 'orch-env ORCH_DECISION_MODE auto-recommended'
-rule_fenced "merge reads the bypass off by default" "$MERGE" "" 'orch-env ORCH_MERGE_BYPASS off'
 rule "merge retry exhaustion has a named stop" "$MERGE" "## 3. Check Merge Readiness" '`merge-check-blocked`'
 rule_fenced "ci-fix reads the decision mode" "$CI" "## 3. Classify And Route" 'orch-env ORCH_DECISION_MODE auto-recommended'
 rule "ci-fix spends retries before its cap" "$CI" "## 5. Verify" '`continue` reruns § 1' '`at-cap` records and returns `ci-fix-cap`'

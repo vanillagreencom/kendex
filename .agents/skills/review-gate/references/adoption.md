@@ -18,7 +18,7 @@ Held-back jobs report `skipped`, and GitHub counts skipped as satisfied.
 3. **Add the validate job** to the repo's CI (below).
 4. **Set the repo's `REVIEW_GATE_*` keys** in `kendex.settings.toml` (decision axes below; full key table in [settings.md](settings.md)).
 5. **Delete everything the writer supersedes in the same PR** — gate jobs that read the predicate to condition CI, rerun/refire/sweep workflows and scripts, local predicate copies, duplicated gate steps.
-6. **Repo-side wiring** (below): rulesets, merge queue, bypass actor.
+6. **Repo-side wiring** (below): rulesets and merge queue, with no bypass actor.
 7. **Reviewer instruction for the vendored tree** — wire the remedy-locus rule from [vendored-paths.md](vendored-paths.md), never a reviewer path exclusion.
 
 ## Recommended CI shape — the fast/full split
@@ -50,7 +50,7 @@ Value rules come from the engine, not from a copy of it: the settings half calls
 
 - **Ruleset**: require the gate context (the repo's `REVIEW_GATE_CONTEXT` value) alongside the test aggregate in the merge queue's required checks.
 - **Thread resolution**: keep (or add) the zero-bypass `required_review_thread_resolution` ruleset.
-- **Bypass actor**: the queue ruleset needs one (e.g. repository admin). It is the sanctioned merge path for gate-repair and settings-change PRs. State the bypass in the merge commit.
+- **No bypass actor**: the queue ruleset carries none, so every merge goes through the merge queue. A gate-repair PR takes the break-glass procedure in [../SKILL.md](../SKILL.md#4-operations); a settings-change PR takes normal review.
 - **Merge queue**: the writer's `merge_group` leg posts the gate context on queue shas unconditionally. Verify the queue's required checks include both the gate context and the test aggregate.
 - **Required checks must NOT include the writer's own job names.** Require the commit STATUS context only.
 

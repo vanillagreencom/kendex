@@ -45,4 +45,4 @@ Two env-only PER-INVOCATION seams are NOT settings keys:
 
 # Security posture
 
-The one workflow that writes the gate status runs the DEFAULT-branch engine on every leg that runs it, with credentials-dropped checkouts, and reads PR data only through the API; no PR-controlled code ever executes with the write-capable token and no trust-posture knob exists. The PR-attached legs reach a relay that checks out nothing and executes no engine. A PR that repairs a broken engine cannot open its own gate — it merges via the ruleset's bypass actor. Wiring: [adoption.md](adoption.md).
+The one workflow that writes the gate status runs the DEFAULT-branch engine on every leg that runs it, with credentials-dropped checkouts, and reads PR data only through the API; no PR-controlled code ever executes with the write-capable token and no trust-posture knob exists. The PR-attached legs reach a relay that checks out nothing and executes no engine. A PR that repairs a broken engine cannot open its own gate — it merges by the break-glass procedure in [../SKILL.md](../SKILL.md#4-operations), since no ruleset carries a bypass actor. Wiring: [adoption.md](adoption.md).
