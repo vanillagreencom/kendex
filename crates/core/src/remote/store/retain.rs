@@ -38,16 +38,14 @@ pub const KEEP_VAR: &str = "KENDEX_SOURCE_CACHE_KEEP";
 /// Snapshots kept per repository when [`KEEP_VAR`] names no count.
 pub const DEFAULT_KEEP: usize = 3;
 
-/// What a retention pass did about the entries outside its keep set: a
-/// publish about the older snapshots beside the new one, and the trash
-/// pass (`crate::trash::retain`) about the entries past its bounds.
+/// What a publish did about the older snapshots beside the new one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Retention {
-    /// Nothing was written, so nothing was judged.
+    /// No snapshot was written, so none was judged.
     Untouched,
-    /// Every entry outside the keep set is gone.
+    /// Every snapshot outside the keep set is gone.
     Pruned { removed: usize },
-    /// Removal did not finish: what is left stays until the next pass.
+    /// Removal did not finish: what is left stays until the next publish.
     /// The keep set could not be established, or one removal failed.
     Stopped { removed: usize, reason: String },
 }
@@ -64,7 +62,7 @@ struct Snapshot {
 /// just published one and holds it, so that one is never removed.
 pub(super) fn retain(env: &Env, key: &str) -> Retention {
     let held = env.held();
-    let judged = keep_count(env).and_then(|keep| {
+    let judged = env.count_var(KEEP_VAR, DEFAULT_KEEP).and_then(|keep| {
         let referenced = referenced_commits(env, key, &held.scopes)?;
         let snapshots = snapshots(env, key)?;
         Ok((keep, referenced, snapshots))
@@ -94,18 +92,6 @@ pub(super) fn retain(env: &Env, key: &str) -> Retention {
         removed += 1;
     }
     Retention::Pruned { removed }
-}
-
-/// The count [`KEEP_VAR`] names. A variable exported empty is how a shell
-/// profile or a job neutralises one, so it reads as unset; anything else
-/// that is not a count stops the pass.
-fn keep_count(env: &Env) -> Result<usize, String> {
-    match env.var(KEEP_VAR).map(str::trim) {
-        None | Some("") => Ok(DEFAULT_KEEP),
-        Some(text) => text
-            .parse()
-            .map_err(|_| format!("{KEEP_VAR}={text:?} is not a count")),
-    }
 }
 
 /// Every commit of `key` a lock names, in a registered scope or one of

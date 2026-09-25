@@ -29,55 +29,24 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
     ui::intro("kendex remove");
     // Each scope's closing line is held until every scope is written and
     // the trash pass has run, so the pass's own line never lands under a
-    // line the run already closed on.
+    // line the run already closed on. A scope that fails, or a cancel at
+    // its prompt, stops the scopes after it and never the finishing of
+    // the ones before it: what they wrote is on disk and owed its closing
+    // line, and the error leaves once that line is said.
     let mut closing: Vec<(Scope, usize)> = Vec::new();
+    let mut stopped: Option<Box<dyn std::error::Error>> = None;
     for scope in resolve_scopes(env, filter)? {
-        let planned = {
-            let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
-            match mode {
-                Removal::Disown { sweep } => {
-                    ops::remove(env, &scope, &names, None, sweep.unwrap_or(false))
-                }
-                Removal::KeepDeclaration => ops::uninstall(env, &scope, &names),
+        match remove_scope(env, &scope, &names, mode) {
+            Ok(Some(applied)) => closing.push((scope, applied)),
+            Ok(None) => {}
+            Err(error) => {
+                stopped = Some(error);
+                break;
             }
-        };
-        let report = planned?;
-        let report = match mode {
-            Removal::Disown { sweep } => answer(env, &scope, &names, report, sweep)?,
-            Removal::KeepDeclaration => report,
-        };
-        // What still wants a removed item says so now, not on the next
-        // audit. Kept declared, a dependency's "kept removed" is true only
-        // until the refresh the closing line names; the warning carries no
-        // type to tell it from the rest, so it prints with them.
-        for warning in &report.warnings {
-            warn(&format!("warning: {}: {}", warning.name, warning.message));
         }
-        if !takes_anything(&report) {
-            continue;
-        }
-        say_split(&report, mode);
-        let applied = {
-            let _removing = ui::spinner("removing");
-            super::engine_common::apply_report(env, &report)?
-        };
-        // What the run did, not what the verb is called: a removal whose
-        // plan reconciles a declaration writes as well as trashes, and a
-        // list of writes under the word "removed" says the wrong thing.
-        say("changes:");
-        for op in &report.plan.ops {
-            say(&format!("  - {}", op.line()));
-        }
-        if matches!(mode, Removal::KeepDeclaration) {
-            say(&format!(
-                "{}: kendex.toml unchanged; refresh installs what it declares again",
-                scope_label(&scope)
-            ));
-        }
-        closing.push((scope, applied));
     }
     super::engine_common::tidy_trash(env);
-    if closing.is_empty() {
+    if closing.is_empty() && stopped.is_none() {
         ui::ledger("Nothing removed", &[]);
     }
     for (scope, applied) in closing {
@@ -94,7 +63,64 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
             &[],
         );
     }
-    Ok(())
+    match stopped {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// One scope's removal: planned, answered, written and said. `None` where
+/// the plan takes nothing off disk, `Some` with the count of what it
+/// wrote.
+fn remove_scope(
+    env: &Env,
+    scope: &Scope,
+    names: &[String],
+    mode: Removal,
+) -> Result<Option<usize>, Box<dyn std::error::Error>> {
+    let planned = {
+        let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
+        match mode {
+            Removal::Disown { sweep } => {
+                ops::remove(env, scope, names, None, sweep.unwrap_or(false))
+            }
+            Removal::KeepDeclaration => ops::uninstall(env, scope, names),
+        }
+    };
+    let report = planned?;
+    let report = match mode {
+        Removal::Disown { sweep } => answer(env, scope, names, report, sweep)?,
+        Removal::KeepDeclaration => report,
+    };
+    // What still wants a removed item says so now, not on the next
+    // audit. Kept declared, a dependency's "kept removed" is true only
+    // until the refresh the closing line names; the warning carries no
+    // type to tell it from the rest, so it prints with them.
+    for warning in &report.warnings {
+        warn(&format!("warning: {}: {}", warning.name, warning.message));
+    }
+    if !takes_anything(&report) {
+        return Ok(None);
+    }
+    say_split(&report, mode);
+    let applied = {
+        let _removing = ui::spinner("removing");
+        super::engine_common::apply_report(env, &report)?
+    };
+    // What the run did, not what the verb is called: a removal whose
+    // plan reconciles a declaration writes as well as trashes, and a
+    // list of writes under the word "removed" says the wrong thing.
+    say("changes:");
+    for op in &report.plan.ops {
+        say(&format!("  - {}", op.line()));
+    }
+    if matches!(mode, Removal::KeepDeclaration) {
+        say(&format!(
+            "{}: kendex.toml unchanged; refresh installs what it declares again",
+            scope_label(scope)
+        ));
+    }
+    Ok(Some(applied))
 }
 
 /// Whether the plan takes anything off disk; one that does not is not run.

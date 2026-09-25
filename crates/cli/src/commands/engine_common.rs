@@ -49,17 +49,17 @@ pub fn print_synced(synced: &kendex_core::remote::Synced) {
     }
 }
 
-/// The pass that closes every writing verb: the trash is brought within
-/// its bounds (`kendex_core::trash::retain`) once the verb's own writes
-/// are done, and what went is said in the verb's own output, so a person
-/// who never runs `kendex trash` still learns that kendex is reclaiming.
-/// A pass that stopped is a warning, never a failure of the verb: the
-/// writes it closes are on disk and the next verb retries it.
+/// The pass `apply`, `refresh`, `remove` and `update-pi` close on: the
+/// trash is brought within its bounds (`kendex_core::trash::retain`)
+/// once the verb's own writes are done, and what went is said in the
+/// verb's own output, so a person who never runs `kendex trash` still
+/// learns that kendex is reclaiming. A pass that stopped is a warning,
+/// never a failure of the verb: the writes it closes are on disk, and the
+/// next of those four verbs retries it.
 pub fn tidy_trash(env: &Env) {
     match kendex_core::trash::retain(env) {
-        kendex_core::trash::Retention::Untouched => {}
-        kendex_core::trash::Retention::Pruned { removed } => print_trashed(removed),
-        kendex_core::trash::Retention::Stopped { removed, reason } => {
+        Ok(removed) => print_trashed(removed),
+        Err(kendex_core::trash::Stopped { removed, reason }) => {
             print_trashed(removed);
             warn(&format!("warning: trash: older entries kept ({reason})"));
         }

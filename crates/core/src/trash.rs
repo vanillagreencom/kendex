@@ -11,9 +11,10 @@
 //! [`KEEP_DAYS_VAR`] days whose bytes, newest first, fit under
 //! [`KEEP_MB_VAR`], and every entry this invocation wrote
 //! (`Env::hold_trashed`), and removes the rest. It runs at the end of
-//! `apply`, `refresh` and `remove`, after the command's own writes, never
-//! in the middle of one. A bound it cannot read stops the pass with
-//! everything intact, and so does an entry it cannot measure or remove.
+//! `apply`, `refresh`, `remove` and `update-pi`, after the command's own
+//! writes, never in the middle of one. A bound it cannot read stops the
+//! pass with everything intact; an entry it cannot measure or remove
+//! stops it where it is, with what went before already gone.
 //!
 //! [`empty`] is the person's own request, through `kendex trash empty`:
 //! every entry, or every entry past an age, this invocation's excepted.
@@ -29,8 +30,6 @@ use std::time::Duration;
 use crate::clock;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-
-pub use crate::remote::store::Retention;
 
 /// The variable naming how many days an entry stays. Unset or empty, the
 /// count is [`DEFAULT_KEEP_DAYS`]; zero keeps only what this invocation
@@ -59,6 +58,14 @@ pub struct Entry {
     /// When it was moved here, in seconds since the Unix epoch, read off
     /// the stamp in its name.
     pub trashed_at: u64,
+}
+
+/// A pass that did not finish: what went before it stopped, and why.
+/// What is left stays until the next pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stopped {
+    pub removed: usize,
+    pub reason: String,
 }
 
 /// One entry with what a listing says about it.
@@ -97,7 +104,7 @@ pub fn move_to_trash(env: &Env, path: &Path) -> Result<()> {
 /// The rename onto it then fails, and one apply's rollback takes the whole
 /// removal with it.
 fn unique_in(dir: &Path, base: &str) -> PathBuf {
-    let stamp = clock::timestamp().replace(':', "-");
+    let stamp = stamp();
     let mut candidate = dir.join(format!("{stamp}-{base}"));
     let mut counter = 1;
     while candidate.exists() || candidate.is_symlink() {
@@ -107,37 +114,27 @@ fn unique_in(dir: &Path, base: &str) -> PathBuf {
     candidate
 }
 
+/// The moment an entry is moved, as its name opens: [`clock::timestamp`]
+/// with its colons replaced, `YYYY-MM-DDTHH-MM-SSZ`, since a colon is not
+/// a file name character everywhere kendex runs.
+fn stamp() -> String {
+    clock::timestamp().replace(':', "-")
+}
+
 /// The moment a name's stamp records, or `None` where the name does not
-/// open with one. The stamp is [`clock::timestamp`] with its colons
-/// replaced, `YYYY-MM-DDTHH-MM-SSZ`, followed by the hyphen that joins it
-/// to the rest of the name.
+/// open with one: the [`stamp`] shape, then the hyphen that joins it to
+/// the rest of the name. Read by restoring the two colons and asking the
+/// clock, so the one inverse of its timestamp is the clock's own.
 fn trashed_at(name: &str) -> Option<u64> {
-    let bytes = name.as_bytes();
-    if bytes.len() < 21 || bytes[20] != b'-' {
+    let (stamp, rest) = name.split_at_checked(20)?;
+    if !rest.starts_with('-') || !stamp.is_ascii() {
         return None;
     }
-    let stamp = &bytes[..20];
-    if stamp[10] != b'T' || stamp[19] != b'Z' {
+    if &stamp[13..14] != "-" || &stamp[16..17] != "-" {
         return None;
     }
-    if [4, 7, 13, 16].iter().any(|&at| stamp[at] != b'-') {
-        return None;
-    }
-    let field = |from: usize, to: usize| -> Option<u32> {
-        let digits = &stamp[from..to];
-        if !digits.iter().all(u8::is_ascii_digit) {
-            return None;
-        }
-        std::str::from_utf8(digits).ok()?.parse().ok()
-    };
-    clock::unix_from_civil(
-        i64::from(field(0, 4)?),
-        field(5, 7)?,
-        field(8, 10)?,
-        field(11, 13)?,
-        field(14, 16)?,
-        field(17, 19)?,
-    )
+    let iso = format!("{}:{}:{}", &stamp[..13], &stamp[14..16], &stamp[17..]);
+    clock::unix_from_iso(&iso)
 }
 
 /// Every entry the trash holds, newest first; two moved in one second
@@ -223,21 +220,11 @@ struct Bounds {
     max_bytes: u64,
 }
 
-/// A variable exported empty is how a shell profile or a job neutralises
-/// one, so it reads as unset; anything else that is not a count stops the
-/// pass with everything intact.
-fn count(env: &Env, var: &str, default: u64) -> std::result::Result<u64, String> {
-    match env.var(var).map(str::trim) {
-        None | Some("") => Ok(default),
-        Some(text) => text
-            .parse()
-            .map_err(|_| format!("{var}={text:?} is not a count")),
-    }
-}
-
+/// The two bounds as `Env::count_var` reads them: a bound that is not a
+/// count stops the pass with everything intact.
 fn bounds(env: &Env) -> std::result::Result<Bounds, String> {
-    let days = count(env, KEEP_DAYS_VAR, DEFAULT_KEEP_DAYS)?;
-    let mb = count(env, KEEP_MB_VAR, DEFAULT_KEEP_MB)?;
+    let days = env.count_var(KEEP_DAYS_VAR, DEFAULT_KEEP_DAYS)?;
+    let mb = env.count_var(KEEP_MB_VAR, DEFAULT_KEEP_MB)?;
     Ok(Bounds {
         max_age_secs: days.saturating_mul(86_400),
         max_bytes: mb.saturating_mul(1024 * 1024),
@@ -254,12 +241,13 @@ fn bounds(env: &Env) -> std::result::Result<Bounds, String> {
 /// One directory listing and one measurement of the kept entries per
 /// pass, and no measurement at all of what the age bound or the
 /// crossing already decided. A trash the pass cannot read, measure or
-/// remove from stops it where it is, with the count of what went before.
-pub fn retain(env: &Env) -> Retention {
+/// remove from stops it where it is, with the count of what went before;
+/// `Ok` carries the count of what went.
+pub fn retain(env: &Env) -> std::result::Result<usize, Stopped> {
     let judged = bounds(env).and_then(|bounds| entries(env).map(|entries| (bounds, entries)));
     let (bounds, entries) = match judged {
         Ok(judged) => judged,
-        Err(reason) => return Retention::Stopped { removed: 0, reason },
+        Err(reason) => return Err(Stopped { removed: 0, reason }),
     };
     let held = env.held().trashed;
     let now = clock::unix_now();
@@ -273,14 +261,14 @@ pub fn retain(env: &Env) -> Retention {
         };
         if held.contains(&entry.path) {
             if let Err(reason) = measured(&mut total) {
-                return Retention::Stopped { removed, reason };
+                return Err(Stopped { removed, reason });
             }
             continue;
         }
         let aged = now.saturating_sub(entry.trashed_at) > bounds.max_age_secs;
         if !over && !aged {
             if let Err(reason) = measured(&mut total) {
-                return Retention::Stopped { removed, reason };
+                return Err(Stopped { removed, reason });
             }
             if total <= bounds.max_bytes {
                 continue;
@@ -288,21 +276,21 @@ pub fn retain(env: &Env) -> Retention {
             over = true;
         }
         if let Err(reason) = remove(&entry.path) {
-            return Retention::Stopped { removed, reason };
+            return Err(Stopped { removed, reason });
         }
         removed += 1;
     }
-    Retention::Pruned { removed }
+    Ok(removed)
 }
 
 /// Remove every entry, or with `older_than` every entry at least that
 /// old, this invocation's own excepted. Oldest first, so a removal that
 /// stops leaves the newest entries, the ones a person is most likely to
-/// want back.
-pub fn empty(env: &Env, older_than: Option<Duration>) -> Retention {
+/// want back. `Ok` carries the count of what went.
+pub fn empty(env: &Env, older_than: Option<Duration>) -> std::result::Result<usize, Stopped> {
     let entries = match entries(env) {
         Ok(entries) => entries,
-        Err(reason) => return Retention::Stopped { removed: 0, reason },
+        Err(reason) => return Err(Stopped { removed: 0, reason }),
     };
     let held: BTreeSet<PathBuf> = env.held().trashed;
     let now = clock::unix_now();
@@ -316,11 +304,11 @@ pub fn empty(env: &Env, older_than: Option<Duration>) -> Retention {
             continue;
         }
         if let Err(reason) = remove(&entry.path) {
-            return Retention::Stopped { removed, reason };
+            return Err(Stopped { removed, reason });
         }
         removed += 1;
     }
-    Retention::Pruned { removed }
+    Ok(removed)
 }
 
 fn remove(path: &Path) -> std::result::Result<(), String> {

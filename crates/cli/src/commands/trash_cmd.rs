@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use clap::Subcommand;
 use kendex_core::env::Env;
-use kendex_core::trash::{self, Retention};
+use kendex_core::trash::{self, Stopped};
 
 use super::engine_common::ask_before_writing;
 use super::{CliResult, out, say};
@@ -62,12 +62,13 @@ fn list(env: &Env) -> CliResult {
 }
 
 /// Every entry, or every entry past the age given. The trash is the one
-/// way back from a removal nobody wanted, so with no age to narrow it the
-/// verb asks first, and with nobody to ask it refuses and names `--yes`.
+/// way back from a removal nobody wanted, so with no age to narrow it,
+/// and an age of zero narrows nothing, the verb asks first, and with
+/// nobody to ask it refuses and names `--yes`.
 fn empty(env: &Env, older_than: Option<u64>, yes: bool) -> CliResult {
     ui::intro("kendex trash empty");
     let bound = older_than.map(|days| Duration::from_secs(days.saturating_mul(86_400)));
-    if bound.is_none() {
+    if bound.is_none_or(|bound| bound.is_zero()) {
         let held = trash::entries(env)?.len();
         if held == 0 {
             ui::ledger("Trash: nothing to remove", &[]);
@@ -82,21 +83,18 @@ fn empty(env: &Env, older_than: Option<u64>, yes: bool) -> CliResult {
         )?;
     }
     match trash::empty(env, bound) {
-        Retention::Pruned { removed } => {
+        Ok(removed) => {
             ui::ledger(
                 &format!("Trash: removed {removed} entr{}", plural(removed)),
                 &[],
             );
             Ok(())
         }
-        Retention::Stopped { removed, reason } => Err(format!(
+        Err(Stopped { removed, reason }) => Err(format!(
             "trash: removed {removed} entr{}, then stopped: {reason}",
             plural(removed)
         )
         .into()),
-        // `trash::empty` judges every entry; nothing judged is a pass
-        // that never ran.
-        Retention::Untouched => Err("trash: the emptying pass judged nothing".into()),
     }
 }
 

@@ -165,11 +165,21 @@ fn refresh_settles_a_line_ending_edit_in_an_untracked_local_source() {
     assert!(!fs::read(&destination).unwrap().contains(&b'\r'));
 }
 
+/// The replaced copy goes to the trash, and the run closes on the trash
+/// pass: an entry past the default age bound goes, the copy this run
+/// moved aside stays.
 #[test]
 fn update_reinstalls_from_the_declared_source() {
     let tmp = fixture();
     let project = tmp.path().join("dev/app");
     let installed = project.join(".pi/packages/pi-widgets/index.js");
+    let trash = kendex_core::env::Env::host_rooted(tmp.path()).trash_dir();
+    let stale = trash.join(format!(
+        "{}-stale",
+        kendex_core::clock::iso_from_unix(kendex_core::clock::unix_now() - 40 * 86_400)
+            .replace(':', "-")
+    ));
+    fs::create_dir_all(&stale).unwrap();
 
     let output = kendex(tmp.path(), &project, &["update-pi"]);
 
@@ -182,6 +192,18 @@ fn update_reinstalls_from_the_declared_source() {
     assert_eq!(
         fs::read_to_string(&installed).unwrap(),
         "export const version = 2;\n"
+    );
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(said.contains("trash: removed 1 older entry"), "{said}");
+    assert!(!stale.exists());
+    let held: Vec<String> = fs::read_dir(&trash)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        held.iter().any(|name| name.ends_with("-pi-widgets")),
+        "the replaced copy is gone: {held:?}"
     );
 
     // A second run has nothing left to do.

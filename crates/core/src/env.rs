@@ -140,6 +140,25 @@ impl Env {
         self.vars.get(key).map(String::as_str)
     }
 
+    /// The count `var` names, for a setting read as a number: the source
+    /// cache's keep count and the trash's two bounds. A variable exported
+    /// empty is how a shell profile or a job neutralises one, so it reads
+    /// as unset and gives `default`; anything else that is not a count is
+    /// an error naming the variable, for a pass that stops rather than
+    /// guesses.
+    pub(crate) fn count_var<T: std::str::FromStr>(
+        &self,
+        var: &str,
+        default: T,
+    ) -> std::result::Result<T, String> {
+        match self.var(var).map(str::trim) {
+            None | Some("") => Ok(default),
+            Some(text) => text
+                .parse()
+                .map_err(|_| format!("{var}={text:?} is not a count")),
+        }
+    }
+
     /// Record a checkout the store handed this invocation.
     pub fn hold_checkout(&self, key: &str, commit: &str) {
         self.held_mut()

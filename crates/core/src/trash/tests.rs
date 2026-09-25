@@ -70,7 +70,7 @@ fn entries_past_the_age_bound_go_and_the_rest_stay() {
     plant(&f, 8 * DAY, "c", 10);
     plant(&f, 30 * DAY, "d", 10);
 
-    assert_eq!(retain(&f.env), Retention::Pruned { removed: 2 });
+    assert_eq!(retain(&f.env), Ok(2));
     assert_eq!(names(&f), BTreeSet::from([name_of(&young), name_of(&week)]));
 }
 
@@ -85,7 +85,7 @@ fn entries_past_the_size_bound_go_oldest_first() {
     let third = plant(&f, 3 * DAY, "c", quarter);
     plant(&f, 4 * DAY, "d", quarter);
 
-    assert_eq!(retain(&f.env), Retention::Pruned { removed: 1 });
+    assert_eq!(retain(&f.env), Ok(1));
     assert_eq!(
         names(&f),
         BTreeSet::from([name_of(&newest), name_of(&second), name_of(&third)])
@@ -104,7 +104,7 @@ fn an_entry_this_invocation_wrote_survives_its_pass() {
     fs::write(removed.join("file"), "bytes").unwrap();
     move_to_trash(&f.env, &removed).unwrap();
 
-    assert_eq!(retain(&f.env), Retention::Pruned { removed: 1 });
+    assert_eq!(retain(&f.env), Ok(1));
     let kept = names(&f);
     assert_eq!(kept.len(), 1, "{kept:?}");
     assert!(
@@ -113,7 +113,7 @@ fn an_entry_this_invocation_wrote_survives_its_pass() {
     );
 
     let next = f.env.next_invocation();
-    assert_eq!(retain(&next), Retention::Pruned { removed: 1 });
+    assert_eq!(retain(&next), Ok(1));
     assert!(names(&f).is_empty());
 }
 
@@ -136,7 +136,7 @@ fn a_setting_that_is_not_a_count_stops_the_pass_with_everything_intact() {
         plant(&f, 400 * DAY, "old", 2 * 1024 * 1024);
         let before = names(&f);
 
-        let Retention::Stopped { removed, reason } = retain(&f.env) else {
+        let Err(Stopped { removed, reason }) = retain(&f.env) else {
             panic!("{days:?}/{mb:?} was read as a bound");
         };
         assert_eq!(removed, 0, "{days:?}/{mb:?}");
@@ -154,7 +154,7 @@ fn a_setting_exported_empty_reads_as_the_default() {
         let young = plant(&f, DAY, "a", 10);
         plant(&f, (DEFAULT_KEEP_DAYS + 1) * DAY, "b", 10);
 
-        assert_eq!(retain(&f.env), Retention::Pruned { removed: 1 }, "{days:?}");
+        assert_eq!(retain(&f.env), Ok(1), "{days:?}");
         assert_eq!(names(&f), BTreeSet::from([name_of(&young)]), "{days:?}");
     }
 }
@@ -177,7 +177,7 @@ fn a_removal_that_fails_stops_the_pass_and_reports_what_went_before() {
 
     let outcome = retain(&f.env);
     fs::set_permissions(&stuck, fs::Permissions::from_mode(0o755)).unwrap();
-    let Retention::Stopped { removed, reason } = outcome else {
+    let Err(Stopped { removed, reason }) = outcome else {
         panic!("{outcome:?}");
     };
     assert_eq!(removed, 1);
@@ -204,7 +204,7 @@ fn a_trash_that_will_not_read_stops_the_pass() {
 
     let outcome = retain(&f.env);
     fs::set_permissions(&trash, fs::Permissions::from_mode(0o755)).unwrap();
-    let Retention::Stopped { removed, reason } = outcome else {
+    let Err(Stopped { removed, reason }) = outcome else {
         panic!("{outcome:?}");
     };
     assert_eq!(removed, 0);
@@ -224,16 +224,13 @@ fn empty_takes_every_entry_or_every_entry_past_an_age() {
     fs::create_dir_all(&removed).unwrap();
     move_to_trash(&f.env, &removed).unwrap();
 
-    assert_eq!(
-        empty(&f.env, Some(Duration::from_secs(7 * DAY))),
-        Retention::Pruned { removed: 1 }
-    );
+    assert_eq!(empty(&f.env, Some(Duration::from_secs(7 * DAY))), Ok(1));
     let mut kept = names(&f);
     assert!(kept.remove(&name_of(&day)), "{kept:?}");
     assert!(kept.remove(&name_of(&five)), "{kept:?}");
     assert_eq!(kept.len(), 1, "{kept:?}");
 
-    assert_eq!(empty(&f.env, None), Retention::Pruned { removed: 2 });
+    assert_eq!(empty(&f.env, None), Ok(2));
     let kept = names(&f);
     assert_eq!(kept.len(), 1, "{kept:?}");
     assert!(
@@ -263,7 +260,7 @@ fn a_listing_reports_name_age_and_bytes_newest_first() {
         "{listed:?}"
     );
 
-    assert_eq!(retain(&f.env), Retention::Pruned { removed: 0 });
+    assert_eq!(retain(&f.env), Ok(0));
     assert!(names(&f).contains("not-kendex"));
 }
 
@@ -289,8 +286,8 @@ fn bytes_under_counts_files_and_links_as_themselves() {
 #[test]
 fn an_absent_trash_holds_nothing() {
     let f = fixture();
-    assert_eq!(retain(&f.env), Retention::Pruned { removed: 0 });
-    assert_eq!(empty(&f.env, None), Retention::Pruned { removed: 0 });
+    assert_eq!(retain(&f.env), Ok(0));
+    assert_eq!(empty(&f.env, None), Ok(0));
     assert!(list(&f.env).unwrap().is_empty());
     assert!(!f.env.trash_dir().exists());
 }

@@ -155,20 +155,30 @@ fn empty_older_than_removes_only_the_entries_past_that_age() {
     assert_eq!(names(&home), [young]);
 }
 
-/// With no bound the verb asks, and with nobody to ask it refuses naming
-/// the flag that answers, before it removes anything. The trash is the
-/// one way back from a removal nobody wanted, so it never empties on a
-/// bare typo.
+/// With no bound, or an age of zero, which narrows nothing, the verb
+/// asks, and with nobody to ask it refuses naming the flag that answers,
+/// before it removes anything. The trash is the one way back from a
+/// removal nobody wanted, so it never empties on a bare typo.
 #[test]
 fn empty_without_a_bound_asks_and_refuses_with_nobody_to_ask() {
     let (_tmp, home) = fixture();
     let one = plant(&home, DAY, "one", 10);
     let two = plant(&home, 2 * DAY, "two", 10);
 
-    let refused = kendex(&home, &home, &[], &["trash", "empty"]);
-    assert!(!refused.status.success(), "{}", said(&refused));
-    assert!(said(&refused).contains("--yes"), "{}", said(&refused));
-    assert_eq!(names(&home), [two, one]);
+    let rows: [&[&str]; 2] = [
+        &["trash", "empty"],
+        &["trash", "empty", "--older-than", "0"],
+    ];
+    for args in rows {
+        let refused = kendex(&home, &home, &[], args);
+        assert!(!refused.status.success(), "{args:?}: {}", said(&refused));
+        assert!(
+            said(&refused).contains("--yes"),
+            "{args:?}: {}",
+            said(&refused)
+        );
+        assert_eq!(names(&home), [two.clone(), one.clone()], "{args:?}");
+    }
 
     let emptied = kendex(&home, &home, &[], &["trash", "empty", "--yes"]);
     assert!(emptied.status.success(), "{}", said(&emptied));
@@ -252,6 +262,44 @@ fn refresh_and_remove_close_on_the_pass_too() {
             "{verb}: {kept:?}"
         );
     }
+}
+
+/// A scope that fails after an earlier one wrote stops the run, never
+/// the finishing of what was written: the earlier scope still closes on
+/// its ledger and the trash pass still runs, and the error leaves after.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_remove_that_fails_at_a_later_scope_still_closes_the_scopes_it_wrote() {
+    let (_tmp, home) = fixture();
+    let project = migrating_project(&home);
+    let installed = kendex(
+        &home,
+        &project,
+        &[],
+        &["apply", "-y", "--replace-unmanaged"],
+    );
+    assert!(installed.status.success(), "{}", said(&installed));
+    plant(&home, 40 * DAY, "old", 10);
+    // The global scope, planned second, has a manifest nothing can read.
+    let global = Env::host_rooted(&home).global_manifest_file();
+    fs::create_dir_all(global.parent().unwrap()).unwrap();
+    fs::write(&global, "schema = \n").unwrap();
+
+    let removed = kendex(
+        &home,
+        &project,
+        &[("KENDEX_TRASH_KEEP_DAYS", "7")],
+        &["remove", "deploy", "--scope", "all"],
+    );
+    assert!(!removed.status.success(), "{}", said(&removed));
+    let text = said(&removed);
+    assert!(text.contains("removed 3 changes"), "{text}");
+    assert!(text.contains("trash: removed 1 older entry"), "{text}");
+    assert!(!text.contains("Nothing removed"), "{text}");
+    assert!(
+        !project.join(".claude/skills/deploy").exists(),
+        "the project scope's removal was written"
+    );
 }
 
 /// A bound exported as something other than a count stops the pass with

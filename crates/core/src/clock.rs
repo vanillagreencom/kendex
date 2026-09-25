@@ -26,10 +26,39 @@ pub fn timestamp() -> String {
     iso_from_unix(unix_now())
 }
 
-/// A UTC civil date and time back to seconds since the Unix epoch: the
-/// inverse of [`iso_from_unix`] over the fields it prints. `None` for a
-/// field outside its range or a date before the epoch.
-pub fn unix_from_civil(
+/// An ISO-8601 UTC timestamp as [`iso_from_unix`] prints it,
+/// `YYYY-MM-DDTHH:MM:SSZ` and nothing else, back to seconds since the
+/// Unix epoch. `None` for any other shape, a field outside its range, a
+/// date the calendar does not hold, or one before the epoch.
+pub fn unix_from_iso(text: &str) -> Option<u64> {
+    let bytes = text.as_bytes();
+    if bytes.len() != 20 || bytes[10] != b'T' || bytes[19] != b'Z' {
+        return None;
+    }
+    if bytes[4] != b'-' || bytes[7] != b'-' || bytes[13] != b':' || bytes[16] != b':' {
+        return None;
+    }
+    let field = |from: usize, to: usize| -> Option<u32> {
+        let digits = &bytes[from..to];
+        if !digits.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        std::str::from_utf8(digits).ok()?.parse().ok()
+    };
+    unix_from_civil(
+        i64::from(field(0, 4)?),
+        field(5, 7)?,
+        field(8, 10)?,
+        field(11, 13)?,
+        field(14, 16)?,
+        field(17, 19)?,
+    )
+}
+
+/// A UTC civil date and time back to seconds since the Unix epoch, the
+/// fields [`iso_from_unix`] prints. `None` for a field outside its range
+/// or a date before the epoch.
+fn unix_from_civil(
     year: i64,
     month: u32,
     day: u32,
@@ -87,41 +116,33 @@ mod tests {
     /// century and a far date, so a stamp read back names the second it
     /// was written at.
     #[test]
-    fn civil_and_unix_round_trip() {
+    fn iso_and_unix_round_trip() {
         for secs in [0, 86_399, 951_782_400, 4_107_542_399, 253_402_300_799] {
             let iso = iso_from_unix(secs);
-            let (date, time) = iso.split_once('T').unwrap();
-            let mut ymd = date.split('-').map(|part| part.parse::<i64>().unwrap());
-            let mut hms = time
-                .trim_end_matches('Z')
-                .split(':')
-                .map(|part| part.parse::<u32>().unwrap());
-            let back = unix_from_civil(
-                ymd.next().unwrap(),
-                ymd.next().unwrap() as u32,
-                ymd.next().unwrap() as u32,
-                hms.next().unwrap(),
-                hms.next().unwrap(),
-                hms.next().unwrap(),
-            );
-            assert_eq!(back, Some(secs), "{iso}");
+            assert_eq!(unix_from_iso(&iso), Some(secs), "{iso}");
         }
     }
 
-    /// A field outside its range, or a date the calendar does not hold, is
-    /// refused rather than folded onto a neighbouring second.
+    /// Any other shape, a field outside its range, or a date the calendar
+    /// does not hold is refused rather than folded onto a neighbouring
+    /// second.
     #[test]
-    fn a_civil_time_outside_the_calendar_is_refused() {
-        let rows: [(i64, u32, u32, u32, u32, u32); 6] = [
-            (2026, 4, 31, 0, 0, 0),
-            (2026, 2, 29, 0, 0, 0),
-            (2026, 13, 1, 0, 0, 0),
-            (2026, 1, 1, 24, 0, 0),
-            (2026, 1, 1, 0, 60, 0),
-            (1969, 12, 31, 23, 59, 59),
-        ];
-        for (y, m, d, h, mi, s) in rows {
-            assert_eq!(unix_from_civil(y, m, d, h, mi, s), None, "{y}-{m}-{d}");
+    fn a_stamp_outside_the_shape_or_the_calendar_is_refused() {
+        for text in [
+            "",
+            "2026-09-14T11:26:54",
+            "2026-09-14T11:26:54Z ",
+            "2026-09-14 11:26:54Z",
+            "2026-09-14T11-26-54Z",
+            "2026-09-1xT11:26:54Z",
+            "2026-04-31T00:00:00Z",
+            "2026-02-29T00:00:00Z",
+            "2026-13-01T00:00:00Z",
+            "2026-01-01T24:00:00Z",
+            "2026-01-01T00:60:00Z",
+            "1969-12-31T23:59:59Z",
+        ] {
+            assert_eq!(unix_from_iso(text), None, "{text:?}");
         }
     }
 }
