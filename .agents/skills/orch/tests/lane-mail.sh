@@ -198,12 +198,12 @@ new_lane receipt
 lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
 SENT_ID="${OUT#*id=}"
 SENT_ID="${SENT_ID%% *}"
-assert_eq "$RC=$OUT" "0=lane-mail: sent item=KEN-1 id=$SENT_ID bytes=12" \
-  "send prints one receipt naming the item, the envelope it appended and the text's bytes"
+assert_eq "$RC=$OUT" "0=lane-mail: sent item=KEN-1 id=$SENT_ID bytes=12 monitor=none" \
+  "send prints one receipt naming the item, the envelope it appended, the text's bytes and that no monitor stands"
 assert_eq "$(jq -r '.id' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "$SENT_ID" \
   "the receipt's id is the appended envelope's"
 lm send --item KEN-2 --root "$LANE" --directive --file "$(text d 'né')"
-assert_eq "$RC=${OUT##* }" "0=bytes=3" "the receipt counts the text in bytes, not in characters"
+assert_eq "$RC=${OUT#* bytes=}" "0=3 monitor=none" "the receipt counts the text in bytes, not in characters"
 
 lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
 assert_eq "$RC=$ERR=$OUT" "2=lane-mail: duplicate id=$SENT_ID=" \
@@ -228,7 +228,7 @@ assert_eq "$([ "$LARGE_BYTES" -gt 131072 ] && echo over || echo under)" "over" \
 lm send --item KEN-1 --root "$LANE" --directive --file "$TMP_ROOT/large.txt"
 LARGE_ID="${OUT#*id=}"
 LARGE_ID="${LARGE_ID%% *}"
-assert_eq "$RC=${OUT##* }" "0=bytes=$(( LARGE_BYTES - 1 ))" \
+assert_eq "$RC=${OUT#* bytes=}" "0=$(( LARGE_BYTES - 1 )) monitor=none" \
   "a message past that ceiling lands, and its receipt counts every byte"
 assert_eq "$(jq -r '.id' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "$LARGE_ID" \
   "and the mailbox holds the envelope the receipt names"
@@ -670,7 +670,7 @@ unsafe_inbox() { # KIND COMPONENT — relative to tmp/lane-mail, empty for tmp/l
   UNSAFE="$RC=$ERR"
 }
 for row in link: link:KEN-1 link:KEN-1/to-overseer.jsonl link:KEN-1/to-lane.jsonl link:KEN-1/to-lane.cursor \
-  link:KEN-1/to-lane.cursor.lock kind:KEN-1 kind:KEN-1/to-lane.jsonl; do
+  link:KEN-1/to-lane.cursor.lock link:KEN-1/to-lane.watch kind:KEN-1 kind:KEN-1/to-lane.jsonl; do
   component="${row#*:}"
   unsafe_inbox "${row%%:*}" "$component"
   assert_eq "$UNSAFE" "2=lane-mail: mailbox-unsafe=$UNSAFE_PATH" \
@@ -884,7 +884,8 @@ host_lm send --item KEN-1 --root "$REMOTE_ROOT" --host --re remote-ask --file "$
 assert_eq "$RC" "0" "a hosted send exits 0"
 HOSTED_ID="${OUT#*id=}"
 HOSTED_ID="${HOSTED_ID%% *}"
-assert_eq "${OUT%% id=*}" "lane-mail: sent item=KEN-1" "and prints the receipt from the remote mailbox"
+assert_eq "$OUT" "lane-mail: sent item=KEN-1 id=$HOSTED_ID bytes=14 monitor=none" \
+  "and prints the whole receipt, no monitor standing where the lane's host holds no watch record"
 assert_eq "$HOSTED_ID" "$(jq -r '.id' < "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-1/to-lane.jsonl")" \
   "whose id is the envelope the transport appended"
 assert_eq "$(jq -r '.text' < "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-1/to-lane.jsonl")" \
@@ -900,6 +901,22 @@ host_lm send --item KEN-1 --root "$REMOTE_ROOT" --host --re remote-ask --file "$
 assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=$HOSTED_ID" \
   "a hosted repeat is refused against the mailbox its own transport reads"
 assert_eq "$(grep -c -- "append --item KEN-1" "$STUB_LOG")" "1" "and crosses no second append"
+
+# A fresh watch record on the lane's host is a monitor polling there. The
+# sender's own disk holds none, so a receipt judged there reads no monitor.
+hosted_live_send() { # BIN — sets RC, OUT and LIVE_ID
+  local box="$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/LIVE-1" at=""
+  rm -rf -- "$box"
+  mkdir -p -- "$box"
+  at="$(date -u +%s)"
+  printf 'at=%s interval=5\n' "$at" > "$box/to-lane.watch"
+  HOST_BIN="$1"
+  host_lm send --item LIVE-1 --root "$REMOTE_ROOT" --host --directive --file "$(text d 'Hosted directive.')"
+  LIVE_ID="$(jq -r '.id' < "$box/to-lane.jsonl")"
+}
+hosted_live_send "$LANE_MAIL"
+assert_eq "$RC=$OUT" "0=lane-mail: sent item=LIVE-1 id=$LIVE_ID bytes=17 monitor=live" \
+  "a hosted send reads a fresh watch record on the lane's host as a live monitor"
 
 # A send the provider refused prints no receipt, so silence and a landed send
 # are never the same screen.
@@ -1281,6 +1298,14 @@ HOST_ENV=(LANE_HOST_STUB_NO_APPEND=1); HOST_BIN="$MUTANT_DIR/receipt-ahead-of-ap
 host_lm send --item KEN-7 --root "$REMOTE_ROOT" --host --directive --file "$(text d 'never landed')"
 assert_eq "$RC=${OUT%% id=*}" "2=lane-mail: sent item=KEN-7" \
   "control: a receipt printed ahead of the hosted append reports a send the provider refused"
+
+# The monitor field is read where the mailbox is. A copy that reads the watch
+# record from the sender's own disk reports none for a hosted lane whose
+# monitor is live, and the overseer would wake it.
+mutant monitor-read-locally 's@^  lm_fetch "\$WATCH_FILE" "\$WORK_DIR/watch.rec"$@  cat -- "$WATCH_FILE" > "$WORK_DIR/watch.rec" 2>/dev/null || : > "$WORK_DIR/watch.rec"@'
+hosted_live_send "$MUTANT_DIR/monitor-read-locally"
+assert_eq "$RC=${OUT##* }" "0=monitor=none" \
+  "control: a monitor read from the sender's own disk misses the hosted lane's live monitor"
 
 # A mailbox file the lane can read and cannot write: the guard reads it, and
 # the append is what fails, so the two copies differ on the receipt alone.

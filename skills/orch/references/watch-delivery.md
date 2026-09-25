@@ -1,6 +1,6 @@
 # Watch delivery
 
-Load from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) before launching the watch.
+Load from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) before launching the watch, and from [skill-rules.md § Coordination](skill-rules.md#coordination), Lane mail, before a lane arms its mailbox monitor.
 
 Oversight stands from the first watch launch until oversee.md § 5 Stop, and every watch line reaches this session as it is written, through the runtime's own event mechanism. Where the runtime has no asynchronous wake, the turn is the wait: hold a blocking follow of the watch log, re-arm it on every return, and never end the turn while any lane record is `running`.
 
@@ -32,3 +32,18 @@ The [oversee.md § 5](../workflows/oversee.md#5-stop) handoff names the mechanis
 ## Single passes
 
 Run the oversee.md § 4 command without `--repeat`, as the harness's background command: no detach, no `[RUN_DIR]`, no follow, no process read. Its exit is the wake. Handle every line it printed, then start the next pass, with `--skip-lane [WINDOW]` per window reported `window-gone` until tmux lists it again. An exit the § 4 stop rules name ends the passes. Nothing reports `overseer-dead`, since no watch outlives the session. At § 5 Stop, start no further pass and stop a running one through the harness's own background-task control. The handoff's Watch row reads `single passes` alone, and a successor starts its own passes.
+
+## Lane mailbox monitor
+
+A lane whose harness has an Arm below arms one standing monitor on its own mailbox as its first step, from its worktree and on its own host, a hosted lane inside its sandbox. The monitor runs `.agents/skills/orch/scripts/lane-mail watch --item [ISSUE_ID]`, which announces unread mail other than answers on lines opening `lane-mail: mail=[ISSUE_ID]`; `lane-mail --help` owns when it announces. Each announcement wakes an idle lane, and the woken turn runs the `lane-mail inbox` command printed under it and acts on every directive it prints. An answer wakes nothing, so the ask gate's `lane-mail wait` keeps it. Every poll rewrites the mailbox's `to-lane.watch`, and a `lane-mail send` receipt reads it as `monitor=live` or `monitor=none`; the overseer wakes a Claude Code, Codex or Pi lane only on `monitor=none` ([oversee.md § Talking to a lane](../workflows/oversee.md#talking-to-a-lane)), and a lane on any other harness never; a lane the wake refuses while its session runs, every hosted lane included, takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver). A lane whose harness has no Arm below never has a monitor, and a Claude Code or Pi lane reads `none` while its monitor is not running.
+
+The launch brief of a lane whose harness has an Arm below adds this line ([oversee.md § 3](../workflows/oversee.md#3-launch)): "As your first step, arm the mailbox monitor `lane-mail watch --item [ISSUE_ID]` per watch-delivery.md § Lane mailbox monitor, re-arm it at each expiry, and run the `lane-mail inbox` command each of its announcements prints."
+
+A watch that exits with status 2 refused, and its keyed `lane-mail:` line is on its stderr. The lane never re-arms a refused watch blind: it runs `lane-mail inbox --item [ISSUE_ID]` once, sends that keyed line to the overseer with `lane-mail notice`, and re-arms once the cause the line names is fixed.
+
+| Harness | Arm | Re-arm |
+|---------|-----|--------|
+| Claude Code | `Monitor` on the watch command, `timeout_ms` at its maximum. | At its expiry, or after the lane stopped it. An exit with status 2 is the refusal above. |
+| Codex | None. Codex starts no turn for output that arrives after a turn ended, so the overseer wakes the lane: [codex-runtime.md § Lane mailbox](codex-runtime.md#lane-mailbox). | None. |
+| Pi | `bg_task` output wakes on the watch command: [pi-runtime.md § Lane mailbox monitor (Pi)](pi-runtime.md#lane-mailbox-monitor-pi). | Respawn in the cases its Re-arm and Exit rows name. |
+| OpenCode and others | None. No background wake starts a turn, and `open-terminal --wake` does not take these harnesses: the lane reads mail at its `lane-mail inbox` wait points, and the overseer sends no wake. | None. |

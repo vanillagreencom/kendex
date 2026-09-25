@@ -4,16 +4,37 @@ Load from [oversee.md § Talking to a lane](../workflows/oversee.md#talking-to-a
 
 ## Wake refusals
 
-The rows are the wake's refusal reasons, plus the different silence `lanes state` reports under the same word. A Pi wake goes to the live session through pi-bridge and is never put to the judge, so no row refuses one.
+The rows are the wake's refusal reasons, plus the different silence `lanes state` reports under the same word. A local Pi wake goes to the live session through pi-bridge and is never put to the judge, so no row refuses one; a hosted Pi lane takes the `wake-invalid` row like any hosted lane.
 
 | Reason | What the judge read | How the lane is reached |
 |--------|---------------------|-------------------------|
-| `working` | A turn in flight, or a pane that cannot be read as anything else: a frame scrolled up its own history reads `working` while it stays there, and so does a lane streaming its last message. | Send, and a lane still taking tool calls reads it at the next one. Scroll the pane back to the bottom and read the state again; a refusal that stays is reached at the pane. |
+| `working` | A turn in flight, or a pane that cannot be read as anything else: a frame scrolled up its own history reads `working` while it stays there, and so does a lane streaming its last message. | Send, and a lane still taking tool calls reads it at the next one, and a turn in flight reads it at its end. For a lane already idle, scroll the pane back to the bottom and read the state again; a refusal that stays is [§ Mail the wake cannot deliver](#mail-the-wake-cannot-deliver). |
 | `asking` | A dialog is waiting on an answer. | Answer it by the harness column of [§ Per harness](#per-harness), not by mail. |
 | `walled` | The account is spent and the turn is over. | Reads no mail. Reach it at the pane, or relaunch after the reset its banner names. |
 | `exited` | Nothing is running under the pane. | Reads no mail. Relaunch it. |
-| `unjudged` from a wake | The process read gave no positive idle: a live Codex process, a harness process another user owns, a host with no `/proc` carrying a process named for that harness, or a limit-banner scan that failed. | The turn may already have ended, so mail may never arrive. Reach it at the pane. |
+| `wake-invalid` for a hosted lane | Nothing: the wake reaches no lane host, so it refuses every hosted lane before any judge runs. | [§ Mail the wake cannot deliver](#mail-the-wake-cannot-deliver). |
+| `unjudged` from a wake | The process read gave no positive idle: a live Codex process, a harness process another user owns, a host with no `/proc` carrying a process named for that harness, or a limit-banner scan that failed. | The turn may already have ended, so the lane reads nothing until its next turn starts: [§ Mail the wake cannot deliver](#mail-the-wake-cannot-deliver). |
 | `unjudged` from `lanes state` | No process is read at all. The pane settled nothing: no pane on this server carries the name, because the window closed or two windows share it, or the pane's screen carries no marker. | A closed window is relaunched under [oversee.md § Recovery relaunch](../workflows/oversee.md#recovery-relaunch). For a shared name, find the lane's own window before touching either: `tmux list-panes -a -F '#{window_name} #{pane_id} #{pane_current_path}'` prints both with their working directories, and the lane's is the one sitting in its worktree. Rename the other, with `tmux rename-window`. Renaming the lane's own leaves the name on no pane, which the next watch pass reads as `window-gone` and relaunches the item beside its live session, so make the check first. A markerless screen is read at the pane. |
+
+## Mail the wake cannot deliver
+
+Every lane the wake refuses while its session still runs takes this route, whatever its harness: `working`, `unjudged` from a wake, and a hosted lane's `wake-invalid`. The mail waits by default, and the lane reads it at the next point the Lane mail rule in [skill-rules.md § Coordination](skill-rules.md#coordination) names, a waiter's return included; a lane idle at its prompt reads nothing until its next turn starts. Mail that cannot wait ends the session by signal, then closes and relaunches the lane, never as a second session beside a running one:
+
+1. Stop the harness. A hosted lane takes `lane-host stop --item [ITEM] --harness [HARNESS]` and needs its `stopped item=[ITEM] processes=[COUNT]` line. A local lane takes the stop `lane-close` runs, `lane_stop_owned` from `scripts/lib/lane-state.sh`, a function the command below sources and calls, run from the lane's repository checkout:
+
+   ```bash
+   bash -c '. .agents/skills/orch/scripts/lib/lane-state.sh && lane_stop_owned "$1" "$2" && echo "stopped processes=$LANE_STOP_COUNT" || { echo "stop-failed cause=$LANE_STOP_CAUSE pid=$LANE_STOP_PID" >&2; exit 1; }' _ [WORKTREE] [HARNESS]
+   ```
+
+   Status 0 prints `stopped processes=[COUNT]`: every `[HARNESS]` process whose directory is `[WORKTREE]` has exited, and 0 means none was running. Status 1 prints `stop-failed cause=[CAUSE]`, the step that failed from that library's list above `lane_stop_owned`, or an empty cause where the library did not load, and the lane may still run.
+
+2. Wait for the lane's `lane-exited` event.
+
+3. Run `lane-close --keep-sandbox --state-dir [OVERSEE_STATE_DIR] [ITEM]`. It ends a local lane's validation runs, closes the window and records the lane `stopped`, keeping a hosted lane's sandbox.
+
+4. Relaunch under [oversee.md § Recovery relaunch](../workflows/oversee.md#recovery-relaunch).
+
+The relaunch carries its own continuation line, which tells the lane to read `lane-mail inbox`, except on a hosted Codex lane, which resumes with no line, reported as `resume-lineless`, and takes it as that section says. The stop interrupts any turn in flight, so it is never the default.
 
 ## Per harness
 
