@@ -196,29 +196,61 @@ awk '
   active { print }
   END { if (blocks != 1 || active) exit 1 }
 ' "$WATCH" > "$MD_TMP/follow.sh"
-printf 'a\nb\nc\n' > "$MD_TMP/watch.log"
 # Job control gives the follow its own process group, so one group kill ends
-# the tail and the loop together.
-set -m
-sh "$MD_TMP/follow.sh" "$MD_TMP/watch.log" 2 > "$MD_TMP/follow.out" 2>&1 < /dev/null &
-follow_pid=$!
-set +m
-follow_lines() { awk 'END { print NR }' "$MD_TMP/follow.out"; }
-for ((attempt=0; attempt<500; attempt++)); do
-  [ "$(follow_lines)" -lt 2 ] || break
-  sleep 0.01
-done
-printf ' d  e\n' >> "$MD_TMP/watch.log"
-for ((attempt=0; attempt<500; attempt++)); do
-  [ "$(follow_lines)" -lt 3 ] || break
-  sleep 0.01
-done
-kill -TERM -- "-$follow_pid" 2>/dev/null || true
-wait "$follow_pid" 2>/dev/null || true
-if [ "$(cat "$MD_TMP/follow.out")" = "$(printf '2: b\n3: c\n4:  d  e')" ]; then
+# the tail and the loop together. The kill waits for the lines it expects: a
+# job forked but not yet exec'd still runs this suite's EXIT trap on a TERM,
+# which removes MD_TMP. A follow.out not opened yet holds 0 lines, not an error.
+follow_lines() {
+  if [ -f "$MD_TMP/follow.out" ]; then awk 'END { print NR }' "$MD_TMP/follow.out"; else echo 0; fi
+}
+follow_lines_unguarded() { awk 'END { print NR }' "$MD_TMP/follow.out"; }
+# One follow, its lines counted by COUNTER. With DELAY, follow.out appears only
+# DELAY seconds after the job starts, as when a slow fork opens it late; that
+# job is `sh` from the start, so a kill never lands on a forked copy of this one.
+follow_run() { # COUNTER [DELAY]
+  local attempt
+  rm -f -- "${MD_TMP:?}/follow.out" "${MD_TMP:?}/follow.out.part"
+  printf 'a\nb\nc\n' > "$MD_TMP/watch.log"
+  set -m
+  if [ -z "${2:-}" ]; then
+    sh "$MD_TMP/follow.sh" "$MD_TMP/watch.log" 2 > "$MD_TMP/follow.out" 2>&1 < /dev/null &
+  else
+    sh -c 'sleep "$1"; ln -- "$2.part" "$2"; exec sh "$3" "$4" 2' _ "$2" "$MD_TMP/follow.out" \
+      "$MD_TMP/follow.sh" "$MD_TMP/watch.log" > "$MD_TMP/follow.out.part" 2>&1 < /dev/null &
+  fi
+  follow_pid=$!
+  set +m
+  for ((attempt=0; attempt<500; attempt++)); do
+    [ "$("$1")" -lt 2 ] || break
+    sleep 0.01
+  done
+  printf ' d  e\n' >> "$MD_TMP/watch.log"
+  for ((attempt=0; attempt<500; attempt++)); do
+    [ "$("$1")" -lt 3 ] || break
+    sleep 0.01
+  done
+  kill -TERM -- "-$follow_pid" 2>/dev/null || true
+  wait "$follow_pid" 2>/dev/null || true
+  FOLLOW_OUT="$(cat "$MD_TMP/follow.out" 2>/dev/null)" || FOLLOW_OUT=""
+}
+FOLLOW_WANT="$(printf '2: b\n3: c\n4:  d  e')"
+follow_run follow_lines
+if [ "$FOLLOW_OUT" = "$FOLLOW_WANT" ]; then
   pass "the follow numbers each line from its start line as it arrives"
 else
-  fail "the follow printed: $(cat "$MD_TMP/follow.out")"
+  fail "the follow printed: $FOLLOW_OUT"
+fi
+follow_run follow_lines 0.3
+if [ "$FOLLOW_OUT" = "$FOLLOW_WANT" ]; then
+  pass "the follow row waits for a follow.out opened late"
+else
+  fail "with follow.out opened late the follow printed: $FOLLOW_OUT"
+fi
+follow_run follow_lines_unguarded 0.3 2>/dev/null
+if [ -z "$FOLLOW_OUT" ]; then
+  pass "control: a count that errors on a missing follow.out stops waiting and reads nothing"
+else
+  fail "control: a count that errors on a missing follow.out still read: $FOLLOW_OUT"
 fi
 
 # --- The handoff shape ------------------------------------------------------
