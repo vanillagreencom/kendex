@@ -63,12 +63,15 @@ Overseer side:
               envelope after line N, skipping asks to-lane.jsonl answers.
               --receipts then prints `receipts cursor=<N> count=<complete
               lines> first=<id>` for to-lane.jsonl, N being the count
-              to-lane.cursor holds and never more than the lines listed, and
-              `<line> <id> <epoch>` for every to-lane.jsonl directive: its line
-              number, its id, and its `at` in epoch seconds, empty where `at`
-              does not parse. The cursor is the receipt: a directive on a line
-              at or below N is one the lane has read. A directive whose id is
-              outside the item alphabet is not listed
+              to-lane.cursor holds and never more than the lines listed, 0
+              where the lane has never read, or `missed` where the cursor
+              was not there beside the lock its reads leave: a read that
+              missed. Then `<line> <id> <epoch>` for every to-lane.jsonl
+              directive: its line number, its id, and its `at` in epoch
+              seconds, empty where `at` does not parse. The cursor is the
+              receipt: a directive on a line at or below N is one the lane
+              has read. A directive whose id is outside the item alphabet is
+              not listed
   pending --item ITEM
               print every to-overseer.jsonl ask with no answer: for a lane
               item, what a restarted overseer owes a reply; for `--item
@@ -565,11 +568,13 @@ lm_host_answers() {
 # Fetch REMOTE_PATH into DEST, empty when the mailbox does not exist yet. A
 # failed hosted read probes the host, so an unreachable one is refused rather
 # than reported as an empty mailbox.
-lm_fetch() { # REMOTE_PATH DEST
+LM_FETCH_ABSENT=0
+lm_fetch() { # REMOTE_PATH DEST — LM_FETCH_ABSENT 1 where the file was not there
   local rc=0
+  LM_FETCH_ABSENT=0
   : >"$2" || refuse write-failed "$2"
   if [ "$HOST" -eq 0 ]; then
-    [ -f "$1" ] || return 0
+    [ -f "$1" ] || { LM_FETCH_ABSENT=1; return 0; }
     cat -- "$1" >"$2" 2>"$WORK_DIR/read.err" \
       || refuse file-unreadable "$1" "$(cat -- "$WORK_DIR/read.err")"
     return 0
@@ -580,6 +585,7 @@ lm_fetch() { # REMOTE_PATH DEST
   [ "$rc" -eq 2 ] || refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/host.err")"
   # The host answers and the file is not there: a lane that has not opened its
   # mailbox. The failed read wrote whatever it managed; start from nothing.
+  LM_FETCH_ABSENT=1
   : >"$2" || refuse write-failed "$2"
 }
 
@@ -803,19 +809,21 @@ lm_cursor_write() { # COUNT
   mv -- "$WORK_DIR/cursor" "$CURSOR" || refuse write-failed "$CURSOR"
 }
 
-# The count to-lane.cursor holds, read through the route every other read of
-# this mailbox takes; a mailbox the lane never read counts 0. inbox calls it
-# under its lock; the readers that move no cursor take none, since the rename
-# above never shows them half a count.
+# The count to-lane.cursor holds, as SEEN, read through the route every other
+# read of this mailbox takes; a cursor that is not there counts 0, and
+# CURSOR_ABSENT says it was not there. inbox calls it under its lock; the
+# readers that move no cursor take none, since the rename above never shows
+# them half a count.
+SEEN=0
+CURSOR_ABSENT=0
 lm_cursor_read() {
-  local seen=""
   lm_fetch "$CURSOR" "$WORK_DIR/cursor.read"
-  seen="$(awk 'NR == 1 { print; exit }' <"$WORK_DIR/cursor.read")" || refuse file-unreadable "$CURSOR"
-  case "$seen" in
-    '') seen=0 ;;
+  CURSOR_ABSENT="$LM_FETCH_ABSENT"
+  SEEN="$(awk 'NR == 1 { print; exit }' <"$WORK_DIR/cursor.read")" || refuse file-unreadable "$CURSOR"
+  case "$SEEN" in
+    '') SEEN=0 ;;
     *[!0-9]*) refuse cursor-invalid "$CURSOR" ;;
   esac
-  printf '%s\n' "$seen"
 }
 
 lm_seconds() { # OPTION VALUE
@@ -949,7 +957,7 @@ case "$VERB" in
     exec 9>>"$CURSOR.lock"
     orch_take_lock 9 "$CURSOR.lock" 30 || refuse lock-failed "$CURSOR.lock"
     trap lm_cleanup EXIT
-    SEEN="$(lm_cursor_read)"
+    lm_cursor_read
     if [ -n "$ACK" ]; then
       # A halt stands until a plain read: the count stops at the line before
       # the first unread halt, whatever a hook that showed it acknowledges.
@@ -1009,7 +1017,7 @@ case "$VERB" in
     # and read between the file read and the cursor read is not taken as read
     # before it was listed.
     if [ "$VERB" = pending ] || [ "$RECEIPTS" -eq 1 ]; then
-      SEEN="$(lm_cursor_read)"
+      lm_cursor_read
       lm_directives "$WORK_DIR/lane.jsonl" >"$WORK_DIR/directives"
     fi
     if [ "$VERB" = pending ]; then
@@ -1018,6 +1026,14 @@ case "$VERB" in
     elif [ "$RECEIPTS" -eq 1 ]; then
       COUNT="$(lm_count "$WORK_DIR/lane.jsonl")"
       [ "$SEEN" -le "$COUNT" ] || SEEN="$COUNT"
+      # A cursor that is not there is one of two things, told apart here once:
+      # a lane that has never read, whose inbox has made neither the cursor
+      # nor its lock, or a read of it that missed, beside the lock every read
+      # the lane has made left behind.
+      if [ "$CURSOR_ABSENT" -eq 1 ]; then
+        lm_fetch "$CURSOR.lock" "$WORK_DIR/cursor.lock.read"
+        [ "$LM_FETCH_ABSENT" -eq 1 ] || SEEN=missed
+      fi
       HEADER="$(lm_header "$WORK_DIR/lane.jsonl")"
       printf 'receipts cursor=%s %s\n' "$SEEN" "$HEADER"
       jq -r "$LM_JQ_DEFS"'

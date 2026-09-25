@@ -230,7 +230,9 @@ mailbox last:
                              the receipt, whichever of the lane's read paths
                              moved it. A lane first watched is taken as
                              having read up to its cursor, reported for
-                             nothing already read
+                             nothing already read; a first read that missed,
+                             an empty to-lane.jsonl or a cursor lane-mail
+                             reports `missed`, seeds nothing
   EVENT directive-unread <item> <id> age=<seconds>
                              a directive the cursor has not passed is older
                              than ORCH_DIRECTIVE_UNREAD_SECS; reported once,
@@ -256,7 +258,9 @@ once; while it reads exited, or walled with a wall its own account confirms,
 no mailbox is read, so a successor finds what was sent in the meantime. A wall
 the account refutes, or one no judgement could settle, reads live: its mail
 is read, and the long pass starts no successor for it. Off tmux there is no
-such pane and the mail is read.
+such pane and the mail is read; a pane that cannot be read reads live too,
+except while a long pass is in flight, which may be closing it in a
+succession, and the mail waits for that pass to end.
 
 Every pane payload above is the lines that event's handling reads and no
 more, always taken from below the lane's last user turn and capped by
@@ -2086,6 +2090,9 @@ check_mail() {
   local mail_items host_flag args
   local state="$MAIL_SEEN"
   HOSTED_GONE_ITEMS=""
+  # This pass's failures alone, as HOSTED_GONE_ITEMS is this pass's: a long
+  # pass forked after it skips only the lanes whose read failed just now.
+  PASS_FAILED_ITEMS=""
   mail_items=(${ITEMS[@]+"${ITEMS[@]}"})
   mail_items+=(overseer)
   for item in "${mail_items[@]}"; do
@@ -2230,7 +2237,7 @@ check_mail() {
     [[ "$replaced" -eq 0 && "$count" -lt "$prior" ]] \
       || state="$(lane_row_set lane-mail "$state" "$cursor" "$count $first")"
     header="${receipts%%$'\n'*}"
-    [[ "$header" =~ ^receipts\ cursor=([0-9]+)\ count=([0-9]+)\ first=([A-Za-z0-9._-]*)$ ]] \
+    [[ "$header" =~ ^receipts\ cursor=([0-9]+|missed)\ count=([0-9]+)\ first=([A-Za-z0-9._-]*)$ ]] \
       || die mail-read-invalid "" "item=$item" "value=${header:-<empty>}"
     lane_read="${BASH_REMATCH[1]}"
     to_count="${BASH_REMATCH[2]}"
@@ -2242,14 +2249,22 @@ check_mail() {
     # The drain's rule for a mailbox holds here too: only one opening with
     # another envelope is a replacement, and starts both counts over; an empty
     # read, or a cursor reading lower than the one reported, is a read that
-    # missed, and this pass reports nothing and moves nothing.
+    # missed, and this pass reports nothing and moves nothing, as is a cursor
+    # lane-mail found `missed`. All are judged before a first row is seeded,
+    # so a missed read never becomes a baseline.
     if ! stored="$(lane_row_get directive "$state" "$cursor")"; then
       die state-read-failed "" "item=$item" "row=directive"
     fi
     read -r read_at unread_at seen <<<"$stored"
     missed=0
-    if ! [[ "$read_at" =~ ^[0-9]+$ && "$unread_at" =~ ^[0-9]+$ ]]; then
-      read_at="$lane_read"; unread_at=0
+    if [[ "$lane_read" == missed ]]; then
+      missed=1
+    elif ! [[ "$read_at" =~ ^[0-9]+$ && "$unread_at" =~ ^[0-9]+$ ]]; then
+      if [[ "$to_count" -eq 0 ]]; then
+        missed=1
+      else
+        read_at="$lane_read"; unread_at=0
+      fi
     elif [[ -n "$to_first" && -n "$seen" && "$to_first" != "$seen" ]]; then
       read_at=0; unread_at=0
     elif [[ "$to_count" -eq 0 || "$lane_read" -lt "$read_at" ]]; then
@@ -3584,14 +3599,20 @@ long_due() {
 # judgement an interval, as it does the long pass; a new banner, or an older
 # answer, is judged afresh with the memo cleared first. Off tmux, or with a
 # pane that cannot be read, nothing is judged and the mail is read, as the
-# long pass reads on.
+# long pass reads on, except while a long pass is in flight.
 OV_WALL_BANNER=""
 OV_WALL_AT=""
 OV_WALL_VERDICT=live
 overseer_down() {
   local pane="${TMUX_PANE:-}" banner=""
   [[ -n "${TMUX:-}" && -n "$pane" ]] || return 1
-  overseer_pane_read "$pane" || return 1
+  # A pane that cannot be read while a long pass is in flight may be one that
+  # pass's succession has just closed: the mail waits for that pass to end,
+  # which a successor leaves at exit 3 before any mailbox is read.
+  if ! overseer_pane_read "$pane"; then
+    [[ -n "$LONG_PID" ]]
+    return
+  fi
   if [[ "$OV_STATE" == walled ]]; then
     banner="$(lane_limit_banner "$(pane_below_last_turn "$OV_SCREEN")")" || banner=""
     if [[ -n "$OV_WALL_AT" && "$banner" == "$OV_WALL_BANNER" && $((PASS_NOW - OV_WALL_AT)) -lt "$INTERVAL" ]]; then

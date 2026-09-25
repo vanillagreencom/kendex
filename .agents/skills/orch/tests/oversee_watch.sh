@@ -967,6 +967,47 @@ PY
 handoff_flap "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "reports=$FLAP" "reports=1000" "control: with the stands read clearing nothing, the returning failure is silent"
 
+# A lane's mail read fails, stands into the next run, and lifts inside it; the
+# handoff it wrote is read by the long pass after the read that succeeded,
+# not skipped for the rest of the run for a failure the mail pass no longer
+# has.
+cat > "$TMP_ROOT/bin/lane-mail-flaky.sh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == drain ]]; then
+  n=$(( $(cat "$STUB_DIR/flaky.n" 2>/dev/null || echo 0) + 1 ))
+  printf '%s' "$n" > "$STUB_DIR/flaky.n"
+  if [[ -n "${FLAKY_ALWAYS:-}" || "$n" -le 1 ]]; then
+    printf 'lane-mail: lock-failed=/srv/box\nThe refusal.\n' >&2
+    exit 2
+  fi
+fi
+exec "$REAL_LANE_MAIL" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/lane-mail-flaky.sh"
+failure_lifts() { # [WATCH_BIN]
+  local -a flaky=(OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-flaky.sh"
+    REAL_LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail")
+  new_case "handoff_after_lift${1:+_mutant}"
+  handoff_record KEN-1
+  WATCH_BIN="${1:-}" run_watch "${flaky[@]}" FLAKY_ALWAYS=1 -- --item KEN-1 >/dev/null 2>&1 || true
+  unlink "$STUB_DIR/flaky.n"
+  LIFTED="$(WATCH_BIN="${1:-}" run_watch "${flaky[@]}" -- --item KEN-1 2>"$TMP_ROOT/e-lifted")" || true
+}
+failure_lifts
+assert_eq "$(head -1 <<<"$LIFTED")" "EVENT handoff KEN-1" \
+  "a lane whose standing mail failure lifts mid-run has its handoff read by the next long pass" "$TMP_ROOT/e-lifted"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = '  PASS_FAILED_ITEMS=""\n  mail_items='
+assert s.count(old) == 1, "failed-items reset mutant pattern"
+open(out, "w").write(s.replace(old, '  mail_items='))
+PY
+failure_lifts "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(head -1 <<<"$LIFTED")" "$HEARTBEAT" \
+  "control: failures kept for the whole run skip the lane's handoff until the heartbeat" "$TMP_ROOT/e-lifted"
+
 # The must-fail control: the clause widened to take a status in place of the
 # verdict, so an install older than the verb reads as "no record stands". The
 # row is then cleared and the lane that handed off is never reported.

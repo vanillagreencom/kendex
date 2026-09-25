@@ -1478,5 +1478,49 @@ banner_changes "$MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$CHANGED" "events=1 cursor=1 judged=2" \
   "control: the refuted banner's answer reused for the new wall hands the note to a walled harness" "$ERR"
 
+
+# The overseer's pane cannot be read while a long pass is in flight, as when
+# that pass's succession has just closed it: the mail waits for the pass to
+# end. The long pass holds its pr-watch open until a mail pass drains under
+# it, or three seconds pass, so a mail pass that ran is seen and one held is
+# not waited on forever.
+cat > "$TMP_ROOT/bin/pr-watch-hold.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'long start\n' >> "$STUB_DIR/order.log"
+waited=0
+until awk '$0 == "long start" { on = 1; next } on && /^drain/ { found = 1 } END { exit !found }' "$STUB_DIR/order.log" \
+  || [[ "$waited" -ge 30 ]]; do
+  waited=$((waited + 1)); sleep 0.1
+done
+printf 'long end\n' >> "$STUB_DIR/order.log"
+EOF
+chmod +x "$TMP_ROOT/bin/pr-watch-hold.sh"
+pane_gone_in_flight() { # [WATCH_BIN]
+  overseer_case "pane_gone_in_flight${1:+_mutant}" idle
+  state_with "$LINE"
+  # A repeat pass, which records no launch line, so the window read that fails
+  # is the pane reading's own.
+  touch "$STUB_DIR/window-id-fail-$PANE" "$STUB_DIR/repeat-child"
+  rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
+  mkdir -p "$CASE_REPO_ROOT/tmp/lane-mail/KEN-5"
+  : > "$STUB_DIR/order.log"
+  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" ORCH_WATCH_MAIL_INTERVAL=1 \
+    OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-hold.sh" \
+    OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-order.sh" REAL_LANE_MAIL="$REAL_LANE_MAIL" \
+    -- --max-loops 1 --item KEN-5
+  IN_FLIGHT="$(awk '$0 == "long start" { on = 1; next } $0 == "long end" { on = 0 } on && /^drain/ { n++ } END { print n + 0 }' "$STUB_DIR/order.log")"
+  LONGS="$(grep -c '^long end$' "$STUB_DIR/order.log" || :)"
+}
+pane_gone_in_flight
+assert_eq "longs=$LONGS drains-in-flight=$IN_FLIGHT" "longs=1 drains-in-flight=0" \
+  "an unreadable overseer pane holds the mail while a long pass is in flight" "$ERR"
+pmutate '  if ! overseer_pane_read "$pane"; then
+    [[ -n "$LONG_PID" ]]
+    return
+  fi' '  overseer_pane_read "$pane" || return 1' "reads the mail whenever the pane cannot be read"
+pane_gone_in_flight "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "drains-in-flight=$([[ "$IN_FLIGHT" -gt 0 ]] && echo some || echo 0)" "drains-in-flight=some" \
+  "control: read with the pane gone mid-pass, the mail goes to an overseer its own pass is closing" "$ERR"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
