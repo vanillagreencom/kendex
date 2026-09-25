@@ -15,7 +15,10 @@
 #
 # WHAT THE PAIR COVERS, stated once and pointed at rather than restated: the
 # process table and the cwd read. A row's precondition for those two becomes a
-# table written here, true at the instant the wake reads it.
+# table written here, true at the instant the wake reads it. A `ps -o stat=`
+# query, the state of one pid that a host without /proc reads through `ps`, is
+# not the table's to answer, since the table carries no state: the stub hands
+# it to the real `ps`.
 #
 # WHAT STILL REACHES THE HOST, so a row arranges it for itself:
 #
@@ -58,14 +61,17 @@
 # fail: rows staging a pid with no cwd entry would read `unjudged` for a reason
 # no row states.
 proc_table_install() { # DIR
-  local real_readlink
+  local real_readlink real_ps
   real_readlink="$(command -v readlink)" ||
     { printf 'proc-table: no-readlink\nreadlink is not on PATH, so the stub has no reader to defer to\n' >&2; return 1; }
+  real_ps="$(command -v ps)" ||
+    { printf 'proc-table: no-ps\nps is not on PATH, so the stub has no reader to defer a state query to\n' >&2; return 1; }
   mkdir -p "$1"
-  cat > "$1/ps" <<'PS_STUB'
-#!/usr/bin/env bash
-cat -- "${PROC_TABLE:?proc-table: PROC_TABLE names no file}"
-PS_STUB
+  {
+    printf '%s\n' '#!/usr/bin/env bash' 'for a in "$@"; do'
+    printf '  [[ "$a" != stat= ]] || exec "%s" "$@"\n' "$real_ps"
+    printf '%s\n' 'done' 'cat -- "${PROC_TABLE:?proc-table: PROC_TABLE names no file}"'
+  } > "$1/ps"
   cat > "$1/readlink" <<'READLINK_STUB'
 #!/usr/bin/env bash
 last=""

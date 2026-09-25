@@ -867,13 +867,14 @@ assert_eq "RC=$RC resumed=$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "RC=1 re
 assert_contains "$ERR" "open-terminal: wake-refused item=CC-1 reason=unjudged" \
   "a wake beside a session whose cwd cannot be read is refused as unjudged"
 # The mutant: a failed cwd read skips the process again. With no /proc the
-# wake is unjudged before any cwd is read, so the control has nothing to turn.
+# wake is unjudged wherever a harness process runs, whatever its cwd read
+# answers, so the control has nothing to turn.
 if proc_table_readable; then
   UNREAD_MUTANT_REPO="$TMP_ROOT/unread-mutant-repo"
   cp -a "$REPO" "$UNREAD_MUTANT_REPO"
   UNREAD_MUTANT="$UNREAD_MUTANT_REPO/scripts/open-terminal"
   UNREAD_MUTANT_LIB="$UNREAD_MUTANT_REPO/scripts/lib/lane-state.sh"
-  sed -i.bak 's/^      return 2$/      continue/' "$UNREAD_MUTANT_LIB"
+  sed -i.bak 's/^        return 2 ;;$/        continue ;;/' "$UNREAD_MUTANT_LIB"
   assert_eq "$(cmp -s "$SRC_LIB_DIR/lane-state.sh" "$UNREAD_MUTANT_LIB" && echo same || echo changed)" "changed" \
     "control: the unread-cwd mutant really skips the process"
   table_wake claude "$UNREAD_MUTANT"

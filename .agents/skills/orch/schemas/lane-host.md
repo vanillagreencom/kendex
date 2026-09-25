@@ -1,6 +1,6 @@
 # Lane host
 
-The `scripts/lane-host` command selects a provider from `ORCH_LANE_HOST`. `resolve` prints `local` when the setting is empty or unset. Any other value is an executable script path. Credentials do not select a provider. `open-terminal --host SPEC`, or this setting, launches a lane through `create`; `oversee-watch --hosted` reads a hosted lane's mailbox and workflow state through `cat` and closes the lane through `close`; `lane-mail --host` adds a line to a hosted mailbox through `append`.
+The `scripts/lane-host` command selects a provider from `ORCH_LANE_HOST`. `resolve` prints `local` when the setting is empty or unset. Any other value is an executable script path. Credentials do not select a provider. `open-terminal --host SPEC`, or this setting, launches a lane through `create`; `oversee-watch --hosted` reads a hosted lane's mailbox and workflow state through `cat` and closes the lane through `close`; `lane-mail --host` adds a line to a hosted mailbox through `append`; `lane-close` ends an idle hosted lane's harness through `stop`.
 
 ## Provider protocol
 

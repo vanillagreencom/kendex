@@ -2,12 +2,19 @@
 # lane-close resolves one recorded pane, refuses live lanes, and closes in order.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git -C "$TEST_DIR" rev-parse --show-toplevel)"
 mkdir -p "$PROJECT_ROOT/tmp"
 TMP_ROOT="$(mktemp -d "$PROJECT_ROOT/tmp/lane-close.XXXXXX")"
-trap 'rm -rf -- "$TMP_ROOT"' EXIT
+LANE_PIDS=""
+cleanup() {
+  local pid
+  for pid in $LANE_PIDS; do kill -KILL "$pid" 2>/dev/null || true; done
+  rm -rf -- "${TMP_ROOT:?}"
+}
+trap cleanup EXIT
 PASS=0
 FAIL=0
 
@@ -15,11 +22,17 @@ ok() { printf 'ok: %s\n' "$1"; PASS=$((PASS + 1)); }
 bad() { printf 'FAIL: %s\n  %s\n' "$1" "$2"; FAIL=$((FAIL + 1)); }
 assert_eq() { [[ "$1" == "$2" ]] && ok "$3" || bad "$3" "expected: $2 | got: $1"; }
 host_call_count() { awk 'END { print NR + 0 }' "$HOST_CALLS"; }
+close_call_count() { grep -c '^close ' "$HOST_CALLS" || true; }
+# The provider stop calls that name this harness, and the pane-writing tmux
+# verbs the close made. The stub fails every one of those verbs, so any count
+# above zero is a close that typed into a lane.
+stop_count() { grep -c -- "^stop --item $1 --harness $2 host=" "$HOST_CALLS" || true; }
+typed_count() { grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$CALLS" || true; }
 state_call_count() { awk -v p="$1" 'index($0, p) == 1 { c++ } END { print c + 0 }' "$STATE_CALLS"; }
 
 # The screens a lane is read from. Claude Code draws its composer as the
-# marker then U+00A0, draft or not; Codex's empty and drafted composers are the
-# byte-exact captures the watch suites already measure.
+# marker then U+00A0, draft or not; Codex's empty composer is the byte-exact
+# capture the watch suites already measure.
 CLAUDE_COMPOSER=$'\xe2\x9d\xaf\xc2\xa0'
 PANE_FIXTURES="$TEST_DIR/fixtures/oversee-watch"
 
@@ -68,6 +81,24 @@ chmod +x "$SCRIPTS/workflow-state"
 cat >"$SCRIPTS/lane-host" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$* host=$ORCH_LANE_HOST" >>"$LANE_CLOSE_HOST_CALLS"
+# stop is the provider signalling the lane's harness on its host: the harness
+# ends, and the pane falls back to the bare shell its window keeps, which the
+# lane judge reads as exited. LANE_CLOSE_NO_EXIT is a harness that outlives the
+# signal, LANE_CLOSE_STOP_STATUS a stop that fails and LANE_CLOSE_STOP_OUT
+# the answer it prints in place of the protocol's line.
+if [[ "$1" == stop ]]; then
+  if [[ "${LANE_CLOSE_STOP_STATUS:-0}" -ne 0 ]]; then
+    printf 'lane-host-ssh: stop-timeout item=%s\n' "$3" >&2
+    exit "$LANE_CLOSE_STOP_STATUS"
+  fi
+  if [[ "${LANE_CLOSE_NO_EXIT:-0}" != 1 ]]; then
+    printf 'exited\n' >"$LANE_CLOSE_PHASE"
+    awk -F'\t' 'BEGIN { OFS = "\t" } { $5 = "bash"; print }' "$LANE_CLOSE_ROWS" >"$LANE_CLOSE_ROWS.next"
+    mv -- "$LANE_CLOSE_ROWS.next" "$LANE_CLOSE_ROWS"
+  fi
+  printf '%s\n' "${LANE_CLOSE_STOP_OUT-stopped item=$3 processes=1}"
+  exit 0
+fi
 if [[ "${LANE_CLOSE_HOST_STATUS:-0}" -ne 0 ]]; then
   [[ "$LANE_CLOSE_HOST_STATUS" -ne 3 ]] || printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2
   exit "$LANE_CLOSE_HOST_STATUS"
@@ -129,14 +160,22 @@ cat >"$BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$LANE_CLOSE_TMUX_CALLS"
-# The harness leaving its pane: the screen goes blank and the pane process
-# falls back to the bare shell the window keeps, which is what the lane judge
-# reads as exited.
-lane_exit() {
+# A local lane's harness leaving its pane once its process has gone: the
+# screen goes blank and the pane process falls back to the bare shell the
+# window keeps, which is what the lane judge reads as exited. A zombie is gone.
+# The state is read from /proc, never through ps, which the local rows stub.
+harness_gone() {
+  local state
+  [[ -n "${LANE_CLOSE_LANE_PID:-}" ]] || return 1
+  source "$LANE_CLOSE_STATE_LIB"
+  state="$(lane_process_state "$LANE_CLOSE_LANE_PID")"
+  [[ -z "$state" || "$state" == Z ]]
+}
+if [[ "$(cat "$LANE_CLOSE_PHASE")" != exited ]] && harness_gone; then
   printf 'exited\n' >"$LANE_CLOSE_PHASE"
   awk -F'\t' 'BEGIN { OFS = "\t" } { $5 = "bash"; print }' "$LANE_CLOSE_ROWS" >"$LANE_CLOSE_ROWS.next"
   mv -- "$LANE_CLOSE_ROWS.next" "$LANE_CLOSE_ROWS"
-}
+fi
 case "$1" in
   list-panes)
     count=$(cat "$LANE_CLOSE_TMUX_LIST_COUNT" 2>/dev/null || echo 0)
@@ -155,32 +194,12 @@ case "$1" in
     [[ "${LANE_CLOSE_CAPTURE_FAIL_AT:-0}" != "$count" ]] || exit 9
     [[ "${LANE_CLOSE_CAPTURE_FAIL:-0}" == 0 ]] || exit "$LANE_CLOSE_CAPTURE_FAIL"
     case "$(cat "$LANE_CLOSE_PHASE")" in
-      dialog) printf 'Exit and stop tasks\n' ;;
       exited) printf '\n' ;;
       *) cat -- "$LANE_CLOSE_SCREEN" ;;
     esac ;;
-  display-message)
-    [[ "${LANE_CLOSE_MODE_FAIL:-0}" == 0 ]] || exit "$LANE_CLOSE_MODE_FAIL"
-    printf '%s\n' "${LANE_CLOSE_MODE:-0}" ;;
-  load-buffer) cp -- "$2" "$LANE_CLOSE_BUFFER" ;;
-  paste-buffer) ;;
-  send-keys)
-    if [[ "${*: -1}" == Enter ]]; then
-      if [[ "$(cat "$LANE_CLOSE_BUFFER" 2>/dev/null || true)" == /exit ]]; then
-        if [[ "$LANE_CLOSE_HARNESS" == claude ]]; then
-          # A Claude lane answers /exit one of three ways: the confirmation
-          # dialog, an immediate exit where no task is running, or nothing.
-          if [[ "${LANE_CLOSE_EXIT_NO_DIALOG:-0}" == 1 ]]; then lane_exit
-          elif [[ "${LANE_CLOSE_NO_DIALOG:-0}" != 1 ]]; then printf 'dialog\n' >"$LANE_CLOSE_PHASE"
-          fi
-        elif [[ "${LANE_CLOSE_NO_EXIT:-0}" != 1 ]]; then
-          lane_exit
-        fi
-        : >"$LANE_CLOSE_BUFFER"
-      elif [[ "$(cat "$LANE_CLOSE_PHASE")" == dialog && "${LANE_CLOSE_NO_EXIT:-0}" != 1 ]]; then
-        lane_exit
-      fi
-    fi ;;
+  # Every verb that writes into a pane fails, logged first, so a close that
+  # types anything is both a refusal and a line in the call log.
+  load-buffer|paste-buffer|send-keys) exit 97 ;;
   kill-window) : >"$LANE_CLOSE_ROWS" ;;
   *) exit 2 ;;
 esac
@@ -198,10 +217,13 @@ printf '%s\n' "${LANE_CLOSE_GITHUB_STATE:-CLOSED}"
 EOF
 chmod +x "$BIN/gh"
 
+# MAIL_ROOT is the lane's worktree as the record names it: a path on the host
+# for a hosted lane, and for a local lane the directory its harness runs in.
+MAIL_ROOT=/srv/worktree
 write_state() { # STATUS HARNESS HOST [TRACKER] [REPO] [WINDOW]
   jq -n --arg status "$1" --arg harness "$2" --arg host "$3" \
-    --arg tracker "${4:-linear}" --arg repo "${5:-}" --arg window "${6:-KEN-1}" \
-    '{lanes:[{item:(if $tracker == "github" then "issue-1" else "KEN-1" end),tracker:$tracker,repo:(if $repo == "" then null else $repo end),harness:$harness,window:$window,account:"/lane",host:(if $host == "" then null else $host end),mail_root:"/srv/worktree",surface:"tmux",model:"model",session_id:null,launched_at:"2026-09-20T00:00:00Z",status:$status}]}' >"$STATE"
+    --arg tracker "${4:-linear}" --arg repo "${5:-}" --arg window "${6:-KEN-1}" --arg root "$MAIL_ROOT" \
+    '{lanes:[{item:(if $tracker == "github" then "issue-1" else "KEN-1" end),tracker:$tracker,repo:(if $repo == "" then null else $repo end),harness:$harness,window:$window,account:"/lane",host:(if $host == "" then null else $host end),mail_root:$root,surface:"tmux",model:"model",session_id:null,launched_at:"2026-09-20T00:00:00Z",status:$status}]}' >"$STATE"
 }
 
 # A record as the launcher wrote it before it recorded the lane's tracker,
@@ -220,39 +242,54 @@ write_panes() { # COMMAND [DUPLICATE] [SESSION]
 }
 
 # The lane's screen. `claude_screen [TEXT]` draws Claude Code's composer with
-# TEXT after the marker: nothing, a draft, or the trailing blanks tmux pads the
-# drawn row with. `codex_screen [idle|draft]` is the measured Codex capture.
+# TEXT after the marker: nothing, or a draft nobody sent. `codex_screen` is the
+# measured Codex capture.
 claude_screen() { printf '%s%s\n' "$CLAUDE_COMPOSER" "${1:-}" >"$SCREEN"; }
-codex_screen() { cp -- "$PANE_FIXTURES/codex-composer-${1:-idle}.txt" "$SCREEN"; }
+codex_screen() { cp -- "$PANE_FIXTURES/codex-composer-idle.txt" "$SCREEN"; }
+
+# A local lane's harness: a real process, so the SIGTERM and its exit are
+# real, started detached so init reaps it rather than this shell holding it as
+# a zombie. LANE_PID is its pid, which the tmux stub reads as
+# LANE_CLOSE_LANE_PID. What the ownership read sees is staged, not the host's:
+# the shared stub pair (lib/process-table.sh) on LOCAL_PATH answers `ps` with a
+# table holding that one pid under the harness name and `readlink` with the
+# lane's worktree as its directory, so another user's session on this box is
+# never read and the read never races the child's exec. The tmux stub reads its
+# state from /proc and proc_state_after its exit, so these rows run where
+# proc_table_readable holds.
+LANE_ROOT="$TMP_ROOT/lane-worktree"
+HARNESS_BIN="$TMP_ROOT/harness-bin"
+PROC_BIN="$TMP_ROOT/proc-bin"
+mkdir -p "$LANE_ROOT" "$HARNESS_BIN"
+LANE_ROOT_REAL="$(cd -- "$LANE_ROOT" && pwd -P)"
+PROC_TABLE="$TMP_ROOT/proc-table"
+PROC_CWD_FILE="$TMP_ROOT/proc-cwd"
+export PROC_TABLE PROC_CWD_FILE
+LANE_CLOSE_STATE_LIB="$SCRIPTS/lib/lane-state.sh"
+export LANE_CLOSE_STATE_LIB
+proc_table_install "$PROC_BIN"
+LOCAL_PATH="$PROC_BIN:$PATH"
+LANE_PID=""
+start_local_harness() { # HARNESS
+  [[ -x "$HARNESS_BIN/$1" ]] || cp -- "$(command -v bash)" "$HARNESS_BIN/$1"
+  LANE_PID="$( (cd -- "$LANE_ROOT" && exec "$HARNESS_BIN/$1" -c 'trap "exit 0" TERM; while :; do sleep 0.1; done' \
+    </dev/null >/dev/null 2>&1 & printf '%s' "$!") )"
+  LANE_PIDS+=" $LANE_PID"
+  proc_table_write "$PROC_TABLE" "$LANE_PID 1 $1"
+  proc_cwd_write "$PROC_CWD_FILE" "$LANE_PID=$LANE_ROOT_REAL"
+}
 
 run_close() { # SCRIPT [ARGS...]
-  local script="$1" harness prev="" arg pane_cmd
+  local script="$1"
   shift
-  # The harness the stub imitates is the one this run closes with, resolved the
-  # way the script resolves it: the record's, and the --harness option only
-  # where the record carries none, in either spelling the parser takes.
-  harness="$(jq -r '.lanes[0].harness // empty' "$STATE")"
-  if [[ -z "$harness" ]]; then
-    for arg in "$@"; do
-      [[ "$prev" != --harness ]] || harness="$arg"
-      [[ "$arg" != --harness=* ]] || harness="${arg#--harness=}"
-      prev="$arg"
-    done
-  fi
-  # Last, the pane's own command, which is what the script derives a harness
-  # from where the record and the options both leave it empty.
-  if [[ -z "$harness" ]]; then
-    pane_cmd="$(awk -F'\t' 'NR == 1 { print $5 }' "$ROWS")"
-    case "$pane_cmd" in claude|codex) harness="$pane_cmd" ;; esac
-  fi
-  : >"$CALLS"; : >"$HOST_CALLS"; : >"$GH_CALLS"; : >"$STATE_CALLS"; : >"$MAIL_CALLS"; : >"$PHASE"; : >"$TMP_ROOT/buffer"; : >"$TMP_ROOT/list-count"; : >"$TMP_ROOT/capture-count"
+  : >"$CALLS"; : >"$HOST_CALLS"; : >"$GH_CALLS"; : >"$STATE_CALLS"; : >"$MAIL_CALLS"; : >"$PHASE"; : >"$TMP_ROOT/list-count"; : >"$TMP_ROOT/capture-count"
   set +e
   OUT="$(PATH="$BIN:$PATH" LANE_CLOSE_STATE="$STATE" LANE_CLOSE_ROWS="$ROWS" \
-    LANE_CLOSE_SCREEN="$SCREEN" LANE_CLOSE_PHASE="$PHASE" LANE_CLOSE_BUFFER="$TMP_ROOT/buffer" \
+    LANE_CLOSE_SCREEN="$SCREEN" LANE_CLOSE_PHASE="$PHASE" \
     LANE_CLOSE_TMUX_LIST_COUNT="$TMP_ROOT/list-count" LANE_CLOSE_CAPTURE_COUNT="$TMP_ROOT/capture-count" \
     LANE_CLOSE_TMUX_CALLS="$CALLS" LANE_CLOSE_HOST_CALLS="$HOST_CALLS" LANE_CLOSE_GH_CALLS="$GH_CALLS" \
     LANE_CLOSE_STATE_CALLS="$STATE_CALLS" LANE_CLOSE_MAIL_CALLS="$MAIL_CALLS" \
-    LANE_CLOSE_HARNESS="$harness" ORCH_LANE_CLOSE_SECS=1 \
+    LANE_CLOSE_LANE_PID="${LANE_CLOSE_LANE_PID:-}" ORCH_LANE_CLOSE_SECS=1 \
     "$script" "$@" "$(jq -r '.lanes[0].item' "$STATE")" 2>"$TMP_ROOT/err")"
   RC=$?
   set -e
@@ -278,6 +315,57 @@ PY
 }
 
 SCRIPT="$SCRIPTS/lane-close"
+
+# What lives in lib/lane-state.sh takes a fixture tree of its own: the same
+# lane-close and stubs over one changed library. OLD is replaced by NEW where
+# OLD is given, and APPEND, where given, is added at the end, where it
+# redefines a function the library defined above it.
+lib_mutant() { # NAME OLD NEW [APPEND]
+  local name="$1" old="$2" new="$3" dir
+  dir="$TMP_ROOT/libmut-$name"
+  mkdir -p "$dir/skills/orch/scripts/lib" "$dir/skills/linear/scripts"
+  cp "$SCRIPTS/lane-close" "$SCRIPTS/workflow-state" "$SCRIPTS/lane-host" "$SCRIPTS/lane-mail" \
+    "$SCRIPTS/dev-validate-run" "$dir/skills/orch/scripts/"
+  cp "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
+  python3 - "$SCRIPTS/lib/lane-state.sh" "$dir/skills/orch/scripts/lib/lane-state.sh" "$old" "$new" "${4:-}" <<'MUTPY'
+import pathlib, sys
+source, target, old, new, append = sys.argv[1:]
+text = pathlib.Path(source).read_text()
+if old:
+    if text.count(old) != 1:
+        raise SystemExit(f"mutation match count={text.count(old)} old={old!r}")
+    text = text.replace(old, new)
+if append:
+    text += "\n" + append + "\n"
+pathlib.Path(target).write_text(text)
+MUTPY
+  chmod +x "$dir/skills/orch/scripts/lane-close" "$dir/skills/orch/scripts/workflow-state" \
+    "$dir/skills/orch/scripts/lane-host" "$dir/skills/orch/scripts/lane-mail" \
+    "$dir/skills/orch/scripts/dev-validate-run" "$dir/skills/linear/scripts/linear.sh"
+  printf '%s\n' "$dir/skills/orch/scripts/lane-close"
+}
+
+# A host without /proc, macOS among them, reads a process's directory through
+# lsof. NOPROC is lane-close over a library that says this host has no /proc,
+# and the lsof on NOPROC_PATH answers as lsof does, from the directory the
+# staged readlink holds, so the local rows run under both readers.
+NO_PROC='lane_proc_readable() { return 1; }'
+NOPROC="$(lib_mutant no-proc '' '' "$NO_PROC")"
+if proc_table_readable; then
+  mkdir -p "$TMP_ROOT/lsof-bin"
+  cat >"$TMP_ROOT/lsof-bin/lsof" <<'EOF'
+#!/usr/bin/env bash
+pid=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == -p ]]; then pid="$2"; shift; fi
+  shift
+done
+cwd="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)" || exit 1
+printf 'p%s\nfcwd\nn%s\n' "$pid" "$cwd"
+EOF
+  chmod +x "$TMP_ROOT/lsof-bin/lsof"
+  NOPROC_PATH="$TMP_ROOT/lsof-bin:$LOCAL_PATH"
+fi
 
 echo '=== lane-close refuses ambiguous and live panes ==='
 write_state running claude /host
@@ -352,23 +440,104 @@ LANE_CLOSE_HOST_STATUS=3 run_close "$SCRIPT"
 assert_eq "rc=$RC refusal=$(grep -c '^lane-host-ssh: close-refused path=/srv/clone$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=3 refusal=1 kill=0 status=running' 'lane-host exit 3 reaches the caller unchanged and kills nothing'
 
-echo '=== idle harnesses exit through their own pane ==='
-for harness in claude codex; do
+echo '=== an idle harness ends by signal, nothing typed into its pane ==='
+# HARNESS|DRAFT: a draft in the composer no longer stands in the way, since
+# nothing is typed for it to be sent with.
+for row in 'claude|' 'codex|' 'pi|' 'claude|finish this later'; do
+  IFS='|' read -r harness draft <<<"$row"
   write_state running "$harness" /host
   write_panes python
-  if [[ "$harness" == claude ]]; then claude_screen; else codex_screen; fi
+  if [[ "$harness" == codex ]]; then codex_screen; else claude_screen "$draft"; fi
   run_close "$SCRIPT"
-  assert_eq "rc=$RC pasted=$(grep -c '^paste-buffer -p -d -t %7$' "$CALLS" || true) enters=$(grep -c '^send-keys -t %7 Enter$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
-    "rc=0 pasted=1 enters=$([[ "$harness" == claude ]] && echo 2 || echo 1) status=done" "$harness exits before close-out"
+  assert_eq "rc=$RC stop=$(stop_count KEN-1 "$harness") typed=$(typed_count) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=0 stop=1 typed=0 kill=1 close=1 status=done' "a hosted $harness lane${draft:+ whose composer holds a draft} is stopped by its provider, then closed"
 done
+
+# A local lane: the same stop, run here against the worktree its record names,
+# ends the harness process itself, under both directory readers.
+if proc_table_readable; then
+  for reader_row in "proc|$SCRIPT|$LOCAL_PATH" "lsof|$NOPROC|$NOPROC_PATH"; do
+    IFS='|' read -r reader reader_script reader_path <<<"$reader_row"
+    for harness in claude codex pi; do
+      MAIL_ROOT="$LANE_ROOT" write_state running "$harness" ""
+      write_panes python; claude_screen
+      start_local_harness "$harness"
+      PATH="$reader_path" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$reader_script"
+      assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") typed=$(typed_count) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+        'rc=0 lane=gone typed=0 host=0 status=done' "a local $harness lane is stopped by SIGTERM to its own process, its directory read through $reader"
+    done
+  done
+  MUTANT="$(mutant local-stop '    if ! lane_stop_owned "$mail_root" "$harness"; then' '    if ! lane_stop_owned "$mail_root" none; then')"
+  MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+  start_local_harness claude
+  PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
+  assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=claude pane=%7 processes=0$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 timeout=1 lane=alive status=running' 'control: a stop that looks for another harness name signals nothing and the lane outlives the wait'
+  kill -KILL "$LANE_PID" 2>/dev/null || true
+
+  # The lsof reader is what answers without /proc: an answer it cannot parse is
+  # a live harness whose directory nothing read, and the close refuses.
+  MUTANT="$(lib_mutant lsof-parse "'/^n/ { print substr(\$0, 2); exit }'" "'/^x/ { print substr(\$0, 2); exit }'" "$NO_PROC")"
+  MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+  start_local_harness claude
+  PATH="$NOPROC_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
+  assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=process-read-failed$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID")" \
+    'rc=1 failed=1 lane=alive' 'control: an lsof answer the reader cannot parse leaves the harness unread and the close refuses'
+  kill -KILL "$LANE_PID" 2>/dev/null || true
+
+  # A host with no directory reader at all refuses under its own cause, never
+  # as a failed process read.
+  MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+  start_local_harness claude
+  MUTANT="$(lib_mutant reader-missing '' '' 'lane_process_cwd() { return 3; }')"
+  PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
+  assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=cwd-reader-missing$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 failed=1 lane=alive status=running' 'a host with neither /proc nor lsof refuses the local stop as cwd-reader-missing'
+  MUTANT="$(lib_mutant reader-missing-cause '    3) LANE_STOP_CAUSE=cwd-reader-missing; return 1 ;;
+' '' 'lane_process_cwd() { return 3; }')"
+  PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
+  assert_eq "missing=$(grep -c ' cause=cwd-reader-missing$' <<<"$ERR" || true) read=$(grep -c ' cause=process-read-failed$' <<<"$ERR" || true)" \
+    'missing=0 read=1' 'control: without its own cause a host lacking any directory reader is blamed on the process read'
+  kill -KILL "$LANE_PID" 2>/dev/null || true
+
+  # A local stop that fails on one process names it: a signal refused to a
+  # harness that is still live.
+  MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+  start_local_harness claude
+  MUTANT="$(lib_mutant signal-refused '' '' 'kill() { return 1; }')"
+  PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$MUTANT"
+  assert_eq "rc=$RC failed=$(grep -c "^lane-close: stop-failed item=KEN-1 harness=claude pid=$LANE_PID cause=signal-refused\$" <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 failed=1 lane=alive status=running' 'a local stop refused on one process names that process'
+  kill -KILL "$LANE_PID" 2>/dev/null || true
+else
+  printf '  skip  the local lane rows stage their process read through procfs\n'
+fi
+
+# A local stop that cannot run refuses, naming the step, rather than waiting
+# the lane out: a record whose worktree is not on this machine resolves none.
+write_state running claude ""; write_panes python; claude_screen
+run_close "$SCRIPT"
+assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=worktree-read-failed$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 failed=1 kill=0 status=running' 'a local stop that cannot resolve the worktree refuses and keeps the window'
+
+echo '=== a failed stop keeps the lane and its record ==='
+write_state running codex /host; write_panes python; codex_screen
+LANE_CLOSE_STOP_STATUS=4 run_close "$SCRIPT"
+assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=codex cause=provider status=4$' <<<"$ERR" || true) relay=$(grep -c '^lane-host-ssh: stop-timeout item=KEN-1$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 failed=1 relay=1 kill=0 close=0 status=running' 'a provider stop that fails refuses, relaying its words, and closes nothing'
+
+write_state running codex /host; write_panes python; codex_screen
+LANE_CLOSE_STOP_OUT='' run_close "$SCRIPT"
+assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=codex cause=answer-unparsed$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 failed=1 kill=0 status=running' 'a provider stop that prints no stopped line refuses as unparsed'
 
 echo '=== --keep-sandbox leaves a stopped record for later close ==='
 write_state running codex /host
 write_panes python
 codex_screen
 run_close "$SCRIPT" --keep-sandbox
-assert_eq "rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE") kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true)" \
-  'rc=0 host=0 status=stopped kill=1' 'keep-sandbox exits the lane, removes its window and records stopped'
+assert_eq "rc=$RC stop=$(stop_count KEN-1 codex) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE") kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true)" \
+  'rc=0 stop=1 close=0 status=stopped kill=1' 'keep-sandbox stops the harness, removes its window and records stopped'
 run_close "$SCRIPT"
 assert_eq "rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=0 host=1 status=done' 'a later close removes the kept sandbox without requiring its former pane'
@@ -376,7 +545,7 @@ assert_eq "rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$ST
 echo '=== tracker terminal routes close idle work ==='
 for row in 'linear|Done|completed' 'linear|Abandoned|canceled' 'github|CLOSED|'; do
   IFS='|' read -r tracker tracker_state tracker_type <<<"$row"
-  write_state running claude "" "$tracker" 'owner/repo'; write_panes python; claude_screen
+  write_state running claude /host "$tracker" 'owner/repo'; write_panes python; claude_screen
   if [[ "$tracker" == linear ]]; then
     LANE_CLOSE_TRACKER_STATE="$tracker_state" LANE_CLOSE_TRACKER_STATE_TYPE="$tracker_type" run_close "$SCRIPT"
   else LANE_CLOSE_GITHUB_STATE="$tracker_state" run_close "$SCRIPT"; fi
@@ -408,16 +577,20 @@ assert_eq "rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$ST
 
 write_legacy_state running /host; write_panes python; claude_screen
 run_close "$SCRIPT" --harness claude --tracker linear
-assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") pasted=$(grep -c '^paste-buffer -p -d -t %7$' "$CALLS" || true)" \
-  'rc=0 status=done pasted=1' 'launch options supply the identity an idle legacy record lacks'
+assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") stop=$(stop_count KEN-1 claude)" \
+  'rc=0 status=done stop=1' 'launch options supply the identity an idle legacy record lacks'
 
 # The two fields the record can answer for itself once it is read rather than
 # asked for: the item key names the tracker, and the pane names the harness it
-# is running. With both, a pre-record lane closes on its item alone.
-write_legacy_state running /host; write_panes claude; claude_screen
-run_close "$SCRIPT"
-assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") pasted=$(grep -c '^paste-buffer -p -d -t %7$' "$CALLS" || true) enters=$(grep -c '^send-keys -t %7 Enter$' "$CALLS" || true)" \
-  'rc=0 status=done pasted=1 enters=2' 'an idle legacy record closes on its item alone, the claude route read off its pane'
+# is running. With both, a pre-record lane closes on its item alone, one row
+# per harness the pane can name.
+for harness in claude codex pi; do
+  write_legacy_state running /host; write_panes "$harness"
+  if [[ "$harness" == codex ]]; then codex_screen; else claude_screen; fi
+  run_close "$SCRIPT"
+  assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") stop=$(stop_count KEN-1 "$harness")" \
+    'rc=0 status=done stop=1' "an idle legacy record closes on its item alone, the $harness harness read off its pane"
+done
 
 # issue-N is what open-terminal keys a GitHub lane by AND what a Linear lane is
 # keyed by wherever GH_ISSUE_PATTERN accepts that spelling, so the key picks no
@@ -435,14 +608,13 @@ assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") gh=$(grep -c '^iss
   'rc=0 status=done gh=1' 'the same legacy issue-N record closes once --tracker and --repo name the lane'
 
 # A supplied value stands against the pane, and against the item key. Each row
-# pins the route by a refusal only that route reaches: a harness that never
-# exits is exit-timeout on the codex route and exit-dialog-missing on the
-# claude one, and a github tracker on a KEN-1 key has no reader where linear
-# has a passing one.
+# pins the value by where it lands: the harness in the stop the provider is
+# asked for, and a github tracker on a KEN-1 key in a refusal the linear reader
+# never reaches.
 write_legacy_state running /host; write_panes claude; claude_screen
-LANE_CLOSE_NO_EXIT=1 run_close "$SCRIPT" --harness codex
-assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=codex pane=%7$' <<<"$ERR" || true) dialog=$(grep -c '^lane-close: exit-dialog-missing ' <<<"$ERR" || true)" \
-  'rc=1 timeout=1 dialog=0' 'a supplied harness beats the pane the derivation would have read'
+run_close "$SCRIPT" --harness codex
+assert_eq "rc=$RC codex=$(stop_count KEN-1 codex) claude=$(stop_count KEN-1 claude)" \
+  'rc=0 codex=1 claude=0' 'a supplied harness beats the pane the derivation would have read'
 
 write_legacy_state running /host; write_panes claude; claude_screen
 run_close "$SCRIPT" --tracker github
@@ -467,15 +639,10 @@ for spelling in space equals; do
     'rc=0 status=done gh=1' "a legacy GitHub record closes through its $spelling options and the repository reaches gh"
 done
 
-write_state running claude /host; write_panes python; claude_screen '   '
-run_close "$SCRIPT"
-assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") pasted=$(grep -c '^paste-buffer -p -d -t %7$' "$CALLS" || true)" \
-  'rc=0 status=done pasted=1' 'a composer row tmux padded with trailing blanks closes like the unpadded one'
-
 write_state running claude /host; write_panes python; claude_screen
 run_close "$SCRIPT" --harness codex
-assert_eq "rc=$RC invalid=$(grep -c '^lane-close: record-invalid item=KEN-1 field=harness recorded=claude option=codex$' <<<"$ERR" || true) typed=$(grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$CALLS" || true)" \
-  'rc=1 invalid=1 typed=0' 'an option contradicting a recorded field refuses record-invalid and types nothing'
+assert_eq "rc=$RC invalid=$(grep -c '^lane-close: record-invalid item=KEN-1 field=harness recorded=claude option=codex$' <<<"$ERR" || true) host=$(host_call_count)" \
+  'rc=1 invalid=1 host=0' 'an option contradicting a recorded field refuses record-invalid and stops nothing'
 
 # The invocation oversee.md section 4 documents for the automatic close. Both
 # reads of the fleet state are made through it, so a value lost anywhere
@@ -492,58 +659,37 @@ for spelling in space equals; do
     'rc=0 status=done get=1 update=1' "the $spelling spelling carries the fleet state directory into the read and the write"
 done
 
-echo '=== a composer holding a draft is never typed into ==='
-write_state running claude /host; write_panes python; claude_screen 'finish this later'
-run_close "$SCRIPT"
-assert_eq "rc=$RC draft=$(grep -c '^lane-close: composer-draft item=KEN-1 pane=%7 harness=claude$' <<<"$ERR" || true) typed=$(grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 draft=1 typed=0 status=running' 'a drafted Claude composer refuses and types nothing'
-
-write_state running codex /host; write_panes python; codex_screen draft
-run_close "$SCRIPT"
-assert_eq "rc=$RC draft=$(grep -c '^lane-close: composer-draft item=KEN-1 pane=%7 harness=codex$' <<<"$ERR" || true) typed=$(grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$CALLS" || true)" \
-  'rc=1 draft=1 typed=0' 'a drafted Codex composer refuses and types nothing'
-
-write_state running claude /host; write_panes python; printf '\xe2\x9d\xaf hello\n' >"$SCREEN"
-run_close "$SCRIPT"
-assert_eq "rc=$RC unreadable=$(grep -c '^lane-close: composer-unreadable item=KEN-1 pane=%7 harness=claude$' <<<"$ERR" || true) typed=$(grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$CALLS" || true)" \
-  'rc=1 unreadable=1 typed=0' 'a live input line matching neither composer refuses rather than guess'
-
-# The dialog answer keeps the confirming keystroke it always had, pinned by the
-# `claude exits before close-out` row above at enters=2 and by the dialog
-# mutant below. These rows are the other answer and the two reads of one pass.
-echo '=== the exit wait reads both answers to /exit ==='
+echo '=== the exit wait reads the pane after the stop ==='
 write_state running claude /host; write_panes python; claude_screen
-LANE_CLOSE_EXIT_NO_DIALOG=1 run_close "$SCRIPT"
-assert_eq "rc=$RC enters=$(grep -c '^send-keys -t %7 Enter$' "$CALLS" || true) dialog=$(grep -c '^lane-close: exit-dialog-missing ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE") kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true)" \
-  'rc=0 enters=1 dialog=0 status=done kill=1' 'a claude harness that exits with no dialog closes in this call and confirms nothing'
+LANE_CLOSE_NO_EXIT=1 LANE_CLOSE_TMUX_LIST_FAIL_AT=2 run_close "$SCRIPT"
+assert_eq "rc=$RC read=$(grep -c '^lane-close: pane-read-failed item=KEN-1 pane=%7$' <<<"$ERR" || true) timeout=$(grep -c '^lane-close: exit-timeout ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 read=1 timeout=0 status=running' 'a pane probe that fails inside the exit wait refuses rather than waiting the lane out'
 
 write_state running claude /host; write_panes python; claude_screen
-LANE_CLOSE_NO_DIALOG=1 LANE_CLOSE_TMUX_LIST_FAIL_AT=2 run_close "$SCRIPT"
-assert_eq "rc=$RC read=$(grep -c '^lane-close: pane-read-failed item=KEN-1 pane=%7$' <<<"$ERR" || true) dialog=$(grep -c '^lane-close: exit-dialog-missing ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 read=1 dialog=0 status=running' 'a pane probe that fails inside the dialog wait refuses rather than waiting the lane out'
-
-write_state running claude /host; write_panes python; claude_screen
-LANE_CLOSE_NO_DIALOG=1 LANE_CLOSE_CAPTURE_FAIL_AT=2 run_close "$SCRIPT"
-assert_eq "rc=$RC read=$(grep -c '^lane-close: pane-read-failed item=KEN-1 pane=%7$' <<<"$ERR" || true) dialog=$(grep -c '^lane-close: exit-dialog-missing ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 read=1 dialog=0 status=running' 'a screen capture that fails inside the dialog wait refuses as the read it was'
+LANE_CLOSE_NO_EXIT=1 LANE_CLOSE_CAPTURE_FAIL_AT=2 run_close "$SCRIPT"
+assert_eq "rc=$RC read=$(grep -c '^lane-close: pane-read-failed item=KEN-1 pane=%7$' <<<"$ERR" || true) timeout=$(grep -c '^lane-close: exit-timeout ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 read=1 timeout=0 status=running' 'a screen capture that fails inside the exit wait refuses as the read it was'
 
 echo '=== a lane holding an unanswered ask is never closed ==='
 ASK="$(pending_ask 3600)"
 ASK_ID="$(jq -r .id <<<"$ASK")"
 write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_MAIL_PENDING="$ASK" run_close "$SCRIPT"
-assert_eq "rc=$RC ask=$(grep -cE "^lane-close: ask-unanswered item=KEN-1 ask=$ASK_ID age=360[0-9]s count=1\$" <<<"$ERR" || true) hosted=$(grep -c -- '^pending --item KEN-1 --root /srv/worktree --host host=/host$' "$MAIL_CALLS" || true) typed=$(grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 ask=1 hosted=1 typed=0 status=running' 'an idle lane whose ask nobody answered refuses, naming the ask and its wait, and types nothing'
+assert_eq "rc=$RC ask=$(grep -cE "^lane-close: ask-unanswered item=KEN-1 ask=$ASK_ID age=360[0-9]s count=1\$" <<<"$ERR" || true) hosted=$(grep -c -- '^pending --item KEN-1 --root /srv/worktree --host host=/host$' "$MAIL_CALLS" || true) stop=$(stop_count KEN-1 claude) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 ask=1 hosted=1 stop=0 status=running' 'an idle lane whose ask nobody answered refuses, naming the ask and its wait, and stops nothing'
 
-write_state running claude ""; write_panes python; claude_screen
-run_close "$SCRIPT"
-assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") local=$(grep -c -- '^pending --item KEN-1 --root /srv/worktree host=$' "$MAIL_CALLS" || true)" \
-  'rc=0 status=done local=1' 'the same lane closes once the answer lands, a local mailbox read on this disk'
+if proc_table_readable; then
+  MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+  start_local_harness claude
+  PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$SCRIPT"
+  assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") local=$(grep -c -- "^pending --item KEN-1 --root $LANE_ROOT host=\$" "$MAIL_CALLS" || true)" \
+    'rc=0 status=done local=1' 'the same lane closes once the answer lands, a local mailbox read on this disk'
+fi
 
 write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_MAIL_STATUS=2 run_close "$SCRIPT"
-assert_eq "rc=$RC failed=$(grep -c '^lane-close: mail-read-failed item=KEN-1 root=/srv/worktree status=2$' <<<"$ERR" || true) relay=$(grep -c '^lane-mail: mail-read-failed=/srv/worktree$' <<<"$ERR" || true) typed=$(grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$CALLS" || true)" \
-  'rc=1 failed=1 relay=1 typed=0' 'a mailbox that cannot be read refuses under its own key and types nothing'
+assert_eq "rc=$RC failed=$(grep -c '^lane-close: mail-read-failed item=KEN-1 root=/srv/worktree status=2$' <<<"$ERR" || true) relay=$(grep -c '^lane-mail: mail-read-failed=/srv/worktree$' <<<"$ERR" || true) stop=$(stop_count KEN-1 claude)" \
+  'rc=1 failed=1 relay=1 stop=0' 'a mailbox that cannot be read refuses under its own key and stops nothing'
 
 write_state running codex /host; write_panes python; codex_screen
 LANE_CLOSE_MAIL_PENDING="$ASK" run_close "$SCRIPT" --keep-sandbox
@@ -643,13 +789,13 @@ run_boundary() { # RULE SCRIPT
     local-host) write_state running claude ""; write_panes bash; printf '\n' >"$SCREEN"; run_close "$script"
       RESULT="rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" ;;
     linear-open|github-open)
-      tracker="${rule%-open}"; write_state running claude "" "$tracker" 'owner/repo'; write_panes python; claude_screen
+      tracker="${rule%-open}"; write_state running claude /host "$tracker" 'owner/repo'; write_panes python; claude_screen
       if [[ "$tracker" == linear ]]; then
         LANE_CLOSE_TRACKER_STATE='In Review' LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$script"
       else LANE_CLOSE_GITHUB_STATE=OPEN run_close "$script"; fi
       RESULT="rc=$RC live=$(grep -c '^lane-close: lane-live .* state=idle pane=%7$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" ;;
     linear-renamed)
-      write_state running claude "" linear 'owner/repo'; write_panes python; claude_screen
+      write_state running claude /host linear 'owner/repo'; write_panes python; claude_screen
       LANE_CLOSE_TRACKER_STATE=Shipped LANE_CLOSE_TRACKER_STATE_TYPE=completed run_close "$script"
       RESULT="rc=$RC live=$(grep -c '^lane-close: lane-live .* state=idle pane=%7$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" ;;
     capture-read) write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; LANE_CLOSE_CAPTURE_FAIL=9 run_close "$script"
@@ -700,30 +846,16 @@ write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; run_close 
 assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true) host=$(host_call_count)" \
   'rc=1 missing=1 host=0' 'a missing recorded pane refuses before provider close'
 
-write_state running pi /host; write_panes python; claude_screen; run_close "$SCRIPT"
-assert_eq "rc=$RC unsupported=$(grep -c '^lane-close: harness-unsupported ' <<<"$ERR" || true) host=$(host_call_count)" \
-  'rc=1 unsupported=1 host=0' 'a harness with no close path refuses before provider close'
-
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"
 LANE_CLOSE_TMUX_LIST_FAIL_AT=1 run_close "$SCRIPT"
 assert_eq "rc=$RC read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true) host=$(host_call_count)" \
   'rc=1 read=1 host=0' 'an initial tmux pane read failure closes nothing'
 
-write_state running codex /host; write_panes python; codex_screen
-LANE_CLOSE_MODE_FAIL=7 run_close "$SCRIPT"
-assert_eq "rc=$RC tmux=$(grep -c '^lane-close: tmux-failed .* operation=submit-exit' <<<"$ERR" || true) host=$(host_call_count)" \
-  'rc=1 tmux=1 host=0' 'a tmux mode read failure submits nothing and closes nothing'
-
 echo '=== exit and finalization failures keep the record nonterminal ==='
 write_state running claude /host; write_panes python; claude_screen
-LANE_CLOSE_NO_DIALOG=1 run_close "$SCRIPT"
-assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-dialog-missing ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 timeout=1 status=running' 'Claude must show its exit dialog before confirmation'
-
-write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_NO_EXIT=1 run_close "$SCRIPT"
-assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 timeout=1 status=running' 'a harness that does not exit before the bound keeps its record running'
+assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=claude pane=%7 processes=1$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 timeout=1 kill=0 status=running' 'a pane that outlives the stop keeps its window and its record running'
 
 write_state stopped claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"
 LANE_CLOSE_HOST_STATUS=9 run_close "$SCRIPT"
@@ -777,23 +909,49 @@ MUTANT="$(mutant missing '[[ -n "$RESOLVED_PANE" ]] || { message pane-missing "i
 write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true) live=$(grep -c '^lane-close: lane-live .* state=unjudged ' <<<"$ERR" || true)" \
   'missing=0 live=1' 'control: removing the missing-pane guard loses its required refusal reason'
-MUTANT="$(mutant harness '[[ "$harness" == claude || "$harness" == codex ]] \' '[[ "$harness" == claude || "$harness" == codex || "$harness" == pi ]] \')"
+MUTANT="$(mutant harness '    *) message harness-unsupported "item=$ITEM" "harness=${harness:-unknown}" >&2; exit 1 ;;' '    *) ;;')"
+write_legacy_state running /host; write_panes python; claude_screen; run_close "$MUTANT" --tracker linear
+assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true) unnamed=$(grep -c -- '^stop --item KEN-1 --harness  host=' "$HOST_CALLS" || true)" 'rc=0 closed=1 unnamed=1' \
+  'control: accepting a lane with no harness asks the provider to stop a harness nobody named'
+MUTANT="$(mutant harness-pi '    claude|codex|pi) ;;' '    claude|codex) ;;')"
 write_state running pi /host; write_panes python; claude_screen; run_close "$MUTANT"
+assert_eq "rc=$RC unsupported=$(grep -c '^lane-close: harness-unsupported item=KEN-1 harness=pi$' <<<"$ERR" || true) stop=$(stop_count KEN-1 pi)" 'rc=1 unsupported=1 stop=0' \
+  'control: a harness set without pi refuses the pi lane the signal close can end'
+MUTANT="$(mutant typed '  stop_harness
+' '  tmux send-keys -t "$pane_id" /exit Enter || { message tmux-failed "item=$ITEM" "operation=send-keys" >&2; exit 1; }
+  stop_harness
+')"
+write_state running claude /host; write_panes python; claude_screen; run_close "$MUTANT"
+assert_eq "rc=$RC typed=$(typed_count) tmux=$(grep -c '^lane-close: tmux-failed item=KEN-1 operation=send-keys$' <<<"$ERR" || true) stop=$(stop_count KEN-1 claude)" 'rc=1 typed=1 tmux=1 stop=0' \
+  'control: a close that types into the pane is logged and refused by the stub that rejects every pane write'
+MUTANT="$(mutant unstopped '  stop_harness
+' '  STOPPED_COUNT=0
+')"
+write_state running claude /host; write_panes python; claude_screen; run_close "$MUTANT"
+assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=claude pane=%7 processes=0$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=1 timeout=1 status=running' \
+  'control: without the stop an idle hosted lane never exits and the close times out'
+MUTANT="$(mutant provider-status '    [[ "$rc" -eq 0 ]] || { message stop-failed "${fields[@]}" "cause=provider" "status=$rc" >&2; exit 1; }' '    :')"
+write_state running codex /host; write_panes python; codex_screen; LANE_CLOSE_STOP_STATUS=4 run_close "$MUTANT"
+assert_eq "provider=$(grep -c ' cause=provider ' <<<"$ERR" || true) unparsed=$(grep -c ' cause=answer-unparsed$' <<<"$ERR" || true)" 'provider=0 unparsed=1' \
+  'control: ignoring the provider status blames its missing answer rather than the stop that failed'
+MUTANT="$(mutant unparsed $'      message stop-failed "${fields[@]}" "cause=answer-unparsed" >&2\n      exit 1' '      STOPPED_COUNT=0')"
+write_state running codex /host; write_panes python; codex_screen; LANE_CLOSE_STOP_OUT='' run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
-  'control: accepting an unsupported harness closes it through an undefined path'
+  'control: accepting a stop with no stopped line closes on an answer the provider never gave'
+MUTANT="$(mutant local-refusal $'      message stop-failed "${fields[@]}" "cause=$LANE_STOP_CAUSE" >&2\n      exit 1' '      :')"
+write_state running claude ""; write_panes python; claude_screen; run_close "$MUTANT"
+assert_eq "failed=$(grep -c '^lane-close: stop-failed ' <<<"$ERR" || true) timeout=$(grep -c '^lane-close: exit-timeout ' <<<"$ERR" || true)" 'failed=0 timeout=1' \
+  'control: ignoring a failed local stop waits the lane out and blames the harness'
+MUTANT="$(mutant wait-read $'      *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;\n    esac\n    passes=' $'      *) ;;\n    esac\n    passes=')"
+write_state running claude /host; write_panes python; claude_screen
+LANE_CLOSE_NO_EXIT=1 LANE_CLOSE_CAPTURE_FAIL_AT=2 run_close "$MUTANT"
+assert_eq "read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true) timeout=$(grep -c '^lane-close: exit-timeout ' <<<"$ERR" || true)" 'read=0 timeout=1' \
+  'control: reading a failed pane probe as a live pane blames the harness for what tmux did'
 MUTANT="$(mutant list-read '    || { message pane-read-failed "item=$ITEM" "window=$window_name" >&2; exit 1; }' '    || :')"
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; LANE_CLOSE_TMUX_LIST_FAIL_AT=1 run_close "$MUTANT"
 assert_eq "read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true) missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true)" \
   'read=0 missing=1' 'control: ignoring the initial pane read failure misreports a missing pane'
-MUTANT="$(mutant mode $'  local mode\n''  mode="$(tmux display-message -p -t "$pane_id" '\''#{pane_in_mode}'\'' 2>/dev/null)" || return 1' $'  local mode\n''  mode="$(tmux display-message -p -t "$pane_id" '\''#{pane_in_mode}'\'' 2>/dev/null)" || mode=0')"
-write_state running codex /host; write_panes python; codex_screen; LANE_CLOSE_MODE_FAIL=7 run_close "$MUTANT"
-assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
-  'control: treating a failed mode read as normal submits and closes the lane'
-MUTANT="$(mutant dialog '      *) message exit-dialog-missing "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;' '      *) ;;')"
-write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_NO_DIALOG=1 run_close "$MUTANT"
-assert_eq "dialog=$(grep -c '^lane-close: exit-dialog-missing ' <<<"$ERR" || true) timeout=$(grep -c '^lane-close: exit-timeout ' <<<"$ERR" || true)" \
-  'dialog=0 timeout=1' 'control: removing the dialog guard loses the dialog refusal and waits on an exit never confirmed'
-MUTANT="$(mutant exit-timeout '    1) message exit-timeout "item=$ITEM" "harness=$harness" "pane=$pane_id" >&2; exit 1 ;;' '    1) ;;')"
+MUTANT="$(mutant exit-timeout '      || { message exit-timeout "item=$ITEM" "harness=$harness" "pane=$pane_id" "processes=$STOPPED_COUNT" >&2; exit 1; }' '      || break')"
 write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_NO_EXIT=1 run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: removing the exit timeout closes a lane whose harness still runs'
@@ -818,13 +976,8 @@ assert_eq "closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true) named=$(st
 
 MUTANT="$(mutant identity $'    message record-invalid "item=$ITEM" "field=$2" "recorded=$recorded" "option=$supplied" >&2\n''    exit 1' '    :')"
 write_state running claude /host; write_panes python; claude_screen; run_close "$MUTANT" --harness codex
-assert_eq "rc=$RC invalid=$(grep -c '^lane-close: record-invalid ' <<<"$ERR" || true) closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true) enters=$(grep -c '^send-keys -t %7 Enter$' "$CALLS" || true)" \
-  'rc=0 invalid=0 closed=1 enters=2' 'control: dropping the identity conflict refusal closes the lane on the record it contradicts'
-
-MUTANT="$(mutant composer-unreadable '    *) message composer-unreadable "item=$ITEM" "pane=$pane_id" "harness=$harness" >&2; exit 1 ;;' '    *) ;;')"
-write_state running claude /host; write_panes python; printf '\xe2\x9d\xaf hello\n' >"$SCREEN"; run_close "$MUTANT"
-assert_eq "unreadable=$(grep -c '^lane-close: composer-unreadable ' <<<"$ERR" || true) pasted=$(grep -c '^paste-buffer -p -d -t %7$' "$CALLS" || true)" \
-  'unreadable=0 pasted=1' 'control: removing the unreadable-composer refusal types /exit into a pane nothing measured'
+assert_eq "rc=$RC invalid=$(grep -c '^lane-close: record-invalid ' <<<"$ERR" || true) closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true) stop=$(stop_count KEN-1 claude)" \
+  'rc=0 invalid=0 closed=1 stop=1' 'control: dropping the identity conflict refusal closes the lane on the record it contradicts'
 
 MUTANT="$(mutant repo-value '    --repo) need_value "$@"; OPT_REPO="$2"; shift 2 ;;' '    --repo) need_value "$@"; shift 2 ;;')"
 write_legacy_state running /host issue-1; write_panes python; claude_screen
@@ -832,25 +985,13 @@ run_close "$MUTANT" --harness claude --tracker github --repo owner/repo
 assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 read=1 status=running' 'control: discarding the --repo value leaves the GitHub lane unclosable'
 
-MUTANT="$(mutant dialog-or-exit '        0) exit_answer=exited; break ;;' '        0) ;;')"
-write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_EXIT_NO_DIALOG=1 run_close "$MUTANT"
-assert_eq "rc=$RC dialog=$(grep -c '^lane-close: exit-dialog-missing item=KEN-1 pane=%7$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 dialog=1 status=running' 'control: a wait blind to the exited pane reports a missing dialog for a lane that did exit'
-
-MUTANT="$(mutant wait-capture '      pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
-        || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }' '      pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" || break')"
-write_state running claude /host; write_panes python; claude_screen
-LANE_CLOSE_NO_DIALOG=1 LANE_CLOSE_CAPTURE_FAIL_AT=2 run_close "$MUTANT"
-assert_eq "read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true) dialog=$(grep -c '^lane-close: exit-dialog-missing ' <<<"$ERR" || true)" \
-  'read=0 dialog=1' 'control: breaking out of the wait on a failed capture blames the harness for what tmux did'
-
 # The one rule derive_identity carries: a derived value fills an empty field and
 # never replaces one. Both halves of the identity run against the same mutant.
 MUTANT="$(mutant derive-guard '  [[ -z "${!1}" ]] || return 0' '  :')"
 write_legacy_state running /host; write_panes claude; claude_screen
-LANE_CLOSE_NO_EXIT=1 run_close "$MUTANT" --harness codex
-assert_eq "rc=$RC dialog=$(grep -c '^lane-close: exit-dialog-missing ' <<<"$ERR" || true) timeout=$(grep -c '^lane-close: exit-timeout ' <<<"$ERR" || true)" \
-  'rc=1 dialog=1 timeout=0' 'control: a derivation that replaces a supplied harness sends a codex lane down the Claude route'
+run_close "$MUTANT" --harness codex
+assert_eq "rc=$RC codex=$(stop_count KEN-1 codex) claude=$(stop_count KEN-1 claude)" \
+  'rc=0 codex=0 claude=1' 'control: a derivation that replaces a supplied harness stops the harness the pane shows, not the one named'
 write_legacy_state running /host; write_panes claude; claude_screen
 run_close "$MUTANT" --tracker github
 assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed ' <<<"$ERR" || true) closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" \
@@ -868,10 +1009,14 @@ write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: reading a failed mailbox as an empty one closes a lane nothing measured'
 
-MUTANT="$(mutant derive-harness '  claude|codex) derive_identity harness "$pane_cmd" ;;' '  claude|codex) ;;')"
+MUTANT="$(mutant derive-harness '  claude|codex|pi) derive_identity harness "$pane_cmd" ;;' '  claude|codex|pi) ;;')"
 write_legacy_state running /host; write_panes claude; claude_screen; run_close "$MUTANT"
 assert_eq "rc=$RC unsupported=$(grep -c '^lane-close: harness-unsupported item=KEN-1 harness=unknown$' <<<"$ERR" || true) closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" \
   'rc=1 unsupported=1 closed=0' 'control: dropping the pane harness derivation refuses a lane whose harness is on the screen'
+MUTANT="$(mutant derive-harness-pi '  claude|codex|pi) derive_identity harness "$pane_cmd" ;;' '  claude|codex) derive_identity harness "$pane_cmd" ;;')"
+write_legacy_state running /host; write_panes pi; claude_screen; run_close "$MUTANT"
+assert_eq "rc=$RC unsupported=$(grep -c '^lane-close: harness-unsupported item=KEN-1 harness=unknown$' <<<"$ERR" || true)" \
+  'rc=1 unsupported=1' 'control: a derivation without pi refuses a directly launched legacy Pi lane'
 
 MUTANT="$(mutant derive-tracker '  *) derived_tracker=linear ;;' '  *) derived_tracker="" ;;')"
 write_legacy_state running /host; write_panes claude; claude_screen; run_close "$MUTANT"
@@ -881,35 +1026,6 @@ MUTANT="$(mutant derive-github '  issue-*) derived_tracker="" ;;' '  issue-*) de
 write_legacy_state running /host issue-1; write_panes claude; claude_screen; run_close "$MUTANT" --repo owner/repo
 assert_eq "rc=$RC ambiguous=$(grep -c ' cause=key-ambiguous$' <<<"$ERR" || true) gh=$(grep -c '^issue view 1 --repo owner/repo --json state --jq .state$' "$GH_CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=0 ambiguous=0 gh=1 status=done' 'control: deriving github from an issue-N key reads that repository issue and closes the lane on its state'
-
-MUTANT="$(mutant composer '    1) message composer-draft "item=$ITEM" "pane=$pane_id" "harness=$harness" >&2; exit 1 ;;' '    1) ;;')"
-write_state running claude /host; write_panes python; claude_screen 'finish this later'; run_close "$MUTANT"
-assert_eq "rc=$RC typed=$(grep -c '^paste-buffer -p -d -t %7$' "$CALLS" || true) closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" \
-  'rc=0 typed=1 closed=1' 'control: removing the composer check submits the draft together with /exit'
-
-# The resolution the rows above exercise lives in lib/lane-state.sh, so its
-# control needs a fixture tree of its own: the same lane-close and stubs over
-# one mutated library.
-lib_mutant() { # NAME OLD NEW
-  local name="$1" old="$2" new="$3" dir
-  dir="$TMP_ROOT/libmut-$name"
-  mkdir -p "$dir/skills/orch/scripts/lib" "$dir/skills/linear/scripts"
-  cp "$SCRIPTS/lane-close" "$SCRIPTS/workflow-state" "$SCRIPTS/lane-host" "$SCRIPTS/lane-mail" \
-    "$dir/skills/orch/scripts/"
-  cp "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
-  python3 - "$SCRIPTS/lib/lane-state.sh" "$dir/skills/orch/scripts/lib/lane-state.sh" "$old" "$new" <<'MUTPY'
-import pathlib, sys
-source, target, old, new = sys.argv[1:]
-text = pathlib.Path(source).read_text()
-if text.count(old) != 1:
-    raise SystemExit(f"mutation match count={text.count(old)} old={old!r}")
-pathlib.Path(target).write_text(text.replace(old, new))
-MUTPY
-  chmod +x "$dir/skills/orch/scripts/lane-close" "$dir/skills/orch/scripts/workflow-state" \
-    "$dir/skills/orch/scripts/lane-host" "$dir/skills/orch/scripts/lane-mail" \
-    "$dir/skills/linear/scripts/linear.sh"
-  printf '%s\n' "$dir/skills/orch/scripts/lane-close"
-}
 
 MUTANT="$(lib_mutant session-column '(q == 0 || $1 == s) && $2 == n { print }' '$2 == n { print }')"
 write_state running claude /host linear '' 'kendex:KEN-1'; write_panes bash '' other; claude_screen

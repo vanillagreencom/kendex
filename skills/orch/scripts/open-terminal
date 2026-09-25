@@ -1961,11 +1961,13 @@ launchable_dir() { # DIR TITLE
 # background task runs through, or, for Claude, its session file does not read
 # idle. Language and MCP servers are non-shell children an idle session keeps,
 # so only shells count. Codex gives no idle signal, so a live codex session
-# with no shell under it is unjudged, never idle. The cwd and the environment
-# are read through /proc.
+# with no shell under it is unjudged, never idle. The environment is read
+# through /proc, which has no other reader, so on a host without /proc any
+# process named for the harness leaves the lane unjudged, wherever it runs.
 lane_session_state() { # DIR — prints busy, idle or unjudged
   local table pid state config
   lane_owned_processes "$1" "$HARNESS" || { printf unjudged; return 0; }
+  lane_proc_readable || [[ -z "$LANE_OWNED_PROCESS_CANDIDATES" ]] || { printf unjudged; return 0; }
   table="$LANE_OWNED_PROCESS_TABLE"
   for pid in $LANE_OWNED_PROCESS_PIDS; do
     state="$(awk -v top="$pid" '{ parent[$1] = $2; name[$1] = $3 }

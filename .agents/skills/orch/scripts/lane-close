@@ -37,14 +37,17 @@ message() { # REASON FIELD=VALUE...
         '  no-state-type   the linear payload carried no state_type, so it answered nothing.' \
         '  tracker-unknown  tracker is neither linear nor github. Pass --tracker linear|github.' \
         'source=derived is a tracker read from the item key rather than from the record or --tracker, and source=given is one of those two.' ;;
-    harness-unsupported) printf '%s\n' 'The recorded harness has no close-out path. harness=unknown is a record that carries none: pass --harness claude|codex.' ;;
+    harness-unsupported) printf '%s\n' 'The recorded harness has no close-out path. harness=unknown is a record that carries none: pass --harness claude|codex|pi.' ;;
     ask-unanswered) printf '%s\n' 'The lane asked the overseer a question and is waiting for the answer. Closing it would end the session that answer would reach. Answer the ask, then close the lane.' ;;
     mail-read-failed) printf '%s\n' 'The lane mailbox could not be read, so nothing here says whether the lane asked anything. Close-out changed nothing.' ;;
-    composer-draft) printf '%s\n' 'The lane composer holds text nobody sent. Submitting /exit there would send the draft with it. Clear the composer in the pane, then close the lane.' ;;
-    composer-unreadable) printf '%s\n' 'Nothing on this screen measures the lane composer, so nothing may be typed into it. Read the pane and quit the harness there yourself, then close the lane again: an exited lane needs no composer read.' ;;
     tmux-failed) printf '%s\n' 'A tmux operation failed. Close-out stopped.' ;;
-    exit-dialog-missing) printf '%s\n' 'Claude Code did not show its exit dialog. Close-out stopped.' ;;
-    exit-timeout) printf '%s\n' 'The harness did not exit before the close timeout. Close-out stopped.' ;;
+    stop-failed)
+      printf '%s\n' \
+        'The harness could not be stopped by signal. Close-out stopped. cause names the step:' \
+        '  provider          the lane host stop verb exited with status; its own words are on the lines above this one.' \
+        '  answer-unparsed   the lane host stop verb succeeded without its stopped item=ID processes=COUNT line.' \
+        '  any other value   the local stop step lib/lane-state.sh lane_stop_owned names, pid= the process it failed on.' ;;
+    exit-timeout) printf '%s\n' 'The pane did not read exited before the close timeout. processes= is how many harness processes the stop signalled in the lane worktree and saw exit; 0 means none was left there to signal. Close-out stopped.' ;;
     state-write-failed) printf '%s\n' 'The lane closed, but its fleet record could not be updated.' ;;
     prepare-stop-failed) printf '%s\n' 'The background launch job the record names could not be stopped. Close-out changed nothing else.' ;;
     validate-stop-failed) printf '%s\n' "A validation run in the lane's worktree could not be ended. The window and record are unchanged; dev-validate-run's own words are on the lines above this one." ;;
@@ -57,18 +60,26 @@ message() { # REASON FIELD=VALUE...
 usage() {
   cat <<'EOF'
 Usage: lane-close [--state-dir PATH] [--keep-sandbox]
-                  [--harness claude|codex] [--tracker linear|github]
+                  [--harness claude|codex|pi] [--tracker linear|github]
                   [--repo OWNER/REPO] ITEM
 
 Close one lane recorded in the oversee workflow state. The command refuses a
 live lane. It accepts an exited lane, or an idle lane whose tracker item is
-terminal. A record already marked stopped can close its kept sandbox without
-a pane. A preparing record, a hosted launch whose background job has written
-no outcome, closes without a harness exit: the job the record names is
-stopped and its window closed. --keep-sandbox exits the harness, closes its window and records
-stopped without calling the lane host. A local lane's close first ends every
-validation run its worktree, the record's mail_root, holds with no verdict,
-through dev-validate-run --stop; a hosted lane's runs end with its sandbox.
+terminal. An idle lane's harness is ended by SIGTERM, never by typing into its
+pane: through lane-host stop for a record carrying host, and for a local lane
+by the same stop against the worktree the record's mail_root names. The close
+then waits up to ORCH_LANE_CLOSE_SECS (default 15) for the pane to read exited.
+The local stop reads each harness process's directory through /proc, or
+through lsof on a host without /proc such as macOS; a host with neither
+refuses as stop-failed cause=cwd-reader-missing.
+A record already marked stopped can close its kept sandbox without a pane. A
+preparing record, a hosted launch whose background job has written no
+outcome, closes without a harness exit: the job the record names is stopped
+and its window closed. --keep-sandbox ends the harness, closes its window and
+records stopped without closing the lane host.
+A local lane's close also ends every validation run its worktree, the record's
+mail_root, holds with no verdict, through dev-validate-run --stop; a hosted
+lane's runs end with its sandbox.
 
 A lane holding an ask nobody has answered refuses as ask-unanswered, under
 --keep-sandbox and on a stopped record alike: the answer would reach a session
@@ -373,7 +384,7 @@ pane_cmd="$LANE_PANE_CMD"
 # that shell as the pane process and the harness as its child, so this answers
 # for the direct launches and leaves the rest to --harness.
 case "$pane_cmd" in
-  claude|codex) derive_identity harness "$pane_cmd" ;;
+  claude|codex|pi) derive_identity harness "$pane_cmd" ;;
 esac
 pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
   || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
@@ -447,16 +458,6 @@ case "$state" in
   *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;
 esac
 
-mode_read() {
-  local mode
-  mode="$(tmux display-message -p -t "$pane_id" '#{pane_in_mode}' 2>/dev/null)" || return 1
-  if [[ "$mode" == 1 ]]; then
-    tmux send-keys -t "$pane_id" -X cancel || return 1
-    mode="$(tmux display-message -p -t "$pane_id" '#{pane_in_mode}' 2>/dev/null)" || return 1
-  fi
-  [[ "$mode" == 0 ]]
-}
-
 pane_now_exited() {
   local row screen current_pid current_cmd current_state
   if ! row="$(tmux list-panes -a -F '#{pane_id}'$'\t''#{pane_pid}'$'\t''#{pane_current_command}' 2>/dev/null \
@@ -470,71 +471,47 @@ pane_now_exited() {
   [[ "$current_state" == exited ]]
 }
 
-if [[ "$state" == idle ]]; then
-  [[ "$harness" == claude || "$harness" == codex ]] \
-    || { message harness-unsupported "item=$ITEM" "harness=${harness:-unknown}" >&2; exit 1; }
-  refuse_unanswered_ask
-  # `/exit` is pasted at the cursor, so a composer holding a draft would submit
-  # the draft with it and start a turn on a lane the fleet has called finished.
-  # The judge calls such a lane idle, which is what it is; only this caller,
-  # about to type, needs the composer's own emptiness, and it refuses rather
-  # than clear a draft it cannot measure here.
-  composer_rc=0
-  lane_composer_empty "$pane_screen" || composer_rc=$?
-  case "$composer_rc" in
-    0) ;;
-    1) message composer-draft "item=$ITEM" "pane=$pane_id" "harness=$harness" >&2; exit 1 ;;
-    *) message composer-unreadable "item=$ITEM" "pane=$pane_id" "harness=$harness" >&2; exit 1 ;;
-  esac
-  scratch="$(mktemp -d)" || exit 1
-  trap 'rm -rf -- "$scratch"' EXIT
-  printf '/exit' >"$scratch/exit-command"
-  tmux load-buffer "$scratch/exit-command" \
-    || { message tmux-failed "item=$ITEM" "operation=load-buffer" >&2; exit 1; }
-  tmux paste-buffer -p -d -t "$pane_id" \
-    || { message tmux-failed "item=$ITEM" "operation=paste-buffer" >&2; exit 1; }
-  mode_read && tmux send-keys -t "$pane_id" Enter \
-    || { message tmux-failed "item=$ITEM" "operation=submit-exit" >&2; exit 1; }
+# The harness is ended by signal to its own process, never by keystrokes into
+# its pane. A hosted lane is signalled by its provider, which alone reaches the
+# host's process table; a local lane by the same library stop against the
+# worktree its record names. STOPPED_COUNT is how many processes the stop
+# signalled, which the exit wait below names where the pane outlives it.
+STOPPED_COUNT=""
+STOP_LINE_RE='^stopped item=[^ ]+ processes=([0-9]+)$'
+stop_harness() {
+  local out rc=0 fields=("item=$ITEM" "harness=$harness")
+  if [[ -n "$host" ]]; then
+    [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; exit 1; }
+    out="$(ORCH_LANE_HOST="$host" "$LANE_HOST" stop --item "$ITEM" --harness "$harness")" || rc=$?
+    [[ "$rc" -eq 0 ]] || { message stop-failed "${fields[@]}" "cause=provider" "status=$rc" >&2; exit 1; }
+    if [[ "$out" =~ $STOP_LINE_RE ]]; then
+      STOPPED_COUNT="${BASH_REMATCH[1]}"
+    else
+      message stop-failed "${fields[@]}" "cause=answer-unparsed" >&2
+      exit 1
+    fi
+  else
+    if ! lane_stop_owned "$mail_root" "$harness"; then
+      [[ -z "$LANE_STOP_PID" ]] || fields+=("pid=$LANE_STOP_PID")
+      message stop-failed "${fields[@]}" "cause=$LANE_STOP_CAUSE" >&2
+      exit 1
+    fi
+    STOPPED_COUNT="$LANE_STOP_COUNT"
+  fi
+}
 
+if [[ "$state" == idle ]]; then
+  case "$harness" in
+    claude|codex|pi) ;;
+    *) message harness-unsupported "item=$ITEM" "harness=${harness:-unknown}" >&2; exit 1 ;;
+  esac
+  refuse_unanswered_ask
   close_secs="${ORCH_LANE_CLOSE_SECS:-15}"
   [[ "$close_secs" =~ ^[1-9][0-9]*$ ]] \
     || { message record-invalid "item=$ITEM" "field=ORCH_LANE_CLOSE_SECS" >&2; exit 1; }
+  stop_harness
   passes=$((close_secs * 5))
-  if [[ "$harness" == claude ]]; then
-    # `/exit` has two answers, and this waits for either. With a task running
-    # the harness raises its confirmation dialog, which the Enter below
-    # answers. With nothing running it ends the session outright and no dialog
-    # is ever drawn: that pane is the outcome this was asked for, so the wait
-    # ends there with nothing sent and the close-out below runs as it would
-    # have after a confirmation. Only a pane showing neither when the wait runs
-    # out is exit-dialog-missing.
-    exit_answer=waiting
-    while (( passes > 0 )); do
-      # Both reads of a pass answer a failed tmux the same way. A capture that
-      # does not answer is not a harness that drew no dialog.
-      pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
-        || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
-      if grep -q 'Exit and stop tasks' <<<"$pane_screen"; then exit_answer=dialog; break; fi
-      rc=0
-      pane_now_exited || rc=$?
-      case "$rc" in
-        0) exit_answer=exited; break ;;
-        1) ;;
-        *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
-      esac
-      passes=$((passes - 1))
-      sleep 0.2
-    done
-    case "$exit_answer" in
-      dialog)
-        mode_read && tmux send-keys -t "$pane_id" Enter \
-          || { message tmux-failed "item=$ITEM" "operation=confirm-exit" >&2; exit 1; } ;;
-      exited) ;;
-      *) message exit-dialog-missing "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
-    esac
-    passes=$((close_secs * 5))
-  fi
-  while (( passes > 0 )); do
+  while :; do
     rc=0
     pane_now_exited || rc=$?
     case "$rc" in
@@ -543,15 +520,10 @@ if [[ "$state" == idle ]]; then
       *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
     esac
     passes=$((passes - 1))
+    (( passes > 0 )) \
+      || { message exit-timeout "item=$ITEM" "harness=$harness" "pane=$pane_id" "processes=$STOPPED_COUNT" >&2; exit 1; }
     sleep 0.2
   done
-  rc=0
-  pane_now_exited || rc=$?
-  case "$rc" in
-    0) ;;
-    1) message exit-timeout "item=$ITEM" "harness=$harness" "pane=$pane_id" >&2; exit 1 ;;
-    *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
-  esac
 fi
 
 finish_close
