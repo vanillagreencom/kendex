@@ -1214,7 +1214,7 @@ answered_missed() { # [WATCH_BIN]
   out="$(WATCH_BIN="${1:-}" run_watch -- --max-loops 1 --item KEN-60 2>"$STUB_DIR/answered-a")"
   ANSWERED_MISSED="first=$(head -1 <<<"$out") row=$(awk -F'\t' '$1 == "lane-mail" && $2 == "KEN-60" { print $3 }' \
     "$STATE_DIR"/*.mail 2>/dev/null || true)"
-  ANSWERED_MISSED+=" failed=$(awk -F'\t' '$1 == "lane-failed" && $2 == "KEN-60"' "$STATE_DIR"/*.mail | wc -l)"
+  ANSWERED_MISSED+=" failed=$(awk -F'\t' '$1 == "lane-failed" && $2 == "KEN-60" { n++ } END { print n + 0 }' "$STATE_DIR"/*.mail)"
   mv -- "$box/to-lane.jsonl.away" "$box/to-lane.jsonl"
   out="$(WATCH_BIN="${1:-}" run_watch -- --max-loops 1 --item KEN-60 2>"$STUB_DIR/answered-b")"
   ANSWERED_MISSED+=" after=$(grep -c '^EVENT lane-question ' <<<"$out" || true)"
