@@ -113,7 +113,7 @@ Keys a repo decides: [references/adoption.md](references/adoption.md) § Keys a 
 
 **Reviewers are down / nothing is reviewing.** Run the internal review loop: fix findings, resolve every thread, then post the override status with a real reason. It cannot bypass an objection or an open thread.
 
-**A PR that repairs the gate itself.** The writer always runs the merged engine, so the repair cannot turn its own gate context green, and no ruleset carries a standing bypass actor to merge it past that. Break-glass: for the repair session the owner adds the Organization admin role as the one bypass entry on the organization merge-queue ruleset, merges the repair through the queue, and removes the entry in the same session; where another organization admin exists, a one-member break-glass team holding only the owner takes the role's place. The repair's commit message names the entry.
+**A PR that repairs the gate itself.** The writer always runs the merged engine, so the repair cannot turn its own gate context green, and no ruleset carries a standing bypass actor to merge it past that. Break-glass: for the repair session the owner adds one bypass entry to the organization merge-queue ruleset (the Organization admin role, or a one-member break-glass team holding only the owner where another organization admin exists), merges the repair PR directly under that bypass, outside the queue, and removes the entry in the same session. The repair's commit message names the entry. No required context is changed, so no other repository loses its gate.
 
 **A settings-change PR** is judged by the OLD config. A PR adding a trusted login cannot have its own gate honor it. Merge it through normal review.
 
