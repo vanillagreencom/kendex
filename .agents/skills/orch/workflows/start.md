@@ -15,7 +15,7 @@ Prepare one work item from the main repo. Never watches or manages other session
 .agents/skills/orch/scripts/lane-host resolve
 ```
 
-A worktree cwd skips this read; § 1 step 3 routes it on. Any answer but `local` refuses the run here, with no handoff resumed and nothing read, activated or created; [SKILL.md](../SKILL.md) § The Cycle, The overseer reads results, holds the reason. The report's first line is `start-control-host host=[HOST]`, and its next line is the fix: launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement, with its `/orch start [ISSUE_ID]` brief; for `start new`, create the issue first, then launch it that way.
+A worktree cwd skips this read; § 1 step 3 routes it on. Any answer but `local` refuses the run here, with no handoff resumed and nothing read, activated or created; [SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes, holds the rule. The report's first line is `start-control-host host=[HOST]`, and its next line is the fix: launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement, with its `/orch start [ISSUE_ID]` brief; for `start new`, create the issue first, then launch it that way.
 
 ## 0. Resume From A Handoff
 
