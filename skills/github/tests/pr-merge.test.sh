@@ -78,6 +78,23 @@ RANGE_BASE="$(git -C "$REPO" rev-parse HEAD~1)"
 RANGE_HEAD="$(git -C "$REPO" rev-parse HEAD)"
 ABSENT_SHA=3333333333333333333333333333333333333333
 
+# One checkout per project settings source, each planting a retired key the way
+# that source spells it. A settings table is exported by the loader and a
+# private env file line is not, so a row run from each checkout proves the
+# refusal reads the key where that source leaves it. `bad-settings` carries a
+# settings file the loader rejects.
+settings_fixture() { # NAME RELPATH CONTENT
+  local dir="$TMPDIR/settings-$1"
+  git init -q "$dir"
+  git -C "$dir" config maintenance.auto false
+  mkdir -p "$(dirname "$dir/$2")"
+  printf '%s\n' "$3" >"$dir/$2"
+}
+settings_fixture toml kendex.settings.toml $'[env]\nORCH_MERGE_BYPASS = "fast-path"'
+settings_fixture dot-kendex .kendex/settings.toml $'[env]\nORCH_ADMIN_MERGE_CLASSES = "render"'
+settings_fixture env-local .env.local 'ORCH_ADMIN_MERGE_GH_CONFIG_DIR=/home/dev/.config/gh-admin'
+settings_fixture bad-settings kendex.settings.toml $'[env]\nORCH_TMUX_VERIFY_SECS = "15"\nORCH_TMUX_VERIFY_SECS = "15"'
+
 # The class policy is asked of review-gate's review-policy beside the scripts
 # tree pr-merge runs from, and review-policy resolves the change classifier
 # beside itself. So the class-policy rows run pr-merge.sh out of a mirror of
@@ -190,6 +207,7 @@ merge_stderr_of() {
 
 # --- the world ------------------------------------------------------------------
 W_ENV=()
+RUN_DIR=""
 CALL_LOG="$TMPDIR/calls.log"
 AUTH_LOG="$TMPDIR/auth.log"
 FAIL_ONCE="$TMPDIR/state-failed-once"
@@ -246,6 +264,7 @@ word() {
     class-policy:range-absent) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_CLASS=render" "STUB_BASE_OID=$ABSENT_SHA" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$ABSENT_SHA" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     class-policy:*) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "STUB_CLASS=$v" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     post-graphql:partial) W_ENV+=("STUB_POST_GRAPHQL_PARTIAL=true") ;;
+    cwd:*) RUN_DIR="$TMPDIR/settings-$v" ;;
     env:*) W_ENV+=("$v") ;;
     -) ;;
     *) echo "UNKNOWN-WORD: $1" >&2; exit 2 ;;
@@ -255,6 +274,7 @@ word() {
 build() {
   local w
   W_ENV=()
+  RUN_DIR="$REPO"
   : >"$CALL_LOG"
   : >"$AUTH_LOG"
   rm -f "$FAIL_ONCE"
@@ -279,6 +299,7 @@ argv_for() {
     force-auto) printf '%s\n' "$PR_MERGE" 123 --force --auto --keep-branch ;;
     expected:*) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch --expected-head "${1#expected:}" ;;
     admin-credential) printf '%s\n' "$PR_MERGE" 123 --admin-credential --keep-branch ;;
+    router-in:*) printf '%s\n' "$GITHUB" -C "$TMPDIR/settings-${1#router-in:}" pr-merge 123 --auto --keep-branch ;;
     router:*) printf '%s\n' "$GITHUB" -C "$REPO" pr-merge 123 "${1#router:}" --keep-branch ;;
     *) echo "UNKNOWN-ARGV: $1" >&2; exit 2 ;;
   esac
@@ -350,7 +371,7 @@ run() {
   # the token each call saw, so a lane's own environment would decide them.
   # The retired merge settings come off too, so only a row's own env: word
   # sets one.
-  (cd "$REPO" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO \
+  (cd "$RUN_DIR" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u KENDEX_ENV_FILE \
     -u ORCH_ADMIN_MERGE_GH_CONFIG_DIR -u ORCH_ADMIN_MERGE_CLASSES -u ORCH_MERGE_BYPASS -u GH_CONFIG_DIR \
     -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u REVIEW_GATE_CONTEXT \
     -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY \
@@ -383,14 +404,15 @@ err_macro() {
     threads:*) printf 'unresolved_threads: %s actionable thread(s) need attention' "${1#threads:}" ;;
     fetch-failed) printf 'review_threads_fetch_failed: Failed to fetch actionable review threads from GitHub' ;;
     malformed) printf 'review_threads_fetch_failed: GitHub returned malformed review thread data' ;;
-    retired) printf 'The overseer'"'"'s admin merge and the ORCH_MERGE_BYPASS fast path are retired (kendex decision D003): every merge goes through the merge queue, armed with --auto.;Remove each key named above from kendex.settings.toml [env], the private env file and the environment, then retry.' ;;
+    retired:*) printf 'The overseer'"'"'s admin merge and the ORCH_MERGE_BYPASS fast path are retired (kendex decision D003): every merge goes through the merge queue, armed with --auto.;Remove %s from kendex.settings.toml [env], .kendex/settings.toml [env], the private env file (.env.local unless KENDEX_ENV_FILE names another) and the environment, then retry.' "$(printf '%s' "${1#retired:}" | tr '+' ' ')" ;;
+    unreadable) printf 'The project settings failed to load (the loader'"'"'s own line is above), so no retired merge setting can be ruled out. Repair the file it names, then retry.' ;;
     arm-remedy) printf 'Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch, or merge through orch merge-pr with the explicit consumer-only answer under submit-pr.md § 6.2.' ;;
     *) printf 'UNKNOWN-MACRO:%s' "$1" ;;
   esac
 }
 err_text() {
   local text="$1" name
-  while [[ "$text" =~ \{([a-z0-9:-]+)\} ]]; do
+  while [[ "$text" =~ \{([A-Za-z0-9:_+-]+)\} ]]; do
     name="${BASH_REMATCH[1]}"
     text="${text//\{$name\}/$(err_macro "$name")}"
   done
@@ -542,12 +564,19 @@ on a queue base --auto enrolls the PR and passes no --admin|checks:ci-required p
 on a queue base --force skips the checks but not the queue|checks:ci-required post-queue|force|75|-|{override-skip};{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=view:state,view:head,merge,graphql:queue auth=<unset>
 a partial post-merge answer is no outcome: the pr-view fallback decides|checks:ci-required post-graphql:partial post-auto|auto|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:auto,graphql:queue,view:post auth=<unset>
 the admin-credential verb is gone: an unknown option, refused before any call|-|admin-credential|1|-|Error: Unknown option: --admin-credential|calls=- auth=-
-a set ORCH_ADMIN_MERGE_GH_CONFIG_DIR refuses before any call|checks:ci-required post:MERGED merge-commit:merged-oid env:ORCH_ADMIN_MERGE_GH_CONFIG_DIR=/home/dev/.config/gh-admin|immediate|1|-|pr-merge: retired-setting key=ORCH_ADMIN_MERGE_GH_CONFIG_DIR;{retired}|calls=- auth=-
-a set ORCH_ADMIN_MERGE_CLASSES refuses before any call|checks:ci-required post:MERGED merge-commit:merged-oid env:ORCH_ADMIN_MERGE_CLASSES=render|immediate|1|-|pr-merge: retired-setting key=ORCH_ADMIN_MERGE_CLASSES;{retired}|calls=- auth=-
-a set ORCH_MERGE_BYPASS refuses --auto before any call|checks:ci-required post-queue env:ORCH_MERGE_BYPASS=fast-path|auto|1|-|pr-merge: retired-setting key=ORCH_MERGE_BYPASS;{retired}|calls=- auth=-
-a key set to the empty string is still set, and --check refuses too|checks:ci-required env:ORCH_MERGE_BYPASS=|check|1|-|pr-merge: retired-setting key=ORCH_MERGE_BYPASS;{retired}|calls=- auth=-
-two keys set name each on its own first line|checks:ci-required env:ORCH_ADMIN_MERGE_CLASSES= env:ORCH_MERGE_BYPASS=off|force|1|-|pr-merge: retired-setting key=ORCH_ADMIN_MERGE_CLASSES;pr-merge: retired-setting key=ORCH_MERGE_BYPASS;{retired}|calls=- auth=-
-the router refuses a set key the same way|checks:ci-required post:MERGED merge-commit:merged-oid env:ORCH_MERGE_BYPASS=off|router:--auto|1|-|pr-merge: retired-setting key=ORCH_MERGE_BYPASS;{retired}|calls=- auth=-
+a set ORCH_ADMIN_MERGE_GH_CONFIG_DIR refuses before any call|checks:ci-required post:MERGED merge-commit:merged-oid env:ORCH_ADMIN_MERGE_GH_CONFIG_DIR=/home/dev/.config/gh-admin|immediate|1|-|pr-merge: retired-setting key=ORCH_ADMIN_MERGE_GH_CONFIG_DIR;{retired:ORCH_ADMIN_MERGE_GH_CONFIG_DIR}|calls=- auth=-
+a set ORCH_ADMIN_MERGE_CLASSES refuses before any call|checks:ci-required post:MERGED merge-commit:merged-oid env:ORCH_ADMIN_MERGE_CLASSES=render|immediate|1|-|pr-merge: retired-setting key=ORCH_ADMIN_MERGE_CLASSES;{retired:ORCH_ADMIN_MERGE_CLASSES}|calls=- auth=-
+a set ORCH_MERGE_BYPASS refuses --auto before any call|checks:ci-required post-queue env:ORCH_MERGE_BYPASS=fast-path|auto|1|-|pr-merge: retired-setting key=ORCH_MERGE_BYPASS;{retired:ORCH_MERGE_BYPASS}|calls=- auth=-
+a key set to the empty string is still set, and --check refuses too|checks:ci-required env:ORCH_MERGE_BYPASS=|check|1|-|pr-merge: retired-setting key=ORCH_MERGE_BYPASS;{retired:ORCH_MERGE_BYPASS}|calls=- auth=-
+two keys set name each on its own first line|checks:ci-required env:ORCH_ADMIN_MERGE_CLASSES= env:ORCH_MERGE_BYPASS=off|force|1|-|pr-merge: retired-setting key=ORCH_ADMIN_MERGE_CLASSES;pr-merge: retired-setting key=ORCH_MERGE_BYPASS;{retired:ORCH_ADMIN_MERGE_CLASSES+ORCH_MERGE_BYPASS}|calls=- auth=-
+the router refuses a set key the same way|checks:ci-required post:MERGED merge-commit:merged-oid env:ORCH_MERGE_BYPASS=off|router:--auto|1|-|pr-merge: retired-setting key=ORCH_MERGE_BYPASS;{retired:ORCH_MERGE_BYPASS}|calls=- auth=-
+a key in kendex.settings.toml [env] refuses the direct call|checks:ci-required post-queue cwd:toml|auto|1|-|pr-merge: retired-setting key=ORCH_MERGE_BYPASS;{retired:ORCH_MERGE_BYPASS}|calls=- auth=-
+a key in .kendex/settings.toml [env] refuses the direct call|checks:ci-required post-queue cwd:dot-kendex|auto|1|-|pr-merge: retired-setting key=ORCH_ADMIN_MERGE_CLASSES;{retired:ORCH_ADMIN_MERGE_CLASSES}|calls=- auth=-
+an unexported .env.local line refuses the direct call|checks:ci-required post-queue cwd:env-local|auto|1|-|pr-merge: retired-setting key=ORCH_ADMIN_MERGE_GH_CONFIG_DIR;{retired:ORCH_ADMIN_MERGE_GH_CONFIG_DIR}|calls=- auth=-
+a key in kendex.settings.toml [env] refuses through the router|checks:ci-required post-queue|router-in:toml|1|-|pr-merge: retired-setting key=ORCH_MERGE_BYPASS;{retired:ORCH_MERGE_BYPASS}|calls=- auth=-
+a key in .kendex/settings.toml [env] refuses through the router|checks:ci-required post-queue|router-in:dot-kendex|1|-|pr-merge: retired-setting key=ORCH_ADMIN_MERGE_CLASSES;{retired:ORCH_ADMIN_MERGE_CLASSES}|calls=- auth=-
+an unexported .env.local line refuses through the router, which sources it without exporting it|checks:ci-required post-queue|router-in:env-local|1|-|pr-merge: retired-setting key=ORCH_ADMIN_MERGE_GH_CONFIG_DIR;{retired:ORCH_ADMIN_MERGE_GH_CONFIG_DIR}|calls=- auth=-
+a settings file the loader rejects refuses rather than rule the keys out|checks:ci-required post-queue cwd:bad-settings|auto|1|-|kendex-env: duplicate-key file=<tmp>/settings-bad-settings/kendex.settings.toml key=ORCH_TMUX_VERIFY_SECS;::error::<tmp>/settings-bad-settings/kendex.settings.toml: ORCH_TMUX_VERIFY_SECS is assigned more than once in [env] (each key must be unique in the table);pr-merge: settings-unreadable root=<tmp>/settings-bad-settings;{unreadable}|calls=- auth=-
 "
 
 echo

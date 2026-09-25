@@ -75,6 +75,6 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
 | `ORCH_SIZE_TEST_PATHS` | Path globs counted as test lines in size reports and cut comparisons | empty |
 
-Every lane merges its own pull request through the merge queue: it arms auto-merge on its head and waits in `queue-wait` for the verdict. `ORCH_MERGE_BYPASS`, `ORCH_ADMIN_MERGE_GH_CONFIG_DIR` and `ORCH_ADMIN_MERGE_CLASSES` are retired, and `github.sh pr-merge` refuses every call while one is set; delete them from `kendex.settings.toml`.
+Every lane merges its own pull request through the merge queue: it arms auto-merge on its head and waits in `queue-wait` for the verdict. `ORCH_MERGE_BYPASS`, `ORCH_ADMIN_MERGE_GH_CONFIG_DIR` and `ORCH_ADMIN_MERGE_CLASSES` are retired, and `github.sh pr-merge` refuses every call while one is set in any settings layer: delete them from `kendex.settings.toml` `[env]`, `.kendex/settings.toml` `[env]`, the private env file (`.env.local` unless `KENDEX_ENV_FILE` names another) and the environment.
 
 Maintainer notes and the test entry point: [DEVELOPMENT.md](DEVELOPMENT.md).

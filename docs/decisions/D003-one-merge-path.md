@@ -27,7 +27,7 @@ A merge reached `main` by more than one route, and kendex renders reached consum
 
 This is the target state, and each current route stays in place until the change that retires it lands. The admin merge and the `ORCH_MERGE_BYPASS` fast path stay until KEN-1777, the consumer train until KEN-1779, and each per-repository ruleset until the organization rulesets stand, the owner action KEN-1778 sequences.
 
-On a hosted fleet the train stopped at KEN-1773: the kendex overseer records the merge and notes each consumer's overseer, and consumers refresh from their own side until the KEN-1779 workflow; the train sentence above applies to a local fleet only.
+On a hosted fleet the train stops at KEN-1773: the kendex overseer records the merge and notes each consumer's overseer, and consumers refresh from their own side until the KEN-1779 workflow; the train sentence above applies to a local fleet only.
 
 1. **One merge path.** Every repository merges through its merge queue, and the lanes app arms auto-merge. No ruleset has a bypass actor, no admin route remains, and no owner credential sits on the control VM (KEN-1777). The queue serializes concurrent lanes and batches up to five pull requests per CI run, so a pull request behind `main` never restacks to merge. The queue run is cheap by class: the `merge_group` diff classifies like a pull request, a `render` or `trivial` group runs one job, and KEN-1750 removes the cargo lanes where no Rust path changed.
 2. **Consumers pull.** kendex ships a refresh workflow template in its render (KEN-1779). The template reaches a consumer's `.github/workflows/` by adoption copy, as the review-gate writer template does per [adoption.md](../../skills/review-gate/references/adoption.md), because `kendex refresh` syncs no workflow YAML ([merge-rail.md](../architecture/merge-rail.md) § Boundaries). The lanes app is installed on all repositories at the organization, and a workflow in kendex `main` sends `repository_dispatch` with the lanes app token to every repository the app is installed on. Each consumer's copy runs on that dispatch, on a 30-minute schedule, and on `workflow_dispatch`. It installs a pinned kendex, runs `kendex refresh --scope project --yes --leave` and `kendex verify --scope project`, commits to the one rolling branch `kendex/refresh`, opens or updates one rolling pull request, and arms auto-merge on it. Its token comes from the organization secrets `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` through `actions/create-github-app-token`, scoped to the running repository. The scoped app token commits, pushes, opens the rolling pull request and arms auto-merge; the built-in `GITHUB_TOKEN` is never used for any of these, because a pull request it opens starts no workflow and its required checks would never report. The pull request is `render` class: no review, one CI job, then the queue. No overseer and no control-VM toolchain take part. kendex never pushes to a consumer.
@@ -58,7 +58,7 @@ On a hosted fleet the train stopped at KEN-1773: the kendex overseer records the
 
 - Each retired item and the issue that retires it:
 
-| Retired | Where it lives today | Issue |
+| Retired | Where it lives, or lived until its issue landed | Issue |
 | --- | --- | --- |
 | The overseer's admin verb | `skills/orch/workflows/merge-pr-admin.md`, `pr-merge --admin-credential` | KEN-1777 |
 | `ORCH_ADMIN_MERGE_GH_CONFIG_DIR` | `kendex.settings.toml`, `skills/github/scripts/commands/pr-merge.sh` | KEN-1777 |
@@ -66,11 +66,12 @@ On a hosted fleet the train stopped at KEN-1773: the kendex overseer records the
 | `ORCH_MERGE_BYPASS` and its fast path | `kendex.settings.toml`, `skills/orch/workflows/merge-pr.md` | KEN-1777 |
 | The merge-ready ask | the overseer's launch brief, `tmp/launch-brief-template.txt` on the control host and not a repository file, whose sentence is deleted the day KEN-1777 merges; `skills/orch/workflows/merge-pr-admin.md`; `skills/orch/references/oversee-events.md` § Admin merges | KEN-1777 |
 | The `vanillagreen-merge-rail` app | the organization's app installations and the ruleset bypass list; nothing in this repository references it | KEN-1777 |
+| The owner credential on the control VM | the gh config directory the retired `ORCH_ADMIN_MERGE_GH_CONFIG_DIR` named, `/home/dev/.config/gh-admin`, holding an organization-admin OAuth token; the owner deletes the directory and revokes the token in GitHub once KEN-1777 merges | KEN-1777, an owner action |
 | `consumer-train.md` and its manual steps | `skills/orch/workflows/consumer-train.md` | KEN-1779 |
 | `ORCH_CONSUMER_REPOS` | `skills/orch/workflows/consumer-train.md`, `skills/orch/kendex.settings.toml.example`, its row in `skills/orch/README.md` § Settings | KEN-1779 |
 | The train step under `merged` | `skills/orch/references/oversee-events.md` § Event kinds | KEN-1779 |
 | Propagation as the only write lane into consumers | `.agents/skills/kendex-issues/SKILL.md` § Propagate and its Consumer boundary line | KEN-1779 |
-| The other train mentions | `skills/orch/SKILL.md`, `skills/orch/workflows/micro.md` | KEN-1779 |
+| The other train mentions | `skills/orch/SKILL.md`, `skills/orch/workflows/micro.md`, the `consumer_train` field in `skills/orch/schemas/workflow-state.md` | KEN-1779 |
 | The create-time sandbox refresh | `kendex update-pi` and `kendex refresh` in `skills/orch/scripts/lane-host-ssh` create, `skills/orch/schemas/lane-host.md` | KEN-1780 |
 | Each per-repository ruleset, kendex's merge-queue ruleset 20569265 among them, with its bypass actors | each repository's ruleset settings in GitHub; nothing in this repository | KEN-1778, as the owner action after it lands in every repository |
 
@@ -84,6 +85,6 @@ On a hosted fleet the train stopped at KEN-1773: the kendex overseer records the
 
 **Revisit When**: GitHub organization rulesets or the merge queue are unavailable to a repository kendex must serve; a consumer cannot run GitHub Actions or obtain its repository-scoped token; or a queue run for a `render` or `trivial` group costs more time than the direct merge it replaced.
 
-**Verification**: KEN-1781's validation, once it lands, run under a lanes app installation token with repository administration read. The lane token lacks that permission and reads the bypass-actor list as empty. Until then, the owner reads the organization ruleset settings in GitHub: zero bypass actors, the merge queue and the two required contexts.
+**Verification**: KEN-1781's validation, once it lands, runs under a lanes app installation token once the owner sets Administration read on the app, as step 2 records. Until then a token without that permission reads the bypass-actor list as empty, and the owner reads the organization ruleset settings in GitHub: zero bypass actors, the merge queue and the two required contexts.
 
 **References**: KEN-1776, KEN-1646, KEN-1672, KEN-1750, KEN-1765, KEN-1773, KEN-1777, KEN-1778, KEN-1779, KEN-1780, KEN-1781; superseded: KEN-1601, KEN-1602

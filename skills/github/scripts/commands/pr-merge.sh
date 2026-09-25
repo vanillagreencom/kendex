@@ -67,10 +67,15 @@ Merge-mode exit codes:
   1    pr-merge: retired-setting key=<NAME>
        A retired merge setting is set. Every mode, --check included, refuses
        before any GitHub call; see Retired settings below.
+  1    pr-merge: settings-unreadable root=<project root>
+       The project settings could not be loaded, so no retired setting can be
+       ruled out. Every mode refuses before any GitHub call.
 
 --check exit:
   --check exits 0 after any valid readiness JSON, including can_merge=false for
-  blocked or CLOSED. Argument or dispatch failures before JSON remain nonzero.
+  blocked or CLOSED. Argument or dispatch failures before JSON remain nonzero,
+  and so do the retired-setting and settings-unreadable refusals: exit 1, no
+  JSON on stdout, the refusal's first line on stderr.
 
 Exit 75 is volatile:
   A queue ejection can disarm merge state. Block on .agents/skills/orch/scripts/queue-wait <N> <poll> <budget> --json before returning; it produces the verdict for the head just armed. Size the poll and budget as orch merge-pr.md § 5 step 1 does: the default budget outlives any foreground call an agent harness holds, so a call without them is killed before the verdict.
@@ -89,9 +94,12 @@ Merge route:
 Retired settings:
   ORCH_ADMIN_MERGE_GH_CONFIG_DIR, ORCH_ADMIN_MERGE_CLASSES and
   ORCH_MERGE_BYPASS named the overseer's owner-credential merge and the direct
-  fast path ahead of the queue, and both routes are gone. A key that is set,
-  empty value included, from the environment or kendex.settings.toml [env],
-  refuses every mode before any GitHub call, one first line per key set, so a
+  fast path ahead of the queue, and both routes are gone. The project settings
+  are loaded the way every kendex script loads them: kendex.settings.toml
+  [env], .kendex/settings.toml [env], the private env file (.env.local unless
+  KENDEX_ENV_FILE names another) and the environment. A key set in any of
+  them, empty value included, refuses every mode before any GitHub call, one
+  first line per key set, and the last line names the keys again, so a
   repository that still expects either route learns it at the first call.
 
 Terminal and mutation rules:
@@ -778,17 +786,34 @@ post_merge_snapshot() {
 # ignored: the repository setting it expects a merge this command no longer
 # makes, and a silent queue arm would leave that expectation standing.
 RETIRED_SETTINGS="ORCH_ADMIN_MERGE_GH_CONFIG_DIR ORCH_ADMIN_MERGE_CLASSES ORCH_MERGE_BYPASS"
+#
+# The keys are read after the project settings load, in a subshell so the load
+# changes nothing this command later reads: the router exports the settings
+# files' keys but sources the private env file without exporting it, so a key
+# set there never reaches this process otherwise. A load the loader rejects
+# refuses too, since an unread file can hold a retired key.
 refuse_retired_settings() {
-    local key found=false
-    for key in $RETIRED_SETTINGS; do
-        if [ -n "${!key+set}" ]; then
-            echo "pr-merge: retired-setting key=$key" >&2
-            found=true
-        fi
+    local found status=0 key keys=""
+    # shellcheck disable=SC1091 # the loader is this package's own lib
+    found=$(
+        source "$SCRIPT_DIR/../lib/kendex-env.sh" || exit 2
+        kendex_load_project_env "$PROJECT_ROOT" >&2 || exit 2
+        for key in $RETIRED_SETTINGS; do
+            [ -z "${!key+set}" ] || printf '%s\n' "$key"
+        done
+    ) || status=$?
+    if [ "$status" -ne 0 ]; then
+        echo "pr-merge: settings-unreadable root=${PROJECT_ROOT:-<none>}" >&2
+        echo "  The project settings failed to load (the loader's own line is above), so no retired merge setting can be ruled out. Repair the file it names, then retry." >&2
+        exit 1
+    fi
+    [ -n "$found" ] || return 0
+    for key in $found; do
+        echo "pr-merge: retired-setting key=$key" >&2
+        keys="${keys:+$keys }$key"
     done
-    [ "$found" = true ] || return 0
     echo "  The overseer's admin merge and the ORCH_MERGE_BYPASS fast path are retired (kendex decision D003): every merge goes through the merge queue, armed with --auto." >&2
-    echo "  Remove each key named above from kendex.settings.toml [env], the private env file and the environment, then retry." >&2
+    echo "  Remove $keys from kendex.settings.toml [env], .kendex/settings.toml [env], the private env file (.env.local unless KENDEX_ENV_FILE names another) and the environment, then retry." >&2
     exit 1
 }
 
