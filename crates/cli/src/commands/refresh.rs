@@ -94,15 +94,17 @@ fn refreshed(count: Option<usize>) -> Wrote<'static> {
 }
 
 /// What a run owes the scopes it got through, whether it got through all
-/// of them or stopped at a cancel: their snapshots derived, and the
+/// of them or stopped at a cancel: their snapshots derived, the trash
+/// brought within its bounds now that every write is done, and the
 /// closing line each one earned. Skipped on a cancel, writes are left on
 /// disk the run said nothing about, and the next session-start check
 /// reads a stale snapshot.
 ///
-/// The snapshot warnings come first because a warning under a closing
-/// line is a run that ended twice.
+/// The snapshot warnings and the trash pass come first because a warning
+/// under a closing line is a run that ended twice.
 fn finish_scopes(env: &Env, reached: &[kendex_core::model::Scope], closing: Vec<Closing>) {
     record_snapshots(env, reached);
+    super::engine_common::tidy_trash(env);
     for scope in closing {
         say_ledger(
             &scope.scope,

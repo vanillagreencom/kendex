@@ -62,7 +62,7 @@ struct Snapshot {
 /// just published one and holds it, so that one is never removed.
 pub(super) fn retain(env: &Env, key: &str) -> Retention {
     let held = env.held();
-    let judged = keep_count(env).and_then(|keep| {
+    let judged = env.count_var(KEEP_VAR, DEFAULT_KEEP).and_then(|keep| {
         let referenced = referenced_commits(env, key, &held.scopes)?;
         let snapshots = snapshots(env, key)?;
         Ok((keep, referenced, snapshots))
@@ -92,18 +92,6 @@ pub(super) fn retain(env: &Env, key: &str) -> Retention {
         removed += 1;
     }
     Retention::Pruned { removed }
-}
-
-/// The count [`KEEP_VAR`] names. A variable exported empty is how a shell
-/// profile or a job neutralises one, so it reads as unset; anything else
-/// that is not a count stops the pass.
-fn keep_count(env: &Env) -> Result<usize, String> {
-    match env.var(KEEP_VAR).map(str::trim) {
-        None | Some("") => Ok(DEFAULT_KEEP),
-        Some(text) => text
-            .parse()
-            .map_err(|_| format!("{KEEP_VAR}={text:?} is not a count")),
-    }
 }
 
 /// Every commit of `key` a lock names, in a registered scope or one of

@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Version 1. Effective 6 September 2026.
+Version 2. Effective 25 September 2026.
 
 This policy covers the kendex desktop app, the kendex command-line tool, and kendex.ai. The controller is Vanillagreen LLC of Bellevue, Washington, USA.
 

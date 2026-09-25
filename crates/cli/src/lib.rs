@@ -184,6 +184,9 @@ enum Command {
     /// Subscribe to marketplaces and list subscriptions
     #[command(subcommand)]
     Marketplace(commands::marketplace_cmd::MarketplaceCommand),
+    /// What removed files went to, and how to empty it
+    #[command(subcommand)]
+    Trash(commands::trash_cmd::TrashCommand),
     /// Sign in to kendex.ai (a code, a browser tab, done)
     Login,
     /// Sign out of kendex.ai on this computer
@@ -550,6 +553,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             commands::source_cmd::run(&env, source_command, filter)?;
         }
         Command::Marketplace(command) => commands::marketplace_cmd::run(&env, command)?,
+        Command::Trash(command) => commands::trash_cmd::run(&env, command)?,
         Command::Index { dir, json } => commands::index_cmd::run(dir, json)?,
         Command::Init { name, kind } => commands::init::run(name, kind)?,
         Command::Update { force, git } => commands::update::run(&env, force, git)?,

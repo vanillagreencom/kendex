@@ -15,7 +15,7 @@ const APP_DIR: &str = "kendex";
 
 /// Process env vars kendex reads: the ones that relocate a harness root,
 /// and the ones that tune how it behaves.
-const HARNESS_VARS: [&str; 8] = [
+const HARNESS_VARS: [&str; 10] = [
     "CODEX_HOME",
     "OPENCODE_CONFIG",
     "OPENCODE_CONFIG_DIR",
@@ -31,6 +31,10 @@ const HARNESS_VARS: [&str; 8] = [
     // How many of one repository's newest snapshots the source cache
     // keeps (`remote::store::KEEP_VAR`).
     "KENDEX_SOURCE_CACHE_KEEP",
+    // How long a trash entry stays, in days, and how much the trash may
+    // hold, in MB (`trash::KEEP_DAYS_VAR`, `trash::KEEP_MB_VAR`).
+    "KENDEX_TRASH_KEEP_DAYS",
+    "KENDEX_TRASH_KEEP_MB",
 ];
 
 /// Every filesystem root the app reads or writes flows through here so tests
@@ -68,17 +72,22 @@ pub(crate) enum SourceCacheWait {
     Background,
 }
 
-/// What this invocation holds in the source cache, which its own
-/// retention pass (`remote::store::retain`) never removes: every checkout
-/// the store handed it, whose path may still be in use anywhere in the
-/// invocation, and every scope whose manifest it named, whose lock names
-/// the commits it stands on whether or not the registry knows the scope.
+/// What this invocation holds against its own retention passes, which
+/// never remove it. In the source cache (`remote::store::retain`): every
+/// checkout the store handed it, whose path may still be in use anywhere
+/// in the invocation, and every scope whose manifest it named, whose lock
+/// names the commits it stands on whether or not the registry knows the
+/// scope. In the trash (`trash::retain`): every entry this invocation
+/// moved there, so a removal is never taken back by the pass that closes
+/// the command that made it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Held {
     /// `(cache key, commit)` of every checkout handed out.
     pub checkouts: BTreeSet<(String, String)>,
     /// Every scope stood in, canonical.
     pub scopes: BTreeSet<Scope>,
+    /// Every trash entry this invocation wrote, by its path in the trash.
+    pub trashed: BTreeSet<PathBuf>,
 }
 
 impl Env {
@@ -131,6 +140,25 @@ impl Env {
         self.vars.get(key).map(String::as_str)
     }
 
+    /// The count `var` names, for a setting read as a number: the source
+    /// cache's keep count and the trash's two bounds. A variable exported
+    /// empty is how a shell profile or a job neutralises one, so it reads
+    /// as unset and gives `default`; anything else that is not a count is
+    /// an error naming the variable, for a pass that stops rather than
+    /// guesses.
+    pub(crate) fn count_var<T: std::str::FromStr>(
+        &self,
+        var: &str,
+        default: T,
+    ) -> std::result::Result<T, String> {
+        match self.var(var).map(str::trim) {
+            None | Some("") => Ok(default),
+            Some(text) => text
+                .parse()
+                .map_err(|_| format!("{var}={text:?} is not a count")),
+        }
+    }
+
     /// Record a checkout the store handed this invocation.
     pub fn hold_checkout(&self, key: &str, commit: &str) {
         self.held_mut()
@@ -143,6 +171,12 @@ impl Env {
     /// it means.
     pub fn stand_in(&self, scope: &Scope) {
         self.held_mut().scopes.insert(scope.clone());
+    }
+
+    /// Record a trash entry this invocation wrote. `trash::move_to_trash`
+    /// is the one caller: every removal lands through it.
+    pub fn hold_trashed(&self, entry: &Path) {
+        self.held_mut().trashed.insert(entry.to_path_buf());
     }
 
     /// The same machine starting a fresh invocation, holding nothing: what

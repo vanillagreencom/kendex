@@ -498,6 +498,9 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
         );
         kendex_core::drift::snapshot::record(env, &plan.scope)?;
     }
+    // Every replaced copy went to the trash with its dependency tree;
+    // the pass runs once every scope is written, before the closing line.
+    super::engine_common::tidy_trash(env);
     offer_to_commit(env, plans)?;
     if failures.is_empty() {
         say(&match updated {
