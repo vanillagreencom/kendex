@@ -343,13 +343,13 @@ for row in "2|KEN-4,KEN-5" "0|none" "|KEN-4,KEN-5,KEN-6,KEN-8,KEN-9"; do
   assert_eq "$RC|$got" "0|$want" "ORCH_REPORT_UPCOMING=${upcoming:-unset} renders Next as $want"
 done
 
-echo "=== render: Next leaves out what is already running ==="
+echo "=== render: Next leaves out what has launched ==="
 seed_fleet next_launched
 jq '.launch_queue = ["KEN-2", "KEN-1", "KEN-4", "KEN-7", "KEN-5"]' "$CASE/state.json" > "$CASE/state.next"
 mv -- "$CASE/state.next" "$CASE/state.json"
 run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(awk '/^Next/ { on = 1; next } on && /^$/ { on = 0 } on && /^\| KEN-/ { print $2 }' <<<"$OUT" | paste -sd, -)" "0|KEN-1,KEN-4,KEN-5" \
-  "a queued item with a running or preparing lane is Running's, not Next's, and one whose lane is done stays"
+assert_eq "$RC|$(awk '/^Next/ { on = 1; next } on && /^$/ { on = 0 } on && /^\| KEN-/ { print $2 }' <<<"$OUT" | paste -sd, -)" "0|KEN-4,KEN-5" \
+  "a queued item with a lanes[] record of any status, running, preparing or done, is not Next's"
 
 echo "=== render: ORCH_REPORT_COLUMNS picks and orders the columns ==="
 seed_fleet columns
@@ -773,6 +773,19 @@ echo '[env] # a comment' > "$CASE/kendex.settings.toml"
 REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|kendex-env: table-header file=$CASE/kendex.settings.toml lineno=1" \
   "control: without the hold the loader's line comes before the key"
+
+# Filtering launched items to running and preparing ones keeps a queued item
+# whose lane is done in Next, as though it had not launched.
+launched='[.lanes[].item]'
+assert_eq "$(grep -cF -- "$launched" "$REPORT_BIN")" "1" "control: the launched-item list is one expression to narrow"
+launched="$launched" awk '{ i = index($0, ENVIRON["launched"]); if (i) $0 = substr($0, 1, i - 1) "[.lanes[] | select(.status == \"running\" or .status == \"preparing\") | .item]" substr($0, i + length(ENVIRON["launched"])); print }' \
+  "$REPORT_BIN" > "$MUTANT"
+seed_fleet next_launched_mutant
+jq '.launch_queue = ["KEN-2", "KEN-1", "KEN-4", "KEN-7", "KEN-5"]' "$CASE/state.json" > "$CASE/state.next"
+mv -- "$CASE/state.next" "$CASE/state.json"
+REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^Next/ { on = 1; next } on && /^$/ { on = 0 } on && /^\| KEN-/ { print $2 }' <<<"$OUT" | paste -sd, -)" "0|KEN-1,KEN-4,KEN-5" \
+  "control: narrowed to running and preparing lanes, Next keeps the queued item whose lane is done"
 
 # Without the empty GH_BOT_TOKEN, github.sh picks the inherited bot token over
 # the keyring the ladder settled on, and the failing-check list fails.

@@ -112,7 +112,8 @@ Rows:
   Running         each lanes[] record reading running or preparing. The issue
                   cell carries its open PR, or `no PR`, and that status.
   Next            the first ORCH_REPORT_UPCOMING keys of launch_queue that
-                  have no lanes[] record reading running or preparing.
+                  have no lanes[] record, whatever its status: a record is
+                  written at launch, so a key with one has launched.
   Waiting on you  each owner_items entry, as `Question for you: <text>`,
                   then one line per thing a running lane waits on, naming the
                   item: an ask `lane-mail pending` lists, the post_pr_stop its
@@ -608,10 +609,10 @@ render() {
   table Running "$rows"
   echo
 
-  # A queued item already launched is Running's, whatever order the overseer
-  # rewrote the queue in.
+  # A queued item with any lanes[] record has launched, and a done one stays
+  # in the queue until the next selection rewrites it: neither is upcoming.
   list="$(jq -r --argjson n "$UPCOMING" '
-    ((.launch_queue // []) - [.lanes[] | select(.status == "running" or .status == "preparing") | .item])[:$n][]
+    ((.launch_queue // []) - [.lanes[].item])[:$n][]
     | [., .] | @tsv' <<<"$STATE_JSON")" \
     || refuse state "$STATE"
   table Next "$list"
