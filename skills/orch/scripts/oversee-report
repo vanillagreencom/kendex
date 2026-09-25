@@ -1,0 +1,397 @@
+#!/usr/bin/env bash
+# The overseer's periodic status report: when one is due, and its rows,
+# rendered from the fleet state and the tracker. Usage, sources and exit
+# statuses: --help.
+#
+# Stdout is a protocol for two readers. `due` prints one `report-due` line or
+# nothing, which oversee-watch relays as its event. `render` and `write` print
+# the report itself, the text the overseer pastes into its chat; `write` puts
+# the same bytes in the report file, so the chat and the file cannot differ.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The column names a report may carry, and the only place they are spelled.
+COLUMN_VOCABULARY="issue|what it is|why it matters"
+# Most characters one prose cell keeps; a longer title or Done-when line is cut.
+CELL_MAX=160
+# Page size of every pull request list. A merged list that fills it refuses,
+# since the merges past it would be missing from Landed.
+PR_PAGE=500
+
+# Every line this script writes to stderr, and the only place its text lives:
+# a stable key and the value acted on, then the English under it, then what a
+# command this script ran wrote.
+message() { # KEY VALUE [CAUSE]
+  {
+    printf 'oversee-report: %s=%s\n' "$1" "$2"
+    case "$1" in
+      args) echo "oversee-report takes due, render or write, then --state PATH and one --repo OWNER/REPO or more; write also takes --summary-file PATH and --succession. See --help." ;;
+      state) echo "The fleet state file could not be read as workflow-state JSON, so no report is judged or rendered from a partial fleet." ;;
+      setting) echo "The setting holds a value it does not take. oversee-report --help lists the values." ;;
+      clock) echo "The current UTC time, a file time or a scratch file could not be had." ;;
+      pr-list) echo "The GitHub pull request list failed, so what landed or what is open is unknown:" ;;
+      pr-list-truncated) echo "The merged list filled its page, so a merge past it would be missing from the report. Nothing is rendered from a partial list." ;;
+      tracker-missing) echo "The Linear CLI is not executable, so the issue's title and Done-when cannot be read. Install the linear skill or set OVERSEE_REPORT_TRACKER." ;;
+      tracker-read) echo "The issue could not be read from the tracker:" ;;
+      summary) echo "The summary file is missing or empty. The report opens with the overseer's own summary, so nothing is written without one." ;;
+      report-exists) echo "A report under this name already stands, and it is never overwritten. Write again in the next minute." ;;
+      write) echo "The report file could not be written." ;;
+      report-written) echo "The report printed above is this file's content." ;;
+    esac
+    [ -z "${3:-}" ] || printf '%s\n' "$3"
+  } >&2
+}
+
+refuse() { # KEY VALUE [CAUSE]
+  message "$@"
+  exit 2
+}
+
+usage() {
+  cat <<'EOF'
+Usage: oversee-report due    --state PATH --repo OWNER/REPO [--repo ...]
+       oversee-report render --state PATH --repo OWNER/REPO [--repo ...]
+       oversee-report write  --state PATH --repo OWNER/REPO [--repo ...]
+                             --summary-file PATH [--succession]
+
+The overseer's status report, in the four rows
+references/communication-modes.md § Status report gives: Landed, Running,
+Next, Waiting on you.
+
+--state is the oversee workflow-state file the watch reads. Reports live in
+progress-reports/ beside it. The newest file there is the last report: what
+landed since its modification time is news, and its age is what the cadence
+measures. With no report yet, the fleet start, the earliest lanes[] launch,
+stands in for it.
+
+due      prints `report-due reason=minutes since=<UTC>` once the last report
+         is ORCH_REPORT_EVERY_MINUTES old, else `report-due reason=issues
+         since=<UTC> landed=<N>` once ORCH_REPORT_EVERY_ISSUES fleet items
+         landed since it, else nothing. Nothing under ORCH_REPORT=off, and
+         nothing for a state with no lane record.
+render   prints the four rows.
+write    prints the summary file's text, a blank line and the four rows, and
+         writes the same bytes to progress-reports/MM-DD-HH-MM.md, in UTC,
+         or MM-DD-HH-MM-succession.md with --succession. The new file is the
+         next report's starting point. A name that already stands is refused.
+
+Rows:
+  Landed          each fleet item, a lanes[] record of any status, whose pull
+                  request merged since the last report, in any --repo. The
+                  issue cell carries the PR number and the merge commit.
+  Running         each lanes[] record reading running or preparing. The issue
+                  cell carries its open PR, or `no PR`, and that status.
+  Next            the first ORCH_REPORT_UPCOMING keys of launch_queue.
+  Waiting on you  the text of each owner_items entry with no answered_at.
+A row with nothing in it reads `none`. Landed, Running and Next are tables
+whose columns ORCH_REPORT_COLUMNS lists: `issue`; `what it is`, the issue's
+title; `why it matters`, the first line of its `## Done when` section. An
+issue is read from GitHub where its lane record says tracker github, or its
+key is issue-N and the record names no tracker, in the record's repo or the
+first --repo; every other issue from the linear skill's cache.
+
+Settings, read through the kendex settings ladder:
+  ORCH_REPORT                on | off, default on
+  ORCH_REPORT_EVERY_MINUTES  minutes between reports, default 120; 0 or empty
+                             turns this trigger off
+  ORCH_REPORT_EVERY_ISSUES   landed items that make a report due, default 0,
+                             which turns this trigger off
+  ORCH_REPORT_UPCOMING       Next rows, default 5
+  ORCH_REPORT_COLUMNS        comma-separated column names, default
+                             `issue,what it is,why it matters`
+  OVERSEE_REPORT_TRACKER     path to the Linear CLI
+
+Exit status:
+  0  the line, the rows or the report was printed, or nothing was due
+  2  a refusal; the first stderr line is `oversee-report: KEY=VALUE`
+EOF
+}
+
+# --- arguments ---------------------------------------------------------------
+
+[[ $# -ge 1 ]] || refuse args none
+case "$1" in
+  -h | --help) usage; exit 0 ;;
+  due | render | write) VERB="$1"; shift ;;
+  *) refuse args "$1" ;;
+esac
+STATE=""
+SUMMARY=""
+SUCCESSION=0
+REPOS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --state) [[ $# -ge 2 && -n "$2" ]] || refuse args "$1"; STATE="$2"; shift 2 ;;
+    --repo) [[ $# -ge 2 && -n "$2" ]] || refuse args "$1"; REPOS+=("$2"); shift 2 ;;
+    --summary-file) [[ $# -ge 2 && -n "$2" ]] || refuse args "$1"; SUMMARY="$2"; shift 2 ;;
+    --succession) SUCCESSION=1; shift ;;
+    -h | --help) usage; exit 0 ;;
+    *) refuse args "$1" ;;
+  esac
+done
+[[ -n "$STATE" ]] || refuse args missing-state
+[[ ${#REPOS[@]} -gt 0 ]] || refuse args missing-repo
+if [[ "$VERB" == write ]]; then
+  [[ -n "$SUMMARY" ]] || refuse args missing-summary-file
+elif [[ -n "$SUMMARY" || "$SUCCESSION" -eq 1 ]]; then
+  refuse args write-only-option
+fi
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT"
+# shellcheck source=lib/date-ladder.sh
+source "$SCRIPT_DIR/lib/date-ladder.sh"
+TRACKER="${OVERSEE_REPORT_TRACKER:-$PROJECT_ROOT/.agents/skills/linear/scripts/linear.sh}"
+
+WORK_DIR="$(mktemp -d)" || refuse clock mktemp
+TMP_FILE=""
+trap 'rm -rf -- "$WORK_DIR"; [[ -z "$TMP_FILE" ]] || rm -f -- "$TMP_FILE"' EXIT
+
+# --- settings ----------------------------------------------------------------
+
+# `-` rather than `:-` throughout: an empty ORCH_REPORT_EVERY_MINUTES is a
+# setting that turns the trigger off, not an absent one.
+REPORT="${ORCH_REPORT-on}"
+case "$REPORT" in on | off) ;; *) refuse setting "ORCH_REPORT:$REPORT" ;; esac
+EVERY_MINUTES="${ORCH_REPORT_EVERY_MINUTES-120}"
+[[ "$EVERY_MINUTES" =~ ^(|0|[1-9][0-9]*)$ ]] || refuse setting "ORCH_REPORT_EVERY_MINUTES:$EVERY_MINUTES"
+EVERY_ISSUES="${ORCH_REPORT_EVERY_ISSUES-0}"
+[[ "$EVERY_ISSUES" =~ ^(0|[1-9][0-9]*)$ ]] || refuse setting "ORCH_REPORT_EVERY_ISSUES:$EVERY_ISSUES"
+UPCOMING="${ORCH_REPORT_UPCOMING-5}"
+[[ "$UPCOMING" =~ ^(0|[1-9][0-9]*)$ ]] || refuse setting "ORCH_REPORT_UPCOMING:$UPCOMING"
+COLUMNS_SETTING="${ORCH_REPORT_COLUMNS-issue,what it is,why it matters}"
+COLUMNS=()
+column_list=()
+IFS=',' read -r -a column_list <<<"$COLUMNS_SETTING"
+for column in ${column_list[@]+"${column_list[@]}"}; do
+  column="${column#"${column%%[![:space:]]*}"}"
+  column="${column%"${column##*[![:space:]]}"}"
+  case "|$COLUMN_VOCABULARY|" in *"|$column|"*) ;; *) refuse setting "ORCH_REPORT_COLUMNS:$COLUMNS_SETTING" ;; esac
+  for seen in ${COLUMNS[@]+"${COLUMNS[@]}"}; do
+    [[ "$seen" != "$column" ]] || refuse setting "ORCH_REPORT_COLUMNS:$COLUMNS_SETTING"
+  done
+  COLUMNS+=("$column")
+done
+[[ ${#COLUMNS[@]} -gt 0 ]] || refuse setting "ORCH_REPORT_COLUMNS:$COLUMNS_SETTING"
+
+# Off is decided before the state is read: a cadence the settings turn off
+# judges nothing, so no state it would have read can fail it.
+[[ "$VERB" != due || "$REPORT" == on ]] || exit 0
+
+# --- fleet state and the last report -----------------------------------------
+
+if ! STATE_JSON="$(jq -c 'select(type == "object" and ((.lanes // []) | type) == "array") | .lanes //= []' -- "$STATE" 2>/dev/null)"; then
+  refuse state "$STATE"
+fi
+[[ -n "$STATE_JSON" ]] || refuse state "$STATE"
+REPORT_DIR="$(dirname -- "$STATE")/progress-reports"
+NOW="$(date -u +%s)" || refuse clock now
+
+# MARKER is the epoch the report covers from: the newest report's modification
+# time, else the fleet start, else empty where the state records no lane.
+MARKER=""
+if [[ -d "$REPORT_DIR" ]]; then
+  for file in "$REPORT_DIR"/*.md; do
+    [[ -f "$file" ]] || continue
+    stamp="$(stat -c %Y -- "$file" 2>/dev/null || stat -f %m -- "$file" 2>/dev/null)" || refuse clock "$file"
+    [[ -n "$MARKER" && "$MARKER" -ge "$stamp" ]] || MARKER="$stamp"
+  done
+fi
+if [[ -z "$MARKER" ]]; then
+  start="$(jq -r '[.lanes[] | .launched_at // empty] | sort | first // ""' <<<"$STATE_JSON")" || refuse state "$STATE"
+  if [[ -n "$start" ]]; then
+    MARKER="$(to_epoch "$start")" || refuse state "$STATE"
+  fi
+fi
+
+# --- what landed --------------------------------------------------------------
+
+# LANDED holds `item<TAB>number<TAB>sha` per fleet item whose pull request
+# merged at or after MARKER, in any --repo, oldest merge first. The item is
+# spelled as its lane record spells it; the branch is that key lower-cased.
+LANDED=""
+landed_read() {
+  local repo list since rows
+  [[ -n "$MARKER" ]] || return 0
+  since="$(from_epoch "$MARKER" %Y-%m-%dT%H:%M:%SZ)" || refuse clock "$MARKER"
+  for repo in "${REPOS[@]}"; do
+    list="$(gh pr list --repo "$repo" --state merged --search "merged:>=$since" --limit "$PR_PAGE" \
+      --json number,headRefName,headRepositoryOwner,mergedAt,mergeCommit 2>"$WORK_DIR/gh.err")" \
+      || refuse pr-list "$repo" "$(cat "$WORK_DIR/gh.err")"
+    rows="$(jq -r --argjson state "$STATE_JSON" --arg owner "${repo%%/*}" --argjson since "$MARKER" --argjson page "$PR_PAGE" '
+      if length >= $page then error("page full") else . end
+      | ($state.lanes | map(.item // empty) | map({key: ascii_downcase, value: .}) | from_entries) as $items
+      | [ .[]
+          | select($items[.headRefName | ascii_downcase] != null)
+          | select(((.headRepositoryOwner.login // $owner) | ascii_downcase) == ($owner | ascii_downcase))
+          | select(.mergedAt != null)
+          | . + {at: (.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}
+          | select(.at >= $since) ]
+      | sort_by(.at)[]
+      | [$items[.headRefName | ascii_downcase], (.number | tostring), ((.mergeCommit.oid // "") | .[0:7])]
+      | @tsv' <<<"$list" 2>"$WORK_DIR/jq.err")" || {
+      grep -q 'page full' "$WORK_DIR/jq.err" && refuse pr-list-truncated "$repo"
+      refuse pr-list "$repo" "$(cat "$WORK_DIR/jq.err")"
+    }
+    [[ -z "$rows" ]] || LANDED+="$rows"$'\n'
+  done
+}
+
+# --- due -----------------------------------------------------------------------
+
+if [[ "$VERB" == due ]]; then
+  [[ -n "$MARKER" ]] || exit 0
+  since="$(from_epoch "$MARKER" %Y-%m-%dT%H:%M:%SZ)" || refuse clock "$MARKER"
+  if [[ -n "$EVERY_MINUTES" && "$EVERY_MINUTES" -gt 0 && $((NOW - MARKER)) -ge $((EVERY_MINUTES * 60)) ]]; then
+    echo "report-due reason=minutes since=$since"
+    exit 0
+  fi
+  [[ "$EVERY_ISSUES" -gt 0 ]] || exit 0
+  landed_read
+  count="$(awk 'NF { n++ } END { print n + 0 }' <<<"$LANDED")"
+  [[ "$count" -lt "$EVERY_ISSUES" ]] || echo "report-due reason=issues since=$since landed=$count"
+  exit 0
+fi
+
+# --- render ----------------------------------------------------------------------
+
+# issue_cells ITEM — sets TITLE and WHY from the item's issue, read from the
+# tracker its lane record names, else the one its key implies.
+TITLE=""
+WHY=""
+issue_cells() {
+  local item="$1" fields tracker repo json
+  fields="$(jq -r --arg item "$item" --arg repo "${REPOS[0]}" '
+    [.lanes[] | select(.item == $item)] | first // {}
+    | "\(.tracker // "")\u001f\(.repo // $repo)"' <<<"$STATE_JSON")" || refuse state "$STATE"
+  # A unit separator, not a tab: IFS whitespace would fold an empty tracker
+  # into the repo that follows it.
+  IFS=$'\x1f' read -r tracker repo <<<"$fields"
+  if [[ "$tracker" == github || ( -z "$tracker" && "$item" =~ ^issue-[0-9]+$ ) ]]; then
+    json="$(gh issue view "${item#issue-}" --repo "$repo" --json title,body 2>"$WORK_DIR/tracker.err")" \
+      || refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
+    json="$(jq -c '{title, description: .body}' <<<"$json" 2>"$WORK_DIR/tracker.err")" \
+      || refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
+  else
+    [[ -x "$TRACKER" ]] || refuse tracker-missing "$TRACKER"
+    json="$("$TRACKER" cache issues get "$item" 2>"$WORK_DIR/tracker.err")" \
+      || refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
+  fi
+  TITLE="$(jq -r '.title // ""' <<<"$json" 2>"$WORK_DIR/tracker.err")" \
+    || refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
+  WHY="$(jq -r '(("\n" + (.description // "")) | gsub("\r\n"; "\n") | split("\n## Done when\n")) as $s
+    | if ($s | length) > 1 then ($s[1] | split("\n## ")[0]) else "" end
+    | [split("\n")[] | select(test("\\S"))] | first // ""
+    | sub("^\\s*([-*]|[0-9]+\\.)\\s+"; "")' <<<"$json" 2>"$WORK_DIR/tracker.err")" \
+    || refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
+}
+
+# cell TEXT — one table cell: whitespace collapsed, cut to CELL_MAX
+# characters, bars escaped, `-` for nothing.
+cell() {
+  local text
+  text="$(printf '%s' "$1" | tr '\n\t' '  ' | awk '{ $1 = $1; print }')"
+  [[ ${#text} -le $CELL_MAX ]] || text="${text:0:$((CELL_MAX - 3))}..."
+  text="${text//|/\\|}"
+  printf '%s' "${text:--}"
+}
+
+# table NAME ROWS — ROWS holds `item<TAB>issue cell` lines; `NAME: none`
+# where it holds none.
+table() {
+  local name="$1" rows="$2" item label column line
+  if [[ -z "$rows" ]]; then
+    printf '%s: none\n' "$name"
+    return 0
+  fi
+  printf '%s:\n' "$name"
+  line="|"; for column in "${COLUMNS[@]}"; do line+=" $column |"; done; printf '%s\n' "$line"
+  line="|"; for column in "${COLUMNS[@]}"; do line+=" --- |"; done; printf '%s\n' "$line"
+  while IFS=$'\t' read -r item label; do
+    [[ -n "$item" ]] || continue
+    issue_cells "$item"
+    line="|"
+    for column in "${COLUMNS[@]}"; do
+      case "$column" in
+        issue) line+=" $(cell "$label") |" ;;
+        "what it is") line+=" $(cell "$TITLE") |" ;;
+        "why it matters") line+=" $(cell "$WHY") |" ;;
+        *) echo "oversee-report: column $column passed the vocabulary check and has no renderer" >&2; exit 2 ;;
+      esac
+    done
+    printf '%s\n' "$line"
+  done <<<"$rows"
+}
+
+render() {
+  local rows="" item number sha repo list open="" pr status
+  landed_read
+  while IFS=$'\t' read -r item number sha; do
+    [[ -n "$item" ]] || continue
+    rows+="$item"$'\t'"$item (#$number, ${sha:-no sha})"$'\n'
+  done <<<"$LANDED"
+  table Landed "$rows"
+  echo
+
+  # Open PRs as `branch<TAB>number`, across every --repo.
+  for repo in "${REPOS[@]}"; do
+    if ! list="$(gh pr list --repo "$repo" --state open --limit "$PR_PAGE" --json number,headRefName 2>"$WORK_DIR/gh.err")"; then
+      refuse pr-list "$repo" "$(cat "$WORK_DIR/gh.err")"
+    fi
+    if ! list="$(jq -r '.[] | "\(.headRefName | ascii_downcase)\t\(.number)"' <<<"$list" 2>"$WORK_DIR/gh.err")"; then
+      refuse pr-list "$repo" "$(cat "$WORK_DIR/gh.err")"
+    fi
+    [[ -z "$list" ]] || open+="$list"$'\n'
+  done
+  list="$(jq -r '.lanes[] | select(.status == "running" or .status == "preparing") | [.item, .status] | @tsv' <<<"$STATE_JSON")" \
+    || refuse state "$STATE"
+  rows=""
+  while IFS=$'\t' read -r item status; do
+    [[ -n "$item" ]] || continue
+    pr="$(awk -F'\t' -v b="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')" '$1 == b { print "#" $2; exit }' <<<"$open")"
+    rows+="$item"$'\t'"$item (${pr:-no PR}, $status)"$'\n'
+  done <<<"$list"
+  table Running "$rows"
+  echo
+
+  list="$(jq -r --argjson n "$UPCOMING" '(.launch_queue // [])[:$n][] | [., .] | @tsv' <<<"$STATE_JSON")" \
+    || refuse state "$STATE"
+  table Next "$list"
+  echo
+
+  if ! list="$(jq -r '(.owner_items // [])[] | select(.answered_at == null) | "- \(.text | gsub("\n"; " "))"' <<<"$STATE_JSON")"; then
+    refuse state "$STATE"
+  fi
+  if [[ -z "$list" ]]; then
+    echo "Waiting on you: none"
+  else
+    printf 'Waiting on you:\n%s\n' "$list"
+  fi
+}
+
+if [[ "$VERB" == render ]]; then
+  render
+  exit 0
+fi
+
+# --- write -----------------------------------------------------------------------
+
+[[ -f "$SUMMARY" && -n "$(awk 'NF' < "$SUMMARY")" ]] || refuse summary "$SUMMARY"
+BODY="$(render)" || exit 2
+SUMMARY_TEXT="$(awk '{ line[NR] = $0 } NF { last = NR } END { for (i = 1; i <= last; i++) print line[i] }' < "$SUMMARY")" \
+  || refuse summary "$SUMMARY"
+NAME="$(from_epoch "$NOW" %m-%d-%H-%M)" || refuse clock "$NOW"
+[[ "$SUCCESSION" -eq 0 ]] || NAME+="-succession"
+TARGET="$REPORT_DIR/$NAME.md"
+[[ ! -e "$TARGET" ]] || refuse report-exists "$TARGET"
+mkdir -p -- "$REPORT_DIR" || refuse write "$REPORT_DIR"
+TMP_FILE="$(mktemp "$REPORT_DIR/.report.XXXXXX")" || refuse write "$REPORT_DIR"
+printf '%s\n\n%s\n' "$SUMMARY_TEXT" "$BODY" > "$TMP_FILE" || refuse write "$TMP_FILE"
+[[ ! -e "$TARGET" ]] || refuse report-exists "$TARGET"
+mv -- "$TMP_FILE" "$TARGET" || refuse write "$TARGET"
+TMP_FILE=""
+cat -- "$TARGET" || refuse write "$TARGET"
+message report-written "$TARGET"

@@ -198,6 +198,27 @@ ORCH_OVERSEER_LANES = "3"
 # three lanes wall an account in about 3.7 hours.
 ORCH_LANE_ACCOUNT_CLAIMS = "3"
 
+# The overseer's status report: what landed, what is running, what is next
+# and what waits on you, pasted into its chat and saved beside the fleet state.
+# "on" writes one on the schedule below and at every overseer handover; "off"
+# writes none.
+# values: on | off
+ORCH_REPORT = "on"
+
+# Minutes between two status reports. 0 or empty turns the timed report off.
+ORCH_REPORT_EVERY_MINUTES = "120"
+
+# Finished items that bring the next status report forward, whatever the
+# minutes above say. 0 leaves the report on its minutes alone.
+ORCH_REPORT_EVERY_ISSUES = "0"
+
+# How many queued items the report's Next list shows.
+ORCH_REPORT_UPCOMING = "5"
+
+# The columns of the report's lists, in order, separated by commas. The
+# choices are: issue, what it is, why it matters.
+ORCH_REPORT_COLUMNS = "issue,what it is,why it matters"
+
 # "off" stops oversee-succeed from launching a successor overseer, and turns
 # off the turn-end refusal that names it. A live
 # overseer writes its handoff and asks the user to start the next session. A
