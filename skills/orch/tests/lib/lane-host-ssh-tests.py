@@ -411,9 +411,10 @@ exec git "$@"
         target = self.root / "mailbox"
         self.assertEqual(self.call("put", "--item", "TEST-1", "--", str(target),
                                    data=b"first answer\n").returncode, 0)
-        cut = self.call("put", "--item", "TEST-1", "--", str(target),
-                        data=b"a much longer second answer\n", SSH_TEST_CUT="5")
-        self.assertNotEqual(cut.returncode, 0)
+        longer = b"a much longer second answer\n"
+        cut = self.call("put", "--item", "TEST-1", "--", str(target), data=longer, SSH_TEST_CUT="5")
+        self.assertEqual(cut.returncode, 1, cut.stderr)
+        self.assertIn(f"lane-host-ssh: put-short expected={len(longer)} arrived=5".encode(), cut.stderr)
         self.assertEqual(target.read_bytes(), b"first answer\n")
         self.assertEqual(list(target.parent.glob("mailbox.kendex-put.*")), [])
         # The control: a provider that renames whatever arrived. The staged
@@ -452,9 +453,10 @@ exec git "$@"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(target.read_bytes(), b'{"id":"half"\n{"id":"whole"}\n')
         # A stream cut short adds nothing and leaves no staging file behind.
-        cut = self.call("append", "--item", "TEST-1", "--", str(target),
-                        data=b'{"id":"a much longer line"}\n', SSH_TEST_CUT="5")
-        self.assertNotEqual(cut.returncode, 0)
+        longer = b'{"id":"a much longer line"}\n'
+        cut = self.call("append", "--item", "TEST-1", "--", str(target), data=longer, SSH_TEST_CUT="5")
+        self.assertEqual(cut.returncode, 1, cut.stderr)
+        self.assertIn(f"lane-host-ssh: append-short expected={len(longer)} arrived=5".encode(), cut.stderr)
         self.assertEqual(target.read_bytes(), b'{"id":"half"\n{"id":"whole"}\n')
         self.assertEqual(list(target.parent.glob("to-lane.jsonl.kendex-append.*")), [])
         # One control per rule, each keeping every other rule in place. The

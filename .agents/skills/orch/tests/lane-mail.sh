@@ -130,9 +130,10 @@ assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")" "2" "the cursor st
 
 # A mailbox read before its first line leaves a cursor of one numeric line,
 # never an empty file: a reader outside lane-mail, the fleet's state sync,
-# takes nothing else. The cursor starts absent, or empty as an inbox that
-# created it with no count left it. FIRST_CURSOR is the exit status and the
-# cursor's bytes in hex, 300a for `0` and its newline, or `absent`.
+# takes nothing else. A peek leaves the cursor as it found it. The cursor
+# starts absent, or empty as an inbox that created it with no count left it.
+# FIRST_CURSOR is the exit status and the cursor's bytes in hex, 300a for `0`
+# and its newline, or `absent`.
 first_inbox() { # NAME absent|empty [INBOX-FLAG]
   new_lane "$1"
   if [ "$2" = empty ]; then
@@ -142,11 +143,28 @@ first_inbox() { # NAME absent|empty [INBOX-FLAG]
   lm inbox --item KEN-1 ${3:+"$3"}
   FIRST_CURSOR="$RC=$(od -An -tx1 "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" 2>/dev/null | tr -d ' \n' || echo absent)"
 }
-for row in 'first_inbox|absent|' 'first_peek|absent|--peek' 'first_empty|empty|' 'first_empty_peek|empty|--peek'; do
-  IFS='|' read -r NAME SEED FLAG <<<"$row"
+for row in 'first_inbox|absent||0=300a|a cursor holding 0' 'first_peek|absent|--peek|0=absent|no cursor' \
+  'first_empty|empty||0=300a|a cursor holding 0' 'first_empty_peek|empty|--peek|0=|the cursor empty'; do
+  IFS='|' read -r NAME SEED FLAG WANT LEAVES <<<"$row"
   first_inbox "$NAME" "$SEED" "$FLAG"
-  assert_eq "$FIRST_CURSOR" "0=300a" "a first inbox${FLAG:+ $FLAG} on an empty mailbox with an $SEED cursor leaves a cursor holding 0"
+  assert_eq "$FIRST_CURSOR" "$WANT" "a first inbox${FLAG:+ $FLAG} on an empty mailbox with an $SEED cursor leaves $LEAVES"
 done
+
+# A peek on a mailbox whose cursor holds no count and whose directory takes
+# no write still lists what is unread: the hooks peek before every tool call,
+# so a peek refused on a full disk would refuse the call that frees it.
+unwritable_peek() { # NAME
+  new_lane "$1"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Free the disk.')"
+  : > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
+  : > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor.lock"
+  chmod 0555 "$LANE/tmp/lane-mail/KEN-1"
+  lm inbox --item KEN-1 --peek
+  chmod 0755 "$LANE/tmp/lane-mail/KEN-1"
+  UNWRITABLE_PEEK="$RC=$(sed -n '/^{/p' <<<"$OUT" | jq -r 'select(.kind == "directive") | .text')"
+}
+unwritable_peek peek_unwritable
+assert_eq "$UNWRITABLE_PEEK" "0=Free the disk." "a peek over a cursor it cannot write still lists the unread directive"
 
 # The receipt a send prints, and the repeat it refuses. A sender reads silence
 # as a send that did not land, and a wrapper run twice delivers nothing twice.
@@ -1048,13 +1066,17 @@ mutant inbox-cursor-churn 's@^    \[ "\$PEEK" -eq 1 \] || \[ "\$COUNT" = "\$SEEN
 cursor_lane control_quiet
 assert_eq "$QUIET" "rewritten" "control: a cursor written on every inbox is replaced by a read that found nothing"
 
-mutant cursor-uncreated 's@^    \[ "\$CURSOR_COUNTED" -eq 1 \] || lm_cursor_write 0$@    :@'
+mutant cursor-uncreated 's@^    \[ "\$PEEK" -eq 1 \] || \[ "\$CURSOR_COUNTED" -eq 1 \] || lm_cursor_write 0$@    :@'
 first_inbox control_first_inbox absent
 assert_eq "$FIRST_CURSOR" "0=absent" "control: without the create a first inbox on an empty mailbox leaves no cursor"
 
-mutant cursor-absent-only 's@^    \[ "\$CURSOR_COUNTED" -eq 1 \] || lm_cursor_write 0$@    [ "$CURSOR_ABSENT" -eq 0 ] || lm_cursor_write 0@'
+mutant cursor-absent-only 's@^    \[ "\$PEEK" -eq 1 \] || \[ "\$CURSOR_COUNTED" -eq 1 \] || lm_cursor_write 0$@    [ "$PEEK" -eq 1 ] || [ "$CURSOR_ABSENT" -eq 0 ] || lm_cursor_write 0@'
 first_inbox control_first_empty empty
 assert_eq "$FIRST_CURSOR" "0=" "control: a create judged on absence alone leaves an empty cursor empty"
+
+mutant peek-writes 's@^    \[ "\$PEEK" -eq 1 \] || \[ "\$CURSOR_COUNTED" -eq 1 \] || lm_cursor_write 0$@    [ "$CURSOR_COUNTED" -eq 1 ] || lm_cursor_write 0@'
+unwritable_peek control_peek_unwritable
+assert_eq "${UNWRITABLE_PEEK%%=*}" "2" "control: a peek that writes the count is refused where the write cannot land"
 
 mutant directives-alone 's@foreach inputs as \$raw (0; \. + 1;@foreach (inputs | select(test("directive"))) as $raw (0; . + 1;@'
 answered_lane control_pending_answer

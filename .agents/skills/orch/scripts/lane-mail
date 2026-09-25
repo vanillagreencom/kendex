@@ -969,8 +969,11 @@ case "$VERB" in
     # fleet's state sync reads this file outside this script and takes one
     # numeric line, which an empty file is not. An empty cursor an earlier
     # inbox left is given its count the same way. Written under the lock, so a
-    # first read racing another never renames 0 over a count it advanced.
-    [ "$CURSOR_COUNTED" -eq 1 ] || lm_cursor_write 0
+    # first read racing another never renames 0 over a count it advanced. A
+    # peek writes nothing: the hooks peek before every tool call, and a write
+    # that cannot land there would refuse each one, the call that frees the
+    # disk included.
+    [ "$PEEK" -eq 1 ] || [ "$CURSOR_COUNTED" -eq 1 ] || lm_cursor_write 0
     if [ -n "$ACK" ]; then
       # A halt stands until a plain read: the count stops at the line before
       # the first unread halt, whatever a hook that showed it acknowledges.

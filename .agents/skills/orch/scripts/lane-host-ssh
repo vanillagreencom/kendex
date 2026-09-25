@@ -61,10 +61,12 @@ esac
 # and the EXIT trap removes the staged file however the script ends, which is
 # a no-op once `put` has renamed it into place.
 #
-# A write that fails is `<verb>-failed path=... reason=...`, the failing
-# command's own report below it. `no-space` is a full disk, freed on the host
-# rather than chased through SSH; `write-failed` is every other cause. The C
-# locale is what holds that report to the wording `write_cause` matches.
+# A staged data write that fails is `<verb>-failed path=... reason=...`, the
+# failing command's own report below it, as is append's library call; the
+# steps around them fail through `set -e` with their own report alone.
+# `no-space` is a full disk, freed on the host rather than chased through SSH;
+# `write-failed` is every other cause. The C locale is what holds that report
+# to the wording `write_cause` matches.
 # Arguments: `$1` target, `$2` declared count, `$3` remote clone, `$4` staging
 # suffix, `$5` the verb opening each diagnostic key. The staged path is left in
 # `$staged`.
@@ -395,8 +397,9 @@ remote account directory, so folder trust and hook approval precede the first tu
 travel on stdin. cat exits 2 for a path that is not there. put stages beside
 the target and renames only once the byte count the sender declared has
 arrived, so a transfer cut short replaces nothing and exits 1. Neither verb
-leaves its staged file behind, and a failed write exits 1 as put-failed or
-append-failed with reason=no-space for a full disk. append stages
+leaves its staged file behind. A failed write of the staged bytes, or of
+append's library call, exits 1 as put-failed or append-failed, with
+reason=no-space for a full disk. append stages
 and counts the same way, then hands the bytes to the clone's own
 lib/mailbox-append.sh, which adds them under a lock taken on the host, so
 writers on several machines each keep their line; it creates the file with
