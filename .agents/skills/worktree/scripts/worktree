@@ -2347,7 +2347,7 @@ case "${1:-}" in
 
     if [[ "$ACTION" == abort ]]; then
       RESTACK_ORIGINAL_HEAD="$(restack_state_get "$WT_PATH" originalHead)"
-      # The abort restores the branch's own version of every held hook, so
+      # The abort restores the branch's own version of every held path, so
       # the saved conflicted copies are stale; their list goes with Git's
       # paused state, so read it first.
       HELD_COPIES="$(restack_unconsumed_hook_copies "$WT_PATH")"

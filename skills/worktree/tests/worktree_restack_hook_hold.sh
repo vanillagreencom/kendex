@@ -60,7 +60,9 @@ SOURCE_HOOK=hooks/stop.sh
 CURSOR_HOOK=.cursor/hooks/stop.sh
 
 # Libraries under the kendex skills tree: the Claude hook sources LIB, LIB
-# sources INNER beside it, and nothing sources OTHER, which shares INNER's name.
+# sources INNER beside it from inside a function, under an indented directive
+# as lane-mail-check.sh does, and nothing sources OTHER, which shares INNER's
+# name.
 # EXTRA is sourced only once the branch's Codex hook starts sourcing it.
 LIB=.agents/skills/guard/scripts/lib/guard.sh
 INNER=.agents/skills/guard/scripts/lib/inner.sh
@@ -101,7 +103,7 @@ JSON
 JSON
   write_sourcing_hook "$MAIN/$CLAUDE_HOOK" guard/scripts/lib/guard.sh base
   mkdir -p "$MAIN/${LIB%/*}"
-  printf '# shellcheck source=inner.sh\nsource "${BASH_SOURCE[0]%%/*}/inner.sh"\n' >"$MAIN/$LIB"
+  printf 'guard_load() {\n  # shellcheck source=inner.sh\n  source "${BASH_SOURCE[0]%%/*}/inner.sh"\n}\nguard_load\n' >"$MAIN/$LIB"
   write_hook "$MAIN/$INNER" base
   write_hook "$MAIN/$OTHER" base
   write_hook "$MAIN/$EXTRA" base
@@ -366,6 +368,7 @@ without the held-path exclusion the report tells the caller to edit a held hook@
 with the branch's side taken first the held hooks keep the branch's version@scripts/lib/restack-state.sh@checkout --ours --@1@checkout --theirs --@hooks@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;$HELD paused=yes parses=ok,ok runs=ok,ok saved=$C,$X markers=$C,$X body=wt,wt ordinary=-
 without the index check a replay continue records a staged copy in the branch@scripts/lib/restack-state.sh@! staged=\"\$(git -C \"\$wt\" ls-files -- \"\$copy\")\" || [[ -n \"\$staged\" ]]@1@false@hooks restack-replay stage-all consume-staged@restack continue topic@rc=0 err=worktree-rebase-count: 1 paused=no parses=ok,ok runs=ok,ok saved=$C,$X markers=- body=resolved,resolved ordinary=-
 without the library follow a sourced library keeps its markers and the hook fails@scripts/lib/restack-state.sh@restack_hook_libraries \"\$wt\" \"\$rev\" \"\$words\" || return 1@1@:@lib@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=FAIL,ok saved=- markers=$LIB body=base,base ordinary=$LIB
+without the indent allowance a directive inside a function is not read@scripts/lib/restack-state.sh@sed -n 's/^[[:space:]]*#[[:space:]]*shellcheck@1@sed -n 's/^#[[:space:]]*shellcheck@inner@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=FAIL,ok saved=- markers=$INNER body=base,base ordinary=$INNER
 without following a library's own directives a library it sources keeps its markers@scripts/lib/restack-state.sh@queue=\"\$queue\"\$'\\n'\"\$target\"@1@:@inner@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=FAIL,ok saved=- markers=$INNER body=base,base ordinary=$INNER
 with every directive matched as a path suffix a same-named unsourced file is held@scripts/lib/restack-state.sh@if [[ \"\$target\" == ../* ]]; then@1@if true; then@other@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $OTHER paused=yes parses=ok,ok runs=ok,ok saved=$OTHER.restack-conflict markers=$OTHER.restack-conflict body=base,base ordinary=-
 with libraries read at the paused HEAD only a library the branch's hook sources keeps its markers@scripts/lib/restack-state.sh@restack_hook_libraries \"\$wt\" \"\$rev\"@1@restack_hook_libraries \"\$wt\" HEAD@branch-sourced@create topic --restack@rc=1 err=worktree-rebase-conflicts: <wt> paused=yes parses=ok,ok runs=ok,FAIL saved=- markers=$EXTRA body=base,base ordinary=$EXTRA
