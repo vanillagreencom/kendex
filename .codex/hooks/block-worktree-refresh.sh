@@ -261,7 +261,7 @@ KENDEX_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]|$)'
 # subcommands of `source` and `marketplace`. FOUND is empty where the segment
 # names none; TAIL keeps a leading space so a word at its start has an edge.
 writing_verb() { # SEGMENT -> FOUND, TAIL
-  local rest word group=""
+  local rest word glued group=""
   FOUND=""
   TAIL=""
   [[ $1 =~ $KENDEX_RE ]] || return 0
@@ -271,6 +271,10 @@ writing_verb() { # SEGMENT -> FOUND, TAIL
     [ -n "$rest" ] || return 0
     word=${rest%%[[:space:]]*}
     rest=${rest#"$word"}
+    # A redirection glued to the word, as in `refresh>/dev/null`, ends the
+    # word Bash passes; it stays in the tail for the option reader.
+    glued=${word#"${word%%[<>]*}"}
+    word=${word%%[<>]*}
     word=${word#[\"\']}
     word=${word%[\"\']}
     case "$group:$word" in
@@ -289,7 +293,7 @@ writing_verb() { # SEGMENT -> FOUND, TAIL
         continue
         ;;
     esac
-    TAIL=" $rest"
+    TAIL=" $glued$rest"
     return 0
   done
 }

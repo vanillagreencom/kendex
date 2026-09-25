@@ -258,6 +258,11 @@ kendex drift-hook from the worktree is refused|2|block-worktree-refresh: refused
 kendex source add x from the worktree is refused, both words the verb read|2|block-worktree-refresh: refused=source add|kendex source add x
 kendex source remove x from the worktree is refused, both words the verb read|2|block-worktree-refresh: refused=source remove|kendex source remove x
 a later verb word is an argument, not the verb|2|block-worktree-refresh: refused=add|kendex add orch --skill refresh
+a redirection glued to the verb ends the verb word|2|block-worktree-refresh: refused=refresh|kendex refresh>/dev/null
+the same for update-pi|2|block-worktree-refresh: refused=update-pi|kendex update-pi>log
+and for an input redirection|2|block-worktree-refresh: refused=refresh|kendex refresh\0074in
+an operator glued to the verb takes the next word as its file|2|block-worktree-refresh: refused=refresh|kendex refresh> --global
+a global option after a verb with a glued redirection passes|0|-|kendex refresh>out --global
 kendex source enable x from the worktree is refused|2|block-worktree-refresh: refused=source enable|kendex source enable x
 kendex source disable x from the worktree is refused|2|block-worktree-refresh: refused=source disable|kendex source disable x
 kendex marketplace subscribe x from the worktree is refused|2|block-worktree-refresh: refused=marketplace subscribe|kendex marketplace subscribe x
