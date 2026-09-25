@@ -3,17 +3,19 @@
 # kendex review-gate skill, vendored at .agents/skills/review-gate/scripts/.
 #
 # READ-ONLY: every GitHub call below is a GET. It answers whether the
-# repository's GitHub-side settings match the standard in ../standard.json,
-# the one place the standard's values live: the default branch's effective
-# rules, the rulesets' bypass actors, the lanes app installation, and the
-# environment that holds the app secrets. Its subject is GitHub state, not
-# the checkout, so validate.sh does not run it: CI's token cannot read
-# bypass actors, installations or secret names, and every row would be
-# unreadable there.
+# repository's GitHub-side settings match the organization standard. The
+# standard's values (required contexts, app, environment, secret names)
+# live in ../standard.json; the rows that hold no value (organization
+# source, merge queue, thread resolution, Copilot review, no classic
+# protection, zero bypass actors) are fixed here. Its subject is GitHub
+# state, not the checkout, so validate.sh does not run it: CI's token
+# cannot read bypass actors, installations or secret names, and every such
+# row would be unreadable there. The permission each row's reads need is in
+# print_usage.
 #
 # Report protocol: ok/FAIL check=KEY value=VALUE, then indented
 # explanation, the same records validate.sh prints. VALUE is the observed
-# state; `unreadable` in it means the read failed, which is never a match.
+# state; `unreadable` in it means a read failed, which is never a match.
 # Human explanation is not parsed. Full contract: print_usage or --help.
 set -euo pipefail
 
@@ -35,8 +37,9 @@ print_usage() {
 Usage: validate-standard.sh [--help]   (no positional arguments)
 
 Reports, read-only, whether THIS repository's GitHub settings match the
-organization standard in the skill's standard.json. The repository is the
-one `gh` resolves: GH_REPO when set, else the checkout's remote.
+organization standard. standard.json in the skill holds its values. The
+repository is the one `gh` resolves: GH_REPO when set, else the checkout's
+remote.
 
 One verdict line per row, VALUE being what was observed:
   standard-ruleset-source           every effective default-branch rule comes
@@ -49,19 +52,49 @@ One verdict line per row, VALUE being what was observed:
   standard-copilot-review           a rule requests a Copilot review
   standard-bypass-actors            no ruleset behind those rules has a bypass
                                     actor
+  standard-classic-protection       the default branch has no classic branch
+                                    protection beside the rulesets
   standard-app                      the standard's app is installed on every
                                     repository of the organization
   standard-environment              the standard's environment exists and
                                     deploys from the default branch only
   standard-environment-secrets      that environment holds every secret the
                                     standard names (names only)
-  standard-secrets-outside          no repository or organization secret
-                                    visible here carries one of those names
+  standard-secrets-outside          no other secret carries one of those names:
+                                    repository and organization Actions
+                                    secrets, repository and organization
+                                    Dependabot secrets, and every other
+                                    environment of the repository
 
-A failed read reports its rows as FAIL with `unreadable` in the value, never
-as a match. Bypass actors, installations and secret names need a token with
-repository administration read, organization administration read and
-secrets read.
+A failed read reports its row as FAIL with `unreadable` in the value, never
+as a match. The permission each row's reads need, as GitHub App permissions:
+  ruleset-source, merge-queue,      the branch's rules: Metadata read
+  required-contexts, conversation-
+  resolution, copilot-review
+  bypass-actors                     each ruleset: the bypass_actors field is
+                                    returned only to a caller with write
+                                    access to the ruleset (Administration
+                                    write where the ruleset lives, the
+                                    organization's for an organization
+                                    ruleset); a withheld field is unreadable
+  classic-protection                the branch: Contents read
+  app                               the organization's installations:
+                                    organization Administration read
+  environment                       environments and branch policies:
+                                    Actions read
+  environment-secrets               the environment's secret names:
+                                    Environments read
+  secrets-outside                   Actions secret names: Secrets read;
+                                    repository Dependabot secret names:
+                                    Dependabot secrets read; organization
+                                    Dependabot secret names: organization
+                                    Dependabot secrets read; other
+                                    environments' secret names: Environments
+                                    read (and Actions read to list them)
+A token holding only repository Administration, Metadata, Actions,
+Environments and Secrets read plus organization Secrets read reads
+bypass-actors, classic-protection and app as unreadable, and the Dependabot
+scopes of secrets-outside as unreadable.
 
 Exit codes:
   0  every row matched
@@ -103,14 +136,15 @@ WANT_SECRETS="$(std '.environment_secrets | unique | .[]')" || die standard-read
 SCRATCH="$(mktemp -d)" || die scratch "${TMPDIR:-/tmp}" "could not create a scratch directory"
 trap 'rm -rf -- "$SCRATCH"' EXIT
 
-# READ_OUT holds stdout; a failed read leaves READ_ERR naming gh's first
-# stderr line so the row says why it could not answer.
+# READ_OUT holds stdout; a failed read sets READ_ERR to gh's first stderr
+# line. Both belong to the latest call only, so a caller that reads in a
+# loop records READ_ERR per read inside the loop.
 READ_OUT=""
 READ_ERR=""
 read_api() { # ENDPOINT FILTER [--paginate]
   local rc=0
   READ_ERR=""
-  READ_OUT="$(gh api ${3:+"$3"} "$1" --jq "$2" 2>"$SCRATCH/err")" || rc=$?
+  READ_OUT="$(gh api ${3:+"$3"} "$1" --jq "$2" </dev/null 2>"$SCRATCH/err")" || rc=$?
   [ "$rc" -eq 0 ] && return 0
   if ! READ_ERR="$(sed -n '1p' "$SCRATCH/err")" || [ -z "$READ_ERR" ]; then
     READ_ERR="gh exited $rc"
@@ -119,6 +153,16 @@ read_api() { # ENDPOINT FILTER [--paginate]
 }
 uri() { jq -rn --arg v "$1" '$v | @uri'; }
 jq_string() { jq -n --arg v "$1" '$v'; }
+# The names among WANT_SECRETS present in the newline list LISTED, one per
+# line; an exact whole-line match, so APP_ID_OLD is not APP_ID.
+held_names() { # LISTED
+  local name
+  for name in $WANT_SECRETS; do
+    if grep -qxF -- "$name" <<<"$1"; then
+      printf '%s\n' "$name"
+    fi
+  done
+}
 
 read_api "repos/{owner}/{repo}" '[.full_name, .default_branch] | @tsv' ||
   die repository-read "${GH_REPO:-}" "could not read the repository: $READ_ERR"
@@ -131,6 +175,7 @@ esac
 [ -n "$BRANCH" ] && [ "$BRANCH" != "$READ_OUT" ] ||
   die repository-read "$READ_OUT" "the repository read named no default branch"
 OWNER="${FULL%%/*}"
+BRANCH_URI="$(uri "$BRANCH")"
 
 PASS=0
 FAILED=0
@@ -141,7 +186,7 @@ bad() { FAILED=$((FAILED + 1)); rg_report FAIL "$@"; }
 
 RULE_ROWS="standard-ruleset-source standard-merge-queue standard-required-contexts standard-conversation-resolution standard-copilot-review standard-bypass-actors"
 RULES=""
-if read_api "repos/$FULL/rules/branches/$(uri "$BRANCH")" '.[] | @json' --paginate &&
+if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
   RULES="$(printf '%s' "$READ_OUT" | jq -s '.' 2>/dev/null)" &&
   jq -e 'all(.[]; type == "object" and (.type | type) == "string")' >/dev/null 2>&1 <<<"$RULES"; then
   # RULES already parsed as an array of rule objects, so a failed query
@@ -180,21 +225,29 @@ if read_api "repos/$FULL/rules/branches/$(uri "$BRANCH")" '.[] | @json' --pagina
     bad standard-copilot-review absent "no rule on $BRANCH requests a Copilot review"
   fi
 
-  # The list is returned only to a token with administration read; without
-  # it the field is absent, which is unreadable and never zero.
+  # GitHub returns bypass_actors only to a caller with write access to the
+  # ruleset and omits the field otherwise, so a missing field is
+  # unreadable and never zero.
   actors=0
   unreadable=""
+  causes=""
   ids="$(rules '[.[].ruleset_id | select(. != null) | tostring] | unique | .[]')"
   for id in $ids; do
-    if read_api "repos/$FULL/rulesets/$id" 'if has("bypass_actors") then (.bypass_actors | length | tostring) else "absent" end' &&
-      [ "$READ_OUT" != absent ]; then
-      actors=$((actors + READ_OUT))
-    else
+    if ! read_api "repos/$FULL/rulesets/$id" 'if has("bypass_actors") then (.bypass_actors | length | tostring) else "withheld" end'; then
       unreadable="${unreadable:+$unreadable,}$id"
+      causes="${causes:+$causes
+}$id: $READ_ERR"
+    elif [ "$READ_OUT" = withheld ]; then
+      unreadable="${unreadable:+$unreadable,}$id"
+      causes="${causes:+$causes
+}$id: bypass_actors withheld, which GitHub does without write access to the ruleset"
+    else
+      actors=$((actors + READ_OUT))
     fi
   done
   if [ -n "$unreadable" ]; then
-    bad standard-bypass-actors "unreadable:$unreadable" "the bypass actors of ruleset(s) $unreadable could not be read${READ_ERR:+ ($READ_ERR)}; a token with repository administration read sees them"
+    bad standard-bypass-actors "unreadable:$unreadable" "the bypass actors of these rulesets could not be read:
+$causes"
   elif [ "$actors" -eq 0 ]; then
     ok standard-bypass-actors 0 "no ruleset on $BRANCH has a bypass actor"
   else
@@ -205,6 +258,19 @@ else
   for check in $RULE_ROWS; do
     bad "$check" unreadable "the effective rules of $BRANCH could not be read: $why"
   done
+fi
+
+# The rules endpoint answers for rulesets only. Classic protection is a
+# second, independent route: its own required contexts, and an admin merge
+# when it does not enforce admins.
+if read_api "repos/$FULL/branches/$BRANCH_URI" '.protection.enabled | if type == "boolean" then (if . then "on" else "off" end) else error("protection.enabled is not a boolean") end'; then
+  case "$READ_OUT" in
+    off) ok standard-classic-protection off "$BRANCH has no classic branch protection" ;;
+    on) bad standard-classic-protection on "$BRANCH has classic branch protection beside the rulesets; the standard holds every rule in the organization rulesets, so remove it" ;;
+    *) bad standard-classic-protection unreadable "the branch read answered neither on nor off" ;;
+  esac
+else
+  bad standard-classic-protection unreadable "the branch $BRANCH could not be read: $READ_ERR"
 fi
 
 # ------------------------------------------------------------- the app ---
@@ -222,9 +288,24 @@ fi
 # --------------------------------------------------------- environment ---
 
 ENV_URI="$(uri "$WANT_ENV")"
+# ENVS is the environments list as one JSON array, or empty when the read
+# failed; every environment row and the other-environment scopes below
+# branch on it.
+ENVS=""
+ENVS_ERR=""
+if read_api "repos/$FULL/environments" '.environments[] | @json' --paginate &&
+  ENVS="$(printf '%s' "$READ_OUT" | jq -s '.' 2>/dev/null)" &&
+  jq -e 'all(.[]; type == "object" and (.name | type) == "string")' >/dev/null 2>&1 <<<"$ENVS"; then
+  :
+else
+  ENVS=""
+  ENVS_ERR="${READ_ERR:-the response is not a list of named environments}"
+fi
+
 ENV_PRESENT=unknown
-if read_api "repos/$FULL/environments" ".environments[] | select(.name == $(jq_string "$WANT_ENV")) | .deployment_branch_policy | @json" --paginate; then
-  policy="$READ_OUT"
+if [ -n "$ENVS" ]; then
+  policy="$(jq -r --arg n "$WANT_ENV" 'map(select(.name == $n)) | if length == 0 then "" else (.[0].deployment_branch_policy | @json) end' <<<"$ENVS")" ||
+    die environments-query "$WANT_ENV" "jq could not evaluate a query over the parsed environments"
   case "$policy" in
     "") ENV_PRESENT=no; bad standard-environment absent "the environment $WANT_ENV does not exist" ;;
     null) ENV_PRESENT=yes; bad standard-environment unrestricted "$WANT_ENV deploys from every branch; the standard allows the default branch only" ;;
@@ -246,18 +327,17 @@ if read_api "repos/$FULL/environments" ".environments[] | select(.name == $(jq_s
       ;;
   esac
 else
-  bad standard-environment unreadable "the environments could not be read: $READ_ERR"
+  bad standard-environment unreadable "the environments could not be read: $ENVS_ERR"
 fi
 
 case "$ENV_PRESENT" in
   yes)
     if read_api "repos/$FULL/environments/$ENV_URI/secrets" '.secrets[].name' --paginate; then
-      held=""
+      listed="$READ_OUT"
+      held="$(held_names "$listed" | paste -sd ';' -)"
       missing=""
       for name in $WANT_SECRETS; do
-        if grep -qxF -- "$name" <<<"$READ_OUT"; then
-          held="${held:+$held;}$name"
-        else
+        if ! grep -qxF -- "$name" <<<"$listed"; then
           missing="${missing:+$missing;}$name"
         fi
       done
@@ -274,32 +354,53 @@ case "$ENV_PRESENT" in
   unknown) bad standard-environment-secrets unreadable "the environments could not be read, so $WANT_ENV's secrets were not asked for" ;;
 esac
 
-# A secret of the same name outside the environment is readable by any
-# workflow on any branch, which is what the environment's branch policy
-# exists to prevent.
+# A secret of the same name anywhere else is readable by a workflow on a
+# branch the environment's policy excludes, which is what that policy
+# exists to prevent. Each scope is one LABEL<TAB>ENDPOINT line.
+scopes="repository	repos/$FULL/actions/secrets
+organization	repos/$FULL/actions/organization-secrets
+dependabot	repos/$FULL/dependabot/secrets
+dependabot-organization	orgs/$OWNER/dependabot/secrets"
 outside=""
 unreadable=""
-for scope in repository organization; do
-  case "$scope" in
-    repository) endpoint="repos/$FULL/actions/secrets" ;;
-    organization) endpoint="repos/$FULL/actions/organization-secrets" ;;
-  esac
-  if read_api "$endpoint" '.secrets[].name' --paginate; then
-    for name in $WANT_SECRETS; do
-      if grep -qxF -- "$name" <<<"$READ_OUT"; then
-        outside="${outside:+$outside;}$scope:$name"
-      fi
-    done
-  else
-    unreadable="${unreadable:+$unreadable,}$scope"
-  fi
-done
-if [ -n "$unreadable" ]; then
-  bad standard-secrets-outside "unreadable:$unreadable" "the $unreadable secret names could not be read: $READ_ERR"
-elif [ -z "$outside" ]; then
-  ok standard-secrets-outside none "no repository or organization secret visible here carries a name the standard keeps in $WANT_ENV"
+causes=""
+if [ -n "$ENVS" ]; then
+  others="$(jq -r --arg n "$WANT_ENV" '.[] | select(.name != $n) | .name' <<<"$ENVS")" ||
+    die environments-query "$WANT_ENV" "jq could not evaluate a query over the parsed environments"
+  while IFS= read -r env_name; do
+    [ -n "$env_name" ] || continue
+    scopes="$scopes
+environment:$env_name	repos/$FULL/environments/$(uri "$env_name")/secrets"
+  done <<EOF_OTHERS
+$others
+EOF_OTHERS
 else
-  bad standard-secrets-outside "$outside" "these secrets sit outside $WANT_ENV, readable by a workflow on any branch; delete them"
+  unreadable="environments"
+  causes="environments: $ENVS_ERR"
+fi
+while IFS='	' read -r label endpoint; do
+  if read_api "$endpoint" '.secrets[].name' --paginate; then
+    while IFS= read -r name; do
+      [ -n "$name" ] || continue
+      outside="${outside:+$outside;}$label:$name"
+    done <<EOF_HELD
+$(held_names "$READ_OUT")
+EOF_HELD
+  else
+    unreadable="${unreadable:+$unreadable,}$label"
+    causes="${causes:+$causes
+}$label: $READ_ERR"
+  fi
+done <<EOF_SCOPES
+$scopes
+EOF_SCOPES
+if [ -n "$unreadable" ]; then
+  bad standard-secrets-outside "unreadable:$unreadable" "these secret-name reads failed${outside:+ (found outside $WANT_ENV so far: $outside)}:
+$causes"
+elif [ -z "$outside" ]; then
+  ok standard-secrets-outside none "no secret outside $WANT_ENV carries a name the standard keeps there"
+else
+  bad standard-secrets-outside "$outside" "these secrets sit outside $WANT_ENV, readable by a workflow on a branch its policy excludes. Move each into $WANT_ENV and declare that environment on every job that reads it, then delete these copies"
 fi
 
 [ "$FAILED" -eq 0 ] || exit 1

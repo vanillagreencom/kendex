@@ -124,7 +124,7 @@ Carry-forward never creates evidence or bypasses a fail-closed term. Objections 
 
 - `scripts/validate.sh`: validate a consumer installation. `--help`
 - `scripts/validate-workflow.sh`: compare the adopted workflow with the template; `--adopt` re-installs a new template over an unedited copy. `--help`
-- `scripts/validate-standard.sh`: report, read-only, whether this repository's rulesets, required contexts, app installation and app-secret environment match `standard.json`. Run it with a token holding administration and secrets read; a row it cannot read is a FAIL. `--help`
+- `scripts/validate-standard.sh`: report, read-only, whether this repository's rulesets, classic branch protection, required contexts, app installation and app-secret environment match the organization standard, and whether a standard secret name also sits in a repository, organization or Dependabot secret or in another environment. A row it cannot read is a FAIL. `--help` names each row and the permission its reads need; a token holding only the lanes app's read-only set reads the bypass-actor, classic-protection and app rows and the Dependabot scopes as unreadable.
 - `scripts/review-predicate.sh`: evaluate one head or validate config. `--help`
 - `scripts/review-policy`: map the shared classifier's answer to the configured review evidence policy. `--help`
 - `scripts/review-writer.sh`: `workflow_dispatch` and `schedule` evaluate and converge every open PR; `merge_group` posts one queue success, while `WRITER_READ_ONLY=1` is a no-op. Its header documents the workflow-only contract.

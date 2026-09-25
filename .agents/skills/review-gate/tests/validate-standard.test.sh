@@ -57,9 +57,13 @@ cat >"$BASE/environments.json" <<'JSON'
 {"environments": [{"name": "copilot", "deployment_branch_policy": null}, {"name": "kendex", "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}]}
 JSON
 printf '{"branch_policies": [{"name": "main", "type": "branch"}]}\n' >"$BASE/branch-policies.json"
-printf '{"secrets": [{"name": "APP_ID"}, {"name": "APP_KEY"}, {"name": "OTHER"}]}\n' >"$BASE/environment-secrets.json"
+printf '{"name": "main", "protected": true, "protection": {"enabled": false}}\n' >"$BASE/branch.json"
+printf '{"secrets": [{"name": "APP_ID"}, {"name": "APP_KEY"}, {"name": "OTHER"}]}\n' >"$BASE/environment-secrets-kendex.json"
+printf '{"secrets": [{"name": "COPILOT_TOKEN"}]}\n' >"$BASE/environment-secrets-copilot.json"
 printf '{"secrets": [{"name": "OTHER"}]}\n' >"$BASE/repository-secrets.json"
 printf '{"secrets": [{"name": "SHARED"}]}\n' >"$BASE/organization-secrets.json"
+printf '{"secrets": [{"name": "NPM_TOKEN"}]}\n' >"$BASE/dependabot-secrets.json"
+printf '{"secrets": []}\n' >"$BASE/organization-dependabot-secrets.json"
 
 BASELINE='ok check=standard-ruleset-source value=Organization
 ok check=standard-merge-queue value=present
@@ -67,6 +71,7 @@ ok check=standard-required-contexts value=CI\;Review\ gate
 ok check=standard-conversation-resolution value=true
 ok check=standard-copilot-review value=present
 ok check=standard-bypass-actors value=0
+ok check=standard-classic-protection value=off
 ok check=standard-app value=all
 ok check=standard-environment value=custom:branch:main
 ok check=standard-environment-secrets value=APP_ID\;APP_KEY
@@ -100,16 +105,23 @@ run() { # FIXTURES SHIM_FAIL — sets OUT (verdict lines) and RC
 }
 
 echo "=== each drifted element reports its own row ==="
-# name ~ shim failure ~ fixture file ~ jq edit of it ~ overrides
+# name ~ shim failure ~ fixture files (comma-separated) ~ jq edit of each
+# ~ overrides. A fixture that does not exist yet, such as a second page, is
+# written from the edit alone.
 rows=0
-while IFS='~' read -r name fail file edit overrides; do
+while IFS='~' read -r name fail files edit overrides; do
   [ -n "$name" ] || continue
   rows=$((rows + 1))
   dir="$TMP/case-$rows"
   cp -R "$BASE" "$dir"
-  if [ -n "$file" ]; then
-    jq "$edit" "$dir/$file" >"$dir/$file.new" && mv "$dir/$file.new" "$dir/$file"
-  fi
+  for file in $(tr ',' ' ' <<<"$files"); do
+    if [ -f "$dir/$file" ]; then
+      jq "$edit" "$dir/$file" >"$dir/$file.new"
+    else
+      jq -n "$edit" >"$dir/$file.new"
+    fi
+    mv "$dir/$file.new" "$dir/$file"
+  done
   run "$dir" "$fail"
   want="$(expected_listing "$overrides")"
   want_rc=1
@@ -129,8 +141,11 @@ an extra required context~~rules.json~.[1].parameters.required_status_checks += 
 a missing required context~~rules.json~.[1].parameters.required_status_checks = [{"context": "Review gate"}]~standard-required-contexts=Review\ gate
 threads need no resolution~~rules.json~.[2].parameters.required_review_thread_resolution = false~standard-conversation-resolution=false
 no Copilot review~~rules.json~del(.[3])~standard-copilot-review=absent
-a bypass actor~~ruleset-2.json~.bypass_actors = [{"actor_type": "RepositoryRole", "actor_id": 5}]~standard-bypass-actors=1
+a bypass actor on each ruleset adds up~~ruleset-1.json,ruleset-2.json~.bypass_actors = [{"actor_type": "RepositoryRole", "actor_id": 5}]~standard-bypass-actors=2
 bypass actors withheld from the token~~ruleset-1.json~del(.bypass_actors)~standard-bypass-actors=unreadable:1
+a per-repository rule on the second page~~rules.page2.json~[{"type": "deletion", "ruleset_source_type": "Repository", "ruleset_id": 1}]~standard-ruleset-source=Repository:1
+classic protection beside the rulesets~~branch.json~.protection.enabled = true~standard-classic-protection=on
+the branch unreadable~branch~~~standard-classic-protection=unreadable
 the app on selected repositories~~installations.json~.installations[1].repository_selection = "selected"~standard-app=selected
 the app not installed~~installations.json~.installations |= [.[0]]~standard-app=absent
 installations unreadable~installations~~~standard-app=unreadable
@@ -138,9 +153,18 @@ the environment deploys from every branch~~environments.json~.environments[1].de
 the environment deploys from protected branches~~environments.json~.environments[1].deployment_branch_policy = {"protected_branches": true, "custom_branch_policies": false}~standard-environment=protected-branches
 the environment deploys from a second branch~~branch-policies.json~.branch_policies += [{"name": "dev", "type": "branch"}]~standard-environment=custom:branch:main\,branch:dev
 branch policies unreadable~branch-policies~~~standard-environment=unreadable
-the environment lacks a secret~~environment-secrets.json~.secrets |= map(select(.name != "APP_KEY"))~standard-environment-secrets=APP_ID
-environment secrets unreadable~environment-secrets~~~standard-environment-secrets=unreadable
+a tag policy named for the default branch~~branch-policies.json~.branch_policies = [{"name": "main", "type": "tag"}]~standard-environment=custom:tag:main
+a secret whose name only starts like a standard one~~environment-secrets-kendex.json~.secrets = [{"name": "APP_ID"}, {"name": "APP_KEY_OLD"}]~standard-environment-secrets=APP_ID
+the environment lacks a secret~~environment-secrets-kendex.json~.secrets |= map(select(.name != "APP_KEY"))~standard-environment-secrets=APP_ID
+environment secrets unreadable~environment-secrets-kendex~~~standard-environment-secrets=unreadable
 a repository secret of a standard name~~repository-secrets.json~.secrets += [{"name": "APP_ID"}]~standard-secrets-outside=repository:APP_ID
+a repository secret of a standard name on the second page~~repository-secrets.page2.json~{"secrets": [{"name": "APP_ID"}]}~standard-secrets-outside=repository:APP_ID
+a repository secret whose name only starts like a standard one~~repository-secrets.json~.secrets += [{"name": "APP_ID_OLD"}]~
+a standard name in another environment~~environment-secrets-copilot.json~.secrets += [{"name": "APP_ID"}]~standard-secrets-outside=environment:copilot:APP_ID
+a repository Dependabot secret of a standard name~~dependabot-secrets.json~.secrets += [{"name": "APP_KEY"}]~standard-secrets-outside=dependabot:APP_KEY
+an organization Dependabot secret of a standard name~~organization-dependabot-secrets.json~.secrets += [{"name": "APP_ID"}]~standard-secrets-outside=dependabot-organization:APP_ID
+another environment's secrets unreadable~environment-secrets-copilot~~~standard-secrets-outside=unreadable:environment:copilot
+repository Dependabot secrets unreadable~dependabot-secrets~~~standard-secrets-outside=unreadable:dependabot
 an organization secret of a standard name~~organization-secrets.json~.secrets += [{"name": "APP_KEY"}]~standard-secrets-outside=organization:APP_KEY
 organization secrets unreadable~organization-secrets~~~standard-secrets-outside=unreadable:organization
 ROWS
@@ -160,8 +184,28 @@ run "$BASE" rules
 want="$(expected_listing 'standard-ruleset-source=unreadable^standard-merge-queue=unreadable^standard-required-contexts=unreadable^standard-conversation-resolution=unreadable^standard-copilot-review=unreadable^standard-bypass-actors=unreadable')"
 if [ "$RC" -eq 1 ] && [ "$OUT" = "$want" ]; then ok "the effective rules unreadable"; else bad "the effective rules unreadable (rc=$RC)" "$RAW"; fi
 run "$BASE" environments
-want="$(expected_listing 'standard-environment=unreadable^standard-environment-secrets=unreadable')"
+want="$(expected_listing 'standard-environment=unreadable^standard-environment-secrets=unreadable^standard-secrets-outside=unreadable:environments')"
 if [ "$RC" -eq 1 ] && [ "$OUT" = "$want" ]; then ok "the environments unreadable"; else bad "the environments unreadable (rc=$RC)" "$RAW"; fi
+
+echo "=== each failed read keeps its own cause ==="
+# A withheld field beside a failed read, and a failed read followed by
+# successful ones: each cause line names its own read.
+dir="$TMP/case-causes"
+cp -R "$BASE" "$dir"
+jq 'del(.bypass_actors)' "$dir/ruleset-1.json" >"$dir/r" && mv "$dir/r" "$dir/ruleset-1.json"
+run "$dir" ruleset-2
+if grep -qx '  2: gh-shim-error=api value=ruleset-2' <<<"$RAW" && grep -q '^  1: ' <<<"$RAW" &&
+  ! grep -q '^  1: gh-shim' <<<"$RAW" && grep -qx 'FAIL check=standard-bypass-actors value=unreadable:1\\,2' <<<"$RAW"; then
+  ok "a withheld field and a failed ruleset read each name their own cause"
+else
+  bad "a withheld field and a failed ruleset read each name their own cause" "$RAW"
+fi
+run "$BASE" organization-secrets
+if grep -qx '  organization: gh-shim-error=api value=organization-secrets' <<<"$RAW"; then
+  ok "a failed secret read keeps its cause after later reads succeed"
+else
+  bad "a failed secret read keeps its cause after later reads succeed" "$RAW"
+fi
 
 echo "=== the check could not run ==="
 # name ~ shim failure ~ manifest replacement (empty keeps the test's) ~ argument ~ first error line
