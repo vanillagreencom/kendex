@@ -231,7 +231,7 @@ Use the output as `MAIN_REPO_ROOT`.
    - **Override** — `merge_mode: admin`, or a § 3.2 `Force merge` answer. That answer named one head and one immediate merge: take the direct attempt below.
    - **Queue** — every other case, on every change class. Take the `--auto` arm below FIRST, and reach the direct attempt only where that arm answers `arm: no-merge-gate`: a repository with no queue and nothing for auto-merge to wait on.
 
-   The lane arms its own head under the token the `github.sh` router selects, which in a lane sandbox is the lanes app's installation token, and waits in `queue-wait` to a terminal verdict. No overseer merges for it and no setting routes it past the queue: `pr-merge` refuses a set `ORCH_MERGE_BYPASS`, `ORCH_ADMIN_MERGE_GH_CONFIG_DIR` or `ORCH_ADMIN_MERGE_CLASSES` as retired, before any GitHub call (`pr-merge --help` § Retired settings).
+   The lane arms its own head under the token the `github.sh` router selects, which in a lane sandbox is the lanes app's installation token, and waits in `queue-wait` to a terminal verdict. No overseer merges for it and no setting routes it past the queue: `pr-merge` refuses a set `ORCH_MERGE_BYPASS`, `ORCH_ADMIN_MERGE_GH_CONFIG_DIR` or `ORCH_ADMIN_MERGE_CLASSES` as retired, before any pull-request read or merge call (`pr-merge --help` § Retired settings).
 
    **The direct attempt** belongs to Override; Queue reaches it only from the arm below:
 
@@ -242,6 +242,8 @@ Use the output as `MAIN_REPO_ROOT`.
    `merge_mode: admin` uses `--admin` and a § 3.2 `Force merge` uses `--force`; no other path adds either.
 
    Exit `0` merged the prepared head — continue to step 2.
+
+   Exit `75` means GitHub queued or armed the PR, as it does for `--force` on a base that requires the merge queue: take the queue-wait block below the `--auto` arm.
 
    Exit `1` from `--admin` records the named stop `merge-blocked` and hands back. It never enters the classification or arms `--auto`; the authorization covers only this head and reason.
 
@@ -265,7 +267,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Route a completed log's verdict through the table below. If the completion file records an exit other than `5` without a result object, report the exit and stop: `queue-wait --help` § Exit codes defines those failures. Follow [Waiter launch](../references/waiter-launch.md) § Completion when no exit is recorded.
 
-   Successive waits are the designed shape for a long queue, and this step is reached only after an exit-`75` arm, which is GitHub reporting the PR queued or auto-merge enabled. That holds for every wait in the sequence and no wait can lose it, which is what the `not_queued` row below rests on: each wait starts with the queue priors of `queue-wait --help` § Verdicts reset, so a wait that never itself saw the PR queued says `not_queued` whatever came before it — and after an exit-`75` arm that reads as an arm cleared in the seam, never as one that was never made.
+   Successive waits are the designed shape for a long queue, and this step is reached only after an exit `75` from the `--auto` arm or the direct attempt, which is GitHub reporting the PR queued or auto-merge enabled. That holds for every wait in the sequence and no wait can lose it, which is what the `not_queued` row below rests on: each wait starts with the queue priors of `queue-wait --help` § Verdicts reset, so a wait that never itself saw the PR queued says `not_queued` whatever came before it — and after an exit `75` that reads as an arm cleared in the seam, never as one that was never made.
 
    Under Codex, run the saved launch script as one simple command ([references/codex-runtime.md](../references/codex-runtime.md)).
 

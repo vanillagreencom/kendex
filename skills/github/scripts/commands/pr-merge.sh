@@ -66,7 +66,7 @@ Merge-mode exit codes:
        The PR is closed unmerged. Nothing was attempted.
   1    pr-merge: retired-setting key=<NAME>
        A retired merge setting is set. Every mode, --check included, refuses
-       before any GitHub call; see Retired settings below.
+       before any pull-request read or merge call; see Retired settings below.
 
 --check exit:
   --check exits 0 after any valid readiness JSON, including can_merge=false for
@@ -95,9 +95,12 @@ Retired settings:
   are loaded the way every kendex script loads them: kendex.settings.toml
   [env], .kendex/settings.toml [env], the private env file (.env.local unless
   KENDEX_ENV_FILE names another) and the environment. A key set in any of
-  them, empty value included, refuses every mode before any GitHub call, one
-  first line per key set, and the last line names the keys again, so a
-  repository that still expects either route learns it at the first call.
+  them, empty value included, refuses every mode before any pull-request read
+  or merge call, one first line per key set, and the last line names the keys
+  again, so a repository that still expects either route learns it at the
+  first call. Through the github.sh router with GH_TOKEN or GITHUB_TOKEN set,
+  the router's own read-only token check (gh api user) runs before pr-merge
+  does, so that one GitHub call can come first.
 
 Terminal and mutation rules:
   After github.sh router setup, MERGED or CLOSED short-circuits pr-merge safety
