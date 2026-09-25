@@ -69,6 +69,9 @@ build() { # NAME [LEASE_OWNER] [STATE_WORKTREE] [STATE_KEY] [BRANCH]
   STATE="$ROOT/state"
   mkdir -p "$MAIN" "$STATE"
   git -C "$MAIN" init -q -b main
+  # The EXIT trap removes this repository, so no background writer may race it.
+  git -C "$MAIN" config gc.auto 0
+  git -C "$MAIN" config maintenance.auto false
   git -C "$MAIN" config user.email test@example.com
   git -C "$MAIN" config user.name Test
   git -C "$MAIN" config commit.gpgsign false
