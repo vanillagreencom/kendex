@@ -28,7 +28,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 .agents/skills/worktree/scripts/worktree <command> [options]
 ```
 
-Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outside the repo root. A hosted lane's worktree, made by `create --hosted` on a clone holding one lane, lives at `<parent-of-checkout>/.worktrees/<checkout-name>/<WORKTREE_HOSTED_NAME>` (default `lane`) whatever `WORKTREE_BASE_DIR` says, the same path in every lane whose clone sits at the same path, so a compile cache keyed by absolute source path hits across lanes. Every command's contract is its `--help`: flags, exit codes, failure semantics, recovery. The top-level `worktree --help` carries the command index, path and issue-ID rules, configuration variables, and setup-path hardening.
+Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outside the repo root. A hosted lane's worktree lives at one path beside its clone instead, so a compile cache keyed by absolute source path hits across lanes: `create --help`, `--hosted`. Every command's contract is its `--help`: flags, exit codes, failure semantics, recovery. The top-level `worktree --help` carries the command index, path and issue-ID rules, configuration variables, and setup-path hardening.
 
 ## Commands
 

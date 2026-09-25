@@ -9,10 +9,8 @@ Usage: worktree <command> [ID|/path] [options]
 
 Portable git worktree manager. Worktrees live outside the repo root at
 <parent-of-checkout>/.worktrees/<checkout-name>/<id>; WORKTREE_BASE_DIR
-overrides the parent directory. A hosted lane's worktree (create --hosted)
-lives at <parent-of-checkout>/.worktrees/<checkout-name>/<WORKTREE_HOSTED_NAME>
-(default lane) whatever WORKTREE_BASE_DIR says, one path in every lane of the
-repository.
+overrides the parent directory. A hosted lane's worktree lives elsewhere
+(create --help, --hosted).
 
 Commands:
   create ID        Claim a new issue worktree. Refuses implicit reuse when a
@@ -44,13 +42,13 @@ Path arguments and canonicalization:
   The project root resolves via git rev-parse (at any depth, inside worktrees
   too). Issue IDs that derive paths must match [A-Za-z0-9][A-Za-z0-9._-]* and
   must not contain '..'. Issue-ID resolution prefers the configured base dir,
-  then the worktree registered for the issue branch, then the hosted lane
-  path when the tree there records the issue, which finds a hosted tree whose
-  HEAD a paused restack detached; there is no auto-migration. Path
-  comparisons are canonical (physical, symlink-resolved on both sides). Direct path arguments for mutating commands must be
-  registered worktrees of this repository's common Git directory: fix-links,
-  codex-setup, codex-branch, claude-setup, and remove refuse the main checkout
-  and foreign worktrees. Codex app-created worktrees are registered git
+  then the worktree registered for the issue branch, then a hosted tree that
+  records the issue (create --help, --hosted); there is no auto-migration.
+  Path comparisons are canonical (physical, symlink-resolved on both sides).
+  Direct path arguments for mutating commands must be registered worktrees of
+  this repository's common Git directory: fix-links, codex-setup,
+  codex-branch, claude-setup, and remove refuse the main checkout and foreign
+  worktrees. Codex app-created worktrees are registered git
   worktrees and are accepted even outside WORKTREE_BASE_DIR.
 
 Configuration (loaded lowest to highest: kendex.settings.toml [env], then
@@ -64,10 +62,8 @@ personal overrides):
                               per-repo sibling dir. Do not point it inside the
                               repo root.
   WORKTREE_HOSTED_NAME        The last segment of the path create --hosted
-                              gives a new worktree, under
-                              ../.worktrees/<checkout-name> whatever
-                              WORKTREE_BASE_DIR says; one path segment in the
-                              issue-ID alphabet. Default: lane.
+                              gives a new worktree (create --help); one path
+                              segment in the issue-ID alphabet. Default: lane.
   WORKTREE_DEFAULT_BRANCH     Default branch name (auto-detected if unset;
                               fallback: main)
   WORKTREE_SYMLINKS           Space-separated paths symlinked from the main
@@ -234,19 +230,19 @@ Options:
   --replay        With --reuse/--restack: run the same restack as an ordered
                   cherry-pick replay with no rebase porcelain, for execution
                   policies that reject 'git rebase'
-  --hosted        The create runs for a hosted lane, on a clone that holds
-                  one lane worktree: a new tree lands at
+  --hosted        The create runs for a hosted lane, on a clone that holds one
+                  lane worktree: a new tree lands at
                   ../.worktrees/<checkout-name>/<WORKTREE_HOSTED_NAME> beside
-                  the checkout (path --hosted), the same path in every lane
-                  whose clone sits at the same path, so a build there hits
-                  compile-cache entries keyed by another lane's identical
-                  source path. The tree records its issue, so the issue ID
-                  finds it with HEAD detached. With --reuse or --restack a
-                  tree the issue already has is reused where it stands;
-                  without them create refuses it (exit 75) as for any
-                  existing tree. A path another issue's tree holds exits 75.
-                  Without --hosted, the new tree is keyed by the issue ID so
-                  several can coexist
+                  the checkout whatever WORKTREE_BASE_DIR says (path
+                  --hosted), the same path in every lane whose clone sits at
+                  the same path, so a build there hits compile-cache entries
+                  keyed by another lane's identical source path. The tree
+                  records its issue, so the issue ID finds it with HEAD
+                  detached. With --reuse or --restack a tree the issue already
+                  has is reused where it stands; without them create refuses
+                  it (exit 75) as for any existing tree. A path another
+                  issue's tree holds exits 75. Without --hosted, the new tree
+                  is keyed by the issue ID so several can coexist
 
 Transfer form:
   --transfer BRANCH

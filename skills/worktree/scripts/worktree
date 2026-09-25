@@ -1129,6 +1129,13 @@ record_worktree_issue() { # WT ISSUE
   fi
 }
 
+# Every create exit that hands back a tree, a reuse included, prints it here,
+# so the record is written, or repaired, wherever a tree is returned.
+report_created_worktree() {
+  record_worktree_issue "$WT_PATH" "$ISSUE" || exit 1
+  printf '%s\n' "$WT_PATH"
+}
+
 recorded_worktree_issue() { # WT
   local git_dir=""
   git_dir="$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)" || return 1
@@ -2557,7 +2564,7 @@ case "${1:-}" in
       REUSE_STATUS="$(git -C "$WT_PATH" status --porcelain 2>/dev/null)" || { worktree_message reuse-status-failed "$WT_PATH" "Error: could not read the worktree state before reusing $WT_PATH." >&2; exit 1; }
       if [[ "$REUSE" == true && "$RESTACK" != true && "$REPLAY" != true && -n "$REUSE_STATUS" ]]; then
         worktree_message reuse-dirty "$WT_PATH" "Reused $WT_PATH with uncommitted work; refreshed its lease and skipped the rebase." >&2
-        echo "$WT_PATH"; exit 0
+        report_created_worktree; exit 0
       fi
 
       # Network/ref discovery must succeed before the claim lock or any setup
@@ -2794,7 +2801,7 @@ case "${1:-}" in
       # Refresh setup (rebase may have replaced symlinks with tracked content)
       release_issue_claim_lock
       setup_app_worktree "$WT_PATH"
-      echo "$WT_PATH"
+      report_created_worktree
       exit 0
     fi
 
@@ -2894,13 +2901,12 @@ case "${1:-}" in
         fi
       fi
       release_issue_claim_lock
-      record_worktree_issue "$WT_PATH" "$ISSUE" || exit 1
       setup_app_worktree "$WT_PATH"
       if [[ -n "$TRANSFER_STASH" && "$(git -C "$WT_PATH" rev-parse --verify refs/stash 2>/dev/null || true)" == "$TRANSFER_STASH" ]]; then
         git -C "$WT_PATH" stash drop 'stash@{0}' >/dev/null 2>&1 || \
           worktree_message transfer-stash-kept "$TRANSFER_STASH" "Warning: transfer succeeded, but its recovery stash could not be removed." >&2
       fi
-      echo "$WT_PATH"
+      report_created_worktree
       exit 0
     fi
 
@@ -2930,9 +2936,8 @@ case "${1:-}" in
       mkdir -p "$TREES_DIR"
       git -C "$PROJECT_ROOT" worktree add --no-track -b "$BRANCH" "$WT_PATH" "$START_POINT" >/dev/null 2>&1
       release_issue_claim_lock
-      record_worktree_issue "$WT_PATH" "$ISSUE" || exit 1
       setup_app_worktree "$WT_PATH"
-      echo "$WT_PATH"
+      report_created_worktree
       exit 0
     fi
 
@@ -3025,9 +3030,8 @@ case "${1:-}" in
       fi
     fi
 
-    record_worktree_issue "$WT_PATH" "$ISSUE" || exit 1
     setup_app_worktree "$WT_PATH"
-    echo "$WT_PATH"
+    report_created_worktree
     ;;
 
   list)

@@ -455,6 +455,7 @@ proof_warm() {
     built) [ "$RC" -eq 0 ] && [ "$built" = yes ] && [ "$at_lane" = yes ] && case "$OUT" in *"lane-setup: warm-build=run path=$LANE_PATH"*) true ;; *) false ;; esac ;;
     skipped) [ "$RC" -eq 0 ] && [ ! -e "$R/target" ] && case "$OUT" in *"lane-setup: warm-build=skip"*) true ;; *) false ;; esac ;;
     fetched) [ "$RC" -eq 0 ] && [ "$built" = no ] && [ "$at_lane" = no ] && case "$OUT" in *"lane-setup: warm-build=fetch-only:no-wrapper"*) true ;; *) false ;; esac ;;
+    fetch-failed) [ "$RC" -ne 0 ] && [ "$built" = no ] && case "$OUT" in *"lane-setup: warm-build=fetch-only:no-wrapper"*) true ;; *) false ;; esac ;;
     failed) [ "$RC" -ne 0 ] && case "$OUT" in *"lane-setup: warm-build=run path=$LANE_PATH"*) true ;; *) false ;; esac ;;
     *) WHY="unknown expectation $expect"; return 1 ;;
   esac
@@ -497,6 +498,7 @@ done <<'ROWS'
 1|broken|sccache|failed
 1|unlocked|sccache|failed
 1|good|none|fetched
+1|unlocked|none|fetch-failed
 ROWS
 
 echo "=== must-fail controls: each cargo proof fails against its mutant ==="
@@ -557,6 +559,12 @@ proof_warm 1 broken sccache failed '  (cd -- "$lane_path" && cargo test --worksp
 proof_warm 1 good none fetched 'if [ "${FLEET_WARM:-}" = 1 ] && [ -z "$lane_wrapper" ]; then' 'if false; then' \
   && bad "control: a warm build with no wrapper fails the fetched row" "$WHY" \
   || ok "control: a warm build with no wrapper fails the fetched row"
+proof_warm 1 unlocked none fetch-failed '  cargo fetch --locked' '  :' \
+  && bad "control: a skipped fetch fails the fetch-failed row" "$WHY" \
+  || ok "control: a skipped fetch fails the fetch-failed row"
+proof_warm 1 unlocked none fetch-failed '  cargo fetch --locked' '  cargo fetch' \
+  && bad "control: a fetch without --locked fails the fetch-failed row" "$WHY" \
+  || ok "control: a fetch without --locked fails the fetch-failed row"
 
 echo "=== the script starts under a real Bash 3.2 when one is reachable ==="
 RUNTIMES="$(sed -n 's/^RUNTIMES="\(.*\)"$/\1/p' "$TOOLS/bash32-parse")"
