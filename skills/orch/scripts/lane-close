@@ -252,7 +252,9 @@ refuse_unanswered_ask() {
   [[ "$rc" -eq 0 ]] \
     || { message mail-read-failed "item=$ITEM" "root=$mail_root" "status=$rc" >&2; exit 1; }
   [[ -n "$out" ]] || return 0
-  summary="$(jq -r -R -s 'split("\n") | map(fromjson? | objects) | "\(length)\t\(.[0].id // "")"' <<<"$out")" \
+  # `pending` lists the lane's unread directives too, which the lane owes
+  # nothing to the overseer for; only an ask is waiting on an answer.
+  summary="$(jq -r -R -s 'split("\n") | map(fromjson? | objects | select(.kind == "ask")) | "\(length)\t\(.[0].id // "")"' <<<"$out")" \
     || { message mail-read-failed "item=$ITEM" "root=$mail_root" "status=parse" >&2; exit 1; }
   IFS=$'\t' read -r ask_count ask_id <<<"$summary"
   [[ "$ask_count" -gt 0 ]] || return 0

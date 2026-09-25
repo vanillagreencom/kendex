@@ -38,7 +38,8 @@ run() {
 #   wsargs~<text>    whether the workflow-state stub was called with <text>
 #   state~<text>     whether the per-repo baseline file carries <text> (`%t`
 #                    reads as a tab)
-#   state_files      how many files the state directory holds
+#   state_files      how many files the state directory holds beside the
+#                    mail pass's own
 watch() {
   local got="" token name value needle state_file="$STATE_DIR/$STATE_FILE_NAME"
   for token in $1; do
@@ -57,7 +58,7 @@ watch() {
       tracker) value="$([[ -e "$STUB_DIR/tracker.args" ]] && echo read || echo unread)" ;;
       wsargs~*) value="$([[ -e "$STUB_DIR/workflow-state.args" ]] && grep -qF -- "$needle" "$STUB_DIR/workflow-state.args" && echo true || echo false)" ;;
       state~*) value="$([[ -e "$state_file" ]] && grep -qF -- "$needle" "$state_file" && echo true || echo false)" ;;
-      state_files) value="$(find "$STATE_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d '[:space:]')" ;;
+      state_files) value="$(find "$STATE_DIR" -maxdepth 1 -type f ! -name '*.mail' 2>/dev/null | wc -l | tr -d '[:space:]')" ;;
       *) echo "watch: unknown field $name" >&2; exit 1 ;;
     esac
     got="$got $name=$value"

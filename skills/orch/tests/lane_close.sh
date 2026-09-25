@@ -686,6 +686,14 @@ if proc_table_readable; then
     'rc=0 status=done local=1' 'the same lane closes once the answer lands, a local mailbox read on this disk'
 fi
 
+# pending also lists what was sent to the lane and not yet read. A directive
+# owes the overseer nothing, so it holds no close.
+DIRECTIVE="$(jq -c '.kind = "directive"' <<<"$ASK")"
+write_state running claude /host; write_panes python; claude_screen
+LANE_CLOSE_MAIL_PENDING="$DIRECTIVE" run_close "$SCRIPT"
+assert_eq "rc=$RC ask=$(grep -c '^lane-close: ask-unanswered ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 ask=0 status=done' 'an unread directive pending lists is no unanswered ask, and the lane closes'
+
 write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_MAIL_STATUS=2 run_close "$SCRIPT"
 assert_eq "rc=$RC failed=$(grep -c '^lane-close: mail-read-failed item=KEN-1 root=/srv/worktree status=2$' <<<"$ERR" || true) relay=$(grep -c '^lane-mail: mail-read-failed=/srv/worktree$' <<<"$ERR" || true) stop=$(stop_count KEN-1 claude)" \
@@ -1002,6 +1010,11 @@ MUTANT="$(mutant ask-refusal '  message ask-unanswered "item=$ITEM" "ask=$ask_id
 write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_MAIL_PENDING="$ASK" run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: removing the ask refusal closes the lane and the question dies with the session'
+
+MUTANT="$(mutant any-pending ' | select(.kind == "ask")) |' ') |')"
+write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_MAIL_PENDING="$DIRECTIVE" run_close "$MUTANT"
+assert_eq "rc=$RC ask=$(grep -c '^lane-close: ask-unanswered ' <<<"$ERR" || true)" 'rc=1 ask=1' \
+  'control: counting every pending line as an ask refuses a lane that owes the overseer nothing'
 
 MUTANT="$(mutant mail-read '  [[ "$rc" -eq 0 ]] \
     || { message mail-read-failed "item=$ITEM" "root=$mail_root" "status=$rc" >&2; exit 1; }' '  [[ "$rc" -eq 0 ]] || out=""')"

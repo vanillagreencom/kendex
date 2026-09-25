@@ -194,9 +194,8 @@ mailbox_lines() {
   [[ -f "$f" ]] && wc -l < "$f" | tr -d ' ' || echo 0
 }
 mail_cursor_count() {
-  local f
-  f="$(find "$STATE_DIR" -maxdepth 1 -type f -name 'overseer-mail__*' -print -quit)"
-  [[ -n "$f" ]] && awk '{print $1}' "$f" || echo 0
+  local f="$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.cursor"
+  [[ -s "$f" ]] && cat -- "$f" || echo 0
 }
 
 RUN_SEQ=0
@@ -268,21 +267,26 @@ assert_eq "$([[ -n "$FL_AT_EPOCH" && "$FL_AT_EPOCH" -ge "$FL_BEFORE" && "$FL_AT_
   "in-window" "and inside the window this run took, so the append stamped it" "$ERR"
 
 # --- one pass is not a death ----------------------------------------------
+# A note that lands while the pane reads exited is held: the mail pass reads no
+# mailbox while a long pass's reading stands, so the note waits for a live
+# overseer or a successor rather than a log nobody reads. Three passes to a
+# death here, so two exited readings go by without one.
 overseer_case dead_one_pass exited
 state_with "$LINE"
+run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 -- --max-loops 1
+assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT")" "rc=0 first=EVENT heartbeat loops=1 interval=0s since=none" \
+  "one exited reading is a poll, not news" "$ERR"
+assert_eq "$(succeed_calls --dead-pane)" "0" "and nothing is launched on it" "$ERR"
 printf 'Retain this event for the next live overseer.\n' > "$TMP_ROOT/held-event.txt"
 (cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/orch/scripts/lane-mail" send \
   --item overseer --directive --file "$TMP_ROOT/held-event.txt" >/dev/null)
 HELD_EVENT="$(jq -r .id "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")"
-run TMUX_PANE="$PANE" -- --max-loops 1
-assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT")" "rc=0 first=EVENT heartbeat loops=1 interval=0s since=none" \
-  "one exited reading is a poll, not news" "$ERR"
-assert_eq "$(succeed_calls --dead-pane)" "0" "and nothing is launched on it" "$ERR"
+run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 -- --max-loops 1
 assert_eq "events=$(grep -c '^EVENT owner-note' <<<"$OUT" || true) cursor=$(mail_cursor_count)" \
-  "events=0 cursor=0" "and its event baseline stays unchanged" "$ERR"
+  "events=0 cursor=0" "a note sent while the pane reads exited is left unread" "$ERR"
 printf 'claude\n' > "$STUB_DIR/cmd-$PANE.txt"
 printf '%b\n' '⏺ The overseer is live.' '\xe2\x9d\xaf\xc2\xa0' > "$STUB_DIR/pane-$PANE.txt"
-run TMUX_PANE="$PANE" -- --max-loops 1
+run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 -- --max-loops 1
 assert_eq "events=$(grep -c "^EVENT owner-note $HELD_EVENT$" <<<"$OUT" || true) cursor=$(mail_cursor_count)" \
   "events=1 cursor=1" "the later live reading delivers the retained event" "$ERR"
 
@@ -706,7 +710,9 @@ for row in \
   "ORCH_OVERSEER_DEAD_PASSES=0|dead-passes-invalid ORCH_OVERSEER_DEAD_PASSES=0|a zero pass count refuses" \
   "ORCH_OVERSEER_DEAD_PASSES=two|dead-passes-invalid ORCH_OVERSEER_DEAD_PASSES=two|a non-numeric pass count refuses" \
   "ORCH_OVERSEER_MARK_REPEAT=0|mark-repeat-invalid ORCH_OVERSEER_MARK_REPEAT=0|a zero repeat count refuses" \
-  "ORCH_OVERSEER_MARK_REPEAT=five|mark-repeat-invalid ORCH_OVERSEER_MARK_REPEAT=five|a non-numeric repeat count refuses"; do
+  "ORCH_OVERSEER_MARK_REPEAT=five|mark-repeat-invalid ORCH_OVERSEER_MARK_REPEAT=five|a non-numeric repeat count refuses" \
+  "ORCH_WATCH_MAIL_INTERVAL=020|mail-interval-invalid value=020|a mail interval with a leading zero refuses" \
+  "ORCH_DIRECTIVE_UNREAD_SECS=five|unread-secs-invalid value=five|a non-numeric unread age refuses"; do
   IFS='|' read -r row_env row_want row_label <<<"$row"
   overseer_case "setting_${row_env//[^A-Za-z0-9]/_}" idle
   run "$row_env" TMUX_PANE="$PANE" -- --max-loops 1
@@ -799,16 +805,21 @@ assert_eq "$(succeed_calls --dead-pane)" "1" \
   "control: without pending state the next pass cannot retry" "$ERR"
 
 # Control 4: without the pass-level gate, an event consumer advances its
-# baseline on the first exited reading.
+# baseline on the first exited reading. The long pass's own consumers are what
+# it guards, the merged check among them; the mail pass has its own gate.
+merged_on_exit() { # CASE [WATCH_BIN]
+  overseer_case "$1" exited
+  state_with "$LINE"
+  printf '[{"number":7,"headRefName":"ken-1","mergedAt":"2026-09-14T10:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+  WATCH_BIN="${2:-}" run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 -- --max-loops 1 --item KEN-1
+}
+merged_on_exit consumer_gated
+assert_not_contains "$OUT" "EVENT merged 7 ken-1" \
+  "the first exited reading consumes no merged event: the long pass stops at the overseer's pane" "$ERR"
 mutate 's/^  if check_overseer; then$/  check_overseer || :; if true; then/' \
   "runs event consumers after an exited reading"
-overseer_case consumer_mutant exited
-state_with "$LINE"
-printf 'Consumed without a reader.\n' > "$TMP_ROOT/mutant-event.txt"
-(cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/orch/scripts/lane-mail" send \
-  --item overseer --directive --file "$TMP_ROOT/mutant-event.txt" >/dev/null)
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
-assert_contains "$OUT" "EVENT owner-note" \
+merged_on_exit consumer_mutant "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_contains "$OUT" "EVENT merged 7 ken-1" \
   "control: without the gate the first exited reading consumes the event" "$ERR"
 
 # Control 5: without the watch invocation's ownership write, the same-pane
@@ -879,7 +890,9 @@ assert_eq "$(cat "$STUB_DIR/succeed.launched")" \
   "naming the walled pane, the handoff path and the overseer's own flags" "$ERR"
 assert_eq "$(succeed_calls --dead-pane)" "0" \
   "the recorded line is never sent: it names the account that walled" "$ERR"
-assert_eq "$(succeed_calls --check-marks)" "2" \
+# Four: each of the two long passes, and the mail pass before each, since the
+# interval here is 0 and a mail pass's answer is kept for one interval.
+assert_eq "$(succeed_calls --check-marks)" "4" \
   "each pass takes its own account judgement, and it is what confirms the wall" "$ERR"
 assert_contains "$(cat "$ERR")" "env CLAUDE_CONFIG_DIR='/home/me/.eclaude' claude -n overseer" \
   "the launch line the recovery used is in the pass output" "$ERR"
@@ -918,14 +931,15 @@ assert_contains "$(cat "$ERR")" "oversee-watch: overseer-wall-unjudged pane=$PAN
 
 # One reading of the marks per pass. A wall the account refutes falls through
 # to the live arm, which reports the crossing off that same reading rather
-# than measuring every account of the fleet a second time.
+# than measuring every account of the fleet a second time. Two readings in the
+# run: the long pass's one, and the mail pass's own before it.
 overseer_case walled_one_judgement walled
 state_with "$LINE"
 printf '%s\n' "oversee-succeed: mark-reached kind=context value=612000 mark=500000 succession=on headroom=80" \
   > "$STUB_DIR/succeed.check"
 run TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "judged=$(succeed_calls --check-marks) marks=$(grep -c '^EVENT overseer-mark' <<<"$OUT" || true)" \
-  "judged=1 marks=1" \
+  "judged=2 marks=1" \
   "the refuted wall reports the standing context mark off the one reading it took" "$ERR"
 
 # The usage endpoint answered every account 429 on the control host because
@@ -952,7 +966,7 @@ for row in \
     run TMUX_PANE="$PANE" -- --max-loops 1 --interval 45
   fi
   assert_eq "judged=$(succeed_calls --check-marks) age=$(paste -sd, "$STUB_DIR/succeed.max-age") accounts=$(paste -sd, "$STUB_DIR/lanes.max-age")" \
-    "judged=1 age=$want accounts=$want" \
+    "judged=2 age=$want,$want accounts=$want" \
     "the usage window of both account reads: $label" "$ERR"
 done
 
@@ -1128,7 +1142,7 @@ assert_not_contains "$(mailbox text)" "overseer-recovery-blocked" \
 
 # Control 10: the account judgement dropped, so the screen decides alone. The
 # relayed banner of another lane then closes a window whose harness is alive.
-mutate 's/^  \[\[ "$ov_case" != walled \]\] || overseer_wall_confirmed "$pane" || ov_case=""$/  :/' \
+mutate 's/^    walled) if overseer_wall_confirmed "\$1"; then OV_VERDICT=walled; fi ;;$/    walled) OV_VERDICT=walled ;;/' \
   "lets the screen confirm the wall by itself"
 overseer_case walled_confirm_mutant walled
 state_with "$LINE"
@@ -1171,13 +1185,15 @@ checks_since_switch() { wc -c < "$STUB_DIR/succeed.check-count" | tr -d ' '; }
 # A wall that lands after the first pass. Pass 1 measures room, so the wall is
 # refuted and its row cleared; passes 2 and 3 measure the account at its
 # trigger, which is the threshold met on a reading taken after the wall
-# landed. A reading memoised for the process never sees it.
+# landed. A reading memoised for the process never sees it. Four readings:
+# the mail pass takes its own before each long pass, the first of them the
+# one that measures room.
 overseer_case walled_confirmed_later walled
 state_with "$LINE"
 check_switch_after_first "$WALL_MARK_LINE"
 run TMUX_PANE="$PANE" -- --max-loops 3 -- --verbose
 assert_eq "rc=$RC judged=$(succeed_calls --check-marks) launched=$(succeed_calls --walled-pane)" \
-  "rc=3 judged=3 launched=1" \
+  "rc=3 judged=4 launched=1" \
   "a wall the later passes confirm is recovered, not refuted against the first reading" "$ERR"
 
 # A standing mark that lifts inside one process. The crossing ends its own
@@ -1201,34 +1217,310 @@ run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 1
 assert_eq "marks=$(marks_seen)" "marks=1" \
   "so the same mark reached again is a fresh crossing, its row having been cleared" "$ERR"
 
-# Control 12: the per-pass reset removed, which is the memo scoped to the
-# process. Every pass after the first replays the first one's reading, so the
-# wall the later passes would confirm is refuted against a reading taken
-# before it landed and the fleet is left unattended.
-mutate 's/^  overseer_marks_reset$/  :/' "drops the per-pass reset of the mark reading"
-overseer_case walled_memo_mutant walled
-state_with "$LINE"
-check_switch_after_first "$WALL_MARK_LINE"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 3
-assert_eq "rc=$RC judged=$(succeed_calls --check-marks) launched=$(succeed_calls --walled-pane)" \
-  "rc=0 judged=1 launched=0" \
-  "control: with the memo kept for the process the later wall is refuted against a stale reading" "$ERR"
 
-# Control 13: the same memo, on the mark the watch already reported. The row
-# the lifted mark would clear is instead counted up against a reading taken
-# before it lifted, so the next crossing is swallowed by a count it did not
-# earn.
-overseer_case mark_memo_mutant idle
-state_with "$LINE"
-mark_stands
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 1
-check_switch_after_first "oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 2
-rm -f -- "${STUB_DIR:?}/succeed.check-later"
-mark_stands
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 1
+# --- the mail pass reads the overseer's pane afresh ------------------------
+# A lane-mail that logs each drain with the pr-watch calls made so far, so a
+# case can tell a mail pass that ran before the first long pass from one that
+# waited for it.
+cat > "$TMP_ROOT/bin/lane-mail-order.sh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == drain ]]; then
+  printf 'drain long=%s\n' "$(cat "$STUB_DIR/prwatch.calls.owner_repo" 2>/dev/null || echo 0)" >> "$STUB_DIR/order.log"
+fi
+exec "$REAL_LANE_MAIL" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/lane-mail-order.sh"
+REAL_LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
+
+# The pane exits after one long pass read it live and before the next: no row
+# says so yet, and the note sent then is still left for the successor.
+exited_between() { # [WATCH_BIN]
+  overseer_case "dead_between_passes${1:+_mutant}" exited
+  state_with "$LINE"
+  printf 'Sent after the overseer exited.\n' > "$TMP_ROOT/between-note.txt"
+  (cd "$CASE_REPO_ROOT" && "$REAL_LANE_MAIL" send --item overseer --directive --file "$TMP_ROOT/between-note.txt" >/dev/null)
+  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 -- --max-loops 1
+  BETWEEN="events=$(grep -c '^EVENT owner-note' <<<"$OUT" || true) cursor=$(mail_cursor_count)"
+}
+exited_between
+assert_eq "$BETWEEN" "events=0 cursor=0" \
+  "a note sent after the pane exited, before any long pass read it, is left unread" "$ERR"
+mutate 's/^  \[\[ "\$OV_VERDICT" != live \]\]$/  [[ "$OV_VERDICT" == walled ]]/' "drops the exited verdict from the mail gate"
+exited_between "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$BETWEEN" "events=1 cursor=1" \
+  "control: without the exited verdict in its gate, the mail pass hands the note to a dead pane" "$ERR"
+
+# A mutant of the watch with one exact text replaced, for the gates below
+# whose rule spans lines.
+pmutate() { # OLD NEW LABEL
+  python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MUTANT_DIR/orch/scripts/oversee-watch" "$1" "$2" <<'PY'
+import sys
+src, out, old, new = sys.argv[1:]
+s = open(src).read()
+assert s.count(old) == 1, "mutant pattern: " + old
+open(out, "w").write(s.replace(old, new))
+PY
+  chmod +x "$MUTANT_DIR/orch/scripts/oversee-watch"
+  assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+    "differs" "control: the mutant really $3"
+}
+WALL_GATE='  [[ "$OV_VERDICT" != live ]]
+}'
+
+# A wall row another pane left, the pane that held this fleet before: this
+# pane's screen carries a relayed banner and its own account measures room,
+# so the first mail pass reads the lane's notice rather than waiting for a
+# long pass to prune that row.
+other_pane_wall() { # [WATCH_BIN]
+  overseer_case "walled_other_pane${1:+_mutant}" walled
+  state_with "$LINE"
+  mkdir -p "$STATE_DIR"
+  printf 'overseer-walled\t7000 %%1\tpending:0\n' > "$STATE_DIR/owner_repo__none"
+  rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
+  mkdir -p "$CASE_REPO_ROOT/tmp/lane-mail/KEN-5"
+  printf 'Rebased.\n' > "$TMP_ROOT/other-notice.txt"
+  (cd "$CASE_REPO_ROOT" && "$REAL_LANE_MAIL" notice --item KEN-5 --file "$TMP_ROOT/other-notice.txt" >/dev/null)
+  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-order.sh" \
+    REAL_LANE_MAIL="$REAL_LANE_MAIL" -- --max-loops 1 --item KEN-5
+  FIRST_DRAIN="$(head -n 1 "$STUB_DIR/order.log" 2>/dev/null || echo none)"
+}
+other_pane_wall
+assert_eq "first=$FIRST_DRAIN notice=$(grep -c '^EVENT lane-notice KEN-5 ' <<<"$OUT" || true)" "first=drain long=0 notice=1" \
+  "another pane's wall row holds no mail pass: the first one reads the lane's notice" "$ERR"
+pmutate "$WALL_GATE" '  [[ "$OV_VERDICT" != live ]] || grep -q "^overseer-walled" "$(pw_state_file "${REPOS[0]}")" 2>/dev/null
+}' \
+  "gates the mail on any wall row a long pass committed"
+other_pane_wall "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "first=$FIRST_DRAIN" "first=drain long=1" \
+  "control: a wall row read whatever pane it names holds the mail until a long pass prunes it" "$ERR"
+
+# The account walls between two long passes: the pane reads walled, the
+# account judgement confirms it, and no long pass has committed a row yet. The
+# mail pass asks that judgement itself, so the note waits for a live overseer.
+walled_between() { # [WATCH_BIN]
+  overseer_case "walled_between_passes${1:+_mutant}" walled
+  state_with "$LINE"
+  printf '%s\n' "$WALL_MARK_LINE" > "$STUB_DIR/succeed.check"
+  printf 'Sent after the account walled.\n' > "$TMP_ROOT/walled-note.txt"
+  (cd "$CASE_REPO_ROOT" && "$REAL_LANE_MAIL" send --item overseer --directive --file "$TMP_ROOT/walled-note.txt" >/dev/null)
+  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 -- --max-loops 1
+  WALLED="events=$(grep -c '^EVENT owner-note' <<<"$OUT" || true) cursor=$(mail_cursor_count)"
+}
+walled_between
+assert_eq "$WALLED" "events=0 cursor=0" \
+  "a note sent once the account walls, before any long pass commits the wall, is left unread" "$ERR"
+pmutate "$WALL_GATE" '  [[ "$OV_STATE" == exited ]] || grep -q "^overseer-walled	$OV_IDENTITY	" "$(pw_state_file "${REPOS[0]}")" 2>/dev/null
+}' \
+  "gates the mail on the wall row this pane's long pass committed"
+walled_between "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$WALLED" "events=1 cursor=1" \
+  "control: gated on a committed row, the mail pass hands the note to a walled harness" "$ERR"
+
+# The watch itself dies while its long pass settles the overseer: the exit
+# still says what that pass decided, 3 for a successor holding the window and
+# 4 for a repeat pass stopping on a notice-only recovery, so repeat mode stops
+# rather than start a second watch. The boundary is staged: the notice's send
+# to the overseer mailbox takes the fleet state away and waits for the watch
+# to die on it before the long pass goes on.
+cat > "$TMP_ROOT/bin/lane-mail-vanish.sh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-} ${2:-} ${3:-}" == "send --item overseer" ]]; then
+  unlink "$VANISH"
+  n=0
+  until grep -q '^oversee-watch: state-unreadable ' "$VANISH_AWAIT" 2>/dev/null || [[ "$n" -ge 200 ]]; do
+    n=$((n + 1)); sleep 0.1
+  done
+fi
+exec "$REAL_LANE_MAIL" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/lane-mail-vanish.sh"
+parent_dies() { # on|off [WATCH_BIN]
+  overseer_case "dead_parent_dies_$1${2:+_mutant}" exited
+  state_with "$LINE"
+  cp "$STUB_DIR/oversee-state.json" "$STUB_DIR/fleet.json"
+  WATCH_BIN="${2:-}" run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=1 ORCH_WATCH_MAIL_INTERVAL=1 \
+    ORCH_OVERSEER_SUCCESSION="$1" OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-vanish.sh" \
+    REAL_LANE_MAIL="$REAL_LANE_MAIL" VANISH="$STUB_DIR/fleet.json" VANISH_AWAIT="$TMP_ROOT/run-$((RUN_SEQ + 1)).err" \
+    -- --max-loops 2 --state "$STUB_DIR/fleet.json"
+  DIES="rc=$RC launched=$(succeed_calls --dead-pane) unreadable=$(grep -c '^oversee-watch: state-unreadable ' "$ERR" || true)"
+}
+parent_dies on
+assert_eq "$DIES" "rc=3 launched=1 unreadable=1" \
+  "a watch that dies while its long pass launches the successor still exits 3" "$ERR"
+parent_dies off
+assert_eq "$DIES" "rc=4 launched=0 unreadable=1" \
+  "a repeat pass that dies while its long pass stops on a notice-only recovery still exits 4" "$ERR"
+pmutate '      [[ -z "$SUCCESSION" ]] || rc="$SUCCESSION"' '      :' "drops the long pass's status from the exit trap"
+parent_dies on "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$DIES" "rc=2 launched=1 unreadable=1" \
+  "control: with the status dropped, the successor's launch reads as a failed pass to retry" "$ERR"
+pmutate '  elif [[ "$OVERSEER_STOP" -ne 0 && "$REPEAT_CHILD" -eq 1 ]]; then SUCCESSION=4; fi' '  fi' "drops the stop arm of the succession status"
+parent_dies off "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$DIES" "rc=2 launched=0 unreadable=1" \
+  "control: without the stop arm, a notice-only recovery reads as a failed pass to retry" "$ERR"
+
+
+# --- one verdict, judged once a wall ---------------------------------------
+# A lane-mail that lands a notice in KEN-5's mailbox on its NOTE_AT-th drain,
+# so a run under an unchanging overseer screen ends on that lane's news.
+cat > "$TMP_ROOT/bin/lane-mail-note-at.sh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == drain ]]; then
+  printf 'drain\n' >> "$STUB_DIR/drains.log"
+  if [[ "$(grep -c . "$STUB_DIR/drains.log")" -eq "${NOTE_AT:-0}" ]]; then
+    printf 'Rebased.\n' > "$STUB_DIR/note-at.txt"
+    "$REAL_LANE_MAIL" notice --item KEN-5 --file "$STUB_DIR/note-at.txt" >/dev/null
+  fi
+fi
+exec "$REAL_LANE_MAIL" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/lane-mail-note-at.sh"
+relayed_banner_case() { # NAME
+  overseer_case "$1" walled
+  state_with "$LINE"
+  rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
+  mkdir -p "$CASE_REPO_ROOT/tmp/lane-mail/KEN-5"
+}
+
+# A relayed banner on the overseer's screen and an account judgement that
+# keeps failing: the long pass acts on nothing, so the mail pass holds
+# nothing either, and the lane's notice is reported.
+unjudged_wall() { # [WATCH_BIN]
+  relayed_banner_case "walled_unjudged_mail${1:+_mutant}"
+  printf '2\n' > "$STUB_DIR/succeed.check-rc"
+  printf 'Rebased.\n' > "$TMP_ROOT/unjudged-notice.txt"
+  (cd "$CASE_REPO_ROOT" && "$REAL_LANE_MAIL" notice --item KEN-5 --file "$TMP_ROOT/unjudged-notice.txt" >/dev/null)
+  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 -- --max-loops 1 --item KEN-5
+  UNJUDGED="notice=$(grep -c '^EVENT lane-notice KEN-5 ' <<<"$OUT" || true)"
+}
+unjudged_wall
+assert_eq "$UNJUDGED" "notice=1" "a wall no judgement could be made on holds no mail, as it starts no successor" "$ERR"
+pmutate '  overseer_marks_judge || { overseer_note overseer-wall-unjudged "pane=$1"; return 1; }' \
+  '  overseer_marks_judge || { overseer_note overseer-wall-unjudged "pane=$1"; return 0; }' \
+  "takes an unjudged wall for a confirmed one"
+unjudged_wall "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$UNJUDGED" "notice=0" "control: an unjudged wall read as down holds the lane's notice" "$ERR"
+
+# A mail pass judges the relayed wall below its mark; the long pass forked
+# after it judges afresh, and reports the context mark its own reading finds.
+memo_after_mail() { # [WATCH_BIN]
+  relayed_banner_case "walled_memo_after_mail${1:+_mutant}"
+  check_switch_after_first "$MARK_LINE"
+  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 -- --max-loops 1
+}
+memo_after_mail
+assert_eq "marks=$(marks_seen)" "marks=1" \
+  "a long pass after a mail pass's judgement takes its own reading and reports the mark it finds" "$ERR"
+pmutate '  overseer_marks_reset
+  # No event consumer advances' '  # No event consumer advances' "drops the memo reset at the top of the long pass"
+memo_after_mail "$MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "marks=$(marks_seen)" "marks=0" \
-  "control: with the stale reading the lifted mark never clears its row and the next crossing is silent" "$ERR"
+  "control: the long pass answers from the mail pass's reading and the crossing goes unreported" "$ERR"
+
+# One unchanged banner over three mail passes and one long pass in a run whose
+# next long pass is an hour away: the mail pass judges it once, the long pass
+# once, and every mail pass after reuses the mail pass's answer. On the
+# machine's own clock, since the mail passes need time to pass: the pinned
+# clock the walled fixture sets is for a recovery's reset, which a relayed
+# banner never reaches.
+banner_judged() { # [WATCH_BIN]
+  relayed_banner_case "walled_judged_once${1:+_mutant}"
+  rm -f -- "${STUB_DIR:?}/now.epoch"
+  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 ORCH_WATCH_MAIL_INTERVAL=1 NOTE_AT=3 \
+    OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-note-at.sh" REAL_LANE_MAIL="$REAL_LANE_MAIL" \
+    -- --max-loops 2 --interval 3600 --item KEN-5
+  JUDGED="$(succeed_calls --check-marks)"
+}
+banner_judged
+assert_eq "judged=$JUDGED" "judged=2" \
+  "a standing banner is judged once by the mail passes and once by the long pass" "$ERR"
+pmutate '    if [[ -n "$OV_WALL_AT" &&' '    if false && [[ -n "$OV_WALL_AT" &&' "judges the wall on every mail pass"
+banner_judged "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "judged=$([[ "$JUDGED" -gt 2 ]] && echo more || echo "$JUDGED")" "judged=more" \
+  "control: judged afresh on every mail pass, a standing banner costs a judgement each" "$ERR"
+
+
+# A relayed banner refuted, then the overseer's own account walls under a
+# different banner inside the same interval: the new banner is judged afresh
+# rather than taken for the refuted one, so the note sent between the two is
+# left for a live overseer. The first capture carries the relayed banner and
+# every later one the new wall; the judgement answers room once, then the
+# mark. The note lands right after the first mail pass reads the mailbox.
+cat > "$TMP_ROOT/bin/lane-mail-note-after.sh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-} ${2:-} ${3:-}" == "inbox --item overseer" && ! -e "$STUB_DIR/noted" ]]; then
+  rc=0
+  "$REAL_LANE_MAIL" "$@" || rc=$?
+  touch "$STUB_DIR/noted"
+  printf 'Sent between the two banners.\n' > "$STUB_DIR/between.txt"
+  "$REAL_LANE_MAIL" send --item overseer --directive --file "$STUB_DIR/between.txt" >/dev/null
+  exit "$rc"
+fi
+exec "$REAL_LANE_MAIL" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/lane-mail-note-after.sh"
+banner_changes() { # [WATCH_BIN]
+  relayed_banner_case "walled_banner_changes${1:+_mutant}"
+  printf '%b\n' '⏺ Watching the fleet.' "$WALL_BANNER" '\xe2\x9d\xaf\xc2\xa0' > "$STUB_DIR/pane-$PANE.1.txt"
+  printf '%b\n' '⏺ Watching the fleet.' "${WALL_BANNER/9:50am/11:50am}" '\xe2\x9d\xaf\xc2\xa0' > "$STUB_DIR/pane-$PANE.txt"
+  check_switch_after_first "$WALL_MARK_LINE"
+  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" ORCH_OVERSEER_DEAD_PASSES=3 \
+    OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-note-after.sh" REAL_LANE_MAIL="$REAL_LANE_MAIL" \
+    -- --max-loops 1 --interval 3600
+  CHANGED="events=$(grep -c '^EVENT owner-note' <<<"$OUT" || true) cursor=$(mail_cursor_count) judged=$(succeed_calls --check-marks)"
+}
+banner_changes
+assert_eq "$CHANGED" "events=0 cursor=0 judged=3" \
+  "a new banner within the interval is judged afresh, and the note it walls is left unread" "$ERR"
+pmutate '    if [[ -n "$OV_WALL_AT" && "$banner" == "$OV_WALL_BANNER" && ' '    if [[ -n "$OV_WALL_AT" && ' \
+  "reuses the wall answer whatever banner it judged"
+banner_changes "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$CHANGED" "events=1 cursor=1 judged=2" \
+  "control: the refuted banner's answer reused for the new wall hands the note to a walled harness" "$ERR"
+
+
+# The overseer's pane cannot be read while a long pass is in flight, as when
+# that pass's succession has just closed it: the mail waits for the pass to
+# end. The long pass holds its pr-watch open until a mail pass drains under
+# it, or three seconds pass, so a mail pass that ran is seen and one held is
+# not waited on forever.
+cat > "$TMP_ROOT/bin/pr-watch-hold.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'long start\n' >> "$STUB_DIR/order.log"
+waited=0
+until awk '$0 == "long start" { on = 1; next } on && /^drain/ { found = 1 } END { exit !found }' "$STUB_DIR/order.log" \
+  || [[ "$waited" -ge 30 ]]; do
+  waited=$((waited + 1)); sleep 0.1
+done
+printf 'long end\n' >> "$STUB_DIR/order.log"
+EOF
+chmod +x "$TMP_ROOT/bin/pr-watch-hold.sh"
+pane_gone_in_flight() { # [WATCH_BIN]
+  overseer_case "pane_gone_in_flight${1:+_mutant}" idle
+  state_with "$LINE"
+  # A repeat pass, which records no launch line, so the window read that fails
+  # is the pane reading's own.
+  touch "$STUB_DIR/window-id-fail-$PANE" "$STUB_DIR/repeat-child"
+  rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
+  mkdir -p "$CASE_REPO_ROOT/tmp/lane-mail/KEN-5"
+  : > "$STUB_DIR/order.log"
+  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" ORCH_WATCH_MAIL_INTERVAL=1 \
+    OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-hold.sh" \
+    OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-order.sh" REAL_LANE_MAIL="$REAL_LANE_MAIL" \
+    -- --max-loops 1 --item KEN-5
+  IN_FLIGHT="$(awk '$0 == "long start" { on = 1; next } $0 == "long end" { on = 0 } on && /^drain/ { n++ } END { print n + 0 }' "$STUB_DIR/order.log")"
+  LONGS="$(grep -c '^long end$' "$STUB_DIR/order.log" || :)"
+}
+pane_gone_in_flight
+assert_eq "longs=$LONGS drains-in-flight=$IN_FLIGHT" "longs=1 drains-in-flight=0" \
+  "an unreadable overseer pane holds the mail while a long pass is in flight" "$ERR"
+pmutate '  if ! overseer_pane_read "$pane"; then
+    [[ -n "$LONG_PID" ]]
+    return
+  fi' '  overseer_pane_read "$pane" || return 1' "reads the mail whenever the pane cannot be read"
+pane_gone_in_flight "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "drains-in-flight=$([[ "$IN_FLIGHT" -gt 0 ]] && echo some || echo 0)" "drains-in-flight=some" \
+  "control: read with the pane gone mid-pass, the mail goes to an overseer its own pass is closing" "$ERR"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

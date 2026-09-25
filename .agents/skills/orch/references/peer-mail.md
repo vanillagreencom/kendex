@@ -9,7 +9,7 @@ The overseer-to-overseer channel: one repository's overseer writes another's mai
 | `lane-mail peer ask --repo [NAME_OR_PATH] --file [PATH] [--options a,b]` | one ask, one id, in the peer's mailbox and then in this overseer's own record; prints `id=[MESSAGE_ID]`. A delivery that refuses records nothing, so nothing is owed for a question the peer never received |
 | `lane-mail peer send --repo [NAME_OR_PATH] --re [MESSAGE_ID] --file [PATH]` | the answer to a peer's ask, releasing that overseer's `wait` |
 | `lane-mail peer send --repo [NAME_OR_PATH] --file [PATH]` | a note that answers no ask |
-| `lane-mail pending --item overseer` | the asks this overseer SENT that a peer has not answered |
+| `lane-mail pending --item overseer` | the asks this overseer SENT that a peer has not answered, then the directives in its own mailbox no reader has taken yet |
 | `lane-mail wait --item overseer --id [MESSAGE_ID]` | blocks for a peer's answer to this overseer's own ask |
 
 Every `peer-note` line carries `kind=`, and only `kind=ask` is owed a reply: an answer sent to a directive would name an id that is in no outbox, so nothing would ever clear it from the sender's `pending`.
@@ -25,7 +25,7 @@ An overseer running the § 4 watch reads a peer's reply there, as the `kind=answ
 
 ## What an inbound ask leaves
 
-Everything a peer sends, a note, an ask and an answer alike, arrives in this overseer's `to-lane.jsonl` and reaches it as one `peer-note` event. `pending --item overseer` reads `to-overseer.jsonl`, so it never lists an inbound ask; it lists the asks this overseer sent.
+Everything a peer sends, a note, an ask and an answer alike, arrives in this overseer's `to-lane.jsonl` and reaches it as one `peer-note` event. `pending --item overseer` lists the asks this overseer sent from `to-overseer.jsonl`, and from `to-lane.jsonl` only the directives past its cursor, so it never lists an inbound ask.
 
 The limit that leaves: once the watch has read a `peer-note`, nothing enumerates the inbound asks still owed an answer. An overseer that restarts mid-exchange relies on the peer re-asking, and the peer's `wait` runs to its `--timeout` in the meantime.
 

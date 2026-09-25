@@ -309,7 +309,7 @@ printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out"
 printf '1' > "$STUB_DIR/prwatch.rc"
 err="$TMP_ROOT/e1h1"
 out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(ls -1 "$STATE_DIR" 2>/dev/null | wc -l | tr -d '[:space:]')" "1" "one state file for the one repo, no temp left behind" "$err"
+assert_eq "$(find "$STATE_DIR" -maxdepth 1 -type f ! -name '*.mail' 2>/dev/null | wc -l | tr -d '[:space:]')" "1" "one state file for the one repo, no temp left behind" "$err"
 state_file="$STATE_DIR/owner_repo__none"
 assert_eq "$([[ -f "$state_file" ]] && echo yes || echo no)" "yes" "the state file is keyed on the repo and --since" "$err"
 assert_eq "$(cat "$state_file")" "$(printf '12\tthreads-open')" "the state file holds the pass's <pr> <kind> keys" "$err"
@@ -403,7 +403,7 @@ assert_contains "$out" "$(printf 'other/repo\tE_REDUCER_READ count=1')" \
   "the reducer's stderr carries its repo too" "$err"
 assert_contains "$(cat "$STUB_DIR/prwatch.repos")" "other/repo" \
   "the reducer is run for the second repo" "$err"
-assert_eq "$(ls -1 "$STATE_DIR" 2>/dev/null | wc -l | tr -d '[:space:]')" "2" \
+assert_eq "$(find "$STATE_DIR" -maxdepth 1 -type f ! -name '*.mail' 2>/dev/null | wc -l | tr -d '[:space:]')" "2" \
   "each repo keeps its own baseline file" "$err"
 assert_eq "$(cat "$STATE_DIR/other_repo__none")" "$(printf '7\tthreads-open')" \
   "the second repo's baseline holds its own keys" "$err"
@@ -570,7 +570,7 @@ assert_not_contains "$out" "EVENT pr-watch" "the newly named repo never preempts
 assert_eq "$(grep -c 'oversee-watch: reducer-baseline' "$err")" "1" "exactly one baseline note on that run"
 assert_contains "$(cat "$err")" "oversee-watch: reducer-baseline repo=other/repo exit=1 count=1" \
   "and the note names the repo that has no baseline yet"
-assert_eq "$(ls -1 "$STATE_DIR" 2>/dev/null | wc -l | tr -d '[:space:]')" "2" \
+assert_eq "$(find "$STATE_DIR" -maxdepth 1 -type f ! -name '*.mail' 2>/dev/null | wc -l | tr -d '[:space:]')" "2" \
   "the newly named repo gets its own baseline file" "$err"
 
 # 1r. the mirror ordering: a baselined repo's genuinely unseen line is still an
@@ -922,6 +922,92 @@ for row in "1||workflow-state: unknown-command arg1=handoff-standing|an install 
     "$label: the standing row survives, so the next readable pass still owes the event" "$err"
 done
 
+# The handoff read's failure is reported once while it stands, and a read
+# that succeeded makes the next one news again: fail, fail, succeed, fail.
+handoff_flap() { # [WATCH_BIN]
+  local run
+  local -a env
+  new_case "handoff_flap${1:+_mutant}"
+  handoff_record KEN-1
+  old_state_reader "$STUB_DIR/old-workflow-state" 1 "" "workflow-state: unknown-command arg1=handoff-standing"
+  FLAP=""
+  FLAP_BEATS=()
+  for run in fail fail ok fail; do
+    env=()
+    [[ "$run" == ok ]] || env=(REAL_WORKFLOW_STATE="$STUB_DIR/old-workflow-state")
+    FLAP_BEATS+=("$(WATCH_BIN="${1:-}" run_watch ${env[@]+"${env[@]}"} -- --item KEN-1 2>"$STUB_DIR/flap.err" || true)")
+    FLAP+="$(grep -c 'oversee-watch: handoff-read-failed item=KEN-1' "$STUB_DIR/flap.err" || :)"
+  done
+}
+handoff_flap
+assert_eq "reports=$FLAP" "reports=1001" "a handoff read failure is reported once, and again after a read that succeeded"
+# The second run's failure stands quiet, and its heartbeat still names it:
+# the row is the long pass's, in the baseline this process reads from disk.
+assert_eq "$(grep -c '^  failing KEN-1 handoff-read-failed ' <<<"${FLAP_BEATS[1]}" || :)" "1" \
+  "a quiet run's heartbeat names the lane whose handoff read still fails"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = '<<<"$MAIL_SEEN"$\'\\n\'"$baseline")"; then'
+assert s.count(old) == 1, "baseline-less heartbeat mutant pattern"
+open(out, "w").write(s.replace(old, '<<<"$MAIL_SEEN")"; then'))
+PY
+handoff_flap "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(grep -c '^  failing KEN-1 ' <<<"${FLAP_BEATS[1]}" || :)" "0" \
+  "control: a heartbeat reading the mail file alone says nothing of the handoff read"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = '    rec="${answer#*$\'\\n\'}"\n    state="$(lane_row_clear lane-failed "$state" "$item")"\n'
+assert s.count(old) == 1, "handoff clear mutant pattern"
+open(out, "w").write(s.replace(old, '    rec="${answer#*$\'\\n\'}"\n'))
+PY
+handoff_flap "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "reports=$FLAP" "reports=1000" "control: with the stands read clearing nothing, the returning failure is silent"
+
+# A lane's mail read fails, stands into the next run, and lifts inside it; the
+# handoff it wrote is read by the long pass after the read that succeeded,
+# not skipped for the rest of the run for a failure the mail pass no longer
+# has.
+cat > "$TMP_ROOT/bin/lane-mail-flaky.sh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == drain ]]; then
+  n=$(( $(cat "$STUB_DIR/flaky.n" 2>/dev/null || echo 0) + 1 ))
+  printf '%s' "$n" > "$STUB_DIR/flaky.n"
+  if [[ -n "${FLAKY_ALWAYS:-}" || "$n" -le 1 ]]; then
+    printf 'lane-mail: lock-failed=/srv/box\nThe refusal.\n' >&2
+    exit 2
+  fi
+fi
+exec "$REAL_LANE_MAIL" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/lane-mail-flaky.sh"
+failure_lifts() { # [WATCH_BIN]
+  local -a flaky=(OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-flaky.sh"
+    REAL_LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail")
+  new_case "handoff_after_lift${1:+_mutant}"
+  handoff_record KEN-1
+  WATCH_BIN="${1:-}" run_watch "${flaky[@]}" FLAKY_ALWAYS=1 -- --item KEN-1 >/dev/null 2>&1 || true
+  unlink "$STUB_DIR/flaky.n"
+  LIFTED="$(WATCH_BIN="${1:-}" run_watch "${flaky[@]}" -- --item KEN-1 2>"$TMP_ROOT/e-lifted")" || true
+}
+failure_lifts
+assert_eq "$(head -1 <<<"$LIFTED")" "EVENT handoff KEN-1" \
+  "a lane whose standing mail failure lifts mid-run has its handoff read by the next long pass" "$TMP_ROOT/e-lifted"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = '  PASS_FAILED_ITEMS=""\n  mail_items='
+assert s.count(old) == 1, "failed-items reset mutant pattern"
+open(out, "w").write(s.replace(old, '  mail_items='))
+PY
+failure_lifts "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(head -1 <<<"$LIFTED")" "$HEARTBEAT" \
+  "control: failures kept for the whole run skip the lane's handoff until the heartbeat" "$TMP_ROOT/e-lifted"
+
 # The must-fail control: the clause widened to take a status in place of the
 # verdict, so an install older than the verb reads as "no record stands". The
 # row is then cleared and the lane that handed off is never reported.
@@ -999,6 +1085,110 @@ out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "gh auth failure exits 2" "$err"
 assert_contains "$(cat "$err")" "oversee-watch: auth-failed service=github" "auth failure is named on stderr"
 assert_eq "$out" "" "auth failure prints no EVENT" "$err"
+assert_eq "prwatch=$([[ -f "$STUB_DIR/prwatch.repos" ]] && echo called || echo none)" "prwatch=none" \
+  "a dead credential stops the run before its long pass reads GitHub unauthenticated" "$err"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = "long_start() {\n  github_ready\n"
+assert s.count(old) == 1, "long-start auth mutant pattern"
+open(out, "w").write(s.replace(old, "long_start() {\n"))
+PY
+new_case auth_fail_unasked
+touch "$STUB_DIR/auth-fail"
+WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- >/dev/null 2>"$TMP_ROOT/e6a-mutant" || true
+assert_eq "prwatch=$([[ -f "$STUB_DIR/prwatch.repos" ]] && echo called || echo none)" "prwatch=called" \
+  "control: with no credential check before it, the long pass reads GitHub on a dead token" "$TMP_ROOT/e6a-mutant"
+
+# A run that dies on its credential check started no long pass, so the run
+# after the repair starts one at once rather than --interval later. Its lane
+# notice ends that run on the turn it starts, so a long pass not yet due is
+# skipped rather than waited for.
+auth_recovery_case() { # NAME [WATCH_BIN]
+  local rc=0
+  new_case "$1"
+  mkdir -p "$TMP_ROOT/repo/tmp/lane-mail/KEN-96"
+  touch "$STUB_DIR/auth-fail"
+  WATCH_BIN="${2:-}" run_watch -- --interval 3600 --item KEN-96 >/dev/null 2>"$TMP_ROOT/e-$1" || rc=$?
+  rm -f -- "$STUB_DIR/auth-fail"
+  printf '{"id":"after-1","kind":"notice","at":"t","text":"Rebased."}\n' \
+    > "$TMP_ROOT/repo/tmp/lane-mail/KEN-96/to-overseer.jsonl"
+  WATCH_BIN="${2:-}" run_watch -- --interval 3600 --item KEN-96 >/dev/null 2>>"$TMP_ROOT/e-$1" || true
+  AUTH_RECOVERY="failed=$rc prwatch=$([[ -f "$STUB_DIR/prwatch.repos" ]] && echo called || echo none)"
+  rm -rf -- "${TMP_ROOT:?}/repo/tmp/lane-mail/KEN-96"
+}
+auth_recovery_case auth_recovery
+assert_eq "$AUTH_RECOVERY" "failed=2 prwatch=called" \
+  "a run after a failed credential check starts its long pass at once" "$TMP_ROOT/e-auth_recovery"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = "long_start() {\n  github_ready\n"
+assert s.count(old) == 1, "start-first mutant pattern"
+open(out, "w").write(s.replace(old,
+    "long_start() {\n  mail_row_commit \"$(lane_row_set long-pass \"$MAIL_SEEN\" fleet \"$PASS_NOW\")\"\n  github_ready\n"))
+PY
+auth_recovery_case auth_recovery_start_first "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$AUTH_RECOVERY" "failed=2 prwatch=none" \
+  "control: a start committed before the credential check holds the next long pass back" \
+  "$TMP_ROOT/e-auth_recovery_start_first"
+
+# The long-pass start kept is the fork's clock: under the stub clock the mail
+# pass's lane-mail moves time on before the fork, and the start is that later
+# reading, not the turn's.
+start_clock_case() { # NAME [WATCH_BIN]
+  new_case "$1"
+  printf '1790000000\n' > "$STUB_DIR/now.epoch"
+  printf '#!/usr/bin/env bash\nprintf "1790000500\\n" > "$STUB_DIR/now.epoch"\nexec "%s" "$@"\n' \
+    "$REPO_ROOT/skills/orch/scripts/lane-mail" > "$STUB_DIR/lane-mail-slow"
+  chmod +x "$STUB_DIR/lane-mail-slow"
+  WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_LANE_MAIL="$STUB_DIR/lane-mail-slow" -- --max-loops 1 \
+    >/dev/null 2>"$TMP_ROOT/e-$1" || true
+  START_CLOCK="start=$(awk -F'\t' '$1 == "long-pass" && $2 == "fleet" { print $3 }' \
+    "$STATE_DIR"/*.mail 2>/dev/null || true)"
+}
+start_clock_case start_clock
+assert_eq "$START_CLOCK" "start=1790000500" "the long-pass start is the clock read at the fork" "$TMP_ROOT/e-start_clock"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = '  started="$(date -u +%s)" || die time-failed "" "clock=UTC"\n'
+assert s.count(old) == 1, "turn-clock start mutant pattern"
+open(out, "w").write(s.replace(old, '  started="$PASS_NOW"\n'))
+PY
+start_clock_case start_clock_turn "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$START_CLOCK" "start=1790000000" "control: a start stamped with the turn's clock is the earlier reading" \
+  "$TMP_ROOT/e-start_clock_turn"
+
+# A run that ends on a lane's notice before any long pass is due asks GitHub
+# nothing, not even its credential.
+mail_only_case() { # NAME [WATCH_BIN]
+  new_case "$1"
+  mkdir -p "$STATE_DIR" "$TMP_ROOT/repo/tmp/lane-mail/KEN-96"
+  printf 'long-pass\tfleet\t%s\n' "$(date -u +%s)" > "$STATE_DIR/owner_repo__none.mail"
+  printf '{"id":"only-1","kind":"notice","at":"t","text":"Rebased."}\n' \
+    > "$TMP_ROOT/repo/tmp/lane-mail/KEN-96/to-overseer.jsonl"
+  MAIL_ONLY_OUT="$(WATCH_BIN="${2:-}" run_watch -- --interval 3600 --item KEN-96 2>"$TMP_ROOT/e-$1")" || true
+  MAIL_ONLY="notice=$(grep -c '^EVENT lane-notice KEN-96 only-1$' <<<"$MAIL_ONLY_OUT" || :) auth=$(grep -c '^auth status' < <(cat -- "$STUB_DIR/gh.calls" 2>/dev/null) || true)"
+  rm -rf -- "${TMP_ROOT:?}/repo/tmp/lane-mail/KEN-96"
+}
+mail_only_case mail_only_no_github
+assert_eq "$MAIL_ONLY" "notice=1 auth=0" "a run ending on mail news before its long pass is due makes no GitHub call" \
+  "$TMP_ROOT/e-mail_only_no_github"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = "if [[ ${#REPOS[@]} -eq 0 ]]; then\n  github_ready\n"
+assert s.count(old) == 1, "eager auth mutant pattern"
+open(out, "w").write(s.replace(old, "github_ready\nif [[ ${#REPOS[@]} -eq 0 ]]; then\n"))
+PY
+mail_only_case mail_only_eager "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$MAIL_ONLY" "notice=1 auth=1" "control: a credential check at startup asks GitHub on every mail-only run" \
+  "$TMP_ROOT/e-mail_only_eager"
 
 # a stale env token with no keyring falls through to the project GH_BOT_TOKEN
 new_case auth_bot_fallback
@@ -1233,7 +1423,7 @@ out="$(run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --rep
 assert_eq "rc=$rc named=$(grep -c '^oversee-watch: sleep-failed secs=0$' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" \
   "rc=2 named=1 events=heartbeat" "a failed repeat delay ends the watch as sleep-failed after the pass it followed" "$err"
 # The must-fail control: the bare sleep, whose failure is the watch's own exit.
-sleep_line='    wait "$REPEAT_CHILD_PID" || die sleep-failed "" "secs=$REPEAT"'
+sleep_line='    wait "$REPEAT_CHILD_PID" || die sleep-failed "" "secs=$delay"'
 assert_eq "$(grep -cxF -- "$sleep_line" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the guarded delay is one line to strip"
 awk -v line="$sleep_line" '$0 == line { print "    wait \"$REPEAT_CHILD_PID\""; next } { print }' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
@@ -1243,6 +1433,69 @@ repeat_sleep_stub 'exit 3'
 err="$TMP_ROOT/e-repeat_sleep_fails_unguarded"
 WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" >/dev/null 2>"$err" </dev/null && rc=0 || rc=$?
 assert_eq "rc=$rc named=$(grep -c '^oversee-watch: sleep-failed' "$err")" "rc=3 named=0" "control: unguarded, the failed delay is a silent exit with the stub's status" "$err"
+# The delay between two passes is the mail interval where that is shorter,
+# so a note sent right after a run ends is read within one interval; a pass
+# that failed waits the whole delay. DELAYS is the one delay the stub was
+# asked for, after a pass that ended quietly or, with every PR list failing,
+# exited 2.
+repeat_delay_case() { # NAME ok|failed [WATCH_BIN]
+  new_case "$1"
+  write_state "$STUB_DIR/state.json" "$(lane_record issue-1 '' '' /w/issue-1 running)"
+  [[ "$2" == ok ]] || touch "$STUB_DIR/list-fail"
+  repeat_sleep_stub 'printf "%s\n" "$1" >> "$STUB_DIR/repeat.delays"' 'exit 3'
+  WATCH_BIN="${3:-}" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" ORCH_WATCH_MAIL_INTERVAL=5 -- --max-loops 1 \
+    --repeat 60 --state "$STUB_DIR/state.json" >/dev/null 2>"$TMP_ROOT/e-$1" </dev/null || true
+  DELAYS="$(paste -sd ' ' - <"$STUB_DIR/repeat.delays" 2>/dev/null || echo none)"
+}
+repeat_delay_case repeat_delay_mail ok
+assert_eq "$DELAYS" "5" "the repeat delay after a pass is the mail interval where that is shorter" "$TMP_ROOT/e-repeat_delay_mail"
+repeat_delay_case repeat_delay_failed failed
+assert_eq "$DELAYS" "60" "a pass that exited 2 waits the whole repeat delay" "$TMP_ROOT/e-repeat_delay_failed"
+delay_cap='    [[ "$pass_rc" -eq 2 || "$MAIL_INTERVAL" -ge "$delay" ]] || delay="$MAIL_INTERVAL"'
+assert_eq "$(grep -cxF -- "$delay_cap" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the delay cap is one line to change"
+awk -v line="$delay_cap" '$0 == line { print "    :"; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+repeat_delay_case repeat_delay_uncapped ok "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$DELAYS" "60" "control: uncapped, the whole repeat delay passes with no mail read" "$TMP_ROOT/e-repeat_delay_uncapped"
+awk -v line="$delay_cap" '$0 == line { print "    [[ \"$MAIL_INTERVAL\" -ge \"$delay\" ]] || delay=\"$MAIL_INTERVAL\""; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+repeat_delay_case repeat_delay_floorless failed "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$DELAYS" "5" "control: with no floor, a failing pass is retried at the mail interval" "$TMP_ROOT/e-repeat_delay_floorless"
+
+# One lane's mailbox fails and stays failed: the run that reports it exits 2
+# and waits the whole delay, and the run after it, the failure unchanged and
+# quiet, fails nothing, so the delay before the next is the mail interval and
+# another lane's note waits no longer.
+standing_delay_case() { # NAME [WATCH_BIN]
+  local root="$TMP_ROOT/standing/$1/ken-12"
+  new_case "$1"
+  mkdir -p "$root/tmp/lane-mail/KEN-12"
+  git -C "$root" init -q
+  printf '{"id":"s-1","kind":"notice","at":"t","text":"x"}\n' > "$root/tmp/lane-mail/KEN-12/to-overseer.jsonl"
+  chmod 000 "$root/tmp/lane-mail/KEN-12/to-overseer.jsonl"
+  write_state "$STUB_DIR/state.json" "$(lane_record KEN-12 '' '' "$root" running)"
+  repeat_sleep_stub 'printf "%s\n" "$1" >> "$STUB_DIR/repeat.delays"' \
+    '[[ "$(grep -c . "$STUB_DIR/repeat.delays")" -lt 2 ]] || exit 3'
+  WATCH_BIN="${2:-}" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" ORCH_WATCH_MAIL_INTERVAL=5 -- --max-loops 1 \
+    --repeat 60 --state "$STUB_DIR/state.json" >/dev/null 2>"$TMP_ROOT/e-$1" </dev/null || true
+  chmod 644 "$root/tmp/lane-mail/KEN-12/to-overseer.jsonl"
+  DELAYS="$(paste -sd ' ' - <"$STUB_DIR/repeat.delays" 2>/dev/null || echo none)"
+}
+standing_delay_case repeat_delay_standing
+assert_eq "$DELAYS" "60 5" "a lane failure still standing fails no later run, so the delay after it is the mail interval" \
+  "$TMP_ROOT/e-repeat_delay_standing"
+python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
+import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = "  local -a tokens=()\n  PASS_FAILED_ITEMS+="
+assert s.count(old) == 1, "standing failure mutant pattern"
+open(out, "w").write(s.replace(old, "  local -a tokens=()\n  PASS_FAILED=1\n  PASS_FAILED_ITEMS+="))
+PY
+standing_delay_case repeat_delay_standing_fails "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$DELAYS" "60 60" "control: a standing failure that ends every run keeps every delay whole" \
+  "$TMP_ROOT/e-repeat_delay_standing_fails"
+
 # A local lane whose worktree sits outside the watch's own checkout (a
 # proposal sweep launched from a source repository) has its mailbox read at
 # the root its record carries, never in this checkout.
@@ -1458,7 +1711,9 @@ assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/
   "control: the mutant really widens the handoff"
 mid_pass_case repeat_state_departs_mid_pass_mutant departs "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$MID_ITEMS" "issue-1 KEN-10 issue-1 KEN-10 issue-1 KEN-10" "control: handed the merged fleet, the pass carries the closed lane on every loop" "$err"
-assert_eq "$MID_MAIL_READS" "3" "control: handed the merged fleet, the closed lane's mailbox is drained on every loop" "$err"
+# Four: a mail pass on each of the three loops, and the one the heartbeat
+# reads after the last long pass.
+assert_eq "$MID_MAIL_READS" "4" "control: handed the merged fleet, the closed lane's mailbox is drained on every mail pass" "$err"
 # An argument a pass would refuse ends repeat mode before any pass. The sleep
 # stub takes the state away, so a watch that ran the pass and slept anyway
 # ends too, on a second refusal.

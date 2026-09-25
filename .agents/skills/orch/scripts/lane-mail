@@ -41,34 +41,49 @@ Lane side, rooted at the lane's own git worktree:
               print its text; exit 124 at --timeout. The whole file is
               searched, so a restarted lane still finds an answer that arrived
               while it was gone
-  inbox --item ITEM [--root ROOT] [--after N | --peek | --ack N]
+  inbox --item ITEM [--root ROOT] [--peek | --ack N]
               print every unread to-lane.jsonl envelope that is not an answer,
               then advance to-lane.cursor past every complete line. An answer
               belongs to the `wait` that asked for it; `--item overseer` is
               the exception, and hands answers over too, because an overseer
-              runs its watch rather than blocking in `wait`. With --after, print
-              the header below, then every such envelope after line N,
-              reading and writing no cursor. With --peek, print the header,
-              then every such envelope after to-lane.cursor, moving no
-              cursor. With --ack N, print nothing and advance to-lane.cursor
-              to N, the count a --peek printed, never back and never past an
-              unread halt
+              runs its watch rather than blocking in `wait`. With --peek, print
+              the header below, then every such envelope after to-lane.cursor,
+              moving no cursor. With --ack N, print nothing and advance
+              to-lane.cursor to N, the count a --peek printed, never back and
+              never past an unread halt
 
 Overseer side:
   send --item ITEM (--re MSGID | --directive | --halt) --file PATH
               append to to-lane.jsonl the answer to MSGID, or a directive that
               answers no ask. --halt sends a directive the lane-mail-halt
               hook refuses every lane tool call on until a plain inbox read
-              acknowledges it. Prints the receipt below on stdout
-  drain --item ITEM --after N
+              acknowledges it. Prints the receipt below on stdout. No halt
+              goes to `--item overseer`: no hook halts an overseer on it, and
+              the watch acknowledges that mailbox with --ack
+  drain --item ITEM --after N [--receipts]
               print the header below, then every to-overseer.jsonl
-              envelope after line N, skipping asks to-lane.jsonl answers
+              envelope after line N, skipping asks to-lane.jsonl answers.
+              --receipts then prints `receipts cursor=<N> count=<complete
+              lines> first=<id>` for to-lane.jsonl, N being the count
+              to-lane.cursor holds and never more than the lines listed, 0
+              where the lane has never read, or `missed` where the cursor
+              was not there beside the lock its reads leave, or reads above
+              0 over a listing of no line: a read that missed. Then `<line> <id> <epoch>` for every to-lane.jsonl
+              directive: its line number, its id, and its `at` in epoch
+              seconds, empty where `at` does not parse. The cursor is the
+              receipt: a directive on a line at or below N is one the lane
+              has read. A directive whose id is outside the item alphabet is
+              not listed
   pending --item ITEM
               print every to-overseer.jsonl ask with no answer: for a lane
               item, what a restarted overseer owes a reply; for `--item
               overseer`, the asks this overseer SENT a peer that the peer has
-              not answered. A peer's inbound ask lands in to-lane.jsonl and is
-              read by `inbox`, so `pending` never lists it
+              not answered. Then every to-lane.jsonl directive past
+              to-lane.cursor: sent and not yet read. A peer's inbound ask
+              lands in to-lane.jsonl and is read by `inbox`, so `pending`
+              never lists it. A cursor read `drain --receipts` would report
+              `missed` is refused `mail-read-failed=<item> cursor=missed`
+              and prints nothing
 
 Peer side, one other repository's overseer mailbox per call:
   peer ask --repo REPO --file PATH [--options a,b]
@@ -105,7 +120,7 @@ Options:
                 it is outside the ownership gate: nothing here can establish
                 whose path it is
   --host        read and write through `lane-host`, not this disk
-  --after N     the read cursor: the count a previous drain or inbox printed
+  --after N     drain only: the read cursor, the count a previous drain printed
   --peek        inbox only: read to-lane.cursor and leave it where it is
   --ack N       inbox only: the count a --peek printed, acknowledged once its
                 envelopes were handed over
@@ -113,7 +128,7 @@ Options:
   --timeout S   seconds before `wait` exits 124; 0 never times out
   --interval S  seconds between `wait` polls (default 5)
 
-Header, the first line drain and inbox --after print: `count=<complete lines>
+Header, the first line drain and inbox --peek print: `count=<complete lines>
 first=<id>`, the id carried by the file's first line, empty when that line is
 no envelope or its id is outside the item alphabet. A reader keeps both: a
 file opening with another id is a replacement mailbox, not the one counted.
@@ -286,6 +301,7 @@ DIRECTIVE=0
 HALT=0
 PEEK=0
 ACK=""
+RECEIPTS=0
 
 need_val() { [ "$#" -ge 2 ] && [ -n "${2:-}" ] || refuse missing-value "$1"; }
 
@@ -308,6 +324,7 @@ while [ "$#" -gt 0 ]; do
     --directive) DIRECTIVE=1; shift ;;
     --halt) DIRECTIVE=1; HALT=1; shift ;;
     --peek) PEEK=1; shift ;;
+    --receipts) RECEIPTS=1; shift ;;
     --ack) need_val "$@"; ACK="$2"; shift 2 ;;
     --help | -h) usage; exit 0 ;;
     *) refuse option-unknown "$1" ;;
@@ -320,6 +337,7 @@ done
 # lane option, refused rather than dropped so a caller is never told a choice
 # landed that never did. The refusal names the spelling typed, so a `--id` on
 # a peer ask does not send its reader to `--re`.
+[ "$RECEIPTS" -eq 0 ] || [ "$VERB" = drain ] || refuse option-unknown --receipts
 if [ "$VERB" = peer ]; then
   [ -n "$REPO" ] || refuse option-required --repo
   for given in $OPTS_GIVEN; do
@@ -554,11 +572,13 @@ lm_host_answers() {
 # Fetch REMOTE_PATH into DEST, empty when the mailbox does not exist yet. A
 # failed hosted read probes the host, so an unreachable one is refused rather
 # than reported as an empty mailbox.
-lm_fetch() { # REMOTE_PATH DEST
+LM_FETCH_ABSENT=0
+lm_fetch() { # REMOTE_PATH DEST — LM_FETCH_ABSENT 1 where the file was not there
   local rc=0
+  LM_FETCH_ABSENT=0
   : >"$2" || refuse write-failed "$2"
   if [ "$HOST" -eq 0 ]; then
-    [ -f "$1" ] || return 0
+    [ -f "$1" ] || { LM_FETCH_ABSENT=1; return 0; }
     cat -- "$1" >"$2" 2>"$WORK_DIR/read.err" \
       || refuse file-unreadable "$1" "$(cat -- "$WORK_DIR/read.err")"
     return 0
@@ -569,6 +589,7 @@ lm_fetch() { # REMOTE_PATH DEST
   [ "$rc" -eq 2 ] || refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/host.err")"
   # The host answers and the file is not there: a lane that has not opened its
   # mailbox. The failed read wrote whatever it managed; start from nothing.
+  LM_FETCH_ABSENT=1
   : >"$2" || refuse write-failed "$2"
 }
 
@@ -650,7 +671,7 @@ lm_duplicate_id() { # LINE — prints the earlier envelope's id, or nothing
   lm_objects "$WORK_DIR/dup.jsonl" >"$WORK_DIR/dup.objects" ||
     refuse file-unreadable "$TO_LANE"
   printf '%s\n' "$1" >"$WORK_DIR/sent.json" || refuse write-failed "$WORK_DIR/sent.json"
-  jq -r --argjson now "$now" --slurpfile sent "$WORK_DIR/sent.json" '
+  jq -r --argjson now "$now" --slurpfile sent "$WORK_DIR/sent.json" "$LM_JQ_DEFS"'
     # Every field but the two a second send cannot repeat: the id, minted once
     # per call, and the stamp, which the window below judges instead. Every
     # line in this mailbox is one lm_envelope wrote, so comparing the objects
@@ -659,7 +680,7 @@ lm_duplicate_id() { # LINE — prints the earlier envelope's id, or nothing
     # for someone to add it to a list kept here by hand.
     ($sent[0] | del(.id, .at)) as $want
     | select(del(.id, .at) == $want)
-    | (try (.at | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) catch null) as $at
+    | (.at | at_epoch) as $at
     | select($at != null and ($now - $at) >= 0 and ($now - $at) <= 60)
     | .id | strings' <"$WORK_DIR/dup.objects" >"$WORK_DIR/dup.ids" ||
     refuse file-unreadable "$TO_LANE"
@@ -694,7 +715,25 @@ lm_sent() {
   printf 'lane-mail: sent item=%s id=%s bytes=%s\n' "$ITEM" "$SENT_ID" "$SENT_BYTES"
 }
 
-# The ids of asks to-lane.jsonl already answers, one per line, into DEST.
+# The `at` stamp as epoch seconds, null where it does not parse: the one
+# parse every reader of a stamp shares, prefixed to its jq program.
+LM_JQ_DEFS='def at_epoch: try (strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) catch null;'
+
+# Every directive in a terminated to-lane.jsonl, one `{line, envelope}` object
+# per line. Numbered over every complete line, parsing or not, as the cursor
+# counts them, so a line number and the cursor are one scale: the one answer
+# to which directives a reader has passed.
+lm_directives() { # FILE
+  jq -c -R -n 'foreach inputs as $raw (0; . + 1;
+    . as $line
+    | ($raw | try fromjson catch null)
+    | select(type == "object" and .kind == "directive")
+    | {line: $line, envelope: .})' <"$1" || refuse file-unreadable "$TO_LANE"
+}
+
+# The ids of asks to-lane.jsonl already answers, one per line, into DEST. It
+# leaves the terminated to-lane.jsonl at WORK_DIR/lane.jsonl, which pending and
+# drain --receipts read after it rather than fetching the file twice.
 lm_answered() { # DEST
   lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
   lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
@@ -774,6 +813,23 @@ lm_cursor_write() { # COUNT
   mv -- "$WORK_DIR/cursor" "$CURSOR" || refuse write-failed "$CURSOR"
 }
 
+# The count to-lane.cursor holds, as SEEN, read through the route every other
+# read of this mailbox takes; a cursor that is not there counts 0, and
+# CURSOR_ABSENT says it was not there. inbox calls it under its lock; the
+# readers that move no cursor take none, since the rename above never shows
+# them half a count.
+SEEN=0
+CURSOR_ABSENT=0
+lm_cursor_read() {
+  lm_fetch "$CURSOR" "$WORK_DIR/cursor.read"
+  CURSOR_ABSENT="$LM_FETCH_ABSENT"
+  SEEN="$(awk 'NR == 1 { print; exit }' <"$WORK_DIR/cursor.read")" || refuse file-unreadable "$CURSOR"
+  case "$SEEN" in
+    '') SEEN=0 ;;
+    *[!0-9]*) refuse cursor-invalid "$CURSOR" ;;
+  esac
+}
+
 lm_seconds() { # OPTION VALUE
   case "$2" in
     '' | *[!0-9]*) refuse seconds-invalid "$1" ;;
@@ -802,6 +858,7 @@ case "$VERB" in
     if [ "$DIRECTIVE" -eq 0 ] && [ -z "$MSGID" ]; then
       refuse option-required --re
     fi
+    [ "$HALT" -eq 0 ] || [ "$ITEM" != overseer ] || refuse option-conflict '--item=overseer,--halt'
     # The envelope is built first and judged whole; lm_envelope writes the id
     # into the work directory and prints the line, so a refusal below leaves
     # nothing in any mailbox.
@@ -889,33 +946,23 @@ case "$VERB" in
     ;;
 
   inbox)
-    # --after is the caller's own cursor, as for drain: the watch keeps its
-    # count in a row and never moves the file cursor a lane's inbox reads.
-    case "${AFTER:+a}${ACK:+k}$PEEK" in
-      0 | a0 | k0 | 1) ;;
-      *) refuse option-conflict '--after,--peek,--ack' ;;
+    [ -z "$AFTER" ] || refuse option-unknown --after
+    case "${ACK:+k}$PEEK" in
+      0 | k0 | 1) ;;
+      *) refuse option-conflict '--peek,--ack' ;;
     esac
     [ -z "$ACK" ] || lm_after "$ACK"
-    if [ -n "$AFTER" ]; then
-      lm_after "$AFTER"
-      SEEN="$AFTER"
-    else
-      mkdir -p -- "$BOX" || refuse write-failed "$BOX"
-      : >>"$CURSOR" || refuse write-failed "$CURSOR"
-      # One lock across the read and the rewrite, so the Stop hook and a
-      # workflow wait point never hand the same line over twice. The lock is its
-      # own file because a rename replaces the cursor, and a lock on the cursor
-      # would be a lock on an inode the next reader no longer opens.
-      : >>"$CURSOR.lock" || refuse write-failed "$CURSOR.lock"
-      exec 9>>"$CURSOR.lock"
-      orch_take_lock 9 "$CURSOR.lock" 30 || refuse lock-failed "$CURSOR.lock"
-      trap lm_cleanup EXIT
-      SEEN="$(cat -- "$CURSOR")" || refuse file-unreadable "$CURSOR"
-      [ -n "$SEEN" ] || SEEN=0
-      case "$SEEN" in
-        *[!0-9]*) refuse cursor-invalid "$CURSOR" ;;
-      esac
-    fi
+    mkdir -p -- "$BOX" || refuse write-failed "$BOX"
+    : >>"$CURSOR" || refuse write-failed "$CURSOR"
+    # One lock across the read and the rewrite, so the Stop hook and a
+    # workflow wait point never hand the same line over twice. The lock is its
+    # own file because a rename replaces the cursor, and a lock on the cursor
+    # would be a lock on an inode the next reader no longer opens.
+    : >>"$CURSOR.lock" || refuse write-failed "$CURSOR.lock"
+    exec 9>>"$CURSOR.lock"
+    orch_take_lock 9 "$CURSOR.lock" 30 || refuse lock-failed "$CURSOR.lock"
+    trap lm_cleanup EXIT
+    lm_cursor_read
     if [ -n "$ACK" ]; then
       # A halt stands until a plain read: the count stops at the line before
       # the first unread halt, whatever a hook that showed it acknowledges.
@@ -934,7 +981,7 @@ case "$VERB" in
     lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
     lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
     COUNT="$(lm_count "$WORK_DIR/lane.jsonl")"
-    [ -z "$AFTER" ] && [ "$PEEK" -eq 0 ] || lm_header "$WORK_DIR/lane.jsonl"
+    [ "$PEEK" -eq 0 ] || lm_header "$WORK_DIR/lane.jsonl"
     awk -v seen="$SEEN" 'NR > seen' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/unread"
     # An answer is handed to the `wait` that asked for it, never to the inbox,
     # so a lane is not told twice about a reply it already acted on. The
@@ -943,17 +990,52 @@ case "$VERB" in
     # mailbox with `inbox`, so a peer's answer would otherwise reach nothing.
     lm_objects "$WORK_DIR/unread" | jq -c --arg item "$ITEM" '
       select($item == "overseer" or .kind != "answer")'
-    if [ -z "$AFTER" ]; then
-      [ "$PEEK" -eq 1 ] || lm_cursor_write "$COUNT"
-      exec 9>&-
-      orch_release_lock
-    fi
+    # Rewritten only when it moves, so a read that found nothing new leaves
+    # the file as it was.
+    [ "$PEEK" -eq 1 ] || [ "$COUNT" = "$SEEN" ] || lm_cursor_write "$COUNT"
+    exec 9>&-
+    orch_release_lock
     ;;
 
   drain | pending)
     [ "$VERB" != drain ] || lm_after "$AFTER"
     lm_answered "$WORK_DIR/answered"
     ANSWERED="$(cat -- "$WORK_DIR/answered")"
+    # And what was sent the other way: from the to-lane.jsonl lm_answered
+    # left, each directive against the cursor that says how far the reader
+    # got. pending lists the ones not passed; drain --receipts lists them all
+    # beside the cursor, clamped to the lines listed, so a directive appended
+    # and read between the file read and the cursor read is not taken as read
+    # before it was listed. Judged before anything is printed, so a pending
+    # read that missed prints nothing but its refusal.
+    if [ "$VERB" = pending ] || [ "$RECEIPTS" -eq 1 ]; then
+      lm_cursor_read
+      lm_directives "$WORK_DIR/lane.jsonl" >"$WORK_DIR/directives"
+      COUNT="$(lm_count "$WORK_DIR/lane.jsonl")" || refuse file-unreadable "$TO_LANE"
+      # The cursor counts lines of an append-only file, so one above 0 over a
+      # listing of no line is a listing that missed. Over one that has lines
+      # it is a directive appended and read after the listing, clamped to it.
+      if [ "$SEEN" -gt 0 ] && [ "$COUNT" -eq 0 ]; then
+        SEEN=missed
+      else
+        [ "$SEEN" -le "$COUNT" ] || SEEN="$COUNT"
+      fi
+      # A cursor that is not there is one of two things, told apart here once:
+      # a lane that has never read, whose inbox has made neither the cursor
+      # nor its lock, or a read of it that missed, beside the lock every read
+      # the lane has made left behind.
+      if [ "$CURSOR_ABSENT" -eq 1 ]; then
+        lm_fetch "$CURSOR.lock" "$WORK_DIR/cursor.lock.read"
+        [ "$LM_FETCH_ABSENT" -eq 1 ] || SEEN=missed
+      fi
+      # pending has no receipts line to carry `missed`: listed, a read that
+      # missed shows directives the lane read as unread and, over a listing
+      # that missed, answered asks as owed, so it is refused instead.
+      if [ "$VERB" = pending ] && [ "$SEEN" = missed ]; then
+        REFUSE_EXTRA=cursor=missed
+        refuse mail-read-failed "$ITEM"
+      fi
+    fi
     lm_fetch "$TO_OVERSEER" "$WORK_DIR/over.raw"
     lm_terminated "$WORK_DIR/over.raw" "$WORK_DIR/over.jsonl"
     if [ "$VERB" = drain ]; then
@@ -968,5 +1050,17 @@ case "$VERB" in
       | . as $envelope
       | select($verb == "drain" or $envelope.kind == "ask")
       | select($envelope.kind != "ask" or ($done | index($envelope.id) | not))'
+    if [ "$VERB" = pending ]; then
+      jq -c --argjson seen "$SEEN" 'select(.line > $seen) | .envelope' <"$WORK_DIR/directives" ||
+        refuse file-unreadable "$TO_LANE"
+    elif [ "$RECEIPTS" -eq 1 ]; then
+      HEADER="$(lm_header "$WORK_DIR/lane.jsonl")"
+      printf 'receipts cursor=%s %s\n' "$SEEN" "$HEADER"
+      jq -r "$LM_JQ_DEFS"'
+        .envelope as $e
+        | select(($e.id | type) == "string" and ($e.id | test("^[A-Za-z0-9._-]+$")))
+        | "\(.line) \($e.id) \(($e.at | at_epoch) // "")"' <"$WORK_DIR/directives" ||
+        refuse file-unreadable "$TO_LANE"
+    fi
     ;;
 esac

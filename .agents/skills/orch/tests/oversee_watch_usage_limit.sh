@@ -369,7 +369,7 @@ MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_DIR/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-sed '/^    echo "EVENT \$event \$lane/,/^    PASS_EVENT=1$/ s/^    PASS_EVENT=1$/    pr_watch_context; exit 0/' \
+sed '/^    echo "EVENT \$event \$lane/,/^    PASS_EVENT=1$/ s/^    PASS_EVENT=1$/    PASS_EVENT=1; return 0/' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
   "control: the mutant really restores the usage-limit arm's early exit"
