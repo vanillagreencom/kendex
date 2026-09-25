@@ -1053,7 +1053,8 @@ WATCH_TAIL_LINES="${ORCH_WATCH_TAIL_LINES:-12}"
 PREPARE_SECS="${ORCH_WATCH_PREPARE_SECS:-1800}"
 [[ "$PREPARE_SECS" =~ ^[1-9][0-9]*$ ]] || die prepare-secs-invalid "" "value=$PREPARE_SECS"
 # The mail pass's own cadence, apart from --interval: its reads are files and
-# provider reads, none of them GitHub's, so a shorter one costs no GitHub call.
+# provider reads, so with every repository named by --repo it costs no GitHub
+# call.
 MAIL_INTERVAL="${ORCH_WATCH_MAIL_INTERVAL:-20}"
 [[ "$MAIL_INTERVAL" =~ ^(0|[1-9][0-9]*)$ ]] || die mail-interval-invalid "" "value=$MAIL_INTERVAL"
 UNREAD_SECS="${ORCH_DIRECTIVE_UNREAD_SECS:-300}"
@@ -3589,8 +3590,8 @@ long_collect() { # [wait]
 # and --interval gone by since the last one started, in this run or an earlier
 # one. A run with news ends at run_end before a later turn reaches here, so a
 # long pass due on the turn the news came is the last one. The start is kept
-# in the mail pass's file, so how many long passes, and GitHub calls, an hour
-# holds is the interval's alone, however many runs end on mail news.
+# in the mail pass's file, so with every repository named by --repo an hour's
+# long passes and GitHub calls are the interval's alone.
 LONG_DUE=0
 long_due() {
   local last

@@ -500,10 +500,11 @@ mid_read_case mid_read_taken_mutant "$MUTANT"
 assert_eq "$MID_READ" "read=found pass=gone note=lost" \
   "control: a read that moves the cursor itself loses the note to the stop"
 
-# A stop between the print and the ack, as a takeover's group stop makes: the
-# ack is held in a lane-mail wrapper and killed with its pass. The note is
-# printed, the cursor stays, and the next reader prints it again: at least
-# once, never lost.
+# A stop between the print and the ack, as a kill of the watch's whole process
+# tree or group from outside makes (a harness stopping its background command):
+# the ack is held in a lane-mail wrapper and killed with its pass. A TERM to
+# the pass alone waits for the ack. The note is printed, the cursor stays, and
+# the next reader prints it again: at least once, never lost.
 ack_stop_case() { # NAME [WATCH_BIN]
   local ack pass held
   new_case "$1"
