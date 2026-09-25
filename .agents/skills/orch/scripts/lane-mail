@@ -54,13 +54,14 @@ Lane side, rooted at the lane's own git worktree:
   watch --item ITEM [--root ROOT] [--interval S]
               the lane's standing mailbox monitor, run under its harness's
               background wake. Every --interval, when envelopes `inbox` would
-              print have landed past to-lane.cursor since the last poll, print
-              `lane-mail: mail=<item> new=<n>`, one line of instruction and
-              the `inbox` command that reads them, with --root naming the
-              mailbox this watch reads: one announcement per poll that finds
-              unread mail, new counting its envelopes, and no envelope ever
-              announced twice. An answer prints nothing: its `wait` hands it
-              over.
+              print lie past to-lane.cursor and this watch has not announced
+              them, print `lane-mail: mail=<item> new=<n>`, n counting those
+              envelopes, then one line of instruction and the `inbox` command
+              that reads them, with --root naming the mailbox this watch
+              reads. One watch process announces an envelope at most once,
+              however many polls find it still unread; a re-armed watch
+              announces again every envelope still unread. An answer prints
+              nothing: its `wait` hands it over.
               Each poll rewrites to-lane.watch, the liveness record a send's
               receipt reads. Moves no cursor, runs until it is stopped, and
               refuses `mailbox-missing` when the mailbox directory is absent
