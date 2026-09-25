@@ -104,11 +104,14 @@ fi
 if [[ "${5:-}" == --format=safe ]]; then cat "$CASE/linear-$4.json"; else jq -c '{issue: .}' "$CASE/linear-$4.json"; fi
 EOF
 # github.sh: `pr-list-failing --all` answers failing.<SLUG>.json for the
-# GH_REPO it runs under, else failing.json, [] without either.
+# GH_REPO it runs under, else failing.json, [] without either. It picks its
+# token as github.sh's router does, GH_TOKEN before a non-empty GH_BOT_TOKEN,
+# and one starting ghp_stale fails the list, as a revoked token does.
 cat > "$TMP_ROOT/bin/github" <<'EOF'
 #!/usr/bin/env bash
 [[ "$*" == "pr-list-failing --all" ]] || { echo "unexpected github.sh call: $*" >&2; exit 1; }
 [[ -n "${GH_REPO:-}" ]] || { echo "github.sh stub: no GH_REPO" >&2; exit 1; }
+[[ "${GH_TOKEN:-${GH_BOT_TOKEN:-}}" != ghp_stale* ]] || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
 slug="${GH_REPO//\//_}"
 if [[ -f "$CASE/failing.$slug.json" ]]; then cat "$CASE/failing.$slug.json"
 elif [[ -f "$CASE/failing.json" ]]; then cat "$CASE/failing.json"
@@ -290,6 +293,11 @@ seed_fleet auth_none
 touch "$CASE/auth-fail"
 run GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_stale_bot -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: auth-failed=github" "render, no credential works: refused as auth-failed"
+# A keyring the ladder settles on holds for the failing-check list too: an
+# inherited GH_BOT_TOKEN that GitHub rejects is not picked up behind it.
+seed_fleet auth_keyring_stale_bot
+run GH_BOT_TOKEN=ghp_stale_bot -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$OUT" "0|$WANT" "render, the keyring works beside a revoked inherited GH_BOT_TOKEN: the keyring reads the same rows"
 # A revoked env token the keyring replaces warns on stderr; a later refusal
 # still names its key on the first line, and the warning follows it.
 seed_fleet auth_keyring_refusal
@@ -746,6 +754,17 @@ echo "[$(merged_pr 11 ken-1 -30 abcdef1234)]" > "$CASE/merged.json"
 touch "$CASE/auth-fail"
 REPORT_UNDER_TEST="$MUTANT" run ORCH_REPORT_EVERY_ISSUES=1 GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_bot00000 -- due --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" "control: without the ladder due's count fails on a revoked GH_TOKEN"
+
+# Without the empty GH_BOT_TOKEN, github.sh picks the inherited bot token over
+# the keyring the ladder settled on, and the failing-check list fails.
+hold="GH_BOT_TOKEN='' GH_REPO="
+assert_eq "$(grep -cF -- "$hold" "$REPORT_BIN")" "1" "control: the bot-token hold is one assignment to strip"
+hold="$hold" awk '{ i = index($0, ENVIRON["hold"]); if (i) $0 = substr($0, 1, i - 1) "GH_REPO=" substr($0, i + length(ENVIRON["hold"])); print }' \
+  "$REPORT_BIN" > "$MUTANT"
+seed_fleet auth_keyring_stale_bot_mutant
+REPORT_UNDER_TEST="$MUTANT" run GH_BOT_TOKEN=ghp_stale_bot -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" \
+  "control: without the hold an inherited revoked GH_BOT_TOKEN fails the list the keyring would read"
 
 # Without the kind filter, an unread directive reads as a question the lane
 # waits on the overseer to answer.

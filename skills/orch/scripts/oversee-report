@@ -523,7 +523,12 @@ blockers() {
   local lanes item host root args asks failing="" repo list stop
   BLOCKERS=""
   for repo in "${REPOS[@]}"; do
-    if ! list="$(GH_REPO="$repo" "$GITHUB" pr-list-failing --all 2>"$WORK_DIR/gh.err")"; then
+    # github.sh picks its own token, and puts GH_BOT_TOKEN, inherited or from
+    # the project's env files, ahead of the keyring and of GITHUB_TOKEN.
+    # github_auth has already chosen, and a bot it chose is GH_TOKEN, so an
+    # empty GH_BOT_TOKEN, which the project files cannot override, holds the
+    # child to that choice.
+    if ! list="$(GH_BOT_TOKEN='' GH_REPO="$repo" "$GITHUB" pr-list-failing --all 2>"$WORK_DIR/gh.err")"; then
       refuse pr-list "$repo" "$(cat "$WORK_DIR/gh.err")"
     fi
     if ! list="$(jq -r '.[] | "\(.branch | ascii_downcase)\t#\(.number)\t\(.failed_checks | join(", "))"' <<<"$list" 2>"$WORK_DIR/gh.err")"; then
