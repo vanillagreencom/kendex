@@ -359,7 +359,7 @@ Empty `json_paths` means no internal review is recorded: report the unmet gate a
 .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE] --item [ISSUE_ID]
 ```
 
-Re-run the gate-3 command once. If threads remain and the external-round cap is below, `auto-recommended` logs `Triage again` and runs one more pass; at the cap it records `review-threads-open`. Under `ask`, present `Triage again` | `Force merge` | `Stop here`, with `Triage again` recommended.
+Re-run the gate-3 command once. If threads remain and the external-round cap is below, `auto-recommended` logs `Triage again` and runs one more pass; at the cap it records `review-threads-open`. Under `ask`, present `Triage again` | `Stop here`, with `Triage again` recommended.
 
 **Gate 4** — verify the recorded § 4 result, under the mode the resolution above printed.
 

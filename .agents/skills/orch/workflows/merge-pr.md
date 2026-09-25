@@ -106,7 +106,7 @@ A `--check` exit `1` with no JSON whose first stderr line is `pr-merge: retired-
 
 `CHECK.state` decides first: `MERGED` → set `[ALREADY_MERGED]=true`, run § 4 EXCEPT § 4.1, then enter § 5 step 1, which skips the arm and the wait and goes straight to post-merge work; `CLOSED` → records `pr-closed-unmerged`.
 
-`can_merge: true` → § 4, showing any warnings. `false` → show the issues with their suggested fixes. `auto-recommended` logs `Fix and retry` and takes that route once; the same blocker after the retry records `merge-check-blocked`. `ask` presents `Skip` | `Fix and retry` | `Force merge`, with `Fix and retry` recommended.
+`can_merge: true` → § 4, showing any warnings. `false` → show the issues with their suggested fixes. `auto-recommended` logs `Fix and retry` and takes that route once; the same blocker after the retry records `merge-check-blocked`. `ask` presents `Skip` | `Fix and retry`, with `Fix and retry` recommended.
 
 Three warnings are merge gates, not advice:
 
