@@ -154,9 +154,7 @@ mod programs;
 /// git, or a machine without it, is an honest nothing, never an error.
 /// `--no-optional-locks` keeps even `status` from refreshing `.git/index`,
 /// because reading a folder must not change a byte inside it. The reader
-/// the Mine row and the checkout-publisher read share; other read-only
-/// git calls build [`Hardened::git`] themselves, without the lock switch
-/// or the timeout.
+/// the Mine row and the checkout-publisher read share.
 pub(crate) fn git_line(path: &Path, args: &[&str]) -> Option<String> {
     let mut no_locks: Vec<&str> = vec!["--no-optional-locks"];
     no_locks.extend_from_slice(args);
