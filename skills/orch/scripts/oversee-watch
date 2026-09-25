@@ -445,9 +445,10 @@ pass would refuse (an item, a --hosted entry, a repeated --repo, a lane
 outside tmux or outside any resolved session, a hosted lane with no host), a
 tmux window list that fails, a watch already running on its state, a record
 it cannot write, or a repeat delay it cannot sleep. TERM ends it at 143,
-stopping the pass it was running; TERM is the stop signal on every start. A
-watch started as a background job, the one a succession restarts among them,
-ignores INT from its start, and no trap can take that back.
+stopping the pass it was running and that pass's long pass; TERM is the stop
+signal on every start. A watch started as a background job, the one a
+succession restarts among them, ignores INT from its start, and no trap can
+take that back.
 
 Which mode fits the overseer's harness:
   repeat       a harness that delivers a detached log's lines as they are
@@ -1786,6 +1787,17 @@ on_exit() {
   exit "$rc"
 }
 trap on_exit EXIT
+# TERM is the stop every start takes, and the one repeat_stop sends this pass.
+# A long pass in flight goes with it rather than being waited out by on_exit,
+# which would leave it reading the fleet and committing baselines beside the
+# next watch; what it spooled before the stop is still printed.
+TICK_SLEEP_PID=""
+pass_stop() {
+  [[ -z "$TICK_SLEEP_PID" ]] || kill -TERM "$TICK_SLEEP_PID" 2>/dev/null || :
+  [[ -z "$LONG_PID" ]] || kill -TERM "$LONG_PID" 2>/dev/null || :
+  exit 143
+}
+trap pass_stop TERM
 
 # Auth ladder (gates.md § Waiter auth ladder): a stale env token yields to the
 # keyring; when neither works, the env token is dropped so the project's
@@ -3634,6 +3646,14 @@ overseer_down() {
 # at each second, so its block goes out within a second of its end. With no
 # mail interval the mail pass runs once a turn: a long pass in flight is waited
 # for, and with none the turn waits for the next one to come due.
+# A tick's sleep runs in the background and is waited on, so a TERM reaches
+# pass_stop at once: bash holds a trap until a FOREGROUND child returns.
+tick_sleep() { # SECS
+  sleep "$1" &
+  TICK_SLEEP_PID=$!
+  wait "$TICK_SLEEP_PID"
+  TICK_SLEEP_PID=""
+}
 tick_wait() {
   local now next
   while :; do
@@ -3651,9 +3671,9 @@ tick_wait() {
     [[ -n "$LONG_PID" || "$LONG_DUE" -ge "$next" ]] || next="$LONG_DUE"
     [[ "$next" -gt "$now" ]] || return 0
     if [[ -n "$LONG_PID" ]]; then
-      sleep 1
+      tick_sleep 1
     else
-      sleep "$((next - now))"
+      tick_sleep "$((next - now))"
       return 0
     fi
   done

@@ -248,6 +248,9 @@ record_case() { # NAME [WATCH_BIN] [WATCH ARGS...]
   new_case "$name"
   sleep_stub
   fleet_state
+  # Seconds each account read of a long pass is held, for a case that stops a
+  # loop while one is in flight.
+  [[ -z "${RECORD_LANES_SLEEP:-}" ]] || printf '%s\n' "$RECORD_LANES_SLEEP" > "$STUB_DIR/lanes.sleep"
   ( WATCH_BIN="$bin" repeat_watch_run -- "$@" -- --model old --verbose >"$TMP_ROOT/o-$name" 2>"$TMP_ROOT/e-$name" && rc=0 || rc=$?
     echo "$rc" > "$STUB_DIR/loop.rc" ) &
   LAUNCHER=$!
@@ -346,6 +349,48 @@ term_case term_untrapped_mutant "$MUTANT"
 assert_eq "pass=${PASS_PID:+found} $PASS_STATE" "pass=found alive" \
   "control: with no TERM trap the loop dies and its pass runs on"
 kill -TERM "$PASS_PID" 2>/dev/null || true
+
+# The same stop while the pass has a long pass in flight, held in its account
+# read: the long pass ends with its pass rather than being waited out, which
+# would leave it reading the fleet, and committing baselines, beside the next
+# watch.
+watch_child() { # PARENT — the one oversee-watch process PARENT started, or empty
+  local pid
+  for pid in $(pgrep -P "$1" 2>/dev/null || true); do
+    [[ "$(ps -o args= -p "$pid" 2>/dev/null)" != *oversee-watch* ]] || { printf '%s\n' "$pid"; return 0; }
+  done
+}
+term_long_case() { # NAME [WATCH_BIN]
+  RECORD_LANES_SLEEP=30 record_case "$1" "${2:-}" --interval 30 --max-loops 2
+  PASS_PID=""
+  LONG_PASS_PID=""
+  for _ in $(seq 1 100); do
+    [[ ! -s "$STUB_DIR/lanes.args" ]] || {
+      PASS_PID="$(watch_child "$LOOP")"
+      [[ -z "$PASS_PID" ]] || LONG_PASS_PID="$(watch_child "$PASS_PID")"
+      [[ -z "$LONG_PASS_PID" ]] || break
+    }
+    "$REAL_SLEEP" 0.1
+  done
+  LIVE_PIDS+=" $PASS_PID $LONG_PASS_PID"
+  kill -TERM "$LOOP"
+  for _ in $(seq 1 50); do
+    { kill -0 "$LONG_PASS_PID" || kill -0 "$PASS_PID" || kill -0 "$LOOP"; } 2>/dev/null || break
+    "$REAL_SLEEP" 0.1
+  done
+  LONG_PASS_STATE="$(kill -0 "$LONG_PASS_PID" 2>/dev/null && echo alive || echo gone)"
+  PASS_STATE="$(kill -0 "$PASS_PID" 2>/dev/null && echo alive || echo gone)"
+  LOOP_STATE="$(kill -0 "$LOOP" 2>/dev/null && echo alive || echo gone)"
+}
+term_long_case term_long_pass
+assert_eq "long=${LONG_PASS_PID:+found} $LONG_PASS_STATE pass=$PASS_STATE loop=$LOOP_STATE" \
+  "long=found gone pass=gone loop=gone" \
+  "a TERM on the loop pid ends the long pass its pass has in flight" "$TMP_ROOT/e-term_long_pass"
+mutant pass_untrapped oversee-watch 'trap pass_stop TERM' ':'
+term_long_case term_long_untrapped_mutant "$MUTANT"
+assert_eq "long=${LONG_PASS_PID:+found} $LONG_PASS_STATE" "long=found alive" \
+  "control: with no TERM trap on the pass its long pass runs on"
+kill -TERM "$LONG_PASS_PID" "$PASS_PID" 2>/dev/null || true
 
 # --- taking over a watch ------------------------------------------------------
 # A stand-in for a watch another start left running: it records itself as the
