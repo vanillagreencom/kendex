@@ -80,14 +80,10 @@ exec "$REAL_CHMOD" "$@"
 ''')
         self.executable(self.bin / "kendex", '''#!/usr/bin/env bash
 printf 'kendex %s\\n' "$*" >> "$SSH_TEST_LOG"
-[[ "${SSH_TEST_INSTALL_FAIL:-0}" == 0 ]] || exit "$SSH_TEST_INSTALL_FAIL"
 if [[ "$1" == generated-paths ]]; then
   [[ "${SSH_TEST_GENERATED_PATHS_STATUS:-0}" == 0 ]] || exit "$SSH_TEST_GENERATED_PATHS_STATUS"
   printf '%s\\n' "${SSH_TEST_GENERATED_PATHS:-[]}"
   exit 0
-fi
-if [[ "$1" == refresh && -n "${SSH_TEST_INSTALL_ROOT:-}" ]]; then
-  mkdir -p .agents; cp -R "$SSH_TEST_INSTALL_ROOT/." .agents/
 fi
 ''')
         self.executable(self.bin / "gh", '''#!/usr/bin/env bash
@@ -191,8 +187,6 @@ exec git "$@"
         self.assertFalse((clone / ".cache/linear/sync.lock").exists())
         self.assertFalse((clone / ".cache/kendex/lock-local.json").exists())
         calls = (self.root / "calls").read_text()
-        self.assertLess(calls.index("kendex update-pi --leave"), calls.index("kendex refresh --yes --leave"))
-        self.assertLess(calls.index("kendex refresh --yes --leave"), calls.index("worktree create TEST-1"))
         self.assertNotIn("claude-secret-fixture", calls)
         self.assertNotIn("private-fixture", calls)
         self.assertNotIn(b"CLAUDE_CONFIG_DIR", first.stdout)
@@ -216,6 +210,11 @@ exec git "$@"
         result = self.create("--reuse", harness="pi")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b"PI_CODING_AGENT_DIR", result.stdout)
+        # The tree carries the render its base branch commits and the host
+        # carries the Pi packages, so no create, fresh or reused, runs either.
+        verbs = {line.split()[1] for line in (self.root / "calls").read_text().splitlines()
+                 if line.startswith("kendex ")}
+        self.assertEqual(verbs & {"refresh", "update-pi"}, set())
 
     def test_create_places_per_harness_pre_approval(self):
         """The overseer's trust file lands where each harness reads it; Claude's merges."""
@@ -622,31 +621,26 @@ exec git "$@"
         self.assertEqual(refused.returncode, 1, refused.stderr)
         self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
 
-    def test_retained_manifest_only_clone_bootstraps_before_helpers(self):
-        install = (self.source / ".agents").rename(self.root / "install")
-        subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qam", "manifest only"], check=True)
-        self.env["SSH_TEST_INSTALL_ROOT"] = str(install)
-        clone = Path(self.row["clone"])
-        subprocess.run([self.env["REAL_GIT"], "clone", "-q", str(self.source), str(clone)], check=True)
-        extra = str(clone) + "-other"
-        subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "add", "--detach", extra], check=True, capture_output=True)
-        self.assertEqual(self.create().returncode, 75)
-        self.assertFalse((clone / ".agents").exists())
-        subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "remove", extra], check=True)
-        (clone / "kendex.toml").write_text("dirty")
-        dirty = self.create()
-        self.assertEqual((dirty.returncode, b"bootstrap-dirty path=" in dirty.stderr), (3, True))
-        (clone / "kendex.toml").write_text("")
-        self.assertEqual(self.create(SSH_TEST_INSTALL_FAIL="19").returncode, 19)
-        ready = self.create()
-        self.assertEqual(ready.returncode, 0, ready.stderr)
-        subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "remove", str(clone) + "-worktree"], check=True)
-        shutil.rmtree(clone / ".agents")
+    def test_clone_without_committed_render_refuses_create(self):
+        """A checkout with no render is named before create touches the host."""
+        shutil.rmtree(self.source / ".agents")
+        subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qam", "no render"], check=True)
         original = self.script.read_text()
-        fragment = 'if ready == b"bootstrap":\n            install(row)'
+        fragment = "    require_render(row)\n"
         self.assertEqual(original.count(fragment), 1)
-        self.script.write_text(original.replace(fragment, 'if ready == b"bootstrap":\n            pass'))
-        self.assertNotEqual(self.create().returncode, 0)
+        # The control drops the check: each clone then fails later, unnamed.
+        for control in (False, True):
+            self.script.write_text(original.replace(fragment, "") if control else original)
+            for kind in ("new", "existing"):
+                with self.subTest(control=control, clone=kind):
+                    self.row["clone"] = str(self.root / f"{kind}-{control}")
+                    self.inventory.write_text(json.dumps([self.row]))
+                    if kind == "existing":
+                        subprocess.run([self.env["REAL_GIT"], "clone", "-q", str(self.source), self.row["clone"]], check=True)
+                    refused = self.create()
+                    self.assertNotEqual(refused.returncode, 0)
+                    self.assertEqual(b"lane-host-ssh: render-missing path=" in refused.stderr, not control, refused.stderr)
+                    self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
 
     def test_file_lifecycle_and_dirty_close(self):
         self.assertEqual(self.create().returncode, 0)
@@ -1076,18 +1070,9 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
         shutil.copytree(PACKAGE.parent / "worktree/scripts", scripts, dirs_exist_ok=True)
         (self.source / "kendex.settings.toml").write_text('[env]\nWORKTREE_DEFAULT_BRANCH = "main"\nWORKTREE_SYMLINKS = ".env.local .agents"\nWORKTREE_COPIES = "copy-config"\n')
         with (self.source / ".gitignore").open("a") as ignore:
-            ignore.write("copy-config\ncopy-added\n.agents/skills/prepared/\n")
+            ignore.write("copy-config\ncopy-added\n")
         for args in (("branch", "-M", "main"), ("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "worktree fixture")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
-        self.executable(self.bin / "kendex", '''#!/usr/bin/env bash
-set -euo pipefail
-if [[ "$1" == refresh ]]; then
-  mkdir -p .agents/skills/prepared
-  printf ready > .agents/skills/prepared/SKILL.md
-  printf copied > copy-config
-  printf added > copy-added
-fi
-''')
         original = self.script.read_text()
         fragment = 'create_worktree(row, args.item, flags)'
         self.assertEqual(original.count(fragment), 1)
@@ -1096,13 +1081,16 @@ fi
                 self.row["clone"] = str(self.root / name)
                 self.inventory.write_text(json.dumps([self.row]))
                 subprocess.run([self.env["REAL_GIT"], "clone", "-q", str(self.source), self.row["clone"]], check=True)
+                # Host-local files the clone holds untracked, for the copy settings to reach.
+                for local, text in (("copy-config", "copied"), ("copy-added", "added")):
+                    Path(self.row["clone"], local).write_text(text)
                 self.script.write_text(original if repair else original.replace(fragment, 'None'))
                 result = self.create()
                 self.assertEqual(result.returncode, 0, result.stderr)
                 path = Path(dict(field.split("=", 1) for field in result.stdout.decode().strip().split("\t"))["path"])
                 # The hosted lane path, the same in every lane of the repository.
                 self.assertEqual(path, self.root.resolve() / ".worktrees" / name / "lane")
-                for entry in (".env.local", ".agents/skills/prepared/SKILL.md", "copy-config"):
+                for entry in (".env.local",):
                     with self.subTest(entry=entry):
                         self.assertEqual((path / entry).exists(), repair)
                         if repair:
@@ -1296,7 +1284,7 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2'''
                 self.assertNotEqual(self.call("list").returncode, 2)
 
     def test_failures_stop_preparation(self):
-        for overrides, code in (({"SSH_TEST_FAIL": "255"}, 255), ({"SSH_TEST_CLONE_FAIL": "23"}, 23), ({"SSH_TEST_INSTALL_FAIL": "19"}, 19)):
+        for overrides, code in (({"SSH_TEST_FAIL": "255"}, 255), ({"SSH_TEST_CLONE_FAIL": "23"}, 23)):
             with self.subTest(overrides=overrides):
                 result = self.create(**overrides)
                 self.assertEqual(result.returncode, code)
