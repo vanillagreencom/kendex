@@ -41,10 +41,11 @@ the shipped template.
 
 --adopt re-installs the template over an adopted copy that still equals a
 version of the template this repository's history shipped, so a refresh that
-brought a new template lands with a matching copy. A copy that equals no
-shipped version is a copy a person edited: it is left untouched and named on
-one `FAIL check=workflow-edited` line. The copy keeps its script path and its
-`check_run` opt-in, the two deltas below.
+brought a new template lands with a matching copy. The re-install writes the
+template's bytes: the copy keeps its script path and its `check_run` opt-in,
+the two deltas below, and loses any comment-only edit. A copy whose code lines
+equal no shipped version is a copy a person edited: it is left untouched and
+named on one `FAIL check=workflow-edited` line.
 
 The template is copied VERBATIM — it carries no per-repo values — so the
 check is equality, line by line. A YAML comment-only line is dropped, and
@@ -380,9 +381,11 @@ template_note() {
 }
 
 # Every version of the template this repository's history committed, each
-# through the same rewrite, until one equals the adopted copy. Prints that
-# version's blob id, or nothing: a copy no shipped version equals is a copy a
-# person edited. A commit that deleted the template holds no version.
+# through the same rewrite, until one equals the adopted copy. Sets SHIPPED to
+# that version's blob id, or leaves it empty: a copy no shipped version equals
+# is a copy a person edited. A commit that deleted the template holds no
+# version. Called in the main shell, so every die here ends the run.
+SHIPPED=""
 shipped_match() {
   local commit blob cmp_rc seen=" "
   git log --format=%H -- "$TEMPLATE_REL" >"$TMP/history" ||
@@ -395,12 +398,13 @@ shipped_match() {
       die template-history "$blob" "could not read $TEMPLATE_REL at blob $blob"
     expected_raw "$TMP/shipped.yml" >"$TMP/shipped.raw" ||
       die template-history "$blob" "could not rewrite $TEMPLATE_REL at blob $blob"
-    code_lines "$TMP/shipped.raw" >"$TMP/shipped.code"
+    code_lines "$TMP/shipped.raw" >"$TMP/shipped.code" ||
+      die template-history "$blob" "could not read the code lines of $TEMPLATE_REL at blob $blob"
     cmp_rc=0
     cmp -s "$TMP/shipped.code" "$TMP/adopted.code" || cmp_rc=$?
     [ "$cmp_rc" -le 1 ] || die workflow-compare "$cmp_rc" "could not compare $adopted against $TEMPLATE_REL at blob $blob (cmp exit $cmp_rc)"
     if [ "$cmp_rc" -eq 0 ]; then
-      printf '%s' "$blob"
+      SHIPPED="$blob"
       return 0
     fi
   done <"$TMP/history"
@@ -424,16 +428,12 @@ elif [ "$ADOPT" -eq 0 ]; then
 $first_divergence"
   template_note
 else
-  # shipped_match dies inside the substitution; its refusal is already on
-  # stderr, and its exit status is this run's.
-  shipped_rc=0
-  shipped="$(shipped_match)" || shipped_rc=$?
-  [ "$shipped_rc" -eq 0 ] || exit "$shipped_rc"
-  if [ -n "$shipped" ]; then
+  shipped_match
+  if [ -n "$SHIPPED" ]; then
     # The EXPECTED bytes, not the template's: the copy keeps this repo's
     # script path and the opt-in it had, so it is equal the moment it lands.
     cat "$TMP/template.raw" >"$adopted" || die workflow-write "$adopted" "could not write $adopted"
-    ok workflow-readopted "$adopted" "$adopted equalled the shipped template at blob $shipped; re-installed $TEMPLATE_REL over it"
+    ok workflow-readopted "$adopted" "$adopted equalled the shipped template at blob $SHIPPED; re-installed $TEMPLATE_REL over it"
   else
     bad workflow-edited "$adopted" "$adopted equals no version of $TEMPLATE_REL this repository's history shipped, so a person edited it; it was left untouched. Re-copy the template by hand. First divergence:
 $first_divergence"

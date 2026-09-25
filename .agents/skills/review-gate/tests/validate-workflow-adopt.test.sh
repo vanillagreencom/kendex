@@ -14,27 +14,15 @@ WF='.github/workflows/review-gate-writer.yml'
 VENDORED_TEMPLATE='.agents/skills/review-gate/templates/review-gate-writer.yml'
 
 # The catalog side of a release: one code line of the vendored template
-# changes, as `kendex refresh` writes it. COMMIT=1 also commits the render,
-# the state a render PR is in once its first commit is pushed.
-template_bump() { # DIR TEMPLATE_PATH OLD NEW COMMIT
-  local t="$1/$2" rc=0
-  grep -qxF -- "$3" "$t" || { printf 'fixture-error=bump-unmatched value=%q\n' "$3" >&2; exit 2; }
-  awk -v old="$3" -v new="$4" '$0 == old { print new; next } { print }' "$t" >"$t.new"
-  cmp -s "$t" "$t.new" || rc=$?
-  [ "$rc" -eq 1 ] || { printf 'fixture-error=bump-unchanged value=%q\n' "$rc" >&2; exit 2; }
-  mv "$t.new" "$t"
-  [ "$5" -eq 0 ] || commit "$1"
-}
-CRON_OLD='    - cron: "*/15 * * * *"'
-CRON_NEW='    - cron: "*/10 * * * *"'
-TIMEOUT_OLD='    timeout-minutes: 15'
-TIMEOUT_NEW='    timeout-minutes: 16'
+# changes, as `kendex refresh` writes it.
+CRON_BUMP=('^    - cron: "\*/15 \* \* \* \*"$' 's|^    - cron: "\*/15 \* \* \* \*"$|    - cron: "*/10 * * * *"|')
+TIMEOUT_BUMP=('^    timeout-minutes: 15$' 's/^    timeout-minutes: 15$/    timeout-minutes: 16/')
 
 OPT_IN='s|^  #   check_run:$|  check_run:|; s|^  #     types: \[created, completed\]$|    types: [created, completed]|'
 
 # Each row: the copy's state before the bump, the bump, and what --adopt
 # must print and leave. `readopted` rows then pass the plain run; `edited`
-# rows leave the copy byte-identical to what it was.
+# rows, and the equal copy, leave the copy byte-identical to what it was.
 rows=0; before=$((PASS + FAIL))
 while IFS='|' read -r shape verdict; do
   [ -n "$shape" ] || continue
@@ -43,6 +31,9 @@ while IFS='|' read -r shape verdict; do
   template="$VENDORED_TEMPLATE"
   note_check=''
   case "$shape" in
+    unchanged)
+      # Code-equal, byte-different: a rewrite of an equal copy shows here.
+      workflow_edit "$DIR" 1 '^# SCAFFOLD from the kendex' 's|^# SCAFFOLD from the kendex|# local note. SCAFFOLD from the kendex|' ;;
     catalog)
       mkdir "$DIR/skills"
       mv "$DIR/.agents/skills/review-gate" "$DIR/skills/review-gate"
@@ -57,10 +48,23 @@ while IFS='|' read -r shape verdict; do
   case "$shape" in
     unchanged) ;;
     two-bumps)
-      template_bump "$DIR" "$template" "$CRON_OLD" "$CRON_NEW" 1
-      template_bump "$DIR" "$template" "$TIMEOUT_OLD" "$TIMEOUT_NEW" 1 ;;
-    committed) template_bump "$DIR" "$template" "$CRON_OLD" "$CRON_NEW" 1 ;;
-    *) template_bump "$DIR" "$template" "$CRON_OLD" "$CRON_NEW" 0 ;;
+      file_edit "$DIR" "$template" 1 "${CRON_BUMP[@]}"
+      commit "$DIR"
+      file_edit "$DIR" "$template" 1 "${TIMEOUT_BUMP[@]}"
+      commit "$DIR" ;;
+    committed)
+      file_edit "$DIR" "$template" 1 "${CRON_BUMP[@]}"
+      commit "$DIR" ;;
+    deleted-readded)
+      # A removed and re-added skill: the deletion commit holds no version.
+      file_edit "$DIR" "$template" 1 "${CRON_BUMP[@]}"
+      commit "$DIR"
+      cp "$DIR/$template" "$TMP/readd.yml"
+      rm "$DIR/$template"
+      commit "$DIR"
+      cp "$TMP/readd.yml" "$DIR/$template"
+      commit "$DIR" ;;
+    *) file_edit "$DIR" "$template" 1 "${CRON_BUMP[@]}" ;;
   esac
   cp "$DIR/$WF" "$TMP/before.yml"
   RC=0
@@ -88,6 +92,7 @@ unchanged|workflow-equality
 uncommitted|workflow-readopted
 committed|workflow-readopted
 two-bumps|workflow-readopted
+deleted-readded|workflow-readopted
 opt-in|workflow-readopted
 catalog|workflow-readopted
 hand-edited|workflow-edited
@@ -95,11 +100,16 @@ ROWS
 [ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=adopt-table value=%q\n' "$rows" >&2; exit 2; }
 
 # The plain run's refusal after a bump names the template blob it compared
-# against; the command it names is the --adopt the rows above drive.
+# against and the --adopt command the rows above drive.
 sandbox
-template_bump "$DIR" "$VENDORED_TEMPLATE" "$CRON_OLD" "$CRON_NEW" 0
+file_edit "$DIR" "$VENDORED_TEMPLATE" 1 "${CRON_BUMP[@]}"
 expect_fail "bumped template, plain run" "$DIR" workflow-equality "$WF" \
   workflow-template "$(git -C "$DIR" hash-object -- "$VENDORED_TEMPLATE")"
+if grep -qF -- '.agents/skills/review-gate/scripts/validate-workflow.sh --adopt' <<<"$OUT"; then
+  ok "bumped template, plain run names --adopt"
+else
+  bad "bumped template, plain run names --adopt" "$OUT"
+fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -59,10 +59,10 @@ Value rules come from the engine, not from a copy of it: the settings half calls
 After `kendex refresh` brings a new template, run `.agents/skills/review-gate/scripts/validate-workflow.sh --adopt` from the repository root and commit its write with the refresh. It compares the copy against every version of the template this repository's history holds:
 
 - A copy equal to the current template is left as it is: `ok check=workflow-equality`.
-- A copy equal to an earlier shipped version is re-installed from the current template, keeping its script path and its `check_run` opt-in: `ok check=workflow-readopted`.
-- A copy equal to no shipped version is one a person edited. It is left untouched and named on one `FAIL check=workflow-edited` line, with the first divergent line under it. Re-copy the template by hand.
+- A copy equal to an earlier shipped version is re-installed from the current template, keeping its script path and its `check_run` opt-in: `ok check=workflow-readopted`. The re-install writes the template's bytes, so a comment-only edit to the copy is replaced.
+- A copy whose code lines equal no shipped version is one a person edited. It is left untouched and named on one `FAIL check=workflow-edited` line, with the first divergent line under it. Re-copy the template by hand.
 
-The consumer train runs this step on every render whose merged range touches `skills/review-gate/templates/` ([orch consumer-train.md § 3](../../orch/workflows/consumer-train.md#3-refresh-each-consumer)), so a template change lands in the render pull request and its validate check stays green.
+The consumer train runs this step on every refresh of a consumer that vendors this skill ([orch consumer-train.md § 3](../../orch/workflows/consumer-train.md#3-refresh-each-consumer)), so a template change lands in the render pull request and its validate check stays green, including on a later train when the one that shipped the change skipped that consumer.
 
 ### The relay/converge split
 
