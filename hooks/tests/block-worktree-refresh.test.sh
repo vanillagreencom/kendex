@@ -3,9 +3,10 @@
 #
 # The hook refuses a project-scope kendex write from a linked worktree and
 # passes the same command from the main checkout, with a global scope, outside
-# a repository, and every kendex read. A linked worktree whose root carries
-# its own kendex.toml is its own project, where the verbs that write one
-# project by being typed inside it pass. Each part is varied below: the verb,
+# a repository, and every kendex read. In a linked worktree, the project
+# kendex resolves from the working directory is the worktree's own where its
+# manifest exists there, and the verbs that write one project by being typed
+# inside it pass. Each part is varied below: the verb,
 # the scope words, the directory the command runs in, whose manifest that
 # worktree has, and the git that has to answer.
 #
@@ -63,6 +64,29 @@ OWN_BROKEN="$TMP_ROOT/own-broken"
 git -C "$MAIN" worktree add -q "$OWN_BROKEN" -b own-broken
 printf '<<<<<<< HEAD\nschema = 6\n=======\nschema = 5\n' >"$OWN_BROKEN/kendex.toml"
 mkdir -p "$OWN/sub/deeper" "$WT/sub"
+# The project kendex writes is the first directory up from the working one
+# carrying a harness marker, which can sit below the worktree's root: one
+# worktree whose project in app/ declares with none at its root, and a
+# marker-only folder inside the declaring worktree, which is a project with
+# no manifest of its own.
+NESTED="$TMP_ROOT/nested"
+git -C "$MAIN" worktree add -q "$NESTED" -b nested
+mkdir -p "$NESTED/app/.claude"
+printf 'schema = 6\n' >"$NESTED/app/kendex.toml"
+mkdir -p "$OWN/marked/.claude"
+# A source catalog declares in kendex-local.toml, its kendex.toml being the
+# catalog it publishes: one worktree without that file, one with it, and one
+# whose is_source_catalog sits inside a table rather than at the top level.
+CATALOG="$TMP_ROOT/catalog"
+git -C "$MAIN" worktree add -q "$CATALOG" -b catalog
+printf 'schema = 6\nis_source_catalog = true\n' >"$CATALOG/kendex.toml"
+CATALOG_LOCAL="$TMP_ROOT/catalog-local"
+git -C "$MAIN" worktree add -q "$CATALOG_LOCAL" -b catalog-local
+printf 'schema = 6\nis_source_catalog = true\n' >"$CATALOG_LOCAL/kendex.toml"
+printf 'schema = 6\n' >"$CATALOG_LOCAL/kendex-local.toml"
+CATALOG_TABLED="$TMP_ROOT/catalog-tabled"
+git -C "$MAIN" worktree add -q "$CATALOG_TABLED" -b catalog-tabled
+printf 'schema = 6\n[marketplace]\nis_source_catalog = true\n' >"$CATALOG_TABLED/kendex.toml"
 OUTSIDE="$TMP_ROOT/outside"
 mkdir -p "$OUTSIDE"
 # precondition: The outside rows prove the not-a-repository branch only where the fixture
@@ -177,6 +201,11 @@ directory_table() {
       own-sub) dir="$OWN/sub/deeper" ;;
       own-broken) dir="$OWN_BROKEN" ;;
       worktree-sub) dir="$WT/sub" ;;
+      nested-app) dir="$NESTED/app" ;;
+      own-marked) dir="$OWN/marked" ;;
+      catalog) dir="$CATALOG" ;;
+      catalog-local) dir="$CATALOG_LOCAL" ;;
+      catalog-tabled) dir="$CATALOG_TABLED" ;;
       *) printf 'directory table: unknown world: %s\n' "$world" >&2; exit 1 ;;
     esac
     case "$mode" in
@@ -325,6 +354,11 @@ an expansion after --project-path leaves the target named|0|-|kendex refresh --p
 a backslash leaves the words unsure, so no global scope is read|2|block-worktree-refresh: refused=add|kendex add --global ./a\\ b
 a > behind a quote may be quoted, so the word is unsure|2|block-worktree-refresh: refused=remove|kendex remove "a>b" --global
 a --scope whose value the segment does not hold is not the global scope|2|block-worktree-refresh: refused=refresh|kendex refresh --global --scope "global"
+the value spelled with an equals sign names a target whatever it holds|0|-|kendex refresh --project-path=\0044PWD -y
+--scope project before -g keeps the project scope|2|block-worktree-refresh: refused=refresh|kendex refresh --scope project -g
+--scope=project before --global keeps it too|2|block-worktree-refresh: refused=refresh|kendex refresh --scope=project --global
+--scope project before --scope global keeps it|2|block-worktree-refresh: refused=refresh|kendex refresh --scope project --scope global
+--scope project before --scope=global keeps it|2|block-worktree-refresh: refused=refresh|kendex refresh --scope project --scope=global
 ROWS
 )
 command_table
@@ -369,6 +403,16 @@ and a refresh from there is still refused|tool-workdir|own-sub|2|block-worktree-
 a kendex.toml that will not parse is still the worktree's own|payload|own-broken|0|-|kendex add orch
 a subdirectory of a worktree with no kendex.toml is refused|tool-workdir|worktree-sub|2|block-worktree-refresh: refused=add|kendex add orch
 a cd into the worktree with its own kendex.toml is still a move|payload|main|2|block-worktree-refresh: moved=add|cd $OWN && kendex add orch
+env -C starts kendex in another directory, which is a move|payload|own|2|block-worktree-refresh: moved=add|env -C $MAIN kendex add orch
+env --chdir= is the same move|payload|own|2|block-worktree-refresh: moved=add|env --chdir=$MAIN kendex add orch
+sudo -D is a move too|payload|own|2|block-worktree-refresh: moved=add|sudo -D $MAIN kendex add orch
+sudo --chdir is the same move|payload|own|2|block-worktree-refresh: moved=add|sudo --chdir $MAIN kendex add orch
+an env without a directory option moves nothing|payload|own|0|-|env FOO=1 kendex add orch
+a project below the worktree root with its own kendex.toml is that worktree's own|payload|nested-app|0|-|kendex remove gh
+a marker-only project inside a declaring worktree has no manifest of its own|payload|own-marked|2|block-worktree-refresh: refused=add|kendex add orch
+a source catalog without kendex-local.toml has no manifest of its own|payload|catalog|2|block-worktree-refresh: refused=add|kendex add orch
+a source catalog with kendex-local.toml has one|payload|catalog-local|0|-|kendex add orch
+is_source_catalog inside a table does not make a catalog|payload|catalog-tabled|0|-|kendex add orch
 ROWS
 )
 directory_table
@@ -393,6 +437,13 @@ assert_not_contains "$ERR_FILE" '--global' 'a source subcommand has no global fl
 assert_not_contains "$ERR_FILE" '--scope global' 'nor a global scope'
 run_in "$OWN" 'kendex refresh'
 assert_contains "$ERR_FILE" "--project-path $OWN" 'a worktree with its own kendex.toml is named by its own root'
+run_in "$OWN" 'kendex updates --apply'
+assert_contains "$ERR_FILE" "kendex updates --apply --project-path $OWN" 'the updates remedy keeps the --apply that makes it a write'
+run_in "$OWN" 'kendex update-pi'
+assert_not_contains "$ERR_FILE" 'update-pi --project-path' 'update-pi is never offered a flag it does not take'
+assert_contains "$ERR_FILE" 'has no --project-path form' 'and the refusal says it has none'
+run_in "$OWN/marked" 'kendex add orch'
+assert_contains "$ERR_FILE" "$OWN/marked" 'the refusal names the project kendex would write, not the worktree root'
 set +e
 (cd "$WT" && "$BASH_BIN" "$HOOK" <"$TMP_ROOT" >/dev/null 2>"$ERR_FILE")
 rc=$?
@@ -401,6 +452,42 @@ assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: paylo
   'a stdin that cannot be read refuses with the refusal status, not the read error'
 
 payload_table "$HOOK" 'kendex refresh' 'kendex verify' "$WT"
+
+echo "=== block-worktree-refresh: kendex's own project markers ==="
+# The hook finds the project kendex writes by kendex's markers, so each one
+# discover.rs lists is planted alone in a folder inside the declaring
+# worktree: that folder is a project, kendex.toml aside it has no manifest,
+# and an add typed there is refused. A marker the hook lacked would walk on
+# to the worktree root, which declares, and pass. The set is read from
+# discover.rs itself; a marker the hook adds beyond it only refuses more.
+DISCOVER="$TEST_DIR/../../crates/core/src/discover.rs"
+NL=$'\n'
+discover_markers() { # CONST -> one marker per line
+  sed -n "/^const $1: /,/^];/p" "$DISCOVER" | grep -o '"[^"]*"' | tr -d '"'
+}
+MARKED_DIRS=$(discover_markers MARKER_DIRS) || { echo "markers: MARKER_DIRS could not be read from $DISCOVER" >&2; exit 2; }
+MARKED_FILES=$(discover_markers MARKER_FILES) || { echo "markers: MARKER_FILES could not be read from $DISCOVER" >&2; exit 2; }
+case "$NL$MARKED_DIRS$NL" in *"$NL.claude$NL"*) ;; *) echo "markers: the MARKER_DIRS extractor lost .claude; it is broken" >&2; exit 2 ;; esac
+case "$NL$MARKED_FILES$NL" in *"$NL.kendex-lock.json$NL"*) ;; *) echo "markers: the MARKER_FILES extractor lost .kendex-lock.json; it is broken" >&2; exit 2 ;; esac
+index=0
+while IFS='|' read -r kind marker; do
+  [ -n "$marker" ] || continue
+  index=$((index + 1))
+  at="$OWN/marker-$index"
+  case "$kind" in
+    dir) mkdir -p "$at/$marker" ;;
+    file) mkdir -p "$(dirname "$at/$marker")" && : >"$at/$marker" ;;
+  esac
+  run_in "$at" 'kendex add orch'
+  if [ "$marker" = kendex.toml ]; then
+    assert_eq "rc=$rc first=$(first_line)" 'rc=0 first=-' "the $marker marker is the manifest itself, and the add passes"
+  else
+    assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: refused=add' "the $marker marker alone makes a project with no manifest"
+  fi
+done <<ROWS
+dir|${MARKED_DIRS//$NL/${NL}dir|}
+file|${MARKED_FILES//$NL/${NL}file|}
+ROWS
 
 echo "=== block-worktree-refresh: a missing git refuses ==="
 NOGIT_BIN="$TMP_ROOT/nogit"

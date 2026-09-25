@@ -152,11 +152,18 @@ pub enum Fix {
 /// The project a project-scope remedy has to name, and whose it is: the
 /// two differ in which verbs reach it by being typed in the checked
 /// directory. Serialized as the path alone.
+///
+/// Which one it is follows the one predicate the catalog's
+/// `block-worktree-refresh` hook asks of the same place, stated in
+/// `crates/core/AGENTS.md`: whether the checked project root, the one
+/// `discover::project_root_from` resolves, holds its own manifest file
+/// (`manifest::project_manifest_path`) in the linked worktree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(untagged)]
 pub enum ProjectTarget {
-    /// The checked linked worktree, which carries a manifest of its own,
-    /// readable or not. A verb typed there writes it, so the verbs with no
+    /// The checked project in a linked worktree, which holds a manifest of
+    /// its own, readable or not, whether it is the worktree's root or a
+    /// folder below it. A verb typed there writes it, so the verbs with no
     /// `--project-path` form that write the project they are typed in run
     /// there as they are.
     Worktree(std::path::PathBuf),
@@ -219,9 +226,11 @@ impl Remedy {
 
     /// Whether this verb, with no `--project-path` form, writes a linked
     /// worktree's own project by being typed inside it: the verbs the
-    /// catalog's `block-worktree-refresh` hook lets through in a worktree
-    /// that carries its own manifest. `update-pi` writes the Pi package
-    /// roots directly, and that hook refuses it in every linked worktree.
+    /// catalog's `block-worktree-refresh` hook lets through where the
+    /// project is [`ProjectTarget::Worktree`]. `update-pi` has no such form
+    /// either, but its default scope, all, writes the global Pi roots as
+    /// well, and that hook leaves its policy as it was and refuses it in
+    /// every linked worktree.
     fn writes_where_typed(&self) -> bool {
         matches!(
             self,

@@ -3,11 +3,12 @@
 //!
 //! A session running the catalog's `block-worktree-refresh` hook is
 //! refused a project-scope kendex write from a linked worktree unless the
-//! command names the checkout it lands in, or the worktree carries its own
-//! manifest and the verb writes the project it is typed in, so a report
-//! printing the bare verb elsewhere prints a command that session cannot
-//! run. The check resolves that name once and every remedy in the report
-//! carries it.
+//! command names the checkout it lands in, or the project it writes owns
+//! its manifest there and the verb writes the project it is typed in — the
+//! predicate `crates/core/AGENTS.md` states once for the hook and this
+//! report — so a report printing the bare verb elsewhere prints a command
+//! that session cannot run. The check resolves that name once and every
+//! remedy in the report carries it.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -355,4 +356,41 @@ fn a_clean_report_resolves_no_destination() {
         checked.project_target, None,
         "nothing would have printed it, so nothing went looking for it"
     );
+}
+
+/// A project below the worktree's root that declares its own packages is
+/// the worktree's own, whatever the root holds: its path is what a write
+/// names, and a remove typed there writes it, so the fix carries no marker.
+/// `hooks/tests/block-worktree-refresh.test.sh` proves the hook passes that
+/// remove on the same layout.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_project_below_the_worktree_root_that_declares_is_its_own() {
+    let (_tmp, env, _main, linked) = repository();
+    fs::create_dir_all(linked.join("app/.claude")).unwrap();
+    let app = scope(&linked.join("app"));
+    declare(&env, &app);
+    record_a_missing_agent(&env, &app);
+
+    let mut checked = report::check(&env, std::slice::from_ref(&app));
+    assert_eq!(
+        checked.project_target,
+        Some(report::ProjectTarget::Worktree(
+            kendex_core::paths::canonical(&linked.join("app")).unwrap()
+        )),
+        "the project the check ran on, not the worktree's root"
+    );
+    checked.sections = vec![report::Section {
+        title: "gone from their source".to_owned(),
+        lines: vec![report::Line {
+            class: report::Class::Drift,
+            text: "'gh' is no longer offered by its source".to_owned(),
+            remedy: Some(report::Remedy::Remove {
+                name: "gh".to_owned(),
+                global: false,
+            }),
+        }],
+    }];
+    let text = report::render_plain(&checked);
+    assert!(text.contains("fix: kendex remove gh\n"), "{text}");
 }

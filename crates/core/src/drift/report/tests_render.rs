@@ -133,7 +133,7 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
             here("kendex apply --plan --project-path '/w/lane'"),
         ),
         (
-            "update-pi, which has no such flag and writes the Pi roots directly",
+            "update-pi, which has no such flag and whose default scope writes the global Pi roots too",
             Remedy::UpdatePi { global: false },
             here("kendex update-pi --scope project"),
             elsewhere("kendex update-pi --scope project"),
@@ -233,6 +233,26 @@ fn a_non_utf8_project_target_keeps_the_row_and_omits_the_command() {
     assert!(json.contains("'orch' does not match its source"), "{json}");
     assert!(!json.contains("projectTarget"), "{json}");
     assert!(!json.contains('\u{fffd}'), "{json}");
+
+    // `kendex check --json` carries a target as its path alone, whichever
+    // checkout's it is.
+    for (target, spelled) in [
+        (
+            ProjectTarget::Worktree("/w/lane".into()),
+            r#""projectTarget":"/w/lane""#,
+        ),
+        (
+            ProjectTarget::MainCheckout("/w/app".into()),
+            r#""projectTarget":"/w/app""#,
+        ),
+    ] {
+        let json = serde_json::to_string(&CheckReport {
+            project_target: Some(target),
+            ..report.clone()
+        })
+        .expect("the report serializes");
+        assert!(json.contains(spelled), "{json}");
+    }
 
     let moved = Remedy::MoveAside {
         from: target.clone(),

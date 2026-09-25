@@ -3,43 +3,65 @@
 # name: block-worktree-refresh
 # event: PreToolUse
 # matcher: Bash
-# description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, `source add|remove|enable|disable`, `marketplace subscribe|unsubscribe`) when the working directory is a linked git worktree and the command does not name the global scope, and whenever a `cd` or `pushd` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. A linked worktree whose root carries no kendex.toml of its own checks out the main checkout's project, so a project-scope write from it renders into that checkout and removes what it does not expect there. One whose root carries its own kendex.toml is a project in its own right, and the verbs that write one project by being typed inside it (`add`, `remove`, `fork`, `pin`, `adopt`, `drift-hook` and the writing `source` and `marketplace` subcommands) pass there. `refresh`, `apply` and `updates --apply` pass in any worktree once they name their target with `--project-path PATH`: the directory the write lands in is then the command's own word, which is the one thing this guard is missing; `update-pi` is refused in both. Names the forms that are right: `--project-path PATH` where the verb takes it, the same command from the main checkout, or the verb's global form where its parser has one (`--global` for add, `--scope global` for update-pi, none for the `source` subcommands, either for the rest).
+# description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, `source add|remove|enable|disable`, `marketplace subscribe|unsubscribe`) when the working directory is a linked git worktree and the command does not name the global scope, and whenever a `cd`, `pushd`, `env -C` or `sudo -D` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. The project a bare verb writes is the one kendex resolves from the working directory; where that project has no manifest of its own in the linked worktree (kendex.toml, or kendex-local.toml for a source catalog), its declarations are the main checkout's, so a project-scope write renders into that checkout and removes what it does not expect there. Where it has one, it is a project in its own right, and the verbs that write one project by being typed inside it (`add`, `remove`, `fork`, `pin`, `adopt`, `drift-hook` and the writing `source` and `marketplace` subcommands) pass there. `refresh`, `apply` and `updates --apply` pass in any worktree once they name their target with `--project-path PATH`: the directory the write lands in is then the command's own word, which is the one thing this guard is missing; `update-pi` is refused in both. Names the forms that are right: `--project-path PATH` where the verb takes it, the same command from the main checkout, or the verb's global form where its parser has one (`--global` for add, `--scope global` for update-pi, none for the `source` subcommands, either for the rest).
 # summary: Stops a kendex command that writes a project from inside a linked git worktree, where the write would land somewhere the command does not name.
-# safety: Reads the command text and asks git whether the tool call's working directory has a git dir that differs from its common dir, which is what makes a worktree linked, and for a linked worktree its root, where it tests whether a kendex.toml exists without reading it; writes nothing. A git that cannot answer refuses. The verb is the first word naming one after a `kendex` word, anywhere in the command except the text the shell would not run: the words inside a quoted span, a heredoc body its command reads as data, and a comment are masked out before the command is read, so prose spelling the pair is not refused, while a span or a heredoc body that a shell, `eval`, `source` or `.` word runs is read as the command it is; a quote that cannot be paired leaves the whole text to be read, so a command this hook could not take apart is refused rather than passed. The command is read by the commit-guards skill's command-position library, found in the install beside the hook; without it every call is refused. The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. A matched verb with `--help` or `--plan` as an argument and no `<`, `>`, backslash, single quote or double quote in its tail, `kendex updates` without `--apply`, `kendex verify`, `list`, `report`, `check` — whose one write, the scope's install record for copies it proves against their source, renders nothing into any checkout — and every other verb pass. The scope, target and apply options are read from the words Bash passes kendex after the verb in its own segment: a redirection operator and the file it opens are not arguments, a standalone `--` ends the options, and a word the shell settles only when it runs (an expansion, a glob, a brace, or a backslash) grants no exemption and counts as `--apply`. A command carrying `-g`, `--global` or `--scope global` there, with no other `--scope` beside it, passes because it names the scope this hook does not guard, and a `refresh`, `apply` or `updates` carrying `--project-path` there passes because it names the project it writes, the value itself being read by kendex, which refuses the flag without one. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the command text and asks git whether the tool call's working directory has a git dir that differs from its common dir, which is what makes a worktree linked, and for a linked worktree its root; walks up from the working directory to that root for the project kendex would write, and tests whether its manifest exists, reading its kendex.toml only for `is_source_catalog`; writes nothing. A git that cannot answer refuses. The verb is the first word naming one after a `kendex` word, anywhere in the command except the text the shell would not run: the words inside a quoted span, a heredoc body its command reads as data, and a comment are masked out before the command is read, so prose spelling the pair is not refused, while a span or a heredoc body that a shell, `eval`, `source` or `.` word runs is read as the command it is; a quote that cannot be paired leaves the whole text to be read, so a command this hook could not take apart is refused rather than passed. The command is read by the commit-guards skill's command-position library, found in the install beside the hook; without it every call is refused. The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. A matched verb with `--help` or `--plan` as an argument and no `<`, `>`, backslash, single quote or double quote in its tail, `kendex updates` without `--apply`, `kendex verify`, `list`, `report`, `check` — whose one write, the scope's install record for copies it proves against their source, renders nothing into any checkout — and every other verb pass. `-g`/`--global`, `--scope`, `--project-path` and `--apply` are read from the words Bash passes kendex after the verb in its own segment: a redirection operator and the file it opens are not arguments, a standalone `--` ends the options, and a word there the shell settles only when it runs (a parameter expansion, a glob, a brace, or a backslash) grants no exemption and counts as `--apply`; a command substitution, and a quoted span the command reader opens as command text with the words after it, are cut out of the segment and not read. `--help`, `--plan` and update-pi's `--check` are read from the segment's text. A command carrying `-g`, `--global` or `--scope global` there, with no other `--scope` beside it, passes because it names the scope this hook does not guard, and a `refresh`, `apply` or `updates` carrying `--project-path` there passes because it names the project it writes, the value itself being read by kendex, which refuses the flag without one. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # ---
 
 set -euo pipefail
 
 # What the refusals name, empty until each is known: the kendex verb, the
-# working directory judged, the linked worktree's root and whose project it
-# is (`worktree` where the root carries its own kendex.toml, `main` where
-# it carries none), the .git entry git could not read, and git's own words
-# on a question it could not answer.
+# working directory judged, the project a bare verb typed there writes and
+# the manifest file that makes it one, whose project that is (`worktree`
+# where that manifest exists in the linked worktree, `main` where it does
+# not), the .git entry git could not read, and git's own words on a question
+# it could not answer.
 VERB=""
 CWD=""
-TOP=""
+PROJECT=""
+MANIFEST=""
 OWNER=""
 AT=""
 REASON=""
+# What kind of writer a verb is, the one answer every decision below
+# dispatches on: `target` for the three that write a whole scope and take
+# `--project-path PATH`; `pi` for update-pi, which has no such form and
+# whose default scope, all, writes the global Pi roots as well as the
+# project's; `typed` for every other writing verb, which writes the one
+# project it is typed in and has no such form either.
+verb_kind() { # VERB -> KIND
+  case "$1" in
+    refresh | apply | updates) KIND=target ;;
+    update-pi) KIND=pi ;;
+    *) KIND=typed ;;
+  esac
+}
 # The forms of VERB that are right, set by `forms` for the refusal naming
 # them: its global form where its parser takes one, empty for the `source`
-# subcommands, which have none, and its named-target form where it has one.
+# subcommands, which have none; its named-target form where it has one; and
+# its writing form, which for updates carries the `--apply` that makes it a
+# write.
 GLOBAL_FORM=""
 TARGET_FORM=""
-forms() { # VERB -> GLOBAL_FORM, TARGET_FORM
+WRITE_FORM=""
+forms() { # VERB -> GLOBAL_FORM, TARGET_FORM, WRITE_FORM
   case "$1" in
     add) GLOBAL_FORM='--global' ;;
     update-pi) GLOBAL_FORM='--scope global' ;;
     "source "*) GLOBAL_FORM="" ;;
     *) GLOBAL_FORM='--scope global (or --global)' ;;
   esac
-  # Three verbs write a whole scope and take `--project-path PATH`; the rest
-  # have no such flag, so offering it to them would name a command kendex
-  # itself refuses.
   case "$1" in
-    refresh | apply | updates) TARGET_FORM="--project-path PATH" ;;
-    *) TARGET_FORM="--project-path PATH on refresh, apply or updates --apply; $1 has no such form" ;;
+    updates) WRITE_FORM='updates --apply' ;;
+    *) WRITE_FORM=$1 ;;
+  esac
+  # Offering the flag to a verb without it would name a command kendex
+  # itself refuses.
+  verb_kind "$1"
+  case "$KIND" in
+    target) TARGET_FORM="--project-path PATH" ;;
+    pi | typed) TARGET_FORM="--project-path PATH on refresh, apply or updates --apply; $1 has no such form" ;;
   esac
 }
 # Every line this hook writes, and the only place its text lives. The first
@@ -73,24 +95,28 @@ refuse() { # KEY VALUE [CAUSE]
       ;;
     moved=*)
       forms "$VERB"
-      echo "refusing 'kendex $VERB' at project scope after a cd or pushd in the same command: the directory the write lands in cannot be established from the command's words." >&2
+      echo "refusing 'kendex $VERB' at project scope after a cd, pushd, env -C or sudo -D in the same command: the directory the write lands in cannot be established from the command's words." >&2
       echo "  Name the project in the command instead: $TARGET_FORM. Or run kendex as its own command from the project it writes${GLOBAL_FORM:+, or pass $GLOBAL_FORM for a global change}." >&2
       ;;
     refused=*)
       forms "$VERB"
       echo "refusing 'kendex $VERB' at project scope from the linked worktree $CWD." >&2
-      case "$OWNER:$VERB" in
-        worktree:update-pi)
-          echo "  update-pi writes the Pi package roots directly and has no --project-path form, so it is not run from a linked worktree, whose own kendex.toml at $TOP does not decide where it writes." >&2
+      verb_kind "$VERB"
+      case "$OWNER:$KIND" in
+        worktree:pi)
+          echo "  The project here, $PROJECT, has its own $MANIFEST, but update-pi has no --project-path form, and its default scope, all, writes the global Pi roots as well; its policy in a linked worktree is unchanged." >&2
           echo "  Run it from the main checkout (the first line of 'git worktree list'), or pass $GLOBAL_FORM for a global change." >&2
           ;;
-        worktree:*)
-          echo "  This worktree is its own project, with its own kendex.toml at $TOP, and 'kendex $VERB' writes a whole project scope only where the command names it." >&2
-          echo "  Name it in the command: kendex $VERB --project-path $TOP, quoted as the shell needs, or pass $GLOBAL_FORM for a global change." >&2
+        worktree:target)
+          echo "  The project here, $PROJECT, has its own $MANIFEST, and 'kendex $VERB' writes a whole project scope only where the command names it." >&2
+          echo "  Name it in the command: kendex $WRITE_FORM --project-path $PROJECT, quoted as the shell needs, or pass $GLOBAL_FORM for a global change." >&2
           ;;
         main:*)
-          echo "  This worktree has no kendex.toml at $TOP, so its project is the main checkout's (the first line of 'git worktree list'); a project-scope write from here renders into that checkout and removes what it does not expect there." >&2
+          echo "  The project here, $PROJECT, has no $MANIFEST of its own in this worktree, so its declarations are the main checkout's (the first line of 'git worktree list'); a project-scope write from here renders into that checkout and removes what it does not expect there." >&2
           echo "  Name the project in the command instead: $TARGET_FORM. Or run the same command from the main checkout${GLOBAL_FORM:+, or pass $GLOBAL_FORM for a global change}. Reads (kendex verify, check, list) are not refused." >&2
+          ;;
+        worktree:typed)
+          echo "internal: a verb that writes where it is typed was refused in a worktree that owns its project; the owner loop and this message disagree." >&2
           ;;
       esac
       ;;
@@ -98,7 +124,7 @@ refuse() { # KEY VALUE [CAUSE]
       echo "$AT/.git exists but git could not read a repository there, so whether $CWD is a linked worktree is unknown and the write is refused" >&2
       ;;
     git=unresolvable)
-      echo "the git directories git named under $CWD could not be entered, so the write is refused" >&2
+      echo "a directory git named or answered for under $CWD could not be entered, so the write is refused" >&2
       ;;
     git=*)
       echo "git could not say whether $CWD is a linked worktree, or which worktree it is, so the write is refused:" >&2
@@ -214,10 +240,13 @@ command_segments "$COMMAND"
 READ_ONLY_RE='(^|[[:space:]])(--help|--plan)([[:space:]]|$)'
 CHECK_RE='(^|[[:space:]])(--check|-c)([[:space:]]|$)'
 # A `cd` or `pushd` word in the verb's segment or an earlier one moves the
-# shell before kendex runs, so the directory git is asked about below is not
-# the one the write lands in; such a command is refused whatever that
-# directory says, since the effective one cannot be established from words.
-MOVE_RE='(^|[^[:alnum:]_.-])(cd|pushd)([[:space:]]|$)'
+# shell before kendex runs, and `env -C`/`--chdir` and `sudo -D`/`--chdir`
+# start the command they run in another directory, so the directory git is
+# asked about below is not the one the write lands in; such a command is
+# refused whatever that directory says, since the effective one cannot be
+# established from words. The option is read as a word after `env` or
+# `sudo` anywhere in the segment, a short one inside a cluster included.
+MOVE_RE='(^|[^[:alnum:]_.-])((cd|pushd)([[:space:]]|$)|env([[:space:]]+[^[:space:]]+)*[[:space:]]+(-[[:alnum:]]*C|--chdir)|sudo([[:space:]]+[^[:space:]]+)*[[:space:]]+(-[[:alnum:]]*D|--chdir))'
 KENDEX_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]|$)'
 
 # The writing verb of one segment, and the text after it. A quote may close
@@ -267,22 +296,25 @@ writing_verb() { # SEGMENT -> FOUND, TAIL
   done
 }
 
-# The options kendex reads after the verb, taken from the words Bash passes
-# it rather than from the text. A redirection operator and the file it opens
-# are the shell's, never an argument, whether the file is glued to the
-# operator (`>--global`), quoted (`> "--global"`) or its own word, and a real
-# option stays one on either side of a redirection. A standalone `--` ends
-# the options, so no word after it is one. Each word is read in order,
-# because the one before it decides whether it is the value of `--scope` or
-# `--project-path`.
+# The four options this hook decides on — `-g`/`--global`, `--scope`,
+# `--project-path` and `--apply` — read from the words of the verb's own
+# segment as Bash passes them rather than from its text. A redirection
+# operator and the file it opens are the shell's, never an argument, whether
+# the file is glued to the operator (`>--global`), quoted (`> "--global"`) or
+# its own word, and a real option stays one on either side of a redirection.
+# A standalone `--` ends the options, so no word after it is one. Each word
+# is read in order, because the one before it decides whether it is the
+# value of `--scope` or `--project-path`.
 #
-# A word whose value the shell settles only when it runs — an expansion, a
-# glob, a brace, or a backslash, which can also join it to the next word —
-# may be any word at all, `--` and `--scope=project` included, so it grants
-# nothing: the scope is then the project scope, `--apply` counts as present,
-# and a `--project-path` after it is not read as a target, since the word
-# before could have ended the options. A quote is removed as the shell
-# removes it.
+# A word in the segment whose value the shell settles only when it runs — a
+# parameter expansion, a glob, a brace, or a backslash, which can also join
+# it to the next word — may be any word at all, `--` and `--scope=project`
+# included, so it grants nothing: the scope is then the project scope,
+# `--apply` counts as present, and a `--project-path` after it is not read as
+# a target, since the word before could have ended the options. A quote is
+# removed as the shell removes it. Words the command reader cut out of the
+# segment are not read at all: a command substitution, and a quoted span it
+# opens as command text together with every word after it.
 #
 # ARG_SCOPE is `unnamed`, `global` or `project`: kendex gives `--scope`
 # precedence over `-g` and `--global`, so a `--scope` whose value is not the
@@ -334,6 +366,11 @@ read_options() { # TAIL -> ARG_SCOPE, ARG_TARGET, ARG_APPLY
           *) continue ;;
         esac
         ;;
+    esac
+    # `--project-path=VALUE` names a target whatever its value holds, as
+    # the spelling with the value in the next word does.
+    case "$value:$word" in
+      :--project-path=*) [ -n "$unsure" ] || ARG_TARGET=1 ;;
     esac
     case "$word" in
       *[\$\\*?[{}]*)
@@ -394,10 +431,10 @@ while IFS= read -r SEGMENT; do
   # there, it can, and the write goes to the project the words carry however
   # the shell moved. Only `refresh`, `apply` and `updates --apply` take the
   # flag; every other writing verb has no such form and stays refused.
-  case "$FOUND" in
-    refresh | apply | updates)
-      [ -z "$ARG_TARGET" ] || continue
-      ;;
+  verb_kind "$FOUND"
+  case "$KIND" in
+    target) [ -z "$ARG_TARGET" ] || continue ;;
+    pi | typed) ;;
   esac
   [ "$ARG_SCOPE" != global ] || continue
   if [ -n "$MOVED" ]; then
@@ -486,35 +523,95 @@ if [ "$GIT_DIR" = "$COMMON_DIR" ]; then
   exit 0
 fi
 
-# Whose project a bare verb typed here writes. A worktree whose root carries
-# a kendex.toml of its own is a project in its own right, and the CLI
-# resolves the current project from the directory it runs in, so the verbs
-# that write one project by being typed inside it write this worktree's.
-# The file is not read: one that will not parse is still this worktree's,
-# and kendex reports it before it writes. A worktree with none checks out
-# the main checkout's declarations, which the refusal points at. The main
-# checkout is not derived from the common dir, which a repository made with
-# --separate-git-dir keeps outside its checkout; `git worktree list` names
-# the checkout first.
+# Whose project a bare verb typed here writes, asked as kendex asks it. The
+# project is the first directory up from the physical working directory
+# that `crates/core/src/discover.rs::project_root_from` takes for a root: one
+# holding one of that file's markers, listed here in the same spelling. Its
+# refusal of the home directory is not repeated, since a walk bounded by a
+# worktree's root does not reach the home directory from below it. The walk
+# stops at the linked worktree's root, since a project above it is not the
+# worktree's own. The file that declares the project is kendex's rule too,
+# `crates/core/src/manifest/file.rs::project_manifest_path`: kendex-local.toml
+# where its kendex.toml sets `is_source_catalog = true` in its top-level
+# table, kendex.toml otherwise. Where that file exists in the worktree the
+# project is the worktree's own, and the verbs that write one project by
+# being typed inside it write that one. The file is not otherwise read: one
+# that will not parse is still this project's, and kendex reports it before
+# it writes. Where it does not exist, or no project is found inside the
+# worktree, the declarations are the main checkout's, which the refusal
+# points at. The main checkout is not derived from the common dir, which a
+# repository made with --separate-git-dir keeps outside its checkout;
+# `git worktree list` names the checkout first.
+MARKER_DIRS=(.claude .codex .opencode .cursor .pi .agents .gemini)
+MARKER_FILES=(kendex.toml .kendex-lock.json .mcp.json opencode.json opencode.jsonc .github/copilot-instructions.md)
+is_project_root() { # DIR -> 0 where kendex takes DIR for a project root
+  local marker
+  for marker in "${MARKER_DIRS[@]}"; do
+    [ ! -d "$1/$marker" ] || return 0
+  done
+  for marker in "${MARKER_FILES[@]}"; do
+    [ ! -f "$1/$marker" ] || return 0
+  done
+  return 1
+}
+# A file this hook cannot read is no source catalog, as kendex reads it.
+declares_catalog() { # KENDEX_TOML -> 0 where its top-level table sets is_source_catalog = true
+  local line
+  [ -r "$1" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      *[![:space:]]*) ;;
+      *) continue ;;
+    esac
+    [[ $line =~ ^[[:space:]]*\[ ]] && return 1
+    [[ $line =~ ^[[:space:]]*is_source_catalog[[:space:]]*=[[:space:]]*true[[:space:]]*(#.*)?$ ]] && return 0
+  done <"$1"
+  return 1
+}
 if ! TOP=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null); then
   TOP_STATUS=0
   REASON=$(git -C "$CWD" rev-parse --show-toplevel 2>&1 >/dev/null) || TOP_STATUS=$?
   refuse git "$TOP_STATUS"
 fi
-if [ -e "$TOP/kendex.toml" ] || [ -L "$TOP/kendex.toml" ]; then
-  OWNER=worktree
-else
-  OWNER=main
+if ! TOP=$(resolve "$TOP"); then
+  refuse git unresolvable "$TOP"
+elif ! AT=$(cd -- "$CWD" 2>&1 && pwd -P); then
+  refuse git unresolvable "$AT"
 fi
-# `refresh`, `apply` and `updates --apply` write a whole scope and keep to
-# the named target in every worktree; `update-pi` writes the Pi package
-# roots directly and is not judged by the worktree's manifest.
+PROJECT=""
+while :; do
+  if is_project_root "$AT"; then
+    PROJECT=$AT
+    break
+  fi
+  [ "$AT" != "$TOP" ] && [ "$AT" != / ] || break
+  AT=${AT%/*}
+  [ -n "$AT" ] || AT=/
+done
+case "$PROJECT/" in
+  "$TOP"/*) ;;
+  *) PROJECT="" ;;
+esac
+MANIFEST=kendex.toml
+OWNER=main
+if [ -n "$PROJECT" ]; then
+  if declares_catalog "$PROJECT/kendex.toml"; then
+    MANIFEST=kendex-local.toml
+  fi
+  if [ -e "$PROJECT/$MANIFEST" ] || [ -L "$PROJECT/$MANIFEST" ]; then
+    OWNER=worktree
+  fi
+else
+  PROJECT=$TOP
+fi
+# A whole-scope writer keeps to the named target in every worktree, and
+# update-pi's policy in a linked worktree is left as it was.
 while IFS= read -r VERB; do
-  case "$OWNER:$VERB" in
-    worktree:add | worktree:remove | worktree:fork | worktree:pin | worktree:adopt | worktree:drift-hook) ;;
-    "worktree:source "* | "worktree:marketplace "*) ;;
-    *:?*) refuse refused "$VERB" ;;
-    *:) ;;
+  [ -n "$VERB" ] || continue
+  verb_kind "$VERB"
+  case "$OWNER:$KIND" in
+    worktree:typed) ;;
+    worktree:target | worktree:pi | main:target | main:pi | main:typed) refuse refused "$VERB" ;;
   esac
 done <<EOF
 $WRITES
