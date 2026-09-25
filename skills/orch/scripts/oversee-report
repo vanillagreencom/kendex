@@ -99,8 +99,10 @@ whose columns ORCH_REPORT_COLUMNS lists: `issue`; `what it is`, the issue's
 title; `why it matters`, the first line of its `## Done when` section. The
 tracker is the lane record's, else the one the key names (lib/lane-state.sh,
 lane_key_tracker). A Linear issue is read from the linear skill's cache, a
-GitHub issue-N from the record's repo. An item whose tracker neither answers,
-or a GitHub item whose record names no repo, renders `-` in both cells.
+GitHub issue-N from the record's repo. An item whose tracker neither answers
+renders `(tracker unknown)` as what it is, a GitHub item whose record names
+no repo `(repo unknown)`, one whose key is not issue-N `(no issue number)`,
+each with `-` as why it matters: that issue was not read.
 
 Settings, read through the kendex settings ladder:
   ORCH_REPORT                on | off, default on
@@ -292,8 +294,10 @@ fi
 
 # issue_cells ITEM — sets TITLE and WHY from the item's issue, read from the
 # tracker its lane record names, else the one lane_key_tracker says its key
-# names. Where neither answers, or a GitHub record names no repository, both
-# stay empty and render `-`: the report never guesses a tracker or a repo.
+# names. Where neither answers, or a GitHub record names no repository, the
+# issue is not read: TITLE names why in parentheses and WHY stays empty, so an
+# unread row reads apart from a read one with no Done-when. The report never
+# guesses a tracker or a repo.
 TITLE=""
 WHY=""
 issue_cells() {
@@ -311,7 +315,8 @@ issue_cells() {
   [[ -n "$tracker" ]] || tracker="$(lane_key_tracker "$item")"
   case "$tracker" in
     github)
-      [[ "$item" =~ ^issue-[0-9]+$ && -n "$repo" ]] || return 0
+      [[ -n "$repo" ]] || { TITLE="(repo unknown)"; return 0; }
+      [[ "$item" =~ ^issue-[0-9]+$ ]] || { TITLE="(no issue number)"; return 0; }
       if ! json="$(gh issue view "${item#issue-}" --repo "$repo" --json title,body 2>"$WORK_DIR/tracker.err")"; then
         refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
       fi
@@ -325,7 +330,7 @@ issue_cells() {
       if ! json="$("$TRACKER" cache issues get "$item" --format=safe 2>"$WORK_DIR/tracker.err")"; then
         refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
       fi ;;
-    *) return 0 ;;
+    *) TITLE="(tracker unknown)"; return 0 ;;
   esac
   # A read that answered with no title answered nothing this report can use.
   if ! TITLE="$(jq -r 'if (.title | type) == "string" and .title != "" then .title else error("no title") end' \
@@ -379,10 +384,13 @@ table() {
 # item_state ITEM HOST MAIL_ROOT — sets ITEM_STATE to the item's own
 # workflow-state JSON, empty where the lane has written none. A local lane's
 # state is under this project's state directory; a hosted lane's is in its
-# clone, which the worktree's `.git` names, read through lane-host.
+# clone, read through lib/lane-gitfile.sh's hosted probe, the one the watch
+# reads through. A hosted worktree already gone, which
+# ../workflows/merge-pr.md § 5 leaves behind a merged lane until lane-close
+# runs, has no state to wait on.
 ITEM_STATE=""
 item_state() {
-  local item="$1" host="$2" root="$3" path line common rc=0
+  local item="$1" host="$2" root="$3" path rc=0
   ITEM_STATE=""
   if [[ -z "$host" ]]; then
     path="$("$WORKFLOW_STATE" path "$item" 2>"$WORK_DIR/state.err")" \
@@ -392,20 +400,20 @@ item_state() {
       || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
     return 0
   fi
-  line="$(ORCH_LANE_HOST="$host" "$LANE_HOST" cat --item "$item" "$root/.git" 2>"$WORK_DIR/state.err")" \
-    || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
-  common="$(lane_gitfile_common_dir "$line")" || refuse item-state "$item" "$root/.git: $line"
-  path="${common%/.git}/$STATE_DIR_SETTING/workflow-state-$item.json"
-  [[ "$STATE_DIR_SETTING" != /* ]] || path="$STATE_DIR_SETTING/workflow-state-$item.json"
-  ITEM_STATE="$(ORCH_LANE_HOST="$host" "$LANE_HOST" cat --item "$item" "$path" 2>"$WORK_DIR/state.err")" || rc=$?
+  ORCH_LANE_HOST="$host" lane_hosted_clone "$LANE_HOST" "$item" "$root" "$WORK_DIR/gitfile" "$WORK_DIR/state.err" || rc=$?
   case "$rc" in
-    0) ITEM_STATE="$(jq -c . <<<"$ITEM_STATE" 2>"$WORK_DIR/state.err")" \
+    0) ;;
+    1) return 0 ;;
+    3) refuse item-state "$item" "$root/.git: ${LANE_HOSTED_GITLINE:-<empty>}" ;;
+    *) refuse item-state "$item" "$(cat "$WORK_DIR/state.err")" ;;
+  esac
+  lane_hosted_state_path "$LANE_HOSTED_CLONE" "$STATE_DIR_SETTING" "$item"
+  ORCH_LANE_HOST="$host" lane_host_fetch "$LANE_HOST" "$item" "$LANE_HOSTED_STATE_PATH" \
+    "$WORK_DIR/item-state.json" "$WORK_DIR/state.err" || rc=$?
+  case "$rc" in
+    0) ITEM_STATE="$(jq -c . -- "$WORK_DIR/item-state.json" 2>"$WORK_DIR/state.err")" \
          || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")" ;;
-    # 2 is a missing file and also every dispatcher refusal; a touch that
-    # succeeds is what tells the first from the second.
-    2) ITEM_STATE=""
-       ORCH_LANE_HOST="$host" "$LANE_HOST" touch --item "$item" >/dev/null 2>"$WORK_DIR/state.err" \
-         || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")" ;;
+    1) ;;
     *) refuse item-state "$item" "$(cat "$WORK_DIR/state.err")" ;;
   esac
 }

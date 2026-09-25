@@ -1625,49 +1625,21 @@ hosted_lane_item() { # LANE
 # The hosted items whose worktree this pass's mail read found gone, one per line.
 HOSTED_GONE_ITEMS=""
 
-# `lane-host cat --item ITEM PATH` into DEST: 0 read, 1 not there, 2 failed.
-# Exit 2 is also the dispatcher's own refusal, so it reads as a missing file
-# only once `touch` answers (schemas/lane-host.md). A failed read leaves no DEST.
-host_fetch() { # ITEM PATH DEST
-  local rc=0
-  "$SCRIPT_DIR/lane-host" cat --item "$1" "$2" >"$3" 2>"$WORK_DIR/host.err" || rc=$?
-  [[ "$rc" -ne 0 ]] || return 0
-  rm -f -- "$3"
-  [[ "$rc" -eq 2 ]] || return 2
-  "$SCRIPT_DIR/lane-host" touch --item "$1" >/dev/null 2>>"$WORK_DIR/host.err" || return 2
-  return 1
-}
-
 # The clone a hosted lane's worktree belongs to, which its record does not
 # carry: the worktree's `.git` file names it while the worktree stands, read
-# through lib/lane-gitfile.sh, and STATE's clone-root row keeps it for after
-# merge-pr.md § 5 removes the worktree. A root that is itself a clone has a
-# `.git` directory, which `cat` fails on and whose HEAD answers: the clone is
-# the root, with no `.git` appended. Sets HOSTED_CLONE, and HOSTED_GONE to 1
+# through lib/lane-gitfile.sh's lane_hosted_clone, and STATE's clone-root row
+# keeps it for after merge-pr.md § 5 removes the worktree. A root that is
+# itself a clone is its own clone. Sets HOSTED_CLONE, and HOSTED_GONE to 1
 # when the worktree is gone. Call after hosted_root.
 hosted_clone() { # ITEM STATE
-  local line="" common="" rc=0 err
+  local rc=0
   HOSTED_GONE=0
-  host_fetch "$1" "$HOSTED_ROOT/.git" "$WORK_DIR/gitfile" || rc=$?
-  if [[ "$rc" -eq 2 ]]; then
-    err="$(cat "$WORK_DIR/host.err")"
-    if host_fetch "$1" "$HOSTED_ROOT/.git/HEAD" "$WORK_DIR/githead"; then
-      HOSTED_CLONE="$HOSTED_ROOT"
-      return 0
-    fi
-    printf '%s\n' "$err" >"$WORK_DIR/host.err"
-  fi
+  lane_hosted_clone "$SCRIPT_DIR/lane-host" "$1" "$HOSTED_ROOT" "$WORK_DIR/gitfile" "$WORK_DIR/host.err" || rc=$?
   case "$rc" in
-    0)
-      if ! IFS= read -r line <"$WORK_DIR/gitfile" && [[ -z "$line" ]]; then
-        lane_failure_set handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=<empty>"
-        return 1
-      fi
-      if ! common="$(lane_gitfile_common_dir "$line")"; then
-        lane_failure_set handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=$line"
-        return 1
-      fi
-      HOSTED_CLONE="${common%/.git}" ;;
+    0) HOSTED_CLONE="$LANE_HOSTED_CLONE" ;;
+    3)
+      lane_failure_set handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=${LANE_HOSTED_GITLINE:-<empty>}"
+      return 1 ;;
     1)
       HOSTED_GONE=1
       if ! HOSTED_CLONE="$(lane_row_get clone-root "$2" "$1")" || [[ -z "$HOSTED_CLONE" ]]; then
@@ -1687,7 +1659,7 @@ hosted_clone() { # ITEM STATE
 # reader then reads; a file the host does not have leaves it empty, as a
 # missing local file does. The clone is the one the last mail pass learned.
 item_state_dir() { # ITEM
-  local clone remote rc=0
+  local clone rc=0
   ITEM_STATE_DIR="$WORKFLOW_STATE_DIR"
   hosted_root "$1"
   [[ -n "$HOSTED_ROOT" ]] || return 0
@@ -1695,16 +1667,16 @@ item_state_dir() { # ITEM
     lane_failure_set handoff-read-failed "" "item=$1" "clone=unknown"
     return 1
   fi
-  remote="$STATE_DIR_SETTING"
-  [[ "$remote" == /* ]] || remote="$clone/$remote"
+  lane_hosted_state_path "$clone" "$STATE_DIR_SETTING" "$1"
   ITEM_STATE_DIR="$WORK_DIR/hosted-state/$1"
   if ! mkdir -p -- "$ITEM_STATE_DIR"; then
     lane_failure_set handoff-read-failed "" "item=$1" "path=$ITEM_STATE_DIR"
     return 1
   fi
-  host_fetch "$1" "$remote/workflow-state-$1.json" "$ITEM_STATE_DIR/workflow-state-$1.json" || rc=$?
+  lane_host_fetch "$SCRIPT_DIR/lane-host" "$1" "$LANE_HOSTED_STATE_PATH" \
+    "$ITEM_STATE_DIR/workflow-state-$1.json" "$WORK_DIR/host.err" || rc=$?
   if [[ "$rc" -gt 1 ]]; then
-    lane_failure_set handoff-read-failed "$(cat "$WORK_DIR/host.err")" "item=$1" "path=$remote"
+    lane_failure_set handoff-read-failed "$(cat "$WORK_DIR/host.err")" "item=$1" "path=${LANE_HOSTED_STATE_PATH%/*}"
     return 1
   fi
 }

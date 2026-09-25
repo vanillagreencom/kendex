@@ -579,8 +579,8 @@ lane_state() {
 # ---------------------------------------------------------------------------
 # A lane's work item: which tracker its key names, and which merged pull
 # requests are its own. The watch, lane-close and oversee-report each ask one
-# of these, and a copy each kept for itself answered the same pull request two
-# ways.
+# of these here, so each gets the same answer for the same key and pull
+# request.
 # ---------------------------------------------------------------------------
 
 # lane_key_tracker ITEM — prints the tracker the item key alone names: `linear`

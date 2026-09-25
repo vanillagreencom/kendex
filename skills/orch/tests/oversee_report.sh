@@ -271,8 +271,8 @@ while IFS='|' read -r tracker repo want; do
 done <<'ROWS'
 github|owner/repo|| issue-7 (no PR, running) | GitHub title | GitHub outcome |
 linear|owner/repo|| issue-7 (no PR, running) | Linear title | Linear outcome |
-||| issue-7 (no PR, running) | - | - |
-github||| issue-7 (no PR, running) | - | - |
+||| issue-7 (no PR, running) | (tracker unknown) | - |
+github||| issue-7 (no PR, running) | (repo unknown) | - |
 ROWS
 
 echo "=== render: Landed lists each fleet branch on its own ==="
@@ -344,6 +344,11 @@ assert_eq "$RC|$(awk '/^Waiting on you/ { on = 1; next } on' <<<"$OUT")" "0|- KE
 rm -f -- "${CASE:?}/host/clone/tmp/workflow-state-KEN-7.json"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Waiting on you/' <<<"$OUT")" "0|Waiting on you: none" "a hosted lane with no state file on its host waits on nothing"
+# ../workflows/merge-pr.md § 5 removes a merged lane's worktree before
+# lane-close runs: the host answers touch and has no .git there.
+rm -f -- "${CASE:?}/host/w/KEN-7/.git"
+run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^Waiting on you/' <<<"$OUT")" "0|Waiting on you: none" "a hosted lane whose worktree is gone renders, waiting on nothing"
 
 echo "=== write: the chat and the file carry one report ==="
 seed_fleet write_report
