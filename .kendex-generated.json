@@ -145,6 +145,7 @@
   ".agents/skills/decider/scripts/lib/kendex-env.sh",
   ".agents/skills/decider/templates/decision-entry.md",
   ".agents/skills/decider/templates/index-row.md",
+  ".agents/skills/decider/tests/decider-base-collision.test.sh",
   ".agents/skills/decider/tests/decider-index-parse.test.sh",
   ".agents/skills/decider/tests/decider-issue-action-hint.test.sh",
   ".agents/skills/decider/tests/decider-next-id-scheme.test.sh",

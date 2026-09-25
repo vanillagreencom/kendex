@@ -14,6 +14,9 @@ FAIL=0
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
+# The fixtures are never inside a repository, wherever TMPDIR points, so no
+# row reads or fetches a base branch.
+export GIT_CEILING_DIRECTORIES="$TMP_ROOT"
 
 pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
@@ -115,6 +118,7 @@ record_row() {
 evaluate_next_id_rows() {
   local script="$1" mode="$2" only_row="${3:-}" name repo_name environment expected_status
   local stdout_rule expected_stdout stderr_rule repo actual_stdout actual_stderr actual expected guard first_line
+  local error_line line
   local executed_rows=0
   table_failures=""
   while IFS='~' read -r name repo_name environment expected_status stdout_rule expected_stdout stderr_rule; do
@@ -130,19 +134,30 @@ evaluate_next_id_rows() {
       *) fail "unknown stdout rule: $stdout_rule"; continue ;;
     esac
     first_line="${err%%$'\n'*}"
+    # The base read reports before the scheme is inferred, so a refusal is the
+    # first error= record rather than the first line.
+    error_line=""
+    while IFS= read -r line; do
+      if [[ "$line" == error=* ]]; then
+        error_line="$line"
+        break
+      fi
+    done <<<"$err"
     case "$stderr_rule" in
-      empty)
-        actual_stderr="$err"
-        expected=""
-        ;;
       ignore)
         actual_stderr=ignored
         expected=ignored
         ;;
+      no-repository)
+        # The fixtures sit outside any repository, so the base read's notice
+        # is the whole of stderr on a clean answer.
+        actual_stderr="$err"
+        expected="notice=base-unverified ref=none reason=not-a-repository"$'\n'"The decisions directory is not inside a git repository, so no base branch was read."
+        ;;
       bad-id-prefix)
         actual_stderr=0,0
-        [[ "$first_line" == *"error=id-suffix-missing"* ]] && actual_stderr=1,0
-        [[ "$first_line" == *"error=id-suffix-missing"* && "$first_line" == *"value=ADR-current"* ]] && actual_stderr=1,1
+        [[ "$error_line" == *"error=id-suffix-missing"* ]] && actual_stderr=1,0
+        [[ "$error_line" == *"error=id-suffix-missing"* && "$error_line" == *"value=ADR-current"* ]] && actual_stderr=1,1
         expected=1,1
         ;;
       width)
@@ -156,7 +171,7 @@ evaluate_next_id_rows() {
     actual="$rc~$actual_stdout~$actual_stderr"
     record_row "$mode" "$name" "$actual" "$expected_status~$expected_stdout~$expected"
   done <<'NEXT_ID_CASES'
-inferred-adr~adr-repo~default~0~exact~ADR-0036~empty
+inferred-adr~adr-repo~default~0~exact~ADR-0036~no-repository
 ignore-prose-id~d-repo~default~0~exact~D002~ignore
 latest-scheme~mixed-repo~default~0~exact~ADR-0036~ignore
 configured-prefix~mixed-repo~d-prefix~0~exact~D009~ignore

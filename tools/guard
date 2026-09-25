@@ -48,6 +48,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
   case "$1" in
     bot-instructions)
       echo "the bot instruction check refused the working tree; its own report above names each file." ;;
+    decision-ids)
+      echo "decisions check refused; its own records above say why. An error=id-* record names a decision ID two records share: renumber per the decider skill's workflows/create-decision.md. An error=base-unverified record means the base branch could not be fetched or read, and an error=index-row-invalid record names an INDEX row check could not parse; the reason and guidance follow each." ;;
     homebrew-formula)
       echo "a Homebrew formula claims the plain kendex name — the cask owns it; name the formula KendexCli." ;;
     catalog-fs-read)
@@ -318,6 +320,13 @@ lane_on() { # LANE — tools/ci-job-set's name for it
 # runs this script; --full judges the working tree, which the chain does not.
 if [ "$FULL" -eq 1 ] && lane_on bot_instructions; then
   "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts/bot-instructions" check || say bot-instructions "$?"
+fi
+# Decision IDs are judged before merge and not per commit: the check fetches
+# the base branch and reads its tip, since a merge base older than another
+# branch's merged record cannot show the collision. No CI lane runs it, so no
+# change class stands it down.
+if [ "$FULL" -eq 1 ]; then
+  "$TOOLS_DIR/../.agents/skills/decider/scripts/decisions" check || say decision-ids "$?"
 fi
 
 # The hit lines below are a tracked file's own bytes, and a source file may

@@ -25,7 +25,8 @@ Confirm with `decisions list && decisions next-id`.
 ## Features
 
 - Search decision summaries and their linked documents.
-- List records and find the next available decision ID.
+- List records and find the next available decision ID, skipping any number the base branch already holds.
+- Refuse a decision ID that two records share, on one branch or across a branch and its base.
 - Create, revise and supersede records through shared workflows.
 
 ## How it works
@@ -35,6 +36,7 @@ Each decision has a markdown document. An index links to each document and recor
 ## Settings
 
 - `DECISIONS_DIR`: where the records live, when auto-discovery of `docs/decisions/`, `decisions/`, `doc/decisions/` or `adr/` does not fit. Set it in `kendex.settings.toml` under `[env]`.
+- `DECISIONS_BASE_REF`: the branch `next-id` and `check` compare against, when it is not `origin/HEAD`, `origin/main` or `main`.
 - `DECISION_ID_PREFIX`, `DECISION_ID_WIDTH`: the ID scheme for an empty index or a deliberate switch. Without them `next-id` follows the last index row, so `D001` and `ADR-0001` both carry forward.
 
 Every key and its default: `decisions --help`.
