@@ -10,7 +10,7 @@ Once per session, first match wins:
 2. The harness ships session or thread launching (Codex threads, Claude Code agent teams, a desktop app's session tool or bundled skill) → use it: one managed session per item, carrying the same brief `open-terminal` would render.
 3. Neither → no parallel surface. Say so once and work the queue sequentially in this session, running each item's § 3 Item Tier brief: `start [ISSUE_ID]`, or [micro.md](micro.md) in this session for a `micro` item, with § 2 selection between items. On a hosted fleet this session runs no item: [SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes.
 
-A lane's questions arrive as `lane-question` and new tracker items as `triage`, both from the § 4 watch, on every surface. Only session banners are surface-specific: off the tmux surface, read them through the harness's own session tooling.
+A lane's questions arrive at least once as `lane-question` and new tracker items as `triage`, both from the § 4 watch, on every surface. Only session banners are surface-specific: off the tmux surface, read them through the harness's own session tooling.
 
 The owner sends the overseer a note without typing into its pane: `.agents/skills/orch/scripts/lane-mail send --item overseer --directive --file [PATH]`, run from any checkout of the project (`lane-mail --help`), and the § 4 watch reports it at least once as `owner-note`. A peer repository's overseer writes the same mailbox, reported as `peer-note` ([references/peer-mail.md](../references/peer-mail.md)).
 

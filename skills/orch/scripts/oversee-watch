@@ -253,9 +253,8 @@ mailbox last:
 The overseer mailbox is read through its own to-lane.cursor, which a session
 start's `lane-mail inbox --item overseer` moves too, acknowledged only once
 its notes are printed, whatever state directory, --since or checkout this
-watch runs with: each note is reported at least once and never lost. A stop
-between the print and the acknowledgement, or a session start's read between
-the peek and it, reports a note twice: a repeated id is one already seen.
+watch runs with. A session start's read between the peek and the
+acknowledgement reports a note twice.
 Before every mail pass the overseer's own pane is read once; while it reads
 exited, or walled with a wall its own account confirms, no mailbox is read,
 so a successor finds what was sent in the meantime. A wall
@@ -292,9 +291,11 @@ verdicts. Lane prompts use pane and turn.
 A line already delivered is not delivered again by a re-run: overseer-dead,
 overseer-walled, merged, lane-asking, usage-limit, model-capacity,
 lane-exited, idle-after-return, handoff and account are keyed in that
-baseline; lane-question, lane-notice, directive-read and directive-unread in
-the mail pass's own file beside it; owner-note and peer-note by the overseer
-mailbox's cursor, at least once as above. Each repeats only when what it reports changes: another PR, a
+baseline. Mail is reported at least once and never lost: lane-question,
+lane-notice, directive-read and directive-unread are keyed in the mail pass's
+own file beside it, owner-note and peer-note by the overseer mailbox's
+cursor, each committed only once printed, so a stop between the two reports
+a line twice: a repeated id is one already seen. Each repeats only when what it reports changes: another PR, a
 different wall or a reset gone by, a replacement pane, a different screen, a
 new record, another account state. An unchanged standing overseer-mark is the one keyed line that
 comes back on a timer: it is reported every ORCH_OVERSEER_MARK_REPEAT passes
@@ -2090,7 +2091,7 @@ mail_read() { # ITEM LANE_MAIL_ARGS...
 # session this process cannot see still reaches the overseer. Each item's row
 # holds how many to-overseer.jsonl lines have been drained and the id the file
 # opened with, and `drain` reports the file's own count and first id, so a
-# message is reported once. An ask already answered is dropped by `drain`
+# committed message is not reported again. An ask already answered is dropped by `drain`
 # rather than by a row, so a restarted overseer with no rows re-reports only
 # what it still owes a reply. The same call's `--receipts` section reads the
 # lane's to-lane.cursor, which every read path the lane has advances: the

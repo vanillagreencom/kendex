@@ -420,8 +420,10 @@ assert_eq "held=${HELD_PID:+found} $HELD_STATE" "held=found gone" \
 mutant long_pass_alone oversee-watch \
   '    || for pid in $(tree_pids "$LONG_PID"); do kill -TERM "$pid" 2>/dev/null || :; done' \
   '    || kill -TERM "$LONG_PID" 2>/dev/null || :'
+# Only the held command is read: under bash 3.2 a TERM to the long pass alone
+# does not end it while it waits on that command.
 term_long_case term_long_alone_mutant "$MUTANT"
-assert_eq "long=$LONG_PASS_STATE held=${HELD_PID:+found} $HELD_STATE" "long=gone held=found alive" \
+assert_eq "long=${LONG_PASS_PID:+found} held=${HELD_PID:+found} $HELD_STATE" "long=found held=found alive" \
   "control: a TERM on the long pass's own pid leaves the command it waits on running"
 mutant pass_untrapped oversee-watch 'trap pass_stop TERM' ':'
 term_long_case term_long_untrapped_mutant "$MUTANT"
@@ -539,6 +541,48 @@ mutant ack_first oversee-watch '      envelopes="$(tail -n +2 <<<"$MAIL_OUT")"' 
 ack_stop_case ack_first_mutant "$MUTANT"
 assert_eq "$ACK_STOP" "ack=found pass=gone printed=0 again=1" \
   "control: an ack before the print leaves a stopped pass having reported nothing"
+
+# The same stop on a lane's notice, whose mail row is committed only once its
+# lines are out: a `sed` shim holds the payload's indent, the one call of that
+# shape, after the event line is printed and is killed with its pass. The next
+# run reports the notice again.
+lane_stop_case() { # NAME [WATCH_BIN]
+  local pass held
+  new_case "$1"
+  rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
+  mkdir -p -- "$CASE_REPO_ROOT/tmp/lane-mail/KEN-7" "$STUB_DIR/bin"
+  (cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/orch/scripts/lane-mail" notice --item KEN-7 \
+    --file "$TMP_ROOT/note.txt" >/dev/null)
+  printf '#!/usr/bin/env bash\n[[ "$*" != "s/^/  /" ]] || exec "%s" 30\nexec "%s" "$@"\n' \
+    "$REAL_SLEEP" "$(command -v sed)" > "$STUB_DIR/bin/sed"
+  chmod +x "$STUB_DIR/bin/sed"
+  ( WATCH_BIN="${2:-}" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --item KEN-7 \
+      >"$TMP_ROOT/o-$1" 2>"$TMP_ROOT/e-$1" ) &
+  LIVE_PIDS+=" $!"
+  held=""
+  for _ in $(seq 1 100); do
+    held="$(descendant "$!" 'sleep 30$')"
+    [[ -z "$held" ]] || break
+    "$REAL_SLEEP" 0.1
+  done
+  pass="$(descendant "$!" 'oversee-watch --interval')"
+  LIVE_PIDS+=" $held"
+  kill -TERM "$held" "$pass" 2>/dev/null || true
+  gone_within "$pass"
+  LANE_STOP="held=${held:+found} pass=$STATES printed=$(grep -c '^EVENT lane-notice KEN-7 ' "$TMP_ROOT/o-$1" || true)"
+  LANE_STOP+=" again=$(WATCH_BIN="${2:-}" run_watch -- --max-loops 1 --item KEN-7 2>/dev/null |
+    grep -c '^EVENT lane-notice KEN-7 ' || true)"
+}
+lane_stop_case lane_stop
+assert_eq "$LANE_STOP" "held=found pass=gone printed=1 again=1" \
+  "a stop between a lane notice's print and its row commit reports it, and the next run reports it again" \
+  "$TMP_ROOT/e-lane_stop"
+mutant lane_commit_first oversee-watch \
+  "      envelopes=\"\$(awk 'NR == 1 { next } /^receipts / { exit } { print }' <<<\"\$MAIL_OUT\")\"" \
+  "      envelopes=\"\$(awk 'NR == 1 { next } /^receipts / { exit } { print }' <<<\"\$MAIL_OUT\")\"; mail_row_commit \"\$(lane_row_set lane-mail \"\$state\" \"\$cursor\" \"\$count \$first\")\""
+lane_stop_case lane_commit_first_mutant "$MUTANT"
+assert_eq "$LANE_STOP" "held=found pass=gone printed=1 again=0" \
+  "control: a row committed before the print is not reported again by the next run"
 
 # --- taking over a watch ------------------------------------------------------
 # A stand-in for a watch another start left running: it records itself as the
