@@ -79,6 +79,27 @@ run "$WHOLE/review-gate/scripts/review-policy" "$TMP/whole-repo"
 assert_eq "$RC" "0" "a measurable tree answers"
 assert_eq "${OUT%% *}" "change_class=micro" "and the record names the class the rules earned"
 
+echo "=== the policy is active by default ==="
+
+# No settings layer assigns the key: the fixture repository has no settings
+# file and no .env.local, and the environment carries neither the key nor a
+# settings-file override. The default policy answers.
+DEFAULT_RC=0
+DEFAULT_CONFIG="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY \
+  "$WHOLE/review-gate/scripts/review-policy" --check-config 2>"$TMP/err")" || DEFAULT_RC=$?
+assert_eq "$DEFAULT_RC:$DEFAULT_CONFIG" "0:review-policy=active" "with no assignment anywhere the policy is active"
+DEFAULT_RC=0
+DEFAULT_RECORD="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY \
+  "$WHOLE/review-gate/scripts/review-policy" --event pull_request --base HEAD~1 --head HEAD --repo . 2>"$TMP/err")" || DEFAULT_RC=$?
+assert_eq "$DEFAULT_RC:$DEFAULT_RECORD" "0:change_class=micro review_evidence=none policy=active" \
+  "and a micro diff needs no review evidence under it"
+
+# The inverse: an explicit empty assignment is the one way to turn it off.
+EMPTY_RC=0
+EMPTY_CONFIG="$(cd "$TMP/whole-repo" && env -u REVIEW_GATE_SETTINGS_FILE REVIEW_GATE_CLASS_POLICY= \
+  "$WHOLE/review-gate/scripts/review-policy" --check-config 2>"$TMP/err")" || EMPTY_RC=$?
+assert_eq "$EMPTY_RC:$EMPTY_CONFIG" "0:review-policy=inactive" "an explicit empty assignment turns the policy off"
+
 # The same repository, judged by a catalog with no orch skill beside
 # harness-ci. The classifier cannot read the narrow-change list, so its
 # `standard` is the fallback. The harness-note on the way there carries a

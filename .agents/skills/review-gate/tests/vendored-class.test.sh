@@ -5,7 +5,9 @@
 # REVIEW_GATE_VENDORED_PATHS carries whatever its extension; trust is the
 # committed set, never the bytes. Every approve is paired with the near-miss
 # that must not, and every refusal is pinned by its REASON — a refusal for
-# the wrong rule is a decision nothing here proved.
+# the wrong rule is a decision nothing here proved. Every case assigns an empty
+# REVIEW_GATE_CLASS_POLICY, so the carry engine is judged without the class
+# classifier, which needs a local git range these fixtures do not have.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -107,7 +109,7 @@ while IFS='|' read -r name files want carry paths exclude opts evidence code val
   esac
   rc=0
   line="$(env ${CFG_BASHOPTS:+"BASHOPTS=$CFG_BASHOPTS"} PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
-    REVIEW_GATE_SETTINGS_FILE=/dev/null REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="" REVIEW_GATE_COMMENT_REVIEWERS="" \
+    REVIEW_GATE_SETTINGS_FILE=/dev/null REVIEW_GATE_CLASS_POLICY="" REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="" REVIEW_GATE_COMMENT_REVIEWERS="" \
     REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="" REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
     REVIEW_GATE_CARRY_FORWARD_EXCLUDE="$CFG_CARRY_EXCLUDE" REVIEW_GATE_VENDORED_PATHS="$CFG_VENDORED_PATHS" \
     GH_REPO=owner/repo PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$AUTHOR" "$predicate" 2>"$work/stderr")" || rc=$?

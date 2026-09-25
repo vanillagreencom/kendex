@@ -128,8 +128,8 @@ stage() {
 
 # run PROJECT ENV ARGS... — one approval-wait run in PROJECT under the
 # space-separated ENV assignments and no other reviewer-gate key: the four the
-# resolver reads, and the class-policy key, are cleared from the inherited
-# environment first, so a row's
+# resolver reads are cleared from the inherited environment first, and the
+# class-policy key is assigned empty unless the row assigns it, so a row's
 # answer is its own on any machine. OUT, RC and ERR (a file) are what
 # `observe` reads. The gh call log is emptied first.
 RUN_SEQ=0
@@ -141,7 +141,7 @@ run() {
   ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
   rm -f -- "$GH_CALLS"
   set +e
-  OUT="$(cd "$project" && PATH="$TMP_ROOT/bin:$PATH" env -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY ${env_args[@]+"${env_args[@]}"} .agents/skills/orch/scripts/approval-wait "$@" 2>"$ERR")"
+  OUT="$(cd "$project" && PATH="$TMP_ROOT/bin:$PATH" env -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u REVIEW_GATE_SETTINGS_FILE REVIEW_GATE_CLASS_POLICY= ${env_args[@]+"${env_args[@]}"} .agents/skills/orch/scripts/approval-wait "$@" 2>"$ERR")"
   RC=$?
   set -e
 }

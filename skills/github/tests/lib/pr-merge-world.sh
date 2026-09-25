@@ -395,12 +395,13 @@ run() {
   # Every token name and GH_REPO come off: a row pins whole stderr lines and
   # the token each call saw, so a lane's own environment would decide them.
   # The retired merge settings come off too, so only a row's own env: word
-  # sets one.
+  # sets one. The class policy is assigned empty unless the row's W_ENV
+  # assigns it.
   (cd "$RUN_DIR" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u KENDEX_ENV_FILE \
     -u ORCH_ADMIN_MERGE_GH_CONFIG_DIR -u ORCH_ADMIN_MERGE_CLASSES -u ORCH_MERGE_BYPASS -u GH_CONFIG_DIR \
     -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u REVIEW_GATE_CONTEXT \
-    -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY -u REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS \
-    -u REVIEW_GATE_THREADS \
+    -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS \
+    -u REVIEW_GATE_THREADS REVIEW_GATE_CLASS_POLICY= \
     STUB_CALL_LOG="$CALL_LOG" STUB_AUTH_LOG="$AUTH_LOG" \
     ${W_ENV[@]+"${W_ENV[@]}"} "${argv[@]}" >"$TMPDIR/stdout" 2>"$TMPDIR/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=%s auth=%s' "$rc" "$(stdout_text "$1")" "$(err_lines)" "$(calls)" "$(auth)"

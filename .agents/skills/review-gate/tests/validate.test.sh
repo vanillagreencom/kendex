@@ -26,6 +26,7 @@ settings-known|kendex.settings.toml
 settings-env-table|kendex.settings.toml
 settings-key-shapes|kendex.settings.toml
 settings-values|0
+class-policy-active|REVIEW_GATE_CLASS_POLICY
 ROWS
 [ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=report-table value=%q\n' "$rows" >&2; exit 2; }
 
@@ -92,6 +93,7 @@ while IFS='~' read -r label action data want check value error_code error_value 
       printf '[env]\nREVIEW_GATE_CONTEXT = "Review gate"\n' >"$DIR/unreadable.settings.toml"
       chmod 000 "$DIR/unreadable.settings.toml"; override=unreadable.settings.toml ;;
     absent) override=absent.settings.toml ;;
+    no-classifier) rm -r -- "${DIR:?}/.agents/skills/harness-ci"; commit "$DIR" ;;
     settings-symlink)
       mv "$DIR/kendex.settings.toml" "$DIR/real-settings.toml"
       ln -s real-settings.toml "$DIR/kendex.settings.toml"
@@ -174,6 +176,10 @@ universal exclusion~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*"~FAIL~carry-un
 declared unmatched exclusion is reported~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "no-such-directory/*.md"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "no-such-directory/*.md"~clean~~~~~carry-prophylactic~no-such-directory/*.md~
 orphan declaration~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "AGENTS.md"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "docs/*"~FAIL~carry-declaration-missing~docs/*~~~~~
 declaration now matches~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "docs/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "docs/*"~FAIL~carry-declaration-matched~docs/*~~~~~
+class policy off with no decision record~append~REVIEW_GATE_CLASS_POLICY = ""~FAIL~class-policy-inactive~REVIEW_GATE_CLASS_POLICY~~~~~
+class policy off with an untracked decision record~append~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs/decisions/D001-no-class-policy.md"~FAIL~class-policy-decision-untracked~docs/decisions/D001-no-class-policy.md~~~~~
+class policy off with a tracked decision record~append~REVIEW_GATE_CLASS_POLICY = ""\nREVIEW_GATE_CLASS_POLICY_DECISION = "docs/guide.md"~clean~~~~~~~
+default class policy with no classifier installed~no-classifier~~FAIL~class-policy-unresolved~2~~~~~
 ROWS
 [ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=settings-table value=%q\n' "$rows" >&2; exit 2; }
 

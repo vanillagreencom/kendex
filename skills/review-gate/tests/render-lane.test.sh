@@ -5,6 +5,8 @@
 # sits under REVIEW_GATE_RENDER_PATHS approves with no review evidence;
 # every refusal takes the normal gate path and is pinned
 # by its stable code and value. Every approve is paired with the near-miss that must not.
+# The lane runs only under an explicitly empty REVIEW_GATE_CLASS_POLICY, which
+# every case assigns.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -123,7 +125,7 @@ while IFS='|' read -r name files want paths carry opts fault evidence page2 code
   rc=0
   # shellcheck disable=SC2086 # CFG_ARGS is --check-config or empty.
   line="$(env ${CFG_BASHOPTS:+"BASHOPTS=$CFG_BASHOPTS"} PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
-    REVIEW_GATE_SETTINGS_FILE=/dev/null REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="" REVIEW_GATE_COMMENT_REVIEWERS="" \
+    REVIEW_GATE_SETTINGS_FILE=/dev/null REVIEW_GATE_CLASS_POLICY="" REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="" REVIEW_GATE_COMMENT_REVIEWERS="" \
     REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="" REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
     REVIEW_GATE_RENDER_PATHS="$CFG_RENDER_PATHS" GH_REPO=owner/repo PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$AUTHOR" \
     "$predicate" $CFG_ARGS 2>"$work/stderr")" || rc=$?
