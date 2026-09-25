@@ -198,12 +198,12 @@ new_lane receipt
 lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
 SENT_ID="${OUT#*id=}"
 SENT_ID="${SENT_ID%% *}"
-assert_eq "$RC=$OUT" "0=lane-mail: sent item=KEN-1 id=$SENT_ID bytes=12" \
-  "send prints one receipt naming the item, the envelope it appended and the text's bytes"
+assert_eq "$RC=$OUT" "0=lane-mail: sent item=KEN-1 id=$SENT_ID bytes=12 monitor=none" \
+  "send prints one receipt naming the item, the envelope it appended, the text's bytes and that no monitor stands"
 assert_eq "$(jq -r '.id' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "$SENT_ID" \
   "the receipt's id is the appended envelope's"
 lm send --item KEN-2 --root "$LANE" --directive --file "$(text d 'né')"
-assert_eq "$RC=${OUT##* }" "0=bytes=3" "the receipt counts the text in bytes, not in characters"
+assert_eq "$RC=${OUT#* bytes=}" "0=3 monitor=none" "the receipt counts the text in bytes, not in characters"
 
 lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
 assert_eq "$RC=$ERR=$OUT" "2=lane-mail: duplicate id=$SENT_ID=" \
@@ -228,7 +228,7 @@ assert_eq "$([ "$LARGE_BYTES" -gt 131072 ] && echo over || echo under)" "over" \
 lm send --item KEN-1 --root "$LANE" --directive --file "$TMP_ROOT/large.txt"
 LARGE_ID="${OUT#*id=}"
 LARGE_ID="${LARGE_ID%% *}"
-assert_eq "$RC=${OUT##* }" "0=bytes=$(( LARGE_BYTES - 1 ))" \
+assert_eq "$RC=${OUT#* bytes=}" "0=$(( LARGE_BYTES - 1 )) monitor=none" \
   "a message past that ceiling lands, and its receipt counts every byte"
 assert_eq "$(jq -r '.id' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "$LARGE_ID" \
   "and the mailbox holds the envelope the receipt names"

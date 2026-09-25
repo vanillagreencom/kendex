@@ -116,7 +116,7 @@ ot_message() { # REASON FIELD=VALUE...
     wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd, --relaunch or lane host.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
     wake-failed) text='The delivering command exited non-zero before the wake window closed. The lane was not woken; the log says why.' ;;
-    wake-refused) text='The lane is not idle: the reason names the state the shared judge read from its pane and its harness process, and a resume would run a second session beside a live one. Nothing was started. Mail reaches a lane only while it still takes a tool call or ends a turn, so a refusal is a state and not a remedy: the refusal table in the orch lane-reach reference, under Wake refusals, says what each reason licenses.' ;;
+    wake-refused) text='The lane is not idle: the reason names the state the shared judge read from its pane and its harness process, and a resume would run a second session beside a live one. Nothing was started. A refusal is a state and not a remedy: the refusal table in the orch lane-reach reference, under Wake refusals, says how mail still reaches the lane for each reason.' ;;
     lane-woken) text='The line that reads the lane inbox is on its way to the session. The delivering command runs detached; its output goes to the log.' ;;
     summary) text='The launch batch is complete.' ;;
     *) printf 'open-terminal: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
@@ -339,9 +339,11 @@ Options:
                     as another session's claim. The newest matching Claude,
                     Codex, or Pi session resumes natively, and the resumed
                     command carries one continuation line telling the lane to
-                    resume its orch workflow, read `lane-mail inbox` and re-arm
-                    its mailbox monitor (`lane-mail watch`), so no follow-up is
-                    pasted into the pane. A hosted codex lane is
+                    resume its orch workflow and read `lane-mail inbox`, and a
+                    claude or pi lane to re-arm its mailbox monitor
+                    (`lane-mail watch`), so no follow-up is pasted into the
+                    pane. A codex lane arms no monitor: Codex starts no turn
+                    for its output. A hosted codex lane is
                     the exception: it resumes with no line, reported as
                     resume-lineless, and its line is pasted into the pane
                     afterwards — see --host. With no match the normal brief
@@ -394,11 +396,10 @@ Options:
                     one; where the box runs none, the read answers idle and
                     the wake goes through. Anything but idle is refused as
                     wake-refused with the state as the reason: working,
-                    asking, walled, exited or unjudged. Mail reaches a lane
-                    only while it still takes a tool call or ends a turn, so
-                    a refusal is a state and not a remedy: the refusal table
-                    in the orch lane-reach reference, under Wake refusals,
-                    says what each reason licenses.
+                    asking, walled, exited or unjudged. A refusal is a state
+                    and not a remedy: the refusal table in the orch
+                    lane-reach reference, under Wake refusals, says how mail
+                    still reaches the lane for each reason.
 
 A Linear ITEM is accepted in whichever case GH_ISSUE_PATTERN matches and
 launched under the tracker's canonical spelling, TEAM-N, which names the
@@ -1586,7 +1587,14 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
     exec="exec "
     print=" -p"
   elif [[ "$RELAUNCH" == true ]]; then
-    line=" 'Resume the orch workflow for $mail_id from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id first and act on every directive it prints, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item $mail_id through your harness background wake.'"
+    # The mailbox monitor is a background wake only claude and pi run a turn
+    # on; codex starts none for its output, and opencode has no such wake.
+    local rearm=""
+    case "$HARNESS" in
+      claude | pi) rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item $mail_id through your harness background wake" ;;
+      *) rearm="" ;;
+    esac
+    line=" 'Resume the orch workflow for $mail_id from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id first and act on every directive it prints$rearm.'"
   fi
   if [[ -n "$wake_dir" && "$HARNESS" == pi ]]; then printf 'pi-bridge send --cwd %q%s\n' "$wake_dir" "$line"; return; fi
   # claude and pi take the line as a trailing positional on their own resume

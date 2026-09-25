@@ -35,10 +35,13 @@ Run the oversee.md § 4 command without `--repeat`, as the harness's background 
 
 ## Lane mailbox monitor
 
-A lane arms one standing monitor on its own mailbox as its first step, from its worktree and on its own host, a hosted lane inside its sandbox. The monitor runs `.agents/skills/orch/scripts/lane-mail watch --item [ISSUE_ID]`, which prints a `lane-mail: mail=[ISSUE_ID]` line once for each arrival of anything but an answer (`lane-mail --help`). Each line wakes an idle lane, and the woken turn runs `lane-mail inbox --item [ISSUE_ID]` and acts on every directive it prints. An answer wakes nothing, so the ask gate's `lane-mail wait` keeps it. A lane whose monitor stands needs no wake after a send.
+A lane arms one standing monitor on its own mailbox as its first step, from its worktree and on its own host, a hosted lane inside its sandbox. The monitor runs `.agents/skills/orch/scripts/lane-mail watch --item [ISSUE_ID]`, which prints a `lane-mail: mail=[ISSUE_ID]` line once for each arrival of anything but an answer (`lane-mail --help`). Each announcement wakes an idle lane, and the woken turn runs the `lane-mail inbox` command printed under it and acts on every directive it prints. An answer wakes nothing, so the ask gate's `lane-mail wait` keeps it. Every poll rewrites the mailbox's `to-lane.watch`, and a `lane-mail send` receipt reads it as `monitor=live` or `monitor=none`; the overseer wakes the lane only on `monitor=none` ([oversee.md § Talking to a lane](../workflows/oversee.md#talking-to-a-lane)).
+
+A watch that exits with status 2 refused, and its keyed `lane-mail:` line is on its stderr. The lane never re-arms a refused watch blind: it runs `lane-mail inbox --item [ISSUE_ID]` once, sends that keyed line to the overseer with `lane-mail notice`, and re-arms once the cause the line names is fixed.
 
 | Harness | Arm | Re-arm |
 |---------|-----|--------|
-| Claude Code | `Monitor` on the watch command, `timeout_ms` at its maximum. | Whenever the monitor ends: at its expiry, or when it is stopped. |
+| Claude Code | `Monitor` on the watch command, `timeout_ms` at its maximum. | At its expiry, or after the lane stopped it. An exit with status 2 is the refusal above. |
 | Codex | None. Codex starts no turn for output that arrives after a turn ended, so the overseer wakes the lane: [codex-runtime.md § Lane mailbox](codex-runtime.md#lane-mailbox). | None. |
 | Pi | `bg_task` output wakes on the watch command: [pi-runtime.md § Lane mailbox monitor (Pi)](pi-runtime.md#lane-mailbox-monitor-pi). | Respawn in the cases its Re-arm and Exit rows name. |
+| OpenCode and others | None. No background wake starts a turn, and `open-terminal --wake` does not take these harnesses: the lane reads mail at its `lane-mail inbox` wait points. | None. |

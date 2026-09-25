@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # lane-mail watch: the lane's standing mailbox monitor. A harness background
 # wake (Claude Code Monitor, Pi bg_task) runs it and starts a turn for each
-# line it prints, and that turn runs `lane-mail inbox`. Each case starts the
-# real script in the background over a lane worktree under TMP_ROOT, appends
-# with the real `send`, and reads what the watch printed. The harness stand-in
-# is the loop the woken turn runs: read a `mail=` line, then run `inbox`. A
-# tmux on PATH records every call, so a directive that reaches an idle lane
-# with no pane write is observed, not assumed. The must-fail control closes
+# announcement it prints, and that turn runs the `inbox` command the
+# announcement names. Each case starts the real script in the background over a
+# lane worktree under TMP_ROOT, appends with the real `send`, and reads what the
+# watch printed. Polls are counted from the liveness record the watch rewrites,
+# so a row asserting silence waits for polls that ran rather than for a fixed
+# time. A tmux on PATH records every call, so a directive that reaches an idle
+# lane with no pane write is observed, not assumed. The must-fail controls close
 # the file.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -44,10 +45,13 @@ printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s"\n' "$TMUX_LOG" >"$STUB_BIN/tmux"
 chmod +x "$STUB_BIN/tmux"
 : >"$TMUX_LOG"
 
+# A lane worktree with the mailbox its launch creates.
 LANE=""
+BOX=""
 new_lane() { # NAME
   LANE="$TMP_ROOT/$1"
-  mkdir -p "$LANE"
+  BOX="$LANE/tmp/lane-mail/KEN-1"
+  mkdir -p "$BOX"
   git -C "$LANE" init -q
   git -C "$LANE" config gc.auto 0
   git -C "$LANE" config maintenance.auto false
@@ -62,90 +66,166 @@ text() { # NAME CONTENT
 lm() { # ARGS...
   (cd "$LANE" && PATH="$STUB_BIN:$PATH" "$LANE_MAIL" "$@")
 }
-send_directive() { # TEXT
-  lm send --item KEN-1 --root "$LANE" --directive --file "$(text d "$1")" >/dev/null
+SENT=""
+send_directive() { # TEXT — SENT holds the receipt
+  SENT="$(lm send --item KEN-1 --root "$LANE" --directive --file "$(text d "$1")")"
 }
 
 WATCH_OUT="$TMP_ROOT/watch.out"
-start_watch() { # [BIN]
+WATCH_ERR="$TMP_ROOT/watch.err"
+start_watch() { # [BIN] [ARGS...] — from the lane, or with the ARGS given
+  local bin="${1:-$LANE_MAIL}"
+  [ "$#" -eq 0 ] || shift
   stop_watch
   : >"$WATCH_OUT"
-  (cd "$LANE" && PATH="$STUB_BIN:$PATH" exec "${1:-$LANE_MAIL}" watch --item KEN-1 --interval 1) \
-    >"$WATCH_OUT" 2>"$TMP_ROOT/watch.err" &
+  rm -f -- "$BOX/to-lane.watch"
+  if [ "$#" -eq 0 ]; then set -- --item KEN-1; fi
+  (cd "$LANE" && PATH="$STUB_BIN:$PATH" exec "$bin" watch --interval 1 "$@") \
+    >"$WATCH_OUT" 2>"$WATCH_ERR" &
   WATCH_PID=$!
 }
 
-# The number of `mail=` lines the watch has printed.
+# The announcements the watch has printed: their keyed lines, one per line.
+mail_lines() {
+  grep '^lane-mail: mail=' "$WATCH_OUT" || :
+}
 announced() {
-  grep -c '^lane-mail: mail=KEN-1 new=' "$WATCH_OUT" || :
+  mail_lines | awk 'END { print NR + 0 }'
 }
 
-# Waits for the watch to print its Nth `mail=` line, or for the deadline.
+# Waits, up to a deadline, for the Nth announcement.
 await_announced() { # N
-  local waited=0
-  while [ "$(announced)" -lt "$1" ] && [ "$waited" -lt 10 ]; do
-    sleep 1
-    waited=$((waited + 1))
+  local tries=0
+  while [ "$(announced)" -lt "$1" ] && [ "$tries" -lt 50 ]; do
+    sleep 0.2
+    tries=$((tries + 1))
   done
 }
 
-# Several polls of the watch, so a line it would print again has had the
-# chance to.
-quiet_polls() { sleep 3; }
+# Waits, up to a deadline, for N more polls: each rewrites the liveness record
+# with the second it ran, and polls sit a whole interval apart.
+watch_at() {
+  sed -n 's/^at=\([0-9]*\) .*/\1/p' "$BOX/to-lane.watch" 2>/dev/null || :
+}
+await_polls() { # N
+  local tries=0 seen=0 last now
+  last="$(watch_at)"
+  while [ "$seen" -lt "$1" ] && [ "$tries" -lt 75 ]; do
+    sleep 0.2
+    tries=$((tries + 1))
+    now="$(watch_at)"
+    if [ -n "$now" ] && [ "$now" != "$last" ]; then
+      seen=$((seen + 1))
+      last="$now"
+    fi
+  done
+}
 
 echo "=== lane-mail watch ==="
 
 new_lane standing
 send_directive 'Rebase onto main.'
+send_directive 'Then rerun the checks.'
 start_watch
 await_announced 1
-assert_eq "$(head -n 1 "$WATCH_OUT")" "lane-mail: mail=KEN-1 new=1" \
-  "a watch announces a directive already unread when it starts"
+assert_eq "$(sed -n 1p "$WATCH_OUT")" "lane-mail: mail=KEN-1 new=2" \
+  "a watch announces every directive already unread when it starts, counting them"
 assert_eq "$(sed -n 2p "$WATCH_OUT")" \
-  "Overseer mail landed in this lane mailbox. Run .agents/skills/orch/scripts/lane-mail inbox --item with the item above, and act on every directive it prints." \
-  "the announcement tells the woken lane to run inbox"
-quiet_polls
-assert_eq "$(announced)" "1" "an arrival is announced once, however many polls pass"
-assert_eq "$([ -e "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" ] && cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" || echo none)" \
+  "Overseer mail landed in this lane mailbox. Run the command below and act on every directive it prints." \
+  "the announcement tells the woken lane to run the command under it"
+assert_eq "$(sed -n 3p "$WATCH_OUT")" "$(printf '%q inbox --item KEN-1' "$LANE_MAIL")" \
+  "the command is the literal inbox read of this lane's mailbox"
+send_directive 'Then merge.'
+assert_eq "${SENT##* }" "monitor=live" "a send to a mailbox under a running watch reads its monitor as live"
+await_announced 2
+await_polls 2
+assert_eq "$(mail_lines | tr '\n' '|')" "lane-mail: mail=KEN-1 new=2|lane-mail: mail=KEN-1 new=1|" \
+  "each arrival is announced once, however many polls pass"
+assert_eq "$([ -e "$BOX/to-lane.cursor" ] && cat "$BOX/to-lane.cursor" || echo none)" \
   "none" "the watch moves no cursor"
 stop_watch
+assert_eq "$([ -e "$BOX/to-lane.watch" ] && echo kept || echo withdrawn)" "withdrawn" \
+  "a stopped watch withdraws its liveness record"
+send_directive 'After the stop.'
+assert_eq "${SENT##* }" "monitor=none" "so a send after the stop reads no monitor, and the lane is woken"
 
-# The row the issue's delivery claim stands on: the lane is idle, with nothing
-# running but its watch; a directive lands; the wake the watch's line causes
-# runs inbox, which hands the directive over; and nothing wrote to a pane.
+# The row the delivery claim stands on: the lane is idle, with nothing running
+# but its watch; a directive lands; the command the announcement names, run as
+# the woken turn runs it, hands the directive over; and nothing wrote to a pane.
 new_lane idle
 start_watch
-quiet_polls
-assert_eq "$(announced)" "0" "an empty mailbox wakes nobody"
+await_polls 1
 send_directive 'Hold the PR.'
 await_announced 1
 READ=""
-if [ "$(announced)" -ge 1 ]; then READ="$(lm inbox --item KEN-1)"; fi
+if [ "$(announced)" -ge 1 ]; then
+  READ="$(cd "$LANE" && PATH="$STUB_BIN:$PATH" eval "$(sed -n 3p "$WATCH_OUT")")"
+fi
 assert_eq "$(jq -r '.kind + " " + .text' <<<"${READ:-null}" 2>/dev/null)" "directive Hold the PR." \
-  "a directive sent to an idle lane is read by the inbox run its watch's line wakes"
-assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")" "1" "that inbox read advances the cursor"
+  "a directive sent to an idle lane is read by the command its watch's announcement names"
+assert_eq "$(cat "$BOX/to-lane.cursor")" "1" "that inbox read advances the cursor"
 assert_eq "$(wc -l <"$TMUX_LOG" | tr -d ' ')" "0" "the directive reached the idle lane with no pane write"
-quiet_polls
-assert_eq "$(announced)" "1" "mail the lane has read is not announced again"
 send_directive 'Then merge.'
 await_announced 2
-assert_eq "$(sed -n 3p "$WATCH_OUT")" "lane-mail: mail=KEN-1 new=1" \
-  "the next directive after a read wakes the lane again, counting only itself"
+await_polls 2
+assert_eq "$(mail_lines | tr '\n' '|')" "lane-mail: mail=KEN-1 new=1|lane-mail: mail=KEN-1 new=1|" \
+  "an empty mailbox wakes nobody, and mail the lane has read is not announced again"
 stop_watch
 
-# An answer belongs to the `wait` that asked for it: the watch prints nothing
-# for one, so no wake runs an inbox read that has nothing to hand over, and the
-# wait still receives the answer.
+# An answer belongs to the `wait` that asked for it: the watch announces nothing
+# for one, so the directive after it is announced alone.
 new_lane answer
 start_watch
+await_polls 1
 ASK="$(lm ask --item KEN-1 --file "$(text q 'Merge now?')")"
 ASK="${ASK#id=}"
 lm send --item KEN-1 --root "$LANE" --re "$ASK" --file "$(text a 'Merge it.')" >/dev/null
-quiet_polls
-assert_eq "$(announced)" "0" "an answer wakes nothing"
+send_directive 'Also tag it.'
+await_announced 1
+await_polls 2
+assert_eq "$(mail_lines | tr '\n' '|')" "lane-mail: mail=KEN-1 new=1|" "an answer wakes nothing"
 assert_eq "$(lm wait --item KEN-1 --id "$ASK" --timeout 5 --interval 1)" "Merge it." \
   "the ask's wait still receives its answer"
 stop_watch
+
+# A watch started over a cursor the lane already moved: what it read is never
+# announced, by a re-armed watch or after a hook read it between two polls.
+new_lane read_first
+send_directive 'Already read.'
+lm inbox --item KEN-1 >/dev/null
+start_watch
+await_polls 1
+send_directive 'Not yet read.'
+await_announced 1
+await_polls 2
+assert_eq "$(mail_lines | tr '\n' '|')" "lane-mail: mail=KEN-1 new=1|" \
+  "a watch announces nothing the cursor already passed"
+stop_watch
+
+# A watch run from another checkout names the lane with --root, and so does the
+# command its announcement hands the woken turn.
+new_lane rooted
+mkdir -p "$TMP_ROOT/elsewhere"
+send_directive 'From afar.'
+stop_watch
+: >"$WATCH_OUT"
+(cd "$TMP_ROOT/elsewhere" && exec "$LANE_MAIL" watch --item KEN-1 --root "$LANE" --interval 1) \
+  >"$WATCH_OUT" 2>"$WATCH_ERR" &
+WATCH_PID=$!
+await_announced 1
+assert_eq "$(sed -n 3p "$WATCH_OUT")" "$(printf '%q inbox --item KEN-1 --root %q' "$LANE_MAIL" "$LANE")" \
+  "a watch given --root hands over the inbox command with that root"
+stop_watch
+
+# The liveness record the receipt reads, judged on its age alone.
+new_lane liveness
+for row in "$(( $(date -u +%s) - 60 ))|none|a record older than twice its interval plus five seconds reads as no monitor" \
+  "$(date -u +%s)|live|a fresh record reads as a live monitor"; do
+  printf 'at=%s interval=5\n' "${row%%|*}" >"$BOX/to-lane.watch"
+  rest="${row#*|}"
+  send_directive "Liveness ${rest%%|*}."
+  assert_eq "${SENT##* }" "monitor=${rest%%|*}" "${rest#*|}"
+done
 
 # Refusals, keyed on their first line.
 new_lane refusals
@@ -153,32 +233,66 @@ RC=0
 lm watch --item KEN-1 --interval soon >/dev/null 2>"$TMP_ROOT/err" || RC=$?
 assert_eq "$RC=$(head -n 1 "$TMP_ROOT/err")" "2=lane-mail: seconds-invalid=--interval" \
   "an interval that is not a number of seconds is refused"
-mkdir -p "$LANE/tmp/lane-mail/KEN-1"
-printf 'two\n' >"$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
+RC=0
+lm watch --item KEN-9 --interval 1 >/dev/null 2>"$TMP_ROOT/err" || RC=$?
+assert_eq "$RC=$(head -n 1 "$TMP_ROOT/err")" "2=lane-mail: mailbox-missing=$LANE/tmp/lane-mail/KEN-9" \
+  "a watch of a mailbox no launch created is refused rather than polling nothing"
+printf 'two\n' >"$BOX/to-lane.cursor"
 RC=0
 lm watch --item KEN-1 --interval 1 >/dev/null 2>"$TMP_ROOT/err" || RC=$?
-assert_eq "$RC=$(head -n 1 "$TMP_ROOT/err")" "2=lane-mail: cursor-invalid=$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" \
+assert_eq "$RC=$(head -n 1 "$TMP_ROOT/err")" "2=lane-mail: cursor-invalid=$BOX/to-lane.cursor" \
   "a cursor that holds no count stops the watch rather than announcing from zero"
 
-# Control: without the line that records what was announced, the watch
-# announces the same directive at every poll and wakes the lane each time.
-# The mutant sits beside the libraries and siblings it sources, as the script
-# it copies does.
-MUTANT_DIR="$TMP_ROOT/mutant-scripts"
-mkdir -p "$MUTANT_DIR"
-sed 's@^      ANNOUNCED="\$(lm_count "\$WORK_DIR/lane.jsonl")"$@      :@' "$LANE_MAIL" >"$MUTANT_DIR/lane-mail"
-chmod +x "$MUTANT_DIR/lane-mail"
-assert_eq "$(cmp -s "$MUTANT_DIR/lane-mail" "$LANE_MAIL" && echo same || echo differs)" "differs" \
-  "control: the announces-again mutant really differs from lane-mail"
-ln -s "$REPO_ROOT/skills/orch/scripts/lib" "$MUTANT_DIR/lib"
-ln -s "$REPO_ROOT/skills/orch/scripts/git-context" "$MUTANT_DIR/git-context"
-new_lane control
+new_lane removed
+start_watch
+await_polls 1
+rm -rf -- "${LANE:?}/tmp"
+TRIES=0
+while kill -0 "$WATCH_PID" 2>/dev/null && [ "$TRIES" -lt 10 ]; do
+  sleep 0.2
+  TRIES=$((TRIES + 1))
+done
+RC=0
+if kill -0 "$WATCH_PID" 2>/dev/null; then RC=running; else wait "$WATCH_PID" || RC=$?; fi
+WATCH_PID=""
+assert_eq "$RC=$(head -n 1 "$WATCH_ERR")" "2=lane-mail: mailbox-missing=$BOX" \
+  "a watch whose mailbox is removed exits within two intervals"
+
+# Controls, each a copy of lane-mail beside the libraries and siblings it
+# sources, with one line of the watch removed.
+mutant() { # NAME SED-EXPRESSION — MUTANT holds the copy
+  local dir="$TMP_ROOT/mutant-$1"
+  mkdir -p "$dir"
+  sed "$2" "$LANE_MAIL" >"$dir/lane-mail"
+  chmod +x "$dir/lane-mail"
+  ln -s "$REPO_ROOT/skills/orch/scripts/lib" "$dir/lib"
+  ln -s "$REPO_ROOT/skills/orch/scripts/git-context" "$dir/git-context"
+  assert_eq "$(cmp -s "$dir/lane-mail" "$LANE_MAIL" && echo same || echo differs)" "differs" \
+    "control: the $1 mutant really differs from lane-mail"
+  MUTANT="$dir/lane-mail"
+}
+
+mutant announces-again 's@^      ANNOUNCED="\$(lm_count "\$WORK_DIR/lane.jsonl")"$@      :@'
+new_lane control_again
 send_directive 'Once.'
-start_watch "$MUTANT_DIR/lane-mail"
+start_watch "$MUTANT"
 await_announced 1
-quiet_polls
+await_polls 2
 assert_eq "$([ "$(announced)" -gt 1 ] && echo repeated || echo once)" "repeated" \
   "control: without the announced count the same directive is announced at every poll"
+stop_watch
+
+mutant cursor-ignored 's@^      \[ "\$ANNOUNCED" -ge "\$SEEN" \] || ANNOUNCED="\$SEEN"$@      :@'
+new_lane control_cursor
+send_directive 'Already read.'
+lm inbox --item KEN-1 >/dev/null
+start_watch "$MUTANT"
+await_polls 1
+send_directive 'Not yet read.'
+await_announced 1
+await_polls 2
+assert_eq "$([ "$(mail_lines | tr '\n' '|')" = "lane-mail: mail=KEN-1 new=1|" ] && echo alone || echo read-mail-announced)" \
+  "read-mail-announced" "control: without the cursor raise a watch announces mail the lane already read"
 stop_watch
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

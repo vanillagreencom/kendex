@@ -65,8 +65,8 @@
 # Exit 0 when every row passed (advisory and skipped included), 1 when any
 # row failed, 2 when the fixture could not be installed or `kendex verify`
 # refused it, 3 when nothing failed but a row was unanswerable, so a harness
-# that died on the render never reads as a clean run. Model turns: five on
-# claude, two each on codex and antigravity, three on pi, one each on gemini and
+# that died on the render never reads as a clean run. Model turns: six on
+# claude, two each on codex and antigravity, four on pi, one each on gemini and
 # copilot, two on cursor when logged in.
 #
 # The report is the row table: one aligned line per row as it is decided, then
@@ -629,30 +629,35 @@ mail_moved() { # — reads to-lane.cursor into MAIL_CURSOR; 1 where it did not a
   MAIL_CURSOR=$(cat -- "$MAIL_BOX/to-lane.cursor" 2>/dev/null) || MAIL_CURSOR=""
   case "$MAIL_CURSOR" in '' | 0 | *[!0-9]*) return 1 ;; esac
 }
-# The fixture hook runs the overseer's send with a trailing `|| :`, because it
-# must never refuse the lane's tool call; a send that failed inside it is then
-# told from a hook that never ran only by what the send wrote.
-mail_send_cause() { # — the send's own last line, or where to look for it
-  local log="$PROJECT/smoke-sent.log" text=""
+# A send that ran detached from the lane, in the fixture hook with a trailing
+# `|| :` or beside the session, is told from one that never ran only by what it
+# wrote. A sentinel still standing is a hook that never ran it: the lane made no
+# tool call.
+mail_send_cause() { # LOG — the send's own last line, or where to look for it
+  local log=$1 text=""
+  if [ -e "$PROJECT/smoke-sentinel" ]; then
+    printf 'the lane made no tool call, so the send never ran'
+    return 0
+  fi
   [ -s "$log" ] || { printf 'the send wrote nothing to %s' "$log"; return 0; }
   text=$(grep -v '^[[:space:]]*$' -- "$log" | tail -n 1) || text=""
   printf 'the send said: %s' "$(clip "$text")"
 }
 # Both proofs or neither: the lane said the directive reached it, and the cursor
-# says the mailbox handed it over.
-mail_proof() { # HARNESS EXPECT COMMAND-TEXT — OUT holds the one-turn lane session
+# says the mailbox handed it over. The one verdict both mail rows reach.
+mail_proof() { # HARNESS ROW DELIVERY LABEL LOG — OUT holds the lane session
   local moved=1
   mail_moved || moved=0
-  if ! grep -qE -e "$2" <<<"$OUT"; then
+  if ! grep -qE -e "^$MAIL_ANSWER\$" <<<"$OUT"; then
     if [ "$STATUS" -ne 0 ]; then
-      row "$1" lane-mail unanswerable "harness=$1 $3 exited $STATUS: $(clip "$(last_line)")"
+      row "$1" "$2" unanswerable "harness=$1 $4 exited $STATUS: $(clip "$(last_line)")"
     else
-      row "$1" lane-mail fail "harness=$1 delivery=none: $3 never said $MAIL_ANSWER (to-lane.cursor: ${MAIL_CURSOR:-unset}); $(mail_send_cause); its last line: $(clip "$(last_line)")"
+      row "$1" "$2" fail "harness=$1 delivery=none: $4 never said $MAIL_ANSWER (to-lane.cursor: ${MAIL_CURSOR:-unset}); $(mail_send_cause "$5"); its last line: $(clip "$(last_line)")"
     fi
   elif [ "$moved" -eq 1 ]; then
-    row "$1" lane-mail pass "harness=$1 delivery=arm ($MAIL_ARM): $3 said $MAIL_ANSWER, and to-lane.cursor advanced to $MAIL_CURSOR"
+    row "$1" "$2" pass "harness=$1 delivery=$3: $4 said $MAIL_ANSWER, and to-lane.cursor advanced to $MAIL_CURSOR"
   else
-    row "$1" lane-mail fail "harness=$1 delivery=none: $3 said $MAIL_ANSWER, and to-lane.cursor did not advance (to-lane.cursor: ${MAIL_CURSOR:-unset})"
+    row "$1" "$2" fail "harness=$1 delivery=none: $4 said $MAIL_ANSWER, and to-lane.cursor did not advance (to-lane.cursor: ${MAIL_CURSOR:-unset})"
   fi
 }
 # The advisory verdict: the harness's own listing says kendex put the wait point
@@ -738,7 +743,7 @@ mail_row() { # HARNESS LABEL LISTED [CMD...]
       "$MAIL_READER" "$MAIL_ITEM" "$PROJECT" "$DIR/mail-directive.txt" >"$PROJECT/smoke-sentinel"
     chmod +x "$PROJECT/smoke-sentinel"
     run "$harness-lane-mail" "$@"
-    mail_proof "$harness" "^$MAIL_ANSWER\$" "$label"
+    mail_proof "$harness" lane-mail "arm ($MAIL_ARM)" "$label" "$PROJECT/smoke-sent.log"
   fi
 }
 # KEN-1486 shipped the halt: `lane-mail send --halt`, and two thin hooks that
@@ -756,54 +761,59 @@ mail_row() { # HARNESS LABEL LISTED [CMD...]
 # reaches it: its own mailbox monitor, `lane-mail watch` under the harness's
 # background wake (skills/orch/references/watch-delivery.md § Lane mailbox
 # monitor), is what starts its next turn. The row asks the lane to arm that
-# monitor and end its turn, and sends the directive WAKE_DELAY seconds after
-# the lane's first tool call, the monitor's own arming, so it lands once the
-# turn is over. It passes only where the session said the directive's answer
-# and the lane's own inbox read moved the cursor. It runs before the lane-mail
-# row, whose install adds the hook that would hand the directive over at the
-# turn's end instead, and on an item of its own, so neither row reads the
-# other's cursor. Codex has no row to run: Codex starts no turn for output that
-# arrives after a turn ended, and a Codex lane is reached by `open-terminal
-# --wake`.
+# monitor and end its turn. A sender beside the session waits for the watch's
+# first liveness record, the monitor armed, then WAKE_DELAY seconds more, so
+# the directive lands once that turn is over; the directive asks the lane to
+# repeat the announcement that woke it, which a lane that polled its inbox by
+# itself never sees. A session that answers `armed` and exits is print mode
+# ending with the turn, not a monitor that failed, and is unanswerable. It runs
+# before the lane-mail row, whose install adds the hook that would hand the
+# directive over at the turn's end instead, and on an item of its own, so
+# neither row reads the other's cursor. Codex has no row to run: Codex starts
+# no turn for output that arrives after a turn ended, and a Codex lane is
+# reached by `open-terminal --wake`.
 WAKE_ITEM=SMOKE-2
 WAKE_DELAY=30
 WAKE_READER="$SELF/skills/orch/scripts/lane-mail"
 WAKE_SKIPPED='Codex starts no turn for output that arrives after a turn ended; a Codex lane is reached by open-terminal --wake'
+WAKE_ANNOUNCED="lane-mail: mail=$WAKE_ITEM new=1"
+printf 'Reply with exactly two lines and nothing else: %s, then the first line of the monitor event that woke you.\n' \
+  "$MAIL_ANSWER" >"$DIR/wake-directive.txt"
 wake_task() { # ARM — the lane session's prompt, ARM naming the harness's background wake
-  printf '%s on the shell command `%q watch --item %s --root %q`. Then reply with exactly: armed, and end your turn. When the monitor reports mail, run the shell command `%q inbox --item %s --root %q`, do what the directive it prints says, and then stop the monitor.' \
-    "$1" "$WAKE_READER" "$WAKE_ITEM" "$PROJECT" "$WAKE_READER" "$WAKE_ITEM" "$PROJECT"
+  printf '%s on the shell command `%q watch --item %s --root %q`. Then reply with exactly: armed, and end your turn. When the monitor reports mail, run the command its event names, do what the directive it prints says, and then stop the monitor.' \
+    "$1" "$WAKE_READER" "$WAKE_ITEM" "$PROJECT"
 }
 wake_row() { # HARNESS LABEL CMD...
-  local harness=$1 label=$2 waited=0 moved=1 log="$PROJECT/smoke-wake.log"
+  local harness=$1 label=$2 log="$PROJECT/smoke-wake.log" sender
   shift 2
   MAIL_BOX="$PROJECT/tmp/lane-mail/$WAKE_ITEM"
-  # %q on every value, as for the lane-mail row's sentinel: this is shell
-  # source the fixture hook runs.
-  printf '#!/usr/bin/env bash\ncd %q || exit 1\n( sleep %s; exec %q send --item %q --root %q --directive --file %q ) </dev/null >>%q 2>&1 &\n' \
-    "$PROJECT" "$WAKE_DELAY" "$WAKE_READER" "$WAKE_ITEM" "$PROJECT" "$DIR/mail-directive.txt" "$log" \
-    >"$PROJECT/smoke-sentinel"
-  chmod +x "$PROJECT/smoke-sentinel"
-  run "$harness-mail-wake" "$@"
-  # The send is detached from the hook, so it can outlive a session that ended
-  # early; waiting for it keeps its write out of a scratch tree already removed.
-  if [ ! -e "$PROJECT/smoke-sentinel" ]; then
-    while ! grep -q '^lane-mail: sent ' "$log" 2>/dev/null && [ "$waited" -le "$WAKE_DELAY" ]; do
+  setup "the lane's mailbox" mkdir -p "$MAIL_BOX"
+  : >"$log"
+  (
+    cd "$PROJECT" || exit 1
+    tries=0
+    while [ ! -e "$MAIL_BOX/to-lane.watch" ] && [ "$tries" -lt 240 ]; do
       sleep 1
-      waited=$((waited + 1))
+      tries=$((tries + 1))
     done
-  fi
-  rm -f -- "${PROJECT:?}/smoke-sentinel"
-  mail_moved || moved=0
-  if [ "$STATUS" -ne 0 ]; then
-    row "$harness" mail-wake unanswerable "harness=$harness $label exited $STATUS: $(clip "$(last_line)")"
-  elif ! grep -q '^lane-mail: sent ' "$log" 2>/dev/null; then
-    row "$harness" mail-wake fail "harness=$harness delivery=none: the directive was never sent, so the lane made no tool call to arm a monitor; its last line: $(clip "$(last_line)")"
-  elif ! grep -qE -e "^$MAIL_ANSWER\$" <<<"$OUT"; then
-    row "$harness" mail-wake fail "harness=$harness delivery=none: $label never said $MAIL_ANSWER after the directive landed on the idle lane (to-lane.cursor: ${MAIL_CURSOR:-unset}); its last line: $(clip "$(last_line)")"
-  elif [ "$moved" -eq 1 ]; then
-    row "$harness" mail-wake pass "harness=$harness delivery=monitor: $label said $MAIL_ANSWER, and to-lane.cursor advanced to $MAIL_CURSOR"
+    [ -e "$MAIL_BOX/to-lane.watch" ] || exit 0
+    sleep "$WAKE_DELAY"
+    exec "$WAKE_READER" send --item "$WAKE_ITEM" --root "$PROJECT" --directive --file "$DIR/wake-directive.txt"
+  ) </dev/null >>"$log" 2>&1 &
+  sender=$!
+  run "$harness-mail-wake" "$@"
+  # The sender outlives a session that ended early; ending it keeps its write
+  # out of a scratch tree already removed.
+  kill "$sender" 2>/dev/null || :
+  wait "$sender" 2>/dev/null || :
+  if [ "$STATUS" -eq 0 ] && [ ! -e "$MAIL_BOX/to-lane.watch" ] && ! grep -q '^lane-mail: sent ' "$log"; then
+    row "$harness" mail-wake fail "harness=$harness delivery=none: $label never armed the monitor (no $MAIL_BOX/to-lane.watch); its last line: $(clip "$(last_line)")"
+  elif [ "$STATUS" -eq 0 ] && [ "$(last_line)" = armed ]; then
+    row "$harness" mail-wake unanswerable "harness=$harness $label armed the monitor and ended with its turn: print mode starts no turn on the monitor's output"
+  elif grep -qE -e "^$MAIL_ANSWER\$" <<<"$OUT" && ! grep -qF -- "$WAKE_ANNOUNCED" <<<"$OUT"; then
+    row "$harness" mail-wake fail "harness=$harness delivery=none: $label said $MAIL_ANSWER without the announcement '$WAKE_ANNOUNCED', so no monitor event woke it"
   else
-    row "$harness" mail-wake fail "harness=$harness delivery=none: $label said $MAIL_ANSWER, and to-lane.cursor did not advance (to-lane.cursor: ${MAIL_CURSOR:-unset})"
+    mail_proof "$harness" mail-wake monitor "$label" "$log"
   fi
 }
 

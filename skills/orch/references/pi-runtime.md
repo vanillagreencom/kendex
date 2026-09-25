@@ -23,9 +23,9 @@ A Pi lane arms its mailbox monitor ([watch-delivery.md § Lane mailbox monitor](
 | Step | Call |
 |------|------|
 | Arm | `bg_task action: "spawn"` on `lane-mail watch --item [ISSUE_ID]`, with `notifyOnOutput: true`, `notifyMode: "always"` and `notifyOnExit: true`. Keep the pid the spawn returns. |
-| Wake | Run `lane-mail inbox --item [ISSUE_ID]` and act on every directive it prints. The inbox is the read; the wake's inline tail only says mail landed. |
+| Wake | Run the `lane-mail inbox` command the announcement prints, and act on every directive it prints. The inbox is the read; the wake's inline tail only says mail landed. |
 | Re-arm | At the "wake budget exhausted" notice, stop the monitor with `bg_status action: "stop"` on the kept pid, then spawn a new one. |
-| Exit | At every exit wake, `bg_status action: "list"`, and spawn a new monitor only when the list does not show the kept pid as running. |
+| Exit | An exit with code 2 is a refused watch: follow the refusal rule of [watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor) and spawn nothing. At every other exit wake, `bg_status action: "list"`, and spawn a new monitor only when the list does not show the kept pid as running. |
 
 ## Standing watch (Pi)
 

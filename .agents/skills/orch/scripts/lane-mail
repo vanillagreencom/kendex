@@ -55,10 +55,13 @@ Lane side, rooted at the lane's own git worktree:
               the lane's standing mailbox monitor, run under its harness's
               background wake. Every --interval, when envelopes `inbox` would
               print have landed past to-lane.cursor since the last poll, print
-              `lane-mail: mail=<item> new=<n>` and one line telling the lane
-              to run `inbox`, so each arrival wakes the lane once. An answer
-              prints nothing: its `wait` hands it over. Moves no cursor and
-              runs until it is stopped
+              `lane-mail: mail=<item> new=<n>`, one line of instruction and
+              the `inbox` command that reads them, so each arrival wakes the
+              lane once. An answer prints nothing: its `wait` hands it over.
+              Each poll rewrites to-lane.watch, the liveness record a send's
+              receipt reads. Moves no cursor, runs until it is stopped, and
+              refuses `mailbox-missing` when the mailbox directory is absent
+              at its start or removed while it runs
 
 Overseer side:
   send --item ITEM (--re MSGID | --directive | --halt) --file PATH
@@ -153,9 +156,13 @@ caller's kendex.toml, else the last segment of its origin URL, else the
 checkout's own directory name.
 
 Receipt, the line a `send` and a `peer send` print on stdout once the envelope
-is appended: `lane-mail: sent item=<item> id=<id> bytes=<n>`, where bytes is
-the length of the text the envelope carries, the message file less the one
-trailing newline it drops. A `peer send` writes a peer's overseer mailbox, so
+is appended: `lane-mail: sent item=<item> id=<id> bytes=<n> monitor=<m>`, where
+bytes is the length of the text the envelope carries, the message file less the
+one trailing newline it drops. monitor is `live` when the mailbox's
+to-lane.watch, `at=<epoch> interval=<s>` rewritten by `watch` at every poll,
+is no older than twice its interval plus five seconds by the sender's clock,
+so a monitor is polling that mailbox and wakes its lane; it is `none`
+otherwise, and the lane needs a wake. A `peer send` writes a peer's overseer mailbox, so
 its receipt always names item `overseer` rather than the repository it reached.
 Silence is not a success: a send that printed no receipt appended nothing.
 
@@ -192,7 +199,7 @@ missing-value, option-required, item-invalid, after-invalid, seconds-invalid,
 command-missing, file-unreadable, root-unresolved, repo-unresolved,
 repo-self, lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, timeout,
-item-case-variant. `duplicate` is the one key whose value follows ` id=`
+item-case-variant, mailbox-missing. `duplicate` is the one key whose value follows ` id=`
 rather than `=`, so it names the earlier envelope through the same field the
 receipt above prints.
 
@@ -263,7 +270,8 @@ lm_message() { # KEY VALUE
     host-unreachable) text='The lane host could not be reached, so the mailbox state is unknown: a read is refused rather than reported as empty, and a write rather than reported as delivered. A stopped host is started; a gone one is relaunched.' ;;
     mail-read-failed) text='The hosted mailbox could not be read and its host answers, so the read is refused rather than reported as empty. A send stopped here appended nothing: a mailbox no read could judge is one no send can be judged against.' ;;
     timeout) text='No answer to this ask arrived before --timeout.' ;;
-    mail) text='Overseer mail landed in this lane mailbox. Run .agents/skills/orch/scripts/lane-mail inbox --item with the item above, and act on every directive it prints.' ;;
+    mail) text='Overseer mail landed in this lane mailbox. Run the command below and act on every directive it prints.' ;;
+    mailbox-missing) text='The mailbox directory is not there, so no watch of it can wake the lane. Run the watch from the lane worktree, or with --root naming it, for the item its launch created.' ;;
     duplicate) sep=' id='; text='This envelope was sent to this item less than a minute ago: every field of it but its own id and its stamp matches the envelope the id above names, so the send is a retry of a delivery that already landed rather than a second message. Change any field of the message, or wait out the minute, to send it again.' ;;
     *) printf 'lane-mail: message-invalid key=%s\n' "$1" >&2; return 2 ;;
   esac
@@ -523,6 +531,7 @@ lm_box() { # ROOT
   TO_OVERSEER="$BOX/to-overseer.jsonl"
   TO_LANE="$BOX/to-lane.jsonl"
   CURSOR="$BOX/to-lane.cursor"
+  WATCH_FILE="$BOX/to-lane.watch"
 }
 lm_box "$ROOT"
 
@@ -533,7 +542,7 @@ lm_box "$ROOT"
 # mailbox is judged by its provider behind `lane-host cat` and `append`.
 lm_plain() {
   local path kind
-  for path in "$MAIL_ROOT/tmp/lane-mail" "$BOX" "$TO_OVERSEER" "$TO_LANE" "$CURSOR" "$CURSOR.lock"; do
+  for path in "$MAIL_ROOT/tmp/lane-mail" "$BOX" "$TO_OVERSEER" "$TO_LANE" "$CURSOR" "$CURSOR.lock" "$WATCH_FILE"; do
     kind=-f
     case "$path" in "$MAIL_ROOT/tmp/lane-mail" | "$BOX") kind=-d ;; esac
     { [ ! -L "$path" ] && { [ ! -e "$path" ] || test "$kind" "$path"; }; } || refuse mailbox-unsafe "$path"
@@ -710,19 +719,37 @@ lm_no_duplicate() { # LINE
   [ -z "$earlier" ] || refuse duplicate "$earlier"
 }
 
-# The receipt's two measured fields, read before the append so that nothing
-# able to fail sits between the append and the line reporting it: a send that
+# The receipt's measured fields, read before the append so that nothing able
+# to fail sits between the append and the line reporting it: a send that
 # landed always prints its receipt, and a caller reads silence as a send that
 # did not.
-lm_receipt_fields() { # LINE — sets SENT_ID and SENT_BYTES
+lm_receipt_fields() { # LINE — sets SENT_ID, SENT_BYTES and SENT_MONITOR
   SENT_BYTES="$(jq -r '.text | utf8bytelength' <<<"$1")" || refuse write-failed "$TO_LANE"
   SENT_ID="$(cat -- "$WORK_DIR/id")" || refuse file-unreadable "$WORK_DIR/id"
+  SENT_MONITOR="$(lm_monitor)" || exit "$?"
+}
+
+# `live` where the mailbox's watch record is fresh, `none` otherwise: absent,
+# stale, or not the shape `watch` writes. Read through lm_fetch, so a hosted
+# lane's record is read on the host that holds it and a host out of reach is
+# refused rather than reported as no monitor.
+lm_monitor() {
+  local now=""
+  now="$(date -u +%s)" || refuse write-failed "$BOX"
+  lm_fetch "$WATCH_FILE" "$WORK_DIR/watch.rec"
+  awk -v now="$now" '
+    NR == 1 && $1 ~ /^at=[0-9]+$/ && $2 ~ /^interval=[0-9]+$/ {
+      at = substr($1, 4) + 0; interval = substr($2, 10) + 0
+      if (now - at >= 0 && now - at <= 2 * interval + 5) live = 1
+    }
+    END { print (live ? "live" : "none") }' <"$WORK_DIR/watch.rec" || refuse file-unreadable "$WATCH_FILE"
 }
 
 # The receipt itself: the item the send reached, the id of the envelope it
-# appended and the bytes of message text that envelope carries.
+# appended, the bytes of message text that envelope carries, and whether a
+# monitor stands on the mailbox.
 lm_sent() {
-  printf 'lane-mail: sent item=%s id=%s bytes=%s\n' "$ITEM" "$SENT_ID" "$SENT_BYTES"
+  printf 'lane-mail: sent item=%s id=%s bytes=%s monitor=%s\n' "$ITEM" "$SENT_ID" "$SENT_BYTES" "$SENT_MONITOR"
 }
 
 # The `at` stamp as epoch seconds, null where it does not parse: the one
@@ -1036,9 +1063,20 @@ case "$VERB" in
 
   watch)
     lm_seconds --interval "$INTERVAL"
-    # A harness stops its monitor with a signal. Trapped, so the EXIT trap
-    # still removes the work directory a monitor re-armed at every expiry
-    # would otherwise leave behind each time.
+    # The mailbox a launch created. A watch of any other directory would poll
+    # an empty mailbox forever and read as armed, and one whose mailbox is
+    # removed under it, its worktree gone, has no lane left to wake.
+    [ -d "$BOX" ] || refuse mailbox-missing "$BOX"
+    # The command the woken turn runs, spelled for the root this watch reads.
+    case "$OPTS_GIVEN" in
+      *"--root$NL"*) printf -v WATCH_READ '%q inbox --item %q --root %q' "$SCRIPT_DIR/lane-mail" "$ITEM" "$ROOT" ;;
+      *) printf -v WATCH_READ '%q inbox --item %q' "$SCRIPT_DIR/lane-mail" "$ITEM" ;;
+    esac
+    # A trapped signal ends the wait below at once, and the EXIT trap then
+    # withdraws the liveness record, so a send stops reading this monitor as
+    # live the moment it is stopped. A KILL runs no trap: the record then goes
+    # stale within its window, and the work directory stays.
+    trap 'rm -f -- "$WATCH_FILE"; lm_cleanup' EXIT
     trap 'exit 129' HUP
     trap 'exit 130' INT
     trap 'exit 143' TERM
@@ -1047,6 +1085,9 @@ case "$VERB" in
     # never announced, and a fresh watch announces what stands unread.
     ANNOUNCED=0
     while :; do
+      [ -d "$BOX" ] || refuse mailbox-missing "$BOX"
+      printf 'at=%s interval=%s\n' "$(date -u +%s)" "$INTERVAL" >"$WORK_DIR/watch.rec" &&
+        mv -- "$WORK_DIR/watch.rec" "$WATCH_FILE" || refuse write-failed "$WATCH_FILE"
       lm_cursor_read
       [ "$ANNOUNCED" -ge "$SEEN" ] || ANNOUNCED="$SEEN"
       lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
@@ -1054,9 +1095,16 @@ case "$VERB" in
       awk -v seen="$ANNOUNCED" 'NR > seen' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/unread"
       NEW="$(lm_inbox_objects "$WORK_DIR/unread" | awk 'END { print NR + 0 }')" ||
         refuse file-unreadable "$TO_LANE"
-      [ "$NEW" -eq 0 ] || REFUSE_EXTRA="new=$NEW" lm_message mail "$ITEM"
+      if [ "$NEW" -ne 0 ]; then
+        REFUSE_EXTRA="new=$NEW" lm_message mail "$ITEM"
+        printf '%s\n' "$WATCH_READ"
+      fi
       ANNOUNCED="$(lm_count "$WORK_DIR/lane.jsonl")"
-      sleep "$INTERVAL"
+      # The copies of the mailbox this poll read go before the wait, so a
+      # watch killed there leaves none of the lane's messages behind.
+      rm -f -- "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl" "$WORK_DIR/unread"
+      sleep "$INTERVAL" &
+      wait "$!"
     done
     ;;
 
