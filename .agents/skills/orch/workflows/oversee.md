@@ -190,7 +190,7 @@ Text crosses `--file` ([SKILL.md](../SKILL.md) § Harness-Safe Shell). A directi
 
 After a directive, wait for the watch's `directive-read` for its id: the lane's own mailbox cursor passing it, whichever read path moved it, on every harness and on a hosted lane. Never read a pane to confirm a delivery. `directive-unread` is the directive still unread past `ORCH_DIRECTIVE_UNREAD_SECS`: wake the lane, reach it at its pane, or relaunch it, by the lane's state and [lane-reach.md](../references/lane-reach.md).
 
-**A refusal is a state, not a remedy.** A halt or an answer to a lane with no monitor that the wake refuses lands only at a tool call or a turn end, per the Lane mail rule in [skill-rules.md](../references/skill-rules.md). Send where the reason allows it; a live Codex lane is handled per [codex-runtime.md § Lane mailbox](../references/codex-runtime.md#lane-mailbox).
+**A refusal is a state, not a remedy.** A halt or an answer to a lane with no monitor that the wake refuses lands only where the Lane mail rule in [skill-rules.md](../references/skill-rules.md) says. Send where the reason allows it; a live Codex lane is handled per [codex-runtime.md § Lane mailbox](../references/codex-runtime.md#lane-mailbox).
 
 [references/lane-reach.md](../references/lane-reach.md) holds what each wake refusal reason licenses and, per harness, how a lane is launched, how its state is read and how its harness dialogs are answered.
 
