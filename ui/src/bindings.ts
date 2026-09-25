@@ -661,7 +661,7 @@ export const events = {
 };
 
 /* Constants */
-export const LEGAL = {"version":1,"termsUrl":"https://kendex.ai/legal/terms","privacyUrl":"https://kendex.ai/legal/privacy"} as const;
+export const LEGAL = {"version":2,"termsUrl":"https://kendex.ai/legal/terms","privacyUrl":"https://kendex.ai/legal/privacy"} as const;
 
 export const MANIFEST_SCHEMA = 6 as const;
 

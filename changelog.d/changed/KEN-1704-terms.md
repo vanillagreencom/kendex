@@ -1,0 +1,1 @@
+- The Terms of Service and Privacy Policy are at version 2, effective 25 September 2026, and state the trash's automatic deletion; the app and the CLI ask for acceptance once more.

@@ -38,7 +38,7 @@ pub struct Legal {
 }
 
 pub const LEGAL: Legal = Legal {
-    version: 1,
+    version: 2,
     terms_url: "https://kendex.ai/legal/terms",
     privacy_url: "https://kendex.ai/legal/privacy",
 };

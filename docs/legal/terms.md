@@ -1,6 +1,6 @@
 # Terms of Service
 
-Version 1. Effective 6 September 2026.
+Version 2. Effective 25 September 2026.
 
 These terms cover the kendex desktop app, the kendex command-line tool, the kendex.ai website, and the community directory they read. They are an agreement between you and Vanillagreen LLC of Bellevue, Washington, USA ("kendex", "we", "us"). Using kendex accepts them. If you do not accept them, do not use kendex.
 
