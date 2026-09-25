@@ -157,15 +157,22 @@ runs (any JSON file whose top-level 'hooks' entries carry a 'command', such as
 .claude/settings.json, .codex/hooks.json or .pi/kendex/hooks.json), that path
 takes one side of the conflict, its conflicted content is saved beside it as
 <path>.restack-conflict, and one 'worktree-restack-hook-held:' line names
-every such path. Resolve the markers in the saved copy, then replace the hook
-in one step with 'mv <path>.restack-conflict <path>', stage the hook, and
+every such path. Resolve the markers in the saved copy, then replace the path
+in one step with 'mv <path>.restack-conflict <path>', stage the path, and
 unstage the copy with 'git rm -q --cached --ignore-unmatch --
 <path>.restack-conflict'. continue and skip refuse with
 'worktree-restack-hook-unconsumed:' while a saved copy is in the worktree or
 the index; deleting it, staging the path and unstaging the copy keeps the held
-side. abort removes the saved copies. The held set is the paths a declaration's command names,
-not the files those hooks source. When the declarations cannot be read, for
-example with jq missing, every conflicted path is held the same way.
+side. abort removes the saved copies. The held set is the paths a
+declaration's command names and the libraries those hooks source, directly or
+through another library, read from the '# shellcheck source=' directive above
+each 'source' or '.' line, at the pre-restack head, the paused HEAD and the
+commit being replayed. A directive resolves against the sourcing file's
+directory; one that climbs out of it ('../skills/<skill>/...') matches every
+tracked path ending in the rest of it, since the hook finds that library by
+searching. When any read that discovery makes fails, the lookup of the
+commit being replayed included, or jq is missing, every conflicted path is
+held the same way.
 Conflicts in every other path keep their markers in place.
 
 On completion, continue and skip report one 'rebase-map: <old-sha>
@@ -269,8 +276,9 @@ Reuse rebase conflicts:
        conflicted.
   With no conflict, --restack completes the same rebase as --reuse. The
   guarded actions fail closed on missing, stale, or unrelated state
-  (restack --help). A conflicted path a harness runs as a hook is held at a
-  parseable side instead of left with markers (restack --help).
+  (restack --help). A conflicted path a harness runs as a hook, or a library
+  such a hook sources, is held at a parseable side instead of left with
+  markers (restack --help).
 
 Rewritten commits:
   A completed --reuse/--restack rebase reports one 'rebase-map: <old-sha>
