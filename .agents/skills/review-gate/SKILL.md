@@ -131,7 +131,7 @@ Carry-forward never creates evidence or bypasses a fail-closed term. Objections 
 ## Scripts
 
 - `scripts/validate.sh`: validate a consumer installation. `--help`
-- `scripts/validate-workflow.sh`: compare the adopted workflow with the template. `--help`
+- `scripts/validate-workflow.sh`: compare the adopted workflow with the template; `--adopt` re-installs a new template over an unedited copy. `--help`
 - `scripts/review-predicate.sh`: evaluate one head or validate config. `--help`
 - `scripts/review-policy`: map the shared classifier's answer to the configured review evidence policy. `--help`
 - `scripts/review-writer.sh`: `workflow_dispatch` and `schedule` evaluate and converge every open PR; `merge_group` posts one queue success, while `WRITER_READ_ONLY=1` is a no-op. Its header documents the workflow-only contract.

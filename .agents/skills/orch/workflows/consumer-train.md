@@ -4,7 +4,7 @@ Run this workflow from the package repository's base checkout. On a hosted fleet
 
 ## 1. Resolve the train
 
-Every command this workflow runs must exit 0, unless a section states how it reads that command's failure; § 3 does so for refresh, verify and `kendex check --quiet`, and no other section does. Any other non-zero exit, and any command that does not run, stops the train before consumer writes. Record the command and its output in § 4's record under `not_committed_reason` for a consumer step, or report it from the run for a § 1 step.
+Every command this workflow runs must exit 0, unless a section states how it reads that command's failure; § 3 does so for refresh, verify, the writer re-adoption and `kendex check --quiet`, and no other section does. Any other non-zero exit, and any command that does not run, stops the train before consumer writes. Record the command and its output in § 4's record under `not_committed_reason` for a consumer step, or report it from the run for a § 1 step.
 
 Bind the package root, its Git remote identity, the fleet state directory, and the candidate paths before entering a consumer checkout:
 
@@ -45,6 +45,14 @@ kendex verify --scope project
 ```
 
 When refresh or verify fails on a line ending `update-pi must settle it`, run `kendex update-pi --scope global` for a global-scope line or `kendex update-pi --scope project` for a project-scope line in the same checkout, then run refresh and verify again. That second result is the one this workflow records.
+
+When `git -C [PACKAGE_ROOT] diff --name-only [MERGED_RANGE] -- skills/review-gate/templates/` names a path, or § 1 bound no range, and the refreshed consumer has an executable `.agents/skills/review-gate/scripts/validate-workflow.sh`, re-adopt the review-gate writer template from the same checkout:
+
+```bash
+.agents/skills/review-gate/scripts/validate-workflow.sh --adopt
+```
+
+It re-installs the new template over the consumer's writer workflow when that copy equals an earlier shipped version, so the render pull request carries both and the consumer's review-gate validate check stays green. Its write is part of the refresh diff and commits with it. Exit 0 continues. Exit 2, and exit 1 with a `FAIL check=workflow-edited` line, fail this consumer as a refresh failure does: that line names a copy a person edited, which a person in the consumer re-copies by hand. Exit 1 without that line reports the consumer's own standing findings, a consumer with no adopted writer among them, and continues.
 
 After refresh, read the consumer project's `.kendex-lock.json`. Match refreshed shipped-package entries to their `sources` rows by source name. Normalize each source row's `repo` by the same rule as `PACKAGE_SOURCE_REPO`, then keep matching rows. Require exactly one distinct non-empty `commit`, and use it as `PACKAGE_SOURCE_SHA`. If the lock is missing, unreadable, or cannot identify exactly one such commit, record that exact refusal, restore the consumer to its pre-refresh state, and do not commit.
 

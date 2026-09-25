@@ -34,10 +34,17 @@ fi
 
 print_usage() {
   cat <<'USAGE'
-Usage: validate-workflow.sh [--help]   (no positional arguments)
+Usage: validate-workflow.sh [--adopt | --help]
 
 Checks that THIS repository's adopted review-gate writer workflow is still
 the shipped template.
+
+--adopt re-installs the template over an adopted copy that still equals a
+version of the template this repository's history shipped, so a refresh that
+brought a new template lands with a matching copy. A copy that equals no
+shipped version is a copy a person edited: it is left untouched and named on
+one `FAIL check=workflow-edited` line. The copy keeps its script path and its
+`check_run` opt-in, the two deltas below.
 
 The template is copied VERBATIM — it carries no per-repo values — so the
 check is equality, line by line. A YAML comment-only line is dropped, and
@@ -52,10 +59,11 @@ deltas are legitimate and allowed:
   * the script path each repo kind actually runs: `skills/` in the catalog,
     the vendored `.agents/skills/` in a consumer. Each rejects the other's.
 
-Anything else is one failure naming the first divergent line. The remedy is
-always the same: re-copy the template. Nothing here re-derives what the
-workflow means, so no spelling of a change can satisfy the check while
-breaking the contract.
+Anything else is one failure naming the first divergent line, the shipped
+template's git blob id on a `note check=workflow-template` line, and the
+remedy: `--adopt`, or a hand re-copy where the copy was edited. Nothing here
+re-derives what the workflow means, so no spelling of a change can satisfy
+the check while breaking the contract.
 
 The single-writer contract gets one check of its own, over-approximating on
 purpose: no other tracked workflow may name the engine outside a comment.
@@ -73,16 +81,22 @@ STATUS is ok, FAIL or note. VALUE uses Bash printf %q escaping.
 Indented explanation follows each verdict; consumers do not parse it.
 
 Exit codes:
-  0  every check held
+  0  every check held (with --adopt, after any re-install it made, which an
+     `ok check=workflow-readopted` line names)
   1  at least one FAIL line
   2  the check could not run at all (bad arguments, not a git repository, no
-     shipped template to compare against)
+     shipped template to compare against, a history or write failure)
 USAGE
 }
 
 if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
   print_usage
   exit 0
+fi
+ADOPT=0
+if [ "$#" -eq 1 ] && [ "$1" = "--adopt" ]; then
+  ADOPT=1
+  shift
 fi
 if [ "$#" -gt 0 ]; then
   rg_message error unknown-arguments "$#" "validate-workflow.sh: unknown argument list ($# argument(s), first: '${1}') — no positional arguments (run --help)" >&2
@@ -326,19 +340,72 @@ elif [ -n "$cr_n" ] || [ -n "$ty_n" ]; then
   bad workflow-opt-in "$adopted" "$adopted carries a PARTIAL check_run opt-in — the trigger line and its \`types: [created, completed]\` child opt in together or not at all: a trigger without the child fires on every activity type or is refused outright, and the child without its trigger lands under whatever precedes it. Uncomment both template lines, adjacent, or neither"
 fi
 
+# The expected copy of ONE template file in this repo: the opt-in pair
+# uncommented in place when the adopted copy carries it, and the catalog's
+# script path. Every template version is judged through this one rewrite, so
+# a version from history and the current one are held to the same deltas.
+EXPECT_SED=()
 if [ "$CHECK_RUN_ENABLED" -eq 1 ]; then
-  sed -e "s|^${TEMPLATE_OPT_TRIGGER}\$|  check_run:|" \
-    -e "s|^  #     types: \\[created, completed\\]\$|    types: [created, completed]|" \
-    "$TEMPLATE" >"$TMP/template.raw"
-else
-  cat "$TEMPLATE" >"$TMP/template.raw"
+  EXPECT_SED+=(-e "s|^${TEMPLATE_OPT_TRIGGER}\$|  check_run:|"
+    -e "s|^  #     types: \\[created, completed\\]\$|    types: [created, completed]|")
 fi
+if [ "$IS_CATALOG" -eq 1 ]; then
+  EXPECT_SED+=(-e 's#\.agents/skills/review-gate/#skills/review-gate/#g')
+fi
+expected_raw() { # TEMPLATE_FILE — raw bytes on stdout
+  if [ "${#EXPECT_SED[@]}" -eq 0 ]; then
+    cat "$1"
+  else
+    sed "${EXPECT_SED[@]}" "$1"
+  fi
+}
+
+expected_raw "$TEMPLATE" >"$TMP/template.raw" ||
+  die template-read "$TEMPLATE" "could not read $TEMPLATE"
 code_lines "$TMP/template.raw" >"$TMP/template.code"
 
-if [ "$IS_CATALOG" -eq 1 ]; then
-  sed -i.bak 's#\.agents/skills/review-gate/#skills/review-gate/#g' "$TMP/template.code"
-  rm -f "$TMP/template.code.bak"
-fi
+# Paths from the repository root: the pathspec the template's history is
+# read through, and the command a person runs from there.
+TEMPLATE_REL="$(cd "$SKILL_DIR/templates" && git rev-parse --show-prefix)review-gate-writer.yml" ||
+  die template-path "$TEMPLATE" "could not place $TEMPLATE inside the repository"
+ADOPT_CMD="$(cd "$SCRIPT_DIR" && git rev-parse --show-prefix)validate-workflow.sh --adopt" ||
+  die script-path "$SCRIPT_DIR" "could not place $SCRIPT_DIR inside the repository"
+
+# The shipped version the copy was compared against, as a git blob id a
+# reader finds with `git log --find-object`: the template names no version.
+template_note() {
+  local blob
+  blob="$(git hash-object -- "$TEMPLATE")" || die template-hash "$TEMPLATE" "could not hash $TEMPLATE"
+  rg_report note workflow-template "$blob" "the shipped template compared against: $TEMPLATE_REL at blob $blob"
+}
+
+# Every version of the template this repository's history committed, each
+# through the same rewrite, until one equals the adopted copy. Prints that
+# version's blob id, or nothing: a copy no shipped version equals is a copy a
+# person edited. A commit that deleted the template holds no version.
+shipped_match() {
+  local commit blob cmp_rc seen=" "
+  git log --format=%H -- "$TEMPLATE_REL" >"$TMP/history" ||
+    die template-history "$TEMPLATE_REL" "could not read the history of $TEMPLATE_REL"
+  while IFS= read -r commit; do
+    blob="$(git rev-parse --verify --quiet "$commit:$TEMPLATE_REL")" || continue
+    case "$seen" in *" $blob "*) continue ;; esac
+    seen="$seen$blob "
+    git cat-file blob "$blob" >"$TMP/shipped.yml" ||
+      die template-history "$blob" "could not read $TEMPLATE_REL at blob $blob"
+    expected_raw "$TMP/shipped.yml" >"$TMP/shipped.raw" ||
+      die template-history "$blob" "could not rewrite $TEMPLATE_REL at blob $blob"
+    code_lines "$TMP/shipped.raw" >"$TMP/shipped.code"
+    cmp_rc=0
+    cmp -s "$TMP/shipped.code" "$TMP/adopted.code" || cmp_rc=$?
+    [ "$cmp_rc" -le 1 ] || die workflow-compare "$cmp_rc" "could not compare $adopted against $TEMPLATE_REL at blob $blob (cmp exit $cmp_rc)"
+    if [ "$cmp_rc" -eq 0 ]; then
+      printf '%s' "$blob"
+      return 0
+    fi
+  done <"$TMP/history"
+  return 0
+}
 
 # diff exits 0 same, 1 differing, and anything higher is trouble reading the
 # files — which must not be laundered into "they differ".
@@ -347,13 +414,31 @@ diff "$TMP/template.code" "$TMP/adopted.code" >"$TMP/diff.out" || diff_rc=$?
 if [ "$diff_rc" -gt 1 ]; then
   die workflow-compare "$diff_rc" "could not compare $adopted against $TEMPLATE (diff exit $diff_rc)"
 fi
+# ONE row, naming the first divergence. Listing every differing line is a
+# diff, and the remedy does not vary per line.
+first_divergence="$(head -n 4 "$TMP/diff.out" | sed 's/^/          /')"
 if [ "$diff_rc" -eq 0 ]; then
   ok workflow-equality "$adopted" "the adopted workflow is the shipped template, line for line"
+elif [ "$ADOPT" -eq 0 ]; then
+  bad workflow-equality "$adopted" "$adopted has diverged from the shipped template ($TEMPLATE). Run \`$ADOPT_CMD\` and commit the result: it re-installs the template over a copy that equals a version this repository shipped. Where it reports workflow-edited, a person changed the copy; re-copy the template by hand. First divergence:
+$first_divergence"
+  template_note
 else
-  # ONE row, naming the first divergence. Listing every differing line is a
-  # diff, and the remedy does not vary per line: re-copy the template.
-  bad workflow-equality "$adopted" "$adopted has diverged from the shipped template ($TEMPLATE). The template carries no per-repo values, so a copy that differs is a copy someone edited — re-copy it. First divergence:
-$(head -n 4 "$TMP/diff.out" | sed 's/^/          /')"
+  # shipped_match dies inside the substitution; its refusal is already on
+  # stderr, and its exit status is this run's.
+  shipped_rc=0
+  shipped="$(shipped_match)" || shipped_rc=$?
+  [ "$shipped_rc" -eq 0 ] || exit "$shipped_rc"
+  if [ -n "$shipped" ]; then
+    # The EXPECTED bytes, not the template's: the copy keeps this repo's
+    # script path and the opt-in it had, so it is equal the moment it lands.
+    cat "$TMP/template.raw" >"$adopted" || die workflow-write "$adopted" "could not write $adopted"
+    ok workflow-readopted "$adopted" "$adopted equalled the shipped template at blob $shipped; re-installed $TEMPLATE_REL over it"
+  else
+    bad workflow-edited "$adopted" "$adopted equals no version of $TEMPLATE_REL this repository's history shipped, so a person edited it; it was left untouched. Re-copy the template by hand. First divergence:
+$first_divergence"
+    template_note
+  fi
 fi
 
 # ==================== what equality cannot express =========================

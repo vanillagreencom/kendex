@@ -14,7 +14,7 @@ Held-back jobs report `skipped`, and GitHub counts skipped as satisfied.
 ## What an adoption PR contains
 
 1. **Vendor the skill** (`kendex refresh` places `.agents/skills/review-gate/scripts/` and these references). The consumer's drift check asserts the vendored copy matches the catalog byte-for-byte.
-2. **Copy `.agents/skills/review-gate/templates/review-gate-writer.yml`** into `.github/workflows/`, VERBATIM. It carries no per-repo values. Repo-owned after the copy — workflow YAML is not an ongoing sync target. The one workflow is the ONLY writer of the gate status; every leg that runs the engine runs the DEFAULT-branch one (PR-attached legs relay). Renaming the copy needs no further change. Keep every line of the relay's `env:` block (`GH_REPO`, `DISPATCH_REF`, `WORKFLOW_REF`, `EVENT_NAME`, `CHECK_NAME`).
+2. **Copy `.agents/skills/review-gate/templates/review-gate-writer.yml`** into `.github/workflows/`, VERBATIM. It carries no per-repo values. `kendex refresh` updates the vendored template but never writes `.github/workflows/`; a template update reaches the copy through `.agents/skills/review-gate/scripts/validate-workflow.sh --adopt` (§ Updating an already-adopted copy). The one workflow is the ONLY writer of the gate status; every leg that runs the engine runs the DEFAULT-branch one (PR-attached legs relay). Renaming the copy needs no further change. Keep every line of the relay's `env:` block (`GH_REPO`, `DISPATCH_REF`, `WORKFLOW_REF`, `EVENT_NAME`, `CHECK_NAME`).
 3. **Add the validate job** to the repo's CI (below).
 4. **Set the repo's `REVIEW_GATE_*` keys** in `kendex.settings.toml` (decision axes below; full key table in [settings.md](settings.md)).
 5. **Delete everything the writer supersedes in the same PR** — gate jobs that read the predicate to condition CI, rerun/refire/sweep workflows and scripts, local predicate copies, duplicated gate steps.
@@ -54,9 +54,19 @@ Value rules come from the engine, not from a copy of it: the settings half calls
 - **Merge queue**: the writer's `merge_group` leg posts the gate context on queue shas unconditionally. Verify the queue's required checks include both the gate context and the test aggregate.
 - **Required checks must NOT include the writer's own job names.** Require the commit STATUS context only.
 
-## Updating an already-adopted copy (relay/converge split)
+## Updating an already-adopted copy
 
-Consumer copies are repo-owned; `kendex refresh` does NOT deliver this — each repo takes it as its own PR. Template delta:
+After `kendex refresh` brings a new template, run `.agents/skills/review-gate/scripts/validate-workflow.sh --adopt` from the repository root and commit its write with the refresh. It compares the copy against every version of the template this repository's history holds:
+
+- A copy equal to the current template is left as it is: `ok check=workflow-equality`.
+- A copy equal to an earlier shipped version is re-installed from the current template, keeping its script path and its `check_run` opt-in: `ok check=workflow-readopted`.
+- A copy equal to no shipped version is one a person edited. It is left untouched and named on one `FAIL check=workflow-edited` line, with the first divergent line under it. Re-copy the template by hand.
+
+The consumer train runs this step on every render whose merged range touches `skills/review-gate/templates/` ([orch consumer-train.md § 3](../../orch/workflows/consumer-train.md#3-refresh-each-consumer)), so a template change lands in the render pull request and its validate check stays green.
+
+### The relay/converge split
+
+The template delta that split the writer into a relay and a converge leg:
 
 - A `request-converge` job (the relay) runs every PR-attached leg; the `write` job's `if:` is narrowed to `workflow_dispatch`/`schedule`.
 - **Permissions**: the relay holds `actions: write` and nothing else — no `contents`, no `statuses`, no `issues`. `actions: write` authorizes dispatching **any** workflow in the repo plus cancelling, re-running and deleting runs, logs and artifacts. The relay checks nothing out and executes no PR-controlled code — never add a checkout to this job. The `write` job holds no `actions` scope.
@@ -117,7 +127,8 @@ Concrete per-consumer values are tracked on the org adoption issue, not here. Ev
 | `carry-unmatched` | Fix the glob, or declare it in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC` when it guards paths that do not exist yet. |
 | `carry-declaration-matched` or `carry-declaration-missing` | Reconcile the ledger — every declaration names an active exclusion that still matches nothing. |
 | `workflow-count` | Adopt (§ What an adoption PR contains), or `git add` the workflow: Actions runs only what is committed. |
-| `workflow-equality` | Re-copy `templates/review-gate-writer.yml` over the adopted file. The template carries no per-repo values, so a copy that differs is a copy someone edited; the line named under the verdict says where. Keep only the `check_run` opt-in's two trigger lines if that opt-in is on. |
+| `workflow-equality` | Run `validate-workflow.sh --adopt` (§ Updating an already-adopted copy) and commit its write. The `note check=workflow-template` line under the verdict names the template blob the copy was compared against. |
+| `workflow-edited` | A person edited the copy. Re-copy `templates/review-gate-writer.yml` over it; the line named under the verdict says where it diverges. Keep only the `check_run` opt-in's two trigger lines if that opt-in is on. |
 | `carry-load` | Read the nested `settings-unreadable` or `settings-syntax` diagnostic. It names the key and the shape the loader rejected. Fix the assignment; an unreadable value is never an empty one. |
 | `runtime-mode` or `runtime-syntax` | Re-run `kendex refresh` and commit the result. |
 
