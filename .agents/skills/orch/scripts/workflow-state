@@ -1091,7 +1091,7 @@ cmd_prune() {
     for entry in "$sd"/*; do
         [[ "$pd" != "$entry" && "$pd" != "$entry"/* ]] || continue
         case "$entry" in
-            "$sd/${state_file##*/}"|"$sd/${state_file##*/}.lock"|"$WATCH_PID_FILE"|"$WATCH_ARGV_FILE"|"$WATCH_LOG_FILE"|"$WATCH_ERR_FILE") ;;
+            "$sd/${state_file##*/}"|"$sd/${state_file##*/}.lock"|"$WATCH_PID_FILE"|"$WATCH_ARGV_FILE"|"$WATCH_LOG_FILE"|"$WATCH_ERR_FILE"|"$WATCH_RUNNER_FILE") ;;
             "$sd/handoffs")
                 for f in "$entry"/*; do [[ "${f##*/}" == OVERSEER-HANDOFF.md ]] || units+=("$f"); done ;;
             "$sd/lane-mail")

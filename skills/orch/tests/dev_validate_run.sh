@@ -737,6 +737,16 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   # runner before units. The grandchild that left the group outlives it.
   MUTANT_FILE=lib/job-unit.sh mutant mutant-no-unit 'elif probe_err="$(systemd-run --user --quiet --collect true </dev/null 2>&1 >/dev/null)"; then' 'elif false; then'
   proj_nounit="$(make_proj proj-no-unit 'setsid sleep 300 & echo $! > grand.pid; exit 0' 20)"
+  # A capped run keeps its unit where the manager does not linger: linger is
+  # asked only of a session-long job.
+  mkdir -p "$TMP_ROOT/no-linger-bin"
+  printf '#!/bin/sh\necho no\n' > "$TMP_ROOT/no-linger-bin/loginctl"
+  chmod +x "$TMP_ROOT/no-linger-bin/loginctl"
+  RUN_PATH="$TMP_ROOT/no-linger-bin:$PATH"
+  run_script "$RUN" --worktree "$proj_nounit" --poll 1
+  RUN_PATH=""
+  assert_eq "$(runner_line "$OUT") $(grandchild_state "$proj_nounit")" "runner=systemd unit=orch-validate-proj-no-unit-PID gone" \
+    "a validation run where the manager does not linger is still a unit, and no grandchild outlives it" "$ERR"
   run_script "$MUTANT" --worktree "$proj_nounit" --poll 1
   assert_eq "$(runner_line "$OUT") $(grandchild_state "$proj_nounit")" "runner=setsid reason=probe-failed detail= alive" \
     "control: outside a unit the grandchild that started its own session outlives the run" "$ERR"

@@ -427,9 +427,8 @@ authoritative for keyring auth only when no env token is selected). Full
 ladder: orch DEVELOPMENT.md.
 
 Long waiter launch:
-  Run under setsid with the exit written to a completion file, then poll
-  that file while keeping the lane active. Follow orch's
-  references/waiter-launch.md for the saved launch script and commands.
+  Follow orch's references/waiter-launch.md for the saved launch script and
+  commands, and poll its completion file while keeping the lane active.
   Never start a long waiter as a harness background command. A missing
   completion file is no verdict and does not authorize a duplicate waiter.
 

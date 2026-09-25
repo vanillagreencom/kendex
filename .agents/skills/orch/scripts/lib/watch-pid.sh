@@ -22,15 +22,22 @@
 #                       on the state other than a succession's prints both
 #                       and removes them; the restarted watch, their writer,
 #                       never does
+#   oversee-watch.runner
+#                       lib/job-unit.sh's record of how a succession started
+#                       its restart helper, which the restart then overwrites
+#                       with how it started the watch; removed with the two
+#                       above
 #
 # A record is live only while its pid runs a process whose command line names
-# oversee-watch: a pid read back off disk may by then belong to anything.
+# oversee-watch (watch_pid_runs): a pid read back off disk may by then belong
+# to anything.
 #
 # Sourced, never executed.
 
-# Seconds a stopped watch has to exit before the stop is reported failed. The
-# loop's TERM trap signals the pass it is waiting on and exits at once; the
-# bound is for a host too loaded to schedule it.
+# Seconds a stopped watch has to give up its record, by removing it or
+# exiting, before the stop is reported failed. The loop's TERM trap removes the
+# record first, so the bound is for a host too loaded to schedule it, not for
+# the pass the loop then waits out.
 WATCH_STOP_SECS=10
 
 # The record's paths for fleet state STATE, and STATE itself resolved, so two
@@ -44,6 +51,7 @@ watch_pid_paths() { # STATE
   WATCH_ARGV_FILE="$dir/oversee-watch.argv"
   WATCH_LOG_FILE="$dir/oversee-watch.log"
   WATCH_ERR_FILE="$dir/oversee-watch.err"
+  WATCH_RUNNER_FILE="$dir/oversee-watch.runner"
 }
 
 # Whether a live watch holds the record for STATE, with its WATCH_PID,
@@ -51,7 +59,7 @@ watch_pid_paths() { # STATE
 # there is no record, its state is another file, or its pid runs no
 # oversee-watch.
 watch_pid_live() { # STATE
-  local line args state=""
+  local line state=""
   WATCH_PID="" WATCH_PANE="" WATCH_ORIGIN="" WATCH_SCRIPT="" WATCH_CWD=""
   watch_pid_paths "$1" || return 1
   [[ -f "$WATCH_PID_FILE" ]] || return 1
@@ -66,9 +74,16 @@ watch_pid_live() { # STATE
     esac
   done < "$WATCH_PID_FILE"
   [[ "$WATCH_PID" =~ ^[1-9][0-9]*$ && "$state" == "$WATCH_STATE_CANON" ]] || return 1
-  kill -0 "$WATCH_PID" 2>/dev/null || return 1
-  args="$(ps -o args= -p "$WATCH_PID" 2>/dev/null)" || return 1
-  [[ "$args" == *oversee-watch* ]]
+  watch_pid_runs "$WATCH_PID"
+}
+
+# Whether PID runs an oversee-watch: it is running, is no zombie nobody has
+# reaped, and its command line names oversee-watch.
+watch_pid_runs() { # PID
+  local line
+  kill -0 "$1" 2>/dev/null || return 1
+  line="$(ps -o stat= -o args= -p "$1" 2>/dev/null)" || return 1
+  [[ "${line# }" != Z* && "$line" == *oversee-watch* ]]
 }
 
 # Write the record for STATE as this process: its pid, PANE, ORIGIN, and the
@@ -103,20 +118,24 @@ watch_argv_read() { # STATE
   while IFS= read -r -d '' word; do WATCH_ARGV+=("$word"); done < "$WATCH_ARGV_FILE"
 }
 
-# Stop the watch at PID and wait for it to go. TERM reaches the loop's trap at
-# once, since the loop waits on its pass and its delay in the background, and
-# the trap signals that pass before it exits. The pass takes TERM's default and
-# its own children finish on their own: one of them can be `lane-close`, whose
-# write of a hosted lane's record the next watch then reads, and a stop in the
-# middle of that close loses the lane-closed event the pass would have printed.
-# Returns 1 when PID is still running at the bound, which is read off the
-# shell's own clock rather than counted in sleeps, so a sleep that returns
-# early cannot shorten it.
-watch_stop() { # PID
+# Stop the watch at PID and wait for it to give up its record: to exit, or to
+# remove the record naming it, whichever comes first. TERM reaches the loop's
+# trap at once, since the loop waits on its pass and its delay in the
+# background, and the trap removes the record, then signals that pass and
+# waits for it. A pass part way through `lane-close` runs that close to its end
+# and reports it before it exits; that close has no bound of its own here, so
+# the stop waits for the record and not for the exit, and watch_pid_runs tells
+# the caller when the rest has happened. Returns 1 when PID still holds its
+# record at the bound, which is read off the shell's own clock rather than
+# counted in sleeps, so a sleep that returns early cannot shorten it, and
+# where STATE's directory does not resolve, before any signal.
+watch_stop() { # PID STATE
   local deadline=$((SECONDS + WATCH_STOP_SECS))
+  watch_pid_paths "$2" || return 1
   kill -TERM "$1" 2>/dev/null || true
-  while kill -0 "$1" 2>/dev/null; do
+  while kill -0 "$1" 2>/dev/null && grep -qxF -- "pid=$1" "$WATCH_PID_FILE" 2>/dev/null; do
     (( SECONDS < deadline )) || return 1
     sleep 0.1
   done
 }
+

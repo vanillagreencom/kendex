@@ -57,7 +57,7 @@ build() { # DIR
   for f in lane-mail/KEN-1/to-lane.jsonl lane-mail/KEN-2/to-lane.jsonl lane-mail/overseer/to-lane.jsonl \
     workflow-state-KEN-1.json workflow-state-KEN-2.json workflow-state-KEN-12.json lane-status-KEN-1.md \
     directive.md workflow-state-oversee.json.lock oversee-watch.pid oversee-watch.argv oversee-watch.log \
-    oversee-watch.err handoffs/OVERSEER-HANDOFF.md handoffs/session-1.md progress-reports/01-01-00-00.md \
+    oversee-watch.err oversee-watch.runner handoffs/OVERSEER-HANDOFF.md handoffs/session-1.md progress-reports/01-01-00-00.md \
     progress-reports/01-01-00-00-succession.md progress-reports/notes.md waiter.run/watch.log; do
     printf 'x\n' > "$sd/$f"
   done
@@ -113,6 +113,7 @@ kept|oversee-watch.pid|the watch's pid record
 kept|oversee-watch.argv|the watch's argv record
 kept|oversee-watch.log|the restarted watch's log
 kept|oversee-watch.err|the restarted watch's err
+kept|oversee-watch.runner|the watch restart's runner record
 kept|handoffs/OVERSEER-HANDOFF.md|the overseer handoff file
 kept|waiter.run/watch.log|the --keep watch log
 kept|fresh.md|a file inside the retention

@@ -31,7 +31,8 @@
 #
 # lib/job-unit.sh starts the child, as a transient systemd user unit named for
 # validate-<worktree directory> (for a lane, its item in lower case) where a
-# user manager answers and under setsid elsewhere, and ends it. In a unit no
+# user manager answers, lingering or not, and under setsid elsewhere, and ends
+# it. In a unit no
 # process the run starts outlives it; under setsid what the run leaves in its
 # process group ends with it, and references/job-units.md § Runner line names
 # what escapes. That file is also the name shape and the stop rule. The unit's
