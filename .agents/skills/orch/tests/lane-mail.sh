@@ -130,8 +130,8 @@ assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")" "2" "the cursor st
 
 # A mailbox read before its first line leaves a cursor of one numeric line,
 # never an empty file: a reader outside lane-mail, the fleet's state sync,
-# takes nothing else. A peek leaves the cursor as it found it. The cursor
-# starts absent, or empty as an inbox that created it with no count left it.
+# takes nothing else. A peek writes the same count. The cursor starts
+# absent, or empty as an inbox that created it with no count left it.
 # FIRST_CURSOR is the exit status and the cursor's bytes in hex, 300a for `0`
 # and its newline, or `absent`.
 first_inbox() { # NAME absent|empty [INBOX-FLAG]
@@ -143,11 +143,10 @@ first_inbox() { # NAME absent|empty [INBOX-FLAG]
   lm inbox --item KEN-1 ${3:+"$3"}
   FIRST_CURSOR="$RC=$(od -An -tx1 "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" 2>/dev/null | tr -d ' \n' || echo absent)"
 }
-for row in 'first_inbox|absent||0=300a|a cursor holding 0' 'first_peek|absent|--peek|0=absent|no cursor' \
-  'first_empty|empty||0=300a|a cursor holding 0' 'first_empty_peek|empty|--peek|0=|the cursor empty'; do
-  IFS='|' read -r NAME SEED FLAG WANT LEAVES <<<"$row"
+for row in 'first_inbox|absent|' 'first_peek|absent|--peek' 'first_empty|empty|' 'first_empty_peek|empty|--peek'; do
+  IFS='|' read -r NAME SEED FLAG <<<"$row"
   first_inbox "$NAME" "$SEED" "$FLAG"
-  assert_eq "$FIRST_CURSOR" "$WANT" "a first inbox${FLAG:+ $FLAG} on an empty mailbox with an $SEED cursor leaves $LEAVES"
+  assert_eq "$FIRST_CURSOR" "0=300a" "a first inbox${FLAG:+ $FLAG} on an empty mailbox with an $SEED cursor leaves a cursor holding 0"
 done
 
 # A peek on a mailbox whose cursor holds no count and whose directory takes
@@ -165,6 +164,29 @@ unwritable_peek() { # NAME
 }
 unwritable_peek peek_unwritable
 assert_eq "$UNWRITABLE_PEEK" "0=Free the disk." "a peek over a cursor it cannot write still lists the unread directive"
+
+# A first peek, then pending: the peek leaves a cursor beside the lock, so
+# pending reads a lane that has not read yet rather than a read that missed.
+# Where the count cannot land, an mv that always fails, the cursor it leaves
+# is empty. PEEK_PENDING is pending's exit status, the cursor's bytes in hex
+# and the directive pending lists.
+NO_MV_BIN="$TMP_ROOT/no-mv-bin"
+mkdir -p "$NO_MV_BIN"
+printf '#!/bin/sh\nexit 1\n' > "$NO_MV_BIN/mv"
+chmod +x "$NO_MV_BIN/mv"
+peek_pending() { # NAME [SHIM-BIN]
+  new_lane "$1"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Unread.')"
+  PATH="${2:+$2:}$PATH" lm inbox --item KEN-1 --peek
+  lm pending --item KEN-1 --root "$LANE"
+  PEEK_PENDING="$RC=$(od -An -tx1 "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" 2>/dev/null | tr -d ' \n' || echo absent)"
+  PEEK_PENDING+="=$(jq -r 'select(.kind == "directive") | .text' <<<"$OUT")"
+}
+for row in 'peek_pending||300a' "peek_pending_no_mv|$NO_MV_BIN|"; do
+  IFS='|' read -r NAME SHIM WANT <<<"$row"
+  peek_pending "$NAME" "$SHIM"
+  assert_eq "$PEEK_PENDING" "0=$WANT=Unread." "a first peek${SHIM:+ whose count cannot land}, then pending, lists the directive as unread"
+done
 
 # The receipt a send prints, and the repeat it refuses. A sender reads silence
 # as a send that did not land, and a wrapper run twice delivers nothing twice.
@@ -1053,7 +1075,7 @@ LANE_MAIL_BIN="$MUTANT_DIR/partial-consumed" lm drain --item KEN-1 --root "$LANE
 assert_eq "$(count_line)" "count=3" \
   "control: without the terminated-prefix rule the half-written line is counted as read"
 
-mutant inbox-cursor-frozen 's@^  mv -- "\$WORK_DIR/cursor" "\$CURSOR".*@  rm -f -- "$WORK_DIR/cursor"@'
+mutant inbox-cursor-frozen 's@ && mv -- "\$WORK_DIR/cursor" "\$CURSOR"$@ \&\& rm -f -- "$WORK_DIR/cursor"@'
 new_lane control_cursor
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'twice')"
 LANE_MAIL_BIN="$MUTANT_DIR/inbox-cursor-frozen" lm inbox --item KEN-1
@@ -1066,17 +1088,26 @@ mutant inbox-cursor-churn 's@^    \[ "\$PEEK" -eq 1 \] || \[ "\$COUNT" = "\$SEEN
 cursor_lane control_quiet
 assert_eq "$QUIET" "rewritten" "control: a cursor written on every inbox is replaced by a read that found nothing"
 
-mutant cursor-uncreated 's@^    \[ "\$PEEK" -eq 1 \] || \[ "\$CURSOR_COUNTED" -eq 1 \] || lm_cursor_write 0$@    :@'
+mutant cursor-uncreated 's@^        lm_cursor_write 0$@        :@'
 first_inbox control_first_inbox absent
 assert_eq "$FIRST_CURSOR" "0=absent" "control: without the create a first inbox on an empty mailbox leaves no cursor"
 
-mutant cursor-absent-only 's@^    \[ "\$PEEK" -eq 1 \] || \[ "\$CURSOR_COUNTED" -eq 1 \] || lm_cursor_write 0$@    [ "$PEEK" -eq 1 ] || [ "$CURSOR_ABSENT" -eq 0 ] || lm_cursor_write 0@'
+mutant cursor-absent-only 's@^    if \[ "\$CURSOR_COUNTED" -eq 0 \]; then$@    if [ "$CURSOR_ABSENT" -eq 1 ]; then@'
 first_inbox control_first_empty empty
 assert_eq "$FIRST_CURSOR" "0=" "control: a create judged on absence alone leaves an empty cursor empty"
 
-mutant peek-writes 's@^    \[ "\$PEEK" -eq 1 \] || \[ "\$CURSOR_COUNTED" -eq 1 \] || lm_cursor_write 0$@    [ "$CURSOR_COUNTED" -eq 1 ] || lm_cursor_write 0@'
+PEEK_CREATE='^        lm_cursor_put 0 2>/dev/null || { : >>"\$CURSOR"; } 2>/dev/null || :$'
+mutant peek-writes "s@$PEEK_CREATE@        lm_cursor_write 0@"
 unwritable_peek control_peek_unwritable
 assert_eq "${UNWRITABLE_PEEK%%=*}" "2" "control: a peek that writes the count is refused where the write cannot land"
+
+mutant peek-uncreated "s@$PEEK_CREATE@        :@"
+peek_pending control_peek_pending
+assert_eq "${PEEK_PENDING%%=*}" "2" "control: a first peek that leaves no cursor has pending judge the read missed"
+
+mutant peek-count-only "s@$PEEK_CREATE@        lm_cursor_put 0 2>/dev/null || :@"
+peek_pending control_peek_pending_no_mv "$NO_MV_BIN"
+assert_eq "${PEEK_PENDING%%=*}" "2" "control: a peek whose count cannot land and creates nothing has pending judge the read missed"
 
 mutant directives-alone 's@foreach inputs as \$raw (0; \. + 1;@foreach (inputs | select(test("directive"))) as $raw (0; . + 1;@'
 answered_lane control_pending_answer
