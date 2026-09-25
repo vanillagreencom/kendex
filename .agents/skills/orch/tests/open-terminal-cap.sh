@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # open-terminal's fleet caps: a fresh launch under --state-dir is refused as
 # cap-reached where the fleet's running and preparing records plus its
-# unrecorded live claims reach ORCH_OVERSEER_LANES, and as account-cap-reached where the live claims
-# on its lane reach ORCH_LANE_ACCOUNT_CLAIMS, both judged under one lock held
-# from the count through the record write. A relaunch meets the fleet cap
-# where the item has no running record, and the account cap where it has none
-# or moves to another account. --over-cap admits one launch and records the
+# unrecorded live claims reach ORCH_OVERSEER_LANES, and as account-cap-reached
+# where the live claims on its lane reach ORCH_LANE_ACCOUNT_CLAIMS, both judged
+# under the fleet's lock and the claim store's, held from the count through the
+# claim and record writes. A relaunch meets the fleet cap where the item has
+# no running or preparing record, and the account cap where it has none or
+# moves to another account. --over-cap admits one launch and records the
 # caps it passed, and --wait-slot waits for room instead of refusing.
 #
 # The suite runs a copy of open-terminal beside copies of workflow-state and
@@ -70,14 +71,15 @@ esac
 exit 0
 EOF
 # Every child a launch starts while it holds the launch lock records, under
-# $FD7, whether descriptor 7 reached it: the GUI terminal here, the worktree
-# CLI and lane-marker below. An open descriptor 7 is a child that could hold
-# the lock past the launch.
-FD7="$TMP_ROOT/fd7"
-mkdir -p "$FD7"
+# $LOCK_FDS, whether descriptor 7 or 8 reached it, each as its own file: the
+# GUI terminal here, the worktree CLI and lane-marker below. An open lock
+# descriptor is a child that could hold that lock past the launch.
+LOCK_FDS="$TMP_ROOT/lock-fds"
+mkdir -p "$LOCK_FDS"
 cat > "$BIN/ghostty" <<EOF
 #!/usr/bin/env bash
-{ : >&7; } 2>/dev/null && : > "$FD7/terminal"
+{ : >&7; } 2>/dev/null && : > "$LOCK_FDS/terminal.7"
+{ : >&8; } 2>/dev/null && : > "$LOCK_FDS/terminal.8"
 exit 0
 EOF
 chmod +x "$BIN/lanes" "$BIN/tmux" "$BIN/ghostty"
@@ -86,7 +88,8 @@ STUB="$TMP_ROOT/worktree-stub"
 cat > "$STUB" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-{ : >&7; } 2>/dev/null && : > "$FD7/worktree-\${1:-}"
+{ : >&7; } 2>/dev/null && : > "$LOCK_FDS/worktree-\${1:-}.7"
+{ : >&8; } 2>/dev/null && : > "$LOCK_FDS/worktree-\${1:-}.8"
 d="$TMP_ROOT/wt/\${2:-unknown}"
 case "\${1:-}" in
   exists) [[ -d "\$d" ]] && echo true || echo false ;;
@@ -109,7 +112,8 @@ orch_fixture_shared_libs "$REPO"
 mv "$REPO/scripts/lane-marker" "$REPO/scripts/lane-marker.real"
 cat > "$REPO/scripts/lane-marker" <<EOF
 #!/usr/bin/env bash
-{ : >&7; } 2>/dev/null && : > "$FD7/lane-marker"
+{ : >&7; } 2>/dev/null && : > "$LOCK_FDS/lane-marker.7"
+{ : >&8; } 2>/dev/null && : > "$LOCK_FDS/lane-marker.8"
 exec "\$(dirname "\$0")/lane-marker.real" "\$@"
 EOF
 chmod +x "$REPO/scripts/lane-marker"
@@ -323,6 +327,23 @@ assert_eq "one=$(rc one) two=$(rc two) running=$(running)" "one=0 two=1 running=
 assert_eq "$(key two)" "open-terminal: account-cap-reached item=CC-2 lane=$LANE_A cap=1 claims=1" \
   "the refusal names the lane, the cap and the claim it counted there"
 
+echo "=== two fleets sharing one claim store race onto one lane against an account cap of 1 and admit one ==="
+# Each fleet has room; only the account is shared. The second fleet's launch
+# waits on the claim store's lock, not on any fleet lock, and counts the first
+# fleet's claim once that lock is free.
+row store-race
+STUB_HOLD="$ROW/release" launch one 10 1 --lane "$LANE_A" CC-1 &
+FIRST=$!
+await_open one
+STATE="$ROW/state-b" launch two 10 1 --lane "$LANE_A" CC-2
+: > "$ROW/release"
+await_exit "$FIRST"
+assert_eq "one=$(rc one) two=$(rc two) $(key two)" \
+  "one=0 two=1 open-terminal: account-cap-reached item=CC-2 lane=$LANE_A cap=1 claims=1" \
+  "the launch holding the claim store's lock takes the account's only claim, and the other fleet's is refused"
+assert_eq "$(grep -c "^open-terminal: lock-waiting item=CC-2 lock=$CLAIMS/claims.launch.lock wait-s=900$" "$ROW/two.out" || true)" "1" \
+  "the other fleet's launch waits on the claim store's lock"
+
 echo "=== a launch onto a second lane proceeds while the first is at its account cap ==="
 row account-other
 launch one 10 1 --lane "$LANE_A" CC-1
@@ -456,7 +477,7 @@ assert_eq "rc=$(rc one) $(key one) opened=$([[ -e "$ROW/opened.one" ]] && echo y
   "rc=1 open-terminal: cap-lock-failed item=CC-1 lock=$STATE/workflow-state-oversee.json.launch.lock opened=no" \
   "a launch lock that cannot be opened refuses the launch rather than counting unlocked"
 
-echo "=== no child started under the launch lock inherits its descriptor ==="
+echo "=== no child started under the launch locks inherits their descriptors ==="
 # A GUI launch reaches the terminal, a fresh tmux launch the worktree create and
 # lane-marker, a relaunch the worktree exists and merged verbs, and a relaunch
 # of a merged item the worktree path and fix-links verbs.
@@ -465,8 +486,8 @@ MODE=--ghostty launch gui 10 0 CC-1
 launch fresh 10 0 --lane "$LANE_A" CC-2
 launch again 10 0 --lane "$LANE_A" --relaunch CC-2
 STUB_MERGED=1 launch merged 10 0 --lane "$LANE_A" --relaunch CC-2
-assert_eq "rc=$(rc gui),$(rc fresh),$(rc again),$(rc merged) reached=$(ls "$FD7" | tr '\n' ' ')" "rc=0,0,0,0 reached=" \
-  "descriptor 7 reaches none of the terminal, the worktree verbs or lane-marker"
+assert_eq "rc=$(rc gui),$(rc fresh),$(rc again),$(rc merged) reached=$(ls "$LOCK_FDS" | tr '\n' ' ')" "rc=0,0,0,0 reached=" \
+  "descriptors 7 and 8 reach none of the terminal, the worktree verbs or lane-marker"
 assert_eq "$(grep -c '^open-terminal: worktree-reuse-merged item=CC-2 commit=abc1234$' "$ROW/merged.out" "$ROW/merged.err" | awk -F: '{ n += $2 } END { print n }')" "1" \
   "the merged relaunch took the path and fix-links arm"
 
