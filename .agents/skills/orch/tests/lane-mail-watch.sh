@@ -363,6 +363,69 @@ assert_eq "$([ "$(mail_lines | tr '\n' '|')" = "lane-mail: mail=KEN-1 new=1|" ] 
   "read-mail-announced" "control: without the cursor raise a watch announces mail the lane already read"
 stop_watch
 
+mutant root-dropped "s@printf -v WATCH_READ '%q inbox --item %q --root %q' \"\\\$SCRIPT_DIR/lane-mail\" \"\\\$ITEM\" \"\\\$ROOT\"@printf -v WATCH_READ '%q inbox --item %q' \"\$SCRIPT_DIR/lane-mail\" \"\$ITEM\"@"
+new_lane control_root
+OTHER="$TMP_ROOT/other-control"
+mkdir -p "$OTHER"
+git -C "$OTHER" init -q
+git -C "$OTHER" config gc.auto 0
+git -C "$OTHER" config maintenance.auto false
+start_watch "$MUTANT"
+await_polls 1
+send_directive 'Hold the PR.'
+await_announced 1
+READ=""
+if [ "$(announced)" -ge 1 ]; then
+  READ="$(cd "$OTHER" && PATH="$STUB_BIN:$PATH" eval "$(sed -n 3p "$WATCH_OUT")" 2>/dev/null)" || :
+fi
+assert_eq "$([ "$(jq -r '.kind + " " + .text' <<<"${READ:-null}" 2>/dev/null)" = "directive Hold the PR." ] && echo read || echo unread)" \
+  "unread" "control: an announced command without --root, run from another checkout, misses the lane's directive"
+stop_watch
+
+mutant answer-announced 's@NEW="\$(lm_inbox_objects "\$WORK_DIR/unread"@NEW="$(lm_objects "$WORK_DIR/unread"@'
+new_lane control_answer
+start_watch "$MUTANT"
+await_polls 1
+ASK="$(lm ask --item KEN-1 --file "$(text q 'Merge now?')")"
+ASK="${ASK#id=}"
+lm send --item KEN-1 --root "$LANE" --re "$ASK" --file "$(text a 'Merge it.')" >/dev/null
+send_directive 'Also tag it.'
+await_announced 1
+await_polls 2
+assert_eq "$([ "$(mail_lines | tr '\n' '|')" = "lane-mail: mail=KEN-1 new=1|" ] && echo directive-alone || echo answer-announced)" \
+  "answer-announced" "control: counting every object a watch announces the answer its ask's wait keeps"
+stop_watch
+
+# The watch checks its mailbox before its first poll and at every poll. The
+# first poll's check refuses a mailbox missing at the start with the same key,
+# so no edit to the start check alone reddens the row for a mailbox no launch
+# created; this copy drops the per-poll check, which the removed-mailbox row holds.
+mutant mailbox-unchecked 's@^      \[ -d "\$BOX" \] || refuse mailbox-missing "\$BOX"$@      :@'
+new_lane control_removed
+start_watch "$MUTANT"
+await_polls 1
+rm -rf -- "${LANE:?}/tmp"
+TRIES=0
+while kill -0 "$WATCH_PID" 2>/dev/null && [ "$TRIES" -lt 10 ]; do
+  sleep 0.2
+  TRIES=$((TRIES + 1))
+done
+RC=0
+if kill -0 "$WATCH_PID" 2>/dev/null; then RC=running; else wait "$WATCH_PID" || RC=$?; fi
+stop_watch
+assert_eq "$([ "$RC=$(head -n 1 "$WATCH_ERR")" = "2=lane-mail: mailbox-missing=$BOX" ] && echo refused-missing || echo not-refused)" \
+  "not-refused" "control: without the per-poll check a removed mailbox is not refused as mailbox-missing"
+
+mutant cursor-moved 's@^      ANNOUNCED="\$(lm_count "\$WORK_DIR/lane.jsonl")"$@&; printf "%s\\n" "$ANNOUNCED" >"$CURSOR"@'
+new_lane control_moves
+send_directive 'Unread still.'
+start_watch "$MUTANT"
+await_announced 1
+await_polls 1
+assert_eq "$([ -e "$BOX/to-lane.cursor" ] && echo moved || echo none)" "moved" \
+  "control: a watch that writes the cursor it polls leaves the lane's unread mail marked read"
+stop_watch
+
 mutant foreground-sleep 's@^      sleep "\$INTERVAL" &$@      sleep "$INTERVAL"@;s@^      wait "\$!"$@      :@'
 term_row "$MUTANT"
 assert_eq "$TERMED" "running:record-kept" \

@@ -20,9 +20,18 @@ The rows are the wake's refusal reasons, plus the different silence `lanes state
 
 Every lane the wake refuses while its session still runs takes this route, whatever its harness: `working`, `unjudged` from a wake, and a hosted lane's `wake-invalid`. The mail waits by default, and the lane reads it at the next point the Lane mail rule in [skill-rules.md § Coordination](skill-rules.md#coordination) names, a waiter's return included; a lane idle at its prompt reads nothing until its next turn starts. Mail that cannot wait ends the session by signal, then closes and relaunches the lane, never as a second session beside a running one:
 
-1. Stop the harness. A hosted lane takes `lane-host stop --item [ITEM] --harness [HARNESS]` and needs its `stopped item=[ITEM] processes=[COUNT]` line. A local lane takes `lane_stop_owned [WORKTREE] [HARNESS]` from `scripts/lib/lane-state.sh`, the stop `lane-close` runs, and needs its status 0.
+1. Stop the harness. A hosted lane takes `lane-host stop --item [ITEM] --harness [HARNESS]` and needs its `stopped item=[ITEM] processes=[COUNT]` line. A local lane takes the stop `lane-close` runs, `lane_stop_owned` from `scripts/lib/lane-state.sh`, a function the command below sources and calls, run from the lane's repository checkout:
+
+   ```bash
+   bash -c '. .agents/skills/orch/scripts/lib/lane-state.sh && lane_stop_owned "$1" "$2" && echo "stopped processes=$LANE_STOP_COUNT" || { echo "stop-failed cause=$LANE_STOP_CAUSE pid=$LANE_STOP_PID" >&2; exit 1; }' _ [WORKTREE] [HARNESS]
+   ```
+
+   Status 0 prints `stopped processes=[COUNT]`: every `[HARNESS]` process whose directory is `[WORKTREE]` has exited, and 0 means none was running. Status 1 prints `stop-failed cause=[CAUSE]`, the step that failed from that library's list above `lane_stop_owned`, or an empty cause where the library did not load, and the lane may still run.
+
 2. Wait for the lane's `lane-exited` event.
+
 3. Run `lane-close --keep-sandbox --state-dir [OVERSEE_STATE_DIR] [ITEM]`. It ends a local lane's validation runs, closes the window and records the lane `stopped`, keeping a hosted lane's sandbox.
+
 4. Relaunch under [oversee.md § Recovery relaunch](../workflows/oversee.md#recovery-relaunch).
 
 The relaunch carries its own continuation line, which tells the lane to read `lane-mail inbox`, except on a hosted Codex lane, which resumes with no line, reported as `resume-lineless`, and takes it as that section says. The stop interrupts any turn in flight, so it is never the default.
