@@ -21,6 +21,9 @@ PR_PAGE=500
 # own ceiling. A list that reaches it refuses, since the merges past it would
 # be missing from Landed.
 MERGED_PAGE=1000
+# Farthest back Landed reaches, in seconds: 7 days, a window this repository's
+# merge rate keeps well under MERGED_PAGE whatever the report settings are.
+LANDED_LOOKBACK=604800
 
 # Every line this script writes to stderr, and the only place its text lives:
 # a stable key and the value acted on, then the English under it, then what a
@@ -70,10 +73,12 @@ Next, Waiting on you.
 progress-reports/ beside it. The newest file there is the last report: what
 landed since its modification time is news, and its age is what the cadence
 measures. With no report yet, the fleet start, the earliest lanes[] launch,
-stands in for it, though Landed then reaches back one
-ORCH_REPORT_EVERY_MINUTES at most. A report covers merges up to the moment it
-read its lists, and `write` stamps its file with that moment, so each merge
-lands in exactly one report.
+stands in for it. A report covers merges up to the moment it read its lists,
+and `write` stamps its file with that moment, so each merge lands in exactly
+one report, with one limit: Landed reaches back 7 days at most, whatever the
+settings. Where the last report, or with none the fleet start, is older, the
+row reads `Landed (since <UTC>, earlier merges not listed):` and merges before
+that time are in no report.
 
 due      prints `report-due reason=minutes since=<UTC>` once the last report
          is ORCH_REPORT_EVERY_MINUTES old, else `report-due reason=issues
@@ -224,13 +229,13 @@ fi
 REPORT_DIR="$(dirname -- "$STATE")/progress-reports"
 # NOW is read before any list, and a report covers merges before it alone: a
 # written report is stamped NOW, so a merge the lists could not yet see falls
-# in the next one and every merge in exactly one.
+# in the next one, and every merge inside the lookback below in exactly one.
 NOW="$(date -u +%s)" || refuse clock now
 
 # MARKER is the epoch the cadence measures from: the newest report's
 # modification time, else the fleet start, else empty where the state records
-# no lane. LANDED_SINCE is where Landed starts: MARKER, bounded as below when
-# no report exists yet.
+# no lane. LANDED_SINCE is where Landed starts: MARKER, or LANDED_LOOKBACK
+# before NOW where MARKER is older, on every path.
 MARKER=""
 if [[ -d "$REPORT_DIR" ]]; then
   for file in "$REPORT_DIR"/*.md; do
@@ -239,19 +244,21 @@ if [[ -d "$REPORT_DIR" ]]; then
     [[ -n "$MARKER" && "$MARKER" -ge "$stamp" ]] || MARKER="$stamp"
   done
 fi
-LANDED_SINCE="$MARKER"
 if [[ -z "$MARKER" ]]; then
   start="$(jq -r '[.lanes[] | .launched_at // empty] | sort | first // ""' <<<"$STATE_JSON")" || refuse state "$STATE"
   if [[ -n "$start" ]]; then
     MARKER="$(to_epoch "$start")" || refuse state "$STATE"
   fi
-  # A first report on a fleet that has run for weeks covers one interval, not
-  # its whole history: that history can pass the merged search's ceiling.
-  LANDED_SINCE="$MARKER"
-  if [[ -n "$MARKER" && -n "$EVERY_MINUTES" && "$EVERY_MINUTES" -gt 0 \
-    && $((NOW - EVERY_MINUTES * 60)) -gt "$MARKER" ]]; then
-    LANDED_SINCE=$((NOW - EVERY_MINUTES * 60))
-  fi
+fi
+# A window as old as a fleet that ran for weeks, or one resumed after a long
+# pause, passes the merged search's ceiling, and a refusal there would stand
+# on every call until someone edited progress-reports/. Landed stops at the
+# lookback instead, and its row says it did.
+LANDED_SINCE="$MARKER"
+LANDED_CUT=0
+if [[ -n "$MARKER" && $((NOW - LANDED_LOOKBACK)) -gt "$MARKER" ]]; then
+  LANDED_SINCE=$((NOW - LANDED_LOOKBACK))
+  LANDED_CUT=1
 fi
 
 # --- what landed --------------------------------------------------------------
@@ -488,13 +495,19 @@ blockers() {
 }
 
 render() {
-  local rows="" item number sha repo list open="" pr status
+  local rows="" item number sha repo list open="" pr status landed_name=Landed cut_since
   landed_read
   while IFS=$'\t' read -r item number sha; do
     [[ -n "$item" ]] || continue
     rows+="$item"$'\t'"$item (#$number, ${sha:-no sha})"$'\n'
   done <<<"$LANDED"
-  table Landed "$rows"
+  if [[ "$LANDED_CUT" -eq 1 ]]; then
+    if ! cut_since="$(from_epoch "$LANDED_SINCE" %Y-%m-%dT%H:%M:%SZ)"; then
+      refuse clock "$LANDED_SINCE"
+    fi
+    landed_name="Landed (since $cut_since, earlier merges not listed)"
+  fi
+  table "$landed_name" "$rows"
   echo
 
   # Open PRs as `branch<TAB>number`, across every --repo.

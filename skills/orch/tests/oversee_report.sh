@@ -42,7 +42,9 @@ exec "$REAL_DATE" "\$@"
 EOF
 # gh: `pr list --state merged` answers merged.json narrowed to --head and
 # capped at --limit, as gh narrows it; `pr list --state open` open.json, and
-# `issue view N` issue-N.json, each from the case directory. A file named
+# `issue view N` issue-N.json, each from the case directory; a `--search
+# merged:>=STAMP` keeps what merged at or after STAMP, unless the case holds
+# search-unfiltered. A file named
 # <base>.<SLUG>.json answers that --repo alone, SLUG being the repo with `/`
 # as `_`. gh-fail fails every list, gh-fail-open the open list alone. Every
 # call's argv is appended to gh.calls.
@@ -51,9 +53,11 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 set -uo pipefail
 printf '%s\n' "$*" >> "$CASE/gh.calls"
 verb="${1:-} ${2:-}"; number="${3:-}"
-state=""; head=""; limit=1000; repo=""
+state=""; head=""; limit=1000; repo=""; search=""
 while [[ $# -gt 0 ]]; do
-  case "$1" in --state) state="$2" ;; --head) head="$2" ;; --limit) limit="$2" ;; --repo) repo="$2" ;; esac
+  case "$1" in
+    --state) state="$2" ;; --head) head="$2" ;; --limit) limit="$2" ;; --repo) repo="$2" ;; --search) search="$2" ;;
+  esac
   shift
 done
 slug="${repo//\//_}"
@@ -64,8 +68,10 @@ case "$verb" in
     [[ ! -f "$CASE/gh-fail-$state" ]] || { echo "HTTP 502" >&2; exit 1; }
     src="$(pick "$state")"
     [[ -f "$src" ]] || { echo '[]'; exit 0; }
-    jq -c --arg head "$head" --argjson limit "$limit" \
-      '[.[] | select($head == "" or .headRefName == $head)] | .[:$limit]' "$src" ;;
+    # A merged:>= search keeps what merged at or after its stamp, as GitHub's does.
+    [[ ! -f "$CASE/search-unfiltered" ]] || search=""
+    jq -c --arg head "$head" --argjson limit "$limit" --arg since "${search#merged:>=}" \
+      '[.[] | select($head == "" or .headRefName == $head) | select($since == "" or .mergedAt >= $since)] | .[:$limit]' "$src" ;;
   "issue view")
     src="$(pick "issue-$number")"
     [[ -f "$src" ]] || { echo "no issue $number" >&2; exit 1; }
@@ -280,11 +286,11 @@ done
 
 echo "=== render: Next leaves out what is already running ==="
 seed_fleet next_launched
-jq '.launch_queue = ["KEN-2", "KEN-4", "KEN-7", "KEN-5"]' "$CASE/state.json" > "$CASE/state.next"
+jq '.launch_queue = ["KEN-2", "KEN-1", "KEN-4", "KEN-7", "KEN-5"]' "$CASE/state.json" > "$CASE/state.next"
 mv -- "$CASE/state.next" "$CASE/state.json"
 run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(awk '/^Next/ { on = 1; next } on && /^$/ { on = 0 } on && /^\| KEN-/ { print $2 }' <<<"$OUT" | paste -sd, -)" "0|KEN-4,KEN-5" \
-  "a queued item with a running or preparing lane is Running's, not Next's"
+assert_eq "$RC|$(awk '/^Next/ { on = 1; next } on && /^$/ { on = 0 } on && /^\| KEN-/ { print $2 }' <<<"$OUT" | paste -sd, -)" "0|KEN-1,KEN-4,KEN-5" \
+  "a queued item with a running or preparing lane is Running's, not Next's, and one whose lane is done stays"
 
 echo "=== render: ORCH_REPORT_COLUMNS picks and orders the columns ==="
 seed_fleet columns
@@ -350,15 +356,46 @@ run -- render --state "$CASE/state.json" --repo owner/a --repo owner/b
 assert_eq "$RC|$(grep -c -- '--state merged' "$CASE/gh.calls")|$(grep -c -- '--head' "$CASE/gh.calls" || true)" "0|2|0" \
   "five lane records over two repositories take two merged searches and no per-branch read"
 
-# With no report yet, Landed reaches back one interval, not to the fleet start.
+# A first report inside the 7-day lookback reaches the fleet start, whatever
+# the minutes setting says.
 new_case landed_first_report
 fleet '' "$(lane KEN-1 done -86400)" "$(lane KEN-2 done -86400)"
+issue KEN-1 "Title 1" "Outcome 1"
 issue KEN-2 "Title 2" "Outcome 2"
 printf '%s\n' "$(merged_pr 11 ken-1 -10000 abcdef1234)" "$(merged_pr 12 ken-2 -3600 1212121aaa)" | jq -s . > "$CASE/merged.json"
-run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(awk '/^\| KEN-/' <<<"$OUT")|$(grep -c -- "merged:>=$(at -7200)" "$CASE/gh.calls")" \
-  "0|| KEN-2 (#12, 1212121) | Title 2 | Outcome 2 ||1" \
-  "a first report lists merges from one ORCH_REPORT_EVERY_MINUTES back and searches from there"
+for minutes in unset 0 ""; do
+  : > "$CASE/gh.calls"
+  if [[ "$minutes" == unset ]]; then run -- render --state "$CASE/state.json" --repo owner/repo
+  else run ORCH_REPORT_EVERY_MINUTES="$minutes" -- render --state "$CASE/state.json" --repo owner/repo; fi
+  assert_eq "$RC|$(awk '/^Landed/' <<<"$OUT")|$(awk '/^\| KEN-/' <<<"$OUT")|$(grep -c -- "merged:>=$(at -86400)" "$CASE/gh.calls")" \
+    "0|Landed:|| KEN-1 (#11, abcdef1) | Title 1 | Outcome 1 |
+| KEN-2 (#12, 1212121) | Title 2 | Outcome 2 ||1" \
+    "a first report with ORCH_REPORT_EVERY_MINUTES '$minutes' lists every merge since the fleet start"
+done
+
+# Past the lookback, on every path: a thousand old merges no longer reach the
+# search, the report renders, and its Landed row says where it stopped.
+LOOKBACK_START="$(at -604800)"
+while IFS='|' read -r name settings report_age verb want; do
+  new_case "landed_lookback_$name"
+  [[ "$report_age" == none ]] || report "-$report_age"
+  fleet '' "$(lane KEN-1 done -2592000)" "$(lane KEN-2 running -2592000)"
+  issue KEN-1 "Title 1" "Outcome 1"
+  issue KEN-2 "Title 2" "Outcome 2"
+  jq -n --arg old "$(at -1728000)" --arg new "$(at -86400)" '[range(1000) | {number: (2000 + .), headRefName: "other-\(.)", headRepositoryOwner: {login: "owner"}, mergedAt: $old, mergeCommit: {oid: "ffffffffff"}}]
+    + [{number: 11, headRefName: "ken-1", headRepositoryOwner: {login: "owner"}, mergedAt: $new, mergeCommit: {oid: "abcdef1234"}}]' > "$CASE/merged.json"
+  read -r -a envs <<<"$settings"
+  run ${envs[@]+"${envs[@]}"} -- "$verb" --state "$CASE/state.json" --repo owner/repo
+  got="$RC|$(grep -c -- "merged:>=$LOOKBACK_START" "$CASE/gh.calls" || true)"
+  if [[ "$verb" == due ]]; then got+="|$OUT"
+  else got+="|$(awk '/^Landed/' <<<"$OUT");rows=$(grep -c '^| KEN-1 (#11, abcdef1) ' <<<"$OUT" || true)"; fi
+  want="${want//@START/$LOOKBACK_START}"
+  want="${want//@FLEET/$(at -2592000)}"
+  assert_eq "$got" "0|1|$want" "$name: past the 7-day lookback the window stops there and the call succeeds"
+done <<'ROWS'
+minutes_off_issues_no_report|ORCH_REPORT_EVERY_MINUTES=0 ORCH_REPORT_EVERY_ISSUES=1|none|due|report-due reason=issues since=@FLEET landed=1
+report_older_than_lookback||2592000|render|Landed (since @START, earlier merges not listed):;rows=1
+ROWS
 
 echo "=== render: every --repo is read, and a record's repo is its own ==="
 new_case multi_repo
@@ -565,6 +602,10 @@ filter="    | select(.at >= \$since) ];'"
 assert_eq "$(grep -cxF -- "$filter" "$LIB")" "1" "control: the since clause is one line to strip"
 awk -v line="$filter" '$0 == line { print "    ];'"'"'"; next } { print }' "$LIB" > "$TMP_ROOT/mutant/scripts/lib/lane-state.sh"
 seed_fleet render_mutant
+# The search's own qualifier would hide the older merge before the clause
+# ever saw it; search-unfiltered makes the stub return the whole list, so the
+# clause alone stands between that merge and Landed.
+touch "$CASE/search-unfiltered"
 REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$(grep -c '^| KEN-3 (#13, 1234567)' <<<"$OUT")" "1" "control: without the clause Landed carries the merge from before the last report"
 cp -- "$LIB" "$TMP_ROOT/mutant/scripts/lib/lane-state.sh"
