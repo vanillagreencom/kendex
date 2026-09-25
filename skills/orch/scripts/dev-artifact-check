@@ -24,6 +24,7 @@
 #     "qa_labels": […], "near_ceiling": […]|null (byte-ceiling near-ceiling lines,
 #     null when the probe did not answer), "near_ceiling_error": "…"|null,
 #     "summary_posted": bool, "summary": "…"|null,
+#     "recovered_from": "transcript"|null,
 #     "bundled": bool, "items": [{"n": <number>, "decision": "Applied"|"Skipped"|"Blocked", "reasoning": "…"}] }
 
 #

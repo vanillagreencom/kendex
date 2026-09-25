@@ -162,6 +162,8 @@ Cancel ends the workflow; a selection goes to § 2.
 
    `B = pass` when the worktree is clean and the reported fix commit resolves in the log — or when the round applied nothing and made no commit.
 
+   A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `round-recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round.
+
    | A (verdict) | B (git) | Action |
    |---|---|---|
 | `accept` | pass | **Accept.** First confirm exact-commit binding: the artifact's `.commit` equals `git -C [WORKTREE_PATH] rev-parse HEAD` (an all-skipped round's `.commit` is the unchanged HEAD). Then read the item decisions, commits, and validate status from the return when present, else from the artifact. Run [dev-start.md § Store Proposed Rules](dev-start.md#store-proposed-rules), then [dev-start.md § Store Near-Ceiling Lines](dev-start.md#store-near-ceiling-lines) — a fix round records its own list, so a file it split stops being carried and a file it pushed into the warn band starts being. → step 6. |

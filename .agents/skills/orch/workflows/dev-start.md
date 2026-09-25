@@ -167,6 +167,8 @@ git -C "[WORKTREE_PATH]" status --porcelain
 
 `HEAD` must differ from `pre_delegate_sha`, `status --porcelain` must be empty, and the Linear validation (Linear only) must report `.all_ok`. `--include-children-of` expands explicit single-PR bundles and audit-created sub-issues worked in this session. `state_ok` expects bundle-expanded sub-issues `Done` and the session-root issue in a pre-merge state (`In Progress` or `In Review`) — never `Done` before merge. GitHub and ad-hoc rounds skip tracker validation: B is the new commit plus the clean worktree.
 
+A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `round-recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round.
+
 | A (verdict) | B (git/tracker) | Action |
 |---|---|---|
 | `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
