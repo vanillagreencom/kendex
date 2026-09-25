@@ -5,7 +5,10 @@
 #
 # On Linux this installs the desktop app and the kendex command. On macOS it
 # installs the kendex command; get the app with `brew install vanillagreencom/kendex/kendex`
-# or from https://kendex.ai/download.
+# or from https://kendex.ai/download. `--cli-only` installs the command alone
+# on every platform:
+#
+#   curl -fsSL https://kendex.ai/install.sh | sh -s -- --cli-only
 # POSIX shell, because the published command pipes this into `sh` and that
 # is dash on Debian and Ubuntu. No `pipefail` either: the one pipeline here
 # is the release lookup, and an empty result is checked for by name a few
@@ -26,6 +29,7 @@ repo="vanillagreencom/kendex"
 version="latest"
 version_set=0
 git_channel=0
+cli_only=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -34,8 +38,10 @@ while [ $# -gt 0 ]; do
       version="$2"; version_set=1; shift 2 ;;
     --git)
       git_channel=1; shift ;;
+    --cli-only)
+      cli_only=1; shift ;;
     -h|--help)
-      message usage install.sh "Usage: install.sh [--git | --version vX.Y.Z]"
+      message usage install.sh "Usage: install.sh [--git | --version vX.Y.Z] [--cli-only]"
       exit 0
       ;;
     *) message unknown-option "$1" "The installer does not accept this option." >&2; exit 2 ;;
@@ -318,11 +324,11 @@ DESKTOP
 }
 
 install_cli
-if [ "$kind" = linux ]; then
-  install_app_linux
-else
-  message app-install-method macos "Desktop app: brew install vanillagreencom/kendex/kendex, or https://kendex.ai/download"
-fi
+case "$cli_only-$kind" in
+  1-*) message app-skipped cli-only "The desktop app was not installed." ;;
+  0-linux) install_app_linux ;;
+  0-macos) message app-install-method macos "Desktop app: brew install vanillagreencom/kendex/kendex, or https://kendex.ai/download" ;;
+esac
 
 case ":$PATH:" in
   *":$bindir:"*) ;;
