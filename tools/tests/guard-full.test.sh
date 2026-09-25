@@ -661,7 +661,7 @@ run_lanes() { # CLASS DOCS PATH... — guard --full with PATHs touched and hande
   OUT=""
   RC=0
   OUT="$(cd "$R" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
-    ${handed[@]+"${handed[@]}"} \
+    "${GUARD_TEST_BOUNDS[@]}" ${handed[@]+"${handed[@]}"} \
     PATH="$LANE_BIN:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" NPM_CALL_LOG="$NPM_CALL_LOG" \
     RUSTUP_INSTALLED_TARGETS="$BOTH" "$LANE_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
 }
@@ -721,7 +721,7 @@ inherited_row() { # — sets OUT and RC
   printf 'docs/guide.md\n' >"$PATHS_FILE"
   OUT=""
   RC=0
-  OUT="$(cd "$R" && env DEV_VALIDATE_CLASS=micro DEV_VALIDATE_DOCS_ONLY=false DEV_VALIDATE_PATHS="$PATHS_FILE" \
+  OUT="$(cd "$R" && env "${GUARD_TEST_BOUNDS[@]}" DEV_VALIDATE_CLASS=micro DEV_VALIDATE_DOCS_ONLY=false DEV_VALIDATE_PATHS="$PATHS_FILE" \
     PATH="$LANE_BIN:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" NPM_CALL_LOG="$NPM_CALL_LOG" \
     RUSTUP_INSTALLED_TARGETS="$BOTH" "$LANE_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
 }

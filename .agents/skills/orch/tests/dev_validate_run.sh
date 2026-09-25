@@ -46,10 +46,11 @@ make_proj() { # NAME CMD TIMEOUT_SECS
   printf '%s\n' "$dir"
 }
 
-# A run directory's start file, the bounds a waiter reads, polled every second.
+# A run directory's start file, the bounds a waiter reads, polled every second,
+# and the change class a child hands its command.
 write_start() { # DIR WORKTREE TIMEOUT_BIN START TIMEOUT_SECS CAP_SECS
   mkdir -p "$1"
-  printf 'worktree=%s\ntimeout-bin=%s\nstart=%s\ntimeout-secs=%s\npoll-secs=1\ncap-secs=%s\n' \
+  printf 'worktree=%s\ntimeout-bin=%s\nstart=%s\ntimeout-secs=%s\npoll-secs=1\ncap-secs=%s\nclass=standard\ndocs-only=false\n' \
     "$2" "$3" "$4" "$5" "$6" > "$1/start"
 }
 
