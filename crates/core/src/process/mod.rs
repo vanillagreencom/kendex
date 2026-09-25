@@ -153,8 +153,10 @@ mod programs;
 /// where git is absent, the call fails or times out: a folder without
 /// git, or a machine without it, is an honest nothing, never an error.
 /// `--no-optional-locks` keeps even `status` from refreshing `.git/index`,
-/// because reading a folder must not change a byte inside it. Every read
-/// that asks git about a folder kendex did not clone comes through here.
+/// because reading a folder must not change a byte inside it. The reader
+/// the Mine row and the checkout-publisher read share; other read-only
+/// git calls build [`Hardened::git`] themselves, without the lock switch
+/// or the timeout.
 pub(crate) fn git_line(path: &Path, args: &[&str]) -> Option<String> {
     let mut no_locks: Vec<&str> = vec!["--no-optional-locks"];
     no_locks.extend_from_slice(args);
@@ -171,8 +173,10 @@ pub(crate) fn git_line(path: &Path, args: &[&str]) -> Option<String> {
 /// The `origin` remote's URL of the checkout at `path`, read through git
 /// itself so a linked worktree, whose `.git` is a file, answers like a
 /// main checkout: `None` where there is no git, no repository, or no
-/// such remote. The one read every reader of "whose checkout is this"
-/// makes.
+/// such remote. The git-backed origin read the checkout publisher
+/// ([`crate::quality::Publisher::of_checkout`]) and the Mine row share;
+/// the scan's `scan::provenance::OriginCache` reads the same remote
+/// textually out of `.git/config`.
 pub(crate) fn origin_url(path: &Path) -> Option<String> {
     git_line(path, &["remote", "get-url", "origin"]).filter(|url| !url.is_empty())
 }

@@ -231,9 +231,11 @@ pub fn check_with(
     display: &str,
 ) -> Result<CatalogCheck> {
     // Whose checkout this is decides which accepted findings are set
-    // aside, and it is decided here, once, for every reader of a local
-    // catalog: the check, the directory index and the Mine row all come
-    // through this pass, so none can score a package another would not.
+    // aside, and it is decided here, once, for the three readers of a
+    // checkout that come through this pass, the check, the directory
+    // index and the Mine row, so none of them can score a package another
+    // would not. A path source installs by its declared provenance
+    // instead (`Publisher::of`).
     let publisher = Publisher::of_checkout(sealed.root());
     let catalog = config
         .findings()

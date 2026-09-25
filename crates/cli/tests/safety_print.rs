@@ -295,9 +295,9 @@ fn refresh_from_base(home: &Path, project: &Path, verbose: bool) -> String {
 /// puts the finding back on the plain run, at the severity the rule
 /// gives it.
 ///
-/// The package is the one whose required companion is a single package,
-/// stubbed here so the plan installs it; the first assertion says which,
-/// so a table that no longer names it points here.
+/// The package requires one companion, stubbed here so the plan installs
+/// it; the first assertion names the package, so a table that no longer
+/// lists it points here.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_finding_kendex_accepted_in_its_own_package_prints_only_on_a_verbose_run() {

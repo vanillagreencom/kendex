@@ -74,8 +74,8 @@ impl Publisher {
     }
 
     /// Whose checkout the catalog at `root` is, by its `origin` remote and
-    /// nothing else: the one answer every reader of a local catalog (the
-    /// authoring check, the directory index, the Mine row) gives, so a
+    /// nothing else: the answer the authoring check, the directory index
+    /// and the Mine row share through `check_catalog::check_with`, so a
     /// checkout of kendex's own repository reads as kendex's in each and a
     /// folder with no git, no repository or no `origin` is nobody's.
     pub fn of_checkout(root: &std::path::Path) -> Publisher {
