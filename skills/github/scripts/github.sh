@@ -121,8 +121,7 @@ Token selection:
   and does not fall back to a different keyring identity after auth failure.
 
 Auth preflight:
-  When the router selects a token (GH_TOKEN, GH_BOT_TOKEN or GITHUB_TOKEN),
-  gh api user is authoritative.
+  When GH_TOKEN or GITHUB_TOKEN is selected, gh api user is authoritative.
   gh auth status is authoritative only when no environment token is selected.
   A failed non-bot environment token is removed only when keyring auth passes.
 

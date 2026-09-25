@@ -92,10 +92,7 @@ Retired settings:
   them, empty value included, refuses every mode before any pull-request read
   or merge call, one first line per key set, and the last line names the keys
   again, so a repository that still expects either route learns it at the
-  first call. Through the github.sh router, whenever the router selects a
-  token (GH_TOKEN, GH_BOT_TOKEN or GITHUB_TOKEN, from the environment or a
-  settings layer), the router's own read-only token check (gh api user) runs
-  before pr-merge does, so that one GitHub call can come first.
+  first call.
 
 Terminal and mutation rules:
   After github.sh router setup, MERGED or CLOSED short-circuits pr-merge safety
