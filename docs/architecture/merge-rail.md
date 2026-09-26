@@ -15,11 +15,11 @@ The rail carries one change from a consumer pull request to the default branch, 
  one job          merge group)              |               template and sets
     |                |                      v               kendex.settings.toml
     v                v                   it commits the         |
- CI lanes        review-predicate.sh     refresh output         |
- gated on        reads the classifier    alone, plus a          |
- the verdict     for the docs waiver     manifest edit          |
-    |                |                   when a bundle's        |
-    |                |                   members moved          |
+ CI lanes        review-predicate.sh     refresh output and     |
+ gated on        reads the classifier    re-adopted gate writer |
+ the verdict     for the docs waiver     alone, plus a bundle's |
+    |                |                   manifest edit when     |
+    |                |                   its members moved      |
     |                |                      |                   |
     v                v                      +---------+---------+
  aggregate-      "Review gate"                        v
@@ -79,7 +79,7 @@ The classifier answers one five-class verdict, `change_class`, beside the two na
 - Classify inside a job, never in `on.<event>.paths`. A path filter stops the workflow from starting, the required context is never created, and a merge queue waits forever on a check nothing will report.
 - Fail closed everywhere. An empty diff, an unresolvable endpoint and an absent render inventory all answer `false`, which authorizes no skip the verdict would otherwise have allowed.
 - The gate is a commit status, not a CI job. Adoption still changes CI: it adds the ungated validate job, and a repository that wants the docs waiver also takes the fast/full split. What stays untouched is that no job is conditioned on the gate's verdict.
-- The consumer train is the current propagation path, and [D003](../decisions/D003-one-merge-path.md) replaces it with a workflow each consumer runs itself. The train enters each consumer's own checkout, refreshes it, and commits the refresh output and nothing else, beyond a manifest edit where a bundle's member list moved, through that repository's branch, review and merge path. On a hosted fleet the train does not run: the orch `merged` event in [../../skills/orch/references/oversee-events.md](../../skills/orch/references/oversee-events.md) § Event kinds sends each consumer's overseer a note and reports that consumer as not refreshed, until KEN-1779 ships a refresh workflow in each consumer's own Actions.
+- The consumer train is the current propagation path, and [D003](../decisions/D003-one-merge-path.md) replaces it with a workflow each consumer runs. The train refreshes each consumer's own checkout and commits only the refresh output, the re-adopted gate writer and, where a bundle's member list moved, a manifest edit, through that repository's branch, review and merge path. On a hosted fleet the train does not run: the orch `merged` event in [../../skills/orch/references/oversee-events.md](../../skills/orch/references/oversee-events.md) § Event kinds sends each consumer's overseer a note and reports that consumer as not refreshed, until KEN-1779 ships a refresh workflow in each consumer's own Actions.
 - In kendex itself `REVIEW_GATE_CARRY_FORWARD` is `docs`: evidence carries across markdown-only deltas, never across a change to an excluded policy path. `REVIEW_GATE_CLASS_POLICY` decides which change classes need evidence, so the legacy `REVIEW_GATE_DOCS_ONLY` and `REVIEW_GATE_RENDER_PATHS` are inert.
 - One merge path, per [D003](../decisions/D003-one-merge-path.md): every lane route goes through the merge queue, armed by the lane itself, for the reasons D003 § Rationale gives. The overseer's owner-credential admin merge, the user's `--admin` and `--force` overrides and the `ORCH_MERGE_BYPASS` fast path are retired; `pr-merge --help` § Retired settings states how their settings are refused.
 - No standing bypass actor means a pull request that repairs a broken gate engine, which cannot turn its own `Review gate` context green, merges by the break-glass procedure [../../skills/review-gate/SKILL.md](../../skills/review-gate/SKILL.md) § 4. Operations states, never by a standing bypass.
