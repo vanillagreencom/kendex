@@ -10,15 +10,16 @@ name: Skill Tests
 # first and runs what the first proved. The `changes` job below reads the
 # class once through the change-class composite action, `tools/ci-job-set`
 # turns it and the changed paths into one `<lane>=true|false` line per gated
-# lane, and every `if:` in this file reads one of those lines. Of the gated
-# jobs, a `render` or `trivial` diff runs the bot-instructions job alone,
-# which also carries the document byte ceilings and the work-marker scan.
-# Every other diff, and a `trivial` one changing a path tools/rust-reads
-# names, runs the shell shards, that job and each other lane as
-# `tools/ci-job-set` selects it; the invariant comment there is the one
-# statement of what each lane runs. The aggregators still report and accept
-# only the skips the selection authorized, and the last job, `CI`, is the one
-# every other job reports into, the three aggregators excepted. The push to main
+# lane and the list of shell shards the changed packages select, and every
+# `if:` in this file reads one of those lines. Of the gated jobs, a `render`
+# or `trivial` diff runs the bot-instructions job alone, which also carries
+# the document byte ceilings and the work-marker scan. Every other diff, and
+# a `trivial` one changing a path tools/rust-reads names, runs that job, the
+# shell shards its packages select and each other lane as `tools/ci-job-set`
+# selects it; the invariant comment there is the one statement of what each
+# lane runs. The aggregators still report and accept only the skips the
+# selection authorized, and the last job, `CI`, is the one every other job
+# reports into, the three aggregators excepted. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
 # so it runs only the compile steps: each cargo lane builds its targets with
@@ -73,8 +74,9 @@ name: Skill Tests
 # Linux `rest` leg that builds kendex-cli from the checkout first, and 15 on
 # every other Linux leg. The per-shard figures behind each budget are in the
 # comment above it.
-# Every pull request pays the battery twice, once on the pull request and once
-# in the merge queue, so the slowest shard is charged twice per merge.
+# Every pull request pays its selected Linux shards twice, once on the pull
+# request and once in the merge queue, so the slowest of them is charged twice
+# per merge; the macOS legs run once, in the queue.
 
 "on":
   pull_request:
@@ -90,6 +92,14 @@ name: Skill Tests
 
 permissions:
   contents: read
+
+# A push to a pull request's branch cancels the run its previous head started,
+# which could only report on a head the pull request no longer has. A merge
+# group or a push to main keys its group to its own run and cancels nothing:
+# cancelling a queue run would eject its entry.
+concurrency:
+  group: skill-tests-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # THE ONE READ OF THE CHANGE CLASS. Every gated lane below answers to a line
@@ -124,6 +134,7 @@ jobs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
       shell_shards: ${{ steps.select.outputs.shell_shards }}
       macos_legs: ${{ steps.select.outputs.macos_legs }}
+      macos_pull_request: ${{ steps.select.outputs.macos_pull_request }}
       ui: ${{ steps.select.outputs.ui }}
       bot_instructions: ${{ steps.select.outputs.bot_instructions }}
       cargo_linux: ${{ steps.select.outputs.cargo_linux }}
@@ -131,6 +142,7 @@ jobs:
       cargo_lint: ${{ steps.select.outputs.cargo_lint }}
       cargo_windows: ${{ steps.select.outputs.cargo_windows }}
       cargo_windows_check: ${{ steps.select.outputs.cargo_windows_check }}
+      shards: ${{ steps.select.outputs.shards }}
     # THE PINNED BUILD. The tag is a published main build, immutable, and
     # both the installer and the binary are read at that one revision. It is
     # one part of this workflow's trust boundary: the classifier and the orch
@@ -317,11 +329,12 @@ jobs:
   # 675s over 64 files and gave the lane, workflow-state and round-artifact
   # suites to `orch-state`, 382s over 30 files, keeping 34 at 293s.
   #
-  # THE macOS LEG runs the twelve shell shards a second time on the runner whose
-  # /bin/bash is 3.2.57, the shell every skill claims to support (skills/
-  # AGENTS.md). tools/bash32-lint scans the source for that claim; this leg
-  # runs it, which is the only way to reach what a text scan cannot — a
-  # quoted builtin name, a construct assembled at runtime. The image's only
+  # THE macOS LEG runs the selected shell shards of the twelve a second time,
+  # in the merge group, on the runner whose /bin/bash is 3.2.57, the shell
+  # every skill claims to support (skills/AGENTS.md). tools/bash32-lint
+  # scans the source for that claim; this leg runs it, which is the only way
+  # to reach what a text scan cannot — a quoted builtin name, a construct
+  # assembled at runtime. The image's only
   # bash is that one today, and the leg does not rely on it: a symlink to
   # /bin/bash goes first on PATH, so the step shell, a `bash "$t"` in a loop
   # and every `#!/usr/bin/env bash` under it resolve to the same interpreter,
@@ -360,14 +373,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [review-gate, orch-terminal, orch-oversee, orch-oversee-succeed, orch-state, orch-rest, guards-scans, guards-commit, guards-tools, linear, worktree, rest, node, pi-claude-bridge]
+        # The shards the diff's packages select, as tools/ci-job-set lists
+        # them; the literal is the whole roster, in the order that script's
+        # SHARDS spells it, and runs where the classifier published nothing.
+        # The job stands down where the list is empty, so no empty matrix
+        # expands.
+        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-tools", "linear", "worktree", "rest", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         # The macOS leg is the SECOND run of these suites, under Bash 3.2 and
-        # the BSD userland. A job-level `if:` cannot reach `matrix`, so the
-        # leg is dropped from the matrix rather than conditioned inside it,
-        # and a leg that never expands bills no macOS runner. A dead
-        # classifier publishes nothing, so the result term ahead of the
-        # selection is what runs both legs rather than neither.
-        os: ${{ fromJSON((needs.changes.result != 'success' || needs.changes.outputs.macos_legs == 'true') && '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+        # the BSD userland, over the same selected shards. A job-level `if:`
+        # cannot reach `matrix`, so the leg is dropped from the matrix rather
+        # than conditioned inside it, and a leg that never expands bills no
+        # macOS runner. It runs in the merge group, and on the pull request
+        # only where macos_pull_request says a lane source or another .github/
+        # path changed; a macOS-only failure then surfaces at queue time and
+        # returns to the lane. A dead classifier publishes nothing, so the
+        # result term ahead of the selection is what runs both legs rather
+        # than neither.
+        os: ${{ fromJSON((needs.changes.result != 'success' || (needs.changes.outputs.macos_legs == 'true' && (github.event_name != 'pull_request' || needs.changes.outputs.macos_pull_request == 'true'))) && '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
         exclude:
           - os: macos-latest
             shard: node
@@ -531,7 +553,7 @@ jobs:
         run: |
           set -u
           wf=.github/workflows/skill-tests.yml
-          declared="$(sed -n 's/^ \{8\}shard: \[\(.*\)\]$/\1/p' "$wf" | tr -d ' ' | tr ',' '\n' | sort -u)"
+          declared="$(sed -n "s/^ \{8\}shard: .*'\[\(.*\)\]'.*\$/\1/p" "$wf" | tr -d ' "' | tr ',' '\n' | sort -u)"
           # Stage one keeps `if:` keys only, so a shard named in a comment or
           # a script is not a step that runs it; stage two's -o prints EVERY
           # comparison, so a compound condition is read whole. `|| true` sends

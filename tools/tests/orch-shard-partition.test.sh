@@ -19,7 +19,7 @@
 # crates/cli/tests and named by no leg would compile under `--no-run` and run
 # nowhere while both required cargo contexts stayed green.
 #
-# Five surfaces:
+# Six surfaces:
 #   1. the filter — a bare argument selects, `!name` rejects, several
 #      arguments are a union, an empty one refuses, and a filter that matches
 #      no suite exits non-zero instead of reporting an empty pass
@@ -35,6 +35,10 @@
 #   4. the citations — a shard a tracked file names in backticks is one the
 #      matrix declares, so a rename cannot leave prose pointing at a lane no
 #      leg runs.
+#   4b. the selection — for each suite a single-shard step runs, a diff to
+#      that suite alone selects that shard through tools/ci-job-set, and every
+#      shard the matrix declares runs some suite. The must-fail arm sends one
+#      package to another shard.
 #   5. the cargo legs' partition — the macOS kendex-cli lane splits by
 #      `--test` target, the legs are the combinations the matrix expands
 #      rather than its raw list, every test target `cargo metadata` reports
@@ -246,13 +250,13 @@ chmod +x "$SHIM/bash"
 # and the node steps run no shell suite at all.
 ROSTER_MARK='=== $t'
 
-split_run_blocks() { # split_run_blocks <workflow> <dir> ; one <dir>/N.sh per block
+split_run_blocks() { # split_run_blocks <workflow> <dir> ; <dir>/N.sh and its `if:` text in <dir>/N.cond per block
   local wf="$1" dir="$2" n=0 line
   rm -rf -- "${dir:?}"
   mkdir -p "$dir"
   while IFS= read -r line; do
     case "$line" in
-      '@@'*) n=$((n + 1)); : > "$dir/$n.sh" ;;
+      '@@'*) n=$((n + 1)); : > "$dir/$n.sh"; printf '%s\n' "${line#@@}" > "$dir/$n.cond" ;;
       *)
         if [[ "$n" -gt 0 ]]; then printf '%s\n' "${line#>}" >> "$dir/$n.sh"; fi ;;
     esac
@@ -438,13 +442,19 @@ fi
 # that from a stale singular. The workflow itself is excluded, being where the
 # matrix lives and where a retired name is deliberately kept: its own history
 # sentences still say what the undivided guards and rest shards once cost.
+# The form is tools/ci-job-set's SHARD_CITATION, which also runs this suite
+# for a changed file citing one.
+CITATION="$(sed -n "s/^SHARD_CITATION='\(.*\)'\$/\1/p" "$ROOT/tools/ci-job-set")"
+[[ -n "$CITATION" ]] || bad "no SHARD_CITATION read from tools/ci-job-set, so no citation can be judged"
 cited_shards() { # cited_shards ; NUL paths on stdin -> path:line:name per citation
-  { xargs -0 grep -HIonE '`[a-z0-9][a-z0-9-]*` shards?' 2>/dev/null || true; } |
+  { xargs -0 grep -HIonE "$CITATION" 2>/dev/null || true; } |
     sed 's/:`\([a-z0-9-]*\)` shards\{0,1\}$/:\1/'
 }
 
-declared_shards="$(sed -n 's/^ \{8\}shard: \[\(.*\)\]$/\1/p' "$WORKFLOW" |
-  tr -d ' ' | tr ',' '\n' | sort -u)"
+# The matrix's shard key expands the list the changes job selects, and the
+# whole roster, its literal, where nothing was selected.
+declared_shards="$(sed -n "s/^ \{8\}shard: .*'\[\(.*\)\]'.*\$/\1/p" "$WORKFLOW" |
+  tr -d ' "' | tr ',' '\n' | sort -u)"
 if [[ -z "$declared_shards" ]]; then
   bad "no shard list in $WORKFLOW, so no citation can be judged against it"
 fi
@@ -485,6 +495,96 @@ if [[ "${arm##*:}" == "$fake" ]] &&
 else
   bad "must-fail: the scan did not read a fabricated shard name, so a stale citation would pass"
 fi
+
+# --- 4b. The shard selection reaches every suite a shard runs -------------
+# tools/ci-job-set chooses which shards a diff runs from a package table of
+# its own, and the steps above are what run each package's suites. A package
+# that table sends to the wrong shard stands down the shard running its suites
+# on exactly the diffs that change them, and every leg that does run stays
+# green. So each suite a single-shard step runs — a roster path, the orch
+# runner, a node step's package, a scan's script — is handed to ci-job-set as
+# a one-path `micro` diff, and the step's shard must be in the list that
+# comes back. One path per shard and directory stands for the rest of that
+# directory, which the table cannot tell apart.
+JOB_SET="$ROOT/tools/ci-job-set"
+
+one_shard() { # one_shard <if text> ; the shard it names when it names exactly one
+  local names
+  names="$(grep -oE "matrix\.shard == '[^']+'" <<< "$1" | cut -d"'" -f2)" || names=""
+  [[ -n "$names" && "$names" != *$'\n'* ]] && printf '%s' "$names"
+  return 0
+}
+
+suite_owners() { # suite_owners <workflow> ; `shard<tab>path`, one per shard and directory
+  local wf="$1" dir="$TMP/owner-blocks" f shard cond wd run word
+  cp "$wf" "$PART/.github/workflows/skill-tests.yml"
+  split_run_blocks "$wf" "$dir"
+  {
+    for f in "$dir"/*.sh; do
+      grep -qF "$ROSTER_MARK" "$f" || continue
+      shard="$(one_shard "$(cat "${f%.sh}.cond")")"
+      [[ -n "$shard" ]] || continue
+      ( cd "$PART" && PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
+        sed -n "s%^=== %$shard	%p"
+    done
+    # One-line steps: the package a node step works in, or the first word of
+    # its `run:` that names a file in this tree. Fields part on the unit
+    # separator, which no step text holds: a tab IFS would fold an empty
+    # working directory away.
+    awk '
+      function flush() { if (cond != "" && (wd != "" || run != "")) printf "%s\037%s\037%s\n", cond, wd, run; cond = wd = run = "" }
+      substr($0, 1, 8) == "      - " { flush() }
+      substr($0, 1, 12) == "        if: " { cond = substr($0, 13) }
+      substr($0, 1, 27) == "        working-directory: " { wd = substr($0, 28) }
+      substr($0, 1, 13) == "        run: " && substr($0, 14, 1) != "|" && substr($0, 14, 1) != ">" { run = substr($0, 14) }
+      END { flush() }
+    ' "$wf" | while IFS=$'\037' read -r cond wd run; do
+      shard="$(one_shard "$cond")"
+      [[ -n "$shard" ]] || continue
+      if [[ -n "$wd" ]]; then
+        printf '%s\t%s/package.json\n' "$shard" "$wd"
+        continue
+      fi
+      for word in $run; do
+        if [[ "$word" == */* && -f "$ROOT/$word" ]]; then
+          printf '%s\t%s\n' "$shard" "$word"
+          break
+        fi
+      done
+    done
+  } | awk -F '\t' '{ d = $2; sub(/\/[^\/]*$/, "", d) } !seen[$1 "\t" d]++'
+}
+
+unselected_owners() { # unselected_owners <ci-job-set> <owners file> ; `shard<tab>path` the selection misses
+  local job_set="$1" shard path out="$TMP/owner-selection"
+  while IFS=$'\t' read -r shard path; do
+    : > "$out"
+    ( cd "$ROOT" && CHANGE_CLASS=micro DOCS_ONLY=false CHANGED_PATHS="$path" \
+      GITHUB_OUTPUT="$out" "$job_set" ) 2>/dev/null ||
+      { printf '%s\t%s\tci-job-set-failed\n' "$shard" "$path"; continue; }
+    grep -qF "\"$shard\"" "$out" || printf '%s\t%s\n' "$shard" "$path"
+  done < "$2"
+}
+
+OWNERS="$TMP/owners"
+suite_owners "$WORKFLOW" > "$OWNERS"
+owner_shards="$(cut -f1 "$OWNERS" | sort -u)"
+check "a suite is read for every shard the matrix declares" "$declared_shards" "$owner_shards"
+check "ci-job-set selects the shard running each suite for a diff to that suite" \
+  "" "$(unselected_owners "$JOB_SET" "$OWNERS")"
+
+# Must-fail: a table that sends worktree to `rest` leaves the worktree shard
+# standing down on a worktree diff, and that suite is named.
+mkdir -p "$TMP/owner-tools"
+cp "$ROOT/tools/rust-reads" "$TMP/owner-tools/rust-reads"
+awk '$0 ~ /^    skills\/worktree\) want_shard worktree ;;$/ { n++; next } { print } END { exit n != 1 }' \
+  "$JOB_SET" > "$TMP/owner-tools/ci-job-set" ||
+  { bad "must-fail: the worktree row is no longer one line in $JOB_SET"; }
+chmod +x "$TMP/owner-tools/ci-job-set"
+case "$(unselected_owners "$TMP/owner-tools/ci-job-set" "$OWNERS")" in
+  worktree$'\t'skills/worktree/tests/*) ok "must-fail: a table sending worktree elsewhere names the worktree suites" ;;
+  *) bad "must-fail: a table sending worktree elsewhere named nothing, so the selection check proves nothing" ;;
+esac
 
 # --- 5. The cargo legs' partition over the CLI's test targets --------------
 # A cargo leg is a roster of `--test` names, and the seam it cuts is inside
