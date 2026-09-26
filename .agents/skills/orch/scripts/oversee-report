@@ -488,40 +488,13 @@ table() {
 }
 
 # item_state ITEM HOST MAIL_ROOT — sets ITEM_STATE to the item's own
-# workflow-state JSON, empty where the lane has written none. A local lane's
-# state is under this project's state directory; a hosted lane's is in its
-# clone, read through lib/lane-gitfile.sh's hosted probe, the one the watch
-# reads through. A hosted worktree already gone, which
-# ../workflows/merge-pr.md § 5 leaves behind a merged lane until lane-close
-# runs, has no state to wait on.
+# workflow-state JSON, empty where the lane has written none, as
+# lib/lane-gitfile.sh's lane_item_state reads it.
 ITEM_STATE=""
 item_state() {
-  local item="$1" host="$2" root="$3" path rc=0
-  ITEM_STATE=""
-  if [[ -z "$host" ]]; then
-    path="$("$WORKFLOW_STATE" path "$item" 2>"$WORK_DIR/state.err")" \
-      || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
-    [[ -f "$path" ]] || return 0
-    ITEM_STATE="$(jq -c . -- "$path" 2>"$WORK_DIR/state.err")" \
-      || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
-    return 0
-  fi
-  ORCH_LANE_HOST="$host" lane_hosted_clone "$LANE_HOST" "$item" "$root" "$WORK_DIR/gitfile" "$WORK_DIR/state.err" || rc=$?
-  case "$rc" in
-    0) ;;
-    1) return 0 ;;
-    3) refuse item-state "$item" "$root/.git: ${LANE_HOSTED_GITLINE:-<empty>}" ;;
-    *) refuse item-state "$item" "$(cat "$WORK_DIR/state.err")" ;;
-  esac
-  lane_hosted_state_path "$LANE_HOSTED_CLONE" "$STATE_DIR_SETTING" "$item"
-  ORCH_LANE_HOST="$host" lane_host_fetch "$LANE_HOST" "$item" "$LANE_HOSTED_STATE_PATH" \
-    "$WORK_DIR/item-state.json" "$WORK_DIR/state.err" || rc=$?
-  case "$rc" in
-    0) ITEM_STATE="$(jq -c . -- "$WORK_DIR/item-state.json" 2>"$WORK_DIR/state.err")" \
-         || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")" ;;
-    1) ;;
-    *) refuse item-state "$item" "$(cat "$WORK_DIR/state.err")" ;;
-  esac
+  lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "$STATE_DIR_SETTING" "$1" "$2" "$3" "$WORK_DIR" \
+    || refuse item-state "$1" "$(cat "$WORK_DIR/state.err")"
+  ITEM_STATE="$LANE_ITEM_STATE"
 }
 
 # running_lanes — reads each running lane once for two rows. BLOCKERS gets one
