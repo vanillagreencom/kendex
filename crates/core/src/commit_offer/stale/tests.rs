@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 
 use super::*;
-use crate::commit_offer::{Branch, Owned};
 use crate::repo_effects::RepoEffects;
 
 /// A changed path touches a package where it sits under the package's own
@@ -35,18 +34,6 @@ fn a_changed_path_touches_the_package_that_owns_or_writes_it() {
         (".github/copilot-instructions.md", false),
         (".agents/skills/bot-instructions-extra/SKILL.md", false),
     ] {
-        let scan = Scan {
-            root: root.clone(),
-            owned: vec![Owned {
-                path: path.to_owned(),
-                untracked: false,
-                added: false,
-            }],
-            shared: Vec::new(),
-            manifest: None,
-            others: 0,
-            branch: Branch::On("main".to_owned()),
-        };
-        assert_eq!(touched(&scan, &declared), want, "{path}");
+        assert_eq!(belongs(&root, &declared, path), want, "{path}");
     }
 }

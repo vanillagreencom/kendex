@@ -126,6 +126,14 @@ pub fn stale(scan: &Scan, stale: &[Stale]) {
                     quoted(line);
                 }
             }
+            Staleness::Split(left) => {
+                detail(&format!(
+                    "the commit would carry some of {name}'s changed files and leave these out:"
+                ));
+                for path in left {
+                    quoted(path);
+                }
+            }
         }
     }
     detail(
@@ -142,6 +150,15 @@ pub fn stale_way_on(set_up: bool) {
             "set it up here first: at a terminal, where kendex offers it, or with Set up on its package page in the app",
         ),
     }
+}
+
+/// A commit that would split a package's changed files: no setup clears
+/// it, so the files are left as diffs for the person to commit together.
+pub fn split_way_on() {
+    detail(
+        "the repository's check renders from what a commit holds, so these belong in one commit",
+    );
+    detail("they are left as diffs; commit them together yourself");
 }
 
 /// A setup chosen at the offer that did not run through.

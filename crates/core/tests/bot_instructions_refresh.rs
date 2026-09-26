@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::test_util::rooted;
 use kendex_core::bot_instructions;
-use kendex_core::commit_offer::{self, Staleness};
+use kendex_core::commit_offer::{self, Carried, Staleness};
 use kendex_core::engine::GeneratedPaths;
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::lock::{EmittedArtifact, Lock, LockEntry, Reason};
@@ -764,6 +764,7 @@ fn a_package_whose_files_the_offer_would_carry_stale_holds_the_commit() {
             &fixture.env,
             &fixture.scope,
             &offer_scan(&fixture, &generated),
+            Carried::Everything,
         )
         .expect("the packages are asked");
 
@@ -817,8 +818,8 @@ fn an_unarmed_doctrine_change_never_offers_the_commit_the_staged_check_refuses()
     rendered.add_to(&mut generated);
 
     let scan = offer_scan(&fixture, &generated);
-    let stale =
-        commit_offer::stale(&fixture.env, &fixture.scope, &scan).expect("the packages are asked");
+    let stale = commit_offer::stale(&fixture.env, &fixture.scope, &scan, Carried::Everything)
+        .expect("the packages are asked");
     assert_eq!(
         stale.iter().map(|held| &held.why).collect::<Vec<_>>(),
         [&Staleness::NotSetUp],
@@ -834,7 +835,7 @@ fn an_unarmed_doctrine_change_never_offers_the_commit_the_staged_check_refuses()
     bot_instructions::add_to_generated(&fixture.env, &fixture.scope, &mut generated)
         .expect("the setup's files join the offer");
     let scan = offer_scan(&fixture, &generated);
-    let stale = commit_offer::stale(&fixture.env, &fixture.scope, &scan)
+    let stale = commit_offer::stale(&fixture.env, &fixture.scope, &scan, Carried::Everything)
         .expect("the packages are asked again");
     assert!(stale.is_empty(), "still held after the setup: {stale:?}");
     assert!(
@@ -886,4 +887,98 @@ fn a_linked_work_tree_names_the_main_checkout_in_its_skip_line() {
             kendex_core::paths::slashed(&fixture.root)
         ))
     );
+}
+
+/// A commit never splits a package's changed paths. One row per way a
+/// package's input can be left behind while its re-rendered files are
+/// carried: a pending doctrine change outside the action's own commit, and
+/// a changed `[bot-instructions]` table in the manifest, which no commit
+/// kendex makes carries. A manifest change outside that table leaves the
+/// commit whole.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_commit_that_splits_a_packages_changed_paths_is_held() {
+    enum Carries {
+        Rendered,
+        Everything,
+    }
+    let rows = [
+        (
+            "the doctrine left out of the action's commit",
+            None,
+            Carries::Rendered,
+            Some(vec![format!("{CODEX_PACKAGE}/SKILL.md")]),
+        ),
+        (
+            "every pending change, the doctrine included",
+            None,
+            Carries::Everything,
+            None,
+        ),
+        (
+            "the package's manifest table changed",
+            Some(("name = \"fixture\"\n", "name = \"renamed\"\n")),
+            Carries::Everything,
+            Some(vec!["kendex.toml".to_owned()]),
+        ),
+        (
+            "the manifest changed outside the package's table",
+            Some((
+                "harnesses = [\"claude\"]\n",
+                "harnesses = [\"claude\", \"codex\"]\n",
+            )),
+            Carries::Everything,
+            None,
+        ),
+    ];
+    for (what, manifest_edit, carries, split) in rows {
+        let fixture = enabled_fixture();
+        commit_fixture(&fixture.root);
+        let manifest = fixture.root.join("kendex.toml");
+        if let Some((from, to)) = manifest_edit {
+            let text = fs::read_to_string(&manifest).unwrap();
+            assert_eq!(
+                text.matches(from).count(),
+                1,
+                "{what}: the manifest edit found {from:?}"
+            );
+            let text = text.replacen(from, to, 1);
+            fs::write(&manifest, text).unwrap();
+        }
+        let mut generated = GeneratedPaths::default();
+        generated.whole.insert(change_doctrine(&fixture.root));
+        let mut rendered = GeneratedPaths::default();
+        bot_instructions::render(&fixture.env, &fixture.scope)
+            .expect("the armed package renders")
+            .add_to(&mut rendered);
+        let scan = offer_scan(&fixture, &{
+            let mut all = generated.clone();
+            all.whole.extend(rendered.whole.iter().cloned());
+            all.regions.extend(rendered.regions.iter().cloned());
+            all
+        });
+        let rendered_paths: BTreeSet<String> = scan
+            .owned
+            .iter()
+            .map(|owned| owned.path.clone())
+            .filter(|path| !path.ends_with("SKILL.md"))
+            .collect();
+        assert!(
+            !rendered_paths.is_empty(),
+            "{what}: the render changed nothing"
+        );
+        let carried = match carries {
+            Carries::Rendered => Carried::Only(&rendered_paths),
+            Carries::Everything => Carried::Everything,
+        };
+
+        let stale = commit_offer::stale(&fixture.env, &fixture.scope, &scan, carried)
+            .expect("the packages are asked");
+
+        let got: Vec<&Staleness> = stale.iter().map(|held| &held.why).collect();
+        match split {
+            Some(left) => assert_eq!(got, [&Staleness::Split(left)], "{what}"),
+            None => assert!(got.is_empty(), "{what}: {got:?}"),
+        }
+    }
 }

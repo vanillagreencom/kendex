@@ -51,33 +51,90 @@ pub enum Staleness {
     /// The package's check could not answer, or could not be run. Its
     /// words, or why it could not be run.
     Unchecked(Vec<String>),
+    /// The commit carries some of the package's changed paths and leaves
+    /// these out: files under its tree or its declared writes the commit
+    /// does not carry, or the manifest, whose table for the package
+    /// changed and which no commit kendex makes carries. The repository's
+    /// check renders from what the commit holds, so it compares the
+    /// carried files against inputs left behind. No setup clears this;
+    /// the way on is to leave the files and commit them together.
+    Split(Vec<String>),
 }
 
-/// Every installed package whose checkout files this offer would commit
-/// out of date. Empty where the commit can be offered.
+/// Which of the scan's changed paths a commit carries.
+#[derive(Debug, Clone, Copy)]
+pub enum Carried<'a> {
+    /// Every changed path kendex owns: the terminal's commit, and the
+    /// window's commit of every pending change.
+    Everything,
+    /// Only these paths: the window's commit of one action's work.
+    Only(&'a std::collections::BTreeSet<String>),
+}
+
+impl Carried<'_> {
+    fn carries(self, path: &str) -> bool {
+        match self {
+            Carried::Everything => true,
+            Carried::Only(paths) => paths.contains(path),
+        }
+    }
+}
+
+/// Every installed package whose checkout files the commit carrying
+/// `carried` would hold out of date. Empty where that commit can be
+/// offered. The one owner of the rule for both surfaces: each asks it of
+/// the commit it offers.
 ///
-/// A package is asked only where the offer touches it: a changed path
-/// under its own tree, which is what a refresh of its doctrine changes, or
-/// under one of the paths it declares it writes. A package declaring no
-/// installer holds nothing, since no setup could clear the hold. One not
-/// set up here holds the commit without any of its code running. One set
-/// up here is asked through its declared check, the same licensed run the
-/// package page makes; declaring no check, it gives kendex nothing to
-/// predict with and holds nothing.
+/// A package is asked only where the commit carries one of its changed
+/// paths: under its own tree, which is what a refresh of its doctrine
+/// changes, or under one of the paths it declares it writes. First, the
+/// commit never splits a package's pending paths ([`Staleness::Split`]):
+/// one that carries some of them and leaves others behind is held however
+/// the package stands, because the repository's check renders from the
+/// commit's inputs. Then a package declaring no installer holds nothing,
+/// since no setup could clear the hold. One not set up here holds the
+/// commit without any of its code running. One set up here is asked
+/// through its declared check, the same licensed run the package page
+/// makes, over the working tree; declaring no check, it gives kendex
+/// nothing to predict with and holds nothing. The split rule is what
+/// makes that working-tree check stand for the commit: with every changed
+/// input carried, the tree the check reads is the one the commit holds.
 ///
 /// A declaration that will not read is passed over: it names neither the
 /// files nor the check, and `repo_effects::lapsed` is the reading that
 /// reports it where kendex set it up.
-pub fn stale(env: &Env, scope: &Scope, scan: &Scan) -> crate::error::Result<Vec<Stale>> {
+pub fn stale(
+    env: &Env,
+    scope: &Scope,
+    scan: &Scan,
+    carried: Carried,
+) -> crate::error::Result<Vec<Stale>> {
     let mut held = Vec::new();
     for installed in crate::engine::installed_declarations(env, scope)? {
         let crate::engine::InstalledDeclaration::Declared(declared) = installed else {
             continue;
         };
-        if crate::repo_effects::touches_git(&declared.effects)
-            || declared.effects.installer.is_none()
-            || !touched(scan, &declared)
-        {
+        if crate::repo_effects::touches_git(&declared.effects) {
+            continue;
+        }
+        let (taken, mut left): (Vec<&str>, Vec<&str>) = scan
+            .owned
+            .iter()
+            .map(|owned| owned.path.as_str())
+            .filter(|path| belongs(&scan.root, &declared, path))
+            .partition(|path| carried.carries(path));
+        if taken.is_empty() {
+            continue;
+        }
+        if let Some(manifest) = table_changed(scan, &declared.name)? {
+            left.push(manifest);
+        }
+        if !left.is_empty() {
+            let left = left.into_iter().map(str::to_owned).collect();
+            held.push((declared, Staleness::Split(left)));
+            continue;
+        }
+        if declared.effects.installer.is_none() {
             continue;
         }
         let why = match crate::repo_effects::armed_here(scope, &declared)? {
@@ -100,6 +157,39 @@ pub fn stale(env: &Env, scope: &Scope, scan: &Scan) -> crate::error::Result<Vec<
         held.push((declared, why));
     }
     disclosed(env, scope, held)
+}
+
+/// The manifest's path where git reports it changed and the table named
+/// for this package differs from the last commit's, else `None`.
+///
+/// A package that reads project settings reads the table named for it:
+/// bot-instructions renders from `[bot-instructions]`. kendex folds keys
+/// into the manifest and never commits it, so a changed table is an input
+/// every commit it makes leaves behind. A change anywhere else in the
+/// manifest is not this package's input.
+fn table_changed<'a>(scan: &'a Scan, table: &str) -> crate::error::Result<Option<&'a str>> {
+    let Some(path) = scan.manifest.as_deref() else {
+        return Ok(None);
+    };
+    let whole = scan.root.join(path);
+    let now = std::fs::read_to_string(&whole)
+        .map_err(|error| crate::error::CoreError::io(&whole, error))?;
+    let committed = super::git::read(&scan.root, &["show", &format!("HEAD:./{path}")])
+        .map_err(|failed| crate::repo_effects::err(failed.said().join("\n")))?
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+    let read = |text: &str| -> crate::error::Result<Option<toml::Value>> {
+        let parsed: toml::Table =
+            toml::from_str(text).map_err(|error| crate::error::CoreError::TomlParse {
+                path: whole.clone(),
+                message: error.to_string(),
+            })?;
+        Ok(parsed.get(table).cloned())
+    };
+    let before = match committed {
+        Some(text) => read(&text)?,
+        None => None,
+    };
+    Ok((read(&now)? != before).then_some(path))
 }
 
 /// Each held package with the block its setup is shown under.
@@ -134,23 +224,23 @@ fn disclosed(
         .collect()
 }
 
-/// Whether the offer carries a change to this package's own files or to a
-/// path it declares it writes.
+/// Whether a changed path is this package's: under its own tree or under
+/// a path it declares it writes.
 ///
 /// Compared as path components, so a declared directory spelled with a
 /// trailing `/` covers what is under it and `docs` does not cover
 /// `docsite`.
-fn touched(scan: &Scan, declared: &DeclaredEffects) -> bool {
-    let tree = declared.root.strip_prefix(&scan.root).ok();
-    scan.owned.iter().any(|owned| {
-        let path = Path::new(&owned.path);
-        tree.is_some_and(|tree| path.starts_with(tree))
-            || declared
-                .effects
-                .writes
-                .iter()
-                .any(|write| path.starts_with(write))
-    })
+fn belongs(root: &Path, declared: &DeclaredEffects, path: &str) -> bool {
+    let path = Path::new(path);
+    declared
+        .root
+        .strip_prefix(root)
+        .is_ok_and(|tree| path.starts_with(tree))
+        || declared
+            .effects
+            .writes
+            .iter()
+            .any(|write| path.starts_with(write))
 }
 
 #[cfg(test)]

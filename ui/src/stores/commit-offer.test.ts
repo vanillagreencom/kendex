@@ -9,6 +9,7 @@ import {
 } from "@/bindings";
 import { droppedToast, NOTHING_TO_COMMIT_TOAST } from "@/lib/copy-commit-offer";
 import {
+  canSetUp,
   heldBy,
   ready,
   routesFor,
@@ -447,6 +448,21 @@ describe("the packages holding the picked commit", () => {
   it("answers an empty line with one array", () => {
     const empty = { queue: [], scoped: "action" as const };
     expect(heldBy(empty)).toBe(heldBy(empty));
+  });
+
+  // A commit that would split a package's changed files is cleared only by
+  // committing them together, so no setup is offered or run for it.
+  it("offers no setup for a split", async () => {
+    const split = { ...held("bot-instructions"), why: "split" } as StalePackage;
+    expect(canSetUp([held("bot-instructions")])).toBe(true);
+    expect(canSetUp([held("bot-instructions"), split])).toBe(false);
+    useCommitOfferStore.setState({
+      queue: [offer({ stale: [split], staleAction: [split] })],
+      stage: { at: "offer" },
+    });
+    await useCommitOfferStore.getState().setUp();
+    expect(commands.repoEffectsApply).not.toHaveBeenCalled();
+    expect(useCommitOfferStore.getState().stage).toEqual({ at: "offer" });
   });
 });
 

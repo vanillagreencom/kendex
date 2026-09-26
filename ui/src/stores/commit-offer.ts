@@ -239,6 +239,13 @@ export function heldBy(state: {
   return selectionOf(state).kind === "all" ? offer.stale : offer.staleAction;
 }
 
+/** Whether a setup can clear the hold on the picked commit: not where the
+ *  commit would split a package's changed files, which only committing
+ *  them together clears. */
+export function canSetUp(held: StalePackage[]): boolean {
+  return held.every((one) => one.why !== "split");
+}
+
 /** Whether the primary action may run: a commit labelled as one action's
  *  work never carries an earlier change the reader has not said yes to.
  *  Every other state is free to run.
@@ -808,7 +815,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
     setUp: async () => {
       const offer = head();
       const held = heldBy(get());
-      if (!offer || held.length === 0) return;
+      if (!offer || held.length === 0 || !canSetUp(held)) return;
       // Taken before the write: the write's own reading of the projects
       // records one for an offer a person opened, which has none and reads
       // as they opened it.

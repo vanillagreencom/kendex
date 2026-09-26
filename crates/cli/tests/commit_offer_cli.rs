@@ -551,6 +551,41 @@ fn held_project(tmp: &tempfile::TempDir) -> PathBuf {
     project
 }
 
+/// A commit that would carry a package's re-rendered file while its
+/// manifest table, which kendex never commits, has changed is held with
+/// the manifest named, whatever the package's own check says: no setup
+/// clears it, so the files are left for the person to commit together.
+#[test]
+fn a_commit_that_leaves_the_packages_manifest_table_behind_is_held() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = region_project(
+        &tmp,
+        "# App\n\n## Code Review Rules\n\nold generated rules\n",
+        "# App\n\n## Code Review Rules\n\nold generated rules\n",
+    );
+    let manifest = project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        format!("{text}\n[bot-instructions]\nschema = 1\n"),
+    )
+    .unwrap();
+
+    let (output, text) = apply(&home, &project, &["--commit"]);
+
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    for line in [
+        "the commit would carry some of bot-instructions's changed files and leave these out:",
+        "    kendex.toml",
+        "they are left as diffs; commit them together yourself",
+    ] {
+        assert!(text.contains(line), "missing {line:?}:\n{text}");
+    }
+    assert!(!text.contains("set it up here first"), "{text}");
+    assert_eq!(head_subject(&project), "bot package");
+}
+
 /// A pre-commit chain that refuses prints every lane it ran, and git hands
 /// back its stdout before its stderr. The refusal leads with the findings
 /// block, then the rest of what git said for the log.

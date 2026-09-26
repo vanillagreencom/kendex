@@ -317,9 +317,12 @@ fn make(
             return Ok(Some(Outcome::Nothing));
         }
         let person = answered.is_none() && std::io::stdin().is_terminal();
-        // Asked before the commit is offered, so a commit the repository's
-        // own check would refuse over a package's files is never offered.
-        let stale = match commit_offer::stale(env, scope, &scan) {
+        // Asked before the commit is offered, of the commit it would make:
+        // a package not set up here, one whose check says its files are
+        // stale, and a commit that would split a package's changed files
+        // each hold it.
+        let stale = match commit_offer::stale(env, scope, &scan, commit_offer::Carried::Everything)
+        {
             Ok(stale) => stale,
             Err(error) => {
                 block::not_vouched(root, &error.to_string());
@@ -327,24 +330,15 @@ fn make(
             }
         };
         if !stale.is_empty() {
-            block::stale(&scan, &stale);
-            // One setup per offer. A package still not ready after its own
-            // setup ran is not one a second run of it fixes.
-            if set_up || !person {
-                block::stale_way_on(set_up);
-                return Ok(Some(match (set_up, answered) {
-                    (false, None) => Outcome::Nothing,
-                    (true, _) | (false, Some(_)) => Outcome::CommitRefused,
-                }));
-            }
-            match block::pick_stale(&stale)? {
-                block::Held::Leave => return Ok(Some(Outcome::Nothing)),
-                block::Held::SetUp => {
+            let held = Held {
+                set_up,
+                answered,
+                person,
+            };
+            match hold(env, scope, &scan, &stale, held, &mut generated)? {
+                Hold::Ended(outcome) => return Ok(Some(outcome)),
+                Hold::SetUp => {
                     set_up = true;
-                    if let Err(error) = set_up_here(env, scope, &stale, &mut generated) {
-                        block::set_up_failed(&error.to_string());
-                        return Ok(Some(Outcome::CommitRefused));
-                    }
                     continue;
                 }
             }
@@ -389,6 +383,67 @@ fn make(
             }
             None => ask(&offer, &generated, session.flags.message.clone()).map(Some),
         };
+    }
+}
+
+/// Where the offer stands when a package holds its commit.
+#[derive(Clone, Copy)]
+struct Held {
+    /// A setup already ran in this offer.
+    set_up: bool,
+    /// The choice a flag named, if one did.
+    answered: Option<Choice>,
+    /// A person is at the prompt to be asked.
+    person: bool,
+}
+
+/// How a held offer ends: an outcome, or a setup that ran, after which the
+/// project is read again.
+enum Hold {
+    Ended(Outcome),
+    SetUp,
+}
+
+/// Say what holds the commit and take the way on the state allows.
+fn hold(
+    env: &Env,
+    scope: &Scope,
+    scan: &commit_offer::Scan,
+    stale: &[commit_offer::Stale],
+    held: Held,
+    generated: &mut GeneratedPaths,
+) -> Result<Hold, Box<dyn std::error::Error>> {
+    block::stale(scan, stale);
+    // A commit that would split a package's changed files is not one any
+    // setup clears: the files are left for the person to commit together.
+    if stale
+        .iter()
+        .any(|one| matches!(one.why, commit_offer::Staleness::Split(_)))
+    {
+        block::split_way_on();
+        return Ok(Hold::Ended(match held.answered {
+            None => Outcome::Nothing,
+            Some(_) => Outcome::CommitRefused,
+        }));
+    }
+    // One setup per offer. A package still not ready after its own setup
+    // ran is not one a second run of it fixes.
+    if held.set_up || !held.person {
+        block::stale_way_on(held.set_up);
+        return Ok(Hold::Ended(match (held.set_up, held.answered) {
+            (false, None) => Outcome::Nothing,
+            (true, _) | (false, Some(_)) => Outcome::CommitRefused,
+        }));
+    }
+    match block::pick_stale(stale)? {
+        block::Held::Leave => Ok(Hold::Ended(Outcome::Nothing)),
+        block::Held::SetUp => match set_up_here(env, scope, stale, generated) {
+            Ok(()) => Ok(Hold::SetUp),
+            Err(error) => {
+                block::set_up_failed(&error.to_string());
+                Ok(Hold::Ended(Outcome::CommitRefused))
+            }
+        },
     }
 }
 

@@ -105,6 +105,7 @@ import {
 } from "@/lib/copy-commit-offer";
 import { cn } from "@/lib/utils";
 import {
+  canSetUp,
   heldBy,
   type Route,
   ready,
@@ -412,7 +413,9 @@ function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
           {stale.map((held) => (
             <div key={held.name} className="space-y-1.5">
               <HeldBy held={held} />
-              <DisclosureBody disclosure={held.disclosure} />
+              {held.why === "split" ? null : (
+                <DisclosureBody disclosure={held.disclosure} />
+              )}
             </div>
           ))}
         </Section>
@@ -428,9 +431,13 @@ function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
         <Button variant="outline" disabled={busy} onClick={leave}>
           {LEAVE_LABEL}
         </Button>
-        <Button disabled={busy} onClick={() => void setUp()}>
-          {busy ? SETTING_UP_LABEL : setUpLabel(stale.map((held) => held.name))}
-        </Button>
+        {canSetUp(stale) ? (
+          <Button disabled={busy} onClick={() => void setUp()}>
+            {busy
+              ? SETTING_UP_LABEL
+              : setUpLabel(stale.map((held) => held.name))}
+          </Button>
+        ) : null}
       </DialogFooter>
     </>
   );
