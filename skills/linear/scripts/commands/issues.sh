@@ -91,9 +91,10 @@ Create Options:
   --state <name>        Initial state (case-sensitive, fails with available list)
   --priority <0-4>      Priority: 0=None, 1=Urgent, 2=High, 3=Normal, 4=Low
   --estimate <1-5>      Effort estimate (points)
-  --assignee <name|me|email>  Assignee: a name matches as a substring, an
+  --assignee <name|me|email|id>  Assignee: a name matches as a substring, an
                         address (anything with @) matches a user's whole
-                        email, case-insensitively; a miss refuses
+                        email, case-insensitively, and a user id is used as
+                        given; a miss refuses
   --parent <id>         Parent issue ID (creates sub-issue)
   --milestone <name|uuid> Project milestone (a name needs --project; a UUID does not)
   --cycle <id>          Cycle (sprint) ID
@@ -139,7 +140,7 @@ Update Options:
   --priority <0-4>      Priority: 0=None, 1=Urgent, 2=High, 3=Normal, 4=Low
   --estimate <0-5>      Effort estimate (points); 0 clears the estimate (unset)
   --clear-estimate      Clear the estimate (unset; e.g. coordination parents = no estimate)
-  --assignee <name|me|email>  Change assignee (matched as on create)
+  --assignee <name|me|email|id>  Change assignee (matched as on create)
   --parent <id>         Set parent issue (convert to sub-issue)
   --remove-parent       Remove parent (convert to top-level issue)
   --milestone <name|uuid> Set project milestone (a name resolves in --project,
@@ -929,7 +930,7 @@ get_issue() {
 
     local variables="{\"id\": \"$issue_id\"}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_query "$query" "$variables") || return 1
 
     # Apply output format
     case "$FORMAT" in
@@ -1070,32 +1071,31 @@ upload_attach_paths() {
     done
 }
 
-# The Linear API's largest page. The users listing is one page, so an email
-# lookup asks for all of it: a smaller page would call a user past its end
-# unknown.
-LINEAR_USERS_PAGE_MAX=250
-
 # find_user_by_email EMAIL — the user whose whole address is EMAIL, compared
-# case-insensitively, as one safe-format users row ({id, name, email, ...}) on
-# stdout; nothing at all when no user has it. Read through the users listing,
-# so nothing is cached. Exits 1 when the listing itself failed, its error
-# already on stderr: a failed lookup is never an unknown address.
+# case-insensitively by Linear's own filter, as one {id, name, email} object on
+# stdout; nothing at all when no user has it. Asked of the server rather than
+# scanned out of a listing, so no page bound can hide a user, and nothing is
+# cached. Exits 1 when the query itself failed, its error already on stderr: a
+# failed lookup is never an unknown address.
 find_user_by_email() {
-    local email="$1" users
-    users=$("$BASH" "$SCRIPT_DIR/users.sh" list --format=safe --limit "$LINEAR_USERS_PAGE_MAX") || return 1
-    jq -c --arg email "$email" \
-        'first(.[] | select((.email | ascii_downcase) == ($email | ascii_downcase))) // empty' <<<"$users"
+    local email="$1" vars result
+    vars=$(jq -cn --arg email "$email" '{email: $email}')
+    result=$(graphql_query 'query GetUserByEmail($email: String!) { users(filter: {email: {eqIgnoreCase: $email}}) { nodes { id name email } } }' "$vars") || return 1
+    jq -c '.users.nodes[0] // empty' <<<"$result"
 }
 
 # resolve_assignee_id REF — the id of the user an --assignee value names, on
-# stdout. `me` is the API key's own user, a value containing `@` is an email
-# address (find_user_by_email), and anything else is a name matched as a
-# case-insensitive substring. A miss refuses: every other resolver here fails
-# closed, and dropping the field on an unresolvable name reported success with
-# the issue unassigned.
+# stdout. `me` is the API key's own user, a user id is taken as given (the
+# form activate_issue passes once it has resolved the person), a value
+# containing `@` is an email address (find_user_by_email), and anything else
+# is a name matched as a case-insensitive substring. A miss refuses: every
+# other resolver here fails closed, and dropping the field on an unresolvable
+# name reported success with the issue unassigned.
 resolve_assignee_id() {
     local ref="$1" result assignee_id
-    if [ "$ref" = "me" ]; then
+    if [[ "$ref" =~ $LINEAR_UUID_PATTERN ]]; then
+        assignee_id="$ref"
+    elif [ "$ref" = "me" ]; then
         result=$(graphql_query 'query { viewer { id } }' "{}") || return 1
         assignee_id=$(jq -r '.viewer.id // empty' <<<"$result")
     elif [[ "$ref" == *@* ]]; then
@@ -2687,9 +2687,10 @@ remove_relation() {
 # mutation, so an unknown agent fails without touching issue state.
 #
 # KENDEX_USER_EMAIL, the person operating this checkout, becomes the assignee
-# of an issue nobody is assigned, in that same mutation. Every outcome but a
-# failed users lookup lets the activation proceed, and each is one keyed line
-# on stderr after the mutation lands, with the JSON "assignee" field beside it:
+# of an issue nobody is assigned, in that same mutation. Every outcome lets the
+# activation proceed; a failed issue read, users lookup or update fails it and
+# reports no outcome. Each outcome is one keyed line on stderr after the
+# mutation lands, with the JSON "assignee" field beside it:
 #   assignee-set assignee=NAME                    "set"
 #   assignee-kept assignee=NAME                   "kept"     (never replaced)
 #   assignee-skipped cause=unset                  "skipped"
@@ -2738,6 +2739,9 @@ activate_issue() {
     local user_email="${KENDEX_USER_EMAIL:-}"
     local issue_result=""
     if [ -n "$agent" ] || [ -n "$user_email" ]; then
+        # The label set and the assignee are both read off this answer, so a
+        # failed read stops here: past it, an empty answer drops the one and
+        # reports the other as kept.
         issue_result=$(get_issue "$issue_id" --format=raw) || return 1
     fi
 
@@ -2768,9 +2772,13 @@ activate_issue() {
             assignee_state="skipped"
             assignee_line="assignee-skipped cause=unknown-email email=$user_email"
         else
+            local user_id
+            user_id=$(jq -r '.id' <<<"$user") || return 1
             assignee_state="set"
             assignee_line="assignee-set assignee=$(jq -r '.name' <<<"$user")"
-            update_args+=(--assignee "$user_email")
+            # The id, not the address: the update then sends it without a
+            # second lookup of the same person.
+            update_args+=(--assignee "$user_id")
         fi
     fi
 

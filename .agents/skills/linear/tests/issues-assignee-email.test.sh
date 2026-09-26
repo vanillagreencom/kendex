@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # --assignee on issues create and issues update takes an email address: a
-# value containing `@` is matched against every user's whole address,
-# case-insensitively, and a miss refuses before any mutation. The name form
-# keeps matching as a substring.
+# value containing `@` is matched against a user's whole address,
+# case-insensitively, and a miss refuses before any mutation. A user id is
+# sent as given, and the name form keeps matching as a substring.
 
 set -euo pipefail
 
@@ -19,6 +19,10 @@ cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # `.cache/linear`.
 git -C "$TMP_ROOT" init -q -b main
 
+# The one user answers only a lookup filtered on the address itself, compared
+# as Linear compares under eqIgnoreCase (case folded), eq (exact) or
+# containsIgnoreCase (a substring): a listing scanned page by page is an
+# unexpected query here.
 cat >"$TMP_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
 config="$(cat)"
@@ -30,12 +34,26 @@ printf '%s\n' "$payload" >> "${CURL_PAYLOAD_LOG:?}"
 issue='{"id":"issue-uuid","identifier":"CC-760","title":"t","description":null,"state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-760","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}'
 
 case "$query" in
-*"users(first:"*)
-  printf '%s' '{"data":{"users":{"nodes":[{"id":"user-other","name":"Other Person","email":"other@example.com","displayName":"other","active":true,"admin":false,"createdAt":"2026-01-01T00:00:00Z"},{"id":"user-dana","name":"Dana Doe","email":"Dana@Example.com","displayName":"dana","active":true,"admin":false,"createdAt":"2026-01-01T00:00:00Z"}]}}}___HTTP_CODE___200'
+*"users(filter: {email: {"*)
+  asked="$(jq -r '.email' <<<"$variables")"
+  stored="Dana@Example.com"
+  folded_asked="$(tr '[:upper:]' '[:lower:]' <<<"$asked")"
+  folded_stored="$(tr '[:upper:]' '[:lower:]' <<<"$stored")"
+  case "$query" in
+  *"eqIgnoreCase:"*) [[ "$folded_asked" == "$folded_stored" ]] ;;
+  *"containsIgnoreCase:"*) [[ "$folded_stored" == *"$folded_asked"* ]] ;;
+  *"eq:"*) [[ "$asked" == "$stored" ]] ;;
+  *) false ;;
+  esac && hit=1 || hit=0
+  if [[ "$hit" == 1 ]]; then
+    printf '%s' '{"data":{"users":{"nodes":[{"id":"11111111-2222-3333-4444-555555555555","name":"Dana Doe","email":"Dana@Example.com"}]}}}___HTTP_CODE___200'
+  else
+    printf '%s' '{"data":{"users":{"nodes":[]}}}___HTTP_CODE___200'
+  fi
   ;;
-*"users(filter:"*)
+*"users(filter: {name:"*)
   if [[ "$(jq -r '.name' <<<"$variables")" == "Dana" ]]; then
-    printf '%s' '{"data":{"users":{"nodes":[{"id":"user-dana"}]}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"users":{"nodes":[{"id":"11111111-2222-3333-4444-555555555555"}]}}}___HTTP_CODE___200'
   else
     printf '%s' '{"data":{"users":{"nodes":[]}}}___HTTP_CODE___200'
   fi
@@ -83,6 +101,8 @@ inputs() {
 
 # One row per case: case, action, --assignee value, and the assigneeId the
 # mutation carries, or `refused` for a miss that sends no mutation at all.
+DANA_ID=11111111-2222-3333-4444-555555555555
+OTHER_ID=99999999-8888-7777-6666-555555555555
 while IFS='|' read -r name action ref want; do
   case "$action" in
   create) run_issues "$name" create --title t --assignee "$ref"; mutation=issueCreate ;;
@@ -98,11 +118,12 @@ while IFS='|' read -r name action ref want; do
     assert_jq "$name: the $mutation carries the user's id" \
       "$(inputs "$name" "$mutation")" "length == 1 and .[0].assigneeId == \"$want\""
   fi
-done <<'ROWS'
-create-email|create|dana@EXAMPLE.com|user-dana
+done <<ROWS
+create-email|create|dana@EXAMPLE.com|$DANA_ID
 create-email-miss|create|nobody@example.com|refused
-update-email|update|dana@example.com|user-dana
+update-email|update|dana@example.com|$DANA_ID
 update-email-miss|update|nobody@example.com|refused
 update-email-partial|update|ana@example.com|refused
-update-name|update|Dana|user-dana
+update-name|update|Dana|$DANA_ID
+update-id|update|$OTHER_ID|$OTHER_ID
 ROWS

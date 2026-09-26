@@ -27,10 +27,11 @@ export function secretEditIn(
 
 /** The edits after one more, replacing any earlier answer for the same
  *  key — a save carries one answer per key, and two answers for one key
- *  is what core refuses the whole save over. The package the new answer
+ *  is what core refuses the whole save over. The owner the new answer
  *  names replaces the old one as the declaration the write is checked
- *  against: it is the page the person last typed on, and either package
- *  declaring the key makes the write a legal one. */
+ *  against: it is the owner of the row it was typed into, the page's
+ *  package for that package's own key and kendex for a key kendex
+ *  declares, and any declaration of the key makes the write a legal one. */
 export function withSecretEdit(
   edits: SecretEdit[],
   next: SecretEdit,

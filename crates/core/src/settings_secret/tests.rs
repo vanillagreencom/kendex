@@ -415,20 +415,6 @@ fn a_package_declaring_a_kendex_key_under_the_other_table_contests_it() {
     }
 }
 
-/// A package declaring kendex's own private key as a credential agrees
-/// with kendex about where its value goes, so it shares the key rather
-/// than contesting it.
-#[test]
-fn a_package_sharing_kendex_own_secret_does_not_contest_it() {
-    let templates = [(
-        "linear".to_owned(),
-        TemplateSource::Text(format!("[secrets]\n# The key.\n{USER_EMAIL_KEY} = \"\"\n")),
-    )]
-    .into_iter()
-    .collect();
-    assert_eq!(contested(&templates), []);
-}
-
 /// kendex's own template holds to the grammar every package template is
 /// read with, so its declaration is never silently empty: the key, the
 /// explainer a consumer reads beside the field, and no `# required`.
@@ -481,18 +467,22 @@ fn kendex_own_key_is_written_under_kendex_and_no_other_name() {
     );
 }
 
-/// And nothing else of kendex's is seeded into the contest: a package is
-/// free to declare any other key a credential, which is the ordinary case
-/// the whole feature exists for.
+/// Nothing else of kendex's is seeded into the contest, and a credential
+/// kendex declares too is shared rather than contested: a package is free
+/// to declare any other key a credential, which is the ordinary case the
+/// whole feature exists for, and a package declaring kendex's own private
+/// key a credential agrees with kendex about where its value goes.
 #[test]
 fn kendex_contests_only_its_own_keys() {
-    let templates = [(
-        "linear".to_owned(),
-        TemplateSource::Text("[secrets]\n# The key.\nLINEAR_API_KEY = \"\"\n".to_owned()),
-    )]
-    .into_iter()
-    .collect();
-    assert_eq!(contested(&templates), []);
+    for key in ["LINEAR_API_KEY", USER_EMAIL_KEY] {
+        let templates = [(
+            "linear".to_owned(),
+            TemplateSource::Text(format!("[secrets]\n# The key.\n{key} = \"\"\n")),
+        )]
+        .into_iter()
+        .collect();
+        assert_eq!(contested(&templates), [], "{key}");
+    }
 }
 
 #[test]

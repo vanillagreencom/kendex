@@ -66,7 +66,7 @@ The cache is `.cache/linear` under the physical worktree root ([README.md](READM
 
 `LINEAR_TEAM` has no default. With it unset every write refuses before any API call; reads drop the team filter. `--team <name>` overrides per call only on `issues create`, `projects create`, `cycles create`, and `labels create`. Run `auth-check --strict` before the first mutation in a project.
 
-`LINEAR_API_KEY` belongs in the project's private env file, `.env.local` unless `KENDEX_ENV_FILE` names another; so does `KENDEX_USER_EMAIL`, the email address of the person operating the checkout ([README.md](README.md) § Settings); non-secret defaults in committed `kendex.settings.toml` `[env]`. The kendex app's Customize tab writes both. A key from project files beats one inherited from the environment, and `auth-check` warns (fingerprints only) when it shadows a differing inherited key.
+`LINEAR_API_KEY` belongs in the project's private env file, `.env.local` unless `KENDEX_ENV_FILE` names another; so does `KENDEX_USER_EMAIL`, the email address of the person operating the checkout ([README.md](README.md) § Settings); non-secret defaults in committed `kendex.settings.toml` `[env]`. The kendex app's Customize tab writes all three. A `LINEAR_API_KEY` from project files beats one inherited from the environment, and `auth-check` warns (fingerprints only) when it shadows a differing inherited key. `KENDEX_USER_EMAIL` and every other key take the usual precedence: the process environment first, then the private env file.
 
 ## Shared label maintenance
 
@@ -122,7 +122,7 @@ A **name** selects one project on `issues create` / `update` / `bulk-update --pr
 `--labels` REPLACES the whole issue-label set. Fetch current labels, compute the final set, validate it against `cache labels list --format=safe` (which reports `is_group` so parent/group labels can be rejected), then pass the complete set. A name that does not resolve fails the update; `--clear-labels` is the only way to empty the set.
 
 - `agent:*` labels are mutually exclusive, one per issue; `issues activate` applies them with the "In Progress" transition (semantics: `issues --help`).
-- `issues activate` assigns an issue nobody is assigned to the user whose email is `KENDEX_USER_EMAIL`, in the same mutation, and never replaces an assignee. It says which happened in one stderr line, `assignee-set`, `assignee-kept` or `assignee-skipped` with its `cause=`, and in the result's `assignee` field; a skip still activates, and a failed users lookup fails the activation (lines: `issues --help`). `--assignee` on create and update takes the same address form: a value containing `@` matches a user's whole email, case-insensitively.
+- `issues activate` assigns an issue nobody is assigned to the user whose email is `KENDEX_USER_EMAIL`, in the same mutation, and never replaces an assignee. It says which happened in one stderr line, `assignee-set`, `assignee-kept` or `assignee-skipped` with its `cause=`, and in the result's `assignee` field; a skip still activates, and a failed issue read, users lookup or update fails the activation with no line (lines: `issues --help`). `--assignee` on create and update takes the same address form: a value containing `@` matches a user's whole email, case-insensitively; a user id is sent as given.
 - `issues bulk-update` is non-atomic: on partial failure it emits `partial: true` with per-issue results and exits non-zero.
 - `issues block` applies the `blocked` label, creates the blocking relation, and comments. A rejected relation fails the command.
 
