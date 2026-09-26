@@ -39,6 +39,7 @@ const offer: ProjectOffer = {
   newBranch: "kendex/renders",
   repo: "acme/site",
   tracked: true,
+  stale: [],
 };
 
 const refused = (step: string, said: string): Refused => ({
@@ -61,6 +62,49 @@ beforeEach(() => {
     scoped: "action",
     accepted: false,
     message: offer.message,
+  });
+});
+
+// A held offer draws the package's setup and leaving the files, never a
+// commit route: the commit would carry the package's files out of date.
+describe("an offer a package holds", () => {
+  it("offers the setup and no commit", async () => {
+    useCommitOfferStore.setState({
+      queue: [
+        {
+          ...offer,
+          stale: [
+            {
+              name: "bot-instructions",
+              why: "notSetUp",
+              said: [],
+              declared: {
+                name: "bot-instructions",
+                root: "/home/method/dev/site/.agents/skills/bot-instructions",
+                summary: "Renders the review-bot files.",
+                writes: [],
+                installer: "scripts/bot-instructions render",
+                uninstaller: null,
+                checker: null,
+                removal: null,
+                notes: [],
+                companions: [],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    mount(<CommitOfferDialog />);
+    await settle();
+
+    const labels = buttons();
+    expect(labels).toContain("Set up bot-instructions here");
+    expect(labels).toContain("Leave as diffs");
+    expect(labels).not.toContain(COMMIT_LABEL);
+    expect(document.body.textContent ?? "").toContain(
+      "Setting bot-instructions up: Renders the review-bot files.",
+    );
   });
 });
 

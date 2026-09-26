@@ -215,7 +215,14 @@ pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn s
     let mut generated = report.generated.clone();
     let bot_instructions = kendex_core::bot_instructions::render(env, &report.plan.scope)?;
     if let Some(skipped) = bot_instructions.skipped() {
-        say(skipped);
+        say(&skipped.line());
+        if super::repo_effects::set_up_beside_main(&report.plan.scope, skipped)? {
+            kendex_core::bot_instructions::add_to_generated(
+                env,
+                &report.plan.scope,
+                &mut generated,
+            )?;
+        }
     }
     bot_instructions.add_to(&mut generated);
     super::commit_offer::after_writing(env, &report.plan.scope, &generated)?;

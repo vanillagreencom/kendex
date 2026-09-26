@@ -63,6 +63,7 @@ const offer = {
   pullRequest: null,
   openNumber: null,
   shared: [],
+  stale: [],
 } as unknown as ProjectOffer;
 
 /** An install still on screen: its ask is open until the reader closes it. */

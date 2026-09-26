@@ -9,9 +9,9 @@ use crate::engine::GeneratedPaths;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::Scope;
+use crate::repo_effects::DeclaredEffects;
 
 const PACKAGE: &str = "bot-instructions";
-const SKIPPED: &str = "bot-instructions: render skipped; use Set up on the bot-instructions package page, or remove and add it with --allow-repo-effects, then apply again";
 
 /// Re-render every enabled bot-instruction surface in this project.
 ///
@@ -31,11 +31,11 @@ pub fn add_to_generated(env: &Env, scope: &Scope, generated: &mut GeneratedPaths
 }
 
 /// Paths written by one successful render.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq)]
 pub struct RenderedPaths {
     paths: BTreeSet<PathBuf>,
     regions: BTreeSet<crate::commit_offer::OwnedRegion>,
-    skipped: Option<&'static str>,
+    skipped: Option<Skipped>,
 }
 
 impl RenderedPaths {
@@ -46,8 +46,33 @@ impl RenderedPaths {
     }
 
     /// Why no package code ran, for the surface that applied the project.
-    pub fn skipped(&self) -> Option<&str> {
-        self.skipped
+    pub fn skipped(&self) -> Option<&Skipped> {
+        self.skipped.as_ref()
+    }
+}
+
+/// The package is installed here and kendex ran none of its code, because
+/// no record licenses it in this checkout.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Skipped {
+    /// The installed package, for a surface that offers to set it up.
+    pub declared: DeclaredEffects,
+    /// The main checkout, where this is a linked work tree of a repository
+    /// that set the package up there:
+    /// [`crate::repo_effects::set_up_in_main_checkout`].
+    pub set_up_in: Option<PathBuf>,
+}
+
+impl Skipped {
+    /// The line a surface prints for it.
+    pub fn line(&self) -> String {
+        match &self.set_up_in {
+            None => "bot-instructions: render skipped; use Set up on the bot-instructions package page, or remove and add it with --allow-repo-effects, then apply again".to_owned(),
+            Some(main) => format!(
+                "bot-instructions: render skipped in this work tree; it is set up in the main checkout at {}, and each work tree is set up on its own: use Set up on the bot-instructions package page, then apply again",
+                crate::paths::slashed(main)
+            ),
+        }
     }
 }
 
@@ -74,11 +99,13 @@ fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
         return Ok(RenderedPaths::default());
     };
     if !crate::repo_effects::armed_here(scope, &declared)? {
-        return Ok(skipped());
+        let set_up_in = crate::repo_effects::set_up_in_main_checkout(scope, &declared)?;
+        return Ok(skipped(declared, set_up_in));
     }
-    let Some(installer) = declared.effects.installer.as_deref() else {
-        return Ok(skipped());
+    let Some(installer) = declared.effects.installer.clone() else {
+        return Ok(skipped(declared, None));
     };
+    let installer = installer.as_str();
     let spec = match mode {
         Mode::Write => installer.to_owned(),
         Mode::Discover => format!("{installer} --dry-run"),
@@ -168,11 +195,14 @@ fn protocol_error(root: &Path, command: &str, line: &str, detail: &str) -> CoreE
     }
 }
 
-fn skipped() -> RenderedPaths {
+fn skipped(declared: DeclaredEffects, set_up_in: Option<PathBuf>) -> RenderedPaths {
     RenderedPaths {
         paths: BTreeSet::new(),
         regions: BTreeSet::new(),
-        skipped: Some(SKIPPED),
+        skipped: Some(Skipped {
+            declared,
+            set_up_in,
+        }),
     }
 }
 

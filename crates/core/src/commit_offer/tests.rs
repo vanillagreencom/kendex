@@ -222,6 +222,67 @@ fn a_push_refused_for_want_of_a_pull_request_is_read_off_githubs_words() {
     }
 }
 
+/// A refused commit's findings block is found where the pre-commit chain
+/// put it, and runs to the next keyed record or the end. One row per way
+/// the words can sit.
+#[test]
+fn a_refused_commits_findings_block_is_found_where_the_chain_put_it() {
+    type Row<'a> = (&'a str, Step, &'a [&'a str], Option<std::ops::Range<usize>>);
+    let rows: [Row; 6] = [
+        (
+            "a chain whose findings came last, on stderr",
+            Step::Commit,
+            &[
+                "commit-guards: step=doc-limits",
+                "  === pre-commit: doc-limits",
+                "commit-guards: result=1",
+                "  pre-commit: violations — commit blocked; see the failures above",
+                "bot-instructions: findings=2",
+                "drift: differs from a fresh render, first at line 27 [.github/copilot-instructions.md]",
+                "drift: the ## Code Review Rules owned region differs from a fresh render [AGENTS.md]",
+            ],
+            Some(4..7),
+        ),
+        (
+            "a block another check's record ends",
+            Step::Commit,
+            &[
+                "preflight: findings=1",
+                "across 3 changed file(s)",
+                "commit-guards: result=1",
+            ],
+            Some(0..2),
+        ),
+        (
+            "a count of none",
+            Step::Commit,
+            &["bot-instructions: findings=0", "commit-guards: result=0"],
+            None,
+        ),
+        (
+            "a hook that speaks no protocol",
+            Step::Commit,
+            &["commit-msg: crates/ changed without a changelog entry"],
+            None,
+        ),
+        (
+            "not a commit",
+            Step::Push,
+            &["remote: findings=1", "remote: refused"],
+            None,
+        ),
+        ("a commit that ran out of time", Step::Commit, &[], None),
+    ];
+    for (what, step, said, want) in rows {
+        let refusal = match said.is_empty() {
+            true => Refusal::TimedOut,
+            false => Refusal::Said(said.iter().map(|line| (*line).to_owned()).collect()),
+        };
+        let failed = Failed { step, refusal };
+        assert_eq!(failed.findings(), want, "{what}");
+    }
+}
+
 /// The recovery by hand is the words the recovery runs, every one quoted,
 /// with the credentials a remote URL can carry left out of what is
 /// printed. A remote spelling with none comes back whole.

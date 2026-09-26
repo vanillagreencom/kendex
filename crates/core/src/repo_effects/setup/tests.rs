@@ -377,6 +377,87 @@ fn an_arming_reaches_the_work_trees_the_effect_does() {
     }
 }
 
+/// A linked work tree that reads as not set up names the main checkout
+/// where the main checkout set the package's checkout effect up, so the
+/// state is never silent. Nothing else names it: an effect every work tree
+/// shares, a repository nothing set up, the main checkout asking about
+/// itself, and a linked work tree set up on its own.
+#[test]
+#[allow(clippy::unwrap_used, reason = "fixture preconditions")]
+fn a_linked_work_tree_names_the_main_checkout_that_set_the_package_up() {
+    #[derive(Clone, Copy)]
+    enum Armed {
+        Main,
+        Linked,
+        Nowhere,
+    }
+    let rows: [(&str, &str, Armed, bool, bool); 5] = [
+        (
+            "a checkout effect set up in the main checkout",
+            "tools/guard",
+            Armed::Main,
+            true,
+            true,
+        ),
+        (
+            "a shared effect",
+            ".git/hooks/kendex-guards",
+            Armed::Main,
+            true,
+            false,
+        ),
+        ("nothing set up", "tools/guard", Armed::Nowhere, true, false),
+        (
+            "the main checkout itself",
+            "tools/guard",
+            Armed::Main,
+            false,
+            false,
+        ),
+        (
+            "set up in the linked work tree",
+            "tools/guard",
+            Armed::Linked,
+            true,
+            false,
+        ),
+    ];
+    for (what, writes, armed, from_linked, named) in rows {
+        let pair = Linked::new();
+        let asked_from = match from_linked {
+            true => &pair.linked,
+            false => &pair.main,
+        };
+        let here = pair.declared(asked_from, writes);
+        let shared = crate::repo_effects::touches_git(&here.effects);
+        let armed_in = match armed {
+            Armed::Main => Some(&pair.main),
+            Armed::Linked => Some(&pair.linked),
+            Armed::Nowhere => None,
+        };
+        if let Some(root) = armed_in {
+            crate::repo_effects::armed::arm(
+                crate::repo_effects::armed::record_dir(
+                    &crate::guard::Repo::at(root).unwrap(),
+                    shared,
+                ),
+                "guards",
+            )
+            .unwrap();
+        }
+
+        let found = crate::repo_effects::set_up_in_main_checkout(
+            &crate::model::Scope::Project {
+                root: asked_from.clone(),
+            },
+            &here,
+        )
+        .unwrap();
+
+        assert_eq!(found, named.then(|| pair.main.clone()), "{what}");
+    }
+}
+
 /// A repository with a second work tree linked to it, both carrying the
 /// package.
 struct Linked {

@@ -227,6 +227,33 @@ pub fn apply(scope: &Scope, declared: &DeclaredEffects) -> CliResult {
     }
 }
 
+/// Offer the setup a linked work tree lacks where its main checkout has
+/// it, and run it on a yes. `true` where it ran.
+///
+/// The one step that keeps such a work tree from staying not set up
+/// without anyone deciding it. The record stays per work tree, so the
+/// answer is asked here rather than read off the main checkout's.
+/// A run with nobody to ask leaves the skip line said above it as the
+/// account.
+pub fn set_up_beside_main(
+    scope: &Scope,
+    skipped: &kendex_core::bot_instructions::Skipped,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    if skipped.set_up_in.is_none() || !std::io::stdin().is_terminal() {
+        return Ok(false);
+    }
+    let declared = &skipped.declared;
+    say(&format!(
+        "  {}: {}",
+        declared.name, declared.effects.summary
+    ));
+    if !crate::ui::confirm(&format!("set {} up in this work tree too?", declared.name))? {
+        return Ok(false);
+    }
+    apply(scope, declared)?;
+    Ok(true)
+}
+
 /// The package's two streams, each on the channel it was written to. Its
 /// stdout goes through the door that escapes nothing: those bytes are the
 /// program's answer, and a caller piping them is reading for what the

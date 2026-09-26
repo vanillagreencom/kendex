@@ -155,7 +155,7 @@ pub(crate) fn settle_report(
     )?;
     let mut settled = view(env, scope);
     if let Some(skipped) = rendered.skipped() {
-        settled.notes.push(skipped.to_owned());
+        settled.notes.push(skipped.line());
     }
     settled.undone = undone;
     Ok(settled)

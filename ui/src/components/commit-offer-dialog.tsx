@@ -79,9 +79,16 @@ import {
   resetCommand,
   SCAN_FAILED_STEPS,
   SCAN_FAILED_TITLE,
+  SET_UP_FAILED_TITLE,
+  SETTING_UP_LABEL,
   SHARED_LABEL,
   SHARED_NOTE,
+  STALE_LABEL,
+  STALE_NOTE,
   saidLabel,
+  settingUpNote,
+  setUpLabel,
+  staleLine,
   stillCarries,
   stillStaged,
   TANGLED_LABEL,
@@ -133,7 +140,7 @@ export function CommitOfferDialog() {
     scanFailureSaid();
   }, [maySayFailure, scanFailure, scanFailureSaid]);
   if (!offer || !mayAsk) return null;
-  const busy = stage.at === "busy";
+  const busy = stage.at === "busy" || stage.at === "settingUp";
   return (
     <Dialog
       open
@@ -154,7 +161,17 @@ function Body({ offer, stage }: { offer: ProjectOffer; stage: Stage }) {
   switch (stage.at) {
     case "offer":
     case "busy":
-      return <OfferState offer={offer} stage={stage} />;
+      // A package holding the commit replaces the commit choices with its
+      // setup: the commit would carry its files out of date.
+      return offer.stale.length > 0 ? (
+        <HeldState offer={offer} busy={false} />
+      ) : (
+        <OfferState offer={offer} stage={stage} />
+      );
+    case "settingUp":
+      return <HeldState offer={offer} busy />;
+    case "setUpFailed":
+      return <SetUpFailedState error={stage.error} />;
     case "commitRefused":
       return (
         <CommitRefusedState
@@ -343,6 +360,77 @@ function OfferState({
         </Button>
         <Button disabled={busy || !held} onClick={() => void run()}>
           {busy ? busyLabel(stage.step) : primaryLabel(route)}
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+/** A package whose files in this repository the commit would carry out of
+ *  date holds the offer: which, why, what its setup changes, and the two
+ *  choices, setting it up here or leaving the files as diffs. */
+function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
+  const setUp = useCommitOfferStore((s) => s.setUp);
+  const leave = useCommitOfferStore((s) => s.leave);
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>
+          {commitOfferTitle(offer.files.length, offer.name)}
+        </DialogTitle>
+        <DialogDescription>{STALE_NOTE}</DialogDescription>
+      </DialogHeader>
+      <div className="space-y-4 text-sm">
+        <Section title={STALE_LABEL}>
+          {offer.stale.map((held) => (
+            <div key={held.name} className="space-y-1.5">
+              <p>{staleLine(held)}</p>
+              {held.said.length > 0 ? (
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
+                  {held.said.join("\n")}
+                </pre>
+              ) : null}
+              <p className="text-muted-foreground">
+                {settingUpNote(held.name, held.declared.summary)}
+              </p>
+            </div>
+          ))}
+        </Section>
+        <Section title={FILES_LABEL}>
+          <ChangedFiles root={offer.root} entries={offerEntries(offer)} />
+        </Section>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" disabled={busy} onClick={leave}>
+          {LEAVE_LABEL}
+        </Button>
+        <Button disabled={busy} onClick={() => void setUp()}>
+          {busy
+            ? SETTING_UP_LABEL
+            : setUpLabel(offer.stale.map((held) => held.name))}
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+/** The setup chosen at a held offer did not run through, or left the
+ *  package still not ready. Nothing was committed. */
+function SetUpFailedState({ error }: { error: string }) {
+  const leave = useCommitOfferStore((s) => s.leave);
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>{SET_UP_FAILED_TITLE}</DialogTitle>
+      </DialogHeader>
+      <div className="space-y-4 text-sm">
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
+          {error}
+        </pre>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={leave}>
+          {LEAVE_LABEL}
         </Button>
       </DialogFooter>
     </>
