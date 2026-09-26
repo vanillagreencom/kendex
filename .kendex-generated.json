@@ -988,6 +988,7 @@
   ".agents/skills/orch/tests/review_artifact_relay.sh",
   ".agents/skills/orch/tests/round_prune.sh",
   ".agents/skills/orch/tests/round_recover.sh",
+  ".agents/skills/orch/tests/run-all-parallel.sh",
   ".agents/skills/orch/tests/run-all.sh",
   ".agents/skills/orch/tests/single-return-codex-dual-channel.test.sh",
   ".agents/skills/orch/tests/spawn_adapter.sh",
