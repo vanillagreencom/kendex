@@ -15,17 +15,8 @@ ORCH_DIR="$(cd "$TEST_DIR/.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
-assert_eq() { # GOT WANT NAME
-  if [[ "$1" == "$2" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$3"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$3" "$2" "$1"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 
 LAYOUT="$TMP_ROOT/layout"
 mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/orch/references" \
