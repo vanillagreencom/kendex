@@ -14,9 +14,8 @@
 #   § composer    whether the lane's live input line is empty, the one question
 #                a caller about to TYPE into the pane must ask
 #   § process ownership
-#                the host process table, zombie states, unreadable processes and
-#                a removed worktree, with one must-fail control each on
-#                lane_owned_processes and lane_stop_owned
+#                the host process table, zombie states and unreadable processes,
+#                with one must-fail control on lane_owned_processes
 #   § agreement  one screen read by BOTH the watch and the wake. The pane rungs
 #                are shared, so above idle the two answer the same word; the
 #                idle rung falls through to the harness-process read that only
@@ -41,8 +40,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 # shellcheck source=lib/process-table.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
-# mutant_scripts and mutate_file, the two halves of the verb's control;
-# mutate_file also plants lane_stop_owned's.
+# mutant_scripts and mutate_file, the two halves of the verb's control.
 # shellcheck source=lib/growth-state.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
@@ -351,48 +349,6 @@ PY
     || PROCESS_FAIL_PS_RC=$?
   assert_eq "$PROCESS_FAIL_PS_RC" 2 \
     "a failed process-table read returns status 2 without caller pipefail"
-
-  # A merged lane's close-out removes its worktree while the harness still sits
-  # there, which /proc then names as the removed path. The ownership read finds
-  # that harness by the path the record still holds, and the stop ends it.
-  PROCESS_REMOVED="$TMP_ROOT/removed-parent/lane"
-  mkdir -p "$PROCESS_REMOVED"
-  PROCESS_REMOVED_REAL="$(cd "$PROCESS_REMOVED" && pwd -P)" || exit 1
-  (cd "$PROCESS_REMOVED" && exec "$PROCESS_HARNESS" -c 'trap "exit 0" TERM; while :; do sleep 0.1; done') &
-  PROCESS_REMOVED_PID=$!
-  PROCESS_FIXTURE_PIDS+=" $PROCESS_REMOVED_PID"
-  for _process_try in {1..100}; do
-    [[ "$(lane_process_cwd "$PROCESS_REMOVED_PID" || true)" != "$PROCESS_REMOVED_REAL" ]] || break
-    sleep 0.02
-  done
-  rmdir -- "$PROCESS_REMOVED"
-  PROCESS_REMOVED_RC=0
-  lane_owned_processes "$PROCESS_REMOVED" 'kz)harness' || PROCESS_REMOVED_RC=$?
-  assert_eq "$LANE_OWNED_PROCESS_PIDS rc=$PROCESS_REMOVED_RC" "$PROCESS_REMOVED_PID rc=0" \
-    "a harness sitting in a removed worktree is owned by the path the record still holds"
-  PROCESS_REMOVED_RC=0
-  lane_stop_owned "$PROCESS_REMOVED" 'kz)harness' || PROCESS_REMOVED_RC=$?
-  assert_eq "count=$LANE_STOP_COUNT cause=${LANE_STOP_CAUSE:-none} rc=$PROCESS_REMOVED_RC state=$(lane_process_state "$PROCESS_REMOVED_PID")" \
-    "count=1 cause=none rc=0 state=" \
-    "the stop ends a harness sitting in a removed worktree"
-  # With its harness gone, the removed worktree has nothing left to signal by
-  # its directory, which the stop names rather than answering none found.
-  PROCESS_REMOVED_RC=0
-  lane_stop_owned "$PROCESS_REMOVED" 'kz)harness' || PROCESS_REMOVED_RC=$?
-  assert_eq "cause=$LANE_STOP_CAUSE rc=$PROCESS_REMOVED_RC" "cause=worktree-removed rc=1" \
-    "a removed worktree holding no harness refuses as worktree-removed"
-  # lane_stop_owned's one must-fail control: without its own cause, a removed
-  # worktree reads as a stop that found no harness to signal.
-  PROCESS_REMOVED_MUTANT="$PROCESS_ROOT/mutant-removed-lane-state.sh"
-  cp -- "$SCRIPTS_DIR/lib/lane-state.sh" "$PROCESS_REMOVED_MUTANT"
-  mutate_file "$PROCESS_REMOVED_MUTANT" '  if [[ "$removed" == true && -z "$LANE_OWNED_PROCESS_PIDS" ]]; then' '  if false; then'
-  PROCESS_REMOVED_CONTROL="$(source "$PROCESS_REMOVED_MUTANT"; rc=0; lane_stop_owned "$PROCESS_REMOVED" 'kz)harness' || rc=$?; printf 'rc=%s count=%s' "$rc" "$LANE_STOP_COUNT")"
-  assert_eq "$PROCESS_REMOVED_CONTROL" "rc=0 count=0" \
-    "control: without its own cause a removed worktree reads as a stop that found no harness"
-  PROCESS_REMOVED_RC=0
-  lane_stop_owned "$TMP_ROOT/absent-parent/lane" 'kz)harness' || PROCESS_REMOVED_RC=$?
-  assert_eq "cause=$LANE_STOP_CAUSE rc=$PROCESS_REMOVED_RC" "cause=worktree-removed rc=1" \
-    "a worktree whose parent does not resolve either refuses as removed"
 
   process_fixture_cleanup
   PROCESS_FIXTURE_PIDS=""

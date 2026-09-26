@@ -561,26 +561,12 @@ else
   printf '  skip  the local lane rows stage their process read through procfs\n'
 fi
 
-# A local stop that finds no harness in a worktree that is not on this machine
-# refuses under its own cause rather than waiting the lane out, under both
-# directory readers: the staged table holds a harness sitting elsewhere, so the
-# stop reads processes and none is the lane's. The worktree whose parent is no
-# directory either takes the same answer.
-proc_table_write "$PROC_TABLE" "4343 1 claude"
-proc_cwd_write "$PROC_CWD_FILE" "4343=$LANE_ROOT_REAL"
-REMOVED_ROWS="/srv/worktree|$SCRIPT|$LOCAL_PATH|a local stop over a removed worktree holding no harness refuses as worktree-removed and keeps the window
-$TMP_ROOT/absent/worktree|$SCRIPT|$LOCAL_PATH|a removed worktree whose parent is gone too refuses the same way"
-# The lsof reader answers from the staged directories only where procfs backs
-# its stub; lsof has no spelling for a removed directory at all.
-if proc_table_readable; then
-  REMOVED_ROWS+=$'\n'"/srv/worktree|$NOPROC|$NOPROC_PATH|the same through lsof, which names no harness in a removed directory"
-fi
-while IFS='|' read -r root reader_script reader_path name; do
-  MAIL_ROOT="$root" write_state running claude ""; write_panes python; claude_screen
-  PATH="$reader_path" run_close "$reader_script" </dev/null
-  assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=worktree-removed$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
-    'rc=1 failed=1 kill=0 status=running' "$name"
-done <<<"$REMOVED_ROWS"
+# A local stop that cannot run refuses, naming the step, rather than waiting
+# the lane out: a record whose worktree is not on this machine resolves none.
+write_state running claude ""; write_panes python; claude_screen
+run_close "$SCRIPT"
+assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=worktree-read-failed$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 failed=1 kill=0 status=running' 'a local stop that cannot resolve the worktree refuses and keeps the window'
 
 echo '=== a limit banner the account has outlived does not hold a finished lane ==='
 # A banner stays below the last turn of a lane it parked after the window

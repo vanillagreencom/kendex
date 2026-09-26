@@ -64,7 +64,7 @@ message() { # REASON FIELD=VALUE...
         '  stderr-unsaved    mktemp could not make the file the lane host stop verb'"'"'s stderr is read from; its own words are above this one.' \
         '  answer-unparsed   the lane host stop verb succeeded without its stopped item=ID processes=COUNT line.' \
         '  any other value   the local stop step lib/lane-state.sh lane_stop_owned names, pid= the process it failed on.' ;;
-    stop-skipped) printf '%s\n' "The lane host answered that the item's worktree is gone and found no harness process by its directory. The host close below ends the harness where the provider's close ends the sandbox; otherwise the window close hangs up the lane's ssh session, which ends it. A static host's close ends no process." ;;
+    stop-skipped) printf '%s\n' "The lane host answered that the item's worktree is gone, so no harness process can be found by its directory. The host close below ends the harness where the provider's close ends the sandbox; otherwise the window close hangs up the lane's ssh session, which ends it. A static host's close ends no process." ;;
     exit-timeout) printf '%s\n' 'The pane did not read exited before the close timeout. processes= is how many harness processes the stop signalled in the lane worktree and saw exit; 0 means none was left there to signal. Close-out stopped.' ;;
     state-write-failed) printf '%s\n' 'The lane closed, but its fleet record could not be updated.' ;;
     prepare-stop-failed) printf '%s\n' 'The background launch job the record names could not be stopped. Close-out changed nothing else.' ;;
@@ -93,12 +93,10 @@ lane is then judged by the rest of its screen. Every other reading keeps the
 lane walled.
 An idle lane's harness is ended by SIGTERM, never by typing into its pane:
 through lane-host stop for a record carrying host, and for a local lane by the
-same stop against the worktree the record's mail_root names. Either stop also
-ends a harness still sitting in a worktree its own close-out removed, which
-/proc names as the removed path. The close then waits up to
-ORCH_LANE_CLOSE_SECS (default 15) for the pane to read exited.
+same stop against the worktree the record's mail_root names. The close then
+waits up to ORCH_LANE_CLOSE_SECS (default 15) for the pane to read exited.
 A hosted stop answering status 4 beside a stop-worktree-removed item=ITEM line
-on its stderr, the item's worktree removed with no harness found in it, prints
+on its stderr, the item's worktree already removed by its own close-out, prints
 stop-skipped cause=worktree-removed and goes straight to the host close and
 window kill. The host close ends the harness where the provider's close ends
 the sandbox; otherwise the window kill hangs up the lane's ssh session, which
@@ -547,6 +545,9 @@ read_wall() {
     *) WALL_ACCOUNT=read-failed ;;
   esac
   [[ "$WALL_ACCOUNT" == room ]] || return 0
+  # The reset is read from the banner because no record carries it: the lanes
+  # usage record holds resets only for the windows it measures, so a wall
+  # outside them is known from the banner alone.
   slice="$(pane_below_last_turn "$pane_screen")" \
     || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
   banner="$(lane_limit_banner "$slice")" \
@@ -641,8 +642,7 @@ stop_harness() {
     rm -f -- "$err"
     [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { message lane-host-busy "${fields[@]}" step=stop >&2; exit "$rc"; }
     # A merged lane's own close-out removes its worktree before the lane goes
-    # idle, and a provider that finds no harness under the removed path answers
-    # 4, as one whose host cannot read a removed directory does. Only an
+    # idle, so the provider has no directory to find the harness by. Only an
     # idle lane on a terminal item reaches this stop, and what follows ends the
     # harness, so the stop is skipped rather than refused: the host close where
     # the provider's close ends the sandbox, otherwise the window kill, which
