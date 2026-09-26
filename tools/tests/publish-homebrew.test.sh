@@ -169,7 +169,7 @@ if [ "$subject" = "sync from vanillagreencom/kendex $revision" ]; then
 else
   bad "push: the commit names this tree's revision" "$subject"
 fi
-if ! git --git-dir="$dir/tap.git" config --get-regexp 'http\..*extraheader' >/dev/null 2>&1; then
+if ! git --git-dir="$dir/tap.git" config --local --get-regexp 'http\..*extraheader' >/dev/null 2>&1; then
   ok "push: no token in the tap's configuration"
 else
   bad "push: the token reached the tap's configuration"
@@ -237,10 +237,10 @@ if grep -q 'test-token' "$dir/push-args"; then
 else
   ok "https push: the raw token is not on the command line"
 fi
-if ! git --git-dir="$dir/tap.git" config --get-regexp 'extraheader|token' >/dev/null 2>&1; then
+if ! git --git-dir="$dir/tap.git" config --local --get-regexp 'extraheader|token' >/dev/null 2>&1; then
   ok "https push: no header or token persisted in the tap"
 else
-  bad "https push: a credential persisted in the tap" "$(git --git-dir="$dir/tap.git" config --list)"
+  bad "https push: a credential persisted in the tap" "$(git --git-dir="$dir/tap.git" config --local --list)"
 fi
 
 # A tap that cannot be cloned fails, after the deferral decision and before any write.
