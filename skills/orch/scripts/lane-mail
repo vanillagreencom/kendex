@@ -1175,6 +1175,12 @@ case "$VERB" in
     [ "$ITEM" != overseer ] || [ -n "$TO" ] || refuse option-required --to
     if [ -n "$RECOMMEND" ]; then
       [ -n "$OPTIONS" ] || refuse option-required --options
+      # The envelope records --options split on commas, so a value holding a
+      # comma spans two choices and is none of them; without one, a match
+      # between the delimiters is exactly one of those choices.
+      case "$RECOMMEND" in
+        *,*) refuse recommend-invalid "$RECOMMEND" ;;
+      esac
       case ",$OPTIONS," in
         *",$RECOMMEND,"*) ;;
         *) refuse recommend-invalid "$RECOMMEND" ;;
