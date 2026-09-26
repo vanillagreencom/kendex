@@ -191,8 +191,8 @@ case "$1" in
     [[ "${LANE_CLOSE_TMUX_LIST_FAIL_AT:-0}" != "$count" ]] || exit 9
     if [[ "${*: -1}" == '#{pane_id}' ]]; then
       awk -F'\t' '{print $3}' "$LANE_CLOSE_ROWS"
-    elif [[ "${*: -1}" == '#{pane_id}'$'\t''#{pane_pid}'$'\t''#{pane_current_command}' ]]; then
-      awk -F'\t' '{print $3 "\t" $4 "\t" $5}' "$LANE_CLOSE_ROWS"
+    elif [[ "${*: -1}" == '#{pane_id} #{pane_pid} #{pane_current_command}' ]]; then
+      awk -F'\t' '{print $3 " " $4 " " $5}' "$LANE_CLOSE_ROWS"
     else
       cat -- "$LANE_CLOSE_ROWS"
     fi ;;
