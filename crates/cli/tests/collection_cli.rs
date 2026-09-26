@@ -163,3 +163,27 @@ fn a_member_no_tool_can_take_leaves_the_scope_unsubscribed() {
         }
     }
 }
+
+/// A collection added again reuses its source and pins each member at the
+/// snapshot commit. Those pins close on the collection's own ledger, so
+/// they draw what `add` draws: a clean member scores no line of its own,
+/// and the ledger says the scan was clean.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_reused_collection_draws_only_what_needs_the_reader() {
+    let (_tmp, home, project, commit) = world();
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    let link = format!("https://kendex.ai/c/{COLLECTION_ID}");
+    let first = kendex(&home, &project, &resolver(&commit), &["add", &link, "-y"]);
+    assert!(first.status.success(), "{}", said(&first));
+
+    let again = kendex(&home, &project, &resolver(&commit), &["add", &link, "-y"]);
+    let text = said(&again);
+
+    assert!(again.status.success(), "{text}");
+    assert!(
+        !text.contains(" scores "),
+        "a clean member drew its score: {text}"
+    );
+    assert!(text.contains("safety: clean"), "{text}");
+}

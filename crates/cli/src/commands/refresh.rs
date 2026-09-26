@@ -2,13 +2,15 @@ use kendex_core::engine::{EngineReport, PlanOptions, plan_apply};
 use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
+use super::advisory::Listing;
+use super::attention::{Attention, print_attention};
+use super::commit_offer::after_writing;
 use super::engine_common::{
-    apply_report, ask_before_writing, confirm_and_apply, print_conflicts, print_drift, print_notes,
-    print_safety, print_synced, refresh_failures, require_yes_in_non_interactive,
+    apply_report, ask_before_writing, confirm_and_apply, print_synced, refresh_failures,
+    require_yes_in_non_interactive,
 };
-use super::ledger::{Wrote, say_ledger};
+use super::ledger::{Folded, Wrote, say_ledger};
 use super::{CliResult, resolve_scopes_at, say, scope_label, warn};
-use super::{commit_offer::after_writing, offers::Blocked};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
@@ -86,6 +88,15 @@ fn print_changes_needing_consent(
     }
 }
 
+/// A refresh draws what needs the reader, and every line with `--verbose`;
+/// its closing ledger counts what the compact report left out.
+fn listing(verbose: bool) -> Listing {
+    match verbose {
+        true => Listing::Verbose,
+        false => Listing::Attention,
+    }
+}
+
 fn refreshed(count: Option<usize>) -> Wrote<'static> {
     Wrote {
         verb: "refreshed",
@@ -109,8 +120,12 @@ fn finish_scopes(env: &Env, reached: &[kendex_core::model::Scope], closing: Vec<
         say_ledger(
             &scope.scope,
             refreshed(scope.count),
-            &scope.blocked,
+            &scope.attention.blocked,
             &scope.scored,
+            match scope.attention.folded {
+                true => Folded::BehindVerbose,
+                false => Folded::None,
+            },
         );
     }
 }
@@ -171,7 +186,7 @@ fn register_written(
 struct Closing {
     scope: kendex_core::model::Scope,
     count: Option<usize>,
-    blocked: Vec<super::offers::Blocked>,
+    attention: Attention,
     scored: Vec<kendex_core::engine::ItemSafety>,
 }
 
@@ -249,6 +264,7 @@ fn prepare_scopes(
     discard_edits: bool,
 ) -> Result<Vec<PreparedScope>, Box<dyn std::error::Error>> {
     let scopes = resolve_scopes_at(env, filter, target.path())?;
+    super::header("refresh", &scopes);
     // The refusal that registration carries, asked before the first write
     // so a run never installs into a folder it would then decline to
     // register. `project::register_target` owns the rule itself.
@@ -266,15 +282,6 @@ fn prepare_scopes(
     Ok(prepared)
 }
 
-fn print_diagnostics(env: &Env, report: &EngineReport, verbose: bool) -> Vec<Blocked> {
-    print_notes(report);
-    print_safety(report, verbose);
-    match verbose {
-        true => print_drift(env, report),
-        false => print_conflicts(env, report),
-    }
-}
-
 /// Print everything the read-only preparation can establish before a
 /// non-interactive run refuses its missing consent. A pending Pi settlement
 /// keeps its diagnostics for the plan derived after settlement.
@@ -286,7 +293,7 @@ fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
         match &scope.planned {
             Ok((report, pending)) => {
                 if pending.is_empty() {
-                    print_diagnostics(env, report, verbose);
+                    print_attention(env, report, listing(verbose));
                     failures.extend(refresh_failures(report));
                 }
             }
@@ -409,7 +416,6 @@ pub fn run(
     yes: bool,
     discard_edits: bool,
 ) -> CliResult {
-    ui::intro("kendex refresh");
     let mut refreshed_anything = false;
     let mut failures: Vec<String> = Vec::new();
     let mut closing: Vec<Closing> = Vec::new();
@@ -443,18 +449,18 @@ pub fn run(
         // package this run settles never prints a stale update-pi remedy.
         // A package it would not settle stays drift and fails the run.
         // The record refusing to read is what stops the scope here.
-        let mut blocked = Vec::new();
+        let mut attention = Attention::default();
         let lock = load_lock(&lock_path(env, &scope))?;
         // A scope settling nothing is reported off this plan, and a run
         // that refused every install is not "nothing installed": a scope
         // carrying a refusal is never passed over. A scope that settles is
         // reported off the plan derived after its settle.
         if pending.is_empty() {
-            blocked = print_diagnostics(env, &report, verbose);
+            attention = print_attention(env, &report, listing(verbose));
             let reported = refresh_failures(&report);
             let failed = !prepared.synced.failures.is_empty() || !reported.is_empty();
             failures.extend(reported);
-            if lock.entries.is_empty() && report.plan.is_empty() && blocked.is_empty() {
+            if lock.entries.is_empty() && report.plan.is_empty() && attention.blocked.is_empty() {
                 // Nothing left to write is not a reason to leave the
                 // named project off the projects list: the run got
                 // through this scope, which is what registration follows.
@@ -479,7 +485,7 @@ pub fn run(
             yes,
             |after| {
                 prepared.synced.suppress_busy_pending(&mut after.notes);
-                blocked = print_diagnostics(env, after, verbose);
+                attention = print_attention(env, after, listing(verbose));
             },
         ) {
             Ok(written) => {
@@ -495,7 +501,7 @@ pub fn run(
                 closing.push(Closing {
                     scope: scope.clone(),
                     count: written.count,
-                    blocked,
+                    attention,
                     scored: written.report.safety.clone(),
                 });
                 if let Some(error) = written.stop {

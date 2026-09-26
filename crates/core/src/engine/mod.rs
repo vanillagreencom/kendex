@@ -117,8 +117,8 @@ mod repo_effects;
 pub use repo_effects::{InstalledDeclaration, installed_declaration, installed_declarations};
 mod report_types;
 pub use report_types::{
-    DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ForkEdit, Held, HeldPin,
-    Installation, ItemWarning, PlanOptions, Registrations, StoodIn, StoodInRecord,
+    DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ExcludedHook, ForkEdit,
+    Held, HeldPin, Installation, ItemWarning, PlanOptions, Registrations, StoodIn, StoodInRecord,
 };
 
 pub(super) struct PlanOwnership {
@@ -240,6 +240,7 @@ pub fn plan_scope(
         plan: Plan::landed(scope.clone(), ops)?,
         notes: state.notes,
         warnings: state.warnings,
+        excluded_hooks: state.excluded_hooks,
         set_changes,
         sweepable,
         kept,

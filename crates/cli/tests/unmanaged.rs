@@ -78,7 +78,7 @@ fn a_blocked_declaration_is_printed_with_both_exits_that_resolve_it() {
 
     let planned = said(&kendex(home, &project, &["apply", "--plan"]));
     assert!(
-        planned.contains("conflict: skill deploy for Claude Code"),
+        planned.contains("conflicts:\n  skill deploy for Claude Code"),
         "{planned}"
     );
     assert!(
@@ -101,7 +101,7 @@ fn a_blocked_declaration_is_printed_with_both_exits_that_resolve_it() {
         &project,
         &["apply", "--plan", "--discard-edits"],
     ));
-    assert!(edits.contains("conflict: skill deploy"), "{edits}");
+    assert!(edits.contains("conflicts:\n  skill deploy"), "{edits}");
 
     let taken = kendex(home, &project, &["apply", "-y", "--replace-unmanaged"]);
     assert!(taken.status.success(), "{taken:?}");

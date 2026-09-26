@@ -1,38 +1,210 @@
-//! One advisory block, in the one shape every verb that scores content
-//! prints it, and the key that decides when two rows share one.
+//! A package's safety score and findings, as a plan's report draws them
+//! and as `check --catalog` prints them, and the key that decides when two
+//! plan rows share one block. Both say the severity in words, what the
+//! rule matched and where it fired, and neither prints a fix line.
 
-use kendex_core::engine::{CatalogSource, EngineReport, ItemSafety, SafetyTarget};
+use kendex_core::engine::{CatalogSource, ItemSafety, SafetyTarget};
 use kendex_core::model::ItemKind;
-use kendex_core::quality::{Finding, place_within};
+use kendex_core::quality::{AuditResult, Finding, Severity, place_within};
 
 use super::say;
+use crate::ui::{self, Span, Status, Style};
+
+/// How much of a scored plan a report draws.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Listing {
+    /// What needs the reader: the packages with a finding or a rule that
+    /// had nothing to read, each finding said once with how many sites say
+    /// it. For a verb whose closing line speaks for what it leaves out.
+    Attention,
+    /// Every package, clean ones included, and every finding at its own
+    /// site: for a verb that closes on no ledger, where a clean package
+    /// going silent would read as one nobody scored.
+    Every,
+    /// Every package and every site, and what the rules read past as a
+    /// mention or kendex's own table accepted.
+    Verbose,
+}
 
 /// What the safety rules found in the content this plan would write —
-/// advisory, printed beside the plan. A verbose run also prints what the
-/// rules read past as a mention.
-pub fn print_safety(report: &EngineReport, verbose: bool) {
-    for (row, targets) in grouped_safety(&report.safety, verbose) {
-        print_advisory(
-            row.kind,
-            &row.name,
-            ScoredAt::Planned {
-                targets: &targets,
-                source: row.source.as_ref(),
-            },
-            &row.advisory,
-            verbose,
-        );
+/// advisory, drawn beside the plan, as much of it as `listing` asks for.
+pub fn safety_section(style: &Style, rows: &[ItemSafety], listing: Listing) -> Vec<String> {
+    let shown: Vec<_> = grouped_safety(rows, listing)
+        .into_iter()
+        .filter(|(row, _)| {
+            listing != Listing::Attention || standing(&row.advisory) != Standing::Clean
+        })
+        .collect();
+    let Some(worst) = shown.iter().map(|(row, _)| standing(&row.advisory)).max() else {
+        return Vec::new();
+    };
+    let mut lines = style.section("safety", shown.len(), worst.status());
+    for (row, targets) in &shown {
+        lines.extend(safety_block_lines(style, row, targets, listing));
     }
+    lines
+}
+
+/// One package's block: its score, then each finding under it with the
+/// glyph of its severity.
+///
+/// A verbose run adds one line per mention: a switch the rules read as
+/// the file naming it rather than using it, which costs the score
+/// nothing. It is what the precision skipped, drawn so a reader can check
+/// the reading against the file. It adds one line per accepted finding
+/// the same way: a finding kendex's own table set aside, which costs
+/// nothing while the file keeps the accepted text.
+fn safety_block_lines(
+    style: &Style,
+    row: &ItemSafety,
+    targets: &[SafetyTarget],
+    listing: Listing,
+) -> Vec<String> {
+    let advisory = &row.advisory;
+    let tools: Vec<&str> = targets
+        .iter()
+        .map(|target| target.harness.display_name())
+        .collect();
+    let head = format!(
+        "{} {} for {} scores {}/100",
+        row.kind.name(),
+        row.name,
+        tools.join(", "),
+        advisory.safety.score
+    );
+    let source = row.source.as_ref();
+    let fold = listing == Listing::Attention;
+    let mut lines = style.row(standing(advisory).status(), &[Span::Prose(&head)], None);
+    for line in finding_lines(&advisory.findings, targets, source, fold) {
+        let text = format!("[{}] {}", line.severity.name(), line.text);
+        lines.extend(style.detail(
+            Some(Standing::Found(line.severity).status()),
+            &[Span::Prose(&text)],
+        ));
+    }
+    if listing == Listing::Verbose {
+        for line in finding_lines(&advisory.mentions, targets, source, false) {
+            let text = format!("named, not run: {}", line.text);
+            lines.extend(style.detail(None, &[Span::Prose(&text)]));
+        }
+        for line in finding_lines(&advisory.accepted, targets, source, false) {
+            let text = format!("accepted in kendex's own package: {}", line.text);
+            lines.extend(style.detail(None, &[Span::Prose(&text)]));
+        }
+    }
+    if let Some(unread) = unread_line(advisory) {
+        lines.extend(style.detail(None, &[Span::Prose(&unread)]));
+    }
+    lines
+}
+
+/// Where a scored package stands, least to most serious, so the section
+/// takes the most serious of its packages. Clean is the one standing
+/// [`Listing::Attention`] leaves out: an unread rule is a score nobody
+/// earned.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Standing {
+    Clean,
+    Unread,
+    Found(Severity),
+}
+
+fn standing(advisory: &AuditResult) -> Standing {
+    match advisory
+        .findings
+        .iter()
+        .map(|finding| finding.severity)
+        .max()
+    {
+        Some(worst) => Standing::Found(worst),
+        None if !advisory.skipped.is_empty() => Standing::Unread,
+        None => Standing::Clean,
+    }
+}
+
+impl Standing {
+    /// One glyph per severity: medium shares low's, the lesser end of the
+    /// ramp.
+    fn status(self) -> Status {
+        match self {
+            Standing::Clean => Status::Done,
+            Standing::Unread => Status::Notice,
+            Standing::Found(Severity::Critical) => Status::Critical,
+            Standing::Found(Severity::High) => Status::High,
+            Standing::Found(Severity::Medium | Severity::Low) => Status::Low,
+        }
+    }
+}
+
+/// One finding line: the message, where it fired, and, where findings
+/// that say the same thing were folded into it, how many sites say it.
+#[derive(PartialEq)]
+struct FindingLine {
+    severity: Severity,
+    text: String,
+}
+
+/// A line per finding, or with `fold` one per thing said: the first site
+/// it was cited at and how many sites say it. A rule firing on six lines
+/// of one file is one thing to read, not six, where the reader asked for
+/// what needs them; every other listing names every site.
+fn finding_lines(
+    findings: &[Finding],
+    targets: &[SafetyTarget],
+    source: Option<&CatalogSource>,
+    fold: bool,
+) -> Vec<FindingLine> {
+    let mut groups: Vec<(&Finding, usize)> = Vec::new();
+    for finding in findings {
+        let same = groups.iter_mut().find(|(first, _)| {
+            fold && first.severity == finding.severity && first.message == finding.message
+        });
+        match same {
+            Some((_, sites)) => *sites += 1,
+            None => groups.push((finding, 1)),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(first, sites)| {
+            // A finding whose rule reads a config entry rather than a file
+            // has no place to name; the claim still prints, without empty
+            // parens. `PATH:LINE` is composed here and nowhere earlier:
+            // this is the end of the line, where nothing has to read it
+            // back.
+            let (place, line) = cited(first, targets, source);
+            let at = match (place.is_empty(), line) {
+                (true, _) => String::new(),
+                (false, None) => format!(" ({place})"),
+                (false, Some(line)) => format!(" ({place}:{line})"),
+            };
+            let sites = match sites {
+                1 => String::new(),
+                n => format!(" at {n} sites"),
+            };
+            FindingLine {
+                severity: first.severity,
+                text: format!("{}{sites}{at}", first.message),
+            }
+        })
+        .collect()
+}
+
+/// The safety section alone on stderr, for a write that draws no other part
+/// of a plan's report: [`Listing::Every`] where the verb closes on no
+/// ledger, [`Listing::Attention`] where a ledger speaks for what it folds.
+pub fn print_safety(rows: &[ItemSafety], listing: Listing) {
+    ui::stderr(&safety_section(&ui::style(), rows, listing));
 }
 
 /// One block per item and reading, worst score first, each carrying every
 /// harness it covers. The same rendering installed for four tools is one
 /// reading of one set of bytes, and four identical blocks read as four
 /// separate problems.
-fn grouped_safety(rows: &[ItemSafety], verbose: bool) -> Vec<(&ItemSafety, Vec<SafetyTarget>)> {
+fn grouped_safety(rows: &[ItemSafety], listing: Listing) -> Vec<(&ItemSafety, Vec<SafetyTarget>)> {
     let mut blocks: Vec<(SafetyBlock, &ItemSafety, Vec<SafetyTarget>)> = Vec::new();
     for row in rows {
-        let block = safety_block(row, verbose);
+        let block = safety_block(row, listing);
         let same = blocks.iter_mut().find(|(seen, first, _)| {
             *seen == block && first.kind == row.kind && first.name == row.name
         });
@@ -51,9 +223,9 @@ fn grouped_safety(rows: &[ItemSafety], verbose: bool) -> Vec<(&ItemSafety, Vec<S
 /// Everything one safety block prints and nothing else, so two rows share
 /// a block exactly when the words would be identical.
 ///
-/// Derived from [`print_advisory`] and [`print_skipped`], which are the
-/// only things that put a safety block on screen: a value they do not
-/// render cannot split a block, and one they do render is here or two
+/// Derived from [`safety_block_lines`] and [`unread_line`], which are the
+/// only things that put a plan's safety block on screen: a value they do
+/// not render cannot split a block, and one they do render is here or two
 /// different blocks fold into one. Nothing outside this file decides it,
 /// so a printer change is answered here rather than in the engine.
 #[derive(PartialEq)]
@@ -61,146 +233,61 @@ struct SafetyBlock {
     /// Here because the score line prints it, though no test can make it
     /// split a block: `quality::safety` derives it from the findings.
     score: u32,
-    findings: Vec<PrintedFinding>,
+    /// Each finding line, cited inside the row's own rendering. Two
+    /// renderings of one item can agree on every finding and still be
+    /// cited differently — one a verbatim copy, the other rewritten — and
+    /// folding those would let the first row decide whether the other's
+    /// line prints.
+    findings: Vec<FindingLine>,
     /// The mention lines a verbose run prints; empty otherwise, so a
     /// difference no line shows splits no block.
-    mentions: Vec<PrintedFinding>,
+    mentions: Vec<FindingLine>,
     /// The accepted lines a verbose run prints, under the same rule.
-    accepted: Vec<PrintedFinding>,
-    /// The count and reason [`print_skipped`] puts on its line, `None`
-    /// where it prints no line at all.
-    skipped: Option<(usize, String)>,
+    accepted: Vec<FindingLine>,
+    /// The line [`unread_line`] draws, `None` where it draws none.
+    skipped: Option<String>,
 }
 
-/// One finding line's parts, its place read inside its own rendering.
-#[derive(PartialEq)]
-struct PrintedFinding {
-    severity: &'static str,
-    message: String,
-    location: String,
-    line: Option<u32>,
-}
-
-fn safety_block(row: &ItemSafety, verbose: bool) -> SafetyBlock {
+fn safety_block(row: &ItemSafety, listing: Listing) -> SafetyBlock {
     let advisory = &row.advisory;
-    // Exactly what the line will say. Two renderings of one item can
-    // agree on every finding and still be cited differently — one a
-    // verbatim copy, the other rewritten — and folding those would let
-    // the first row decide whether the other's line prints.
-    let printed = |finding: &Finding| {
-        let (location, line) = cited(finding, &row.targets, row.source.as_ref());
-        PrintedFinding {
-            severity: finding.severity.name(),
-            message: finding.message.clone(),
-            location,
-            line,
-        }
+    let printed = |findings: &[Finding], fold: bool| {
+        finding_lines(findings, &row.targets, row.source.as_ref(), fold)
     };
+    let verbose = listing == Listing::Verbose;
     SafetyBlock {
         score: advisory.safety.score,
-        findings: advisory.findings.iter().map(printed).collect(),
+        findings: printed(&advisory.findings, listing == Listing::Attention),
         mentions: match verbose {
-            true => advisory.mentions.iter().map(printed).collect(),
+            true => printed(&advisory.mentions, false),
             false => Vec::new(),
         },
         accepted: match verbose {
-            true => advisory.accepted.iter().map(printed).collect(),
+            true => printed(&advisory.accepted, false),
             false => Vec::new(),
         },
-        skipped: advisory
-            .skipped
-            .first()
-            .map(|first| (advisory.skipped.len(), first.reason.clone())),
+        skipped: unread_line(advisory),
     }
 }
 
-/// Every other rendering this block covers, at this finding's own place
-/// and line inside it. The score line names every harness, but the
-/// finding prints one `PATH:LINE`, right for the rendering it was read
-/// from and wrong for the rest; a place the output does not name is a
-/// place the reader cannot go to, the rule `print_conflicts` names its
-/// own positions under. Every member of a block shares the line, which
-/// the key compares. Empty where the finding is not inside its own root.
-fn also_at(finding: &Finding, targets: &[SafetyTarget]) -> Vec<String> {
-    let Some((first, rest)) = targets.split_first() else {
-        return Vec::new();
-    };
-    let Some(place) = place_within(&finding.location, &first.location) else {
-        return Vec::new();
-    };
-    let line = finding
-        .line
-        .map_or(String::new(), |line| format!(":{line}"));
-    let mut places: Vec<String> = Vec::new();
-    for target in rest {
-        let at = format!("{}{place}{line}", target.location);
-        if at != format!("{}{line}", finding.location) && !places.contains(&at) {
-            places.push(at);
-        }
-    }
-    places
-}
-
-/// Where a scored package sits, as its score line says so: an
-/// installation belongs to a tool, a catalog item to a path inside its
-/// catalog. Naming the two shapes is what keeps the caller from
-/// hand-building a subject string, so every score line is worded the same
-/// way.
-pub enum ScoredAt<'a> {
-    /// The harness renderings whose audit results share this block, and
-    /// the catalog file they were rendered from where one backs them.
-    Planned {
-        targets: &'a [kendex_core::engine::SafetyTarget],
-        source: Option<&'a CatalogSource>,
-    },
-    /// The item's own path within the catalog. Empty for a repository
-    /// that is one skill: its path is the catalog, so there is no segment
-    /// to name and the score line leaves it out.
-    CatalogPath(&'a str),
-}
-
-/// One package's advisory result, in the one shape every verb that scores
-/// content prints it: the score, then each finding on a line of its own —
-/// severity in words, what the rule matched, and where it fired as
-/// subtext. No fix line and no prompt: the score is advisory, and a
-/// finding says what was matched, not what to do about it.
+/// One catalog item's advisory result, as `check --catalog` prints it:
+/// the score, then each finding on a line of its own — severity in words,
+/// what the rule matched, and where it fired as subtext. No fix line and no
+/// prompt: the score is advisory, and a finding says what was matched, not
+/// what to do about it.
 ///
-/// The score line prints for a clean package too. The contract is a score
-/// beside every package; a clean one going silent would make "scored 100"
-/// and "never scored" read alike.
-///
-/// A verbose run adds one line per mention: a switch the rules read as
-/// the file naming it rather than using it, which costs the score
-/// nothing. It is what the precision skipped, printed so a reader can
-/// check the reading against the file. It adds one line per accepted
-/// finding the same way: a finding kendex's own table set aside, which
-/// costs nothing while the file keeps the accepted text.
+/// The score line prints for a clean item too. A catalog check is an
+/// inventory of what it scored, and a clean item going silent would make
+/// "scored 100" and "never scored" read alike. `path` is the item's own
+/// path within the catalog, empty for a repository that is one skill: its
+/// path is the catalog, so the score line leaves it out.
 ///
 /// Severity leads the finding as a word, never as a colour: the line has
 /// to carry it for a reader who has no colour, and this printer emits
 /// none.
-pub fn print_advisory(
-    kind: ItemKind,
-    name: &str,
-    at: ScoredAt<'_>,
-    advisory: &kendex_core::quality::AuditResult,
-    verbose: bool,
-) {
-    let (targets, source, at) = match at {
-        ScoredAt::Planned { targets, source } => (
-            targets,
-            source,
-            format!(
-                " for {}",
-                targets
-                    .iter()
-                    .map(|target| target.harness.display_name())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        ),
-        ScoredAt::CatalogPath("") => (&[][..], None, String::new()),
-        ScoredAt::CatalogPath(path) => (&[][..], None, format!(" at {}", path)),
+pub fn print_advisory(kind: ItemKind, name: &str, path: &str, advisory: &AuditResult) {
+    let at = match path {
+        "" => String::new(),
+        path => format!(" at {path}"),
     };
     say(&format!(
         "safety: {} {}{at} scores {}/100",
@@ -208,46 +295,12 @@ pub fn print_advisory(
         name,
         advisory.safety.score
     ));
-    // A finding whose rule reads a config entry rather than a file has
-    // no place to name; the claim still prints, without empty parens.
-    // `PATH:LINE` is composed here and nowhere earlier: this is the end
-    // of the line, where nothing has to read it back.
-    let where_at = |finding: &Finding| {
-        let (place, line) = cited(finding, targets, source);
-        match (place.is_empty(), line) {
-            (true, _) => String::new(),
-            (false, None) => format!(" ({})", place),
-            (false, Some(line)) => format!(" ({}:{line})", place),
-        }
-    };
-    for finding in &advisory.findings {
-        say(&format!(
-            "  [{}] {}{}",
-            finding.severity.name(),
-            finding.message,
-            where_at(finding)
-        ));
-        for place in also_at(finding, targets) {
-            say(&format!("  also at {}", place));
-        }
+    for line in finding_lines(&advisory.findings, &[], None, false) {
+        say(&format!("  [{}] {}", line.severity.name(), line.text));
     }
-    if verbose {
-        for mention in &advisory.mentions {
-            say(&format!(
-                "  named, not run: {}{}",
-                mention.message,
-                where_at(mention)
-            ));
-        }
-        for accepted in &advisory.accepted {
-            say(&format!(
-                "  accepted in kendex's own package: {}{}",
-                accepted.message,
-                where_at(accepted)
-            ));
-        }
+    if let Some(unread) = unread_line(advisory) {
+        say(&format!("  {unread}"));
     }
-    print_skipped(advisory);
 }
 
 /// Where this finding is cited, and at which line of it.
@@ -311,20 +364,18 @@ fn cited(
 }
 
 /// The rules that apply to this kind and had no bytes to read here.
-fn print_skipped(advisory: &kendex_core::quality::AuditResult) {
-    let Some(first) = advisory.skipped.first() else {
-        return;
-    };
-    say(&format!(
-        "  not fully checked: {} rule(s) had nothing to read — {}",
+fn unread_line(advisory: &AuditResult) -> Option<String> {
+    let first = advisory.skipped.first()?;
+    Some(format!(
+        "not fully checked: {} rule(s) had nothing to read — {}",
         advisory.skipped.len(),
         first.reason
-    ));
+    ))
 }
 
 #[cfg(test)]
 mod tests {
-    use kendex_core::model::HarnessId::{Claude, Codex, Cursor, Gemini};
+    use kendex_core::model::HarnessId::{Claude, Codex, Cursor};
     use kendex_core::model::{HarnessId, Scope};
     use kendex_core::quality::{
         AuditResult, Deduction, Finding, QualityScore, RULESET_VERSION, SafetyScore, Severity,
@@ -389,7 +440,7 @@ mod tests {
 
     /// The harnesses each block would name, in the order they print.
     fn blocks(rows: &[ItemSafety]) -> Vec<Vec<HarnessId>> {
-        grouped_safety(rows, false)
+        grouped_safety(rows, Listing::Every)
             .iter()
             .map(|(_, targets)| targets.iter().map(|target| target.harness).collect())
             .collect()
@@ -493,43 +544,6 @@ mod tests {
         for (what, rows, expected) in rows {
             assert_eq!(blocks(&rows), expected, "{what}");
         }
-    }
-
-    /// Every shape `also_at` names and the one it must not, a message
-    /// per clause so a failure says which shape broke.
-    #[test]
-    fn also_at_names_every_other_rendering() {
-        let at = |harness, location: &str| SafetyTarget {
-            harness,
-            location: location.to_owned(),
-        };
-        let mut row = skill(Claude, PIPES, &[]);
-        let targets = [
-            row.targets[0].clone(),
-            skill(Codex, PIPES, &[]).targets.remove(0),
-        ];
-        assert_eq!(
-            also_at(&row.advisory.findings[0], &targets),
-            ["/home/one/.codex/skills/deploy/SKILL.md:12"],
-            "a file in a tree is re-rooted under the other rendering"
-        );
-
-        row.advisory.findings[0].location = "/home/one/.claude/hooks.json (command)".to_owned();
-        let labelled = [
-            at(Claude, "/home/one/.claude/hooks.json"),
-            at(Gemini, "/home/one/.gemini/settings.json"),
-        ];
-        assert_eq!(
-            also_at(&row.advisory.findings[0], &labelled),
-            ["/home/one/.gemini/settings.json (command):12"],
-            "a hook's place rejoins by the space it was taken off by"
-        );
-
-        row.advisory.findings[0].location = "kendex.toml".to_owned();
-        assert!(
-            also_at(&row.advisory.findings[0], &targets).is_empty(),
-            "a place outside the rendering claims no other position"
-        );
     }
 
     /// What a finding is cited as, by where it sits. A place inside a

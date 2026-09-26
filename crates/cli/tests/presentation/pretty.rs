@@ -1,9 +1,17 @@
-//! What a terminal gets. The frame is the only thing that differs: every
-//! word the plain run said is here, said once, inside it.
+//! What a terminal gets from a framed verb. The frame is the only thing
+//! that differs: every word the plain run said is here, said once, inside
+//! it. `remove` is the verb these are held on: the verbs built from the
+//! design system's components draw no frame.
 
 use super::*;
 
-const REFRESH: [&str; 4] = ["refresh", "-y", "--scope", "project"];
+const REMOVE: [&str; 5] = [
+    "remove",
+    "commit-guards",
+    "--no-sweep",
+    "--scope",
+    "project",
+];
 
 /// The frame opens on the verb and closes on the outcome, and every line
 /// between the two belongs to it. A line at column 0 in the middle of a
@@ -11,9 +19,9 @@ const REFRESH: [&str; 4] = ["refresh", "-y", "--scope", "project"];
 /// module's back.
 #[test]
 fn the_session_is_framed_from_the_verb_to_the_outcome() {
-    let (_, pretty) = both(&REFRESH);
+    let (_, pretty) = both(&REMOVE);
     assert!(
-        pretty.starts_with("┌  kendex refresh\n"),
+        pretty.starts_with("┌  kendex remove\n"),
         "the frame opens on the verb: {pretty}"
     );
     let escaped = escaped_the_frame(&pretty);
@@ -28,10 +36,10 @@ fn the_session_is_framed_from_the_verb_to_the_outcome() {
 /// it.
 #[test]
 fn the_frame_closes_on_the_ledger() {
-    let (plain, pretty) = both(&REFRESH);
+    let (plain, pretty) = both(&REMOVE);
     let ledger = plain
         .lines()
-        .find(|line| line.contains(": refreshed "))
+        .find(|line| line.contains(": removed "))
         .unwrap_or_default();
     let closing = pretty
         .lines()
@@ -51,15 +59,6 @@ fn the_frame_closes_on_the_ledger() {
             .all(|line| line.starts_with("     ")),
         "the run said something after it closed: {pretty}"
     );
-    for step in [
-        "skipped — kendex apply --replace-unmanaged, or the kendex adopt line under each conflict above",
-        "flagged — the safety lines above",
-    ] {
-        assert!(
-            unframed(&closing).contains(&squashed(step)),
-            "the ledger dropped a next step: {pretty}"
-        );
-    }
 }
 
 /// And in the order it said them. Flattening the session into one string
@@ -67,18 +66,17 @@ fn the_frame_closes_on_the_ledger() {
 /// makes possible.
 #[test]
 fn the_frame_says_them_in_the_order_the_plain_run_did() {
-    let (plain, pretty) = both(&REFRESH);
+    let (plain, pretty) = both(&REMOVE);
     // Up to the closing box, whose head the terminal's width wraps across
     // lines; that the box carries the ledger is its own assertion above.
     let framed: Vec<String> = unframed_lines(&pretty)
         .into_iter()
-        .take_while(|line| !line.contains(": refreshed "))
+        .take_while(|line| !line.contains(": removed "))
         .collect();
     let mut at = 0usize;
     for line in plain
         .lines()
-        .filter(|line| !line.trim().is_empty() && !line.contains(": refreshed "))
-        .take_while(|line| !line.starts_with("  skipped — "))
+        .filter(|line| !line.trim().is_empty() && !line.contains(": removed "))
     {
         let wanted = squashed(line);
         let found = framed[at..]
@@ -92,18 +90,18 @@ fn the_frame_says_them_in_the_order_the_plain_run_did() {
     assert!(at > 0, "nothing was matched at all: {pretty}");
 }
 
-/// One conflict said once, one way out said once, one ledger — the same
-/// bound the plain run is held to, so the frame cannot buy its hierarchy
-/// by repeating a headline inside it.
+/// One headline said once, each of its lines said once, one ledger — the
+/// same bound the plain run is held to, so the frame cannot buy its
+/// hierarchy by repeating a headline inside it.
 #[test]
 fn nothing_is_said_twice_inside_the_frame() {
-    let (_, pretty) = both(&REFRESH);
+    let (_, pretty) = both(&REMOVE);
     let carried = unframed(&pretty);
     for once in [
-        "conflict: skill commit-guards",
-        "to keep those files:",
-        "to install the packages this place lists instead:",
-        ": refreshed 3 changes",
+        "changes:",
+        "- Save kendex.toml",
+        "- Update the install record",
+        ": removed ",
     ] {
         assert_eq!(
             carried.matches(&squashed(once)).count(),
@@ -117,17 +115,12 @@ fn nothing_is_said_twice_inside_the_frame() {
 /// two spaces, and it is what turns a wall of lines into blocks.
 #[test]
 fn detail_is_drawn_under_its_headline() {
-    let (_, pretty) = both(&REFRESH);
+    let (_, pretty) = both(&REMOVE);
     let mut lines = pretty
         .lines()
-        .skip_while(|line| !line.starts_with("◇  conflict:"));
-    assert!(lines.next().is_some(), "no conflict headline: {pretty}");
-    for detail in [
-        "also at",
-        "differs from the package in 2 files",
-        "to keep those files:",
-        "to install the packages this place lists instead:",
-    ] {
+        .skip_while(|line| !line.starts_with("◇  changes:"));
+    assert!(lines.next().is_some(), "no changes headline: {pretty}");
+    for detail in ["- Save kendex.toml", "- Write skill tidy's files"] {
         let line = lines.next().unwrap_or_default();
         assert!(
             line.starts_with("│    ") && line.contains(detail),
@@ -142,7 +135,7 @@ fn detail_is_drawn_under_its_headline() {
 /// the thing the plain run's twenty-line bound exists to stop.
 #[test]
 fn the_frame_costs_the_run_a_fixed_number_of_lines() {
-    let (plain, pretty) = both(&REFRESH);
+    let (plain, pretty) = both(&REMOVE);
     let count = |text: &str| text.lines().filter(|line| !line.trim().is_empty()).count();
     let plain_lines = count(&plain);
     let framed = count(&pretty);
@@ -201,7 +194,11 @@ fn one_line_verdicts_are_drawn_as_one_group() {
 /// bottom of the run with no closing line under it.
 #[test]
 fn a_run_ending_outside_its_ledger_still_closes_the_frame() {
-    let printed = said(&nothing_declared(&["refresh", "--scope", "project"]));
+    // The answer on stdout follows the ledger, so the ledger is drawn as
+    // an ordinary block and the frame is left for the run's end to close.
+    let printed = said(&nothing_declared(&[
+        "verify", "--json", "--scope", "project",
+    ]));
     assert!(
         printed.contains("nothing installed"),
         "the fixture no longer reaches the case: {printed}"

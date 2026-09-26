@@ -69,12 +69,18 @@ fn manifest(project: &Path, catalog: &Path, tools: &str, method: &str, declarati
 /// A hand-placed copy sitting where a catalog skill renders.
 const UNMANAGED_SKILL: &str = "---\nname: commit-guards\ndescription: keep it small\nlicense: MIT\nmetadata:\n  author: vanillagreen\n---\nThe copy already there.\n";
 
-/// Every item a safety block reports a finding against.
+/// Every item the safety section reports a finding against.
 fn flagged_items(listed: &str) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
+    let section: Vec<&str> = listed
+        .lines()
+        .skip_while(|line| *line != "safety:")
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+        .collect();
     let mut item = None;
-    for line in listed.lines() {
-        match line.strip_prefix("safety: skill ") {
+    for line in section {
+        match line.strip_prefix("  skill ") {
             Some(rest) => item = rest.split(" for ").next().map(str::to_owned),
             None => {
                 if line.trim_start().starts_with('[')
@@ -141,17 +147,19 @@ fn a_blocked_refresh_ends_on_a_ledger_naming_every_outcome_and_its_next_step() {
 
     // One item, one line — not one line per tool, and no position hidden.
     assert_eq!(
-        printed.matches("conflict:").count(),
+        printed
+            .matches("  skill commit-guards for Claude Code, Codex:")
+            .count(),
         1,
         "the same conflict was printed once per tool: {printed}"
     );
     assert!(
-        printed.contains("conflict: skill commit-guards for Claude Code, Codex:"),
+        printed.contains("conflicts:\n  skill commit-guards for Claude Code, Codex:"),
         "the one line names every tool the conflict blocks: {printed}"
     );
     assert!(
         printed.contains(&format!(
-            "  also at {}",
+            "    also at {}",
             kendex_core::paths::slashed(&project.join(".agents/skills/commit-guards"))
         )),
         "every position is named, so the reader can act on each: {printed}"
@@ -164,7 +172,7 @@ fn a_blocked_refresh_ends_on_a_ledger_naming_every_outcome_and_its_next_step() {
     assert_eq!(
         ledger(&printed),
         format!(
-            "{}: refreshed 3 changes · skipped 1 item on conflict · flagged 2 items on safety",
+            "{}: refreshed 3 changes · skipped 1 item on conflict · flagged 2 items on safety · details folded",
             kendex_core::paths::slashed(&project)
         ),
         "{printed}"
@@ -225,10 +233,14 @@ fn a_clean_refresh_ends_on_the_count_and_a_clean_scan() {
     assert_eq!(
         ledger(&printed),
         format!(
-            "{}: refreshed 2 changes · safety: clean",
+            "{}: refreshed 2 changes · safety: clean · details folded",
             kendex_core::paths::slashed(&project)
         ),
-        "a clean run reports its writes and its clean scan, and no outcome it does not have: {printed}"
+        "a clean run reports its writes, its clean scan and that it left detail out, and no outcome it does not have: {printed}"
+    );
+    assert!(
+        printed.contains("  folded — --verbose draws them") && !printed.contains(" scores "),
+        "the clean package is folded, and the ledger names the flag that draws it: {printed}"
     );
     assert!(
         !printed.contains("flagged — the safety lines above"),

@@ -28,6 +28,9 @@ Truecolor values are the `.dark` block of `ui/src/index.css`; `ui::tokens` tests
 | `✗` | failed or blocked | `x` |
 | `!` | needs a decision | `!` |
 | `•` | notice | `*` |
+| `◉` | a critical safety finding | `#` |
+| `◐` | a high safety finding | `+` |
+| `○` | a medium or low safety finding | `o` |
 | `→` | from, to | `->` |
 | `›` | current choice, folded block | `>` |
 | `─` | rule | `-` |
@@ -40,6 +43,7 @@ ASCII applies when `LC_ALL`, `LC_CTYPE` or `LANG`, first non-empty, names no UTF
 | `header(verb, target)` | `kendex <verb>` and the target | nothing |
 | `section(title, count, status)` | blank line, bold title in the status colour, muted count | `title:` |
 | `row(status, &[Span], Value)` | glyph and label, its commands never broken; under it the value's copy as a command, then its remark wrapped | `  label — copy remark` |
+| `detail(status, &[Span])` | a line one level under its row: the status glyph and the text, or muted text without one | `    text` |
 | `change(name, old, new, scope)` | `name  old → new  [scope]` | the same, uncoloured |
 | `callout(what, why, choices)` | blank line, `!` and what, then why and the choices | `! what`, then why and the choices, indented |
 | `choices(&[Choice])` | `[Enter] Set up · [s] Skip`, the recommended one bold | the same, uncoloured |
@@ -50,6 +54,10 @@ ASCII applies when `LC_ALL`, `LC_CTYPE` or `LANG`, first non-empty, names no UTF
 | `summary(status, text)` | blank line, glyph and bold text: the run's last line | the text |
 | `details(title, lines, folded)` | folded: the title and a line count | the title indented two spaces, every line indented four |
 | `note(&[Span])` | muted text, its commands never broken | the spans joined |
+
+A `Status` is `Done`, `Failed`, `Decision` or `Notice`, or a safety finding's severity: `Critical` (danger), `High` (warn) or `Low` (muted, medium included).
+
+A plan's report (`src/commands/attention.rs`) is drawn from these: a `conflicts` section, then a `safety` section, then a `notes` section, each item a `row` with its `detail` lines. `advisory::Listing` says how much it draws. `refresh`, `apply` and `add` draw `Attention`: only the packages with a finding or a rule that had nothing to read, each finding once with its site count, and no hook exclusion a declaration does not contradict. `refresh` alone closes on `details folded` where the compact drawing differs from the verbose one, and draws it all under `--verbose`; `apply` and `add` have no flag that draws more. `pin`, `adopt`, `fork` and the drift-hook install close on no ledger and draw `Every` package, clean ones included.
 
 Rich wraps prose between words and never breaks a command: text a component takes as `Span::Command` (core marks the commands in a report line and its next step with `report::Sentence`), or a `Value`'s copy, starts a new line where it does not fit and is drawn whole, and the terminal wraps one wider than a line. Each component escapes the values it is handed; `ui::stdout` and `ui::stderr` print what it drew unchanged. Snapshot tests per component in both renderings sit in `src/ui/components/tests.rs`; `tests/presentation/design.rs` holds `NO_COLOR` output equal to a pipe's and a rich run at `COLUMNS=80` to 80 cells, commands aside. `tests/tapes/check.tape` records the pilot with vhs.
 

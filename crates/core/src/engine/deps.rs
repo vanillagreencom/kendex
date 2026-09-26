@@ -614,7 +614,7 @@ fn wanted_by(
                     Some(
                         NotWritten::KeptRemoved
                             | NotWritten::OtherTools
-                            | NotWritten::OwnHarnessesLine
+                            | NotWritten::OwnHarnessesLine { .. }
                             | NotWritten::Undeliverable(_)
                     )
                 )
@@ -942,7 +942,7 @@ fn finding(
             ),
             format!("settle the finding on {dep}"),
         ),
-        NotWritten::OwnHarnessesLine => (
+        NotWritten::OwnHarnessesLine { .. } => (
             format!(
                 "missing required dependency: {tools} {} {parent} without {dep}, whose own harnesses line leaves {tools} out",
                 verb

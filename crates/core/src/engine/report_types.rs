@@ -215,6 +215,16 @@ pub struct Installation {
     pub positions: Vec<super::desired::Position>,
 }
 
+/// A catalog hook the plan wrote nothing for on a tool its own harnesses
+/// line leaves out, where the person's declaration of it does not name that
+/// tool. Expected state rather than a finding: the hook's header says it
+/// does not run there, and nothing the person wrote asked otherwise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExcludedHook {
+    pub name: String,
+    pub harness: HarnessId,
+}
+
 #[derive(Debug)]
 pub struct EngineReport {
     pub declaration_status: DeclarationStatus,
@@ -222,6 +232,10 @@ pub struct EngineReport {
     pub plan: Plan,
     pub notes: Vec<String>,
     pub warnings: Vec<ItemWarning>,
+    /// Catalog hooks left off a tool by their own harnesses line alone.
+    /// A declaration that names the tool gets a `kendex-hook-excluded`
+    /// note in `notes` instead.
+    pub excluded_hooks: Vec<ExcludedHook>,
     /// What this plan would add to or drop from the installed set.
     pub set_changes: Vec<SetChange>,
     /// Installations this plan leaves alone that nothing needs anymore —
@@ -359,6 +373,7 @@ impl EngineReport {
             plan,
             notes: Vec::new(),
             warnings: Vec::new(),
+            excluded_hooks: Vec::new(),
             set_changes: Vec::new(),
             sweepable: Vec::new(),
             kept: Vec::new(),

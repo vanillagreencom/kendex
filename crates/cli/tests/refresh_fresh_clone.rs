@@ -388,12 +388,13 @@ fn the_settled_plan_supplies_the_diagnostics_and_closing_counts() {
         let printed = said(&output);
         assert_eq!(output.status.code(), Some(0), "{printed}");
         for (line, shown) in [
-            ("safety: skill deploy for Claude Code scores ", true),
-            ("safety: hook guard for Pi scores ", true),
+            // Clean, so drawn only where every package is.
+            ("  skill deploy for Claude Code scores ", verbose),
+            ("  hook guard for Pi scores ", true),
             ("flagged 1 item on safety", true),
             ("skipped 1 item on conflict", conflict),
             ("settling added to what this run writes", !conflict),
-            ("conflict: hook guard for Pi:", !verbose && conflict),
+            ("  hook guard for Pi:", !verbose && conflict),
             ("hook guard [pi]: Conflict", verbose && conflict),
             ("hook guard [pi]: Missing", verbose && !conflict),
         ] {

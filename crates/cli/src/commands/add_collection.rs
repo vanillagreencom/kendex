@@ -10,8 +10,9 @@ use kendex_core::model::Scope;
 use kendex_core::registry::{CurlFetch, collections};
 use kendex_core::source_ops::{self, SourceAction};
 
-use super::engine_common::{apply_report, ask_before_writing, print_report, print_safety};
-use super::ledger::{Wrote, say_ledger};
+use super::advisory::{Listing, print_safety};
+use super::engine_common::{apply_report, ask_before_writing, print_report};
+use super::ledger::{Folded, Wrote, say_ledger};
 use super::offers::Blocked;
 use super::{CliResult, fail_refusal, say, scope_label};
 
@@ -84,6 +85,7 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
             },
             &closing.blocked,
             &closing.scored,
+            Folded::None,
         );
     };
     let (outcome, refused) = finish(
@@ -320,7 +322,9 @@ fn install_step(
     // whole collection at once. Nothing here runs an effect.
     wrote.effects.extend(report.repo_effects.iter().cloned());
     wrote.planned = !report.plan.is_empty();
-    wrote.blocked.extend(print_report(env, &report));
+    wrote
+        .blocked
+        .extend(print_report(env, &report, Listing::Attention));
     wrote.scored.extend(report.safety.iter().cloned());
     wrote.applied += apply_report(env, &report)?;
     if let Some(name) = subscribed {
@@ -331,7 +335,9 @@ fn install_step(
     {
         for (kind, name) in &members {
             let pinned = kendex_core::package::set_rev(env, scope, *kind, name, Some(commit))?;
-            print_safety(&pinned, false);
+            // The pin's rows reach the collection's closing ledger with
+            // the step's own, which speaks for what this folds.
+            print_safety(&pinned.safety, Listing::Attention);
             wrote.scored.extend(pinned.safety.iter().cloned());
             wrote.applied += apply_report(env, &pinned)?;
         }

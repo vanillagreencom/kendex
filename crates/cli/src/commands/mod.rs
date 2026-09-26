@@ -3,6 +3,7 @@ pub mod add_collection;
 pub mod adopt;
 pub mod advisory;
 pub mod apply_cmd;
+pub mod attention;
 pub mod blocked;
 pub mod bookmark_cmd;
 pub mod check;
@@ -56,6 +57,13 @@ use crate::scope::ScopeFilter;
 pub use crate::ui::{Lines, answer, escaped, fail, fail_refusal, note, out, payload, say, warn};
 
 pub type CliResult = Result<(), Box<dyn std::error::Error>>;
+
+/// The verb and the scopes it acts on, above a converted verb's report.
+/// Chrome: a plain run draws nothing.
+pub fn header(verb: &str, scopes: &[Scope]) {
+    let target: Vec<String> = scopes.iter().map(Scope::label).collect();
+    crate::ui::stderr(&crate::ui::style().header(verb, &target.join(", ")));
+}
 
 /// A scope as a human line names it. The label is a path somebody chose,
 /// and a path carries whatever the filesystem allowed; the `ui` seam

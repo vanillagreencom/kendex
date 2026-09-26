@@ -69,7 +69,7 @@ fn a_name_a_shell_would_split_is_never_printed_as_an_argument() {
     .unwrap();
 
     let planned = said(&kendex(home, &project, &["apply", "--plan"]));
-    assert!(planned.contains("conflict: skill"), "{planned}");
+    assert!(planned.contains("conflicts:\n  skill"), "{planned}");
     assert!(
         !planned.contains("adopt skill ship it;"),
         "a name a shell would split was printed as an argument: {planned}"

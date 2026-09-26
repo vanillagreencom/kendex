@@ -44,22 +44,22 @@ fn shape(setup: &[&str], args: &[&str]) -> Vec<String> {
         .collect()
 }
 
-/// The block every verb that plans prints before its own lines: one
-/// score per item and matching result, each naming every position it
-/// covers, and one conflict however many tools it blocks.
+/// The report every verb that plans prints before its own lines: one
+/// conflict however many tools it blocks, first, then one score per item
+/// and matching result, its render mirrors implied.
 fn planned_block() -> Vec<&'static str> {
     vec![
-        "safety: skill commit-guards for Claude Code, Codex scores 75/100",
-        "  [finding]",
-        "  also at <project>/.agents/skills/commit-guards/SKILL.md:5",
-        "safety: skill tidy for Claude Code, Codex scores 75/100",
-        "  [finding]",
-        "  also at <project>/.agents/skills/tidy/SKILL.md:5",
-        "conflict: skill commit-guards for Claude Code, Codex: <project>/.claude/skills/commit-guards already holds files kendex did not write",
-        "  also at <project>/.agents/skills/commit-guards",
-        "  differs from the package in 2 files: SKILL.md, references/rules.md",
-        "  to keep those files: kendex adopt skill commit-guards --harness claude --harness codex",
+        "conflicts:",
+        "  skill commit-guards for Claude Code, Codex: <project>/.claude/skills/commit-guards already holds files kendex did not write",
+        "    also at <project>/.agents/skills/commit-guards",
+        "    differs from the package in 2 files: SKILL.md, references/rules.md",
+        "    to keep those files: kendex adopt skill commit-guards --harness claude --harness codex",
         "  to install the packages this place lists instead: kendex apply --replace-unmanaged",
+        "safety:",
+        "  skill commit-guards for Claude Code, Codex scores 75/100",
+        "  [finding]",
+        "  skill tidy for Claude Code, Codex scores 75/100",
+        "  [finding]",
     ]
 }
 
@@ -200,8 +200,8 @@ fn a_name_off_a_foreign_tree_cannot_forge_a_line() {
             "the name was not printed as what it is ({ui}): {printed}"
         );
         assert!(
-            !printed.contains('\u{1b}'),
-            "a control character reached the terminal ({ui}): {printed:?}"
+            !printed.contains("ir\u{1b}[31md"),
+            "the name's control character reached the terminal ({ui}): {printed:?}"
         );
         // The line it appears on is one line. Escaped after the message
         // is composed, the break inside the name would split this in two.
@@ -239,8 +239,8 @@ fn a_name_off_a_foreign_tree_cannot_forge_a_line() {
             "the place was not printed as what it is ({ui}): {printed}"
         );
         assert!(
-            !printed.contains('\u{1b}'),
-            "a control character reached the terminal ({ui}): {printed:?}"
+            !printed.contains("we\u{1b}[31mird"),
+            "the place's control character reached the terminal ({ui}): {printed:?}"
         );
     }
 }
@@ -276,8 +276,8 @@ fn a_refusal_naming_one_finding_per_line_keeps_its_lines() {
             &["apply", "--plan", "--scope", "project"],
         ));
         assert!(
-            !printed.contains('\u{1b}'),
-            "a control character reached the terminal ({ui}): {printed:?}"
+            !printed.contains("ir\u{1b}d"),
+            "the key's control character reached the terminal ({ui}): {printed:?}"
         );
         assert!(
             squashed(&printed).contains("we\\nir\\u{1b}d:unknowntableorkey"),
@@ -344,8 +344,8 @@ fn a_value_in_the_closing_refusal_cannot_forge_a_line() {
             &["apply", "--plan", "--scope", "project"],
         ));
         assert!(
-            !printed.contains('\u{1b}'),
-            "a control character reached the terminal ({ui}): {printed:?}"
+            !printed.contains("we\u{1b}[31mi"),
+            "the place's control character reached the terminal ({ui}): {printed:?}"
         );
         assert!(
             squashed(&printed).contains("we\\u{1b}[31mi\\nrd"),

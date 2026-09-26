@@ -337,7 +337,7 @@ fn version_10_recovery_continues_after_a_partial_apply() {
     let recovered = read(&deploy);
     super::write(&deploy, "person's edit after the partial recovery\n");
     let held = super::said(&world.try_run(&["apply", "--plan"]));
-    assert!(held.contains("conflict: skill deploy"), "{held}");
+    assert!(held.contains("conflicts:\n  skill deploy"), "{held}");
     super::write(&deploy, &recovered);
 
     declares_two_sources(&world, &ready);
@@ -397,7 +397,7 @@ fn version_10_recovery_keeps_a_hand_edited_render_as_a_conflict() {
     move_old_lock_aside(&world);
 
     let planned = super::said(&world.try_run(&["apply", "--plan"]));
-    assert!(planned.contains("conflict: skill deploy"), "{planned}");
+    assert!(planned.contains("conflicts:\n  skill deploy"), "{planned}");
     assert_eq!(read(&rendered), "person's edit\n");
 }
 
@@ -438,7 +438,7 @@ fn version_10_hook_recovery_keeps_an_edited_script_and_registration() {
 
     let planned = super::said(&world.try_run(&["apply", "--plan"]));
 
-    assert!(planned.contains("conflict: hook guard"), "{planned}");
+    assert!(planned.contains("conflicts:\n  hook guard"), "{planned}");
     assert_eq!(read(&script), "#!/bin/sh\necho person's edit\n");
     let settings = read(&world.at(".claude/settings.json"));
     assert!(settings.contains("PreToolUse"), "{settings}");
