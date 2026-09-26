@@ -157,8 +157,8 @@ jobs:
       BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
       HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
       KENDEX_REPO: ${{ github.repository }}
-      KENDEX_BUILD_SHA: 2ba4f18c9ba6889a190ad6f19793ac4bf089df35
-      KENDEX_VERSION: main-build-133-1-2ba4f18c9ba6889a190ad6f19793ac4bf089df35
+      KENDEX_BUILD_SHA: 9dab3e4c2f7b95e2ff7a03915e708bd8d1629782
+      KENDEX_VERSION: main-build-250-1-9dab3e4c2f7b95e2ff7a03915e708bd8d1629782
     steps:
       # THREE CHECKOUTS, and the split is the point. The classifier is the
       # DEFAULT BRANCH's copy, where the pull request's author cannot change

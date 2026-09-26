@@ -21,8 +21,8 @@
 # does not, so a consumer that must not treat a fallback as a class reads the
 # marker rather than a list of causes of its own. The render proof runs `kendex verify --scope
 # project --json` in that private checkout, with `--base` set to the base-rev:
-# line harness-only printed and, where that kendex takes it, `--at-record`
-# beside it, and reads its document. The classes, first match winning:
+# line harness-only printed and `--at-record` beside it, and reads its
+# document. The classes, first match winning:
 #
 #   render   every changed path is a file kendex generated, `kendex verify`
 #            reports files checked and none failed, and every changed path is
@@ -40,9 +40,8 @@
 #            the base's record names, so a render the catalog has moved
 #            past since it was pushed is weighed on its own terms and
 #            printed as one `render-stale:` line per source commit it
-#            trails; a kendex without the flag renders at the mirror's
-#            revision and the log says `render-reading: current`. The two
-#            files kendex keeps about itself are as it writes them, and that
+#            trails. The two files kendex keeps about itself are as it
+#            writes them, and that
 #            every recorded entry is one the declarations back. Provenance
 #            is proved by rendering, never by trusting .kendex-generated.json
 #            or the install record, either of which the branch can rewrite;
@@ -123,14 +122,6 @@ ORCH_CONTRACT_REQUIRED=1
 # is the render proof's whole contract with kendex: a kendex printing another
 # version, or none, answers standard rather than being read by guesswork.
 VERIFY_DOCUMENT_VERSION=1
-# The flag that weighs a render at the commits its install record names.
-# A kendex without it is still called, and weighs the render at its sources'
-# revisions now, which refuses every render the catalog has moved past: the
-# kendex main builds the harness-ci and review-gate templates pin before the
-# first build carrying the flag. The probe goes once both pins carry it. The
-# flag goes only beside `--base`: the base's record is the floor that stops
-# a branch rewriting its own record back to an older catalog commit.
-VERIFY_AT_RECORD=--at-record
 # One tab, resolved once. The ownership pass reads it once per printed
 # position per changed path, and a substitution at that read forks a
 # subshell every time: minutes over a repository's own refresh.
@@ -408,14 +399,11 @@ renders_match() {
   fi
   verify_args=(verify --scope project --json)
   if [ -n "$base_rev" ]; then
-    verify_args=("${verify_args[@]}" --base "$base_rev")
-    if ! verify_help="$( (cd -- "$proof_tree" && kendex verify --help) 2>/dev/null)"; then
-      verify_help=""
-    fi
-    case "$verify_help" in
-      *"$VERIFY_AT_RECORD"*) verify_args=("${verify_args[@]}" "$VERIFY_AT_RECORD") ;;
-      *) printf 'render-reading: current cause=verify-lacks-at-record\n' >&2 ;;
-    esac
+    # `--at-record` weighs each package at the commit the install record
+    # names, and goes only beside `--base`: the base's record is the floor
+    # that stops a branch rewriting its own record back to an older catalog
+    # commit.
+    verify_args=("${verify_args[@]}" --base "$base_rev" --at-record)
   fi
   if ! VERIFY_JSON="$( (cd -- "$proof_tree" && kendex "${verify_args[@]}") 2>"$work/verify-stderr" )"; then
     cat "$work/verify-stderr" >&2

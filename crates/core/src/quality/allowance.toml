@@ -27,7 +27,7 @@ name = "harness-ci"
 
 [[package.file]]
 path = "references/wiring.md"
-hash = "a9e34e1ac194227491cfbb4212eea13dba4d05134dfb5483a33180624747bc54"
+hash = "88a73d5caaafd58074b0982d2b825b04dc5c9e0b33e06e05eb953c6b8cca06b4"
 
 [[package.file.finding]]
 rule = "rce"
@@ -40,7 +40,7 @@ name = "review-gate"
 
 [[package.file]]
 path = "templates/review-gate-writer.yml"
-hash = "05c242972d6362eb6c27bcb4ae7652daa6cfdcb845a0350f8ddedf7defdd5196"
+hash = "d3c857e1618b169dd5e3e7916dd0721e7f725999c3b3babd64604b195a7f2712"
 
 [[package.file.finding]]
 rule = "rce"
