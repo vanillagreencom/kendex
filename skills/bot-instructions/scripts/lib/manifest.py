@@ -26,6 +26,7 @@ draws the same line for the review gate's own set.
 """
 
 import json
+import re
 import tomllib
 
 from .constants import DERIVED_REASON
@@ -108,11 +109,27 @@ def rendered_skill_trees(tree):
         paths = json.loads(text)
     except ValueError as exc:
         raise ManifestError(f"{INVENTORY}: not valid JSON ({exc})") from exc
-    if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
-        raise ManifestError(
-            f"{INVENTORY}: expected a JSON array of repo-relative paths. A record this "
-            "cannot read is refused rather than read as empty"
+    def path_string(value):
+        return isinstance(value, str) and bool(value) and "\n" not in value and "\0" not in value
+
+    def entry(value):
+        if isinstance(value, str):
+            return path_string(value)
+        return (
+            isinstance(value, dict)
+            and value.keys() == {"path", "template", "templateHash"}
+            and path_string(value["path"])
+            and path_string(value["template"])
+            and isinstance(value["templateHash"], str)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", value["templateHash"]) is not None
         )
+
+    if not isinstance(paths, list) or not all(entry(p) for p in paths):
+        raise ManifestError(
+            f"{INVENTORY}: expected a JSON array of paths or adopted workflow records. "
+            "A record this cannot read is refused rather than read as empty"
+        )
+    paths = [p if isinstance(p, str) else p["path"] for p in paths]
     names = set()
     prefix = SKILLS_ROOT + "/"
     for path in paths:

@@ -94,6 +94,46 @@ pub(crate) struct World {
     pub(crate) catalog: PathBuf,
 }
 
+/// A consumer with one installed skill template and no adopted workflow.
+#[allow(clippy::unwrap_used)]
+pub(crate) fn adoption_world(template: &str) -> World {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("consumer");
+    let catalog = home.join("catalog");
+    write(&catalog.join("kendex.toml"), "is_source_catalog = true\n");
+    write(
+        &catalog.join("skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: Deploy\n---\nDeploy.\n",
+    );
+    write(
+        &catalog.join("skills/deploy/templates/adopted.yml"),
+        template,
+    );
+    write(
+        &project.join("kendex.toml"),
+        &format!(
+            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n",
+            source_path(&catalog)
+        ),
+    );
+    git(&project, &["init", "-q"]);
+    let env = Env::fake(&home, kendex_core::env::FakeOs::Linux);
+    let scope = kendex_core::model::Scope::Project {
+        root: project.clone(),
+    };
+    let plan =
+        kendex_core::engine::plan_apply(&env, &scope, &kendex_core::engine::PlanOptions::default())
+            .unwrap();
+    kendex_core::apply::execute(&env, &plan.plan).unwrap();
+    World {
+        _tmp: tmp,
+        home,
+        project,
+        catalog,
+    }
+}
+
 /// A consumer with one item of every kind installed, on the awkward names:
 /// a scoped Pi extension, a command whose declared name a skill has taken
 /// on a harness that stores commands as skills, a plugin-sourced

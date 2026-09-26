@@ -64,6 +64,32 @@ load_rows \
   "an entry carrying a newline is refused: the list is newline-delimited|[\"a\\\\nb\"]|rc=2 paths=<> $ARRAY" \
   "an entry carrying a NUL is refused|[\"a\\\\u0000b\"]|rc=2 paths=<> $ARRAY"
 
+
+# Adopted workflows are writer records, and malformed records must not grant ownership.
+ADOPTED='{"path":".github/workflows/kendex-refresh.yml","template":".agents/skills/review-gate/templates/kendex-refresh.yml","templateHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+assert_eq 'a mixed inventory uses the adopted workflow path' \
+  'rc=0 paths=<plain.md;.github/workflows/kendex-refresh.yml>' "$(load "[\"plain.md\",$ADOPTED]")"
+for mutation in 'del(.path)' '.path = null' '.path = ""' '.path = "a\nb"' \
+  'del(.template)' '.template = 7' '.template = "a\u0000b"' \
+  'del(.templateHash)' '.templateHash = "sha256:bad"' '.templateHash = null' '.templateHash += "\n"' '.extra = true'; do
+  malformed="$(jq -c "$mutation" <<<"$ADOPTED")"
+  assert_eq "invalid adopted record: $mutation" "rc=2 paths=<> $ARRAY" "$(load "[$malformed]")"
+done
+
+# Removing adopted-object acceptance makes the mixed-inventory assertion fail.
+reader="$TEST_DIR/../scripts/lib/generated-paths.sh"
+cp "$TEST_DIR/../scripts/lib/messages.sh" "$TMP/messages.sh"
+needle='elif type == "object" then'
+[ "$(grep -Fc "$needle" "$reader")" -eq 1 ]
+sed 's/elif type == "object" then/elif false then/' "$reader" >"$TMP/generated-paths.sh"
+cmp -s "$reader" "$TMP/generated-paths.sh" && { echo "control changed no bytes" >&2; exit 1; }
+# shellcheck source=../scripts/lib/generated-paths.sh
+source "$TMP/generated-paths.sh"
+assert_eq 'control: refusing adopted objects breaks the valid mixed inventory' \
+  "rc=2 paths=<> $ARRAY" "$(load "[\"plain.md\",$ADOPTED]")"
+# shellcheck source=../scripts/lib/generated-paths.sh
+source "$reader"
+
 echo "=== membership is literal, both ways ==="
 contains() { generated_paths_load "$1"; if generated_path_contains "$2"; then echo yes; else echo no; fi; } # INVENTORY PATH
 contains_rows() { # label | inventory | path | expect

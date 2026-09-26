@@ -6,7 +6,7 @@
 //! offer, which covers only the files kendex owns whole. One collection,
 //! so the two cannot disagree about what kendex wrote.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::apply::{Op, PlannedOp, Pre};
@@ -18,6 +18,10 @@ use super::instruction_shims::{ShimStanding, ShimState};
 
 /// The name of the inventory CI reads, at a project root.
 pub const INVENTORY: &str = ".kendex-generated.json";
+
+mod adopted;
+pub use adopted::AdoptedWorkflow;
+pub(crate) use adopted::{committable_paths, inventory_paths};
 
 /// The files that travel with a commit that adds or takes away a render:
 /// the inventory recording which paths kendex owns here, and the lock
@@ -60,12 +64,18 @@ pub struct GeneratedPaths {
     /// The positions of items this pass refused to write — a `Conflict` or
     /// `Unmanaged` row — as the other two groups would have carried them.
     pub held: BTreeSet<PathBuf>,
+    /// Adoption copies checked against declared package templates. Refresh
+    /// records their provenance but does not write or restore their YAML.
+    pub adopted: BTreeMap<PathBuf, AdoptedWorkflow>,
 }
 
 impl GeneratedPaths {
     /// Nothing rendered at all, in either group.
     pub fn is_empty(&self) -> bool {
-        self.whole.is_empty() && self.shared.is_empty() && self.regions.is_empty()
+        self.whole.is_empty()
+            && self.shared.is_empty()
+            && self.regions.is_empty()
+            && self.adopted.is_empty()
     }
 
     /// The inventory's paths, including its own file and the lock.
@@ -74,6 +84,7 @@ impl GeneratedPaths {
             .iter()
             .chain(&self.shared)
             .chain(&self.held)
+            .chain(self.adopted.keys())
             .cloned()
             .chain(
                 self.regions
@@ -115,18 +126,7 @@ impl GeneratedPaths {
     /// is an array composed by hand; one entry per line bounds a conflict to
     /// the lines holding the entries involved.
     fn document(&self, root: &Path) -> Result<String> {
-        Self::laid_out(&self.relative(root), root)
-    }
-
-    fn laid_out(paths: &BTreeSet<String>, root: &Path) -> Result<String> {
-        let mut text = serde_json::to_string_pretty(paths).map_err(|error| {
-            crate::error::CoreError::JsonParse {
-                path: root.join(INVENTORY),
-                message: error.to_string(),
-            }
-        })?;
-        text.push('\n');
-        Ok(text)
+        adopted::document(self, root)
     }
 
     /// Owning the FORMAT is not owning the bytes, so the project's manifest
@@ -243,6 +243,12 @@ pub(super) fn plan(
     if !root.join(".git").exists() {
         return Ok(generated);
     }
+    let Some(adopted) = adopted::collect(root, state)? else {
+        // Verify reports the malformed document. An apply must retain it:
+        // rewriting it could erase adoption declarations it cannot read.
+        return Ok(generated);
+    };
+    generated.adopted = adopted;
     if !generated.held.is_empty() {
         let committed = crate::commit_offer::committed_inventory(root).map_err(|error| {
             crate::error::CoreError::GitFailed {

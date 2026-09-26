@@ -458,6 +458,7 @@ impl Repo {
             shared: shared.iter().map(|p| self.root.join(p)).collect(),
             regions: BTreeSet::new(),
             held: BTreeSet::new(),
+            adopted: Default::default(),
         }
     }
 

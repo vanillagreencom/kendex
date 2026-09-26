@@ -13,10 +13,16 @@ generated_paths_load() { # JSON — load the writer's exact paths, or refuse
   local output="" status=0 explanation="Cannot read .kendex-generated.json. Install jq or refresh and stage the inventory."
   output="$(jq -ers '
     if length == 1 then .[0] else "" | halt_error(20) end
-    | if type == "array" and all(.[];
-        type == "string" and length > 0
-        and (contains("\n") or contains("\u0000") | not))
-      then join("\n")
+    | def path_string: type == "string" and length > 0
+        and (contains("\n") or contains("\u0000") | not);
+      def entry: if type == "string" then path_string
+        elif type == "object" then
+          keys == ["path", "template", "templateHash"]
+          and (.path | path_string) and (.template | path_string)
+          and (.templateHash | type == "string" and length == 71 and test("^sha256:[0-9a-f]{64}$"))
+        else false end;
+      if type == "array" and all(.[]; entry)
+      then map(if type == "string" then . else .path end) | join("\n")
       else "" | halt_error(21) end
   ' <<<"$1" 2>&1)" || status=$?
   if [ "$status" -ne 0 ]; then

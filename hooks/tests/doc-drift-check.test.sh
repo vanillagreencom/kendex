@@ -201,6 +201,12 @@ build() { # WORLD — the row's repository, its run directory and PATH
       # root, the one a covering document reaches, so one row asks what a
       # render does where coverage would otherwise name it and the other what
       # a path the same inventory does not list still does.
+      adopted-generated|invalid-adopted)
+        printf '%s\n' '[{"path":"top.rs","template":".agents/skills/review-gate/templates/kendex-refresh.yml","templateHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]' >"$REPO/.kendex-generated.json"
+        if [ "$word" = invalid-adopted ]; then
+          printf '%s\n' '[{"path":"top.rs","template":"x","templateHash":"bad"}]' >"$REPO/.kendex-generated.json"
+        fi
+        seal ;;
       generated) printf '["top.rs"]\n' >"$REPO/.kendex-generated.json"; seal ;;
       empty-generated) : >"$REPO/.kendex-generated.json"; seal ;;
       root-topic) printf '# All\n\nCovers: . ./ /\n' >"$REPO/docs/architecture/all.md"; seal ;;
@@ -439,6 +445,7 @@ a glob entry is satisfied by a path its * reaches across /|repo glob-topic|md|0|
 an entry whose only match is an untracked new file is satisfied|repo|covered-new|0|-|-
 a changed path at the root names the root AGENTS.md as stale, never itself as uncovered|repo|top|2|AGENTS.md(top.rs)|stale=1;base=default-branch
 a changed path the render inventory lists is a render, named at neither kind though the root AGENTS.md covers it|repo generated|top|0|-|-
+an adopted path is excluded using the record path|repo adopted-generated|top|0|-|-
 a changed path the same inventory does not list is still uncovered|repo generated|ui|2|ui/src/app.ts|uncovered=1;base=default-branch
 a deleted path no doc covers is not named|repo|rm-ui|0|-|-
 an untracked AGENTS.md covers the new code beside it|repo|newpkg|0|-|-
@@ -514,7 +521,7 @@ control_rename() { # LABEL NEEDLE REPLACEMENT WORLD CHANGE WANT
   run stop
   got="rc=$RC out=$(out_text) base=$(base_text)"
   HOOK="$original"
-  assert_eq "$got" "$want" "control: removing --no-renames from $label loses the source documents"
+  assert_eq "$got" "$want" "control: $label mutation changes the hook result"
 }
 
 control_rename base \
@@ -529,6 +536,12 @@ control_rename cached \
   'git_paths '\''diff --cached'\'' diff --cached --no-renames --name-only -z ${BASE:+"$BASE"}' \
   'git_paths '\''diff --cached'\'' diff --cached --name-only -z ${BASE:+"$BASE"}' \
   repo rename-index 'rc=2 out=ui/src/lib.rs base=default-branch'
+
+
+control_rename inventory \
+  '        elif type == "object" then' \
+  '        elif false then' \
+  'repo adopted-generated' top 'rc=2 out=- base=-'
 
 run_table "a set is named once per session" "world change payload rc out" "\
 the same set on a later stop passes|repo|code stopped|stop|0|-
@@ -553,6 +566,7 @@ a default-branch probe git cannot answer is not read as absent|clone break:symbo
 a payload that cannot be read|repo break:cat|code|stop|2|-|payload=unreadable;fixture: cat failed
 a payload that is not JSON|repo|code|raw|2|-|payload=invalid-json
 a jq that cannot answer for the payload, with its own words below|repo break:jq|code|stop|2|-|payload=invalid-json;fixture: jq failed
+an adopted record with an invalid hash is refused|repo invalid-adopted|top|stop|2|-|inventory=invalid-json
 an inventory holding no document is not read as nothing rendered|repo empty-generated|top|stop|2|-|inventory=invalid-json
 a payload carrying no session id|repo|code|noid|2|-|session-id=invalid
 a marker that cannot be recorded|repo sealed-marker|code|stop|2|-|marker=<path>
