@@ -183,7 +183,7 @@ fn every_path_honours_the_table_for_kendex_and_for_nobody_else() {
             .safety
             .iter()
             .find(|row| row.name == PACKAGE)
-            .unwrap_or_else(|| panic!("{dir}: no plan row for {PACKAGE}: {:#?}", report.notes));
+            .unwrap_or_else(|| panic!("{dir}: no plan row for {PACKAGE}"));
         assert_eq!(standing(&planned.advisory), expected, "{dir}: plan");
 
         apply::execute(&w.env, &report.plan).unwrap();
