@@ -742,12 +742,12 @@ LANE_ROWS=(
   "standard|false|$CODE ui/app.ts|$ALL"
   "standard|false|$CODE|suites parse lint apple windows test"
   "standard|false|$SKILL_TOOL|suites parse test"
-  "standard|true|docs/guide.md|parse test"
+  "standard|true|docs/guide.md|test"
   "render|false|$CODE|"
   "trivial|true|$CODE|"
   "micro|false|$CODE|suites parse lint apple windows test"
   "small|false|$CODE ui/app.ts|$ALL"
-  "micro|false|docs/guide.md|parse test"
+  "micro|false|docs/guide.md|test"
 )
 lane_guard
 for row in "${LANE_ROWS[@]}"; do
@@ -797,8 +797,8 @@ run_lanes standard false $SKILL_TOOL
   || bad "control: with standard read as every lane the skill-and-tool row runs every lane" "rc=$RC got=$(lanes_ran)"
 # A suite a lane runs inherits none of the selection: the outer run's class
 # would otherwise choose the lanes of every guard that suite starts, the way
-# this file's own rows ran under a prose-only micro selection. The touched
-# demo suite prints what reached it.
+# this file's own rows once ran under a prose-only micro selection. The
+# touched demo suite prints what reached it.
 inherited_row() { # — sets OUT and RC
   local t
   git -C "$R" reset -q --hard "$lanes_head"
@@ -807,7 +807,7 @@ inherited_row() { # — sets OUT and RC
     printf '%s\n' '#!/usr/bin/env bash' \
       'echo "inner=${DEV_VALIDATE_CLASS-unset}:${DEV_VALIDATE_DOCS_ONLY-unset}:${DEV_VALIDATE_PATHS-unset}"' >"$R/$t"
   done
-  printf 'docs/guide.md\n' >"$PATHS_FILE"
+  printf 'skills/demo/tests/demo.test.sh\n' >"$PATHS_FILE"
   OUT=""
   RC=0
   OUT="$(cd "$R" && env "${GUARD_TEST_BOUNDS[@]}" DEV_VALIDATE_CLASS=micro DEV_VALIDATE_DOCS_ONLY=false DEV_VALIDATE_PATHS="$PATHS_FILE" \
@@ -817,8 +817,8 @@ inherited_row() { # — sets OUT and RC
 lane_guard
 inherited_row
 [ "$RC" -eq 0 ] && [[ "$OUT" == *"inner=unset:unset:unset"* ]] \
-  && ok "a suite run under a prose-only micro selection inherits none of it" \
-  || bad "a suite run under a prose-only micro selection inherits none of it" "rc=$RC out=$OUT"
+  && ok "a suite run under a micro selection inherits none of it" \
+  || bad "a suite run under a micro selection inherits none of it" "rc=$RC out=$OUT"
 lane_guard '/^unset DEV_VALIDATE_CLASS DEV_VALIDATE_DOCS_ONLY DEV_VALIDATE_PATHS$/d'
 inherited_row
 [[ "$OUT" == *"inner=micro:false:$PATHS_FILE"* ]] \

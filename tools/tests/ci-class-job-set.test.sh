@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # What `.github/workflows/skill-tests.yml` runs is keyed to the change class,
 # and the keying is in three places that have to agree: `tools/ci-job-set`
-# turns a class into one line per lane, each job's `if:` reads one of those
-# lines, and `tools/ci-aggregate` holds the required contexts open over the
+# turns a class into one line per lane and a list of shell shards, each job's
+# `if:` and the shard matrix read those lines, and `tools/ci-aggregate` holds the required contexts open over the
 # lanes a class stood down. A lane that no condition reads runs on every
 # class; a lane a condition reads without a status function stands down on
 # exactly the diffs nothing classified; an aggregate that waives a lane the
@@ -11,23 +11,28 @@
 #
 # Four surfaces:
 #   1. the selection: one row per class and path shape, asserting the whole
-#      lane line, and the refusals beside them; then a `trivial` diff of a
-#      path the Rust source reads, in a fixture checkout, with a control.
+#      lane line and shard list, and the refusals beside them; a control per
+#      shard-selection rule; then a `trivial` diff of a path the Rust source
+#      reads, and a dependency list the reader cannot take, in fixture
+#      checkouts.
 #   2. the names: the lanes the gates read, the lanes the changes job
 #      publishes and the lanes ci-job-set selects are one set, compared by
 #      name, and each aggregate, on its own, holds every job it needs to the
 #      lane or event condition that job's own `if:` reads.
-#   3. the job set: each gated job's own `if:` and the platform matrix's
-#      `os:` expression, read out of the workflow and EVALUATED against a
-#      selection and an event, with GitHub's implicit success() where a
+#   3. the job set: each gated job's own `if:` and the shard matrix's `os:`
+#      and `shard:` expressions, read out of the workflow and EVALUATED
+#      against a selection and an event, with GitHub's implicit success() where a
 #      condition carries no status function. A merge group runs the class
 #      job set its pull request ran, less the two jobs held to the
-#      pull-request event. A dead classifier runs every gated job and both
-#      platform legs. The `CI` job needs every job but the aggregators and
+#      pull-request event. The macOS legs run on a pull request only where
+#      the selection says a lane source changed. A dead classifier runs every
+#      gated job, both platform legs and the whole shard roster. A pull
+#      request's run is cancelled by its next push; no other run is. The `CI` job needs every job but the aggregators and
 #      runs on both gated events whatever its needs did. Must-fail arms plant
 #      a lane condition that reads no selection, one that drops its status
 #      function, one that ignores the class on a merge group, a matrix with
-#      its arms swapped, a job dropped from CI's needs, CI without always(),
+#      its arms swapped, one ignoring the event, a shard key reading no
+#      selection, a cancel held to no event, a job dropped from CI's needs, CI without always(),
 #      a lane dropped from one aggregate alone and an event-held job held to
 #      another condition.
 #   4. the aggregate: a lane the class authorized may skip; one it did not
@@ -79,17 +84,33 @@ selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or th
   tr '\n' ' ' <"$out" | sed 's/ $//'
 }
 
-ALL_OFF="shell_shards=false macos_legs=false ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false"
-ALL_ON="shell_shards=true macos_legs=true ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true"
+# The whole shard roster, in the matrix's order.
+ROSTER='["review-gate","orch-terminal","orch-oversee","orch-oversee-succeed","orch-state","orch-rest","guards-scans","guards-commit","guards-tools","linear","worktree","rest","node","pi-claude-bridge"]'
+ORCH='"orch-terminal","orch-oversee","orch-oversee-succeed","orch-state","orch-rest"'
+ALL_OFF="shell_shards=false macos_legs=false macos_pull_request=false ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=[]"
+ALL_ON="shell_shards=true macos_legs=true macos_pull_request=true ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true shards=$ROSTER"
 # `render` and `trivial` run the one verify job.
-VERIFY_ROW="shell_shards=false macos_legs=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false"
-# Every measured class runs the three Linux lanes. The platform lanes stand
-# down only on an all-prose diff, the compile lanes where no build input
-# changed, and ui off ui/.
-PROSE_ROW="shell_shards=true macos_legs=false ui=false bot_instructions=true cargo_linux=true cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false"
-CODE_ROW="shell_shards=true macos_legs=true ui=false bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=false cargo_windows=true cargo_windows_check=false"
-UI_ROW="shell_shards=true macos_legs=true ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=false cargo_windows=true cargo_windows_check=false"
-BUILD_ROW="shell_shards=true macos_legs=true ui=false bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true"
+VERIFY_ROW="shell_shards=false macos_legs=false macos_pull_request=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false shards=[]"
+# Every measured class runs cargo_linux and bot_instructions. The shell
+# shards run per package, the platform lanes stand down only on an all-prose
+# diff, the macOS legs also where no shard runs, the compile lanes where no
+# build input changed, and ui off ui/.
+measured() { # SHELL MACOS MACOS_PR UI PLATFORM BUILD SHARDS — one measured row
+  printf 'shell_shards=%s macos_legs=%s macos_pull_request=%s ui=%s bot_instructions=true cargo_linux=true cargo_macos=%s cargo_lint=%s cargo_windows=%s cargo_windows_check=%s shards=%s' \
+    "$1" "$2" "$3" "$4" "$5" "$6" "$5" "$6" "$7"
+}
+# Outside every package.
+PROSE_ROW="$(measured false false false false false false '[]')"
+CODE_ROW="$(measured false false false false true false '[]')"
+UI_ROW="$(measured false false false true true false '[]')"
+# A build input runs `rest`, which builds kendex-cli for harness-ci's rows.
+BUILD_ROW="$(measured true true false false true true '["rest"]')"
+# tools/ and hooks/ run their suites' shard and the scans.
+TOOL_ROW="$(measured true true false false true false '["guards-scans","guards-tools"]')"
+# orch, and the skills declaring it, which `rest` runs.
+ORCH_SHARDS="[$ORCH,\"guards-scans\",\"rest\"]"
+ORCH_PROSE_ROW="$(measured true false false false false false "$ORCH_SHARDS")"
+ORCH_CODE_ROW="$(measured true true false false true false "$ORCH_SHARDS")"
 
 # CLASS|DOCS_ONLY|PATHS (blank-separated)|EXPECTED
 selection_rows=0
@@ -102,14 +123,28 @@ render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|$VERIFY_R
 trivial|true|docs/architecture/overview.md|$VERIFY_ROW
 trivial|true|AGENTS.md|$VERIFY_ROW
 standard|false|crates/core/src/lib.rs|$BUILD_ROW
-micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$PROSE_ROW
+micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$ORCH_PROSE_ROW
 small|false|crates/cli/src/main.rs|$BUILD_ROW
 micro|false|ui/src/app.tsx|$UI_ROW
-standard|false|skills/orch/scripts/lanes tools/guard|$CODE_ROW
-standard|false|tools/ci-job-set.orig|$CODE_ROW
+standard|false|skills/orch/scripts/lanes tools/guard|$(measured true true false false true false "[$ORCH,\"guards-scans\",\"guards-tools\",\"rest\"]")
+standard|false|tools/ci-job-set.orig|$TOOL_ROW
 micro|false|install.sh|$CODE_ROW
 micro|false|.gitattributes|$CODE_ROW
-micro|false|skills/orch/scripts/lanes|$CODE_ROW
+micro|false|skills/orch/scripts/lanes|$ORCH_CODE_ROW
+micro|false|tools/tests/ci-job-set.test.sh|$TOOL_ROW
+micro|false|hooks/lane-mail-check|$TOOL_ROW
+micro|false|skills/worktree/scripts/worktree|$(measured true true false false true false "[$ORCH,\"guards-scans\",\"worktree\"]")
+micro|false|.agents/skills/worktree/scripts/worktree|$(measured true true false false true false "[$ORCH,\"worktree\"]")
+micro|false|skills/review-gate/scripts/x|$(measured true true false false true false '["review-gate","guards-scans"]')
+micro|false|skills/harness-ci/scripts/x|$(measured true true false false true false '["review-gate","guards-scans","rest"]')
+micro|false|skills/commit-guards/scripts/x|$(measured true true false false true false '["guards-scans","guards-commit","guards-tools","rest"]')
+micro|false|skills/preflight/scripts/x|$(measured true true false false true false '["guards-scans","linear"]')
+micro|false|skills/deep-research/scripts/x.mjs|$(measured true true false false true false '["guards-scans","node"]')
+micro|false|pi-extensions/pi-qol/src/x.ts|$(measured true true false false true false '["node"]')
+micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$(measured true true false false true false '["node","pi-claude-bridge"]')
+micro|false|skills/AGENTS.md|$(measured true false false false false false '["guards-scans"]')
+micro|false|.github/instructions/code-review.md|$(measured true false false false false false "$ROSTER")
+micro|false|.github/AGENTS.md skills/orch/scripts/lanes|$(measured true true true false true false "$ROSTER")
 micro|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
 small|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
 standard|true|docs/guide.md CHANGELOG.md|$PROSE_ROW
@@ -124,7 +159,7 @@ enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous
 micro|false||exit=2 class-without-paths class=micro
 micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe
 ROWS
-[ "$selection_rows" -ge 24 ] ||
+[ "$selection_rows" -ge 38 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
 
 # Each declared lane source runs every lane and each declared build name is a
@@ -154,10 +189,13 @@ sed 's/ \.cargo \\$/ \\/' "$ROOT/tools/rust-reads" >"$TMP/member/tools/rust-read
 chmod +x "$TMP/member/tools/ci-job-set" "$TMP/member/tools/rust-reads"
 check "control: a copy without a member fails each pin" "${SOURCES/ci-aggregate/nothing}|$(echo ${NAMES/.cargo /})" \
   "$(pins "$TMP/member/tools/ci-job-set" "$TMP/member/tools/rust-reads")"
-for row in "standard tools/ci-aggregate" "micro .cargo"; do
-  check "control: copies without the member $row run it as no lane source or build input" "$CODE_ROW" \
-    "$(SELECT_WITH="$TMP/member/tools/ci-job-set" selection ${row% *} false "${row#* }")"
-done
+while IFS='|' read -r class path expected; do
+  check "control: copies without the member $path run it as no lane source or build input" "$expected" \
+    "$(SELECT_WITH="$TMP/member/tools/ci-job-set" selection "$class" false "$path")"
+done <<ROWS
+standard|tools/ci-aggregate|$TOOL_ROW
+micro|.cargo|$CODE_ROW
+ROWS
 
 # A row that forgets a lane is refused before any lane reads it. macos_legs is
 # the lane no aggregate holds, so this refusal is what keeps a forgotten
@@ -165,11 +203,11 @@ done
 # from the render row.
 mkdir -p "$TMP/forgot/tools"
 forgot="$TMP/forgot/tools/ci-job-set"
-[ "$(grep -c 'cargo_lint=false cargo_windows=false cargo_windows_check=false$' "$JOB_SET")" -eq 1 ] ||
+[ "$(grep -c "cargo_lint=false cargo_windows=false cargo_windows_check=false 'shards=\[\]'\$" "$JOB_SET")" -eq 1 ] ||
   { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
 awk '
-  /cargo_lint=false cargo_windows=false cargo_windows_check=false$/ {
-    sub(/ cargo_windows_check=false$/, "")
+  /cargo_lint=false cargo_windows=false cargo_windows_check=false .shards=\[\].$/ {
+    sub(/ cargo_windows_check=false/, "")
   }
   { print }
 ' "$JOB_SET" >"$forgot"
@@ -219,7 +257,7 @@ check "and on a measured diff, whose compile lanes it gates" "exit=2 rust-reads-
 # A build input is a non-prose path under a build or include row, not a read.
 check "an included file other than prose is a build input" "$BUILD_ROW" \
   "$(SELECT_IN="$READ_WORLD" selection micro false assets/x.json)"
-check "a file the Rust source reads at run time is no build input" "$CODE_ROW" \
+check "a file the Rust source reads at run time is no build input" "$TOOL_ROW" \
   "$(SELECT_IN="$READ_WORLD" selection micro false tools/x)"
 # The platform lanes run on a standard diff that is not documentation alone,
 # prose included; the control drops that rule.
@@ -248,11 +286,53 @@ done <<CONTROLS
 s/row=trivial-read ;;/row=trivial ;;/|trivial|docs/a.md|$PROSE_ROW
 s/index(path, read\[r\] "\/") != 1/index(path, read[r]) != 1/|trivial|docs/legalese.md|$VERIFY_ROW
 s/if (kind\[r\] != "manifest" .*) build = 1/build = 1/|micro|docs/a.md|$PROSE_ROW
-s/kind\[r\] != "manifest" .. //|micro|tools/x|$CODE_ROW
+s/kind\[r\] != "manifest" .. //|micro|tools/x|$TOOL_ROW
 s/if any "\$LANE_SOURCES"; then/if false; then/|standard|.github/workflows/skill-tests.yml|$ALL_ON
-s/ci-aggregate.rust-reads)\$)/ci-aggregate.rust-reads))/|standard|tools/ci-job-set.orig|$CODE_ROW
+s/ci-aggregate.rust-reads)\$)/ci-aggregate.rust-reads))/|standard|tools/ci-job-set.orig|$TOOL_ROW
 s/any '^ui\/' .. uitree=true/uitree=true/|micro|docs/a.md|$PROSE_ROW
 CONTROLS
+
+# The shard selection's rules, each removed from a copy run over this tree:
+# the copy must answer its row other than the script does. Fields split on
+# `@`, since the edits spell `|`. The second row is
+# the inverse the selection must never reach, an orch diff selecting none of
+# orch's shards.
+while IFS='@' read -r edit class paths; do
+  sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
+  chmod +x "$TMP/rule/tools/ci-job-set"
+  if cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set"; then
+    bad "control: the edit changed nothing in a ci-job-set copy: $edit"
+    continue
+  fi
+  expected="$(selection "$class" false "$(printf '%s\n' $paths)")"
+  got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" selection "$class" false "$(printf '%s\n' $paths)")"
+  [ "$got" != "$expected" ] && ok "control: $edit reddens $class over $paths" ||
+    bad "control: $edit reddens $class over $paths (still '$got')"
+done <<'CONTROLS'
+s/want_package "skills\/\$skill" ;; esac/;; esac/@micro@skills/worktree/scripts/worktree
+s/skills\/\*\/\* | \.agents\/skills\/\*\/\*)/no-package)/@micro@skills/orch/scripts/lanes
+s/skills\/\* | hooks\/\* | tools\/\*) want_shard guards-scans/no-tree) want_shard guards-scans/@micro@skills/AGENTS.md
+s/\[ "\$1" = false \] || want_shard rest/:/@micro@crates/core/src/lib.rs
+s/! any "\$ALL_SHARDS" || want_shard \$SHARDS/:/@micro@.github/instructions/code-review.md
+s/! any "\$ALL_SHARDS" || macos_pr=\$macos/:/@micro@.github/AGENTS.md skills/orch/scripts/lanes
+s/\[ "\$shards" != "\[\]" \] || shell=false/:/@micro@install.sh
+s/\[ "\$shell:\$platform" != true:true \] || macos=true/macos=$platform/@micro@install.sh
+CONTROLS
+
+# A dependencies.required this reader cannot take as an inline list is
+# refused, never read as no dependency.
+DEP_WORLD="$TMP/dep-world"
+mkdir -p "$DEP_WORLD/skills/block" "$DEP_WORLD/skills/plain"
+cp -R "$READ_WORLD/crates" "$DEP_WORLD/crates"
+printf -- '---\nname: block\ndependencies:\n  required:\n    - plain\n---\n' >"$DEP_WORLD/skills/block/SKILL.md"
+printf -- '---\nname: plain\n---\n' >"$DEP_WORLD/skills/plain/SKILL.md"
+check "a required list this reader cannot take is refused" \
+  "exit=2 requirements-unreadable path=skills/block/SKILL.md" \
+  "$(SELECT_IN="$DEP_WORLD" selection micro false skills/plain/scripts/x)"
+printf -- '---\nname: block\ndependencies:\n  required: [plain]\n---\n' >"$DEP_WORLD/skills/block/SKILL.md"
+check "and the inline list it can take selects the declaring skill's shard" \
+  "$(measured true true false false true false '["guards-scans","rest"]')" \
+  "$(SELECT_IN="$DEP_WORLD" selection micro false skills/plain/scripts/x)"
 
 # --- 2. The names -----------------------------------------------------------
 # Each reader is extracted with an anchored pattern: a name is the whole run
@@ -261,9 +341,9 @@ CONTROLS
 
 OUTPUT_NAME='needs\.changes\.outputs\.[a-z_]+'
 
-# The platform matrix's `os:` expression, the `${{ }}` stripped.
-matrix_expr() { # WORKFLOW
-  sed -n 's/^        os: \${{ \(.*\) }}$/\1/p' "$1"
+# A shard matrix key's expression, `os` or `shard`, the `${{ }}` stripped.
+matrix_expr() { # WORKFLOW KEY
+  sed -n "s/^        $2: \\\${{ \\(.*\\) }}\$/\\1/p" "$1"
 }
 
 # `LANE:JOB` for every job whose own condition reads a lane.
@@ -277,7 +357,7 @@ gate_pairs() { # WORKFLOW
 # Every lane a gate reads: the job conditions and the platform matrix.
 lanes_read() { # WORKFLOW
   { gate_pairs "$1" | sed 's/:.*//'
-    matrix_expr "$1" | grep -oE "$OUTPUT_NAME" | sed 's/^needs\.changes\.outputs\.//' || true
+    { matrix_expr "$1" os; matrix_expr "$1" shard; } | grep -oE "$OUTPUT_NAME" | sed 's/^needs\.changes\.outputs\.//' || true
   } | LC_ALL=C sort -u
 }
 
@@ -444,12 +524,12 @@ running() { # WORKFLOW SELECTION [RESULT] [EVENT] — the gated jobs that run, s
     LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//'
 }
 
-legs() { # WORKFLOW SELECTION [RESULT] — the platform legs the matrix expands to
-  local wf="$1" sel="$2" result="${3:-success}" map="$TMP/published-map" expr
+legs() { # WORKFLOW SELECTION [RESULT] [EVENT] [KEY] — what a matrix key expands to, `os` by default
+  local wf="$1" sel="$2" result="${3:-success}" event="${4:-pull_request}" map="$TMP/published-map" expr
   published_map "$wf" >"$map"
-  expr="$(matrix_expr "$wf")"
+  expr="$(matrix_expr "$wf" "${5:-os}")"
   [ -n "$expr" ] || { printf 'no-matrix-expression'; return 0; }
-  gh_eval value "$(context_json pull_request "$result" "$sel" "$map")" "$expr"
+  gh_eval value "$(context_json "$event" "$result" "$sel" "$map")" "$expr"
 }
 
 EVERY_GATED="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows markdown preflight skill-suites-shard ui-tests"
@@ -478,12 +558,14 @@ pull_request|$ALL_ON|$EVERY_GATED
 merge_group|$ALL_ON|$EVERY_GROUP_LANE
 pull_request|$one_skill|bot-instructions cargo-linux markdown preflight skill-suites-shard
 merge_group|$one_skill|bot-instructions cargo-linux skill-suites-shard
-pull_request|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows markdown preflight skill-suites-shard
-merge_group|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
+pull_request|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows markdown preflight
+merge_group|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows
+pull_request|$ORCH_CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows markdown preflight skill-suites-shard
+merge_group|$ORCH_CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
 pull_request|$standard_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows markdown preflight skill-suites-shard
 merge_group|$standard_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows skill-suites-shard
 ROWS
-[ "$job_rows" -ge 10 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
+[ "$job_rows" -ge 12 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
 
 # The same property over every selection the table names: what a merge group
 # runs is what its pull request ran less the event-held jobs.
@@ -494,7 +576,7 @@ without_event_held() { # JOBS — the jobs, spaced, with every event-held one dr
   done
   printf '%s' "${out# }"
 }
-for sel in "$VERIFY_ROW" "$ALL_ON" "$one_skill" "$CODE_ROW" "$UI_ROW" "$PROSE_ROW" "$standard_code"; do
+for sel in "$VERIFY_ROW" "$ALL_ON" "$one_skill" "$CODE_ROW" "$ORCH_CODE_ROW" "$UI_ROW" "$PROSE_ROW" "$standard_code"; do
   check "a merge group runs its pull request's class job set under '$sel'" \
     "$(without_event_held "$(running "$WORKFLOW" "$sel" success pull_request)")" \
     "$(running "$WORKFLOW" "$sel" success merge_group)"
@@ -505,12 +587,33 @@ done
 check "a dead classifier runs every gated job" "$EVERY_GATED" \
   "$(running "$WORKFLOW" "$ALL_OFF" failure)"
 
-check "the matrix runs both legs where the class selects them" \
-  '["ubuntu-latest","macos-latest"]' "$(legs "$WORKFLOW" "$ALL_ON")"
-check "the matrix runs the Linux leg alone where the class drops macOS" \
-  '["ubuntu-latest"]' "$(legs "$WORKFLOW" "$one_skill")"
-check "the matrix runs both legs when nothing classified" \
-  '["ubuntu-latest","macos-latest"]' "$(legs "$WORKFLOW" "$ALL_OFF" failure)"
+# EVENT|RESULT|SELECTION|LEGS. The macOS legs run in the merge group, and on
+# the pull request only where the selection says a lane source changed.
+leg_rows=0
+while IFS='|' read -r event result sel expected; do
+  leg_rows=$((leg_rows + 1))
+  check "the matrix expands $expected on $event at $result under '$sel'" "$expected" \
+    "$(legs "$WORKFLOW" "$sel" "$result" "$event")"
+done <<ROWS
+pull_request|success|$ALL_ON|["ubuntu-latest","macos-latest"]
+merge_group|success|$ALL_ON|["ubuntu-latest","macos-latest"]
+pull_request|success|$ORCH_CODE_ROW|["ubuntu-latest"]
+merge_group|success|$ORCH_CODE_ROW|["ubuntu-latest","macos-latest"]
+pull_request|success|$one_skill|["ubuntu-latest"]
+merge_group|success|$one_skill|["ubuntu-latest"]
+pull_request|failure|$ALL_OFF|["ubuntu-latest","macos-latest"]
+merge_group|failure|$ALL_OFF|["ubuntu-latest","macos-latest"]
+ROWS
+[ "$leg_rows" -ge 8 ] || { echo "the leg table read $leg_rows rows" >&2; exit 1; }
+
+# The shard key expands to the published list, and to the whole roster where
+# nothing was published; that literal is the roster ci-job-set selects from,
+# in its order, which the ALL_ON row's list is.
+check "the shard matrix expands the selected shards" "[$ORCH,\"guards-scans\",\"rest\"]" \
+  "$(legs "$WORKFLOW" "$ORCH_CODE_ROW" success merge_group shard)"
+check "the shard matrix expands ci-job-set's roster, in order, when nothing classified" \
+  "$(selection standard false .github/workflows/skill-tests.yml | sed 's/.*shards=//')" \
+  "$(legs "$WORKFLOW" "$ALL_OFF" failure pull_request shard)"
 
 # The document byte ceilings and the work-marker scan run in the job a
 # `render` or `trivial` diff runs, and in no other, so every class that runs
@@ -569,6 +672,52 @@ for event in pull_request merge_group; do
     "$(gh_eval value "$(jq -cn --arg e "$event" '{github: {event_name: $e}}')" "$changes_if")"
 done
 
+# --- 3a'. Superseded runs ---------------------------------------------------
+# A push to a pull request cancels the run its previous head started; a merge
+# group or a push to main never shares a group with another run, so nothing
+# cancels or queues it behind one. Each `${{ }}` of the workflow's
+# concurrency values is evaluated and spliced back into its text.
+concurrency_value() { # WORKFLOW KEY EVENT — the key's value on a run of that event
+  local raw ctx out="" expr
+  raw="$(awk -v key="$2" '
+    /^concurrency:/ { on = 1; next }
+    on && /^[^ ]/ { exit }
+    on && $1 == key ":" { sub(/^ *[a-z-]+: */, ""); print }
+  ' "$1")"
+  [ -n "$raw" ] || { printf 'no-concurrency-%s' "$2"; return 0; }
+  ctx="$(jq -cn --arg e "$3" '{github: {event_name: $e, run_id: 7}}
+    | if $e == "pull_request" then .github.event = {pull_request: {number: 42}} else . end')"
+  while [ -n "$raw" ]; do
+    case "$raw" in
+      *'${{'*)
+        out="$out${raw%%'${{'*}"
+        raw="${raw#*'${{'}"
+        expr="${raw%%'}}'*}"
+        raw="${raw#*'}}'}"
+        out="$out$(gh_eval value "$ctx" "$expr" | tr -d '"')"
+        ;;
+      *) out="$out$raw"; raw="" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+# EVENT|GROUP|CANCEL
+concurrency_rows=0
+while IFS='|' read -r event group cancel; do
+  concurrency_rows=$((concurrency_rows + 1))
+  check "a $event run's concurrency group and cancel" "$group $cancel" \
+    "$(concurrency_value "$WORKFLOW" group "$event") $(concurrency_value "$WORKFLOW" cancel-in-progress "$event")"
+done <<'ROWS'
+pull_request|skill-tests-pull_request-42|true
+merge_group|skill-tests-merge_group-7|false
+push|skill-tests-push-7|false
+ROWS
+[ "$concurrency_rows" -ge 3 ] || { echo "the concurrency table read $concurrency_rows rows" >&2; exit 1; }
+plant "$WORKFLOW" "cancel-in-progress: \${{ github.event_name == 'pull_request' }}" "cancel-in-progress: true" \
+  "$TMP/wf-cancel-all.yml"
+check "must-fail: a cancel held to no event cancels a merge group run" "true" \
+  "$(concurrency_value "$TMP/wf-cancel-all.yml" cancel-in-progress merge_group)"
+
 # --- 3b. Must-fail controls -------------------------------------------------
 
 # The pre-patch shape of the macOS cargo lane: gated on the event alone. It
@@ -597,6 +746,19 @@ plant "$WORKFLOW" "'[\"ubuntu-latest\", \"macos-latest\"]' || '[\"ubuntu-latest\
   "'[\"ubuntu-latest\"]' || '[\"ubuntu-latest\", \"macos-latest\"]'" "$TMP/wf-swapped.yml"
 check "must-fail: a matrix with its arms swapped expands the wrong legs" \
   '["ubuntu-latest","macos-latest"]' "$(legs "$TMP/wf-swapped.yml" "$one_skill")"
+
+# The matrix without its event term runs the macOS legs on every pull request
+# that selects them, which the merge group exists to take.
+plant "$WORKFLOW" "(github.event_name != 'pull_request' || needs.changes.outputs.macos_pull_request == 'true')" \
+  "true" "$TMP/wf-macos-pr.yml"
+check "must-fail: a matrix ignoring the event runs macOS on the pull request" \
+  '["ubuntu-latest","macos-latest"]' "$(legs "$TMP/wf-macos-pr.yml" "$ORCH_CODE_ROW")"
+
+# The shard key reading no selection expands the whole roster on a diff that
+# selected one package.
+plant "$WORKFLOW" "|| needs.changes.outputs.shards)" "|| '$ROSTER')" "$TMP/wf-shards-unread.yml"
+check "must-fail: a shard key reading no selection expands the whole roster" \
+  "$ROSTER" "$(legs "$TMP/wf-shards-unread.yml" "$ORCH_CODE_ROW" success merge_group shard)"
 
 # The doc-limits step moved, not deleted, into the shell shards: the scan
 # still runs, but not on the classes that run no shard.
