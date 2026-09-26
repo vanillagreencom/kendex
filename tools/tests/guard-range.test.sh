@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # tools/guard --range BASE, a fix round's validation: the default rules read
 # over the changes since BASE, cargo clippy for the crates those
-# changes touch, the UI checks and suite for a non-Markdown UI change, and the
-# suites of the trees they touch, and none of what --full adds beyond that: the
+# changes touch, the UI checks and suite for a non-Markdown UI change, the
+# suites a touched skill's changed files map to and the suites of the other
+# trees they touch, and none of what --full adds beyond that: the
 # workspace test run, cross-target checks, the documentation build, the Bash
 # 3.2 parse, the working-tree bot-instructions check, the decision-ID check,
 # the cargo free-space floor and the class lane selection. Every compiler and
@@ -362,6 +363,139 @@ if mutant_guard 's/^\[ "\$MODE" != default \] || worktree_reads=0$/worktree_read
 else
   bad "control: the range's working-tree read could not be turned into an index read in a guard copy"
 fi
+back_to_base
+
+echo "=== a range runs the suites a skill's changed files map to ==="
+# A skill run through the real orch runner: each suite prints a count and
+# passes, so which ones ran is read from the runner's start lines. tool is a
+# substring of tool_extra and toolbox, so only a whole-name selection runs it
+# alone; wrapped reaches lib/pid.sh through lib/wrap.sh, and deep through
+# lib/alpha.sh and then lib/wrap.sh, which the lib scan meets in that order
+# only on its second pass.
+M="$R/skills/mapped"
+mkdir -p "$M/scripts/lib" "$M/tests/lib"
+cp "$REPO/skills/orch/tests/run-all.sh" "$M/tests/run-all.sh"
+cp "$REPO/skills/orch/tests/lib/git-env.sh" "$M/tests/lib/git-env.sh"
+printf 'pid=1\n' >"$M/scripts/lib/pid.sh"
+printf 'source "${BASH_SOURCE[0]%%/*}/pid.sh"\n' >"$M/scripts/lib/wrap.sh"
+printf 'source "${BASH_SOURCE[0]%%/*}/wrap.sh"\n' >"$M/scripts/lib/alpha.sh"
+printf '#!/usr/bin/env bash\necho tool\n' >"$M/scripts/tool"
+printf '#!/usr/bin/env bash\necho orphan\n' >"$M/scripts/orphan"
+for s in tool tool_extra toolbox other; do
+  printf '#!/usr/bin/env bash\necho "pass: 1   fail: 0"\n' >"$M/tests/$s.sh"
+done
+printf '#!/usr/bin/env bash\n# names ../scripts/lib/pid.sh\necho "pass: 1   fail: 0"\n' >"$M/tests/pid_direct.sh"
+printf '#!/usr/bin/env bash\n# names ../scripts/lib/wrap.sh\necho "pass: 1   fail: 0"\n' >"$M/tests/wrapped.sh"
+printf '#!/usr/bin/env bash\n# names ../scripts/lib/alpha.sh\necho "pass: 1   fail: 0"\n' >"$M/tests/deep.sh"
+git -C "$R" add -A
+git -C "$R" commit -q -m "chore: a skill with a runner and suites named for its files"
+mapped_base="$(git -C "$R" rev-parse HEAD)"
+MAPPED_ALL="deep other pid_direct tool tool_extra toolbox wrapped"
+UNMAPPED_NOTE="guard-note: suites=all reason=unmapped path=skills/mapped/scripts/orphan"
+started() { printf '%s\n' "$OUT" | sed -n 's/^start suite=//p' | sort | tr '\n' ' ' | sed 's/ $//'; }
+back_to_mapped() {
+  git -C "$R" reset -q --hard "$mapped_base"
+  git -C "$R" clean -qfd -e fake-bin
+}
+change() { # HOW PATH — append to it or delete it
+  case "$1" in
+    append) printf '# changed\n' >>"$R/$2" ;;
+    delete) rm -- "${R:?}/$2" ;;
+    *) echo "change: no way named $1" >&2; exit 2 ;;
+  esac
+}
+# label|how|path|suites that start, sorted|the unmapped note, or none
+MAP_ROWS=(
+  "a changed suite runs itself alone|append|skills/mapped/tests/tool.sh|tool|none"
+  "a changed script runs each suite named for it, not one its name only begins|append|skills/mapped/scripts/tool|tool tool_extra|none"
+  "a changed lib runs every suite naming it, directly or through another lib|append|skills/mapped/scripts/lib/pid.sh|deep pid_direct wrapped|none"
+  "a deleted suite runs nothing|delete|skills/mapped/tests/other.sh||none"
+  "a changed script no suite is named for runs the whole set and says so|append|skills/mapped/scripts/orphan|$MAPPED_ALL|$UNMAPPED_NOTE"
+)
+before=$((PASS + FAIL))
+for row in "${MAP_ROWS[@]}"; do
+  IFS='|' read -r label how path want note <<<"$row"
+  change "$how" "$path"
+  run_range "$mapped_base"
+  if [ "$note" = none ]; then
+    noted=$([[ "$OUT" != *"guard-note: suites="* ]] && echo none || echo noted)
+  else
+    noted=$([[ "$OUT" == *"$note"* ]] && echo "$note" || echo missing)
+  fi
+  [ "$RC" -eq 0 ] && [ "$(started)" = "$want" ] && [ "$noted" = "$note" ] \
+    && ok "$label" \
+    || bad "$label" "rc=$RC started=$(started) out=$OUT"
+  back_to_mapped
+done
+[ "$((PASS + FAIL))" -eq "$((before + ${#MAP_ROWS[@]}))" ] || { echo "a suite-map row asserted nothing" >&2; exit 2; }
+change append skills/mapped/tests/tool.sh
+OUT=""
+RC=0
+OUT="$(cd "$R" && env "${GUARD_TEST_BOUNDS[@]}" PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$GUARD" --full 2>&1 </dev/null)" || RC=$?
+[ "$(started)" = "$MAPPED_ALL" ] \
+  && ok "inverse: the same one-suite diff under --full runs the whole set" \
+  || bad "inverse: the same one-suite diff under --full runs the whole set" "rc=$RC started=$(started)"
+back_to_mapped
+# Each rule is what its row stands on: with it broken, the row's diff runs
+# another set.
+# label#how#path#sed expression breaking the rule#suites that start, sorted
+MAP_CONTROLS=(
+  "control: without the suite arm the changed suite runs the whole set#append#skills/mapped/tests/tool.sh#s/^      if grep -Fxq -- \"\$dir\/\$rel\" <<<\"\$suites\"; then$/      if false; then/#$MAPPED_ALL"
+  "control: without the deleted-suite arm a deleted suite runs the whole set#delete#skills/mapped/tests/other.sh#s/\*.test.mjs) return 0 ;; esac$/*.test.mjs) return 1 ;; esac/#deep pid_direct tool tool_extra toolbox wrapped"
+  "control: with names handed to the runner as substrings the changed suite runs its namesakes#append#skills/mapped/tests/tool.sh#s/filters+=(\"=\${t%.sh}\")/filters+=(\"\${t%.sh}\")/#tool tool_extra toolbox"
+  "control: without the name-and-dash arm the script's second suite stands down#append#skills/mapped/scripts/tool#s/case \"\$base\" in \"\$name\" | \"\$name\"-\*)/case \"\$base\" in \"\$name\")/#tool"
+  "control: without the lib scan's second pass the suite two libs away stands down#append#skills/mapped/scripts/lib/pid.sh#/^              found=1$/d#pid_direct wrapped"
+  "control: without the lib closure the suite reaching the lib through another stands down#append#skills/mapped/scripts/lib/pid.sh#/needles+=(-e/d#pid_direct"
+  "control: without the whole-set fallback the unmapped script runs nothing#append#skills/mapped/scripts/orphan#s/unmapped path=\$f\"; run=all; break ;;/unmapped path=\$f\"; break ;;/#"
+)
+for row in "${MAP_CONTROLS[@]}"; do
+  IFS='#' read -r label how path expr want <<<"$row"
+  change "$how" "$path"
+  if mutant_guard "$expr"; then
+    run_range "$mapped_base" "$MUTANT_TOOLS/guard"
+    [ "$(started)" = "$want" ] \
+      && ok "$label" \
+      || bad "$label" "rc=$RC started=$(started) out=$OUT"
+  else
+    bad "$label" "the rule could not be broken in a guard copy"
+  fi
+  back_to_mapped
+done
+# A suite the lib scan cannot read is no evidence it does not name the lib:
+# the skill runs whole, and the note names the read, not the rule. The stub
+# fails the lib scan's grep alone, the one that passes -qF.
+REAL_GREP="$(command -v grep)"
+cat >"$R/fake-bin/grep" <<'SH'
+#!/usr/bin/env bash
+for a in "$@"; do :; done
+if [ "${FAIL_GREP:-0}" -eq 1 ] && [ "$1" = -qF ] && [ "$a" = skills/mapped/tests/pid_direct.sh ]; then
+  echo "grep: $a: Permission denied" >&2
+  exit 2
+fi
+exec "$REAL_GREP" "$@"
+SH
+chmod +x "$R/fake-bin/grep"
+range_grep_fails() { # GUARD
+  OUT=""
+  RC=0
+  : >"$CALLS"
+  OUT="$(cd "$R" && env FAIL_GREP=1 REAL_GREP="$REAL_GREP" PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$1" --range "$mapped_base" 2>&1 </dev/null)" || RC=$?
+}
+change append skills/mapped/scripts/lib/pid.sh
+range_grep_fails "$GUARD"
+[ "$RC" -eq 0 ] && [ "$(started)" = "$MAPPED_ALL" ] \
+  && [[ "$OUT" == *"guard-note: suites=all reason=unreadable path=skills/mapped/scripts/lib/pid.sh"* ]] \
+  && ok "a suite the lib scan cannot read runs the whole set and names the read" \
+  || bad "a suite the lib scan cannot read runs the whole set and names the read" "rc=$RC started=$(started) out=$OUT"
+if mutant_guard 's/^          \*) return 2 ;;$/          *) ;;/'; then
+  range_grep_fails "$MUTANT_TOOLS/guard"
+  [ "$(started)" = "deep wrapped" ] \
+    && ok "control: with the failed read taken as no match the unread suite stands down" \
+    || bad "control: with the failed read taken as no match the unread suite stands down" "rc=$RC started=$(started) out=$OUT"
+else
+  bad "control: the failed read could not be taken as no match in a guard copy"
+fi
+rm -f -- "${R:?}/fake-bin/grep"
 back_to_base
 
 echo "=== a range with no usable base is refused before anything runs ==="
