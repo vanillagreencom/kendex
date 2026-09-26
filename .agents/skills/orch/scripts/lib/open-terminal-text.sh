@@ -322,7 +322,8 @@ Options:
                     so Codex never opens its startup update prompt, where a
                     pasted line would install the update and end the session.
                     EVERY COMMAND BUILT HERE TAKES THE HARNESS QUESTION TOOL
-                    AWAY, ahead of these flags; a lane asks through lane-mail.
+                    AWAY WHERE A ROW BELOW NAMES WORDS, ahead of these flags;
+                    a lane asks through lane-mail.
                       claude    --disallowedTools=AskUserQuestion,EnterPlanMode
                       codex     -c features.default_mode_request_user_input=false
                       pi        --exclude-tools question

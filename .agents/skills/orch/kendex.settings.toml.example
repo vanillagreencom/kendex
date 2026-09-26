@@ -91,10 +91,12 @@ REVIEWER_SLOT_BUDGET = "0"
 # --- Talking to you -----------------------------------------------------------
 # How a session asks you questions, reports to you and decides without you.
 
-# Whether a launched session may open a question dialog in its terminal.
-# "off": no overseer and no lane gets the dialog; every question for you is
-# mail, which reaches Slack, the report and the chat. "overseer": the overseer
-# keeps the dialog, lanes never do.
+# Whether a launched overseer may open a question dialog in its terminal.
+# "off": the overseer starts without the dialog, as every lane does, on each
+# harness that can turn the dialog off; every question for you is then mail,
+# which reaches Slack, the report and the chat. "overseer": the overseer keeps
+# the dialog, and lanes still start without it. The question-tools table in
+# the orch skill rules lists the harnesses that can turn the dialog off.
 # values: off | overseer
 ORCH_QUESTION_TOOL = "off"
 

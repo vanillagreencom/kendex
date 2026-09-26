@@ -7,7 +7,8 @@
 # controls close the file, one per rule, each a copy of lane-mail with that
 # rule removed: the one resolution, the delivery id, the attachment's
 # confinement, the audience and deadline filters, the cursor rule, the reply's
-# owner-ask read, the ask's deadline field and the box `events` stamps.
+# owner-ask read, the owner-note class a reply names, the ask's deadline field
+# and the box `events` stamps.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -39,6 +40,8 @@ new_repo() { # NAME
   LANE="$TMP_ROOT/$1"
   mkdir -p "$LANE/.agents/skills/orch"
   git -C "$LANE" init -q
+  git -C "$LANE" config gc.auto 0
+  git -C "$LANE" config maintenance.auto false
   ln -sfn "$REPO_ROOT/skills/orch/scripts" "$LANE/.agents/skills/orch/scripts"
   BOX="$LANE/tmp/lane-mail/overseer"
 }
@@ -107,15 +110,21 @@ lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
 OWNER_NOTE="$(field "$BOX/to-lane.jsonl" '.id')"
 owner_ask 'Which?' a,b
 ASK_TO_OWNER="$ASK"
+lm resolve --item overseer --id "$ASK_TO_OWNER" --text "$(text a 'a')"
+RESOLUTION="$(field "$BOX/to-lane.jsonl" 'select(.kind == "answer") | .id')"
 # A peer ask leaves the asker's own record in this mailbox with `to: peer`,
-# which resolve closes no more than it closes this overseer's own notice.
+# which resolve closes no more than it closes this overseer's own notice; the
+# peer's ask the other way lands in to-lane.jsonl beside the owner's notes.
 REFUSALS="$LANE"
 new_repo peer
+lm peer ask --repo refusals --file "$(text q 'Mine?')" --options yes,no
+INBOUND_PEER="${OUT#id=}"
 LANE="$REFUSALS"; BOX="$LANE/tmp/lane-mail/overseer"
 lm peer ask --repo peer --file "$(text q 'Yours?')" --options yes,no
 PEER_ASK="${OUT#id=}"
 # ARGS|WANT (rc=first stderr line); F is the message file. A --ref answers an
-# owner note or an owner ask; a notice of this overseer's own is neither.
+# owner note or an owner ask; a notice of this overseer's own, a peer's line
+# and a resolution are none of them.
 F="$TMP_ROOT/q.txt"
 while IFS='|' read -r args want; do
   # shellcheck disable=SC2086  # a row's arguments are its own words.
@@ -136,6 +145,8 @@ notice --item overseer --to owner --ref 1790000000-1-1 --file $F|2=lane-mail: re
 notice --item overseer --to owner --ref $NOTE_TO_OWNER --file $F|2=lane-mail: ref-unknown=$NOTE_TO_OWNER
 notice --item overseer --to owner --ref $ASK_TO_OWNER --file $F|0=
 notice --item overseer --to owner --ref $PEER_ASK --file $F|2=lane-mail: ref-unknown=$PEER_ASK
+notice --item overseer --to owner --ref $INBOUND_PEER --file $F|2=lane-mail: ref-unknown=$INBOUND_PEER
+notice --item overseer --to owner --ref $RESOLUTION --file $F|2=lane-mail: ref-unknown=$RESOLUTION
 notice --item KEN-1 --attach x --file $F|2=lane-mail: option-unknown=--attach
 send --item overseer --re $OWNER_NOTE --file $F|2=lane-mail: resolve-required=$OWNER_NOTE
 send --item overseer --directive --host --root $LANE --delivery-id k --file $F|2=lane-mail: option-conflict=--host,--delivery-id
@@ -312,6 +323,19 @@ LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b
 mutant ref-lane-only 'lm_owner_ask_find "$REF" ||' 'false ||'
 lm notice --item overseer --to owner --file "$(text n 'Ruled.')" --ref "$ASK"
 assert_eq "$RC=$ERR" "2=lane-mail: ref-unknown=$ASK" "control: without the to-overseer read a reply naming an owner ask is refused"
+
+# The owner-note class lives in lib/mailbox-append.sh, which a mutant of
+# lane-mail cannot reach: the copied library calls every line an owner note.
+new_repo control_ref_class
+CLASS_REPO="$LANE"
+new_repo control_ref_peer
+LANE_MAIL_BIN="$LANE_MAIL" lm peer ask --repo control_ref_class --file "$(text q 'Mine?')" --options yes,no
+INBOUND_PEER="${OUT#id=}"
+LANE="$CLASS_REPO"
+CLASS_DIR="$(mutant_scripts mutants/ref-class lib/mailbox-append.sh)" || exit 1
+mutate_file "$CLASS_DIR/lib/mailbox-append.sh" 'then "peer"' 'then "owner-note"'
+LANE_MAIL_BIN="$CLASS_DIR/lane-mail" lm notice --item overseer --to owner --file "$(text n 'Re.')" --ref "$INBOUND_PEER"
+assert_eq "$RC=$ERR" "0=" "control: with every sender an owner a reply names a peer's ask"
 
 new_repo control_deadline
 mutant no-deadline ', deadline: (($now + ($wait | tonumber) * 60) | todate)' ''

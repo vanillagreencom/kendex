@@ -196,6 +196,8 @@ source "$SCRIPT_DIR/lib/lane-context.sh"
 source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 # shellcheck source=lib/watch-pid.sh
 source "$SCRIPT_DIR/lib/watch-pid.sh"
+# shellcheck source=lib/mailbox-append.sh
+source "$SCRIPT_DIR/lib/mailbox-append.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
@@ -1497,7 +1499,7 @@ mail_read() { # ITEM LANE_MAIL_ARGS...
 # read last by `inbox --peek` and acknowledged only once its notes are
 # printed, so a stopped pass leaves them unread rather than taken and unsaid.
 check_mail() {
-  local item stored prior seen header count first line fields id kind options text rest root cursor from re by
+  local item stored prior seen header count first line fields id kind options text rest root cursor from re by class
   local envelopes receipts replaced hold lane_read to_first read_at unread_at at
   local mail_items host_flag args
   local state="$MAIL_SEEN"
@@ -1627,7 +1629,7 @@ check_mail() {
     fi
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
-      if ! fields="$(jq -r '[.id // "", .kind // "", ((.options // []) | join(", ")), .from // "", .re // "", .by // ""] | @tsv' <<<"$line")"; then
+      if ! fields="$(jq -r "$MAILBOX_CLASS_JQ"' [.id // "", .kind // "", ((.options // []) | join(", ")), .from // "", .re // "", .by // "", overseer_mail_class] | @tsv' <<<"$line")"; then
         die mail-read-invalid "" "item=$item" "value=envelope"
       fi
       id="${fields%%$'\t'*}"
@@ -1639,28 +1641,26 @@ check_mail() {
       from="${rest%%$'\t'*}"
       rest="${rest#*$'\t'}"
       re="${rest%%$'\t'*}"
-      by="${rest#*$'\t'}"
+      rest="${rest#*$'\t'}"
+      by="${rest%%$'\t'*}"
+      class="${rest#*$'\t'}"
       case "$item:$kind" in
-        # The overseer's own mailbox carries the owner's notes and its peers'.
-        # A line with no sender is an older owner note, never a peer's. A peer
-        # line carries its kind, because only an ask is owed a reply and an
-        # answer to a directive would name an id in no outbox; `re=` rides an
-        # answer, without which two replies from one peer are told apart by
-        # their wording alone. An answer carrying `by` is a resolution
-        # lane-mail resolve wrote, the owner's or the deadline's; the ask it
-        # closes is what the overseer is waiting on, so the line names that
-        # ask. An answer carrying no `by` is nobody's, since the owner answers
-        # nothing and a send with --re into this mailbox is refused, so it is
-        # skipped rather than read back as a note.
+        # The overseer's own mailbox, each line reported under the class
+        # lib/mailbox-append.sh defines, which lane-mail judges a reply's --ref
+        # by too. A resolution names the ask it closes, the one the overseer
+        # is waiting on. A peer line carries its kind, because only an ask is
+        # owed a reply and an answer to a directive would name an id in no
+        # outbox; `re=` rides an answer, without which two replies from one
+        # peer are told apart by their wording alone. A stray answer is
+        # nobody's, so it is skipped rather than read back as a note.
         overseer:*)
-          if [[ -n "$by" ]]; then
-            echo "EVENT owner-ask-resolved $re by=$by"
-          elif [[ -z "$from" || "$from" == owner ]]; then
-            [[ "$kind" != answer ]] || continue
-            echo "EVENT owner-note $id"
-          else
-            echo "EVENT peer-note ${from#overseer:} $id kind=$kind${re:+ re=$re}"
-          fi
+          case "$class" in
+            resolution) echo "EVENT owner-ask-resolved $re by=$by" ;;
+            owner-note) echo "EVENT owner-note $id" ;;
+            peer) echo "EVENT peer-note ${from#overseer:} $id kind=$kind${re:+ re=$re}" ;;
+            stray) continue ;;
+            *) die mail-read-invalid "" "item=$item" "value=class=$class" ;;
+          esac
           ;;
         *:ask) echo "EVENT lane-question $item $id" ;;
         # Only the lane writes this file, and it writes asks and notices; any

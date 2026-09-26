@@ -86,8 +86,9 @@ lane_env_prefix() { # HARNESS DIR
 # the harness question tool away, written as they stand, and `-` where this
 # table names none. A lane asks its overseer through `lane-mail ask`, and a
 # question tool in a lane opens a dialog nobody at the pane answers, so every
-# lane command carries them; a launched overseer carries them as
-# launch_overseer_question_tool below decides from ORCH_QUESTION_TOOL.
+# lane command carries its row's words where the row has any; a launched
+# overseer carries them as launch_overseer_question_tool below decides from
+# ORCH_QUESTION_TOOL.
 #
 # The FIRST spelling of each list is the one written; the rest are further
 # spellings a caller may have typed, which launch_choice_value reads.
@@ -464,10 +465,10 @@ launch_choice_question_off() { # HARNESS
 }
 
 # ORCH_QUESTION_TOOL, decided once here for every launcher: `off`, the
-# default, means no launched session keeps its harness question tool, the
-# overseer included, so every question for the owner is mailbox mail;
-# `overseer` keeps the tool in a launched overseer alone. A lane never keeps
-# it whatever the setting, since nobody sits at a lane's pane, which is why
+# default, gives a launched overseer its harness row's question-off words in
+# LAUNCH_CHOICE_FLAGS, where the row has any, as every lane launch carries
+# them; `overseer` keeps the tool in a launched overseer alone. The setting
+# never reaches a lane, since nobody sits at a lane's pane, which is why
 # open-terminal asks this function nothing. Prints `off` or `keep` for a
 # launched overseer; returns 3 on a value the setting does not take, for the
 # caller to name.

@@ -463,9 +463,9 @@ if [[ -n "$LANE" && -n "$(launch_choice_row "$LAUNCH_HARNESS")" ]]; then
   [[ "$launch_choice_missing" != true ]] || exit 1
 fi
 
-# A lane never holds its harness question tool: every command start_cmd builds
-# carries the words that take it away, and a --cmd template, rendered verbatim,
-# has to carry them itself. Keyed on the same harness as the gate above and
+# Every command start_cmd builds carries the words its harness row names to
+# take the question tool away, and a --cmd template, rendered verbatim, has to
+# carry them itself; a harness whose row names none keeps its tool. Keyed on the same harness as the gate above and
 # asked whether or not a --lane is named, because an item launched here is a
 # lane on any account; a launch naming no harness has no row and is not asked.
 # A reading of the words that fails is refused as their absence, never skipped.

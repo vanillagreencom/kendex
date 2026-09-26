@@ -655,9 +655,9 @@ fi
 
 # Whether a successor keeps the harness question tool: ORCH_QUESTION_TOOL,
 # decided by lib/lane-launch.sh for every overseer launcher. Off by default,
-# so a successor carries the words that take the tool away, as every lane
-# launch does, and every question for the owner is mailbox mail; `overseer`
-# keeps it. The setting is the one owner: question-tool words in the caller's
+# so a successor carries its harness row's words that take the tool away,
+# where the row names any, as every lane launch does; `overseer` keeps it.
+# The setting is the one owner: question-tool words in the caller's
 # own flags never carry, since a successor on another harness would be handed
 # a flag its launch refuses. Read only by the modes that build a line: `dead`
 # sends the line it was handed and `check` launches nothing.
