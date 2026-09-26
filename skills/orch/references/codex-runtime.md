@@ -82,7 +82,7 @@ Codex starts no turn for output that arrives after a turn ended, from a detached
 | Wait | `write_stdin` on that `session_id`, empty `chars`, `yield_time_ms` 300000 | An empty poll waits 5000-300000 ms; `background_terminal_max_timeout` sets the ceiling, 300000 by default. It returns the output written since the previous call. |
 | Re-arm | The same `write_stdin` again, in the same turn, once every returned line is handled | Never end the turn between polls while a lane record is `running`. Every poll return, empty, with output or with an `exit_code`, is an expiry: run the watch-delivery.md checks before the next poll. An `exit_code` ended the follow: arm again from the line after the last number handled. |
 
-Each call is one simple command, so the classifier above passes it.
+Each call is one simple command, as orch's one-simple-command rule asks ([../SKILL.md](../SKILL.md) § Harness-Safe Shell).
 
 ## Lane mailbox
 
