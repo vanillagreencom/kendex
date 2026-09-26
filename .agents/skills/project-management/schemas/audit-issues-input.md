@@ -1,10 +1,10 @@
 # Audit Issues Input Schema
 
-Input file for `audit-issues --issues`, written by the caller at `[worktree-path]/tmp/audit-{source}-YYYYMMDD-HHMMSS.json`.
+Input file for `audit-issues --issues` and `audit-issues --single`, written by the caller at `[worktree-path]/tmp/audit-{source}-YYYYMMDD-HHMMSS.json`. A `--single` file holds exactly one `items[]` entry and no `hierarchy_contract` ([tpm-audit](../workflows/tpm-audit.md) § 14).
 
 ```json
 {
-  "source": "review|pr-comments|local-review|research-complete|roadmap-create",
+  "source": "review|pr-comments|local-review|research-complete|roadmap-create|oversee",
   "parent_issue": "PROJ-456",
   "tracker": {"type": "linear|github", "repository": "owner/repo"},
   "worktree": "/path/to/worktree",

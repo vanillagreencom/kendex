@@ -32,7 +32,7 @@ Wrappers run in the primary session: they own the user dialog and every tracker 
 - **Name what reaches it.** Every issue carries a `Reached by:` line giving the user action, run, check, or shipped producer that arrives at the defect; an owner-directed item names the ask.
   - The thread a finding came from, a shape ("a name containing a quote"), or something true in theory is not a reach, and an item with nothing to name is a decline, not an issue. The judgement is the author's: `issues create` under `LINEAR_REQUIRE_REACH` refuses only a body with no `Reached by:` line, an unsubstituted placeholder and a null token (`TBD`, `n/a`, `none`, `-`) counting as absent.
   - A filing whose source is a review round carries, at priority 2, a `Symptom:` line naming the run, the user, or the red check that already showed the defect (`--review-born`). Priority 2 from any other source is structural, reports no symptom, and is not checked for one. Where a review-born finding files at all is [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) § Filing bar.
-- **Burn down more than you create.** Every audit that reads an issue backlog sweeps its comparison set for issues the codebase has already satisfied, duplicated, or superseded, and proposes those for cancellation in the same pass, along with every active issue that fails the creation bar as it stands today. Report `created N / closed M`. `project-order` reorders projects, reads no backlog, and does not sweep.
+- **Burn down more than you create.** Every audit that reads an issue backlog sweeps its comparison set for issues the codebase has already satisfied, duplicated, or superseded, and proposes those for cancellation in the same pass, along with every active issue that fails the creation bar as it stands today. Report `created N / closed M`. `project-order` reorders projects, reads no backlog, and does not sweep; `single` files one item against the open titles and does not sweep either.
 - **Ask about work, never about mechanics.** Creation and cancellation follow [audit-issues § 6](workflows/audit-issues.md#6-approve-creations-and-cancellations); the user decides activation. Labels, priorities, relations, hierarchy, sort order, and project moves are corrections the workflow applies on its own authority.
 - **Research is part of planning, not a work item.** Gather prior art, vendor docs, and approach comparisons inline during planning. Store the artifacts in the tracker under § Planning artifacts. A tracker research issue exists only when the research is delegated as standalone work: run by the researcher agent, or prepared for later pickup (`research-spike`).
 - **One approval per decision.** Ask the user to approve a body of work once, at the roadmap plan gate. Creation re-asks only what changed after that answer.
@@ -52,7 +52,7 @@ For a GitHub audit, put the produced text artifact in the created or updated iss
 | Command | Arguments | Workflow |
 |---------|-----------|----------|
 | `cycle-plan` | none | [cycle-plan](workflows/cycle-plan.md) |
-| `audit-issues` | `project` \| `project "Name"` \| `team` \| `issue [IDs]` \| `--issues [file]` \| `--analyzed [file]` \| `project-order` | [audit-issues](workflows/audit-issues.md) |
+| `audit-issues` | `project` \| `project "Name"` \| `team` \| `issue [IDs]` \| `--issues [file]` \| `--single [file]` \| `--analyzed [file]` \| `project-order` | [audit-issues](workflows/audit-issues.md) |
 | `roadmap plan` | `[feature]` \| `[feature] @[research-or-plan-path]` | [roadmap-plan](workflows/roadmap-plan.md) |
 | `roadmap create` | `@[plan-file]` | [roadmap-create](workflows/roadmap-create.md) |
 | `research-spike` | none | [research-spike](workflows/research-spike.md) |
@@ -64,7 +64,7 @@ For a GitHub audit, put the produced text artifact in the created or updated iss
 
 The `@[path]` given to `roadmap plan` may be research findings or a **finished plan** (a design the user has reviewed). A finished plan is the spec: derive issues from it instead of re-planning, and every issue cites it.
 
-TPM analysis workflows, each returning JSON per its schema: [tpm-cycle-plan](workflows/tpm-cycle-plan.md), [tpm-audit](workflows/tpm-audit.md) (project / team / issue / project-order modes), [tpm-roadmap-plan](workflows/tpm-roadmap-plan.md).
+TPM analysis workflows, each returning JSON per its schema: [tpm-cycle-plan](workflows/tpm-cycle-plan.md), [tpm-audit](workflows/tpm-audit.md) (project / team / issue / single / project-order modes), [tpm-roadmap-plan](workflows/tpm-roadmap-plan.md).
 
 ## Execution Rules
 
@@ -87,6 +87,8 @@ The Linear cache is workspace-wide, so each path states whether it resolves the 
 | tpm-audit `project`, `team` | yes | § 1.3 projects, § 1.4 input set, § 1.5 comparison set |
 | tpm-audit `issues`, Linear | yes | § 1.5 comparison set; a § 1.4 input issue outside scope halts |
 | tpm-audit `issues`, GitHub | n/a, reads no Linear cache | n/a |
+| tpm-audit `single`, Linear | yes | § 1.3 projects, § 14 title list |
+| tpm-audit `single`, GitHub | n/a, reads no Linear cache | n/a |
 | tpm-audit `project-order` | yes | § 11 initiatives, projects, and per-project issues |
 | tpm-roadmap-plan | yes, § 1.1 | § 1.4 projects, § 1.5 comparison set |
 | tpm-cycle-plan | **no** | **no**. `session-status` picks the active project workspace-wide, and every later read is scoped to that pick |
