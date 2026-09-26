@@ -146,22 +146,33 @@ assert_eq "$(diagnostic_key)" "diagnostics-load" \
 
 echo "=== review-policy names the review bots a none row waives threads from ==="
 
-# `trusted-logins|want`: the trusted list as a repository sets it, and the
-# line --review-bots prints. Only a `[bot]` entry is a bot, both separators
-# split, and the suffix is dropped because GitHub's GraphQL login lacks it.
+# `threads|trusted-logins|want`: REVIEW_GATE_THREADS (`-` leaves it unset),
+# the trusted list as a repository sets it, and the first line
+# --review-bots prints, after `exit N` when it refuses. Only a `[bot]` entry
+# is a bot, both separators split, and the suffix is dropped because
+# GitHub's GraphQL login lacks it. With the thread term off nothing can count
+# a lapsed waiver, so no bot is named and nothing is waived.
 bot_rows=0
-while IFS='|' read -r trusted want; do
+while IFS='|' read -r threads trusted want; do
   bot_rows=$((bot_rows + 1))
-  got="$(cd "$TMP" && REVIEW_GATE_SETTINGS_FILE=/dev/null \
+  threads_env=(REVIEW_GATE_THREADS="$threads")
+  [ "$threads" != - ] || threads_env=(-u REVIEW_GATE_THREADS)
+  rc=0
+  got="$(cd "$TMP" && env "${threads_env[@]}" REVIEW_GATE_SETTINGS_FILE=/dev/null \
     REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="$trusted" \
-    "$SKILL_DIR/scripts/review-policy" --review-bots 2>&1)" || got="exit $? $got"
-  assert_eq "$got" "$want" "review bots of [$trusted]"
+    "$SKILL_DIR/scripts/review-policy" --review-bots 2>&1)" || rc=$?
+  got="${got%%$'\n'*}"
+  [ "$rc" -eq 0 ] || got="exit $rc $got"
+  assert_eq "$got" "$want" "review bots of [$trusted] with threads $threads"
 done <<'ROWS'
-copilot-pull-request-reviewer[bot]; coderabbitai[bot],bmethod|review-bots=copilot-pull-request-reviewer,coderabbitai
-bmethod|review-bots=
-|review-bots=
+-|copilot-pull-request-reviewer[bot]; coderabbitai[bot],bmethod|review-bots=copilot-pull-request-reviewer,coderabbitai
+enforce|copilot-pull-request-reviewer[bot]|review-bots=copilot-pull-request-reviewer
+off|copilot-pull-request-reviewer[bot]|review-bots=
+sometimes|copilot-pull-request-reviewer[bot]|exit 2 review-gate-error=policy-threads-mode value=sometimes
+-|bmethod|review-bots=
+-||review-bots=
 ROWS
-assert_eq "$bot_rows" "3" "the review-bot table ran every row"
+assert_eq "$bot_rows" "6" "the review-bot table ran every row"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

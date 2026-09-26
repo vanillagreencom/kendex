@@ -129,8 +129,11 @@ Review-thread gate:
   Which threads a none answer waives, the reply the merge route leaves, and
   when a resolution it made lapses are the review gate's rule
   (<skills>/review-gate/scripts/lib/waiver.sh, beside the review-policy
-  owner), which the review gate's own thread term reads too; an owner with
-  no rule beside it blocks with review_policy_unreadable. A
+  owner), which the review gate's own thread term reads too. An owner with
+  no rule beside it blocks with review_policy_unreadable only where the rule
+  could change the answer: an unresolved thread, or a resolved one carrying
+  the merge route's reply. REVIEW_GATE_THREADS=off leaves review-policy
+  --review-bots naming no bot, so nothing is waived there. A
   review_evidence=none answer waives the threads only a review bot has
   written in: the first comment and every other comment by an author GitHub
   types Bot whose login review-policy --review-bots names, or the merge
@@ -491,9 +494,14 @@ review_policy_evidence() {
 }
 
 # The review gate's waiver rule, loaded from the lib beside the review-policy
-# owner: RG_WAIVER_JQ and rg_waiver_reply. With no owner there is no class
-# policy, so nothing is waived and no waiver resolution can be judged; that
-# is the empty return. Non-zero when an owner stands without its rule.
+# owner: RG_WAIVER_JQ and rg_waiver_reply. WAIVER_LOADED says what was found:
+#   absent   no owner, so no class policy: nothing is waived and no waiver
+#            resolution can stand
+#   present  the rule is loaded
+#   missing  an owner stands without a rule that loads, as where a review-gate
+#            older than this script is installed beside it; the caller refuses
+#            only where the rule could change its answer
+# Non-zero only when the owner lookup itself fails.
 WAIVER_LOADED=""
 load_waiver_rule() {
     local owner lib
@@ -504,11 +512,12 @@ load_waiver_rule() {
         return 0
     fi
     lib="$(dirname -- "$owner")/lib/waiver.sh"
-    [ -r "$lib" ] || return 1
+    WAIVER_LOADED=missing
+    [ -r "$lib" ] || return 0
     # shellcheck source=../../../review-gate/scripts/lib/waiver.sh
-    . "$lib" || return 1
-    [ -n "${RG_WAIVER_JQ:-}" ] || return 1
-    WAIVER_LOADED=present
+    if . "$lib" && [ -n "${RG_WAIVER_JQ:-}" ]; then
+        WAIVER_LOADED=present
+    fi
 }
 
 # The review bots a none row waives threads from, as a JSON array of logins
@@ -626,7 +635,7 @@ run_checks() {
     # is asked only once a thread it could change exists. An unreadable policy
     # is not a waiver: it blocks and says so.
     local policy_answer class_evidence policy_class policy_head bots_json='[]'
-    local threads_json counts unresolved open standing verdict waived waiver_ids waiver_jq
+    local threads_json counts unresolved open standing marked verdict waived waiver_ids waiver_jq
     local thread_waiver=null thread_reopen='[]'
     # Fetch the complete unfiltered list. Filtering unresolved threads inside
     # pr-threads would discard nodes whose isResolved value is missing, null,
@@ -645,21 +654,28 @@ run_checks() {
         issues+=("review_threads_fetch_failed: GitHub returned malformed review thread data")
     elif ! load_waiver_rule; then
         can_merge=false
-        issues+=("review_policy_unreadable: The review gate's waiver rule could not be loaded beside its class policy")
+        issues+=("review_policy_unreadable: The review gate's class policy owner could not be located")
     else
-        # No owner is no class policy: nothing is waived and no waiver stands.
+        # Without a loaded rule nothing is waived and no waiver stands.
         waiver_jq='def rg_waivable($b): false; def rg_waiver_stands: false; def rg_lapsed_waiver($e; $b): false;'
-        [ "$WAIVER_LOADED" = absent ] || waiver_jq="$RG_WAIVER_JQ"
+        [ "$WAIVER_LOADED" != present ] || waiver_jq="$RG_WAIVER_JQ"
+        # marked: resolved threads a comment of which opens with the waiver
+        # reply's first words. It only says the rule could matter where the
+        # rule is missing; whether one stands is the rule's alone.
         if ! counts=$(jq -r "$waiver_jq"'
                 [([.threads[] | select(.is_resolved == false and .is_outdated == false)] | length),
                  ([.threads[] | select(.is_resolved == false)] | length),
-                 ([.threads[] | select(rg_waiver_stands)] | length)]
+                 ([.threads[] | select(rg_waiver_stands)] | length),
+                 ([.threads[] | select(.is_resolved == true and any(.comments[]; (.body // "") | startswith("Resolved by the merge route: ")))] | length)]
                 | @tsv' <<<"$threads_json") || [ -z "$counts" ]; then
             can_merge=false
             issues+=("review_threads_fetch_failed: The review thread data could not be counted")
         else
-            IFS=$'\t' read -r unresolved open standing <<<"$counts"
-            if [ "$open" -gt 0 ] || [ "$standing" -gt 0 ]; then
+            IFS=$'\t' read -r unresolved open standing marked <<<"$counts"
+            if [ "$WAIVER_LOADED" = missing ] && { [ "$open" -gt 0 ] || [ "$marked" -gt 0 ]; }; then
+                can_merge=false
+                issues+=("review_policy_unreadable: The review gate's waiver rule could not be loaded beside its class policy")
+            elif [ "$open" -gt 0 ] || [ "$standing" -gt 0 ]; then
                 if ! policy_answer=$(review_policy_evidence "$pr_num"); then
                     can_merge=false
                     issues+=("review_policy_unreadable: The review gate's class policy could not be resolved for this pull request")
