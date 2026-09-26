@@ -109,6 +109,10 @@ STUBEOF
 # of dying, so the pane stays in ssh and no retyped line can reach a shell.
 # $OT_SSH_SCREEN names a file holding the connected screen, several lines and
 # not one, which is what a login printing a banner above its prompt draws.
+# $OT_COMPOSER_ON_ENTER=N is a harness whose first screen lacks the brief: the
+# pane shows a prompt until the log holds N Enter keystrokes, a ready, empty
+# composer at N, and past N the first line pasted after the Nth Enter, as the
+# turn it submitted.
 cat > "$OT_STUB_BIN/tmux" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_TMUX_LOG"
@@ -196,9 +200,21 @@ case "${1:-}" in
     # The connected screen a row spells out, from a file because a screen is
     # several lines while run_ot's env list is one.
     elif [[ "$state" == ssh && -n "${OT_SSH_SCREEN:-}" ]]; then cat "$OT_SSH_SCREEN"
+    elif [[ -n "${OT_COMPOSER_ON_ENTER:-}" ]]; then
+      enters="$(grep -c '^send-keys .* Enter$' "$OT_TMUX_LOG")" || true
+      if (( enters < OT_COMPOSER_ON_ENTER )); then printf 'dev@lane:~$\n'
+      elif (( enters == OT_COMPOSER_ON_ENTER )); then printf '\xe2\x9d\xaf\xc2\xa0\n'
+      else
+        awk -v n="$OT_COMPOSER_ON_ENTER" '
+          /^send-keys .* Enter$/ { e++; next }
+          loaded { if (e >= n) { print; exit } loaded = 0; next }
+          /^load-buffer / { loaded = 1 }' "$OT_TMUX_LOG"
+      fi
     elif [[ -n "${OT_LAUNCHED_GATE:-}" && ! -e "$OT_LAUNCHED_GATE" ]]; then printf 'dev@lane:~$\n'
     else printf '%s\n' "${OT_PANE_TEXT:-dev@lane:~\$}"; fi ;;
-  load-buffer) cat "${!#}" >> "$OT_TMUX_LOG" ;;
+  # The pasted text on a line of its own: a paste carries no newline, and the
+  # next call's log line would otherwise run on from it.
+  load-buffer) { cat "${!#}"; echo; } >> "$OT_TMUX_LOG" ;;
 esac
 exit 0
 STUBEOF
@@ -1306,6 +1322,33 @@ run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE" --harness c
 assert_eq "$(observe "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc")" \
   "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc" \
   "the one hosted shape that renders a brief still refuses that broken timeout before any create"
+
+# A hosted lane's composer nudge and brief re-paste go into a pane ssh holds,
+# so both are written expecting ssh: the harness runs on the host, never under
+# this pane. The pane shows no brief after the launch line, then a ready
+# composer once the nudge's Enter lands, then the brief the second paste sent.
+BRIEF_ROW="ORCH_LANE_HOST=$HOST_STUB;OT_COMPOSER_ON_ENTER=3;$CHOICE"
+brief_resend() { # ITEM
+  printf 'rc=%s enters=%s brief=%s redelivered=%s refused=%s' "$RC" "$(typed "send-keys -t %1 Enter")" \
+    "$(grep -cxF -- "/orch start $1" "$RUN/tmux.log" || true)" "$(said "open-terminal: brief-redelivered item=$1")" \
+    "$(awk '$1 == "open-terminal:" && $2 == "pane-refused" { print $3, $4; exit }' <<<"$OUT" | tr ' ' ',')"
+}
+run_ot "$BRIEF_ROW" --harness claude --lane "$H/.eclaude" --repo o/r CC-151
+assert_eq "$(brief_resend CC-151)" "rc=0 enters=4 brief=1 redelivered=1 refused=" \
+  "a hosted claude lane whose first screen lacks the brief is nudged and re-sent the brief through its ssh pane"
+
+# Control: the same launch against a copy that expects the harness in that
+# pane has its nudge refused, so the brief is never re-sent and the lane fails.
+# run_ot reads $OPEN_TERMINAL, so the mutant takes that name for its row and
+# the shipped path is restored after.
+BRIEF_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-running-ssh/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-running-ssh/orch"
+mutate_file "$OPEN_TERMINAL" '    running=ssh' '    running="$HARNESS"'
+run_ot "$BRIEF_ROW" --harness claude --lane "$H/.eclaude" --repo o/r CC-152
+assert_eq "$(brief_resend CC-152)" "rc=1 enters=2 brief=0 redelivered=0 refused=operation=nudge,item=CC-152" \
+  "control: a hosted lane expecting its harness under the ssh pane has its nudge refused and never gets the brief"
+OPEN_TERMINAL="$BRIEF_OT_SHIPPED"
 
 echo "=== the claim store belongs to the caller's checkout ==="
 # `.agents` in a worktree points back at the main checkout, so a root derived

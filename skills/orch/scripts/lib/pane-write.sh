@@ -194,9 +194,12 @@ pane_write() { # KIND TARGET EXPECT ACTION VALUE
     pane_write_key "$value"
     return
   fi
-  # A buffer named for this process, so a second writer's paste cannot take
-  # this one's text off the top of the stack; -d deletes it once pasted.
-  buffer="pane-write-$$"
+  # A named buffer, so another writer's paste cannot take this one's text off
+  # the top of the stack; -d deletes it once pasted. $$ alone does not tell
+  # writers apart: every subshell and background job of one script shares it,
+  # so the pane id is in the name too. Two writers into one pane at once still
+  # share a buffer, and their input would interleave in that pane regardless.
+  buffer="pane-write-$$-${PANE_WRITE_ID#%}"
   pane_write_mode_clear || return
   # Text reaches the buffer on stdin from a process substitution, never a pipe,
   # so a reader that stops early costs the writer nothing.
