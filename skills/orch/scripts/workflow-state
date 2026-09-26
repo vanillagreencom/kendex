@@ -1332,8 +1332,8 @@ EOF
   remove <issue_id>             Delete the state file and its lock sidecar; absent is success
   fleet-log takeover|audit      Print fleet_log rows of the oversee state, one
                                 JSON object per line: takeover the last rows
-                                of every kind but cycle, as many as
-                                ORCH_TAKEOVER_ROWS (default 10),
+                                of every kind but cycle, as many as the
+                                setting ORCH_TAKEOVER_ROWS (default 10),
                                 and nothing, exit 0, where no fleet state
                                 exists yet; audit every proposal and ruling row
   progress-report-path [--succession]
