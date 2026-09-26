@@ -63,7 +63,7 @@ orch owns every step. kendex-specific parameters:
 Only from a change **merged on `origin/main`**. Batch: if open items would force another re-vendor soon, hold and run one train; an immediate train is for a fail-open defect in a consumer gate or an owner ask.
 
 1. `git checkout main && git pull --ff-only`; confirm the source consumers read sits at the `origin/main` tip containing the merge.
-2. Skill/agent/hook changes → `kendex refresh` (all scopes, never `--scope project`; Pi packages are global) + `kendex verify` in each consumer. CLI-only changes → binary rebuild, no skill refresh.
+2. Skill/agent/hook changes → `kendex refresh` (all scopes, never `--scope project`; Pi packages are global) + `.agents/skills/orch/scripts/adopt-writer [CONSUMER]` from this checkout + `kendex verify` in each consumer; commit the writer workflow it re-installs with the refresh. CLI-only changes → binary rebuild, no skill refresh.
 3. Consumer commits: `git check-ignore -q <path>` first (ignored = nothing to commit). Stage kendex paths only, never `-A`; revert no-op `.kendex-refreshed` and template-default churn. Branch → PR → `gh pr merge --auto`. Reply to and resolve bot threads. Confirm each push landed and carries only kendex files. While propagation PRs are open, `GH_REPO=vanillagreencom/<repo> pr-watch.sh --heal` each cycle.
 4. New skills do not propagate by refresh: `kendex add --skill <name> -y` per consumer, commit its `kendex.toml` entry through that repo's queue.
 5. Bot findings on propagation PRs: a real defect in vendored content is fixed upstream first (issue → fix → merge → refresh on the branch → resolve citing the fix). Nits on the PR's own payload: fix on the branch.

@@ -85,6 +85,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `pr-view-json` | PR view JSON; `status=no_pr` exits 0 and routes to PR creation, not an error |
 | `resolve-base-branch` | Print a worktree's base branch; exits 1 rather than guess |
 | `sync-base` | Resolve, fetch, and fast-forward the checkout that owns the base branch; prints the branch name |
+| `adopt-writer` | After a project refresh, re-install the review-gate writer template over an unedited workflow copy; every orch step that refreshes a project runs it. `--help` |
 | `container-close` | Serialize a Linear container close across linked checkouts; prints `closed` or `deferred`, with closed diagnostics on stderr |
 | `base-freshness` | Gate the review cycle on a current base; unverifiable = stale |
 | `review-artifact-check` | Validate a reviewer's JSON artifact, the sole reviewer completion condition |

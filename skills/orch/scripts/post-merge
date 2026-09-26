@@ -5,7 +5,7 @@ mode=full
 case "${1:-}" in
   -h|--help)
     printf '%s\n' 'usage: post-merge [--refresh-only] [BASE_CHECKOUT]' 'Run in the base checkout; stop at the first failed step.' \
-      '--refresh-only  the refresh and the restore alone, for a hosted fleet whose control host ran sync-base itself and whose CI and lane built and verified.'
+      '--refresh-only  the refresh, the writer adoption and the restore alone, for a hosted fleet whose control host ran sync-base itself and whose CI and lane built and verified.'
     exit 0 ;;
   --refresh-only) mode=refresh-only; shift ;;
 esac
@@ -45,18 +45,20 @@ if [[ "$mode" == full ]]; then
 fi
 if [[ -f kendex.toml ]]; then
   # The refresh judges and the checkout keeps the committed record, whatever
-  # the refresh and the verify returned: a project that records on its
-  # default branch after each merge (docs/decisions/D007-lock-record-on-main.md)
-  # leaves that record stale until its rolling pull request lands, the next
-  # sync-base refuses a dirty checkout, and its fast-forward refuses an
-  # untracked path the landing would overwrite.
+  # the refresh, the adoption and the verify returned: a project that records
+  # on its default branch after each merge
+  # (docs/decisions/D007-lock-record-on-main.md) leaves that record stale
+  # until its rolling pull request lands, the next sync-base refuses a dirty
+  # checkout, and its fast-forward refuses an untracked path the landing
+  # would overwrite.
   before="$(untracked)" || { status restore 1; exit 1; }
   rc=0
   step refresh kendex refresh --scope project --yes --leave || rc=$?
+  [[ $rc -ne 0 ]] || step adopt "$SCRIPT_DIR/adopt-writer" . || rc=$?
   [[ $rc -ne 0 || "$mode" != full ]] || step verify kendex verify --scope project || rc=$?
   step restore restore "$before" || exit $?
   [[ $rc -eq 0 ]] || exit $rc
 else
-  status refresh skipped
+  status refresh skipped; status adopt skipped
   [[ "$mode" != full ]] || status verify skipped
 fi
