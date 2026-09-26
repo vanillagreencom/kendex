@@ -277,18 +277,23 @@ out="$( (cd "$TMP_ROOT/empty" && ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$TMP_RO
 #   KEN-8  the main checkout and its branch, as review writes a local key
 #   KEN-9  neither field
 #   KEN-10 a worktree that is a directory but no linked worktree
+#   KEN-11 a linked worktree alone whose path git quotes in the line listing
+#   KEN-12 a branch alone whose registered tree's directory is gone
 build_shapes() { # DIR
   local p="$1" sd="$1/tmp" t="$1.trees" n
   mkdir -p "$p" "$p.plain"
   git -C "$p" init -q -b main
   git -C "$p" config gc.auto 0
+  git -C "$p" config maintenance.auto false
   git -C "$p" config user.email test@example.com
   git -C "$p" config user.name Test
   git -C "$p" config commit.gpgsign false
   git -C "$p" commit -q --allow-empty -m base
   git -C "$p" branch ken-4
   git -C "$p" branch ken-6
-  for n in ken-1 other-2 ken-3 ken-5; do git -C "$p" worktree add -q -b "$n" "$t/$n" main; done
+  for n in ken-1 other-2 ken-3 ken-5 ken-12; do git -C "$p" worktree add -q -b "$n" "$t/$n" main; done
+  rm -rf -- "${t:?}/ken-12"
+  git -C "$p" worktree add -q -b ken-11 "$t/ken-q"$'\n'"tree" main
   mkdir -p "$sd"
   printf '{"worktree":"%s","branch":"ken-1"}\n' "$t/ken-1" > "$sd/workflow-state-KEN-1.json"
   printf '{"worktree":"%s"}\n' "$t/other-2" > "$sd/workflow-state-KEN-2.json"
@@ -300,7 +305,9 @@ build_shapes() { # DIR
   printf '{"worktree":"%s","branch":"main"}\n' "$p" > "$sd/workflow-state-KEN-8.json"
   printf '{}\n' > "$sd/workflow-state-KEN-9.json"
   printf '{"worktree":"%s"}\n' "$p.plain" > "$sd/workflow-state-KEN-10.json"
-  for n in 1 2 3 4 5 6 7 8 9 10; do printf 'x\n' > "$sd/audit-KEN-$n.json"; done
+  jq -n --arg w "$t/ken-q"$'\n'"tree" '{worktree: $w}' > "$sd/workflow-state-KEN-11.json"
+  printf '{"branch":"ken-12"}\n' > "$sd/workflow-state-KEN-12.json"
+  for n in 1 2 3 4 5 6 7 8 9 10 11 12; do printf 'x\n' > "$sd/audit-KEN-$n.json"; done
   find "$sd" -mindepth 1 -exec touch -t "$old_touch" {} +
 }
 SHAPE_ROWS='kept|1|a state naming its linked worktree and branch
@@ -312,7 +319,9 @@ removed|6|a branch-only state whose branch no tree holds
 removed|7|a branch-only state whose branch only the main checkout holds
 removed|8|a state naming the main checkout
 removed|9|a state naming neither
-removed|10|a state naming a directory that is no linked worktree'
+removed|10|a state naming a directory that is no linked worktree
+kept|11|a state naming a linked worktree whose path git quotes
+removed|12|a branch-only state whose registered tree has no directory'
 # SHAPES reads, for the prune SCRIPT ran over a fresh fixture, each item's
 # state and file as kept or removed, in row order.
 shapes_run() { # NAME SCRIPT
@@ -320,7 +329,7 @@ shapes_run() { # NAME SCRIPT
   build_shapes "$sp"
   SHAPES_RC=0
   bare_run "$sp" "$2" >/dev/null || SHAPES_RC=$?
-  for n in 1 2 3 4 5 6 7 8 9 10; do
+  for n in 1 2 3 4 5 6 7 8 9 10 11 12; do
     if [[ -e "$sp/tmp/workflow-state-KEN-$n.json" ]]; then got+="$n:kept,"; else got+="$n:removed,"; fi
     if [[ -e "$sp/tmp/audit-KEN-$n.json" ]]; then got+="kept "; else got+="removed "; fi
   done
@@ -520,15 +529,15 @@ state_find_row "$MUTANT_DIR/state-find-ignored"
   && ok "control: without the standing-state refusal a state whose age find cannot read is held live" \
   || bad "control: without the standing-state refusal a state whose age find cannot read is held live" "$STATE_FIND"
 # Planted: the worktree lookup dropped, so every old state reads as naming none.
-mutant no-lane-lookup 'wt=$("$SCRIPT_DIR/git-context" lane-worktree "${wt%%$'"'"'\t'"'"'*}" "${wt#*$'"'"'\t'"'"'}" "$root") || return 1' 'wt=""'
+mutant no-lane-lookup 'wt=$("$SCRIPT_DIR/git-context" lane-worktree "$wt" "$branch" "$root") || return 1' 'wt=""'
 shapes_run no-lane-lookup "$MUTANT_DIR/no-lane-lookup"
 [[ " $SHAPES" == *" 1:removed,removed "* ]] \
   && ok "control: without the worktree lookup an item on its linked worktree is pruned" \
   || bad "control: without the worktree lookup an item on its linked worktree is pruned" "got=$SHAPES"
 # Planted: a failed listing read as no worktree, so every old state the
 # listing would have held is pruned.
-mutant listing-ignored 'wt=$("$SCRIPT_DIR/git-context" lane-worktree "${wt%%$'"'"'\t'"'"'*}" "${wt#*$'"'"'\t'"'"'}" "$root") || return 1' \
-  'wt=$("$SCRIPT_DIR/git-context" lane-worktree "${wt%%$'"'"'\t'"'"'*}" "${wt#*$'"'"'\t'"'"'}" "$root") || wt=""'
+mutant listing-ignored 'wt=$("$SCRIPT_DIR/git-context" lane-worktree "$wt" "$branch" "$root") || return 1' \
+  'wt=$("$SCRIPT_DIR/git-context" lane-worktree "$wt" "$branch" "$root") || wt=""'
 listing_row listing-ignored "$MUTANT_DIR/listing-ignored"
 [[ "$LISTING" == rc=0\ * && "$LISTING" != *"removed=none"* ]] \
   && ok "control: reading a failed listing as no worktree prunes the states it would have held" \
@@ -550,10 +559,12 @@ while IFS='@' read -r name anchor replacement n want label; do
   shapes_run "$name" "$GC_DIR/workflow-state"
   [[ " $SHAPES" == *" $n:$want,$want "* ]] && ok "control: $label" || bad "control: $label" "got=$SHAPES"
 done <<'ROWS'
-main-answers@NR > 1 {@NR >= 1 {@8@kept@with the main checkout counted as a lane's tree a state naming it is held
+main-answers@[[ "$n" -eq 1 ]] || lane=true@lane=true@8@kept@with the main checkout counted as a lane's tree a state naming it is held
+stale-dir@[[ -d "$path" ]] || lane=false@:@12@kept@with a registered tree taken whatever its directory a branch-only state on a gone tree is held
+line-listing@git -C "$worktree" worktree list --porcelain -z >"$listing" || exit 1@git -C "$worktree" worktree list --porcelain | tr '\n' '\0' >"$listing" || exit 1@11@removed@with the line listing read a state naming a worktree whose path git quotes is pruned
 no-tree-match@[[ "$resolved" != "$want_tree" ]] || { printf '%s\n' "$path"; exit 0; }@:@2@removed@without the worktree match a state naming a linked worktree alone is pruned
 plain-dir@[[ -n "$want_tree" && -d "$want_tree" ]] || want_tree=""@[[ -z "$want_tree" || ! -d "$want_tree" ]] || { printf '%s\n' "$want_tree"; exit 0; }@10@kept@with any directory taken for a worktree a state naming a plain directory is held
-no-branch@[[ -n "$branch_hit" || -z "$want_branch" || "$branch" != "$want_branch" ]] || branch_hit="$path"@:@5@removed@without the branch lookup a branch-only state whose branch a linked tree holds is pruned
+no-branch@[[ "$lane" == false || -n "$branch_hit" || -z "$want_branch" ]] || branch_hit="$path"@:@5@removed@without the branch lookup a branch-only state whose branch a linked tree holds is pruned
 ROWS
 mutant no-fresh-hold 'if [[ -z "$recent" ]]; then' 'if true; then'
 control_bare no-fresh-hold '[[ ! -e tmp/completion-summary-KEN-1.md ]]' \

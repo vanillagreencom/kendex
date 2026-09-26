@@ -1151,16 +1151,17 @@ cmd_prune() {
     # round-prune reads it, never the main checkout. A state past the
     # retention that names no such worktree is an item nothing resumes, one a
     # close-out never reached, and it ages out with its files.
-    local recent wt root=""
+    local recent wt branch root=""
     for f in "$sd/$STATE_PREFIX-"*.json; do
         [[ -f "$f" && "$f" != "$sd/${state_file##*/}" ]] || continue
         if ! recent=$(find "$f" -mtime "-$days" -print 2>&1); then
             unit="$f" err="$recent"; state_message prune-age-unreadable "$@" >&2; return 1
         fi
         if [[ -z "$recent" ]]; then
-            wt=$(jq -r '[.worktree // "", .branch // ""] | @tsv' "$f") || return 1
+            wt=$(jq -r '.worktree // empty' "$f") || return 1
+            branch=$(jq -r '.branch // empty' "$f") || return 1
             [[ -n "$root" ]] || root=$(project_root) || return 1
-            wt=$("$SCRIPT_DIR/git-context" lane-worktree "${wt%%$'\t'*}" "${wt#*$'\t'}" "$root") || return 1
+            wt=$("$SCRIPT_DIR/git-context" lane-worktree "$wt" "$branch" "$root") || return 1
             [[ -n "$wt" ]] || continue
         fi
         f="${f#"$sd/$STATE_PREFIX-"}"
