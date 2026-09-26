@@ -1,1 +1,0 @@
-- `open-terminal` opens every lane window in the fleet's named tmux session and records it as `SESSION:WINDOW`, so a detached launch no longer opens where the watch does not look.

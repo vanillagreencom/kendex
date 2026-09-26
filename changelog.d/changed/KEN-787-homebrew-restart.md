@@ -1,1 +1,0 @@
-- A Homebrew kendex-cli 5.x install now upgrades to 1.0.0 through `brew upgrade`. The cask has no version scheme, so it says to uninstall the app and the kendex-cli formula, then reinstall.

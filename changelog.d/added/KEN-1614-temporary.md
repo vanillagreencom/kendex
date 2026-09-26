@@ -1,1 +1,0 @@
-- Naming a folder under a temporary path with `apply`, `refresh` or `updates --apply` is refused unless `--throwaway` is passed; `apply --plan` and a bare `updates` listing are not asked.

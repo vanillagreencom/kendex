@@ -1,1 +1,0 @@
-- Foreground refreshes and installs now wait for a source download already running in another kendex process instead of reporting every package as unfetched.

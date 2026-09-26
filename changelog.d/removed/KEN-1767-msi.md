@@ -1,1 +1,0 @@
-- The Windows `.msi` is no longer built or published; the NSIS setup `.exe` is the Windows download.

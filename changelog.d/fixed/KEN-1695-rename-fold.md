@@ -1,1 +1,0 @@
-- A Pi package counts as one package across every name it has shipped under, so `update-pi` now blocks a cross-scope duplicate where one scope names it currently and the other by an earlier name.

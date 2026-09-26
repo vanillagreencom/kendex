@@ -1,1 +1,0 @@
-- Show the built commit in `kendex --version` for the Arch `kendex-git` and `kendex-cli-git` packages, and name a maintainer with an address in the Linux `.deb`.
