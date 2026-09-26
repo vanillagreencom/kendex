@@ -66,8 +66,8 @@ tm set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 
 # A caller past the context mark, so every run below succeeds itself: the
-# reading its turn-end hook would have recorded for its pane, 95 percent of a
-# 1M window, in the overseer mailbox the succession reads.
+# reading its turn-end hook would have taken, 95 percent of a 1M window, handed
+# in as --context, and recorded for its pane, which names its model.
 # shellcheck source=../scripts/lib/lane-context.sh
 source "$SRC_DIR/lib/lane-context.sh"
 MARK='  kendex (ken-1453) Fable 5.1 (1M context) 95% (fixture@example.com)     /rc'
@@ -132,7 +132,7 @@ run_succeed() {
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     CLAUDE_CONFIG_DIR="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" \
     ORCH_OVERSEER_PREFERENCE=claude:1:high ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 \
-    "${1:-$SUCCEED}" -- --permission-mode dontAsk --verbose 2>&1)" || RC=$?
+    "${1:-$SUCCEED}" --context 950000:1000000 -- --permission-mode dontAsk --verbose 2>&1)" || RC=$?
   # The window the caller held, which the successor holds once the close ran.
   SUCC_PANE="$(tm list-panes -t fleet:1 -F '#{pane_id}' 2>/dev/null || true)"
 }

@@ -60,7 +60,7 @@ lane_env_prefix() { # HARNESS DIR
 # One row per harness,
 # `HARNESS|MODEL SPELLINGS|EFFORT SPELLINGS|EFFORT-IN-MODEL|ATTACH WORD|
 # PERMISSION SPELLINGS|TRANSFER PERMISSION SPELLINGS|LAUNCH SETTINGS|
-# QUESTION TOOL OFF`, each
+# QUESTION TOOL OFF|COMPACTION OFF`, each
 # spelling list space-separated, so a consumer's harness or a new flag spelling
 # is one row rather than a code path. A spelling that ends in `=` is a whole
 # token with its value attached; any other is a flag word taking the next token
@@ -83,18 +83,19 @@ lane_env_prefix() { # HARNESS DIR
 # one exists; the first paste a lane receives then answers that prompt, installs
 # the update and exits the session. `check_for_update_on_startup=false` is the
 # key the Codex config reference names for centrally managed installs, passed
-# per launch so no installed config is edited. The same column turns the
-# harness's own auto-compaction off, so a lane hands off at its own mark
-# (lib/lane-context.sh) before the harness compacts it: claude reads
-# DISABLE_AUTO_COMPACT from the `env` table its `--settings` flag carries, and
-# codex compacts at `model_auto_compact_token_limit`, which a limit past every
-# window never reaches. Pi has no launch word for it; open-terminal checks its
-# settings file instead. The ninth is the words that take
+# per launch so no installed config is edited. The ninth is the words that take
 # the harness question tool away, written as they stand, and `-` where this
 # table names none. A lane asks its overseer through `lane-mail ask`, and a
 # question tool in a lane opens a dialog nobody at the pane answers, so every
 # lane command carries them; an overseer carries them only where
-# ORCH_OVERSEER_QUESTION_TOOL is off.
+# ORCH_OVERSEER_QUESTION_TOOL is off. The tenth is the words that turn the
+# harness's own auto-compaction off, which every command a launcher builds
+# carries, so a session hands off at its own mark (lib/lane-context.sh) before
+# its harness compacts it, and `-` where the harness has no launch word for it:
+# claude reads DISABLE_AUTO_COMPACT from the `env` table its `--settings` flag
+# carries, and codex compacts at `model_auto_compact_token_limit`, which a limit
+# past every window never reaches. Pi's switch is its settings file, which
+# open-terminal reads instead.
 #
 # The FIRST spelling of each list is the one written; the rest are further
 # spellings a caller may have typed, which launch_choice_value reads.
@@ -139,10 +140,10 @@ lane_env_prefix() { # HARNESS DIR
 #             variable, JSON no flag word carries: the row names none, and an
 #             opencode lane keeps its question tool.
 LAUNCH_CHOICE_FLAGS=(
-  'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions|--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}|--disallowedTools=AskUserQuestion,EnterPlanMode'
-  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false;-c model_auto_compact_token_limit=9223372036854775807|-c features.default_mode_request_user_input=false'
-  'opencode|-m --model|-|-|-|-|-|-|-'
-  'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question'
+  'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions|-|--disallowedTools=AskUserQuestion,EnterPlanMode|--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}'
+  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false|-c features.default_mode_request_user_input=false|-c model_auto_compact_token_limit=9223372036854775807'
+  'opencode|-m --model|-|-|-|-|-|-|-|-'
+  'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question|-'
 )
 # The row for harness $1, empty where the table names no such harness.
 launch_choice_row() { # HARNESS
@@ -427,9 +428,10 @@ launch_choice_permission_write() { # HARNESS
 }
 
 # The words a launcher builds for HARNESS, left in LAUNCH_CHOICE_KEPT: that
-# harness's launch settings first, with `--question-off` its question-tool
-# words after them, then WORD... in order with every row's settings run and
-# question-tool run taken out wherever it stands whole. A caller's flags handed
+# harness's launch settings first, then its compaction words, with
+# `--question-off` its question-tool words after them, then WORD... in order
+# with every row's settings, compaction and question-tool runs taken out
+# wherever each stands whole. A caller's flags handed
 # on keep none of their own: the same harness would carry them twice, another
 # harness would be handed a word its launch form refuses, and whether a launch
 # keeps its question tool is the flag's answer, never the caller's words.
@@ -440,23 +442,19 @@ launch_choice_lead_settings() { # [--question-off] HARNESS WORD...
     question_off=true
     shift
   fi
-  local harness="$1" nl=$'\n' lead="" row name settings question run runs words line
+  local harness="$1" nl=$'\n' lead="" row name settings question compaction run words line
   shift
   words="$nl$(printf '%s\n' "$@")$nl"
   for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
-    IFS='|' read -r name _ _ _ _ _ _ settings question <<<"$row"
-    # The settings column is `;`-separated runs, each stripped on its own, so a
-    # caller carrying one of a harness's settings loses it whatever else that
-    # row sets.
-    runs="${settings//;/$nl}$nl$question"
-    while IFS= read -r run; do
-      [[ -n "$run" && "$run" != - ]] || continue
+    IFS='|' read -r name _ _ _ _ _ _ settings question compaction <<<"$row"
+    for run in "$settings" "$compaction" "$question"; do
+      [[ "$run" != - ]] || continue
       run="${run// /$nl}"
       while [[ "$words" == *"$nl$run$nl"* ]]; do words="${words/"$nl$run$nl"/$nl}"; done
-    done <<<"$runs"
+    done
     [[ "$name" == "$harness" ]] || continue
-    settings="${settings//;/ }"
     [[ "$settings" == - ]] || lead="${settings// /$nl}"
+    [[ "$compaction" == - ]] || lead="$lead$nl${compaction// /$nl}"
     [[ "$question_off" != true || "$question" == - ]] || lead="$lead$nl${question// /$nl}"
   done
   LAUNCH_CHOICE_KEPT=()
@@ -471,13 +469,24 @@ launch_choice_question_off() { # HARNESS
   local row words
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 0
-  IFS='|' read -r _ _ _ _ _ _ _ _ words <<<"$row"
+  IFS='|' read -r _ _ _ _ _ _ _ _ words _ <<<"$row"
   [[ "$words" == - ]] || printf '%s\n' "$words"
 }
 
-# Whether TEXT carries WORDS as consecutive tokens. Each token is compared with
-# its quotes and backslashes taken out, the shell quoting a caller writes into a
-# command it hands on; no question-tool word holds one of those characters.
+# The words that turn harness $1's own auto-compaction off, empty where the row
+# says `-` or the table names no such harness.
+launch_choice_compaction_off() { # HARNESS
+  local row words
+  row="$(launch_choice_row "$1")"
+  [[ -n "$row" ]] || return 0
+  IFS='|' read -r _ _ _ _ _ _ _ _ _ words <<<"$row"
+  [[ "$words" == - ]] || printf '%s\n' "$words"
+}
+
+# Whether TEXT carries WORDS as consecutive tokens. Each token of both is
+# compared with its quotes and backslashes taken out, the shell quoting a caller
+# writes into a command it hands on, so the claude compaction word, which holds
+# JSON quotes, matches however the command quotes it.
 launch_choice_words_present() { # WORDS TEXT
   local -a want=() tokens=()
   local i j tok
@@ -488,7 +497,7 @@ launch_choice_words_present() { # WORDS TEXT
     for ((j = 0; j < ${#want[@]}; j++)); do
       tok="${tokens[i + j]}"
       tok="${tok//[\'\"\\]/}"
-      [[ "$tok" == "${want[j]}" ]] || continue 2
+      [[ "$tok" == "${want[j]//[\'\"\\]/}" ]] || continue 2
     done
     return 0
   done

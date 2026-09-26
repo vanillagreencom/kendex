@@ -189,29 +189,6 @@ fi
 [[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { ot_message tracker-invalid "tracker=$TRACKER" >&2; exit 1; }
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { ot_message command-missing "options=--harness,--cmd" >&2; exit 1; }
 [[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
-# A fleet lane hands off at a share of its own window, which the harness adapter
-# in lib/lane-context.sh reads, and the harness's own compaction stays off so
-# the handoff comes first: claude and codex through the launch words the
-# launch-choice table in lib/lane-launch.sh leads every command with, Pi through
-# its settings file, which has no launch word and is checked here. A harness no
-# adapter reads is refused rather than launched into a fleet with nothing
-# judging its mark. A launch naming no fleet state has no overseer to hand off
-# to, and is judged on none of it.
-if [[ "$FLEET" == true ]]; then
-  case "$HARNESS" in
-    '' | claude | codex) ;;
-    pi)
-      pi_compaction_rc=0
-      lane_adapter_pi_compaction_on "$CLAIM_ROOT" || pi_compaction_rc=$?
-      case "$pi_compaction_rc" in
-        1) ;;
-        0) ot_message compaction-on "harness=pi" "file=${PI_CODING_AGENT_DIR:-${LANES_HOME:-$HOME}/.pi/agent}/settings.json" >&2; exit 1 ;;
-        *) ot_message compaction-on "harness=pi" "file=unreadable" >&2; exit 1 ;;
-      esac
-      ;;
-    *) ot_message unsupported-for-oversee "harness=$HARNESS" >&2; exit 1 ;;
-  esac
-fi
 # lane-host owns the setting's reading; it runs from this script's checkout,
 # whose project settings this script loaded, or from the caller's directory
 # when the script sits outside any checkout, since `cd ""` fails.
@@ -502,6 +479,57 @@ if ! LAUNCH_QUESTION_OFF="$(launch_choice_question_off "$LAUNCH_HARNESS")" \
   for question_word in ${question_words[@]+"${question_words[@]}"}; do question_fields+=("word=$question_word"); done
   ot_message launch-question-tool-missing "harness=$LAUNCH_HARNESS" ${question_fields[@]+"${question_fields[@]}"} >&2
   exit 1
+fi
+
+# A fleet lane hands off at a share of its own window, which a harness adapter
+# in lib/lane-context.sh reads, and runs with its harness's own compaction off,
+# so the handoff comes first. Judged on the harness the launch RUNS, as the
+# gates above are, and only where a fleet state is named: a launch outside any
+# fleet has no overseer to hand off to. A launch that turns compaction off on a
+# session whose window nothing can name would run it into its wall with neither
+# a handoff nor a compaction, so each harness is admitted only where both halves
+# hold:
+#   claude  its words from the launch-choice table, which a --cmd template has
+#           to carry itself as it carries the question-tool words, on a model
+#           whose window the claude adapter names
+#   codex   the same words; its rollout names its own window
+#   pi      its settings file turning compaction off, read on this machine, so
+#           a hosted Pi lane, whose host keeps its own, cannot be admitted, and
+#           an installed pi-hooks carrier that sends the window
+# Every other harness, and a launch naming none, has no adapter. A wake is not
+# judged: it re-enters a session its own launch was admitted with, and names no
+# model of its own.
+if [[ "$FLEET" == true && "$WAKE" != true ]]; then
+  case "$LAUNCH_HARNESS" in
+    claude | codex)
+      if [[ "$LAUNCH_HARNESS" == claude && -z "$(lane_adapter_claude_window "$LAUNCH_MODEL")" ]]; then
+        ot_message launch-window-unknown "harness=claude" "model=${LAUNCH_MODEL:-none}" >&2
+        exit 1
+      fi
+      LAUNCH_COMPACTION_OFF="$(launch_choice_compaction_off "$LAUNCH_HARNESS")"
+      if [[ -n "$CMD_TEMPLATE" ]] && ! launch_choice_words_present "$LAUNCH_COMPACTION_OFF" "$CMD_TEMPLATE"; then
+        compaction_fields=()
+        read -r -a compaction_words <<<"$LAUNCH_COMPACTION_OFF"
+        for compaction_word in "${compaction_words[@]}"; do compaction_fields+=("word=$compaction_word"); done
+        ot_message launch-compaction-missing "harness=$LAUNCH_HARNESS" "${compaction_fields[@]}" >&2
+        exit 1
+      fi
+      ;;
+    pi)
+      [[ "$LANE_HOST" == local ]] || { ot_message pi-compaction-unverified "host=$LANE_HOST" >&2; exit 1; }
+      pi_compaction_rc=0
+      lane_adapter_pi_compaction_on "$CLAIM_ROOT" || pi_compaction_rc=$?
+      case "$pi_compaction_rc" in
+        1) ;;
+        0) ot_message compaction-on "harness=pi" "file=$LANE_ADAPTER_PI_FILE" >&2; exit 1 ;;
+        *) ot_message pi-settings-unreadable "file=$LANE_ADAPTER_PI_FILE" >&2
+           printf '%s\n' "$LANE_ADAPTER_PI_CAUSE" >&2; exit 1 ;;
+      esac
+      lane_adapter_pi_window_read "$CLAIM_ROOT" \
+        || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; exit 1; }
+      ;;
+    *) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; exit 1 ;;
+  esac
 fi
 
 # Handoff is unattended. A harness whose row names a permission posture stalls
@@ -1503,7 +1531,12 @@ host_lane_marker() { # ITEM ROOT
   LANE_MARKER_FIELDS=("path=$marker")
   printf '%s\n' "$2" | host_transport put --item "$1" "$marker" || { host_marker_busy $?; return 1; }
   read_back="$(host_transport cat --item "$1" "$marker")" || { host_marker_busy $?; return 1; }
-  [[ "$read_back" == "$2" ]]
+  [[ "$read_back" == "$2" ]] || return 1
+  # The context reading a session before this launch recorded in the mailbox,
+  # emptied as lane-marker removes it locally: `lanes context` reads an empty
+  # record as none, and the host has no verb that deletes.
+  LANE_MARKER_FIELDS=("path=$2/tmp/lane-mail/$1/$LANE_CONTEXT_RECORD")
+  host_transport put --item "$1" "$2/tmp/lane-mail/$1/$LANE_CONTEXT_RECORD" </dev/null || { host_marker_busy $?; return 1; }
 }
 
 # The launch record lane-mail-check reads: the marker under the common git

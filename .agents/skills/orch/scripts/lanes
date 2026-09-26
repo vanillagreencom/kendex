@@ -128,8 +128,10 @@
 #         places, read through its host where that record names one; the
 #         caller's own row with no lane record is the overseer, read from
 #         the overseer mailbox and only where the reading names this pane.
-#         CONTEXT_USED_PCT is the share of that window CONSUMED, and a row
-#         with no reading is `unrecorded`, never empty. HANDOFF is
+#         CONTEXT_USED_PCT is the share of that window CONSUMED. A row
+#         with no reading is `unrecorded`, never empty; one whose reading names
+#         no window is `window-unread`; one whose record could not be read, or
+#         a claimed window no running lane record places, is `unreadable`. HANDOFF is
 #         `required` at or past ORCH_HANDOFF_CONTEXT_PCT of the window
 #         (default 90), the judge the hook uses, or at a HEADROOM at or
 #         below ORCH_HANDOFF_HEADROOM_PCT (default 3).
@@ -1957,7 +1959,6 @@ context_record_fetch() { # LANE CALLER
 			printf 'no running fleet lane record names the window %s, so the mailbox its reading is recorded in is unknown\n' "$lane"
 			return 2
 		fi
-		[[ -n "$CONTEXT_OVERSEER_BOX" ]] || { printf 'the main checkout could not be resolved, so the overseer mailbox is unknown\n'; return 2; }
 		path="$CONTEXT_OVERSEER_BOX/$LANE_CONTEXT_RECORD"
 		[[ -e "$path" ]] || return 1
 		out="$(cat -- "$path" 2>&1)" || { printf '%s\n' "$out"; return 2; }
@@ -2662,7 +2663,7 @@ case "$SUB" in
 			CONTEXT_LANES="$("$SCRIPT_DIR/workflow-state" get oversee '[.lanes // [] | .[] | select(.status == "running")]' 2>/dev/null)" \
 				|| die context-fleet oversee
 		fi
-		CONTEXT_OVERSEER_BOX="$("$SCRIPT_DIR/git-context" common-root . 2>/dev/null)/tmp/lane-mail/overseer" || CONTEXT_OVERSEER_BOX=""
+		CONTEXT_OVERSEER_BOX="$(lane_context_overseer_box "$PWD")"
 		# A separate list, never LANE_CLAIMS_LIVE itself: the caller's pane is
 		# a pane to measure and not a launch in flight, and the usage pass
 		# below counts that global's rows against each account.

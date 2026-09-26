@@ -98,7 +98,7 @@ case "${1:-}" in
        && "$(wc -c < "$STUB_DIR/succeed.check-count")" -gt 1 ]]
     then cat "$STUB_DIR/succeed.check-later"
     elif [[ -f "$STUB_DIR/succeed.check" ]]; then cat "$STUB_DIR/succeed.check"
-    else echo "oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"; fi
+    else echo "oversee-succeed: account-below-mark headroom=80"; fi
     exit 0 ;;
   --dead-pane)
     printf '%s\n' "$*" >> "$STUB_DIR/succeed.launched"
@@ -1068,7 +1068,7 @@ state_with "$LINE"
 mark_stands
 run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 1
 assert_eq "marks=$(marks_seen)" "marks=1" "the crossing is reported once" "$ERR"
-check_switch_after_first "oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
+check_switch_after_first "oversee-succeed: account-below-mark headroom=80"
 run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 2
 assert_eq "rc=$RC judged=$(checks_since_switch) marks=$(marks_seen)" \
   "rc=0 judged=2 marks=0" \

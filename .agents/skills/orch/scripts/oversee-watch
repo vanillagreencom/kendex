@@ -1252,17 +1252,13 @@ overseer_launch_args() {
 }
 
 overseer_command_record() {
-  local pane="${TMUX_PANE:-}" key server window line record detail
+  local pane="${TMUX_PANE:-}" key server window line record detail box
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
-  # The key is the orch library's, the same function the report and the lane
-  # turn-end hook read a session's own key with: the hook compares its own
-  # against the pair written here, and a second derivation that drifted would
-  # leave the overseer's turn end judged by nothing, with no keyed line.
-  # That library swallows tmux's own words, and a second read of `#{pid}` here
-  # would be a twin of the verb it owns, so the refusal names the read that
-  # failed instead of replaying a message this script cannot have. The window
-  # read below runs here and does replay tmux's. A key that came back in some
-  # other shape is its own cause and is replayed as one.
+  # The key is the orch library's, which the report and the turn-end hook read
+  # a session's own key with, so the hook's comparison cannot drift from this
+  # pair. That library swallows tmux's words and a second `#{pid}` read here
+  # would twin it, so the refusal names the failed read. The window read below
+  # replays tmux's words; a key of another shape is replayed as its own cause.
   if ! key="$(lane_context_caller_key)"; then
     overseer_record_refuse "tmux reported no server pid for pane $pane" \
       overseer-unrecorded "pane=$pane" "step=identity"
@@ -1289,6 +1285,10 @@ overseer_command_record() {
   detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
     set oversee overseer "$record" 2>&1)" \
     || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=write"
+  # The overseer mailbox's reading is the last session's until this one's first
+  # turn end records its own, and a pane key cannot tell the two apart.
+  box="$(lane_context_overseer_box "$PROJECT_ROOT")"
+  rm -f -- "${box:?}/$LANE_CONTEXT_RECORD"
 }
 
 # Whether PANE, a pane id, is one the tmux server this start runs on no longer

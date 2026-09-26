@@ -72,8 +72,8 @@
 #        The CONTEXT mark reads the reading this session's own turn-end hook
 #        recorded in the overseer mailbox (lib/lane-context.sh), the tokens
 #        its transcript names and the window its model has, and only a
-#        reading that names this very pane: a successor never judges the
-#        figure its predecessor left there. It is judged at
+#        reading that names this very pane; the watch a new overseer starts
+#        removes the reading its predecessor left. It is judged at
 #        ORCH_HANDOFF_CONTEXT_PCT of that window, the one setting and the one
 #        judge the lane turn-end hook uses too. Under it prints
 #        `context-below-mark`; no reading, or one whose window its adapter
@@ -102,7 +102,9 @@
 #        is judged on, so an entry whose rank the tier ladder cannot answer
 #        refuses `model-failed` and ends the run rather than being skipped: a
 #        preference naming a rank that does not exist is a setting to fix, not
-#        a lane to pass over. An entry with no qualifying lane IS skipped.
+#        a lane to pass over; a claude entry whose model the claude adapter
+#        names no window for refuses `model-window-unknown` the same way. An
+#        entry with no qualifying lane IS skipped.
 #        A named entry's LAUNCH carries the model and effort words its own row
 #        writes. A same-harness entry keeps the caller's permission words
 #        exactly. A cross-harness entry transfers only a full-bypass posture
@@ -335,6 +337,7 @@ message() { # KEY FIELD=VALUE...
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     walled-lane-unknown) text='The account this walled overseer is spending could not be named, so the one account its successor must not open on is unknown and nothing was launched. A session carrying neither of the two account variables, under a harness whose default this reader cannot resolve, is the shape that reaches this.' ;;
     model-failed) text='kendex tier-model named no model for this entry.' ;;
+    model-window-unknown) text='The claude adapter names no context window for the model this entry resolves to, and a successor runs with its compaction off, so it would reach its wall with no handoff mark. Nothing was launched. Name a rank whose model the window table in lib/adapters/claude.sh names.' ;;
     launch-choice-failed) text='The launch flag table cannot state a required model or an equivalent cross-harness permission posture. Nothing was launched.' ;;
     no-lane-qualifies) text='No lane walked is above the headroom trigger; nothing was launched and this overseer keeps running. The walk is every ORCH_OVERSEER_PREFERENCE entry, counted in entries, and then the fleet-wide sweep of the harness the fallback field names, which is none where the walk never reached that entry, so a preference aimed at a spent harness is not what this says. walled and unmeasured are the accounts those sweeps refused and the accounts nothing could measure, counted once per sweep. The mark field names the trigger. At mark=headroom the account and resets fields name the account that ran out and when the bucket this session spends frees up. At mark=wall the caller pane read walled and no mark was judged, so no account is named here; the caller that read that wall names it.' ;;
     launch-trust-missing) text='The folder-trust entry for the caller directory could not be made in the config this codex successor would read, so nothing was launched and the caller keeps running. The successor would open on the folder-trust question and wait there for an answer nobody at the pane gives. The reason field names what failed: trust-refused is an answer already recorded for that directory that is not trust, which this will not overwrite; config-unreadable is the account config present and unreadable, a dangling shim link being the usual cause; account-store is the account transcript directory that could not be made; home-path, home-create, home-link, home-entry, config-write and config-install are the private CODEX_HOME under the account that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; entry-unreadable is the entry written and not read back.' ;;
@@ -670,9 +673,11 @@ CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 
   || die pane-unreadable "pane=$CALLER_PANE"
 # The harness is the pane's foreground command, and the context is the reading
 # this session's own turn-end hook recorded in the overseer mailbox, accepted
-# only where it names this pane: a successor in another pane, and a session
-# started by hand in this one before its first turn end has recorded, never
-# judge the figure a predecessor left there. A foreground command that names
+# only where it names this pane, so a successor in another pane never judges
+# its predecessor's figure. One started in this same pane starts its watch,
+# which removes that reading before its first pass; until a session reset in
+# place by the harness ends its first turn, it is judged on the reading before
+# the reset. A foreground command that names
 # neither harness, an agent-confine launcher, takes the harness that reading
 # names; with neither the run refuses. A dead pane runs no command and records
 # nothing, so the recorded line answers for all of it instead.
@@ -683,8 +688,7 @@ if [[ "$MODE" != dead ]]; then
   CALLER_SERVER="$(tmux display-message -p -t "$CALLER_PANE" '#{pid}' 2>"$DEP_ERR")" \
     || die pane-unreadable "pane=$CALLER_PANE"
   reading_harness="" reading_model=""
-  OVERSEER_BOX="$("$SCRIPT_DIR/git-context" common-root "$PROJECT_ROOT" 2>/dev/null)" || OVERSEER_BOX="$PROJECT_ROOT"
-  OVERSEER_BOX="$OVERSEER_BOX/tmp/lane-mail/overseer"
+  OVERSEER_BOX="$(lane_context_overseer_box "$PROJECT_ROOT")"
   if [[ -f "$OVERSEER_BOX/$LANE_CONTEXT_RECORD" ]] \
      && lane_context_record_fields "$(cat -- "$OVERSEER_BOX/$LANE_CONTEXT_RECORD" 2>/dev/null)" \
      && [[ "$LANE_CTX_PANE_KEY" == "$CALLER_SERVER $CALLER_PANE" ]]; then
@@ -1076,6 +1080,11 @@ for entry in ${ENTRIES[@]+"${ENTRIES[@]}"}; do
     # entry: it is a setting to fix, not a lane to pass over.
     model="$(kendex tier-model "$harness" "$rank" 2>"$DEP_ERR")" && [[ -n "$model" ]] \
       || die model-failed "entry=$entry"
+    # A successor runs with its harness's own compaction off, so a claude model
+    # whose window the adapter cannot name would reach its wall unjudged. Also a
+    # setting to fix, so it ends the run like a rank the ladder cannot answer.
+    [[ "$harness" != claude || -n "$(lane_adapter_claude_window "$model")" ]] \
+      || die model-window-unknown "entry=$entry" "model=$model"
     pick_model="$model"
   fi
   # The caller's own lane is kept on `has-room` alone. At the trigger it is

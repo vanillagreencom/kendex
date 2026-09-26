@@ -669,12 +669,12 @@ mail_check() {
 
 # --- the handoff marks ---------------------------------------------------
 #
-# A lane hands ITSELF off. The overseer's `lanes context` poll of a pane is a
-# backstop: it is blind to a hosted pane, no watch event carries a context
-# figure, and an overseer between events, at its own wall or in succession
-# reads nothing at all, so lanes ran 50 to 190 thousand tokens past the mark
-# waiting to be told. Two marks fire one instruction, and the lane's own
-# handoff record clears both.
+# A lane hands ITSELF off. The overseer's `lanes context` poll of the readings
+# this hook records is a backstop: no watch event carries a context figure, and
+# an overseer between events, at its own wall or in succession reads nothing at
+# all, so lanes ran 50 to 190 thousand tokens past the mark waiting to be told.
+# Two marks fire one instruction, and the lane's own handoff record clears
+# both.
 #
 # The OVERSEER is judged here too, on two marks of its own. It does not share
 # the reads below: `oversee-succeed --check-marks` is the one judge of where an
@@ -969,8 +969,7 @@ context_read_and_record() { # BOX PANE_KEY
 # directory that cannot be made, leaves OVERSEER_BOX naming where it would be,
 # and the record's own failure reports it.
 overseer_box() {
-  COMMON_ROOT=$("$SCRIPTS/git-context" common-root "$ROOT" 2>/dev/null) || COMMON_ROOT=""
-  OVERSEER_BOX="${COMMON_ROOT:-$ROOT}/tmp/lane-mail/overseer"
+  OVERSEER_BOX=$(lane_context_overseer_box "$ROOT")
   mkdir -p -- "$OVERSEER_BOX" 2>/dev/null || :
 }
 

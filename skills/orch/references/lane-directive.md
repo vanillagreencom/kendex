@@ -20,6 +20,13 @@ On `lanes pick` exit 3, read `lanes list`, wait only when its lanes are over the
 - `host-credential-dead`: this machine's copy of the account expired and could not be renewed, and the provider reports holding that same account. Renew the login on this machine for that config dir; a provider that re-seeds the host from that directory at every `create` sends the dead copy again. Reported for claude lanes, the only ones whose local credential `lanes` reads an unrenewable expiry from. A relaunch onto that same account proceeds instead, on the copy the provider installed.
 - `lane-judge-failed`: the judge refused before it answered, a malformed `--lane-max-pct` among the causes. The keyed `lanes:` line above it names which.
 
+A fleet launch, one naming `--state-dir`, meets one more gate, which admits a harness only where the lane runs with its own compaction off and a harness adapter can name its window:
+
+- `launch-compaction-missing` (naming `harness` and one `word` per word): the `--cmd` command leaves that harness's own compaction on. Add the words, in order; [skill-rules.md § Coordination](skill-rules.md#coordination) lists them.
+- `launch-window-unknown` (naming the claude `model`): the claude adapter names no window for that model. Launch on a model its window table names.
+- `unsupported-for-oversee` (naming `harness`, `none` for a launch naming none): no adapter reads that harness, or, with `reason=no-window-read`, the Pi carrier installed sends no `context_window`. Launch on claude, codex, or a Pi with the current pi-hooks.
+- `compaction-on`, `pi-settings-unreadable` and `pi-compaction-unverified` (naming the `file` or `host`): Pi would compact the lane, its settings file could not be read, or the lane is hosted, whose Pi settings this machine cannot read. Set Pi's `compaction.enabled` to `false`, repair the file, or launch the Pi lane locally.
+
 An unreadable in-flight claim store is not a refusal here: this gate asks for a wall, which no claim count enters, so `lanes` reports the store on stderr as `pick-lane-claims` and answers the wall anyway. Fix the claims directory, or set `OVERSEE_WATCH_STATE_DIR`, so the next `lanes pick` across the fleet can still see what is running.
 
 `host-accounts-unanswered` is a notice, not a refusal: nothing said which accounts the host holds, so the launch is judged on this machine's reading as an unhosted one is. A keyed `lanes:` line above the notice names a provider failure, with the provider's own message above that line; no line above it means the read of the answer failed on this machine. Fix what that line names, or read the launch's outcome as a local measurement.
