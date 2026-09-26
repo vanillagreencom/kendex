@@ -315,6 +315,31 @@ grep -qxF 'tar: planted failure' "$TMP_ROOT/fail-tar.err" \
 grep -qxF 'find: planted failure' "$TMP_ROOT/fail-find.err" \
   && pass "the age refusal carries find's own words" || fail "the age refusal carries find's own words"
 
+# A find that fails only on the read of KEN-4's standing state, which decides
+# whether KEN-4 is live, and answers for every other path. SCRIPT's prune under
+# that stub: STATE_FIND reads its status, first line, what it removed and
+# whether it wrote an archive.
+REAL_FIND="$(command -v find)"
+STATE_FIND_BIN="$TMP_ROOT/state-find-bin"
+mkdir -p "$STATE_FIND_BIN"
+cat > "$STATE_FIND_BIN/find" <<STUB
+#!/bin/sh
+case "\$1" in */workflow-state-KEN-4.json) echo "find: planted failure" >&2; exit 1 ;; esac
+exec "$REAL_FIND" "\$@"
+STUB
+chmod +x "$STATE_FIND_BIN/find"
+state_find_row() { # SCRIPT
+  local fp="$TMP_ROOT/state-find-${1##*/}" before src=0
+  build "$fp"
+  before="$(tree_of "$fp")"
+  run_prune "$fp" "$1" "$STATE_FIND_BIN:" --keep tmp/waiter.run >/dev/null 2>"$fp.err" || src=$?
+  STATE_FIND="rc=$src key=$(head -n 1 "$fp.err" | sed "s|$fp/|FP/|") removed=$([[ "$(tree_of "$fp")" == "$before" ]] && echo none || echo some) archive=$([[ -z "$(find "$fp/fleet" -name '*.tgz' 2>/dev/null || true)" ]] && echo none || echo some)"
+}
+state_find_row "$WS"
+[[ "$STATE_FIND" == "rc=1 key=workflow-state: prune-age-unreadable path=FP/tmp/workflow-state-KEN-4.json removed=none archive=none" ]] \
+  && ok "a find that cannot read a standing state's age is refused naming that state and removes nothing" \
+  || bad "a find that cannot read a standing state's age is refused naming that state and removes nothing" "$STATE_FIND"
+
 # A removal that fails part way: the archive already holds every path, and
 # the rows have already left the state.
 REAL_RM="$(command -v rm)"
@@ -396,6 +421,13 @@ control no-worktree-hold "" "" '[[ ! -e tmp/audit-KEN-3.json ]]' \
 mutant no-state-bound 'if [[ -z "$recent" ]]; then' 'if false; then'
 control_bare no-state-bound '[[ -e tmp/audit-KEN-4.json ]]' \
   "without the retention and worktree bound an abandoned item's state holds its files forever"
+# Planted: the standing-state refusal dropped, so the failed find's words read
+# as a recent write and the state it could not judge holds its item live.
+mutant state-find-ignored 'unit="$f" err="$recent"; state_message prune-age-unreadable "$@" >&2; return 1' ':'
+state_find_row "$MUTANT_DIR/state-find-ignored"
+[[ "$STATE_FIND" == rc=0\ * ]] \
+  && ok "control: without the standing-state refusal a state whose age find cannot read is held live" \
+  || bad "control: without the standing-state refusal a state whose age find cannot read is held live" "$STATE_FIND"
 mutant no-fresh-hold 'if [[ -z "$recent" ]]; then' 'if true; then'
 control_bare no-fresh-hold '[[ ! -e tmp/completion-summary-KEN-1.md ]]' \
   "without the retention hold a running item with a fresh state and no worktree loses its old files"
