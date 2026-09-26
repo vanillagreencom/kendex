@@ -2,22 +2,64 @@
 
 Deep halves of the Codex notes in [../SKILL.md](../SKILL.md). Everything here is Codex-specific.
 
-## Shell-shape classifier (`approval_policy = never`)
+## Shell approval by launch mode
 
-The CLI classifies shell CONTROL SYNTAX as approval-required however harmless the inner commands are. Rejected shapes: `for`/`while` loops; multi-command blocks (`;`- or newline-separated); `VAR=x cmd` env-assignment prefixes; `$(...)` substitution, including a literal backtick anywhere in the command, even inside a quoted search pattern; array building; heredocs; value-plumbing pipelines; and redirection. Write search patterns with the regex hex escape `\x60` (`[\x60]` inside a bracket expression) in regex mode — `rg -F` has no escapes. Canonical safe search shape:
+In the check below, Codex refused a command for one of three causes: an execpolicy rule match, its built-in `rm -f` check, or the sandbox. It refused no shell form. A redirect, a pipeline, a `;` list, `$(...)`, a heredoc, a `for` loop, an env-assignment prefix, a literal backtick and `git rebase` each ran in every mode, as far as the sandbox let it write.
+
+| Mode | Where kendex launches it | Probe flags | Sandbox | `rm -f` |
+|------|--------------------------|-------------|---------|---------|
+| Bypass | Lanes: the spelling [lane-launch.sh](../scripts/lib/lane-launch.sh) writes | `--dangerously-bypass-approvals-and-sandbox` | None | Refused |
+| `never`, full access | The user config default, `approval_policy = "never"` with `sandbox_mode = "danger-full-access"`; `-a never` on that config | none | None | Refused |
+| `never`, workspace-write | `-a never` on a config whose sandbox is `workspace-write` | `-c approval_policy='"never"' -s workspace-write` | A write outside the working directory fails `Read-only file system` | Refused |
+| Approve for me | Lanes: the accepted spelling `--approve-for-me` | `--approve-for-me` | workspace-write; a write outside the working directory failed, then its reviewed escalation ran | Reviewed, then ran |
+| Read-only | second-opinion: `codex exec -s read-only` | `-s read-only` | Every write fails `Read-only file system` | Refused |
+
+### Refusals
+
+| Cause | Text the tool returns | Action |
+|-------|-----------------------|--------|
+| An execpolicy rule with `decision="prompt"` matched; observed in bypass and `never`, full access | `approval required by policy, but AskForApproval is set to Never` | Do not retry and do not wait: no approval can arrive. The rule matches a command prefix, not a shell form. Rules live in `$CODEX_HOME/rules/*.rules` and the project's `.codex/rules/*.rules`; `codex execpolicy check --rules <file> <command words>` prints the matching rule. Run the replacement the rule's owner names, or report a blocker. |
+| The built-in `rm -f` check, in every mode but approve for me | `rm -f style commands are not permitted. Use a safer approach` | Drop `-f`: `rm <path>` passed the check in every mode. |
+| The sandbox, in the workspace-write and read-only modes | `Read-only file system` | Read-only writes nothing. Workspace-write writes inside the working directory; a write outside it is a blocker. |
+| A kendex PreToolUse hook, in every mode | `Command blocked by PreToolUse hook: <hook>: ...` | Use the accepted form the hook names. The project's `.codex/hooks.json` lists the hooks; each refuses a named command, and none refuses a shell form. |
+
+### Check
+
+Observed with `codex-cli 0.157.1`. Each mode ran one `codex exec` whose prompt listed these commands, one shell tool call each, in a scratch directory under `tmp/` that holds a one-commit git repository `repo`:
+
+| Shape | Command | Result |
+|-------|---------|--------|
+| Redirect | `echo probe > redirect.txt` | Ran; read-only failed `Read-only file system` |
+| Pipeline | `printf 'a\nb\n' \| wc -l` | Ran |
+| `;` list | `echo one; echo two` | Ran |
+| Substitution | `echo "$(printf sub)"` | Ran |
+| Heredoc | `cat <<'EOF' > heredoc.txt`, one body line, `EOF` | Ran; read-only failed |
+| Loop | `for i in 1 2; do echo "$i"; done` | Ran |
+| Env prefix | `PROBE_VAR=1 printenv PROBE_VAR` | Ran |
+| Backtick | ``grep -c '`' prompt-copy.txt`` | Ran |
+| Rebase | `git -C repo rebase HEAD` | Ran; read-only failed on the ref lock |
+| `rm -f` | `rm -f redirect.txt heredoc.txt` | Refused, except in approve for me |
+| Rule match | `git -C repo rebase HEAD`, with `.codex/rules/probe.rules` in the scratch directory holding `prefix_rule(pattern=["git", "-C", "repo", "rebase"], decision="prompt")` | Refused in bypass and `never`, full access |
+| Hook | `pkill -f ken1894-no-such-process`, run with `--dangerously-bypass-hook-trust` | Refused by `block-argv-kill` in bypass and read-only |
+
+```bash
+codex exec --json --ephemeral --skip-git-repo-check -C <scratch-dir> <probe-flags> - < <prompt-file>
+```
+
+A `command_execution` item with `"status":"completed"` in the `--json` output is a command that ran. Rerun the check after a Codex upgrade, and update these tables when a result changes.
+
+### Substitutes
+
+orch runs one simple command per tool call in every harness ([../SKILL.md](../SKILL.md) § Harness-Safe Shell). These substitutes keep a command inside that rule; no mode above refuses the forms they replace. In a fenced command, write a backtick in a search pattern with the regex hex escape `\x60` (`[\x60]` inside a bracket expression) in regex mode; `rg -F` has no escapes:
 
 ```bash
 rg -n '\x60kendex refresh\x60' skills/
 ```
 
-`approval required by policy, but AskForApproval is set to Never` means the shape was flagged, not access. Do not retry the shape and do not wait for approval — none can arrive.
-
-Rewrites:
-
 - Polling loops → the orch waiters `ci-wait`, `approval-wait`, `queue-wait`, launched through [Waiter launch](waiter-launch.md). Save its detach command with the harness file-write tool, then invoke the saved script as one simple command. Use the harness wait mechanism to poll the completion file.
 - Multi-item sweeps → one simple command per item.
 - Derived values → helper scripts (`git-context`, `workflow-state`), never substitution.
-- File writes → harness file tools or `apply_patch`, never redirection.
+- File writes → harness file tools, `apply_patch`, or a direct redirect such as `echo value > path` where the sandbox allows the write. Never wrap a write in a Python subprocess.
 - Related `workflow-state` operations → one `get '{...}'` or one `update '... | ...'`. Split what cannot collapse — `set-git-head`/`set-now` (they compute their own value), a read mixed with a write, a `// empty` default that would collapse a combined object, a per-item loop — into separate one-command calls.
 - Several file reads → separate read commands or the harness file-read tool.
 - An optional environment variable affecting a command → omit the option and let the script auto-detect, or read it with `printenv VAR` and run a second command with a literal value. Never put an unset-variable expansion in a required command.
@@ -26,9 +68,9 @@ Rewrites:
 
 The prefix is an environment precondition, not part of the required command — normalize it where the command is accepted into the workflow, before any agent is asked to run it. `printenv VAR` confirms ordinary variables; `locale` confirms locale variables by their effective `LC_*` lines (an unset `LC_ALL` with an effective `C` locale satisfies `LC_ALL=C`). `env VAR=value cmd args` is not an accepted shape. If the ambient environment does not satisfy the precondition, report a blocker instead of running under the wrong environment.
 
-### Policy-rejected porcelain
+### Rule-refused porcelain
 
-The classifier rejects some porcelain verbs outright, top-level `git rebase` among them; no user authorization or delegation lifts it. The replacement for a clean linear issue branch is the worktree skill's guarded `create <ID> --reuse --replay` (or `--restack --replay` to pause on conflicts) with `worktree restack continue|skip|abort` — worktree SKILL.md § Policy-blocked rebase (cherry-pick replay fallback) — never an improvised force-push. A dirty tree or merge commits in range put the branch outside that recipe: report a blocker.
+Where an execpolicy rule refuses top-level `git rebase`, no user authorization or delegation lifts the refusal. The replacement for a clean linear issue branch is the worktree skill's guarded `create <ID> --reuse --replay` (or `--restack --replay` to pause on conflicts) with `worktree restack continue|skip|abort` — worktree SKILL.md § Policy-blocked rebase (cherry-pick replay fallback) — never an improvised force-push. A dirty tree or merge commits in range put the branch outside that recipe: report a blocker.
 
 ## Standing watch
 
