@@ -246,7 +246,8 @@ ORCH_REPORT_COLUMNS = "issue,what it is,why it matters"
 # Zero disables the rate trigger.
 ORCH_OVERSEER_WALL_MINUTES = "20"
 
-# Maximum number of better successor accounts that starts succession.
+# Accounts above ORCH_OVERSEER_HEADROOM_PCT, the overseer's own counted where it
+# has room, at or below which succession moves it to one with more headroom.
 # Zero disables the qualifying-account trigger.
 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 

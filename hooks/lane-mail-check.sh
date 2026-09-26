@@ -221,7 +221,7 @@ message() { # KEY VALUE [CAUSE]
           "$2" "$MARK" "$HANDOFF_INSTRUCTION"
         ;;
       qualifying=*)
-        printf 'oversee-succeed finds %s successor accounts, at or below the ORCH_OVERSEER_SUCCESSOR_ACCOUNTS mark of %s. Succeed this session yourself before no account remains.\n%s\n' \
+        printf 'oversee-succeed finds %s accounts above the headroom mark, the account this session runs on counted where it has room, at or below the ORCH_OVERSEER_SUCCESSOR_ACCOUNTS mark of %s. Succeed this session yourself onto another of them before no account remains.\n%s\n' \
           "$2" "$MARK" "$HANDOFF_INSTRUCTION"
         ;;
       question-tool=*)

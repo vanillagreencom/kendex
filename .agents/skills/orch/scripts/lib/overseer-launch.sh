@@ -9,6 +9,8 @@
 # tries. What is shared is here:
 #
 #   ol_preference_entries  the ORCH_OVERSEER_PREFERENCE parse
+#   ol_pick_record         one `lanes pick --json` record, for a caller's
+#                          own counts
 #   ol_pick_lane           one `lanes pick` for one entry, with the counts a
 #                          refusal reports
 #   ol_command_line        the harness command for a picked lane, brief
@@ -78,6 +80,22 @@ ol_preference_entries() { # VALUE
   done
 }
 
+# ol_pick_record HARNESS MODEL TRIGGER [EXCLUDE_DIR] — the one `lanes pick
+# --json` over HARNESS at TRIGGER, its record into OL_PICK_RECORD on every
+# exit, since exit 3 prints its counts too, and `lanes pick`'s own status
+# returned. The pick ol_pick_lane makes and every count a caller holds a
+# launch to ask this one question, so no two of them judge an account two
+# ways.
+OL_PICK_RECORD=""
+ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
+  local floor=() exclude=() rc=0 LC_ALL=C
+  [[ -n "$(lane_context_mark_model "$1" "$2")" ]] || floor=(--binding-floor)
+  [[ -z "${4:-}" ]] || exclude=(--exclude-lane "$4")
+  OL_PICK_RECORD="$("$SCRIPT_DIR/lanes" pick --harness "$1" --min-headroom-pct "$3" \
+    ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?
+  return "$rc"
+}
+
 # ol_pick_lane HARNESS MODEL TRIGGER [EXCLUDE_DIR] — the config dir `lanes
 # pick` names for HARNESS, into OL_PICKED_DIR. MODEL is the one the launched
 # session will run, empty where nothing names one: the bound is judged on the
@@ -96,12 +114,10 @@ OL_PICKED_DIR=""
 OL_WALKED_WALLED=0
 OL_WALKED_UNMEASURED=0
 ol_pick_lane() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
-  local record rc=0 floor=() exclude=() walled unmeasured LC_ALL=C
+  local record rc=0 walled unmeasured LC_ALL=C
   OL_PICKED_DIR=""
-  [[ -n "$(lane_context_mark_model "$1" "$2")" ]] || floor=(--binding-floor)
-  [[ -z "${4:-}" ]] || exclude=(--exclude-lane "$4")
-  record="$("$SCRIPT_DIR/lanes" pick --harness "$1" --min-headroom-pct "$3" \
-    ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?
+  ol_pick_record "$@" || rc=$?
+  record="$OL_PICK_RECORD"
   if (( rc == 3 )); then
     walled="$(jq -r '.walled // empty' <<<"$record" 2>/dev/null)" || walled=""
     unmeasured="$(jq -r '.unmeasured // empty' <<<"$record" 2>/dev/null)" || unmeasured=""

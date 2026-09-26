@@ -68,6 +68,29 @@
 #        the unmeasured account is never reused for the successor, because
 #        the only state that keeps the caller's own lane is a headroom
 #        MEASURED above the trigger (step 3).
+#        The QUALIFYING mark (ORCH_OVERSEER_SUCCESSOR_ACCOUNTS, 0 turns it
+#        off) counts the accounts of this overseer's harness above
+#        ORCH_OVERSEER_HEADROOM_PCT, by the `lanes pick` judgement a successor
+#        pick takes, and counts this overseer's own account among them where
+#        its headroom was measured above that trigger. It fires where that
+#        count is at or below the setting, holds at least one account other
+#        than this one, and the account the pick names has more headroom than
+#        this one. The count once left this overseer's own account out, so
+#        with two accounts above the trigger it read one from either account:
+#        the overseer moved, its successor counted the account just left, and
+#        only the headroom comparison held it there. That comparison passes
+#        again once the two readings cross, and the move itself crosses them,
+#        since the successor now spends the account it landed on and no longer
+#        spends the one it left. Counted whole, the figure reads the same from
+#        every account it covers, so no move inside one harness lowers it: at
+#        the default of 1 the mark fires only where this overseer's own
+#        account is not measured above the trigger and exactly one other
+#        account is. A succession this mark starts is held to the same count
+#        in step 3: an entry whose successor, on the lane picked, would count
+#        a figure that fires this mark again at its first turn end is
+#        skipped, and a walk that skips every entry it picked a lane for
+#        refuses `successor-refires`, naming that count, with this overseer
+#        still running.
 #        The CONTEXT mark reads the pane's status line
 #        (lib/lane-context.sh). Its window is the one the line names, or the
 #        window the model it names runs, where the line names none. A window
@@ -353,6 +376,7 @@ message() { # KEY FIELD=VALUE...
     walled-lane-unknown) text='The account this walled overseer is spending could not be named, so the one account its successor must not open on is unknown and nothing was launched. A session carrying neither of the two account variables, under a harness whose default this reader cannot resolve, is the shape that reaches this.' ;;
     model-failed) text='kendex tier-model named no model for this entry.' ;;
     launch-choice-failed) text='The launch flag table cannot state a required model or an equivalent cross-harness permission posture. Nothing was launched.' ;;
+    successor-refires) text='Every successor this walk picked a lane for would count, from that lane, as many accounts above the headroom trigger as this overseer does, at or below ORCH_OVERSEER_SUCCESSOR_ACCOUNTS, and fire this qualifying mark again at its first turn end. Nothing was launched and this overseer keeps running. The count field is the figure that successor would read and the entry field the last entry skipped on it. A count that includes the account the overseer runs on reads the same from every account it covers, so a setting at or above that count is one no move settles: lower the setting.' ;;
     no-lane-qualifies) text='No lane walked is above the headroom trigger; nothing was launched and this overseer keeps running. The walk is every ORCH_OVERSEER_PREFERENCE entry, counted in entries, and then the fleet-wide sweep of the harness the fallback field names, which is none where the walk never reached that entry, so a preference aimed at a spent harness is not what this says. walled and unmeasured are the accounts those sweeps refused and the accounts nothing could measure, counted once per sweep. The mark field names the trigger. At mark=headroom the account and resets fields name the account that ran out and when the bucket this session spends frees up. At mark=wall the caller pane read walled and no mark was judged, so no account is named here; the caller that read that wall names it.' ;;
     launch-trust-missing) text='The folder-trust entry for the caller directory could not be made in the config this codex successor would read, so nothing was launched and the caller keeps running. The successor would open on the folder-trust question and wait there for an answer nobody at the pane gives. The reason field names what failed: trust-refused is an answer already recorded for that directory that is not trust, which this will not overwrite; config-unreadable is the account config present and unreadable, a dangling shim link being the usual cause; account-store is the account transcript directory that could not be made; home-path, home-create, home-link, home-entry, config-write and config-install are the private CODEX_HOME under the account that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; entry-unreadable is the entry written and not read back.' ;;
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
@@ -839,28 +863,35 @@ if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
 fi
 
 # Capacity is the only fleet-wide read. Headroom, rate and context are already
-# decided, so a slow sweep cannot hide a mark this pane already reached.
+# decided, so a slow sweep cannot hide a mark this pane already reached. It is
+# lib/overseer-launch.sh's ol_pick_record, the question the walk's pick and
+# its successor count ask too, so the three cannot judge an account three ways.
+#
+# QUALIFYING_COUNT is the accounts a successor could open on, this one left
+# out, and at least one of them is what makes a move possible at all.
+# QUALIFYING_TOTAL is the figure the mark is set against: those accounts and
+# this overseer's own where its headroom was measured above the trigger. The
+# header's step 2 says why the mark is never set against the first.
+QUALIFYING_TOTAL=""
 if (( JUDGES )) && (( SUCCESSOR_ACCOUNTS > 0 )) && [[ -z "$MARK_KIND" && "$CALLER_STATE" != at-trigger ]]; then
   capacity_rc=0
-  capacity_floor=()
-  [[ -n "$(lane_context_mark_model "$CALLER_HARNESS" "$CALLER_MODEL")" ]] || capacity_floor=(--binding-floor)
-  capacity_record="$("$SCRIPT_DIR/lanes" pick --harness "$CALLER_HARNESS" \
-    --min-headroom-pct "$HEADROOM_TRIGGER" --exclude-lane "$CALLER_CFG" \
-    ${capacity_floor[@]+"${capacity_floor[@]}"} ${CALLER_MODEL:+--model "$CALLER_MODEL"} \
-    --json 2>"$DEP_ERR")" || capacity_rc=$?
+  ol_pick_record "$CALLER_HARNESS" "$CALLER_MODEL" "$HEADROOM_TRIGGER" "$CALLER_CFG" || capacity_rc=$?
   case "$capacity_rc" in
     0|3)
       capacity_row="$(jq -r '[ (.qualifying_count // ""), (.effective_headroom_pct // "") ] | @tsv' \
-        <<<"$capacity_record" 2>"$DEP_ERR")" || capacity_row=""
+        <<<"$OL_PICK_RECORD" 2>"$DEP_ERR")" || capacity_row=""
       QUALIFYING_COUNT="${capacity_row%%$'\t'*}"
       QUALIFYING_HEADROOM="${capacity_row#*$'\t'}"
       if matches "$QUALIFYING_COUNT" '^[0-9]+$' \
          && { (( QUALIFYING_COUNT == 0 )) || matches "$QUALIFYING_HEADROOM" '^[0-9]{1,3}$'; }; then QUALIFYING_STATE=measured; fi
       ;;
   esac
-  if [[ "$QUALIFYING_STATE" == measured ]] \
-     && (( QUALIFYING_COUNT > 0 && QUALIFYING_COUNT <= SUCCESSOR_ACCOUNTS \
-           && QUALIFYING_HEADROOM > CALLER_HEADROOM )); then MARK_KIND=qualifying; fi
+  if [[ "$QUALIFYING_STATE" == measured ]]; then
+    QUALIFYING_TOTAL="$QUALIFYING_COUNT"
+    [[ "$CALLER_STATE" != has-room ]] || QUALIFYING_TOTAL=$((QUALIFYING_COUNT + 1))
+    if (( QUALIFYING_COUNT > 0 && QUALIFYING_TOTAL <= SUCCESSOR_ACCOUNTS \
+          && QUALIFYING_HEADROOM > CALLER_HEADROOM )); then MARK_KIND=qualifying; fi
+  fi
 fi
 
 if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
@@ -921,7 +952,7 @@ if [[ "$MODE" == check ]]; then
     message mark-reached kind=rate "value=$WALL_PROJECTED" "mark=$WALL_MINUTES" \
       "succession=$SUCCESSION" "account=${CALLER_ACCOUNT:-unknown}"
   elif [[ "$MARK_KIND" == qualifying ]]; then
-    message mark-reached kind=qualifying "value=$QUALIFYING_COUNT" "mark=$SUCCESSOR_ACCOUNTS" \
+    message mark-reached kind=qualifying "value=$QUALIFYING_TOTAL" "mark=$SUCCESSOR_ACCOUNTS" \
       "succession=$SUCCESSION"
   else
     message mark-reached kind=context "value=$tokens" "mark=$CONTEXT_MARK" \
@@ -1019,6 +1050,8 @@ pick_lane_dir() { # HARNESS [MODEL]
   ol_pick_lane "$1" "${2:-}" "$HEADROOM_TRIGGER" "$exclude"
 }
 
+# The successor count the last entry skipped on, for the refusal after the walk.
+REFIRE_COUNT="" REFIRE_ENTRY=""
 for entry in ${ENTRIES[@]+"${ENTRIES[@]}"}; do
   rc=0
   if [[ "$entry" == caller ]]; then
@@ -1099,6 +1132,26 @@ for entry in ${ENTRIES[@]+"${ENTRIES[@]}"}; do
       message successor-lane-spent "lane=$WALLED_LANE" "entry=$entry" >&2
       continue
     fi
+    # A qualifying succession is held to the count its successor will read at
+    # its first turn end: the accounts of that successor's harness above the
+    # trigger other than the lane picked, plus the lane picked, which the pick
+    # has just judged above it. A figure that fires this mark again sends the
+    # successor straight back, so the entry is skipped, and a walk with no
+    # entry left refuses below naming it rather than as a fleet with no room.
+    if [[ "$MARK_KIND" == qualifying ]]; then
+      rc=0
+      ol_pick_record "$harness" "$pick_model" "$HEADROOM_TRIGGER" "$OL_PICKED_DIR" || rc=$?
+      case "$rc" in
+        0|3) ;;
+        *) die lanes-failed "entry=$entry" "exit=$rc" "step=successor-count" ;;
+      esac
+      successor_count="$(jq -r '.qualifying_count // empty' <<<"$OL_PICK_RECORD" 2>"$DEP_ERR")" || successor_count=""
+      matches "$successor_count" '^[0-9]+$' || die lanes-failed "entry=$entry" "step=successor-count"
+      if (( successor_count > 0 && successor_count + 1 <= SUCCESSOR_ACCOUNTS )); then
+        REFIRE_COUNT=$((successor_count + 1)) REFIRE_ENTRY="$entry"
+        continue
+      fi
+    fi
     lane_dir="$OL_PICKED_DIR"
   fi
   chosen="$entry"
@@ -1123,6 +1176,8 @@ if [[ -z "$chosen" ]]; then
   # "walked" means here.
   WALK=("entries=$NAMED_ENTRIES" "fallback=$FALLBACK_WALKED"
         "walled=$OL_WALKED_WALLED" "unmeasured=$OL_WALKED_UNMEASURED")
+  [[ -z "$REFIRE_COUNT" ]] \
+    || die successor-refires "count=$REFIRE_COUNT" "mark=$SUCCESSOR_ACCOUNTS" "entry=$REFIRE_ENTRY"
   [[ "$MODE" != walled ]] || die_status 3 no-lane-qualifies "${WALK[@]}" mark=wall
   [[ "$MARK_KIND" != headroom ]] || die_status 3 no-lane-qualifies "${WALK[@]}" \
     mark=headroom "account=${CALLER_ACCOUNT:-unknown}" "resets=${CALLER_RESETS:-none}"

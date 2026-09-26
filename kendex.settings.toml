@@ -141,8 +141,8 @@ ORCH_LANE_ACCOUNT_CLAIMS = "3"
 ORCH_LANE_MAX_PCT = "95"
 
 # The overseer moves before its account walls when its current binding bucket
-# reaches 5 percent headroom, its projected wall is within 20 minutes, or only
-# one other account still qualifies for the successor.
+# reaches 5 percent headroom, its projected wall is within 20 minutes, or its
+# own account is not measured above that mark and only one other account is.
 ORCH_OVERSEER_HEADROOM_PCT = "5"
 ORCH_OVERSEER_WALL_MINUTES = "20"
 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
