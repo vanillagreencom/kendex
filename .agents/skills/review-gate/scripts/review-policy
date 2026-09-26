@@ -48,7 +48,10 @@ Exit 2 prints no policy record. The caller cannot assert a class.
 
 the REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS entries that end in `[bot]`,
 with that suffix dropped: the spelling GitHub's GraphQL API gives a bot's
-login. An empty list names no bot, and nothing is waived.
+login. An empty list names no bot, and nothing is waived. Under
+REVIEW_GATE_THREADS=off the list is empty whatever the trusted logins name:
+the predicate's thread term is what counts a lapsed waiver as open, and with
+it off a waiver resolution would outlive the class that earned it.
 USAGE
 }
 
@@ -89,6 +92,15 @@ fi
 
 if [ "${1:-}" = "--review-bots" ]; then
   [ "$#" -eq 1 ] || fail policy-arguments "$*" "--review-bots takes no other arguments"
+  THREADS="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 2
+  case "$THREADS" in
+    enforce) ;;
+    off)
+      printf 'review-bots=\n'
+      exit 0
+      ;;
+    *) fail policy-threads-mode "$THREADS" "REVIEW_GATE_THREADS must be 'enforce' or 'off'" ;;
+  esac
   TRUSTED="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 2
   TRUSTED_N="$(rg_pack "$TRUSTED" ';,')" ||
     fail policy-review-bots REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "the trusted-login list could not be read"

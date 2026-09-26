@@ -10,7 +10,10 @@
 # the thread. Its last word: the resolver is the identity that posted the
 # newest waiver reply in the thread, and that identity has written nothing
 # since. A thread someone answered and resolved again is theirs, not a waiver.
-# A lapsed waiver counts as an open thread wherever threads are counted.
+# review-predicate.sh's thread term and pr-merge count a lapsed waiver as an
+# open thread. Readers of isResolved alone (pr-watch's threads-open, github
+# pr-threads' unresolved_count, orch queue-wait's late-findings guard) see it
+# as resolved until the merge route reopens it.
 
 # The waiver reply's opening, which names the class and the head the class
 # was measured at. Anchored, and the head is a whole commit SHA, so a quote of

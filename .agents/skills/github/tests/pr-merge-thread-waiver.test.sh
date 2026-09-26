@@ -64,10 +64,21 @@ printf 'change_class=%s\n' "$STUB_CLASS"
 EOF
 chmod +x "$MIRROR/skills/harness-ci/scripts/change-class"
 
+# A review gate installed at an older revision than this github skill: its
+# owner stands with no waiver rule beside it.
+NO_RULE="$TMPDIR/no-rule-tree"
+for mirrored in github review-gate; do mirror_tree "$NO_RULE" "$mirrored"; done
+rm -- "$NO_RULE/skills/review-gate/scripts/lib/waiver.sh"
+mkdir -p "$NO_RULE/skills/harness-ci/scripts"
+cp -- "$MIRROR/skills/harness-ci/scripts/change-class" "$NO_RULE/skills/harness-ci/scripts/change-class"
+NO_RULE_PR_MERGE="$NO_RULE/skills/github/scripts/commands/pr-merge.sh"
+[[ -f "$NO_RULE_PR_MERGE" && ! -e "$NO_RULE/skills/review-gate/scripts/lib/waiver.sh" ]] || { echo "the no-rule mirror is malformed" >&2; exit 2; }
+
 
 # The out field's fixed texts; the err field spells the same ones as macros.
 WAIVED="unresolved_threads_waived: 1 review-bot thread(s) open, waived by the review gate's class policy for this change, and the merge route resolves them before it arms"
 UNREADABLE="review_policy_unreadable: The review gate's class policy could not be resolved for this pull request"
+NO_RULE_ISSUE="review_policy_unreadable: The review gate's waiver rule could not be loaded beside its class policy"
 PERSON="unresolved_threads: 1 actionable thread(s) need attention"
 MERGE_PRE="$CHECK_POLICY,view:head"
 # The reply trace names the class and the head it was measured at, shortened.
@@ -98,6 +109,10 @@ a class policy the classifier cannot answer blocks a bot's thread rather than wa
 a class the classifier did not measure blocks rather than waive, whatever it named|checks:ci-required threads:actionable class-policy:unmeasured|check-classified|0|merge=false transient=false $OPEN runs=- issues=[$UNREADABLE;$PERSON] warnings=[] waiver=- reopen=[]|class: class=render measured=false cause=stub;review-gate-error=policy-unmeasured value=cause=stub;review-policy: the change classifier fell back to standard instead of measuring a class;blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
 a range naming a commit this checkout lacks blocks rather than waive|checks:ci-required threads:actionable class-policy:range-absent|check-classified|0|merge=false transient=false $OPEN runs=- issues=[$UNREADABLE;$PERSON] warnings=[] waiver=- reopen=[]|{fetch-no-origin};blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
 an unreadable pull request range blocks rather than waive|checks:ci-required threads:actionable class-policy:range-fail|check-classified|0|merge=false transient=false $OPEN runs=- issues=[$UNREADABLE;$PERSON] warnings=[] waiver=- reopen=[]|blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
+with the thread term off a bot's thread on a waived class is no waiver and blocks|checks:ci-required threads:bot class-policy:trivial env:REVIEW_GATE_THREADS=off|check-classified|0|merge=false transient=false $OPEN runs=- issues=[$PERSON] warnings=[] waiver=- reopen=[]|blocked;head-run: none|calls=$CHECK_POLICY auth=<unset>
+a review gate with no waiver rule and no thread needs no rule|checks:ci-required threads:-|check-no-rule|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[] waiver=- reopen=[]|mergeable;head-run: none|calls=$CHECK auth=<unset>
+a review gate with no waiver rule refuses an open thread the rule could waive|checks:ci-required threads:bot class-policy:trivial|check-no-rule|0|merge=false transient=false $OPEN runs=- issues=[$NO_RULE_ISSUE] warnings=[] waiver=- reopen=[]|blocked;head-run: none|calls=$CHECK auth=<unset>
+a review gate with no waiver rule refuses a resolved thread carrying the merge route's reply|checks:ci-required threads:waived-resolved class-policy:standard|check-no-rule|0|merge=false transient=false $OPEN runs=- issues=[$NO_RULE_ISSUE] warnings=[] waiver=- reopen=[]|blocked;head-run: none|calls=$CHECK auth=<unset>
 "
 
 # The merge modes resolve each waived thread, one reply naming the class and
@@ -118,6 +133,7 @@ a thread the merge route resolved is reopened before --auto blocks on a class se
 a reopen that fails is named, and --auto still blocks|checks:ci-required threads:waived-resolved class-policy:standard reopen:fail post-entry|auto-classified|1|-|pr-merge: thread-reopen-failed id=PRRT_waived;{\"error\":\"reopen refused\"};{\"success\":false,\"unresolved\":[],\"failed\":[\"PRRT_waived\"]};{blocked};{permanent};✗ {threads:1};{hint-threads}|calls=$CHECK_POLICY,graphql:reopen(PRRT_waived) auth=<unset>
 a waiver a person replied after is reopened before --auto blocks on a waived class|checks:ci-required threads:waived-person-reply class-policy:trivial post-entry|auto-classified|1|-|{reopened:PRRT_waived_reply};{blocked};{permanent};✗ {threads:1};{hint-threads}|calls=$CHECK_POLICY,graphql:reopen(PRRT_waived_reply) auth=<unset>
 --dry-run on a lapsed waiver reopens nothing|checks:ci-required threads:waived-resolved class-policy:standard post-entry|dry-classified|1|-|{blocked};{permanent};✗ {threads:1};{hint-threads}|calls=$CHECK_POLICY auth=<unset>
+the immediate merge runs beside a review gate with no waiver rule when no thread needs it|checks:ci-required threads:- post:MERGED merge-commit:merged-oid|immediate-no-rule|0|-|{no-token};MERGED PR #123|calls=$CHECK,view:head,merge,graphql:queue auth=<unset>
 a head that moved after the class was measured blocks before any thread is touched|checks:ci-required threads:bot class-policy:trivial head-moved:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb post-entry|auto-classified|1|-|Warnings:;⚠ {waived:1};BLOCKED PR #123 — the class policy waived its bot threads at $RANGE_HEAD, not at the head being merged (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)|calls=$MERGE_PRE auth=<unset>
 a failed reply blocks with nothing armed, and names the thread|checks:ci-required threads:two-bots class-policy:trivial reply:fail post-entry|auto-classified|1|-|Warnings:;⚠ {waived:2};BLOCKED PR #123 — the reply on waived bot thread PRRT_bot_a failed;{\"error\":\"reply refused\"}|calls=$MERGE_PRE,graphql:reply(PRRT_bot_a:trivial$AT) auth=<unset>
 a failed resolve blocks with nothing armed, and names the thread|checks:ci-required threads:bot class-policy:trivial resolve:fail post-entry|auto-classified|1|-|Warnings:;⚠ {waived:1};BLOCKED PR #123 — resolving waived bot thread PRRT_post_merge_bot failed;{\"error\":\"resolve refused\"};{\"success\":false,\"resolved\":[],\"failed\":[\"PRRT_post_merge_bot\"]}|calls=$MERGE_PRE,graphql:reply(PRRT_post_merge_bot:trivial$AT),graphql:resolve(PRRT_post_merge_bot) auth=<unset>

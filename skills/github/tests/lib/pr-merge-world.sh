@@ -49,10 +49,12 @@
 #          auto-classified | immediate-classified | expected-classified:<sha> |
 #          dry-classified
 #          (run from the mirror tree whose harness-ci sibling is the classifier
-#          stub, which pr-merge-thread-waiver.test.sh builds as $MIRROR)
+#          stub, which pr-merge-thread-waiver.test.sh builds as $MIRROR) |
+#          check-no-rule | immediate-no-rule (run from that suite's mirror
+#          whose review gate lacks lib/waiver.sh, $NO_RULE_PR_MERGE)
 #   out    check: `merge=<bool> transient=<bool> state=<S> mergeable=<M>
 #          at=<mergedAt|-> runs=<ids|-> issues=[a;b] warnings=[c]`;
-#          check-classified adds ` waiver=<class>@<head>[<ids>]`, or
+#          check-classified and check-no-rule add ` waiver=<class>@<head>[<ids>]`, or
 #          ` waiver=-` for none, then ` reopen=[<ids>]`; otherwise stdout,
 #          `-` when empty
 #   err    stderr's lines joined by `;`, leading spaces dropped, blank lines
@@ -287,6 +289,9 @@ argv_for() {
     immediate-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --keep-branch ;;
     expected-classified:*) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --keep-branch --expected-head "${1#expected-classified:}" ;;
     dry-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --dry-run --keep-branch ;;
+    # The mirror whose review gate has no waiver rule beside its owner.
+    check-no-rule) printf '%s\n' "$NO_RULE_PR_MERGE" 123 --check ;;
+    immediate-no-rule) printf '%s\n' "$NO_RULE_PR_MERGE" 123 --keep-branch ;;
     auto) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch ;;
     immediate) printf '%s\n' "$PR_MERGE" 123 --keep-branch ;;
     force) printf '%s\n' "$PR_MERGE" 123 --force --keep-branch ;;
@@ -365,7 +370,7 @@ check_text() {
 stdout_text() {
   [[ -s "$TMPDIR/stdout" ]] || { printf -- '-'; return; }
   if [[ "$1" == check ]]; then check_text <"$TMPDIR/stdout"; return; fi
-  if [[ "$1" == check-classified ]]; then
+  if [[ "$1" == check-classified || "$1" == check-no-rule ]]; then
     printf '%s' "$(check_text <"$TMPDIR/stdout")"
     jq -j '" waiver=" + (.thread_waiver | if . == null then "-" else "\(.class)@\(.head)[\(.threads | join(","))]" end) + " reopen=[\(.thread_reopen | join(","))]"' <"$TMPDIR/stdout" 2>/dev/null || printf ' waiver=unparseable'
     return
@@ -390,6 +395,7 @@ run() {
     -u ORCH_ADMIN_MERGE_GH_CONFIG_DIR -u ORCH_ADMIN_MERGE_CLASSES -u ORCH_MERGE_BYPASS -u GH_CONFIG_DIR \
     -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u REVIEW_GATE_CONTEXT \
     -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_CLASS_POLICY -u REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS \
+    -u REVIEW_GATE_THREADS \
     STUB_CALL_LOG="$CALL_LOG" STUB_AUTH_LOG="$AUTH_LOG" \
     ${W_ENV[@]+"${W_ENV[@]}"} "${argv[@]}" >"$TMPDIR/stdout" 2>"$TMPDIR/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=%s auth=%s' "$rc" "$(stdout_text "$1")" "$(err_lines)" "$(calls)" "$(auth)"

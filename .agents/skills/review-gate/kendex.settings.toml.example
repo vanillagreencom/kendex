@@ -65,7 +65,8 @@ REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable 
 
 # "enforce" fails closed on unresolved threads CI-side; "off" only where a
 # server-side zero-bypass ruleset already enforces thread hygiene. Evidence
-# and changes-requested still fail closed either way.
+# and changes-requested still fail closed either way. "off" also waives no
+# review-bot thread on a `none` class row.
 REVIEW_GATE_THREADS = "enforce"
 
 # Bounded attempts per predicate evidence read. A read failing every attempt
