@@ -5,6 +5,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../scripts" && pwd)"
 SCRATCH="$(mktemp -d)"; trap 'rm -rf -- "$SCRATCH"' EXIT
+TMP_ROOT="$SCRATCH"
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 git init -q "$SCRATCH/seed"; git -C "$SCRATCH/seed" config gc.auto 0; git -C "$SCRATCH/seed" config maintenance.auto false; git -C "$SCRATCH/seed" config user.email test@example.com; git -C "$SCRATCH/seed" config user.name test
 git -C "$SCRATCH/seed" commit -qm initial --allow-empty; git -C "$SCRATCH/seed" branch -M main
 mkdir "$SCRATCH/bin"; printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*"' '[[ "$1" != "$FAIL_STEP" ]]' > "$SCRATCH/bin/kendex"; chmod +x "$SCRATCH/bin/kendex"
@@ -38,15 +41,14 @@ ROWS
 }
 table "$DIR/post-merge" real assert_eq
 # Must-fail control: a copy with no adopt step fails the verify row. Its judge
-# counts nothing, so the misses it expects stay out of the suite's tally. It
-# runs from a copy of the skill tree, since sync-base finds the github skill
-# beside orch.
+# counts nothing, so the misses it expects stay out of the suite's tally. The
+# mutant tree is named orch, with the github skill linked beside it, since
+# sync-base finds its auth helper there.
 miss() { [[ "$1" == "$2" ]] || { printf 'miss %s rc=%s\n' "$3" "${1%%:*}"; return 1; }; }
-step='  step adopt "$SCRIPT_DIR/adopt-writer" . || exit $?'
-assert_eq "$(grep -cxF -- "$step" "$DIR/post-merge" || true)" 1 "control finds the adopt step as one line to strip"
-mkdir "$SCRATCH/mutant"; cp -R "$DIR/.." "$SCRATCH/mutant/orch"; ln -s "$(cd "$DIR/../../github" && pwd)" "$SCRATCH/mutant/github"
-step="$step" awk '$0 == ENVIRON["step"] { print "  :"; next } { print }' "$DIR/post-merge" >"$SCRATCH/mutant/orch/scripts/post-merge"
-rc=0; out="$(table "$SCRATCH/mutant/orch/scripts/post-merge" mutant miss 2>"$SCRATCH/control-error")" || rc=$?
+mutant="$(mutant_scripts orch post-merge)/post-merge" || exit 1
+ln -s "$(cd "$DIR/../../github" && pwd)" "$SCRATCH/github"
+mutate_file "$mutant" 'step adopt "$SCRIPT_DIR/adopt-writer" . || exit $?' ':'
+rc=0; out="$(table "$mutant" mutant miss 2>"$SCRATCH/control-error")" || rc=$?
 assert_eq "$rc:$out" "1:miss verify rc=1" "control: a copy with no adopt step fails the verify row" "$SCRATCH/control-error"
 
 echo
