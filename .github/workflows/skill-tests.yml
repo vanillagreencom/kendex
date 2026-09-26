@@ -45,9 +45,9 @@ name: Skill Tests
 # skills/orch/tests/run-all.sh now runs a shard's suites `nproc` at a time
 # and prints one `suite=<name> seconds=<n>` line per suite, so their next CI
 # run re-measures them, and the comment above the orch shard steps holds
-# that run's figures. `guards-tools` on both runners, `worktree` on macOS,
-# and `linear` and `rest` on Linux do not run through run-all.sh and stand
-# past their figure pending a split.
+# run 36195213656's figures. `guards-tools` on both runners, `worktree` on
+# macOS, and `linear` and `rest` on Linux do not run through run-all.sh and
+# stand past their figure pending a split.
 #
 # A SPLIT GOES AS FAR AS ITS SEAM REACHES and no further — a name partition, a
 # scans-against-suites cut, a package boundary with its slowest tail moved

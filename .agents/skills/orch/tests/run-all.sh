@@ -24,10 +24,10 @@
 # answer (a stock macOS has no nproc). A suite's stdout and stderr are held
 # until it exits and then printed whole under its header, so two suites
 # never interleave; headers come in completion order. A suite in ALONE
-# below runs by itself after the others. Each suite prints one line when it
-# starts, so a run cut off by a signal or a job timeout still names every
-# suite that was running; after its output comes one line, and after the
-# last suite one total line:
+# below runs by itself after the others. run-all.sh prints a start line as
+# it launches each suite, so a run cut off by a signal or a job timeout still
+# names every suite that was running; after each suite's output it prints
+# one line, and after the last suite one total line:
 #
 #   start suite=<name>
 #   suite=<name> seconds=<n> pass=<n> fail=<n>
