@@ -221,15 +221,30 @@ assert_eq "$(sed 's/ at=[^ ]*//' "$timeout_dir/exit")" "guard-exit=124 verdict=n
   "the sentinel file carries the guard-exit line and the bound's verdict on one line"
 assert_eq "$(sed -n 's/^guard-exit=[0-9]* at=\([^ ]*\).*$/\1/p' "$timeout_dir/exit" | grep -c -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')" "1" \
   "and one UTC timestamp beside it"
+# The wall time beside it: its three lines, its end the sentinel's own at=, its
+# seconds that span, and the span the command's, which a 2-second bound killed.
+# A missing file reads empty, so its rows fail rather than end the suite.
+timing_field() { sed -n "s/^$1=//p" "$timeout_dir/timing" 2>/dev/null || true; }
+t_start="$(timing_field started-at)"
+t_end="$(timing_field ended-at)"
+t_secs="$(timing_field seconds)"
+assert_eq "$(sed 's/=.*//' "$timeout_dir/timing" 2>/dev/null | tr '\n' ' ' || true)" "started-at ended-at seconds " \
+  "the timing file carries the start, the end and the seconds on their own"
+assert_eq "$t_end" "$(sed -n 's/^guard-exit=[0-9]* at=\([^ ]*\).*$/\1/p' "$timeout_dir/exit")" \
+  "and its end is the time the sentinel records"
+assert_eq "$t_secs" "$(jq -n --arg a "$t_start" --arg b "$t_end" '($b | fromdateiso8601) - ($a | fromdateiso8601)')" \
+  "and its seconds are the span from its start to its end"
+assert_eq "$([[ "$t_secs" -ge 2 ]] && echo within || echo "outside:$t_secs")" "within" \
+  "and the span is the command's: at least its 2-second bound"
 run_script "$RUN" --record --run-dir "$timeout_dir"
-assert_eq "$OUT rc=$RC" "validate-mode=full verdict=no-verdict rc=0" \
-  "the record of a run killed at its bound reads no-verdict, never pass or FAILING" "$ERR"
+assert_eq "$OUT rc=$RC" "validate-mode=full verdict=no-verdict seconds=$t_secs started-at=$t_start ended-at=$t_end rc=0" \
+  "the record of a run killed at its bound reads no-verdict, never pass or FAILING, and carries its wall time" "$ERR"
 
 # Control: a sentinel reader that files the bound's verdict with the failures
 # hands the receipt a FAILING for that same cut-off run.
 mutant mutant-cut-failing '*" verdict=no-verdict") SENTINEL_VERDICT=no-verdict ;;' '*" verdict=no-verdict") SENTINEL_VERDICT=FAILING ;;'
 run_script "$MUTANT" --record --run-dir "$timeout_dir"
-assert_eq "$OUT" "validate-mode=full verdict=FAILING" \
+assert_eq "$OUT" "validate-mode=full verdict=FAILING seconds=$t_secs started-at=$t_start ended-at=$t_end" \
   "control: with the bound's verdict unread the cut-off run's record reads FAILING" "$ERR"
 
 # Control: with the own-exit marker never written, a command's own exit 124
@@ -349,7 +364,9 @@ for row in "${MODE_ROWS[@]}"; do
   assert_eq "$(start_line "$mode_dir" validate-mode) base=$got_base" "$want_mode base=$want_base" \
     "$label — the start record names the mode and base that ran" "$ERR"
   run_script "$RUN" --record --run-dir "$mode_dir"
-  assert_eq "$OUT" "validate-mode=$want_mode verdict=pass" "$label — the run's record names that mode and the pass" "$ERR"
+  assert_eq "$(sed -E 's/ seconds=[0-9]+ started-at=[^ ]+ ended-at=[^ ]+$/ seconds=N started-at=T ended-at=T/' <<<"$OUT")" \
+    "validate-mode=$want_mode verdict=pass seconds=N started-at=T ended-at=T" \
+    "$label — the run's record names that mode, the pass and its wall time" "$ERR"
 done
 # The last range run's started line keeps the shape every waiter reads; the
 # class fields that close it are the classifier rows' to pin.
@@ -655,6 +672,15 @@ assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^class: class=\([a-z]*\) 
 
 # label|arguments after the worktree or run directory|refusal's first line
 proj_refuse="$(make_mode_proj proj-mode-refuse "$RANGE_CMD")"
+# A verdict with no wall time beside it, and one wall time per malformed field.
+for name in untimed badtimed badstart badend; do
+  mkdir -p "$TMP_ROOT/$name"
+  printf 'validate-mode=full\n' > "$TMP_ROOT/$name/start"
+  printf 'guard-exit=0 at=2026-01-01T00:55:00Z\n' > "$TMP_ROOT/$name/exit"
+done
+printf 'started-at=2026-01-01T00:00:00Z\nended-at=2026-01-01T00:55:00Z\nseconds=soon\n' > "$TMP_ROOT/badtimed/timing"
+printf 'started-at=2026-01-01 00:00:00\nended-at=2026-01-01T00:55:00Z\nseconds=3300\n' > "$TMP_ROOT/badstart/timing"
+printf 'started-at=2026-01-01T00:00:00Z\nended-at=soon\nseconds=3300\n' > "$TMP_ROOT/badend/timing"
 MODE_REFUSALS=(
   "a validation mode outside the two is refused, naming it|--worktree $proj_refuse --validate-mode fast|dev-validate-run: invalid-mode option=--validate-mode value=fast"
   "a range run with no base is refused|--worktree $proj_refuse --validate-mode range|dev-validate-run: required option=--base validate-mode=range"
@@ -667,6 +693,10 @@ MODE_REFUSALS=(
   "a record of a directory no run started is refused|--record --run-dir $TMP_ROOT/unstarted|dev-validate-run: no-run path=$TMP_ROOT/unstarted/start"
   "a record whose start names no mode is refused|--record --run-dir $stale|dev-validate-run: record-unreadable path=$stale/start validate-mode="
   "a call budget handed to the record is refused|--record --run-dir $stale --budget 5|dev-validate-run: option-unused option=--budget mode=record"
+  "a record of a verdict with no wall time is refused|--record --run-dir $TMP_ROOT/untimed|dev-validate-run: timing-unreadable path=$TMP_ROOT/untimed/timing"
+  "a record of a wall time whose seconds are no number is refused|--record --run-dir $TMP_ROOT/badtimed|dev-validate-run: timing-unreadable path=$TMP_ROOT/badtimed/timing"
+  "a record of a wall time whose start is no UTC time is refused|--record --run-dir $TMP_ROOT/badstart|dev-validate-run: timing-unreadable path=$TMP_ROOT/badstart/timing"
+  "a record of a wall time whose end is no UTC time is refused|--record --run-dir $TMP_ROOT/badend|dev-validate-run: timing-unreadable path=$TMP_ROOT/badend/timing"
 )
 for row in "${MODE_REFUSALS[@]}"; do
   IFS='|' read -r label args want <<<"$row"

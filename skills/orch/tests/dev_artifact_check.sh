@@ -100,6 +100,7 @@ observe() {
       rc) value="$RC" ;;
       files) value="$(json '.files | tojson')" ;;
       near_ceiling) value="$(json '.near_ceiling | tojson')" ;;
+      validate_time) value="$(json '.validate_time | tojson')" ;;
       help_sections)
         value=""
         grep -q '^Gates ordered:' <<<"$OUT" && value="$value,gates"
@@ -136,8 +137,8 @@ R="1750000000-4242"
 ARTIFACT="$WT/tmp/dev-return-$ISSUE-$R.json"
 "$STATE" --state-dir "$WT/tmp" init "$ISSUE" --worktree "$WT" --branch test >/dev/null
 export ORCH_STATE_DIR="$WT/tmp"
-VALID_IMPL='{"schema_version":1,"round_id":"1750000000-4242","kind":"implement","issue":"issue-770","branch":"issue-770","commit":"abc123f","baseline_lines":1,"validate":"pass","validate_mode":"full","qa_labels":["needs-review"],"summary_posted":true,"summary":null,"bundled":false,"items":[]}'
-VALID_FIX='{"schema_version":1,"round_id":"1750000000-4242","kind":"fix","issue":"issue-770","branch":"issue-770","commit":"def456a","validate":"FAILING: lint","validate_mode":"range","summary_posted":true,"summary":null,"bundled":false,"items":[{"n":1,"decision":"Applied","reasoning":"fixed nil deref"},{"n":2,"decision":"Skipped","reasoning":"contradicts D010"}]}'
+VALID_IMPL='{"schema_version":1,"round_id":"1750000000-4242","kind":"implement","issue":"issue-770","branch":"issue-770","commit":"abc123f","baseline_lines":1,"validate":"pass","validate_mode":"full","validate_time":{"started_at":"2026-01-01T00:00:00Z","ended_at":"2026-01-01T00:55:00Z","seconds":3300},"qa_labels":["needs-review"],"summary_posted":true,"summary":null,"bundled":false,"items":[]}'
+VALID_FIX='{"schema_version":1,"round_id":"1750000000-4242","kind":"fix","issue":"issue-770","branch":"issue-770","commit":"def456a","validate":"FAILING: lint","validate_mode":"range","validate_time":null,"summary_posted":true,"summary":null,"bundled":false,"items":[{"n":1,"decision":"Applied","reasoning":"fixed nil deref"},{"n":2,"decision":"Skipped","reasoning":"contradicts D010"}]}'
 ROUND_ARGS="--worktree $WT --issue $ISSUE --round-id $R"
 
 # receipt_table ROW... — one artifact shape, one run, one assertion per row:
@@ -470,7 +471,7 @@ receipt_table \
   "a missing validate_mode is invalid^impl^del(.validate_mode)^$FILE_ARGS^reason=invalid" \
   "a validate_mode outside full and range is invalid^impl^.validate_mode=\"class\"^$FILE_ARGS^reason=invalid" \
   "a null validate_mode beside a pass is invalid^impl^.validate_mode=null^$FILE_ARGS^reason=invalid" \
-  "a null validate_mode beside a failing validate is valid^impl^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null^$FILE_ARGS^reason=valid validate_mode=null" \
+  "a null validate_mode beside a failing validate is valid^impl^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null | .validate_time=null^$FILE_ARGS^reason=valid validate_mode=null" \
   "a null validate_mode beside no-verdict is invalid^impl^.validate=\"no-verdict\" | .validate_note=\"$NOTE\" | .validate_mode=null^$FILE_ARGS^reason=invalid" \
   "a no-verdict validate, a battery the timeout cut off, is accepted with its suites named^impl^.validate=\"no-verdict\" | .validate_note=\"$SUITES_NOTE\"^$FILE_ARGS^verdict=accept reason=valid validate=no-verdict" \
   "a no-verdict validate naming no suites is invalid^impl^.validate=\"no-verdict\"^$FILE_ARGS^verdict=retry reason=invalid" \
@@ -479,6 +480,24 @@ receipt_table \
   "a numeric validate_note is invalid^impl^.validate_note=42^$FILE_ARGS^reason=invalid" \
   "a boolean validate_note is invalid^impl^.validate_note=true^$FILE_ARGS^reason=invalid" \
   "an array validate_note is invalid^impl^.validate_note=[]^$FILE_ARGS^reason=invalid"
+
+echo "=== the validation wall time reaches the orchestrator ==="
+# The lane status file and the overseer's report show minutes per round from
+# this echo, so a recorded time is echoed whole; the key is required, null only
+# where no run can have ended, and a time is the run's own: UTC ends and
+# seconds their difference.
+receipt_table \
+  "a validate_time is echoed beside the verdict^impl^.^$FILE_ARGS^reason=valid validate=pass validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:55:00Z\",\"seconds\":3300}" \
+  "a null validate_time beside a failing validate is valid and echoed null^fix^.^$FILE_ARGS^reason=valid validate_time=null" \
+  "a missing validate_time beside a failing validate is invalid^fix^del(.validate_time)^$FILE_ARGS^reason=invalid" \
+  "a null validate_time beside a pass is invalid^impl^.validate_time=null^$FILE_ARGS^reason=invalid" \
+  "a no-verdict validate_time is echoed beside the verdict^impl^.validate=\"no-verdict\" | .validate_note=\"$SUITES_NOTE\"^$FILE_ARGS^verdict=accept validate=no-verdict validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:55:00Z\",\"seconds\":3300}" \
+  "a null validate_time beside no-verdict is invalid^impl^.validate=\"no-verdict\" | .validate_note=\"$SUITES_NOTE\" | .validate_time=null^$FILE_ARGS^reason=invalid" \
+  "a validate_time beside no validation mode is invalid^impl^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null^$FILE_ARGS^reason=invalid" \
+  "a validate_time whose seconds are not its span is invalid^impl^.validate_time.seconds=60^$FILE_ARGS^reason=invalid" \
+  "a validate_time with a non-UTC start is invalid^impl^.validate_time.started_at=\"2026-01-01 00:00:00\"^$FILE_ARGS^reason=invalid" \
+  "a validate_time that ends before it starts is invalid^impl^.validate_time.started_at=\"2026-01-01T00:55:00Z\" | .validate_time.ended_at=\"2026-01-01T00:00:00Z\" | .validate_time.seconds=-3300^$FILE_ARGS^reason=invalid" \
+  "a validate_time that is not an object is invalid^impl^.validate_time=3300^$FILE_ARGS^reason=invalid"
 
 echo "=== the near-ceiling lines reach the orchestrator ==="
 # The next round's brief plans the split from these, so a line stored in the

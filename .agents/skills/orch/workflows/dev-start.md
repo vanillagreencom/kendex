@@ -169,6 +169,8 @@ git -C "[WORKTREE_PATH]" status --porcelain
 
 A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `round-recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round.
 
+Before B or the check's `reason` routes the round, run [Store Validation Time](#store-validation-time) for every `reason` but `missing` and `invalid`: that artifact passed the schema gate, so its echoed `validate_time` is the round's own. A round the table then accepts, retries, replaces with a fresh round or escalates keeps its validation minutes, and no row below names the step again.
+
 | A (verdict) | B (git/tracker) | Action |
 |---|---|---|
 | `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
@@ -218,6 +220,18 @@ The accept paths, implement and fix alike, and the retry path for a structurally
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.near_ceiling = [NEAR_CEILING_ARRAY]'
 ```
+
+### Store Validation Time
+
+Every artifact past the schema gate runs this subsection, implement and fix alike, before B or the retry reason routes the round, as [§ 3](#3-accept-the-round) states. It is the one writer of `.validate_rounds`: the lane rewrites its status file's validation line from it, and `oversee-report`'s Validation row reads it.
+
+`[VALIDATE_TIME]` is the artifact's `validate_time` as `dev-artifact-check` echoed it. On `null` the round named no run, or its run is unfinished, and there is no wall time to record: skip the write. A `no-verdict` run the timeout ended carries its time and is recorded like any other. Otherwise `[SECONDS]` is its `seconds`, `[VALIDATE_MODE]` the echoed `validate_mode`, and `[KIND]` the round's `implement` or `fix`. The write appends one entry per round and replaces an entry already carrying this round id, so a re-run of this step never counts a round twice.
+
+```bash
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --arg round [DEV_ROUND_ID] --arg kind [KIND] --arg mode [VALIDATE_MODE] --argjson seconds [SECONDS] '.validate_rounds = ([(.validate_rounds // [])[] | select(.round_id != $round)] + [{round_id: $round, kind: $kind, mode: $mode, seconds: $seconds}])'
+```
+
+A lane under an overseer then rewrites its status file's validation line from `.validate_rounds`, per [oversee.md § 3 Lane directive](oversee.md#lane-directive).
 
 ### Store QA State
 

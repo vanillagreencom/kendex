@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# oversee-report: when the overseer's status report is due, and the four rows
+# oversee-report: when the overseer's status report is due, and the rows
 # it renders from the fleet state, GitHub and the tracker.
 #
 # Every case runs the real script against a fleet state under TMP_ROOT, with
@@ -225,7 +225,8 @@ first_err() { awk 'NR == 1' "$CASE/err"; }
 # before it, KEN-9 is no fleet item, KEN-2 and KEN-3 still run, KEN-2 with an
 # open PR; KEN-4 to KEN-6 wait in the queue and one question is open. KEN-2
 # waits on an ask and on red checks, KEN-3 on a post-PR stop. KEN-7 is still
-# preparing on its host.
+# preparing on its host. KEN-3 has validated twice, a full implement round
+# and a range fix round; KEN-2 not yet.
 seed_fleet() {
   new_case "$1"
   report -3600
@@ -233,7 +234,9 @@ seed_fleet() {
     "$(lane KEN-1 done)" "$(lane KEN-2 running)" "$(lane KEN-3 running)" "$(lane KEN-7 preparing -86400 ssh-a)"
   echo '{"id":"1790000000-1-a","kind":"ask","text":"Which schema?"}' > "$CASE/pending-KEN-2.jsonl"
   echo '[{"number": 12, "branch": "ken-2", "failed_checks": ["test", "lint"]}]' > "$CASE/failing.json"
-  item_state KEN-3 '{"post_pr_stop": {"name": "review-round-cap", "gate": "review", "remaining": ["one unresolved review thread"]}}'
+  item_state KEN-3 '{"post_pr_stop": {"name": "review-round-cap", "gate": "review", "remaining": ["one unresolved review thread"]},
+    "validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": 3300},
+      {"round_id": "r2", "kind": "fix", "mode": "range", "seconds": 290}]}'
   item_state KEN-2 '{"post_pr_stop": null}'
   printf '%s\n' "$(merged_pr 11 ken-1 -60 abcdef1234)" "$(merged_pr 13 ken-3 -7200 1234567abc)" \
     "$(merged_pr 19 ken-9 -60 9999999aaa)" "$(merged_pr 21 ken-1 -30 2121212aaa someone-else)" \
@@ -243,7 +246,7 @@ seed_fleet() {
   for n in 1 2 3 4 5 6 7 8 9; do issue "KEN-$n" "Title $n" "Outcome $n | kept"; done
 }
 
-echo "=== render: the four rows from a fleet ==="
+echo "=== render: the rows from a fleet ==="
 seed_fleet render_fleet
 run -- render --state "$CASE/state.json" --repo owner/repo
 WANT="Landed:
@@ -258,6 +261,10 @@ Running:
 | KEN-3 (no PR, running) | Title 3 | Outcome 3 \\| kept |
 | KEN-7 (no PR, preparing) | Title 7 | Outcome 7 \\| kept |
 
+Validation:
+- KEN-2: no validation run recorded
+- KEN-3: 60 min over 2 rounds: implement full 55, fix range 5
+
 Next:
 | issue | what it is | why it matters |
 | --- | --- | --- |
@@ -271,7 +278,7 @@ Waiting on you:
 - KEN-2 waits on red checks on #12: test, lint
 - KEN-3 waits on a stopped review gate, review-round-cap: one unresolved review thread"
 assert_eq "$RC|$OUT" "0|$WANT" \
-  "Landed holds only the fleet item merged since the last report, Running each live or preparing lane with its PR, Next the queue, Waiting on you the open question then each running lane's blockers"
+  "Landed holds only the fleet item merged since the last report, Running each live or preparing lane with its PR, Validation each running lane's minutes in total and per round, Next the queue, Waiting on you the open question then each running lane's blockers"
 
 echo "=== render: Waiting on you holds a lane's asks, not its unread directives ==="
 # lane-mail pending lists the directives the overseer sent and the lane has
@@ -325,6 +332,8 @@ run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$OUT" "0|Landed: none
 
 Running: none
+
+Validation: none
 
 Next: none
 
@@ -523,6 +532,28 @@ rm -f -- "${CASE:?}/host/w/KEN-7/.git"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Waiting on you/' <<<"$OUT")" "0|Waiting on you: none" "a hosted lane whose worktree is gone renders, waiting on nothing"
 
+echo "=== render: a lane's validation minutes are its own state's ==="
+# A hosted lane's rounds are read from its clone as its stop is; one round
+# reads singular, and a round list the state cannot sum refuses rather than
+# render a total it did not read.
+new_case hosted_validation
+report -60
+fleet '' "$(lane KEN-7 running -86400 ssh-a)"
+issue KEN-7 "Title 7" "Outcome 7"
+mkdir -p "$CASE/host/w/KEN-7" "$CASE/host/clone/tmp"
+echo "gitdir: /clone/.git/worktrees/KEN-7" > "$CASE/host/w/KEN-7/.git"
+echo '{"validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": 89}]}' > "$CASE/host/clone/tmp/workflow-state-KEN-7.json"
+run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^Validation/ { on = 1; next } on && /^$/ { on = 0 } on' <<<"$OUT")" "0|- KEN-7: 1 min over 1 round: implement full 1" \
+  "a hosted lane's validation minutes are read from the clone its worktree's .git names"
+echo '{"validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": "89"}]}' > "$CASE/host/clone/tmp/workflow-state-KEN-7.json"
+run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: item-state=KEN-7" "a round whose seconds are no number refuses rather than render a total"
+rm -f -- "${CASE:?}/host/clone/tmp/workflow-state-KEN-7.json"
+run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^Validation/ { on = 1; next } on && /^$/ { on = 0 } on' <<<"$OUT")" "0|- KEN-7: no validation run recorded" \
+  "a lane with no state on its host has no validation run recorded"
+
 echo "=== write: each merge lands in exactly one report ==="
 # KEN-3 merged at the second the lists are read, and KEN-2 merges while the
 # render reads KEN-1's issue, after its lists were read. Neither is in this
@@ -552,8 +583,8 @@ NAME="$("$REAL_DATE" -u -d "@$NOW" +%m-%d-%H-%M 2>/dev/null || "$REAL_DATE" -u -
 FILE="$CASE/progress-reports/$NAME"
 assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$FILE" "a succession write names its file MM-DD-HH-MM-succession.md"
 assert_eq "printed=$([[ -n "$OUT" ]] && echo yes)|$OUT" "printed=yes|$(cat "$FILE" 2>/dev/null)" "what write prints is the file's content, byte for byte"
-assert_eq "$(grep -c -E '^(Landed|Running|Next|Waiting on you):' <<<"$OUT")|$(awk 'NR == 1' <<<"$OUT")|$(awk 'NR == 3' <<<"$OUT")" \
-  "4|Two items landed and one waits on you.|Landed:" "the report is the summary, one blank line, then the four rows"
+assert_eq "$(grep -c -E '^(Landed|Running|Validation|Next|Waiting on you):' <<<"$OUT")|$(awk 'NR == 1' <<<"$OUT")|$(awk 'NR == 3' <<<"$OUT")" \
+  "5|Two items landed and one waits on you.|Landed:" "the report is the summary, one blank line, then the five rows"
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt" --succession
 assert_eq "$RC|$(first_err)" "2|oversee-report: report-exists=$FILE" "a second report under the same name is refused, never overwritten"
 : > "$CASE/empty.txt"

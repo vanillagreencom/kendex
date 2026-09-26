@@ -60,18 +60,22 @@ growth_round_write() {
 }
 
 # validate_run_dir DIR MODE [EXIT] — a finished dev-validate-run run directory
-# for a receipt to name: a start record under MODE and a sentinel recording
-# EXIT, 0 by default; EXIT "none" leaves the run unfinished and "no-verdict"
-# records the bound ending it, as the runner's child does. The receipt reads
-# it back through dev-validate-run --record, which dev_validate_run.sh pins
-# against runs the script itself wrote. Prints DIR.
+# for a receipt to name: a start record under MODE, a wall time of 3300
+# seconds, and a sentinel recording EXIT, 0 by default; EXIT "none" leaves the
+# run unfinished, with neither, and "no-verdict" records the bound ending it,
+# as the runner's child does. The receipt reads it back through
+# dev-validate-run --record, which dev_validate_run.sh pins against runs the
+# script itself wrote. Prints DIR.
 validate_run_dir() {
   mkdir -p "$1"
   printf 'validate-mode=%s\n' "$2" > "$1/start"
+  if [[ "${3:-0}" != none ]]; then
+    printf 'started-at=2026-01-01T00:00:00Z\nended-at=2026-01-01T00:55:00Z\nseconds=3300\n' > "$1/timing"
+  fi
   case "${3:-0}" in
     none) ;;
-    no-verdict) printf 'guard-exit=124 at=2026-01-01T00:00:00Z verdict=no-verdict\n' > "$1/exit" ;;
-    *) printf 'guard-exit=%s at=2026-01-01T00:00:00Z\n' "${3:-0}" > "$1/exit" ;;
+    no-verdict) printf 'guard-exit=124 at=2026-01-01T00:55:00Z verdict=no-verdict\n' > "$1/exit" ;;
+    *) printf 'guard-exit=%s at=2026-01-01T00:55:00Z\n' "${3:-0}" > "$1/exit" ;;
   esac
   printf '%s\n' "$1"
 }
