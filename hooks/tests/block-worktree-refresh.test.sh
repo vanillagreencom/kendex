@@ -5,10 +5,11 @@
 # passes the same command from the main checkout, with a global scope, outside
 # a repository, and every kendex read. In a linked worktree, the project
 # kendex resolves from the working directory is the worktree's own where its
-# manifest exists there, and the verbs that write one project by being typed
-# inside it pass. Each part is varied below: the verb,
-# the scope words, the directory the command runs in, whose manifest that
-# worktree has, and the git that has to answer.
+# manifest exists there, and every writing verb but update-pi passes there
+# bare. A refusal names --project-path only where the installed kendex lists
+# the flag, asked of a stub kendex on PATH. Each part is varied below: the
+# verb, the scope words, the directory the command runs in, whose manifest
+# that worktree has, the kendex on PATH, and the git that has to answer.
 #
 # Every refusal opens with `block-worktree-refresh: <key>=<value>`, and that
 # line is the contract: every row pins it whole beside the exit status, and the
@@ -16,7 +17,10 @@
 # verb's global option, pinned as the option spelling itself.
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
-# (a no-op hook, an always-block hook) run against these assertions.
+# (a no-op hook, an always-block hook) run against these assertions. The copy
+# sits under this repository, tmp/ included: the hook finds the command
+# reader by walking up from its own directory, and a copy parked outside the
+# checkout refuses every command as missing-library.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -104,10 +108,6 @@ printf 'description = """\n[not a table]\n"""\nis_source_catalog = true\n' >"$CA
 CATALOG_QUOTED="$TMP_ROOT/catalog-quoted"
 git -C "$MAIN" worktree add -q "$CATALOG_QUOTED" -b catalog-quoted
 printf '"is_source_catalog" = true\n' >"$CATALOG_QUOTED/kendex.toml"
-# A project path with a space, which the refusal's remedy has to keep one word.
-SPACED="$TMP_ROOT/sp/my app"
-git -C "$MAIN" worktree add -q "$SPACED" -b spaced
-printf 'schema = 6\n' >"$SPACED/kendex.toml"
 OUTSIDE="$TMP_ROOT/outside"
 mkdir -p "$OUTSIDE"
 # precondition: The outside rows prove the not-a-repository branch only where the fixture
@@ -318,6 +318,14 @@ updates without --apply is a read|0|-|kendex updates
 a global updates --apply passes|0|-|kendex updates --apply -g
 help after a write verb is a read|0|-|kendex refresh --help
 plan after a write verb is a read|0|-|kendex apply --plan
+-h after a write verb is the same read|0|-|kendex refresh -h
+kendex help VERB is the help subcommand of clap, a read|0|-|kendex help refresh
+kendex help alone names no verb|0|-|kendex help
+help before an output redirection is still the word bash passes|0|-|kendex refresh --help >out
+help beside a stderr redirection and a pipe is still the word bash passes|0|-|kendex refresh --help 2>&1 | head
+a redirection target spelling --help is a file, not help|2|block-worktree-refresh: refused=refresh|kendex refresh > --help
+help after a standalone -- is a positional, not help|2|block-worktree-refresh: refused=refresh|kendex refresh -- --help
+help beside an expansion may follow a -- the expansion holds, so it is not read|2|block-worktree-refresh: refused=refresh|kendex refresh \0044X --help
 an escaped-space local path is not a help argument|2|block-worktree-refresh: refused=add|kendex add ./catalog\ --help -y
 kendex verify from the worktree passes|0|-|kendex verify
 kendex check from the worktree passes|0|-|kendex check
@@ -429,16 +437,17 @@ source enable there passes|payload|own|0|-|kendex source enable x
 source disable there passes|payload|own|0|-|kendex source disable x
 marketplace subscribe there passes|payload|own|0|-|kendex marketplace subscribe owner/repo
 marketplace unsubscribe there passes|payload|own|0|-|kendex marketplace unsubscribe x
-refresh there still has to name its target|payload|own|2|block-worktree-refresh: refused=refresh|kendex refresh
-apply there still has to name its target|payload|own|2|block-worktree-refresh: refused=apply|kendex apply
-updates --apply there still has to name its target|payload|own|2|block-worktree-refresh: refused=updates|kendex updates --apply
-refresh there naming its target passes|payload|own|0|-|kendex refresh --project-path $OWN
+a bare refresh there writes that worktree, the one project it can, and passes|payload|own|0|-|kendex refresh
+a bare apply there passes|payload|own|0|-|kendex apply
+a bare updates --apply there passes|payload|own|0|-|kendex updates --apply
+refresh there naming its target passes too|payload|own|0|-|kendex refresh --project-path $OWN
+a bare refresh in a worktree with no kendex.toml is still refused|payload|worktree|2|block-worktree-refresh: refused=refresh|kendex refresh
 update-pi there is refused as before|payload|own|2|block-worktree-refresh: refused=update-pi|kendex update-pi
 update-pi --scope global there passes|payload|own|0|-|kendex update-pi --scope global
 a skill named refresh on an add there is an argument, and the add passes|payload|own|0|-|kendex add orch --skill refresh
-a refresh after an add there is judged on its own|payload|own|2|block-worktree-refresh: refused=refresh|kendex add orch && kendex refresh
+a global add before a bare refresh does not exempt the refresh, each segment judged on its own|payload|worktree|2|block-worktree-refresh: refused=refresh|kendex add -g orch && kendex refresh
 a tool call from a subdirectory of that worktree judges the worktree root|tool-workdir|own-sub|0|-|kendex add orch
-and a refresh from there is still refused|tool-workdir|own-sub|2|block-worktree-refresh: refused=refresh|kendex refresh
+and a refresh from there writes that worktree and passes|tool-workdir|own-sub|0|-|kendex refresh
 a kendex.toml that will not parse is still the worktree's own|payload|own-broken|0|-|kendex add orch
 a subdirectory of a worktree with no kendex.toml is refused|tool-workdir|worktree-sub|2|block-worktree-refresh: refused=add|kendex add orch
 a cd into the worktree with its own kendex.toml is still a move|payload|main|2|block-worktree-refresh: moved=add|cd $OWN && kendex add orch
@@ -473,18 +482,9 @@ assert_contains "$ERR_FILE" '--scope global' 'and update-pi names the one it tak
 run_in "$WT" 'kendex refresh'
 assert_contains "$ERR_FILE" '--scope global (or --global)' 'while a verb taking either names both'
 assert_contains "$ERR_FILE" 'git worktree list' 'the refusal names the command that finds the main checkout'
-assert_contains "$ERR_FILE" '--project-path PATH' 'and the refusal names the flag that names the project'
-run_in "$WT" 'kendex add orch'
-assert_contains "$ERR_FILE" 'add has no such form' 'a verb with no named-target form says so rather than offering one'
 run_in "$WT" 'kendex source add x owner/repo'
 assert_not_contains "$ERR_FILE" '--global' 'a source subcommand has no global flag, and the refusal offers none'
 assert_not_contains "$ERR_FILE" '--scope global' 'nor a global scope'
-run_in "$OWN" 'kendex refresh'
-assert_contains "$ERR_FILE" "--project-path $OWN" 'a worktree with its own kendex.toml is named by its own root'
-run_in "$SPACED" 'kendex refresh'
-assert_contains "$ERR_FILE" "Name it in the command: kendex refresh --project-path $TMP_ROOT/sp/my\\ app, or pass" 'a project path with a space is one word in the remedy'
-run_in "$OWN" 'kendex updates --apply'
-assert_contains "$ERR_FILE" "kendex updates --apply --project-path $OWN" 'the updates remedy keeps the --apply that makes it a write'
 run_in "$OWN" 'kendex update-pi --scope project'
 assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: refused=update-pi' 'update-pi at the project scope is refused where the project owns its manifest'
 assert_contains "$ERR_FILE" 'kendex update-pi --scope global' 'and the refusal offers the one form update-pi runs as in a linked worktree'
@@ -500,6 +500,85 @@ assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: paylo
   'a stdin that cannot be read refuses with the refusal status, not the read error'
 
 payload_table "$HOOK" 'kendex refresh' 'kendex verify' "$WT"
+
+echo "=== block-worktree-refresh: the installed kendex decides whether --project-path is offered ==="
+# Three kendex commands on PATH: one whose refresh help lists --project-path,
+# one whose help predates it, and one that records every call it takes, so a
+# pass proves the probe never ran. A fourth world holds every tool the hook
+# reads and no kendex at all.
+stub_cli() { # DIR HELP-LINE -> a kendex on DIR/ printing that line under refresh --help
+  mkdir -p "$1"
+  cat >"$1/kendex" <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  --version) echo "kendex 0.9.0-stub" ;;
+  refresh) printf 'Usage: kendex refresh [OPTIONS]\\n\\nOptions:\\n%s\\n' '$2' ;;
+esac
+STUB
+  chmod +x "$1/kendex"
+}
+CLI_WITH="$TMP_ROOT/cli-with"
+stub_cli "$CLI_WITH" '      --project-path <PATH>  The project this run reads and writes'
+CLI_WITHOUT="$TMP_ROOT/cli-without"
+stub_cli "$CLI_WITHOUT" '  -y, --yes  Accept changes'
+CLI_CALLS="$TMP_ROOT/cli-calls"
+mkdir -p "$CLI_CALLS"
+printf '#!/usr/bin/env bash\necho "$*" >>"%s/log"\n' "$CLI_CALLS" >"$CLI_CALLS/kendex"
+chmod +x "$CLI_CALLS/kendex"
+CLI_NONE="$TMP_ROOT/cli-none"
+mkdir -p "$CLI_NONE"
+for tool in bash cat jq git; do
+  target="$(command -v "$tool" 2>/dev/null)" && ln -sf "$target" "$CLI_NONE/$tool"
+done
+run_with_cli() { # dir command cli-dir -> rc, stderr in ERR_FILE, that kendex first on PATH
+  set +e
+  json_for "$2" "$1" | env -i HOME="$HOME" PWD="$1" PATH="$3:$CLI_NONE" "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+  rc=$?
+  set -e
+}
+# label|world|cli|rc|first|wanted|unwanted|command
+# `wanted` and `unwanted` are English under the keyed line, `-` for none.
+while IFS='|' read -r label world cli expected first wanted unwanted command; do
+  [ -n "$label" ] || continue
+  case "$world" in
+    worktree) dir="$WT" ;;
+    own) dir="$OWN" ;;
+    main) dir="$MAIN" ;;
+    *) printf 'cli table: unknown world: %s\n' "$world" >&2; exit 1 ;;
+  esac
+  case "$cli" in
+    with) path="$CLI_WITH" ;;
+    without) path="$CLI_WITHOUT" ;;
+    none) path="$CLI_NONE" ;;
+    *) printf 'cli table: unknown cli: %s\n' "$cli" >&2; exit 1 ;;
+  esac
+  run_with_cli "$dir" "$command" "$path"
+  assert_eq "rc=$rc first=$(first_line)" "rc=$expected first=$first" "$label"
+  [ "$wanted" = - ] || assert_contains "$ERR_FILE" "$wanted" "$label: names it"
+  [ "$unwanted" = - ] || assert_not_contains "$ERR_FILE" "$unwanted" "$label: does not name it"
+done <<ROWS
+a kendex whose help lists the flag is offered it|worktree|with|2|block-worktree-refresh: refused=refresh|--project-path PATH|predates|kendex refresh
+a kendex whose help predates the flag is named with its version instead|worktree|without|2|block-worktree-refresh: refused=refresh|kendex 0.9.0-stub) predates --project-path|--project-path PATH|kendex refresh
+and the route that works on it is the main checkout|worktree|without|2|block-worktree-refresh: refused=refresh|from the main checkout|-|kendex refresh
+a verb with no such form says so where the kendex has the flag|worktree|with|2|block-worktree-refresh: refused=add|add has no such form|-|kendex add orch
+and offers nothing named --project-path where the kendex lacks it|worktree|without|2|block-worktree-refresh: refused=add|predates --project-path|--project-path PATH|kendex add orch
+a moved write names the flag where the kendex has it|main|with|2|block-worktree-refresh: moved=refresh|--project-path PATH|-|cd $WT && kendex refresh
+and names the skew where it lacks it|main|without|2|block-worktree-refresh: moved=refresh|predates --project-path|--project-path PATH|cd $WT && kendex refresh
+no kendex on PATH is named as unasked, and the flag is not offered|worktree|none|2|block-worktree-refresh: refused=refresh|could not be asked whether it takes --project-path (kendex is not on PATH)|--project-path PATH|kendex refresh
+a worktree that owns its manifest passes the bare refresh whichever kendex is installed|own|without|0|-|-|-|kendex refresh
+and with the flag listed too|own|with|0|-|-|-|kendex refresh
+ROWS
+# The probe runs on the refusal path only: a pass asks the kendex on PATH
+# nothing, a refusal asks it once for its version and once for its help.
+run_with_cli "$OWN" 'kendex refresh' "$CLI_CALLS"
+assert_eq "rc=$rc calls=$(cat "$CLI_CALLS/log" 2>/dev/null || printf none)" 'rc=0 calls=none' 'a passing command never runs the installed kendex'
+run_with_cli "$WT" 'kendex verify' "$CLI_CALLS"
+assert_eq "rc=$rc calls=$(cat "$CLI_CALLS/log" 2>/dev/null || printf none)" 'rc=0 calls=none' 'nor does a read'
+run_with_cli "$WT" 'kendex refresh' "$CLI_CALLS"
+# Read through cat rather than a redirection: a `<` inside a command
+# substitution is what tools/bash32-parse cannot follow.
+calls=$(cat "$CLI_CALLS/log" | tr '\n' ';')
+assert_eq "rc=$rc calls=$calls" 'rc=2 calls=--version;refresh --help;' 'a refusal asks it once for its version and once for its refresh help'
 
 echo "=== block-worktree-refresh: kendex's own project markers ==="
 # The hook finds the project kendex writes by kendex's markers, so each one
