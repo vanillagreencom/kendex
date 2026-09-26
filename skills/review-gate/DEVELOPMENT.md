@@ -13,6 +13,8 @@ Paths as installed in a consuming repo, under `.agents/skills/review-gate/`.
 | `scripts/review-writer.sh` | Posts that answer as the commit status. The whole writer. |
 | `scripts/validate.sh` | The consumer-facing tool: is this repo's install sound? Runtime, settings, carry-forward exclusions, then the workflow half below, whose verdicts it relays and counts. |
 | `scripts/validate-workflow.sh` | Is the adopted copy still the shipped template? Equality, not re-derivation: see § Equality, not re-derivation. `--adopt` re-installs the template over a copy that equals an earlier shipped version. |
+| `scripts/validate-standard.sh` | Does this repository's GitHub side match the organization standard? Read-only GETs: the default branch's effective rules and each ruleset behind them, read at the organization or repository endpoint that owns it, the branch's classic protection, the organization's app installations, the environments with the standard one's branch policies and secret names, and the secret names of every other scope: repository Actions secrets, the organization-wide Actions secrets, repository and organization-wide Dependabot secrets, and every other environment. A standard secret name in any of those scopes is caught. `validate.sh` does not run it, because CI's token cannot read bypass actors, installations or secret names. |
+| `standard.json` | The standard's values: the required contexts, the app, the environment and its secret names. `validate-standard.sh` reads them from here; the rows that hold no value are fixed in the script. |
 | `scripts/pr-watch.sh` | The agent-side reducer: does any open PR need attention right now? Silence on stdout plus exit 0 means nothing needs you; `--heal` also dispatches the writer once on a stale gate. |
 | `scripts/lib/diagnostics.sh` | Formats stable diagnostic records and validator reports. Standalone settings consumers copy it with `scripts/lib/settings.sh`. |
 | `scripts/review-predicate-selftest.sh` | Offline proof of the decision table. An engine proof: it runs here, in the catalog repo, on every change. |
@@ -22,7 +24,7 @@ Paths as installed in a consuming repo, under `.agents/skills/review-gate/`.
 
 ## Diagnostic records
 
-Refusals and notices begin with `review-gate-error=CODE value=VALUE` or `review-gate-notice=CODE value=VALUE`. Values use Bash `printf %q` escaping. English explanation follows the record. Validators use `ok`, `FAIL`, or `note` records with `check=CODE value=VALUE` and indent all explanation lines. The consumer validator, `validate.sh`, ends with `review-gate-failed=COUNT passed=COUNT`; the standalone workflow validator exits after its individual records.
+Refusals and notices begin with `review-gate-error=CODE value=VALUE` or `review-gate-notice=CODE value=VALUE`. Values use Bash `printf %q` escaping. English explanation follows the record. Validators use `ok`, `FAIL`, or `note` records with `check=CODE value=VALUE` and indent all explanation lines. The consumer validator, `validate.sh`, ends with `review-gate-failed=COUNT passed=COUNT`; the standalone workflow and standard validators exit after their individual records.
 
 The predicate's verdict and detail lines and the watcher's tab-separated attention records are complete text protocols. Their script headers define those contracts. Diagnostic changes preserve those stdout protocols.
 

@@ -4,7 +4,11 @@
 # any --jq filter with real jq, so review-predicate.sh runs unmodified.
 # Dispatch is by request shape (the endpoint path, or GraphQL); the switches
 # GH_SHIM_FAIL, GH_SHIM_FAIL_TIMES and GH_SHIM_EMPTY drive the fail-loud
-# paths, and <name>.page2.json models a second page.
+# paths, and <name>.page2.json models a second page, filtered by --jq as
+# real gh filters each page. A ruleset read is served from
+# org-ruleset-<id>.json through the organization endpoint and
+# ruleset-<id>.json through the repository one, an environment's secrets from
+# environment-secrets-<name>.json, so each can carry its own answer.
 # Every request URL is appended to .urls.log so a case can pin read shapes.
 set -euo pipefail
 url=""; filter=""; paginate=0; graphql_page2=0; graphql_after=""
@@ -56,6 +60,23 @@ case "$url" in
   *"/issues/"*"/comments"*) name=comments ;;
   graphql)       name=graphql ;;
   *"/pulls/"*)   name=pull ;;
+  *"/rules/branches/"*) name=rules ;;
+  "repos/"*"/branches/"*) name=branch ;;
+  "orgs/"*"/rulesets/"*) name="org-ruleset-${url##*/}" ;;
+  *"/rulesets/"*) name="ruleset-${url##*/}" ;;
+  "orgs/"*"/installations") name=installations ;;
+  *"/deployment-branch-policies") name=branch-policies ;;
+  *"/environments/"*"/secrets")
+    environment="${url#*/environments/}"
+    name="environment-secrets-${environment%/secrets}"
+    ;;
+  "orgs/"*"/dependabot/secrets") name=organization-dependabot-secrets ;;
+  "repos/"*"/dependabot/secrets") name=dependabot-secrets ;;
+  *"/environments") name=environments ;;
+  *"/actions/organization-secrets") name=organization-secrets ;;
+  "orgs/"*"/actions/secrets") name=organization-actions-secrets ;;
+  *"/actions/secrets") name=repository-secrets ;;
+  "repos/{owner}/{repo}") name=repository ;;
   *) printf 'gh-shim-error=request value=%q\n' "$url" >&2; exit 90 ;;
 esac
 echo "$url" >>"$GH_SHIM_FIXTURES/.urls.log"
@@ -96,6 +117,6 @@ elif [ "$name" = "graphql" ] && [ -n "$graphql_after" ]; then
 fi
 [ -f "$file" ] || { printf 'gh-shim-error=fixture value=%q\n' "$file" >&2; exit 91; }
 if [ -n "$filter" ]; then jq -r "$filter" <"$file"; else cat "$file"; fi
-if [ "$paginate" = "1" ] && [ -f "$GH_SHIM_FIXTURES/$name.page2.json" ] && [ -z "$filter" ]; then
-  cat "$GH_SHIM_FIXTURES/$name.page2.json"
+if [ "$paginate" = "1" ] && [ -f "$GH_SHIM_FIXTURES/$name.page2.json" ]; then
+  if [ -n "$filter" ]; then jq -r "$filter" <"$GH_SHIM_FIXTURES/$name.page2.json"; else cat "$GH_SHIM_FIXTURES/$name.page2.json"; fi
 fi
