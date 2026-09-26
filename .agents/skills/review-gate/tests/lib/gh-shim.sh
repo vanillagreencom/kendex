@@ -6,7 +6,8 @@
 # GH_SHIM_FAIL, GH_SHIM_FAIL_TIMES and GH_SHIM_EMPTY drive the fail-loud
 # paths, and <name>.page2.json models a second page, filtered by --jq as
 # real gh filters each page. A ruleset read is served from
-# ruleset-<id>.json and an environment's secrets from
+# org-ruleset-<id>.json through the organization endpoint and
+# ruleset-<id>.json through the repository one, an environment's secrets from
 # environment-secrets-<name>.json, so each can carry its own answer.
 # Every request URL is appended to .urls.log so a case can pin read shapes.
 set -euo pipefail
@@ -61,6 +62,7 @@ case "$url" in
   *"/pulls/"*)   name=pull ;;
   *"/rules/branches/"*) name=rules ;;
   "repos/"*"/branches/"*) name=branch ;;
+  "orgs/"*"/rulesets/"*) name="org-ruleset-${url##*/}" ;;
   *"/rulesets/"*) name="ruleset-${url##*/}" ;;
   "orgs/"*"/installations") name=installations ;;
   *"/deployment-branch-policies") name=branch-policies ;;

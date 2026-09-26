@@ -72,8 +72,12 @@ as a match. The permission each row's reads need, as GitHub App permissions:
   ruleset-source, merge-queue,      the branch's rules: Metadata read
   required-contexts, conversation-
   resolution, copilot-review
-  bypass-actors                     each ruleset: the bypass_actors field is
-                                    returned only to a caller with write
+  bypass-actors                     each ruleset, read where it lives
+                                    (orgs/OWNER/rulesets/ID for an
+                                    organization ruleset,
+                                    repos/OWNER/NAME/rulesets/ID for a
+                                    repository ruleset): the bypass_actors
+                                    field is returned only to a caller with write
                                     access to the ruleset (Administration
                                     write where the ruleset lives, the
                                     organization's for an organization
@@ -230,13 +234,26 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
 
   # GitHub returns bypass_actors only to a caller with write access to the
   # ruleset and omits the field otherwise, so a missing field is
-  # unreadable and never zero.
+  # unreadable and never zero. Each ruleset is read at the level that owns
+  # it: an organization owner sees an organization ruleset's actors through
+  # the organization endpoint, not through the repository one.
   actors=0
   unreadable=""
   causes=""
-  ids="$(rules '[.[].ruleset_id | select(. != null) | tostring] | unique | .[]')"
-  for id in $ids; do
-    if ! read_api "repos/$FULL/rulesets/$id" 'if has("bypass_actors") then (.bypass_actors | length | tostring) else "withheld" end'; then
+  owned="$(rules '[.[] | select(.ruleset_id != null) | "\(.ruleset_source_type) \(.ruleset_id)"] | unique | .[]')"
+  while read -r source id; do
+    [ -n "$id" ] || continue
+    case "$source" in
+      Organization) endpoint="orgs/$OWNER/rulesets/$id" ;;
+      Repository) endpoint="repos/$FULL/rulesets/$id" ;;
+      *)
+        unreadable="${unreadable:+$unreadable,}$id"
+        causes="${causes:+$causes
+}$id: source $source has no ruleset read here"
+        continue
+        ;;
+    esac
+    if ! read_api "$endpoint" 'if has("bypass_actors") then (.bypass_actors | length | tostring) else "withheld" end'; then
       unreadable="${unreadable:+$unreadable,}$id"
       causes="${causes:+$causes
 }$id: $READ_ERR"
@@ -247,7 +264,9 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
     else
       actors=$((actors + READ_OUT))
     fi
-  done
+  done <<EOF_OWNED
+$owned
+EOF_OWNED
   if [ -n "$unreadable" ]; then
     bad standard-bypass-actors "unreadable:$unreadable" "the bypass actors of these rulesets could not be read:
 $causes"

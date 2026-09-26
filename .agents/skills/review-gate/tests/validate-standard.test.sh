@@ -48,8 +48,13 @@ cat >"$BASE/rules.json" <<'JSON'
   {"type": "copilot_code_review", "parameters": {"review_on_push": true}, "ruleset_source_type": "Organization", "ruleset_id": 2}
 ]
 JSON
+# Every baseline rule is organization-sourced, so its ruleset is read
+# through the organization endpoint. The repository-endpoint copy of ruleset
+# 2 carries an actor, so a read through the wrong endpoint reports 1.
+printf '{"id": 1, "bypass_actors": []}\n' >"$BASE/org-ruleset-1.json"
+printf '{"id": 2, "bypass_actors": []}\n' >"$BASE/org-ruleset-2.json"
 printf '{"id": 1, "bypass_actors": []}\n' >"$BASE/ruleset-1.json"
-printf '{"id": 2, "bypass_actors": []}\n' >"$BASE/ruleset-2.json"
+printf '{"id": 2, "bypass_actors": [{"actor_type": "RepositoryRole", "actor_id": 9}]}\n' >"$BASE/ruleset-2.json"
 cat >"$BASE/installations.json" <<'JSON'
 {"installations": [{"app_slug": "other-app", "repository_selection": "selected"}, {"app_slug": "lanes-app", "repository_selection": "all"}]}
 JSON
@@ -144,8 +149,10 @@ an extra required context~~rules.json~.[1].parameters.required_status_checks += 
 a missing required context~~rules.json~.[1].parameters.required_status_checks = [{"context": "Review gate"}]~standard-required-contexts=Review\ gate
 threads need no resolution~~rules.json~.[2].parameters.required_review_thread_resolution = false~standard-conversation-resolution=false
 no Copilot review~~rules.json~del(.[3])~standard-copilot-review=absent
-a bypass actor on each ruleset adds up~~ruleset-1.json,ruleset-2.json~.bypass_actors = [{"actor_type": "RepositoryRole", "actor_id": 5}]~standard-bypass-actors=2
-bypass actors withheld from the token~~ruleset-1.json~del(.bypass_actors)~standard-bypass-actors=unreadable:1
+a bypass actor on each ruleset adds up~~org-ruleset-1.json,org-ruleset-2.json~.bypass_actors = [{"actor_type": "RepositoryRole", "actor_id": 5}]~standard-bypass-actors=2
+bypass actors withheld from the token~~org-ruleset-1.json~del(.bypass_actors)~standard-bypass-actors=unreadable:1
+a repository ruleset's actors read through the repository endpoint~~rules.json~.[3].ruleset_source_type = "Repository"~standard-ruleset-source=Repository:2^standard-bypass-actors=1
+a ruleset source with no ruleset read is unreadable~~rules.json~.[3].ruleset_source_type = "Enterprise"~standard-ruleset-source=Enterprise:2^standard-bypass-actors=unreadable:2
 a per-repository rule on the second page~~rules.page2.json~[{"type": "deletion", "ruleset_source_type": "Repository", "ruleset_id": 1}]~standard-ruleset-source=Repository:1
 classic protection beside the rulesets~~branch.json~.protection.enabled = true~standard-classic-protection=on
 the branch unreadable~branch~~~standard-classic-protection=unreadable
@@ -195,9 +202,9 @@ echo "=== each failed read keeps its own cause ==="
 # successful ones: each cause line names its own read.
 dir="$TMP/case-causes"
 cp -R "$BASE" "$dir"
-jq 'del(.bypass_actors)' "$dir/ruleset-1.json" >"$dir/r" && mv "$dir/r" "$dir/ruleset-1.json"
-run "$dir" ruleset-2
-if grep -qx '  2: gh-shim-error=api value=ruleset-2' <<<"$RAW" && grep -q '^  1: ' <<<"$RAW" &&
+jq 'del(.bypass_actors)' "$dir/org-ruleset-1.json" >"$dir/r" && mv "$dir/r" "$dir/org-ruleset-1.json"
+run "$dir" org-ruleset-2
+if grep -qx '  2: gh-shim-error=api value=org-ruleset-2' <<<"$RAW" && grep -q '^  1: ' <<<"$RAW" &&
   ! grep -q '^  1: gh-shim' <<<"$RAW" && grep -qx 'FAIL check=standard-bypass-actors value=unreadable:1\\,2' <<<"$RAW"; then
   ok "a withheld field and a failed ruleset read each name their own cause"
 else
