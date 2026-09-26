@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# Record this repository's install record on the default branch after a
+# merge, and land it through one rolling pull request.
+#
+# Usage: tools/lock-record [--repo DIR] [--base BRANCH] [--remote NAME] [--branch NAME]
+#
+# --repo DIR       the checkout of the default branch to judge (default: the
+#                  checkout this script sits in)
+# --base BRANCH    the branch the rolling pull request targets (default main)
+# --remote NAME    the remote the rolling branch is pushed to (default origin)
+# --branch NAME    the rolling branch (default kendex/lock)
+# -h, --help       print this help
+#
+# The kendex on PATH is the judge; .github/workflows/lock-record.yml builds
+# it from the checkout, since the kendex code that hashes, renders and
+# records is part of what moves the record. The run refreshes the source
+# mirrors, then asks `kendex verify` whether the committed record is what
+# this tree would write. A current record ends the run. A stale one is
+# re-recorded with `kendex refresh`, verified again, committed on the rolling
+# branch from the checkout's head, force-pushed, and put up as one pull
+# request the merge queue takes; a pull request already open on the branch is
+# updated by that push. Nothing here pushes to the default branch: the
+# organization ruleset takes every change to it through the merge queue
+# (docs/decisions/D003-one-merge-path.md), and the record takes the same
+# route (docs/decisions/D007-lock-record-on-main.md). The rule a branch
+# follows is skills/AGENTS.md.
+#
+# `gh` reads its token from GH_TOKEN, git pushes with the credential the
+# checkout carries, and the commit identity is GIT_AUTHOR_* and
+# GIT_COMMITTER_*. The suite is crates/cli/tests/lock_record.rs.
+#
+# Every line this script writes opens `lock-record: <key>=<value>`:
+#   option=<arg>                unknown option, or one with no value (exit 2)
+#   repo=<dir>                  not a git checkout (exit 2)
+#   status=<dir>                git status could not read the checkout (exit 2 before the judge, 1 after the refresh)
+#   dirty=<n>                   the checkout has n uncommitted paths; nothing was judged (exit 2)
+#   source-refresh=<status>     `kendex source refresh` failed (exit 1)
+#   current=<sha>               the record matches the tree at that head; nothing was written
+#   refresh=<status>            `kendex refresh` failed (exit 1)
+#   stale-after-refresh=<sha>   verify still fails after the refresh; the paths it wrote follow (exit 1)
+#   refresh-wrote-nothing=<sha> verify failed, and the refresh changed no tracked path (exit 1)
+#   recorded=<sha> paths=<n>    the commit on the rolling branch; its paths follow
+#   pushed=<remote>/<branch>    the branch reached the remote
+#   pull-request-list=<branch>  gh could not list the branch's pull requests; nothing opened or armed (exit 1)
+#   pull-request=<n> action=<opened|updated>
+#   pull-request-view=<n>       gh could not read the pull request's auto-merge state; not armed (exit 1)
+#   armed=<n|already>           auto-merge enabled on it, or found enabled
+set -euo pipefail
+
+say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line
+  printf 'lock-record: %s=%s\n' "$1" "$2"
+  shift 2
+  for line in "$@"; do printf '%s\n' "$line"; done
+}
+
+repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+base=main
+remote=origin
+branch=kendex/lock
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo | --base | --remote | --branch)
+      if [[ $# -lt 2 ]]; then
+        say option "$1" "$1 needs a value" >&2
+        exit 2
+      fi
+      case "$1" in
+        --repo) repo="$2" ;;
+        --base) base="$2" ;;
+        --remote) remote="$2" ;;
+        --branch) branch="$2" ;;
+      esac
+      shift 2 ;;
+    -h | --help) sed -n '2,47p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) say option "$1" "usage: tools/lock-record [--repo DIR] [--base BRANCH] [--remote NAME] [--branch NAME]" >&2; exit 2 ;;
+  esac
+done
+
+if ! top="$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null)"; then
+  say repo "$repo" "not a git checkout, so there is no head to judge the record against" >&2
+  exit 2
+fi
+repo="$top"
+
+# The record is judged against a commit: an uncommitted path would be judged
+# and could be committed as the record's, under a head that does not hold it.
+if ! dirty="$(git -C "$repo" status --porcelain --untracked-files=all)"; then
+  say status "$repo" "git status could not read the checkout, so nothing was judged" >&2
+  exit 2
+fi
+if [[ -n "$dirty" ]]; then
+  say dirty "$(printf '%s\n' "$dirty" | wc -l | tr -d ' ')" \
+    "the checkout at $repo has uncommitted paths, so the tree is not the commit the record would be judged against:" \
+    "$dirty" >&2
+  exit 2
+fi
+head="$(git -C "$repo" rev-parse HEAD)"
+
+# The mirrors the record's source commits are held to. `source refresh` and
+# `verify` read the project from the working directory; `refresh` names it.
+rc=0
+(cd -- "$repo" && kendex source refresh) || rc=$?
+if [[ $rc -ne 0 ]]; then
+  say source-refresh "$rc" "kendex source refresh failed in $repo; its output is above, and the record was not judged" >&2
+  exit 1
+fi
+
+rc=0
+(cd -- "$repo" && kendex verify --scope project) || rc=$?
+if [[ $rc -eq 0 ]]; then
+  say current "$head" "the committed record is what this tree writes; nothing to record"
+  exit 0
+fi
+
+rc=0
+kendex refresh --scope project --yes --leave --project-path "$repo" || rc=$?
+if [[ $rc -ne 0 ]]; then
+  say refresh "$rc" "kendex refresh could not re-record the tree at $head; its output is above" >&2
+  exit 1
+fi
+
+if ! changed="$(git -C "$repo" status --porcelain --untracked-files=all)"; then
+  say status "$repo" "git status could not read what the refresh wrote, so nothing was committed" >&2
+  exit 1
+fi
+rc=0
+(cd -- "$repo" && kendex verify --scope project) || rc=$?
+if [[ $rc -ne 0 ]]; then
+  say stale-after-refresh "$head" \
+    "kendex verify still fails after kendex refresh re-recorded the tree, so the refresh does not settle what verify reports; the paths it wrote:" \
+    "$changed" >&2
+  exit 1
+fi
+if [[ -z "$changed" ]]; then
+  say refresh-wrote-nothing "$head" \
+    "kendex verify failed before the refresh and passes after it, yet the refresh changed no tracked path; what verify read moved outside the tree" >&2
+  exit 1
+fi
+count="$(printf '%s\n' "$changed" | wc -l | tr -d ' ')"
+short="$(git -C "$repo" rev-parse --short "$head")"
+
+git -C "$repo" checkout -q -B "$branch"
+git -C "$repo" add -A
+git -C "$repo" commit -q \
+  -m "chore(lock): record the install record at $short" \
+  -m "kendex refresh, built from $head, wrote these paths on main after the merges up to that head. The record is recorded here and never on a branch: skills/AGENTS.md states the rule, docs/decisions/D007-lock-record-on-main.md the reason."
+say recorded "$head paths=$count" "$changed"
+
+git -C "$repo" push --quiet --force "$remote" "refs/heads/$branch:refs/heads/$branch"
+say pushed "$remote/$branch"
+
+# One pull request per branch: a push updates an open one, and a branch
+# with none gets one. `gh` binds itself to the checkout's remote.
+if ! number="$(cd -- "$repo" && gh pr list --head "$branch" --base "$base" --state open --json number --jq '.[0].number // empty')"; then
+  say pull-request-list "$branch" "gh could not list the branch's open pull requests; the push stands, and no pull request was opened or armed" >&2
+  exit 1
+fi
+if [[ -n "$number" ]]; then
+  action=updated
+else
+  url="$(cd -- "$repo" && gh pr create --base "$base" --head "$branch" \
+    --title "chore(lock): record the install record at $short" \
+    --body "tools/lock-record re-recorded .kendex-lock.json on main after the merges up to $head, with a kendex built from that tree. Paths: $count. The record is recorded here and never on a branch: skills/AGENTS.md.")"
+  number="${url##*/}"
+  action=opened
+fi
+printf 'lock-record: pull-request=%s action=%s\n' "$number" "$action"
+
+if ! armed="$(cd -- "$repo" && gh pr view "$number" --json autoMergeRequest --jq '.autoMergeRequest != null')"; then
+  say pull-request-view "$number" "gh could not read whether the pull request is armed; it was not armed" >&2
+  exit 1
+fi
+if [[ "$armed" == true ]]; then
+  say armed already
+else
+  (cd -- "$repo" && gh pr merge "$number" --squash --auto --match-head-commit "$(git -C "$repo" rev-parse HEAD)")
+  say armed "$number"
+fi

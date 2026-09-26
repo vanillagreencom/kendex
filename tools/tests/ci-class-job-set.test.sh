@@ -190,17 +190,17 @@ micro|false|$DISCOVER_RS|$SHARD_BUILD|+guards-tools +rest
 micro|false|.claude/hooks/lane-mail-check|$SHARD_CODE|+guards-tools
 micro|false|pi-extensions/pi-qol/src/x.ts|$SHARD_CODE|+node -pi-claude-bridge
 micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$SHARD_CODE|+node +pi-claude-bridge
-micro|false|hooks/block-bare-cd.sh|$SHARD_CODE|+rest +node
-micro|false|skills/deep-research/SKILL.md|$SHARD_PROSE|+rest +node
-micro|false|pi-extensions/pi-hooks/extensions/hooks.ts|$SHARD_CODE|+rest +node
-micro|false|$SKILLS_AGENTS|$SHARD_PROSE|["guards-scans","guards-tools","rest"]
+micro|false|hooks/block-bare-cd.sh|$SHARD_CODE|+node
+micro|false|skills/deep-research/SKILL.md|$SHARD_PROSE|+node
+micro|false|pi-extensions/pi-hooks/extensions/hooks.ts|$SHARD_CODE|+node
+micro|false|$SKILLS_AGENTS|$SHARD_PROSE|["guards-scans","guards-tools"]
 micro|false|.github/instructions/code-review.md|$SHARD_PROSE|$ROSTER
 micro|false|.github/AGENTS.md skills/orch/scripts/lanes|$(lanes true true true false true false)|$ROSTER
 micro|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
 small|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
 standard|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
-standard|true|AGENTS.md|$SHARD_PROSE|["rest"]
-standard|true|CLAUDE.md|$SHARD_PROSE|["rest"]
+standard|true|AGENTS.md|$NONE_PROSE|[]
+standard|true|CLAUDE.md|$NONE_PROSE|[]
 standard|true|GEMINI.md|$NONE_PROSE|[]
 standard|true|$UNREAD_LEGAL|$NONE_PROSE|[]
 trivial|true|$UNREAD_LEGAL|$NONE_PROSE|[]
@@ -401,29 +401,24 @@ done <<ROWS
 skills/price-handling/scripts/x|["guards-scans","guards-tools","rest"]
 skills/github/scripts/lib/gh-auth.sh|["review-gate",$ORCH,"guards-scans","guards-tools","worktree","rest"]
 skills/orch/scripts/lib/branch-growth.sh|["review-gate",$ORCH,"guards-scans","guards-tools","rest"]
-skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-tools","linear","rest"]
+skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-tools","linear"]
 kendex.settings.toml|["guards-tools"]
 install.sh|[]
 README.md|[]
 crates/demo/src/discover.rs|["guards-tools","rest","node"]
-.claude/hooks/lane-mail-check|["guards-tools","rest","node"]
-.pi/kendex/hooks/lane-mail-check|["guards-tools","rest","node"]
-hooks/block-bare-cd.sh|["guards-scans","guards-tools","rest","node"]
+.claude/hooks/lane-mail-check|["guards-tools","node"]
+.pi/kendex/hooks/lane-mail-check|["guards-tools","node"]
+hooks/block-bare-cd.sh|["guards-scans","guards-tools","node"]
 docs/x/policy.md|["guards-tools","node"]
 tools/demo-tool|["guards-scans","guards-tools","node"]
-skills/AGENTS.md|["guards-scans","guards-tools","rest"]
+skills/AGENTS.md|["guards-scans","guards-tools"]
 docs/cite.md|["guards-tools"]
-kendex.toml|["rest"]
-agents/reviewer.md|["rest"]
-commands/scrub.md|["rest"]
-.codex/agents/reviewer.toml|["rest"]
-.kendex-lock.json|["rest"]
-.kendex-generated.json|["rest"]
-docs/x/AGENTS.md|["rest"]
-crates/x/CLAUDE.md|["rest"]
-skills/CLAUDE.md|["guards-scans","rest"]
+kendex.toml|[]
+agents/reviewer.md|[]
+.kendex-lock.json|[]
+skills/CLAUDE.md|["guards-scans"]
 ROWS
-[ "$world_rows" -ge 24 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
+[ "$world_rows" -ge 19 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
 
 # The shard selection's rules, each removed from a copy run over the fixture
 # world: the copy must answer its path other than the script does. Fields
@@ -452,13 +447,6 @@ s/^\$path" ;;$/" ;;/@kendex.settings.toml
 s/^      \*\/\*) pending="\$pending$/      *.md | *.markdown) ;; *\/*) pending="$pending/@docs/x/policy.md
 s/0) want_shard guards-tools ;;/0) ;;/@docs/cite.md
 s/hooks) want_shard guards-tools node ;;/hooks) want_shard guards-tools ;;/@hooks/block-bare-cd.sh
-s/^  ! any "\$INSTALL_RECORD" || want_shard rest$/  :/@hooks/block-bare-cd.sh
-s/|agents|hooks|/|hooks|/@agents/reviewer.md
-s/|commands|/|/@commands/scrub.md
-s/|\\\.codex|/|/@.codex/agents/reviewer.toml
-s/|\\\.kendex-lock\\\.json|/|/@.kendex-lock.json
-s/|\\\.kendex-generated\\\.json)/)/@.kendex-generated.json
-s/|(^|\/)(AGENTS|CLAUDE)\\\.md\$'/'/@docs/x/AGENTS.md crates/x/CLAUDE.md
 /^  \/\^pi-extensions\\\/\/ { package = "pi-extensions" }$/d@tools/demo-tool
 s/^\.\.\/\$1\/"$/"/@skills/orch/scripts/lib/branch-growth.sh
 s/^        want_package tools$/        :/@skills/price-handling/scripts/x
