@@ -48,7 +48,9 @@ Value rules come from the engine, not from a copy of it: the settings half calls
 
 ## Repo-side wiring
 
-The organization rulesets carry this shape for every repository. Until they stand, the repository's own ruleset carries it, and the owner sets it once the repository reports `CI`. `scripts/validate-standard.sh` reports each part of it.
+The organization rulesets carry this shape for every repository. Until they stand, the repository's own ruleset carries it. `scripts/validate-standard.sh` reports each part of it.
+
+The owner sets the ruleset once the repository's pull requests report `CI`: the `standard-ci-context` row reads ok, or `merge-group-unobserved` with `CI` among the job names. A repository whose workflow already reports `CI` meets that before any change. The merge queue then runs, and the row's ok confirms that merge groups report `CI` too.
 
 - **Required contexts**: exactly two, `CI` and `Review gate`, the `ci_context` and `gate_context` of the skill's `standard.json`. `Review gate` is the repo's `REVIEW_GATE_CONTEXT` value. `CI` is the aggregate [harness-ci wiring.md § The CI context](../../harness-ci/references/wiring.md#the-ci-context) describes.
 - **Merge queue**: required on the default branch. The writer's `merge_group` leg posts the gate context on queue shas unconditionally.
