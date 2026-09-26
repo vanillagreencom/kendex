@@ -1159,72 +1159,84 @@ skill_suites() { # DIR
     printf '%s\n' "$t"
   done
 }
+# Every file of a skill the reference scan reads: its scripts, one directory
+# below scripts/ included, its tests/lib files and its whole set.
+skill_files() { # DIR
+  local f
+  for f in "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/*; do
+    [ ! -f "$f" ] || printf '%s\n' "$f"
+  done
+  skill_suites "$1"
+}
 # The suites a range runs for one changed path of a skill, REL being the path
 # inside it, by the rule tools/AGENTS.md states. No output with status 0 is a
-# deleted suite, which needs none; status 1 is a path the rule maps to no
-# suite, and status 2 a lib scan grep could not read.
+# deleted suite nothing names; status 1 is a path the rule maps to no suite,
+# and status 2 a file the reference scan could not read.
 mapped_suites() { # DIR REL
-  local dir="$1" rel="$2" suites name t base f seen found out="" needles
-  suites=$(skill_suites "$dir")
+  local dir="$1" rel="$2" suites files reached f t name base found out="" needles
   case "$rel" in
-    scripts/lib/* | tests/lib/*)
-      needles=(-e "/${rel##*/}")
-      seen="/${rel##*/}"
-      found=1
-      while [ "$found" -eq 1 ]; do
-        found=0
-        for f in "$dir"/scripts/lib/* "$dir"/tests/lib/*; do
-          [ -f "$f" ] || continue
-          ! grep -Fxq -- "/${f##*/}" <<<"$seen" || continue
-          grep -qF "${needles[@]}" -- "$f"
-          case $? in
-            0)
-              needles+=(-e "/${f##*/}")
-              seen="$seen
-/${f##*/}"
-              found=1
-              ;;
-            1) ;;
-            *) return 2 ;;
-          esac
-        done
-      done
-      while IFS= read -r t; do
-        [ -n "$t" ] || continue
-        grep -qF "${needles[@]}" -- "$t"
-        case $? in
-          0) out="$out$t
-" ;;
-          1) ;;
-          *) return 2 ;;
-        esac
-      done <<<"$suites"
-      ;;
-    tests/run-all.sh | tests/*/* | scripts/*/*) return 1 ;;
-    tests/*)
-      if grep -Fxq -- "$dir/$rel" <<<"$suites"; then
-        out="$dir/$rel
-"
-      elif [ ! -e "$dir/$rel" ]; then
-        case "$rel" in *.sh | *.test.mjs) return 0 ;; esac
-      fi
-      ;;
-    scripts/*)
-      name="${rel#scripts/}"
-      name="${name%.*}"
-      name="${name//_/-}"
-      while IFS= read -r t; do
-        base="${t##*/}"
-        base="${base%.sh}"
-        base="${base%.mjs}"
-        base="${base%.test}"
-        base="${base//_/-}"
-        case "$base" in "$name" | "$name"-*) out="$out$t
-" ;; esac
-      done <<<"$suites"
-      ;;
+    tests/run-all.sh) return 1 ;;
+    # A shell file is reached by its path; anything else in a subdirectory,
+    # a Python module above all, can be reached by an import that spells none.
+    scripts/*/*.sh | tests/lib/*.sh) ;;
+    scripts/*/* | tests/*/*) return 1 ;;
+    scripts/* | tests/*.sh | tests/*.test.mjs) ;;
+    *) return 1 ;;
   esac
-  [ -n "$out" ] || return 1
+  suites=$(skill_suites "$dir")
+  files=$(skill_files "$dir")
+  # What the changed file reaches: every file of the skill naming /<file>, or
+  # naming a file already reached, at any depth.
+  reached="$dir/$rel"
+  needles=(-e "/${rel##*/}")
+  found=1
+  while [ "$found" -eq 1 ]; do
+    found=0
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      ! grep -Fxq -- "$f" <<<"$reached" || continue
+      grep -qF "${needles[@]}" -- "$f"
+      case $? in
+        0)
+          needles+=(-e "/${f##*/}")
+          reached="$reached
+$f"
+          found=1
+          ;;
+        1) ;;
+        *) return 2 ;;
+      esac
+    done <<<"$files"
+  done
+  # Each suite reached runs, and so does each suite named for a top-level
+  # script reached.
+  while IFS= read -r f; do
+    if grep -Fxq -- "$f" <<<"$suites"; then
+      out="$out$f
+"
+    fi
+    case "${f#"$dir"/}" in
+      scripts/*/*) ;;
+      scripts/*)
+        name="${f##*/}"
+        name="${name%.*}"
+        name="${name//_/-}"
+        while IFS= read -r t; do
+          base="${t##*/}"
+          base="${base%.sh}"
+          base="${base%.mjs}"
+          base="${base%.test}"
+          base="${base//_/-}"
+          case "$base" in "$name" | "$name"-*) out="$out$t
+" ;; esac
+        done <<<"$suites"
+        ;;
+    esac
+  done <<<"$reached"
+  if [ -z "$out" ]; then
+    case "$rel" in tests/*) [ -e "$dir/$rel" ] || return 0 ;; esac
+    return 1
+  fi
   printf '%s' "$out"
 }
 if [ "$MODE" != default ] && lane_on shell_shards; then
