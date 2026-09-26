@@ -618,6 +618,7 @@ crash|1|lane-mail: host-unreachable=KEN-8 state=unknown
 global|2|lane-mail: root-unresolved=/w/KEN-8
 other-item|2|lane-mail: host-unreachable=KEN-9 state=unknown
 prefix-item|2|lane-mail: mail-read-failed=KEN-80
+other-key|2|lane-mail: item-case-variant=KEN-8
 ROWS
 seed_fleet mail_helper_missing
 run OVERSEE_REPORT_LANE_MAIL="$CASE/no-lane-mail" -- render --state "$CASE/state.json" --repo owner/repo
@@ -928,6 +929,46 @@ echo 'lane-mail: host-unreachable=KEN-3' > "$CASE/mail-fail-KEN-3"
 REPORT_UNDER_TEST="$MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(grep -c '^- KEN-3 waits on a stopped review gate' <<<"$OUT")" "0|0" \
   "control: without the host condition the local lane's stored stop vanishes"
+
+# One mutant per rule of the mailbox-refusal classifier and the host-unreachable
+# state skip: each row weakens one rule, seeds the case that rule decides and
+# expects the weakened script to misreport KEN-8. Rows: name@text@replacement.
+while IFS='@' read -r name text with; do
+  assert_eq "$(grep -cF -- "$text" "$REPORT_BIN")" "1" "control: the $name rule is one clause to weaken"
+  text="$text" with="$with" awk '{ i = index($0, ENVIRON["text"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["with"] substr($0, i + length(ENVIRON["text"])); print }' \
+    "$REPORT_BIN" > "$MUTANT"
+  seed_unreadable "mutant_$name"
+  case "$name" in
+    exit-status) echo 1 > "$CASE/mail-exit-KEN-8" ;;
+    refusal-key | skip-kind)
+      # The host answers, so the state read the mutant reaches does not refuse.
+      rm -f -- "${CASE:?}/host-gone-KEN-8"
+      mkdir -p "$CASE/host/w/KEN-8" "$CASE/host/clone/tmp"
+      echo "gitdir: /clone/.git/worktrees/KEN-8" > "$CASE/host/w/KEN-8/.git"
+      if [[ "$name" == refusal-key ]]; then
+        echo 'lane-mail: item-case-variant=KEN-8' > "$CASE/mail-fail-KEN-8"
+      else
+        echo 'lane-mail: mail-read-failed=KEN-8' > "$CASE/mail-fail-KEN-8"
+        echo '{"post_pr_stop": {"name": "ci-fix-cap", "gate": "ci", "remaining": ["test"]}}' > "$CASE/host/clone/tmp/workflow-state-KEN-8.json"
+      fi ;;
+    refusal-item) echo 'lane-mail: host-unreachable=KEN-9 state=unknown' > "$CASE/mail-fail-KEN-8" ;;
+    validation-unread) ;;
+    *) echo "oversee_report: unknown mutant row $name" >&2; exit 1 ;;
+  esac
+  REPORT_UNDER_TEST="$MUTANT" run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+  case "$name" in
+    exit-status | refusal-key | refusal-item) got="$RC|$(grep -c '^- KEN-8 mailbox unreadable' <<<"$OUT" || true)"; want="0|1" ;;
+    skip-kind) got="$RC|$(grep -c '^- KEN-8 waits on a stopped ci gate' <<<"$OUT" || true)"; want="0|0" ;;
+    validation-unread) got="$RC|$(grep -c '^- KEN-8: no validation run recorded$' <<<"$OUT" || true)"; want="0|1" ;;
+  esac
+  assert_eq "$got" "$want" "control: without the $name rule the report misreports KEN-8"
+done <<'ROWS'
+exit-status@"$rc" -eq 2 && @
+refusal-key@(host-unreachable|mail-read-failed)=@([a-z-]+)=
+refusal-item@ && "${BASH_REMATCH[2]}" == "$item" ]]@ ]]
+skip-kind@"$mail" == host-unreachable && -n "$host" ]] ||@"$mail" != read && -n "$host" ]] ||
+validation-unread@if [[ "$mail" == host-unreachable && -n "$host" ]]; then@if false; then
+ROWS
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
