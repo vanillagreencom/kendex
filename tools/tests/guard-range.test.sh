@@ -374,6 +374,10 @@ echo "=== a range runs the suites a skill's changed files map to ==="
 # on its second pass, and by runner and drives through scripts/runner, which
 # sources it: runner is named for that script and drives names it. pyuse
 # names lib/mod.py, a module an import reaches without spelling its path.
+# helped reaches scripts/driven only through tests/lib/helper.sh, which names
+# it; nothing names tests/lib/lonely.sh. battery names the runner and skilldoc
+# names SKILL.md, so the arms that turn those two away are what keep each from
+# mapping to its namer alone.
 M="$R/skills/mapped"
 mkdir -p "$M/scripts/lib" "$M/tests/lib" "$M/tests/fixtures"
 cp "$REPO/skills/orch/tests/run-all.sh" "$M/tests/run-all.sh"
@@ -385,7 +389,11 @@ printf 'VALUE = 1\n' >"$M/scripts/lib/mod.py"
 printf '#!/usr/bin/env bash\necho tool\n' >"$M/scripts/tool"
 printf '#!/usr/bin/env bash\necho orphan\n' >"$M/scripts/orphan"
 printf '#!/usr/bin/env bash\nsource "$(dirname "$0")/lib/pid.sh"\n' >"$M/scripts/runner"
+printf '#!/usr/bin/env bash\necho driven\n' >"$M/scripts/driven"
 printf 'fixture\n' >"$M/tests/fixtures/x.sh"
+printf 'drive() { "$SKILL/../../scripts/driven"; }\n' >"$M/tests/lib/helper.sh"
+printf 'lonely=1\n' >"$M/tests/lib/lonely.sh"
+printf -- '---\nname: mapped\n---\n' >"$M/SKILL.md"
 suite_naming() { # NAME [TEXT] — a passing suite whose comment holds TEXT
   printf '#!/usr/bin/env bash\n# %s\necho "pass: 1   fail: 0"\n' "${2:-}" >"$M/tests/$1.sh"
 }
@@ -395,6 +403,9 @@ suite_naming wrapped 'names ../scripts/lib/wrap.sh'
 suite_naming deep 'names ../scripts/lib/alpha.sh'
 suite_naming drives 'runs ../scripts/runner'
 suite_naming pyuse 'reads ../scripts/lib/mod.py'
+suite_naming helped 'sources lib/helper.sh'
+suite_naming battery 'runs ../tests/run-all.sh'
+suite_naming skilldoc 'reads ../SKILL.md'
 # A skill with no runner: each suite runs by its own file, a .test suffix
 # included, and a node suite beside the shell ones.
 P="$R/skills/plain"
@@ -406,9 +417,10 @@ printf '%s\n' "import test from 'node:test';" "test('gamma', () => {});" >"$P/te
 git -C "$R" add -A
 git -C "$R" commit -q -m "chore: two skills with suites named for their files"
 mapped_base="$(git -C "$R" rev-parse HEAD)"
-MAPPED_ALL="deep drives other pid_direct pyuse runner tool tool_extra toolbox wrapped"
+MAPPED_ALL="battery deep drives helped other pid_direct pyuse runner skilldoc tool tool_extra toolbox wrapped"
 PLAIN_ALL="alpha.test.sh beta.test.sh gamma.test.mjs"
 note_for() { printf 'guard-note: suites=all reason=%s path=%s' "$1" "$2"; }
+mapped_note() { printf 'guard-note: suites=%s reason=mapped skill=skills/%s' "$1" "$2"; }
 # The suites that started: the runner's start lines, and the file headers the
 # guard prints for a skill with no runner.
 started() {
@@ -429,19 +441,25 @@ change() { # HOW PATH... — append to each, or delete each
     esac
   done
 }
+# One row per arm of mapped_suites and per entry of skill_files.
 # label|how|paths, space-separated|suites that start, sorted|the note, or none
 MAP_ROWS=(
-  "a changed suite runs itself alone|append|skills/mapped/tests/tool.sh|tool|none"
-  "a changed script runs each suite named for it, not one its name only begins|append|skills/mapped/scripts/tool|tool tool_extra|none"
-  "a changed lib runs every suite reaching it through libs, scripts and names|append|skills/mapped/scripts/lib/pid.sh|deep drives pid_direct runner wrapped|none"
-  "a deleted suite nothing names runs nothing|delete|skills/mapped/tests/other.sh||none"
+  "a changed suite runs itself alone|append|skills/mapped/tests/tool.sh|tool|$(mapped_note 1/13 mapped)"
+  "a changed script runs each suite named for it, not one its name only begins|append|skills/mapped/scripts/tool|tool tool_extra|$(mapped_note 2/13 mapped)"
+  "a changed lib runs every suite reaching it through libs, scripts and names|append|skills/mapped/scripts/lib/pid.sh|deep drives pid_direct runner wrapped|$(mapped_note 5/13 mapped)"
+  "a changed script reaches a suite through a tests/lib helper naming it|append|skills/mapped/scripts/driven|helped|$(mapped_note 1/13 mapped)"
+  "a changed tests/lib helper runs the suite sourcing it|append|skills/mapped/tests/lib/helper.sh|helped|$(mapped_note 1/13 mapped)"
+  "a deleted suite nothing names runs nothing|delete|skills/mapped/tests/other.sh||$(mapped_note 0/12 mapped)"
+  "a deleted tests/lib helper nothing names runs the whole set and says so|delete|skills/mapped/tests/lib/lonely.sh|$MAPPED_ALL|$(note_for unmapped skills/mapped/tests/lib/lonely.sh)"
   "a changed script no suite reaches runs the whole set and says so|append|skills/mapped/scripts/orphan|$MAPPED_ALL|$(note_for unmapped skills/mapped/scripts/orphan)"
   "a Python module under lib runs the whole set and says so|append|skills/mapped/scripts/lib/mod.py|$MAPPED_ALL|$(note_for unmapped skills/mapped/scripts/lib/mod.py)"
   "a deleted fixture under tests runs the whole set and says so|delete|skills/mapped/tests/fixtures/x.sh|$MAPPED_ALL|$(note_for unmapped skills/mapped/tests/fixtures/x.sh)"
-  "two changed paths run the suites of both|append|skills/mapped/scripts/tool skills/mapped/tests/other.sh|other tool tool_extra|none"
+  "a changed runner runs the whole set and says so|append|skills/mapped/tests/run-all.sh|$MAPPED_ALL|$(note_for unmapped skills/mapped/tests/run-all.sh)"
+  "a changed SKILL.md runs the whole set and says so|append|skills/mapped/SKILL.md|$MAPPED_ALL|$(note_for unmapped skills/mapped/SKILL.md)"
+  "two changed paths run the suites of both|append|skills/mapped/scripts/tool skills/mapped/tests/other.sh|other tool tool_extra|$(mapped_note 3/13 mapped)"
   "a mapped and an unmapped path run the whole set|append|skills/mapped/scripts/tool skills/mapped/scripts/orphan|$MAPPED_ALL|$(note_for unmapped skills/mapped/scripts/orphan)"
-  "with no runner a changed script runs its .test suite alone|append|skills/plain/scripts/alpha.sh|alpha.test.sh|none"
-  "with no runner a changed suite runs itself alone|append|skills/plain/tests/beta.test.sh|beta.test.sh|none"
+  "with no runner a changed script runs its .test suite alone|append|skills/plain/scripts/alpha.sh|alpha.test.sh|$(mapped_note 1/3 plain)"
+  "with no runner a changed suite runs itself alone|append|skills/plain/tests/beta.test.sh|beta.test.sh|$(mapped_note 1/3 plain)"
 )
 map_row() { # HOW PATHS NOTE [GUARD] — sets VERDICT
   local noted
@@ -478,14 +496,20 @@ back_to_mapped
 # label#how#paths#sed expression breaking the rule#suites that start, sorted
 MAP_CONTROLS=(
   "control: without the suite arm the changed suite runs the whole set#append#skills/mapped/tests/tool.sh#s/^    if grep -Fxq -- \"\$f\" <<<\"\$suites\"; then$/    if false; then/#$MAPPED_ALL"
-  "control: without the deleted-suite arm a deleted suite runs the whole set#delete#skills/mapped/tests/other.sh#s/|| return 0 ;; esac$/|| return 1 ;; esac/#deep drives pid_direct pyuse runner tool tool_extra toolbox wrapped"
+  "control: without the deleted-suite arm a deleted suite runs the whole set#delete#skills/mapped/tests/other.sh#s/\] || return 0 ;;$/] || return 1 ;;/#battery deep drives helped pid_direct pyuse runner skilldoc tool tool_extra toolbox wrapped"
+  "control: with the deleted-suite arm taking any path under tests a deleted helper runs nothing#delete#skills/mapped/tests/lib/lonely.sh#s/^      tests\/\*\/\*) ;;$/      tests\/never) ;;/#"
   "control: with names handed to the runner as substrings the changed suite runs its namesakes#append#skills/mapped/tests/tool.sh#s/filters+=(\"=\${t%.sh}\")/filters+=(\"\${t%.sh}\")/#tool tool_extra toolbox"
   "control: without the name-and-dash arm the script's second suite stands down#append#skills/mapped/scripts/tool#s/case \"\$base\" in \"\$name\" | \"\$name\"-\*)/case \"\$base\" in \"\$name\")/#tool"
   "control: without the scan's second pass the suites two files away stand down#append#skills/mapped/scripts/lib/pid.sh#/^          found=1$/d#drives pid_direct runner wrapped"
   "control: without the scan growing its needles only what names the lib itself runs#append#skills/mapped/scripts/lib/pid.sh#/needles+=(-e/d#pid_direct runner"
   "control: without the name rule for a reached script its named suite stands down#append#skills/mapped/scripts/lib/pid.sh#s/^      scripts\/\*)$/      scripts\/none)/#deep drives pid_direct wrapped"
+  "control: with skill_files missing top-level scripts the lib's script and its suites stand down#append#skills/mapped/scripts/lib/pid.sh#s| \"\$1\"/scripts/\* \"\$1\"/scripts/\*/\*| \"\$1\"/scripts/*/*|#deep pid_direct wrapped"
+  "control: with skill_files missing scripts subdirectories the lib chain stands down#append#skills/mapped/scripts/lib/pid.sh#s| \"\$1\"/scripts/\*/\* \"\$1\"/tests/lib/\*| \"\$1\"/tests/lib/*|#drives pid_direct runner"
+  "control: with skill_files missing tests/lib the helper's suite goes unreached and the whole set runs#append#skills/mapped/scripts/driven#s| \"\$1\"/tests/lib/\*; do|; do|#$MAPPED_ALL"
+  "control: without tests/lib in the scanned-path arm a changed helper runs the whole set#append#skills/mapped/tests/lib/helper.sh#s/^    scripts\/\*\/\*.sh | tests\/lib\/\*.sh) ;;$/    scripts\/*\/*.sh) ;;/#$MAPPED_ALL"
   "control: without the subdirectory arm the Python module runs only its namer#append#skills/mapped/scripts/lib/mod.py#/^    scripts\/\*\/\* | tests\/\*\/\*) return 1 ;;$/d#pyuse"
-  "control: without the subdirectory arm the deleted fixture runs nothing#delete#skills/mapped/tests/fixtures/x.sh#/^    scripts\/\*\/\* | tests\/\*\/\*) return 1 ;;$/d#"
+  "control: without the runner arm a changed runner runs only its namer#append#skills/mapped/tests/run-all.sh#/^    tests\/run-all.sh) return 1 ;;$/d#battery"
+  "control: without the catch-all arm a changed SKILL.md runs only its namer#append#skills/mapped/SKILL.md#/^    \*) return 1 ;;$/d#skilldoc"
   "control: without the whole-set fallback the unmapped script runs nothing#append#skills/mapped/scripts/orphan#s/unmapped path=\$f\"; run=all; break ;;/unmapped path=\$f\"; break ;;/#"
   "control: with each path's suites overwriting the last only the last path's run#append#skills/mapped/scripts/tool skills/mapped/tests/other.sh#s/^            run=\"\$run\$sel$/            run=\"\$sel/#other"
   "control: with the no-runner loop reading the whole set every suite runs#append#skills/plain/scripts/alpha.sh#s/^        done <<<\"\$run\"$/        done <<<\"\$(skill_suites \"\$d\")\"/#$PLAIN_ALL"
@@ -502,6 +526,15 @@ for row in "${MAP_CONTROLS[@]}"; do
     bad "$label" "the rule could not be broken in a guard copy"
   fi
 done
+# The narrowed run's note is the reader's one sign that the set was cut.
+if mutant_guard '/note suites "\$(count_lines/d'; then
+  map_row append skills/mapped/tests/tool.sh "$(mapped_note 1/13 mapped)" "$MUTANT_TOOLS/guard"
+  [[ "$VERDICT" == *" started=tool note=missing" ]] \
+    && ok "control: without the narrowed-run note the one-suite run says nothing of the cut" \
+    || bad "control: without the narrowed-run note the one-suite run says nothing of the cut" "$VERDICT out=$OUT"
+else
+  bad "control: the narrowed-run note could not be removed from a guard copy"
+fi
 # A file the scan cannot read is no evidence it names nothing: the skill runs
 # whole, and the note names the read, not the rule. The stub fails the scan's
 # grep alone, the one that passes -qF, on the file FAIL_GREP names: a lib the
