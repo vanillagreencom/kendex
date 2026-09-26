@@ -442,8 +442,12 @@ fi
 # that from a stale singular. The workflow itself is excluded, being where the
 # matrix lives and where a retired name is deliberately kept: its own history
 # sentences still say what the undivided guards and rest shards once cost.
+# The form is tools/ci-job-set's SHARD_CITATION, which also runs this suite
+# for a changed file citing one.
+CITATION="$(sed -n "s/^SHARD_CITATION='\(.*\)'\$/\1/p" "$ROOT/tools/ci-job-set")"
+[[ -n "$CITATION" ]] || bad "no SHARD_CITATION read from tools/ci-job-set, so no citation can be judged"
 cited_shards() { # cited_shards ; NUL paths on stdin -> path:line:name per citation
-  { xargs -0 grep -HIonE '`[a-z0-9][a-z0-9-]*` shards?' 2>/dev/null || true; } |
+  { xargs -0 grep -HIonE "$CITATION" 2>/dev/null || true; } |
     sed 's/:`\([a-z0-9-]*\)` shards\{0,1\}$/:\1/'
 }
 

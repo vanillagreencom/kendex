@@ -152,7 +152,15 @@ sel_row() { # DESC CLASS DOCS PATHS LANES SPEC
 
 # CLASS|DOCS_ONLY|PATHS (blank-separated)|LANES|SHARDS. This tree's scripts
 # and suites decide who reads a path, so a row here names the members its
-# case is about; the fixture world below holds whole lists.
+# case is about; the fixture world below holds whole lists. This suite is one
+# of the files searched, so a path outside skills/ that a row needs its real
+# reader for is built from parts here, and this file never spells it whole.
+SETTINGS_TOML="kendex.settings"".toml"
+LOCAL_TOML="kendex-local"".toml"
+DISCOVER_RS="crates/core/src/discover"".rs"
+SKILLS_AGENTS="skills/AGENTS"".md"
+UNREAD_DOC="docs/no-reader"".md"
+UNREAD_LEGAL="docs/legal/no-reader"".md"
 selection_rows=0
 while IFS='|' read -r class docs paths want spec; do
   selection_rows=$((selection_rows + 1))
@@ -176,25 +184,25 @@ micro|false|skills/preflight/scripts/preflight|$SHARD_CODE|+linear +guards-commi
 micro|false|skills/doc-limits/scripts/doc-limits|$SHARD_CODE|+rest +guards-commit
 micro|false|skills/github/scripts/lib/gh-auth.sh|$SHARD_CODE|+rest +worktree
 micro|false|skills/orch/scripts/lib/branch-growth.sh|$SHARD_CODE|+review-gate +rest
-micro|false|kendex.settings.toml|$SHARD_CODE|+guards-tools
-micro|false|kendex-local.toml|$SHARD_CODE|+guards-tools
-micro|false|crates/core/src/discover.rs|$SHARD_BUILD|+guards-tools +rest
+micro|false|$SETTINGS_TOML|$SHARD_CODE|+guards-tools
+micro|false|$LOCAL_TOML|$SHARD_CODE|+guards-tools
+micro|false|$DISCOVER_RS|$SHARD_BUILD|+guards-tools +rest
 micro|false|.claude/hooks/lane-mail-check|$SHARD_CODE|+guards-tools
 micro|false|pi-extensions/pi-qol/src/x.ts|$SHARD_CODE|+node -pi-claude-bridge
 micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$SHARD_CODE|+node +pi-claude-bridge
-micro|false|skills/AGENTS.md|$SHARD_PROSE|["guards-scans"]
+micro|false|$SKILLS_AGENTS|$SHARD_PROSE|["guards-scans","guards-tools"]
 micro|false|.github/instructions/code-review.md|$SHARD_PROSE|$ROSTER
 micro|false|.github/AGENTS.md skills/orch/scripts/lanes|$(lanes true true true false true false)|$ROSTER
-micro|true|docs/guide.md CHANGELOG.md|$NONE_PROSE|[]
-small|true|docs/guide.md CHANGELOG.md|$NONE_PROSE|[]
-standard|true|docs/guide.md CHANGELOG.md|$NONE_PROSE|[]
+micro|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
+small|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
+standard|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
 standard|true|AGENTS.md|$NONE_PROSE|[]
 standard|true|CLAUDE.md|$NONE_PROSE|[]
 standard|true|GEMINI.md|$NONE_PROSE|[]
-standard|true|docs/legal/terms.md|$NONE_PROSE|[]
-trivial|true|docs/legal/terms.md|$NONE_PROSE|[]
+standard|true|$UNREAD_LEGAL|$NONE_PROSE|[]
+trivial|true|$UNREAD_LEGAL|$NONE_PROSE|[]
 trivial|true|README.md|$NONE_PROSE|[]
-standard|false|docs/guide.md|$NONE_CODE|[]
+standard|false|$UNREAD_DOC|$NONE_CODE|[]
 enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous|
 micro|false||exit=2 class-without-paths class=micro|
 micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe|
@@ -305,7 +313,7 @@ mkdir -p "$TMP/standard/tools"
 cp "$ROOT/tools/rust-reads" "$TMP/standard/tools/rust-reads"
 sed '/\[ "\$CHANGE_CLASS:\$DOCS_ONLY" != standard:false \] /d' "$JOB_SET" >"$TMP/standard/tools/ci-job-set"
 chmod +x "$TMP/standard/tools/ci-job-set"
-[ "$(SELECT_WITH="$TMP/standard/tools/ci-job-set" selection standard false docs/guide.md)" = "$PROSE_ROW" ] &&
+[ "$(SELECT_WITH="$TMP/standard/tools/ci-job-set" selection standard false "$UNREAD_DOC")" = "$PROSE_ROW" ] &&
   ok "control: without the standard rule a standard prose diff stands the platform lanes down" ||
   bad "control: without the standard rule a standard prose diff stands the platform lanes down"
 # EDIT|CLASS|PATHS|EXPECTED — a copy with that rule removed answers the row
@@ -340,7 +348,9 @@ CONTROLS
 #   commit-guards' suite runs preflight, and doc-limits declares
 #   commit-guards;
 #   a tools/ suite reads kendex.settings.toml and names atomic-install.sh and
-#   AGENTS.md; a hooks/ suite reads crates/demo/src/discover.rs.
+#   AGENTS.md; hooks/ suites read crates/demo/src/discover.rs and
+#   docs/x/policy.md; a Pi package's suite runs tools/demo-tool;
+#   skills/AGENTS.md and docs/cite.md cite a shard.
 # A script's read carries the change to its skill's readers; a suite's read
 # runs that suite's shard and goes no further.
 SEL_WORLD="$TMP/sel-world"
@@ -368,6 +378,12 @@ printf '. "$HERE/../../orch/scripts/lib/branch-growth.sh"\n' >"$SEL_WORLD/skills
 printf 'run "$R/.agents/skills/preflight/scripts/preflight"\n' >"$SEL_WORLD/skills/commit-guards/tests/scope.test.sh"
 printf 'read "$ROOT/kendex.settings.toml" lib/atomic-install.sh AGENTS.md\n' >"$SEL_WORLD/tools/tests/settings.test.sh"
 printf 'DISCOVER="$TEST_DIR/../../crates/demo/src/discover.rs"\n' >"$SEL_WORLD/hooks/tests/discover.test.sh"
+printf 'policy "$ROOT/docs/x/policy.md"\n' >"$SEL_WORLD/hooks/tests/policy.test.sh"
+mkdir -p "$SEL_WORLD/pi-extensions/pi-demo/tests" "$SEL_WORLD/docs"
+printf 'run("tools/demo-tool")\n' >"$SEL_WORLD/pi-extensions/pi-demo/tests/demo.test.ts"
+printf 'the `guards-scans` shard runs it\n' | tee "$SEL_WORLD/skills/AGENTS.md" >"$SEL_WORLD/docs/cite.md"
+git -C "$SEL_WORLD" init -q
+git -C "$SEL_WORLD" add -A
 # PATH|SHARDS, every row micro and not docs-only.
 world_rows=0
 while IFS='|' read -r path expected; do
@@ -382,11 +398,16 @@ skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-tools
 kendex.settings.toml|["guards-tools"]
 install.sh|[]
 AGENTS.md|[]
-crates/demo/src/discover.rs|["guards-tools","rest"]
-.claude/hooks/lane-mail-check|["guards-tools"]
-.pi/kendex/hooks/lane-mail-check|["guards-tools"]
+crates/demo/src/discover.rs|["guards-tools","rest","node"]
+.claude/hooks/lane-mail-check|["guards-tools","node"]
+.pi/kendex/hooks/lane-mail-check|["guards-tools","node"]
+hooks/block-bare-cd.sh|["guards-scans","guards-tools","node"]
+docs/x/policy.md|["guards-tools","node"]
+tools/demo-tool|["guards-scans","guards-tools","node"]
+skills/AGENTS.md|["guards-scans","guards-tools"]
+docs/cite.md|["guards-tools"]
 ROWS
-[ "$world_rows" -ge 10 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
+[ "$world_rows" -ge 15 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
 
 # The shard selection's rules, each removed from a copy run over the fixture
 # world: the copy must answer its path other than the script does. Fields
@@ -408,16 +429,20 @@ while IFS='@' read -r edit paths; do
 done <<'CONTROLS'
 s/^    \[ "\$required" != "\$1" \] || reach_skill "\$skill"$/    :/@skills/orch/scripts/lib/branch-growth.sh
 s/skills\/\*:script) reach_skill "\${package#skills\/}"/skills\/*:script) want_package "$package"/@skills/github/scripts/lib/gh-auth.sh
-s/how = (\$0 ~ \/\\\/tests\\\/\/) ? "suite" : "script"/how = "script"/@skills/preflight/scripts/preflight
+s/? "suite" : "script")/? "script" : "script")/@skills/preflight/scripts/preflight
 s/"(^|\[^A-Za-z0-9_.-\])\$(printf/"$(printf/@install.sh
 s/^\$path" ;;$/" ;;/@kendex.settings.toml
-s/skills\/\* | \.agents\/skills\/\* | \*\.md | \*\.markdown) ;;/skills\/* | .agents\/skills\/*) ;;/@AGENTS.md
+/^      \*\.md | \*\.markdown) ;;$/d@AGENTS.md
+s/^      \*\/\*) pending="\$pending$/      *.md | *.markdown) ;; *\/*) pending="$pending/@docs/x/policy.md
+s/0) want_shard guards-tools ;;/0) ;;/@docs/cite.md
+s/hooks) want_shard guards-tools node ;;/hooks) want_shard guards-tools ;;/@hooks/block-bare-cd.sh
+/^  \/\^pi-extensions\\\/\/ { package = "pi-extensions" }$/d@tools/demo-tool
 s/^\.\.\/\$1\/"$/"/@skills/orch/scripts/lib/branch-growth.sh
 s/^        want_package tools$/        :/@skills/price-handling/scripts/x
 s/ | \.claude\/hooks\/\*//@.claude/hooks/lane-mail-check
 s/skills\/\*\/\* | \.agents\/skills\/\*\/\*)/no-package)/@skills/orch/scripts/lib/branch-growth.sh
 s/skills\/\* | hooks\/\* | tools\/\*) want_shard guards-scans/no-tree) want_shard guards-scans/@skills/price-handling/scripts/x
-s/\[ "\$1" = false \] || want_shard rest/:/@crates/demo/src/unnamed.rs
+s/\[ "\$build" = false \] || want_shard rest/:/@crates/demo/src/unnamed.rs
 s/! any "\$ALL_SHARDS" || want_shard \$SHARDS/:/@.github/instructions/code-review.md
 s/! any "\$ALL_SHARDS" || macos_pr=\$macos/:/@.github/AGENTS.md skills/price-handling/scripts/x
 s/\[ "\$shards" != "\[\]" \] || shell=false/:/@install.sh
@@ -459,7 +484,8 @@ while IFS='#' read -r edit path expected; do
 done <<'ROWS'
 s/skills\/worktree) want_shard worktree ;;/skills\/worktree) want_shard worktre ;;/#skills/worktree/scripts/worktree#exit=2 shard-undeclared shard=worktre
 s/^  ' "\$@"$/  ' "$@" \&\& false/#skills/price-handling/scripts/x#exit=2 requirements-failed
-s/files="\$(grep -rlE /files="$(grep --no-such-option -rlE /#kendex.settings.toml#exit=2 consumers-failed
+s/files="\$(grep -lE /files="$(grep --no-such-option -lE /#kendex.settings.toml#exit=2 consumers-failed
+s/grep -qE -- "\$SHARD_CITATION"/grep --no-such-option -qE -- "$SHARD_CITATION"/#docs/cite.md#exit=2 citation-read-failed
 ROWS
 
 # --- 2. The names -----------------------------------------------------------

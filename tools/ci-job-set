@@ -27,15 +27,20 @@
 #     `pi-extensions/`. A changed package selects the shards whose steps run
 #     its suites. A changed skill also selects `guards-tools`, whose tools/
 #     and hooks/ suites read skills' scripts, some by glob.
-#   - Who reads a change is searched for, not listed. The scripts and suites
-#     under skills/*/scripts, skills/*/tests, tools/ and hooks/ are searched
-#     for each changed skill's name and for the path of each changed file
-#     outside skills/ that is not prose. A suite that names one selects its
-#     own shard. A script that names a skill, or a skill declaring it under
-#     `dependencies.required` in its SKILL.md, carries the change on: that
-#     skill counts as changed and is searched for in turn, until no search
-#     finds a new one. A reference the search cannot see, a path a script
-#     assembles at run time, is outside this rule.
+#   - Who reads a change is searched for, not listed. Every tracked file a
+#     shard runs, as consumers() maps it to a package, is searched for each
+#     changed skill's name and for the path of each changed file outside
+#     skills/, save a root file of prose. A suite that names one selects its
+#     own shard. A skill's script that names a skill, or a skill declaring
+#     it under `dependencies.required` in its SKILL.md, carries the change
+#     on: that skill counts as changed and is searched for in turn, until no
+#     search finds a new one. A reference the search cannot see, a path a
+#     script assembles at run time, is outside this rule, save the one
+#     want_package states: pi-hooks runs hooks by name, so hooks/ also
+#     selects `node`.
+#   - A changed file citing a shard by name in backticks selects
+#     `guards-tools`, whose orch-shard-partition suite holds every citation
+#     to the roster.
 #   - `guards-scans` runs where a path under skills/, hooks/ or tools/
 #     changed, the trees its scans read. `rest` also runs where a build input
 #     changed, because it builds kendex-cli from the checkout for
@@ -161,6 +166,8 @@ PROSE='\.(md|markdown)$'
 # What defines the lanes: the workflows and actions that run them, and the
 # scripts that select them.
 LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|rust-reads)$)'
+# A shard cited by name in prose: a name in backticks, then `shard`.
+SHARD_CITATION='`[a-z0-9][a-z0-9-]*` shards?'
 # What selects every shell shard: the lane sources and the rest of .github/.
 ALL_SHARDS="^\\.github/|$LANE_SOURCES"
 
@@ -231,19 +238,19 @@ requirements() {
   ' "$@"
 }
 
-# Who reads a path: `<package> <how>` for each file naming one of the paths
-# on stdin, the package `skills/<name>`, `tools` or `hooks`. These trees are
-# what a shard runs. <how> is `suite` for a file under a tests/ directory,
-# which reads the path when its own shard runs, and `script` for any other,
-# whose behaviour now depends on it. A path is named where it stands whole:
-# no path character touches either end, save a `/` before it or a path
-# ending in one, so `install.sh` is not read out of `atomic-install.sh`. A skill is also
-# named as `skills/<name>` or `../<name>/`. Exit 2 where the search failed.
+# Who reads a path: `<package> <how>` for each tracked file naming one of the
+# paths on stdin. The package is the one a shard runs the file in:
+# `skills/<name>` for its scripts/ and tests/, `tools`, `hooks`, and
+# `pi-extensions/pi-claude-bridge` or `pi-extensions` for a Pi package; a
+# tracked file anywhere else is no shard's and is not read. <how> is `suite`
+# for a file under a tests/ directory or a Pi package, which reads the path
+# when its own shard runs, and `script` for any other, whose behaviour now
+# depends on it. A path is named where it stands whole: no path character
+# touches either end, save a `/` before it or a path ending in one, so
+# `install.sh` is not read out of `atomic-install.sh`. A skill is also named as
+# `skills/<name>` or `../<name>/`. Exit 2 where the search failed.
 consumers() {
-  local tree trees="" path end n=0 files status=0
-  for tree in skills/*/scripts skills/*/tests tools hooks; do
-    [ ! -d "$tree" ] || trees="$trees $tree"
-  done
+  local path end n=0 listed deleted files status=0
   set --
   while IFS= read -r path; do
     [ -n "$path" ] || continue
@@ -252,18 +259,39 @@ consumers() {
     set -- "$@" -e "(^|[^A-Za-z0-9_.-])$(printf '%s' "$path" | sed 's/[][\.*^$+?(){}|]/\\&/g')$end"
     n=$((n + 1))
   done
-  [ -n "$trees" ] && [ "$n" -gt 0 ] || return 0
-  # shellcheck disable=SC2086 # the tree list is word-split on purpose
-  files="$(grep -rlE "$@" -- $trees)" || status=$?
+  [ "$n" -gt 0 ] || return 0
+  # Tracked and present: a file the working tree deleted is read by nothing.
+  listed="$(git -c core.quotePath=false ls-files)" || return 2
+  deleted="$(git -c core.quotePath=false ls-files --deleted)" || return 2
+  listed="$(printf '%s\n' "$listed" | awk -v mode=path "$PACKAGE_AWK")" || return 2
+  if [ -n "$deleted" ] && [ -n "$listed" ]; then
+    listed="$(grep -vxF -e "$deleted" <<<"$listed")" || [ "$?" -eq 1 ] || return 2
+  fi
+  [ -n "$listed" ] || return 0
+  local IFS='
+'
+  set -f
+  # shellcheck disable=SC2086 # one file per line
+  set -- "$@" $listed
+  set +f
+  files="$(grep -lE "$@")" || status=$?
   [ "$status" -le 1 ] || return 2
   [ -n "$files" ] || return 0
-  printf '%s\n' "$files" | awk '
-    { how = ($0 ~ /\/tests\//) ? "suite" : "script" }
-    /^skills\/[^\/]+\// { split($0, part, "/"); print "skills/" part[2] " " how; next }
-    /^tools\// { print "tools " how; next }
-    /^hooks\// { print "hooks " how; next }
-  ' | sort -u
+  printf '%s\n' "$files" | awk -v mode=package "$PACKAGE_AWK" | sort -u
 }
+# The one mapping from a tracked file to the package a shard runs it in, as
+# consumers() above states it. mode=path prints each file that has one,
+# mode=package its `<package> <how>`.
+PACKAGE_AWK='
+  /^skills\/[^\/]+\/(scripts|tests)\// { split($0, part, "/"); package = "skills/" part[2] }
+  /^tools\// { package = "tools" }
+  /^hooks\// { package = "hooks" }
+  /^pi-extensions\// { package = "pi-extensions" }
+  /^pi-extensions\/pi-claude-bridge\// { package = "pi-extensions/pi-claude-bridge" }
+  package == "" { next }
+  mode == "path" { print; package = ""; next }
+  { print package " " (($0 ~ /\/tests\// || package ~ /^pi-extensions/) ? "suite" : "script"); package = "" }
+'
 
 # The shards the changed paths select, gathered into `want` as a
 # space-bounded set.
@@ -291,7 +319,10 @@ want_package() { # PACKAGE
     skills/worktree) want_shard worktree ;;
     skills/deep-research) want_shard node ;;
     skills/*) want_shard rest ;;
-    tools | hooks) want_shard guards-tools ;;
+    tools) want_shard guards-tools ;;
+    # pi-hooks' suite runs real hooks by a path it builds from each hook's
+    # name, which no search for the path can find.
+    hooks) want_shard guards-tools node ;;
     pi-extensions/pi-claude-bridge) want_shard node pi-claude-bridge ;;
     pi-extensions) want_shard node ;;
   esac
@@ -331,7 +362,8 @@ skills/$1
 
 # The `shards=` value for a measured row: the JSON list, in roster order.
 select_shards() { # BUILD(true|false)
-  local path skill batch found package list="" shard
+  local build="$1" path skill batch found package list="" shard cited
+  set --
   while IFS= read -r path; do
     case "$path" in
       skills/*/* | .agents/skills/*/*)
@@ -347,32 +379,49 @@ select_shards() { # BUILD(true|false)
       pi-extensions/*) want_package pi-extensions ;;
     esac
     case "$path" in skills/* | hooks/* | tools/*) want_shard guards-scans ;; esac
-    # A file outside every skill is searched for by its own path. Prose is
-    # left out: no suite executes it, and its bare name is every fixture's.
+    # A file outside every skill is searched for by its own path, save a
+    # root file of prose: a bare AGENTS.md or README.md is every fixture's.
     case "$path" in
-      skills/* | .agents/skills/* | *.md | *.markdown) ;;
+      skills/* | .agents/skills/*) ;;
+      */*) pending="$pending
+$path" ;;
+      *.md | *.markdown) ;;
       *) pending="$pending
 $path" ;;
     esac
+    [ ! -f "$path" ] || set -- "$@" "$path"
   done <<<"$paths"
+  # A changed file citing a shard by name, in the form
+  # tools/tests/orch-shard-partition.test.sh holds to the roster, runs that
+  # suite.
+  if [ "$#" -gt 0 ]; then
+    cited=0
+    grep -qE -- "$SHARD_CITATION" "$@" || cited=$?
+    case "$cited" in
+      0) want_shard guards-tools ;;
+      1) ;;
+      *) die "citation-read-failed" "the changed files could not be read for shard citations" ;;
+    esac
+  fi
   # Until no search finds a skill it has not searched for.
   while [ -n "$pending" ]; do
     batch="$pending"
     pending=""
     found="$(consumers <<<"$batch")" ||
       die "consumers-failed" "the scripts and suites naming a changed path could not be searched"
-    # A suite that reads a path runs; a script that reads one carries the
-    # change on to its own package's readers. tools/ and hooks/ are read by
-    # no package's scripts, so they end the chain.
+    # A suite that reads a path runs; a skill's script that reads one
+    # carries the change on to that skill's readers. The chain ends at
+    # tools/, hooks/ and pi-extensions/: a change to one of those is
+    # searched for by its own path, above.
     while read -r package how; do
       case "$package:$how" in
         skills/*:script) reach_skill "${package#skills/}" ;;
-        skills/*:suite | tools:* | hooks:*) want_package "$package" ;;
+        skills/*:suite | tools:* | hooks:* | pi-extensions*:*) want_package "$package" ;;
         :) ;;
       esac
     done <<<"$found"
   done
-  [ "$1" = false ] || want_shard rest
+  [ "$build" = false ] || want_shard rest
   # shellcheck disable=SC2086 # the roster is a word list
   ! any "$ALL_SHARDS" || want_shard $SHARDS
   for shard in $SHARDS; do
