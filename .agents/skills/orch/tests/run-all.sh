@@ -23,7 +23,8 @@
 # Suites run as many at a time as `nproc` reports, or 4 where it cannot
 # answer (a stock macOS has no nproc). A suite's stdout and stderr are held
 # until it exits and then printed whole under its header, so two suites
-# never interleave; headers come in completion order. A suite in ALONE
+# never interleave; headers come in the order the runner reaps the
+# suites, which follows completion to within one 0.1s poll. A suite in ALONE
 # below runs by itself after the others. run-all.sh prints a start line as
 # it launches each suite, so a run cut off by a signal or a job timeout still
 # names every suite that was running; after each suite's output it prints
@@ -126,8 +127,8 @@ esac
 OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/orch-run-all.XXXXXX")" ||
   { echo "run-all.sh: mktemp failed; no directory to hold suite output" >&2; exit 1; }
 trap 'rm -rf -- "$OUT_DIR"' EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'stop_suites; exit 130' INT
+trap 'stop_suites; exit 143' TERM
 
 # Prints "PASS FAIL" from a suite's output, per the shapes the header names.
 counts_of() { # FILE
@@ -171,6 +172,23 @@ report() { # BASE STATUS SECONDS
   printf 'suite=%s seconds=%s pass=%s fail=%s\n' "$1" "$3" "$pass" "$fail"
 }
 
+# Each suite is launched with job control on, so it leads its own process
+# group with SIGINT at its default rather than ignored as a plain background
+# job's is; a Ctrl-C reaches the runner alone, and this sends TERM to every
+# running suite's whole group and waits for it before the runner exits.
+stop_suites() {
+  local k=0
+  while [ "$k" -lt "$JOBS" ]; do
+    [ -z "${SLOT_PID[k]:-}" ] || kill -TERM -- "-${SLOT_PID[k]}" 2>/dev/null
+    k=$((k + 1))
+  done
+  k=0
+  while [ "$k" -lt "$JOBS" ]; do
+    [ -z "${SLOT_PID[k]:-}" ] || wait "${SLOT_PID[k]}" 2>/dev/null
+    k=$((k + 1))
+  done
+}
+
 # One slot per worker, each empty or holding the suite it runs. A suite is
 # reaped once `kill -0` finds it gone, and `wait` then returns the status the
 # shell kept for it. A slot is refilled on the pass that reaps it, except that
@@ -195,16 +213,19 @@ while [ "$finished" -lt "$RUN" ]; do
       status=$?
       report "$base" "$status" "$((SECONDS - SLOT_START[k]))"
       SLOT[k]=""
+      SLOT_PID[k]=""
       finished=$((finished + 1))
       running=$((running - 1))
       reaped=1
     fi
     if [ -z "${SLOT[k]}" ] && [ "$next" -lt "$RUN" ] &&
       { [ "$next" -lt "$POOLED" ] || [ "$running" -eq 0 ]; }; then
-      SLOT[k]="${SUITES[next]}"
-      printf 'start suite=%s\n' "${SLOT[k]}"
-      bash "$TEST_DIR/${SLOT[k]}.sh" >"$OUT_DIR/${SLOT[k]}.out" 2>&1 </dev/null &
+      printf 'start suite=%s\n' "${SUITES[next]}"
+      set -m
+      bash "$TEST_DIR/${SUITES[next]}.sh" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
       SLOT_PID[k]=$!
+      set +m
+      SLOT[k]="${SUITES[next]}"
       SLOT_START[k]=$SECONDS
       running=$((running + 1))
       next=$((next + 1))

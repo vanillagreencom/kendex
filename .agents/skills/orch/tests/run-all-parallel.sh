@@ -24,6 +24,8 @@
 #      that is not a number refuses
 #   4. the ALONE list — each suite run-all.sh names there starts only when
 #      no other suite runs, and no suite starts while it runs
+#   5. an interrupt — SIGINT to the runner's process group ends the run at
+#      130 and stops the suite it was running, which would otherwise finish
 #
 # Bash 3.2 compatible.
 
@@ -254,6 +256,34 @@ verdicts="$(printf '%s\n' "$ALONE_NAMES" | awk -v ev="$B.ev" '
 ' - "$B.ev")"
 want="$(printf '%s\n' "$ALONE_NAMES" | awk '{printf "%s=alone ", $1}')"
 assert_eq "rc=$RC $verdicts" "rc=0 $want" "every ALONE suite runs with no other suite beside it"
+
+echo "=== 5. an interrupt stops the running suites ==="
+# The runner leads its own process group (set -m), so the group signal is a
+# terminal's Ctrl-C and never reaches this file; perl sets SIGINT back to its
+# default, since a shell started with it ignored could not trap it.
+B="$TMP_ROOT/interrupt"
+battery "$B"
+printf '#!/usr/bin/env bash\nsleep 3\ntouch "$MARK"\n' >"$B/long.sh"
+mkdir -p "$B.bin"
+printf '#!/usr/bin/env bash\necho 2\n' >"$B.bin/nproc"
+chmod +x "$B.bin/nproc"
+set -m
+perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die "exec: $!"' env -i PATH="$B.bin:$PATH" HOME="$HOME" \
+  TMPDIR="$B.tmp" MARK="$B.mark" bash "$B/run-all.sh" >"$B.out" 2>&1 &
+runner=$!
+set +m
+tick=0
+until grep -q '^start suite=long$' "$B.out" 2>/dev/null || [ "$tick" -ge 50 ]; do
+  sleep 0.1
+  tick=$((tick + 1))
+done
+sleep 0.5
+kill -INT -- "-$runner"
+RC=0
+wait "$runner" || RC=$?
+sleep 4
+assert_eq "rc=$RC mark=$([ -e "$B.mark" ] && echo written || echo absent)" "rc=130 mark=absent" \
+  "SIGINT ends the run at 130 and the suite it was running never finishes"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
