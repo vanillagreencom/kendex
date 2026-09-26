@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # job-unit.sh — start a long-lived orch job as a transient systemd user unit
 # where a user manager answers, under setsid elsewhere, and stop it by what
-# its launch recorded. It bounds a job's lifetime and nothing else: no
-# memory, CPU or task limit. It holds the manager probe, the unit name, the
+# its launch recorded. It bounds a job's lifetime and, when asked, its
+# memory, and nothing else: no CPU or task limit. It holds the manager probe, the unit name, the
 # systemd-run launch, the setsid fallback, the unit stop and the process-group
 # kill for the jobs that use it: dev-validate-run, every job
 # references/waiter-launch.md starts (the repeat watch among them), and
@@ -25,7 +25,7 @@
 # Usage:
 #   job-unit.sh name NAME PID
 #       Print the unit name orch-NAME-PID.
-#   job-unit.sh launch NAME RECORD [--cap SECS] -- ARGV...
+#   job-unit.sh launch NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
 #       Start ARGV detached, as the unit orch-NAME-PID where a manager
 #       answers (and, with no --cap, lingers), PID being this launch's own
 #       process, in this launch's own working directory and environment, and
@@ -39,13 +39,16 @@
 #       has: set above that bound plus the kill grace, so the job's own bound
 #       fires first. A job with no timeout, which runs until it is stopped,
 #       passes none, and its unit has no RuntimeMaxSec.
+#       --memory-max is the unit's MemoryMax in MiB; no process group holds a
+#       memory bound, so a launch that would run under setsid refuses it.
 #       A systemd-run that fails after the probe answered falls back to setsid
 #       only where the manager has no unit of that name: its call can time out
 #       while the manager still starts the unit, which is then the job.
 #       Exit 0 launched; 1 RECORD could not be written (record-unwritable); 2
 #       no setsid where the fallback needs it (missing-command); 3 usage; 4
 #       the job was not started (launch-failed: setsid's exit status, or a
-#       unit the manager would not describe).
+#       unit the manager would not describe); 5 --memory-max where the job
+#       would run under setsid (memory-max-unheld, with the runner line).
 #   job-unit.sh end RECORD LEADER_PID
 #       The job's own last call. Under setsid, tear down the process group
 #       LEADER_PID leads, the caller being a member; under a unit, nothing,
@@ -139,16 +142,18 @@ job_unit_read() { # RECORD
   esac
 }
 
-job_unit_launch() { # NAME RECORD [--cap SECS] -- ARGV...
-  local job="${1:-}" record="${2:-}" probe_err="" launch_err="" linger capped="" load nofile name arg
+job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
+  local job="${1:-}" record="${2:-}" probe_err="" launch_err="" linger capped="" memory_max="" load nofile name arg
   local unit_props=() unit_env=() unit_argv=()
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
   [[ $# -lt 2 ]] || shift 2
-  if [[ "${1:-}" == --cap && "${2:-}" =~ ^[1-9][0-9]*$ ]]; then
-    unit_props+=(-p "RuntimeMaxSec=$2")
-    capped=yes
+  while [[ "${1:-}" == --cap || "${1:-}" == --memory-max ]] && [[ "${2:-}" =~ ^[1-9][0-9]*$ ]]; do
+    case "$1" in
+      --cap) unit_props+=(-p "RuntimeMaxSec=$2"); capped=yes ;;
+      --memory-max) unit_props+=(-p "MemoryMax=${2}M"); memory_max="$2" ;;
+    esac
     shift 2
-  fi
+  done
   [[ -n "$job" && -n "$record" && $# -ge 2 && "$1" == -- ]] \
     || { job_unit_fail usage subcommand=launch 3; return; }
   shift
@@ -220,6 +225,7 @@ job_unit_launch() { # NAME RECORD [--cap SECS] -- ARGV...
     JOB_UNIT_NAME=""
     JOB_UNIT_LINE="runner=setsid reason=unit-launch-failed detail=${launch_err%%$'\n'*}"
   fi
+  [[ -z "$memory_max" ]] || { job_unit_fail memory-max-unheld "$JOB_UNIT_LINE" 5; return; }
   job_unit_record "$record" || { job_unit_fail record-unwritable "path=$record" 1; return; }
   # setsid -f returns once it has forked; a status here is a fork it could not
   # make or an argv it could not start.
