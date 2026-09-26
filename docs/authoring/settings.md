@@ -69,4 +69,6 @@ Nothing under `[secrets]` is ever seeded into `kendex.settings.toml`. No value r
 
 Declare a key under one table. A key declared under both, in one template or across two installed skills, has no destination anything can choose: the app offers no field for it and both write routes refuse it.
 
+kendex declares one private key itself: `KENDEX_USER_EMAIL`, the email address of the person who operates the checkout. It is the one identity key; a package that acts for that person reads it and declares no key of its own for the same thing. The Customize tab shows it on every package page that has settings, after that package's own credentials, and writes it to the private env file like any credential. A package that declares it under `[secrets]` shares it; one that declares it under `[env]` contests it.
+
 The precedence a consumer sees is `settings.md`'s own: the process environment first, then the private env file, then the settings files. `skills/*/scripts/lib/kendex-env.sh` reads them in that order, and `KENDEX_ENV_FILE` chooses which private file it reads.

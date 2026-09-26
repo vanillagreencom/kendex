@@ -53,10 +53,26 @@ pub use destination::{
 /// file once.
 pub const ENV_FILE_KEY: &str = "KENDEX_ENV_FILE";
 
-/// The name [`ENV_FILE_KEY`] is declared under. Every other key in a
-/// consumer's settings file belongs to a package; this one is kendex's,
-/// and the name is what a refusal and a conflict note call it.
+/// The name [`ENV_FILE_KEY`] and [`USER_EMAIL_KEY`] are declared under.
+/// Every other key in a consumer's settings file or private env file
+/// belongs to a package; these two are kendex's, and the name is what a
+/// refusal, a conflict note and an edit of either call their owner.
 pub const KENDEX_OWNER: &str = "kendex";
+
+/// The private key naming the person who operates this checkout, by the
+/// email address every system they use knows them by. kendex declares it
+/// rather than any one package, so every package that acts for that
+/// person reads the one key.
+pub const USER_EMAIL_KEY: &str = "KENDEX_USER_EMAIL";
+
+/// The comment block of [`USER_EMAIL_KEY`] in kendex's own template: what
+/// a consumer reads beside the field.
+const USER_EMAIL_EXPLAINER: [&str; 4] = [
+    "# The email address of the person who operates this checkout. Packages",
+    "# that act for you read it: the linear package assigns an issue to you",
+    "# when it starts work on it. Empty or absent means nothing is assigned.",
+    "# Use the address your Linear account signs in with.",
+];
 
 /// The comment block kendex writes above [`ENV_FILE_KEY`]. It is what a
 /// consumer reads beside the key in their own settings file, so it says
@@ -84,6 +100,35 @@ pub fn env_file_declaration() -> crate::settings_seed::SeededEnv {
         },
         owner: KENDEX_OWNER.to_owned(),
     }
+}
+
+/// kendex's own `[secrets]` template: the private keys kendex declares
+/// for itself rather than for a package, written in the grammar every
+/// package template is read with, so one reader decides what a
+/// declaration says.
+fn own_template() -> String {
+    let mut text = String::from("[secrets]\n\n");
+    for line in USER_EMAIL_EXPLAINER {
+        text.push_str(line);
+        text.push('\n');
+    }
+    text.push_str(&format!("{USER_EMAIL_KEY} = \"\"\n"));
+    text
+}
+
+/// The private keys kendex declares itself, each bound to
+/// [`KENDEX_OWNER`]. They go to the private env file by the same route as
+/// a package's credentials, and every project shows them beside its
+/// packages' own.
+pub fn own_declared() -> Vec<DeclaredSecret> {
+    crate::settings_template::read(&own_template())
+        .secrets
+        .into_iter()
+        .map(|entry| DeclaredSecret {
+            entry,
+            owner: KENDEX_OWNER.to_owned(),
+        })
+        .collect()
 }
 
 /// One credential a package declares, bound to the package that declares
@@ -116,6 +161,10 @@ pub enum SecretState {
 #[serde(rename_all = "camelCase")]
 pub struct SecretRow {
     pub key: String,
+    /// Whose declaration a value typed here is written under: the package
+    /// whose page shows the row, or kendex for a key kendex declares
+    /// itself. The edit names it, and the write is checked against it.
+    pub owner: String,
     /// The template's comment block, `#` markers stripped — what the
     /// author wrote to say what the key lets the package do.
     pub explainer: Vec<String>,
@@ -209,19 +258,20 @@ impl SecretsRead {
         }
     }
 
-    /// The rows one package's declarations become.
+    /// The rows one owner's declarations become.
     ///
     /// The whole comment block reaches the explainer, values line and all.
     /// A values line declares nothing under `[secrets]` — only `[env]` has
     /// a default to hold a list to — so a line spelled that way here is
     /// the prose it looks like, and there is no picker beside it to say
     /// the same thing twice.
-    pub fn rows(&self, secrets: &[SecretEntry]) -> Vec<SecretRow> {
+    pub fn rows(&self, secrets: &[SecretEntry], owner: &str) -> Vec<SecretRow> {
         secrets
             .iter()
             .map(|entry| SecretRow {
                 current: self.state_of(&entry.key),
                 key: entry.key.clone(),
+                owner: owner.to_owned(),
                 explainer: entry.comment.clone(),
                 required: entry.required,
             })
@@ -330,12 +380,12 @@ fn candidates(root: &Path, chosen: &str) -> Vec<String> {
     found.into_iter().collect()
 }
 
-/// Every credential the installed packages declare, by package. Read
-/// through the strict template reader, so a template with any defect
-/// declares nothing here and is reported as invalid by
-/// [`crate::settings_view`] rather than half-read.
+/// Every credential kendex and the installed packages declare, kendex's
+/// own first and then by package. Read through the strict template
+/// reader, so a template with any defect declares nothing here and is
+/// reported as invalid by [`crate::settings_view`] rather than half-read.
 pub fn declared(templates: &BTreeMap<String, TemplateSource>) -> Vec<DeclaredSecret> {
-    let mut out = Vec::new();
+    let mut out = own_declared();
     for (owner, source) in templates {
         let TemplateSource::Text(text) = source else {
             continue;
@@ -365,20 +415,25 @@ pub fn declared(templates: &BTreeMap<String, TemplateSource>) -> Vec<DeclaredSec
 pub fn contested(templates: &BTreeMap<String, TemplateSource>) -> Vec<ContestedKey> {
     let mut public: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut secret: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    // kendex declares one public key of its own, and it is contested by a
-    // package declaring the same name a credential exactly as two packages
-    // contest each other. Seeded here rather than checked at the write,
-    // because this function is what every caller asks: the view suppresses
-    // a contested field, the settings write refuses an edit on it, and the
-    // private write refuses a value for it. A check anywhere else would
-    // answer for one of those three and leave the others offering a field
-    // whose value has nowhere to go — `KENDEX_ENV_FILE` names the private
-    // file every package loader reads, so one key holding both a
-    // credential and that selector is a value the loaders cannot resolve.
+    // kendex declares one public key of its own and its own private keys,
+    // and a package declaring one of them under the other table contests
+    // it exactly as two packages contest each other. Seeded here rather
+    // than checked at the write, because this function is what every
+    // caller asks: the view suppresses a contested field, the settings
+    // write refuses an edit on it, and the private write refuses a value
+    // for it. A check anywhere else would answer for one of those three
+    // and leave the others offering a field whose value has nowhere to go
+    // — `KENDEX_ENV_FILE` names the private file every package loader
+    // reads, so one key holding both a credential and that selector is a
+    // value the loaders cannot resolve, and `KENDEX_USER_EMAIL` is a
+    // personal identifier no package may seed into a tracked file.
     public
         .entry(ENV_FILE_KEY.to_owned())
         .or_default()
         .insert(KENDEX_OWNER.to_owned());
+    for own in own_declared() {
+        secret.entry(own.entry.key).or_default().insert(own.owner);
+    }
     for (owner, source) in templates {
         let TemplateSource::Text(text) = source else {
             continue;

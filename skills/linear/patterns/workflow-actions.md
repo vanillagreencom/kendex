@@ -13,6 +13,8 @@ scripts/linear.sh issues unblock [ISSUE_ID]
 scripts/linear.sh issues complete [ISSUE_ID] --summary-file [SUMMARY_PATH]
 ```
 
+`activate` also assigns the issue to the person `KENDEX_USER_EMAIL` names when nobody is assigned yet; SKILL.md § Option Behavior states the outcomes.
+
 Cancel, duplicate, and absorb are all `comments create` + `issues update --state "Canceled"`; name the surviving issue in the comment on both sides of an absorb.
 
 ## Descriptions

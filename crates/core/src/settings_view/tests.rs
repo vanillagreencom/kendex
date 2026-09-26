@@ -10,14 +10,21 @@ fn private(text: Option<&str>) -> SecretsRead {
     read_of(text)
 }
 
+/// The rows a page shows under its own package's name, without the keys
+/// kendex declares itself.
+fn of_pkg(secrets: &[SecretRow]) -> Vec<&SecretRow> {
+    secrets.iter().filter(|row| row.owner == "pkg").collect()
+}
+
 #[test]
 fn a_skill_that_ships_nothing_and_one_nothing_could_read_are_told_apart() {
     assert_eq!(
-        template_of(&TemplateSource::Absent, &[], &private(None), &[]),
+        template_of("pkg", &TemplateSource::Absent, &[], &private(None), &[]),
         SkillTemplate::NoTemplate
     );
     assert_eq!(
         template_of(
+            "pkg",
             &TemplateSource::Unreadable("switched off".to_owned()),
             &[],
             &private(None),
@@ -37,6 +44,7 @@ fn a_skill_that_ships_nothing_and_one_nothing_could_read_are_told_apart() {
 fn an_invalid_template_reports_findings_with_their_lines() {
     let no_comment = "[env]\nMODE = \"quiet\"\n";
     let SkillTemplate::Invalid { findings } = template_of(
+        "pkg",
         &TemplateSource::Text(no_comment.to_owned()),
         &sites("[env]\nMODE = \"mine\"\n"),
         &private(None),
@@ -52,6 +60,7 @@ fn an_invalid_template_reports_findings_with_their_lines() {
 #[test]
 fn a_clean_template_carries_its_explainer_default_and_where_the_file_stands() {
     let SkillTemplate::Rows { rows, .. } = template_of(
+        "pkg",
         &TemplateSource::Text(TEMPLATE.to_owned()),
         &sites("[env]\nMODE = \"mine\"\n"),
         &private(None),
@@ -78,6 +87,7 @@ fn a_clean_template_carries_its_explainer_default_and_where_the_file_stands() {
 #[test]
 fn a_declared_values_line_reaches_the_row_as_values_and_not_as_explainer() {
     let SkillTemplate::Rows { rows, .. } = template_of(
+        "pkg",
         &TemplateSource::Text(
             "[env]\n# How loud it is.\n# values: quiet | loud\nMODE = \"quiet\"\n".to_owned(),
         ),
@@ -94,6 +104,7 @@ fn a_declared_values_line_reaches_the_row_as_values_and_not_as_explainer() {
 #[test]
 fn a_key_the_file_never_assigns_reads_as_absent() {
     let SkillTemplate::Rows { rows, .. } = template_of(
+        "pkg",
         &TemplateSource::Text(TEMPLATE.to_owned()),
         &[],
         &private(None),
@@ -123,6 +134,7 @@ fn global_scope_is_a_known_empty_answer() {
 #[test]
 fn a_secret_only_template_has_rows_of_its_own() {
     let SkillTemplate::Rows { rows, secrets } = template_of(
+        "pkg",
         &TemplateSource::Text("[secrets]\n# The API key.\nAPI_KEY = \"\" # required\n".to_owned()),
         &[],
         &private(Some("API_KEY='dummy'\n")),
@@ -131,6 +143,7 @@ fn a_secret_only_template_has_rows_of_its_own() {
         panic!("a secret-only template has rows");
     };
     assert_eq!(rows, []);
+    let secrets = of_pkg(&secrets);
     assert_eq!(secrets.len(), 1);
     assert_eq!(secrets[0].key, "API_KEY");
     assert!(secrets[0].required);
@@ -142,6 +155,7 @@ fn a_secret_only_template_has_rows_of_its_own() {
 #[test]
 fn a_stored_secret_never_reaches_the_row() {
     let SkillTemplate::Rows { secrets, .. } = template_of(
+        "pkg",
         &TemplateSource::Text("[secrets]\n# The API key.\nAPI_KEY = \"\"\n".to_owned()),
         &[],
         &private(Some("API_KEY='sk-live-secret'\n")),
@@ -160,6 +174,7 @@ fn a_stored_secret_never_reaches_the_row() {
 fn an_unassigned_key_and_an_unreadable_file_are_told_apart() {
     let rows = |text: Option<&str>| {
         let SkillTemplate::Rows { secrets, .. } = template_of(
+            "pkg",
             &TemplateSource::Text("[secrets]\n# The API key.\nAPI_KEY = \"\"\n".to_owned()),
             &[],
             &private(text),
@@ -198,6 +213,7 @@ fn a_contested_key_is_offered_by_neither_route() {
     );
     assert_eq!(contested.len(), 1, "{contested:?}");
     let SkillTemplate::Rows { rows, secrets } = template_of(
+        "pkg",
         &TemplateSource::Text(
             "[env]\n# Why.\nSHARED = \"\"\n\n[secrets]\n# The key.\nOWN = \"\"\n".to_owned(),
         ),
@@ -208,6 +224,66 @@ fn a_contested_key_is_offered_by_neither_route() {
         panic!("a clean template has rows");
     };
     assert_eq!(rows, []);
+    let secrets = of_pkg(&secrets);
     assert_eq!(secrets.len(), 1);
     assert_eq!(secrets[0].key, "OWN");
+}
+
+/// Every package page with settings shows the private keys kendex
+/// declares itself, after the package's own and under kendex's name, so
+/// the edit a person makes there is written under kendex's declaration.
+/// A package declaring the key too shows it once, as its own; a package
+/// declaring it a setting contests it, and neither route offers it.
+#[test]
+fn kendex_own_keys_follow_the_package_s_own_credentials() {
+    use crate::settings_secret::{KENDEX_OWNER, USER_EMAIL_KEY};
+    let email = USER_EMAIL_KEY;
+    let rows = [
+        (
+            "settings only",
+            TEMPLATE.to_owned(),
+            vec![(KENDEX_OWNER, email)],
+        ),
+        (
+            "own credential",
+            "[secrets]\n# The API key.\nAPI_KEY = \"\"\n".to_owned(),
+            vec![("pkg", "API_KEY"), (KENDEX_OWNER, email)],
+        ),
+        (
+            "shares the key",
+            format!("[secrets]\n# Mine too.\n{email} = \"\"\n"),
+            vec![("pkg", email)],
+        ),
+        (
+            "contests the key",
+            format!("[env]\n# Mine, public.\n{email} = \"\"\n"),
+            vec![],
+        ),
+    ];
+    for (case, text, want) in rows {
+        let source = TemplateSource::Text(text);
+        let contested = crate::settings_secret::contested(
+            &[("pkg".to_owned(), source.clone())].into_iter().collect(),
+        );
+        let SkillTemplate::Rows { secrets, .. } = template_of(
+            "pkg",
+            &source,
+            &[],
+            &private(Some(&format!("{email}='dana@example.com'\n"))),
+            &contested,
+        ) else {
+            panic!("{case}: a clean template has rows");
+        };
+        let got: Vec<(&str, &str)> = secrets
+            .iter()
+            .map(|row| (row.owner.as_str(), row.key.as_str()))
+            .collect();
+        assert_eq!(got, want, "{case}");
+        assert!(
+            secrets
+                .iter()
+                .all(|row| row.current == SecretState::Set || row.key != email),
+            "{case}: the kendex-owned row does not read Set"
+        );
+    }
 }

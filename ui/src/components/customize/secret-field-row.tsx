@@ -43,7 +43,6 @@ import {
  * stores what it is given and asks nobody whether it works.
  */
 export function SecretFieldRow({
-  skill,
   row,
   file,
   writable,
@@ -51,7 +50,7 @@ export function SecretFieldRow({
   onEdit,
   onCancel,
 }: {
-  skill: string;
+  /** Names its own owner: the edit is written under that declaration. */
   row: SecretRow;
   /** Where a value typed here would go, as the read resolved it. */
   file: string;
@@ -152,7 +151,7 @@ export function SecretFieldRow({
               value={edit?.value.kind === "set" ? edit.value.value : ""}
               onChange={(event) =>
                 onEdit({
-                  skill,
+                  skill: row.owner,
                   key: row.key,
                   value: { kind: "set", value: event.target.value },
                 })
@@ -178,7 +177,11 @@ export function SecretFieldRow({
                 size="sm"
                 disabled={!settable}
                 onClick={() =>
-                  onEdit({ skill, key: row.key, value: { kind: "clear" } })
+                  onEdit({
+                    skill: row.owner,
+                    key: row.key,
+                    value: { kind: "clear" },
+                  })
                 }
               >
                 {SECRET_CLEAR_ACTION}

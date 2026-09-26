@@ -30,7 +30,14 @@ Actions:
   remove-relation Delete an issue relation
 
 Workflow Actions (composite operations for dev):
-  activate       Claim issue: set "In Progress" (--agent applies agent:<name> label)
+  activate       Claim issue: set "In Progress" (--agent applies agent:<name> label).
+                 With KENDEX_USER_EMAIL set, an issue nobody is assigned is
+                 assigned to that person in the same mutation. One keyed
+                 stderr line and the JSON "assignee" field say what happened:
+                 assignee-set assignee=<name> (set), assignee-kept
+                 assignee=<name> (kept; an existing assignee is never
+                 replaced), assignee-skipped cause=unset or
+                 assignee-skipped cause=unknown-email email=<email> (skipped)
   block          Block issue: add label + relation + comment
   unblock        Unblock issue: remove label + comment
   complete       Complete issue: post optional summary comment, then set "Done"
@@ -84,7 +91,10 @@ Create Options:
   --state <name>        Initial state (case-sensitive, fails with available list)
   --priority <0-4>      Priority: 0=None, 1=Urgent, 2=High, 3=Normal, 4=Low
   --estimate <1-5>      Effort estimate (points)
-  --assignee <name|me>  Assignee
+  --assignee <name|me|email|id>  Assignee: a name matches as a substring, an
+                        address (anything with @) matches a user's whole
+                        email, case-insensitively, and a user id is used as
+                        given; a miss refuses
   --parent <id>         Parent issue ID (creates sub-issue)
   --milestone <name|uuid> Project milestone (a name needs --project; a UUID does not)
   --cycle <id>          Cycle (sprint) ID
@@ -130,7 +140,7 @@ Update Options:
   --priority <0-4>      Priority: 0=None, 1=Urgent, 2=High, 3=Normal, 4=Low
   --estimate <0-5>      Effort estimate (points); 0 clears the estimate (unset)
   --clear-estimate      Clear the estimate (unset; e.g. coordination parents = no estimate)
-  --assignee <name|me>  Change assignee
+  --assignee <name|me|email|id>  Change assignee (matched as on create)
   --parent <id>         Set parent issue (convert to sub-issue)
   --remove-parent       Remove parent (convert to top-level issue)
   --milestone <name|uuid> Set project milestone (a name resolves in --project,
@@ -920,7 +930,7 @@ get_issue() {
 
     local variables="{\"id\": \"$issue_id\"}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_query "$query" "$variables") || return 1
 
     # Apply output format
     case "$FORMAT" in
@@ -1059,6 +1069,50 @@ upload_attach_paths() {
             attach_pending+=("${attach_url}"$'\t'"${attach_title}")
         fi
     done
+}
+
+# find_user_by_email EMAIL — the user whose whole address is EMAIL, compared
+# case-insensitively by Linear's own filter, as one {id, name, email} object on
+# stdout; nothing at all when no user has it. Asked of the server rather than
+# scanned out of a listing, so no page bound can hide a user, and nothing is
+# cached. Exits 1 when the query itself failed, its error already on stderr: a
+# failed lookup is never an unknown address.
+find_user_by_email() {
+    local email="$1" vars result
+    vars=$(jq -cn --arg email "$email" '{email: $email}')
+    result=$(graphql_query 'query GetUserByEmail($email: String!) { users(filter: {email: {eqIgnoreCase: $email}}) { nodes { id name email } } }' "$vars") || return 1
+    jq -c '.users.nodes[0] // empty' <<<"$result"
+}
+
+# resolve_assignee_id REF — the id of the user an --assignee value names, on
+# stdout. `me` is the API key's own user, a user id is taken as given (the
+# form activate_issue passes once it has resolved the person), a value
+# containing `@` is an email address (find_user_by_email), and anything else
+# is a name matched as a case-insensitive substring. A miss refuses: every
+# other resolver here fails closed, and dropping the field on an unresolvable
+# name reported success with the issue unassigned.
+resolve_assignee_id() {
+    local ref="$1" result assignee_id
+    if [[ "$ref" =~ $LINEAR_UUID_PATTERN ]]; then
+        assignee_id="$ref"
+    elif [ "$ref" = "me" ]; then
+        result=$(graphql_query 'query { viewer { id } }' "{}") || return 1
+        assignee_id=$(jq -r '.viewer.id // empty' <<<"$result")
+    elif [[ "$ref" == *@* ]]; then
+        result=$(find_user_by_email "$ref") || return 1
+        assignee_id=$(jq -r '.id // empty' <<<"$result")
+    else
+        local user_query='query GetUser($name: String!) { users(filter: {name: {containsIgnoreCase: $name}}) { nodes { id } } }'
+        local user_vars
+        user_vars=$(jq -cn --arg name "$ref" '{name: $name}')
+        result=$(graphql_query "$user_query" "$user_vars") || return 1
+        assignee_id=$(jq -r '.users.nodes[0].id // empty' <<<"$result")
+    fi
+    if [ -z "$assignee_id" ]; then
+        jq -cn --arg who "$ref" '{error: ("Assignee not found: " + $who)}' >&2
+        return 1
+    fi
+    printf '%s\n' "$assignee_id"
 }
 
 create_issue() {
@@ -1249,6 +1303,13 @@ create_issue() {
         fi
     fi
 
+    # A miss refuses here, before the upload, so an unknown assignee leaves
+    # no orphaned asset behind.
+    local assignee_id=""
+    if [ -n "$assignee" ]; then
+        assignee_id=$(resolve_assignee_id "$assignee") || return 1
+    fi
+
     # Uploads run only after the routing guard and the resolvers above.
     if [ ${#attach_paths[@]} -gt 0 ]; then
         # Resolve declared agent labels BEFORE uploading: under a declared
@@ -1354,26 +1415,8 @@ create_issue() {
         input_parts+=("\"stateId\": \"$state_id\"")
     fi
 
-    # Handle assignee. Every other resolver here fails closed; dropping the
-    # field on an unresolvable name reported success with the issue unassigned.
-    if [ -n "$assignee" ]; then
-        local assignee_id
-        if [ "$assignee" = "me" ]; then
-            local me_query='query { viewer { id } }'
-            local me_result
-            me_result=$(graphql_query "$me_query" "{}")
-            assignee_id=$(echo "$me_result" | jq -r '.viewer.id // empty')
-        else
-            local user_query='query GetUser($name: String!) { users(filter: {name: {containsIgnoreCase: $name}}) { nodes { id } } }'
-            local user_vars user_result
-            user_vars=$(jq -cn --arg name "$assignee" '{name: $name}')
-            user_result=$(graphql_query "$user_query" "$user_vars")
-            assignee_id=$(echo "$user_result" | jq -r '.users.nodes[0].id // empty')
-        fi
-        if [ -z "$assignee_id" ]; then
-            jq -cn --arg who "$assignee" '{error: ("Assignee not found: " + $who)}' >&2
-            return 1
-        fi
+    # Resolved above, before the attachment upload.
+    if [ -n "$assignee_id" ]; then
         input_parts+=("\"assigneeId\": \"$assignee_id\"")
     fi
 
@@ -1804,6 +1847,13 @@ update_issue() {
         )
     fi
 
+    # A miss refuses here, before the upload, so an unknown assignee leaves
+    # no orphaned asset behind.
+    local assignee_id=""
+    if [ -n "$assignee" ]; then
+        assignee_id=$(resolve_assignee_id "$assignee") || return 1
+    fi
+
     # Upload --attach files. Image embeds append to the description being
     # written; when this update does not itself rewrite the description,
     # seed it from the issue's current one so the embed is an append, not a
@@ -1894,26 +1944,8 @@ update_issue() {
         input_parts+=("\"projectId\": \"$project_id\"")
     fi
 
-    # Handle assignee. Every other resolver here fails closed; dropping the
-    # field on an unresolvable name reported success with the issue unassigned.
-    if [ -n "$assignee" ]; then
-        local assignee_id
-        if [ "$assignee" = "me" ]; then
-            local me_query='query { viewer { id } }'
-            local me_result
-            me_result=$(graphql_query "$me_query" "{}")
-            assignee_id=$(echo "$me_result" | jq -r '.viewer.id // empty')
-        else
-            local user_query='query GetUser($name: String!) { users(filter: {name: {containsIgnoreCase: $name}}) { nodes { id } } }'
-            local user_vars user_result
-            user_vars=$(jq -cn --arg name "$assignee" '{name: $name}')
-            user_result=$(graphql_query "$user_query" "$user_vars")
-            assignee_id=$(echo "$user_result" | jq -r '.users.nodes[0].id // empty')
-        fi
-        if [ -z "$assignee_id" ]; then
-            jq -cn --arg who "$assignee" '{error: ("Assignee not found: " + $who)}' >&2
-            return 1
-        fi
+    # Resolved above, before the attachment upload.
+    if [ -n "$assignee_id" ]; then
         input_parts+=("\"assigneeId\": \"$assignee_id\"")
     fi
 
@@ -2665,6 +2697,16 @@ remove_relation() {
 # --agent applies the exclusive agent:<name> issue label in the same
 # issueUpdate mutation as the state change. The label is validated before any
 # mutation, so an unknown agent fails without touching issue state.
+#
+# KENDEX_USER_EMAIL, the person operating this checkout, becomes the assignee
+# of an issue nobody is assigned, in that same mutation. Every outcome lets the
+# activation proceed; a failed issue read, users lookup or update fails it and
+# reports no outcome. Each outcome is one keyed line on stderr after the
+# mutation lands, with the JSON "assignee" field beside it:
+#   assignee-set assignee=NAME                    "set"
+#   assignee-kept assignee=NAME                   "kept"     (never replaced)
+#   assignee-skipped cause=unset                  "skipped"
+#   assignee-skipped cause=unknown-email email=E  "skipped"
 activate_issue() {
     local issue_id="$1"
     shift
@@ -2693,9 +2735,9 @@ activate_issue() {
         esac
     done
 
-    local final_labels=""
+    local agent_label=""
     if [ -n "$agent" ]; then
-        local agent_label="agent:$agent"
+        agent_label="agent:$agent"
         # Fail before the state change when the agent label doesn't resolve —
         # update_issue's own label handling is warn+skip, which would silently
         # activate without the label.
@@ -2704,22 +2746,57 @@ activate_issue() {
             echo "{\"error\": \"Agent label not found: '$agent_label'. Issue state unchanged. Verify agent labels with 'linear.sh cache labels list --format=safe'.\"}" >&2
             return 1
         fi
+    fi
 
+    local user_email="${KENDEX_USER_EMAIL:-}"
+    local issue_result=""
+    if [ -n "$agent" ] || [ -n "$user_email" ]; then
+        # The label set and the assignee are both read off this answer, so a
+        # failed read stops here: past it, an empty answer drops the one and
+        # reports the other as kept.
+        issue_result=$(get_issue "$issue_id" --format=raw) || return 1
+    fi
+
+    local update_args=(--state "In Progress")
+    if [ -n "$agent" ]; then
         # Agent labels are exclusive: replace any existing agent:* label and
         # preserve all other labels (--labels replaces the full set).
-        local issue_result
-        issue_result=$(get_issue "$issue_id" --format=raw)
+        local final_labels
         final_labels=$(echo "$issue_result" | jq -r --arg agent_label "$agent_label" \
             '[.issue.labels.nodes[].name | select(startswith("agent:") | not)] + [$agent_label] | join(",")')
+        update_args+=(--labels "$final_labels")
     fi
 
-    # Update state to In Progress (single mutation carries the label set too)
-    local update_result
-    if [ -n "$agent" ]; then
-        update_result=$(update_issue "$issue_id" --state "In Progress" --labels "$final_labels")
-    else
-        update_result=$(update_issue "$issue_id" --state "In Progress")
+    local assignee_state assignee_line current_assignee=null
+    if [ -n "$user_email" ]; then
+        current_assignee=$(jq -c '.issue.assignee' <<<"$issue_result") || return 1
     fi
+    if [ -z "$user_email" ]; then
+        assignee_state="skipped"
+        assignee_line="assignee-skipped cause=unset"
+    elif [ "$current_assignee" != "null" ]; then
+        assignee_state="kept"
+        assignee_line="assignee-kept assignee=$(jq -r '.name // ""' <<<"$current_assignee")"
+    else
+        local user
+        user=$(find_user_by_email "$user_email") || return 1
+        if [ -z "$user" ]; then
+            assignee_state="skipped"
+            assignee_line="assignee-skipped cause=unknown-email email=$user_email"
+        else
+            local user_id
+            user_id=$(jq -r '.id' <<<"$user") || return 1
+            assignee_state="set"
+            assignee_line="assignee-set assignee=$(jq -r '.name' <<<"$user")"
+            # The id, not the address: the update then sends it without a
+            # second lookup of the same person.
+            update_args+=(--assignee "$user_id")
+        fi
+    fi
+
+    # One mutation carries the state, the label set and the assignee.
+    local update_result
+    update_result=$(update_issue "$issue_id" "${update_args[@]}")
     local update_success
     update_success=$(echo "$update_result" | jq -r '.success // false')
 
@@ -2728,13 +2805,13 @@ activate_issue() {
         return 1
     fi
 
+    printf '%s\n' "$assignee_line" >&2
     local identifier
     identifier=$(echo "$update_result" | jq -r '.identifier // empty')
-    if [ -n "$agent" ]; then
-        echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"activated\", \"agent\": \"$agent\"}"
-    else
-        echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"activated\"}"
-    fi
+    jq -cn --arg identifier "$identifier" --arg agent "$agent" --arg assignee "$assignee_state" \
+        '{success: true, identifier: $identifier, action: "activated"}
+        + (if $agent == "" then {} else {agent: $agent} end)
+        + {assignee: $assignee}'
 }
 
 # Block an issue: add blocked label, create blocked-by relation, post comment

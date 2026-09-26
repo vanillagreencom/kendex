@@ -7,6 +7,7 @@
 | 2026-09-25 | D003 | — | One merge path through the app-armed queue; consumers pull renders; organization rulesets | A mixed path rebuilds queue groups; the train loads the control VM | Organization rulesets or Actions unavailable to a served repository; a render-group queue run outlasts direct merge | Active | [Full](D003-one-merge-path.md) |
 | 2026-09-25 | D004 | — | Bound the trash by age and size; state that mirrors are kept | Removal never deleted, so a host filled; a mirror bound costs a full clone | A mirror dominates a cache measurement, or the pass shows in apply latency | Active (measurement → D005) | [Full](D004-trash-retention.md) |
 | 2026-09-25 | D005 | — | Measure a trash entry once; one size record inside the trash | Entries never change after landing; the walk showed in apply latency | The listing dominates the pass, or an entry gains a writer | Active | [Full](D005-trash-size-record.md) |
+| 2026-09-26 | D006 | — | kendex's own private keys show on every package page with settings | kendex has no page; one key, one line, one answer | A second kendex key, reported noise, or a project-wide settings page | Active | [Full](D006-kendex-own-private-keys.md) |
 
 ---
 

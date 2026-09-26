@@ -18,7 +18,7 @@ Actions:
   me      Get current user (shorthand for "get me")
 
 List Options:
-  --limit <n>           Max results (default: 50)
+  --limit <n>           Max results (default: 75; the API's largest page is 250)
 
 Get:
   users.sh get <id-or-name>
