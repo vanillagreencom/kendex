@@ -77,6 +77,8 @@ pr-threads unknown option^-^pr-threads^Unknown option: --no\"^--no\"
 pr-threads surplus positional^-^pr-threads^Unexpected argument: no\"^23^no\"
 pr-threads unknown format^-^pr-threads^Invalid format: no\". Use: safe, raw^--format^no\"
 pr-threads branch with no PR^-^pr-threads^No PR found for: no\"^no\"
+pr-timeline unknown option^-^pr-timeline^Unknown option: --no\"^--no\"
+pr-timeline surplus positional^-^pr-timeline^Unexpected argument: no\"^23^no\"
 edit-comment surplus positional^-^edit-comment^Unexpected argument: no\"^1^body^no\"
 edit-comment unreadable body file^-^edit-comment^--body-file path not readable: $MISSING^1^--body-file^$MISSING
 repository slug that is not owner/name^GH_REPO=a\"b/c^edit-comment^Resolved repository is not owner/name: a\"b/c^1^body
