@@ -3,33 +3,35 @@
 # The ONE writer into a tmux pane. Every keystroke orch sends, and every paste,
 # goes through pane_write: the launch lines open-terminal types into a window it
 # just opened, the successor line oversee-succeed types into its own new window,
-# and what the overseer still has to type through ../pane-write (a harness
-# dialog, a walled lane's continuation nudge, a hosted Codex relaunch's
-# continuation line). A raw `tmux paste-buffer -t ""` types into whatever pane
-# the caller sits in, which is how an overseer pasted `/exit` into itself; a
-# write into a pane whose process has changed lands its keystrokes in a process
-# nobody meant. Both are refused here, before anything is typed.
+# and what the overseer still has to type through ../pane-write, such as a
+# harness dialog's answer or a continuation line: a walled lane's nudge, a
+# hosted Codex relaunch's line, the resend after model-capacity. A raw
+# `tmux paste-buffer -t ""` types into whatever pane the caller sits in, which
+# is how an overseer pasted `/exit` into itself; a write into a pane whose
+# process has changed lands its keystrokes in a process nobody meant. Both are refused here, before anything is typed.
 #
 # This is the whole of pane input, the capability a later thread API (turn
 # start, interrupt, stop) replaces: moving a caller onto that API removes its
 # call here, and nothing else in orch types into a pane.
 #
-# Sourced, never run. lib/lane-state.sh is sourced first: the window resolution
-# is its lane_pane_resolve, the shell names its is_bare_shell and the process
-# table its lane_process_table.
+# Sourced, never run. lib/lane-state.sh is sourced first: the pane resolution is
+# its lane_pane_resolve and lane_pane_by_id, the shell names its is_bare_shell,
+# and the process read its lane_process_table and lane_process_below.
 #
 # pane_write KIND TARGET EXPECT ACTION VALUE
 #
 #   KIND    `window`: TARGET is a lane record's window, resolved through
 #           lane_pane_resolve. `pane`: TARGET is a pane id (%N) the caller
 #           proved, which is new-window's own -P output for a pane it opened.
-#   EXPECT  the process the pane must be running. `shell` is a bare shell in
-#           the foreground, what a window opened seconds ago holds. Any other
+#   EXPECT  the process the pane must be running. `shell` is a shell in the
+#           foreground, what a window opened seconds ago holds: a name
+#           is_bare_shell knows, or the name of tmux's default-shell. Any other
 #           word is a process name: the pane's foreground command, or the pane
 #           process or a process below it, carries that name. The second form
 #           is a harness started under a shell or through a wrapper script.
-#   ACTION  `file`: paste VALUE, a file's bytes, as one bracketed paste, then
-#           press Enter. `key`: press the one key VALUE names, from PANE_WRITE_KEYS.
+#   ACTION  `text`: paste VALUE itself as one bracketed paste, then press
+#           Enter. `file`: the same with a file's bytes. `key`: press the one
+#           key VALUE names, from PANE_WRITE_KEYS.
 #
 # Copy mode is cancelled, and read back as cancelled, before every keystroke:
 # a key sent to a pane in copy mode drives the copy-mode cursor and never
@@ -39,9 +41,9 @@
 # tmux write that failed after the checks passed, so part of the input may
 # have landed. Either prints its keyed line, then a `fix=` line, on stderr.
 #
-# The identity read and the write are separate tmux calls, so a process that
-# changes between them is not caught; the read is taken immediately before
-# the write to keep that window to one round trip.
+# The identity is read once, before the copy-mode check and the buffer load,
+# and the Enter that follows a paste is not checked again: a process that
+# changes after that read is not caught.
 
 # The keys a caller may press, each with its producer: Enter (the composer
 # after a paste, a dialog's default), Up and Down (moving a Claude Code
@@ -64,9 +66,13 @@ pane_write_message() { # KEY FIELD=VALUE...
     pane-missing) printf '%s\n' 'fix=no pane on this tmux server carries the target; read the lane record'"'"'s window again, or relaunch a lane whose window closed' ;;
     pane-ambiguous) printf '%s\n' 'fix=more than one pane carries the window name; rename the one that is not the lane'"'"'s, as lane-reach.md § Wake refusals says' ;;
     pane-read-failed) printf '%s\n' 'fix=tmux or the process table did not answer; nothing was typed, and a retry is safe once it does' ;;
-    process-mismatch) printf '%s\n' 'fix=the pane does not run the expected process; read the lane'"'"'s state with lanes state before writing to it' ;;
+    process-mismatch)
+      case " $* " in
+        *" expected=shell "*) printf '%s\n' 'fix=a window just opened must be at its shell, one of bash, zsh, fish, sh, dash or tmux'"'"'s default-shell; set default-shell to the shell it runs' ;;
+        *) printf '%s\n' 'fix=the pane does not run the expected process; read the lane'"'"'s state with lanes state before writing to it' ;;
+      esac ;;
     expect-missing) printf '%s\n' 'fix=name the process the pane must run: shell for a window just opened, or the harness, or ssh for a hosted lane' ;;
-    action-invalid) printf '%s\n' 'fix=the action is file or key; this is a defect in the caller' ;;
+    action-invalid) printf '%s\n' 'fix=the action is text, file or key; this is a defect in the caller' ;;
     key-invalid) printf '%s\n' "fix=press one of: $PANE_WRITE_KEYS" ;;
     file-unreadable) printf '%s\n' 'fix=write the input to a regular file first, with the harness file tool' ;;
     argument-invalid) printf '%s\n' 'fix=run pane-write --help' ;;
@@ -85,7 +91,7 @@ pane_write_refuse() {
 
 # The pane a TARGET names, into PANE_WRITE_ID, _PID and _CMD.
 pane_write_resolve() { # KIND TARGET
-  local rows row rc=0
+  local rc=0
   PANE_WRITE_ID=""; PANE_WRITE_PID=""; PANE_WRITE_CMD=""
   [[ -n "$2" ]] || { pane_write_refuse 1 pane-unresolved "kind=$1" 'target='; return; }
   case "$1" in
@@ -107,12 +113,13 @@ pane_write_resolve() { # KIND TARGET
       # A pane id and nothing else: tmux reads any other word as a window or
       # session name, which is the resolution this KIND exists to skip.
       [[ "$2" =~ ^%[0-9]+$ ]] || { pane_write_refuse 1 pane-unresolved kind=pane "target=$2"; return; }
-      rows="$(tmux list-panes -a -F "#{pane_id}"$'\t'"#{pane_pid}"$'\t'"#{pane_current_command}" 2>/dev/null)" \
-        || { pane_write_refuse 1 pane-read-failed "pane=$2" operation=list-panes; return; }
-      row="$(awk -F'\t' -v p="$2" '$1 == p { print; exit }' <<<"$rows")" \
-        || { pane_write_refuse 1 pane-read-failed "pane=$2" operation=list-panes; return; }
-      [[ -n "$row" ]] || { pane_write_refuse 1 pane-missing "pane=$2"; return; }
-      IFS=$'\t' read -r PANE_WRITE_ID PANE_WRITE_PID PANE_WRITE_CMD <<<"$row" ;;
+      lane_pane_by_id "$2" || rc=$?
+      case "$rc" in
+        0) ;;
+        1) pane_write_refuse 1 pane-missing "pane=$2"; return ;;
+        *) pane_write_refuse 1 pane-read-failed "pane=$2" operation=list-panes; return ;;
+      esac
+      PANE_WRITE_ID="$LANE_PANE_ID"; PANE_WRITE_PID="$LANE_PANE_PID"; PANE_WRITE_CMD="$LANE_PANE_CMD" ;;
     *) pane_write_refuse 1 pane-unresolved "kind=$1" "target=$2"; return ;;
   esac
   if [[ -n "${TMUX_PANE:-}" && "$PANE_WRITE_ID" == "$TMUX_PANE" ]]; then
@@ -123,29 +130,24 @@ pane_write_resolve() { # KIND TARGET
 
 # Whether the resolved pane runs EXPECT.
 pane_write_expect() { # EXPECT
-  local table found
+  local table found default name_re
   [[ -n "$1" ]] || { pane_write_refuse 1 expect-missing "pane=$PANE_WRITE_ID"; return; }
   if [[ "$1" == shell ]]; then
     is_bare_shell "$PANE_WRITE_CMD" && return 0
+    # A shell is_bare_shell does not name is still the window's own when it is
+    # the one tmux starts in a new window.
+    default="$(tmux show-options -gv default-shell 2>/dev/null)" \
+      || { pane_write_refuse 1 pane-read-failed "pane=$PANE_WRITE_ID" operation=show-options; return; }
+    default="${default##*/}"
+    [[ -z "$default" || "${PANE_WRITE_CMD#-}" != "$default" ]] || return 0
   else
     [[ "$PANE_WRITE_CMD" == "$1" ]] && return 0
     table="$(lane_process_table)" \
       || { pane_write_refuse 1 pane-read-failed "pane=$PANE_WRITE_ID" operation=ps; return; }
-    # The pane process itself, or any process whose parent chain reaches it.
-    # The walk is bounded so a table read mid-reparent cannot loop it.
-    found="$(awk -v root="$PANE_WRITE_PID" -v want="$1" '
-      { n = $0; sub(/^[^ ]+ [^ ]+ /, "", n); parent[$1] = $2; name[$1] = n; pid[NR] = $1 }
-      END {
-        for (i = 1; i <= NR; i++) {
-          if (name[pid[i]] != want) continue
-          for (q = pid[i]; q != "" && hops < 64; q = parent[q]) {
-            if (q == root) { print "found"; exit }
-            hops++
-          }
-          hops = 0
-        }
-        print "none"
-      }' <<<"$table")" \
+    # The name as a whole-name ERE, its metacharacters escaped.
+    name_re="$(printf '%s' "$1" | sed 's/[][\\.*^$+?(){}|]/\\&/g')" \
+      || { pane_write_refuse 1 pane-read-failed "pane=$PANE_WRITE_ID" operation=ps; return; }
+    found="$(lane_process_below "$table" "$PANE_WRITE_PID" "^$name_re\$" 1)" \
       || { pane_write_refuse 1 pane-read-failed "pane=$PANE_WRITE_ID" operation=ps; return; }
     [[ "$found" != found ]] || return 0
   fi
@@ -182,6 +184,7 @@ pane_write() { # KIND TARGET EXPECT ACTION VALUE
         *" $value "*) ;;
         *) pane_write_refuse 1 key-invalid "key=$value"; return ;;
       esac ;;
+    text) ;;
     file) [[ -f "$value" && -r "$value" ]] || { pane_write_refuse 1 file-unreadable "file=$value"; return; } ;;
     *) pane_write_refuse 1 action-invalid "action=$action"; return ;;
   esac
@@ -195,8 +198,13 @@ pane_write() { # KIND TARGET EXPECT ACTION VALUE
   # this one's text off the top of the stack; -d deletes it once pasted.
   buffer="pane-write-$$"
   pane_write_mode_clear || return
-  tmux load-buffer -b "$buffer" "$value" 2>/dev/null \
-    || { pane_write_refuse 2 write-failed "pane=$PANE_WRITE_ID" step=load-buffer; return; }
+  # Text reaches the buffer on stdin from a process substitution, never a pipe,
+  # so a reader that stops early costs the writer nothing.
+  if [[ "$action" == text ]]; then
+    tmux load-buffer -b "$buffer" - < <(printf '%s' "$value") 2>/dev/null
+  else
+    tmux load-buffer -b "$buffer" "$value" 2>/dev/null
+  fi || { pane_write_refuse 2 write-failed "pane=$PANE_WRITE_ID" step=load-buffer; return; }
   tmux paste-buffer -p -d -b "$buffer" -t "$PANE_WRITE_ID" 2>/dev/null \
     || { pane_write_refuse 2 write-failed "pane=$PANE_WRITE_ID" step=paste-buffer; return; }
   pane_write_key Enter

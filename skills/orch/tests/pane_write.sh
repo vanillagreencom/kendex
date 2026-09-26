@@ -42,6 +42,12 @@ tm new-window -d -t w -n twin 'exec sleep 100000'
 # A harness under a shell that does not exec it, the shape a lane started by
 # typing its wrapper at a prompt keeps for its whole life.
 tm new-window -d -t w -n nest '/bin/sh -c "sleep 100000; :"'
+# A shell is_bare_shell does not name, started as tmux's default-shell: a copy
+# of bash under a name of its own. It stays the default from here on, which
+# the rows that expect a shell read at write time.
+cp "$(command -v bash)" "$TMP_ROOT/ownsh"
+tm set-option -g default-shell "$TMP_ROOT/ownsh"
+tm new-window -d -t w -n own
 LANE_PANE="$(tm display-message -p -t '=w:lane' '#{pane_id}')"
 printf 'hello' > "$TMP_ROOT/hello"
 HELLO="$TMP_ROOT/hello"
@@ -105,6 +111,7 @@ ROWS=(
   "a proven pane id receives the paste|-|--pane;$LANE_PANE;--expect;cat;--file;$HELLO|rc=0 key=none received=hello,"
   "a key is pressed in the pane|-|--window;lane;--expect;cat;--key;Enter|rc=0 key=none received=,"
   "a process below the pane's shell is the expected one|-|--window;nest;--expect;sleep;--key;Enter|rc=0 key=none received="
+  "a shell named only by tmux's default-shell is a window's own shell|-|--window;own;--expect;shell;--key;Enter|rc=0 key=none received="
 )
 for r in "${ROWS[@]}"; do
   IFS='|' read -r name self args want <<<"$r"
@@ -117,32 +124,34 @@ assert_eq "$(observe "$REF" "" "--window;lane;--expect;cat;--file;$HELLO" 'tm co
   "rc=0 key=none received=hello," "a pane in copy mode is returned to its program before the Enter"
 
 echo "=== pane-write: each rule's control ==="
-# mutant NAME OLD NEW — a copy of the scripts with OLD replaced by NEW in
-# lib/pane-write.sh, once, or the control fails before it runs.
+# mutant NAME OLD NEW [LIB] — a copy of the scripts with OLD replaced by NEW in
+# lib/LIB, lib/pane-write.sh by default, once, or the control fails before it
+# runs.
 mutant() {
   local dir="$TMP_ROOT/mutant-$1" file
   copy_scripts "$dir"
-  file="$dir/lib/pane-write.sh"
+  file="$dir/lib/${4:-pane-write.sh}"
   assert_eq "$(grep -c -F -e "$2" "$file" || true)" 1 "control $1 finds its one site"
   OLD="$2" NEW="$3" perl -i -pe 's/\Q$ENV{OLD}\E/$ENV{NEW}/' "$file"
   assert_eq "$(grep -c -F -e "$3" "$file" || true)" 1 "control $1 applied its mutation"
   MUTANT="$dir"
 }
-# One row per rule: NAME@OLD@NEW@SELF@ARGS@EXPECTED, `@`-separated because the
-# sites carry `|`. Each row is its rule's own refusal row above, run against a
-# copy with that rule taken out.
+# One row per rule: LIB@NAME@OLD@NEW@SELF@ARGS@EXPECTED, `@`-separated because
+# the sites carry `|`. Each row is its rule's own row above, run against a copy
+# with that rule taken out of lib/LIB.
 CONTROLS=(
-  "unresolved@  [[ -n \"\$2\" ]] ||@  [[ -n \"\$2\" ]] || true ||@-@--window;;--expect;cat;--file;$HELLO@rc=1 key=pane-missing received="
-  "self@\"\$PANE_WRITE_ID\" == \"\$TMUX_PANE\"@\"\$PANE_WRITE_ID\" == never@$LANE_PANE@--window;lane;--expect;cat;--file;$HELLO@rc=0 key=none received=hello,"
-  "missing@if [[ \"\$LANE_PANE_COUNT\" == 0 ]]; then@if false; then@-@--window;gone;--expect;cat;--file;$HELLO@rc=1 key=pane-ambiguous received="
-  "ambiguous@            pane_write_refuse 1 pane-ambiguous@            : pane_write_refuse 1 pane-ambiguous@-@--window;twin;--expect;sleep;--file;$HELLO@rc=1 key=process-mismatch received="
-  "mismatch@  pane_write_expect \"\$expect\" || return@  : || return@-@--window;lane;--expect;claude;--file;$HELLO@rc=0 key=none received=hello,"
-  "child@if (q == root) { print \"found\"; exit }@if (q == root) { print \"none\"; exit }@-@--window;nest;--expect;sleep;--key;Enter@rc=1 key=process-mismatch received="
+  "pane-write.sh@unresolved@  [[ -n \"\$2\" ]] ||@  [[ -n \"\$2\" ]] || true ||@-@--window;;--expect;cat;--file;$HELLO@rc=1 key=pane-missing received="
+  "pane-write.sh@self@\"\$PANE_WRITE_ID\" == \"\$TMUX_PANE\"@\"\$PANE_WRITE_ID\" == never@$LANE_PANE@--window;lane;--expect;cat;--file;$HELLO@rc=0 key=none received=hello,"
+  "pane-write.sh@missing@if [[ \"\$LANE_PANE_COUNT\" == 0 ]]; then@if false; then@-@--window;gone;--expect;cat;--file;$HELLO@rc=1 key=pane-ambiguous received="
+  "pane-write.sh@ambiguous@            pane_write_refuse 1 pane-ambiguous@            : pane_write_refuse 1 pane-ambiguous@-@--window;twin;--expect;sleep;--file;$HELLO@rc=1 key=process-mismatch received="
+  "pane-write.sh@mismatch@  pane_write_expect \"\$expect\" || return@  : || return@-@--window;lane;--expect;claude;--file;$HELLO@rc=0 key=none received=hello,"
+  "lane-state.sh@child@if (q == root) { print \"found\"; exit }@if (q == root) { print \"none\"; exit }@-@--window;nest;--expect;sleep;--key;Enter@rc=1 key=process-mismatch received="
+  "pane-write.sh@default-shell@\"\$default\" ]] || return 0@\"\$default\" ]] || :@-@--window;own;--expect;shell;--key;Enter@rc=1 key=process-mismatch received="
 )
 for r in "${CONTROLS[@]}"; do
-  IFS='@' read -r name old new self args want <<<"$r"
+  IFS='@' read -r lib name old new self args want <<<"$r"
   [[ "$self" != - ]] || self=""
-  mutant "$name" "$old" "$new"
+  mutant "$name" "$old" "$new" "$lib"
   assert_eq "$(observe "$MUTANT" "$self" "$args")" "$want" "control: without the $name rule the row reads otherwise"
 done
 mutant copy-mode 'pane_write_mode_clear() {' 'pane_write_mode_clear() { return 0;'

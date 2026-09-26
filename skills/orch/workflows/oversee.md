@@ -183,7 +183,7 @@ After a directive, wait for the watch's `directive-read` for its id: the lane's 
 .agents/skills/orch/scripts/pane-write --window [WINDOW] --expect [PROCESS] --file [PATH]
 ```
 
-It cancels copy mode, pastes the file and presses `Enter`. A dialog key takes `--key [KEY]` in place of `--file`. A refusal types nothing, and its `fix=` line names the remedy (`pane-write --help`). Never paste a shell command into a lane pane. Stop a process inside a hosted sandbox through `lane-host stop --item [ITEM] --harness [HARNESS]`. Never type a process-name kill at a prompt that can belong to the control host.
+It cancels copy mode, pastes the file and presses `Enter`. A dialog key takes `--key [KEY]` in place of `--file`. A refusal, exit 1, types nothing, and its `fix=` line names the remedy (`pane-write --help`). Exit 2, `write-failed`, may have typed part of the input: read the pane before a retry. Never paste a shell command into a lane pane. Stop a process inside a hosted sandbox through `lane-host stop --item [ITEM] --harness [HARNESS]`. Never type a process-name kill at a prompt that can belong to the control host.
 
 A lane under a session limit still needs its one-line continuation nudge pasted into its pane at the reset through Pane paste above, since a walled harness runs no turn and so reads no mail; the launch brief and a harness dialog's answer reach a pane the same way, and nothing else does.
 

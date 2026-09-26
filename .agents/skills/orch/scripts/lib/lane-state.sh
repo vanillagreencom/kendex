@@ -301,6 +301,30 @@ lane_process_table() {
   printf '%s\n' "$table"
 }
 
+# Whether a process whose name matches the ERE NAME_RE sits below ROOT in a
+# lane_process_table TABLE, or is ROOT itself where INCLUDE_ROOT is 1. Prints
+# `found` or `none`. The walk up each parent chain is bounded by the table's
+# row count: no real chain is longer, and a table read mid-reparent that holds
+# a cycle cannot loop it.
+lane_process_below() { # TABLE ROOT NAME_RE INCLUDE_ROOT
+  # The ERE crosses in the environment: awk -v would read its backslashes as
+  # escape sequences and unescape the metacharacters the caller escaped.
+  LANE_BELOW_RE="$3" awk -v root="$2" -v self="$4" '
+    BEGIN { re = ENVIRON["LANE_BELOW_RE"] }
+    { n = $0; sub(/^[^ ]+ [^ ]+ /, "", n); parent[$1] = $2; name[$1] = n; pid[NR] = $1 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        if (name[pid[i]] !~ re) continue
+        q = (self == 1) ? pid[i] : parent[pid[i]]
+        for (hops = 0; q != "" && hops < NR; hops++) {
+          if (q == root) { print "found"; exit }
+          q = parent[q]
+        }
+      }
+      print "none"
+    }' <<<"$1"
+}
+
 lane_owned_processes() { # WORKTREE HARNESS
   local root table candidates pid cwd state rc
   LANE_OWNED_PROCESS_TABLE=""
@@ -446,6 +470,19 @@ lane_pane_resolve() { # WINDOW
     LANE_PANE_ID=""; LANE_PANE_PID=""; LANE_PANE_CMD=""; LANE_PANE_COUNT=0
     return 2
   }
+}
+
+# The pane a caller already holds by id, `%N`, read from the same list the
+# resolution above reads: LANE_PANE_ID, LANE_PANE_PID and LANE_PANE_CMD hold it
+# on status 0. Status 1 is a pane this server does not list, and status 2 the
+# list failing, with the three empty on both.
+lane_pane_by_id() { # PANE_ID
+  local rows row
+  LANE_PANE_ID=""; LANE_PANE_PID=""; LANE_PANE_CMD=""
+  rows="$(tmux list-panes -a -F "#{pane_id}"$'\t'"#{pane_pid}"$'\t'"#{pane_current_command}" 2>/dev/null)" || return 2
+  row="$(awk -F'\t' -v p="$1" '$1 == p { print; exit }' <<<"$rows")" || return 2
+  [[ -n "$row" ]] || return 1
+  IFS=$'\t' read -r LANE_PANE_ID LANE_PANE_PID LANE_PANE_CMD <<<"$row"
 }
 
 # The lane's tmux pane, as the three raw observations `lane_state` judges

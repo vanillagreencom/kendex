@@ -387,9 +387,7 @@ esac
 # settings load keeps it.
 DEP_ERR="$(mktemp)" || die launch-failed step=mktemp
 export DEP_ERR
-trap 'rm -f -- "$DEP_ERR" ${SUCC_LINE_FILE:+"$SUCC_LINE_FILE"}' EXIT
-# The successor line crosses a file into the pane, as every pane write does.
-SUCC_LINE_FILE="$(mktemp)" || die launch-failed step=mktemp
+trap 'rm -f -- "$DEP_ERR"' EXIT
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export PROJECT_ROOT
@@ -1298,8 +1296,7 @@ spec="$(tmux new-window -d -a -t "$CALLER_WINDOW" -n overseer -c "$CALLER_PATH" 
 read -r SUCC_PANE SUCC_WINDOW <<<"$spec"
 [[ -n "$SUCC_WINDOW" ]] || abandon launch-failed step=new-window
 
-printf '%s' "$cmd" >"$SUCC_LINE_FILE" || abandon launch-failed step=line-file
-pane_write pane "$SUCC_PANE" shell file "$SUCC_LINE_FILE" 2>"$DEP_ERR" || abandon launch-failed step=pane-write
+pane_write pane "$SUCC_PANE" shell text "$cmd" 2>"$DEP_ERR" || abandon launch-failed step=pane-write
 
 # The account the pane is REALLY on, asked TWICE, and only the second answers.
 #

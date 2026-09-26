@@ -21,17 +21,20 @@ runs the process meant. Nothing is typed on a refusal.
   --pane PANE      a pane id (%N) the caller proved, such as the one
                    tmux new-window -P printed for a window it opened
   --expect PROCESS the process the pane must run: the lane's harness (claude,
-                   codex), ssh for a lane whose record carries host, or shell
-                   for a window just opened. The pane's foreground command, or
-                   the pane process or a process below it, must carry the name
+                   codex, pi), ssh for a lane whose record carries host, or
+                   shell for a window just opened, which accepts bash, zsh,
+                   fish, sh, dash and tmux's default-shell. For any name but
+                   shell, the pane's foreground command, or the pane process or
+                   a process below it, must carry the name
   --file PATH      paste the file's bytes as one bracketed paste, then Enter
   --key KEY        press one key: Enter, Up, Down, C-c or a digit 0-9
 
 Copy mode is cancelled before every keystroke.
 
-Exit 0 wrote. Exit 1 refused, and nothing was typed. Exit 2 is a tmux write
-that failed after the checks passed, so part of the input may have landed.
-A refusal prints `pane-write: KEY FIELD=VALUE...` and a `fix=` line on stderr:
+Exit 0 wrote. Every other exit prints `pane-write: KEY FIELD=VALUE...` and a
+`fix=` line on stderr.
+
+Exit 1 is a refusal, and nothing was typed:
 
   pane-unresolved   the target is empty, or --pane is not a pane id
   pane-self         the target is the pane this command runs in ($TMUX_PANE)
@@ -42,8 +45,13 @@ A refusal prints `pane-write: KEY FIELD=VALUE...` and a `fix=` line on stderr:
   expect-missing    --expect is empty
   key-invalid       --key names a key outside the list above
   file-unreadable   --file is not a readable regular file
-  argument-invalid  an option is unknown, repeated or missing its value
-  write-failed      a tmux step failed; step= names it (exit 2)
+  argument-invalid  an option is unknown, repeated or missing its value, or a
+                    required option is absent
+
+Exit 2 is a tmux write that failed after the checks passed, so part of the
+input may have landed; read the pane before writing again:
+
+  write-failed      step= names the tmux step that failed
 EOF
 }
 
