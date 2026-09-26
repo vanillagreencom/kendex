@@ -329,6 +329,7 @@ message() { # KEY FIELD=VALUE...
     mode-conflict) text='--print-launch-line, --check-marks, --dead-pane, --walled-pane and -- HARNESS_FLAGS name five different runs. --dead-pane needs --line-file and takes none of the others; --line-file is read only with it; --walled-pane takes --handoff, --wait-secs and -- HARNESS_FLAGS and none of the other modes, reading no recorded line because the walled pane still answers for itself; --check-marks takes no other option at all, --handoff and --wait-secs included, because it opens no window for either to reach.' ;;
     line-unrecorded) text='The successor launch line could not be written to the fleet state, so a later dead-overseer relaunch has none to send. The succession itself stands.' ;;
     record-unwritten) text='The session record in the fleet state could not be written for the successor, or put back after an abandoned launch, so the record does not name the session that is running. The step field says which; the succession itself stands.' ;;
+    runtime-unsupported) text='This script reads the successor'\''s account off its tmux pane, so it opens sessions on the tmux runtime alone. ORCH_OVERSEER_HOST names another; nothing was launched and this overseer keeps running.' ;;
     settings-rejected) text='The settings load failed; no successor is chosen from partial settings.' ;;
     invalid-succession) text='ORCH_OVERSEER_SUCCESSION takes on or off.' ;;
     invalid-question-tool) text='ORCH_OVERSEER_QUESTION_TOOL takes on or off.' ;;
@@ -1203,6 +1204,15 @@ if [[ "$MODE" == print ]]; then
   exit 0
 fi
 
+# The runtime, held to tmux by the library both launchers share: this script
+# reads the successor's account off its pane, so a provider path is refused
+# here, before this run prints or records anything, never opened through and
+# recorded as tmux.
+if ! ol_runtime_supported; then
+  [[ "$OL_REASON" != runtime-unsupported ]] || die runtime-unsupported "host=$OL_RUNTIME"
+  die launch-failed step=host-resolve
+fi
+
 # The line this run built, for a `walled` caller's own output: that caller is
 # `oversee-watch`, which reports the recovery it just performed and has no
 # other way to say which command it sent. Printed before the window opens, for
@@ -1210,14 +1220,24 @@ fi
 # being the one its caller handed in.
 [[ "$MODE" != walled ]] || printf '%s\n' "$cmd"
 
+# The caller's own session record, read before anything below writes to the
+# `overseer` object: it is what an abandoned launch puts back whole, launch
+# line included, so a later dead-overseer relaunch never replays a line this
+# run refused. A state that cannot be read is a notice, the same notice the
+# line write below gives: a run outside a fleet has none.
+if ! ol_record_read; then
+  message record-unwritten field=overseer step=read >&2
+  [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+fi
 # Recorded BEFORE the window opens, not after the close: the close kills this
-# script's own window and a write placed after it may never run. A launch that
-# then fails leaves the line of a successor that was chosen and had room, which
-# is the better thing for a later relaunch to find than nothing. The state is
-# the fleet's, so a run outside a fleet has none: that is a notice, never a
-# reason to leave the fleet unattended. `walled` records too: its successor
-# runs a command this run built, and a later death that read the walled
-# session's line would relaunch onto the account this recovery just left.
+# script's own window and a write placed after it may never run. The line
+# stands from here until the session record carries it, and a launch that is
+# abandoned after that record was written puts the caller's line back with
+# the rest of the caller's record. The state is the fleet's, so a run outside
+# a fleet has none: that is a notice, never a reason to leave the fleet
+# unattended. `walled` records too: its successor runs a command this run
+# built, and a later death that read the walled session's line would relaunch
+# onto the account this recovery just left.
 if [[ "$MODE" == succeed || "$MODE" == walled ]]; then
   if ! "$SCRIPT_DIR/workflow-state" set oversee overseer.launch_line "$cmd" >/dev/null 2>"$DEP_ERR"; then
     message line-unrecorded "field=overseer.launch_line" >&2
@@ -1233,28 +1253,20 @@ message successor-launch "form=$LANE_FORM" "lane=${lane_dir:-none}" "trust=${LAN
 
 # Two overseers never run: every failure from here closes the successor and
 # puts the predecessor's session record back, so the record names the
-# session that is still running.
-SUCC_PANE="" SUCC_WINDOW="" RECORD_WRITTEN=0
+# session that is still running. The close-out is the library's
+# ol_session_abandon, the same one `oversee launch` runs; the words are this
+# script's.
+SUCC_PANE="" SUCC_WINDOW=""
 abandon() {
-  # The detail the refusal carries was written to DEP_ERR before this ran;
-  # the stop and the restore write theirs there too, so it is kept aside and
-  # put back for the refusal to relay.
-  local detail
-  detail="$(cat -- "$DEP_ERR" 2>/dev/null)" || detail=""
-  [[ -z "$SUCC_PANE" ]] || ol_session_stop "$SUCC_PANE" || true
-  if (( RECORD_WRITTEN )); then
-    ol_record_restore || { message record-unwritten field=overseer step=restore >&2; [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2; }
-    RECORD_WRITTEN=0
-  fi
-  if [[ -n "$detail" ]]; then printf '%s\n' "$detail" > "$DEP_ERR"; else : > "$DEP_ERR"; fi
+  ol_session_abandon || { message record-unwritten field=overseer step=restore >&2; [[ -z "$OL_DETAIL" ]] || printf '%s\n' "$OL_DETAIL" >&2; }
   die "$@"
 }
 # A shell tool that times out signals this script. The traps are set before
 # the session exists, and a signal that lands during the runtime's create runs
-# once the call returns, so the session is read off the provider's answer
-# when the parse below has not run yet.
+# once the call returns; ol_session_abandon inside abandon reads the session
+# off the provider's answer and closes it, so the window is named here only
+# where the create had already returned it.
 interrupted() { # SIGNAL
-  [[ -n "$SUCC_PANE" ]] || ol_session_from_out
   abandon interrupted "window=${OL_WINDOW:-none}" "signal=$1"
 }
 trap 'interrupted TERM' TERM
@@ -1268,20 +1280,12 @@ ol_session_open "$CALLER_PATH" overseer "$cmd" --after "$CALLER_PANE" || abandon
 SUCC_PANE="$OL_SESSION" SUCC_WINDOW="$OL_WINDOW"
 
 # The session record, written before the successor's first turn: the runtime,
-# the server, the session, its account and one generation past the record it
-# replaces, in the same `overseer` object the launch line went into, so the
-# hooks and the watch can tell this session from the one it succeeds. A state
-# that cannot be read or written is the notice line-unrecorded already gave
-# for this run's line, under its own key: a run outside a fleet has no state.
-if ol_record_read; then
-  if ol_record_write tmux "$SUCC_PANE" "$SUCC_WINDOW" "$OL_SERVER" "$lane_dir"; then
-    RECORD_WRITTEN=1
-  else
-    message record-unwritten field=overseer step=write >&2
-    [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
-  fi
-else
-  message record-unwritten field=overseer step=read >&2
+# the server, the session, its account, its own launch line and one
+# generation past the record it replaces, over the caller's record read
+# above, so the hooks and the watch can tell this session from the one it
+# succeeds. A state the read above could not open is not written to.
+if [[ -n "$OL_PRIOR" ]] && ! ol_record_write "$OL_RUNTIME" "$SUCC_PANE" "$SUCC_WINDOW" "$OL_SERVER" "$lane_dir" "$cmd"; then
+  message record-unwritten field=overseer step=write >&2
   [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
 fi
 
@@ -1295,14 +1299,10 @@ if ! ol_session_verify "$SUCC_PANE" "$lane_var" "$lane_dir" "$LANE_FORM" "$WAIT_
   case "$OL_REASON" in
     wrong-lane) abandon successor-wrong-lane "picked=$lane_dir" "observed=$OL_OBSERVED" ;;
     result-unknown) abandon successor-lane-unknown "result=$OL_RESULT" ;;
-    dialog)
-      # The pane line goes where the dependency detail goes, on the line
-      # after the keyed one.
-      printf '%s\n' "$OL_DETAIL" > "$DEP_ERR"
-      abandon successor-dialog "window=$SUCC_WINDOW" "waited=$OL_WAITED" ;;
-    not-working)
-      printf '%s\n' "$OL_DETAIL" > "$DEP_ERR"
-      abandon successor-not-working "window=$SUCC_WINDOW" "waited=$OL_WAITED" ;;
+    # The pane line and the last screen are in DEP_ERR, where the library
+    # put them: on the line after the keyed one, as dependency detail goes.
+    dialog) abandon successor-dialog "window=$SUCC_WINDOW" "waited=$OL_WAITED" ;;
+    not-working) abandon successor-not-working "window=$SUCC_WINDOW" "waited=$OL_WAITED" ;;
     inspect-failed) abandon launch-failed "step=$OL_STEP" ;;
     *) abandon launch-failed "step=verify" "reason=$OL_REASON" ;;
   esac

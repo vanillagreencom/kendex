@@ -13,6 +13,8 @@
 #                          refusal reports
 #   ol_command_line        the harness command for a picked lane, brief
 #                          included, made trusted and put under the lane form
+#   ol_runtime_supported   the runtime resolved and held to the one these
+#                          launchers can verify a session on
 #   ol_session_open        the runtime's `create`, through overseer-host
 #   ol_record_*            the session record in the oversee state's
 #                          `overseer` object: read, written before the first
@@ -20,6 +22,8 @@
 #   ol_session_verify      the account read, the first working turn and the
 #                          confirming read, inside one deadline
 #   ol_session_stop        the runtime's `stop`
+#   ol_session_abandon     the close-out every refusal after `create` takes:
+#                          the session stopped, the prior record put back
 #
 # Every function returns 0 for the answer its name promises and 1 for a
 # refusal the caller prints, with the reason in OL_REASON and its fields in
@@ -38,6 +42,18 @@ ol_runtime() {
   [[ -n "$OL_RUNTIME" ]] && return 0
   OL_RUNTIME="$("$SCRIPT_DIR/overseer-host" resolve 2>"$DEP_ERR")" || { OL_REASON=host-unresolved; return 1; }
   [[ -n "$OL_RUNTIME" ]] || { OL_REASON=host-unresolved; return 1; }
+}
+
+# ol_runtime_supported — the runtime resolved, and 0 only where it is one
+# these launchers can open a session on. Both of them verify the new
+# session's account off its tmux pane (lane_account_check reads the pane's
+# process environment), so a runtime other than tmux returns 1 with
+# OL_REASON=runtime-unsupported and the value in OL_RUNTIME: a provider path
+# ORCH_OVERSEER_HOST names is refused before anything opens, never opened
+# through and recorded as tmux. Resolution failing is OL_REASON=host-unresolved.
+ol_runtime_supported() {
+  ol_runtime || return 1
+  [[ "$OL_RUNTIME" == tmux ]] || { OL_REASON=runtime-unsupported; return 1; }
 }
 
 # ol_preference_entries VALUE — VALUE, ORCH_OVERSEER_PREFERENCE's
@@ -185,13 +201,37 @@ ol_session_stop() { # SESSION [SUCCESSOR]
   "$SCRIPT_DIR/overseer-host" stop "${args[@]}" >/dev/null 2>"$DEP_ERR"
 }
 
+# ol_session_abandon — the close-out every refusal after `create` takes,
+# whichever launcher refuses: the session this launch opened is stopped, read
+# off the provider's answer where a signal landed before the caller parsed
+# it, and the prior record is put back where ol_record_write ran. Two
+# overseers never run, so this is one function and not a copy per caller.
+# DEP_ERR is left as the caller had it, holding the detail its refusal
+# relays; the stop's and the restore's own words go nowhere. Returns 0, or 1
+# where the restore failed, with OL_REASON=restore-failed and the writer's
+# words in OL_DETAIL, for the caller to report under its own key before its
+# refusal.
+ol_session_abandon() {
+  local detail rc=0
+  detail="$(cat -- "$DEP_ERR" 2>/dev/null)" || detail=""
+  [[ -n "$OL_SESSION" ]] || ol_session_from_out
+  [[ -z "$OL_SESSION" ]] || ol_session_stop "$OL_SESSION" || true
+  if (( OL_RECORD_WRITTEN )) && ! ol_record_restore; then
+    OL_REASON=restore-failed
+    OL_DETAIL="$(cat -- "$DEP_ERR" 2>/dev/null)" || OL_DETAIL=""
+    rc=1
+  fi
+  if [[ -n "$detail" ]]; then printf '%s\n' "$detail" > "$DEP_ERR"; else : > "$DEP_ERR"; fi
+  return "$rc"
+}
+
 # ---------------------------------------------------------------------------
 # The session record: the `overseer` object of the oversee state
 # (../schemas/workflow-state.md), which names the runtime, the server, the
 # session and a generation, written before the session's first turn. The
-# hooks, the watch and the reports read it to know which session is the
-# overseer, so during a succession it is what tells the predecessor and the
-# successor apart, and a launch that is abandoned puts the predecessor's
+# turn-end hook, the watch and `oversee launch` read it to know which session
+# is the overseer, so during a succession it is what tells the predecessor and
+# the successor apart, and a launch that is abandoned puts the predecessor's
 # record back.
 # ---------------------------------------------------------------------------
 
@@ -212,11 +252,13 @@ ol_record_read() {
 # prior record's, or 1 where none was recorded, and the prior's own where the
 # prior names this very session on this server, which is a registration
 # repeated and never a second session. On tmux the session is the pane, and
-# the object keeps `pane` as the spelling the turn-end hook, the watch and
-# the report already read it under. Every other field the prior carried
-# stays. The generation written is in OL_GENERATION. Returns 1 with the
-# writer's words in DEP_ERR.
+# the object keeps `pane` as the spelling the turn-end hook and the watch
+# already read it under. Every other field the prior carried
+# stays. The generation written is in OL_GENERATION, and OL_RECORD_WRITTEN
+# is 1 until ol_record_restore runs, which is how ol_session_abandon knows
+# there is a prior to put back. Returns 1 with the writer's words in DEP_ERR.
 OL_GENERATION=""
+OL_RECORD_WRITTEN=0
 ol_record_write() { # RUNTIME SESSION WINDOW SERVER ACCOUNT [LINE]
   local prior="${OL_PRIOR:-null}" record
   record="$(jq -cn --argjson prior "$prior" --arg runtime "$1" --arg session "$2" \
@@ -231,14 +273,17 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER ACCOUNT [LINE]
       + (if $line == "" then {} else {launch_line: $line} end)' 2>"$DEP_ERR")" \
     || return 1
   OL_GENERATION="$(jq -r '.generation' <<<"$record" 2>"$DEP_ERR")" || return 1
-  "$SCRIPT_DIR/workflow-state" set oversee overseer "$record" >/dev/null 2>"$DEP_ERR"
+  "$SCRIPT_DIR/workflow-state" set oversee overseer "$record" >/dev/null 2>"$DEP_ERR" || return 1
+  OL_RECORD_WRITTEN=1
 }
 
 # ol_record_restore — OL_PRIOR written back whole, for a launch abandoned
 # after ol_record_write: the predecessor keeps running, so the record has to
-# name it again. A prior of null removes the object. Returns 1 with the
-# writer's words in DEP_ERR.
+# name it again, its own launch line included. A prior of null removes the
+# object. Returns 1 with the writer's words in DEP_ERR; either way the write
+# is no longer one to put back.
 ol_record_restore() {
+  OL_RECORD_WRITTEN=0
   if [[ "${OL_PRIOR:-null}" == null ]]; then
     "$SCRIPT_DIR/workflow-state" update oversee 'del(.overseer)' >/dev/null 2>"$DEP_ERR"
   else
@@ -331,10 +376,12 @@ ol_account_verdict() { # SESSION LANE_VAR LANE_DIR FORM BOUND final|early
 #   wrong-lane      the session runs another account (OL_OBSERVED)
 #   result-unknown  an account verdict this library does not know (OL_RESULT)
 #   dialog          a dialog nobody is there to answer holds the harness; the
-#                   line under the keyed one is in OL_DETAIL, OL_WAITED the
-#                   seconds waited
+#                   line under the keyed one is in DEP_ERR for the caller's
+#                   refusal to relay, and in OL_DETAIL, OL_WAITED the seconds
+#                   waited
 #   not-working     no working turn inside the wait; the last screen is in
-#                   OL_DETAIL, OL_WAITED the seconds waited
+#                   DEP_ERR and OL_DETAIL the same way, OL_WAITED the seconds
+#                   waited
 #   inspect-failed  the runtime could not read the session; its words are in
 #                   DEP_ERR, the step in OL_STEP
 # OL_UNOBSERVED carries the deciding read's unobserved reason, empty where it
@@ -371,6 +418,7 @@ ol_session_verify() { # SESSION LANE_VAR LANE_DIR FORM WAIT_SECS
       working) break ;;
       asking)
         OL_REASON=dialog; OL_WAITED="$(ol_waited)"
+        printf '%s\n' "$OL_DETAIL" > "$DEP_ERR"
         return 1 ;;
       idle) ;;
       *)
@@ -383,6 +431,7 @@ ol_session_verify() { # SESSION LANE_VAR LANE_DIR FORM WAIT_SECS
     # and the deciding read below would reach it with nothing left.
     if (( $(ol_budget_raw) <= 0 )); then
       OL_REASON=not-working; OL_WAITED="$(ol_waited)"
+      printf '%s\n' "$OL_DETAIL" > "$DEP_ERR"
       return 1
     fi
     sleep 1

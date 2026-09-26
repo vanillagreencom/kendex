@@ -67,14 +67,15 @@ TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 
 # run_oversee ENV=VAL... -- ARGS... — the script under an explicit, whole
 # environment with no $TMUX, from the work directory workflow-state resolves
-# `tmp` under. Sets OUT (both streams) and RC.
+# `tmp` under, or from RUN_DIR where a row sets it. Sets OUT (both streams)
+# and RC.
 run_oversee() {
   local env_args=()
   while [[ $# -gt 0 && "$1" != -- ]]; do env_args+=("$1"); shift; done
   shift
   rm -f "${TMP_ROOT:?}"/argv.*
   RC=0
-  OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" \
+  OUT="$(cd "${RUN_DIR:-$TMP_ROOT/work}" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" ORCH_LANES_USAGE_TTL=0 \
     ORCH_OVERSEER_PREFERENCE="claude:1:high" ORCH_TMUX_SESSION=fleet \
@@ -162,6 +163,18 @@ check "no lane above the trigger: refused at 3 with the walk's counts" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" "3|oversee: no-lane-qualifies entries=1 walled=2 unmeasured=0|0"
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
+# A has-session answer that is not "can't find session" is the call failing,
+# not a missing session: pointed at a TMUX_TMPDIR with no server running, the
+# launch refuses tmux-failed naming that socket, not tmux-session-missing whose
+# advice is to start the session.
+EMPTY_TMUX="$TMP_ROOT/empty-tmux"
+mkdir -p "$EMPTY_TMUX"
+EMPTY_SOCKET="$EMPTY_TMUX/tmux-$(id -u)/default"
+run_oversee TMUX_TMPDIR="$EMPTY_TMUX" -- launch --wait-secs 5
+check "launch against a socket with no server refuses tmux-failed, not a missing session" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "1|oversee: tmux-failed operation=has-session server=$EMPTY_SOCKET|0"
+
 # register: the record for a hand-opened pane, its generation one past the
 # record's, kept where the record already names that pane.
 HAND="$(tm new-window -d -t fleet:4 -n hand -P -F '#{pane_id}' 'exec sleep 100000')"
@@ -174,6 +187,35 @@ check "registering the same pane again keeps its generation and takes --account"
   "$RC|$(recorded generation)|$(recorded account)" "0|4|$H/.claude"
 run_oversee -- register
 check "register outside a pane refuses" "$RC|$(sed -n 1p <<<"$OUT")" "1|oversee: tmux-missing var=TMUX_PANE"
+
+# A launch typed outside the fleet directory, --cwd naming it: the run moves
+# there first, so the record goes into THAT directory's fleet state, the one
+# the launched overseer's hooks, watch and succession read, and the session
+# starts there. The typing directory gets no state of its own.
+tm kill-window -t "$(recorded window)"
+ELSEWHERE="$TMP_ROOT/elsewhere"
+mkdir -p "$ELSEWHERE"
+WORK_REAL="$(cd "$TMP_ROOT/work" && pwd -P)"
+elsewhere_state() { if [[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]]; then echo written; else echo absent; fi; }
+RUN_DIR="$ELSEWHERE" run_oversee -- launch --cwd "$TMP_ROOT/work" --wait-secs 20
+check "launch --cwd from outside the fleet directory records into that directory's state and starts there" \
+  "$RC|$(recorded generation)|$(elsewhere_state)|$(tm display-message -p -t "$(recorded pane)" '#{pane_current_path}')" \
+  "0|5|absent|$WORK_REAL"
+tm kill-window -t "$(recorded window)"
+# The must-fail control: a launcher that only hands --cwd to the session keeps
+# the typing directory's state, so the record lands beside the wrong fleet.
+CWDCTL="$TMP_ROOT/cwdctl"
+mkdir -p "$CWDCTL"
+ln -s "$SRC_DIR"/* "$CWDCTL/"
+rm -f -- "${CWDCTL:?}/oversee"
+CWD_LINE='  cd -- "$CWD" || die invalid-cwd "dir=$given"'
+check "control: the move into --cwd is one line of the launcher" "$(grep -cxF -- "$CWD_LINE" "$OVERSEE")" "1"
+FROM="$CWD_LINE" awk '$0 == ENVIRON["FROM"] { print "  :"; next } { print }' "$OVERSEE" > "$CWDCTL/oversee"
+chmod +x "$CWDCTL/oversee"
+OVERSEE_BIN="$CWDCTL/oversee" RUN_DIR="$ELSEWHERE" run_oversee -- launch --cwd "$TMP_ROOT/work" --wait-secs 20
+check "control: without the move the record lands in the typing directory's state" \
+  "$RC|$(recorded generation)|$(elsewhere_state)" "0|5|written"
+tm kill-window -t "$(jq -r '.overseer.window' "$ELSEWHERE/tmp/workflow-state-oversee.json")"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

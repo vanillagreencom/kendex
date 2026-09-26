@@ -36,7 +36,7 @@ A launch queued behind the caps, such as a chain script, passes `--wait-slot`, w
 
 ## Tmux session
 
-Every lane window opens in one tmux session, named in the record's `window` as `SESSION:WINDOW`: `ORCH_TMUX_SESSION` when set, else the session the state records as `tmux.session`, else the launching pane's session. The first tmux launch records the session it opened in, `ORCH_TMUX_SESSION` or the pane's, once tmux confirms it exists. A launch with no live pane and neither refuses as `tmux-session-unresolved`, and a named session tmux does not hold refuses as `tmux-session-missing` with its source. A detached launch chain still needs `$TMUX` set, as a `setsid` chain or a `run-shell` job started inside tmux has; one without it refuses as `tmux-missing`. Set `ORCH_TMUX_SESSION` for such a chain.
+Every lane window opens in one tmux session, named in the record's `window` as `SESSION:WINDOW`: `ORCH_TMUX_SESSION` when set, else the session the state records as `tmux.session`, else the launching pane's session. The first tmux launch records the session it opened in, `ORCH_TMUX_SESSION` or the pane's, once tmux confirms it exists. A launch with no live pane and neither refuses as `tmux-session-unresolved`, and a named session tmux does not hold refuses as `tmux-session-missing` with its source. A detached launch chain with `ORCH_TMUX_SESSION` set needs no `$TMUX`: it reaches that session on the person's own tmux server, the socket tmux derives from their uid. One with neither refuses as `tmux-missing`, so set `ORCH_TMUX_SESSION` for such a chain.
 
 ## Recovery relaunch
 

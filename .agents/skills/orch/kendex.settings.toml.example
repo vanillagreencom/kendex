@@ -31,7 +31,9 @@ ORCH_LANE_HOST = "local"
 
 # Runtime the overseer's own session runs in, which oversee launch and
 # oversee-succeed open sessions through: "tmux", the included provider, or an
-# executable script path speaking schemas/overseer-host.md.
+# executable script path speaking schemas/overseer-host.md. Both launchers
+# verify a session's account through its tmux pane, so today they refuse any
+# value but "tmux" as runtime-unsupported.
 # ORCH_OVERSEER_HOST = "tmux"
 
 # Lane pane output. No person reads a lane's pane, so "quiet" is the package

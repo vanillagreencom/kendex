@@ -193,6 +193,12 @@ check "create --session appends the window after the session's last" "$RC|$(layo
 run_tmux create --cwd "$TMP_ROOT/work" --session fleetz --line "exec sleep 100000"
 check "create into a session tmux does not hold refuses naming it" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(layout)" "1|overseer-host-tmux: tmux-session-missing session=fleetz|5 w5;6 overseer;"
+# A has-session answer that is not "can't find session" is the call failing,
+# not a missing session: TMUX pointed at a socket with no server refuses
+# tmux-failed, not tmux-session-missing.
+OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$TMP_ROOT" PATH="$PATH" TMUX="$TMP_ROOT/dead-socket,1,0" "$HOST" create --cwd "$TMP_ROOT/work" --session fleet --line "exec sleep 1" 2>&1)" && RC=0 || RC=$?
+check "create against a socket with no server refuses tmux-failed, not a missing session" \
+  "$RC|$(sed -n 1p <<<"$OUT")" "1|overseer-host-tmux: tmux-failed operation=has-session session=fleet"
 run_tmux create --cwd "$TMP_ROOT/work" --session fleet --after "$FIRST" --line "exec sleep 100000"
 check "create refuses two placements" "$RC|$(sed -n 1p <<<"$OUT")" "2|overseer-host-tmux: option-conflict verb=create"
 run_tmux create --cwd "$TMP_ROOT/work" --session fleet
