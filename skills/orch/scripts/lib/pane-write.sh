@@ -2,8 +2,9 @@
 #
 # The ONE writer into a tmux pane. Every keystroke orch sends, and every paste,
 # goes through pane_write: the launch lines open-terminal types into a window it
-# just opened, the successor line oversee-succeed types into its own new window,
-# and what the overseer still has to type through ../pane-write, such as a
+# just opened, the successor line overseer-host-tmux's create types into the
+# window it opens, and what the overseer still has to type through
+# ../pane-write, such as a
 # harness dialog's answer or a continuation line: a walled lane's nudge, a
 # hosted Codex relaunch's line, the resend after model-capacity. A raw
 # `tmux paste-buffer -t ""` types into whatever pane the caller sits in, which

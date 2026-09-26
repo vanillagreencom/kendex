@@ -193,6 +193,20 @@ check "create --session appends the window after the session's last" "$RC|$(layo
 run_tmux create --cwd "$TMP_ROOT/work" --session fleetz --line "exec sleep 100000"
 check "create into a session tmux does not hold refuses naming it" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(layout)" "1|overseer-host-tmux: tmux-session-missing session=fleetz|5 w5;6 overseer;"
+# A pane write that fails once the window is open closes that window again: a
+# tmux shim on PATH fails the paste, and the layout is what it was.
+REAL_TMUX="$(command -v tmux)"
+cat > "$BIN/tmux" <<SHIM
+#!/bin/sh
+[ "\$1" != paste-buffer ] || exit 1
+exec "$REAL_TMUX" "\$@"
+SHIM
+chmod +x "$BIN/tmux"
+PATH="$BIN:$PATH" run_tmux create --cwd "$TMP_ROOT/work" --session fleet --line "exec sleep 100000"
+rm -f -- "${BIN:?}/tmux"
+check "create whose pane write fails closes the window it opened" \
+  "$RC|$(sed -n 1p <<<"$OUT" | sed 's/window=@[0-9]*/window=@N/')|$(layout)" \
+  "1|overseer-host-tmux: create-failed step=pane-write window=@N|5 w5;6 overseer;"
 # A has-session answer that is not "can't find session" is the call failing,
 # not a missing session: TMUX pointed at a socket with no server refuses
 # tmux-failed, not tmux-session-missing.

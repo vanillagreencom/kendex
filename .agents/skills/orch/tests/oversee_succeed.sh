@@ -737,8 +737,9 @@ assert_eq "$RC|$(keyed interrupted "$(cat "$TMP_ROOT/interrupted.out")" | sed -n
 # header names: the successor window is open and its id lives only in the
 # provider's answer, not yet in SUCC_PANE. The close-out must read the session
 # off that answer and stop it, or two overseers run. A tmux shim on PATH
-# delays send-keys, so the group kill lands inside the real provider, between
-# its new-window and its answer; the shim is on PATH for these rows alone.
+# delays load-buffer, the first write the provider's pane_write makes, so the
+# group kill lands inside the real provider, between its new-window and its
+# answer, before the line is typed; the shim is on PATH for these rows alone.
 REAL_TMUX="$(command -v tmux)"
 # int_create_run BIN — the script launched in its own process group so the
 # group kill reaches the provider too, run until the overseer window opens,
@@ -762,7 +763,7 @@ if command -v setsid >/dev/null 2>&1; then
   # takes to see the new window.
   cat > "$BIN/tmux" <<SHIM
 #!/bin/sh
-[ "\$1" != send-keys ] || sleep 2
+[ "\$1" != load-buffer ] || sleep 2
 exec "$REAL_TMUX" "\$@"
 SHIM
   chmod +x "$BIN/tmux"
