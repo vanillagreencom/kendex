@@ -26,9 +26,20 @@ Exit status is this worktree's verdict:
      the records to see how far it got, then inspect the worktree.
   6  HEAD moved during the run; nothing was deleted, because this returns
      before the apply loop
+  7  --owned only: inspection complete, and a unit it found was kept for a
+     held or replaced build lock, a live holder or a change under the
+     measurement, so the owner's output was not all reclaimed. The records
+     and the summary are whole.
+
+--owned is the owner-scoped prune a round runs on its own worktree: no
+retention window applies, so only an output a build lock guards is in scope,
+a Cargo profile. A lock-free output such as node_modules has nothing a
+starting install would wait on and nothing reinstalls it between rounds, so
+this mode never considers it.
 """
 import argparse
 import contextlib
+import math
 import os
 import shutil
 import stat
@@ -36,7 +47,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, FrozenSet, List, NamedTuple, Optional, Tuple
+from typing import Callable, Dict, FrozenSet, List, NamedTuple, Optional, Tuple
 
 try:
     import fcntl
@@ -45,6 +56,7 @@ except ImportError:  # A platform without Unix advisory locks cannot hold a buil
 
 INSPECTION_INCOMPLETE = 1
 HEAD_MOVED = 6
+UNITS_KEPT = 7
 
 
 class Output(NamedTuple):
@@ -502,49 +514,49 @@ def relative(worktree: Path, directory: Path) -> str:
     return directory.relative_to(worktree).as_posix()
 
 
-def keep(worktree: Path, unit: Unit, reason: str) -> None:
-    emit(
-        "err",
-        "kept",
-        ecosystem=unit.ecosystem,
-        output=relative(worktree, unit.directory),
-        reason=reason,
-    )
+def discover(worktree: Path, locked_only: bool,
+             kept: Callable[..., None]) -> Tuple[Unit, ...]:
+    """Every prunable unit in the worktree, reporting each path it keeps.
 
-
-def discover(worktree: Path) -> Tuple[Unit, ...]:
-    """Every prunable unit in the worktree, reporting each path it keeps."""
+    Every keep goes through `kept`, the caller's one record and count of what it
+    held back. locked_only leaves every output with no build lock out of scope
+    unreported: it is not a path this mode keeps but one it never takes, and a
+    layout with no locked output is never walked into."""
     roots = package_roots(worktree)
     if not roots:
         emit("err", "no-layout", reason="no-ecosystem-marker")
         return ()
     units: List[Unit] = []
     for root, layout in roots:
+        if locked_only and all(output.lock is None for output in layout.outputs):
+            continue
         if not reportable(relative(worktree, root)):
             # The path cannot appear in its own refusal, so the record names
             # only what it can. Nothing under this root is inspected, which is
             # what keeps a lock-free output there from being deleted ahead of a
             # record that could not have described it.
-            emit("err", "kept", ecosystem=layout.name, reason="unreportable-root-name")
+            kept(ecosystem=layout.name, reason="unreportable-root-name")
             continue
         for output in layout.outputs:
+            if locked_only and output.lock is None:
+                continue
             path = root / output.path
             shown = relative(worktree, path)
-            kept = None
+            refusal = None
             if path.is_symlink():
-                kept = "symlink"
+                refusal = "symlink"
             elif not path.exists():
                 continue
             elif not path.is_dir():
-                kept = "not-a-directory"
+                refusal = "not-a-directory"
             # A resolved worktree root plus a resolved output path differ only
             # through a symlinked ancestor, which a nested root can have.
             elif path.resolve() != path:
-                kept = "outside-worktree"
+                refusal = "outside-worktree"
             elif tracks_content(worktree, shown):
-                kept = "tracked"
-            if kept is not None:
-                emit("err", "kept", ecosystem=layout.name, output=shown, reason=kept)
+                refusal = "tracked"
+            if refusal is not None:
+                kept(ecosystem=layout.name, output=shown, reason=refusal)
                 continue
             if output.lock is None:
                 units.append(Unit(layout.name, path, None))
@@ -553,18 +565,18 @@ def discover(worktree: Path) -> Tuple[Unit, ...]:
             for directory in profiles.symlinked:
                 refused = relative(worktree, directory)
                 if not reportable(refused):
-                    emit("err", "kept", ecosystem=layout.name,
+                    kept(ecosystem=layout.name,
                          reason="unreportable-unit-name")
                     continue
-                emit("err", "kept", ecosystem=layout.name, output=refused, reason="symlink")
+                kept(ecosystem=layout.name, output=refused, reason="symlink")
             if not profiles.units:
                 if not profiles.symlinked:
-                    emit("err", "kept", ecosystem=layout.name, output=shown,
+                    kept(ecosystem=layout.name, output=shown,
                          reason="no-lock-unit")
                 continue
             for directory, lock in profiles.units:
                 if not reportable(relative(worktree, directory)):
-                    emit("err", "kept", ecosystem=layout.name, output=shown,
+                    kept(ecosystem=layout.name, output=shown,
                          reason="unreportable-unit-name")
                     continue
                 units.append(Unit(layout.name, directory, lock))
@@ -588,15 +600,32 @@ def hold_lock(stack: contextlib.ExitStack, unit: Unit) -> Optional[str]:
     return None
 
 
-def run(worktree: Path, head: str, older_than_days: int, apply_prune: bool) -> int:
+def run(worktree: Path, head: str, older_than_days: Optional[int], apply_prune: bool) -> int:
+    """older_than_days None is --owned: no retention window, lock-guarded
+    outputs only, and a unit kept here is the prune's failure (UNITS_KEPT)."""
     if not head_unchanged(worktree, head):
         return HEAD_MOVED
-    cutoff = time.time() - older_than_days * 86400
+    owned = older_than_days is None
+    # No retention window leaves no unit recent: every unit is aged, and only
+    # its lock, its holders and a change under the measurement can keep it.
+    cutoff = math.inf if owned else time.time() - older_than_days * 86400
+    # The one count of what this run held back, from discovery and from each
+    # unit alike: under --owned any keep at all is the prune's failure.
+    kept_count = 0
+
+    def kept(**fields: object) -> None:
+        nonlocal kept_count
+        kept_count += 1
+        emit("err", "kept", **fields)
+
+    def keep_unit(unit: Unit, reason: str) -> None:
+        kept(ecosystem=unit.ecosystem, output=relative(worktree, unit.directory), reason=reason)
+
     aged: List[Unit] = []
-    for unit in discover(worktree):
+    for unit in discover(worktree, locked_only=owned, kept=kept):
         measured = survey(unit, collect=False)
         if measured is None or measured.newest_mtime > cutoff:
-            keep(worktree, unit, "changed" if measured is None else "recent")
+            keep_unit(unit, "changed" if measured is None else "recent")
             continue
         aged.append(unit)
 
@@ -612,7 +641,7 @@ def run(worktree: Path, head: str, older_than_days: int, apply_prune: bool) -> i
                 continue
             reason = hold_lock(stack, unit)
             if reason is not None:
-                keep(worktree, unit, reason)
+                keep_unit(unit, reason)
                 continue
             locked.append(unit)
 
@@ -626,10 +655,10 @@ def run(worktree: Path, head: str, older_than_days: int, apply_prune: bool) -> i
         idle: List[Unit] = []
         for unit in locked:
             if not probe_available and unit.lock is None:
-                keep(worktree, unit, "holder-probe-unavailable")
+                keep_unit(unit, "holder-probe-unavailable")
                 continue
             if held_under(holders, unit.directory):
-                keep(worktree, unit, "live-holder")
+                keep_unit(unit, "live-holder")
                 continue
             idle.append(unit)
 
@@ -647,7 +676,7 @@ def run(worktree: Path, head: str, older_than_days: int, apply_prune: bool) -> i
         for unit in idle:
             tally = survey(unit, collect=True)
             if tally is None or tally.newest_mtime > cutoff:
-                keep(worktree, unit, "changed")
+                keep_unit(unit, "changed")
                 continue
             ledger.absorb(unit, tally)
             settled.append(unit)
@@ -671,7 +700,7 @@ def run(worktree: Path, head: str, older_than_days: int, apply_prune: bool) -> i
                 fresh, fresh_uninspected = process_holders()
                 uninspected = max(uninspected, fresh_uninspected)
                 if held_under(fresh, unit.directory):
-                    keep(worktree, unit, "live-holder")
+                    keep_unit(unit, "live-holder")
                     continue
             total += reclaimed
             pruned += 1
@@ -694,7 +723,7 @@ def run(worktree: Path, head: str, older_than_days: int, apply_prune: bool) -> i
         bytes=total,
         uninspected_processes=uninspected,
     )
-    return 0
+    return UNITS_KEPT if owned and kept_count else 0
 
 
 def positive_days(text: str) -> int:
@@ -708,7 +737,9 @@ def main(argv: Tuple[str, ...]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worktree", required=True, type=Path)
     parser.add_argument("--head", required=True)
-    parser.add_argument("--older-than-days", required=True, type=positive_days)
+    retention = parser.add_mutually_exclusive_group(required=True)
+    retention.add_argument("--older-than-days", type=positive_days)
+    retention.add_argument("--owned", action="store_true")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     try:

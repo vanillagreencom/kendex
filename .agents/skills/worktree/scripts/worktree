@@ -3263,6 +3263,9 @@ case "${1:-}" in
     # reclaim nothing on the machine that reports a full disk.
     if [[ "$OUTPUT_PRUNE_MODE" == true ]]; then
       cleanup_enumerate_worktrees || exit 1
+      if [[ -n "$OUTPUT_PRUNE_WORKTREE" ]]; then
+        output_prune_owned_tree || exit 1
+      fi
       output_prune_sweep ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"} || CLEANUP_FAILED=true
       if [[ "$CLEANUP_FAILED" == true ]]; then
         exit 1

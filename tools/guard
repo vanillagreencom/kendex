@@ -112,8 +112,6 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "crates/core must not depend on tauri." ;;
     crate-lints)
       echo "that manifest is missing [lints] workspace = true — workspace lints are not inherited." ;;
-    cargo-check)
-      printf 'cargo check failed for %s.\n' "$2" ;;
     clippy)
       printf 'cargo clippy failed for %s.\n' "$2" ;;
     cargo-fmt)
@@ -251,7 +249,7 @@ case "${1:-}" in
     printf '%s\n' 'usage: tools/guard [--full | --range BASE]' \
       'Default: repository rules and compile checks for staged product changes.' \
       '--range BASE: the default rules over the changes since BASE, working tree included,' \
-      '        cargo check and clippy for the crates they touch, any non-Markdown file inside' \
+      '        cargo clippy for the crates they touch, any non-Markdown file inside' \
       '        one included (the workspace for a shared input or a file compiled code includes),' \
       '        the UI checks and suite when they touch a non-Markdown file under ui/, and the' \
       '        suites of the skill, hook, tool and Pi-package trees they touch. A Markdown file' \
@@ -1105,12 +1103,15 @@ if [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt
     grep -A1 '^\[lints\]' "$m" | grep -q 'workspace *= *true' ||
       say crate-lints "$m"
   done
+  # No cargo check runs beside clippy: clippy-driver is rustc with lints
+  # added, so it reports every error cargo check reports over the same
+  # packages and targets, and -D warnings makes each rustc warning an error
+  # too. A cargo check first would build the workspace's check metadata a
+  # second time, under a fingerprint clippy does not reuse.
   if [ "$rust_all" -eq 1 ]; then
-    cargo check --workspace --all-targets || say cargo-check workspace
     cargo clippy --workspace --all-targets --quiet -- -D warnings || say clippy workspace
   else
     for manifest in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
-      cargo check --manifest-path "$manifest" --all-targets || say cargo-check "$manifest"
       cargo clippy --manifest-path "$manifest" --all-targets --quiet -- -D warnings || say clippy "$manifest"
     done
   fi

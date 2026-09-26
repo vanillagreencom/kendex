@@ -24,6 +24,15 @@ OUTPUT_PRUNE_APPLY=false
 # A unit whose newest artifact is younger than this survives the sweep, so a
 # warm cache a paused lane is about to resume on is not thrown away.
 OUTPUT_PRUNE_DAYS=7
+OUTPUT_PRUNE_DAYS_SET=false
+# The owner-scoped mode: one worktree, pruned for the session whose lease it
+# carries. That session is the one deciding its own warm cache is worth less
+# than the disk, so no retention window applies, and its lease, which blocks
+# every other sweep, admits this one. With no window, only output a build lock
+# guards is in scope (a Cargo profile), and a unit kept for that lock, a live
+# holder or a change fails the prune: the engine's --owned.
+OUTPUT_PRUNE_WORKTREE=""
+OUTPUT_PRUNE_OWNER=""
 # The last flag seen that only the targets-only mode accepts, so validation can
 # name the one the operator passed.
 OUTPUT_PRUNE_MODE_FLAG=""
@@ -54,6 +63,16 @@ output_prune_parse_flag() {
         exit 1
       fi
       OUTPUT_PRUNE_DAYS="$2"
+      OUTPUT_PRUNE_DAYS_SET=true
+      OUTPUT_PRUNE_SHIFT=2
+      ;;
+    --worktree | --owner)
+      OUTPUT_PRUNE_MODE_FLAG="$1"
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        worktree_message cleanup-targets-value-required "$1" "Error: $1 requires a value" >&2
+        exit 1
+      fi
+      if [[ "$1" == --worktree ]]; then OUTPUT_PRUNE_WORKTREE="$2"; else OUTPUT_PRUNE_OWNER="$2"; fi
       OUTPUT_PRUNE_SHIFT=2
       ;;
     *) return 1 ;;
@@ -76,6 +95,29 @@ output_prune_validate() {
     worktree_message cleanup-targets-lease-flag "$CLEANUP_LEASE_FLAG" "Error: --targets-only never releases a session guard lease, so it cannot take $CLEANUP_LEASE_FLAG" >&2
     exit 1
   fi
+  if [[ -n "$OUTPUT_PRUNE_WORKTREE" && -z "$OUTPUT_PRUNE_OWNER" ]] || [[ -z "$OUTPUT_PRUNE_WORKTREE" && -n "$OUTPUT_PRUNE_OWNER" ]]; then
+    worktree_message cleanup-targets-owner-pair "$OUTPUT_PRUNE_MODE_FLAG" "Error: --worktree and --owner name one owner-scoped prune together; pass both or neither" >&2
+    exit 1
+  fi
+  if [[ -n "$OUTPUT_PRUNE_OWNER" && "$OUTPUT_PRUNE_DAYS_SET" == true ]]; then
+    worktree_message cleanup-targets-owner-retention "--older-than-days" "Error: the owner-scoped prune applies no retention window, so it cannot take --older-than-days" >&2
+    exit 1
+  fi
+}
+
+# The owner-scoped mode's one worktree, from the registered non-main worktrees
+# CLEANUP_TREES holds: the path the sweep would have visited, never an arbitrary
+# directory and never the main checkout, whose lease the guard refuses.
+output_prune_owned_tree() {
+  local wt=""
+  for wt in ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"}; do
+    if same_canonical_dir "$wt" "$OUTPUT_PRUNE_WORKTREE"; then
+      CLEANUP_TREES=("$wt")
+      return 0
+    fi
+  done
+  worktree_message output-prune-worktree-unknown "$OUTPUT_PRUNE_WORKTREE" "Error: --worktree names no linked worktree of this repository; nothing was inspected." >&2
+  return 1
 }
 
 # Render the engine's report for one worktree, reading the newline-terminated,
@@ -111,8 +153,10 @@ output_prune_render() {
 # what it pruned or names the reason it was kept; nothing passes silently.
 # Returns 1 only when an inspection could not complete — a worktree kept for a
 # stated reason is a result, not a failure, exactly as it is on the removal path.
+# The owner-scoped mode names its one worktree, so there a worktree kept whole,
+# for a lease or a moved HEAD, is that prune's failure as well.
 output_prune_sweep() {
-  local failed=false wt="" head="" rc=0 report="" owner="" claimed=false
+  local failed=false wt="" head="" rc=0 report="" owner="" claimed=false owned=false
   local -a engine_args=()
   if [[ ! -x "$OUTPUT_PRUNE_ENGINE" ]]; then
     worktree_message output-prune-engine-missing "$OUTPUT_PRUNE_ENGINE" "Error: the prune engine is missing or not executable; nothing was inspected." >&2
@@ -141,18 +185,36 @@ output_prune_sweep() {
       failed=true
       continue
     fi
-    # No owner identity is derived: a lease blocks this sweep whether it is
-    # ours or another session's, so the branch the removal path reads for its
-    # identity would change no answer here.
-    cleanup_probe_lease "$wt"
+    # The sweep derives no owner identity: a lease blocks it whether it is ours
+    # or another session's, so the branch the removal path reads for its
+    # identity would change no answer here. The owner-scoped mode names the one
+    # owner it acts for, and that owner's lease is the one lease admitting a
+    # prune: the guard answers 0 for the named owner and 75 for any other. That
+    # lease stays held throughout, so no second claim is taken.
+    cleanup_probe_lease "$wt" "$OUTPUT_PRUNE_OWNER"
+    owned=false
+    if [[ -n "$OUTPUT_PRUNE_OWNER" && "$CLEANUP_LEASE_STATE" == held && "$CLEANUP_LEASE_RC" == 0 ]]; then
+      owned=true
+    fi
     case "$CLEANUP_LEASE_STATE" in
       none) ;;
       held)
-        worktree_message output-prune-lease-blocked "worktree=$wt state=held" "Skipped (a session holds a guard lease, so a build may be running here): $wt" >&2
-        continue
+        if [[ "$owned" == true ]]; then
+          worktree_message output-prune-lease-owned "worktree=$wt owner=$OUTPUT_PRUNE_OWNER"
+        elif [[ -n "$OUTPUT_PRUNE_OWNER" ]]; then
+          worktree_message output-prune-lease-foreign "worktree=$wt owner=$OUTPUT_PRUNE_OWNER" "Refused (another session's lease holds this worktree; only its own owner may prune it): $wt" >&2
+          failed=true
+          continue
+        else
+          worktree_message output-prune-lease-blocked "worktree=$wt state=held" "Skipped (a session holds a guard lease, so a build may be running here): $wt" >&2
+          continue
+        fi
         ;;
       unmanaged)
         worktree_message output-prune-lease-blocked "worktree=$wt state=unmanaged" "Skipped (locked outside the session guard): $wt" >&2
+        # The owner-scoped mode was asked for this one tree, so keeping it
+        # whole is its failure rather than one skip among many.
+        [[ -z "$OUTPUT_PRUNE_OWNER" ]] || failed=true
         continue
         ;;
       *)
@@ -166,7 +228,7 @@ output_prune_sweep() {
     # a directory being emptied. A preview writes nothing and takes no lease.
     claimed=false
     owner="output-prune-$$"
-    if [[ "$OUTPUT_PRUNE_APPLY" == true ]]; then
+    if [[ "$OUTPUT_PRUNE_APPLY" == true && "$owned" == false ]]; then
       if ! "$SESSION_GUARD" claim "$wt" --owner "$owner" >/dev/null 2>&1; then
         worktree_message output-prune-claim-failed "worktree=$wt" "Skipped (could not claim the worktree for the duration of the prune): $wt" >&2
         failed=true
@@ -174,7 +236,11 @@ output_prune_sweep() {
       fi
       claimed=true
     fi
-    engine_args=(--worktree "$wt" --head "$head" --older-than-days "$OUTPUT_PRUNE_DAYS")
+    if [[ -n "$OUTPUT_PRUNE_OWNER" ]]; then
+      engine_args=(--worktree "$wt" --head "$head" --owned)
+    else
+      engine_args=(--worktree "$wt" --head "$head" --older-than-days "$OUTPUT_PRUNE_DAYS")
+    fi
     if [[ "$OUTPUT_PRUNE_APPLY" == true ]]; then
       engine_args+=(--apply)
     fi
@@ -189,8 +255,15 @@ output_prune_sweep() {
       # The engine's own `incomplete` record named the cause; a second record
       # here would restate it.
       1) failed=true ;;
+      7)
+        # Only --owned exits 7, and only this mode passes it. The engine's own
+        # kept records above name each unit and its reason.
+        worktree_message output-prune-units-kept "worktree=$wt" "Error: a build lock, a live holder or a change kept part of this worktree's output, so the owner-scoped prune did not reclaim it all: $wt" >&2
+        failed=true
+        ;;
       6)
         worktree_message output-prune-head-moved "worktree=$wt" "Skipped (HEAD moved while the prune was running; nothing was removed): $wt" >&2
+        [[ -z "$OUTPUT_PRUNE_OWNER" ]] || failed=true
         ;;
       *)
         worktree_message output-prune-engine-failed "worktree=$wt exit=$rc" "Error: the prune engine exited $rc, a status this version of worktree does not define. Any records above it are what it had already done, so under --apply treat this worktree as possibly part-pruned and inspect it: $wt" >&2
