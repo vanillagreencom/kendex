@@ -16,6 +16,9 @@ TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
+# mutant_scripts and mutate_file, the two halves of the control below.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
@@ -40,13 +43,10 @@ git -C "$main_repo" worktree add -q -b issue-anchor "$worktree"
 assert_file_exists "$main_repo/tmp/workflow-state-issue-anchor.json" "a worktree writes default state under the main checkout"
 assert_file_absent "$worktree/tmp/workflow-state-issue-anchor.json" "a worktree does not keep its own default state"
 
-mutant_dir="$TMP_ROOT/mutant/orch/scripts"
-mkdir -p "$mutant_dir"
-cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$mutant_dir/lib"
-cp "$REPO_ROOT/skills/orch/scripts/git-context" "$mutant_dir/git-context"
-assert_eq "$(grep -Fc '*) root=$(project_root) || return 1' "$WS")" "1" "anchor control finds the relative-directory join"
-sed 's|\*) root=$(project_root) \|\| return 1|*) root=$PWD|' "$WS" > "$mutant_dir/workflow-state"
-(cd "$worktree" && env -u ORCH_STATE_DIR bash "$mutant_dir/workflow-state" init issue-mutant --branch issue-mutant) >/dev/null
+# The default directory's one must-fail control: a cwd-relative join.
+anchor_mutant="$(mutant_scripts anchor-mutant workflow-state)/workflow-state" || exit 1
+mutate_file "$anchor_mutant" '*) root=$(project_root) || return 1' '*) root=$PWD'
+(cd "$worktree" && env -u ORCH_STATE_DIR "$anchor_mutant" init issue-mutant --branch issue-mutant) >/dev/null
 assert_file_absent "$main_repo/tmp/workflow-state-issue-mutant.json" "control: a cwd-relative join misses the main checkout"
 
 # Test 1: --state-dir with NO ORCH_STATE_DIR env and no env prefix. init writes

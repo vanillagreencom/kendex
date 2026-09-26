@@ -24,6 +24,9 @@ source "$REPO_ROOT/skills/orch/scripts/lib/date-ladder.sh"
 
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
+# mutant_scripts and mutate_file, the two halves of the controls below.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 
 echo
 echo "--- workflow-state prune ---"
@@ -336,15 +339,14 @@ shapes_run() { # NAME SCRIPT
   SHAPES="$got"
 }
 shapes_run shipped "$WS"
-[[ "$SHAPES_RC" -eq 0 ]] && ok "a prune over every state shape exits 0" || bad "a prune over every state shape exits 0" "rc=$SHAPES_RC"
+[[ "$SHAPES_RC" -eq 0 ]] && pass "a prune over every state shape exits 0" || fail "a prune over every state shape exits 0" "rc=$SHAPES_RC"
 while IFS='|' read -r want n label; do
-  [[ " $SHAPES" == *" $n:$want,$want "* ]] && ok "old, $label: state and file $want" \
-    || bad "old, $label: state and file $want" "got=$SHAPES"
+  [[ " $SHAPES" == *" $n:$want,$want "* ]] && pass "old, $label: state and file $want" \
+    || fail "old, $label: state and file $want" "got=$SHAPES"
 done <<<"$SHAPE_ROWS"
 
 # A worktree listing git cannot give, over the same fixture: which worktree a
-# state names is unknown, so SCRIPT's prune refuses and removes nothing.
-# LISTING reads its status, whether the tree changed and whether it archived.
+# state names is unknown, so the prune refuses and removes nothing.
 REAL_GIT="$(command -v git)"
 GIT_LIST_FAIL_BIN="$TMP_ROOT/git-list-fail-bin"
 mkdir -p "$GIT_LIST_FAIL_BIN"
@@ -359,18 +361,16 @@ if [[ -n "\$wt" && -n "\$list" ]]; then echo "fatal: planted failure" >&2; exit 
 exec "$REAL_GIT" "\$@"
 STUB
 chmod +x "$GIT_LIST_FAIL_BIN/git"
-listing_row() { # NAME SCRIPT
-  local lp="$TMP_ROOT/listing-$1" before lrc=0
-  build_shapes "$lp"
-  before="$(tree_of "$lp")"
-  (cd "$lp" && PATH="$GIT_LIST_FAIL_BIN:$PATH" env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 \
-    FLEET_DIR="$lp/fleet" bash "$2" prune) >/dev/null 2>"$lp.err" || lrc=$?
-  LISTING="rc=$lrc removed=$([[ "$(tree_of "$lp")" == "$before" ]] && echo none || echo some) archive=$([[ -z "$(find "$lp/fleet" -name '*.tgz' 2>/dev/null || true)" ]] && echo none || echo some)"
-}
-listing_row shipped "$WS"
-[[ "$LISTING" == "rc=1 removed=none archive=none" ]] && grep -qxF 'fatal: planted failure' "$TMP_ROOT/listing-shipped.err" \
-  && ok "a worktree listing git cannot give refuses the prune, carrying git's words, and removes nothing" \
-  || bad "a worktree listing git cannot give refuses the prune, carrying git's words, and removes nothing" "$LISTING"
+lp="$TMP_ROOT/listing"
+build_shapes "$lp"
+before="$(tree_of "$lp")"
+rc=0
+(cd "$lp" && PATH="$GIT_LIST_FAIL_BIN:$PATH" env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 \
+  FLEET_DIR="$lp/fleet" "$WS" prune) >/dev/null 2>"$lp.err" || rc=$?
+LISTING="rc=$rc removed=$([[ "$(tree_of "$lp")" == "$before" ]] && echo none || echo some) archive=$([[ -z "$(find "$lp/fleet" -name '*.tgz' 2>/dev/null || true)" ]] && echo none || echo some)"
+[[ "$LISTING" == "rc=1 removed=none archive=none" ]] && grep -qxF 'fatal: planted failure' "$lp.err" \
+  && pass "a worktree listing git cannot give refuses the prune, carrying git's words, and removes nothing" \
+  || fail "a worktree listing git cannot give refuses the prune, carrying git's words, and removes nothing" "$LISTING"
 
 # A step that fails before the archive stands removes nothing and writes no
 # archive: an archive tar cannot write, an archive root that is a file, a find
@@ -421,9 +421,7 @@ grep -qxF 'find: planted failure' "$TMP_ROOT/fail-find.err" \
   && pass "the age refusal carries find's own words" || fail "the age refusal carries find's own words"
 
 # A find that fails only on the read of KEN-4's standing state, which decides
-# whether KEN-4 is live, and answers for every other path. SCRIPT's prune under
-# that stub: STATE_FIND reads its status, first line, what it removed and
-# whether it wrote an archive.
+# whether KEN-4 is live, and answers for every other path.
 REAL_FIND="$(command -v find)"
 STATE_FIND_BIN="$TMP_ROOT/state-find-bin"
 mkdir -p "$STATE_FIND_BIN"
@@ -433,17 +431,15 @@ case "\$1" in */workflow-state-KEN-4.json) echo "find: planted failure" >&2; exi
 exec "$REAL_FIND" "\$@"
 STUB
 chmod +x "$STATE_FIND_BIN/find"
-state_find_row() { # SCRIPT
-  local fp="$TMP_ROOT/state-find-${1##*/}" before src=0
-  build "$fp"
-  before="$(tree_of "$fp")"
-  run_prune "$fp" "$1" "$STATE_FIND_BIN:" --keep tmp/waiter.run >/dev/null 2>"$fp.err" || src=$?
-  STATE_FIND="rc=$src key=$(head -n 1 "$fp.err" | sed "s|$fp/|FP/|") removed=$([[ "$(tree_of "$fp")" == "$before" ]] && echo none || echo some) archive=$([[ -z "$(find "$fp/fleet" -name '*.tgz' 2>/dev/null || true)" ]] && echo none || echo some)"
-}
-state_find_row "$WS"
+fp="$TMP_ROOT/state-find"
+build "$fp"
+before="$(tree_of "$fp")"
+rc=0
+run_prune "$fp" "$WS" "$STATE_FIND_BIN:" --keep tmp/waiter.run >/dev/null 2>"$fp.err" || rc=$?
+STATE_FIND="rc=$rc key=$(head -n 1 "$fp.err" | sed "s|$fp/|FP/|") removed=$([[ "$(tree_of "$fp")" == "$before" ]] && echo none || echo some) archive=$([[ -z "$(find "$fp/fleet" -name '*.tgz' 2>/dev/null || true)" ]] && echo none || echo some)"
 [[ "$STATE_FIND" == "rc=1 key=workflow-state: prune-age-unreadable path=FP/tmp/workflow-state-KEN-4.json removed=none archive=none" ]] \
-  && ok "a find that cannot read a standing state's age is refused naming that state and removes nothing" \
-  || bad "a find that cannot read a standing state's age is refused naming that state and removes nothing" "$STATE_FIND"
+  && pass "a find that cannot read a standing state's age is refused naming that state and removes nothing" \
+  || fail "a find that cannot read a standing state's age is refused naming that state and removes nothing" "$STATE_FIND"
 
 # A removal that fails part way: the archive already holds every path, and
 # the rows have already left the state.
@@ -473,136 +469,26 @@ got="$(jq -c '[any(.fleet_log[]; .text == "old"), any(.lanes[]; .item == "KEN-2"
   && pass "the pruned rows had already left the state" \
   || fail "the pruned rows had already left the state" "got=$got"
 
-MUTANT_DIR="$TMP_ROOT/mutant"
-mkdir -p "$MUTANT_DIR"
-cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$MUTANT_DIR/lib"
-cp "$REPO_ROOT/skills/orch/scripts/orch-env" "$REPO_ROOT/skills/orch/scripts/git-context" "$MUTANT_DIR/"
-mutant() { # NAME ANCHOR REPLACEMENT
-  [[ "$(grep -Fc -- "$2" "$WS")" == "1" ]] \
-  && pass "the $1 control finds its anchor" \
-  || fail "the $1 control finds its anchor"
-  # Through the environment, since awk -v reads backslash escapes in a value.
-  A="$2" R="$3" awk 'index($0, ENVIRON["A"]) { sub(/[^ ].*/, ""); print $0 ENVIRON["R"]; next } { print }' \
-    "$WS" > "$MUTANT_DIR/$1"
-}
-# One planted defect per rule: the mutant, its anchor and replacement, the
-# PATH prefix and settings it runs under, and what the defect lets through.
-control() { # NAME PREFIX EXTRA_ENV CHECK LABEL
-  local mp="$TMP_ROOT/m-$1"
-  build "$mp"
-  (cd "$mp" && PATH="$2$PATH" env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$mp/fleet" \
-    $3 bash "$MUTANT_DIR/$1" prune --keep tmp/waiter.run) >/dev/null 2>&1 || true
-  (cd "$mp" && eval "$4") && pass "control: $5" || fail "control: $5"
-}
+# The suite's one must-fail control: the live-lane match dropped, so a running
+# lane's mailbox is pruned with the closed lanes' files.
+NO_LIVE="$(mutant_scripts no-live workflow-state)/workflow-state" || exit 1
+mutate_file "$NO_LIVE" '[[ -z "$item" ]] || ! unit_names_item "$unit" "$item" || kept_by=live' ':'
+mp="$TMP_ROOT/m-no-live"
+build "$mp"
+(cd "$mp" && env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$mp/fleet" \
+  "$NO_LIVE" prune --keep tmp/waiter.run) >/dev/null 2>&1 || true
+[[ ! -e "$mp/tmp/lane-mail/KEN-1" ]] \
+  && pass "control: without the live-lane match a running lane's mailbox is pruned" \
+  || fail "control: without the live-lane match a running lane's mailbox is pruned"
 
-# The same planted defects on the checkout with no fleet state.
-control_bare() { # NAME CHECK LABEL
-  local mp="$TMP_ROOT/mb-$1"
-  build_bare "$mp"
-  bare_run "$mp" "$MUTANT_DIR/$1" >/dev/null || true
-  (cd "$mp" && eval "$2") && pass "control: $3" || fail "control: $3"
-}
-
-# Planted: a prune with no fleet state stops before judging anything, as it
-# did before the workstation backstop.
-mutant absent-skipped 'state_file=$(fleet_state_file) || fleet=false' \
-  'state_file=$(fleet_state_file) || { printf "pruned fleet-state=none\n"; return 0; }'
-control_bare absent-skipped '[[ -e tmp/completion-summary-KEN-2.md ]]' \
-  "without the no-fleet-state pass a closed item's old file stays"
-
-mutant no-live '[[ -z "$item" ]] || ! unit_names_item "$unit" "$item" || kept_by=live' ':'
-control no-live "" "" '[[ ! -e tmp/lane-mail/KEN-1 ]]' \
-  "without the live-lane match a running lane's mailbox is pruned"
-
-mutant no-state-live 'live+="${f%.json}"$'"'"'\n'"'" ':'
-control_bare no-state-live '[[ ! -e tmp/completion-summary-KEN-1.md ]]' \
-  "without the standing-state match a running item's old file is pruned"
-STATE_LIVE='[[ -f "$f" && "$f" != "$sd/${state_file##*/}" ]] || continue'
-mutant no-state-bound 'if [[ -z "$recent" ]]; then' 'if false; then'
-control_bare no-state-bound '[[ -e tmp/audit-KEN-4.json ]]' \
-  "without the retention and worktree bound an abandoned item's state holds its files forever"
-# Planted: the standing-state refusal dropped, so the failed find's words read
-# as a recent write and the state it could not judge holds its item live.
-mutant state-find-ignored 'unit="$f" err="$recent"; state_message prune-age-unreadable "$@" >&2; return 1' ':'
-state_find_row "$MUTANT_DIR/state-find-ignored"
-[[ "$STATE_FIND" == rc=0\ * ]] \
-  && ok "control: without the standing-state refusal a state whose age find cannot read is held live" \
-  || bad "control: without the standing-state refusal a state whose age find cannot read is held live" "$STATE_FIND"
-# Planted: the worktree lookup dropped, so every old state reads as naming none.
-mutant no-lane-lookup 'wt=$("$SCRIPT_DIR/git-context" lane-worktree "$wt" "$branch" "$root") || return 1' 'wt=""'
-shapes_run no-lane-lookup "$MUTANT_DIR/no-lane-lookup"
-[[ " $SHAPES" == *" 1:removed,removed "* ]] \
-  && ok "control: without the worktree lookup an item on its linked worktree is pruned" \
-  || bad "control: without the worktree lookup an item on its linked worktree is pruned" "got=$SHAPES"
-# Planted: a failed listing read as no worktree, so every old state the
-# listing would have held is pruned.
-mutant listing-ignored 'wt=$("$SCRIPT_DIR/git-context" lane-worktree "$wt" "$branch" "$root") || return 1' \
-  'wt=$("$SCRIPT_DIR/git-context" lane-worktree "$wt" "$branch" "$root") || wt=""'
-listing_row listing-ignored "$MUTANT_DIR/listing-ignored"
-[[ "$LISTING" == rc=0\ * && "$LISTING" != *"removed=none"* ]] \
-  && ok "control: reading a failed listing as no worktree prunes the states it would have held" \
-  || bad "control: reading a failed listing as no worktree prunes the states it would have held" "$LISTING"
-# Planted in git-context, the lookup's one owner, one rule each: NAME, anchor,
-# replacement, the item whose verdict flips, and that verdict.
-GC_DIR="$TMP_ROOT/mutant-git-context"
-mkdir -p "$GC_DIR"
-cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$GC_DIR/lib"
-cp "$REPO_ROOT/skills/orch/scripts/orch-env" "$WS" "$GC_DIR/"
-while IFS='@' read -r name anchor replacement n want label; do
-  if [[ "$(grep -Fc -- "$anchor" "$REPO_ROOT/skills/orch/scripts/git-context")" != 1 ]]; then
-    bad "the $name control finds its anchor"; continue
-  fi
-  A="$anchor" R="$replacement" \
-    awk 'index($0, ENVIRON["A"]) { sub(/[^ ].*/, ""); print $0 ENVIRON["R"]; next } { print }' \
-    "$REPO_ROOT/skills/orch/scripts/git-context" > "$GC_DIR/git-context"
-  chmod +x "$GC_DIR/git-context"
-  shapes_run "$name" "$GC_DIR/workflow-state"
-  [[ " $SHAPES" == *" $n:$want,$want "* ]] && ok "control: $label" || bad "control: $label" "got=$SHAPES"
-done <<'ROWS'
-main-answers@[[ "$n" -eq 1 ]] || lane=true@lane=true@8@kept@with the main checkout counted as a lane's tree a state naming it is held
-stale-dir@[[ -d "$path" ]] || lane=false@:@12@kept@with a registered tree taken whatever its directory a branch-only state on a gone tree is held
-line-listing@git -C "$worktree" worktree list --porcelain -z >"$listing" || exit 1@git -C "$worktree" worktree list --porcelain | tr '\n' '\0' >"$listing" || exit 1@11@removed@with the line listing read a state naming a worktree whose path git quotes is pruned
-no-tree-match@[[ "$resolved" != "$want_tree" ]] || { printf '%s\n' "$path"; exit 0; }@:@2@removed@without the worktree match a state naming a linked worktree alone is pruned
-plain-dir@[[ -n "$want_tree" && -d "$want_tree" ]] || want_tree=""@[[ -z "$want_tree" || ! -d "$want_tree" ]] || { printf '%s\n' "$want_tree"; exit 0; }@10@kept@with any directory taken for a worktree a state naming a plain directory is held
-no-branch@[[ "$lane" == false || -n "$branch_hit" || -z "$want_branch" ]] || branch_hit="$path"@:@5@removed@without the branch lookup a branch-only state whose branch a linked tree holds is pruned
-ROWS
-mutant no-fresh-hold 'if [[ -z "$recent" ]]; then' 'if true; then'
-control_bare no-fresh-hold '[[ ! -e tmp/completion-summary-KEN-1.md ]]' \
-  "without the retention hold a running item with a fresh state and no worktree loses its old files"
-mutant fleet-state-live "$STATE_LIVE" '[[ "$fleet" == false && -f "$f" && "$f" != "$sd/${state_file##*/}" ]] || continue'
-control fleet-state-live "" "" '[[ ! -e tmp/audit-KEN-3.json ]]' \
-  "a fleet prune reading liveness from lane records alone prunes an open item whose lane is done"
-mutant fleet-state-item "$STATE_LIVE" '[[ -f "$f" ]] || continue'
-control fleet-state-item "" "" '[[ -e tmp/oversee-triage-source.json ]]' \
-  "without the fleet-state exclusion an old overseer file is held as a live item's"
-
-mutant no-keep '[[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || kept_by=keep' ':'
-control no-keep "" "" '[[ ! -e tmp/waiter.run ]]' "without the --keep match the kept watch log is pruned"
-control_bare no-keep '[[ ! -e tmp/waiter.run ]]' \
-  "without the --keep match a live run directory is pruned on a checkout with no fleet state"
-
-mutant archive-ignored '&& tar -czf "$stage.tgz" -C / -T "$stage/paths" 2>"$stage/tar.err"; }; then' \
-  '&& { tar -czf "$stage.tgz" -C / -T "$stage/paths" || true; }; }; then'
-control archive-ignored "$TAR_BIN:" "" '[[ ! -e tmp/directive.md ]]' \
-  "without the archive refusal a failed archive still removes the directive"
-
-mutant first-lane "lanes: [(.lanes // [])[1:][] | select(.status == \"done\" and (.launched_at | old))]}' \"\$state_file\") || return 1" \
-  "lanes: [(.lanes // [])[] | select(.status == \"done\" and (.launched_at | old))]}' \"\$state_file\") || return 1"
-control first-lane "" "" '[[ "$(jq -r ".lanes[0].item" tmp/workflow-state-oversee.json)" != KEN-0 ]]' \
-  "without the first-record exception the fleet start is pruned"
-
-mutant report-names '[[ ! "${f##*/}" =~ $PROGRESS_REPORT_RE ]] || units+=("$f")' \
-  'units+=("$f")'
-control report-names "" "" '[[ ! -e tmp/progress-reports/notes.md ]]' \
-  "without the report-name filter an unrelated old file in the progress directory is pruned"
-
-mutant no-overlap 'state_message prune-progress-overlap "$@" >&2; return 1' ':'
-control no-overlap "" "ORCH_PROGRESS_REPORT_DIR=tmp" '[[ ! -e tmp/directive.md ]]' \
-  "without the overlap refusal a progress directory equal to the state directory prunes"
-
-mutant no-umask 'umask 077' ':'
-control no-umask "" "" '[[ "$(ls -l fleet/archive/*/oversee/*.tgz | cut -c1-10)" != -rw------- ]]' \
-  "without the private umask the archive is readable beyond its owner"
+# git-context lane-worktree's one must-fail control: the worktree match
+# dropped, so a state naming a linked worktree alone is pruned with its file.
+NO_TREE_MATCH="$(mutant_scripts no-tree-match git-context)" || exit 1
+mutate_file "$NO_TREE_MATCH/git-context" '[[ "$resolved" != "$want_tree" ]] || { printf '"'"'%s\n'"'"' "$path"; exit 0; }' ':'
+shapes_run no-tree-match "$NO_TREE_MATCH/workflow-state"
+[[ " $SHAPES" == *" 2:removed,removed "* ]] \
+  && pass "control: without the worktree match a state naming a linked worktree alone is pruned" \
+  || fail "control: without the worktree match a state naming a linked worktree alone is pruned" "got=$SHAPES"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

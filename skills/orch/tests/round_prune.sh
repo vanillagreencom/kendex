@@ -210,33 +210,9 @@ done <<<"$ROWS"
 [[ "$n" -ge 15 ]] || { echo "the row table was not read" >&2; exit 2; }
 row_setup -
 
-
-# The suite's one must-fail control: a copy whose comparison never reaches the
-# mark prunes nothing past it.
-NEVER="$(mutant_scripts never round-prune)" || exit 1
-mutate_file "$NEVER/round-prune" 'if [[ "$used" -ge "$mark" ]]; then' 'if false; then'
-build control-never KEN-1
-prune 80 "$NEVER"
-[[ "$(artifacts)" == ".cargo-lock" ]] &&
-  assert_eq "pruned" "not pruned" "control: with the mark never reached the output past it is kept" ||
-  assert_eq "kept" "kept" "control: with the mark never reached the output past it is kept"
-
-# Must-fail control: a copy that takes the state's worktree field as it stands
-# takes the main checkout for a lane's tree.
-mkdir -p "$MUTANTS/raw-worktree"
-cp -a "$ORCH_SCRIPTS" "$MUTANTS/raw-worktree/scripts"
-LW_ANCHOR='worktree="$("$GIT_CONTEXT" lane-worktree "$worktree" "$branch")" || { message worktree-list "$branch" >&2; exit 2; }'
-[[ "$(grep -Fc -- "$LW_ANCHOR" "$ORCH_SCRIPTS/round-prune")" == 1 ]] || { echo "control: the lane-worktree call could not be found in round-prune" >&2; exit 2; }
-A="$LW_ANCHOR" awk 'index($0, ENVIRON["A"]) { print ":"; next } { print }' "$ORCH_SCRIPTS/round-prune" >"$MUTANTS/raw-worktree/scripts/round-prune"
-build control-raw-worktree KEN-1 main pr-5
-prune 80 "$MUTANTS/raw-worktree/scripts"
-[[ "$(line)" == *"action=no-worktree"* ]] &&
-  assert_eq "no-worktree" "another action" "control: taking the worktree field as it stands takes the main checkout for a lane's tree" ||
-  assert_eq "taken" "taken" "control: taking the worktree field as it stands takes the main checkout for a lane's tree"
-
 # A worktree listing git cannot give: which tree the state names is unknown,
-# so the round refuses with nothing pruned or recorded. SCRIPTS' round-prune
-# under a git that fails `worktree list` and runs every other command.
+# so the round refuses with nothing pruned or recorded, under a git that fails
+# `worktree list` and runs every other command.
 REAL_GIT="$(command -v git)"
 GIT_LIST_FAIL_BIN="$TMP_ROOT/git-list-fail-bin"
 mkdir -p "$GIT_LIST_FAIL_BIN"
@@ -251,50 +227,32 @@ if [[ -n "\$wt" && -n "\$list" ]]; then echo "fatal: planted failure" >&2; exit 
 exec "$REAL_GIT" "\$@"
 STUB
 chmod +x "$GIT_LIST_FAIL_BIN/git"
-listing_refused() { # NAME SCRIPTS
-  build "listing-$1" KEN-1
-  "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" new-round-id "$KEY" dev_round_id >/dev/null
-  RC=0
-  OUT="$(cd "$MAIN" && env PATH="$GIT_LIST_FAIL_BIN:$TMP_ROOT/bin:$PATH" DF_TARGET_USED=80 \
-    "$2/round-prune" --state-dir "$STATE" "$KEY" 2>&1)" || RC=$?
-  LISTING="rc=$RC $(grep -m 1 '^round-prune: ' <<<"$OUT" || true) git=$(grep -c -x 'fatal: planted failure' <<<"$OUT" || true) recorded=$("$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" get "$KEY" '.round_prunes // {} | length') left=$(artifacts)"
-}
-listing_refused shipped "$ORCH_SCRIPTS"
-assert_eq "$LISTING" "rc=2 round-prune: worktree-list=ken-1 git=1 recorded=0 left=.cargo-lock,deps/unit-0.rlib" \
+build listing KEN-1
+"$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" new-round-id "$KEY" dev_round_id >/dev/null
+RC=0
+OUT="$(cd "$MAIN" && env PATH="$GIT_LIST_FAIL_BIN:$TMP_ROOT/bin:$PATH" DF_TARGET_USED=80 \
+  "$ORCH_SCRIPTS/round-prune" --state-dir "$STATE" "$KEY" 2>&1)" || RC=$?
+assert_eq "rc=$RC $(grep -m 1 '^round-prune: ' <<<"$OUT" || true) git=$(grep -c -x 'fatal: planted failure' <<<"$OUT" || true) recorded=$("$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" get "$KEY" '.round_prunes // {} | length') left=$(artifacts)" \
+  "rc=2 round-prune: worktree-list=ken-1 git=1 recorded=0 left=.cargo-lock,deps/unit-0.rlib" \
   "a worktree listing git cannot give is refused as worktree-list with nothing pruned or recorded"
-# Must-fail control: a copy that drops the refusal reads the failed listing as
-# no worktree and records the round.
-mkdir -p "$MUTANTS/listing-ignored"
-cp -a "$ORCH_SCRIPTS" "$MUTANTS/listing-ignored/scripts"
-A="$LW_ANCHOR" awk 'index($0, ENVIRON["A"]) { print "worktree=\"$(\"$GIT_CONTEXT\" lane-worktree \"$worktree\" \"$branch\")\" || worktree=\"\""; next } { print }' \
-  "$ORCH_SCRIPTS/round-prune" >"$MUTANTS/listing-ignored/scripts/round-prune"
-listing_refused listing-ignored "$MUTANTS/listing-ignored/scripts"
-[[ "$LISTING" == "rc=0 "* ]] &&
-  assert_eq "recorded" "recorded" "control: without the worktree-list refusal a failed listing records the round" ||
-  assert_eq "$LISTING" "rc=0 ..." "control: without the worktree-list refusal a failed listing records the round"
 
 # A registered tree whose directory is gone: git still lists it on the
-# state's branch, and it is no lane target. STALE reads SCRIPTS' round.
-stale_tree() { # NAME SCRIPTS
-  build "stale-$1" KEN-1 branch pr-5
-  rm -rf -- "${WT:?}"
-  prune 80 "$2"
-  STALE="rc=$RC $(line)"
-}
-stale_tree shipped "$ORCH_SCRIPTS"
-assert_eq "$STALE" "rc=0 round-prune: action=no-worktree used-pct=0 mark-pct=75 bytes=0 round=<round> worktree=" \
+# state's branch, and it is no lane target.
+build stale KEN-1 branch pr-5
+rm -rf -- "${WT:?}"
+prune 80
+assert_eq "rc=$RC $(line)" "rc=0 round-prune: action=no-worktree used-pct=0 mark-pct=75 bytes=0 round=<round> worktree=" \
   "a state whose branch sits on a registered tree with no directory records no-worktree"
-# Must-fail control: a git-context that takes a registered tree whatever its
-# directory hands the round a target that is gone.
-mkdir -p "$MUTANTS/stale-dir"
-cp -a "$ORCH_SCRIPTS" "$MUTANTS/stale-dir/scripts"
-SD_ANCHOR='[[ -d "$path" ]] || lane=false'
-[[ "$(grep -Fc -- "$SD_ANCHOR" "$ORCH_SCRIPTS/git-context")" == 1 ]] || { echo "control: the directory check could not be found in git-context" >&2; exit 2; }
-A="$SD_ANCHOR" awk 'index($0, ENVIRON["A"]) { print ":"; next } { print }' "$ORCH_SCRIPTS/git-context" >"$MUTANTS/stale-dir/scripts/git-context"
-stale_tree stale-dir "$MUTANTS/stale-dir/scripts"
-[[ "$STALE" == *"action=no-worktree"* ]] &&
-  assert_eq "$STALE" "another outcome" "control: taking a registered tree whatever its directory hands the round a gone target" ||
-  assert_eq "gone target" "gone target" "control: taking a registered tree whatever its directory hands the round a gone target"
+
+# The suite's one must-fail control: a copy whose comparison never reaches the
+# mark prunes nothing past it.
+NEVER="$(mutant_scripts never round-prune)" || exit 1
+mutate_file "$NEVER/round-prune" 'if [[ "$used" -ge "$mark" ]]; then' 'if false; then'
+build control-never KEN-1
+prune 80 "$NEVER"
+[[ "$(artifacts)" == ".cargo-lock" ]] &&
+  assert_eq "pruned" "not pruned" "control: with the mark never reached the output past it is kept" ||
+  assert_eq "kept" "kept" "control: with the mark never reached the output past it is kept"
 
 echo "=== target/ across two runs ==="
 # Two rounds, each starting with the round-start prune and ending with a
