@@ -4,11 +4,12 @@
 # position.
 #
 # Usage:
-#   oversee-succeed [--context TOKENS:WINDOW] [--handoff PATH] [--wait-secs N] [-- HARNESS_FLAGS...]
-#   oversee-succeed --print-launch-line [--handoff PATH] [-- HARNESS_FLAGS...]
-#   oversee-succeed --check-marks [--context TOKENS:WINDOW]
+#   oversee-succeed [--harness H] [--context TOKENS:WINDOW] [--handoff PATH] [--wait-secs N]
+#                   [-- HARNESS_FLAGS...]
+#   oversee-succeed --print-launch-line [--harness H] [--handoff PATH] [-- HARNESS_FLAGS...]
+#   oversee-succeed --check-marks [--harness H] [--context TOKENS:WINDOW]
 #   oversee-succeed --dead-pane PANE --line-file PATH [--wait-secs N]
-#   oversee-succeed --walled-pane PANE [--handoff PATH] [--wait-secs N]
+#   oversee-succeed --walled-pane PANE [--harness H] [--handoff PATH] [--wait-secs N]
 #                   [-- HARNESS_FLAGS...]
 #
 #   Five modes over ONE launch path. The first is an overseer succeeding
@@ -185,8 +186,9 @@
 #        same runner, as the job watch-restart-<stamp>, with its
 #        recorded command in its recorded directory under this run's
 #        environment, except that TMUX_PANE names the successor pane, the
-#        flags after `--` are the successor's, and the account variable names
-#        the successor's account. <stamp> is the UTC second each launch was
+#        flags after `--` are the successor's, a trailing --harness names the
+#        successor's harness over any the recorded command carried, and the
+#        account variable names the successor's account. <stamp> is the UTC second each launch was
 #        made, so no start reuses the name of the unit it replaces; both
 #        launches write their record to oversee-watch.runner (lib/watch-pid.sh).
 #        The restarted watch's own start stops the old one, whose pane is
@@ -231,6 +233,13 @@
 #                    A mix refuses before launch. Print mode records this
 #                    session rather than a later preference.
 #                    Refused beside --dead-pane, whose line already holds them
+#   --harness H      The harness this overseer runs, claude or codex, where its
+#                    pane cannot say: a Codex pane reports node, which names
+#                    either, and the turn-end reading that would name it does
+#                    not exist before the first turn end. It answers ahead of
+#                    the pane and the reading; any other value is refused as
+#                    invalid-harness, and --dead-pane, whose recorded line
+#                    names its harness, refuses it
 #   --context TOKENS:WINDOW
 #                    This session's context reading, as its turn-end hook took
 #                    it: the tokens the last response left in the context and
@@ -343,7 +352,8 @@ message() { # KEY FIELD=VALUE...
     invalid-successor-accounts) text='ORCH_OVERSEER_SUCCESSOR_ACCOUNTS takes a whole number; 0 disables this trigger.' ;;
     invalid-context-mark) text='ORCH_HANDOFF_CONTEXT_PCT takes a whole number of percent from 1 to 100.' ;;
     pane-unreadable) text='The caller pane could not be read.' ;;
-    harness-unnamed) text='The caller pane runs no harness this script launches, and no context reading of this pane names one.' ;;
+    harness-unnamed) text='The caller pane runs no harness this script launches, and neither --harness nor a context reading of this pane names one.' ;;
+    invalid-harness) text='--harness takes claude or codex.' ;;
     invalid-context) text='--context takes TOKENS:WINDOW, two whole numbers, the window empty where no adapter named one.' ;;
     context-unmeasured) text='No account mark is reached and the context mark was not judged: the --context reading names no window (window-unnamed), or this run was handed none (context-unread). Nothing was launched. At the context mark, run the succession the turn-end refusal names, which carries the reading. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
     context-below-mark) text='No mark is reached; nothing was launched. The overseer context is under ORCH_HANDOFF_CONTEXT_PCT of its own window. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
@@ -450,16 +460,16 @@ watch_job_launch() { # NAME STATE OUT ERR COMMAND...
 }
 
 # The internal `--watch-restart STATE CALLER_WINDOW PANE LANE_VAR LANE_HOME
-# [FLAG...]` run, step 6's helper, which the succession starts before its
+# HARNESS [FLAG...]` run, step 6's helper, which the succession starts before its
 # close through the orch job runner (header step 6). Every
 # line it prints goes to oversee-watch.err, where the handover pointed its
 # stdout and stderr, so the next watch start on the state other than a
 # succession's prints it. Each outcome is one keyed line, and none is a refusal
 # of anything: the succession has already committed.
-watch_restart() { # STATE CALLER_WINDOW PANE LANE_VAR LANE_HOME [FLAG...]
-  local state="$1" window="$2" pane="$3" var="$4" home="$5" windows deadline runner
+watch_restart() { # STATE CALLER_WINDOW PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
+  local state="$1" window="$2" pane="$3" var="$4" home="$5" harness="$6" windows deadline runner
   local -a flags=()
-  shift 5
+  shift 6
   [[ $# -eq 0 ]] || flags=(-- "$@")
   deadline=$((SECONDS + WATCH_STOP_SECS))
   while :; do
@@ -491,7 +501,7 @@ watch_restart() { # STATE CALLER_WINDOW PANE LANE_VAR LANE_HOME [FLAG...]
   fi
   if ! watch_job_launch watch-restart "$state" "$WATCH_LOG_FILE" "$WATCH_ERR_FILE" \
       env TMUX_PANE="$pane" "$var=$home" OVERSEE_WATCH_ORIGIN=succession \
-      "$WATCH_SCRIPT" ${WATCH_ARGV[@]+"${WATCH_ARGV[@]}"} ${flags[@]+"${flags[@]}"}; then
+      "$WATCH_SCRIPT" ${WATCH_ARGV[@]+"${WATCH_ARGV[@]}"} --harness "$harness" ${flags[@]+"${flags[@]}"}; then
     message watch-restart-failed step=start "dir=$WATCH_CWD" "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR"
     return 0
   fi
@@ -512,7 +522,7 @@ watch_restart() { # STATE CALLER_WINDOW PANE LANE_VAR LANE_HOME [FLAG...]
 }
 if [[ "${1:-}" == --watch-restart ]]; then
   shift
-  [[ $# -ge 5 ]] || die unknown-option "arg=--watch-restart"
+  [[ $# -ge 6 ]] || die unknown-option "arg=--watch-restart"
   watch_restart "$@"
   exit 0
 fi
@@ -571,12 +581,14 @@ HANDOFF_GIVEN=0
 WAIT_GIVEN=0
 CONTEXT_ARG=""
 CONTEXT_GIVEN=0
+HARNESS_ARG=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --handoff|--wait-secs|--dead-pane|--walled-pane|--line-file|--context)
+    --handoff|--wait-secs|--dead-pane|--walled-pane|--line-file|--context|--harness)
       [[ $# -ge 2 ]] || die unknown-option "arg=$1"
       case "$1" in
         --context) CONTEXT_ARG="$2"; CONTEXT_GIVEN=1 ;;
+        --harness) HARNESS_ARG="$2" ;;
         --handoff) HANDOFF="$2"; HANDOFF_GIVEN=1 ;;
         --wait-secs) WAIT_SECS="$2"; WAIT_GIVEN=1 ;;
         --dead-pane) DEAD_PANE="$2" ;;
@@ -638,6 +650,8 @@ fi
 JUDGES=0
 [[ "$MODE" != succeed && "$MODE" != check ]] || JUDGES=1
 (( JUDGES || ! CONTEXT_GIVEN )) || die mode-conflict "mode=$MODE" "context=$CONTEXT_ARG"
+[[ "$MODE" != dead || -z "$HARNESS_ARG" ]] || die mode-conflict "mode=$MODE" "harness=$HARNESS_ARG"
+case "$HARNESS_ARG" in '' | claude | codex) ;; *) die invalid-harness "value=$HARNESS_ARG" ;; esac
 # The context reading, the one this session's turn-end hook just took and
 # nothing stored: `unjudged` where none was handed in, `unmeasured` where it
 # names no window, and judged below where it names one.
@@ -700,7 +714,8 @@ CALLER_WINDOW="$(tmux display-message -p -t "$CALLER_PANE" '#{window_id}' 2>"$DE
   || die pane-unreadable "pane=$CALLER_PANE"
 CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 2>"$DEP_ERR")" \
   || die pane-unreadable "pane=$CALLER_PANE"
-# The harness is the pane's foreground command. The model its account buckets
+# The harness is the one --harness names, else the pane's foreground command.
+# The model its account buckets
 # are judged on, and the harness of a foreground command naming neither, an
 # agent-confine launcher, are the ones the reading this pane's turn-end hook
 # last recorded in the overseer mailbox names: a successor in another pane
@@ -722,7 +737,9 @@ if [[ "$MODE" != dead ]]; then
      && [[ "$LANE_CTX_PANE_KEY" == "$CALLER_SERVER $CALLER_PANE" ]]; then
     reading_harness="$LANE_CTX_HARNESS" reading_model="$LANE_CTX_MODEL"
   fi
-  if ! CALLER_HARNESS="$(lane_context_shape "${CALLER_CMD#-}")"; then
+  if [[ -n "$HARNESS_ARG" ]]; then
+    CALLER_HARNESS="$HARNESS_ARG"
+  elif ! CALLER_HARNESS="$(lane_context_shape "${CALLER_CMD#-}")"; then
     die harness-unnamed "pane=$CALLER_PANE"
   fi
   if [[ "$CALLER_HARNESS" == both ]]; then
@@ -1481,7 +1498,7 @@ if [[ "$MODE" == succeed ]]; then
   else
     old_watch="$WATCH_PID"
     if watch_job_launch watch-handover "$watch_state" "$WATCH_ERR_FILE" "$WATCH_ERR_FILE" \
-        "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" --watch-restart "$watch_state" "$CALLER_WINDOW" "$SUCC_PANE" "$lane_var" "$launch_home" ${SUCC_FLAGS[@]+"${SUCC_FLAGS[@]}"}; then
+        "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" --watch-restart "$watch_state" "$CALLER_WINDOW" "$SUCC_PANE" "$lane_var" "$launch_home" "$harness" ${SUCC_FLAGS[@]+"${SUCC_FLAGS[@]}"}; then
       message watch-handover "pid=$old_watch" "pane=$SUCC_PANE" "log=$WATCH_ERR_FILE" "$JOB_UNIT_LINE"
     else
       message watch-restart-failed step=helper "pid=$old_watch" "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR" >&2

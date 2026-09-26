@@ -28,7 +28,7 @@ Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
                      [--item ISSUE_ID]... [--repo OWNER/REPO]...
                      [--hosted ITEM=REMOTE_ROOT]... [--root ITEM=PATH]...
                      [--handoff PATH] [--state PATH [--skip-lane WINDOW]...]
-                     [LANE_WINDOW...] [-- OVERSEER_FLAGS...]
+                     [--harness claude|codex] [LANE_WINDOW...] [-- OVERSEER_FLAGS...]
        oversee-watch --repeat SECS --state PATH [any option above]...
 
 Blocks until the fleet needs the overseer, then prints every event it found
@@ -365,6 +365,8 @@ Options:
                       tmux's own target form, names one in another session.
                       A bare name with no session resolved is refused as
                       session-unresolved naming the lane and the --state file
+  --harness H         the OVERSEER's harness, handed to each oversee-succeed
+                      call; a Codex pane reads node, which names neither
   -- OVERSEER_FLAGS...
                       the flags the OVERSEER itself runs under — its
                       permission flags, plus its current model and effort
@@ -664,6 +666,7 @@ parse_argv() {
   STATE_FILE=""
   HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
   OVERSEER_FLAGS=()
+  OVERSEER_HARNESS=""
   # How many leading words are this watch's own, before the `--` that starts
   # the overseer's flags: what the watch records of its command, and what a
   # restart from a successor pane runs again with the successor's flags.
@@ -676,6 +679,7 @@ parse_argv() {
       # window: the words are the harness's and this parser reads none of them.
       --) ARGV_BASE_COUNT=$((total - $#)); shift; OVERSEER_FLAGS=("$@"); break ;;
       --handoff) need_val "$@"; HANDOFF="$2"; shift 2 ;;
+      --harness) need_val "$@"; OVERSEER_HARNESS="$2"; shift 2 ;;
       --handoff=*) HANDOFF="${1#--handoff=}"; need_val --handoff "$HANDOFF"; shift ;;
       --repeat) need_val "$@"; REPEAT="$2"; shift 2 ;;
       --repeat=*) REPEAT="${1#--repeat=}"; need_val --repeat "$REPEAT"; shift ;;
@@ -1248,6 +1252,7 @@ overseer_record_refuse() { # DETAIL REASON FIELD=VALUE...
 OVERSEER_LAUNCH_ARGS=()
 overseer_launch_args() {
   OVERSEER_LAUNCH_ARGS=(--handoff "$HANDOFF")
+  [[ -z "$OVERSEER_HARNESS" ]] || OVERSEER_LAUNCH_ARGS+=(--harness "$OVERSEER_HARNESS")
   [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || OVERSEER_LAUNCH_ARGS+=(-- "${OVERSEER_FLAGS[@]}")
 }
 
@@ -1393,6 +1398,7 @@ repeat_watch() { # ARGV...
     fi
     args=(--interval "$INTERVAL" --max-loops "$MAX_LOOPS" \
           --handoff "$HANDOFF" --state "$STATE_FILE")
+    [[ -z "$OVERSEER_HARNESS" ]] || args+=(--harness "$OVERSEER_HARNESS")
     [[ -z "$SINCE" ]] || args+=(--since "$SINCE")
     for line in ${REPOS[@]+"${REPOS[@]}"}; do args+=(--repo "$line"); done
     for line in ${GIVEN_HOSTED[@]+"${GIVEN_HOSTED[@]}"}; do args+=(--hosted "$line"); done

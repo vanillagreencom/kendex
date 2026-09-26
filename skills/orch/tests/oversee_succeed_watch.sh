@@ -216,8 +216,8 @@ assert_eq "$(grep -c "^stopped $OLD\$" "$TMP_ROOT/watch.log")|$(kill -0 "$OLD" 2
   "1|gone" \
   "the watch serving the caller's pane is stopped, once"
 assert_eq "${NEW:+found}|$(started_line "${NEW:-none}")" \
-  "found|pane=$SUCC_PANE origin=succession lane=$H/.claude cwd=$TMP_ROOT/work argv=$WATCH_ARGS -- --model fable --effort high --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --permission-mode dontAsk --verbose" \
-  "and started again from the successor pane, with the successor's flags and account"
+  "found|pane=$SUCC_PANE origin=succession lane=$H/.claude cwd=$TMP_ROOT/work argv=$WATCH_ARGS --harness claude -- --model fable --effort high --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --permission-mode dontAsk --verbose" \
+  "and started again from the successor pane, with the successor's harness, flags and account"
 assert_eq "$(grep -c "^oversee-succeed: watch-restarted pid=$NEW pane=$SUCC_PANE $SETSID_LINE\$" "$WATCH_ERR")|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
   "1|2" \
   "the restart is written beside the fleet state with the new loop's pid and the successor pane"

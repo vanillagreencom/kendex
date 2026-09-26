@@ -76,7 +76,8 @@ STUB
 # A COPY of sleep, never a shell or script named for the harness: both can reset
 # the process name tmux reads, so the shape rule never sees the harness word.
 cp "$(command -v sleep)" "$BIN/hclaude"
-chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex" "$BIN/hclaude"
+cp "$(command -v sleep)" "$BIN/node"
+chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex" "$BIN/hclaude" "$BIN/node"
 
 # The trigger every headroom fixture below is derived from: a lane at exactly
 # TRIGGER percent headroom has no room and one at TRIGGER+1 does, so the rows
@@ -972,6 +973,13 @@ run_succeed unknowncontext '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "1|oversee-succeed: harness-unnamed pane=$CALLER_PANE" \
   "a pane with no known harness and no reading naming one still refuses"
+# A Codex overseer's pane reads node, which names neither harness, and before
+# its first turn end no reading names one either: --harness does, so the watch
+# can record its launch line inside that first turn.
+new_caller "$NO_CONTEXT" "$NO_CONTEXT" "cat '$TMP_ROOT/caller.screen'; exec '$BIN/node' 100000"
+CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed nodeprint '' --print-launch-line --harness codex -- --verbose
+assert_eq "$RC|$(grep -c ' codex ' <<<"$OUT")|$(grep -c 'claude' <<<"$OUT")" "0|1|0" \
+  "a node pane with no reading prints its codex line where --harness names codex"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
 
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -1095,7 +1103,8 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
 # takes one.
 new_caller "$MARK"
 for row in "badcontext|--check-marks --context 12|1|oversee-succeed: invalid-context value=12" \
-           "printcontext|--print-launch-line --context 12:100|1|oversee-succeed: mode-conflict mode=print context=12:100"; do
+           "printcontext|--print-launch-line --context 12:100|1|oversee-succeed: mode-conflict mode=print context=12:100" \
+           "badharness|--print-launch-line --harness pi|1|oversee-succeed: invalid-harness value=pi"; do
   IFS='|' read -r row_name row_args row_rc row_first <<<"$row"
   # shellcheck disable=SC2086
   NO_CONTEXT=1 run_succeed "$row_name" '' $row_args
