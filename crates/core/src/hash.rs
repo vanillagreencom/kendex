@@ -220,13 +220,16 @@ impl RenderedIdentity {
 /// contains that pair, policy cannot change the hash, so avoid every Git
 /// probe and keep exact identity for both roles.
 fn exact_without_git(files: &[(PathBuf, Vec<u8>)], exact: String) -> Option<RenderedIdentity> {
-    files
-        .iter()
-        .all(|(_, bytes)| !normalization_eligible(bytes))
-        .then(|| RenderedIdentity {
-            persisted: exact.clone(),
-            exact,
-        })
+    (!git_can_convert(files)).then(|| RenderedIdentity {
+        persisted: exact.clone(),
+        exact,
+    })
+}
+
+/// Whether any file carries a CRLF pair, the only bytes Git's text
+/// conversion rewrites.
+fn git_can_convert(files: &[(PathBuf, Vec<u8>)]) -> bool {
+    files.iter().any(|(_, bytes)| normalization_eligible(bytes))
 }
 
 fn normalization_eligible(bytes: &[u8]) -> bool {
@@ -525,23 +528,28 @@ pub fn installation_hash(
     name: &str,
     harness: HarnessId,
 ) -> Result<String> {
-    let mut hasher = Sha256::new();
-    if kind == ItemKind::Skill {
-        let files = sealed.collect_skill_tree(source_tree)?;
-        hasher.update(
-            hash_clean_checkout_files(source_tree, &files).unwrap_or_else(|| hash_files(&files)),
-        );
+    let files = if kind == ItemKind::Skill {
+        sealed.collect_skill_tree(source_tree)?
+    } else if sealed.is_dir(source_tree) {
+        sealed.collect_tree(source_tree, &[])?
     } else {
-        let files = match sealed.is_dir(source_tree) {
-            true => sealed.collect_tree(source_tree, &[])?,
-            false => vec![(Path::new("").to_path_buf(), sealed.read(source_tree)?)],
-        };
-        hasher.update(
-            hash_clean_checkout_files(source_tree, &files).unwrap_or_else(|| hash_files(&files)),
-        );
-    }
+        vec![(Path::new("").to_path_buf(), sealed.read(source_tree)?)]
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(portable_source_hash(source_tree, &files));
     hasher.update(relevant_sections(manifest, kind, name, harness).as_bytes());
     Ok(hex(&hasher.finalize()))
+}
+
+/// A source's bytes under the identity a committed lock carries. Git is
+/// asked only where it could convert something: a plan hashes every source
+/// once per harness, and the Git route starts a process per file.
+fn portable_source_hash(source_tree: &Path, files: &[(PathBuf, Vec<u8>)]) -> String {
+    let exact = hash_files(files);
+    match git_can_convert(files) {
+        true => hash_clean_checkout_files(source_tree, files).unwrap_or(exact),
+        false => exact,
+    }
 }
 
 /// Deterministic serialization of every manifest value that shapes the
