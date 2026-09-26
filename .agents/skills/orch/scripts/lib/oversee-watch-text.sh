@@ -104,7 +104,9 @@ The long pass's events, checked and reported in this order:
   EVENT pr-watch rc=N        new review-gate attention; reducer output follows
   EVENT merged <PR> <branch> <repo>
                              an --item PR merged at or after --since, in any
-                             --repo
+                             --repo. A parked record's item is an --item for
+                             this check alone, and its merge runs the close
+                             below at once: nothing wakes a parked sandbox
   EVENT triage <item>        an item created at or after --since that is absent
                              from the first repository's persisted baseline
   EVENT lane-ready <item>    a lane open-terminal handed to a background job
@@ -131,11 +133,17 @@ The long pass's events, checked and reported in this order:
                              lane watched
   EVENT lane-closed <item>   under a lane-exited whose window watches a --hosted
                              item already reported merged, once the pass finds
-                             its worktree gone: `lane-close` succeeded;
+                             its worktree gone, or under the merged event of a
+                             parked record, whose sandbox is stopped and whose
+                             close needs no pane: `lane-close` succeeded;
                              the provider's output follows, then `kept=none`
                              when that output has no `kept=` line because the
                              close archived nothing. A lane exiting while its
-                             worktree stands is not closed
+                             worktree stands is not closed. A parked close
+                             that fails is lane-close-failed on stderr with
+                             its merged row uncommitted, so the next pass
+                             reports the merge again and retries the close;
+                             lane-close-refused commits it and is never retried
   EVENT lane-close-refused <item>
                              the same close exited 3: its clone or worktree
                              has user-owned changes. Generated whole-file render
@@ -435,12 +443,18 @@ Options:
                       the command line, the state's entry winning where both
                       name one item or window, so a lane launched, relaunched
                       or closed while the run loops joins or leaves it with
-                      no restart.
+                      no restart. A `lanes[]` entry whose status is `parked`,
+                      its sandbox stopped by `lane-close --park` with its disk
+                      kept, is one --item for the merged check alone: its
+                      pane is gone and its mailbox and state are on a stopped
+                      disk, so no other check reads it, and its `merged` runs
+                      the hosted close in the same pass.
                       The set is noted on stderr as fleet-read whenever a
                       read changes what the reader last carried, with the
                       count of records whose status is not running, so a
                       state that parses to no running lane is named rather
-                      than watched in silence: a standalone run names the
+                      than watched in silence, and with the parked records
+                      it carries for the merged check: a standalone run names the
                       fleet its own first read found, repeat mode names the
                       fleet it launches each pass with, and a pass names a
                       change one of its own loops found
@@ -610,7 +624,7 @@ ow_message() { # REASON FIELD=VALUE...
     state-invalid) text='The oversee state file is not workflow-state JSON with a lanes array of records naming their item. The watch stops rather than carry a partial fleet.' ;;
     window-absent) text='tmux does not list the window. Passes carry it until one reports it gone; later passes skip it until tmux lists it again.' ;;
     sleep-failed) text='The repeat delay could not be slept. Repeat mode stops rather than run passes back to back.' ;;
-    fleet-read) text='The fleet this watch carries, as the last state read gave it; printed again when a re-read changes it. dropped counts records whose status is not running, which the watch does not carry.' ;;
+    fleet-read) text='The fleet this watch carries, as the last state read gave it; printed again when a re-read changes it. parked counts the parked records carried for the merged check alone, and dropped the records whose status is neither running nor parked, which the watch does not carry.' ;;
     max-loops-invalid) text='The loop limit must be a positive integer.' ;;
     prepare-secs-invalid) text='ORCH_WATCH_PREPARE_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     tail-lines-invalid) text='ORCH_WATCH_TAIL_LINES takes a positive whole number of lines, with no leading zero.' ;;

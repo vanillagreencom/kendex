@@ -102,6 +102,9 @@ ot_message() { # REASON FIELD=VALUE...
     host-resolve-failed) text='The lane-host helper could not resolve the host.' ;;
     host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex or pi. Nothing was created.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
+    host-start-failed) text='The item is recorded parked, its sandbox stopped with its disk kept, and the lane host could not bring that sandbox back: exit= is the start verb'"'"'s status, its own words above this line, and cause=answer-unparsed a start that succeeded without its sandbox-started item=ID line, so nothing confirms the sandbox is up. No create ran and the record still reads parked: fix what the provider names and relaunch the item again.' ;;
+    host-started) text='The parked item'"'"'s sandbox is up again on the disk the park kept; create --relaunch now resumes the harness on it.' ;;
+    state-read-failed) text='The fleet state could not be read for this item'"'"'s record, so whether the item is parked is unknown. Nothing was launched: fix what workflow-state names above.' ;;
     lane-host-busy) text='lane-host refused the call step names at its per-home cap on provider calls, after waiting ORCH_LANE_HOST_BUSY_WAIT_SECS for a slot; its own line is above and the provider ran nothing. After a refused create nothing was made: launch the item again. After a refused wait or marker call the host holds the item: relaunch it with --relaunch.' ;;
     host-line-invalid) text='The lane host create output lacks ssh-target, path or remote-prefix on one line, or names a state other than preparing.' ;;
     host-prepare-failed) text='The lane host accepted this item and its wait reported the preparation failed; the provider says why above. No lane was started. The host keeps what it made until lane-host close or a --relaunch.' ;;
@@ -384,7 +387,19 @@ Options:
                     a lane the overseer has already judged dead, so the claim
                     it would assert is one nobody still holds. An item on the
                     reuse path is still skipped on a lease held under another
-                    owner.
+                    owner. A hosted item whose fleet record reads parked, its
+                    sandbox stopped by `lane-close --park` with its disk kept,
+                    is started first through `lane-host start`, whose
+                    sandbox-started item=ID line is required, then created
+                    with --relaunch as any hosted relaunch is, so the harness
+                    resumes on the disk the park kept and its transcript with
+                    it; a start that fails is host-start-failed, the record
+                    stays parked and no create runs. The relaunch's record
+                    drops `parked`. A parked record is not a running or
+                    preparing one, so this relaunch is judged as adding a
+                    lane under --state-dir's caps: at the fleet cap it is
+                    refused as cap-reached until a lane closes, or admitted
+                    with --wait-slot or --over-cap.
   --wake            Wake an idle lane in its existing worktree: resume its
                     newest matching Claude or Codex session in print mode, or
                     send to its live Pi session through pi-bridge, with one

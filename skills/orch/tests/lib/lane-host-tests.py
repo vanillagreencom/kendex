@@ -119,6 +119,10 @@ class LaneHostTests(unittest.TestCase):
                 self.assertEqual(result.returncode, code)
                 self.assertEqual(b"host-create-failed" in result.stderr, notice)
         self.assertEqual(self.run_host("close", "--item", "TEST-1", **env, LANE_HOST_STUB_STATUS="3").returncode, 3)
+        parked = self.run_host("stop-sandbox", "--item", "TEST-1", **env)
+        self.assertEqual((parked.returncode, parked.stdout), (0, b"sandbox-stopped item=TEST-1\n"))
+        started = self.run_host("start", "--item", "TEST-1", **env)
+        self.assertEqual((started.returncode, started.stdout), (0, b"sandbox-started item=TEST-1\n"))
         closed = self.run_host("close", "--item", "TEST-1", **env)
         self.assertEqual((closed.returncode, closed.stdout), (0, b"kept=/fleet/archive/repo/TEST-1/tmp-stub.tgz\n"))
         self.assertTrue((self.root / "calls").read_text().endswith("delete --item TEST-1\n"))
@@ -130,10 +134,12 @@ class LaneHostTests(unittest.TestCase):
         self.assertEqual(self.run_host("--help").returncode, 0)
     def test_dispatch_protocol(self):
         original = self.script.read_text()
-        rule = "  create|wait|cat|put|append|touch|stop|close|list|accounts)"
+        rule = "  create|wait|cat|put|append|touch|stop|stop-sandbox|start|close|list|accounts)"
         self.assertEqual(original.count(rule), 1)
         protocol = [(("stop", "--item", "TEST-1", "--harness", "claude"), (0, True)),
                     (("wait", "--item", "TEST-1"), (0, True)),
+                    (("stop-sandbox", "--item", "TEST-1"), (0, True)),
+                    (("start", "--item", "TEST-1"), (0, True)),
                     (("exec", "--item", "TEST-1", "--", "true"), (2, False))]
         def observed(args):
             before = (self.root / "calls").read_text() if (self.root / "calls").exists() else ""
@@ -151,7 +157,7 @@ class LaneHostCallersTests(unittest.TestCase):
     provider verb is a call outside the bound."""
     # A provider verb, or the caller's own argv forwarded whole, which is how
     # open-terminal's host_transport hands its verbs on.
-    VERB = re.compile(r"(?:create|wait|cat|put|append|touch|stop|close|list|accounts|\$@)")
+    VERB = re.compile(r"(?:create|wait|cat|put|append|touch|stop|stop-sandbox|start|close|list|accounts|\$@)")
     # Keywords, `!`, environment assignments and an optional argv prefix, then
     # the command word and the word after it.
     COMMAND = re.compile(r'^(?:\s|!|(?:if|then|elif|do|while|until)\b|[A-Za-z_]\w*=(?:"[^"]*"|[^\s"]*(?=\s))'

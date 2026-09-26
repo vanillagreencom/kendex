@@ -1134,8 +1134,61 @@ assert_eq "$REPEAT_EVENTS" "lane-question heartbeat" "the hosted lane's ask is r
 assert_contains "$out" "EVENT lane-question KEN-10 remote-1" "the hosted mailbox is the record's mail_root on the record's host" "$err"
 assert_eq "gh-1=$(cat "$STUB_DIR/cmd-gh-1.calls") KEN-10=$(cat "$STUB_DIR/cmd-KEN-10.calls") gh-3=$(cat "$STUB_DIR/cmd-gh-3.calls" 2>/dev/null || echo none)" \
   "gh-1=2 KEN-10=2 gh-3=none" "every running record's window is read on every pass, and a done record's is not" "$err"
-assert_eq "$(grep '^oversee-watch: fleet-read ' "$err")" "oversee-watch: fleet-read items=2 windows=2 hosted=1 dropped=1 path=$STUB_DIR/state.json" \
+assert_eq "$(grep '^oversee-watch: fleet-read ' "$err")" "oversee-watch: fleet-read items=2 windows=2 hosted=1 parked=0 dropped=1 path=$STUB_DIR/state.json" \
   "the set the passes carry is named once, with the done record counted as dropped, and not again while it stands" "$err"
+
+# A parked record: lane-close --park stopped its sandbox with the disk kept
+# while its pull request waited for the queue. The watch carries it for the
+# merged check alone, never reads its stopped disk, and closes it in the pass
+# that reports the merge. A failed close leaves the row uncommitted, so the next
+# pass reports the merge again and retries; a refused close is committed.
+parked_record() { # ITEM HOST MAIL_ROOT PR
+  lane_record "$1" "" "$2" "$3" parked | jq -c --argjson pr "$4" '.parked = {pr: $pr, head: "abc123", repo: "owner/repo", at: "2026-09-20T00:00:00Z"}'
+}
+parked_case() { # NAME [ENV=VAL...]
+  local name="$1"
+  shift
+  new_case "$name"
+  printf 'gh-1\n' > "$STUB_DIR/windows.txt"
+  printf '[{"number": 2, "headRefName": "issue-2", "mergedAt": "2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+  write_state "$STUB_DIR/state.json" "$(lane_record issue-1 gh-1 '' /w/issue-1 running)" \
+    "$(parked_record issue-2 /srv/provider /srv/lane/issue-2 2)"
+  err="$TMP_ROOT/e-$name"
+  out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" "$@" \
+    -- --since 2026-09-19T00:00:00Z --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
+  EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2 " " $3; sep = "," }' <<<"$out")"
+  HOST_VERBS="$(awk '{ printf "%s%s", sep, $1 " " $3; sep = "," }' "$STUB_DIR/host.log" 2>/dev/null || true)"
+}
+parked_case parked_merged
+assert_eq "rc=$rc events=$EVENTS host=$HOST_VERBS close=$(grep -c '^--state-dir .* issue-2$' "$STUB_DIR/lane-close.args" || true)" \
+  "rc=0 events=merged 2,lane-closed issue-2 host=close issue-2,delete issue-2 close=1" \
+  "a parked record's merge is reported and closes its sandbox in the same pass, with no read of the stopped disk" "$err"
+assert_contains "$(cat "$err")" "oversee-watch: fleet-read items=1 windows=1 hosted=0 parked=1 dropped=1" \
+  "the parked record is carried as parked, not as a running item" "$err"
+assert_eq "$(grep -c '^kept=' <<<"$out")" "1" "the provider's kept line follows the close" "$err"
+# The same pass again: the merged row is committed, so nothing repeats.
+out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
+  -- --since 2026-09-19T00:00:00Z --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
+assert_eq "merged=$(grep -c '^EVENT merged 2' <<<"$out" || true) closes=$(grep -c '^close ' "$STUB_DIR/host.log" || true)" "merged=0 closes=1" \
+  "a closed parked lane's merge is not reported again and the close runs once" "$err"
+
+parked_case parked_close_failed LANE_HOST_STUB_CLOSE_STATUS=1
+assert_eq "rc=$rc events=$EVENTS failed=$(grep -c '^oversee-watch: lane-close-failed item=issue-2 exit=1$' "$err" || true)" \
+  "rc=2 events=merged 2 failed=1" \
+  "a parked close that fails is reported on stderr and fails the pass" "$err"
+out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_CLOSE_STATUS=1 \
+  -- --since 2026-09-19T00:00:00Z --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
+assert_eq "merged=$(grep -c '^EVENT merged 2 issue-2' <<<"$out" || true) closes=$(grep -c '^close ' "$STUB_DIR/host.log" || true)" "merged=1 closes=2" \
+  "the next pass reports the merge again and retries the close" "$err"
+
+parked_case parked_close_refused LANE_HOST_STUB_CLOSE_STATUS=3
+assert_eq "rc=$rc events=$EVENTS path=$(grep -c '^path=/srv/clone$' <<<"$out" || true)" \
+  "rc=0 events=merged 2,lane-close-refused issue-2 path=1" \
+  "a parked close the provider refuses is lane-close-refused with the checkout it stopped on" "$err"
+out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_CLOSE_STATUS=3 \
+  -- --since 2026-09-19T00:00:00Z --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
+assert_eq "merged=$(grep -c '^EVENT merged 2' <<<"$out" || true) closes=$(grep -c '^close ' "$STUB_DIR/host.log" || true)" "merged=0 closes=1" \
+  "a refused parked close is committed and never retried" "$err"
 
 custom_close_case() { # NAME
   local name="$1" custom
@@ -1175,7 +1228,7 @@ repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
 err="$TMP_ROOT/e-repeat_state_all_done"
 out="$(run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
 assert_eq "rc=$rc note=$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' -) unreadable=$(grep -c '^oversee-watch: state-unreadable option=--state' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" \
-  "rc=2 note=oversee-watch: fleet-read items=0 windows=0 hosted=0 dropped=1 unreadable=1 events=heartbeat" \
+  "rc=2 note=oversee-watch: fleet-read items=0 windows=0 hosted=0 parked=0 dropped=1 unreadable=1 events=heartbeat" \
   "a state whose every record is done is named as an empty fleet, heartbeats, and ends on the state taken away" "$err"
 # A run handed --state with no --repeat has no wrapper to have named its fleet,
 # so its own first read names it. One line, not two: the loop below re-reads
@@ -1193,7 +1246,7 @@ standalone_read_case() { # NAME
 }
 standalone_read_case standalone_state_first_read
 assert_eq "rc=$rc note=$STANDALONE_NOTES events=$STANDALONE_EVENTS" \
-  "rc=0 note=oversee-watch: fleet-read items=1 windows=0 hosted=0 dropped=0 events=heartbeat" \
+  "rc=0 note=oversee-watch: fleet-read items=1 windows=0 hosted=0 parked=0 dropped=0 events=heartbeat" \
   "a standalone --state run names the fleet its own first read found" "$err"
 # A repeat delay that cannot be slept ends the watch with its cause named,
 # never with a bare exit status: the stub fails the delay after the first pass.
@@ -1319,7 +1372,7 @@ joins_case repeat_state_hosted_joins
 assert_eq "$rc" "2" "the joining run ends on the state it cannot read" "$err"
 assert_eq "$REPEAT_EVENTS" "heartbeat lane-question heartbeat" "a hosted lane recorded between passes is read by the next pass, with no restart" "$err"
 assert_eq "$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' -)" \
-  "oversee-watch: fleet-read items=1 windows=1 hosted=0 dropped=0|oversee-watch: fleet-read items=2 windows=2 hosted=1 dropped=0" \
+  "oversee-watch: fleet-read items=1 windows=1 hosted=0 parked=0 dropped=0|oversee-watch: fleet-read items=2 windows=2 hosted=1 parked=0 dropped=0" \
   "the set is named again on the re-read that changes it, and not on the one that does not" "$err"
 # A record that lands or closes between two loops of ONE pass moves that
 # pass's fleet with it, with no restart of the pass or of the watch. The
@@ -1362,7 +1415,7 @@ assert_eq "$MID_ITEMS" "issue-1 issue-1 KEN-10" "the loop after the record lands
 assert_eq "$MID_EVENTS" "lane-question" "that loop reads the joined lane's ask, in the pass the first loop started" "$err"
 assert_contains "$out" "EVENT lane-question KEN-10 remote-1" "the ask is read at the record's own root, on the record's host" "$err"
 assert_eq "$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' -)" \
-  "oversee-watch: fleet-read items=1 windows=1 hosted=0 dropped=0|oversee-watch: fleet-read items=2 windows=2 hosted=1 dropped=0" \
+  "oversee-watch: fleet-read items=1 windows=1 hosted=0 parked=0 dropped=0|oversee-watch: fleet-read items=2 windows=2 hosted=1 parked=0 dropped=0" \
   "the wrapper names the set it launched the pass with, and the pass names the set its own re-read changed" "$err"
 # The other half: a record closed between two loops leaves that pass's fleet.
 # The wrapper hands the pass only what argv gave it, so nothing outside the

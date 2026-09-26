@@ -468,6 +468,15 @@ launch two 1 0 --lane "$LANE_A" --relaunch CC-1
 assert_eq "rc=$(rc two) $(key two) running=$(running)" \
   "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 running=CC-9" \
   "a relaunch of a stopped record adds a lane, and at the fleet cap it is refused"
+row relaunch-parked
+launch one 1 0 --lane "$LANE_A" CC-1
+"$WS" --state-dir "$STATE" update oversee '.lanes |= map(.status = "parked")' >/dev/null
+rm -f -- "${CLAIMS:?}/claims"/*.claim
+seed_running CC-9
+launch two 1 0 --lane "$LANE_A" --relaunch CC-1
+assert_eq "rc=$(rc two) $(key two) running=$(running)" \
+  "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 running=CC-9" \
+  "a parked record holds no working-lane capacity: its relaunch adds a lane, and at the fleet cap it is refused"
 row relaunch-preparing
 seed_running CC-1 preparing
 launch one 1 0 --lane "$LANE_A" --relaunch CC-1

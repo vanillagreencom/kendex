@@ -456,9 +456,11 @@ check_repo_set() {
 check_item_set() {
   local item entry hosted_item hosted_seen=""
   ITEM_BRANCHES=""
-  for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
+  MERGED_ITEMS=()
+  for item in ${ITEMS[@]+"${ITEMS[@]}"} ${PARKED_ITEMS[@]+"${PARKED_ITEMS[@]}"}; do
     [[ "$item" =~ ^[A-Za-z0-9._-]+$ ]] || die item-invalid "" "item=$item"
     ITEM_BRANCHES+="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"$'\n'
+    MERGED_ITEMS+=("$item")
   done
   # `--hosted ITEM=REMOTE_ROOT` and `--root ITEM=PATH`, validated here so the
   # mail pass never composes a path out of a value nobody judged.
@@ -504,6 +506,12 @@ check_root_entries() { # KIND ENTRY...
   done
 }
 
+# Whether the item is a parked record's, for the merged check's close.
+item_parked() { # ITEM
+  local entry
+  for entry in ${PARKED_ITEMS[@]+"${PARKED_ITEMS[@]}"}; do [[ "$entry" != "$1" ]] || return 0; done
+  return 1
+}
 # HOSTED_ROOT is the item's lane root on its own host, empty for a lane on this
 # disk. Set rather than printed: a substitution would carry the lookup's own
 # status out under errexit, and a fleet with no hosted lane at all is the
@@ -587,6 +595,14 @@ PREPARE_ROWS_FILTER='
   | [.item, $outcome, (.prepare.since | fromdateiso8601 | tostring), .prepare.log, (.prepare.reason // "")] | join("\u001f")'
 PREPARE_ROWS=""
 
+# The parked records, one item per line: a lane lane-close --park stopped with
+# its disk kept, whose pull request the merged check still watches. Nothing
+# else reads it: its pane is gone and its mailbox is on a stopped disk.
+PARKED_ROWS_FILTER='
+  (.lanes // [])[] | select(type == "object" and .status == "parked")
+  | if ((.item? | type) == "string" and (.item | length) > 0) then .item else error("lane-field field=item value=\(.item | tojson)") end'
+PARKED_ITEMS=()
+
 # The one reader of the state, asked by the repeat wrapper before every pass
 # and by the pass itself before every loop: the live set changes on every
 # launch, relaunch and close, and a hosted lane's root rides in its record, so
@@ -602,10 +618,16 @@ PREPARE_ROWS=""
 # and a lane with no window would take `local` as its window name.
 FLEET_CARRIED=""
 fleet_merge() { # [quiet]
-  local state rows dropped line item window where root kept carried
+  local state rows dropped line item window where root kept carried parked
   state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
   rows="$(jq -r "$LANE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$rows" "option=--state" "path=$STATE_FILE"
   PREPARE_ROWS="$(jq -r "$PREPARE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$PREPARE_ROWS" "option=--state" "path=$STATE_FILE"
+  parked="$(jq -r "$PARKED_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$parked" "option=--state" "path=$STATE_FILE"
+  PARKED_ITEMS=()
+  while IFS= read -r item; do
+    [[ -n "$item" ]] || continue
+    PARKED_ITEMS+=("$item")
+  done <<<"$parked"
   # The count is the first line; a fleet of no running lane has no second.
   dropped="${rows%%$'\n'*}"
   if [[ "$rows" == *$'\n'* ]]; then rows="${rows#*$'\n'}"; else rows=""; fi
@@ -639,7 +661,7 @@ fleet_merge() { # [quiet]
   # deciding whether to print it are the same words. `quiet` takes the
   # baseline without naming it, for the one read a pass makes of a set its
   # caller has already named.
-  carried=("items=${#ITEMS[@]}" "windows=${#LANES[@]}" "hosted=${#HOSTED[@]}" "dropped=$dropped")
+  carried=("items=${#ITEMS[@]}" "windows=${#LANES[@]}" "hosted=${#HOSTED[@]}" "parked=${#PARKED_ITEMS[@]}" "dropped=$dropped")
   if [[ "${carried[*]}" != "$FLEET_CARRIED" ]]; then
     [[ "${1:-}" == quiet ]] || ow_message fleet-read "${carried[@]}" "path=$STATE_FILE" >&2
     FLEET_CARRIED="${carried[*]}"
@@ -1174,10 +1196,19 @@ MAIL_STATE_FILE="$(pw_state_file "${REPOS[0]}").mail"
 # delivered, so a merged item still in --item on a re-run is not news again,
 # while a further PR on the branch, in any repo, is. The rows are committed
 # once, after the lines are out.
+# A parked item's merge closes its sandbox here, in the pass that reports it:
+# the lane has no pane to exit and nothing wakes a parked sandbox. The merged
+# row is committed before the close, which cannot be undone, so a run that
+# stops after the close never closes the lane twice; a close that fails puts
+# the row back, so the next pass reports the merge again and retries, and the
+# pass exits 2 as a failed close under lane-exited does. A refused close, exit
+# 3, keeps its row: the user settles that checkout, and nothing retries it.
+MERGED_CLOSE_FAILED=0
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
   local errf="$WORK_DIR/merged.err" item branch repo list hit hits prior keys key line state="${PW_SEEN[0]}"
-  for item in "${ITEMS[@]}"; do
+  MERGED_CLOSE_FAILED=0
+  for item in "${MERGED_ITEMS[@]}"; do
     branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
     hits=""
     for repo in "${REPOS[@]}"; do
@@ -1205,9 +1236,18 @@ check_merged() {
       PASS_EVENT=1
     done <<<"$hits"
     state="$(lane_row_set merged "$state" "$item" "$keys")"
+    [[ "$keys" != "$prior" ]] && item_parked "$item" || continue
+    lane_row_commit "$state"
+    if ! close_hosted_lane "$item"; then
+      if [[ -n "$prior" ]]; then state="$(lane_row_set merged "$state" "$item" "$prior")"
+      else state="$(lane_row_clear merged "$state" "$item")"; fi
+      MERGED_CLOSE_FAILED=1
+    fi
+    [[ -z "$CLOSE_TERMED" ]] || { lane_row_commit "$state"; exit 143; }
   done
-  state="$(lane_row_prune merged "$state" "${ITEMS[@]}")"
+  state="$(lane_row_prune merged "$state" "${MERGED_ITEMS[@]}")"
   lane_row_commit "$state"
+  [[ "$MERGED_CLOSE_FAILED" -eq 0 ]] || exit 2
 }
 
 check_triage() {
