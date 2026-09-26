@@ -117,6 +117,9 @@ check-suites|.data.repository.pullRequest.mergeCommit.checkSuites.pageInfo.hasNe
 check-runs|.data.repository.pullRequest.headCommit.nodes[0].commit.checkSuites.nodes[1].checkRuns.pageInfo.hasNextPage = true
 ROWS
 
+assert_eq "$(run '.data.repository.pullRequest |= (.commits.totalCount = 100 | .reviews.totalCount = 100)') $(jq -c .pr "$TMP_ROOT/stdout")" \
+  "rc=0 42" "a hundred commits and reviews fit the page and print"
+
 echo "=== the repository and gate context reach the query ==="
 run . --repo other/place --gate-context "Custom gate" >/dev/null
 calls="$(gh_stub_calls | tr '\n' ' ')"

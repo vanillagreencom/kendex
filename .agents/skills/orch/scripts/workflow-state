@@ -981,7 +981,8 @@ fleet_state_file() {
 
 # The fleet log's two readers, each printing its rows one JSON object per
 # line: the successor overseer's takeover read, the last ORCH_TAKEOVER_ROWS
-# rows, and the audit read, every proposal and ruling row.
+# rows but the `cycle` rows oversee-cycle logs, which would crowd the rulings
+# out of the window, and the audit read, every proposal and ruling row.
 cmd_fleet_log() {
     local reader="${1:-}" state_file rows
     case "$reader" in
@@ -989,7 +990,7 @@ cmd_fleet_log() {
             state_file=$(fleet_state_file) || return 0
             rows=$("$SCRIPT_DIR/orch-env" ORCH_TAKEOVER_ROWS 10) || return 1
             jq -c --argjson n "$rows" \
-                '(.fleet_log // []) | if $n == 0 then empty else .[-$n:][] end' "$state_file" ;;
+                '[(.fleet_log // [])[] | select(.kind != "cycle")] | if $n == 0 then empty else .[-$n:][] end' "$state_file" ;;
         audit)
             state_file=$(get_state_file oversee)
             ensure_state_exists "$state_file"
@@ -1330,8 +1331,9 @@ EOF
                                 and is never read as "no record stands"
   remove <issue_id>             Delete the state file and its lock sidecar; absent is success
   fleet-log takeover|audit      Print fleet_log rows of the oversee state, one
-                                JSON object per line: takeover the last rows,
-                                as many as ORCH_TAKEOVER_ROWS (default 10),
+                                JSON object per line: takeover the last rows
+                                of every kind but cycle, as many as
+                                ORCH_TAKEOVER_ROWS (default 10),
                                 and nothing, exit 0, where no fleet state
                                 exists yet; audit every proposal and ruling row
   progress-report-path [--succession]

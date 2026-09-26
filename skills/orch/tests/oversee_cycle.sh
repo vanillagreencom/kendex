@@ -3,11 +3,13 @@
 # it writes to the lane record, the repeat-miss bar, and the per-class rollup.
 #
 # The real script runs from a copy of orch/scripts laid out beside a stub
-# github skill, whose pr-timeline answers the case's timeline.json, and a stub
-# harness-ci classifier, which answers the case's class file. The checkout is
-# a two-commit repository whose HEAD is the merge commit the timeline names.
-# Each case asserts the printed line whole, and the lane record's `cycle`
-# read back from the fleet state.
+# github skill, whose pr-timeline answers the case's timeline.json, a stub
+# harness-ci classifier, which answers the case's class file, and a lane-host
+# fake, which serves a hosted lane's files from the case's host directory.
+# Each stub logs its argv to the case. The checkout is a two-commit
+# repository whose HEAD is the merge commit the timeline names; its origin
+# holds one more commit the checkout lacks. Each case asserts the printed
+# line, and the lane record's `cycle` read back from the fleet state.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -36,31 +38,64 @@ cat > "$LAYOUT/github/scripts/github.sh" <<'SH'
 printf '%s\n' "$*" >> "$CASE/github.calls"
 cat "$CASE/timeline.json"
 SH
+# The classifier's own stderr `class:` line carries the measured marker the
+# case's measured file names, true by default.
 cat > "$LAYOUT/harness-ci/scripts/change-class" <<'SH'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CASE/class.calls"
 [[ -f "$CASE/class" ]] || { echo "change-class: cause=stub" >&2; exit 2; }
+measured=true
+[[ ! -f "$CASE/measured" ]] || measured="$(cat "$CASE/measured")"
+printf 'class: class=%s measured=%s cause=stub\n' "$(cat "$CASE/class")" "$measured" >&2
 printf 'change_class=%s\n' "$(cat "$CASE/class")"
 SH
-chmod +x "$LAYOUT/github/scripts/github.sh" "$LAYOUT/harness-ci/scripts/change-class"
+# `cat --item ITEM PATH` serves PATH from the case's host directory, exit 2
+# where it holds no such file, as a provider answers; `touch` answers.
+cat > "$LAYOUT/orch/scripts/lane-host" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CASE/lane-host.calls"
+case "$1" in
+  cat) [[ -f "$CASE/host$4" ]] || exit 2; cat -- "$CASE/host$4" ;;
+  touch) exit 0 ;;
+  *) exit 9 ;;
+esac
+SH
+chmod +x "$LAYOUT/github/scripts/github.sh" "$LAYOUT/harness-ci/scripts/change-class" "$LAYOUT/orch/scripts/lane-host"
 
+commit() { git -C "$1" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "$2"; }
+ORIGIN="$TMP_ROOT/origin.git"
+git init -q --bare "$ORIGIN"
 REPO="$TMP_ROOT/repo"
 git init -q "$REPO"
 git -C "$REPO" config gc.auto 0
 git -C "$REPO" config maintenance.auto false
-git -C "$REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
-git -C "$REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m merge
+commit "$REPO" base
+commit "$REPO" merge
 MERGE="$(git -C "$REPO" rev-parse HEAD)"
+BASE="$(git -C "$REPO" rev-parse HEAD^)"
+git -C "$REPO" remote add origin "$ORIGIN"
+git -C "$REPO" push -q origin HEAD:refs/heads/main
+# A merge commit only origin holds, as a queue merge is before the checkout
+# syncs: a second clone commits it and pushes it to a branch of its own.
+OTHER="$TMP_ROOT/other"
+git clone -q -b main "$ORIGIN" "$OTHER"
+git -C "$OTHER" config gc.auto 0
+git -C "$OTHER" config maintenance.auto false
+commit "$OTHER" far
+FAR="$(git -C "$OTHER" rev-parse HEAD)"
+git -C "$OTHER" push -q origin HEAD:refs/heads/far
+mkdir -p "$REPO/tmp"
 
 T0=1790000000 # the lane's launched_at
 at() { jq -rn --argjson t "$((T0 + $1))" '$t | todate'; }
 
-# new_case NAME: a fleet state holding lane records KEN-1..KEN-4, all
+# new_case NAME: a fleet state holding lane records KEN-1..KEN-6, all
 # launched at T0.
 new_case() {
   CASE="$TMP_ROOT/case-$1"
   export CASE
   mkdir -p "$CASE/state"
-  jq -n --arg at "$(at 0)" '{lanes: [range(1; 5) | {item: "KEN-\(.)", repo: null, launched_at: $at, status: "done"}], fleet_log: []}' \
+  jq -n --arg at "$(at 0)" '{lanes: [range(1; 7) | {item: "KEN-\(.)", repo: null, launched_at: $at, status: "done"}], fleet_log: []}' \
     > "$CASE/state/workflow-state-oversee.json"
 }
 
@@ -77,6 +112,7 @@ timeline() {
                queued: null, merged: $merged},
       ci_head_secs: 60, ci_merge_group_secs: null, open_secs: null, bot_reviews: 0}' > "$CASE/timeline.json"
 }
+edit_json() { jq "$2" "$1" > "$1.new" && mv -- "$1.new" "$1"; } # FILE FILTER
 
 record() { # ITEM TIER [ARGS...]
   local item="$1" tier="$2" rc=0
@@ -85,42 +121,72 @@ record() { # ITEM TIER [ARGS...]
     > "$CASE/out" 2> "$CASE/err" || rc=$?
   printf 'rc=%s %s' "$rc" "$(cat "$CASE/out")"
 }
+field() { grep -o " $1=[^ ]*" <<<"$2" | head -n 1 | sed 's/^ //'; } # NAME LINE
 
 state() { jq -c "$1" "$CASE/state/workflow-state-oversee.json"; }
 
 # --- the target per class, and the miss verdict ------------------------------
 # One row per class, one second over its target, and each class at its
-# target exactly, which meets it.
+# target exactly, which meets it; each tier with each class that could escape.
 echo "=== each class is judged against its own target ==="
-while IFS='|' read -r class merged want_target want_verdict; do
+while IFS='|' read -r class merged tier want_target want_verdict want_escaped; do
   [[ -n "$class" ]] || continue
-  new_case "$class-$merged"
+  new_case "$class-$merged-$tier"
   printf '%s' "$class" > "$CASE/class"
   timeline "$merged"
-  got="$(record KEN-1 standard)"
-  assert_eq "$(sed -E 's/ phase=.*//' <<<"$got")" \
-    "rc=0 cycle item=KEN-1 pr=7 class=$class tier=standard target=$want_target actual=$merged verdict=$want_verdict" \
-    "$class merged at $merged s: target $want_target, $want_verdict"
+  got="$(record KEN-1 "$tier")"
+  assert_eq "$(sed -E 's/ phase=.*//' <<<"$got") $(field escaped "$got")" \
+    "rc=0 cycle item=KEN-1 pr=7 class=$class tier=$tier target=$want_target actual=$merged verdict=$want_verdict escaped=$want_escaped" \
+    "$class at $merged s, tier $tier: target $want_target, $want_verdict, escaped $want_escaped"
 done <<'ROWS'
-render|301|300|miss
-render|300|300|met
-trivial|301|300|miss
-trivial|300|300|met
-micro|901|900|miss
-micro|900|900|met
-small|1501|1500|miss
-small|1500|1500|met
-standard|5401|5400|miss
-standard|5400|5400|met
+render|301|standard|300|miss|false
+render|300|standard|300|met|false
+trivial|301|standard|300|miss|false
+trivial|300|standard|300|met|false
+micro|901|standard|900|miss|false
+micro|900|micro|900|met|false
+small|1501|standard|1500|miss|false
+small|1500|micro|1500|met|true
+standard|5401|standard|5400|miss|false
+standard|5400|micro|5400|met|true
 ROWS
+
+echo "=== the class is read over the merge commit's first parent to the merge ==="
+assert_eq "$(grep -o -- '--base [^ ]* --head [^ ]*' "$CASE/class.calls")" "--base $BASE --head $MERGE" \
+  "the classifier is handed merge^1 and the merge commit"
 
 echo "=== a class the classifier did not give is unclassified, never judged ==="
 new_case unclassified
 timeline 5401
 assert_eq "$(record KEN-1 standard)" \
-  "rc=0 cycle item=KEN-1 pr=7 class=- tier=standard target=- actual=5401 verdict=unclassified phase=merged phase_secs=4981 review=- fix=- bot=- full_validations=- escaped=- refixed=false" \
+  "rc=0 cycle item=KEN-1 pr=7 class=- tier=standard target=- actual=5401 verdict=unclassified phase=merged phase_secs=4981 missing=- review=- fix=- bot=- full_validations=- escaped=- refixed=false" \
   "the classifier's refusal records no class and no target"
 assert_eq "$(head -n 1 "$CASE/err")" "oversee-cycle: class-unread cause=classifier-exit-2" "and names the cause on stderr"
+
+new_case unmeasured-class
+printf standard > "$CASE/class"; printf false > "$CASE/measured"
+timeline 1000
+got="$(record KEN-1 micro)"
+assert_eq "$(field class "$got") $(field verdict "$got") $(field escaped "$got")|$(head -n 1 "$CASE/err")" \
+  "class=- verdict=unclassified escaped=-|oversee-cycle: class-unread cause=class-unmeasured" \
+  "the classifier's fallback to standard, measured=false, is no class"
+
+new_case absent-merge
+printf micro > "$CASE/class"
+timeline 1000
+edit_json "$CASE/timeline.json" '.merge_commit = "0123456789abcdef0123456789abcdef01234567"'
+got="$(record KEN-1 micro)"
+assert_eq "$(field class "$got") $(field verdict "$got")|$(head -n 1 "$CASE/err")" \
+  "class=- verdict=unclassified|oversee-cycle: class-unread cause=merge-commit-absent" \
+  "a merge commit neither the checkout nor origin holds is no class"
+
+new_case fetched-merge
+printf micro > "$CASE/class"
+timeline 1000
+edit_json "$CASE/timeline.json" ".merge_commit = \"$FAR\""
+got="$(record KEN-1 micro)"
+assert_eq "$(field class "$got")|$(grep -o -- '--head [^ ]*' "$CASE/class.calls")" "class=micro|--head $FAR" \
+  "a merge commit only origin holds is fetched and classified"
 
 # --- the stamps are written to the record and read back ----------------------
 echo "=== the record carries its seven stamps, its class and its rounds ==="
@@ -128,12 +194,11 @@ new_case stamps
 printf micro > "$CASE/class"
 timeline 1200 300 500
 # The lane's own state, where workflow-state puts a local lane's in this
-# checkout.
-mkdir -p "$REPO/tmp"
-jq -n '{first_panel: {agents: ["a"]}, rereview_cycles: 2, cycles: 3, pr_comment_review: {iterations: 4},
+# checkout; each round figure has a value no other one shares.
+jq -n '{first_panel: {agents: ["a"]}, rereview_cycles: 2, cycles: 5, pr_comment_review: {iterations: 4},
         validate_rounds: [{mode: "full"}, {mode: "range"}, {mode: "full"}]}' > "$REPO/tmp/workflow-state-KEN-2.json"
 assert_eq "$(record KEN-2 micro)" \
-  "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=900 actual=1200 verdict=miss phase=merged phase_secs=780 review=3 fix=3 bot=4 full_validations=2 escaped=false refixed=true" \
+  "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=900 actual=1200 verdict=miss phase=merged phase_secs=780 missing=- review=3 fix=5 bot=4 full_validations=2 escaped=false refixed=true" \
   "the printed line: a miss whose longest gap ends at the merge, and a push after the first gate pass"
 assert_eq "$(state '.lanes[] | select(.item == "KEN-2") | .cycle | [.class, .tier, .verdict, .stamps]')" \
   "[\"micro\",\"micro\",\"miss\",{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":\"$(at 120)\",\"gate_green\":\"$(at 300)\",\"ci_green\":\"$(at 360)\",\"armed\":\"$(at 420)\",\"merged\":\"$(at 1200)\"}]" \
@@ -150,15 +215,54 @@ assert_eq "$(record KEN-2 micro | grep -o 'review=[^ ]* fix=[^ ]* bot=[^ ]* full
   "a lane state that does not read records no rounds and says so"
 rm -f -- "${REPO:?}/tmp/workflow-state-KEN-2.json"
 
+echo "=== a hosted lane's rounds are read from its clone ==="
+new_case hosted
+printf micro > "$CASE/class"
+timeline 1200
+edit_json "$CASE/state/workflow-state-oversee.json" '(.lanes[] | select(.item == "KEN-4")) |= (.host = "box" | .mail_root = "/w/KEN-4")'
+mkdir -p "$CASE/host/w/KEN-4" "$CASE/host/clone/tmp"
+echo "gitdir: /clone/.git/worktrees/KEN-4" > "$CASE/host/w/KEN-4/.git"
+printf '{"cycles": 7}' > "$CASE/host/clone/tmp/workflow-state-KEN-4.json"
+assert_eq "$(field fix "$(record KEN-4 micro)")" "fix=7" "the fix count comes from the hosted clone's state"
+
+echo "=== the repository the timeline is read from ==="
+new_case repo
+printf micro > "$CASE/class"
+timeline 1200
+edit_json "$CASE/state/workflow-state-oversee.json" '(.lanes[] | select(.item == "KEN-1")).repo = "owner/other"'
+record KEN-1 micro >/dev/null
+record KEN-2 micro --repo owner/cli >/dev/null
+assert_eq "$(tr '\n' ';' < "$CASE/github.calls")" "pr-timeline 7 --repo owner/other;pr-timeline 7 --repo owner/cli;" \
+  "the lane record's repo, else --repo, names the repository"
+
+echo "=== a missing stamp names no phase ==="
+# CI green at 1000 and armed at 1010: with CI gone the gate-to-armed gap
+# would read as the longest and name armed.
+new_case missing
+printf small > "$CASE/class"
+timeline 1100
+jq --arg armed "$(at 1010)" '.stamps.ci_green = null | .stamps.armed = $armed' "$CASE/timeline.json" > "$CASE/t" && mv -- "$CASE/t" "$CASE/timeline.json"
+got="$(record KEN-1 standard)"
+assert_eq "$(field verdict "$got") $(field phase "$got") $(field phase_secs "$got") $(field missing "$got")" \
+  "verdict=met phase=- phase_secs=- missing=ci_green" "the verdict stands, the phase is unnamed and the absent stamp is listed"
+
+new_case no-launch
+printf small > "$CASE/class"
+timeline 1100
+edit_json "$CASE/state/workflow-state-oversee.json" '(.lanes[] | select(.item == "KEN-1")).launched_at = null'
+got="$(record KEN-1 standard)"
+assert_eq "$(field verdict "$got") $(field actual "$got") $(field missing "$got")" "verdict=unmeasured actual=- missing=launched" \
+  "a lane with no launch stamp is unmeasured, never met"
+
 echo "=== which phase dominates is read from the stamps ==="
 new_case phase
 printf small > "$CASE/class"
-jq -n --arg merge "$MERGE" --arg fc "$(at 900)" --arg cr "$(at 960)" --arg gate "$(at 1000)" --arg m "$(at 1100)" \
+jq -n --arg merge "$MERGE" --arg fc "$(at 900)" --arg cr "$(at 960)" --arg gate "$(at 1000)" --arg ci "$(at 1010)" --arg m "$(at 1100)" \
   '{pr: 7, merge_commit: $merge, stamps: {first_commit: $fc, created: $cr, last_push: $cr, first_gate_met: null,
-    gate_met: $gate, ci_green: null, armed: null, queued: $gate, merged: $m}}' > "$CASE/timeline.json"
+    gate_met: $gate, ci_green: $ci, armed: null, queued: $gate, merged: $m}}' > "$CASE/timeline.json"
 assert_eq "$(record KEN-3 micro)" \
-  "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1500 actual=1100 verdict=met phase=first_commit phase_secs=900 review=- fix=- bot=- full_validations=- escaped=true refixed=false" \
-  "launch to first commit dominates, queued stands in for armed, and a micro tier merged small escaped"
+  "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1500 actual=1100 verdict=met phase=first_commit phase_secs=900 missing=- review=- fix=- bot=- full_validations=- escaped=true refixed=-" \
+  "launch to first commit dominates, queued stands in for armed, a micro tier merged small escaped, and no gate pass leaves refixed unknown"
 
 echo "=== refusals ==="
 new_case refusals
@@ -172,21 +276,32 @@ done <<'ROWS'
 an item the fleet never launched|KEN-9 standard|oversee-cycle: record-missing=KEN-9
 a tier oversee.md never gives|KEN-1 small|oversee-cycle: usage=--tier
 ROWS
-jq '.merge_commit = null' "$CASE/timeline.json" > "$CASE/t" && mv "$CASE/t" "$CASE/timeline.json"
+edit_json "$CASE/timeline.json" '.merge_commit = null'
 record KEN-1 standard >/dev/null || true
 assert_eq "$(head -n 1 "$CASE/err")" "oversee-cycle: not-merged=7" "a PR with no merge commit writes nothing"
 assert_eq "$(state '[.lanes[] | has("cycle")] | any')" "false" "and no refusal wrote a record"
 
 # --- the repeat-miss bar -----------------------------------------------------
+# A miss at 5000 s ends on merged; a first commit at 4000 s moves a miss's
+# phase to first_commit.
 echo "=== the third miss on one phase names the three lanes ==="
 new_case repeat
 printf micro > "$CASE/class"
 timeline 5000
 record KEN-1 micro >/dev/null
 assert_eq "$(record KEN-2 micro | grep -c '^repeat-miss' || true)" "0" "two misses on one phase are under the bar"
+jq --arg fc "$(at 4000)" '.stamps.first_commit = $fc' "$CASE/timeline.json" > "$CASE/other.json"
+cp -- "$CASE/timeline.json" "$CASE/merged.json"
+cp -- "$CASE/other.json" "$CASE/timeline.json"
 got="$(record KEN-3 micro)"
-assert_eq "$(tail -n 1 <<<"$got")" "repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3" "the third names its phase and lanes"
-assert_eq "$(state '.fleet_log[-1].text')" '"repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3"' "and the fleet log carries it"
+assert_eq "$(field phase "$got")|$(grep -c '^repeat-miss' <<<"$got" || true)" "phase=first_commit|0" \
+  "a third miss on another phase is under the bar"
+cp -- "$CASE/merged.json" "$CASE/timeline.json"
+got="$(record KEN-4 micro)"
+assert_eq "$(tail -n 1 <<<"$got")" "repeat-miss phase=merged items=KEN-1,KEN-2,KEN-4" "the third on one phase names its phase and lanes"
+assert_eq "$(state '.fleet_log[-1].text')" '"repeat-miss phase=merged items=KEN-1,KEN-2,KEN-4"' "and the fleet log carries it"
+assert_eq "$(record KEN-4 micro | grep -c '^repeat-miss' || true)" "0" "recording the third again makes no second bar"
+assert_eq "$(record KEN-5 micro | grep -c '^repeat-miss' || true)" "0" "a fourth miss on the phase is past the bar"
 
 # --- the rollup --------------------------------------------------------------
 echo "=== the rollup counts each class, its median and p90 ==="
@@ -195,15 +310,22 @@ cycle() { # CLASS ACTUAL VERDICT ROUNDS ESCAPED REFIXED
   printf '{"class":%s,"actual":%s,"verdict":"%s","rounds":%s,"escaped":%s,"refixed":%s}' "$@"
 }
 R='{"review":1,"fix":2,"bot":1,"full_validations":1}'
-jq -n --argjson c "[$(cycle '"micro"' 100 met "$R" false false),$(cycle '"micro"' 400 met "$R" true true),$(cycle '"micro"' 1000 miss null false false),$(cycle '"micro"' 200 met "$R" false false),$(cycle '"standard"' 6000 miss "$R" false true),$(cycle null 50 unclassified null null false)]" \
+# The render record follows the micro ones, so neither lane order nor
+# alphabetical order is the target table's.
+jq -n --argjson c "[$(cycle '"micro"' 100 met "$R" false false),$(cycle '"micro"' 400 met "$R" true true),$(cycle '"micro"' 1000 miss null false null),$(cycle '"micro"' 200 met "$R" false false),$(cycle '"render"' 30 met "$R" false false),$(cycle '"standard"' 6000 miss "$R" false true),$(cycle null 50 unclassified null null false)]" \
   '{lanes: ([$c | to_entries[] | {item: "KEN-\(.key)", status: "done", cycle: .value}] + [{item: "KEN-99", status: "running"}]), fleet_log: []}' \
   > "$CASE/state/workflow-state-oversee.json"
-want='rollup class=micro items=4 median=200 p90=1000 misses=1 review=3 fix=6 bot=3 full_validations=3 rounds_unread=1 escaped=1 refixed=1
+want='rollup class=render items=1 median=30 p90=30 misses=0 review=1 fix=2 bot=1 full_validations=1 rounds_unread=0 escaped=0 refixed=0
+rollup class=micro items=4 median=200 p90=1000 misses=1 review=3 fix=6 bot=3 full_validations=3 rounds_unread=1 escaped=1 refixed=1
 rollup class=standard items=1 median=6000 p90=6000 misses=1 review=1 fix=2 bot=1 full_validations=1 rounds_unread=0 escaped=0 refixed=1
 rollup class=unclassified items=1 median=50 p90=50 misses=0 review=- fix=- bot=- full_validations=- rounds_unread=1 escaped=0 refixed=0'
 rollup() { (cd "$REPO" && "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" rollup) 2>"$CASE/err"; }
 assert_eq "$(rollup)" "$want" "one row per class with a record, in target order, unclassified last"
-assert_eq "$(state '.fleet_log | map(.item) | join(",")')" '"micro,standard,unclassified"' "each row joins the fleet log under its class"
+assert_eq "$(state '.fleet_log | map(.item) | join(",")')" '"render,micro,standard,unclassified"' "each row joins the fleet log under its class"
+
+echo "=== --help prints the targets the verdict reads ==="
+assert_eq "$("$BIN" --help | tail -n 1)" "Targets, seconds: render 300, trivial 300, micro 900, small 1500, standard 5400" \
+  "the last help line is the target table"
 
 # --- controls ----------------------------------------------------------------
 # One planted defect per surface, each in a copy beside the script so it
@@ -219,7 +341,7 @@ mutant() { # NAME ANCHOR REPLACEMENT
 echo "=== controls ==="
 mutant no-miss 'elif $actual > $target then "miss"' 'elif false then "miss"'
 new_case c-miss; printf standard > "$CASE/class"; timeline 5401
-assert_eq "$(record KEN-1 standard | grep -o 'verdict=[a-z]*')" "verdict=met" \
+assert_eq "$(field verdict "$(record KEN-1 standard)")" "verdict=met" \
   "control: without the target comparison a close past its target reports no miss"
 
 mutant no-write '(.lanes[] | select(.item == $item)).cycle = $cycle' '.'
@@ -231,20 +353,37 @@ assert_eq "$(state '.lanes[] | select(.item == "KEN-2") | .cycle.stamps')" "null
 mutant no-fix-rounds 'fix: (.cycles // 0),' 'fix: 0,'
 new_case c-rounds; printf micro > "$CASE/class"; timeline 1200
 printf '{"cycles": 3}' > "$REPO/tmp/workflow-state-KEN-2.json"
-assert_eq "$(record KEN-2 micro | grep -o ' fix=[0-9-]*')" " fix=0" \
+assert_eq "$(field fix "$(record KEN-2 micro)")" "fix=0" \
   "control: a fix count not read from the lane's state reads as none"
 rm -f -- "${REPO:?}/tmp/workflow-state-KEN-2.json"
 
 mutant first-phase 'sort_by(- .secs)' 'sort_by(.secs)'
 new_case c-phase; printf micro > "$CASE/class"; timeline 1200
-assert_eq "$(record KEN-1 micro | grep -o 'phase=[a-z_]*')" "phase=first_commit" \
+assert_eq "$(field phase "$(record KEN-1 micro)")" "phase=first_commit" \
   "control: sorting gaps shortest first names a phase that did not dominate"
+
+mutant phase-over-missing 'if ($missing | length) > 0 then' 'if false then'
+new_case c-missing; printf small > "$CASE/class"; timeline 1100
+jq --arg armed "$(at 1010)" '.stamps.ci_green = null | .stamps.armed = $armed' "$CASE/timeline.json" > "$CASE/t" && mv -- "$CASE/t" "$CASE/timeline.json"
+assert_eq "$(field phase "$(record KEN-1 standard)")" "phase=armed" \
+  "control: naming a phase across a missing stamp blames armed for CI's time"
+
+mutant unmeasured-class '[[ "$CHANGE_CLASS_MEASURED" != true ]]' 'false'
+new_case c-measured; printf standard > "$CASE/class"; printf false > "$CASE/measured"; timeline 1000
+assert_eq "$(field class "$(record KEN-1 micro)")" "class=standard" \
+  "control: without the marker check the classifier's fallback reads as a class"
 
 mutant repeat-bar 'select(length == 3)' 'select(length == 4)'
 new_case c-repeat; printf micro > "$CASE/class"; timeline 5000
 record KEN-1 micro >/dev/null; record KEN-2 micro >/dev/null
 assert_eq "$(record KEN-3 micro | grep -c '^repeat-miss' || true)" "0" \
   "control: a bar at four misses is silent on the third"
+
+mutant repeat-again ' or ($prior.verdict == "miss" and $prior.phase == $cycle.phase)' ''
+new_case c-again; printf micro > "$CASE/class"; timeline 5000
+record KEN-1 micro >/dev/null; record KEN-2 micro >/dev/null; record KEN-3 micro >/dev/null
+assert_eq "$(record KEN-3 micro | grep -c '^repeat-miss' || true)" "1" \
+  "control: without the prior-record check recording the third again fires the bar again"
 
 mutant p90-floor '| if $n == 0 then "-" else $a[(($n * $p) | ceil) - 1] end;' '| if $n == 0 then "-" else $a[(($n * $p) | floor) - 1] end;'
 new_case c-rollup

@@ -487,16 +487,6 @@ table() {
   done <<<"$rows"
 }
 
-# item_state ITEM HOST MAIL_ROOT — sets ITEM_STATE to the item's own
-# workflow-state JSON, empty where the lane has written none, as
-# lib/lane-gitfile.sh's lane_item_state reads it.
-ITEM_STATE=""
-item_state() {
-  lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "$STATE_DIR_SETTING" "$1" "$2" "$3" "$WORK_DIR" \
-    || refuse item-state "$1" "$(cat "$WORK_DIR/state.err")"
-  ITEM_STATE="$LANE_ITEM_STATE"
-}
-
 # running_lanes — reads each running lane once for two rows. BLOCKERS gets one
 # line per thing the lane waits on: an ask the overseer has not answered, a
 # post-PR stop its state records, and red checks on its open pull request.
@@ -548,11 +538,13 @@ running_lanes() {
     fi
     [[ -z "$asks" ]] || BLOCKERS+="$asks"$'\n'
     # A host that did not answer holds the hosted lane's state too.
-    ITEM_STATE=""; [[ "$mail" == host-unreachable && -n "$host" ]] || item_state "$item" "$host" "$root"
-    if [[ -n "$ITEM_STATE" ]]; then
+    LANE_ITEM_STATE=""; [[ "$mail" == host-unreachable && -n "$host" ]] || lane_item_state \
+      "$WORKFLOW_STATE" "$LANE_HOST" "$STATE_DIR_SETTING" "$item" "$host" "$root" "$WORK_DIR" \
+      || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
+    if [[ -n "$LANE_ITEM_STATE" ]]; then
       if ! stop="$(jq -r --arg item "$item" '.post_pr_stop // empty
-        | "- \($item) waits on a stopped \(.gate // "post-PR") gate, \(.name // "unnamed"): \((.remaining // []) | join("; "))"' <<<"$ITEM_STATE")"; then
-        refuse item-state "$item" "$ITEM_STATE"
+        | "- \($item) waits on a stopped \(.gate // "post-PR") gate, \(.name // "unnamed"): \((.remaining // []) | join("; "))"' <<<"$LANE_ITEM_STATE")"; then
+        refuse item-state "$item" "$LANE_ITEM_STATE"
       fi
       [[ -z "$stop" ]] || BLOCKERS+="$stop"$'\n'
     fi
@@ -562,7 +554,7 @@ running_lanes() {
       (if . == null then [] else .validate_rounds // [] end) as $rounds
       | if ($rounds | length) == 0 then "- \($item): no validation run recorded"
         else "- \($item): \([$rounds[].seconds] | add | min) min over \($rounds | length) round\(if ($rounds | length) == 1 then "" else "s" end): \([$rounds[] | "\(.kind) \(.mode) \(.seconds | min)"] | join(", "))"
-        end' <<<"${ITEM_STATE:-null}" 2>"$WORK_DIR/state.err")"; then
+        end' <<<"${LANE_ITEM_STATE:-null}" 2>"$WORK_DIR/state.err")"; then
       refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
     fi
     VALIDATION+="$minutes"$'\n'
