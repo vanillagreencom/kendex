@@ -241,7 +241,7 @@ With `DECISION_REF` present, also detect issues the decision made unnecessary by
 **Below the bar.**
 
 1. Re-read every active issue in the comparison set as § 1.5 fetched it against the creation bar's first and third tests as they stand today (the second, coverage by other work, is not reapplied: an issue always covers itself).
-2. One that fails (the bar's own list, not restated here) is a cancellation with confidence 100 and evidence `{below_bar: true, test, who_hits_it}`: `test` names the failed test, `who_hits_it` is the one-line user story and how often a user meets it, written after reading the issue's body and its § 1.4.1 comments (on GitHub, `gh issue view <n> --json body,comments`; the § 1.5 list carries neither).
+2. One that fails (the bar's own list, not restated here) is a cancellation with confidence 100 and evidence `{below_bar: true, test, who_hits_it}`: `test` names the failed test, `who_hits_it` is the one-line user story and how often a user meets it, written after reading the issue's body and its § 1.4.1 comments (on GitHub, `gh issue view [N] --repo [REPOSITORY] --json body,comments`; the § 1.5 list carries neither).
 3. In project mode it is an `obsolete[]` entry; in issue mode it is the issue's own `issues[]` entry with `action: "cancel"` and that evidence in its `obsolete` field.
 4. The bar's two exceptions (a shipped-path security or data-loss defect; a critical-harm or financial-loss edge case) never go here on likelihood; the third test still applies to them.
 5. The code-verification rule above is for implementation-obsolete entries; a `below_bar` entry is verified by reading the body and, where it names a path, producer, or regression, checking that claim in the repository before the entry is written.
@@ -416,7 +416,7 @@ One filing: the creation bar, a title-level duplicate check, the label set and t
    gh issue list --repo [REPOSITORY] --state open --limit 200 --json number,title --jq '.[] | "#\(.number)\t\(.title)"'                                            # TRACKER=github
    ```
 
-   A title naming the item's problem makes the item `skip` with that issue as `target` and reason `covered by [ISSUE_ID]`. Read a matched issue's body (`cache issues get`, or `gh issue view --json body`) only when its title alone leaves the match open; read no other body.
+   A title naming the item's problem makes the item `skip` with that issue as `target` and reason `covered by [ISSUE_ID]`. Read a matched issue's body (`cache issues get [ISSUE_ID]`, or `gh issue view [N] --repo [REPOSITORY] --json body`) only when its title alone leaves the match open; read no other body.
 
 5. **Action.** § 10.1, then `create` or `skip`; no other action. A `create` fills `create_fields` per § 10.2, with `hierarchy: {"action": "none", "parent": null}`.
 
