@@ -110,6 +110,12 @@ if [[ "$1" == stop ]]; then
   printf '%s\n' "${LANE_CLOSE_STOP_OUT-stopped item=$3 processes=1}"
   exit 0
 fi
+# LANE_CLOSE_HOST_MARKER is the clone's item marker, which the shipped ssh
+# provider's close removes: a close that finds it gone is refused as unowned.
+if [[ -n "${LANE_CLOSE_HOST_MARKER:-}" ]]; then
+  [[ -e "$LANE_CLOSE_HOST_MARKER" ]] || { printf 'lane-host-ssh: close-unowned item=%s\n' "$3" >&2; exit 75; }
+  rm -f -- "$LANE_CLOSE_HOST_MARKER"
+fi
 if [[ "${LANE_CLOSE_HOST_STATUS:-0}" -ne 0 ]]; then
   [[ "$LANE_CLOSE_HOST_STATUS" -ne 3 ]] || printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2
   exit "$LANE_CLOSE_HOST_STATUS"
@@ -429,12 +435,24 @@ for row in "${ITEM_FILE_ROWS[@]}"; do
   item_files_row "$SCRIPT" "$option" "$remove_status" "$host_status" "$tracker_env"
   assert_eq "$ITEM_FILES" "$want" "$label"
 done
-# The retry the refusal promises: after a failed removal, a second close
-# reaches the removal and the host close, and records the lane done.
-item_files_row "$SCRIPT" - 5 0 LANE_CLOSE_NONE=1
-LANE_CLOSE_REMOVE_STATUS=0 run_close "$SCRIPT" --state-dir "$FLEET_DIR"
-assert_eq "rc=$RC remove=$(grep -c -x -- "--state-dir $FLEET_DIR remove KEN-1" "$STATE_CALLS" || true) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=0 remove=1 close=1 status=done' 'a second close after a failed removal removes the files, closes the host and records done'
+# The retry the refusal promises, against a host whose close takes its item
+# marker: after a failed removal, a second close by SCRIPT reaches the removal
+# and the host close. RETRY reads what that second close did.
+retry_row() { # SCRIPT
+  : >"$TMP_ROOT/host-marker"
+  export LANE_CLOSE_HOST_MARKER="$TMP_ROOT/host-marker"
+  item_files_row "$1" - 5 0 LANE_CLOSE_NONE=1
+  LANE_CLOSE_REMOVE_STATUS=0 run_close "$1" --state-dir "$FLEET_DIR"
+  unset LANE_CLOSE_HOST_MARKER
+  RETRY="rc=$RC remove=$(grep -c -x -- "--state-dir $FLEET_DIR remove KEN-1" "$STATE_CALLS" || true) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE")"
+}
+retry_row "$SCRIPT"
+assert_eq "$RETRY" 'rc=0 remove=1 close=1 status=done' \
+  'a second close after a failed removal removes the files, closes the host and records done'
+MUTANT="$(mutant lane-close-retry-host-first 'remove_item_files; close_host || exit $?; fi' 'close_host || exit $?; remove_item_files; fi')"
+retry_row "$MUTANT"
+assert_eq "$RETRY" 'rc=75 remove=0 close=1 status=running' \
+  'control: with the host closed first the second close stops at the unowned host before the removal'
 
 # Fields split on @, since the anchors hold |: label, mutant name, anchor,
 # replacement, the row's remove status, its tracker env, and what the

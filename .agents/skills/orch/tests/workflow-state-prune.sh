@@ -291,6 +291,34 @@ grep -qxF 'tar: planted failure' "$TMP_ROOT/fail-tar.err" \
 grep -qxF 'find: planted failure' "$TMP_ROOT/fail-find.err" \
   && pass "the age refusal carries find's own words" || fail "the age refusal carries find's own words"
 
+# A removal that fails part way: the archive already holds every path, and
+# the rows have already left the state.
+REAL_RM="$(command -v rm)"
+RM_BIN="$TMP_ROOT/rm-bin"
+mkdir -p "$RM_BIN"
+cat > "$RM_BIN/rm" <<STUB
+#!/bin/sh
+for a in "\$@"; do case "\$a" in */directive.md) echo "rm: planted failure" >&2; exit 1 ;; esac; done
+exec "$REAL_RM" "\$@"
+STUB
+chmod +x "$RM_BIN/rm"
+fp="$TMP_ROOT/fail-rm"
+build "$fp"
+rc=0
+run_prune "$fp" "$WS" "$RM_BIN:" --keep tmp/waiter.run >/dev/null 2>"$fp.err" || rc=$?
+key="$(head -n 1 "$fp.err")"
+kept="${key##* kept=}"
+[[ "$rc" -eq 1 && "$key" == "workflow-state: prune-remove-failed path=$fp/tmp/directive.md kept="* ]] \
+  && ok "a removal that fails is refused as prune-remove-failed" \
+  || bad "a removal that fails is refused as prune-remove-failed" "rc=$rc key=$key"
+[[ -s "$kept" ]] && grep -qxF -- "${fp#/}/tmp/directive.md" <<<"$(tar -tzf "$kept" 2>/dev/null || true)" \
+  && ok "the archive it names holds the path it could not remove" \
+  || bad "the archive it names holds the path it could not remove" "kept=$kept"
+got="$(jq -c '[any(.fleet_log[]; .text == "old"), any(.lanes[]; .item == "KEN-2")]' "$fp/tmp/workflow-state-oversee.json")"
+[[ "$got" == '[false,false]' ]] \
+  && ok "the pruned rows had already left the state" \
+  || bad "the pruned rows had already left the state" "got=$got"
+
 MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_DIR"
 cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$MUTANT_DIR/lib"
