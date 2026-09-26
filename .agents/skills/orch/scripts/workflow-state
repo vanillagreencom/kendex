@@ -1079,11 +1079,11 @@ unit_names_item() { # UNIT ITEM
 # schemas/workflow-state.md § Recording policy states, applied to the fleet
 # state and the directory holding it.
 #
-# A live item's paths stay whatever their age. With a fleet state the lane
-# records say which items are live: a lane whose record is not `done`. A
-# checkout with no fleet state, where no overseer runs, has no lane records, so
-# there an item is live while its own workflow state stands, whatever its age:
-# the item's close-out, `remove`, takes that state when the item ends. The
+# A live item's paths stay whatever their age. An item is live while its own
+# workflow state stands, whatever its age: the item's close-out, `remove`,
+# takes that state when the item ends. With a fleet state, a lane whose record
+# is not `done` is live too; a checkout with no fleet state, where no overseer
+# runs, has only the workflow states to judge by. The
 # keep list is explicit, and a path on it is never a candidate whatever its age.
 # Nothing leaves the disk or the state before one archive holding all of it is
 # written: a failed archive removes nothing, and the rows are dropped from the
@@ -1139,13 +1139,16 @@ cmd_prune() {
             def old: type == "string" and test($iso) and . < $cut;
             {fleet_log: [(.fleet_log // [])[] | select(.at | old)],
              lanes: [(.lanes // [])[1:][] | select(.status == "done" and (.launched_at | old))]}' "$state_file") || return 1
-    else
-        for f in "$sd/$STATE_PREFIX-"*.json; do
-            [[ -f "$f" ]] || continue
-            f="${f#"$sd/$STATE_PREFIX-"}"
-            live+="${f%.json}"$'\n'
-        done
+        live+=$'\n'
     fi
+    # An item whose own workflow state stands is live under either branch, the
+    # fleet state apart: a lane closed while its item was open keeps that state
+    # for a later resume, and only the item's close-out takes it.
+    for f in "$sd/$STATE_PREFIX-"*.json; do
+        [[ -f "$f" && "$f" != "$sd/${state_file##*/}" ]] || continue
+        f="${f#"$sd/$STATE_PREFIX-"}"
+        live+="${f%.json}"$'\n'
+    done
 
     [[ ! -d "$progress_dir" ]] || pd=$(cd -P -- "$progress_dir" && pwd -P) || return 1
     if [[ -n "$pd" && ( "$pd" == "$sd" || "$sd" == "$pd"/* ) ]]; then
@@ -1409,16 +1412,17 @@ EOF
                                 FLEET_DIR/archive/REPO/oversee first (FLEET_DIR
                                 defaults to ~/.fleet); a failed archive removes
                                 nothing. Never removes a --keep path, the first
-                                lane record, nor a path named for a lane whose
-                                record is not done. Refused as
-                                prune-progress-overlap where the progress report
-                                directory is or holds the state directory.
-                                Prints "pruned path=PATH" per removed path, a
-                                "pruned fleet_log=N lanes=N progress_reports=N
-                                paths=N" count, then "kept=ARCHIVE" or kept=none.
-                                With no fleet state it prunes the directory by
-                                age alone, holding the paths of each item whose
-                                workflow state file stands
+                                lane record, a path named for a lane whose
+                                record is not done, nor a path named for an
+                                item whose workflow state file stands. Refused
+                                as prune-progress-overlap where the progress
+                                report directory is or holds the state
+                                directory. Prints "pruned path=PATH" per removed
+                                path, a "pruned fleet_log=N lanes=N
+                                progress_reports=N paths=N" count, then
+                                "kept=ARCHIVE" or kept=none. With no fleet state
+                                there are no lane records, and the directory is
+                                judged by age and standing workflow states alone
 
 Keys:
   Four per-item key forms: the tracker identifier (KEN-123) for a tracked
