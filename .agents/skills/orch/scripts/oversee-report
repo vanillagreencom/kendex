@@ -125,9 +125,8 @@ Rows:
                   then one line per thing a running lane waits on, naming the
                   item: an ask `lane-mail pending` lists, the post_pr_stop its
                   own workflow state holds, and failing checks on its open PR
-                  as `github.sh pr-list-failing --all` judges them. A pending
-                  refusal host-unreachable or mail-read-failed for the item
-                  reads `- ITEM mailbox unreadable (mail-read=ITEM): <it>`.
+                  as `github.sh pr-list-failing --all` judges them; its lane-mail
+                  refusal naming the item is `- ITEM mailbox unreadable ...`.
 A row with nothing in it reads `none`. Landed, Running and Next are tables
 whose columns ORCH_REPORT_COLUMNS lists: `issue`; `what it is`, the issue's
 title; `why it matters`, the first line of its `## Done when` section. The
@@ -576,8 +575,7 @@ running_lanes() {
     fi
     [[ -z "$asks" ]] || BLOCKERS+="$asks"$'\n'
     # A host that did not answer holds the hosted lane's state too.
-    ITEM_STATE=""
-    [[ "$mail" == host-unreachable && -n "$host" ]] || item_state "$item" "$host" "$root"
+    ITEM_STATE=""; [[ "$mail" == host-unreachable && -n "$host" ]] || item_state "$item" "$host" "$root"
     if [[ -n "$ITEM_STATE" ]]; then
       if ! stop="$(jq -r --arg item "$item" '.post_pr_stop // empty
         | "- \($item) waits on a stopped \(.gate // "post-PR") gate, \(.name // "unnamed"): \((.remaining // []) | join("; "))"' <<<"$ITEM_STATE")"; then
