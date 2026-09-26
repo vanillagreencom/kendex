@@ -62,18 +62,30 @@ response() {
         + {checkSuites: {pageInfo: {hasNextPage: false}, nodes: [
             suite("pull_request"; [run("10:20"; "10:30"), run("10:21"; "10:40")]),
             suite(null; [run("10:22"; "10:45")])]}})}]},
-      commits: {totalCount: 1, nodes: [{commit: gate("SUCCESS"; "10:25")}]},
+      commits: {totalCount: 1, nodes: [{commit: {oid: "h2"}}]},
       reviews: {totalCount: 3, nodes: [
         {submittedAt: t("09:30"), author: {__typename: "User"}},
         {submittedAt: t("09:40"), author: {__typename: "Bot"}},
         {submittedAt: t("10:30"), author: {__typename: "Bot"}}]},
       timelineItems: {pageInfo: {hasNextPage: false}, nodes: [
-        {__typename: "HeadRefForcePushedEvent", createdAt: t("10:20"), beforeCommit: gate("SUCCESS"; "10:05")},
+        {__typename: "HeadRefForcePushedEvent", createdAt: t("10:20"), beforeCommit: {oid: "b1"}},
         {__typename: "AutoMergeEnabledEvent", createdAt: t("10:26")},
         {__typename: "AutoMergeEnabledEvent", createdAt: t("10:50")},
         {__typename: "AddedToMergeQueueEvent", createdAt: t("10:55")}]}
     }}}} | '"$1"
 }
+
+# Each head's status history, newest first as the REST endpoint lists it:
+# `when:state` pairs for the gate context, beside another context's success
+# that never counts. The force-pushed-over head b1 passed at 10:05; the final
+# head h2 at 10:25.
+status_history() { # PAIRS
+  jq -cn --arg pairs "$1" '[($pairs | split(" ")[] | select(. != "") | split(":") as $p
+      | {context: "Review gate", state: $p[2], created_at: "2026-09-20T\($p[0]):\($p[1]):00Z"}),
+    {context: "CI", state: "success", created_at: "2026-09-20T08:00:00Z"}]'
+}
+HISTORY_B1="10:05:success"
+HISTORY_H2="10:25:success"
 
 BIN="$PR_TIMELINE"
 run() { # EDIT [ARGS...]
@@ -81,6 +93,8 @@ run() { # EDIT [ARGS...]
   shift
   gh_stub_reset
   gh_stub_answer api-graphql "$(response "$edit")"
+  gh_stub_answer "api-repos/owner/repo/commits/b1/statuses?per_page=100" "$(status_history "$HISTORY_B1")"
+  gh_stub_answer "api-repos/owner/repo/commits/h2/statuses?per_page=100" "$(status_history "$HISTORY_H2")"
   (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u REVIEW_GATE_CONTEXT \
     bash "$BIN" 42 "$@" >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
   printf 'rc=%s' "$rc"
@@ -103,6 +117,29 @@ a pending gate is not met@.data.repository.pullRequest.headCommit.nodes[0].commi
 no Bot review leaves the first one null and the count zero@.data.repository.pullRequest.reviews.nodes |= map(.author.__typename = "User")@[.stamps.first_bot_review, .bot_reviews] == [null, 0]
 no force push leaves the head's commit date the last push@.data.repository.pullRequest.timelineItems.nodes |= map(select(.__typename != "HeadRefForcePushedEvent"))@[.stamps.last_push, .stamps.first_gate_met] == ["2026-09-20T10:10:00Z", "2026-09-20T10:25:00Z"]
 ROWS
+
+echo "=== the first gate pass is read from each head's status history ==="
+while IFS='|' read -r label b1 h2 want; do
+  [[ -n "$label" ]] || continue
+  HISTORY_B1="$b1" HISTORY_H2="$h2"
+  run . >/dev/null
+  assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout")" "$want" "$label"
+done <<'ROWS'
+a success, then a failure, then a success on one head: the first success|10:30:pending|10:25:success 10:24:failure 10:02:success|"2026-09-20T10:02:00Z"
+a head whose latest gate status is a failure keeps its earlier pass|10:30:pending|10:40:failure 10:15:success|"2026-09-20T10:15:00Z"
+no head ever passed|10:30:pending|10:40:failure|null
+ROWS
+HISTORY_B1="10:05:success" HISTORY_H2="10:25:success"
+run . >/dev/null
+assert_eq "$(gh_stub_calls | grep 'statuses' | sed 's/^api repos.owner.repo.commits.//' | tr '\n' ';')" \
+  "b1/statuses?per_page=100 --paginate;h2/statuses?per_page=100 --paginate;" "each head's history is read once, through every page"
+gh_stub_reset
+gh_stub_answer api-graphql "$(response .)"
+gh_stub_fail "api-repos/owner/repo/commits/b1/statuses?per_page=100" 1 'HTTP 500'
+rc=0
+(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u REVIEW_GATE_CONTEXT \
+  bash "$BIN" 42 >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
+assert_eq "rc=$rc out=$(cat "$TMP_ROOT/stdout")" "rc=1 out=" "a status history that does not read prints nothing"
 
 echo "=== a connection longer than its page refuses ==="
 while IFS='|' read -r connection edit; do
@@ -145,6 +182,12 @@ mutant group-suites 'select(.workflowRun.event == "merge_group") end]' 'select(t
 run . >/dev/null
 assert_eq "$(jq -c '.ci_merge_group_secs' "$TMP_ROOT/stdout")" "2400" \
   "control: without the merge_group filter the merge commit's push suite joins the merge-group figure"
+mutant latest-pass '| .created_at] | min // empty' '| .created_at] | max // empty'
+HISTORY_B1="10:30:pending" HISTORY_H2="10:25:success 10:24:failure 10:02:success"
+run . >/dev/null
+assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout")" '"2026-09-20T10:25:00Z"' \
+  "control: the latest success on a head in place of its first reads a pass the head had earlier"
+HISTORY_B1="10:05:success" HISTORY_H2="10:25:success"
 mutant no-truncation 'if ($truncated | length) > 0 then' 'if false then'
 assert_eq "$(run '.data.repository.pullRequest.reviews.totalCount = 101')" "rc=0" \
   "control: without the truncation check a partial review list prints stamps"

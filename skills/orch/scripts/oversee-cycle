@@ -53,7 +53,8 @@
 # record that was already a miss on that phase does not make it again.
 #
 # rollup prints, and appends to the fleet log, one row per class with any
-# recorded lane, in the order of the target table, then unclassified:
+# recorded lane, in the order of the target table, then unclassified; with no
+# fleet state yet it prints nothing and exits 0:
 #   rollup class=C items=N median=S p90=S misses=N review=N fix=N bot=N
 #     full_validations=N rounds_unread=N escaped=N refixed=N
 # median and p90 are nearest-rank over the measured launch-to-merge seconds;
@@ -108,7 +109,12 @@ WORK="$(mktemp -d)" || refuse mktemp failed
 trap 'rm -rf -- "$WORK"' EXIT
 
 STATE_FILE="$("$WORKFLOW_STATE" ${WS_ARGS[@]+"${WS_ARGS[@]}"} path oversee)" || refuse state-missing path
-[[ -f "$STATE_FILE" ]] || refuse state-missing "$STATE_FILE"
+# A fleet with no state yet, a session stopping before its first launch, has
+# nothing to roll up; a record for a lane it never launched refuses.
+if [[ ! -f "$STATE_FILE" ]]; then
+  [[ "$VERB" != rollup ]] || exit 0
+  refuse state-missing "$STATE_FILE"
+fi
 
 log_row() { # ITEM TEXT
   jq -n --arg item "$1" --arg text "$2" '{kind: "cycle", item: $item, text: $text}' >"$WORK/row.json"

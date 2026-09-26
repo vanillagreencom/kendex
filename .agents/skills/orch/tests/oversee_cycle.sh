@@ -382,6 +382,12 @@ rollup() { (cd "$REPO" && "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" rollup) 2
 assert_eq "$(rollup)" "$want" "one row per class with a record, in target order, unclassified last"
 assert_eq "$(state '.fleet_log | map(.item) | join(",")')" '"render,micro,standard,unclassified"' "each row joins the fleet log under its class"
 
+new_case rollup-no-state
+rm -f -- "${CASE:?}/state/workflow-state-oversee.json"
+rc=0; out="$(rollup)" || rc=$?
+assert_eq "rc=$rc out=$out files=$(ls -A "$CASE/state" | tr '\n' ' ')" "rc=0 out= files=" "with no fleet state yet the rollup prints nothing, writes nothing and exits 0"
+assert_eq "$(record KEN-1 micro) $(head -n 1 "$CASE/err")" "rc=1  oversee-cycle: state-missing=$CASE/state/workflow-state-oversee.json" "while a record refuses"
+
 echo "=== --help prints the targets the verdict reads ==="
 assert_eq "$("$BIN" --help | tail -n 1)" "Targets, seconds: render 300, trivial 300, micro 900, small 1500, standard 5400" \
   "the last help line is the target table"
@@ -467,6 +473,13 @@ named-phase@or $cycle.phase == null@or false@unnamed-phase
 newly-made@or ($prior.verdict == "miss" and $prior.phase == $cycle.phase)@or false@recorded-again
 exactly-third@select(length == 3)@select(length >= 3)@fourth
 ROWS
+
+mutant no-state-rollup '[[ "$VERB" != rollup ]] || exit 0' ':'
+new_case c-no-state
+rm -f -- "${CASE:?}/state/workflow-state-oversee.json"
+rc=0; rollup >/dev/null || rc=$?
+assert_eq "rc=$rc $(head -n 1 "$CASE/err")" "rc=1 oversee-cycle: state-missing=$CASE/state/workflow-state-oversee.json" \
+  "control: without the no-state exit a Stop before any launch refuses its rollup"
 
 mutant p90-floor '| if $n == 0 then "-" else $a[(($n * $p) | ceil) - 1] end;' '| if $n == 0 then "-" else $a[(($n * $p) | floor) - 1] end;'
 new_case c-rollup

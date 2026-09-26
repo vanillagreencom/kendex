@@ -32,8 +32,10 @@ Output, one JSON object on stdout:
     "last_push":        the later of the final head's committer date and the
                         last force push,
     "first_bot_review": the first review a Bot account submitted,
-    "first_gate_met":   the first success of the gate context on any head the
-                        PR carried, force-pushed-over heads included,
+    "first_gate_met":   the first success the gate context posted on any head
+                        the PR carried, force-pushed-over heads included,
+                        read from each head's whole status history, since a
+                        later status on that head replaces the earlier one,
     "gate_met":         the gate context's success on the final head,
     "ci_green":         the last check run on the final head completed, when
                         every one concluded success, neutral or skipped,
@@ -55,7 +57,8 @@ figure counts it.
 Errors: {"error": "..."} on stderr and exit 1. A connection longer than one
 page (more than 100 commits, reviews, marked timeline events or check runs, or
 50 check suites on one commit) refuses as `truncated: <connection>` rather
-than printing a stamp read from part of the history.
+than printing a stamp read from part of the history. Each head's status
+history is read through every page of the REST commit statuses endpoint.
 
 Examples:
   pr-timeline.sh 42
@@ -70,13 +73,13 @@ QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
       mergeCommit { oid ...suites }
       firstCommit: commits(first: 1) { nodes { commit { authoredDate } } }
       headCommit: commits(last: 1) { nodes { commit { oid committedDate ...gate ...suites } } }
-      commits(last: 100) { totalCount nodes { commit { ...gate } } }
+      commits(last: 100) { totalCount nodes { commit { oid } } }
       reviews(first: 100) { totalCount nodes { submittedAt author { __typename } } }
       timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, AUTO_MERGE_ENABLED_EVENT, ADDED_TO_MERGE_QUEUE_EVENT]) {
         pageInfo { hasNextPage }
         nodes {
           __typename
-          ... on HeadRefForcePushedEvent { createdAt beforeCommit { ...gate } }
+          ... on HeadRefForcePushedEvent { createdAt beforeCommit { oid } }
           ... on AutoMergeEnabledEvent { createdAt }
           ... on AddedToMergeQueueEvent { createdAt }
         }
@@ -129,7 +132,7 @@ def secs($a; $b): if $a == null or $b == null then null else ($b | fromdate) - (
       created: $p.createdAt,
       last_push: ([$head.committedDate, ($pushes[] | .createdAt)] | map(select(. != null)) | max),
       first_bot_review: ($bot | map(.submittedAt) | min),
-      first_gate_met: ([($p.commits.nodes[] | gate(.commit)), ($pushes[] | .beforeCommit // null | select(. != null) | gate(.))] | min),
+      first_gate_met: null,
       gate_met: ([gate($head)] | first // null),
       ci_green: green(runs($head_suites)),
       armed: ([$p.timelineItems.nodes[] | select(.__typename == "AutoMergeEnabledEvent") | .createdAt] | max),
@@ -183,7 +186,26 @@ pr_timeline() {
         jq -c '{error: ("truncated: " + .truncated)}' <<<"$result" >&2
         exit 1
     fi
-    printf '%s\n' "$result"
+    # first_gate_met, from the status history of every head the PR carried:
+    # the GraphQL status names only each head's latest, and the review writer
+    # posts success, then failure or pending when a late thread opens, then
+    # success again on one head.
+    local heads sha statuses first="" earliest
+    heads=$(jq -r '.repository.pullRequest | [.commits.nodes[].commit.oid,
+        (.timelineItems.nodes[] | select(.__typename == "HeadRefForcePushedEvent") | .beforeCommit.oid // empty)]
+        | unique[]' <<<"$data") || { echo '{"error": "pr-timeline: unreadable response"}' >&2; exit 1; }
+    for sha in $heads; do
+        statuses=$(gh_rest "repos/$owner/$name/commits/$sha/statuses?per_page=100" --paginate) || exit 1
+        if ! earliest=$(jq -rs --arg gate "$gate" \
+            '[.[][] | select(.context == $gate and .state == "success") | .created_at] | min // empty' <<<"$statuses"); then
+            jq -nc --arg sha "$sha" '{error: ("pr-timeline: unreadable statuses for " + $sha)}' >&2
+            exit 1
+        fi
+        if [[ -n "$earliest" && ( -z "$first" || "$earliest" < "$first" ) ]]; then
+            first="$earliest"
+        fi
+    done
+    jq -c --arg first "$first" '.stamps.first_gate_met = (if $first == "" then null else $first end)' <<<"$result"
 }
 
 pr_timeline "$@"
