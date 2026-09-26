@@ -21,7 +21,7 @@ import {
 	shouldUseUnknownToolRenderer,
 	componentDefinesRenderer,
 } from "./generic.js";
-import { settingBoolean, settingEnum, toolChromeMode } from "./settings.js";
+import { settingBoolean, settingEnum, toolChromeMode, type ToolChromeMode } from "./settings.js";
 import { RESERVED_IMAGE_ROW_MARKER, TOOL_RENDER_OVERLAY_CHECK_SYMBOL } from "./overlay.js";
 import { trackToolExecutionComponent } from "./live-settings.js";
 import { glyphs } from "./glyphs.js";
@@ -163,14 +163,28 @@ function toolChromeThemeFor(component: any): any {
 	return component?.[TOOL_CHROME_THEME_SYMBOL] ?? component?.ui?.theme ?? (activeToolChromeCtx?.hasUI ? activeToolChromeCtx.ui.theme : undefined);
 }
 
+/** Last chrome output per component. Pi re-renders the whole tree on every
+ * frame, and re-wrapping every tool block each time made long sessions spin. */
+const toolChromeCache = new WeakMap<object, { key: string; lines: string[] }>();
+
 function renderToolChromeLines(component: any, rendered: string[], width: number): string[] {
 	const effectiveCwd = component?.cwd ?? process.cwd();
 	const mode = toolChromeMode(effectiveCwd);
 	if (mode === "off") return rendered;
-	const core = renderedToolCore(rendered, width, effectiveCwd);
+	const rule = mode === "transparent" ? "" : mutedHorizontalRule(toolChromeThemeFor(component), width, effectiveCwd);
+	const key = `${stableRenderWidth(width, effectiveCwd)}\0${mode}\0${rule}\0${rendered.join("\n")}`;
+	const cacheable = typeof component === "object" && component !== null;
+	const cached = cacheable ? toolChromeCache.get(component) : undefined;
+	if (cached?.key === key) return cached.lines;
+	const lines = toolChromeLines(rendered, width, effectiveCwd, mode, rule);
+	if (cacheable) toolChromeCache.set(component, { key, lines });
+	return lines;
+}
+
+function toolChromeLines(rendered: string[], width: number, cwd: string, mode: ToolChromeMode, rule: string): string[] {
+	const core = renderedToolCore(rendered, width, cwd);
 	if (!core) return rendered;
 	if (mode === "transparent") return core;
-	const rule = mutedHorizontalRule(toolChromeThemeFor(component), width, effectiveCwd);
 	return shouldOmitBottomToolChromeRule(core) ? [rule, ...core] : [rule, ...core, rule];
 }
 
