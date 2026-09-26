@@ -9,7 +9,8 @@
 #     checks:<name>  a checks fixture; checks-exit:<n> gh's exit for it
 #     threads:<actionable|outdated|malformed|large|bot|resolved100|->, and
 #     the bot-thread shapes threads:<bot-outdated|bot-and-person|two-bots|
-#     codeql|bot-with-reply|bot-partial|waived-resolved>;
+#     codeql|bot-with-reply|bot-partial|waived-resolved|waived-answered|
+#     waived-person-reply|bot-login-user>;
 #     `actionable` and `outdated` are a person's, typed User by GitHub
 #     threads:page2:<name>  a second page holding that fixture
 #     threads:<fetch-fail|page2-fail|page2-malformed>
@@ -45,13 +46,15 @@
 #   argv   check | auto | immediate |
 #          expected:<sha> (--auto with --expected-head) | router:<flags> |
 #          force | admin | admin-credential (the retired flags) | check-classified |
-#          auto-classified | immediate-classified | expected-classified:<sha>
+#          auto-classified | immediate-classified | expected-classified:<sha> |
+#          dry-classified
 #          (run from the mirror tree whose harness-ci sibling is the classifier
 #          stub, which pr-merge-thread-waiver.test.sh builds as $MIRROR)
 #   out    check: `merge=<bool> transient=<bool> state=<S> mergeable=<M>
 #          at=<mergedAt|-> runs=<ids|-> issues=[a;b] warnings=[c]`;
 #          check-classified adds ` waiver=<class>@<head>[<ids>]`, or
-#          ` waiver=-` for none; otherwise stdout, `-` when empty
+#          ` waiver=-` for none, then ` reopen=[<ids>]`; otherwise stdout,
+#          `-` when empty
 #   err    stderr's lines joined by `;`, leading spaces dropped, blank lines
 #          dropped, `{word}` macros expanded (see err_macro)
 #   calls  `calls=<each gh call by kind, in order> auth=<the GH_TOKEN each
@@ -139,6 +142,8 @@ checks_of() {
   esac
 }
 
+# A waiver reply the merge route left at an earlier head.
+WAIVER_REPLY="Resolved by the merge route: change class trivial at 1111111111111111111111111111111111111111, review evidence none under REVIEW_GATE_CLASS_POLICY"
 threads_of() {
   case "$1" in
     actionable) printf '[{"id":"PRRT_actionable","isResolved":false,"isOutdated":false,"path":"src/lib.rs","line":12,"comments":{"nodes":[{"author":{"login":"reviewer","__typename":"User"},"body":"Fix this safety bug"}]}}]' ;;
@@ -161,7 +166,13 @@ threads_of() {
     # a review bot's thread whose comments were not all read
     bot-partial) printf '[{"id":"PRRT_bot_partial","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":101,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"}]}}]' ;;
     # a thread the merge route resolved under an earlier waiver
-    waived-resolved) printf '[{"id":"PRRT_waived","isResolved":true,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":2,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"Resolved by the merge route: change class trivial at 1111111111111111111111111111111111111111, review evidence none under REVIEW_GATE_CLASS_POLICY"}]}}]' ;;
+    waived-resolved) printf '[{"id":"PRRT_waived","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"vanillagreen-fleet-lanes[bot]"},"path":"docs/plans/a.md","line":4,"comments":{"totalCount":2,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"Resolved by the merge route: change class trivial at 1111111111111111111111111111111111111111, review evidence none under REVIEW_GATE_CLASS_POLICY"}]}}]' ;;
+    # that thread after a reopen: its resolver answered and resolved it again
+    waived-answered) printf '[{"id":"PRRT_answered","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"vanillagreen-fleet-lanes[bot]"},"path":"docs/plans/a.md","line":4,"comments":{"totalCount":3,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"%s"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"Fixed in 2222222"}]}}]' "$WAIVER_REPLY" ;;
+    # the waiver still the resolution, with a person's reply after it
+    waived-person-reply) printf '[{"id":"PRRT_waived_reply","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"vanillagreen-fleet-lanes[bot]"},"path":"docs/plans/a.md","line":4,"comments":{"totalCount":3,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"%s"},{"author":{"login":"reviewer","__typename":"User"},"body":"This is still wrong"}]}}]' "$WAIVER_REPLY" ;;
+    # a person's account spelling the review bot's login
+    bot-login-user) printf '[{"id":"PRRT_impostor","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":1,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"User"},"body":"Issue KEN-1 does not exist"}]}}]' ;;
     -) printf '[]' ;;
     *) echo "UNKNOWN-THREADS: $1" >&2; exit 2 ;;
   esac
@@ -275,6 +286,7 @@ argv_for() {
     auto-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --keep-branch ;;
     immediate-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --keep-branch ;;
     expected-classified:*) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --keep-branch --expected-head "${1#expected-classified:}" ;;
+    dry-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --dry-run --keep-branch ;;
     auto) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch ;;
     immediate) printf '%s\n' "$PR_MERGE" 123 --keep-branch ;;
     force) printf '%s\n' "$PR_MERGE" 123 --force --keep-branch ;;
@@ -355,7 +367,7 @@ stdout_text() {
   if [[ "$1" == check ]]; then check_text <"$TMPDIR/stdout"; return; fi
   if [[ "$1" == check-classified ]]; then
     printf '%s' "$(check_text <"$TMPDIR/stdout")"
-    jq -j '" waiver=" + (.thread_waiver | if . == null then "-" else "\(.class)@\(.head)[\(.threads | join(","))]" end)' <"$TMPDIR/stdout" 2>/dev/null || printf ' waiver=unparseable'
+    jq -j '" waiver=" + (.thread_waiver | if . == null then "-" else "\(.class)@\(.head)[\(.threads | join(","))]" end) + " reopen=[\(.thread_reopen | join(","))]"' <"$TMPDIR/stdout" 2>/dev/null || printf ' waiver=unparseable'
     return
   fi
   sed 's/;/\\;/g' "$TMPDIR/stdout" | paste -s -d ';' -

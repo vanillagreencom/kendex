@@ -1104,6 +1104,7 @@
   ".agents/skills/review-gate/scripts/lib/diagnostics.sh",
   ".agents/skills/review-gate/scripts/lib/settings.sh",
   ".agents/skills/review-gate/scripts/lib/standard.sh",
+  ".agents/skills/review-gate/scripts/lib/waiver.sh",
   ".agents/skills/review-gate/scripts/pr-watch.sh",
   ".agents/skills/review-gate/scripts/provision-environment.sh",
   ".agents/skills/review-gate/scripts/review-policy",

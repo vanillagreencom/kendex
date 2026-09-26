@@ -121,7 +121,7 @@ group() { printf '\n== %s ==\n' "$1"; }
 
 group "runtime"
 
-# lib/settings.sh is sourced, never executed, so it is checked for syntax
+# The lib/ files are sourced, never executed, so each is checked for syntax
 # but not for an executable bit.
 #
 # Paths below are SKILL-relative, and every remediation naming one has to be
@@ -131,7 +131,8 @@ group "runtime"
 SKILL_REL="${SKILL_DIR#"$REPO_ROOT"/}"
 for rel in scripts/review-predicate.sh scripts/review-writer.sh \
   scripts/review-policy scripts/pr-watch.sh scripts/validate.sh \
-  scripts/validate-workflow.sh scripts/lib/settings.sh scripts/lib/diagnostics.sh; do
+  scripts/validate-workflow.sh scripts/lib/settings.sh scripts/lib/diagnostics.sh \
+  scripts/lib/waiver.sh; do
   path="$SKILL_DIR/$rel"
   if [ ! -f "$path" ]; then
     bad runtime-missing "$rel" "$rel is missing from the installed skill ($SKILL_DIR) — re-run \`kendex refresh\` and commit the result"

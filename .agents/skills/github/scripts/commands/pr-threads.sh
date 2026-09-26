@@ -30,6 +30,7 @@ Output (safe format):
     "id": "PRRT_...",
     "is_resolved": false,
     "is_outdated": false,
+    "resolved_by": "",
     "path": "src/file.rs",
     "line": 42,
     "author": "reviewer",
@@ -45,7 +46,9 @@ GitHub's actor type: Bot for an app such as Copilot's reviewer, whose login
 carries no [bot] suffix here, User for a person, and empty where GitHub names
 no author. comments holds the thread's first 100 comments in order, each
 typed the same way, and comment_count is the thread's whole count, so a
-caller can tell a thread it read in full from one it did not.
+caller can tell a thread it read in full from one it did not. resolved_by is
+the login that resolved the thread, empty while it is open; GitHub spells an
+app's login there with a [bot] suffix its comment authors lack.
 
 Examples:
   pr-threads.sh 23
@@ -128,6 +131,7 @@ get_pr_threads() {
                           id
                           isResolved
                           isOutdated
+                          resolvedBy { login }
                           path
                           line
                           comments(first: 100) { totalCount nodes { author { login __typename } body } }') || exit 1
@@ -178,6 +182,7 @@ get_pr_threads() {
                     id: .id,
                     is_resolved: .isResolved,
                     is_outdated: .isOutdated,
+                    resolved_by: (.resolvedBy.login // ""),
                     path: (.path // ""),
                     line: (.line // null),
                     author: (.comments.nodes[0].author.login // ""),

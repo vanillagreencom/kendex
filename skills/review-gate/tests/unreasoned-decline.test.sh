@@ -44,11 +44,15 @@ PASS=0 FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok    $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL  $1"; echo "        got: $2"; }
 
-# The shipped thread program is the shared reply-form defs plus the thread
-# reduction: the predicate concatenates the two, so the proof reads both.
+# The shipped thread program is the shared reply-form defs, the merge-route
+# waiver rule and the thread reduction: the predicate concatenates the three,
+# so the proof reads all of them.
 forms="$(sed -n "/^REPLY_FORMS_DEF='/,/^'\$/p" "$PRED" | sed "1s/^REPLY_FORMS_DEF='//; \$d")"
 reduction="$(sed -n "/^t_threads_page_jq=/,/^  end'\$/p" "$PRED" | sed "1s/^t_threads_page_jq=[^']*'//; s/^  end'\$/  end/")"
+# shellcheck source=../scripts/lib/waiver.sh
+. "$SCRIPT_DIR/../scripts/lib/waiver.sh"
 prog="$forms
+$RG_WAIVER_JQ
 $reduction"
 [ -n "$forms" ] && [ -n "$reduction" ] || { echo "FAIL: could not extract the thread program"; exit 1; }
 

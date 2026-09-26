@@ -887,6 +887,27 @@ PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='runtime/*' HARNESS_CI_TRIVIAL_M
   assert_class "a configured ceiling bounds the configured allowlist" micro \
   --repo "$repo" --event pull_request --base "$base" --head HEAD
 
+# With no configured ceiling the allowlist takes the shipped one, and it
+# replaces the plan exemption as well as the documentation set.
+# label | expected | file:lines
+allowlist_rows=0
+while IFS='|' read -r label expected spec; do
+  allowlist_rows=$((allowlist_rows + 1))
+  reset_case
+  set_verifier dirty
+  write_lines "$repo" "${spec%:*}" "${spec##*:}"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "$label"
+  PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='runtime/*' \
+    assert_class "$label" "$expected" \
+    --repo "$repo" --event pull_request --base "$base" --head HEAD
+done <<'CASES'
+allowlisted-at-the-default-ceiling|trivial|runtime/product.ts:20
+allowlisted-one-over-the-default-ceiling|small|runtime/product.ts:21
+plan-outside-a-configured-allowlist|standard|docs/plans/v2.md:400
+CASES
+require_rows change-class-allowlist-table "$allowlist_rows"
+
 # A ceiling that is not a whole number is a wiring error, not a skipped check:
 # without the refusal the comparison below it fails under strict mode and the
 # trivial test would never run.
