@@ -18,11 +18,10 @@
 #                    file's `path` lines matches is refused by every narrow
 #                    class, so it answers standard.
 #   --base, --head   the item's branch, classified by harness-ci's
-#                    change-class through lib/change-class.sh: the script CI
-#                    runs, so a lane and the gate judging it cannot disagree.
-#                    render and trivial count as micro. A class the
-#                    classifier's `measured=` marker says it did not measure
-#                    answers standard as classifier-unmeasured.
+#                    change-class through lib/change-class.sh. render and
+#                    trivial count as micro. A class the classifier's
+#                    `measured=` marker says it did not measure answers
+#                    standard as classifier-unmeasured.
 #
 # At least one of --production, --floor and --base is required. --repo
 # (default .) is the checkout the classifier and the review gate read. No
