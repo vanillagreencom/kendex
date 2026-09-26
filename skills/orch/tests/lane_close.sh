@@ -52,8 +52,8 @@ FLEET_DIR="$TMP_ROOT/fleet-state"
 mkdir -p "$FLEET_DIR"
 mkdir -p "$SCRIPTS/lib" "$FIXTURE/skills/linear/scripts" "$BIN"
 cp "$TEST_DIR/../scripts/lane-close" "$SCRIPTS/lane-close"
-cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$SCRIPTS/lib/lane-state.sh"
-cp "$TEST_DIR/../scripts/lib/lane-host-slots.sh" "$SCRIPTS/lib/lane-host-slots.sh"
+cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TEST_DIR/../scripts/lib/date-ladder.sh" \
+  "$TEST_DIR/../scripts/lib/usage-reset.sh" "$TEST_DIR/../scripts/lib/lane-host-slots.sh" "$SCRIPTS/lib/"
 chmod +x "$SCRIPTS/lane-close"
 
 cat >"$SCRIPTS/workflow-state" <<'EOF'
@@ -135,6 +135,20 @@ pending_ask() { # AGE_SECONDS
   printf '{"id":"%s-9-31","kind":"ask","at":"2026-09-21T05:45:00Z","from":"KEN-1","text":"which base"}' \
     "$((now - $1))"
 }
+
+# lanes answers `pick --lane` for the account the record names with the exit
+# LANE_CLOSE_LANES_STATUS gives it: 0 room, 3 walled, 5 unmeasured.
+export LANE_CLOSE_LANES_CALLS="$TMP_ROOT/lanes-calls"
+cat >"$SCRIPTS/lanes" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$LANE_CLOSE_LANES_CALLS"
+case "${LANE_CLOSE_LANES_STATUS:-0}" in
+  0) printf 'CLAUDE_CONFIG_DIR=%s\n' "$3" ;;
+  3) printf 'lanes: pick-lane-walled %s wall=100\n' "$3" >&2 ;;
+esac
+exit "${LANE_CLOSE_LANES_STATUS:-0}"
+EOF
+chmod +x "$SCRIPTS/lanes"
 
 # dev-validate-run records each --stop. The records' /srv/worktree is no
 # directory here, so only a row that points mail_root at one reaches it.
@@ -253,6 +267,10 @@ write_panes() { # COMMAND [DUPLICATE] [SESSION]
 # TEXT after the marker: nothing, or a draft nobody sent. `codex_screen` is the
 # measured Codex capture.
 claude_screen() { printf '%s%s\n' "$CLAUDE_COMPOSER" "${1:-}" >"$SCREEN"; }
+# A limit banner under the lane's last turn, above its composer, naming RESET.
+walled_screen() { # RESET
+  printf '%s\n\n%s\n%s\n' '⏺ I will keep going.' "You've hit your session limit · resets $1" "$CLAUDE_COMPOSER" >"$SCREEN"
+}
 codex_screen() { cp -- "$PANE_FIXTURES/codex-composer-idle.txt" "$SCREEN"; }
 
 # A local lane's harness: a real process, so the SIGTERM and its exit are
@@ -332,7 +350,7 @@ lib_mutant() { # NAME OLD NEW [APPEND]
   local name="$1" old="$2" new="$3" dir sibling
   dir="$TMP_ROOT/libmut-$name"
   mkdir -p "$dir/skills/orch/scripts/lib" "$dir/skills/linear/scripts"
-  for sibling in lane-close workflow-state lane-host lane-mail dev-validate-run; do
+  for sibling in lane-close workflow-state lane-host lane-mail dev-validate-run lanes lib/date-ladder.sh lib/usage-reset.sh; do
     ln -s "$SCRIPTS/$sibling" "$dir/skills/orch/scripts/$sibling"
   done
   ln -s "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
@@ -493,12 +511,57 @@ else
   printf '  skip  the local lane rows stage their process read through procfs\n'
 fi
 
-# A local stop that cannot run refuses, naming the step, rather than waiting
-# the lane out: a record whose worktree is not on this machine resolves none.
-write_state running claude ""; write_panes python; claude_screen
-run_close "$SCRIPT"
-assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=worktree-read-failed$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 failed=1 kill=0 status=running' 'a local stop that cannot resolve the worktree refuses and keeps the window'
+# A local stop that finds no harness in a worktree that is not on this machine
+# refuses under its own cause rather than waiting the lane out, under both
+# directory readers: the staged table holds a harness sitting elsewhere, so the
+# stop reads processes and none is the lane's. The worktree whose parent is no
+# directory either takes the same answer.
+proc_table_write "$PROC_TABLE" "4343 1 claude"
+proc_cwd_write "$PROC_CWD_FILE" "4343=$LANE_ROOT_REAL"
+REMOVED_ROWS="/srv/worktree|$SCRIPT|$LOCAL_PATH|a local stop over a removed worktree holding no harness refuses as worktree-removed and keeps the window
+$TMP_ROOT/absent/worktree|$SCRIPT|$LOCAL_PATH|a removed worktree whose parent is gone too refuses the same way"
+# The lsof reader answers from the staged directories only where procfs backs
+# its stub; lsof has no spelling for a removed directory at all.
+if proc_table_readable; then
+  REMOVED_ROWS+=$'\n'"/srv/worktree|$NOPROC|$NOPROC_PATH|the same through lsof, which names no harness in a removed directory"
+fi
+while IFS='|' read -r root reader_script reader_path name; do
+  MAIL_ROOT="$root" write_state running claude ""; write_panes python; claude_screen
+  PATH="$reader_path" run_close "$reader_script" </dev/null
+  assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=worktree-removed$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 failed=1 kill=0 status=running' "$name"
+done <<<"$REMOVED_ROWS"
+
+echo '=== a limit banner the account has outlived does not hold a finished lane ==='
+# A banner stays below the last turn of a lane it parked after the window
+# resets. The account the record names settles it: room lifts a banner that
+# dates no reset still ahead, and the finished lane closes like any idle one.
+# A clock reset leaves the account to answer alone; a dated one, the weekly
+# wall's shape, printing its year, lifts once that date is behind.
+while IFS='|' read -r reset name; do
+  write_state running claude /host; write_panes python; walled_screen "$reset"; : >"$LANE_CLOSE_LANES_CALLS"
+  run_close "$SCRIPT" </dev/null
+  assert_eq "rc=$RC lanes=$(cat "$LANE_CLOSE_LANES_CALLS") stop=$(stop_count KEN-1 claude) status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=0 lanes=pick --lane /lane --harness claude stop=1 status=done' "$name"
+done <<'ROWS'
+21:00|a lifted banner over an account reading room closes the finished lane
+Oct 7, 2020, 11:32am (UTC)|a dated banner whose reset is behind, over an account reading room, closes the finished lane
+ROWS
+# Each reading the wall stands on refuses, naming it.
+while IFS='|' read -r lanes_status reset want name; do
+  write_state running claude /host; write_panes python; walled_screen "$reset"
+  LANE_CLOSE_LANES_STATUS="$lanes_status" run_close "$SCRIPT" </dev/null
+  assert_eq "rc=$RC live=$(grep -c "^lane-close: lane-live item=KEN-1 state=walled pane=%7 $want\$" <<<"$ERR" || true) stop=$(stop_count KEN-1 claude) status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 live=1 stop=0 status=running' "$name"
+done <<'ROWS'
+3|21:00|account=walled|a stale banner over an account still walled refuses as walled
+0|Oct 7, 2099, 11:32am (Mars/Olympus)|account=room resets=unresolved|a reset in a zone this host has no zoneinfo for keeps the wall
+0|Feb 30, 2099, 4pm (UTC)|account=room resets=unresolved|a dated reset date rejects keeps the wall
+5|21:00|account=unmeasured|an account nothing measured leaves the banner standing
+4|21:00|account=unlisted|an account no configured lane names leaves the banner standing
+1|21:00|account=read-failed|a lanes read that fails leaves the banner standing
+0|Oct 7, 2099, 11:32am (UTC)|account=room resets=2099-10-07T11:32:00Z|a banner dating its reset still ahead outranks a room reading
+ROWS
 
 echo '=== a failed stop keeps the lane and its record ==='
 write_state running codex /host; write_panes python; codex_screen

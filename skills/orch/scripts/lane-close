@@ -8,8 +8,11 @@ LANE_HOST="$SCRIPT_DIR/lane-host"
 LANE_MAIL="$SCRIPT_DIR/lane-mail"
 DEV_VALIDATE_RUN="$SCRIPT_DIR/dev-validate-run"
 LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
+LANES="$SCRIPT_DIR/lanes"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 source "$SCRIPT_DIR/lib/lane-host-slots.sh"
+source "$SCRIPT_DIR/lib/date-ladder.sh"
+source "$SCRIPT_DIR/lib/usage-reset.sh"
 
 message() { # REASON FIELD=VALUE...
   local reason="$1" field
@@ -25,7 +28,16 @@ message() { # REASON FIELD=VALUE...
     pane-missing) printf '%s\n' 'No tmux pane carries the recorded window name.' ;;
     pane-ambiguous) printf '%s\n' 'More than one tmux pane carries the recorded window name.' ;;
     pane-read-failed) printf '%s\n' 'The lane pane could not be read.' ;;
-    lane-live) printf '%s\n' 'The lane is not finished. Close-out changed nothing.' ;;
+    lane-live)
+      printf '%s\n' 'The lane is not finished. Close-out changed nothing.' \
+        'state=walled is a limit banner below the lane'"'"'s last turn that its account reading did not lift. account= is that reading:' \
+        '  room            lanes pick --lane read room, and the banner names a reset still ahead in resets=,' \
+        '                  or resets=unresolved: a reset clause this host could not resolve, such as one in a zone it has no zoneinfo for.' \
+        '  walled          lanes pick --lane read the account at or above ORCH_LANE_MAX_PCT.' \
+        '  unmeasured      lanes pick --lane measured nothing for the account; its words are on the lines above.' \
+        '  unlisted        the recorded account is no configured lane of the harness.' \
+        '  read-failed     lanes pick --lane failed; its words are on the lines above.' \
+        '  none            the record names no account, or its harness is not one lanes measures.' ;;
     tracker-read-failed)
       printf '%s\n' \
         'The tracker state could not be read. Close-out changed nothing. cause names which read did not answer:' \
@@ -52,7 +64,7 @@ message() { # REASON FIELD=VALUE...
         '  stderr-unsaved    mktemp could not make the file the lane host stop verb'"'"'s stderr is read from; its own words are above this one.' \
         '  answer-unparsed   the lane host stop verb succeeded without its stopped item=ID processes=COUNT line.' \
         '  any other value   the local stop step lib/lane-state.sh lane_stop_owned names, pid= the process it failed on.' ;;
-    stop-skipped) printf '%s\n' "The lane host answered that the item's worktree is gone, so no harness process can be found by its directory. The host close below ends the harness where the provider's close ends the sandbox; otherwise the window close hangs up the lane's ssh session, which ends it. A static host's close ends no process." ;;
+    stop-skipped) printf '%s\n' "The lane host answered that the item's worktree is gone and found no harness process by its directory. The host close below ends the harness where the provider's close ends the sandbox; otherwise the window close hangs up the lane's ssh session, which ends it. A static host's close ends no process." ;;
     exit-timeout) printf '%s\n' 'The pane did not read exited before the close timeout. processes= is how many harness processes the stop signalled in the lane worktree and saw exit; 0 means none was left there to signal. Close-out stopped.' ;;
     state-write-failed) printf '%s\n' 'The lane closed, but its fleet record could not be updated.' ;;
     prepare-stop-failed) printf '%s\n' 'The background launch job the record names could not be stopped. Close-out changed nothing else.' ;;
@@ -71,12 +83,19 @@ Usage: lane-close [--state-dir PATH] [--keep-sandbox]
 
 Close one lane recorded in the oversee workflow state. The command refuses a
 live lane. It accepts an exited lane, or an idle lane whose tracker item is
-terminal. An idle lane's harness is ended by SIGTERM, never by typing into its
-pane: through lane-host stop for a record carrying host, and for a local lane
-by the same stop against the worktree the record's mail_root names. The close
-then waits up to ORCH_LANE_CLOSE_SECS (default 15) for the pane to read exited.
+terminal. A limit banner below the lane's last turn is passed over only where
+`lanes pick --lane` reads the account the record names as room and the banner
+names no dated reset still ahead and no reset this host cannot resolve; the
+lane is then judged by the rest of its screen. Every other reading keeps the
+lane walled.
+An idle lane's harness is ended by SIGTERM, never by typing into its pane:
+through lane-host stop for a record carrying host, and for a local lane by the
+same stop against the worktree the record's mail_root names. Either stop also
+ends a harness still sitting in a worktree its own close-out removed, which
+/proc names as the removed path. The close then waits up to
+ORCH_LANE_CLOSE_SECS (default 15) for the pane to read exited.
 A hosted stop answering status 4 beside a stop-worktree-removed item=ITEM line
-on its stderr, the item's worktree already removed by its own close-out, prints
+on its stderr, the item's worktree removed with no harness found in it, prints
 stop-skipped cause=worktree-removed and goes straight to the host close and
 window kill. The host close ends the harness where the provider's close ends
 the sandbox; otherwise the window kill hangs up the lane's ssh session, which
@@ -400,6 +419,72 @@ pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
 lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" \
   || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
 
+# usage-reset.sh's one import: a reset clause the banner scan could not read.
+die() { message pane-read-failed "item=$ITEM" "pane=$pane_id" "cause=$1" >&2; exit 1; }
+
+# A limit banner stays on a lane's screen after the window it reports resets,
+# since the lane it parked takes no turn to scroll it away. So a `walled`
+# screen is weighed against the account the record names, and it stops
+# answering only where that account reads room and the banner names no reset
+# still ahead. WALL_ACCOUNT is the lane-live message's account= word, and
+# WALL_RESETS a dated reset the banner names still ahead, or `unresolved` for a
+# reset clause that resolved to no time, empty otherwise. A clock or weekday
+# reset names no day, and with no sighting to pin one to it leaves the account
+# reading to answer alone.
+WALL_ACCOUNT=none
+WALL_RESETS=""
+read_wall() {
+  local rc=0 account slice banner key at now clause_rc=0
+  if ! account="$(record_field account)"; then message record-invalid "item=$ITEM" "field=account" >&2; exit 1; fi
+  case "$harness" in claude|codex) ;; *) return 0 ;; esac
+  [[ -n "$account" ]] || return 0
+  [[ -x "$LANES" ]] || { message helper-missing "item=$ITEM" "path=$LANES" >&2; exit 1; }
+  "$LANES" pick --lane "$account" --harness "$harness" >/dev/null || rc=$?
+  case "$rc" in
+    0) WALL_ACCOUNT=room ;;
+    3) WALL_ACCOUNT=walled ;;
+    4) WALL_ACCOUNT=unlisted ;;
+    5) WALL_ACCOUNT=unmeasured ;;
+    *) WALL_ACCOUNT=read-failed ;;
+  esac
+  [[ "$WALL_ACCOUNT" == room ]] || return 0
+  slice="$(pane_below_last_turn "$pane_screen")" \
+    || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+  banner="$(lane_limit_banner "$slice")" \
+    || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+  # die has already named the failed scan when this substitution fails.
+  key="$(usage_reset_key "$banner")" || exit 1
+  # No key is either a banner naming no reset, which the account answers
+  # alone, or a clause the grammar matched and could not key, such as a zone
+  # this host has no zoneinfo for, which keeps the wall.
+  if [[ -z "$key" ]]; then
+    grep -Eq -- "$USAGE_RESET_ANY_RE" <<<"$banner" || clause_rc=$?
+    case "$clause_rc" in
+      0) WALL_RESETS=unresolved ;;
+      1) ;;
+      *) message pane-read-failed "item=$ITEM" "pane=$pane_id" "cause=reset" >&2; exit 1 ;;
+    esac
+    return 0
+  fi
+  [[ "$key" == dated'|'* ]] || return 0
+  now="$(date -u +%s)" || { message pane-read-failed "item=$ITEM" "pane=$pane_id" "cause=clock" >&2; exit 1; }
+  # A dated clause date rejects, `resets Feb 30, 4pm` among them, resolves to
+  # no time, which is no evidence the reset is behind.
+  if ! at="$(usage_reset_epoch "$key" "$now")" || [[ -z "$at" ]]; then
+    WALL_RESETS=unresolved
+    return 0
+  fi
+  [[ "$at" -gt "$now" ]] || return 0
+  WALL_RESETS="$(from_epoch "$at" '%Y-%m-%dT%H:%M:%SZ')" || WALL_RESETS="$at"
+}
+if [[ "$state" == walled ]]; then
+  read_wall
+  if [[ "$WALL_ACCOUNT" == room && -z "$WALL_RESETS" ]]; then
+    lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" "" room \
+      || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+  fi
+fi
+
 # One tracker CLI call, its own words kept for the refusal and dropped on
 # success: a close that works stays quiet, and one that does not says what the
 # CLI said rather than swallowing it. Status 0 with OUT_VAR set, or 1 with that
@@ -464,6 +549,9 @@ case "$state" in
       1) message lane-live "item=$ITEM" "state=idle" "pane=$pane_id" >&2; exit 1 ;;
       *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" "source=$tracker_source" "cause=$TRACKER_CAUSE" >&2; exit 1 ;;
     esac ;;
+  walled)
+    message lane-live "item=$ITEM" "state=walled" "pane=$pane_id" "account=$WALL_ACCOUNT" ${WALL_RESETS:+"resets=$WALL_RESETS"} >&2
+    exit 1 ;;
   *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;
 esac
 
@@ -508,7 +596,8 @@ stop_harness() {
     rm -f -- "$err"
     [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { message lane-host-busy "${fields[@]}" step=stop >&2; exit "$rc"; }
     # A merged lane's own close-out removes its worktree before the lane goes
-    # idle, so the provider has no directory to find the harness by. Only an
+    # idle, and a provider that finds no harness under the removed path answers
+    # 4, as one whose host cannot read a removed directory does. Only an
     # idle lane on a terminal item reaches this stop, and what follows ends the
     # harness, so the stop is skipped rather than refused: the host close where
     # the provider's close ends the sandbox, otherwise the window kill, which

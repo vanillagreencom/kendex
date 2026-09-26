@@ -231,9 +231,10 @@ pane_has_child() {
 
 # The harness processes whose current directory is one worktree. This is the
 # ownership read used before a wake starts a second harness and before
-# lane_stop_owned signals one. The worktree path is canonical, and a process
-# that still exists but whose cwd cannot be read makes the whole answer
-# unreadable.
+# lane_stop_owned signals one. The worktree is matched as lane_worktree_cwd
+# spells it, which also names a harness still sitting in a worktree its own
+# close-out removed, and a process that still exists but whose cwd cannot be
+# read makes the whole answer unreadable.
 #
 # On success LANE_OWNED_PROCESS_TABLE holds `pid ppid name` rows for the host,
 # LANE_OWNED_PROCESS_CANDIDATES every pid named for the harness, and
@@ -325,12 +326,29 @@ lane_process_below() { # TABLE ROOT NAME_RE INCLUDE_ROOT
     }' <<<"$1"
 }
 
+# The directory a harness process in WORKTREE reads as its own: the canonical
+# path of a standing worktree. A merged lane's close-out removes its worktree
+# while the harness still sits there, and /proc names a removed directory as
+# its last path followed by ` (deleted)`, so a removed worktree is that
+# spelling under its canonical parent. lsof has no such spelling, so on a host
+# without /proc a removed worktree matches no process. Status 1 is a worktree
+# whose parent does not resolve either.
+lane_worktree_cwd() { # WORKTREE
+  local parent
+  if [[ -d "$1" ]]; then
+    (cd -- "$1" && pwd -P)
+    return
+  fi
+  parent="$(cd -- "$(dirname -- "$1")" && pwd -P)" || return 1
+  printf '%s/%s (deleted)\n' "${parent%/}" "$(basename -- "$1")"
+}
+
 lane_owned_processes() { # WORKTREE HARNESS
   local root table candidates pid cwd state rc
   LANE_OWNED_PROCESS_TABLE=""
   LANE_OWNED_PROCESS_CANDIDATES=""
   LANE_OWNED_PROCESS_PIDS=""
-  root="$(cd -- "$1" && pwd -P)" || return 2
+  root="$(lane_worktree_cwd "$1")" || return 2
   table="$(lane_process_table)" || return 2
   candidates="$(awk -v harness="$2" '$3 == harness { print $1 }' <<<"$table")" || return 2
   for pid in $candidates; do
@@ -362,7 +380,11 @@ lane_owned_processes() { # WORKTREE HARNESS
 # signalled, 0 where none was found. On status 1 LANE_STOP_CAUSE names the step
 # that failed and LANE_STOP_PID the process it failed on, empty where the step
 # reads no single process:
-#   worktree-read-failed  the worktree does not resolve
+#   worktree-read-failed  the standing worktree does not resolve
+#   worktree-removed      the worktree is no directory and no harness process
+#                         sits in it as its removed path, a parent that does
+#                         not resolve included: nothing is left to signal by
+#                         its directory, which is not a stop that found none
 #   process-read-failed   the ownership read answered nothing (its status 2)
 #   cwd-reader-missing    this host has neither /proc nor lsof to read a
 #                         process's directory (its status 3)
@@ -376,18 +398,27 @@ LANE_STOP_CAUSE=""
 LANE_STOP_PID=""
 LANE_STOP_WAIT_PASSES=50
 lane_stop_owned() { # WORKTREE HARNESS
-  local root pid current state rc signaled="" live="" passes="$LANE_STOP_WAIT_PASSES"
+  local root pid current state rc removed=false signaled="" live="" passes="$LANE_STOP_WAIT_PASSES"
   LANE_STOP_COUNT=0
   LANE_STOP_CAUSE=""
   LANE_STOP_PID=""
-  root="$(cd -- "$1" && pwd -P)" || { LANE_STOP_CAUSE=worktree-read-failed; return 1; }
+  [[ -d "$1" ]] || removed=true
+  if ! root="$(lane_worktree_cwd "$1")"; then
+    LANE_STOP_CAUSE=worktree-read-failed
+    [[ "$removed" == false ]] || LANE_STOP_CAUSE=worktree-removed
+    return 1
+  fi
   rc=0
-  lane_owned_processes "$root" "$2" || rc=$?
+  lane_owned_processes "$1" "$2" || rc=$?
   case "$rc" in
     0) ;;
     3) LANE_STOP_CAUSE=cwd-reader-missing; return 1 ;;
     *) LANE_STOP_CAUSE=process-read-failed; return 1 ;;
   esac
+  if [[ "$removed" == true && -z "$LANE_OWNED_PROCESS_PIDS" ]]; then
+    LANE_STOP_CAUSE=worktree-removed
+    return 1
+  fi
   for pid in $LANE_OWNED_PROCESS_PIDS; do
     LANE_STOP_PID="$pid"
     if ! current="$(lane_process_cwd "$pid")"; then
@@ -521,14 +552,15 @@ lane_pane_observe() { # WINDOW
 # The judge.
 # ---------------------------------------------------------------------------
 
-# lane_state OUT_VAR WINDOW CMD PID SCREEN [SESSION] — assigns OUT_VAR
-# exactly one of:
+# lane_state OUT_VAR WINDOW CMD PID SCREEN [SESSION] [ACCOUNT] — assigns
+# OUT_VAR exactly one of:
 #
 #   gone      no window: there is no lane here to ask about
 #   exited    the window outlived its harness — a bare shell with nothing
 #             under it, the shape a session that quit, crashed or hit its
 #             limit leaves behind
-#   walled    the account is spent and said so below the lane's last turn
+#   walled    the account is spent and said so below the lane's last turn,
+#             and no ACCOUNT reading says the wall has lifted
 #   asking    a dialog is up and waiting on an answer
 #   idle      the harness is at its input prompt with nothing in flight
 #   working   a turn is in flight
@@ -543,6 +575,9 @@ lane_pane_observe() { # WINDOW
 #   SCREEN   the pane capture, whole
 #   SESSION  `busy`, `idle` or `unjudged` from the harness process read
 #            through /proc, and "" where the caller has no /proc to read
+#   ACCOUNT  `room` where the caller measured the lane's account and found
+#            the wall its banner reports lifted, `walled` where it found the
+#            wall standing, and "" where it measured nothing
 #
 # THE PANE IS ASKED FIRST FOR EVERY RUNG THAT IS NOT `idle`, which the
 # supplied process read decides; the session rule below carries that half.
@@ -554,10 +589,13 @@ lane_pane_observe() { # WINDOW
 #
 # Rung order is load-bearing and is the order the watch has always used:
 # `walled` outranks `asking` because a limit banner can sit above a stale
-# prompt and the spent account is the news; `asking` outranks `working`
-# because a dialog is up whatever the transcript above it is doing; and
-# `idle` demands the absence of a turn in flight, so a working lane can never
-# take that rung.
+# prompt and the spent account is the news. A banner stays on the screen after
+# its window resets, since a lane parked by it takes no turn to scroll it
+# away, so an ACCOUNT of `room` passes the banner over and the rungs below
+# answer; `walled` and "" keep it, and any other value is `unjudged`.
+# `asking` outranks `working` because a dialog is up whatever the transcript
+# above it is doing; and `idle` demands the absence of a turn in flight, so a
+# working lane can never take that rung.
 #
 # THE WHOLE SESSION RULE, in one sentence: a SUPPLIED SESSION that is not
 # `idle` answers on its own and the pane's `idle` rung is never reached, so a
@@ -583,7 +621,7 @@ lane_pane_observe() { # WINDOW
 # Exit 2, with OUT_VAR set to `unjudged`, means a scan failed rather than
 # answered. The caller decides whether that ends its run.
 lane_state() {
-  local _ls_out="$1" _ls_window="$2" _ls_cmd="$3" _ls_pid="$4" _ls_screen="$5" _ls_session="${6:-}"
+  local _ls_out="$1" _ls_window="$2" _ls_cmd="$3" _ls_pid="$4" _ls_screen="$5" _ls_session="${6:-}" _ls_account="${7:-}"
   local _ls_slice _ls_banner _ls_rc=0
   LANE_PROBE_RC=0
   if [[ "$_ls_window" != listed ]]; then printf -v "$_ls_out" gone; return 0; fi
@@ -598,7 +636,13 @@ lane_state() {
   _ls_rc=0
   _ls_banner="$(lane_limit_banner "$_ls_slice")" || _ls_rc=$?
   if [[ "$_ls_rc" -eq 2 ]]; then printf -v "$_ls_out" unjudged; return 2; fi
-  if [[ -n "$_ls_banner" ]]; then printf -v "$_ls_out" walled; return 0; fi
+  if [[ -n "$_ls_banner" ]]; then
+    case "$_ls_account" in
+      "" | walled) printf -v "$_ls_out" walled; return 0 ;;
+      room) ;;
+      *) printf -v "$_ls_out" unjudged; return 0 ;;
+    esac
+  fi
   if grep -Eq -- "$LANE_ASKING_RE" <<<"$_ls_slice"; then printf -v "$_ls_out" asking; return 0; fi
   if pane_working "$_ls_slice"; then printf -v "$_ls_out" working; return 0; fi
   # The supplied process read, whole, before any rung that could answer `idle`.
