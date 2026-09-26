@@ -670,6 +670,59 @@ assert_eq "rc=$RC waited=$(grep -c '^wait --item CC-83 $' "$TMP_ROOT/host.log" |
   "rc=0 waited=1 handed=0 lineless=1 record=running none none" \
   "a hosted codex relaunch waits for its host in the foreground and reports resume-lineless to the caller"
 
+# lane-host refuses a call at its per-home cap once every slot stays taken. A
+# slot naming this suite's own shell, alive throughout, fills a cap of 1 in a
+# home of the suite's own, and
+# the provider below plants that slot as create runs, so create is admitted
+# and the launch's next host call is the one refused.
+BUSY_HOME="$TMP_ROOT/busy-home"
+BUSY_SLOTS="$BUSY_HOME/.cache/orch/lane-host-slots"
+mkdir -p "$BUSY_SLOTS"
+BUSY_SLOT="$BUSY_SLOTS/slot.$$"
+BUSY_HOST="$TMP_ROOT/busy-provider"
+cat > "$BUSY_HOST" <<EOF
+#!/usr/bin/env bash
+[ "\$1" != create ] || : > "$BUSY_SLOT"
+exec "$HOST_STUB" "\$@"
+EOF
+chmod +x "$BUSY_HOST"
+# busy_hand_off ITEM [ENV=VALUE]... [-- ARGS...] — hand_off against that
+# provider, under a cap of 1 that refuses at once.
+busy_hand_off() {
+  local item="$1"
+  shift
+  HOME="$BUSY_HOME" HOST_STUB="$BUSY_HOST" hand_off "$item" ORCH_LANE_HOST_MAX_CALLS=1 ORCH_LANE_HOST_BUSY_WAIT_SECS=0 "$@"
+}
+# A background job exists to wait for its host: a wait refused at the cap is
+# asked again, the record stays preparing and the window open, and the launch
+# finishes once a slot frees.
+busy_hand_off CC-91
+busy="$(log_line "$STATE/lane-prepare-CC-91.log" 'lane-host: lane-host-busy count=1 cap=1 verb=wait item=CC-91')"
+assert_eq "rc=$RC busy=$([[ "$busy" -ge 1 ]] && echo yes || echo "$busy") record=$(prepared CC-91) closed=$(grep -c '^kill-window ' "$TMUX_LOG" || true) failed=$(grep -c '^open-terminal: lane-prepare-failed ' "$STATE/lane-prepare-CC-91.log" || true)" \
+  "rc=0 busy=yes record=preparing prepare none closed=0 failed=0" \
+  "a background wait lane-host refused at its cap keeps the record preparing and the window open"
+rm -f -- "${BUSY_SLOT:?}"
+assert_eq "record=$(settled CC-91) marker=$(marker_at cc-91)" "record=running prepare none marker=root" \
+  "once a slot frees the job's next wait is admitted and the lane launches"
+# A foreground launch has no job to wait in: the refused step is lane-host-busy,
+# never the host failing. STEP|ITEM|ENV: create is refused with the slot taken
+# before the launch, wait and marker by the slot create plants, marker after a
+# create that answers ready.
+TAB=$'\t'
+while IFS='|' read -r step item env; do
+  [[ -n "$step" ]] || continue
+  [[ "$step" != create ]] || : > "$BUSY_SLOT"
+  busy_hand_off "$item" ${env:+"$env"} -- STATE_DIR=
+  rm -f -- "${BUSY_SLOT:?}"
+  assert_eq "rc=$RC busy=$(grep -cE "^open-terminal: lane-host-busy item=$item step=$step( |\$)" <<<"$ERR" || true) other=$(grep -cE '^open-terminal: (host-create-failed|host-prepare-failed|host-gitfile-unread) ' <<<"$ERR" || true) summary=$(grep -o 'launched=[0-9]* skipped=[0-9]* failed=[0-9]*' <<<"$ERR")" \
+    "rc=1 busy=1 other=0 summary=launched=0 skipped=0 failed=1" \
+    "a foreground $step lane-host refused at its cap is lane-host-busy and launches nothing"
+done <<ROWS
+create|CC-92|
+wait|CC-93|
+marker|CC-94|LANE_HOST_STUB_CREATE_LINE=ssh-target=lane.example${TAB}path=/srv/lane${TAB}remote-prefix=exec bash -lc
+ROWS
+
 # The job outlives a kill of the caller's process group, which is what a
 # harness sends the command it ran on return or timeout. The launch runs in a
 # group of its own here, which is killed once the launch has returned.
@@ -685,6 +738,27 @@ group_killed() { # SCRIPT ITEM
 }
 assert_eq "record=$(group_killed "$OT" CC-84)" "record=running prepare none" \
   "a launch job survives a kill of the caller's process group and finishes the launch"
+
+# The busy controls, each a copy of the launcher with one line changed beside
+# links to its helpers in a git repo of its own: without the retry a
+# background wait refused at the cap stops the lane, and without the create's
+# busy branch a refused create reads as the host failing.
+busy_mutant() { # NAME OLD NEW — sets BUSY_MUTANT_OT
+  BUSY_MUTANT_OT="$(mutant_scripts "$1" open-terminal)/open-terminal" || exit 1
+  git -C "$TMP_ROOT/$1" init -q
+  orch_fixture_shared_libs "$TMP_ROOT/$1"
+  mutate_file "$BUSY_MUTANT_OT" "$2" "$3"
+}
+busy_mutant unretried '  HOST_BUSY_RETRY=true' '  :'
+busy_hand_off CC-95 -- SCRIPT="$BUSY_MUTANT_OT"
+assert_eq "record=$(settled CC-95)" "record=stopped prepare wait-failed" \
+  "control: without the retry a background wait refused at the cap stops the lane"
+busy_mutant createbusy '  elif [[ "$create_rc" -eq "$LANE_HOST_BUSY_EXIT" && "$LANE_HOST" != local ]]; then' '  elif false; then'
+: > "$BUSY_SLOT"
+busy_hand_off CC-96 -- SCRIPT="$BUSY_MUTANT_OT" STATE_DIR=
+rm -f -- "${BUSY_SLOT:?}"
+assert_eq "failed=$(grep -c '^open-terminal: host-create-failed item=CC-96 exit=69$' <<<"$ERR" || true)" "failed=1" \
+  "control: without the busy branch a create refused at the cap is host-create-failed"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

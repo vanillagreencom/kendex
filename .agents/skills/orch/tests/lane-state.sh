@@ -601,17 +601,6 @@ for name in kendex:CC-404 CC-404; do
   assert_eq "$(probed "$name")" "CC-404" "lanes state $name probes the provider with the bare item"
 done
 
-# Control: without the busy arm a probe lane-host refused at its cap is noted
-# as a host out of reach.
-BUSY_MUT_REPO="$TMP_ROOT/verb-busy-mutant"
-cp -R "$VERB_REPO" "$BUSY_MUT_REPO"
-busy_arm='			if [[ "$probe_rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then'
-assert_eq "$(grep -cxF -- "$busy_arm" "$BUSY_MUT_REPO/scripts/lanes")" "1" "control: the busy arm is one line to change"
-busy_arm="$busy_arm" awk '$0 == ENVIRON["busy_arm"] { print "\t\t\tif false; then"; next } { print }' \
-  "$VERB_REPO/scripts/lanes" > "$BUSY_MUT_REPO/scripts/lanes"
-assert_eq "$(VERB_RUN_REPO="$BUSY_MUT_REPO" verb_state CC-404 none ssh 69)" "unjudged rc=0 note=host-unreachable" \
-  "control: without the busy arm a refused probe is noted host-unreachable"
-
 # The provider's own bytes reach the operator: a note naming only the key would
 # leave the reason for the failed probe on the far side of the dispatcher.
 verb_state CC-404 none ssh 1 >/dev/null
@@ -669,6 +658,16 @@ git -C "$PROBE_MUTANT_REPO" init -q
 mutate_file "$PROBE_MUTANT_SCRIPTS/lanes" 'touch --item "${LANE_ARG#*:}"' 'touch --item "$LANE_ARG"'
 assert_eq "$(probed kendex:CC-404 "$PROBE_MUTANT_REPO")" "kendex:CC-404" \
   "control: probing with the whole argument names the session to the provider"
+# The probe's busy arm, the second branch on its status: without it a probe
+# lane-host refused at its cap is noted as a host out of reach.
+BUSY_MUTANT_SCRIPTS="$(mutant_scripts verb-busy-mutant lanes)" || exit 1
+BUSY_MUTANT_REPO="$(dirname "$BUSY_MUTANT_SCRIPTS")"
+rm -- "${BUSY_MUTANT_SCRIPTS:?}/lane-host"
+cp "$VERB_REPO/scripts/lane-host" "$BUSY_MUTANT_SCRIPTS/lane-host"
+git -C "$BUSY_MUTANT_REPO" init -q
+mutate_file "$BUSY_MUTANT_SCRIPTS/lanes" 'if [[ "$probe_rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then' 'if false; then'
+assert_eq "$(VERB_RUN_REPO="$BUSY_MUTANT_REPO" verb_state CC-404 none ssh 69)" "unjudged rc=0 note=host-unreachable" \
+  "control: without the busy arm a refused probe is noted host-unreachable"
 
 echo "=== lane-state § control: the judge that reads the process and not the pane ==="
 

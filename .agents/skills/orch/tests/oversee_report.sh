@@ -133,9 +133,10 @@ want="--root /w/$3"; host=""
 [[ ! -f "$CASE/mail-fail-$3" ]] || { cat "$CASE/mail-fail-$3" >&2; exit "$(cat "$CASE/mail-exit-$3" 2>/dev/null || echo 2)"; }
 [[ ! -f "$CASE/pending-$3.jsonl" ]] || cat "$CASE/pending-$3.jsonl"
 EOF
-# lane-host: `cat --item ITEM PATH` answers host/PATH, exit 2 without it;
-# `touch` succeeds; host-gone-ITEM fails every call as a host that no longer
-# knows the item. Every call must run under the ORCH_LANE_HOST its item's
+# lane-host: `cat --item ITEM PATH` answers host/PATH, exit 2 without it,
+# and is refused at the per-home cap for the PATH host-busy names; `touch`
+# succeeds; host-gone-ITEM fails every call as a host that no longer knows
+# the item. Every call must run under the ORCH_LANE_HOST its item's
 # record names (hosted-ITEM).
 cat > "$TMP_ROOT/bin/lane-host" <<'EOF'
 #!/usr/bin/env bash
@@ -143,7 +144,10 @@ cat > "$TMP_ROOT/bin/lane-host" <<'EOF'
   || { echo "lane-host stub: $3 read under host=${ORCH_LANE_HOST:-}" >&2; exit 9; }
 [[ ! -f "$CASE/host-gone-$3" ]] || { echo "lane-host: item-unknown=$3" >&2; exit 2; }
 case "$1" in
-  cat) [[ -f "$CASE/host$4" ]] || exit 2; cat "$CASE/host$4" ;;
+  cat)
+    [[ ! -f "$CASE/host-busy" || "$4" != "$(cat "$CASE/host-busy")" ]] \
+      || { echo "lane-host: lane-host-busy count=1 cap=1 verb=cat item=$3" >&2; exit 69; }
+    [[ -f "$CASE/host$4" ]] || exit 2; cat "$CASE/host$4" ;;
   touch) exit 0 ;;
   *) echo "unexpected lane-host call: $*" >&2; exit 1 ;;
 esac
@@ -530,6 +534,14 @@ echo "gitdir: /clone/.git/worktrees/KEN-7" > "$CASE/host/w/KEN-7/.git"
 rm -f -- "${CASE:?}/host/clone/tmp/workflow-state-KEN-7.json"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Waiting on you/' <<<"$OUT")" "0|Waiting on you: none" "a hosted lane with no state file on its host waits on nothing"
+# A read lane-host refused at its per-home cap names that cause, never a
+# state that could not be read. Rows: the path refused.
+for path in /w/KEN-7/.git /clone/tmp/workflow-state-KEN-7.json; do
+  printf '%s' "$path" > "$CASE/host-busy"
+  run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+  assert_eq "$RC|$(first_err)" "2|oversee-report: lane-host-busy=KEN-7" "a $path read lane-host refused at its cap refuses as lane-host-busy"
+done
+rm -f -- "${CASE:?}/host-busy"
 # ../workflows/merge-pr.md § 5 removes a merged lane's worktree before
 # lane-close runs: the host answers touch and has no .git there.
 rm -f -- "${CASE:?}/host/w/KEN-7/.git"
@@ -767,6 +779,11 @@ report -60
 fleet '' "$(lane issue-7 running -86400 "" github owner/repo)"
 run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: tracker-read=issue-7" "a failing gh issue view refuses rather than render blank cells"
+seed_fleet refuse_mail_busy
+echo 'lane-mail: lane-host-busy=KEN-2' > "$CASE/mail-fail-KEN-2"
+echo 69 > "$CASE/mail-exit-KEN-2"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: lane-host-busy=KEN-2" "a mailbox read lane-host refused at its cap refuses as lane-host-busy, not a row marked unreadable"
 seed_fleet refuse_title
 echo '{"description": "## Done when\n- no title here"}' > "$CASE/linear-KEN-2.json"
 run -- render --state "$CASE/state.json" --repo owner/repo
@@ -814,6 +831,17 @@ echo "[$(merged_pr 11 ken-1 -30 abcdef1234)]" > "$CASE/merged.json"
 touch "$CASE/auth-fail"
 REPORT_UNDER_TEST="$MUTANT" run ORCH_REPORT_EVERY_ISSUES=1 GH_TOKEN=ghp_stale0000 GH_BOT_TOKEN=ghp_bot00000 -- due --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: pr-list=owner/repo" "control: without the ladder due's count fails on a revoked GH_TOKEN"
+
+# The mailbox read's busy branch: without it a read lane-host refused at its
+# cap reads as a mailbox that failed.
+BUSY_MUTANT="$(mutant_scripts busy/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/busy/github"
+mutate_file "$BUSY_MUTANT" '[[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || refuse lane-host-busy "$item" "$(cat "$WORK_DIR/mail.err")"' ':'
+seed_fleet mail_busy_mutant
+echo 'lane-mail: lane-host-busy=KEN-2' > "$CASE/mail-fail-KEN-2"
+echo 69 > "$CASE/mail-exit-KEN-2"
+REPORT_UNDER_TEST="$BUSY_MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: mail-read=KEN-2" "control: without it a refused mailbox read is mail-read"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
