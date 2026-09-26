@@ -99,7 +99,12 @@ create)
   fi
   printf '%s\\n' "$path" ;;
 exists) if [[ -d "$path" ]]; then printf 'true\\n'; else printf 'false\\n'; fi ;;
-path) printf '%s\\n' "$path" ;;
+# An item's path is the hosted tree while it stands, and once it is gone the
+# issue-keyed configured path, under a base dir no create made, as the real
+# command answers; --hosted is the one lane path every create uses.
+path)
+  if [[ "$2" == --hosted || -d "$path" ]]; then printf '%s\\n' "$path"
+  else printf '%s\\n' "$PWD-trees/$2"; fi ;;
 remove)
   if [[ -n "${SSH_TEST_CLOSE_STDOUT:-}" ]]; then
     printf 'before-delete:%s\\n' "$(cat -- "$SSH_TEST_CLOSE_STDOUT")" >> "$SSH_TEST_LOG"
@@ -738,16 +743,39 @@ exec "$REAL_CAT" "$@"
                           b"remote-failed" in removed.stderr),
                          (4, b"", True, False), removed.stderr)
         original = self.script.read_text()
-        guard = """if ! test -d "$1"; then
-  printf 'lane-host-ssh: stop-worktree-removed item=%s\\n' "$4" >&2
-  exit 4
-fi
+        guard = """  if test "$LANE_STOP_CAUSE" = worktree-removed; then exit 4; fi
 """
         self.assertEqual(original.count(guard), 1)
         self.script.write_text(original.replace(guard, ""))
         mutant = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((mutant.returncode, b"stop-worktree-read-failed item=TEST-1" in mutant.stderr),
+        self.assertEqual((mutant.returncode, b"stop-worktree-removed item=TEST-1\n" in mutant.stderr),
                          (1, True), mutant.stderr)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "a removed directory's /proc spelling is Linux's")
+    def test_stop_ends_a_harness_still_in_a_removed_worktree(self):
+        # The harness outlives the worktree its lane's close-out removed, and
+        # the host reads its directory as the removed hosted path, which still
+        # names it. The item's own path by then is the issue-keyed one, whose
+        # base dir no create made.
+        self.assertEqual(self.create().returncode, 0)
+        worktree = Path(self.row["clone"] + "-worktree")
+        shutil.copy2(shutil.which("bash"), self.bin / "claude")
+        (self.bin / "claude").chmod(0o755)
+        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(worktree)],
+                       check=True, capture_output=True)
+        worktree.mkdir()
+        process = subprocess.Popen([str(self.bin / "claude"), "-c", "trap 'exit 0' TERM; while :; do sleep 0.1; done"],
+                                   cwd=worktree, env=self.env, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: process.poll() is None and process.kill())
+        for _ in range(100):
+            if os.readlink(f"/proc/{process.pid}/cwd") == str(worktree.resolve()):
+                break
+            time.sleep(0.02)
+        worktree.rmdir()
+        stopped = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((stopped.returncode, stopped.stdout), (0, b"stopped item=TEST-1 processes=1\n"),
+                         stopped.stderr)
+        self.assertEqual(process.wait(2), 0)
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
     def test_stop_refuses_when_a_signaled_process_stays_live(self):
