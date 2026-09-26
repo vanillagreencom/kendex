@@ -17,13 +17,11 @@ TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 source "$REPO_ROOT/skills/orch/scripts/lib/date-ladder.sh"
 
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 # mutant_scripts and mutate_file, the two halves of the control below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 echo
 echo "--- workflow-state remove ---"
@@ -56,13 +54,13 @@ sd="$TMP_ROOT/main"
 build "$sd"
 rc=0
 out="$(remove "$WS" "$sd" KEN-1 2>&1)" || rc=$?
-[[ "$rc" -eq 0 ]] && ok "remove exits 0" || bad "remove exits 0" "rc=$rc out=$out"
+[[ "$rc" -eq 0 ]] && pass "remove exits 0" || fail "remove exits 0" "rc=$rc out=$out"
 
 while IFS='|' read -r want path label; do
   if [[ -e "$sd/$path" ]]; then got=kept; else got=removed; fi
   [[ "$got" == "$want" ]] \
-  && ok "$label is $want" \
-  || bad "$label is $want" "path=$path got=$got"
+  && pass "$label is $want" \
+  || fail "$label is $want" "path=$path got=$got"
 done <<'ROWS'
 removed|workflow-state-KEN-1.json|the item's workflow state
 removed|workflow-state-KEN-1.json.lock|the item's state lock
@@ -80,8 +78,8 @@ ROWS
 lines="$(grep -c '^removed path=' <<<"$out" || true)"
 [[ "$lines" == 6 && -z "$(grep -v '^removed path=' <<<"$out" || true)" ]] \
   && grep -qxF "removed path=$sd/workflow-state-KEN-1.json" <<<"$out" \
-  && ok "one removed path= line per removed path, and no prune where a fleet state stands" \
-  || bad "one removed path= line per removed path, and no prune where a fleet state stands" "out=$out"
+  && pass "one removed path= line per removed path, and no prune where a fleet state stands" \
+  || fail "one removed path= line per removed path, and no prune where a fleet state stands" "out=$out"
 
 # The fleet's own files, each under a key its name carries, so only the fleet
 # exclusion keeps it: ITEM|PATH|label.
@@ -89,7 +87,7 @@ while IFS='|' read -r item path label; do
   fp="$TMP_ROOT/fleet-$item"
   build "$fp"
   remove "$WS" "$fp" "$item" >/dev/null 2>&1 || true
-  [[ -e "$fp/$path" ]] && ok "remove $item keeps $label" || bad "remove $item keeps $label" "path=$path"
+  [[ -e "$fp/$path" ]] && pass "remove $item keeps $label" || fail "remove $item keeps $label" "path=$path"
 done <<'ROWS'
 oversee|workflow-state-oversee.json|the fleet state
 oversee|workflow-state-oversee.json.lock|the fleet state's lock
@@ -108,8 +106,8 @@ out="$(remove "$WS" "$nf" KEN-1 2>&1)" || rc=$?
    && "$(grep -c '^removed path=' <<<"$out" || true)" == 6 \
    && "$(grep '^pruned fleet_log=' <<<"$out" || true)" == "pruned fleet_log=0 lanes=0 progress_reports=0 paths=1" \
    && "$(tail -n 1 <<<"$out")" == "kept=$nf.fleet/"*.tgz ]] \
-  && ok "with no fleet state the close-out prunes an old file no item names and names its archive" \
-  || bad "with no fleet state the close-out prunes an old file no item names and names its archive" "rc=$rc out=$out"
+  && pass "with no fleet state the close-out prunes an old file no item names and names its archive" \
+  || fail "with no fleet state the close-out prunes an old file no item names and names its archive" "rc=$rc out=$out"
 
 # A backstop that refuses is the close-out's refusal: with no fleet state and
 # an archive root that is a file, remove has taken the item's files, and its
@@ -122,8 +120,8 @@ rc=0
 remove "$WS" "$bd" KEN-1 >"$bd.out" 2>"$bd.err" || rc=$?
 BACKSTOP="rc=$rc removed=$(grep -c '^removed path=' "$bd.out" || true) err=$(head -n 1 "$bd.err" | sed "s|path=$bd.fleet/.*|path=FLEET|") old=$([[ -e "$bd/waiter.abc" ]] && echo kept || echo removed)"
 [[ "$BACKSTOP" == "rc=1 removed=6 err=workflow-state: prune-archive-failed path=FLEET old=kept" ]] \
-  && ok "with no fleet state a backstop whose archive cannot be built refuses the close-out" \
-  || bad "with no fleet state a backstop whose archive cannot be built refuses the close-out" "$BACKSTOP"
+  && pass "with no fleet state a backstop whose archive cannot be built refuses the close-out" \
+  || fail "with no fleet state a backstop whose archive cannot be built refuses the close-out" "$BACKSTOP"
 
 # Each refusal and each quiet success, one row: the case, the exit status and
 # the first line it prints.
@@ -147,8 +145,8 @@ while IFS='|' read -r case_name want_rc want label; do
     rm-fails) got="$( (cd "$TMP_ROOT" && PATH="$RM_BIN:$PATH" bash "$WS" --state-dir "$cp_dir" remove KEN-1) 2>&1 >/dev/null)" || rc=$? ;;
   esac
   [[ "$rc" -eq "$want_rc" && "$(head -n 1 <<<"$got")" == "$want" && ! -e "$TMP_ROOT/none" ]] \
-  && ok "$label" \
-  || bad "$label" "rc=$rc got=$got"
+  && pass "$label" \
+  || fail "$label" "rc=$rc got=$got"
 done <<ROWS
 absent|0||a state directory that is not there removes nothing and creates none
 absent-key|0||a key no entry names removes nothing
@@ -156,7 +154,7 @@ no-item|2|workflow-state: remove-issue command=remove|a remove with no item is r
 rm-fails|1|workflow-state: remove-failed path=$TMP_ROOT/case-rm-fails/completion-summary-KEN-1.md|a removal that fails is refused naming the path
 ROWS
 grep -qxF 'rm: planted failure' <<<"$got" \
-  && ok "the removal refusal carries rm's own words" || bad "the removal refusal carries rm's own words" "got=$got"
+  && pass "the removal refusal carries rm's own words" || fail "the removal refusal carries rm's own words" "got=$got"
 
 # The suite's one must-fail control: the item match dropped, so another
 # item's file is removed with the item's own.
@@ -166,8 +164,8 @@ mp="$TMP_ROOT/m-no-item-match"
 build "$mp"
 remove "$NO_ITEM_MATCH" "$mp" KEN-1 >/dev/null 2>&1 || true
 [[ ! -e "$mp/completion-summary-KEN-2.md" ]] \
-  && ok "control: without the item match another item's file is removed" \
-  || bad "control: without the item match another item's file is removed"
+  && pass "control: without the item match another item's file is removed" \
+  || fail "control: without the item match another item's file is removed"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
