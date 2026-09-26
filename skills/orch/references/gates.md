@@ -9,7 +9,7 @@ Read the effective reviewer-gate mode ONLY through `approval-wait --resolve-mode
 | `GATE_MODE` | Meaning | Route |
 |-------------|---------|-------|
 | `approval` | GitHub-native approval verdict required | `approval-wait` |
-| `review` | a non-author review of the current head that is APPROVED or CHANGES_REQUESTED, or COMMENTED with a body or a thread it opened, plus zero unresolved threads; under review-gate's default review-object settings (any state, no trusted-login list), the merge-blocking Review gate status still counts a reply-only non-author review, so the wait can keep waiting on a head that status already passed | `approval-wait --mode review` |
+| `review` | a non-author review of the current head that is APPROVED or CHANGES_REQUESTED, or COMMENTED with a body or a thread it opened, plus zero unresolved threads | `approval-wait --mode review` |
 | `exempt` | the review gate's class policy waives review for this change class (resolved first) | skip the wait; record the gate not-applicable; no thread term applies either |
 | `off` | reviewer-less repo, or the engine's `REVIEW_GATE_MODE=off` disable | skip the wait; record the gate not-applicable |
 

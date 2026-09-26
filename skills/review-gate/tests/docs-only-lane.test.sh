@@ -74,6 +74,7 @@ run_case() { # NAME MODE HEAD EFFECT WANT
   reset_fixtures "$head"
   min_state=any
   carry_exclude=""
+  shim_fail=""
   case "$effect" in
     objection) reviews_set "$(review reviewer CHANGES_REQUESTED)" ;;
     thread) threads false >"$fixtures/graphql.json" ;;
@@ -82,11 +83,15 @@ run_case() { # NAME MODE HEAD EFFECT WANT
       reviews_set "$(review reviewer COMMENTED "2026-01-01T00:00:00Z" "$head" $'### Suppressed comments (1)\n\n**docs/policy.md:9**\n* Blocking: hidden.')"
       ;;
     policy) carry_exclude='*AGENTS.md;CLAUDE.md' ;;
+    reply)
+      reviews_set "$(review reviewer COMMENTED "2026-01-01T00:00:00Z" "$head" "" 7)"
+      shim_fail=review-comments
+      ;;
     none) : ;;
     *) exit 1 ;;
   esac
   rc=0
-  line="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
+  line="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" GH_SHIM_FAIL="$shim_fail" \
     REVIEW_GATE_SETTINGS_FILE=/dev/null REVIEW_GATE_DOCS_ONLY="$mode" \
     REVIEW_GATE_MODE=enforce REVIEW_GATE_THREADS=enforce \
     REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="" REVIEW_GATE_COMMENT_REVIEWERS="" \
@@ -118,6 +123,8 @@ run_case "a standing objection still blocks" none "$DOCS_HEAD" objection \
   "verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
 run_case "a current-head suppressed finding still blocks" none "$DOCS_HEAD" suppressed \
   "verdict=suppressed-findings detail=1 suppressed finding(s) in a review body, carried by no thread: docs/policy.md:9"
+run_case "a bodyless reply beside the waiver needs no review-comment read" none "$DOCS_HEAD" reply \
+  "verdict=approved detail=docs-only diff (REVIEW_GATE_DOCS_ONLY=none); no review evidence required"
 run_case "ordinary docs keep the waiver with policy exclusions configured" none "$DOCS_HEAD" policy \
   "verdict=approved detail=docs-only diff (REVIEW_GATE_DOCS_ONLY=none); no review evidence required"
 run_case "a policy instruction needs review" none "$POLICY_HEAD" policy \

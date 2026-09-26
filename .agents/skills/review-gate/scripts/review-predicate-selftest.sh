@@ -186,6 +186,7 @@ run() { # case-name, expected-verdict, expected-exit
 reset() {
   printf '[]\n' >"$fixtures/reviews.json"
   printf '[]\n' >"$fixtures/comments.json"
+  printf '[]\n' >"$fixtures/review-comments.json"
   printf '{"check_runs":[]}\n' >"$fixtures/checkruns.json"
   printf '[]\n' >"$fixtures/statuses.json"
   threads >"$fixtures/graphql.json"
@@ -211,7 +212,7 @@ reset() {
   # own explicit cases below.
   CFG_GATE_MODE="enforce"
   CFG_SNAPSHOT=""
-  rm -f "$fixtures/compare.json"
+  rm -f "$fixtures/compare.json" "$fixtures"/compare-*.json
   CFG_PR_AUTHOR="$AUTHOR"
   CFG_CONTEXTS="$ACTIVE_CONTEXTS"
   CFG_SKIPS="$ACTIVE_SKIPS"

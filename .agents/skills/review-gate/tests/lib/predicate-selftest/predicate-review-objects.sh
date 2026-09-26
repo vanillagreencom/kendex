@@ -23,8 +23,8 @@ review_rows="$(
     "$(review "reviewer" COMMENTED)"
   review_row "min_state=approved: APPROVED review counts" approved "" "approved" "$ACTIVE_ERROR_PATTERNS" \
     "$(review "reviewer" APPROVED)"
-  review_row "min_state=any: COMMENTED review counts (compatible default)" approved "" "any" "$ACTIVE_ERROR_PATTERNS" \
-    "$(review "reviewer" COMMENTED)"
+  review_row "min_state=any: COMMENTED review with a body counts (compatible default)" approved "" "any" "$ACTIVE_ERROR_PATTERNS" \
+    "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$HEAD" "Reviewed 3 of 3 changed files.")"
   review_row "an errored auto-review alone is NOT evidence (silence)" awaiting "" "any" "$ERRORED_MARK" \
     "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$ERRORED_BODY")"
   review_row "errored auto-review then a genuine re-review: the genuine row counts" approved "" "any" "$ERRORED_MARK" \
@@ -99,3 +99,85 @@ while IFS= read -r row; do
   want="$(jq -r .want <<<"$row")" || exit 1
   run "$name" "$want"
 done <<<"$review_rows"
+
+# A review counts only with content of its own. Answering a thread submits a
+# bodyless COMMENTED review whose every comment is a reply; which threads a
+# bodyless review opened is read from the review-comment listing, and only
+# where that answer can change the verdict.
+content_row() { # NAME VERDICT READS_COMMENTS MIN_STATE CARRY REVIEWS_JSON REVIEW_COMMENT_JSON...
+  local name="$1" want="$2" reads="$3" min="$4" carry="$5" reviews_json="$6"
+  shift 6
+  jq -cn --arg name "$name" --arg want "$want" --arg reads "$reads" --arg min "$min" --arg carry "$carry" \
+    --argjson reviews "$reviews_json" --args \
+    '{name:$name,want:$want,reads:$reads,min:$min,carry:$carry,reviews:$reviews,comments:($ARGS.positional | map(fromjson))}' "$@"
+}
+reviews_of() { jq -cn --args '$ARGS.positional | map(fromjson)' "$@"; }
+content_rows="$(
+  set -e
+  content_row "a reply-only COMMENTED review is not evidence" awaiting yes any "" \
+    "$(reviews_of "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$HEAD" "" 7)")" "$(review_comment 7 100)"
+  content_row "a bodyless COMMENTED review that opened a thread counts" approved yes any "" \
+    "$(reviews_of "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$HEAD" "" 7)")" "$(review_comment 7)"
+  content_row "a thread another review opened lends no content" awaiting yes any "" \
+    "$(reviews_of "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$HEAD" "" 7)")" "$(review_comment 8)"
+  content_row "a whitespace-only body is no content" awaiting yes any "" \
+    "$(reviews_of "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$HEAD" "$(printf ' \n\t ')" 7)")"
+  content_row "a bodyless APPROVED counts without the review-comment read" approved no any "" \
+    "$(reviews_of "$(review "reviewer" APPROVED "2026-01-01T00:00:00Z" "$HEAD" "" 7)")"
+  content_row "a COMMENTED review with a body counts without the review-comment read" approved no any "" \
+    "$(reviews_of "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$HEAD" "Reviewed 3 of 3 changed files." 7)")"
+  content_row "an approval beside a reply at head decides without the review-comment read" approved no any "" \
+    "$(reviews_of "$(review "reviewer" APPROVED "2026-01-01T00:00:00Z" "$HEAD" "" 7)" \
+                  "$(review "reviewer" COMMENTED "2026-01-01T01:00:00Z" "$HEAD" "" 8)")" "$(review_comment 8 100)"
+  content_row "min_state=approved: a bodyless COMMENTED row never takes the review-comment read" approved no approved "" \
+    "$(reviews_of "$(review "reviewer" APPROVED "2026-01-01T00:00:00Z" "$HEAD" "" 7)" \
+                  "$(review "other-reviewer" COMMENTED "2026-01-01T01:00:00Z" "$HEAD" "" 8)")" "$(review_comment 8)"
+  content_row "carry off: a bodyless ancestor row takes no review-comment read" awaiting no any "" \
+    "$(reviews_of "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$OTHER" "" 7)")" "$(review_comment 7)"
+  content_row "carry on: a bodyless ancestor row is judged from the review comments" awaiting yes any docs \
+    "$(reviews_of "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$OTHER" "" 7)")" "$(review_comment 7 100)"
+)" || exit 1
+while IFS= read -r row; do
+  reset
+  CFG_TRUSTED_LOGINS=""
+  CFG_MIN_STATE="$(jq -r .min <<<"$row")" || exit 1
+  CFG_CARRY="$(jq -r .carry <<<"$row")" || exit 1
+  jq .reviews <<<"$row" >"$fixtures/reviews.json" || exit 1
+  jq .comments <<<"$row" >"$fixtures/review-comments.json" || exit 1
+  name="$(jq -r .name <<<"$row")" || exit 1
+  want="$(jq -r .want <<<"$row")" || exit 1
+  reads="$(jq -r .reads <<<"$row")" || exit 1
+  run "$name" "$want"
+  read_seen=no
+  if grep -qxF 'repos/owner/repo/pulls/1/comments?per_page=100' "$fixtures/.urls.log"; then read_seen=yes; fi
+  cases=$((cases + 1))
+  if [ "$read_seen" = "$reads" ]; then
+    echo "ok    $name: review-comment read $reads"
+  else
+    rg_message error selftest-review-comment-read "$name" "FAIL  $name: review-comment read $read_seen, wanted $reads" >&2
+    failures=$((failures + 1))
+  fi
+done <<<"$content_rows"
+
+# The review-comment listing is read last, only when the verdict turns on it,
+# so a failing listing never costs a verdict another term decides. Each row
+# pairs a bodyless reply at head with that term under a failing listing.
+# name|verdict|term
+while IFS='|' read -r name want term; do
+  reset
+  CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE=any; CFG_CARRY=""
+  reply="$(review "reviewer" COMMENTED "2026-01-01T01:00:00Z" "$HEAD" "" 8)"
+  case "$term" in
+    objection) reviews_set "$(review "objector" CHANGES_REQUESTED "2026-01-01T00:00:00Z" "$OTHER" "" 7)" "$reply" ;;
+    status) reviews_set "$reply"; CFG_CONTEXTS=mech-ctx; status_ctx mech-ctx success 'analysis complete' ;;
+    override) reviews_set "$reply"; CFG_OUTAGE=mech-outage; CFG_PUBLISHER_REJECT=""
+      status_ctx mech-outage success 'reviewer outage attested' ;;
+    *) exit 1 ;;
+  esac
+  export GH_SHIM_FAIL=review-comments
+  run "$name" "$want"
+done <<'CASES'
+failing review-comment listing: a standing objection still decides|changes-requested|objection
+failing review-comment listing: a clean-analysis status still decides|approved|status
+failing review-comment listing: an operator override still decides|approved|override
+CASES
