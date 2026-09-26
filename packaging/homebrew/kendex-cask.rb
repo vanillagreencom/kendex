@@ -5,11 +5,12 @@
 #
 #   brew install vanillagreencom/kendex/kendex
 #
-# Installs the app and, through the formula dependency, the kendex command.
+# Installs the app and links the kendex command out of it, so the two
+# update together.
 cask "kendex" do
-  version "1.0.0"
-  sha256 arm:   "ec48eb743789aad02581a1272ceadb6f49a15646d7774818f140d5ef4afbc350",
-         intel: "dac61f402f66441e80ddf8f9fbbb59fa53660f0a997a906c9ad11c27a1e7910f"
+  version "1.0.1"
+  sha256 arm:   "80d6ca0edf8a20091d3cf9690ad8465ca576b08e026f945c5266083d73c6bf51",
+         intel: "bb90381449f73b0aaac33c2aceb09175c22827de6f49a03d194a34b0352515c4"
 
   # Tauri names the Intel disk image `x64` and the Apple-silicon one `aarch64`.
   arch arm: "aarch64", intel: "x64"
@@ -22,22 +23,24 @@ cask "kendex" do
   # steps aside, and the in-app Update button owns the upgrade.
   auto_updates true
 
-  depends_on formula: "vanillagreencom/kendex/kendex-cli"
+  # Both put `kendex` in brew's bin.
+  conflicts_with formula: "vanillagreencom/kendex/kendex-cli"
 
   app "kendex.app"
+  binary "#{appdir}/kendex.app/Contents/MacOS/kendex"
 
   # A cask has no `version_scheme`, the formula's way over the 5.x-to-1.0
   # restart: `auto_updates true` above hands the upgrade to the app, and
   # the app renders no notice for a feed older than itself, so a 5.x
   # install is offered nothing. The reinstall below is what reaches it.
-  # `brew uninstall kendex` leaves the kendex-cli formula in place, so the
-  # command is removed by hand before the install pulls it back at 1.0.0.
+  # Earlier casks installed the kendex-cli formula beside the app, and
+  # `brew uninstall kendex` leaves it in place, so it is removed by hand
+  # before the install, which the `conflicts_with` above refuses otherwise.
   caveats <<~EOS
-    Upgrading from kendex 5.x: 1.0.0 restarts the version number. This
-    cask leaves upgrades to the app, and the app's updater sees 1.0.0 as
-    older than itself, so nothing offers it. Reinstall once, the kendex
-    command included, because uninstalling the app leaves its kendex-cli
-    formula behind:
+    Upgrading from kendex 5.x, or from a cask that installed the
+    kendex-cli formula: this cask now links the kendex command out of the
+    app. Reinstall once, removing the formula, because uninstalling the
+    app leaves it behind:
 
       brew uninstall kendex
       brew uninstall kendex-cli

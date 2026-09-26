@@ -5,12 +5,12 @@
 #   brew install vanillagreencom/kendex/kendex-cli
 #
 # The plain `kendex` name belongs to the cask, so the default install is
-# the app; this formula is the CLI-only channel and what the cask depends
-# on. Installs the prebuilt release binary — no toolchain needed.
+# the app, which carries the command itself; this formula is the CLI-only
+# channel. Installs the prebuilt release binary — no toolchain needed.
 class KendexCli < Formula
   desc "Package manager for agents, skills, and hooks across AI coding tools"
   homepage "https://kendex.ai"
-  version "1.0.0"
+  version "1.0.1"
   # 1.0.0 follows 5.0.1, so the version number restarts. brew compares
   # this scheme before the number: an installed 5.x sits on scheme 0 and
   # reads as outdated, so `brew upgrade` reaches it. The Arch recipes
@@ -27,11 +27,11 @@ class KendexCli < Formula
   on_macos do
     on_arm do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-aarch64-apple-darwin"
-      sha256 "8f587d1af395f1c7952d7a80ed335ee1779e6a1f778b2e851f171badddcda192"
+      sha256 "327f9d4eaed6c695eb59a4220e4607e76f670575380ec9ddd3208fce306562bf"
     end
     on_intel do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-x86_64-apple-darwin"
-      sha256 "66b4089fd48792ac093c04c47c958103f5c288caec15dff8f216948dd7285228"
+      sha256 "f810654484ea2cd2ace5bbbb8b9f6b7c8be381ba6d66c46826023a11de440050"
     end
   end
 
@@ -41,11 +41,11 @@ class KendexCli < Formula
 
     on_intel do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-x86_64-unknown-linux-gnu"
-      sha256 "0d4ae9ffa82f3600d34a18e4a36009bae29ecd06ba7fa8fb0ef1d569d3a0936f"
+      sha256 "3ec313ca7fa896c6dad99b986027d35c22494bea21807520bc06dc1819000413"
     end
     on_arm do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-aarch64-unknown-linux-gnu"
-      sha256 "04e16bcc316d764c5d275d5f89689f8ba531f3c9d438e23adca24c5ad5bc6126"
+      sha256 "21fab7a98eaa201565e450a98c80e775736a42dc4c9ac30919c4bfc43b374842"
     end
   end
 
@@ -56,6 +56,6 @@ class KendexCli < Formula
   end
 
   test do
-    assert_match "1.0.0", shell_output("#{bin}/kendex --version")
+    assert_match version.to_s, shell_output("#{bin}/kendex --version")
   end
 end

@@ -231,6 +231,25 @@ fn homebrew_cask_hands_the_upgrade_to_the_app() {
     );
 }
 
+/// The cask links the command the app carries, so the two update together,
+/// and refuses to sit beside the formula that puts the same name in brew's
+/// bin.
+#[test]
+fn homebrew_cask_links_the_command_out_of_the_app() {
+    let cask = read("packaging/homebrew/kendex-cask.rb");
+    let lines: Vec<&str> = cask.lines().map(str::trim).collect();
+    for want in [
+        r##"binary "#{appdir}/kendex.app/Contents/MacOS/kendex""##,
+        r#"conflicts_with formula: "vanillagreencom/kendex/kendex-cli""#,
+    ] {
+        assert!(lines.contains(&want), "kendex-cask.rb has no `{want}`");
+    }
+    assert!(
+        !lines.iter().any(|l| l.starts_with("depends_on formula:")),
+        "kendex-cask.rb still installs the kendex-cli formula"
+    );
+}
+
 /// Pacman arch names: `x86_64` and `aarch64`, each with its own source
 /// array, mirrored into .SRCINFO. Only the prebuilt package selects a
 /// download per architecture; the other three build from source.
@@ -548,9 +567,9 @@ fn homebrew_cask_caveats() -> String {
 /// A cask has no `version_scheme`, and `auto_updates true` defers to an app
 /// that renders no notice for a feed older than itself, so a 5.x install is
 /// reached by telling the person to uninstall and install again. Uninstalling
-/// the cask leaves its kendex-cli formula dependency installed, so the
-/// command is removed as its own step before the install pulls it back at
-/// 1.0.0; the order is the instruction.
+/// the cask leaves the kendex-cli formula earlier casks installed, which the
+/// new cask's `conflicts_with` refuses, so the formula is removed as its own
+/// step before the install; the order is the instruction.
 #[test]
 fn the_cask_tells_a_5_x_install_to_reinstall_the_app_and_its_cli() {
     let caveats = homebrew_cask_caveats();
