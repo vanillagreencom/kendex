@@ -5102,7 +5102,12 @@ export type StaleWhy =
 /**  The package's check says its files are out of date. */
 "outOfDate" | 
 /**  The package's check could not answer. */
-"unchecked";
+"unchecked" | 
+/**
+ *  The commit would carry some of the package's changed files and
+ *  leave out the ones `said` names. No setup clears it.
+ */
+"split";
 
 /**
  *  What stands at the folder a project would be reconnected to.

@@ -158,6 +158,18 @@ describe("an offer a package holds", () => {
       actions: ["Leave as diffs"],
       disabled: false,
     },
+    {
+      name: "held, the commit would split its changes",
+      stage: { at: "offer" } as Stage,
+      held: held("split", ["kendex.toml"]),
+      title: "1 file kendex wrote in site is not committed",
+      words: [
+        "This commit would carry some of bot-instructions's changed files and leave out the ones below. They belong in one commit: leave them as diffs and commit them together.",
+        "kendex.toml",
+      ],
+      actions: ["Leave as diffs"],
+      disabled: false,
+    },
   ])("draws its stage: $name", async (row) => {
     useCommitOfferStore.setState({
       queue: [{ ...offer, stale: [row.held], staleAction: [row.held] }],

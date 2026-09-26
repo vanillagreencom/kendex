@@ -6,8 +6,11 @@ The commit offer in [post-refresh-commit-flow.md](post-refresh-commit-flow.md) i
 
 A package can declare an effect on files in the checkout, the way bot-instructions renders the review-bot files. A commit carries those files, and commit-guards' pre-commit chain runs `bot-instructions check --staged` wherever that package is installed. `commit_offer::stale` asks each such package before the commit is offered, where the set touches the package's own files or a path it declares it writes. The app, whose write-opened offer starts on this action's own paths, asks once for that commit and once for every pending change, and holds only the one picked: an older pending change to a package's files holds only the commit that carries it. An effect inside `.git` is out of scope: a commit carries none of those files.
 
+A commit never splits a package's pending paths. One that carries any of a package's changed paths while leaving another out is held, however the package stands. The paths left out can be under the package's tree or its declared writes, or the manifest, where the table named for the package changed: kendex never commits the manifest. The repository's check renders from what the commit holds, so it would compare the carried files against inputs left behind. No setup clears this; the way on is Leave, and the person commits the files together. This rule is also what lets the working-tree check below stand for the staged one: with every changed input carried, the tree the check reads is the tree the commit holds. A candidate index, a temporary index built from the commit's paths and checked with `check --staged`, would judge the commit directly. It was not built: it runs a second package check per scope on every offer and needs its own index lifecycle, where this rule is one pass over paths already read.
+
 | Standing | How kendex reads it | Why named |
 | --- | --- | --- |
+| Splits the package's changed paths | Its paths in the set against the commit's, and its manifest table against the last commit | `the commit would carry some of its changed files and leave these out`, with the paths |
 | Declares no installer | Its declaration; no setup could clear a hold | not named |
 | Not set up here | No arming record for this checkout; no package code runs | `not set up in this checkout` |
 | Set up, its check exits 1 | The declared checker, licensed by the record | `out of date`, with the check's words |
@@ -36,7 +39,7 @@ bot-instructions changes how this repository works, beyond the files above:
 1-2, or Enter to leave them as diffs:
 ```
 
-After a setup that leaves the package still named, the block is printed again with the package's fresh words and ends on `it is still not ready after its setup ran; nothing was committed`, exit 1. With no terminal, or a flag naming a commit, the block ends on `set it up here first: at a terminal, where kendex offers it, or with Set up on its package page in the app`. A flag's run exits 1, `not committed`.
+After a setup that leaves the package still named, the block is printed again with the package's fresh words and ends on `it is still not ready after its setup ran; nothing was committed`, exit 1. A commit that would split a package's changed files names the paths left out and ends on `they are left as diffs; commit them together yourself`, with no setup offered and no question asked; a flag's run exits 1. With no terminal, or a flag naming a commit, the block ends on `set it up here first: at a terminal, where kendex offers it, or with Set up on its package page in the app`. A flag's run exits 1, `not committed`.
 
 ## App
 
@@ -52,4 +55,4 @@ The held state is drawn in place of the offer state.
 | Footer, outline | `Leave as diffs` |
 | Footer, primary | `Set up bot-instructions here`; `Setting up…` while it runs |
 
-A setup whose installer, or the read after it, fails ends in `The setup did not finish` with the words, and `Leave as diffs` only. A setup that ran and leaves a package still named ends in `Set up, and still not ready to commit`, described `The setup ran, and kendex still does not offer the commit. Nothing was committed.`, with each package's line and fresh words, and `Leave as diffs` only.
+Where a package would have its changed files split, its line names the paths left out and the footer carries `Leave as diffs` only: no setup clears it. A setup whose installer, or the read after it, fails ends in `The setup did not finish` with the words, and `Leave as diffs` only. A setup that ran and leaves a package still named ends in `Set up, and still not ready to commit`, described `The setup ran, and kendex still does not offer the commit. Nothing was committed.`, with each package's line and fresh words, and `Leave as diffs` only.

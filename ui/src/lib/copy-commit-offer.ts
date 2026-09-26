@@ -95,6 +95,8 @@ export function staleLine(stale: StalePackage): string {
       return `${stale.name} says its files in this repository are out of date.`;
     case "unchecked":
       return `${stale.name} could not say whether its files in this repository are up to date.`;
+    case "split":
+      return `This commit would carry some of ${stale.name}'s changed files and leave out the ones below. They belong in one commit: leave them as diffs and commit them together.`;
   }
 }
 export const STALE_NOTE =
