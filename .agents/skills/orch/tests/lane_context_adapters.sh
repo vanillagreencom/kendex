@@ -46,9 +46,11 @@ due() { # LIB TOKENS WINDOW PCT
 }
 
 # One transcript line per spelling a harness writes, with a model and a figure.
+# Each figure holds 7 output tokens, the response the next request sends back,
+# so a figure one over a prompt is read only where the output is summed.
 claude_line() { # MODEL TOKENS
   jq -nc --arg m "$1" --argjson t "$2" \
-    '{type:"assistant",message:{model:$m,usage:{input_tokens:1,cache_read_input_tokens:($t - 1),cache_creation_input_tokens:0}}}'
+    '{type:"assistant",message:{model:$m,usage:{input_tokens:1,cache_read_input_tokens:($t - 8),cache_creation_input_tokens:0,output_tokens:7}}}'
 }
 codex_context() { # MODEL
   jq -nc --arg m "$1" '{type:"turn_context",payload:{model:$m}}'
@@ -59,7 +61,7 @@ codex_count() { # TOKENS WINDOW
 }
 pi_line() { # MODEL TOKENS
   jq -nc --arg m "$1" --argjson t "$2" \
-    '{type:"message",message:{role:"assistant",model:$m,usage:{input:1,output:7,cacheRead:($t - 1),cacheWrite:0,totalTokens:($t + 7)}}}'
+    '{type:"message",message:{role:"assistant",model:$m,usage:{input:1,output:7,cacheRead:($t - 8),cacheWrite:0,totalTokens:$t}}}'
 }
 
 # The transcripts, each named for what it holds.
@@ -176,7 +178,11 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'claude reads claude-last as'
   control no-synthetic-skip adapters/claude.sh ' and .model != "<synthetic>"' '' \
     'claude reads claude-synthetic as'
-  control pi-spelling adapters/pi.sh 'if has("input") or has("cacheRead") or has("cacheWrite")' 'if false' \
+  control pi-spelling adapters/pi.sh 'if has("input") or has("output") or has("cacheRead") or has("cacheWrite")' 'if false' \
+    'pi reads pi-last as: rc=0 1000|200000|m'
+  control claude-output adapters/claude.sh ' + (.output_tokens // 0))' ')' \
+    'claude reads claude-last as'
+  control pi-output adapters/pi.sh '(.input // 0) + (.output // 0)' '(.input // 0)' \
     'pi reads pi-last as: rc=0 1000|200000|m'
   control codex-window adapters/codex.sh '\($i.model_context_window // "")' '' \
     'codex reads codex-last as'

@@ -185,8 +185,8 @@ stop_at() { # TRANSCRIPT ACTIVE [ENV=VAL...]
 # A real transcript grows one line at a time, so a row that turns on WHICH
 # usage line the hook reads writes the first and appends the rest.
 #
-#   claude  Claude Code's own line: input_tokens beside its two cache counts,
-#           on a model whose tier runs a 1M window.
+#   claude  Claude Code's own line: input_tokens beside its two cache counts
+#           and output_tokens, on a model whose tier runs a 1M window.
 #   sonnet  the same line on a model whose window the claude adapter leaves
 #           unnamed.
 #   pi      Pi's session entry, `appendMessage` in @earendil-works/pi-coding-agent,
@@ -203,7 +203,7 @@ usage_line() { # SPELLING TOKENS
   case "$1" in
     claude | sonnet)
       jq -nc --argjson t "$2" --arg m "$([ "$1" = claude ] && echo claude-opus-5-5 || echo claude-sonnet-5)" \
-        '{type:"assistant",message:{model:$m,usage:{input_tokens:1,cache_read_input_tokens:($t - 1),cache_creation_input_tokens:0}}}'
+        '{type:"assistant",message:{model:$m,usage:{input_tokens:1,cache_read_input_tokens:($t - 8),cache_creation_input_tokens:0,output_tokens:7}}}'
       ;;
     codex)
       jq -nc '{type:"turn_context",payload:{model:"gpt-6-astra"}}'
@@ -214,8 +214,8 @@ usage_line() { # SPELLING TOKENS
       jq -nc --argjson t "$2" \
         '{type:"message",id:"e1",parentId:null,timestamp:"2026-09-19T00:00:00Z",
           message:{role:"assistant",model:"m",stopReason:"stop",
-                   usage:{input:1,output:7,cacheRead:($t - 1),cacheWrite:0,
-                          totalTokens:($t + 7),cost:{total:0}}}}'
+                   usage:{input:1,output:7,cacheRead:($t - 8),cacheWrite:0,
+                          totalTokens:$t,cost:{total:0}}}}'
       ;;
     unread)
       jq -nc --argjson t "$2" \
@@ -640,7 +640,9 @@ expect 2 "lane-mail-check: context=600000" "a transcript path holding a space is
 # picks the adapter, and pins the reading the turn end recorded for every other
 # reader. A 1M window at 500000 tokens is room under the fraction, where the
 # absolute mark this replaced fired. A reading whose window its adapter cannot
-# name is reported and passed, never judged against a guess.
+# name is reported and passed, never judged against a guess. Every figure holds
+# the response's 7 output tokens, so each row at its mark crosses on the output
+# alone.
 #
 #   HOOK DIR|SPELLING|TOKENS|PAYLOAD WINDOW|FIRST LINE|RECORDED
 ADAPTER_ROWS='.claude/hooks|claude|899999||GAP|claude 899999 1000000
