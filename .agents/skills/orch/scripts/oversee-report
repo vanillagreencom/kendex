@@ -130,8 +130,8 @@ Rows:
                   written at launch, so a key with one has launched.
   Waiting on you  each owner ask no answer has closed, from `lane-mail
                   pending --item overseer --to owner`, as `Question for you:
-                  <text>`, with its recommendation and the time it stands by
-                  default where the ask carries them,
+                  <text>`, with its recommendation and the time after which
+                  it becomes the default where the ask carries them,
                   then one line per thing a running lane waits on, naming the
                   item: an ask `lane-mail pending` lists, the post_pr_stop its
                   own workflow state holds, and failing checks on its open PR
@@ -647,7 +647,7 @@ render() {
   fi
   if ! list="$(jq -r -R 'fromjson? | objects
     | "- Question for you: \(.text // "" | gsub("\n"; " "))"
-      + (if .recommend then " (recommended \(.recommend); taken by default at \(.deadline // "no deadline"))" else "" end)' \
+      + (if .recommend then " (recommended \(.recommend); \(if .deadline then "defaults to it after \(.deadline)" else "no deadline" end))" else "" end)' \
     <<<"$list" 2>"$WORK_DIR/mail.err")"; then
     refuse owner-asks overseer "$(cat "$WORK_DIR/mail.err")"
   fi
