@@ -9,7 +9,7 @@
 #     checks:<name>  a checks fixture; checks-exit:<n> gh's exit for it
 #     threads:<actionable|outdated|malformed|large|bot|resolved100|->, and
 #     the bot-thread shapes threads:<bot-outdated|bot-and-person|two-bots|
-#     codeql|bot-with-reply|bot-partial|waived-resolved|waived-answered|
+#     codeql|bot-with-reply|bot-partial|waived-resolved|waived-twice|waived-answered|
 #     waived-person-reply|bot-login-user>;
 #     `actionable` and `outdated` are a person's, typed User by GitHub
 #     threads:page2:<name>  a second page holding that fixture
@@ -169,6 +169,9 @@ threads_of() {
     bot-partial) printf '[{"id":"PRRT_bot_partial","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":101,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"}]}}]' ;;
     # a thread the merge route resolved under an earlier waiver
     waived-resolved) printf '[{"id":"PRRT_waived","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"vanillagreen-fleet-lanes[bot]"},"path":"docs/plans/a.md","line":4,"comments":{"totalCount":2,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"Resolved by the merge route: change class trivial at 1111111111111111111111111111111111111111, review evidence none under REVIEW_GATE_CLASS_POLICY"}]}}]' ;;
+    # that thread waived again on a later head: two waiver replies, both the
+    # resolver's, and nothing after the second
+    waived-twice) printf '[{"id":"PRRT_waived_twice","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"vanillagreen-fleet-lanes[bot]"},"path":"docs/plans/a.md","line":4,"comments":{"totalCount":3,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"%s"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"%s"}]}}]' "$WAIVER_REPLY" "${WAIVER_REPLY/1111111111111111111111111111111111111111/3333333333333333333333333333333333333333}" ;;
     # that thread after a reopen: its resolver answered and resolved it again
     waived-answered) printf '[{"id":"PRRT_answered","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"vanillagreen-fleet-lanes[bot]"},"path":"docs/plans/a.md","line":4,"comments":{"totalCount":3,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"%s"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"Fixed in 2222222"}]}}]' "$WAIVER_REPLY" ;;
     # the waiver still the resolution, with a person's reply after it
