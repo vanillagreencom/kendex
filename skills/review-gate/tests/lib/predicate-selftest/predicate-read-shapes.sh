@@ -4,6 +4,8 @@ while IFS='|' read -r endpoint body code; do
   reset
   CFG_CONTEXTS=mech-ctx
   CFG_REVIEWERS='mech-bot[bot]:Reviewed commit:'
+  # The review-comment listing is read only for a row with no content of its own.
+  [ "$endpoint" != review-comments ] || reviews_set "$(review "$(trusted_reviewer)" COMMENTED)"
   if [ "$body" = empty ]; then
     export GH_SHIM_EMPTY="$endpoint"
   else
@@ -27,4 +29,7 @@ reviews|{"message":"Server Error"}|predicate-reviews-pages
 checkruns|\n   \n|predicate-checkruns-pages
 checkruns|{}|predicate-checkruns-pages
 comments|\n   \n|predicate-comments-pages
+review-comments|empty|predicate-review-comments-empty
+review-comments|\n   \n|predicate-review-comments-pages
+review-comments|{"message":"Server Error"}|predicate-review-comments-pages
 CASES

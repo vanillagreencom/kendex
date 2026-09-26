@@ -50,7 +50,14 @@ Predicate: review evidence present for the CURRENT head — any of
       errored state, so a bot review that ERRORS lands as a normal review
       row (COMMENTED) whose body says the review never ran. Like a
       skip-marked check pass it proves nothing ran — silence, routed to
-      NOT-EVIDENCE, never to failure, and never a carry-forward candidate;
+      NOT-EVIDENCE, never to failure, and never a carry-forward candidate.
+      The row also needs content of its own: a formal verdict (APPROVED or
+      CHANGES_REQUESTED, whatever its body), a non-blank body, or a review
+      comment that opens a thread. Answering a thread submits a bodyless
+      COMMENTED row whose every comment is a reply; that row is
+      NOT-EVIDENCE the same way. A bodyless COMMENTED row is judged from
+      the review-comment listing, read only when such a row exists, and a
+      failed read of it is exit 2;
   (b) a trusted clean-analysis CHECK-RUN or legacy COMMIT STATUS succeeding
       on this head, whose title/summary/description carries no skip-pattern
       marker (a "pass" that says the analysis was rate limited, skipped, or
@@ -1034,21 +1041,35 @@ cr="$(jq '[.[] | select(.state != "DISMISSED" and .state != "PENDING") | select(
 # objection would be a fail-open lever, and an errored row can never block
 # anyway (it is not CHANGES_REQUESTED).
 #
+# A REPLY-ONLY review is not evidence either. Answering an existing review
+# thread submits its own COMMENTED review with an empty body whose every
+# comment is a reply, so counting it would pass the head the moment anyone
+# answers a thread, on a row that says nothing about the head. A row counts
+# only with content of its own: a formal verdict (APPROVED or
+# CHANGES_REQUESTED, whatever its body — the Approve button with no comment
+# submits an empty-bodied APPROVED), a non-blank body, or a review comment
+# that opens a thread rather than answering one. The review row carries no
+# comments, so which threads a bodyless COMMENTED row opened is read from the
+# review-comment listing into $openers below, and only when some candidate
+# row needs it. orch's approval-wait applies the same rule to the same rows.
+#
 # Defined ONCE and concatenated in front of EVERY jq program that accepts
 # review rows, because what the gate accepts as a review must never drift
 # between them and hand-kept copies of the chain would part ways silently.
 # Three programs call it: head evidence below, carry candidates, and the
 # suppressed-finding scan. What is shared is the whole accepted-row chain —
-# the state and author exclusions, the trust list, and this attestation — and
-# each program adds only what is genuinely its own: the commit predicate, and
-# min_state where it applies. The `cr` reduction above is NOT a fourth copy;
-# it is deliberately unfiltered by the trust list, for the reason stated
-# there.
+# the state and author exclusions, the trust list, this attestation and the
+# content rule — and each program adds only what is genuinely its own: the
+# commit predicate, and min_state where it applies. The `cr` reduction above
+# is NOT a fourth copy; it is deliberately unfiltered by the trust list, for
+# the reason stated there, and the content rule never drops the verdicts it
+# reduces.
 #
 # The body is bound BEFORE testing containment: inside contains(.) the dot
 # would rebind, the same trap as the skip-pattern filter. $mk is the
 # lowercased pattern list, $t the trust list, both built by the helpers here
-# from the $errmarks and $trusted each program passes.
+# from the $errmarks and $trusted each program passes; $openers is the ids of
+# the reviews that opened a thread.
 ACCEPTED_ROWS_DEF='def not_errored_attestation($mk):
   (((.body // "") | ascii_downcase
     | sub("^[\\s>]+"; "") | split("\n") | (.[0] // "")) as $b
@@ -1057,11 +1078,48 @@ def trust_list($trusted):
   $trusted | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0));
 def error_marks($errmarks):
   $errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase);
-def accepted_rows($t; $mk; $author):
+def own_content:
+  .state == "APPROVED" or .state == "CHANGES_REQUESTED" or ((.body // "") | test("\\S"));
+def candidate_rows($t; $mk; $author):
   [ .[]
     | select(.state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
     | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
-    | select(not_errored_attestation($mk)) ];'
+    | select(not_errored_attestation($mk)) ];
+def accepted_rows($t; $mk; $author; $openers):
+  [ candidate_rows($t; $mk; $author)[]
+    | select(own_content or (.id as $id | any($openers[]; . == $id))) ];'
+
+# The review-comment listing is read with the reviews read contract: every
+# page, and a failed, zero-byte or non-array read is exit 2. A read that
+# failed must never become an empty opener list, which would drop a bodyless
+# review that did open a thread and turn a reviewed head into awaiting on an
+# API hiccup.
+needs_openers="$(jq --arg author "$PR_AUTHOR" --arg trusted "$TRUSTED_LOGINS_N" \
+        --arg errmarks "$ERROR_PATTERNS" "$ACCEPTED_ROWS_DEF"'
+  trust_list($trusted) as $t
+  | error_marks($errmarks) as $mk
+  | any(candidate_rows($t; $mk; $author)[]; own_content | not)' <<<"$reviews")" || {
+  rg_message error predicate-review-content "$PR_NUMBER" "::error::could not evaluate review content for PR #$PR_NUMBER" >&2
+  exit 2
+}
+THREAD_OPENERS='[]'
+if [ "$needs_openers" = "true" ]; then
+  raw_review_comments="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER/comments?per_page=100" --paginate)" || {
+    rg_message error predicate-review-comments-read "$PR_NUMBER" "::error::could not read review comments for PR #$PR_NUMBER" >&2
+    exit 2
+  }
+  if [ -z "$raw_review_comments" ]; then
+    rg_message error predicate-review-comments-empty "$PR_NUMBER" "::error::review-comments read for PR #$PR_NUMBER produced zero bytes (broken read, not an empty page set)" >&2
+    exit 2
+  fi
+  THREAD_OPENERS="$(jq -c -s 'if (length > 0) and all(type == "array")
+                              then add | [ .[] | select(.in_reply_to_id == null) | .pull_request_review_id
+                                           | select(. != null) ] | unique
+                              else error("review comment pages are not arrays") end' <<<"$raw_review_comments" 2>/dev/null)" || {
+    rg_message error predicate-review-comments-pages "$PR_NUMBER" "::error::review-comments read for PR #$PR_NUMBER returned non-array pages or a vacuous body (broken read)" >&2
+    exit 2
+  }
+fi
 
 # Review-object evidence. NOT a latest-review-per-reviewer reduction (see the
 # header): in "any" mode every accepted row counts; in "approved" mode a
@@ -1070,10 +1128,11 @@ def accepted_rows($t; $mk; $author):
 # never withdraws an approval.
 got="$(jq --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
         --arg trusted "$TRUSTED_LOGINS_N" --arg minstate "$MIN_STATE" \
-        --arg errmarks "$ERROR_PATTERNS" "$ACCEPTED_ROWS_DEF"'
+        --arg errmarks "$ERROR_PATTERNS" --argjson openers "$THREAD_OPENERS" \
+        "$ACCEPTED_ROWS_DEF"'
   trust_list($trusted) as $t
   | error_marks($errmarks) as $mk
-  | [ accepted_rows($t; $mk; $author)[] | select(.commit_id == $sha) ]
+  | [ accepted_rows($t; $mk; $author; $openers)[] | select(.commit_id == $sha) ]
   | if $minstate == "approved" then
       group_by(.user.login)
       | map(sort_by(.submitted_at // ""))
@@ -1540,10 +1599,11 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
   # bounded so a force-push-heavy PR cannot turn the walk into an API storm.
   carry_candidates="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
       --arg trusted "$TRUSTED_LOGINS_N" --arg minstate "$MIN_STATE" \
-      --arg errmarks "$ERROR_PATTERNS" "$ACCEPTED_ROWS_DEF"'
+      --arg errmarks "$ERROR_PATTERNS" --argjson openers "$THREAD_OPENERS" \
+      "$ACCEPTED_ROWS_DEF"'
     trust_list($trusted) as $t
     | error_marks($errmarks) as $mk
-    | [ accepted_rows($t; $mk; $author)[]
+    | [ accepted_rows($t; $mk; $author; $openers)[]
         | select($minstate != "approved" or .state == "APPROVED")
         | select((.commit_id // "") != "" and .commit_id != $sha)
       ]
@@ -2203,7 +2263,7 @@ SUPP_ENTRY_DEF='def entry_marks: ["**", "`"];
 '
 supp_raw="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
         --arg trusted "$TRUSTED_LOGINS_N" --arg carrybase "$supp_carry_base" \
-        --arg errmarks "$ERROR_PATTERNS" \
+        --arg errmarks "$ERROR_PATTERNS" --argjson openers "$THREAD_OPENERS" \
         "$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$ACCEPTED_ROWS_DEF"'
   # The sentinel text of a line, whichever surface carries it: a markdown
   # heading, or the <summary> of a <details> section. The reviewer writes the
@@ -2263,7 +2323,7 @@ supp_raw="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
         else . end);
   trust_list($trusted) as $t
   | error_marks($errmarks) as $mk
-  | [ accepted_rows($t; $mk; $author)[]
+  | [ accepted_rows($t; $mk; $author; $openers)[]
       | select(.commit_id == $sha or ($carrybase != "" and .commit_id == $carrybase))
       | (.body // "") | suppressed_scan
     ] as $rows

@@ -94,6 +94,7 @@ case "$url" in
   *"/status"*)   name=status ;;
   *"/issues/"*"/comments"*) name=comments ;;
   graphql)       name=graphql ;;
+  *"/pulls/"*"/comments"*) name=review-comments ;;
   *"/pulls/"*)   name=pull ;;
   *"/rules/branches/"*) name=rules ;;
   "repos/"*"/branches/"*) name=branch ;;

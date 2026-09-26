@@ -186,6 +186,7 @@ run() { # case-name, expected-verdict, expected-exit
 reset() {
   printf '[]\n' >"$fixtures/reviews.json"
   printf '[]\n' >"$fixtures/comments.json"
+  printf '[]\n' >"$fixtures/review-comments.json"
   printf '{"check_runs":[]}\n' >"$fixtures/checkruns.json"
   printf '[]\n' >"$fixtures/statuses.json"
   threads >"$fixtures/graphql.json"
