@@ -181,12 +181,24 @@ wrapped() {
   seen="$(observe "$1" "" "--window;own;--expect;shell;--key;Enter" "echo 0 > '$WRAP_COUNT'; echo $2 > '$WRAP_LIMIT'" "$WRAPPED")"
   printf '%s %s' "$seen" "$(awk '$1 == "pane-write:" { for (i = 3; i <= NF; i++) if ($i ~ /^running=/) print $i }' "$TMP_ROOT/err")"
 }
-assert_eq "$(wrapped "$REF" 2)" "rc=0 key=none received= " \
-  "a window a default-command wrapper holds for two reads passes once its shell is in the foreground"
-assert_eq "$(wrapped "$REF" 99)" "rc=1 key=process-mismatch received= running=systemd-run" \
+# At a one-second settle the resolution reads the pane once and the settle ten
+# times more, so the eleventh list-panes call is the last reading: a wrapper
+# held for ten reads is gone by it, one held for eleven is not.
+assert_eq "$(wrapped "$REF" 10)" "rc=0 key=none received= " \
+  "a window a default-command wrapper holds until the last reading passes once its shell is in the foreground"
+assert_eq "$(wrapped "$REF" 11)" "rc=1 key=process-mismatch received= running=systemd-run" \
   "a window the wrapper holds past the settle time is refused on the last reading"
-assert_eq "$(observe "$REF" "" "--window;own;--expect;shell;--key;Enter" "PW_SETTLE=abc")" \
-  "rc=1 key=settle-invalid received=" "a settle time that is not a whole number of seconds is refused"
+# SETTLE|EXPECTED — the setting's two sides: two digits at most, and digits only.
+SETTLES=(
+  "99|rc=0 key=none received="
+  "100|rc=1 key=settle-invalid received="
+  "abc|rc=1 key=settle-invalid received="
+)
+for r in "${SETTLES[@]}"; do
+  IFS='|' read -r settle want <<<"$r"
+  assert_eq "$(observe "$REF" "" "--window;own;--expect;shell;--key;Enter" "PW_SETTLE=$settle")" \
+    "$want" "a settle time of $settle reads as the 0-99 whole seconds the setting allows"
+done
 
 # buffers_left — how many pane-write buffers the fixture server holds, each
 # deleted once counted so the next count starts from none.
@@ -279,11 +291,14 @@ mutant shared-buffer 'buffer="pane-write-$$-${PANE_WRITE_ID#%}"' 'buffer="pane-w
 assert_eq "$(concurrent "$MUTANT")" "rc=0,2 lane=two, pair=" \
   "control: a buffer named for the script alone hands one job's text to the other's pane"
 mutant settle '[[ "$reads" -lt $((10#$settle * 10)) ]] || break' 'break'
-assert_eq "$(wrapped "$MUTANT" 2)" "rc=1 key=process-mismatch received= running=systemd-run" \
+assert_eq "$(wrapped "$MUTANT" 10)" "rc=1 key=process-mismatch received= running=systemd-run" \
   "control: without the settle the wrapper's first reading refuses the window"
 mutant settle-invalid '[[ "$settle" =~ ^[0-9]{1,2}$ ]]' '[[ "$settle" =~ ^.*$ ]]'
 assert_eq "$(observe "$MUTANT" "" "--window;own;--expect;shell;--key;Enter" "PW_SETTLE=abc")" \
   "rc=0 key=none received=" "control: without the settle check a word for the settle time is never judged"
+mutant settle-digits '^[0-9]{1,2}$' '^[0-9]+$'
+assert_eq "$(observe "$MUTANT" "" "--window;own;--expect;shell;--key;Enter" "PW_SETTLE=100")" \
+  "rc=0 key=none received=" "control: without the two-digit bound a three-digit settle time is never judged"
 mutant copy-mode 'pane_write_mode_clear() {' 'pane_write_mode_clear() { return 0;'
 assert_eq "$(observe "$MUTANT" "" "--window;lane;--expect;cat;--file;$HELLO" 'tm copy-mode -t "$LANE_PANE"')" \
   "rc=0 key=none received=hello" "control: without the copy-mode cancel the Enter never reaches the program"
