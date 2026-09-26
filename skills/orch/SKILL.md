@@ -121,7 +121,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; `.env.
 
 ## Runtime Notes
 
-> If you are running in **Codex**: `approval required by policy, but AskForApproval is set to Never` flags the command's SHAPE. Never retry it, never wait for approval; rewrite it per [references/codex-runtime.md](references/codex-runtime.md). Run long waiters through [Waiter launch](references/waiter-launch.md); CI waiting uses `.agents/skills/orch/scripts/ci-wait`. Spawn generated agents through `scripts/spawn-adapter` with `fork_context: false`, then `send_input` a `DELEGATION:`-prefixed `<delegation_format>`.
+> If you are running in **Codex**: `approval required by policy, but AskForApproval is set to Never` means an execpolicy rule matched the command, not its shell form. Never retry it, never wait for approval; act per [references/codex-runtime.md](references/codex-runtime.md), which states what each launch mode refuses. Run long waiters through [Waiter launch](references/waiter-launch.md); CI waiting uses `.agents/skills/orch/scripts/ci-wait`. Spawn generated agents through `scripts/spawn-adapter` with `fork_context: false`, then `send_input` a `DELEGATION:`-prefixed `<delegation_format>`.
 
 > If you are running in **OpenCode**: store the `task_id` returned by `functions.task` in workflow state (`child_sessions[agent].agent_id`, `review_agent_ids[reviewer-name]`) and re-delegate with `functions.task(task_id=<stored_id>)`. Spawn fresh only when no ID is stored, one resume attempt failed, or the task is confirmed dead.
 
