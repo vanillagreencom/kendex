@@ -17,22 +17,25 @@
 //! standing consent, so no later run inherits it: `kendex refresh` repairs
 //! the files a package installs and arms nothing on its own, and a
 //! repository is armed by the invocation that says so — this one, `kendex
-//! guard install`, or the yes a writing verb asks for at a terminal: the
-//! commit offer's setup of a package holding the commit, and the setup a
-//! linked work tree is offered where its main checkout has it. Each of
-//! those asks after printing this same disclosure. Not even where kendex's own record says this repository was
-//! armed before, for two reasons. The yes was given against the disclosure
-//! as it read that day, its declared writes and its summary, and a
-//! package's next version can declare more — a hook lane the armed shims
-//! do not carry — so running its installer again on the strength of that
-//! yes applies an effect nobody was shown. And the installer a refresh
-//! would run is code that arrived with the fetch the same refresh made:
-//! running it unasked is running a checkout's script on the checkout's
-//! own say-so. What a refresh owes an armed repository instead is to say
-//! so when the package reports its effect no longer standing — one
-//! reading, `kendex_core::repo_effects::lapsed`, which `kendex verify`
-//! fails on — and to name `kendex guard install`, which is the person
-//! saying yes again to the disclosure as it now reads.
+//! guard install`, or a yes a writing verb asks for at a terminal. A
+//! refresh does not run an installer unasked even where kendex's own record
+//! says this repository was armed before, for two reasons. The yes was
+//! given against the disclosure as it read that day, its declared writes
+//! and its summary, and a package's next version can declare more — a hook
+//! lane the armed shims do not carry — so running its installer again on
+//! the strength of that yes applies an effect nobody was shown. And the
+//! installer a refresh would run is code that arrived with the fetch the
+//! same refresh made: running it unasked is running a checkout's script on
+//! the checkout's own say-so. What a refresh owes an armed repository
+//! instead is to say so when the package reports its effect no longer
+//! standing — one reading, `kendex_core::repo_effects::lapsed`, which
+//! `kendex verify` fails on — and to name `kendex guard install`, which is
+//! the person saying yes again to the disclosure as it now reads.
+//!
+//! A writing verb asks that yes in two places: the commit offer's setup of
+//! a package holding the commit, and the setup a linked work tree is
+//! offered where its main checkout has it. Each prints this same
+//! disclosure before it asks.
 //!
 //! Every value a package declared goes out through the `ui` seam, which
 //! escapes it. This block is read immediately before a consent prompt, and

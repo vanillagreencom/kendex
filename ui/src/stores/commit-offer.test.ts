@@ -785,37 +785,88 @@ describe("setting up a package that holds the commit", () => {
     });
   });
 
+  const applied = { status: "ok", data: { stdout: [], stderr: [] } };
+  const read = (stale: StalePackage[]) => ({
+    status: "ok",
+    data: { kind: "offer", offer: offer({ stale }) },
+  });
+  const stillHeld = [
+    held("outOfDate", ["drift: .github/copilot-instructions.md"]),
+  ];
+
+  // One row per way the setup ends. `open` is what the post-setup read was
+  // asked with, `head` the stale packages the offer in front of the reader
+  // carries afterwards (null where it was answered and left the line).
   it.each([
     {
       name: "the reading after it is clear",
-      armed: { status: "ok", data: { stdout: [], stderr: [] } },
-      after: [] as StalePackage[],
+      byWrite: true,
+      armed: applied,
+      read: read([]),
       stage: { at: "offer" },
-      reread: true,
+      open: [root, since],
+      head: [] as StalePackage[],
+      toast: false,
     },
     {
       name: "the package still holds the commit",
-      armed: { status: "ok", data: { stdout: [], stderr: [] } },
-      after: [held("outOfDate", ["drift: .github/copilot-instructions.md"])],
+      byWrite: true,
+      armed: applied,
+      read: read(stillHeld),
       stage: { at: "stillHeld" },
-      reread: true,
+      open: [root, since],
+      head: stillHeld,
+      toast: false,
     },
     {
       name: "the setup failed",
+      byWrite: true,
       armed: { status: "error", error: "bot-instructions: render exited 2" },
-      after: [] as StalePackage[],
-      stage: {
-        at: "setUpFailed",
-        error: "bot-instructions: render exited 2",
-      },
-      reread: false,
+      read: read([]),
+      stage: { at: "setUpFailed", error: "bot-instructions: render exited 2" },
+      open: null,
+      head: [held("notSetUp")],
+      toast: false,
+    },
+    {
+      name: "the read after it failed",
+      byWrite: true,
+      armed: applied,
+      read: { status: "error", error: "fatal: index.lock exists" },
+      stage: { at: "setUpFailed", error: "fatal: index.lock exists" },
+      open: [root, since],
+      head: [held("notSetUp")],
+      toast: false,
+    },
+    {
+      name: "the read after it found nothing pending",
+      byWrite: true,
+      armed: applied,
+      read: { status: "ok", data: { kind: "nothing" } },
+      stage: { at: "offer" },
+      open: [root, since],
+      head: null,
+      toast: true,
+    },
+    {
+      name: "an offer a person opened",
+      byWrite: false,
+      armed: applied,
+      read: read([]),
+      stage: { at: "offer" },
+      open: [root, null],
+      head: [] as StalePackage[],
+      toast: false,
     },
   ] as const)("ends where it should: $name", async (row) => {
+    // An offer a write opened holds the reading it was scoped to; one a
+    // person opened holds none.
+    const baselines: Record<string, ProjectBaseline> = row.byWrite
+      ? { [root]: since }
+      : {};
+    useCommitOfferStore.setState({ baselines });
     vi.mocked(commands.repoEffectsApply).mockResolvedValue(row.armed as never);
-    vi.mocked(commands.commitOfferScan).mockResolvedValue({
-      status: "ok",
-      data: [offer({ stale: [...row.after] })],
-    });
+    vi.mocked(commands.commitOfferOpen).mockResolvedValue(row.read as never);
 
     await useCommitOfferStore.getState().setUp();
 
@@ -825,10 +876,15 @@ describe("setting up a package that holds the commit", () => {
     );
     const state = useCommitOfferStore.getState();
     expect(state.stage).toEqual(row.stage);
-    expect(vi.mocked(commands.commitOfferScan).mock.calls).toEqual(
-      row.reread ? [[[root], [since]]] : [],
+    expect(vi.mocked(commands.commitOfferOpen).mock.calls).toEqual(
+      row.open === null ? [] : [row.open],
     );
-    if (row.reread) expect(state.queue[0].stale).toEqual(row.after);
+    expect(commands.commitOfferScan).not.toHaveBeenCalled();
+    expect(state.queue[0]?.stale ?? null).toEqual(row.head);
+    expect(vi.mocked(toast.info).mock.calls.length > 0).toBe(row.toast);
+    // A read that failed leaves the offer's reading where it was.
+    if (row.head !== null && row.byWrite)
+      expect(state.baselines[root]).toBe(since);
   });
 
   // The read after the setup keeps the offer scoped to the write that
@@ -839,14 +895,17 @@ describe("setting up a package that holds the commit", () => {
       status: "ok",
       data: { stdout: [], stderr: [] },
     });
-    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+    vi.mocked(commands.commitOfferOpen).mockResolvedValue({
       status: "ok",
-      data: [offer({ choice: true, actionPaths: ["one.md", "two.md"] })],
+      data: {
+        kind: "offer",
+        offer: offer({ choice: true, actionPaths: ["one.md", "two.md"] }),
+      },
     });
 
     await useCommitOfferStore.getState().setUp();
 
-    expect(commands.commitOfferOpen).not.toHaveBeenCalled();
+    expect(commands.commitOfferOpen).toHaveBeenCalledWith(root, since);
     const state = useCommitOfferStore.getState();
     expect(state.scoped).toBe("action");
     expect(state.accepted).toBe(false);

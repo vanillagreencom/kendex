@@ -384,15 +384,22 @@ export const commands = {
 	 */
 	commitOfferScan: (roots: string[], since: ProjectBaseline[]) => typedError<ProjectOffer[], string>(__TAURI_INVOKE("commit_offer_scan", { roots, since })),
 	/**
-	 *  Build the offer for one project because a person asked for it, rather
-	 *  than because a write left it behind.
+	 *  Build the offer for one project on the window's own ask, rather than
+	 *  because a write's scan left it behind.
 	 * 
 	 *  The setting that turns off asking is not consulted: it decides whether
-	 *  kendex opens the question by itself, and this is the person opening it.
-	 *  Nothing is attributed to an action either — there is none — so every
-	 *  pending change is theirs to choose from.
+	 *  kendex opens the question by itself, and this is the window asking.
+	 *  `since` is the reading an offer on screen was scoped to, where the
+	 *  window reads that offer again after a step it ran: the answer keeps the
+	 *  action's attribution, and a read that fails or finds the project
+	 *  blocked says so rather than reading as nothing pending. Without one a
+	 *  person opened the review, and nothing is attributed to an action, so
+	 *  every pending change is theirs to choose from.
 	 */
-	commitOfferOpen: (root: string) => typedError<OpenOffer, string>(__TAURI_INVOKE("commit_offer_open", { root })),
+	commitOfferOpen: (root: string, since: {
+	root: string,
+	held: HeldPath[],
+} | null) => typedError<OpenOffer, string>(__TAURI_INVOKE("commit_offer_open", { root, since })),
 	/**
 	 *  What changed in one file the offer covers, for the viewer the window
 	 *  opens on it.
