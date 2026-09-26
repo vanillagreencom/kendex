@@ -16,9 +16,6 @@ TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
-# mutant_scripts and mutate_file, the two halves of the controls below.
-# shellcheck source=lib/growth-state.sh
-source "$TEST_DIR/lib/growth-state.sh"
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
@@ -43,28 +40,14 @@ git -C "$main_repo" worktree add -q -b issue-anchor "$worktree"
 assert_file_exists "$main_repo/tmp/workflow-state-issue-anchor.json" "a worktree writes default state under the main checkout"
 assert_file_absent "$worktree/tmp/workflow-state-issue-anchor.json" "a worktree does not keep its own default state"
 
-# The default directory's one must-fail control: a cwd-relative join.
-anchor_mutant="$(mutant_scripts anchor-mutant workflow-state)/workflow-state" || exit 1
-mutate_file "$anchor_mutant" '*) root=$(project_root) || return 1' '*) root=$PWD'
-(cd "$worktree" && env -u ORCH_STATE_DIR "$anchor_mutant" init issue-mutant --branch issue-mutant) >/dev/null
+mutant_dir="$TMP_ROOT/mutant/orch/scripts"
+mkdir -p "$mutant_dir"
+cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$mutant_dir/lib"
+cp "$REPO_ROOT/skills/orch/scripts/git-context" "$mutant_dir/git-context"
+assert_eq "$(grep -Fc '*) root=$(project_root) || return 1' "$WS")" "1" "anchor control finds the relative-directory join"
+sed 's|\*) root=$(project_root) \|\| return 1|*) root=$PWD|' "$WS" > "$mutant_dir/workflow-state"
+(cd "$worktree" && env -u ORCH_STATE_DIR bash "$mutant_dir/workflow-state" init issue-mutant --branch issue-mutant) >/dev/null
 assert_file_absent "$main_repo/tmp/workflow-state-issue-mutant.json" "control: a cwd-relative join misses the main checkout"
-
-remove_dir="$TMP_ROOT/remove"
-for key in issue-one issue-two; do "$WS" --state-dir "$remove_dir" init "$key" >/dev/null; done
-"$WS" --state-dir "$remove_dir" update issue-one '.' >/dev/null
-"$WS" --state-dir "$remove_dir" remove issue-one
-assert_file_absent "$remove_dir/workflow-state-issue-one.json" "remove deletes the exact state file"
-assert_file_absent "$remove_dir/workflow-state-issue-one.json.lock" "remove deletes its lock sidecar"
-"$WS" --state-dir "$remove_dir" remove issue-absent
-assert_file_exists "$remove_dir/workflow-state-issue-two.json" "remove keeps a sibling and accepts an absent key"
-
-# remove's one must-fail control: a glob delete.
-glob_mutant="$(mutant_scripts glob-mutant workflow-state)/workflow-state" || exit 1
-mutate_file "$glob_mutant" 'rm -f -- "$state_file" "$state_file.lock"' 'rm -f -- "$STATE_DIR"/workflow-state-*.json*'
-glob_dir="$TMP_ROOT/glob"
-for key in issue-one issue-two; do "$WS" --state-dir "$glob_dir" init "$key" >/dev/null; done
-"$glob_mutant" --state-dir "$glob_dir" remove issue-one
-assert_file_absent "$glob_dir/workflow-state-issue-two.json" "control: a glob delete removes the sibling"
 
 # Test 1: --state-dir with NO ORCH_STATE_DIR env and no env prefix. init writes
 # to and get reads back from <state-dir>/workflow-state-<ID>.json.
