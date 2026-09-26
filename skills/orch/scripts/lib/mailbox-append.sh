@@ -6,7 +6,8 @@
 # the lock loses a line whenever two writers meet.
 #
 # Sourced, never executed, after lib/file-lock.sh, whose orch_take_lock and
-# orch_release_lock this uses. Bash 3.2-safe, like its callers.
+# orch_release_lock this uses; oversee-watch sources it for the envelope class
+# alone, which takes no lock. Bash 3.2-safe, like its callers.
 
 # Whether FILE ends on a complete line: 0 when its last byte is a newline and
 # when it is empty, 1 when a writer left a fragment there, 2 when it could not
@@ -83,3 +84,18 @@ mailbox_append_locked() { # FILE WAIT_SECONDS [GUARD] — bytes on stdin
   exec 9>&-
   orch_release_lock
 }
+
+# The class of an envelope in the overseer's own to-lane.jsonl, as a jq
+# definition a caller puts ahead of its filter, so the writer that checks a
+# reply's --ref and the watch that reports the line judge one rule: a
+# `resolution` is the answer `lane-mail resolve` wrote, carrying `by`; a `peer`
+# line is another repository's overseer's, `from` naming it; an `owner-note` is
+# what the owner wrote, `from` owner or absent; and a `stray` is an answer from
+# the owner with no `by`, which nothing here writes, since the owner answers
+# nothing and a send with --re into this mailbox is refused.
+# shellcheck disable=SC2034  # read by the scripts that source this.
+MAILBOX_CLASS_JQ='def overseer_mail_class:
+  if .kind == "answer" and (.by | type) == "string" then "resolution"
+  elif ((.from // "") | . != "" and . != "owner") then "peer"
+  elif .kind == "answer" then "stray"
+  else "owner-note" end;'

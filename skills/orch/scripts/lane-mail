@@ -127,12 +127,15 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               with no --options waits for free text
   notice --item overseer --to owner --file PATH [--ref MSGID] [--attach PATH]
               a note for the owner. --ref names the envelope it answers,
-              an owner note in to-lane.jsonl or an owner ask in
+              an owner note in to-lane.jsonl, one the owner wrote and not a
+              peer's line or a resolution, or an owner ask in
               to-overseer.jsonl whose ruling it reports, so a relay puts the
-              reply where the note or the question was written. --attach names a file
-              the relay carries beside the text: a plain file directly
-              under the progress-report directory workflow-state names,
-              reached through no symlink, refused `attach-outside` otherwise
+              reply where the note or the question was written. --attach
+              names a file the relay carries beside the text: a regular
+              file, not itself a symlink, whose directory resolves
+              physically to the progress-report directory workflow-state
+              names, recorded at that physical path; refused
+              `attach-outside` otherwise
   resolve --item overseer --id MSGID (--text PATH | --default) [--delivery-id KEY]
               the one operation that closes an owner ask: under the mailbox
               lock it appends to to-lane.jsonl the `answer` envelope whose
@@ -360,10 +363,10 @@ lm_message() { # KEY VALUE
     minutes-invalid) text='The option, or ORCH_ASK_WAIT_MINUTES, takes a non-negative integer number of minutes.' ;;
     to-invalid) text='--to takes owner or peer. A peer ask is `peer ask --repo`, which writes peer itself, so an ask or notice typed here takes owner.' ;;
     ref-invalid) text='--ref takes the id of an envelope: ASCII letters, digits, dot, underscore and hyphen.' ;;
-    ref-unknown) text='No owner note in to-lane.jsonl and no owner ask in to-overseer.jsonl carries that id, so nothing here can be answered by it. Read the note or the ask again and pass the id it carries.' ;;
+    ref-unknown) text='No owner note in to-lane.jsonl and no owner ask in to-overseer.jsonl carries that id, so nothing here can be answered by it; a line a peer overseer sent and a resolution there are neither. Read the note or the ask again and pass the id it carries.' ;;
     recommend-invalid) text='--recommend names one of the choices --options lists, and an ask with no choices has nothing to recommend.' ;;
     recommend-missing) text='The ask carries no recommendation, so no default can stand for it: answer it with --text.' ;;
-    attach-outside) text='An attachment is a plain file directly under the progress-report directory, reached through no symlink. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
+    attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
     ask-unknown) text='No unanswered-or-answered owner ask in the overseer mailbox carries that id. resolve closes asks sent with --to owner and nothing else.' ;;
     resolve-required) text='An ask in the overseer mailbox is closed by `lane-mail resolve` alone, exactly once, so nothing is sent into it with --re. Run resolve --item overseer --id MSGID --text PATH; a reply owed to an owner note is `notice --item overseer --to owner --ref MSGID`.' ;;
     resolved-already) text='This ask is already resolved by the answer named above, and an ask resolves exactly once. Deliver later text for it as a directive with `send --item overseer --directive`.' ;;
@@ -1013,8 +1016,8 @@ lm_guard_delivery() { # FILE
 # The answer already resolving this ask, into WORK_DIR/resolved.earlier as
 # `<id> <by> <delivery_id>`; refuses where one stands.
 lm_guard_resolve() { # FILE
-  jq -r -R --arg re "$MSGID" '(fromjson? // empty) | objects
-    | select(.kind == "answer" and .re == $re and (.by | type) == "string")
+  jq -r -R --arg re "$MSGID" "$MAILBOX_CLASS_JQ"' (fromjson? // empty) | objects
+    | select(overseer_mail_class == "resolution" and .re == $re)
     | "\(.id) \(.by) \(.delivery_id // "")"' <"$1" >"$WORK_DIR/resolved.earlier" || return 2
   [ ! -s "$WORK_DIR/resolved.earlier" ]
 }
@@ -1066,11 +1069,11 @@ lm_wait_minutes() {
   esac
 }
 
-# The attachment, judged where it stands: a plain file whose directory
-# resolves to the progress-report directory workflow-state names, which is
-# one rule at the one point the relay would otherwise carry any path it was
-# handed. ATTACH is rewritten to the physical path so the relay opens what
-# was judged.
+# The attachment, judged where it stands: a regular file, not itself a
+# symlink, whose directory resolves physically to the progress-report
+# directory workflow-state names, which is one rule at the one point the relay
+# would otherwise carry any path it was handed. ATTACH is rewritten to the
+# physical path so the relay opens what was judged.
 lm_attach_confined() {
   local reports dir base
   reports="$("$SCRIPT_DIR/workflow-state" progress-report-path 2>"$WORK_DIR/reports.err")" ||
@@ -1187,10 +1190,14 @@ case "$VERB" in
       esac
       # The envelope answered is an owner note in to-lane.jsonl or an owner
       # ask in to-overseer.jsonl, the two things the owner reads a reply to;
-      # a notice of this overseer's own answers nothing.
+      # a notice of this overseer's own, a peer's line and a resolution
+      # answer nothing the owner wrote. The note is judged by the class the
+      # watch reports it under, so a line the watch calls a peer's is never
+      # the owner's here.
       lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
       lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
-      lm_objects "$WORK_DIR/lane.jsonl" | jq -e --arg id "$REF" 'select(.id == $id)' >/dev/null ||
+      lm_objects "$WORK_DIR/lane.jsonl" |
+        jq -e --arg id "$REF" "$MAILBOX_CLASS_JQ"' select(.id == $id and overseer_mail_class == "owner-note")' >/dev/null ||
         lm_owner_ask_find "$REF" ||
         refuse ref-unknown "$REF"
     fi
