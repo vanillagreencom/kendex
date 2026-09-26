@@ -115,6 +115,23 @@ describe("whether the first launch asks", () => {
     expect(dialog() !== null).toBe(row.asks);
   });
 
+  it("withdraws the question once a command is installed", async () => {
+    vi.mocked(commands.commandLinkState).mockResolvedValue({
+      status: "ok",
+      data: asking,
+    });
+    mount(<CommandLinkDialog />);
+    await settle();
+    expect(dialog()).not.toBeNull();
+    vi.mocked(commands.commandLinkState).mockResolvedValue({
+      status: "ok",
+      data: linked,
+    });
+    await act(() => useCommandLinkStore.getState().load());
+    await settle();
+    expect(dialog()).toBeNull();
+  });
+
   it("states the link it creates and what it points at", async () => {
     vi.mocked(commands.commandLinkState).mockResolvedValue({
       status: "ok",

@@ -80,14 +80,20 @@ export const useCommandLinkStore = create<CommandLinkStore>((set, get) => ({
     const { command, ask } = read.data;
     if (ask && command.kind === "offered" && !get().answered) {
       if (get().question === null) set({ question: command });
+    } else if (get().stage.at === "idle") {
+      // A command installed while the question waited leaves nothing to ask.
+      set({ question: null });
     }
   },
 
+  // An install or answer lands a newer state than any read still in flight,
+  // so each takes a ticket that read cannot outrank.
   install: async () => {
     if (get().stage.at === "working") return;
     set({ stage: { at: "working" } });
     const run = await settled(commands.commandLinkInstall());
     if (run.status === "ok") {
+      order.begin();
       set({ state: run.data, stage: { at: "done" } });
       return;
     }
@@ -119,7 +125,9 @@ export const useCommandLinkStore = create<CommandLinkStore>((set, get) => ({
   answer: async () => {
     set({ question: null, answered: true, stage: { at: "idle" } });
     const recorded = await settled(commands.commandLinkPromptAnswered());
-    if (recorded.status === "ok") set({ state: recorded.data });
-    else toast.error(answerNotRecorded(recorded.error));
+    if (recorded.status === "ok") {
+      order.begin();
+      set({ state: recorded.data });
+    } else toast.error(answerNotRecorded(recorded.error));
   },
 }));
