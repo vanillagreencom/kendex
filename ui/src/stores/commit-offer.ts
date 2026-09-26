@@ -254,7 +254,7 @@ export function routesFor(offer: ProjectOffer): Route[] {
   return routes;
 }
 
-export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
+export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
   /** Forget the readings for projects with nothing left to answer, so the
    *  next action reads them afresh. Only once no scan is still out: a
    *  project is not absent from the line while an answer about it is still
@@ -317,6 +317,17 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
   };
 
   const head = () => get().queue[0];
+
+  /** Settle once no scan a write started is still out. */
+  const scansLanded = (): Promise<void> =>
+    new Promise((resolve) => {
+      if (!get().scanning) return resolve();
+      const stop = api.subscribe((state) => {
+        if (state.scanning) return;
+        stop();
+        resolve();
+      });
+    });
 
   /** Read the head project again after a step this dialog ran, through the
    *  one door a single project is read by, handing it `since`, the reading
@@ -808,12 +819,16 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
       switch (read.at) {
         case "offer": {
           const next = head();
-          set({
-            stage:
-              next?.root === offer.root && next.stale.length > 0
-                ? { at: "stillHeld" }
-                : { at: "offer" },
-          });
+          if (next?.root === offer.root && next.stale.length > 0) {
+            set({ stage: { at: "stillHeld" } });
+            return;
+          }
+          // The commit offer drawn from here is asked only once the scan
+          // the setup's own write started has landed, as any offer is.
+          // Held at settingUp until then, the dialog stays on screen and
+          // the scan leaves the head this read answered alone.
+          await scansLanded();
+          set({ stage: { at: "offer" } });
           return;
         }
         case "nothing":
