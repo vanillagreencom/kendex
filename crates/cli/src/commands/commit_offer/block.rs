@@ -11,10 +11,12 @@
 
 use std::path::Path;
 
-use kendex_core::commit_offer::{Failed, Offer, Operation, Step, Unavailable};
+use kendex_core::commit_offer::{
+    Failed, Offer, Operation, Scan, Stale, Staleness, Step, Unavailable,
+};
 
 use super::super::say;
-use super::Choice;
+use super::{Asking, Choice};
 use crate::ui;
 
 /// Enough paths to recognise what is there without burying the choices
@@ -85,6 +87,122 @@ pub fn unreadable(root: &Path, failed: &Failed) {
         kendex_core::paths::slashed(root)
     ));
     refusal(failed);
+}
+
+/// The packages could not be asked whether their files are current, so
+/// the commit is not offered. The verb's own writes still stand.
+pub fn not_vouched(root: &Path, why: &str) {
+    say(&format!(
+        "{}: the files kendex wrote could not be checked",
+        kendex_core::paths::slashed(root)
+    ));
+    detail(why);
+}
+
+/// A package whose files in this repository the commit would carry out of
+/// date: the head line, then each package and why, in place of the commit
+/// choices.
+pub fn stale(scan: &Scan, stale: &[Stale]) {
+    say(&head(&scan.root, scan.count()));
+    for held in stale {
+        let name = &held.disclosure.name;
+        match &held.why {
+            Staleness::NotSetUp => detail(&format!(
+                "{name} is not set up in this checkout, so its files in this repository were not brought up to date"
+            )),
+            Staleness::OutOfDate(said) => {
+                detail(&format!(
+                    "{name} says its files in this repository are out of date:"
+                ));
+                for line in said {
+                    quoted(line);
+                }
+            }
+            Staleness::Unchecked(said) => {
+                detail(&format!(
+                    "{name} could not say whether its files in this repository are up to date:"
+                ));
+                for line in said {
+                    quoted(line);
+                }
+            }
+            Staleness::Split(left) => {
+                detail(&format!(
+                    "the commit would carry some of {name}'s changed files and leave these out:"
+                ));
+                for path in left {
+                    quoted(path);
+                }
+            }
+        }
+    }
+    detail(
+        "committing now would carry those files out of date, so kendex does not offer the commit",
+    );
+}
+
+/// Where nobody is at the prompt to set the package up, or its setup ran
+/// and it is still not ready: what is left to the person.
+pub fn stale_way_on(set_up: bool) {
+    match set_up {
+        true => detail("it is still not ready after its setup ran; nothing was committed"),
+        false => detail(
+            "set it up here first: at a terminal, where kendex offers it, or with Set up on its package page in the app",
+        ),
+    }
+}
+
+/// A commit that would split a package's changed files: no setup clears
+/// it, so the files are left as diffs for the person to commit together.
+pub fn split_way_on() {
+    detail(
+        "the repository's check renders from what a commit holds, so these belong in one commit",
+    );
+    detail("they are left as diffs; commit them together yourself");
+}
+
+/// A setup chosen at the offer that did not run through.
+pub fn set_up_failed(why: &str) {
+    detail("the setup did not finish; nothing was committed");
+    for line in why.lines() {
+        quoted(line);
+    }
+}
+
+/// What a person picks where a package holds the commit.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Held {
+    SetUp,
+    Leave,
+}
+
+/// The two choices a held offer carries, the disclosure of what each
+/// package's setup changes above them, and the answer. The same block
+/// every other setup's yes is given against. As with the offer, any answer
+/// but the setup's number leaves the files as diffs.
+pub fn pick_stale(stale: &[Stale]) -> std::io::Result<Held> {
+    for held in stale {
+        super::super::repo_effects::print_disclosure(&held.disclosure);
+    }
+    say("");
+    let names: Vec<&str> = stale
+        .iter()
+        .map(|held| held.disclosure.name.as_str())
+        .collect();
+    detail(&format!(
+        "1  set up {} here, then offer the commit with {} files",
+        names.join(" and "),
+        match names.len() {
+            1 => "its",
+            _ => "their",
+        }
+    ));
+    detail("2  leave them as diffs");
+    let typed = ui::ask("1-2, or Enter to leave them as diffs: ")?;
+    Ok(match typed.trim() {
+        "1" => Held::SetUp,
+        _ => Held::Leave,
+    })
 }
 
 /// The offer itself: what changed, what kendex leaves alone, and the
@@ -431,13 +549,74 @@ pub fn first_commit_stays(from: &str) {
     detail(&format!("{from} in this checkout still carries the commit"));
 }
 
-/// The three ways on from a refused commit.
-pub fn after_refusal() -> std::io::Result<Retry> {
-    let labels = [
-        (Retry::Same, "commit again with the same message"),
-        (Retry::Different, "commit again with a different message"),
-        (Retry::Leave, "leave them as diffs"),
+/// A refused commit: its head line, then, where its words carry a
+/// findings block, that block first.
+///
+/// With a person at the prompt the rest of what the commit check printed
+/// waits behind a choice, and this returns `true`. A flag's run has nobody
+/// to choose, so the rest follows the block for the log, and nothing waits.
+pub fn commit_refused(failed: &Failed, asking: Asking) -> bool {
+    let head = commit_refused_head(failed);
+    let Some(block) = failed.findings() else {
+        refused(head, failed);
+        return false;
+    };
+    let said = failed.said();
+    detail(head);
+    detail("the repository's commit check found problems:");
+    for line in &said[block.clone()] {
+        quoted(line);
+    }
+    let rest = said.len() - block.len();
+    if rest == 0 {
+        return false;
+    }
+    match asking {
+        Asking::Yes => {
+            detail(&format!(
+                "the commit check printed {rest} more line{}",
+                plural(rest)
+            ));
+            true
+        }
+        Asking::No => {
+            detail("the rest of what git said:");
+            for line in said[..block.start].iter().chain(&said[block.end..]) {
+                quoted(line);
+            }
+            false
+        }
+    }
+}
+
+/// Everything a refused commit's words held, in the order git gave them.
+pub fn everything(failed: &Failed) {
+    detail(program_said(failed.step));
+    for line in failed.said() {
+        quoted(line);
+    }
+}
+
+/// The ways on from a refused commit. `more` adds the choice that shows
+/// what the refusal left unshown.
+pub fn after_refusal(more: bool) -> std::io::Result<AfterRefusal> {
+    let mut labels = vec![
+        (
+            AfterRefusal::Retry(Retry::Same),
+            "commit again with the same message",
+        ),
+        (
+            AfterRefusal::Retry(Retry::Different),
+            "commit again with a different message",
+        ),
     ];
+    if more {
+        labels.push((
+            AfterRefusal::Show,
+            "show everything the commit check printed",
+        ));
+    }
+    labels.push((AfterRefusal::Retry(Retry::Leave), "leave them as diffs"));
     for (nth, (_, label)) in labels.iter().enumerate() {
         detail(&format!("{}  {label}", nth + 1));
     }
@@ -451,7 +630,7 @@ pub fn after_refusal() -> std::io::Result<Retry> {
         .ok()
         .filter(|nth| *nth >= 1 && *nth <= labels.len())
         .map(|nth| labels[nth - 1].0)
-        .unwrap_or(Retry::Leave))
+        .unwrap_or(AfterRefusal::Retry(Retry::Leave)))
 }
 
 /// What a person picks after a refused commit.
@@ -460,6 +639,14 @@ pub enum Retry {
     Same,
     Different,
     Leave,
+}
+
+/// An answer to [`after_refusal`]: a way on, or asking to see what the
+/// refusal left unshown, which is answered by asking again.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AfterRefusal {
+    Retry(Retry),
+    Show,
 }
 
 /// The two ways on from a refused push, where a pull request is available.

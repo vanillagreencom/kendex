@@ -7,6 +7,7 @@ import {
   type ProjectFlag,
   type ProjectOffer,
   type Refused,
+  type StalePackage,
 } from "@/bindings";
 import {
   committedToast,
@@ -16,6 +17,7 @@ import {
 } from "@/lib/copy-commit-offer";
 import { askingAgain, forgetRoot, isForgotten } from "@/lib/forgotten-roots";
 import { readOrder } from "@/lib/read-state";
+import { writingRepo } from "@/lib/rescan";
 import { useProblemsStore } from "./problems";
 
 /** Which of the three the person picked. `leave` is not one: leaving is
@@ -37,6 +39,15 @@ export type Scoped = "action" | "all";
 export type Stage =
   | { at: "offer" }
   | { at: "busy"; step: Route }
+  /** The setup a held offer carries is running. */
+  | { at: "settingUp" }
+  /** The setup's installer, or the read after it, failed: what went
+   *  wrong, and nothing was committed. */
+  | { at: "setUpFailed"; error: string }
+  /** The setup ran and the fresh reading still holds the commit. The
+   *  head is that reading, so what [`heldBy`] reads off it is what the
+   *  state draws. */
+  | { at: "stillHeld" }
   | {
       at: "commitRefused";
       refused: Refused;
@@ -161,6 +172,12 @@ interface CommitOfferState {
   accept: (accepted: boolean) => void;
   setMessage: (message: string) => void;
   run: () => Promise<void>;
+  /** Set up each package holding the head offer, then read the project
+   *  again against the same reading the offer was scoped to: the files the
+   *  setup rendered join the offer, and each package is asked again. One
+   *  setup per offer: a package still holding the commit after its own
+   *  setup ran ends in `stillHeld`. */
+  setUp: () => Promise<void>;
   openPullRequest: () => Promise<void>;
   /** Leaving the files as diffs, which dismissing the dialog also is.
    *
@@ -205,6 +222,30 @@ export function selectionOf(state: {
   return { kind: "only", paths: offer.actionPaths };
 }
 
+/** The one empty answer [`heldBy`] gives, shared: it is a store selector,
+ *  and a fresh array per read compares unequal each render and loops. */
+const NOTHING_HELD: StalePackage[] = [];
+
+/** The packages holding the commit the reader has picked: every pending
+ *  change, or only this action's work. An older pending change to a
+ *  package's files holds only the commit that carries it, so the two can
+ *  differ. Read off the same selection the commit is sent with. */
+export function heldBy(state: {
+  queue: ProjectOffer[];
+  scoped: Scoped;
+}): StalePackage[] {
+  const offer = state.queue[0];
+  if (!offer) return NOTHING_HELD;
+  return selectionOf(state).kind === "all" ? offer.stale : offer.staleAction;
+}
+
+/** Whether a setup can clear the hold on the picked commit: not where the
+ *  commit would split a package's changed files, which only committing
+ *  them together clears. */
+export function canSetUp(held: StalePackage[]): boolean {
+  return held.every((one) => one.why !== "split");
+}
+
 /** Whether the primary action may run: a commit labelled as one action's
  *  work never carries an earlier change the reader has not said yes to.
  *  Every other state is free to run.
@@ -239,7 +280,7 @@ export function routesFor(offer: ProjectOffer): Route[] {
   return routes;
 }
 
-export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
+export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
   /** Forget the readings for projects with nothing left to answer, so the
    *  next action reads them afresh. Only once no scan is still out: a
    *  project is not absent from the line while an answer about it is still
@@ -302,6 +343,45 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
   };
 
   const head = () => get().queue[0];
+
+  /** Settle once no scan a write started is still out. */
+  const scansLanded = (): Promise<void> =>
+    new Promise((resolve) => {
+      if (!get().scanning) return resolve();
+      const stop = api.subscribe((state) => {
+        if (state.scanning) return;
+        stop();
+        resolve();
+      });
+    });
+
+  /** Read the head project again after a step this dialog ran, through the
+   *  one door a single project is read by, handing it `since`, the reading
+   *  the offer was scoped to: the action's own work plus what the step
+   *  wrote, with the earlier edits still asked about. An offer a person
+   *  opened has no reading and reads as they opened it. A read that fails
+   *  or finds the project blocked says so, and leaves the offer and its
+   *  reading where they were. */
+  const reread = async (
+    root: string,
+    since: ProjectBaseline | null,
+  ): Promise<OpenedFor> => {
+    const response = await commands.commitOfferOpen(root, since);
+    if (response.status === "error") {
+      return { at: "failed", error: response.error };
+    }
+    if (response.data.kind === "nothing") return { at: "nothing" };
+    if (response.data.kind === "blocked")
+      return { at: "blocked", flag: response.data.flag };
+    const offer = response.data.offer;
+    set({
+      queue: [offer, ...get().queue.filter((one) => one.root !== root)],
+      // The set the earlier edits ride along with may have changed, so
+      // the yes about them is asked again.
+      accepted: false,
+    });
+    return { at: "offer" };
+  };
 
   // The scans overlap, so only the latest one that started may answer, and
   // nothing is asked until the last of them has.
@@ -494,7 +574,8 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
 
     openFor: async (root) => {
       const ticket = opens.begin();
-      const response = await commands.commitOfferOpen(root);
+      // A person opening the review has no action to scope it to.
+      const response = await commands.commitOfferOpen(root, null);
       const newest = opens.lands(ticket);
       if (response.status === "error") {
         return { at: "failed", error: response.error };
@@ -729,6 +810,67 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
         return;
       }
       await open(offer, sha, branch, files, true, null, offer.branch);
+    },
+
+    setUp: async () => {
+      const offer = head();
+      const held = heldBy(get());
+      if (!offer || held.length === 0 || !canSetUp(held)) return;
+      // Taken before the write: the write's own reading of the projects
+      // records one for an offer a person opened, which has none and reads
+      // as they opened it.
+      const since = get().baselines[offer.root] ?? null;
+      // The setup reaches `repo_effects`, so it runs inside the one write
+      // lifecycle and the machine is read again behind it, landed or
+      // refused. The offer that lifecycle asks for reads this project
+      // against the same reading as the read below, and leaves the head
+      // alone while its answer is on screen.
+      const refused = await writingRepo(
+        async () => {
+          for (const one of held) {
+            const armed = await commands.repoEffectsApply(
+              { scope: "project", root: offer.root },
+              one.disclosure.declared,
+            );
+            if (armed.status === "error") return armed.error;
+          }
+          return null;
+        },
+        () => set({ stage: { at: "settingUp" } }),
+      );
+      if (refused !== null) {
+        set({ stage: { at: "setUpFailed", error: refused } });
+        return;
+      }
+      const read = await reread(offer.root, since);
+      switch (read.at) {
+        case "offer": {
+          const next = head();
+          if (next?.root === offer.root && heldBy(get()).length > 0) {
+            set({ stage: { at: "stillHeld" } });
+            return;
+          }
+          // The commit offer drawn from here is asked only once the scan
+          // the setup's own write started has landed, as any offer is.
+          // Held at settingUp until then, the dialog stays on screen and
+          // the scan leaves the head this read answered alone.
+          await scansLanded();
+          set({ stage: { at: "offer" } });
+          return;
+        }
+        case "nothing":
+          toast.info(NOTHING_TO_COMMIT_TOAST);
+          advance();
+          return;
+        // The project's card carries the state that stops an offer, from
+        // the read behind the setup's write.
+        case "blocked":
+          advance();
+          return;
+        case "failed":
+          set({ stage: { at: "setUpFailed", error: read.error } });
+          return;
+      }
     },
 
     openPullRequest: async () => {

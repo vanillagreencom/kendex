@@ -277,80 +277,194 @@ fn make(
         command: String::new(),
     };
     let session = SESSION.get().unwrap_or(&default);
-    let scan = match commit_offer::scan(scope, generated) {
-        Ok(None) => return Ok(None),
-        Ok(Some(scan)) => scan,
-        // A read the offer is built from that would not run leaves the
-        // offer unbuildable. The verb's own writes still stand, so this is
-        // one line rather than a failure of the run.
-        Err(failed) => {
-            block::unreadable(root, &failed);
+    let mut generated = generated.clone();
+    let mut set_up = false;
+    // Read again after a setup: the renders kendex reads back join the
+    // offer (`set_up_here` says which), and the packages are asked again
+    // whether they now stand behind them.
+    loop {
+        let scan = match commit_offer::scan(scope, &generated) {
+            Ok(None) => return Ok(None),
+            Ok(Some(scan)) => scan,
+            // A read the offer is built from that would not run leaves the
+            // offer unbuildable. The verb's own writes still stand, so this
+            // is one line rather than a failure of the run.
+            Err(failed) => {
+                block::unreadable(root, &failed);
+                return Ok(Some(Outcome::Nothing));
+            }
+        };
+        let answered = session.flags.answered();
+        // Two states where kendex owns changed files and cannot offer at
+        // all: a commit would land somewhere nobody asked for.
+        match &scan.branch {
+            Branch::Detached => {
+                block::no_branch(root, scan.count());
+                return Ok(Some(Outcome::Nothing));
+            }
+            Branch::InProgress(operation) => {
+                block::in_progress(root, scan.count(), *operation);
+                return Ok(Some(Outcome::Nothing));
+            }
+            Branch::On(_) => {}
+        }
+        if answered == Some(Choice::Leave) {
             return Ok(Some(Outcome::Nothing));
         }
-    };
-    let answered = session.flags.answered();
-    // Two states where kendex owns changed files and cannot offer at all:
-    // a commit would land somewhere nobody asked for.
-    match &scan.branch {
-        Branch::Detached => {
-            block::no_branch(root, scan.count());
-            return Ok(Some(Outcome::Nothing));
-        }
-        Branch::InProgress(operation) => {
-            block::in_progress(root, scan.count(), *operation);
-            return Ok(Some(Outcome::Nothing));
-        }
-        Branch::On(_) => {}
-    }
-    if answered == Some(Choice::Leave) {
-        return Ok(Some(Outcome::Nothing));
-    }
-    if answered.is_none() {
         // The setting turns off the asking, not the choices — which is why
         // it is read here and not before a flag has had its say.
-        if !commit_offer::asking(env) {
+        if answered.is_none() && !commit_offer::asking(env) {
             return Ok(Some(Outcome::Nothing));
         }
-        if !std::io::stdin().is_terminal() {
+        let person = answered.is_none() && std::io::stdin().is_terminal();
+        // Asked before the commit is offered, of the commit it would make:
+        // a package not set up here, one whose check says its files are
+        // stale, and a commit that would split a package's changed files
+        // each hold it.
+        let stale = match commit_offer::stale(env, scope, &scan, commit_offer::Carried::Everything)
+        {
+            Ok(stale) => stale,
+            Err(error) => {
+                block::not_vouched(root, &error.to_string());
+                return Ok(Some(Outcome::Nothing));
+            }
+        };
+        if !stale.is_empty() {
+            let held = Held {
+                set_up,
+                answered,
+                person,
+            };
+            match hold(env, scope, &scan, &stale, held, &mut generated)? {
+                Hold::Ended(outcome) => return Ok(Some(outcome)),
+                Hold::SetUp => {
+                    set_up = true;
+                    continue;
+                }
+            }
+        }
+        if answered.is_none() && !person {
             block::no_terminal(root, scan.count());
             return Ok(Some(Outcome::Nothing));
         }
-    }
-    // A flag that already chose `commit` never pushes, so `gh` is not
-    // asked about the branch's rules or a pull request. One that chose
-    // `push` is, so a push the rules would refuse is refused before the
-    // commit rather than after it.
-    let probe = match answered {
-        Some(Choice::Commit) => Probe::Skip,
-        Some(Choice::Push) | Some(Choice::Pr) | Some(Choice::Leave) | None => Probe::Gh,
-    };
-    let offer = match commit_offer::offer(scan, &session.command, probe) {
-        Ok(offer) => offer,
-        Err(failed) => {
-            block::unreadable(root, &failed);
-            return Ok(Some(Outcome::Nothing));
-        }
-    };
-    match answered {
-        Some(choice) => {
-            // A precondition that removed the choice a flag names refuses
-            // with that precondition's reason, and the verb's writes still
-            // stand. Nothing was committed, which is what the ledger says.
-            if let Some(reason) = block::not_on_offer(&offer, choice) {
-                block::flag_refused(&offer, choice, &reason);
-                return Ok(Some(Outcome::CommitRefused));
+        // A flag that already chose `commit` never pushes, so `gh` is not
+        // asked about the branch's rules or a pull request. One that chose
+        // `push` is, so a push the rules would refuse is refused before the
+        // commit rather than after it.
+        let probe = match answered {
+            Some(Choice::Commit) => Probe::Skip,
+            Some(Choice::Push) | Some(Choice::Pr) | Some(Choice::Leave) | None => Probe::Gh,
+        };
+        let offer = match commit_offer::offer(scan, &session.command, probe) {
+            Ok(offer) => offer,
+            Err(failed) => {
+                block::unreadable(root, &failed);
+                return Ok(Some(Outcome::Nothing));
             }
-            routes::take(
-                &offer,
-                generated,
-                choice,
-                session.flags.message.clone(),
-                Asking::No,
-            )
-            .map(Some)
-        }
-        None => ask(&offer, generated, session.flags.message.clone()).map(Some),
+        };
+        return match answered {
+            Some(choice) => {
+                // A precondition that removed the choice a flag names
+                // refuses with that precondition's reason, and the verb's
+                // writes still stand. Nothing was committed, which is what
+                // the ledger says.
+                if let Some(reason) = block::not_on_offer(&offer, choice) {
+                    block::flag_refused(&offer, choice, &reason);
+                    return Ok(Some(Outcome::CommitRefused));
+                }
+                routes::take(
+                    &offer,
+                    &generated,
+                    choice,
+                    session.flags.message.clone(),
+                    Asking::No,
+                )
+                .map(Some)
+            }
+            None => ask(&offer, &generated, session.flags.message.clone()).map(Some),
+        };
     }
+}
+
+/// Where the offer stands when a package holds its commit.
+#[derive(Clone, Copy)]
+struct Held {
+    /// A setup already ran in this offer.
+    set_up: bool,
+    /// The choice a flag named, if one did.
+    answered: Option<Choice>,
+    /// A person is at the prompt to be asked.
+    person: bool,
+}
+
+/// How a held offer ends: an outcome, or a setup that ran, after which the
+/// project is read again.
+enum Hold {
+    Ended(Outcome),
+    SetUp,
+}
+
+/// Say what holds the commit and take the way on the state allows.
+fn hold(
+    env: &Env,
+    scope: &Scope,
+    scan: &commit_offer::Scan,
+    stale: &[commit_offer::Stale],
+    held: Held,
+    generated: &mut GeneratedPaths,
+) -> Result<Hold, Box<dyn std::error::Error>> {
+    block::stale(scan, stale);
+    // A commit that would split a package's changed files is not one any
+    // setup clears: the files are left for the person to commit together.
+    if stale
+        .iter()
+        .any(|one| matches!(one.why, commit_offer::Staleness::Split(_)))
+    {
+        block::split_way_on();
+        return Ok(Hold::Ended(match held.answered {
+            None => Outcome::Nothing,
+            Some(_) => Outcome::CommitRefused,
+        }));
+    }
+    // One setup per offer. A package still not ready after its own setup
+    // ran is not one a second run of it fixes.
+    if held.set_up || !held.person {
+        block::stale_way_on(held.set_up);
+        return Ok(Hold::Ended(match (held.set_up, held.answered) {
+            (false, None) => Outcome::Nothing,
+            (true, _) | (false, Some(_)) => Outcome::CommitRefused,
+        }));
+    }
+    match block::pick_stale(stale)? {
+        block::Held::Leave => Ok(Hold::Ended(Outcome::Nothing)),
+        block::Held::SetUp => match set_up_here(env, scope, stale, generated) {
+            Ok(()) => Ok(Hold::SetUp),
+            Err(error) => {
+                block::set_up_failed(&error.to_string());
+                Ok(Hold::Ended(Outcome::CommitRefused))
+            }
+        },
+    }
+}
+
+/// Set each held package up here, and add what bot-instructions renders to
+/// the files the offer covers.
+///
+/// The setup is the package's declared installer, the same run the
+/// package page and an install's separate yes make, relayed the same way.
+/// bot-instructions is the one package whose rendered files kendex reads
+/// back, through its own dry run.
+fn set_up_here(
+    env: &Env,
+    scope: &Scope,
+    stale: &[commit_offer::Stale],
+    generated: &mut GeneratedPaths,
+) -> CliResult {
+    for held in stale {
+        super::repo_effects::apply(scope, &held.disclosure.declared)?;
+    }
+    kendex_core::bot_instructions::add_to_generated(env, scope, generated)?;
+    Ok(())
 }
 
 /// Whether the person is at the prompt: a flag's answer takes its route

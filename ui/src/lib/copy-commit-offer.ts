@@ -7,7 +7,7 @@
 // name, the remote, the branches, the commit and the pull request number
 // are arguments, the way `repoEffectsTitle` takes a package name.
 
-import type { Refused, Why } from "@/bindings";
+import type { Refused, StalePackage, Why } from "@/bindings";
 
 const plural = (n: number) => (n === 1 ? "" : "s");
 
@@ -81,6 +81,37 @@ export const addsToPullRequest = (number: number) =>
   `Adds a commit to pull request #${number}.`;
 export const prMoves = (newBranch: string, from: string) =>
   `Commits on ${newBranch} and opens a pull request. This checkout moves to that branch. ${from} stays where it is.`;
+
+/** A package whose files in this repository the commit would carry out of
+ *  date holds the commit: the dialog says which and why, and offers the
+ *  package's setup or leaving the files, the choices the terminal prints in
+ *  `block::stale`. */
+export const STALE_LABEL = "Not ready to commit";
+export function staleLine(stale: StalePackage): string {
+  switch (stale.why) {
+    case "notSetUp":
+      return `${stale.name} is not set up in this checkout, so its files in this repository were not brought up to date.`;
+    case "outOfDate":
+      return `${stale.name} says its files in this repository are out of date.`;
+    case "unchecked":
+      return `${stale.name} could not say whether its files in this repository are up to date.`;
+    case "split":
+      return `This commit would carry some of ${stale.name}'s changed files and leave out the ones below. They belong in one commit: leave them as diffs and commit them together.`;
+  }
+}
+export const STALE_NOTE =
+  "Committing now would carry those files out of date, so kendex does not offer the commit.";
+export const setUpLabel = (names: string[]) =>
+  `Set up ${names.join(" and ")} here`;
+export const SETTING_UP_LABEL = "Setting up…";
+/** The installer or the read after it failed: nothing was committed. */
+export const SET_UP_FAILED_TITLE = "The setup did not finish";
+/** The setup ran and the package still holds the commit. The fresh
+ *  reading's words are drawn under it; one setup per offer, as the
+ *  terminal's. */
+export const STILL_HELD_TITLE = "Set up, and still not ready to commit";
+export const STILL_HELD_NOTE =
+  "The setup ran, and kendex still does not offer the commit. Nothing was committed.";
 
 export const LEAVE_LABEL = "Leave as diffs";
 export const LEAVE_IT_HERE_LABEL = "Leave it here";

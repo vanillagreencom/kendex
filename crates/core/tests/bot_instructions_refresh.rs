@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::test_util::rooted;
 use kendex_core::bot_instructions;
+use kendex_core::commit_offer::{self, Carried, Staleness};
 use kendex_core::engine::GeneratedPaths;
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::lock::{EmittedArtifact, Lock, LockEntry, Reason};
@@ -77,6 +78,27 @@ fn fixture_at(manifest: &str, armed: bool, harness: HarnessId, package_rel: &str
     fs::write(root.join("kendex.toml"), manifest).unwrap();
     git(&root, &["init", "--quiet"]);
     git(&root, &["add", "-A"]);
+    record_install(&env, &root, harness, package);
+    if armed {
+        let repo = kendex_core::guard::Repo::at(&root).unwrap();
+        kendex_core::repo_effects::armed::arm(
+            kendex_core::repo_effects::armed::record_dir(&repo, false),
+            "bot-instructions",
+        )
+        .unwrap();
+    }
+    Fixture {
+        scope: Scope::Project { root: root.clone() },
+        env,
+        root,
+        _tmp: tmp,
+    }
+}
+
+/// The install record naming `package` as this project's copy of the
+/// package, the record `installed_declaration` reads.
+#[allow(clippy::unwrap_used)]
+fn record_install(env: &Env, root: &Path, harness: HarnessId, package: PathBuf) {
     let mut lock = Lock {
         version: kendex_core::lock::LOCK_VERSION,
         ..Lock::default()
@@ -108,24 +130,15 @@ fn fixture_at(manifest: &str, armed: bool, harness: HarnessId, package_rel: &str
         },
     );
     kendex_core::lock::save(
-        &kendex_core::lock::lock_path(&env, &Scope::Project { root: root.clone() }),
+        &kendex_core::lock::lock_path(
+            env,
+            &Scope::Project {
+                root: root.to_owned(),
+            },
+        ),
         &lock,
     )
     .unwrap();
-    if armed {
-        let repo = kendex_core::guard::Repo::at(&root).unwrap();
-        kendex_core::repo_effects::armed::arm(
-            kendex_core::repo_effects::armed::record_dir(&repo, false),
-            "bot-instructions",
-        )
-        .unwrap();
-    }
-    Fixture {
-        scope: Scope::Project { root: root.clone() },
-        env,
-        root,
-        _tmp: tmp,
-    }
 }
 
 fn enabled_fixture() -> Fixture {
@@ -232,14 +245,80 @@ fn run_package_at(root: &Path, package_rel: &str, verb: &str) {
 
 #[allow(clippy::unwrap_used)]
 fn package_output(root: &Path, package_rel: &str, verb: &str) -> std::process::Output {
+    package_run(root, package_rel, &[verb])
+}
+
+#[allow(clippy::unwrap_used)]
+fn package_run(root: &Path, package_rel: &str, args: &[&str]) -> std::process::Output {
     let script = root.join(package_rel).join("scripts/bot-instructions");
-    Hardened::package_script(
-        &script,
-        vec![verb.into(), "--repo".into(), root.as_os_str().to_owned()],
+    let mut argv: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();
+    argv.extend(["--repo".into(), root.as_os_str().to_owned()]);
+    Hardened::package_script(&script, argv, root).run().unwrap()
+}
+
+/// Commit what the fixture staged, so a later change reads as one.
+fn commit_fixture(root: &Path) {
+    git(
         root,
-    )
-    .run()
-    .unwrap()
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            "fixture",
+        ],
+    );
+}
+
+/// Change the installed doctrine, the way a refresh of the package does.
+#[allow(clippy::unwrap_used)]
+fn change_doctrine(root: &Path) -> PathBuf {
+    let doctrine = root.join(CODEX_PACKAGE).join("SKILL.md");
+    let current = fs::read_to_string(&doctrine).unwrap();
+    let changed = current.replacen(
+        "Raise a defect only in changed lines",
+        "Raise a defect only in lines changed by this pull request",
+        1,
+    );
+    assert_ne!(
+        changed, current,
+        "the doctrine mutation found no source text"
+    );
+    fs::write(&doctrine, changed).unwrap();
+    doctrine
+}
+
+/// The offer's view of the project, with `generated` as the files kendex
+/// wrote.
+#[allow(clippy::expect_used)]
+fn offer_scan(fixture: &Fixture, generated: &GeneratedPaths) -> commit_offer::Scan {
+    commit_offer::scan(&fixture.scope, generated)
+        .expect("the offer reads the project")
+        .expect("the project has changes kendex owns")
+}
+
+/// Whether `bot-instructions check --staged`, the commit-guards pre-commit
+/// lane, passes over these paths staged. The index is put back after.
+fn staged_check_passes(root: &Path, owned: &[commit_offer::Owned]) -> bool {
+    let mut add = vec!["add", "--"];
+    add.extend(owned.iter().map(|owned| owned.path.as_str()));
+    git(root, &add);
+    let output = package_run(root, CODEX_PACKAGE, &["check", "--staged"]);
+    git(root, &["reset", "--quiet"]);
+    match output.status.code() {
+        Some(0) => true,
+        Some(1) => false,
+        other => panic!(
+            "check --staged could not answer ({other:?}):\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    }
 }
 
 #[test]
@@ -437,7 +516,10 @@ fn an_unarmed_install_runs_no_package_code_and_names_the_setup_step() {
     let rendered = bot_instructions::render(&fixture.env, &fixture.scope)
         .expect("an unarmed package is skipped");
     assert_eq!(
-        rendered.skipped(),
+        rendered
+            .skipped()
+            .map(bot_instructions::Skipped::line)
+            .as_deref(),
         Some(
             "bot-instructions: render skipped; use Set up on the bot-instructions package page, or remove and add it with --allow-repo-effects, then apply again"
         )
@@ -508,4 +590,412 @@ fn removal_revokes_automatic_rendering_before_a_declined_reinstall() {
         before,
         "the declined reinstall executed the renderer"
     );
+}
+
+/// What one row of the stale table expects `commit_offer::stale` to say.
+enum Holds {
+    NotSetUp,
+    OutOfDate,
+    Unchecked(&'static str),
+    Nothing,
+}
+
+/// One standing a package can have when the offer touches it.
+struct StaleRow {
+    what: &'static str,
+    armed: bool,
+    doctrine_changed: bool,
+    rendered: bool,
+    declares: fn(&Path, String) -> String,
+    holds: Holds,
+}
+
+/// The declaration edits a row applies to the installed copy before the
+/// fixture is committed.
+fn as_shipped(_: &Path, text: String) -> String {
+    text
+}
+
+fn no_installer(_: &Path, text: String) -> String {
+    without(text, "  installer: \"scripts/bot-instructions render\"\n")
+}
+
+fn no_checker(_: &Path, text: String) -> String {
+    without(text, "  checker: \"scripts/bot-instructions check\"\n")
+}
+
+fn writes_into_git(_: &Path, text: String) -> String {
+    replaced(
+        text,
+        "  writes:\n",
+        "  writes:\n    - \".git/hooks/pre-commit\"\n",
+    )
+}
+
+#[allow(clippy::unwrap_used)]
+fn check_cannot_answer(package: &Path, text: String) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let script = package.join("scripts/fail-check");
+    fs::write(
+        &script,
+        "#!/bin/sh\necho 'fail-check: the manifest would not read' >&2\nexit 2\n",
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    replaced(
+        text,
+        "  checker: \"scripts/bot-instructions check\"\n",
+        "  checker: \"scripts/fail-check\"\n",
+    )
+}
+
+fn without(text: String, line: &str) -> String {
+    replaced(text, line, "")
+}
+
+fn replaced(text: String, from: &str, to: &str) -> String {
+    assert_eq!(
+        text.matches(from).count(),
+        1,
+        "the declaration edit found {from:?}"
+    );
+    text.replacen(from, to, 1)
+}
+
+const STALE_ROWS: [StaleRow; 8] = [
+    StaleRow {
+        what: "not set up here",
+        armed: false,
+        doctrine_changed: true,
+        rendered: false,
+        declares: as_shipped,
+        holds: Holds::NotSetUp,
+    },
+    StaleRow {
+        what: "set up, its files not rendered",
+        armed: true,
+        doctrine_changed: true,
+        rendered: false,
+        declares: as_shipped,
+        holds: Holds::OutOfDate,
+    },
+    StaleRow {
+        what: "set up and rendered",
+        armed: true,
+        doctrine_changed: true,
+        rendered: true,
+        declares: as_shipped,
+        holds: Holds::Nothing,
+    },
+    StaleRow {
+        what: "set up, its check cannot answer",
+        armed: true,
+        doctrine_changed: true,
+        rendered: false,
+        declares: check_cannot_answer,
+        holds: Holds::Unchecked("fail-check: the manifest would not read"),
+    },
+    StaleRow {
+        what: "not touched by the offer",
+        armed: false,
+        doctrine_changed: false,
+        rendered: false,
+        declares: as_shipped,
+        holds: Holds::Nothing,
+    },
+    StaleRow {
+        what: "no installer to set it up with",
+        armed: false,
+        doctrine_changed: true,
+        rendered: false,
+        declares: no_installer,
+        holds: Holds::Nothing,
+    },
+    StaleRow {
+        what: "an effect inside .git",
+        armed: false,
+        doctrine_changed: true,
+        rendered: false,
+        declares: writes_into_git,
+        holds: Holds::Nothing,
+    },
+    StaleRow {
+        what: "set up, no check to ask",
+        armed: true,
+        doctrine_changed: true,
+        rendered: false,
+        declares: no_checker,
+        holds: Holds::Nothing,
+    },
+];
+
+/// Each package the offer touches is asked before the commit is offered,
+/// and one kendex cannot vouch for holds it. One row per standing: not set
+/// up, set up with its files not rendered, set up and rendered, set up
+/// with a check that cannot answer, and the four that hold nothing: not
+/// touched by the offer, no installer to set it up with, an effect inside
+/// `.git`, and set up with no check to ask.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_package_whose_files_the_offer_would_carry_stale_holds_the_commit() {
+    for row in STALE_ROWS {
+        let what = row.what;
+        let fixture = enabled_fixture_with_arming(row.armed);
+        let package = fixture.root.join(CODEX_PACKAGE);
+        let skill = package.join("SKILL.md");
+        let declared = (row.declares)(&package, fs::read_to_string(&skill).unwrap());
+        fs::write(&skill, declared).unwrap();
+        git(&fixture.root, &["add", "-A"]);
+        commit_fixture(&fixture.root);
+        let mut generated = GeneratedPaths::default();
+        let readme = fixture.root.join("README.md");
+        fs::write(&readme, "# fixture, changed\n").unwrap();
+        generated.whole.insert(readme);
+        if row.doctrine_changed {
+            generated.whole.insert(change_doctrine(&fixture.root));
+        }
+        if row.rendered {
+            bot_instructions::render(&fixture.env, &fixture.scope)
+                .expect("the armed package renders")
+                .add_to(&mut generated);
+        }
+
+        let stale = commit_offer::stale(
+            &fixture.env,
+            &fixture.scope,
+            &offer_scan(&fixture, &generated),
+            Carried::Everything,
+        )
+        .expect("the packages are asked");
+
+        match row.holds {
+            Holds::Nothing => assert!(stale.is_empty(), "{what}: {stale:?}"),
+            Holds::NotSetUp => {
+                assert_eq!(stale.len(), 1, "{what}: {stale:?}");
+                assert_eq!(stale[0].disclosure.name, "bot-instructions", "{what}");
+                assert_eq!(stale[0].why, Staleness::NotSetUp, "{what}");
+            }
+            Holds::OutOfDate => {
+                assert_eq!(stale.len(), 1, "{what}: {stale:?}");
+                let Staleness::OutOfDate(said) = &stale[0].why else {
+                    panic!("{what}: {:?}", stale[0].why);
+                };
+                assert!(
+                    said.iter()
+                        .any(|line| line.starts_with("bot-instructions: findings=")),
+                    "{what}: the check's own words did not travel: {said:?}"
+                );
+            }
+            Holds::Unchecked(words) => {
+                assert_eq!(stale.len(), 1, "{what}: {stale:?}");
+                assert_eq!(
+                    stale[0].why,
+                    Staleness::Unchecked(vec![words.to_owned()]),
+                    "{what}"
+                );
+            }
+        }
+    }
+}
+
+/// The offer after a refresh that changed an unarmed package's doctrine.
+/// The commit it used to offer is one `bot-instructions check --staged`,
+/// the pre-commit lane, refuses; the offer now holds it. The setup the
+/// hold offers renders the files, and the commit it then offers passes
+/// that check.
+///
+/// Must-fail control: `commit_offer::stale` answering empty for a package
+/// not set up here restores the old offer, and the first assertion fails.
+#[test]
+fn an_unarmed_doctrine_change_never_offers_the_commit_the_staged_check_refuses() {
+    let fixture = enabled_fixture_with_arming(false);
+    commit_fixture(&fixture.root);
+    let mut generated = GeneratedPaths::default();
+    generated.whole.insert(change_doctrine(&fixture.root));
+    let rendered = bot_instructions::render(&fixture.env, &fixture.scope)
+        .expect("an unarmed package is skipped");
+    assert!(rendered.skipped().is_some(), "the unarmed render ran");
+    rendered.add_to(&mut generated);
+
+    let scan = offer_scan(&fixture, &generated);
+    let stale = commit_offer::stale(&fixture.env, &fixture.scope, &scan, Carried::Everything)
+        .expect("the packages are asked");
+    assert_eq!(
+        stale.iter().map(|held| &held.why).collect::<Vec<_>>(),
+        [&Staleness::NotSetUp],
+        "the commit was offered over a package not set up here"
+    );
+    assert!(
+        !staged_check_passes(&fixture.root, &scan.owned),
+        "the premise failed: the old offer's commit passes the staged check"
+    );
+
+    kendex_core::repo_effects::arm(&fixture.scope, &stale[0].disclosure.declared)
+        .expect("the setup the hold offers runs");
+    bot_instructions::add_to_generated(&fixture.env, &fixture.scope, &mut generated)
+        .expect("the setup's files join the offer");
+    let scan = offer_scan(&fixture, &generated);
+    let stale = commit_offer::stale(&fixture.env, &fixture.scope, &scan, Carried::Everything)
+        .expect("the packages are asked again");
+    assert!(stale.is_empty(), "still held after the setup: {stale:?}");
+    assert!(
+        staged_check_passes(&fixture.root, &scan.owned),
+        "the commit offered after the setup fails the staged check"
+    );
+}
+
+/// A linked work tree of a repository whose main checkout set the package
+/// up is not set up itself, and its skip line names the main checkout
+/// rather than leaving the state unexplained.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_linked_work_tree_names_the_main_checkout_in_its_skip_line() {
+    let fixture = enabled_fixture();
+    commit_fixture(&fixture.root);
+    let linked = fixture.root.parent().unwrap().join("linked");
+    git(
+        &fixture.root,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "second",
+            linked.to_str().unwrap(),
+        ],
+    );
+    let linked = linked.canonicalize().unwrap();
+    record_install(
+        &fixture.env,
+        &linked,
+        HarnessId::Codex,
+        linked.join(CODEX_PACKAGE),
+    );
+
+    let rendered = bot_instructions::render(
+        &fixture.env,
+        &Scope::Project {
+            root: linked.clone(),
+        },
+    )
+    .expect("a package set up elsewhere is skipped here");
+
+    assert_eq!(
+        rendered.skipped().map(bot_instructions::Skipped::line),
+        Some(format!(
+            "bot-instructions: render skipped in this work tree; it is set up in the main checkout at {}, and each work tree is set up on its own: use Set up on the bot-instructions package page, then apply again",
+            kendex_core::paths::slashed(&fixture.root)
+        ))
+    );
+}
+
+/// A commit never splits a package's changed paths. One row per way a
+/// package's input can be left behind while its re-rendered files are
+/// carried: a pending doctrine change outside the commit, the manifest
+/// changed or deleted anywhere, which no commit kendex makes carries, and
+/// a changed inventory outside the commit. A commit carrying every changed
+/// path kendex owns, the inventory included, is whole.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_commit_that_splits_a_packages_changed_paths_is_held() {
+    enum Edit {
+        Nothing,
+        Harnesses,
+        DeleteManifest,
+        Inventory,
+    }
+    let doctrine = format!("{CODEX_PACKAGE}/SKILL.md");
+    let inventory = ".kendex-generated.json";
+    let rows = [
+        (
+            "the doctrine left out of the commit",
+            Edit::Nothing,
+            Some(doctrine.as_str()),
+            Some(vec![doctrine.clone()]),
+        ),
+        (
+            "every pending change, the doctrine included",
+            Edit::Nothing,
+            None,
+            None,
+        ),
+        (
+            "the manifest changed outside the package's table",
+            Edit::Harnesses,
+            None,
+            Some(vec!["kendex.toml".to_owned()]),
+        ),
+        (
+            "the manifest deleted",
+            Edit::DeleteManifest,
+            None,
+            Some(vec!["kendex.toml".to_owned()]),
+        ),
+        (
+            "the changed inventory left out of the commit",
+            Edit::Inventory,
+            Some(inventory),
+            Some(vec![inventory.to_owned()]),
+        ),
+        ("the changed inventory carried", Edit::Inventory, None, None),
+    ];
+    for (what, edit, leave, split) in rows {
+        let fixture = enabled_fixture();
+        commit_fixture(&fixture.root);
+        let mut generated = GeneratedPaths::default();
+        generated.whole.insert(change_doctrine(&fixture.root));
+        bot_instructions::render(&fixture.env, &fixture.scope)
+            .expect("the armed package renders")
+            .add_to(&mut generated);
+        let replace = |path: &str, from: &str, to: &str| {
+            let path = fixture.root.join(path);
+            let text = fs::read_to_string(&path).unwrap();
+            assert_eq!(text.matches(from).count(), 1, "{what}: {from:?}");
+            fs::write(&path, text.replacen(from, to, 1)).unwrap();
+        };
+        match edit {
+            Edit::Nothing => {}
+            Edit::Harnesses => replace(
+                "kendex.toml",
+                "harnesses = [\"claude\"]\n",
+                "harnesses = [\"claude\", \"codex\"]\n",
+            ),
+            Edit::DeleteManifest => fs::remove_file(fixture.root.join("kendex.toml")).unwrap(),
+            Edit::Inventory => replace(
+                inventory,
+                "\".claude/agents/a.md\",",
+                "\".claude/agents/a.md\",\".claude/agents/b.md\",",
+            ),
+        }
+        let scan = offer_scan(&fixture, &generated);
+        let carried_paths: BTreeSet<String> = scan
+            .owned
+            .iter()
+            .map(|owned| owned.path.clone())
+            .filter(|path| Some(path.as_str()) != leave)
+            .collect();
+        assert!(
+            carried_paths.len() > 1,
+            "{what}: the render changed nothing"
+        );
+        let carried = match leave {
+            Some(left) => {
+                assert!(
+                    scan.owned.iter().any(|owned| owned.path == left),
+                    "{what}: {left} did not change"
+                );
+                Carried::Only(&carried_paths)
+            }
+            None => Carried::Everything,
+        };
+
+        let stale = commit_offer::stale(&fixture.env, &fixture.scope, &scan, carried)
+            .expect("the packages are asked");
+
+        let got: Vec<&Staleness> = stale.iter().map(|held| &held.why).collect();
+        match split {
+            Some(left) => assert_eq!(got, [&Staleness::Split(left)], "{what}"),
+            None => assert!(got.is_empty(), "{what}: {got:?}"),
+        }
+    }
 }

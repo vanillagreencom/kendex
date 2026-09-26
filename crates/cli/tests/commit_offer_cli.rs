@@ -317,7 +317,8 @@ fn the_install_record_is_committed_with_the_renders() {
 /// person left in the worktree.
 ///
 /// The fixture answers `region-bounds` by calling the shipped launcher, so
-/// no fixture carries a second copy of the bounds rule.
+/// no fixture carries a second copy of the bounds rule. Its `check` says the
+/// files are current: the offer asks it before it offers the commit.
 #[allow(clippy::unwrap_used)]
 fn region_project(tmp: &tempfile::TempDir, committed: &str, working: &str) -> PathBuf {
     let home = rooted(tmp);
@@ -326,7 +327,7 @@ fn region_project(tmp: &tempfile::TempDir, committed: &str, working: &str) -> Pa
     executable(
         &script,
         &format!(
-            "#!/bin/sh\nif [ \"$1\" = region-bounds ]; then\n  exec '{PACKAGE_LAUNCHER}' \"$@\"\nfi\nmkdir -p .github\nprintf 'updated review rules\\n' > .github/copilot-instructions.md\nif ! grep -q 'old generated rules' AGENTS.md; then\n  echo 'fixture-render: AGENTS.md has no generated rules' >&2\n  exit 1\nfi\nsed 's/old generated rules/new generated rules/' AGENTS.md > AGENTS.md.rendered && mv AGENTS.md.rendered AGENTS.md || exit 1\necho 'wrote .github/copilot-instructions.md'\nprintf 'wrote region AGENTS.md\\t## Code Review Rules\\n'\n"
+            "#!/bin/sh\nif [ \"$1\" = region-bounds ]; then\n  exec '{PACKAGE_LAUNCHER}' \"$@\"\nfi\nif [ \"$1\" = check ]; then\n  exit 0\nfi\nmkdir -p .github\nprintf 'updated review rules\\n' > .github/copilot-instructions.md\nif ! grep -q 'old generated rules' AGENTS.md; then\n  echo 'fixture-render: AGENTS.md has no generated rules' >&2\n  exit 1\nfi\nsed 's/old generated rules/new generated rules/' AGENTS.md > AGENTS.md.rendered && mv AGENTS.md.rendered AGENTS.md || exit 1\necho 'wrote .github/copilot-instructions.md'\nprintf 'wrote region AGENTS.md\\t## Code Review Rules\\n'\n"
         ),
     );
     fs::write(project.join("AGENTS.md"), committed).unwrap();
@@ -489,6 +490,133 @@ fn an_unarmed_cli_apply_succeeds_names_setup_and_runs_no_package_code() {
         !project.join(".bot-instructions-ran").exists(),
         "the unarmed CLI apply executed package code"
     );
+}
+
+/// A package whose check says its files are out of date holds the offer:
+/// the commit is not offered, a flag naming it is refused with the
+/// package's own words and exits 1, and a run with nobody to ask names the
+/// setup rather than the flags that would commit. A project each, since
+/// the fixture's render runs once.
+#[test]
+fn a_package_whose_check_fails_holds_the_commit() {
+    for (flags, code, said) in [
+        (
+            &["--commit"][..],
+            Some(1),
+            &[
+                "bot-instructions says its files in this repository are out of date:",
+                "drift: .github/copilot-instructions.md differs from a fresh render",
+                "committing now would carry those files out of date, so kendex does not offer the commit",
+                "set it up here first",
+                " · not committed",
+            ][..],
+        ),
+        (&[][..], Some(0), &["set it up here first"][..]),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = held_project(&tmp);
+
+        let (output, text) = apply(&home, &project, flags);
+
+        assert_eq!(output.status.code(), code, "{flags:?}: {text}");
+        for line in said {
+            assert!(text.contains(line), "{flags:?}: missing {line:?}:\n{text}");
+        }
+        assert!(!text.contains("the commit was refused"), "{text}");
+        assert!(!text.contains("run again with --commit"), "{text}");
+        assert_eq!(head_subject(&project), "bot package", "{flags:?}");
+    }
+}
+
+/// A [`region_project`] whose package's check says its files are out of
+/// date.
+#[allow(clippy::unwrap_used)]
+fn held_project(tmp: &tempfile::TempDir) -> PathBuf {
+    let project = region_project(
+        tmp,
+        "# App\n\n## Code Review Rules\n\nold generated rules\n",
+        "# App\n\n## Code Review Rules\n\nold generated rules\n",
+    );
+    let script = project.join(".agents/skills/bot-instructions/scripts/bot-instructions");
+    let renders = fs::read_to_string(&script).unwrap();
+    executable(
+        &script,
+        &renders.replacen(
+            "#!/bin/sh\n",
+            "#!/bin/sh\nif [ \"$1\" = check ]; then\n  echo 'bot-instructions: findings=1' >&2\n  echo 'drift: .github/copilot-instructions.md differs from a fresh render' >&2\n  exit 1\nfi\n",
+            1,
+        ),
+    );
+    project
+}
+
+/// A commit that would carry a package's re-rendered file while the
+/// manifest, which kendex never commits, has changed is held with the
+/// manifest named, whatever the package's own check says: no setup clears
+/// it, so the files are left for the person to commit together.
+#[test]
+fn a_commit_that_leaves_the_changed_manifest_behind_is_held() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = region_project(
+        &tmp,
+        "# App\n\n## Code Review Rules\n\nold generated rules\n",
+        "# App\n\n## Code Review Rules\n\nold generated rules\n",
+    );
+    let manifest = project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        format!("{text}\n[bot-instructions]\nschema = 1\n"),
+    )
+    .unwrap();
+
+    let (output, text) = apply(&home, &project, &["--commit"]);
+
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    for line in [
+        "the commit would carry some of bot-instructions's changed files and leave these out:",
+        "    kendex.toml",
+        "they are left as diffs; commit them together yourself",
+    ] {
+        assert!(text.contains(line), "missing {line:?}:\n{text}");
+    }
+    assert!(!text.contains("set it up here first"), "{text}");
+    assert_eq!(head_subject(&project), "bot package");
+}
+
+/// A pre-commit chain that refuses prints every lane it ran, and git hands
+/// back its stdout before its stderr. The refusal leads with the findings
+/// block, then the rest of what git said for the log.
+#[test]
+fn a_commit_refusal_leads_with_its_findings_block() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = project(&tmp);
+    executable(
+        &project.join(".git/hooks/pre-commit"),
+        "#!/bin/sh\necho 'commit-guards: step=doc-limits'\necho '  === pre-commit: doc-limits'\necho 'commit-guards: result=1'\necho 'bot-instructions: findings=1' >&2\necho 'drift: AGENTS.md differs from a fresh render' >&2\nexit 1\n",
+    );
+    let (output, text) = apply(&home, &project, &["--commit"]);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    let at = |line: &str| {
+        text.find(line)
+            .unwrap_or_else(|| panic!("missing {line:?}:\n{text}"))
+    };
+    assert!(
+        at("the repository's commit check found problems:") < at("bot-instructions: findings=1"),
+        "{text}"
+    );
+    assert!(
+        at("drift: AGENTS.md differs from a fresh render") < at("the rest of what git said:"),
+        "{text}"
+    );
+    assert!(
+        at("the rest of what git said:") < at("commit-guards: step=doc-limits"),
+        "{text}"
+    );
+    assert_eq!(head_subject(&project), "files");
 }
 
 /// A flag naming a choice a precondition removed refuses with that

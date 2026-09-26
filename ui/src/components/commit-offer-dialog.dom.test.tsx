@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProjectOffer, Refused } from "@/bindings";
+import type { ProjectOffer, Refused, StalePackage } from "@/bindings";
 import { EARLIER_WORD } from "@/components/project-changes/change-rows";
 import {
   ACCEPT_EARLIER_LABEL,
@@ -11,7 +11,7 @@ import {
   COMMIT_LABEL,
   TANGLED_LABEL,
 } from "@/lib/copy-commit-offer";
-import { useCommitOfferStore } from "@/stores/commit-offer";
+import { type Stage, useCommitOfferStore } from "@/stores/commit-offer";
 import { mount, settle } from "@/test/dom";
 import { CommitOfferDialog } from "./commit-offer-dialog";
 
@@ -39,6 +39,8 @@ const offer: ProjectOffer = {
   newBranch: "kendex/renders",
   repo: "acme/site",
   tracked: true,
+  stale: [],
+  staleAction: [],
 };
 
 const refused = (step: string, said: string): Refused => ({
@@ -61,6 +63,180 @@ beforeEach(() => {
     scoped: "action",
     accepted: false,
     message: offer.message,
+  });
+});
+
+// Every stage a held offer reaches, one row each, so a stage the dialog
+// draws with no row here is visible in the table. Held: why each package
+// holds the commit, the disclosure its setup's yes is given against, the
+// setup and leaving, never a commit route. Setting up: the same, both
+// actions disabled. Setup failed: the words, leaving only. Still held: the
+// fresh reading's words, leaving only.
+describe("an offer a package holds", () => {
+  const held = (why: StalePackage["why"], said: string[]): StalePackage => ({
+    name: "bot-instructions",
+    why,
+    said,
+    disclosure: {
+      declared: {
+        name: "bot-instructions",
+        root: "/home/method/dev/site/.agents/skills/bot-instructions",
+        summary: "raw summary",
+        writes: [],
+        installer: "scripts/bot-instructions render",
+        uninstaller: null,
+        checker: null,
+        removal: null,
+        notes: [],
+        companions: [],
+      },
+      name: "bot-instructions",
+      summary: "Renders the review-bot files.",
+      writes: [],
+      companions: [],
+      notes: [],
+      undo: null,
+    },
+  });
+  const NOT_SET_UP =
+    "bot-instructions is not set up in this checkout, so its files in this repository were not brought up to date.";
+  const DISCLOSED = "Renders the review-bot files.";
+
+  it.each([
+    {
+      name: "held, not set up",
+      stage: { at: "offer" } as Stage,
+      held: held("notSetUp", []),
+      title: "1 file kendex wrote in site is not committed",
+      words: [NOT_SET_UP, DISCLOSED],
+      actions: ["Leave as diffs", "Set up bot-instructions here"],
+      disabled: false,
+    },
+    {
+      name: "held, out of date",
+      stage: { at: "offer" } as Stage,
+      held: held("outOfDate", ["drift: AGENTS.md differs from a fresh render"]),
+      title: "1 file kendex wrote in site is not committed",
+      words: [
+        "bot-instructions says its files in this repository are out of date.",
+        "drift: AGENTS.md differs from a fresh render",
+        DISCLOSED,
+      ],
+      actions: ["Leave as diffs", "Set up bot-instructions here"],
+      disabled: false,
+    },
+    {
+      name: "setting up",
+      stage: { at: "settingUp" } as Stage,
+      held: held("notSetUp", []),
+      title: "1 file kendex wrote in site is not committed",
+      words: [NOT_SET_UP, DISCLOSED],
+      actions: ["Leave as diffs", "Setting up…"],
+      disabled: true,
+    },
+    {
+      name: "setup failed",
+      stage: {
+        at: "setUpFailed",
+        error: "bot-instructions: render exited 2",
+      } as Stage,
+      held: held("notSetUp", []),
+      title: "The setup did not finish",
+      words: ["bot-instructions: render exited 2"],
+      actions: ["Leave as diffs"],
+      disabled: false,
+    },
+    {
+      name: "still held",
+      stage: { at: "stillHeld" } as Stage,
+      held: held("unchecked", ["fail-check: the manifest would not read"]),
+      title: "Set up, and still not ready to commit",
+      words: [
+        "bot-instructions could not say whether its files in this repository are up to date.",
+        "fail-check: the manifest would not read",
+      ],
+      actions: ["Leave as diffs"],
+      disabled: false,
+    },
+    {
+      name: "held, the commit would split its changes",
+      stage: { at: "offer" } as Stage,
+      held: held("split", ["kendex.toml"]),
+      title: "1 file kendex wrote in site is not committed",
+      words: [
+        "This commit would carry some of bot-instructions's changed files and leave out the ones below. They belong in one commit: leave them as diffs and commit them together.",
+        "kendex.toml",
+      ],
+      actions: ["Leave as diffs"],
+      disabled: false,
+    },
+  ])("draws its stage: $name", async (row) => {
+    useCommitOfferStore.setState({
+      queue: [{ ...offer, stale: [row.held], staleAction: [row.held] }],
+      stage: row.stage,
+    });
+    mount(<CommitOfferDialog />);
+    await settle();
+
+    const title = document.body.querySelector('[data-slot="dialog-title"]');
+    expect(title?.textContent).toBe(row.title);
+    const text = document.body.textContent ?? "";
+    for (const said of row.words) expect(text).toContain(said);
+    expect(text).not.toContain("raw summary");
+    const footer = [
+      ...document.body.querySelectorAll('[data-slot="dialog-footer"] button'),
+    ];
+    expect(footer.map((one) => one.textContent)).toEqual(row.actions);
+    for (const one of footer)
+      expect((one as HTMLButtonElement).disabled).toBe(row.disabled);
+    expect(buttons()).not.toContain(COMMIT_LABEL);
+  });
+});
+
+// An older pending change to a package's files holds only the commit that
+// carries it: this action's own commit is offered, and picking every
+// pending change draws the hold, with the choice between them still on
+// screen to go back.
+describe("an offer held for every pending change only", () => {
+  it("offers the action's commit and holds the other", async () => {
+    const stale: StalePackage = {
+      name: "bot-instructions",
+      why: "notSetUp",
+      said: [],
+      disclosure: {
+        declared: {
+          name: "bot-instructions",
+          root: "/home/method/dev/site/.agents/skills/bot-instructions",
+          summary: "Renders the review-bot files.",
+          writes: [],
+          installer: "scripts/bot-instructions render",
+          uninstaller: null,
+          checker: null,
+          removal: null,
+          notes: [],
+          companions: [],
+        },
+        name: "bot-instructions",
+        summary: "Renders the review-bot files.",
+        writes: [],
+        companions: [],
+        notes: [],
+        undo: null,
+      },
+    };
+    useCommitOfferStore.setState({
+      queue: [{ ...offer, choice: true, stale: [stale], staleAction: [] }],
+      scoped: "action",
+    });
+    mount(<CommitOfferDialog />);
+    await settle();
+    expect(buttons()).toContain(COMMIT_LABEL);
+    expect(buttons()).not.toContain("Set up bot-instructions here");
+
+    act(() => useCommitOfferStore.getState().scope("all"));
+    await settle();
+    expect(buttons()).toContain("Set up bot-instructions here");
+    expect(buttons()).toContain(ACTION_SEGMENT);
   });
 });
 

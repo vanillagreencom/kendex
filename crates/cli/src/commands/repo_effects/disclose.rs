@@ -39,12 +39,13 @@ pub fn disclose(
         ));
     }
     for disclosure in &offers.shown {
-        print(disclosure);
+        print_disclosure(disclosure);
     }
     Ok(offers.shown)
 }
 
-fn print(disclosure: &Disclosure) {
+/// One package's block, for a surface that already holds the disclosure.
+pub fn print_disclosure(disclosure: &Disclosure) {
     let name = &disclosure.name;
     say("");
     say(&format!(

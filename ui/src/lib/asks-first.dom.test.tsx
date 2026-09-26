@@ -17,10 +17,19 @@ import { useCommitOfferStore } from "@/stores/commit-offer";
 import { useInstallFlow } from "@/stores/install-flow";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useProblemsStore } from "@/stores/problems";
+import { useSettingsStore } from "@/stores/settings";
 import { mount, settle } from "@/test/dom";
 
 vi.mock("@/bindings", () => ({
-  commands: { commitOfferScan: vi.fn() },
+  commands: {
+    commitOfferScan: vi.fn(),
+    commitOfferBaseline: vi.fn(),
+    commitOfferOpen: vi.fn(),
+    repoEffectsApply: vi.fn(),
+    scanMachine: vi.fn(),
+    auditAll: vi.fn(),
+    projectChangesScan: vi.fn(),
+  },
 }));
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn(), info: vi.fn(), message: vi.fn() },
@@ -63,6 +72,8 @@ const offer = {
   pullRequest: null,
   openNumber: null,
   shared: [],
+  stale: [],
+  staleAction: [],
 } as unknown as ProjectOffer;
 
 /** An install still on screen: its ask is open until the reader closes it. */
@@ -274,5 +285,58 @@ describe("the questions a write leaves behind", () => {
     );
     // Said once: the holding is cleared by the saying.
     expect(useCommitOfferStore.getState().scanFailure).toBeNull();
+  });
+  // A held package's setup is a write, and the lifecycle it runs in scans
+  // every tracked project behind it. The offer on screen is being answered
+  // and that scan leaves it alone, so waiting on it would take the dialog
+  // down mid-answer with the window live under it.
+  it("keeps a held offer on screen through its own setup's scan", async () => {
+    const outstanding = () => new Promise<never>(() => {});
+    vi.mocked(commands.commitOfferScan).mockReturnValue(outstanding());
+    vi.mocked(commands.scanMachine).mockReturnValue(outstanding());
+    vi.mocked(commands.auditAll).mockReturnValue(outstanding());
+    vi.mocked(commands.projectChangesScan).mockReturnValue(outstanding());
+    vi.mocked(commands.repoEffectsApply).mockResolvedValue({
+      status: "ok",
+      data: { stdout: [], stderr: [] },
+    });
+    vi.mocked(commands.commitOfferOpen).mockResolvedValue({
+      status: "ok",
+      data: { kind: "offer", offer },
+    });
+    useSettingsStore.setState({
+      settings: { projects: ["/work/acme"] } as never,
+    });
+    useCommitOfferStore.setState({
+      queue: [
+        {
+          ...offer,
+          stale: [
+            { name: "guards", why: "notSetUp", said: [], disclosure: guards },
+          ],
+          staleAction: [
+            { name: "guards", why: "notSetUp", said: [], disclosure: guards },
+          ],
+        },
+      ],
+      baselines: { "/work/acme": { root: "/work/acme", held: [] } },
+    });
+    const host = mount(<CommitOfferDialog />);
+    await settle();
+    expect(host.ownerDocument.body.textContent).toContain("acme");
+
+    void useCommitOfferStore.getState().setUp();
+    await settle();
+
+    expect(useCommitOfferStore.getState().scanning).toBe(true);
+    expect(commands.commitOfferOpen).toHaveBeenCalled();
+    expect(useCommitOfferStore.getState().stage).toEqual({ at: "settingUp" });
+    expect(host.ownerDocument.body.textContent).toContain("acme");
+
+    // The scan lands, and the commit offer the setup cleared is asked.
+    useCommitOfferStore.setState({ scanning: false });
+    await settle();
+    expect(useCommitOfferStore.getState().stage).toEqual({ at: "offer" });
+    expect(host.ownerDocument.body.textContent).toContain("acme");
   });
 });

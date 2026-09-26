@@ -1,7 +1,13 @@
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { ProjectOffer, Refused, TangledFile } from "@/bindings";
+import type {
+  ProjectOffer,
+  Refused,
+  StalePackage,
+  TangledFile,
+} from "@/bindings";
 import { ExternalLink } from "@/components/external-link";
+import { DisclosureBody } from "@/components/marketplaces/repo-effects-dialog";
 import { offerEntries } from "@/components/project-changes/change-rows";
 import { ChangedFiles } from "@/components/project-changes/changed-files";
 import { Button } from "@/components/ui/button";
@@ -79,9 +85,17 @@ import {
   resetCommand,
   SCAN_FAILED_STEPS,
   SCAN_FAILED_TITLE,
+  SET_UP_FAILED_TITLE,
+  SETTING_UP_LABEL,
   SHARED_LABEL,
   SHARED_NOTE,
+  STALE_LABEL,
+  STALE_NOTE,
+  STILL_HELD_NOTE,
+  STILL_HELD_TITLE,
   saidLabel,
+  setUpLabel,
+  staleLine,
   stillCarries,
   stillStaged,
   TANGLED_LABEL,
@@ -91,6 +105,8 @@ import {
 } from "@/lib/copy-commit-offer";
 import { cn } from "@/lib/utils";
 import {
+  canSetUp,
+  heldBy,
   type Route,
   ready,
   routesFor,
@@ -133,7 +149,7 @@ export function CommitOfferDialog() {
     scanFailureSaid();
   }, [maySayFailure, scanFailure, scanFailureSaid]);
   if (!offer || !mayAsk) return null;
-  const busy = stage.at === "busy";
+  const busy = stage.at === "busy" || stage.at === "settingUp";
   return (
     <Dialog
       open
@@ -151,10 +167,23 @@ export function CommitOfferDialog() {
 }
 
 function Body({ offer, stage }: { offer: ProjectOffer; stage: Stage }) {
+  const held = useCommitOfferStore(heldBy).length > 0;
   switch (stage.at) {
     case "offer":
     case "busy":
-      return <OfferState offer={offer} stage={stage} />;
+      // A package holding the picked commit replaces the commit choices
+      // with its setup: that commit would carry its files out of date.
+      return held ? (
+        <HeldState offer={offer} busy={false} />
+      ) : (
+        <OfferState offer={offer} stage={stage} />
+      );
+    case "settingUp":
+      return <HeldState offer={offer} busy />;
+    case "setUpFailed":
+      return <SetUpFailedState error={stage.error} />;
+    case "stillHeld":
+      return <StillHeldState />;
     case "commitRefused":
       return (
         <CommitRefusedState
@@ -343,6 +372,125 @@ function OfferState({
         </Button>
         <Button disabled={busy || !held} onClick={() => void run()}>
           {busy ? busyLabel(stage.step) : primaryLabel(route)}
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+/** Why one package holds the commit, with its check's own words. */
+function HeldBy({ held }: { held: StalePackage }) {
+  return (
+    <>
+      <p>{staleLine(held)}</p>
+      {held.said.length > 0 ? (
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
+          {held.said.join("\n")}
+        </pre>
+      ) : null}
+    </>
+  );
+}
+
+/** A package whose files in this repository the commit would carry out of
+ *  date holds the offer: which, why, the disclosure its setup's yes is
+ *  given against, the same block the repository-effects dialog draws, and
+ *  the two choices, setting it up here or leaving the files as diffs. A
+ *  split package gets no disclosure and no setup choice: no setup clears
+ *  it, so leaving the files is the only way on. */
+function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
+  const setUp = useCommitOfferStore((s) => s.setUp);
+  const leave = useCommitOfferStore((s) => s.leave);
+  const stale = useCommitOfferStore(heldBy);
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>
+          {commitOfferTitle(offer.files.length, offer.name)}
+        </DialogTitle>
+        <DialogDescription>{STALE_NOTE}</DialogDescription>
+      </DialogHeader>
+      <div className="space-y-4 text-sm">
+        <Section title={STALE_LABEL}>
+          {stale.map((held) => (
+            <div key={held.name} className="space-y-1.5">
+              <HeldBy held={held} />
+              {held.why === "split" ? null : (
+                <DisclosureBody disclosure={held.disclosure} />
+              )}
+            </div>
+          ))}
+        </Section>
+        <Section title={FILES_LABEL}>
+          <ChangedFiles root={offer.root} entries={offerEntries(offer)} />
+        </Section>
+        {/* The hold is on the commit picked here: a commit of only this
+            action's work can be clean where every pending change is not,
+            so the choice between them stays on screen. */}
+        <Scope offer={offer} busy={busy} />
+      </div>
+      <DialogFooter>
+        <Button variant="outline" disabled={busy} onClick={leave}>
+          {LEAVE_LABEL}
+        </Button>
+        {canSetUp(stale) ? (
+          <Button disabled={busy} onClick={() => void setUp()}>
+            {busy
+              ? SETTING_UP_LABEL
+              : setUpLabel(stale.map((held) => held.name))}
+          </Button>
+        ) : null}
+      </DialogFooter>
+    </>
+  );
+}
+
+/** The setup ran and the fresh reading still holds the commit: why, in
+ *  that reading's words, and no second setup, as the terminal. */
+function StillHeldState() {
+  const leave = useCommitOfferStore((s) => s.leave);
+  const stale = useCommitOfferStore(heldBy);
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>{STILL_HELD_TITLE}</DialogTitle>
+        <DialogDescription>{STILL_HELD_NOTE}</DialogDescription>
+      </DialogHeader>
+      <div className="space-y-4 text-sm">
+        <Section title={STALE_LABEL}>
+          {stale.map((held) => (
+            <div key={held.name} className="space-y-1.5">
+              <HeldBy held={held} />
+            </div>
+          ))}
+        </Section>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={leave}>
+          {LEAVE_LABEL}
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+/** The setup chosen at a held offer did not run through: its installer,
+ *  or the read after it, failed. Nothing was committed. */
+function SetUpFailedState({ error }: { error: string }) {
+  const leave = useCommitOfferStore((s) => s.leave);
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>{SET_UP_FAILED_TITLE}</DialogTitle>
+      </DialogHeader>
+      <div className="space-y-4 text-sm">
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
+          {error}
+        </pre>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={leave}>
+          {LEAVE_LABEL}
         </Button>
       </DialogFooter>
     </>

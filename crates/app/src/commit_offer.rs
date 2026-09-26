@@ -18,11 +18,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use kendex_core::commit_offer::{
     self, Attribution, Baseline, Branch, Changes, Committed, Failed, Held, Offer, Pending, Probe,
-    RestorePlan, Selection, Step, Tangled, Unavailable,
+    RestorePlan, Selection, Stale, Staleness, Step, Tangled, Unavailable,
 };
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::package::diff::PackageDiff;
+use kendex_core::repo_effects::Disclosure;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -159,6 +160,63 @@ pub struct ProjectOffer {
     /// The branch already tracks the chosen remote, so a push needs no
     /// `--set-upstream`.
     pub tracked: bool,
+    /// Packages whose files in this repository a commit of every pending
+    /// change would carry out of date. Where the commit on offer is that
+    /// one and any is listed, it is not offered: the dialog offers their
+    /// setup, or leaving the files as diffs.
+    pub stale: Vec<StalePackage>,
+    /// The same reading for a commit of only this action's work,
+    /// `action_paths`, which a write-opened offer starts on. An older
+    /// pending change can hold every pending change while this action's
+    /// own commit is clean. Equal to `stale` where no action opened the
+    /// offer.
+    pub stale_action: Vec<StalePackage>,
+}
+
+/// One package holding the commit, from
+/// [`kendex_core::commit_offer::stale`].
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct StalePackage {
+    pub name: String,
+    pub why: StaleWhy,
+    /// What the package's check said, escaped. Empty where it did not run.
+    pub said: Vec<String>,
+    /// What the setup changes, the block the dialog shows before its yes.
+    /// Its `declared` is handed back to `repo_effects_apply` untouched;
+    /// every word drawn is the disclosure's own display text.
+    pub disclosure: Disclosure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum StaleWhy {
+    /// kendex has not set the package up in this checkout.
+    NotSetUp,
+    /// The package's check says its files are out of date.
+    OutOfDate,
+    /// The package's check could not answer.
+    Unchecked,
+    /// The commit would carry some of the package's changed files and
+    /// leave out the ones `said` names. No setup clears it.
+    Split,
+}
+
+impl From<Stale> for StalePackage {
+    fn from(stale: Stale) -> StalePackage {
+        let (why, said) = match stale.why {
+            Staleness::NotSetUp => (StaleWhy::NotSetUp, Vec::new()),
+            Staleness::OutOfDate(said) => (StaleWhy::OutOfDate, said),
+            Staleness::Unchecked(said) => (StaleWhy::Unchecked, said),
+            Staleness::Split(left) => (StaleWhy::Split, left),
+        };
+        StalePackage {
+            name: stale.disclosure.name.clone(),
+            why,
+            said,
+            disclosure: stale.disclosure,
+        }
+    }
 }
 
 /// Who opened the offer, which decides whether one is made at all.
@@ -235,21 +293,13 @@ impl From<&Failed> for Refused {
 
 /// Put a hook's keyed findings block before the successful checks that ran
 /// ahead of it. The whole output remains present; only the first thing the
-/// commit failure view shows changes.
+/// commit failure view shows changes. Where the block is, is
+/// [`Failed::findings`]' answer, the one the terminal reads too.
 fn said_first(failed: &Failed) -> Vec<String> {
     let mut lines = failed.said().to_vec();
-    if failed.step != Step::Commit {
-        return lines;
+    if let Some(block) = failed.findings() {
+        lines.rotate_left(block.start);
     }
-    let Some(at) = lines.iter().position(|line| {
-        let Some((name, count)) = line.rsplit_once(": findings=") else {
-            return false;
-        };
-        !name.is_empty() && count.parse::<u64>().is_ok_and(|count| count > 0)
-    }) else {
-        return lines;
-    };
-    lines.rotate_left(at);
     lines
 }
 
@@ -389,10 +439,16 @@ fn read(
         }
         Opened::ByPerson => None,
     };
+    // Asked before the commit is offered, the same reading the terminal
+    // makes of the commit each scope would carry: a package not set up, or
+    // whose check says its files are stale, and a commit that would split a
+    // package's changed files, each hold the commit rather than offer one
+    // kendex can already see the repository's check refusing.
+    let held = held_by_scope(env, &scope, &scan, pending.as_ref())?;
     // The window's write is not a typed command, so the message names the
     // shell the person is in rather than a verb they typed.
     match commit_offer::offer(scan, COMMAND, Probe::Gh) {
-        Ok(offer) => Ok(Some(Ok(drawn(root, key, offer, pending.as_ref())))),
+        Ok(offer) => Ok(Some(Ok(drawn(root, key, offer, pending.as_ref(), held)))),
         Err(failed) => Ok(Some(Err(ProjectFlag {
             root: key.to_owned(),
             count: 0,
@@ -403,11 +459,58 @@ fn read(
     }
 }
 
+/// The packages holding each commit the offer can make: every pending
+/// change, and only this action's work.
+///
+/// Each is `commit_offer::stale` asked of the paths that commit carries. The
+/// terminal commits every pending change and reads the whole scan; the
+/// window starts a write-opened offer on the action's own paths, so, under
+/// the package's check, an older pending change to a package's files holds
+/// only the commit that carries it. A commit carrying some of a package's
+/// changed paths is held as split even when the older change is the part
+/// it leaves out. Where no action opened the offer, or both commits are
+/// the same set, one reading answers for both.
+fn held_by_scope(
+    env: &Env,
+    scope: &Scope,
+    scan: &commit_offer::Scan,
+    pending: Option<&Pending>,
+) -> Result<HeldBy, String> {
+    let read = |carried: commit_offer::Carried| -> Result<Vec<StalePackage>, String> {
+        Ok(commit_offer::stale(env, scope, scan, carried)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(StalePackage::from)
+            .collect())
+    };
+    let all = read(commit_offer::Carried::Everything)?;
+    let action = match pending {
+        Some(pending) if !pending.same() => {
+            read(commit_offer::Carried::Only(&pending.action_set()))?
+        }
+        Some(_) | None => all.clone(),
+    };
+    Ok(HeldBy { all, action })
+}
+
+/// [`held_by_scope`]'s answer, one list per commit the offer can make.
+#[derive(Debug)]
+struct HeldBy {
+    all: Vec<StalePackage>,
+    action: Vec<StalePackage>,
+}
+
 /// What the default message names when the write came from the window.
 /// The rule is the command, and in the app the command is the app.
 const COMMAND: &str = "app";
 
-fn drawn(root: &Path, key: &str, offer: Offer, pending: Option<&Pending>) -> ProjectOffer {
+fn drawn(
+    root: &Path,
+    key: &str,
+    offer: Offer,
+    pending: Option<&Pending>,
+    held: HeldBy,
+) -> ProjectOffer {
     let did: BTreeMap<&str, &kendex_core::commit_offer::PendingFile> = pending
         .map(|pending| {
             pending
@@ -472,6 +575,8 @@ fn drawn(root: &Path, key: &str, offer: Offer, pending: Option<&Pending>) -> Pro
         tracked: offer.remote.as_ref().is_some_and(|remote| remote.tracked),
         remote: offer.remote.as_ref().map(|remote| remote.name.clone()),
         branch: offer.branch,
+        stale: held.all,
+        stale_action: held.action,
     }
 }
 
@@ -663,26 +768,36 @@ pub fn commit_offer_scan(
     Ok(offers)
 }
 
-/// Build the offer for one project because a person asked for it, rather
-/// than because a write left it behind.
+/// Build the offer for one project on the window's own ask, rather than
+/// because a write's scan left it behind.
 ///
 /// The setting that turns off asking is not consulted: it decides whether
-/// kendex opens the question by itself, and this is the person opening it.
-/// Nothing is attributed to an action either — there is none — so every
-/// pending change is theirs to choose from.
+/// kendex opens the question by itself, and this is the window asking.
+/// `since` is the reading an offer on screen was scoped to, where the
+/// window reads that offer again after a step it ran: the answer keeps the
+/// action's attribution, and a read that fails or finds the project
+/// blocked says so rather than reading as nothing pending. Without one a
+/// person opened the review, and nothing is attributed to an action, so
+/// every pending change is theirs to choose from.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn commit_offer_open(root: String) -> Result<OpenOffer, String> {
+pub fn commit_offer_open(
+    root: String,
+    since: Option<ProjectBaseline>,
+) -> Result<OpenOffer, String> {
     let env = env()?;
-    Ok(
-        match read(&env, &PathBuf::from(&root), &root, Opened::ByPerson)? {
-            Some(Ok(offer)) => OpenOffer::Offer {
-                offer: Box::new(offer),
-            },
-            Some(Err(flag)) => OpenOffer::Blocked { flag },
-            None => OpenOffer::Nothing,
+    let since = since.map(ProjectBaseline::into_core);
+    let opened = match &since {
+        Some(since) => Opened::ByWrite(Some(since)),
+        None => Opened::ByPerson,
+    };
+    Ok(match read(&env, &PathBuf::from(&root), &root, opened)? {
+        Some(Ok(offer)) => OpenOffer::Offer {
+            offer: Box::new(offer),
         },
-    )
+        Some(Err(flag)) => OpenOffer::Blocked { flag },
+        None => OpenOffer::Nothing,
+    })
 }
 
 /// What asking for one project's offer answered with.
@@ -1169,6 +1284,10 @@ mod tests {
             },
             // No reading was taken before the write.
             None,
+            HeldBy {
+                all: Vec::new(),
+                action: Vec::new(),
+            },
         );
         assert!(unattributed.action_paths.is_empty());
         assert!(
@@ -1551,6 +1670,182 @@ mod tests {
                 read.map(|one| one.map(|offer| offer.files))
             );
         }
+    }
+
+    /// The window's offer carries each package the terminal would hold the
+    /// commit over, with the package's own words: a rendered surface whose
+    /// check says it is out of date, or cannot answer, is listed with why;
+    /// one whose check passes is not.
+    #[test]
+    #[cfg(unix)]
+    fn an_offer_lists_the_packages_that_hold_its_commit() {
+        use kendex_core::env::{Env, FakeOs};
+
+        for (check, held) in [
+            ("exit 0", None),
+            (
+                "echo 'drift: fixture' >&2; exit 1",
+                Some((StaleWhy::OutOfDate, "drift: fixture")),
+            ),
+            (
+                "echo 'fixture-check: the manifest would not read' >&2; exit 2",
+                Some((
+                    StaleWhy::Unchecked,
+                    "fixture-check: the manifest would not read",
+                )),
+            ),
+        ] {
+            let tmp = tempfile::tempdir().expect("a fixture directory");
+            let home = tmp.path().join("home");
+            let root = tmp.path().join("project");
+            write_bot_fixture(&root);
+            let script = root.join(".agents/skills/bot-instructions/scripts/bot-instructions");
+            let renders = std::fs::read_to_string(&script).expect("the fixture renderer reads");
+            std::fs::write(
+                &script,
+                renders.replacen(
+                    "#!/bin/sh\n",
+                    &format!("#!/bin/sh\nif [ \"$1\" = check ]; then\n  {check}\nfi\n"),
+                    1,
+                ),
+            )
+            .expect("the fixture check is written");
+            std::fs::create_dir_all(&home).expect("the fixture home is made");
+            let root = root.canonicalize().expect("the project root canonicalizes");
+            bot_fixture_repo(&root, &home);
+            let scope = Scope::Project { root: root.clone() };
+            let env = Env::fake(&home, FakeOs::Linux);
+            record_bot_package(&env, &scope, &root, true);
+            crate::audit::apply_scope(&env, &scope, false).expect("the render succeeds");
+
+            let key = root.to_string_lossy().into_owned();
+            let Some(Ok(offer)) =
+                read(&env, &root, &key, Opened::ByPerson).expect("the project reads")
+            else {
+                panic!("check {check:?}: no offer was read");
+            };
+
+            let stale: Vec<(&str, StaleWhy, &[String])> = offer
+                .stale
+                .iter()
+                .map(|one| (one.name.as_str(), one.why, one.said.as_slice()))
+                .collect();
+            let said: Vec<String> = held.iter().map(|(_, words)| (*words).to_owned()).collect();
+            let want: Vec<(&str, StaleWhy, &[String])> = held
+                .iter()
+                .map(|(why, _)| ("bot-instructions", *why, said.as_slice()))
+                .collect();
+            assert_eq!(stale, want, "check {check:?}");
+        }
+    }
+
+    /// An older pending change to a package's files holds only the commit
+    /// that carries it. A doctrine change left as diffs, then an action
+    /// that writes an unrelated file: the action's own commit is clean, and
+    /// a commit of every pending change is held because the package is not
+    /// set up here.
+    #[test]
+    #[cfg(unix)]
+    fn an_older_pending_change_holds_only_the_commit_that_carries_it() {
+        use kendex_core::env::{Env, FakeOs};
+
+        let tmp = tempfile::tempdir().expect("a fixture directory");
+        let home = tmp.path().join("home");
+        let root = tmp.path().join("project");
+        write_bot_fixture(&root);
+        std::fs::create_dir_all(&home).expect("the fixture home is made");
+        let root = root.canonicalize().expect("the project root canonicalizes");
+        bot_fixture_repo(&root, &home);
+        let scope = Scope::Project { root: root.clone() };
+        let env = Env::fake(&home, FakeOs::Linux);
+        record_bot_package(&env, &scope, &root, false);
+        let doctrine = root.join(".agents/skills/bot-instructions/SKILL.md");
+        let text = std::fs::read_to_string(&doctrine).expect("the doctrine reads");
+        std::fs::write(&doctrine, format!("{text}Changed rules.\n"))
+            .expect("an earlier action changed the doctrine");
+        let shim = root.join("CLAUDE.md");
+        let generated = kendex_core::engine::GeneratedPaths {
+            whole: std::collections::BTreeSet::from([doctrine, shim.clone()]),
+            ..kendex_core::engine::GeneratedPaths::default()
+        };
+        let since = commit_offer::baseline(&scope, &generated).expect("the reading before");
+        std::fs::write(&shim, "@AGENTS.md\n").expect("the action writes its file");
+        let scan = commit_offer::scan(&scope, &generated)
+            .expect("the project reads")
+            .expect("kendex owns changed files");
+        let pending = commit_offer::pending(&scan, &since);
+
+        let held =
+            held_by_scope(&env, &scope, &scan, Some(&pending)).expect("the packages are asked");
+
+        let named = |held: &[StalePackage]| -> Vec<(String, StaleWhy)> {
+            held.iter().map(|one| (one.name.clone(), one.why)).collect()
+        };
+        assert_eq!(named(&held.action), Vec::new(), "the action's own commit");
+        assert_eq!(
+            named(&held.all),
+            vec![("bot-instructions".to_owned(), StaleWhy::NotSetUp)],
+            "every pending change"
+        );
+        let whole = held_by_scope(&env, &scope, &scan, None).expect("the packages are asked");
+        assert_eq!(
+            named(&whole.action),
+            named(&whole.all),
+            "no action opened it"
+        );
+    }
+
+    /// A commit never splits a package's changed paths. A doctrine change
+    /// left as diffs, then an action that re-renders the package's file:
+    /// the action's own commit would carry the render without the doctrine
+    /// it came from, so it is held naming the doctrine, while every pending
+    /// change carries both and is not held by this rule.
+    #[test]
+    #[cfg(unix)]
+    fn an_action_commit_that_splits_a_packages_changes_is_held() {
+        use kendex_core::env::{Env, FakeOs};
+
+        let tmp = tempfile::tempdir().expect("a fixture directory");
+        let home = tmp.path().join("home");
+        let root = tmp.path().join("project");
+        write_bot_fixture(&root);
+        std::fs::create_dir_all(&home).expect("the fixture home is made");
+        let root = root.canonicalize().expect("the project root canonicalizes");
+        bot_fixture_repo(&root, &home);
+        let scope = Scope::Project { root: root.clone() };
+        let env = Env::fake(&home, FakeOs::Linux);
+        record_bot_package(&env, &scope, &root, true);
+        let doctrine = root.join(".agents/skills/bot-instructions/SKILL.md");
+        let text = std::fs::read_to_string(&doctrine).expect("the doctrine reads");
+        std::fs::write(&doctrine, format!("{text}Changed rules.\n"))
+            .expect("an earlier action changed the doctrine");
+        let rendered = root.join(".github/copilot-instructions.md");
+        let generated = kendex_core::engine::GeneratedPaths {
+            whole: std::collections::BTreeSet::from([doctrine, rendered]),
+            ..kendex_core::engine::GeneratedPaths::default()
+        };
+        let since = commit_offer::baseline(&scope, &generated).expect("the reading before");
+        crate::audit::apply_scope(&env, &scope, false).expect("the action re-renders");
+        let scan = commit_offer::scan(&scope, &generated)
+            .expect("the project reads")
+            .expect("kendex owns changed files");
+        let pending = commit_offer::pending(&scan, &since);
+
+        let held =
+            held_by_scope(&env, &scope, &scan, Some(&pending)).expect("the packages are asked");
+
+        let named = |held: &[StalePackage]| -> Vec<(StaleWhy, Vec<String>)> {
+            held.iter().map(|one| (one.why, one.said.clone())).collect()
+        };
+        assert_eq!(
+            named(&held.action),
+            vec![(
+                StaleWhy::Split,
+                vec![".agents/skills/bot-instructions/SKILL.md".to_owned()]
+            )],
+            "the action's own commit"
+        );
+        assert_eq!(named(&held.all), Vec::new(), "every pending change");
     }
 
     /// Discovery applies the package's ownership result to the app's commit

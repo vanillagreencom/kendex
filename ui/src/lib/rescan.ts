@@ -34,7 +34,8 @@
 // [`writingRepo`] carries the rule: a write that reaches `repo_effects` runs
 // its whole body inside it — the marketplace subscribe, install, repository
 // effect, source toggle and unsubscribe, the drift-report install, the
-// editor save, and the audit's item actions — so a ninth cannot skip it.
+// editor save, the audit's item actions, and the commit offer's setup of a
+// package holding the commit — so a tenth cannot skip it.
 // The update paths spell the call out instead, as the last step inside
 // their own `holdingBusy`: `updates.ts`'s [`updateRows`], which every
 // confirm the Updates page's review takes goes through, [`updateOne`],

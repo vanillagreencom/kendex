@@ -137,7 +137,7 @@ describe("the review of one project's pending changes", () => {
     expect(commands.commitOfferOpen).not.toHaveBeenCalled();
     await userEvent.click(button(COMMIT_CHANGES_LABEL));
     await settle();
-    expect(commands.commitOfferOpen).toHaveBeenCalledWith(ROOT);
+    expect(commands.commitOfferOpen).toHaveBeenCalledWith(ROOT, null);
   });
 
   // The states no commit could land in keep their changes on screen with

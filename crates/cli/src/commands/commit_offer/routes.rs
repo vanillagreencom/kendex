@@ -9,7 +9,7 @@
 use kendex_core::commit_offer::{self, Committed, Offer, Selection};
 use kendex_core::engine::GeneratedPaths;
 
-use super::block::{self, Recover, Retry};
+use super::block::{self, AfterRefusal, Recover, Retry};
 use super::{Asking, Choice, Outcome};
 
 type Taken = Result<Outcome, Box<dyn std::error::Error>>;
@@ -80,11 +80,11 @@ fn straight(
                 };
             }
             Err(refused) => {
-                block::refused(block::commit_refused_head(&refused.failed), &refused.failed);
+                let more = block::commit_refused(&refused.failed, asking);
                 if let Some(count) = refused.still_staged {
                     block::still_staged(count);
                 }
-                match again(asking)? {
+                match again(asking, more.then_some(&refused.failed))? {
                     Retry::Leave => return Ok(Outcome::CommitRefused),
                     Retry::Same => {}
                     Retry::Different => message = block::message(&message)?,
@@ -95,11 +95,21 @@ fn straight(
 }
 
 /// The ways on from a refused commit, where there is a person to offer
-/// them to.
-fn again(asking: Asking) -> std::io::Result<Retry> {
-    match asking {
-        Asking::No => Ok(Retry::Leave),
-        Asking::Yes => block::after_refusal(),
+/// them to. `unshown` is the refusal whose words were cut to their
+/// findings: asking to see the rest prints it and asks again, without that
+/// choice.
+fn again(asking: Asking, mut unshown: Option<&commit_offer::Failed>) -> std::io::Result<Retry> {
+    if asking == Asking::No {
+        return Ok(Retry::Leave);
+    }
+    loop {
+        match block::after_refusal(unshown.is_some())? {
+            AfterRefusal::Retry(retry) => return Ok(retry),
+            AfterRefusal::Show => match unshown.take() {
+                Some(failed) => block::everything(failed),
+                None => unreachable!("the show choice was picked from a list without it"),
+            },
+        }
     }
 }
 
@@ -281,7 +291,7 @@ fn abandoned(
     message: String,
     asking: Asking,
 ) -> Taken {
-    block::refused(block::commit_refused_head(&refused.failed), &refused.failed);
+    let more = block::commit_refused(&refused.failed, asking);
     if let Some(count) = refused.still_staged {
         block::still_staged(count);
     }
@@ -295,7 +305,7 @@ fn abandoned(
     // Committing again is the route the person chose, run again from its
     // start: the branch is made once more and the commit lands on it. The
     // message is the one they settled on, not the default.
-    match again(asking)? {
+    match again(asking, more.then_some(&refused.failed))? {
         Retry::Leave => Ok(Outcome::CommitRefused),
         Retry::Same => pull_request(offer, generated, Some(message), asking),
         Retry::Different => {
