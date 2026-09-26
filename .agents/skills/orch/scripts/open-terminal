@@ -125,6 +125,8 @@ source "$SCRIPT_DIR/lib/lane-state.sh"
 source "$SCRIPT_DIR/lib/pane-write.sh"
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
+# shellcheck source=lib/tmux-server.sh
+source "$SCRIPT_DIR/lib/tmux-server.sh"
 # shellcheck source=lib/lane-gitfile.sh
 source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 # lane_context_caller_cfg there is the one answer to "which config dir is a
@@ -267,8 +269,11 @@ verify_seconds_ok() { # SETTING VALUE CEILING
   fi
   VERIFY_SECONDS="$value"
 }
+# tmux where this launch has a tmux server to reach: $TMUX, or
+# ORCH_TMUX_SESSION naming the fleet's session on the person's own server
+# (lib/tmux-server.sh), which is how a lane is launched from outside tmux.
 if [[ -z "$TERMINAL_MODE" ]]; then
-  if [[ -n "${TMUX:-}" ]]; then TERMINAL_MODE="tmux"; else TERMINAL_MODE="gui"; fi
+  if tmux_server_named; then TERMINAL_MODE="tmux"; else TERMINAL_MODE="gui"; fi
 elif [[ "$TERMINAL_MODE" == "ghostty" && -n "${TMUX:-}" ]]; then
   # The override stands (an intentional GUI launch from a tmux controller), but
   # a caller who inferred the flag from the visible terminal gets told where the
@@ -1505,7 +1510,9 @@ write_lane_marker() { # WT ITEM REMOTE_ROOT
 # chain or a run-shell job started inside tmux, a watch-driven relaunch after
 # its pane closed) gets whichever session the server calls current: the lane
 # then opens where neither the watch nor `lanes state` looks for it. A launch
-# with no $TMUX at all never gets here; open_tmux refuses it as tmux-missing.
+# with neither $TMUX nor ORCH_TMUX_SESSION never gets here; tmux_window_open
+# refuses it as tmux-missing, and one with the setting alone reaches the
+# person's own tmux server (lib/tmux-server.sh).
 # So the session is always named: ORCH_TMUX_SESSION, then the fleet state's
 # tmux.session, then the session of the launching pane, and none of them is a
 # refusal. The session must exist before anything uses or records it: a
@@ -1550,7 +1557,7 @@ launch_session_resolve() { # TITLE
   [[ -n "$session" ]] || { ot_message tmux-session-unresolved "item=$1" "consulted=$consulted" "pane=$pane_read" >&2; return 1; }
   if ! err="$(tmux has-session -t "=$session" 2>&1)"; then
     if [[ "$err" == "can't find session"* ]]; then
-      ot_message tmux-session-missing "item=$1" "session=$session" "source=$source" >&2
+      ot_message tmux-session-missing "item=$1" "session=$session" "source=$source" "server=$(tmux_server_socket)" >&2
     else
       ot_message tmux-failed "operation=has-session" "item=$1" "detail=$err" >&2
     fi
@@ -1568,7 +1575,7 @@ launch_session_resolve() { # TITLE
 # item's pick counts this account while the host is still preparing.
 tmux_window_open() { # DIR TITLE
   local dir="$1" title="$2" last_idx pane spec server
-  [[ -n "${TMUX:-}" ]] || { ot_message tmux-missing "item=$title" >&2; return 1; }
+  tmux_server_named || { ot_message tmux-missing "item=$title" >&2; return 1; }
   launchable_dir "$dir" "$title" || return 1
   launch_session_resolve "$title" || return 1
   # Exact (`=`): tmux otherwise takes a prefix match for a session name.

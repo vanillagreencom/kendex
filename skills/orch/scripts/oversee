@@ -1,0 +1,375 @@
+#!/usr/bin/env bash
+# oversee — the overseer session itself: launch one, or register one a person
+# opened by hand.
+#
+# Usage:
+#   oversee launch [--session NAME] [--cwd DIR] [--handoff PATH] [--wait-secs N]
+#   oversee register [--account DIR]
+#
+#   launch   opens a fleet's FIRST overseer. A first launch is the same verb as
+#            a succession launch with no predecessor: the steps after the
+#            account is chosen are lib/overseer-launch.sh's, the ones
+#            `oversee-succeed` runs when it replaces an overseer, so the two
+#            cannot open, verify or record a session differently. In order:
+#     1. Resolve the runtime through `overseer-host resolve`
+#        (ORCH_OVERSEER_HOST). This launcher reads the new session's account
+#        off its tmux pane, so a runtime other than tmux refuses
+#        `runtime-unsupported` here.
+#     2. Resolve the tmux session the window opens in: --session, else
+#        ORCH_TMUX_SESSION; neither refuses `session-unresolved`, and a name
+#        tmux does not hold refuses `tmux-session-missing`. The verb needs no
+#        $TMUX: from outside tmux it reaches the person's own server, the
+#        socket tmux derives from their uid (lib/tmux-server.sh), which every
+#        line below names as `server=`.
+#     3. Read the fleet state's `overseer` record (schemas/workflow-state.md),
+#        creating the oversee state where a fresh fleet has none. A record
+#        naming a tmux session this server still lists is a live overseer,
+#        and a second one is never opened beside it: `overseer-live` names
+#        it and its generation. Two overseers never act at once; a live one
+#        is replaced through `oversee-succeed`, never launched over.
+#     4. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:rank:effort`
+#        entries, in order, and open on the first whose harness has a lane
+#        above ORCH_OVERSEER_HEADROOM_PCT: `kendex tier-model` names the
+#        entry's model, `lanes pick` the lane, judged on the bucket that
+#        walls that model and held to the reading the session will take of
+#        itself (lib/overseer-launch.sh § ol_pick_lane). A rank the tier
+#        ladder cannot answer refuses `model-failed`; an entry with no
+#        qualifying lane is skipped; an empty preference refuses
+#        `preference-empty`, because a first launch has no caller whose own
+#        harness and lane could stand in; a walk that ends empty refuses
+#        `no-lane-qualifies` at exit 3 with the counts each sweep found.
+#     5. Build the command: the entry's model and effort words, the harness's
+#        full-bypass permission words, its launch settings, its question-tool
+#        words where ORCH_OVERSEER_QUESTION_TOOL is off, and the brief naming
+#        --handoff. An unattended overseer takes no flags from the caller:
+#        the words are spelled per harness by lib/lane-launch.sh's table, so a
+#        preference that names two harnesses is never handed one harness's
+#        spelling for the other. A codex launch is made trusted for --cwd
+#        first, refusing `launch-trust-missing` where the entry cannot be made.
+#     6. Open the session through the adapter's `create`, print
+#        `overseer-launch` naming the form, lane, session and window, and
+#        write the session record before the first turn: runtime tmux, the
+#        server, the pane, its window, the account, the launch line and
+#        generation 1, or one past the record a stopped fleet left. A record
+#        that cannot be written closes the session and refuses
+#        `record-unwritten`: a first launch nothing records is one the hooks
+#        and the watch cannot tell from any other session.
+#     7. Verify the session inside --wait-secs, as a succession does: read its
+#        account, wait for a running turn through `inspect --launch`, read the
+#        account again. `overseer-wrong-lane`, `overseer-dialog` and
+#        `overseer-not-working` each close the session, put the record back
+#        and refuse. `overseer-lane-unobserved` is a notice: the launch stands.
+#        On success `overseer-launched` names the session, window, generation
+#        and lane, at exit 0.
+#   register writes the session record for the session this command runs in,
+#            a tmux pane a person opened by hand: runtime tmux, the tmux
+#            server, $TMUX_PANE, its window, and the account, --account or
+#            else the one this session's own account variable names through
+#            lib/lane-context.sh. The generation is one past the record's,
+#            or the record's own where it already names this pane, so
+#            registering twice launches nothing and counts nothing twice.
+#            Prints `registered` naming the session and generation.
+#
+# Options:
+#   --session NAME   The tmux session the window opens in (default
+#                    ORCH_TMUX_SESSION)
+#   --cwd DIR        The directory the session starts in (default the
+#                    current directory)
+#   --handoff PATH   The handoff file the brief names (default
+#                    tmp/handoffs/OVERSEER-HANDOFF.md); letters, digits and
+#                    ./_- only, so the brief survives the pane's shell
+#   --wait-secs N    Seconds the session has to come up: one bound over
+#                    reading its account, waiting for its running turn and
+#                    confirming the account once that turn shows (default 60)
+#   --account DIR    register: the account the session spends, where its
+#                    environment does not say
+#
+# Output: every line is `oversee: <key> <field>=<value>` first, with the
+# explanation and any failing dependency's own stderr under it. A refusal is
+# on stderr at exit 1, except `no-lane-qualifies` at exit 3, the status
+# `lanes pick` itself answers "no lane clears the bound" with. `overseer-launch`,
+# `overseer-launched` and `registered` are on stdout; `overseer-lane-unobserved`
+# is a notice on stderr the run continues past.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export SCRIPT_DIR
+
+usage() { sed -n '/^# Usage:/,/^# Output:/p' "$0" | sed 's/^# \{0,1\}//'; }
+
+message() { # KEY FIELD=VALUE...
+  local key="$1" text
+  shift
+  case "$key" in
+    unknown-option) text="$(usage | sed -n '/^Usage:/,/^$/p')" ;;
+    unknown-command) text='The commands are launch and register.' ;;
+    invalid-wait-secs) text='--wait-secs takes a positive whole number of seconds.' ;;
+    invalid-handoff) text='The handoff path takes letters, digits and ./_- only.' ;;
+    invalid-cwd) text='--cwd names no directory.' ;;
+    settings-rejected) text='The settings load failed; nothing is launched from partial settings.' ;;
+    runtime-unsupported) text='This launcher reads the new session'\''s account off its tmux pane, so it opens sessions on the tmux runtime alone. ORCH_OVERSEER_HOST names another; nothing was launched.' ;;
+    tmux-missing) text='register runs inside the overseer'\''s own tmux pane; launch reaches a tmux server through $TMUX or ORCH_TMUX_SESSION.' ;;
+    session-unresolved) text='No tmux session is named for the overseer window: give --session or set ORCH_TMUX_SESSION. Nothing was opened.' ;;
+    tmux-session-missing) text='The tmux session named does not exist on the server this run reaches. Nothing was opened; the server field names the socket.' ;;
+    state-unwritable) text='The oversee workflow state could not be created or read, so no session record can be kept. Nothing was launched.' ;;
+    overseer-live) text='The fleet state names an overseer session this tmux server still lists, so a second one is not opened beside it. Two overseers never act at once: replace a live one through oversee-succeed, or stop it and clear the record.' ;;
+    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:rank:effort with harness claude or codex.' ;;
+    preference-empty) text='A first launch has no caller whose own harness and lane could stand in, so ORCH_OVERSEER_PREFERENCE must name at least one entry.' ;;
+    invalid-headroom-trigger) text='ORCH_OVERSEER_HEADROOM_PCT takes a whole number of percent from 0 to 100.' ;;
+    invalid-question-tool) text='ORCH_OVERSEER_QUESTION_TOOL takes on or off.' ;;
+    model-failed) text='kendex tier-model named no model for this entry; a preference naming a rank the ladder cannot answer is a setting to fix, not an entry to pass over.' ;;
+    lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
+    no-lane-qualifies) text='No lane of any harness the preference names is above the headroom trigger; nothing was launched. entries counts the preference entries walked; walled and unmeasured are the accounts the sweeps refused and the accounts nothing could measure.' ;;
+    launch-choice-failed) text='The launch flag table cannot state this harness'\''s model, effort or permission words. Nothing was launched.' ;;
+    launch-trust-missing) text='The folder-trust entry for the launch directory could not be made in the config this codex session would read, so nothing was launched; the reason field is lib/lane-launch.sh'\''s.' ;;
+    launch-failed) text='The session could not be opened or read; the step field names the call that failed.' ;;
+    record-unwritten) text='The session record could not be written to the fleet state, so the session was closed again: an overseer nothing records is one the hooks and the watch cannot tell from any other session.' ;;
+    overseer-launch) text='The command is built and the session opened; the form names how the picked lane reaches the harness.' ;;
+    overseer-dialog) text='The session stopped at a dialog nobody is there to answer; it was closed and the record put back. The pane line follows.' ;;
+    overseer-not-working) text='The session never showed a running turn inside the wait; it was closed and the record put back.' ;;
+    overseer-wrong-lane) text='The session is running on another account than the one picked, so a wrapper on PATH replaced the selection; it was closed and the record put back.' ;;
+    overseer-lane-unobserved) text='The account the session runs on could not be established. The launch stands: this check refuses on a disagreement it observed, never on an observation it could not make.' ;;
+    overseer-lane-unknown) text='The account check returned an outcome this script does not know; the session was closed rather than trusted.' ;;
+    overseer-launched) text='The overseer is running and recorded.' ;;
+    interrupted) text='A signal stopped the launch; the session was closed and the record put back.' ;;
+    pane-unreadable) text='This session'\''s own pane could not be read; tmux says why below.' ;;
+    registered) text='The session record names this session.' ;;
+  esac
+  printf 'oversee: %s' "$key"
+  printf ' %s' "$@"
+  printf '\n%s\n' "$text"
+}
+
+die_status() { # STATUS KEY FIELD=VALUE...
+  local status="$1"
+  shift
+  message "$@" >&2
+  [[ ! -s "${DEP_ERR:-}" ]] || cat -- "$DEP_ERR" >&2
+  exit "$status"
+}
+die() { die_status 1 "$@"; }
+
+matches() { # VALUE REGEX
+  local LC_ALL=C
+  [[ "$1" =~ $2 ]]
+}
+
+case "${1:-}" in
+  -h|--help|help|"") usage; exit 0 ;;
+esac
+COMMAND="$1"
+shift
+case "$COMMAND" in
+  launch|register) ;;
+  *) die_status 2 unknown-command "command=$COMMAND" ;;
+esac
+
+HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
+WAIT_SECS=60
+SESSION_NAME=""
+CWD=""
+ACCOUNT=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --session|--cwd|--handoff|--wait-secs|--account)
+      [[ $# -ge 2 ]] || die_status 2 unknown-option "arg=$1"
+      case "$1" in
+        --session) SESSION_NAME="$2" ;;
+        --cwd) CWD="$2" ;;
+        --handoff) HANDOFF="$2" ;;
+        --wait-secs) WAIT_SECS="$2" ;;
+        *) ACCOUNT="$2" ;;
+      esac
+      shift 2 ;;
+    *) die_status 2 unknown-option "arg=$1" ;;
+  esac
+done
+matches "$WAIT_SECS" '^[1-9][0-9]*$' || die invalid-wait-secs "value=$WAIT_SECS"
+matches "$HANDOFF" '^[A-Za-z0-9._/-]+$' || die invalid-handoff "path=$HANDOFF"
+
+DEP_ERR="$(mktemp)" || die launch-failed step=mktemp
+export DEP_ERR
+trap 'rm -f -- "$DEP_ERR"' EXIT
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+export PROJECT_ROOT
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT" 2>"$DEP_ERR" || die settings-rejected "path=$PROJECT_ROOT"
+# shellcheck source=lib/lane-context.sh
+source "$SCRIPT_DIR/lib/lane-context.sh"
+# shellcheck source=lib/lane-state.sh
+source "$SCRIPT_DIR/lib/lane-state.sh"
+# shellcheck source=lib/lane-launch.sh
+source "$SCRIPT_DIR/lib/lane-launch.sh"
+# shellcheck source=lib/overseer-launch.sh
+source "$SCRIPT_DIR/lib/overseer-launch.sh"
+# shellcheck source=lib/tmux-server.sh
+source "$SCRIPT_DIR/lib/tmux-server.sh"
+
+ol_runtime || die launch-failed step=host-resolve
+[[ "$OL_RUNTIME" == tmux ]] || die runtime-unsupported "host=$OL_RUNTIME"
+
+# The oversee state, where the record lives: created for a fresh fleet, read
+# for every other. One refusal for both, naming the path.
+state_ready() {
+  local path
+  path="$("$SCRIPT_DIR/workflow-state" path oversee 2>"$DEP_ERR")" || die state-unwritable state=oversee
+  if ! "$SCRIPT_DIR/workflow-state" exists oversee >/dev/null 2>"$DEP_ERR"; then
+    "$SCRIPT_DIR/workflow-state" init oversee >/dev/null 2>"$DEP_ERR" || die state-unwritable "path=$path"
+  fi
+  ol_record_read || die state-unwritable "path=$path"
+}
+
+# ---------------------------------------------------------------------------
+# register
+# ---------------------------------------------------------------------------
+if [[ "$COMMAND" == register ]]; then
+  [[ -n "${TMUX_PANE:-}" ]] || die tmux-missing var=TMUX_PANE
+  key="$(lane_context_caller_key)" || die pane-unreadable "pane=$TMUX_PANE" field=pid
+  matches "$key" '^([0-9]+)[[:blank:]]+(%[0-9]+)$' || die pane-unreadable "pane=$TMUX_PANE" field=pid "value=$key"
+  server="${key%% *}"
+  window="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>"$DEP_ERR")" \
+    || die pane-unreadable "pane=$TMUX_PANE" field=window_id
+  if [[ -z "$ACCOUNT" ]]; then
+    cmd="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_command}' 2>"$DEP_ERR")" \
+      || die pane-unreadable "pane=$TMUX_PANE" field=pane_current_command
+    ACCOUNT="$(lane_context_caller_cfg "$(lane_context_shape "${cmd#-}")")"
+  fi
+  state_ready
+  ol_record_write tmux "$TMUX_PANE" "$window" "$server" "$ACCOUNT" "" \
+    || die record-unwritten field=overseer
+  message registered "session=$TMUX_PANE" "window=$window" "server=$server" \
+    "generation=$OL_GENERATION" "account=${ACCOUNT:-none}"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# launch
+# ---------------------------------------------------------------------------
+[[ -n "$SESSION_NAME" ]] || SESSION_NAME="${ORCH_TMUX_SESSION:-}"
+[[ -n "$SESSION_NAME" ]] || die session-unresolved consulted=--session,ORCH_TMUX_SESSION
+# The server every tmux call below reaches, named on every line: the rule is
+# lib/tmux-server.sh's, answered for the session just resolved.
+export ORCH_TMUX_SESSION="$SESSION_NAME"
+SERVER_SOCKET="$(tmux_server_socket)" || die tmux-missing var=TMUX
+if ! err="$(tmux has-session -t "=$SESSION_NAME" 2>&1)"; then
+  printf '%s\n' "$err" > "$DEP_ERR"
+  die tmux-session-missing "session=$SESSION_NAME" "server=$SERVER_SOCKET"
+fi
+[[ -n "$CWD" ]] || CWD="$PWD"
+[[ -d "$CWD" ]] || die invalid-cwd "dir=$CWD"
+
+state_ready
+# A live overseer: the record names a tmux session, and this server lists
+# that pane under that server pid. A record naming a pane the server no
+# longer lists is a stopped fleet's, and the launch takes the next
+# generation over it.
+if ! live="$(jq -r 'if type == "object" and (.runtime // "tmux") == "tmux" and (.pane // "") != ""
+    then ((.server // "") + " " + .pane + " " + ((.generation // 0) | tostring)) else "" end' <<<"$OL_PRIOR" 2>"$DEP_ERR")"; then
+  die state-unwritable field=overseer
+fi
+if [[ -n "$live" ]]; then
+  read -r live_server live_pane live_generation <<<"$live"
+  panes="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>"$DEP_ERR")" || die launch-failed step=list-panes
+  if grep -qxF -- "$live_server $live_pane" <<<"$panes"; then
+    die overseer-live "session=$live_pane" "server=$SERVER_SOCKET" "generation=$live_generation"
+  fi
+fi
+
+HEADROOM_TRIGGER="${ORCH_OVERSEER_HEADROOM_PCT:-10}"
+matches "$HEADROOM_TRIGGER" '^[0-9]{1,3}$' && (( 10#$HEADROOM_TRIGGER <= 100 )) \
+  || die invalid-headroom-trigger "ORCH_OVERSEER_HEADROOM_PCT=$HEADROOM_TRIGGER"
+HEADROOM_TRIGGER=$((10#$HEADROOM_TRIGGER))
+QUESTION_OFF=()
+case "${ORCH_OVERSEER_QUESTION_TOOL:-on}" in
+  on) ;;
+  off) QUESTION_OFF=(--question-off) ;;
+  *) die invalid-question-tool "ORCH_OVERSEER_QUESTION_TOOL=$ORCH_OVERSEER_QUESTION_TOOL" ;;
+esac
+ol_preference_entries "${ORCH_OVERSEER_PREFERENCE:-}" || die invalid-preference "entry=$OL_BAD_ENTRY"
+(( OL_NAMED > 0 )) || die preference-empty setting=ORCH_OVERSEER_PREFERENCE
+
+chosen="" harness="" model="" effort="" lane_dir=""
+for entry in "${OL_ENTRIES[@]}"; do
+  IFS=: read -r harness rank effort <<<"$entry"
+  model="$(kendex tier-model "$harness" "$rank" 2>"$DEP_ERR")" && [[ -n "$model" ]] \
+    || die model-failed "entry=$entry"
+  rc=0
+  ol_pick_lane "$harness" "$model" "$HEADROOM_TRIGGER" || rc=$?
+  case "$rc" in
+    0) ;;
+    3) continue ;;
+    *) die lanes-failed "entry=$entry" "exit=$rc" ;;
+  esac
+  lane_dir="$OL_PICKED_DIR"
+  chosen="$entry"
+  break
+done
+[[ -n "$chosen" ]] || die_status 3 no-lane-qualifies "entries=$OL_NAMED" \
+  "walled=$OL_WALKED_WALLED" "unmeasured=$OL_WALKED_UNMEASURED"
+
+# The words, spelled per harness by lib/lane-launch.sh's table: the entry's
+# model and effort, full bypass, then the launch settings leading, with the
+# question-tool words where the setting takes the tool away.
+choice_words="$(launch_choice_write "$harness" "$model" "$effort")" || die launch-choice-failed "harness=$harness"
+permission_words="$(launch_choice_permission_write "$harness")" || die launch-choice-failed "harness=$harness" reason=permission
+FLAGS=()
+[[ -z "$choice_words" ]] || eval "FLAGS=($choice_words)"
+eval "FLAGS+=($permission_words)"
+launch_choice_lead_settings ${QUESTION_OFF[@]+"${QUESTION_OFF[@]}"} "$harness"
+FLAGS+=(${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"})
+
+ol_command_line "$harness" "$HANDOFF" "$lane_dir" "$CWD" ${FLAGS[@]+"${FLAGS[@]}"} \
+  || die launch-trust-missing "lane=$lane_dir" "dir=$CWD" "reason=$OL_TRUST_REASON"
+
+# Every failure from here closes the session and puts the record back.
+SESSION="" RECORD_WRITTEN=0
+abandon() {
+  # The detail the refusal carries was written to DEP_ERR before this ran;
+  # the stop and the restore write theirs there too, so it is kept aside and
+  # put back for the refusal to relay.
+  local detail
+  detail="$(cat -- "$DEP_ERR" 2>/dev/null)" || detail=""
+  [[ -z "$SESSION" ]] || ol_session_stop "$SESSION" || true
+  if (( RECORD_WRITTEN )); then
+    ol_record_restore || { message record-unwritten field=overseer step=restore >&2; [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2; }
+    RECORD_WRITTEN=0
+  fi
+  if [[ -n "$detail" ]]; then printf '%s\n' "$detail" > "$DEP_ERR"; else : > "$DEP_ERR"; fi
+  die "$@"
+}
+interrupted() { # SIGNAL
+  [[ -n "$SESSION" ]] || { ol_session_from_out; SESSION="$OL_SESSION"; }
+  abandon interrupted "session=${SESSION:-none}" "signal=$1"
+}
+trap 'interrupted TERM' TERM
+trap 'interrupted INT' INT
+trap 'interrupted HUP' HUP
+
+ol_session_open "$CWD" overseer "$OL_CMD" --session "$SESSION_NAME" || abandon launch-failed "step=$OL_REASON"
+SESSION="$OL_SESSION"
+message overseer-launch "form=$OL_FORM" "lane=$lane_dir" "trust=$OL_TRUST_ROUTE" \
+  "session=$SESSION" "window=$OL_WINDOW" "server=$SERVER_SOCKET"
+ol_record_write tmux "$SESSION" "$OL_WINDOW" "$OL_SERVER" "$lane_dir" "$OL_CMD" \
+  || abandon record-unwritten field=overseer step=write
+RECORD_WRITTEN=1
+
+if ! ol_session_verify "$SESSION" "$OL_LANE_VAR" "$lane_dir" "$OL_FORM" "$WAIT_SECS"; then
+  case "$OL_REASON" in
+    wrong-lane) abandon overseer-wrong-lane "picked=$lane_dir" "observed=$OL_OBSERVED" ;;
+    result-unknown) abandon overseer-lane-unknown "result=$OL_RESULT" ;;
+    dialog)
+      printf '%s\n' "$OL_DETAIL" > "$DEP_ERR"
+      abandon overseer-dialog "session=$SESSION" "waited=$OL_WAITED" ;;
+    not-working)
+      printf '%s\n' "$OL_DETAIL" > "$DEP_ERR"
+      abandon overseer-not-working "session=$SESSION" "waited=$OL_WAITED" ;;
+    inspect-failed) abandon launch-failed "step=$OL_STEP" ;;
+    *) abandon launch-failed step=verify "reason=$OL_REASON" ;;
+  esac
+fi
+[[ -z "$OL_UNOBSERVED" ]] || message overseer-lane-unobserved "reason=$OL_UNOBSERVED" >&2
+trap - HUP TERM INT
+message overseer-launched "session=$SESSION" "window=$OL_WINDOW" "server=$SERVER_SOCKET" \
+  "generation=$OL_GENERATION" "lane=$lane_dir"

@@ -15,7 +15,7 @@ Requires jq, Bash 3.2, flock, setsid and timeout or gtimeout; the included SSH h
 - `orch start`, run in an issue's worktree, takes one issue to merge: a coding agent implements it, review agents check the change, the coding agent applies the required fixes, and orch opens the PR, waits for CI and the review gate, and merges it.
 - `orch oversee` launches one lane per unblocked issue, reports merges, lane questions, stopped lanes, usage limits and new Linear issues as events through `oversee-watch`, takes each PR to merge, and then runs the post-merge steps and, off a hosted fleet, refreshes the consumer repositories when a merge changes shipped packages.
 - `lane-mail` carries questions, notices and directives between a lane and the overseer as files in the lane's worktree, so messages need no tmux pane and also reach a lane on another machine.
-- `oversee-succeed` replaces an overseer in the same tmux position when its context, headroom, projected wall time, or qualifying-account trigger fires. It also replaces an overseer that ended or walled.
+- `oversee launch` opens a fleet's first overseer and `oversee register` records one opened by hand. `oversee-succeed` replaces an overseer in the same tmux position when its context, headroom, projected wall time, or qualifying-account trigger fires. It also replaces an overseer that ended or walled.
 - `lanes` reads the usage of each Claude Code and Codex account it discovers or is configured with, and picks the account with the fewest lanes in flight among those under the usage threshold; the watch reports an account that hit its usage limit and the time the limit resets.
 - `lane-host` runs lanes on another machine through a provider script, with the same mailbox and watch; `lane-host-ssh` is the included provider for SSH hosts. What runs where, which credential each part spends and how mail and handoff move on a hosted fleet: [docs/hosted-oversight.html](docs/hosted-oversight.html).
 - `oversee-report` writes the overseer's status reports; `oversee-cycle` times each merge against its class target.
@@ -68,6 +68,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | Report settings | `ORCH_REPORT`, `ORCH_REPORT_EVERY_MINUTES`, `ORCH_REPORT_EVERY_ISSUES`, `ORCH_REPORT_UPCOMING`, `ORCH_REPORT_COLUMNS`: `oversee-report --help` | |
 | Watch settings | `ORCH_WATCH_TAIL_LINES`, `ORCH_WATCH_PREPARE_SECS`: `oversee-watch --help` § Environment | |
 | `ORCH_LANE_HOST` | `lane-host`'s provider: an executable or `local`; `ORCH_LANE_HOST_MAX_CALLS` and `ORCH_LANE_HOST_BUSY_WAIT_SECS` cap it: [Host protocol](schemas/lane-host.md) | `local` |
+| `ORCH_OVERSEER_HOST` | Runtime the overseer's own session runs in: `tmux`, or a provider script path. [Protocol](schemas/overseer-host.md) | `tmux` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal | empty |
 | `RECONCILE_STALE_HOURS` | Hours before an In Progress or In Review item counts as started-stale in `reconcile-work-items` sweeps | `24` |
 | `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` drives; empty resolves the installed worktree skill's script | resolved |

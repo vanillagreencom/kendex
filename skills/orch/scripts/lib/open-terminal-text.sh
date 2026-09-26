@@ -53,12 +53,12 @@ ot_message() { # REASON FIELD=VALUE...
     lane-result-unknown) text='The account check returned an outcome this script does not know. The window is closed: an unreadable verdict is not a pass.' ;;
     harness-unsupported) text='This terminal harness is not supported.' ;;
     directory-missing) text='The working directory does not exist. No window was opened.' ;;
-    tmux-missing) text='This launch requires an active tmux session.' ;;
+    tmux-missing) text='This launch requires a tmux server to reach: run it inside tmux, or set ORCH_TMUX_SESSION to the fleet session on your own tmux server.' ;;
     tmux-failed) text='The tmux operation failed.' ;;
     pane-refused) text='The pane writer refused to type into the window this launch opened, and typed nothing: the window is not the one opened, or it does not run the process the step expects. Its own pane-write line above names which.' ;;
     session-record-failed) text='The tmux session this fleet opens lane windows in could not be read from or recorded into the oversee workflow state. Nothing was opened; fix what workflow-state names.' ;;
     tmux-session-unresolved) text='No tmux session is named for the lane window. consulted lists the sources this launch read, in order, and none of them named a session. pane is what the TMUX_PANE read found: unset is no TMUX_PANE; none is an empty answer, which is how tmux answers for a pane it does not hold; read-failed is the read itself failing, and tmux names that failure on the line above. Nothing was opened: a window with no named session lands in whichever session tmux calls current, where the watch does not look for it. Set ORCH_TMUX_SESSION, or launch from a pane in the fleet session.' ;;
-    tmux-session-missing) text='The tmux session this launch resolved does not exist on this server. Nothing was opened and nothing was recorded. source says where the name came from: ORCH_TMUX_SESSION is the setting, so correct it; tmux.session is the fleet state, which a renamed session or a restarted server leaves stale, so set ORCH_TMUX_SESSION to the live fleet session, or clear the record with .agents/skills/orch/scripts/workflow-state --state-dir [OVERSEE_STATE_DIR] update oversee '\''del(.tmux)'\'' and launch from a pane in that session; pane is the launching pane, whose session closed during the launch.' ;;
+    tmux-session-missing) text='The tmux session this launch resolved does not exist on the server this launch reaches, which the server field names. Nothing was opened and nothing was recorded. source says where the name came from: ORCH_TMUX_SESSION is the setting, so correct it; tmux.session is the fleet state, which a renamed session or a restarted server leaves stale, so set ORCH_TMUX_SESSION to the live fleet session, or clear the record with .agents/skills/orch/scripts/workflow-state --state-dir [OVERSEE_STATE_DIR] update oversee '\''del(.tmux)'\'' and launch from a pane in that session; pane is the launching pane, whose session closed during the launch.' ;;
     claim-write-failed) text='The lane launched, but its claim could not be recorded. Check OVERSEE_WATCH_STATE_DIR.' ;;
     record-write-failed) text='The lane launched and its window stands, but its record could not be written to the oversee workflow state, so the watch cannot carry it. Fix what workflow-state names, then record the lane by hand per oversee.md § 3 Lane record, or close the window before relaunching the item with --relaunch.' ;;
     record-missing) text='No lane record names the item, so this launcher never launched it and the wake recorded nothing; the woken session runs. Record the lane per oversee.md § 3 Lane record, or close its window and relaunch the item with --relaunch.' ;;
@@ -144,12 +144,15 @@ Options:
                     pane and no recorded session among them, refuses as
                     tmux-session-unresolved; a resolved session tmux does
                     not hold refuses as tmux-session-missing, naming it and
-                    its source. Either opens nothing, and a launch with no
-                    $TMUX at all refuses as tmux-missing. The lane record's
-                    window is SESSION:WINDOW.
+                    its source. Either opens nothing, and a launch with
+                    neither $TMUX nor ORCH_TMUX_SESSION refuses as
+                    tmux-missing: with the setting alone the launch reaches
+                    the person's own tmux server from outside tmux. The lane
+                    record's window is SESSION:WINDOW.
   --ghostty         Open GUI terminals ($TERMINAL, xdg-terminal-exec, ghostty)
                     With neither mode flag the mode is auto-detected: tmux
-                    when $TMUX is set, otherwise a GUI terminal. Both flags
+                    when $TMUX or ORCH_TMUX_SESSION is set, otherwise a GUI
+                    terminal. Both flags
                     are overrides; --ghostty inside tmux warns that the flag
                     overrides the auto-detected tmux mode and still opens GUI
                     terminals, which receive no TMUX or TMUX_PANE.
