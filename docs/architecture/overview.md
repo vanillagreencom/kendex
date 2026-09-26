@@ -19,10 +19,10 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 
 ## Boundaries
 
-- `crates/core`: pure domain logic; no Tauri, no IPC, no UI concern. Enforced by the `cargo tree` lane in `tools/guard`. Every external process is built by `crates/core/src/process/mod.rs` and every catalog read goes through `source_read::SealedSource`; both enforced by `tools/guard` lanes.
-- `crates/app`: Tauri commands, one module per page domain, over core. The command surface and the constants the UI reads are declared in `specta_builder` and byte-checked against `ui/src/bindings.ts` by `crates/app/tests/bindings.rs`.
-- `crates/cli`: thin verbs over the same core, with one presentation layer in `crates/cli/src/ui.rs`.
-- `ui/`: renders state and invokes commands over the generated bindings; domain logic and types live in Rust. `@tauri-apps` is imported only by the generated bindings and no UI file carries a raw colour; both enforced by `tools/guard` lanes.
+- `crates/core`: pure domain logic; no Tauri, no IPC, no UI concern. Enforced by the `cargo tree` lane in `tools/guard`. Catalog reads go through `source_read::SealedSource` (a `tools/guard` lane); processes are invariant 13.
+- `crates/app`: Tauri commands, one module per page domain, over core. The command surface and the UI's constants are declared in `specta_builder` and byte-checked against `ui/src/bindings.ts` by `crates/app/tests/bindings.rs`.
+- `crates/cli`: thin verbs over core, one presentation layer in `crates/cli/src/ui.rs`.
+- `ui/`: renders state and invokes commands over the generated bindings; domain logic and types live in Rust. `@tauri-apps` is imported only by the generated bindings and no UI file carries a raw colour (`tools/guard` lanes).
 - Adapters under `crates/core/src/harness/` own paths and rendering only; what each harness supports is one capability table, `crates/core/src/harness/caps.rs`, read by core and UI. Enforced by `crates/core/src/harness/mod.rs::observe_capabilities_match_declared_surfaces`.
 
 ## Invariants
@@ -69,6 +69,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 - [engine.md](engine.md): read before changing planning, apply, locks, manifests, ownership, take-over or forks.
 - [sources.md](sources.md): read before changing the source store, discovery, browsing, subscriptions, bundles, unsubscribe or the drift snapshot.
 - [harnesses.md](harnesses.md): read before changing an adapter, the capability table, rendering, hook delivery or the Pi carrier.
+- [in-place.md](in-place.md): read before changing project resolution, the worktree guard or in-place packages.
 - [trash.md](trash.md): read before changing the trash or its bounds.
 - [scoring.md](scoring.md): read before changing a safety or quality rule.
 - [updates.md](updates.md): read before changing the release feed, signing, digests or self-replace.
