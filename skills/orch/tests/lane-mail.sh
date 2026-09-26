@@ -970,6 +970,26 @@ host_lm drain --item KEN-2 --root "$REMOTE_ROOT" --host --after 0
 assert_eq "$RC=$ERR" "2=lane-mail: host-unreachable=KEN-2 state=unknown" \
   "a host that cannot be reached is refused, and the refusal names the state it could not act on"
 
+# A call lane-host refused at its per-home cap ran no provider, so it is
+# neither an empty mailbox nor a host out of reach: the read refuses with
+# lane-host's own status. One held call fills a cap of 1.
+BUSY_HOME="$TMP_ROOT/busy-home"
+(cd "$LANE" && HOME="$BUSY_HOME" ORCH_LANE_HOST="$FIXTURE_HOST" ORCH_LANE_HOST_MAX_CALLS=1 \
+  LANE_HOST_STUB_LOG="$TMP_ROOT/hold.log" LANE_HOST_STUB_WAIT_GATE="$TMP_ROOT/busy-gate" \
+  "$REPO_ROOT/skills/orch/scripts/lane-host" wait --item HOLD-1 >/dev/null 2>&1) &
+HOLDER=$!
+for _ in $(seq 1 200); do
+  ! grep -q 'wait --item HOLD-1' "$TMP_ROOT/hold.log" 2>/dev/null || break
+  sleep 0.05
+done
+HOST_ENV=(HOME="$BUSY_HOME" ORCH_LANE_HOST_MAX_CALLS=1 ORCH_LANE_HOST_BUSY_WAIT_SECS=0)
+host_lm drain --item KEN-1 --root "$REMOTE_ROOT" --host --after 0
+touch "$TMP_ROOT/busy-gate"
+wait "$HOLDER"
+assert_eq "$RC=$ERR=$(grep -c '^lane-host: lane-host-busy count=1 cap=1 verb=cat item=KEN-1$' "$TMP_ROOT/err")" \
+  "69=lane-mail: lane-host-busy=KEN-1=1" \
+  "a hosted read lane-host refused at its cap exits with its status, naming lane-host's line"
+
 
 # A hosted mailbox directory that is a symlink is refused by the provider behind
 # cat, which lane-mail reads as a failed read, never as an empty mailbox.

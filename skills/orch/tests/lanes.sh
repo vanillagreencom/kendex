@@ -1872,6 +1872,25 @@ if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; th
   # The setting is normalized to its decimal reading once, at validation.
   table \
     "a bound written with a leading zero is read in base 10 and still bounds the provider|$OCTAL_ENV|list --harness claude --json|rc=0 through=claude:local length=1 key=host-accounts-unreadable,host=$SLOW_HOST,exit=124"
+  # A full per-home cap on provider calls, through the real dispatcher at the
+  # shipped slot wait and bound: a slot naming this suite's own shell, alive
+  # throughout, fills a cap of 1 in a home of its own. lane-host's 30-second
+  # slot wait outlasts the 10-second bound, so the read waits for less than
+  # the bound and lane-host refuses as busy before the bound can end it.
+  BUSY_HOME="$TMP_ROOT/busy-home"
+  mkdir -p "$BUSY_HOME/.cache/orch/lane-host-slots"
+  : > "$BUSY_HOME/.cache/orch/lane-host-slots/slot.$$"
+  BUSY_ENV="$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv;HOME=$BUSY_HOME;ORCH_LANE_HOST_MAX_CALLS=1;ORCH_LANE_HOST_BUSY_WAIT_SECS=30;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=10"
+  table \
+    "a read lane-host refuses at its per-home cap answers 1 under lane-host-busy before the bound ends it|$BUSY_ENV|host-accounts --no-cache|rc=1 lines=0 key=lane-host-busy,step=accounts,item=-"
+  # Control: with the slot wait left longer than the bound, the bound cuts the
+  # wait off and the refusal reads as the verb failing.
+  lanes_mutant mutant-accounts-busy-wait lanes 'busy_wait=\$((ACCOUNTS_TIMEOUT_S - 1))' ':'
+  LANES_PATCHED="$LANES"
+  LANES="$TMP_ROOT/mutant-accounts-busy-wait/scripts/lanes"
+  table \
+    "control: a slot wait past the bound is cut off as host-accounts-unreadable exit 124|$BUSY_ENV|host-accounts --no-cache|rc=1 lines=0 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=124"
+  LANES="$LANES_PATCHED"
 else
   echo "  skip  neither timeout nor gtimeout is installed; the accounts bound rows did not run"
 fi

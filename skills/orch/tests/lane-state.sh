@@ -562,7 +562,9 @@ verb_state() {
 # non-zero `touch` is a probe that failed — schemas/lane-host.md gives the verb
 # no "no such lane" reply — so exits 1 and 2 answer alike and neither says
 # `gone`, which would send an overseer down the window-gone path onto an item
-# whose remote session is still running. The `CC-1|idle|ssh` row is the
+# whose remote session is still running. Exit 69 is lane-host refusing the
+# probe at its per-home cap, which says nothing about the host and is noted as
+# lane-host-busy. The `CC-1|idle|ssh` row is the
 # inverse: a pane that answered leaves the provider unasked. The
 # `kendex:` rows are the SESSION:WINDOW form a lane record carries, which
 # selects the pane under that session and answers as the bare name does.
@@ -580,6 +582,7 @@ CC-404|none|local|1|unjudged rc=0 note=none
 CC-404|none|ssh|0|unjudged rc=0 note=none
 CC-404|none|ssh|1|unjudged rc=0 note=host-unreachable
 CC-404|none|ssh|2|unjudged rc=0 note=host-unreachable
+CC-404|none|ssh|69|unjudged rc=0 note=lane-host-busy
 CC-1|idle|ssh|1|idle rc=0 note=none
 kendex:CC-1|idle|local|0|idle rc=0 note=none
 fleet:CC-1|idle|local|0|unjudged rc=0 note=none
@@ -655,6 +658,16 @@ git -C "$PROBE_MUTANT_REPO" init -q
 mutate_file "$PROBE_MUTANT_SCRIPTS/lanes" 'touch --item "${LANE_ARG#*:}"' 'touch --item "$LANE_ARG"'
 assert_eq "$(probed kendex:CC-404 "$PROBE_MUTANT_REPO")" "kendex:CC-404" \
   "control: probing with the whole argument names the session to the provider"
+# The probe's busy arm, the second branch on its status: without it a probe
+# lane-host refused at its cap is noted as a host out of reach.
+BUSY_MUTANT_SCRIPTS="$(mutant_scripts verb-busy-mutant lanes)" || exit 1
+BUSY_MUTANT_REPO="$(dirname "$BUSY_MUTANT_SCRIPTS")"
+rm -- "${BUSY_MUTANT_SCRIPTS:?}/lane-host"
+cp "$VERB_REPO/scripts/lane-host" "$BUSY_MUTANT_SCRIPTS/lane-host"
+git -C "$BUSY_MUTANT_REPO" init -q
+mutate_file "$BUSY_MUTANT_SCRIPTS/lanes" 'if [[ "$probe_rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then' 'if false; then'
+assert_eq "$(VERB_RUN_REPO="$BUSY_MUTANT_REPO" verb_state CC-404 none ssh 69)" "unjudged rc=0 note=host-unreachable" \
+  "control: without the busy arm a refused probe is noted host-unreachable"
 
 echo "=== lane-state § control: the judge that reads the process and not the pane ==="
 

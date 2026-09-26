@@ -155,7 +155,8 @@
 #          asserts, so it is not among the words printed here. Where
 #          ORCH_LANE_HOST names a provider, `lane-host touch` then says whether
 #          the HOST answers; a failed probe prints `lanes: host-unreachable`
-#          on stderr with the provider's own message, and leaves the state
+#          on stderr with the provider's own message, one lane-host refused at
+#          its per-home cap `lanes: lane-host-busy`, and either leaves the state
 #          alone. --json prints {"item":..,"state":..}. Exit 1 when a scan
 #          failed rather than answered.
 #   check  Exit 0 when no lane setting excludes or retires <config-dir>, or the
@@ -274,7 +275,10 @@
 #                      may take (default 10; 0 asks for no bound). Applied
 #                      where `timeout` or `gtimeout` is installed. A bound
 #                      reached is the verb failing, reported as
-#                      `host-accounts-unreadable`. Where neither spelling is
+#                      `host-accounts-unreadable`. A bounded call waits for a
+#                      lane-host slot for less than the bound, so a full
+#                      ORCH_LANE_HOST_MAX_CALLS cap reads as `lane-host-busy`
+#                      rather than as the bound. Where neither spelling is
 #                      installed, a CACHED read runs unbounded and the cache
 #                      holds its cost to one call per TTL, while a `--no-cache`
 #                      read is refused as `host-accounts-unbounded` rather than
@@ -518,6 +522,10 @@ message() {
     host-account-invalid)
       printf 'lanes: host-account-invalid account=%s field=%s\n' "$1" "$2"
       printf '%s\n' "the provider's accounts row carries a field this script cannot read, so the row is left out rather than listed on a guess"
+      ;;
+    lane-host-busy)
+      printf 'lanes: lane-host-busy step=%s item=%s\n' "$1" "$2"
+      printf '%s\n' "lane-host refused the provider call at its per-home cap on provider calls, and its own line is above; the provider ran nothing, so this says nothing about the host. Ask again"
       ;;
     host-unreachable)
       printf 'lanes: host-unreachable item=%s state=%s\n' "$1" "$2"
@@ -1819,7 +1827,7 @@ host_account_records() { # HOST HARNESS — one lane record per account it holds
 # The provider's raw `accounts` answer, cached and time-bounded. Its status is
 # the one host_account_records passes on: 0 answered, 2 verb absent, 1 failed.
 host_accounts_answer() { # HOST — the provider's rows on stdout, its status back
-	local host="$1" rc=0 rows err cached now_s record="" record_rc=0
+	local host="$1" rc=0 rows err cached now_s record="" record_rc=0 busy_wait
 	local -a bound=()
 	# Read through the same cache every usage figure in this script uses, keyed on
 	# the PROVIDER rather than on a harness and a config dir, since one answer
@@ -1869,8 +1877,18 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 	# instead, as the verb failing, which every caller already reads as a host it
 	# could not ask. A cached read keeps the unbounded call: its cost is one per
 	# window and its caller is a listing, which no launch waits on.
+	#
+	# lane-host waits ORCH_LANE_HOST_BUSY_WAIT_SECS for a provider slot before it
+	# refuses as lane-host-busy, and a bound that ends first cuts that wait off
+	# as the verb failing, with no busy line. So a bounded call waits for a slot
+	# for less than its bound. A value lane-host would refuse is passed on as it
+	# stands, for lane-host to name.
+	busy_wait="${ORCH_LANE_HOST_BUSY_WAIT_SECS:-30}"
 	if [[ "$ACCOUNTS_TIMEOUT_S" -ne 0 && -n "$ACCOUNTS_TIMEOUT_CMD" ]]; then
-		bound=("$ACCOUNTS_TIMEOUT_CMD" "$ACCOUNTS_TIMEOUT_S")
+		if [[ "$busy_wait" =~ ^(0|[1-9][0-9]*)$ && "$busy_wait" -ge "$ACCOUNTS_TIMEOUT_S" ]]; then
+			busy_wait=$((ACCOUNTS_TIMEOUT_S - 1))
+		fi
+		bound=(env "ORCH_LANE_HOST_BUSY_WAIT_SECS=$busy_wait" "$ACCOUNTS_TIMEOUT_CMD" "$ACCOUNTS_TIMEOUT_S")
 	elif [[ "$ACCOUNTS_TIMEOUT_S" -ne 0 && "$USE_CACHE" != true ]]; then
 		message host-accounts-unbounded "$host" "$ACCOUNTS_TIMEOUT_S" >&2
 		return 1
@@ -1882,7 +1900,10 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 	trap 'rm -f -- "${err:?}"; exit 1' INT TERM
 	rows="$(${bound[@]+"${bound[@]}"} "$SCRIPT_DIR/lane-host" accounts 2>"$err")" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
-		if [[ "$rc" -ne 2 ]]; then
+		if [[ "$rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then
+			cat -- "$err" >&2
+			message lane-host-busy accounts - >&2
+		elif [[ "$rc" -ne 2 ]]; then
 			cat -- "$err" >&2
 			message host-accounts-unreadable "$host" "$rc" >&2
 		fi
@@ -2292,6 +2313,8 @@ source "$SCRIPT_DIR/lib/lane-model.sh"
 # hand back and the launchers render, owned in one place so they cannot drift.
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
+# shellcheck source=lib/lane-host-slots.sh
+source "$SCRIPT_DIR/lib/lane-host-slots.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # The lib carries the strict mode its other callers run under. This one is
@@ -2520,7 +2543,12 @@ case "$SUB" in
 			probe_rc=0
 			# The provider knows the item, never the session a window sits in.
 			probe_err="$("$SCRIPT_DIR/lane-host" touch --item "${LANE_ARG#*:}" 2>&1 >/dev/null)" || probe_rc=$?
-			[[ "$probe_rc" -eq 0 ]] || message host-unreachable "$LANE_ARG" "$LANE_STATE_ANSWER" "$probe_err" >&2
+			if [[ "$probe_rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then
+				printf '%s\n' "$probe_err" >&2
+				message lane-host-busy touch "$LANE_ARG" >&2
+			elif [[ "$probe_rc" -ne 0 ]]; then
+				message host-unreachable "$LANE_ARG" "$LANE_STATE_ANSWER" "$probe_err" >&2
+			fi
 		fi
 		if [[ "$AS_JSON" == "true" ]]; then
 			jq -nc --arg i "$LANE_ARG" --arg s "$LANE_STATE_ANSWER" '{item:$i,state:$s}'

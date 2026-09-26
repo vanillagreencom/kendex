@@ -955,5 +955,85 @@ assert_eq "$ANSWERED_MISSED" "first=$HEARTBEAT row= failed=0 after=0" \
   "a to-lane read that missed reports no answered ask as a question, moves no row and clears a failure" \
   "$STUB_DIR/answered-a"
 
+# A lane-host call refused at the per-home cap is its own event for that lane,
+# reported once while it stands: the pass reads the next lane, and nothing
+# reports the busy lane as silent or its host as gone. One held call fills a
+# cap of 1, so every call the pass makes through lane-host is refused.
+busy_watch() { # ERR — the pass over KEN-70 hosted and KEN-71 local
+  BUSY_RC=0
+  BUSY_OUT="$(run_watch HOME="$BUSY_HOME" ORCH_LANE_HOST="$FIXTURE_HOST" ORCH_LANE_HOST_MAX_CALLS=1 \
+    ORCH_LANE_HOST_BUSY_WAIT_SECS=0 LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$BUSY_REMOTE" \
+    -- --max-loops 1 --item KEN-70 --hosted KEN-70=/srv/lane/KEN-70 --item KEN-71 2>"$1")" || BUSY_RC=$?
+}
+new_case mail_lane_host_busy
+BUSY_HOME="$STUB_DIR/home"
+BUSY_REMOTE="$STUB_DIR/busy-remote"
+mkdir -p "$BUSY_REMOTE/srv/lane/KEN-70/tmp/lane-mail/KEN-70"
+printf 'gitdir: /srv/clone/.git/worktrees/KEN-70\n' > "$BUSY_REMOTE/srv/lane/KEN-70/.git"
+printf '{"id":"busy-1","kind":"notice","at":"t","text":"Held lane."}\n' \
+  > "$BUSY_REMOTE/srv/lane/KEN-70/tmp/lane-mail/KEN-70/to-overseer.jsonl"
+mail_reset KEN-71
+say KEN-71 notice 'Later lane.' >/dev/null
+: > "$STUB_DIR/host.log"
+(cd "$CASE_REPO_ROOT" && HOME="$BUSY_HOME" ORCH_LANE_HOST="$FIXTURE_HOST" ORCH_LANE_HOST_MAX_CALLS=1 \
+  LANE_HOST_STUB_LOG="$STUB_DIR/hold.log" LANE_HOST_STUB_WAIT_GATE="$STUB_DIR/gate" \
+  "$REPO_ROOT/skills/orch/scripts/lane-host" wait --item HOLD-1 >/dev/null 2>&1) &
+HOLDER=$!
+for _ in $(seq 1 200); do
+  ! grep -q 'wait --item HOLD-1' "$STUB_DIR/hold.log" 2>/dev/null || break
+  sleep 0.05
+done
+busy_watch "$STUB_DIR/busy-a"
+busy_first="$(grep -c '^oversee-watch: lane-host-busy item=KEN-70$' "$STUB_DIR/busy-a" || :)"
+busy_other="$(grep -cE 'handoff-read-failed|mail-read-failed|host-unreachable' "$STUB_DIR/busy-a" || :)"
+busy_later="$(grep -c '^EVENT lane-notice KEN-71 ' <<<"$BUSY_OUT" || :)"
+busy_watch "$STUB_DIR/busy-b"
+touch "$STUB_DIR/gate"
+wait "$HOLDER"
+assert_eq "busy=$busy_first other=$busy_other later=$busy_later" "busy=1 other=0 later=1" \
+  "a lane-host call refused at the cap reports lane-host-busy, never a failed read, and the pass reads the next lane" \
+  "$STUB_DIR/busy-a"
+assert_eq "$(grep -c 'KEN-70' "$STUB_DIR/host.log" || :)" "0" \
+  "and no provider call for the busy lane ran" "$STUB_DIR/busy-a"
+assert_eq "$BUSY_RC=$(grep -c '^oversee-watch: lane-host-busy ' "$STUB_DIR/busy-b" || :)" "0=0" \
+  "a standing busy refusal is not reported again and fails no later pass" "$STUB_DIR/busy-b"
+busy_watch "$STUB_DIR/busy-c"
+assert_eq "$(grep -c '^EVENT lane-notice KEN-70 busy-1$' <<<"$BUSY_OUT" || :)" "1" \
+  "once a slot frees, the next pass reads the lane" "$STUB_DIR/busy-c"
+
+# lane-mail passes lane-host's busy status through, and the pass reads it as
+# the same event rather than a mailbox that failed to read.
+new_case mail_lane_mail_busy
+mail_reset KEN-71
+say KEN-71 notice 'Later lane.' >/dev/null
+cat > "$STUB_DIR/lane-mail-busy" <<STUB
+#!/usr/bin/env bash
+for arg; do [ "\$arg" != KEN-72 ] || { printf 'lane-mail: lane-host-busy=KEN-72\n' >&2; exit 69; }; done
+exec "$LANE_MAIL" "\$@"
+STUB
+chmod +x "$STUB_DIR/lane-mail-busy"
+BUSY_MAIL_STUB="$STUB_DIR/lane-mail-busy"
+out="$(run_watch OVERSEE_WATCH_LANE_MAIL="$STUB_DIR/lane-mail-busy" -- --max-loops 1 \
+  --item KEN-72 --item KEN-71 2>"$STUB_DIR/lane-mail-busy.err")" || :
+assert_eq "$(grep -c '^oversee-watch: lane-host-busy item=KEN-72$' "$STUB_DIR/lane-mail-busy.err" || :)=$(
+  grep -c 'mail-read-failed' "$STUB_DIR/lane-mail-busy.err" || :)=$(grep -c '^EVENT lane-notice KEN-71 ' <<<"$out" || :)" \
+  "1=0=1" "lane-mail's busy exit is the lane-host-busy event, and the pass reads the next lane" \
+  "$STUB_DIR/lane-mail-busy.err"
+
+# The mail pass's busy branch: without it lane-mail's busy exit reads as a
+# mailbox that failed to read.
+BUSY_WATCH="$(mutant_scripts busy/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/busy/github"
+mutate_file "$BUSY_WATCH" '[[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { lane_failure_set lane-host-busy "" "item=$item"; return 1; }' ':'
+new_case mail_lane_mail_busy_mutant
+mail_reset KEN-71
+say KEN-71 notice 'Later lane.' >/dev/null
+out="$(WATCH_BIN="$BUSY_WATCH" run_watch OVERSEE_WATCH_LANE_MAIL="$BUSY_MAIL_STUB" -- --max-loops 1 \
+  --item KEN-72 --item KEN-71 2>"$STUB_DIR/lane-mail-busy-mutant.err")" || :
+assert_eq "$(grep -c '^oversee-watch: lane-host-busy ' "$STUB_DIR/lane-mail-busy-mutant.err" || :)=$(
+  grep -c '^oversee-watch: mail-read-failed item=KEN-72 exit=69$' "$STUB_DIR/lane-mail-busy-mutant.err" || :)" \
+  "0=1" "control: without the busy branch lane-mail's busy exit is mail-read-failed" \
+  "$STUB_DIR/lane-mail-busy-mutant.err"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

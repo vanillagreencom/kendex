@@ -9,13 +9,17 @@ case "${1:-}" in
       'ORCH_LANE_HOST: local (default), or an executable script path.' \
       'resolve prints the selected host. Other verbs pass arguments and stdin unchanged.' \
       'create preserves ownership exit 75; other provider failures report host-create-failed.' \
-      'A local selection refuses provider verbs with exit 2. No local fallback runs.'
+      'A local selection refuses provider verbs with exit 2. No local fallback runs.' \
+      'At most ORCH_LANE_HOST_MAX_CALLS (default 4) provider calls run at once per home; a call waits' \
+      'up to ORCH_LANE_HOST_BUSY_WAIT_SECS (default 30) for a slot, then exits 69 with lane-host-busy.'
     exit 0 ;;
 esac
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 source "$SCRIPT_DIR/lib/kendex-env.sh"
+source "$SCRIPT_DIR/lib/file-lock.sh"
+source "$SCRIPT_DIR/lib/lane-host-slots.sh"
 kendex_load_project_env "$PROJECT_ROOT"
 host="${ORCH_LANE_HOST:-local}"
 verb="${1:-}"
@@ -33,6 +37,8 @@ if [[ ! -x "$host" || -d "$host" ]]; then
   exit 2
 fi
 status=0
+lane_host_slot_take "$@" || exit $?
+trap lane_host_slot_release EXIT
 "$host" "$@" || status=$?
 if [[ "$verb" == create && "$status" -ne 0 && "$status" -ne 75 ]]; then
   printf 'lane-host: host-create-failed path=%s exit=%s\n' "$host" "$status" >&2

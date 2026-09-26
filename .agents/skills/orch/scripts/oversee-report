@@ -51,6 +51,7 @@ message() { # KEY VALUE [CAUSE]
       tracker-read) echo "The issue could not be read from the tracker:" ;;
       mail-read) echo "The lane's mailbox could not be read, so whether it waits on an answer is unknown:" ;;
       item-state) echo "The lane's own workflow state could not be read, so whether a post-PR stop holds it is unknown:" ;;
+      lane-host-busy) echo "lane-host refused a provider call for this lane at its per-home cap on provider calls, so what the lane waits on is unknown and nothing is rendered from a partial fleet. Run the report again:" ;;
       summary) echo "The summary file is missing or empty. The report opens with the overseer's own summary, so nothing is written without one." ;;
       report-exists) echo "A report under this name already stands, and it is never overwritten. Write again in the next minute." ;;
       write) echo "The report file could not be written." ;;
@@ -524,6 +525,7 @@ running_lanes() {
     # does; any other failure, a missing or crashed helper too, refuses.
     mail=read rc=0
     asks="$(ORCH_LANE_HOST="$host" "$LANE_MAIL" "${args[@]}" 2>"$WORK_DIR/mail.err")" || rc=$?
+    [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || refuse lane-host-busy "$item" "$(cat "$WORK_DIR/mail.err")"
     if [[ "$rc" -ne 0 ]]; then
       line="$(awk 'NR == 1' "$WORK_DIR/mail.err")"
       [[ "$rc" -eq 2 && "$line" =~ $LANE_MAIL_REFUSAL && "${BASH_REMATCH[2]}" == "$item" ]] \
@@ -538,9 +540,15 @@ running_lanes() {
     fi
     [[ -z "$asks" ]] || BLOCKERS+="$asks"$'\n'
     # A host that did not answer holds the hosted lane's state too.
-    LANE_ITEM_STATE=""; [[ "$mail" == host-unreachable && -n "$host" ]] || lane_item_state \
+    LANE_ITEM_STATE="" rc=0
+    [[ "$mail" == host-unreachable && -n "$host" ]] || lane_item_state \
       "$WORKFLOW_STATE" "$LANE_HOST" "$STATE_DIR_SETTING" "$item" "$host" "$root" "$WORK_DIR" \
-      || refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
+      || rc=$?
+    case "$rc" in
+      0) ;;
+      4) refuse lane-host-busy "$item" "$(cat "$WORK_DIR/state.err")" ;;
+      *) refuse item-state "$item" "$(cat "$WORK_DIR/state.err")" ;;
+    esac
     if [[ -n "$LANE_ITEM_STATE" ]]; then
       if ! stop="$(jq -r --arg item "$item" '.post_pr_stop // empty
         | "- \($item) waits on a stopped \(.gate // "post-PR") gate, \(.name // "unnamed"): \((.remaining // []) | join("; "))"' <<<"$LANE_ITEM_STATE")"; then
