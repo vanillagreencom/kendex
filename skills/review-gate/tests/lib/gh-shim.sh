@@ -9,7 +9,9 @@
 # org-ruleset-<id>.json through the organization endpoint and
 # ruleset-<id>.json through the repository one, an environment's secrets from
 # environment-secrets-<name>.json, and a workflow run's jobs from
-# jobs-<run id>.json, so each can carry its own answer. A
+# jobs-<run id>.json, so each can carry its own answer. A runs read filtered
+# to event=merge_group is served from workflow-runs-merge-group.json, every
+# other runs read from workflow-runs.json. A
 # repos/OWNER/NAME/... read is served from the directory
 # repos/OWNER/NAME/ under the fixtures when that directory exists, so one
 # world can hold several repositories.
@@ -117,11 +119,13 @@ case "$url" in
     esac
     name=organization
     ;;
-  *"/pulls?"*) name=pulls ;;
+  *"/commits/"*"/pulls") name=commit-pulls ;;
+  "repos/"*"/commits/"*) name=commit ;;
   *"/actions/runs/"*"/jobs"*)
     run="${url#*/actions/runs/}"
     name="jobs-${run%%/*}"
     ;;
+  *"/actions/runs?"*"event=merge_group"*) name=workflow-runs-merge-group ;;
   *"/actions/runs?"*) name=workflow-runs ;;
   *) printf 'gh-shim-error=request value=%q\n' "$url" >&2; exit 90 ;;
 esac

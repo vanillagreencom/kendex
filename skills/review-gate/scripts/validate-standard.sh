@@ -55,15 +55,16 @@ One verdict line per row, VALUE being what was observed:
   standard-classic-protection       the default branch has no classic branch
                                     protection beside the rulesets
   standard-ci-context               an Actions job named the standard's
-                                    ci_context ran on the head of the pull
-                                    request merged into the default branch
-                                    most recently; VALUE lists the job names
-                                    that ran there. The row reads
-                                    FAIL check=ci-context-missing when no
-                                    such job ran, VALUE then being the job
-                                    names that did run or `none`, and FAIL
-                                    under its own key when the read failed
-                                    or nothing has merged
+                                    ci_context ran for the pull request the
+                                    default branch's head merged, on its
+                                    pull_request leg and on its merge_group
+                                    leg. VALUE is the pull_request leg's job
+                                    names; a FAIL value is one of
+                                    ci-context-missing:LEG:JOBS (LEG ran no
+                                    such job; JOBS is what ran, or none),
+                                    merge-group-unobserved:JOBS (no
+                                    merge_group run on the head),
+                                    no-associated-pull-request or unreadable
   standard-app                      the standard's app is installed on every
                                     repository of the organization
   standard-environment              the standard's environment exists and
@@ -93,9 +94,10 @@ as a match. The permission each row's reads need, as GitHub App permissions:
                                     organization's for an organization
                                     ruleset); a withheld field is unreadable
   classic-protection                the branch: Contents read
-  ci-context                        the closed pull requests: Pull requests
-                                    read; the workflow runs on their head
-                                    and each run's jobs: Actions read
+  ci-context                        the default branch's head commit:
+                                    Contents read; its pull requests: Pull
+                                    requests read; the workflow runs on each
+                                    leg and their jobs: Actions read
   app                               the organization's installations:
                                     organization Administration read
   environment                       environments and branch policies:
@@ -113,8 +115,8 @@ as a match. The permission each row's reads need, as GitHub App permissions:
                                     read (and Actions read to list them)
 A token holding only repository Administration, Metadata, Actions,
 Environments and Secrets read plus organization Secrets read reads
-bypass-actors, classic-protection and app as unreadable, and the Dependabot
-scopes of secrets-outside as unreadable.
+bypass-actors, classic-protection, ci-context and app as unreadable, and the
+Dependabot scopes of secrets-outside as unreadable.
 
 Exit codes:
   0  every row matched
@@ -289,58 +291,99 @@ fi
 
 # ---------------------------------------------------------- CI context ---
 
-# The ruleset requires the CI context by name, so a repository whose jobs
-# carry other names never merges. An Actions job reports its name as a check
-# context on the commit it ran for, and the head of the pull request merged
-# most recently is where the repository's CI last reported. Commit statuses
-# are not read: the CI context is an Actions job, and statuses need a
-# permission the standard's app does not hold. The pull requests come from
-# one page ordered by update, and a merge updates its pull request, so the
-# latest merge is on it.
-ci_context_row() {
-  local merged number sha runs run_id names="" emitted
-  if ! read_api "repos/$FULL/pulls?state=closed&base=$BRANCH_URI&sort=updated&direction=desc&per_page=100" \
-    'map(select(.merged_at != null)) | if length == 0 then "" else (max_by(.merged_at) | "\(.number) \(.head.sha)") end'; then
-    bad standard-ci-context unreadable "the pull requests closed into $BRANCH could not be read: $READ_ERR"
-    return 0
-  fi
-  merged="$READ_OUT"
-  if [ -z "$merged" ]; then
-    bad standard-ci-context no-merged-pull-request "no pull request has merged into $BRANCH, so no commit shows which contexts $FULL's CI reports"
-    return 0
-  fi
-  number="${merged%% *}"
-  sha="${merged#* }"
-  case "$sha" in
-    "" | *[!0123456789abcdef]*)
-      bad standard-ci-context unreadable "the latest merged pull request's head is not a commit sha: $merged"
-      return 0
-      ;;
-  esac
-  if ! read_api "repos/$FULL/actions/runs?head_sha=$sha&per_page=100" '.workflow_runs[].id' --paginate; then
-    bad standard-ci-context unreadable "the workflow runs on $sha, the head of pull request #$number, could not be read: $READ_ERR"
-    return 0
-  fi
+# The ruleset requires the CI context by name on the pull request and again
+# on the merge group, so a repository whose jobs carry other names, or whose
+# CI never runs for a merge group, never merges. An Actions job reports its
+# name as a check context on the commit it ran for. The default branch's head
+# is the commit the merge queue merged, where the merge_group leg ran, and
+# the pull request associated with it holds the head where the pull_request
+# leg ran. Commit statuses are not read: the CI context is an Actions job,
+# and statuses need a permission the standard's app does not hold.
+
+# The names of the jobs that ran on SHA for EVENT, one per line, sorted and
+# unique, in LEG_JOBS; LEG_RUNS counts the runs. A failed read returns 1
+# with READ_ERR naming it.
+LEG_JOBS=""
+LEG_RUNS=0
+leg_jobs() { # SHA EVENT
+  local runs run_id names=""
+  LEG_JOBS=""
+  LEG_RUNS=0
+  read_api "repos/$FULL/actions/runs?head_sha=$1&event=$2&per_page=100" '.workflow_runs[].id' --paginate ||
+    { READ_ERR="the $2 runs on $1: $READ_ERR"; return 1; }
   runs="$READ_OUT"
   while IFS= read -r run_id; do
     [ -n "$run_id" ] || continue
-    if ! read_api "repos/$FULL/actions/runs/$run_id/jobs?per_page=100" '.jobs[].name' --paginate; then
-      bad standard-ci-context unreadable "the jobs of workflow run $run_id on $sha could not be read: $READ_ERR"
-      return 0
-    fi
+    LEG_RUNS=$((LEG_RUNS + 1))
+    read_api "repos/$FULL/actions/runs/$run_id/jobs?per_page=100" '.jobs[].name' --paginate ||
+      { READ_ERR="the jobs of $2 run $run_id: $READ_ERR"; return 1; }
     names="${names:+$names
 }$READ_OUT"
   done <<EOF_RUNS
 $runs
 EOF_RUNS
-  emitted="$(printf '%s\n' "$names" | LC_ALL=C sort -u | sed '/^$/d' | paste -sd ';' -)" ||
-    die ci-context-names "$sha" "could not list the job names read for $sha"
-  if [ -z "$emitted" ]; then
-    bad ci-context-missing none "$FULL ran no Actions job on $sha, the head of pull request #$number, the latest merged into $BRANCH; the ruleset's $WANT_CI context never reports there"
-  elif grep -qxF -- "$WANT_CI" <<<"$names"; then
-    ok standard-ci-context "$emitted" "$FULL reported $WANT_CI on $sha, the head of pull request #$number"
+  LEG_JOBS="$(printf '%s\n' "$names" | LC_ALL=C sort -u | sed '/^$/d')" ||
+    die ci-context-names "$1" "could not list the job names read for $1"
+}
+leg_list() { # JOBS — the job names as one VALUE field, or none
+  local list
+  list="$(printf '%s\n' "$1" | paste -sd ';' -)" || die ci-context-names join "could not join the job names read for the CI context"
+  printf '%s\n' "${list:-none}"
+}
+
+ci_context_row() {
+  local head merged number pr_sha pr_jobs pr_list
+  if ! read_api "repos/$FULL/commits/$BRANCH_URI" '.sha'; then
+    bad standard-ci-context unreadable "the head commit of $BRANCH could not be read: $READ_ERR"
+    return 0
+  fi
+  head="$READ_OUT"
+  case "$head" in
+    "" | *[!0123456789abcdef]*)
+      bad standard-ci-context unreadable "the head of $BRANCH is not a commit sha: $head"
+      return 0
+      ;;
+  esac
+  if ! read_api "repos/$FULL/commits/$head/pulls" \
+    "map(select(.merged_at != null and .base.ref == $(jq_string "$BRANCH"))) | if length == 0 then \"\" else (.[0] | \"\\(.number) \\(.head.sha)\") end"; then
+    bad standard-ci-context unreadable "the pull requests of $head, the head of $BRANCH, could not be read: $READ_ERR"
+    return 0
+  fi
+  merged="$READ_OUT"
+  if [ -z "$merged" ]; then
+    bad standard-ci-context no-associated-pull-request "$head, the head of $BRANCH, belongs to no pull request merged into $BRANCH, so no commit shows which contexts $FULL's CI reports"
+    return 0
+  fi
+  number="${merged%% *}"
+  pr_sha="${merged#* }"
+  case "$pr_sha" in
+    "" | *[!0123456789abcdef]*)
+      bad standard-ci-context unreadable "the head of pull request #$number is not a commit sha: $merged"
+      return 0
+      ;;
+  esac
+
+  if ! leg_jobs "$pr_sha" pull_request; then
+    bad standard-ci-context unreadable "$READ_ERR"
+    return 0
+  fi
+  pr_jobs="$LEG_JOBS"
+  pr_list="$(leg_list "$pr_jobs")"
+  if ! grep -qxF -- "$WANT_CI" <<<"$pr_jobs"; then
+    bad standard-ci-context "ci-context-missing:pull_request:$pr_list" "$FULL reported no $WANT_CI job for pull request #$number on its head $pr_sha, so the ruleset's required $WANT_CI context never reports and no pull request merges. Give the job that aggregates every lane the name $WANT_CI: .agents/skills/harness-ci/references/wiring.md § The CI context"
+    return 0
+  fi
+
+  if ! leg_jobs "$head" merge_group; then
+    bad standard-ci-context unreadable "$READ_ERR"
+    return 0
+  fi
+  if [ "$LEG_RUNS" -eq 0 ]; then
+    bad standard-ci-context "merge-group-unobserved:$pr_list" "no merge_group run of $FULL's CI ran on $head, the head of $BRANCH that pull request #$number merged as, so the merge queue waits on a $WANT_CI context nothing reports. Run the workflow on merge_group: .agents/skills/harness-ci/references/wiring.md § The CI context"
+  elif ! grep -qxF -- "$WANT_CI" <<<"$LEG_JOBS"; then
+    bad standard-ci-context "ci-context-missing:merge_group:$(leg_list "$LEG_JOBS")" "$FULL reported no $WANT_CI job for the merge group on $head, the head of $BRANCH, so the merge queue waits on a $WANT_CI context nothing reports. Give the job that aggregates every lane the name $WANT_CI: .agents/skills/harness-ci/references/wiring.md § The CI context"
   else
-    bad ci-context-missing "$emitted" "$FULL reported no $WANT_CI job on $sha, the head of pull request #$number, the latest merged into $BRANCH, so the ruleset's required $WANT_CI context never reports and no pull request merges. Give the job that aggregates every lane the name $WANT_CI: .agents/skills/harness-ci/references/wiring.md § The CI context"
+    ok standard-ci-context "$pr_list" "$FULL reported $WANT_CI for pull request #$number on $pr_sha and for its merge group on $head"
   fi
 }
 ci_context_row

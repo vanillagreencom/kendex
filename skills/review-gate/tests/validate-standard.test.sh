@@ -73,20 +73,25 @@ printf '{"secrets": [{"name": "SHARED"}]}\n' >"$BASE/organization-secrets.json"
 printf '{"secrets": [{"name": "SHARED"}, {"name": "ELSEWHERE"}]}\n' >"$BASE/organization-actions-secrets.json"
 printf '{"secrets": [{"name": "NPM_TOKEN"}]}\n' >"$BASE/dependabot-secrets.json"
 printf '{"secrets": []}\n' >"$BASE/organization-dependabot-secrets.json"
-# The page lists the later update first and the later merge second, so a
-# read that takes the first merged pull request reads the older head.
-cat >"$BASE/pulls.json" <<'JSON'
+# The default branch's head is the queue's merge commit. Its first associated
+# pull request merged into another branch, so a read that ignores the base
+# takes the wrong head.
+printf '{"sha": "dddddddddddddddddddddddddddddddddddddddd"}\n' >"$BASE/commit.json"
+cat >"$BASE/commit-pulls.json" <<'JSON'
 [
-  {"number": 12, "merged_at": null, "head": {"sha": "cccccccccccccccccccccccccccccccccccccccc"}},
-  {"number": 10, "merged_at": "2026-09-20T09:00:00Z", "head": {"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
-  {"number": 11, "merged_at": "2026-09-21T09:00:00Z", "head": {"sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
+  {"number": 20, "merged_at": "2026-09-22T09:00:00Z", "base": {"ref": "release"}, "head": {"sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}},
+  {"number": 12, "merged_at": null, "base": {"ref": "main"}, "head": {"sha": "cccccccccccccccccccccccccccccccccccccccc"}},
+  {"number": 11, "merged_at": "2026-09-21T09:00:00Z", "base": {"ref": "main"}, "head": {"sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
 ]
 JSON
-# The CI workflow's run carries the lanes and their aggregate; the second run
-# is another workflow's.
+# The pull_request leg: the CI workflow's run carries the lanes and their
+# aggregate; the second run is another workflow's. The merge_group leg runs
+# the CI workflow alone.
 printf '{"workflow_runs": [{"id": 7}, {"id": 8}]}\n' >"$BASE/workflow-runs.json"
 printf '{"jobs": [{"name": "lint-typecheck"}, {"name": "build"}, {"name": "CI"}]}\n' >"$BASE/jobs-7.json"
 printf '{"jobs": [{"name": "writer"}]}\n' >"$BASE/jobs-8.json"
+printf '{"workflow_runs": [{"id": 9}]}\n' >"$BASE/workflow-runs-merge-group.json"
+printf '{"jobs": [{"name": "lint-typecheck"}, {"name": "build"}, {"name": "CI"}]}\n' >"$BASE/jobs-9.json"
 
 BASELINE='ok check=standard-ruleset-source value=Organization
 ok check=standard-merge-queue value=present
@@ -102,10 +107,9 @@ ok check=standard-environment-secrets value=APP_ID\;APP_KEY
 ok check=standard-secrets-outside value=none'
 
 # The baseline with each named row turned to FAIL at its observed value.
-# OVERRIDES is `check=value` pairs separated by `^`, values as printed; a
-# `check@key=value` pair also reports the row under the FAIL key `key`.
+# OVERRIDES is `check=value` pairs separated by `^`, values as printed.
 expected_listing() { # OVERRIDES
-  local line check pair name out=""
+  local line check pair out=""
   while IFS= read -r line; do
     check="${line#ok check=}"
     check="${check%% value=*}"
@@ -114,8 +118,7 @@ expected_listing() { # OVERRIDES
     while [ -n "$rest" ]; do
       pair="${rest%%^*}"
       [ "$pair" = "$rest" ] && rest="" || rest="${rest#*^}"
-      name="${pair%%=*}"
-      [ "${name%%@*}" = "$check" ] && hit="FAIL check=${name#*@} value=${pair#*=}"
+      [ "${pair%%=*}" = "$check" ] && hit="FAIL check=$check value=${pair#*=}"
     done
     out="${out:+$out
 }${hit:-$line}"
@@ -177,13 +180,20 @@ the branch unreadable~branch~~~standard-classic-protection=unreadable
 the app on selected repositories~~installations.json~.installations[1].repository_selection = "selected"~standard-app=selected
 the app not installed~~installations.json~.installations |= [.[0]]~standard-app=absent
 installations unreadable~installations~~~standard-app=unreadable
-lanes reporting their own names and no CI aggregate~~jobs-7.json~.jobs |= map(select(.name != "CI"))~standard-ci-context@ci-context-missing=build\;lint-typecheck\;writer
-an aggregate whose name only starts with CI~~jobs-7.json~.jobs |= map(if .name == "CI" then .name = "CI Required" else . end)~standard-ci-context@ci-context-missing=CI\ Required\;build\;lint-typecheck\;writer
-no job ran on the head~~workflow-runs.json~.workflow_runs = []~standard-ci-context@ci-context-missing=none
-no pull request merged~~pulls.json~map(.merged_at = null)~standard-ci-context=no-merged-pull-request
-a merged head that is not a sha~~pulls.json~.[2].head.sha = "main"~standard-ci-context=unreadable
-pull requests unreadable~pulls~~~standard-ci-context=unreadable
-workflow runs unreadable~workflow-runs~~~standard-ci-context=unreadable
+lanes reporting their own names and no CI aggregate~~jobs-7.json~.jobs |= map(select(.name != "CI"))~standard-ci-context=ci-context-missing:pull_request:build\;lint-typecheck\;writer
+an aggregate whose name only starts with CI~~jobs-7.json~.jobs |= map(if .name == "CI" then .name = "CI Required" else . end)~standard-ci-context=ci-context-missing:pull_request:CI\ Required\;build\;lint-typecheck\;writer
+no job ran on the pull request~~workflow-runs.json~.workflow_runs = []~standard-ci-context=ci-context-missing:pull_request:none
+the CI job on the second page of a run's jobs~~jobs-7.json,jobs-7.page2.json~if . == null then {"jobs": [{"name": "CI"}]} else .jobs |= map(select(.name != "CI")) end~
+CI on the pull request only, never for a merge group~~workflow-runs-merge-group.json~.workflow_runs = []~standard-ci-context=merge-group-unobserved:CI\;build\;lint-typecheck\;writer
+a merge group that ran no CI job~~jobs-9.json~.jobs |= map(select(.name != "CI"))~standard-ci-context=ci-context-missing:merge_group:build\;lint-typecheck
+a head no merged pull request produced~~commit-pulls.json~map(.merged_at = null)~standard-ci-context=no-associated-pull-request
+a head merged only into another branch~~commit-pulls.json~map(select(.base.ref != "main"))~standard-ci-context=no-associated-pull-request
+a branch head that is not a sha~~commit.json~.sha = "main"~standard-ci-context=unreadable
+a merged head that is not a sha~~commit-pulls.json~.[2].head.sha = "main"~standard-ci-context=unreadable
+the branch head unreadable~commit~~~standard-ci-context=unreadable
+the head's pull requests unreadable~commit-pulls~~~standard-ci-context=unreadable
+pull_request runs unreadable~workflow-runs~~~standard-ci-context=unreadable
+merge_group runs unreadable~workflow-runs-merge-group~~~standard-ci-context=unreadable
 a run's jobs unreadable~jobs-8~~~standard-ci-context=unreadable
 the environment deploys from every branch~~environments.json~.environments[1].deployment_branch_policy = null~standard-environment=unrestricted
 the environment deploys from protected branches~~environments.json~.environments[1].deployment_branch_policy = {"protected_branches": true, "custom_branch_policies": false}~standard-environment=protected-branches
@@ -243,15 +253,23 @@ else
   bad "a failed secret read keeps its cause after later reads succeed" "$RAW"
 fi
 
-echo "=== the CI context is read on the latest merge ==="
+echo "=== the CI context is read on both legs of the latest merge ==="
+# The row's reads in order: the branch head, its pull requests, the
+# pull_request leg on the merged pull request's head, and the merge_group leg
+# on the branch head.
 dir="$TMP/case-latest-merge"
 cp -R "$BASE" "$dir"
+rm -f -- "${dir:?}/.urls.log"
 run "$dir" ""
-if grep -qxF 'repos/acme/widgets/actions/runs?head_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&per_page=100' "$dir/.urls.log" &&
-  ! grep -qF 'head_sha=aaaa' "$dir/.urls.log"; then
-  ok "the runs read names the head of the pull request merged last"
+want_urls='repos/acme/widgets/commits/main
+repos/acme/widgets/commits/dddddddddddddddddddddddddddddddddddddddd/pulls
+repos/acme/widgets/actions/runs?head_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&event=pull_request&per_page=100
+repos/acme/widgets/actions/runs?head_sha=dddddddddddddddddddddddddddddddddddddddd&event=merge_group&per_page=100'
+got_urls="$(grep -E '/commits/|/actions/runs\?' "$dir/.urls.log" || true)"
+if [ "$got_urls" = "$want_urls" ]; then
+  ok "the reads name the branch head, its merged pull request's head and the merge_group leg"
 else
-  bad "the runs read names the head of the pull request merged last" "$(cat "$dir/.urls.log")"
+  bad "the reads name the branch head, its merged pull request's head and the merge_group leg" "$(diff <(printf '%s\n' "$want_urls") <(printf '%s\n' "$got_urls") || true)"
 fi
 
 echo "=== the check could not run ==="
@@ -274,6 +292,7 @@ while IFS='~' read -r name fail manifest arg key; do
 done <<'ROWS'
 the repository unreadable~repository~~~review-gate-error=repository-read
 a manifest without an app~~{"ci_context": "CI", "gate_context": "Review gate", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
+a manifest without a gate context~~{"ci_context": "CI", "app": "a", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
 a manifest without a CI context~~{"gate_context": "Review gate", "app": "a", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
 a manifest whose two contexts are one~~{"ci_context": "CI", "gate_context": "CI", "app": "a", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
 an argument~~~--repo~review-gate-error=unknown-arguments
