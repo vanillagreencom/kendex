@@ -65,10 +65,12 @@ fi
 #   build. A CARGO_TARGET_DIR the fleet exports still wins.
 # - linker: the image's, when its cargo config already passes -fuse-ld;
 #   otherwise mold, else lld, when installed, for Linux targets only.
-# - rustc wrapper: sccache, when it is installed and the fleet's shared cache
-#   endpoint FLEET_SCCACHE_REDIS_ENDPOINT is non-empty. The endpoint goes to
-#   sccache's own config file, which every sccache server reads whoever
-#   starts it; a cargo [env] entry would reach only a server a build started.
+# - rustc wrapper: sccache, whenever it is installed. Its own config file,
+#   which every sccache server reads whoever starts it, names the Redis
+#   endpoint FLEET_SCCACHE_REDIS_ENDPOINT when that is non-empty and no cache
+#   section otherwise, so sccache keeps its local disk cache; a cargo [env]
+#   entry would reach only a server a build started. The file is rewritten
+#   either way, so an endpoint an earlier run wrote does not outlive it.
 toml_string() {
   local value=$1
   value=${value//\\/\\\\}
@@ -81,7 +83,10 @@ owned_header='# Written by tools/lane-setup, rewritten on every run: edits here 
 # write_owned KEY PATH CONTENT: replaces a file this script wrote, refuses one
 # it did not, and announces KEY=write or KEY=skip.
 write_owned() {
-  local key=$1 path=$2 content="$owned_header"$'\n'"$3" current=""
+  local key=$1 path=$2 content="$owned_header" current=""
+  if [ -n "$3" ]; then
+    content="$content"$'\n'"$3"
+  fi
   if [ -e "$path" ]; then
     current="$(cat -- "$path")" || exit $?
     if [ "${current%%$'\n'*}" != "$owned_header" ]; then
@@ -101,23 +106,28 @@ write_owned() {
 }
 
 write_lane_cargo_config() {
-  local lanes_dir="" cargo_config="" sccache_path="" image_config="" linker="" status=0
+  local lanes_dir="" cargo_config="" sccache_path="" sccache_config="" image_config="" linker="" status=0
   lanes_dir="$(cd .. && pwd -P)" || exit $?
   printf 'lane-setup: incremental=off\n'
   cargo_config="[build]
 incremental = false"
 
-  if [ -z "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ]; then
-    printf 'lane-setup: rustc-wrapper=none:endpoint-unset\n'
-  elif ! sccache_path="$(command -v sccache)"; then
+  if ! sccache_path="$(command -v sccache)"; then
     printf 'lane-setup: rustc-wrapper=none:sccache-absent\n'
   else
     printf 'lane-setup: rustc-wrapper=%s\n' "$sccache_path"
     lane_wrapper=$sccache_path
     cargo_config="$cargo_config
 rustc-wrapper = $(toml_string "$sccache_path")"
-    write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" "[cache.redis]
+    sccache_config=""
+    if [ -n "${FLEET_SCCACHE_REDIS_ENDPOINT:-}" ]; then
+      printf 'lane-setup: sccache-cache=redis\n'
+      sccache_config="[cache.redis]
 endpoint = $(toml_string "$FLEET_SCCACHE_REDIS_ENDPOINT")"
+    else
+      printf 'lane-setup: sccache-cache=local:endpoint-unset\n'
+    fi
+    write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" "$sccache_config"
   fi
 
   image_config="${CARGO_HOME:-$HOME/.cargo}/config.toml"
@@ -168,14 +178,19 @@ fi
 # compile by its absolute source path, so only a build at that path stores
 # entries a lane's own build hits. The tree is removed once the build ends,
 # so a lane's hosted create finds the path free; the compiled units survive
-# only in the shared sccache, where sccache wraps rustc. With no wrapper they
+# only in sccache's cache, where sccache wraps rustc. With no wrapper they
 # would be deleted with the tree, so the build is skipped by name and only
 # the registry cache under CARGO_HOME is filled, which the snapshot keeps
-# either way. The build is the compile step of the `cargo test --workspace`
-# that every lane's `tools/guard --full` runs; `cargo build --workspace
-# --all-targets` would add bench units under the bench profile, which no lane
-# step builds. It builds HEAD, the tree a lane starts from. --locked keeps a
-# stale Cargo.lock from being rewritten into the snapshot.
+# either way. A tree already at the path is a build cut off before its own
+# removal, on a builder that keeps its disk between builds: it is removed
+# first, and a registration whose directory is gone is overridden by the
+# add's --force. A directory there that git does not know as a worktree fails
+# the remove, and the setup with it. The build is the compile step of the
+# `cargo test --workspace` that every lane's `tools/guard --full` runs;
+# `cargo build --workspace --all-targets` would add bench units under the
+# bench profile, which no lane step builds. It builds HEAD, the tree a lane
+# starts from. --locked keeps a stale Cargo.lock from being rewritten into
+# the snapshot.
 if [ "${FLEET_WARM:-}" = 1 ] && [ -z "$lane_wrapper" ]; then
   printf 'lane-setup: warm-build=fetch-only:no-wrapper\n'
   cargo fetch --locked
@@ -183,7 +198,11 @@ elif [ "${FLEET_WARM:-}" = 1 ]; then
   lane_path=""
   lane_path="$(.agents/skills/worktree/scripts/worktree path --hosted)" || exit $?
   printf 'lane-setup: warm-build=run path=%s\n' "$lane_path"
-  git worktree add --quiet --detach -- "$lane_path" HEAD
+  if [ -e "$lane_path" ]; then
+    printf 'lane-setup: warm-tree=remove-stale path=%s\n' "$lane_path"
+    git worktree remove --force -- "$lane_path"
+  fi
+  git worktree add --force --quiet --detach -- "$lane_path" HEAD
   build_status=0
   (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?
   git worktree remove --force -- "$lane_path"
