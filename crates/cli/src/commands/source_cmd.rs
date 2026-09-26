@@ -68,7 +68,8 @@ pub fn run(env: &Env, args: SourceArgs) -> CliResult {
     // global — a project-scoped default here would leave global mirrors
     // stale forever (and die outright when run outside a project).
     if let SourceCommand::Refresh { stale: true } = &command {
-        let scopes = resolve_scopes(env, ScopeFilter::All)?;
+        let stale = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::All)?;
+        let scopes = resolve_scopes(env, stale)?;
         for note in kendex_core::drift::refresh::refresh_stale(env, &scopes) {
             say(&format!("note: {}", note));
         }

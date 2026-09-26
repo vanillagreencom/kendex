@@ -755,12 +755,12 @@ fn a_global_source_verb_runs_outside_every_project_and_a_scoped_one_refuses() {
     let home = rooted(&tmp);
     let outside = tempfile::tempdir().unwrap();
     let elsewhere = rooted(&outside);
-    let rows: [(&[&str], bool); 3] = [
-        (&["--global", "source", "refresh"], true),
+    for (args, passes) in [
+        (&["--global", "source", "refresh"][..], true),
         (&["source", "refresh", "--global"], true),
         (&["source", "refresh"], false),
-    ];
-    for (args, passes) in rows {
+        (&["source", "refresh", "--stale", "--scope=project"], false),
+    ] {
         let output = kendex(&home, &elsewhere, args);
         let printed = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.success(), passes, "{args:?}: {printed}");
