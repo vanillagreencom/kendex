@@ -3,7 +3,10 @@
 # ../schemas/workflow-state.md § Recording policy states, on a fixture fleet. Past ORCH_RECORD_RETENTION_DAYS a closed lane's
 # files, an old directive, an old handoff archive and an old progress report
 # go, with the fleet_log rows and done lane records past the window. A live
-# lane's files, a --keep path and the named keep list stay whatever their age.
+# lane's files, an open item's files while its own workflow state is inside
+# the retention or names a worktree that stands, a
+# --keep path and the named keep list stay whatever their age. A checkout with
+# no fleet state prunes the same directory with no lane records to judge.
 # Everything removed is in the archive `kept=` names first, and a prune whose
 # archive cannot be written removes nothing.
 
@@ -21,7 +24,7 @@ source "$REPO_ROOT/skills/orch/scripts/lib/date-ladder.sh"
 
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
-# mutant_scripts and mutate_file, the two halves of the control below.
+# mutant_scripts and mutate_file, the two halves of the controls below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 
@@ -37,7 +40,13 @@ umask 022
 # One project per case, outside Git, so its root, its progress directory and
 # its archive name are the sandbox's own; the retention is two days and every
 # old fixture is three days old. KEN-0 is the first lane record, done and old;
-# KEN-1 runs; KEN-2 and KEN-12 are done and old; KEN-3 is done and fresh.
+# KEN-1 runs; KEN-2 and KEN-12 are done and old, their workflow states taken by
+# their close-outs; KEN-3 is done and fresh, its lane closed while its item was
+# open, which left its workflow state, written inside the retention; KEN-4 has
+# no lane record, its old state left by a close that never reached close-out,
+# naming no worktree. oversee-triage-source.json is an overseer read that
+# outlived its step, named for no item. The fleet state is written every pass.
+# Which worktree a state names is the git fixture's below.
 build() { # DIR
   local p="$1" sd="$1/tmp"
   mkdir -p "$p"
@@ -56,13 +65,18 @@ build() { # DIR
   mkdir -p "$sd/lane-mail/KEN-1" "$sd/lane-mail/KEN-2" "$sd/lane-mail/overseer" \
     "$sd/handoffs" "$sd/progress-reports" "$sd/waiter.run"
   for f in lane-mail/KEN-1/to-lane.jsonl lane-mail/KEN-2/to-lane.jsonl lane-mail/overseer/to-lane.jsonl \
-    workflow-state-KEN-1.json workflow-state-KEN-2.json workflow-state-KEN-12.json lane-status-KEN-1.md \
+    audit-KEN-2.json audit-KEN-12.json lane-status-KEN-1.md \
+    audit-KEN-3.json audit-KEN-4.json oversee-triage-source.json \
     directive.md workflow-state-oversee.json.lock oversee-watch.pid oversee-watch.argv oversee-watch.log \
     oversee-watch.err oversee-watch.runner handoffs/OVERSEER-HANDOFF.md handoffs/session-1.md progress-reports/01-01-00-00.md \
     progress-reports/01-01-00-00-succession.md progress-reports/notes.md waiter.run/watch.log; do
     printf 'x\n' > "$sd/$f"
   done
+  printf '{}\n' > "$sd/workflow-state-KEN-1.json"
+  printf '{}\n' > "$sd/workflow-state-KEN-4.json"
   find "$sd" -mindepth 1 -exec touch -t "$old_touch" {} +
+  touch "$sd/workflow-state-oversee.json"
+  printf '{}\n' > "$sd/workflow-state-KEN-3.json"
   printf 'x\n' > "$sd/fresh.md"
   printf 'x\n' > "$sd/progress-reports/12-31-23-59.md"
 }
@@ -98,8 +112,13 @@ while IFS='|' read -r want path label; do
   || fail "$label is $want" "path=$path got=$got"
 done <<'ROWS'
 removed|directive.md|a three-day-old directive
-removed|workflow-state-KEN-2.json|a closed lane's workflow state
-removed|workflow-state-KEN-12.json|a closed lane's file whose item extends a live one's
+removed|audit-KEN-2.json|a closed lane's old file
+removed|audit-KEN-12.json|a closed lane's file whose item extends a live one's
+removed|oversee-triage-source.json|an old overseer file named for no item
+kept|workflow-state-KEN-3.json|an open item's workflow state written inside the retention, its lane done
+kept|audit-KEN-3.json|an open item's old file, its lane done
+removed|workflow-state-KEN-4.json|an old workflow state naming no worktree
+removed|audit-KEN-4.json|an old file of an item whose old state names no worktree
 removed|lane-mail/KEN-2|a closed lane's mailbox
 removed|handoffs/session-1.md|an old handoff archive
 removed|progress-reports/01-01-00-00.md|an old progress report
@@ -144,7 +163,7 @@ start_after="$(jq -r '.lanes[0].launched_at' "$sd/workflow-state-oversee.json")"
   || fail "the fleet start, the first lane record's launched_at, is unchanged" "before=$start_before after=$start_after"
 
 count="$(grep '^pruned fleet_log=' "$TMP_ROOT/main.out" || true)"
-[[ "$count" == "pruned fleet_log=1 lanes=2 progress_reports=2 paths=7" ]] \
+[[ "$count" == "pruned fleet_log=1 lanes=2 progress_reports=2 paths=10" ]] \
   && pass "the count line names each record removed" \
   || fail "the count line names each record removed" "got=$count"
 
@@ -159,7 +178,8 @@ modes="$(ls -ld "$archive" | cut -c1-10) $(ls -ld "${archive%/*}" | cut -c1-10)"
 
 listing="$(tar -tzf "$archive" 2>/dev/null || true)"
 missing=""
-for path in directive.md workflow-state-KEN-2.json workflow-state-KEN-12.json lane-mail/KEN-2/to-lane.jsonl \
+for path in directive.md audit-KEN-2.json audit-KEN-12.json oversee-triage-source.json lane-mail/KEN-2/to-lane.jsonl \
+  workflow-state-KEN-4.json audit-KEN-4.json \
   handoffs/session-1.md progress-reports/01-01-00-00.md progress-reports/01-01-00-00-succession.md; do
   grep -qxF -- "${sd#/}/$path" <<<"$listing" || missing="$missing $path"
 done
@@ -181,25 +201,176 @@ out="$(prune "$p" --keep tmp/waiter.run 2>&1)" || rc=$?
   && pass "a prune with nothing to remove prints kept=none" \
   || fail "a prune with nothing to remove prints kept=none" "rc=$rc out=$out"
 
-# No fleet state, as on a first session that stops before its first launch:
-# no lane records to tell live from closed, so nothing is judged. The prune
-# prints the one line, touches nothing, archives nothing and writes no state,
-# even over an old file.
-bare="$TMP_ROOT/bare"
-mkdir -p "$bare/tmp"
-printf 'x\n' > "$bare/tmp/directive.md"
-touch -t "$old_touch" "$bare/tmp/directive.md"
-bare_before="$(tree_of "$bare")"
-bare_run() { # SCRIPT
-  (cd "$bare" && env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$bare/fleet" \
-    bash "$1" prune --keep tmp/waiter.run) 2>&1
+# No fleet state, as on a workstation checkout no overseer runs in: the same
+# directory is pruned by age. KEN-1 runs, its workflow state written today;
+# KEN-2 closed, its state already taken by its close-out; KEN-4 was
+# abandoned, its old state naming no worktree; KEN-12 extends KEN-1's key.
+# mutstab-diag is a
+# scratch directory nothing names, and waiter.run the --keep run directory.
+build_bare() { # DIR
+  local sd="$1/tmp" f
+  mkdir -p "$sd/mutstab-diag" "$sd/waiter.run"
+  for f in completion-summary-KEN-1.md dev-return-KEN-1-7.json workflow-state-KEN-1.json.lock \
+    completion-summary-KEN-2.md audit-KEN-4.json completion-summary-KEN-12.md \
+    mutstab-diag/run.log waiter.run/watch.log directive.md; do
+    printf 'x\n' > "$sd/$f"
+  done
+  printf '{}\n' > "$sd/workflow-state-KEN-4.json"
+  find "$sd" -mindepth 1 -exec touch -t "$old_touch" {} +
+  printf '{}\n' > "$sd/workflow-state-KEN-1.json"
+  printf 'x\n' > "$sd/fresh.md"
 }
+bare_run() { # DIR SCRIPT
+  (cd "$1" && env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$1/fleet" \
+    bash "$2" prune --keep tmp/waiter.run) 2>&1
+}
+bare="$TMP_ROOT/bare"
+build_bare "$bare"
 rc=0
-out="$(bare_run "$WS")" || rc=$?
-[[ "$rc" -eq 0 && "$out" == "pruned fleet-state=none path=$bare/tmp/workflow-state-oversee.json" \
-   && "$(tree_of "$bare")" == "$bare_before" && ! -e "$bare/fleet" ]] \
-  && pass "a prune with no fleet state prints fleet-state=none and touches nothing" \
-  || fail "a prune with no fleet state prints fleet-state=none and touches nothing" "rc=$rc out=$out"
+out="$(bare_run "$bare" "$WS")" || rc=$?
+[[ "$rc" -eq 0 ]] && pass "a prune with no fleet state exits 0" || fail "a prune with no fleet state exits 0" "rc=$rc out=$out"
+while IFS='|' read -r want path label; do
+  if [[ -e "$bare/tmp/$path" ]]; then got=kept; else got=removed; fi
+  [[ "$got" == "$want" ]] \
+  && pass "with no fleet state $label is $want" \
+  || fail "with no fleet state $label is $want" "path=$path got=$got"
+done <<'ROWS'
+removed|completion-summary-KEN-2.md|a closed item's file
+removed|workflow-state-KEN-4.json|an abandoned item's old state naming no worktree
+removed|audit-KEN-4.json|an abandoned item's old file
+removed|completion-summary-KEN-12.md|an old file whose item extends a running one's
+removed|mutstab-diag|an old scratch directory no item names
+removed|directive.md|an old file no item names
+kept|workflow-state-KEN-1.json|a running item's workflow state
+kept|workflow-state-KEN-1.json.lock|a running item's old lock
+kept|completion-summary-KEN-1.md|a running item's old file
+kept|dev-return-KEN-1-7.json|a running item's old round artifact
+kept|waiter.run/watch.log|the --keep run directory
+kept|fresh.md|a file inside the retention
+ROWS
+count="$(grep '^pruned fleet_log=' <<<"$out" || true)"
+[[ "$count" == "pruned fleet_log=0 lanes=0 progress_reports=0 paths=6" && ! -e "$bare/tmp/workflow-state-oversee.json" ]] \
+  && pass "with no fleet state the count names the paths alone and no fleet state is written" \
+  || fail "with no fleet state the count names the paths alone and no fleet state is written" "got=$count"
+archive="$(sed -n 's/^kept=//p' <<<"$out")"
+listing="$(tar -tzf "$archive" 2>/dev/null || true)"
+grep -qxF -- "${bare#/}/tmp/mutstab-diag/run.log" <<<"$listing" \
+  && pass "with no fleet state the archive holds what went" \
+  || fail "with no fleet state the archive holds what went" "archive=$archive"
+# No state directory at all is a checkout nothing has written to yet.
+mkdir -p "$TMP_ROOT/empty"
+rc=0
+out="$( (cd "$TMP_ROOT/empty" && ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$TMP_ROOT/empty/fleet" "$WS" prune) 2>&1)" || rc=$?
+[[ "$rc" -eq 0 && "$out" == $'pruned fleet_log=0 lanes=0 progress_reports=0 paths=0\nkept=none' && ! -e "$TMP_ROOT/empty/tmp" ]] \
+  && pass "a prune with no state directory removes nothing and creates none" \
+  || fail "a prune with no state directory removes nothing and creates none" "rc=$rc out=$out"
+
+# Every shape of state the orch workflows write, in a checkout that is a git
+# repository with no fleet state, every state and file old, so only the
+# worktree a state names can hold it. The main checkout is on main; ken-1,
+# ken-3, ken-5 and other-2 are checked out in linked worktrees, and ken-4 and
+# ken-6 are branches no tree has checked out.
+#   KEN-1  worktree and branch, as start-worktree, dev-start and micro write
+#   KEN-2  a worktree alone, now on another branch
+#   KEN-3  a worktree that is gone and a branch a linked tree holds
+#   KEN-4  a worktree that is gone and a branch no tree holds
+#   KEN-5  a branch alone that a linked tree holds, as merge-pr and ci-fix write
+#   KEN-6  a branch alone that no tree holds
+#   KEN-7  a branch alone that only the main checkout holds
+#   KEN-8  the main checkout and its branch, as review writes a local key
+#   KEN-9  neither field
+#   KEN-10 a worktree that is a directory but no linked worktree
+#   KEN-11 a linked worktree alone whose path git quotes in the line listing
+#   KEN-12 a branch alone whose registered tree's directory is gone
+build_shapes() { # DIR
+  local p="$1" sd="$1/tmp" t="$1.trees" n
+  mkdir -p "$p" "$p.plain"
+  git -C "$p" init -q -b main
+  git -C "$p" config gc.auto 0
+  git -C "$p" config maintenance.auto false
+  git -C "$p" config user.email test@example.com
+  git -C "$p" config user.name Test
+  git -C "$p" config commit.gpgsign false
+  git -C "$p" commit -q --allow-empty -m base
+  git -C "$p" branch ken-4
+  git -C "$p" branch ken-6
+  for n in ken-1 other-2 ken-3 ken-5 ken-12; do git -C "$p" worktree add -q -b "$n" "$t/$n" main; done
+  rm -rf -- "${t:?}/ken-12"
+  git -C "$p" worktree add -q -b ken-11 "$t/ken-q"$'\n'"tree" main
+  mkdir -p "$sd"
+  printf '{"worktree":"%s","branch":"ken-1"}\n' "$t/ken-1" > "$sd/workflow-state-KEN-1.json"
+  printf '{"worktree":"%s"}\n' "$t/other-2" > "$sd/workflow-state-KEN-2.json"
+  printf '{"worktree":"%s","branch":"ken-3"}\n' "$t/gone-3" > "$sd/workflow-state-KEN-3.json"
+  printf '{"worktree":"%s","branch":"ken-4"}\n' "$t/gone-4" > "$sd/workflow-state-KEN-4.json"
+  printf '{"branch":"ken-5"}\n' > "$sd/workflow-state-KEN-5.json"
+  printf '{"branch":"ken-6"}\n' > "$sd/workflow-state-KEN-6.json"
+  printf '{"branch":"main"}\n' > "$sd/workflow-state-KEN-7.json"
+  printf '{"worktree":"%s","branch":"main"}\n' "$p" > "$sd/workflow-state-KEN-8.json"
+  printf '{}\n' > "$sd/workflow-state-KEN-9.json"
+  printf '{"worktree":"%s"}\n' "$p.plain" > "$sd/workflow-state-KEN-10.json"
+  jq -n --arg w "$t/ken-q"$'\n'"tree" '{worktree: $w}' > "$sd/workflow-state-KEN-11.json"
+  printf '{"branch":"ken-12"}\n' > "$sd/workflow-state-KEN-12.json"
+  for n in 1 2 3 4 5 6 7 8 9 10 11 12; do printf 'x\n' > "$sd/audit-KEN-$n.json"; done
+  find "$sd" -mindepth 1 -exec touch -t "$old_touch" {} +
+}
+SHAPE_ROWS='kept|1|a state naming its linked worktree and branch
+kept|2|a state naming a linked worktree alone
+kept|3|a state whose worktree is gone and whose branch a linked tree holds
+removed|4|a state whose worktree is gone and whose branch no tree holds
+kept|5|a branch-only state whose branch a linked tree holds
+removed|6|a branch-only state whose branch no tree holds
+removed|7|a branch-only state whose branch only the main checkout holds
+removed|8|a state naming the main checkout
+removed|9|a state naming neither
+removed|10|a state naming a directory that is no linked worktree
+kept|11|a state naming a linked worktree whose path git quotes
+removed|12|a branch-only state whose registered tree has no directory'
+# SHAPES reads, for the prune SCRIPT ran over a fresh fixture, each item's
+# state and file as kept or removed, in row order.
+shapes_run() { # NAME SCRIPT
+  local sp="$TMP_ROOT/shapes-$1" n got=""
+  build_shapes "$sp"
+  SHAPES_RC=0
+  bare_run "$sp" "$2" >/dev/null || SHAPES_RC=$?
+  for n in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    if [[ -e "$sp/tmp/workflow-state-KEN-$n.json" ]]; then got+="$n:kept,"; else got+="$n:removed,"; fi
+    if [[ -e "$sp/tmp/audit-KEN-$n.json" ]]; then got+="kept "; else got+="removed "; fi
+  done
+  SHAPES="$got"
+}
+shapes_run shipped "$WS"
+[[ "$SHAPES_RC" -eq 0 ]] && pass "a prune over every state shape exits 0" || fail "a prune over every state shape exits 0" "rc=$SHAPES_RC"
+while IFS='|' read -r want n label; do
+  [[ " $SHAPES" == *" $n:$want,$want "* ]] && pass "old, $label: state and file $want" \
+    || fail "old, $label: state and file $want" "got=$SHAPES"
+done <<<"$SHAPE_ROWS"
+
+# A worktree listing git cannot give, over the same fixture: which worktree a
+# state names is unknown, so the prune refuses and removes nothing.
+REAL_GIT="$(command -v git)"
+GIT_LIST_FAIL_BIN="$TMP_ROOT/git-list-fail-bin"
+mkdir -p "$GIT_LIST_FAIL_BIN"
+cat > "$GIT_LIST_FAIL_BIN/git" <<STUB
+#!/usr/bin/env bash
+wt="" list=""
+for a in "\$@"; do
+  [[ "\$a" != worktree ]] || wt=1
+  [[ "\$a" != list ]] || list=1
+done
+if [[ -n "\$wt" && -n "\$list" ]]; then echo "fatal: planted failure" >&2; exit 128; fi
+exec "$REAL_GIT" "\$@"
+STUB
+chmod +x "$GIT_LIST_FAIL_BIN/git"
+lp="$TMP_ROOT/listing"
+build_shapes "$lp"
+before="$(tree_of "$lp")"
+rc=0
+(cd "$lp" && PATH="$GIT_LIST_FAIL_BIN:$PATH" env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 \
+  FLEET_DIR="$lp/fleet" "$WS" prune) >/dev/null 2>"$lp.err" || rc=$?
+LISTING="rc=$rc removed=$([[ "$(tree_of "$lp")" == "$before" ]] && echo none || echo some) archive=$([[ -z "$(find "$lp/fleet" -name '*.tgz' 2>/dev/null || true)" ]] && echo none || echo some)"
+[[ "$LISTING" == "rc=1 removed=none archive=none" ]] && grep -qxF 'fatal: planted failure' "$lp.err" \
+  && pass "a worktree listing git cannot give refuses the prune, carrying git's words, and removes nothing" \
+  || fail "a worktree listing git cannot give refuses the prune, carrying git's words, and removes nothing" "$LISTING"
 
 # A step that fails before the archive stands removes nothing and writes no
 # archive: an archive tar cannot write, an archive root that is a file, a find
@@ -249,6 +420,27 @@ grep -qxF 'tar: planted failure' "$TMP_ROOT/fail-tar.err" \
 grep -qxF 'find: planted failure' "$TMP_ROOT/fail-find.err" \
   && pass "the age refusal carries find's own words" || fail "the age refusal carries find's own words"
 
+# A find that fails only on the read of KEN-4's standing state, which decides
+# whether KEN-4 is live, and answers for every other path.
+REAL_FIND="$(command -v find)"
+STATE_FIND_BIN="$TMP_ROOT/state-find-bin"
+mkdir -p "$STATE_FIND_BIN"
+cat > "$STATE_FIND_BIN/find" <<STUB
+#!/bin/sh
+case "\$1" in */workflow-state-KEN-4.json) echo "find: planted failure" >&2; exit 1 ;; esac
+exec "$REAL_FIND" "\$@"
+STUB
+chmod +x "$STATE_FIND_BIN/find"
+fp="$TMP_ROOT/state-find"
+build "$fp"
+before="$(tree_of "$fp")"
+rc=0
+run_prune "$fp" "$WS" "$STATE_FIND_BIN:" --keep tmp/waiter.run >/dev/null 2>"$fp.err" || rc=$?
+STATE_FIND="rc=$rc key=$(head -n 1 "$fp.err" | sed "s|$fp/|FP/|") removed=$([[ "$(tree_of "$fp")" == "$before" ]] && echo none || echo some) archive=$([[ -z "$(find "$fp/fleet" -name '*.tgz' 2>/dev/null || true)" ]] && echo none || echo some)"
+[[ "$STATE_FIND" == "rc=1 key=workflow-state: prune-age-unreadable path=FP/tmp/workflow-state-KEN-4.json removed=none archive=none" ]] \
+  && pass "a find that cannot read a standing state's age is refused naming that state and removes nothing" \
+  || fail "a find that cannot read a standing state's age is refused naming that state and removes nothing" "$STATE_FIND"
+
 # A removal that fails part way: the archive already holds every path, and
 # the rows have already left the state.
 REAL_RM="$(command -v rm)"
@@ -280,7 +472,7 @@ got="$(jq -c '[any(.fleet_log[]; .text == "old"), any(.lanes[]; .item == "KEN-2"
 # The suite's one must-fail control: the live-lane match dropped, so a running
 # lane's mailbox is pruned with the closed lanes' files.
 NO_LIVE="$(mutant_scripts no-live workflow-state)/workflow-state" || exit 1
-mutate_file "$NO_LIVE" '[[ ! "${unit##*/}" =~ $re ]] || kept_by=live' ':'
+mutate_file "$NO_LIVE" '[[ -z "$item" ]] || ! unit_names_item "$unit" "$item" || kept_by=live' ':'
 mp="$TMP_ROOT/m-no-live"
 build "$mp"
 (cd "$mp" && env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$mp/fleet" \
@@ -288,6 +480,15 @@ build "$mp"
 [[ ! -e "$mp/tmp/lane-mail/KEN-1" ]] \
   && pass "control: without the live-lane match a running lane's mailbox is pruned" \
   || fail "control: without the live-lane match a running lane's mailbox is pruned"
+
+# git-context lane-worktree's one must-fail control: the worktree match
+# dropped, so a state naming a linked worktree alone is pruned with its file.
+NO_TREE_MATCH="$(mutant_scripts no-tree-match git-context)" || exit 1
+mutate_file "$NO_TREE_MATCH/git-context" '[[ "$resolved" != "$want_tree" ]] || { printf '"'"'%s\n'"'"' "$path"; exit 0; }' ':'
+shapes_run no-tree-match "$NO_TREE_MATCH/workflow-state"
+[[ " $SHAPES" == *" 2:removed,removed "* ]] \
+  && pass "control: without the worktree match a state naming a linked worktree alone is pruned" \
+  || fail "control: without the worktree match a state naming a linked worktree alone is pruned" "got=$SHAPES"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

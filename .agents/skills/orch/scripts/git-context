@@ -80,6 +80,50 @@ case "$cmd" in
             exit 1
         fi
         ;;
+    lane-worktree)
+        # The linked worktree a workflow state names, never the main checkout:
+        # WORKTREE where it is one of this repository's linked worktrees, else
+        # the linked worktree that has BRANCH checked out, else nothing. A tree
+        # git still lists whose directory is gone answers for nothing. Git is
+        # asked only when there is a candidate, and a listing it cannot give
+        # fails.
+        want_tree="${1:-}"
+        want_branch="${2:-}"
+        worktree="$(worktree_arg "${3:-}")"
+        [[ -n "$want_tree" && -d "$want_tree" ]] || want_tree=""
+        [[ -n "$want_tree" || -n "$want_branch" ]] || exit 0
+        if [[ -n "$want_tree" ]]; then
+            want_tree="$(cd -P -- "$want_tree" && pwd -P)" || exit 1
+        fi
+        # The NUL-delimited listing, since the line form quotes an unusual
+        # path; held in a file, since a substitution drops NULs and a pipe
+        # drops git's status.
+        listing="$(mktemp)" || exit 1
+        trap 'rm -f -- "$listing"' EXIT
+        git -C "$worktree" worktree list --porcelain -z >"$listing" || exit 1
+        # Each tree's fields open with its worktree field. The first tree is
+        # the main checkout, which is never a lane's.
+        n=0 path="" lane=false branch_hit=""
+        while IFS= read -r -d '' field; do
+            case "$field" in
+                worktree\ *)
+                    path="${field#worktree }"
+                    n=$((n + 1))
+                    lane=false
+                    [[ "$n" -eq 1 ]] || lane=true
+                    [[ -d "$path" ]] || lane=false
+                    if [[ "$lane" == true && -n "$want_tree" ]]; then
+                        resolved="$(cd -P -- "$path" && pwd -P)" || resolved=""
+                        [[ "$resolved" != "$want_tree" ]] || { printf '%s\n' "$path"; exit 0; }
+                    fi
+                    ;;
+                "branch refs/heads/$want_branch")
+                    [[ "$lane" == false || -n "$branch_hit" || -z "$want_branch" ]] || branch_hit="$path"
+                    ;;
+            esac
+        done <"$listing"
+        [[ -z "$branch_hit" ]] || printf '%s\n' "$branch_hit"
+        ;;
     repo-root)
         worktree="$(worktree_arg "$@")"
         git -C "$worktree" rev-parse --show-toplevel
@@ -118,6 +162,11 @@ Commands:
   issue-from-branch [worktree]    Print issue id matched from branch
   issue-canonical ID [pattern]    Print the canonical spelling of an id the
                                   pattern accepts in any case
+  lane-worktree WORKTREE BRANCH [worktree]
+                                  Print the linked worktree a workflow state
+                                  names, never the main checkout: WORKTREE where
+                                  it is a linked worktree, else the one with
+                                  BRANCH checked out, else nothing
   repo-root [worktree]            Print git worktree root
   common-root [worktree]          Print main checkout root for worktree sets
   timestamp [compact|epoch|iso]   Print workflow timestamp (iso is UTC RFC-3339)

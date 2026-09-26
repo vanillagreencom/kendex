@@ -9,17 +9,18 @@
 # `dev_delegated_at` stamp and the delegation, so no validation run is in
 # flight in the worktree: the prune happens between rounds and a validation run
 # deletes nothing. It resolves its own target from the state and the tree, so
-# no workflow passes one: the round id and the worktree from workflow state,
-# or, where the state names no worktree, the linked worktree (never the main
-# checkout) that has the state's branch checked out; the lease owner from that
-# worktree's branch through `git-context issue-from-branch`, which is the issue
-# id start-worktree claims the lease under; the Cargo target as tools/guard
-# resolves it, ${CARGO_TARGET_DIR:-target} with a relative value read from the
-# worktree; and the use of the volume holding that target from df. A state
-# with neither has no lane target to free: it records action=no-worktree and
-# exits 0. A branch naming no issue id had no start-worktree lease, and the
-# state key stands in as the owner. At or past ORCH_ROUND_PRUNE_DISK_PCT
-# (default 75) it runs
+# no workflow passes one: the round id from workflow state, and the linked
+# worktree the state names, never the main checkout, as git-context
+# lane-worktree resolves it from the state's worktree and branch; the lease
+# owner from that worktree's branch through `git-context issue-from-branch`,
+# which is the issue id start-worktree claims the lease under; the Cargo
+# target as tools/guard resolves it, ${CARGO_TARGET_DIR:-target} with a
+# relative value read from the worktree; and the use of the volume holding
+# that target from df. A state that names no linked worktree, by either field,
+# has no lane target to free: it records action=no-worktree and exits 0. A
+# listing git cannot give refuses as worktree-list. A branch naming no issue
+# id had no start-worktree lease, and the state key stands in as the owner.
+# At or past ORCH_ROUND_PRUNE_DISK_PCT (default 75) it runs
 #   worktree cleanup --targets-only --apply --worktree WORKTREE --owner OWNER
 # That prune takes every Cargo profile under the worktree's own target/,
 # however recent, and nothing else: node_modules/ and .next/ stay, since nothing
@@ -95,20 +96,9 @@ if ! round="$(state_get '.dev_round_id // ""')" || [[ -z "$round" ]]; then
 fi
 worktree="" branch=""
 worktree="$(state_get '.worktree // ""')" || { message state-missing worktree >&2; exit 2; }
-# A state initialized with a branch alone names its tree through the linked
-# worktree that has that branch checked out; the first listed is the main
-# checkout, whose lease the guard refuses and which is never a lane's.
-if [[ -z "$worktree" ]]; then
-  branch="$(state_get '.branch // ""')" || { message state-missing branch >&2; exit 2; }
-  if [[ -n "$branch" ]]; then
-    listing=""
-    listing="$(git worktree list --porcelain)" || { message worktree-list "$branch" >&2; exit 2; }
-    worktree="$(awk -v want="refs/heads/$branch" '
-      /^worktree / { path = substr($0, 10); n++ }
-      $0 == "branch " want && n > 1 { print path; exit }
-    ' <<<"$listing")"
-  fi
-fi
+branch="$(state_get '.branch // ""')" || { message state-missing branch >&2; exit 2; }
+# The main checkout, whose lease the guard refuses, is never a lane's tree.
+worktree="$("$GIT_CONTEXT" lane-worktree "$worktree" "$branch")" || { message worktree-list "$branch" >&2; exit 2; }
 
 record() { # ACTION USED MARK BYTES — the result line, then the round record
   printf 'round-prune: action=%s used-pct=%s mark-pct=%s bytes=%s round=%s worktree=%s\n' \

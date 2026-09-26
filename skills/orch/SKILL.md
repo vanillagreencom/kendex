@@ -95,7 +95,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | Terminal handoff; model, effort, and permission flags via `--launch-flags` |
 | `pane-write` | The one writer into a tmux pane: pastes a file or presses one key only into a proven pane running the expected process, and refuses an empty target, the caller's own pane, a missing or shared window and any other process |
-| `lane-close` | Stop one finished recorded lane's harness by signal, unless a hosted stop answers the item's worktree is gone, close its hosted sandbox and tmux window, and update its fleet record |
+| `lane-close` | Stop one finished recorded lane's harness by signal, unless a hosted stop answers the item's worktree is gone, close its hosted sandbox and tmux window, remove a finished item's files from the state directory on a full close, and update its fleet record |
 | `lanes` | Enumerate harness auth lanes; `pick` prints the launch env prefix for the least-loaded qualifying lane, exit 3 when none qualifies; `context` reports each live lane's context use; `state <item>` prints one lane's state from the pane, by the same judge `oversee-watch` and `open-terminal --wake` ask |
 | `lane-host` | Resolve or call the configured host provider; protocol: [schemas/lane-host.md](schemas/lane-host.md). Static SSH reference: `lane-host-ssh --help` |
 | `lane-mail` | The lane-to-overseer mailbox. A lane runs `ask`, `notice`, `wait`, `inbox` and its mailbox monitor `watch`; the overseer runs `send`, `drain` and `pending`, adding `--root` and `--host` for a lane on another host |

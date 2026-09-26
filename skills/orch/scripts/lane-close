@@ -57,6 +57,8 @@ message() { # REASON FIELD=VALUE...
     state-write-failed) printf '%s\n' 'The lane closed, but its fleet record could not be updated.' ;;
     prepare-stop-failed) printf '%s\n' 'The background launch job the record names could not be stopped. Close-out changed nothing else.' ;;
     validate-stop-failed) printf '%s\n' "A validation run in the lane's worktree could not be ended. The window and record are unchanged; dev-validate-run's own words are on the lines above this one." ;;
+    item-files-failed) printf '%s\n' "The item's files in the state directory could not all be removed. The host, window and record are unchanged, and a second close retries the removal. workflow-state's own words are on the lines above this one." ;;
+    item-files-kept) printf '%s\n' "The item is not finished, or its tracker did not answer, so its files in the state directory stay for a relaunch. cause is open for an item the tracker holds open, and otherwise names the read that did not answer, as tracker-read-failed does. How long they stay is the prune's keep list, as workflow-state prune --help states." ;;
     helper-missing) printf '%s\n' 'The required helper is not executable. Close-out changed nothing.' ;;
     stopped) printf '%s\n' 'The lane window closed and its sandbox was kept.' ;;
     closed) printf '%s\n' 'The lane, sandbox and fleet record closed.' ;;
@@ -94,7 +96,14 @@ and its window closed. --keep-sandbox ends the harness, closes its window and
 records stopped without closing the lane host.
 A local lane's close also ends every validation run its worktree, the record's
 mail_root, holds with no verdict, through dev-validate-run --stop; a hosted
-lane's runs end with its sandbox.
+lane's runs end with its sandbox. A close that is not --keep-sandbox, of an
+item whose tracker answers terminal, removes the item's files from the state
+directory through workflow-state remove before the host close, printing its
+removed path= lines; a removal that fails refuses as item-files-failed with
+the host, window and record unchanged. An exited, stopped or preparing lane's
+tracker is read for that alone: an item it holds open, or a read that does not
+answer, keeps the files and prints item-files-kept with the cause, and the
+close goes on.
 
 A lane holding an ask nobody has answered refuses as ask-unanswered, under
 --keep-sandbox and on a stopped record alike: the answer would reach a session
@@ -111,7 +120,11 @@ on this server, or SESSION:WINDOW, whose session name must match exactly.
 --harness, --tracker and --repo supply a lane identity for a record written
 before the launcher recorded one. Each fills only a field the record leaves
 null or absent; the record wins where it carries a value, and an option that
-contradicts one refuses as record-invalid. An exited lane needs none of them.
+contradicts one refuses as record-invalid. An exited lane closes without any
+of them, but its files leave the state directory only where its tracker
+answers, so a record carrying no tracker or repository takes --tracker or
+--repo on that close; otherwise the files stay for as long as the prune holds
+the item live.
 
 A field neither the record nor an option carries is read from the lane where
 the lane answers it: tracker from the item key, linear for a tracker
@@ -289,6 +302,60 @@ close_host() {
   return "$rc"
 }
 
+# One tracker CLI call, its own words kept for the refusal and dropped on
+# success: a close that works stays quiet, and one that does not says what the
+# CLI said rather than swallowing it. Status 0 with OUT_VAR set, or 1 with that
+# stderr already relayed.
+tracker_read() { # OUT_VAR COMMAND...
+  local _tr_out _tr_err _tr_rc=0
+  _tr_err="$(mktemp)" || return 1
+  _tr_out="$("${@:2}" 2>"$_tr_err")" || _tr_rc=$?
+  [[ "$_tr_rc" -eq 0 ]] || cat -- "$_tr_err" >&2
+  rm -f -- "${_tr_err:?}"
+  [[ "$_tr_rc" -eq 0 ]] || return 1
+  printf -v "$1" '%s' "$_tr_out"
+}
+
+# Whether the work item is finished and, where that is not an answer, WHY. The
+# several ways this read fails to answer are one status to the caller and
+# distinct words to the operator, so the refusal names the cause rather than
+# asserting one of them. TRACKER_CAUSE carries it on every status 2.
+TRACKER_CAUSE=""
+tracker_terminal() {
+  local value number
+  TRACKER_CAUSE=""
+  case "$tracker" in
+    linear)
+      [[ -x "$LINEAR" ]] || { TRACKER_CAUSE=cli-missing; return 2; }
+      tracker_read value "$LINEAR" issues get "$ITEM" --format=safe \
+        || { TRACKER_CAUSE=read-failed; return 2; }
+      # Terminality is the stable state_type, never the display name: a team
+      # renames Done or Canceled freely, and a renamed terminal state read by
+      # name would hold a finished lane open. A payload carrying no state_type
+      # answered nothing, so it reads as a failed tracker read, not as work
+      # still running.
+      value="$(jq -r '.state_type // empty' <<<"$value")" || { TRACKER_CAUSE=payload-unparsed; return 2; }
+      [[ -n "$value" ]] || { TRACKER_CAUSE=no-state-type; return 2; }
+      [[ "$value" == completed || "$value" == canceled ]] ;;
+    github)
+      # The key is read before the repository: an item whose key is not issue-N
+      # carries no issue number at all, which no repository supplies.
+      [[ "$ITEM" == issue-* ]] || { TRACKER_CAUSE=key-not-issue; return 2; }
+      [[ -n "$repo" ]] || { TRACKER_CAUSE=repo-missing; return 2; }
+      number="${ITEM#issue-}"
+      tracker_read value gh issue view "$number" --repo "$repo" --json state --jq .state \
+        || { TRACKER_CAUSE=read-failed; return 2; }
+      [[ "$value" == CLOSED ]] ;;
+    # An empty tracker under an issue-N key is the derivation declining, not an
+    # unrecognised value: both trackers spell a key that way, so the caller is
+    # asked which one rather than told the tracker is unknown.
+    *)
+      TRACKER_CAUSE=tracker-unknown
+      [[ -n "$tracker" || "$ITEM" != issue-* ]] || TRACKER_CAUSE=key-ambiguous
+      return 2 ;;
+  esac
+}
+
 # A validation the lane started goes on after its session ends, and nothing
 # would ever read its verdict. A local lane's mail_root is its worktree, as
 # open-terminal records it; one that is no directory on this disk holds no run
@@ -302,21 +369,46 @@ stop_validations() {
     || { message validate-stop-failed "item=$ITEM" "worktree=$mail_root" "status=$rc" >&2; exit 1; }
 }
 
+# The item's close-out under tmp/: every file the state directory holds named
+# for it, through workflow-state remove, the one owner of that removal. Only a
+# full close of a finished item reaches it, one whose tracker answers terminal,
+# whether the idle check already read it or the read happens here: a lane
+# closed before its work ended, or under a --keep-sandbox close, is relaunched
+# into those files, so they stay and the line saying so names why. It runs
+# before the host close, so a close that fails before the host close retries
+# whole, the removal included, which an idempotent remove allows. One that
+# fails after the host close does not: the ssh provider's close takes the item
+# marker, and a second close is refused as unowned.
+ITEM_FINISHED=false
+remove_item_files() {
+  local rc=0
+  if [[ "$ITEM_FINISHED" == false ]]; then
+    tracker_terminal || rc=$?
+    case "$rc" in
+      0) ;;
+      1) message item-files-kept "item=$ITEM" "cause=open"; return 0 ;;
+      *) message item-files-kept "item=$ITEM" "cause=$TRACKER_CAUSE"; return 0 ;;
+    esac
+  fi
+  "$WORKFLOW_STATE" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} remove "$ITEM" || rc=$?
+  [[ "$rc" -eq 0 ]] || { message item-files-failed "item=$ITEM" "status=$rc" >&2; exit 1; }
+}
+
 pane_still_exists() {
   local listed
   listed="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)" || return 2
   awk -v pane="$pane_id" '$0 == pane { found=1 } END { exit !found }' <<<"$listed"
 }
 
-# The end of every close-out: a local lane's validations ended, the host closed
-# unless --keep-sandbox, the window closed where pane_id names one tmux still
-# lists, then the record and the line naming the outcome, pane= carried where
-# the close had a pane.
+# The end of every close-out: a local lane's validations ended, the item's
+# files removed and the host closed unless --keep-sandbox, the window closed where
+# pane_id names one tmux still lists, then the record and the line naming the
+# outcome, pane= carried where the close had a pane.
 pane_id=""
 finish_close() {
   local next_status=done pane_rc=0 fields=("item=$ITEM")
   [[ -n "$host" ]] || stop_validations
-  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || exit $?; fi
+  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else remove_item_files; close_host || exit $?; fi
   if [[ -n "$pane_id" ]]; then
     pane_still_exists || pane_rc=$?
     case "$pane_rc" in
@@ -400,67 +492,13 @@ pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
 lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" \
   || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
 
-# One tracker CLI call, its own words kept for the refusal and dropped on
-# success: a close that works stays quiet, and one that does not says what the
-# CLI said rather than swallowing it. Status 0 with OUT_VAR set, or 1 with that
-# stderr already relayed.
-tracker_read() { # OUT_VAR COMMAND...
-  local _tr_out _tr_err _tr_rc=0
-  _tr_err="$(mktemp)" || return 1
-  _tr_out="$("${@:2}" 2>"$_tr_err")" || _tr_rc=$?
-  [[ "$_tr_rc" -eq 0 ]] || cat -- "$_tr_err" >&2
-  rm -f -- "${_tr_err:?}"
-  [[ "$_tr_rc" -eq 0 ]] || return 1
-  printf -v "$1" '%s' "$_tr_out"
-}
-
-# Whether the work item is finished and, where that is not an answer, WHY. The
-# several ways this read fails to answer are one status to the caller and
-# distinct words to the operator, so the refusal names the cause rather than
-# asserting one of them. TRACKER_CAUSE carries it on every status 2.
-TRACKER_CAUSE=""
-tracker_terminal() {
-  local value number
-  TRACKER_CAUSE=""
-  case "$tracker" in
-    linear)
-      [[ -x "$LINEAR" ]] || { TRACKER_CAUSE=cli-missing; return 2; }
-      tracker_read value "$LINEAR" issues get "$ITEM" --format=safe \
-        || { TRACKER_CAUSE=read-failed; return 2; }
-      # Terminality is the stable state_type, never the display name: a team
-      # renames Done or Canceled freely, and a renamed terminal state read by
-      # name would hold a finished lane open. A payload carrying no state_type
-      # answered nothing, so it reads as a failed tracker read, not as work
-      # still running.
-      value="$(jq -r '.state_type // empty' <<<"$value")" || { TRACKER_CAUSE=payload-unparsed; return 2; }
-      [[ -n "$value" ]] || { TRACKER_CAUSE=no-state-type; return 2; }
-      [[ "$value" == completed || "$value" == canceled ]] ;;
-    github)
-      # The key is read before the repository: an item whose key is not issue-N
-      # carries no issue number at all, which no repository supplies.
-      [[ "$ITEM" == issue-* ]] || { TRACKER_CAUSE=key-not-issue; return 2; }
-      [[ -n "$repo" ]] || { TRACKER_CAUSE=repo-missing; return 2; }
-      number="${ITEM#issue-}"
-      tracker_read value gh issue view "$number" --repo "$repo" --json state --jq .state \
-        || { TRACKER_CAUSE=read-failed; return 2; }
-      [[ "$value" == CLOSED ]] ;;
-    # An empty tracker under an issue-N key is the derivation declining, not an
-    # unrecognised value: both trackers spell a key that way, so the caller is
-    # asked which one rather than told the tracker is unknown.
-    *)
-      TRACKER_CAUSE=tracker-unknown
-      [[ -n "$tracker" || "$ITEM" != issue-* ]] || TRACKER_CAUSE=key-ambiguous
-      return 2 ;;
-  esac
-}
-
 case "$state" in
   exited) ;;
   idle)
     tracker_rc=0
     tracker_terminal || tracker_rc=$?
     case "$tracker_rc" in
-      0) ;;
+      0) ITEM_FINISHED=true ;;
       1) message lane-live "item=$ITEM" "state=idle" "pane=$pane_id" >&2; exit 1 ;;
       *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" "source=$tracker_source" "cause=$TRACKER_CAUSE" >&2; exit 1 ;;
     esac ;;

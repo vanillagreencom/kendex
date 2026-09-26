@@ -54,7 +54,9 @@ fill() { head -c "$2" /dev/zero >"$1"; }
 KEY="" BRANCH=""
 build() { # NAME [LEASE_OWNER] [STATE_WORKTREE] [STATE_KEY] [BRANCH]
   # STATE_WORKTREE: "branch" records the branch alone, "none" a branch no
-  # worktree has checked out, anything else the worktree and its branch.
+  # worktree has checked out, "main" the main checkout and its branch as an
+  # ad-hoc local review key records them, anything else the worktree and its
+  # branch.
   ROOT="$TMP_ROOT/$1"
   MAIN="$ROOT/main"
   WT="$ROOT/trees/topic"
@@ -82,6 +84,8 @@ build() { # NAME [LEASE_OWNER] [STATE_WORKTREE] [STATE_KEY] [BRANCH]
     "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" init "$KEY" --branch "$BRANCH" >/dev/null
   elif [[ "${3:-}" == none ]]; then
     "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" init "$KEY" --branch gone-branch >/dev/null
+  elif [[ "${3:-}" == main ]]; then
+    "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" init "$KEY" --worktree "$MAIN" --branch main >/dev/null
   else
     "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" init "$KEY" --worktree "$WT" --branch "$BRANCH" >/dev/null
   fi
@@ -186,6 +190,7 @@ a state keyed apart from the lease prunes under the owner its branch names|80|pr
 a branch naming no issue is pruned under the state key|80|KEN-1|topic|KEN-1|-|-|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
 a state carrying only a branch prunes the worktree that has it checked out|80|pr-5|ken-1|KEN-1|branch|-|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
 a state whose branch no worktree holds records no-worktree and lets the round go|80|pr-5|ken-1|KEN-1|none|-|0|no-worktree used-pct=0 mark-pct=75 bytes=0|no-worktree used=0 mark=75 bytes=0|.cargo-lock,deps/unit-0.rlib
+a state naming the main checkout records no-worktree and prunes nothing|80|pr-5|ken-1|KEN-1|main|-|0|no-worktree used-pct=0 mark-pct=75 bytes=0|no-worktree used=0 mark=75 bytes=0|.cargo-lock,deps/unit-0.rlib
 a relative CARGO_TARGET_DIR naming the worktree's target/ is pruned|80|KEN-1|ken-1|KEN-1|-|target-relative|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
 an absolute CARGO_TARGET_DIR at the worktree's target/ is pruned|80|KEN-1|ken-1|KEN-1|-|target-absolute|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
 past the mark a CARGO_TARGET_DIR outside the worktree fails closed and prunes nothing|10|KEN-1|ken-1|KEN-1|-|target-outside-full|1|target-elsewhere used-pct=80 mark-pct=75 bytes=0|target-elsewhere used=80 mark=75 bytes=0|.cargo-lock,deps/unit-0.rlib outside=deps/unit-9.rlib
@@ -200,11 +205,44 @@ while IFS='|' read -r label used key branch owner state_wt setup rc action recor
   prune "$used"
   row_teardown
   assert_eq "rc=$RC $(line) | $(recorded) | $(artifacts)$(js_left)$(outside_left)" \
-    "rc=$rc round-prune: action=$action round=<round> worktree=$([[ "$state_wt" == none ]] || echo '<wt>') | $record | $left" "$label"
+    "rc=$rc round-prune: action=$action round=<round> worktree=$([[ "$state_wt" == none || "$state_wt" == main ]] || echo '<wt>') | $record | $left" "$label"
 done <<<"$ROWS"
 [[ "$n" -ge 15 ]] || { echo "the row table was not read" >&2; exit 2; }
 row_setup -
 
+# A worktree listing git cannot give: which tree the state names is unknown,
+# so the round refuses with nothing pruned or recorded, under a git that fails
+# `worktree list` and runs every other command.
+REAL_GIT="$(command -v git)"
+GIT_LIST_FAIL_BIN="$TMP_ROOT/git-list-fail-bin"
+mkdir -p "$GIT_LIST_FAIL_BIN"
+cat > "$GIT_LIST_FAIL_BIN/git" <<STUB
+#!/usr/bin/env bash
+wt="" list=""
+for a in "\$@"; do
+  [[ "\$a" != worktree ]] || wt=1
+  [[ "\$a" != list ]] || list=1
+done
+if [[ -n "\$wt" && -n "\$list" ]]; then echo "fatal: planted failure" >&2; exit 128; fi
+exec "$REAL_GIT" "\$@"
+STUB
+chmod +x "$GIT_LIST_FAIL_BIN/git"
+build listing KEN-1
+"$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" new-round-id "$KEY" dev_round_id >/dev/null
+RC=0
+OUT="$(cd "$MAIN" && env PATH="$GIT_LIST_FAIL_BIN:$TMP_ROOT/bin:$PATH" DF_TARGET_USED=80 \
+  "$ORCH_SCRIPTS/round-prune" --state-dir "$STATE" "$KEY" 2>&1)" || RC=$?
+assert_eq "rc=$RC $(grep -m 1 '^round-prune: ' <<<"$OUT" || true) git=$(grep -c -x 'fatal: planted failure' <<<"$OUT" || true) recorded=$("$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" get "$KEY" '.round_prunes // {} | length') left=$(artifacts)" \
+  "rc=2 round-prune: worktree-list=ken-1 git=1 recorded=0 left=.cargo-lock,deps/unit-0.rlib" \
+  "a worktree listing git cannot give is refused as worktree-list with nothing pruned or recorded"
+
+# A registered tree whose directory is gone: git still lists it on the
+# state's branch, and it is no lane target.
+build stale KEN-1 branch pr-5
+rm -rf -- "${WT:?}"
+prune 80
+assert_eq "rc=$RC $(line)" "rc=0 round-prune: action=no-worktree used-pct=0 mark-pct=75 bytes=0 round=<round> worktree=" \
+  "a state whose branch sits on a registered tree with no directory records no-worktree"
 
 # The suite's one must-fail control: a copy whose comparison never reaches the
 # mark prunes nothing past it.

@@ -214,6 +214,15 @@ state_message() {
       printf 'workflow-state: cycle-cap count=%s limit=%s\n' "$(jq -r '.entered' <<<"$report")" "$cap"
       printf '%s\n' "workflow-state: rereview_cycles is at the cap ($(jq -r '.entered' <<<"$report") >= REVIEW_MAX_CYCLES=$cap, entries already taken): the fix loop is over — no further re-review cycle and no further fix round; follow review-pr § 4 At The Cap, \"Capped items are escalated, never dropped\" — one update per still-outstanding blocker and category==fix suggestion records it in escalated_items (outcome \"blocked\") and drops its superseded fixed_items entry in the same write — then go to review-pr § 5 (verdict pass) and report them"
       ;;
+    remove-issue)
+      printf 'workflow-state: remove-issue command=%s\n' "remove"
+      printf '%s\n' "Error: remove requires an issue_id"
+      ;;
+    remove-failed)
+      printf 'workflow-state: remove-failed path=%s\n' "$unit"
+      printf '%s\n' "Error: remove: $unit could not be removed; every path before it is gone"
+      [[ -z "$err" ]] || printf '%s\n' "$err"
+      ;;
     exists-issue)
       printf 'workflow-state: exists-issue command=%s\n' "exists"
       printf '%s\n' "Error: exists requires an issue_id"
@@ -969,9 +978,9 @@ project_path() { # PATH
 }
 
 # The fleet state's path, returning 1 where no file is there yet. A first fleet
-# session has none until its first launch writes one, which leaves the verbs
-# that run at a fleet's edges, takeover and prune, nothing to read or remove
-# rather than a missing state to refuse.
+# session has none until its first launch writes one, which leaves takeover
+# nothing to read rather than a missing state to refuse; prune then judges the
+# directory without lane records, as cmd_prune states.
 fleet_state_file() {
     local state_file
     state_file=$(get_state_file oversee)
@@ -1033,22 +1042,58 @@ cmd_progress_report_path() {
     printf '%s/%s%s.md\n' "$dir" "$stamp" "$suffix"
 }
 
+# The entries of the state directory SD that a prune or an item's close-out
+# judges, into UNITS: every entry but the fleet state, its lock and the watch's
+# own files, each entry under handoffs/ but the overseer handoff file, and each
+# mailbox under lane-mail/ but the overseer's. PD, the resolved progress report
+# directory, is skipped where it sits inside SD; the prune judges it apart.
+UNITS=()
+state_units() { # SD STATE_FILE PD
+    local sd="$1" pd="$3" entry f
+    UNITS=()
+    watch_pid_paths "$2" || return 1
+    shopt -s nullglob dotglob
+    for entry in "$sd"/*; do
+        [[ "$pd" != "$entry" && "$pd" != "$entry"/* ]] || continue
+        case "$entry" in
+            "$sd/${2##*/}"|"$sd/${2##*/}.lock"|"$WATCH_PID_FILE"|"$WATCH_ARGV_FILE"|"$WATCH_LOG_FILE"|"$WATCH_ERR_FILE"|"$WATCH_RUNNER_FILE") ;;
+            "$sd/handoffs")
+                for f in "$entry"/*; do [[ "${f##*/}" == OVERSEER-HANDOFF.md ]] || UNITS+=("$f"); done ;;
+            "$sd/lane-mail")
+                for f in "$entry"/*; do [[ "${f##*/}" == overseer ]] || UNITS+=("$f"); done ;;
+            *) UNITS+=("$entry") ;;
+        esac
+    done
+    shopt -u nullglob dotglob
+}
+
+# Whether UNIT's name carries ITEM as a whole token: its mailbox, its workflow
+# state, its status file and anything else named for it, and never a file of an
+# item whose key extends ITEM's.
+unit_names_item() { # UNIT ITEM
+    local re="(^|[-_.])${2//./\\.}([-_.]|$)"
+    [[ "${1##*/}" =~ $re ]]
+}
+
 # `prune [--keep PATH]...`: the retention that
 # schemas/workflow-state.md § Recording policy states, applied to the fleet
 # state and the directory holding it.
 #
-# Every refusal here rests on telling a live lane from a closed one, which only
-# the fleet state's lane records can do, so a prune with no fleet state judges
-# nothing on file ages alone and touches nothing. The keep list is explicit, and
-# a path on it is never a candidate whatever its age. Nothing leaves the disk or
-# the state before one archive holding all of it is written: a failed archive
-# removes nothing, and the rows are dropped from the state before any path is
-# removed, so a failure part way leaves the archive a superset of what went.
+# A live item's paths stay whatever their age. An item is live while its own
+# workflow state stands and was written within the retention or names a
+# linked worktree that still stands: the item's close-out, `remove`, takes that state
+# when the item ends. With a fleet state, a lane whose record is not `done` is
+# live too; a checkout with no fleet state, where no overseer runs, has only
+# the workflow states to judge by. The
+# keep list is explicit, and a path on it is never a candidate whatever its age.
+# Nothing leaves the disk or the state before one archive holding all of it is
+# written: a failed archive removes nothing, and the rows are dropped from the
+# state before any path is removed, so a failure part way leaves the archive a
+# superset of what went.
 #
 # Output, one keyed line each: `pruned path=PATH` per removed path, then
 # `pruned fleet_log=N lanes=N progress_reports=N paths=N`, then `kept=ARCHIVE`,
-# or `kept=none` where there was nothing to archive. With no fleet state it is
-# `pruned fleet-state=none path=STATE_FILE` alone.
+# or `kept=none` where there was nothing to archive.
 cmd_prune() {
     local -a keeps=() units=() candidates=()
     local keep
@@ -1068,11 +1113,8 @@ cmd_prune() {
         esac
     done
 
-    local state_file field=fleet_log
-    if ! state_file=$(fleet_state_file); then
-        printf 'pruned fleet-state=none path=%s\n' "$state_file"
-        return 0
-    fi
+    local state_file field=fleet_log fleet=true
+    state_file=$(fleet_state_file) || fleet=false
 
     local days progress_dir now_epoch cutoff
     days=$("$SCRIPT_DIR/orch-env" ORCH_RECORD_RETENTION_DAYS 14) || return 1
@@ -1082,58 +1124,73 @@ cmd_prune() {
     [[ -z "$now_epoch" ]] || cutoff=$(from_epoch "$((now_epoch - days * 86400))" '%Y-%m-%dT%H:%M:%SZ') || cutoff=""
     [[ -n "$cutoff" ]] || { state_message clock-unreadable "$@" >&2; return 1; }
 
-    # A lane whose record is anything but `done` is live: `running`, and a
-    # `preparing` or `stopped` one a relaunch resumes into its own files. The
-    # first lane record stays whatever its age or status: its `launched_at` is
-    # the fleet start every watch passes as --since.
-    local live rows
-    live=$(jq -r '(.lanes // [])[] | select(.status != "done") | .item // empty' "$state_file") || return 1
-    rows=$(jq -c --arg cut "$cutoff" --arg iso "$ISO_UTC_RE" '
-        def old: type == "string" and test($iso) and . < $cut;
-        {fleet_log: [(.fleet_log // [])[] | select(.at | old)],
-         lanes: [(.lanes // [])[1:][] | select(.status == "done" and (.launched_at | old))]}' "$state_file") || return 1
-
-    local sd pd=""
+    local sd pd="" unit err="" f live="" rows='{"fleet_log":[],"lanes":[]}'
+    if [[ ! -d "$STATE_DIR" ]]; then
+        printf 'pruned fleet_log=0 lanes=0 progress_reports=0 paths=0\nkept=none\n'
+        return 0
+    fi
     sd=$(cd -P -- "$STATE_DIR" && pwd -P) || return 1
+    if [[ "$fleet" == true ]]; then
+        # A lane whose record is anything but `done` is live: `running`, and a
+        # `preparing` or `stopped` one a relaunch resumes into its own files.
+        # The first lane record stays whatever its age or status: its
+        # `launched_at` is the fleet start every watch passes as --since.
+        live=$(jq -r '(.lanes // [])[] | select(.status != "done") | .item // empty' "$state_file") || return 1
+        rows=$(jq -c --arg cut "$cutoff" --arg iso "$ISO_UTC_RE" '
+            def old: type == "string" and test($iso) and . < $cut;
+            {fleet_log: [(.fleet_log // [])[] | select(.at | old)],
+             lanes: [(.lanes // [])[1:][] | select(.status == "done" and (.launched_at | old))]}' "$state_file") || return 1
+        live+=$'\n'
+    fi
+    # An item whose own workflow state stands is live under either branch, the
+    # fleet state apart, while that state was written within the retention or
+    # the worktree it records still stands: a lane closed while its item was
+    # open keeps that state for a later resume, and only the item's close-out
+    # takes it. The worktree a state names is the linked one git-context
+    # lane-worktree resolves from its worktree and branch fields, as
+    # round-prune reads it, never the main checkout. A state past the
+    # retention that names no such worktree is an item nothing resumes, one a
+    # close-out never reached, and it ages out with its files.
+    local recent wt branch root=""
+    for f in "$sd/$STATE_PREFIX-"*.json; do
+        [[ -f "$f" && "$f" != "$sd/${state_file##*/}" ]] || continue
+        if ! recent=$(find "$f" -mtime "-$days" -print 2>&1); then
+            unit="$f" err="$recent"; state_message prune-age-unreadable "$@" >&2; return 1
+        fi
+        if [[ -z "$recent" ]]; then
+            wt=$(jq -r '.worktree // empty' "$f") || return 1
+            branch=$(jq -r '.branch // empty' "$f") || return 1
+            [[ -n "$root" ]] || root=$(project_root) || return 1
+            wt=$("$SCRIPT_DIR/git-context" lane-worktree "$wt" "$branch" "$root") || return 1
+            [[ -n "$wt" ]] || continue
+        fi
+        f="${f#"$sd/$STATE_PREFIX-"}"
+        live+="${f%.json}"$'\n'
+    done
+
     [[ ! -d "$progress_dir" ]] || pd=$(cd -P -- "$progress_dir" && pwd -P) || return 1
     if [[ -n "$pd" && ( "$pd" == "$sd" || "$sd" == "$pd"/* ) ]]; then
         state_message prune-progress-overlap "$@" >&2; return 1
     fi
 
-    # The watch's own files, named where their one owner names them.
-    watch_pid_paths "$state_file" || return 1
-    local entry f
-    shopt -s nullglob dotglob
-    for entry in "$sd"/*; do
-        [[ "$pd" != "$entry" && "$pd" != "$entry"/* ]] || continue
-        case "$entry" in
-            "$sd/${state_file##*/}"|"$sd/${state_file##*/}.lock"|"$WATCH_PID_FILE"|"$WATCH_ARGV_FILE"|"$WATCH_LOG_FILE"|"$WATCH_ERR_FILE"|"$WATCH_RUNNER_FILE") ;;
-            "$sd/handoffs")
-                for f in "$entry"/*; do [[ "${f##*/}" == OVERSEER-HANDOFF.md ]] || units+=("$f"); done ;;
-            "$sd/lane-mail")
-                for f in "$entry"/*; do [[ "${f##*/}" == overseer ]] || units+=("$f"); done ;;
-            *) units+=("$entry") ;;
-        esac
-    done
+    state_units "$sd" "$state_file" "$pd" || return 1
+    units=(${UNITS[@]+"${UNITS[@]}"})
     if [[ -n "$pd" ]]; then
+        shopt -s nullglob
         for f in "$pd"/*; do
             [[ ! "${f##*/}" =~ $PROGRESS_REPORT_RE ]] || units+=("$f")
         done
+        shopt -u nullglob
     fi
-    shopt -u nullglob dotglob
 
-    local unit item re recent err="" kept_by reports=0
+    local item kept_by reports=0
     for unit in ${units[@]+"${units[@]}"}; do
         kept_by=""
         for keep in ${keeps[@]+"${keeps[@]}"}; do
             [[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || kept_by=keep
         done
-        # A live lane's item as a whole token of the name: its mailbox, its
-        # workflow state, its status file and anything else named for it.
         while IFS= read -r item; do
-            [[ -n "$item" ]] || continue
-            re="(^|[-_.])${item//./\\.}([-_.]|$)"
-            [[ ! "${unit##*/}" =~ $re ]] || kept_by=live
+            [[ -z "$item" ]] || ! unit_names_item "$unit" "$item" || kept_by=live
         done <<<"$live"
         [[ -z "$kept_by" ]] || continue
         # A find that fails prints why on the lines it returns, and a warning
@@ -1194,10 +1251,26 @@ cmd_prune() {
     printf 'kept=%s\n' "$archive"
 }
 
+# `remove ITEM`: the item's close-out. Every entry state_units yields that
+# names ITEM goes whatever its age, the item's workflow state and its lock
+# among them. The lane status file and the lane mailbox stay: the recording
+# policy gives those two their own retention, which the prune applies. Prints
+# `removed path=PATH` per path; a state directory that is not there holds none.
+# Where no fleet state stands, no overseer prunes the directory, so the
+# close-out runs the prune too and prints its lines after its own.
 cmd_remove() {
-    local state_file
-    state_file="$(get_state_file "$1")"
-    rm -f -- "$state_file" "$state_file.lock"
+    local item="${1:-}" sd unit err
+    [[ -n "$item" ]] || { state_message remove-issue "$@" >&2; return 2; }
+    [[ -d "$STATE_DIR" ]] || return 0
+    sd=$(cd -P -- "$STATE_DIR" && pwd -P) || return 1
+    state_units "$sd" "$(get_state_file oversee)" "" || return 1
+    for unit in ${UNITS[@]+"${UNITS[@]}"}; do
+        unit_names_item "$unit" "$item" || continue
+        [[ "$unit" != "$sd/lane-status-$item.md" && "$unit" != "$sd/lane-mail/$item" ]] || continue
+        err=$(rm -rf -- "${unit:?}" 2>&1) || { state_message remove-failed "$@" >&2; return 1; }
+        printf 'removed path=%s\n' "$unit"
+    done
+    fleet_state_file >/dev/null || cmd_prune
 }
 
 cmd_help() {
@@ -1329,7 +1402,14 @@ EOF
                                 unknown command, and a settings file bash 3.2
                                 cannot parse kills the script before dispatch —
                                 and is never read as "no record stands"
-  remove <issue_id>             Delete the state file and its lock sidecar; absent is success
+  remove <issue_id>             The item's close-out: delete every entry of the
+                                state directory whose name carries the key as a
+                                whole token, its state file and lock sidecar
+                                among them, keeping the lane status file, the
+                                lane mailbox and the fleet's own files. Prints
+                                "removed path=PATH" per path; absent is success.
+                                Where no fleet state exists it then runs prune
+                                and prints its lines
   fleet-log takeover|audit      Print fleet_log rows of the oversee state, one
                                 JSON object per line: takeover the last rows
                                 of every kind but cycle, as many as the
@@ -1350,16 +1430,21 @@ EOF
                                 FLEET_DIR/archive/REPO/oversee first (FLEET_DIR
                                 defaults to ~/.fleet); a failed archive removes
                                 nothing. Never removes a --keep path, the first
-                                lane record, nor a path named for a lane whose
-                                record is not done. Refused as
-                                prune-progress-overlap where the progress report
-                                directory is or holds the state directory.
-                                Prints "pruned path=PATH" per removed path, a
-                                "pruned fleet_log=N lanes=N progress_reports=N
-                                paths=N" count, then "kept=ARCHIVE" or kept=none.
-                                With no fleet state yet it prints "pruned
-                                fleet-state=none path=PATH" alone and touches
-                                nothing
+                                lane record, a path named for a lane whose
+                                record is not done, nor a path named for an
+                                item whose workflow state file stands and was
+                                written within the retention or names a
+                                linked worktree, never the main checkout, that
+                                git-context lane-worktree resolves from its
+                                worktree and branch fields. Refused
+                                as prune-progress-overlap where the progress
+                                report directory is or holds the state
+                                directory. Prints "pruned path=PATH" per removed
+                                path, a "pruned fleet_log=N lanes=N
+                                progress_reports=N paths=N" count, then
+                                "kept=ARCHIVE" or kept=none. With no fleet state
+                                there are no lane records, and the directory is
+                                judged by age and standing workflow states alone
 
 Keys:
   Four per-item key forms: the tracker identifier (KEN-123) for a tracked
