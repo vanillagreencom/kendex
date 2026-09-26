@@ -15,6 +15,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+# mutant_scripts and mutate_file, the two halves of the controls at the end.
+# shellcheck source=lib/growth-state.sh
+source "$REPO_ROOT/skills/orch/tests/lib/growth-state.sh"
 
 PASS=0
 FAIL=0
@@ -279,77 +282,74 @@ assert_eq "$(jq -r '.kind' <<<"$OUT" | paste -sd, -)=$([[ -e "$BOX/to-lane.curso
   "ask,answer,directive=no-cursor" "events consumes nothing: a second read prints the same and moves no cursor"
 
 # --- controls, one per rule ---------------------------------------------------
-MUTANT_DIR="$TMP_ROOT/mutants"
-mkdir -p "$MUTANT_DIR"
-for sibling in lib lane-host git-context workflow-state orch-env; do
-  ln -sfn "$REPO_ROOT/skills/orch/scripts/$sibling" "$MUTANT_DIR/$sibling"
-done
-mutant() { # NAME SED-EXPRESSION
-  sed "$2" "$LANE_MAIL" > "$MUTANT_DIR/$1"
-  chmod +x "$MUTANT_DIR/$1"
-  assert_eq "$(cmp -s "$MUTANT_DIR/$1" "$LANE_MAIL" && echo same || echo differs)" "differs" \
-    "control: the $1 mutant really differs from lane-mail"
-  LANE_MAIL_BIN="$MUTANT_DIR/$1"
+# mutant NAME OLD NEW — a private lane-mail with OLD, which occurs once,
+# replaced by NEW, beside links to the shipped rest; lm runs it until the next
+# real-script row resets LANE_MAIL_BIN.
+mutant() {
+  local dir
+  dir="$(mutant_scripts "mutants/$1" lane-mail)" || exit 1
+  mutate_file "$dir/lane-mail" "$2" "$3"
+  LANE_MAIL_BIN="$dir/lane-mail"
 }
 
-mutant resolve-twice 's@lm_append_local "\$TO_LANE" "\$LINE" lm_guard_resolve@lm_append_local "$TO_LANE" "$LINE"@'
 new_repo control_resolve
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Cut?' cut,keep cut 0
 LANE_MAIL_BIN="$LANE_MAIL" lm resolve --item overseer --id "$ASK" --default
-LANE_MAIL_BIN="$MUTANT_DIR/resolve-twice" lm resolve --item overseer --id "$ASK" --default
+mutant resolve-twice 'lm_append_local "$TO_LANE" "$LINE" lm_guard_resolve' 'lm_append_local "$TO_LANE" "$LINE"'
+lm resolve --item overseer --id "$ASK" --default
 assert_eq "$RC=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "0=2" \
   "control: without the resolve guard a second resolution lands"
 
-mutant delivery-twice 's@lm_append_local "\$TO_LANE" "\$LINE" lm_guard_delivery@lm_append_local "$TO_LANE" "$LINE"@'
 new_repo control_delivery
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Once.')" --delivery-id k1
-LANE_MAIL_BIN="$MUTANT_DIR/delivery-twice" lm send --item overseer --directive --file "$(text d 'Once.')" --delivery-id k1
+mutant delivery-twice 'lm_append_local "$TO_LANE" "$LINE" lm_guard_delivery' 'lm_append_local "$TO_LANE" "$LINE"'
+lm send --item overseer --directive --file "$(text d 'Once.')" --delivery-id k1
 assert_eq "$RC=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "0=2" \
   "control: without the delivery guard the retry lands a second time"
 
-mutant ref-lane-only 's@^        lm_owner_ask_find "\$REF" ||$@        false ||@'
 new_repo control_ref
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b
-LANE_MAIL_BIN="$MUTANT_DIR/ref-lane-only" lm notice --item overseer --to owner --file "$(text n 'Ruled.')" --ref "$ASK"
+mutant ref-lane-only 'lm_owner_ask_find "$REF" ||' 'false ||'
+lm notice --item overseer --to owner --file "$(text n 'Ruled.')" --ref "$ASK"
 assert_eq "$RC=$ERR" "2=lane-mail: ref-unknown=$ASK" "control: without the to-overseer read a reply naming an owner ask is refused"
 
-mutant no-deadline 's@, deadline: ((\$now + (\$wait | tonumber) \* 60) | todate)@@'
 new_repo control_deadline
-LANE_MAIL_BIN="$MUTANT_DIR/no-deadline" owner_ask 'Cut?' cut,keep cut 30
+mutant no-deadline ', deadline: (($now + ($wait | tonumber) * 60) | todate)' ''
+owner_ask 'Cut?' cut,keep cut 30
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '[has("wait"), has("deadline")] | map(tostring) | join(",")')" "0=true,false" \
   "control: without the deadline clause an ask carries its wait and no deadline"
 
-mutant boxless 's@ + {box: "to-lane"}@@'
 new_repo control_box
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
-LANE_MAIL_BIN="$MUTANT_DIR/boxless" lm events --item overseer
+mutant boxless ' + {box: "to-lane"}' ''
+lm events --item overseer
 assert_eq "$RC=$(jq -r '.box // "none"' <<<"$OUT")" "0=none" "control: without the box field a to-lane envelope names no file"
 
-mutant attach-anywhere 's@\[ "\$dir" = "\$reports" \] || refuse attach-outside "\$ATTACH"@:@'
 new_repo control_attach
 mkdir -p "$LANE/elsewhere"
 echo "outside" > "$LANE/elsewhere/x.md"
-LANE_MAIL_BIN="$MUTANT_DIR/attach-anywhere" lm notice --item overseer --to owner --file "$(text n 'R.')" --attach "$LANE/elsewhere/x.md"
+mutant attach-anywhere '[ "$dir" = "$reports" ] || refuse attach-outside "$ATTACH"' ':'
+lm notice --item overseer --to owner --file "$(text n 'R.')" --attach "$LANE/elsewhere/x.md"
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.attach')" "0=$LANE/elsewhere/x.md" \
   "control: without the directory rule a file anywhere is attached"
 
-mutant to-unfiltered 's@select(\$to == "" or \$envelope.to == \$to)@select(true)@'
 new_repo control_to
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Owner?' a,b a 120
-LANE_MAIL_BIN="$MUTANT_DIR/to-unfiltered" lm pending --item overseer --to peer
+mutant to-unfiltered 'select($to == "" or $envelope.to == $to)' 'select(true)'
+lm pending --item overseer --to peer
 assert_eq "$RC=$(jq -r '.to' <<<"$OUT")" "0=owner" "control: without the audience filter --to peer lists the owner's ask"
 
-mutant due-unfiltered 's@select(\$due == 0 or @select(true or @'
 new_repo control_due
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Later?' a,b a 120
-LANE_MAIL_BIN="$MUTANT_DIR/due-unfiltered" lm pending --item overseer --to owner --due
+mutant due-unfiltered 'select($due == 0 or ' 'select(true or '
+lm pending --item overseer --to owner --due
 assert_eq "$RC=$(jq -r '.wait' <<<"$OUT")" "0=120" "control: without the deadline filter --due lists an ask not yet due"
 
-mutant cursor-for-asks 's@^    if \[ "\$LISTS_DIRECTIVES" -eq 1 \]; then$@    if [ "$VERB" = pending ] || [ "$RECEIPTS" -eq 1 ]; then@'
 new_repo control_cursor
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Cursor?' a,b a 0
 touch "$BOX/to-lane.cursor.lock"
-LANE_MAIL_BIN="$MUTANT_DIR/cursor-for-asks" lm pending --item overseer --to owner
+mutant cursor-for-asks 'if [ "$LISTS_DIRECTIVES" -eq 1 ]; then' 'if [ "$VERB" = pending ] || [ "$RECEIPTS" -eq 1 ]; then'
+lm pending --item overseer --to owner
 assert_eq "$RC=$ERR" "2=lane-mail: mail-read-failed=overseer cursor=missed" \
   "control: with the cursor read for every pending a missed read refuses the asks --to keeps"
 
