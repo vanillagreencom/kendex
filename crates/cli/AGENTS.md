@@ -12,4 +12,4 @@ Thin verbs over `kendex-core`: a verb parses, calls core and prints. No domain l
 
 ## Output
 
-A converted verb builds every human line from the components on `ui::Style` and prints them with `ui::stdout` (what another program composes with) or `ui::stderr` (what a person reads about the run); it never formats a line itself. `ui::channel(json)` picks the rendering. [OUTPUT.md](OUTPUT.md) is the reference: renderings, tokens, symbols and components. `src/commands/check.rs` is the pilot.
+A converted verb builds every human line from the components on `ui::Style` and prints them with `ui::stdout` (what another program composes with) or `ui::stderr` (what a person reads about the run); it never formats a line itself. The one exception is `check --quiet`, the session hook's bounded report, which core spells. `ui::channel(json)` picks the rendering. [OUTPUT.md](OUTPUT.md) is the reference: renderings, tokens, symbols and components. `src/commands/check.rs` is the pilot.

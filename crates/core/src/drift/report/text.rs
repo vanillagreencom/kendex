@@ -71,11 +71,7 @@ pub fn fold(report: &mut CheckReport, title: &str, class: Class, text: Text) {
             lines: vec![line],
         }),
     }
-    let raised = match class {
-        Class::Drift | Class::Unevaluated => CheckStatus::Drift,
-        Class::Unknown => CheckStatus::Unknown,
-    };
-    report.status = report.status.max(raised);
+    report.status = report.status.max(class.status());
 }
 
 /// How much of a foreign FRAGMENT the report will spell. Nothing outside

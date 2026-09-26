@@ -40,7 +40,7 @@ source = "cat"
 [skills.docs-writing]
 source = "cat"
 TOML
-(cd "$project" && kendex refresh -y --scope project >/dev/null 2>&1)
+(cd "$project" && kendex refresh -y --scope project >/dev/null)
 
 # Deleted after the install.
 rm -r -- "${project:?}/.agents/skills/docs-writing"

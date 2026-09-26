@@ -1,5 +1,5 @@
 use kendex_core::drift::report::{
-    CheckReport, CheckStatus, Class, Line, Remedy, Section, page, render_full, render_plain,
+    CheckReport, CheckStatus, Class, Line, Remedy, Section, page, render_plain,
 };
 
 use super::{screen, verdict};
@@ -121,7 +121,7 @@ fn the_check_draws_every_kind_of_row_rich() {
             "  <33>!</> agent reviewer: 1 file differs from its render",
             "    <36>see: kendex apply --plan</>",
             "",
-            "<1;36>source comparison needed</>  <90>1</>",
+            "<1;33>source comparison needed</>  <90>1</>",
             "  <36>•</> skill docs-writing",
             "",
             "<1;31>could not check</>  <90>1</>",
@@ -187,18 +187,6 @@ fn a_clean_check_draws_only_the_all_clear() {
         plain_run.verdict,
         ["all clear — every install matches its source"]
     );
-}
-
-/// The plain report is core's complete rendering line for line, so a
-/// script reading `kendex check` reads what it always has, and the two
-/// cannot disagree about which item offers which command.
-#[test]
-fn the_plain_report_is_the_complete_rendering() {
-    for report in [every_kind(), clean(), many(12)] {
-        let drawn = screen(&plain(), &report, "here").report;
-        let complete = render_full(&report);
-        assert_eq!(drawn, complete.lines().collect::<Vec<_>>());
-    }
 }
 
 /// The verdict counts the rows the reader was shown, and points at them

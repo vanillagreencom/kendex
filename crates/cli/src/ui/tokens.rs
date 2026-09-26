@@ -6,9 +6,10 @@
 //! a terminal that says it draws truecolor gets the app's own values, so
 //! the CLI and the app read as one product.
 //!
-//! The only escape sequences the CLI writes are composed here and in
-//! [`super::components`]'s hyperlink. `tools/guard`'s `cli-raw-output`
-//! lane refuses one spelled anywhere else under `crates/cli/src/`.
+//! The CLI composes escape sequences only inside `src/ui`: the colours
+//! here, the hyperlink in [`super::components`] and the line clear in
+//! [`super::live`]. `tools/guard`'s `cli-raw-output` lane refuses one
+//! spelled anywhere else under `crates/cli/src/`.
 
 /// A colour role.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,7 +31,8 @@ pub enum Token {
 pub enum Palette {
     /// The terminal's 16 colours, whatever its theme makes of them.
     Ansi16,
-    /// The app's values, for a terminal that sets `COLORTERM=truecolor`.
+    /// The app's values, for a terminal that sets `COLORTERM` to
+    /// `truecolor` or `24bit`.
     Truecolor,
 }
 

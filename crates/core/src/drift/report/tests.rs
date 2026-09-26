@@ -131,7 +131,7 @@ fn an_old_drift_hook_names_reinstall_and_backup_commands() {
         .and_then(|section| section.lines.first())
         .unwrap();
     assert_eq!(stale.remedy, Some(Remedy::DriftHook { global: false }));
-    let text = render_full(&report);
+    let text = item_lines(&report);
     assert!(
         text.contains(&format!(
             "backup first if needed: cp -i {} {}",
@@ -896,7 +896,7 @@ fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not(
         "{}",
         line.text
     );
-    let text = render_full(&report);
+    let text = item_lines(&report);
     assert!(
         text.contains(&format!(
             "fix: mv -i {} {}",
@@ -999,4 +999,16 @@ fn a_copy_of_a_package_declared_at_both_scopes_is_named_once() {
         "{}",
         lines[0].text
     );
+}
+
+/// Every item line of the complete report, as the explicit check's plain
+/// rendering shows each one.
+fn item_lines(report: &CheckReport) -> String {
+    page(report)
+        .sections
+        .iter()
+        .flat_map(|section| &section.items)
+        .map(PageItem::line)
+        .collect::<Vec<_>>()
+        .join("\n")
 }

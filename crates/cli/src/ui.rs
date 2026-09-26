@@ -90,7 +90,12 @@ mod symbols;
 mod tokens;
 
 pub use blocks::{finish, flush, intro};
-pub use components::Status;
+#[expect(
+    unused_imports,
+    reason = "the types a callout and a link take; the verbs converted after the pilot name them"
+)]
+pub use components::{Choice, Target};
+pub use components::{Status, Value};
 pub use live::Spinner;
 pub use modes::{Channel, Style, channel};
 pub use prompt::{ask, cancelled, confirm, spinner};

@@ -50,6 +50,15 @@ impl Status {
     }
 }
 
+/// What goes with a [`Style::row`]: something a reader copies — a
+/// command, a version, a path — and a remark about it.
+pub struct Value<'a> {
+    /// Drawn whole, never broken across lines: a command split at a space
+    /// reads as a shorter command. A terminal narrower than it wraps it.
+    pub copy: &'a str,
+    pub remark: Option<&'a str>,
+}
+
 /// One keyed choice of a [`Style::choices`] line.
 pub struct Choice<'a> {
     /// What to press: `Enter`, `s`, `?`.
@@ -112,11 +121,13 @@ impl Style {
 
     /// One thing, what is true of it, and what goes with it: a remedy, a
     /// version, a path.
-    pub fn row(&self, status: Status, label: &str, value: Option<&str>) -> Vec<String> {
-        let (label, value) = (escaped(label), value.map(escaped));
+    pub fn row(&self, status: Status, label: &str, value: Option<Value<'_>>) -> Vec<String> {
+        let label = escaped(label);
+        let value = value.map(|value| (escaped(value.copy), value.remark.map(escaped)));
         match self.look {
             Look::Plain => vec![match value {
-                Some(value) => format!("  {label} — {value}"),
+                Some((copy, Some(remark))) => format!("  {label} — {copy} {remark}"),
+                Some((copy, None)) => format!("  {label} — {copy}"),
                 None => format!("  {label}"),
             }],
             Look::Rich { palette, width } => {
@@ -125,10 +136,13 @@ impl Style {
                     paint(palette, status.token(), self.glyph(status.symbol()))
                 );
                 let mut lines = fitted(width, &lead, 4, 4, &label, str::to_owned);
-                if let Some(value) = value {
-                    lines.extend(fitted(width, "    ", 4, 4, &value, |chunk| {
-                        paint(palette, Token::Info, chunk)
-                    }));
+                if let Some((copy, remark)) = value {
+                    lines.push(format!("    {}", paint(palette, Token::Info, &copy)));
+                    if let Some(remark) = remark {
+                        lines.extend(fitted(width, "    ", 4, 4, &remark, |chunk| {
+                            paint(palette, Token::Muted, chunk)
+                        }));
+                    }
                 }
                 lines
             }

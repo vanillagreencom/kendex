@@ -32,7 +32,14 @@ fn drawn(style: &Style) -> Vec<(&'static str, Vec<String>)> {
         ("section", style.section("stale", 2, Status::Decision)),
         (
             "row",
-            style.row(Status::Failed, "skill tidy", Some("fix: kendex apply")),
+            style.row(
+                Status::Failed,
+                "skill tidy",
+                Some(Value {
+                    copy: "fix: kendex apply",
+                    remark: Some("(not from here)"),
+                }),
+            ),
         ),
         (
             "row bare",
@@ -91,7 +98,11 @@ fn each_component_draws_rich() {
         ("section", &["", "<1;33>stale</>  <90>2</>"]),
         (
             "row",
-            &["  <31>✗</> skill tidy", "    <36>fix: kendex apply</>"],
+            &[
+                "  <31>✗</> skill tidy",
+                "    <36>fix: kendex apply</>",
+                "    <90>(not from here)</>",
+            ],
         ),
         ("row bare", &["  <32>✓</> skill tidy [claude]"]),
         (
@@ -160,7 +171,7 @@ fn each_component_draws_plain() {
     let want: [(&str, &[&str]); 16] = [
         ("header", &[]),
         ("section", &["stale:"]),
-        ("row", &["  skill tidy — fix: kendex apply"]),
+        ("row", &["  skill tidy — fix: kendex apply (not from here)"]),
         ("row bare", &["  skill tidy [claude]"]),
         ("change", &["  tidy  1.0.0 → 1.2.0  [project]"]),
         (
@@ -236,7 +247,14 @@ fn a_hostile_value_is_escaped_by_every_component() {
         let drawn = [
             style.header(hostile, hostile),
             style.section(hostile, 1, Status::Notice),
-            style.row(Status::Notice, hostile, Some(hostile)),
+            style.row(
+                Status::Notice,
+                hostile,
+                Some(Value {
+                    copy: hostile,
+                    remark: Some(hostile),
+                }),
+            ),
             style.change(hostile, hostile, hostile, Some(hostile)),
             style.callout(hostile, hostile, &pick),
             style.link(hostile, Target::Url(hostile)),
@@ -273,7 +291,14 @@ fn a_rich_line_wraps_inside_its_width() {
     let style = rich(40);
     let drawn = [
         style.header("check", long),
-        style.row(Status::Decision, long, Some(long)),
+        style.row(
+            Status::Decision,
+            long,
+            Some(Value {
+                copy: "fix: kendex apply",
+                remark: Some(long),
+            }),
+        ),
         style.callout(long, long, &[]),
         style.summary(Status::Decision, long),
         style.note(long),
@@ -289,6 +314,28 @@ fn a_rich_line_wraps_inside_its_width() {
         row[1..].iter().all(|line| line.starts_with("    ")),
         "a row's continuation left its indent: {row:?}"
     );
+}
+
+/// A command wider than the room is still one line: split at a space it
+/// reads as a shorter command, the next item's fix, say. The terminal
+/// wraps it, and its remark wraps under it as prose.
+#[test]
+fn a_command_wider_than_the_room_is_drawn_whole() {
+    let command = "fix: kendex apply --replace-unmanaged --project-path /home/me/dev/app";
+    let drawn = rich(40).row(
+        Status::Decision,
+        "skill tidy",
+        Some(Value {
+            copy: command,
+            remark: Some("(no --project-path form; the hook refuses this verb here)"),
+        }),
+    );
+    let tagged = tagged(&drawn);
+    assert_eq!(tagged[1], format!("    <36>{command}</>"), "{tagged:?}");
+    assert!(tagged.len() > 3, "the remark did not wrap: {tagged:?}");
+    for line in &drawn[2..] {
+        assert!(cells(line) <= 40, "{} cells: {line:?}", cells(line));
+    }
 }
 
 #[track_caller]

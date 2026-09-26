@@ -15,7 +15,9 @@ Set Padding 24
 Set TypingSpeed 40ms
 
 Hide
-Type 'source <(crates/cli/tests/tapes/check-fixture.sh "$(mktemp -d)/world")'
+# A fixture that fails ends the shell, and the recording with it, rather
+# than recording a check of whatever home the operator runs in.
+Type 'world=$(crates/cli/tests/tapes/check-fixture.sh "$(mktemp -d)/world") || exit 1; eval "$world"'
 Enter
 # The terms notice a first run on a terminal prints, said and recorded here
 # rather than in the recording.

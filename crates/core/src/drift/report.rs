@@ -64,6 +64,17 @@ pub enum Class {
     Unknown,
 }
 
+impl Class {
+    /// What a line of this class makes of the whole check. A verdict still
+    /// owed is a state the check determined, so it counts as drift.
+    pub fn status(self) -> CheckStatus {
+        match self {
+            Class::Drift | Class::Unevaluated => CheckStatus::Drift,
+            Class::Unknown => CheckStatus::Unknown,
+        }
+    }
+}
+
 /// The closed remedy vocabulary. Nothing else ever renders in a command
 /// position; identifiers are validated before rendering and a name that
 /// fails validation drops the remedy rather than escaping into it.
@@ -555,10 +566,7 @@ impl Sections {
         let status = sections
             .iter()
             .flat_map(|section| &section.lines)
-            .map(|line| match line.class {
-                Class::Drift | Class::Unevaluated => CheckStatus::Drift,
-                Class::Unknown => CheckStatus::Unknown,
-            })
+            .map(|line| line.class.status())
             .max()
             .unwrap_or(CheckStatus::Clean);
         CheckReport {
@@ -829,6 +837,6 @@ mod tests_evidence;
 mod tests_render;
 mod text;
 
-pub use render::{Page, PageFix, PageItem, PageSection, page, render_full, render_plain};
+pub use render::{Page, PageFix, PageItem, PageSection, page, render_plain};
 use scope::check_scope;
 pub use text::{Text, fold};

@@ -1,6 +1,6 @@
-//! Plain-text rendering of a check report, bounded for the session hook
-//! and complete for an explicit check, and the [`Page`] both are read off:
-//! the lines a complete report shows, before any of them is spelled as text.
+//! A check report as a reader gets it: the [`Page`] the CLI draws an
+//! explicit check from, and the bounded plain text the session hook prints,
+//! which is spelled off that page.
 
 use std::fmt;
 
@@ -10,7 +10,7 @@ use super::*;
 /// because this is the only place it is printed, and it names the
 /// condition rather than a place to go instead: which session is free of
 /// the hook is not something a report can know.
-const NOT_FROM_HERE: &str = " (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)";
+const NOT_FROM_HERE: &str = "(no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)";
 
 /// A duration as the shortest honest spelling: "3m", "5h", "2d".
 fn age_word(secs: u64) -> String {
@@ -67,9 +67,9 @@ fn next_action(report: &CheckReport) -> Option<String> {
 
 /// A report as its complete rendering shows it: every item with the remedy
 /// it offers, then the evaluation age and the next step. The CLI draws an
-/// explicit check from this, and [`render_full`] spells it as the plain
-/// lines scripts read, so the two cannot disagree about which item offers
-/// which command.
+/// explicit check from this, and [`render_plain`] spells the session hook's
+/// bounded report off it, so the two cannot disagree about which item
+/// offers which command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Page {
     pub sections: Vec<PageSection>,
@@ -100,17 +100,35 @@ pub struct PageFix {
     pub fix: Fix,
 }
 
-impl fmt::Display for PageFix {
-    /// `fix: <command>` or `see: <command>`; a fix this session cannot type
-    /// is still the fix, marked with why it will not run here.
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl PageFix {
+    /// `fix: <command>` or `see: <command>`: the part a reader copies, which
+    /// no rendering may break.
+    pub fn command_line(&self) -> String {
         let word = match self.mutates {
             true => "fix",
             false => "see",
         };
         match &self.fix {
-            Fix::Here(command) => write!(out, "{word}: {command}"),
-            Fix::Elsewhere(command) => write!(out, "{word}: {command}{NOT_FROM_HERE}"),
+            Fix::Here(command) | Fix::Elsewhere(command) => format!("{word}: {command}"),
+        }
+    }
+
+    /// Why a fix this session cannot type will not run here. It is still
+    /// the fix.
+    pub fn remark(&self) -> Option<&'static str> {
+        match self.fix {
+            Fix::Here(_) => None,
+            Fix::Elsewhere(_) => Some(NOT_FROM_HERE),
+        }
+    }
+}
+
+impl fmt::Display for PageFix {
+    /// The command line, then the remark where there is one.
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.remark() {
+            Some(remark) => write!(out, "{} {remark}", self.command_line()),
+            None => out.write_str(&self.command_line()),
         }
     }
 }
@@ -165,19 +183,10 @@ pub fn page(report: &CheckReport) -> Page {
     }
 }
 
-/// The bounded plain-text rendering for the session-start hook.
+/// The bounded plain-text rendering for the session-start hook. Empty when
+/// clean. Every budget counts its own overflow line, and no line is cut
+/// mid-way: command arguments remain complete.
 pub fn render_plain(report: &CheckReport) -> String {
-    render(report, true)
-}
-
-/// The complete plain-text rendering for an explicit `kendex check`.
-pub fn render_full(report: &CheckReport) -> String {
-    render(report, false)
-}
-
-/// Empty when clean. Every bounded budget counts its own overflow line,
-/// and no line is cut mid-way: command arguments remain complete.
-fn render(report: &CheckReport, bounded: bool) -> String {
     if report.is_clean() {
         return String::new();
     }
@@ -185,7 +194,7 @@ fn render(report: &CheckReport, bounded: bool) -> String {
     let mut lines: Vec<String> = Vec::new();
     for section in &page.sections {
         lines.push(format!("{}:", section.title));
-        let over = bounded && section.items.len() > SECTION_ITEMS;
+        let over = section.items.len() > SECTION_ITEMS;
         // The overflow line spends one of the section's own slots.
         let shown_count = match over {
             true => SECTION_ITEMS - 1,
@@ -203,13 +212,6 @@ fn render(report: &CheckReport, bounded: bool) -> String {
     }
     lines.extend(page.age);
     let action = page.next;
-
-    if !bounded {
-        if let Some(action) = action {
-            lines.push(action);
-        }
-        return lines.join("\n") + "\n";
-    }
 
     // Whole-report budgets, overflow line counted inside them: drop whole
     // lines from the end until the truncation line itself fits.

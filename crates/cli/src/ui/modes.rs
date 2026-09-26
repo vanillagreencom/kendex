@@ -61,6 +61,7 @@ pub fn style() -> Style {
         let var = |name: &str| std::env::var(name).ok();
         resolve(&Probe {
             capable: super::capable(),
+            escapes: escapes_reach_the_terminal(),
             no_color: var("NO_COLOR").is_some_and(|value| !value.is_empty()),
             dumb: var("TERM").as_deref() == Some("dumb"),
             truecolor: matches!(var("COLORTERM").as_deref(), Some("truecolor" | "24bit")),
@@ -72,6 +73,24 @@ pub fn style() -> Style {
             columns: columns(var("COLUMNS").as_deref()),
         })
     })
+}
+
+/// Whether each stream a person reads acts on escape sequences. The
+/// Windows console host prints them as text until virtual terminal
+/// processing is turned on for its handle; `console`'s colour probe turns
+/// it on as it answers, and answers no where the console refuses. A stream
+/// that is no console at all has nothing to turn on: what reaches it is
+/// read as bytes. Everywhere else a terminal acts on them as they are.
+#[cfg(windows)]
+fn escapes_reach_the_terminal() -> bool {
+    [console::Term::stdout(), console::Term::stderr()]
+        .iter()
+        .all(|term| !term.is_term() || term.features().colors_supported())
+}
+
+#[cfg(not(windows))]
+fn escapes_reach_the_terminal() -> bool {
+    true
 }
 
 /// The terminal's width: `COLUMNS` where the shell exported it, which is
@@ -92,6 +111,8 @@ fn columns(exported: Option<&str>) -> Option<usize> {
 struct Probe {
     /// A terminal on both streams, or `KENDEX_UI=pretty`.
     capable: bool,
+    /// Every terminal among the streams acts on escape sequences.
+    escapes: bool,
     no_color: bool,
     dumb: bool,
     truecolor: bool,
@@ -100,7 +121,7 @@ struct Probe {
 }
 
 fn resolve(probe: &Probe) -> Style {
-    let look = match probe.capable && !probe.no_color && !probe.dumb {
+    let look = match probe.capable && probe.escapes && !probe.no_color && !probe.dumb {
         false => Look::Plain,
         true => Look::Rich {
             palette: match probe.truecolor {
@@ -162,6 +183,7 @@ mod tests {
     fn probe() -> Probe {
         Probe {
             capable: true,
+            escapes: true,
             no_color: false,
             dumb: false,
             truecolor: false,
@@ -174,8 +196,16 @@ mod tests {
     #[test]
     fn the_environment_picks_the_look() {
         let rich = |palette, width| Look::Rich { palette, width };
-        let rows: [(&str, Probe, Look); 8] = [
+        let rows: [(&str, Probe, Look); 9] = [
             ("a terminal", probe(), rich(Palette::Ansi16, 80)),
+            (
+                "a console that refuses escape sequences",
+                Probe {
+                    escapes: false,
+                    ..probe()
+                },
+                Look::Plain,
+            ),
             (
                 "a pipe",
                 Probe {

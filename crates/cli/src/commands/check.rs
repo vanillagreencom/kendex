@@ -7,7 +7,7 @@ use kendex_core::model::Scope;
 use super::{answer, out, resolve_scopes};
 mod commit_hooks;
 use crate::scope::ScopeFilter;
-use crate::ui::{self, Channel, Status, Style};
+use crate::ui::{self, Channel, Status, Style, Value};
 use commit_hooks::fold_commit_hooks;
 
 /// The session-start contract: exit 0 clean / 1 drift or not yet
@@ -97,22 +97,25 @@ fn screen(style: &Style, checked: &CheckReport, target: &str) -> Screen {
     for section in &page.sections {
         report.extend(style.section(&section.title, section.items.len(), section_status(section)));
         for item in &section.items {
-            let fix = item.fix.as_ref().map(ToString::to_string);
-            report.extend(style.row(status(item.class), &item.text, fix.as_deref()));
+            let copy = item.fix.as_ref().map(|fix| fix.command_line());
+            let value = item
+                .fix
+                .as_ref()
+                .zip(copy.as_deref())
+                .map(|(fix, copy)| Value {
+                    copy,
+                    remark: fix.remark(),
+                });
+            report.extend(style.row(status(item.class), &item.text, value));
         }
     }
     for footnote in page.age.iter().chain(&page.next) {
         report.extend(style.note(footnote));
     }
-    let outcome = match checked.status {
-        CheckStatus::Clean => Status::Done,
-        CheckStatus::Drift => Status::Decision,
-        CheckStatus::Unknown => Status::Failed,
-    };
     Screen {
         head: style.header("check", target),
         report,
-        verdict: style.summary(outcome, &verdict(&page)),
+        verdict: style.summary(outcome(checked.status), &verdict(&page)),
     }
 }
 
@@ -126,20 +129,26 @@ fn status(class: Class) -> Status {
     }
 }
 
-/// A section is as serious as its most serious row.
+/// A section is as serious as its most serious row, by core's own reading
+/// of what a row makes of the check.
 fn section_status(section: &PageSection) -> Status {
-    let worst = section
-        .items
-        .iter()
-        .map(|item| item.class)
-        .max_by_key(|class| match class {
-            Class::Unevaluated => 0,
-            Class::Drift => 1,
-            Class::Unknown => 2,
-        });
-    match worst {
-        Some(class) => status(class),
-        None => unreachable!("a report section holds at least one line"),
+    outcome(
+        section
+            .items
+            .iter()
+            .map(|item| item.class.status())
+            .max()
+            .unwrap_or(CheckStatus::Clean),
+    )
+}
+
+/// What a check's status says to its reader: clean is done, drift wants a
+/// decision, and a check that could not finish failed.
+fn outcome(status: CheckStatus) -> Status {
+    match status {
+        CheckStatus::Clean => Status::Done,
+        CheckStatus::Drift => Status::Decision,
+        CheckStatus::Unknown => Status::Failed,
     }
 }
 
