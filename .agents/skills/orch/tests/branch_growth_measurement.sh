@@ -10,7 +10,10 @@ STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 source "$TEST_DIR/lib/growth-state.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
-VRUN="$(validate_run_dir "$TMP_ROOT/validate-run" full)"
+# The mode a fix round runs is read from the project's settings, and orch-env
+# reads the process environment first: a developer's own range command would
+# otherwise decide the fix receipts' acceptance.
+unset DEV_VALIDATE_RANGE_CMD
 
 # branch-size-check reads the allowance through the Linear CLI beside its own
 # skill; the stand-in answers `cache issues get ID --format=raw` from the
@@ -154,7 +157,7 @@ mutant_rc=0
 assert_eq "$mutant_rc" "2" "must-fail control: forced worktree state loses the caller's round"
 (cd "$CALLER" && env -u ORCH_STATE_DIR "$LIVE_SCRIPTS/dev-round-write" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 4-4 --cut --item 1 fix "the branch this round shrinks" >/dev/null)
 head_sha="$(git -C "$RENDER_WT" rev-parse HEAD)" || exit 1
-"$LIVE_SCRIPTS/dev-return-write" --worktree "$RENDER_WT" --kind fix --issue KEN-GROWTH --round-id 4-4 --branch growth --commit "$head_sha" --validate pass --validate-run-dir "$VRUN" --item 1 Applied cut >/dev/null
+"$LIVE_SCRIPTS/dev-return-write" --worktree "$RENDER_WT" --kind fix --issue KEN-GROWTH --round-id 4-4 --branch growth --commit "$head_sha" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-renderwt-4-4-1" "$RENDER_WT" KEN-GROWTH 4-4)" --item 1 Applied cut >/dev/null
 cut_rc=0; cut="$(cd "$CALLER" && env -u ORCH_STATE_DIR "$LIVE_SCRIPTS/dev-artifact-check" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 4-4 --expect-items-from-round 2>/dev/null)" || cut_rc=$?
 cut_reason="$(jq -r '.reason' <<<"$cut")" || exit 1; assert_eq "$cut_rc $cut_reason" "1 cut_not_shrunk" "cut acceptance reads caller state"
 

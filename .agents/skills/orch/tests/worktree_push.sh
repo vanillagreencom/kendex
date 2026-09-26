@@ -28,7 +28,10 @@ source "$TEST_DIR/lib/growth-state.sh"
 # scripts print the resolved path.
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
-VRUN="$(validate_run_dir "$TMP_ROOT/validate-run" full)"
+# The mode a fix round runs is read from the project's settings, and orch-env
+# reads the process environment first: a developer's own range command would
+# otherwise decide the fix receipts' acceptance.
+unset DEV_VALIDATE_RANGE_CMD
 mkdir -p "$TMP_ROOT/linear/scripts"
 cat > "$TMP_ROOT/linear/scripts/linear.sh" <<'SH'
 #!/usr/bin/env bash
@@ -442,7 +445,7 @@ assert_eq "$(cat "$live_state/tmp/workflow-state-KEN-LIVE.json" | jq -r '.rebase
 
 # The round closes when its dev-return receipt lands: the push then proceeds.
 "$RETURN_WRITE" --worktree "$live_wt" --kind fix --issue KEN-LIVE --round-id 1-1 \
-  --branch main --commit "$live_head" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
+  --branch main --commit "$live_head" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-livewt-1-1-1" "$live_wt" KEN-LIVE 1-1)" --item 1 Applied done >/dev/null
 assert_eq "$("$ARTIFACT_CHECK" --worktree "$live_wt" --issue KEN-LIVE --round-id 1-1 \
   --expect-items-from-round | jq -r '.reason')" "valid" "the returned round accepts"
 : > "$live_args"
@@ -506,7 +509,7 @@ check_args="$TMP_ROOT/check-args.log"
 # The must-fail control above left -1 live; land its receipt again so
 # this block starts from a branch that may be rebased.
 "$RETURN_WRITE" --worktree "$live_wt" --kind fix --issue KEN-LIVE --round-id 1-1 \
-  --branch main --commit "$live_head" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
+  --branch main --commit "$live_head" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-livewt-1-1-2" "$live_wt" KEN-LIVE 1-1)" --item 1 Applied done >/dev/null
 STUB_ARGS_LOG="$check_args" run_push "$live_state" --check-live-round \
   --worktree "$live_wt" --issue KEN-LIVE
 assert_eq "$RUN_RC" "0" "with no live round the check permits the rebase"

@@ -237,14 +237,14 @@ assert_eq "$t_secs" "$(jq -n --arg a "$t_start" --arg b "$t_end" '($b | fromdate
 assert_eq "$([[ "$t_secs" -ge 2 ]] && echo within || echo "outside:$t_secs")" "within" \
   "and the span is the command's: at least its 2-second bound"
 run_script "$RUN" --record --run-dir "$timeout_dir"
-assert_eq "$OUT rc=$RC" "validate-mode=full verdict=no-verdict seconds=$t_secs started-at=$t_start ended-at=$t_end rc=0" \
+assert_eq "$OUT rc=$RC" "validate-mode=full verdict=no-verdict head= seconds=$t_secs started-at=$t_start ended-at=$t_end rc=0" \
   "the record of a run killed at its bound reads no-verdict, never pass or FAILING, and carries its wall time" "$ERR"
 
 # Control: a sentinel reader that files the bound's verdict with the failures
 # hands the receipt a FAILING for that same cut-off run.
 mutant mutant-cut-failing '*" verdict=no-verdict") SENTINEL_VERDICT=no-verdict ;;' '*" verdict=no-verdict") SENTINEL_VERDICT=FAILING ;;'
 run_script "$MUTANT" --record --run-dir "$timeout_dir"
-assert_eq "$OUT" "validate-mode=full verdict=FAILING seconds=$t_secs started-at=$t_start ended-at=$t_end" \
+assert_eq "$OUT" "validate-mode=full verdict=FAILING head= seconds=$t_secs started-at=$t_start ended-at=$t_end" \
   "control: with the bound's verdict unread the cut-off run's record reads FAILING" "$ERR"
 
 # Control: with the own-exit marker never written, a command's own exit 124
@@ -365,8 +365,8 @@ for row in "${MODE_ROWS[@]}"; do
     "$label — the start record names the mode and base that ran" "$ERR"
   run_script "$RUN" --record --run-dir "$mode_dir"
   assert_eq "$(sed -E 's/ seconds=[0-9]+ started-at=[^ ]+ ended-at=[^ ]+$/ seconds=N started-at=T ended-at=T/' <<<"$OUT")" \
-    "validate-mode=$want_mode verdict=pass seconds=N started-at=T ended-at=T" \
-    "$label — the run's record names that mode, the pass and its wall time" "$ERR"
+    "validate-mode=$want_mode verdict=pass head=$head_sha seconds=N started-at=T ended-at=T" \
+    "$label — the run's record names that mode, the pass, the HEAD it started at and its wall time" "$ERR"
 done
 # The last range run's started line keeps the shape every waiter reads; the
 # class fields that close it are the classifier rows' to pin.
@@ -384,6 +384,35 @@ run_script "$MUTANT" --worktree "$proj" --poll 1 --validate-mode range --base HE
 assert_eq "$(output_of "$OUT")" "full" \
   "control: with the range setting unread the range run logs the full battery" "$ERR"
 
+# Control: a start record that names no HEAD binds the run to no round, and
+# the record row reddens on it.
+mutant mutant-no-head "head_sha=\"\$(git rev-parse --verify -q 'HEAD^{commit}')\"" 'head_sha=""'
+run_script "$MUTANT" --worktree "$proj" --poll 1 --validate-mode range --base HEAD
+run_script "$RUN" --record --run-dir "$(run_dir_of "$OUT")"
+assert_eq "${OUT%% seconds=*}" "validate-mode=range verdict=pass head=" \
+  "control: with the HEAD unrecorded the record names none" "$ERR"
+
+# --- --resolve-mode names the mode a range run records, and starts nothing ----
+# label|project's range command|mode printed
+RESOLVE_ROWS=(
+  "a project with a range command resolves a range request to range|$RANGE_CMD|range"
+  "a project with no range command resolves a range request to full||full"
+)
+n=0
+for row in "${RESOLVE_ROWS[@]}"; do
+  IFS='|' read -r label range_cmd want_mode <<<"$row"
+  n=$((n + 1))
+  proj="$(make_mode_proj "proj-resolve-$n" "$range_cmd")"
+  run_script "$RUN" --resolve-mode --worktree "$proj"
+  assert_eq "$OUT rc=$RC runs=$(find "$proj" -maxdepth 2 -name 'dev-validate-*' | wc -l | tr -d ' ')" \
+    "validate-mode=$want_mode rc=0 runs=0" "$label" "$ERR"
+done
+# Control: a resolution that never reads the range command names full for the
+# project that sets one.
+mutant mutant-resolve-full 'validate_mode=range' 'validate_mode=full'
+run_script "$MUTANT" --resolve-mode --worktree "$TMP_ROOT/proj-resolve-1"
+assert_eq "$OUT" "validate-mode=full" \
+  "control: with the range command unread the project that sets one resolves to full" "$ERR"
 # --- A range base a rebase left off the branch ---------------------------------
 # A branch that forked from main, committed b1 (the round's recorded base, the
 # pre-rebase head), and was then rebased over the three commits main gained and
@@ -500,7 +529,7 @@ assert_eq "$RC" "3" "and exits 3, which is the instruction to poll again" "$ERR"
 assert_eq "$([[ "$slow_elapsed" -le 5 ]] && echo within || echo "over:$slow_elapsed")" "within" \
   "and it returns on its own budget rather than a whole poll interval past it"
 run_script "$RUN" --record --run-dir "$slow_dir"
-assert_eq "$OUT rc=$RC" "validate-mode=full verdict=unfinished rc=0" \
+assert_eq "$OUT rc=$RC" "validate-mode=full verdict=unfinished head= rc=0" \
   "the record of a run still going reads unfinished, never pass" "$ERR"
 kill -KILL -- "-$started" 2>/dev/null || kill -KILL "$started" 2>/dev/null || true
 wait "$started" 2>/dev/null || true
@@ -580,7 +609,7 @@ assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: option-unused option=--bud
 assert_eq "$RC" "2" "and exits 2"
 
 run_script "$RUN" --poll 1
-assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: required options=--worktree,--wait,--stop,--record,--child" \
+assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: required options=--worktree,--wait,--stop,--record,--resolve-mode,--child" \
   "a call naming no mode is refused"
 assert_eq "$RC" "2" "and exits 2"
 
@@ -759,6 +788,9 @@ MODE_REFUSALS=(
   "a record of a wall time whose seconds are no number is refused|--record --run-dir $TMP_ROOT/badtimed|dev-validate-run: timing-unreadable path=$TMP_ROOT/badtimed/timing"
   "a record of a wall time whose start is no UTC time is refused|--record --run-dir $TMP_ROOT/badstart|dev-validate-run: timing-unreadable path=$TMP_ROOT/badstart/timing"
   "a record of a wall time whose end is no UTC time is refused|--record --run-dir $TMP_ROOT/badend|dev-validate-run: timing-unreadable path=$TMP_ROOT/badend/timing"
+  "a base handed to --resolve-mode is refused|--resolve-mode --worktree $proj_refuse --base HEAD|dev-validate-run: option-unused option=--base mode=resolve"
+  "a validation mode handed to --resolve-mode is refused|--resolve-mode --worktree $proj_refuse --validate-mode range|dev-validate-run: option-unused option=--validate-mode mode=resolve"
+  "--resolve-mode with no worktree is refused|--resolve-mode|dev-validate-run: required option=--worktree"
 )
 for row in "${MODE_REFUSALS[@]}"; do
   IFS='|' read -r label args want <<<"$row"

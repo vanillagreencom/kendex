@@ -62,6 +62,15 @@
 # --record reports it, a no-verdict run's included, and null where no run is
 # named or the run is unfinished.
 #
+# A fix round's run is bound to its round. The round record dev-round-write
+# stamped at delegation, PATH/tmp/dev-round-ID-RID.json, names the round's
+# base_sha, and a fix receipt names a run only when the HEAD --record reports
+# for it contains that base. The implement round's run, still on disk and in
+# the dev agent's context, started before the base existed; accepting it
+# would record its full pass for a commit only a range run judged, and submit
+# would reuse that pass as the whole battery. An implement round has no round
+# record and no binding.
+#
 # Writes PATH/tmp/dev-return-ID-RID.json and prints its absolute path (one line).
 #
 # Artifact schema — canonical source of truth: skills/orch/schemas/dev-return.md
@@ -146,6 +155,9 @@ die() {
       invalid-validate) printf 'The validation result must be pass, no-verdict, or start with FAILING:.\n' ;;
       run-record-unreadable) printf 'dev-validate-run --record could not read the run; its refusal follows.\n' ;;
       validate-disagrees) printf 'A pass needs a run that passed, and no-verdict a run the timeout ended; this run is neither.\n' ;;
+      round-record-unreadable) printf 'A fix receipt names a run only against its round record, and this one carries no base_sha of 40 hex.\n' ;;
+      run-off-round) printf 'The run started at a HEAD that does not contain the round base, so it validated another round.\n' ;;
+      ancestry-unreadable) printf 'Git could not compare the run HEAD with the round base.\n' ;;
       empty-text) printf 'The text must contain a non-whitespace character.\n' ;;
       summary-conflict) printf 'Supply one summary source.\n' ;;
       missing-file) printf 'The summary or recovered-text file does not exist.\n' ;;
@@ -183,7 +195,9 @@ timeout ended and a --validate-note naming the scoped suites that passed; a
 FAILING result is accepted beside any run. A pass or no-verdict requires it; a FAILING round with no run omits it and
 records validate_mode null. Submit reuses only a full pass. validate_time is
 the run's wall time --record reports, a no-verdict run's included, and null
-with no run or an unfinished one.
+with no run or an unfinished one. With --kind fix the run's HEAD must contain
+the base_sha of PATH/tmp/dev-round-ID-RID.json, so a run from an earlier round
+is refused.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
 content. --recovered-text PATH embeds the report round-recover read from a
 stalled agent's transcript and records recovered_from: transcript. The three
@@ -259,6 +273,7 @@ validate_run_dir=""
 validate_seconds=""
 validate_started_at=""
 validate_ended_at=""
+run_head=""
 baseline_lines=null
 summary_file=""
 summary_file_given=false
@@ -359,14 +374,16 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
     IFS= read -r run_cause <<<"$run_record" || true
     die run-record-unreadable "path=$validate_run_dir" "cause=$run_cause"
   fi
-  # The one line --record prints: validate-mode=M verdict=V, then seconds=N
-  # started-at=T ended-at=T where the run finished, the bound's end included.
+  # The one line --record prints: validate-mode=M verdict=V head=H, then
+  # seconds=N started-at=T ended-at=T where the run finished, the bound's end
+  # included.
   run_verdict=""
   read -r -a run_fields <<<"$run_record"
   for field in ${run_fields[@]+"${run_fields[@]}"}; do
     case "$field" in
       validate-mode=*) validate_mode="${field#*=}" ;;
       verdict=*) run_verdict="${field#*=}" ;;
+      head=*) run_head="${field#*=}" ;;
       seconds=*) validate_seconds="${field#*=}" ;;
       started-at=*) validate_started_at="${field#*=}" ;;
       ended-at=*) validate_ended_at="${field#*=}" ;;
@@ -423,6 +440,29 @@ if [[ "$kind" == "fix" || "$bundled" == "true" ]]; then
   if (( ${#item_n[@]} == 0 )); then
     die missing-items "kind=$kind" "bundled=$bundled" count=0
   fi
+fi
+
+# A fix round's run must have started at or after the round's base.
+if [[ "$kind" == "fix" && "$validate_run_dir_given" == "true" ]]; then
+  round_record="$worktree/tmp/dev-round-$issue-$round_id.json"
+  round_base="$(jq -r 'if (.base_sha? | type) == "string" then .base_sha else "" end' "$round_record" 2>/dev/null)" \
+    || round_base=""
+  [[ "$round_base" =~ ^[0-9a-f]{40}$ ]] || die round-record-unreadable "path=$round_record"
+  [[ -n "$run_head" ]] \
+    || die run-off-round "run-dir=$validate_run_dir" "head=$run_head" "base-sha=$round_base"
+  # The head is checked as hex before it reaches git, where a value shaped like
+  # an option would be parsed as one.
+  ancestry=0
+  if [[ "$run_head" =~ ^[0-9a-f]+$ ]]; then
+    git -C "$worktree" merge-base --is-ancestor "$round_base" "$run_head" 2>/dev/null || ancestry=$?
+  else
+    ancestry=128
+  fi
+  case "$ancestry" in
+    0) ;;
+    1) die run-off-round "run-dir=$validate_run_dir" "head=$run_head" "base-sha=$round_base" ;;
+    *) die ancestry-unreadable "run-dir=$validate_run_dir" "head=$run_head" "base-sha=$round_base" ;;
+  esac
 fi
 
 if [[ "$kind" == "implement" ]]; then

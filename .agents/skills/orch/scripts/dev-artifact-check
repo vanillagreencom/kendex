@@ -158,12 +158,18 @@ Exceeding that comparison is reason=cut_not_shrunk; a failed measurement is
 reason=cut_unmeasurable. Every other gate applies unchanged.
 Protected-addition scope, and what the gate does once a rebase orphans base_sha:
 skills/orch/schemas/dev-round.md § Protected additions.
+A kind fix receipt checked against its round record also carries the mode a
+fix round runs: the mode `dev-validate-run --resolve-mode` reports for WT,
+range, or full where the project sets no DEV_VALIDATE_RANGE_CMD. Any other
+recorded mode is reason=mode_mismatch; a null mode, a failing round that
+started no run, is not judged. A resolution that cannot be read exits 2.
 
 Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|
                       "commit_unverifiable"|"comparison_failed"|"classifier_failed"|
                       "unapproved_additions"|"additions_unattributable"|
-                      "cut_not_shrunk"|"cut_unmeasurable"|"incomplete",
+                      "cut_not_shrunk"|"cut_unmeasurable"|"mode_mismatch"|
+                      "incomplete",
               warning: "commit_unreachable"|null,
               hint: usage diagnosis (count-vs-set --expect-items misuse)|null,
               files: [repo-relative paths],
@@ -176,7 +182,8 @@ Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               near_ceiling_error: why near_ceiling is null|null}
 
 Gates ordered: missing → (round_id mismatch → invalid) → scalars → invalid →
-commit object → commit_unverifiable or commit_unresolvable → additions probe → comparison_failed or
+fix round mode (round record only) → mode_mismatch → commit object →
+commit_unverifiable or commit_unresolvable → additions probe → comparison_failed or
 classifier_failed or unapproved_additions or additions_unattributable → cut
 size (declared cuts only) → cut_not_shrunk or cut_unmeasurable → items →
 incomplete → valid.
@@ -232,6 +239,11 @@ reason meanings when ok=false:
               a declared cut whose recorded comparison could not be read, or a
               branch git could not diff against its base. A cut is never
               accepted on an unmeasured branch.
+  mode_mismatch
+              a fix receipt records a validation mode other than the one its
+              round runs, such as the implement round's full run named where
+              the round runs range. Submit reuses only a full pass, so the
+              receipt would stand in for a battery this round never ran.
   incomplete  items[] fails the applicable rule — exact-set (with --expect-items)
               or non-empty-well-formed (kind fix OR bundled==true). kind implement
               without bundled keeps allowing items: [].
@@ -382,6 +394,14 @@ message() {
     verdict-unreadable)
       printf 'dev-artifact-check: verdict-unreadable file=%s\n' "$file"
       printf 'The emitted artifact verdict could not be read.\n'
+      ;;
+    mode-unresolved)
+      printf 'dev-artifact-check: mode-unresolved worktree=%s\n' "$repo"
+      printf 'dev-validate-run --resolve-mode could not name the mode this fix round runs.\n'
+      ;;
+    mode-mismatch)
+      printf 'dev-artifact-check: mode-mismatch validate-mode=%s round-mode=%s\n' "$recorded_mode" "$round_mode"
+      printf 'The receipt names a run of another mode than this fix round runs.\n'
       ;;
     exit)
       printf 'dev-artifact-check: exit=%s\n' "$1"
@@ -693,6 +713,24 @@ validate_artifact() {
   if ! has_required_fields "$file"; then
     emit false "$file" "invalid"
     return 1
+  fi
+  # A fix receipt's mode is the one its round runs. It is judged before the
+  # commit gate, whose warning would otherwise precede this gate's status 2
+  # refusal on stderr.
+  if [[ -n "$round_record" ]] && jq -e '.kind == "fix" and .validate_mode != null' "$file" >/dev/null 2>&1; then
+    local recorded_mode round_mode
+    recorded_mode="$(jq -r '.validate_mode' "$file")"
+    round_mode="$("$SCRIPT_DIR/dev-validate-run" --resolve-mode --worktree "$repo" 2>/dev/null)" || round_mode=""
+    round_mode="${round_mode#validate-mode=}"
+    case "$round_mode" in
+      full|range) ;;
+      *) message mode-unresolved >&2; return 2 ;;
+    esac
+    if [[ "$recorded_mode" != "$round_mode" ]]; then
+      message mode-mismatch >&2
+      emit false "$file" "mode_mismatch"
+      return 1
+    fi
   fi
   # A `.commit` that passed the scalar gate must name a real commit
   # object in the worktree's repo — a fabricated SHA (same short prefix as HEAD,
