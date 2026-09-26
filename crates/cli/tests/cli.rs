@@ -747,3 +747,27 @@ fn every_writing_verb_prints_the_score_beside_the_write() {
         );
     }
 }
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_global_source_verb_runs_outside_every_project_and_a_scoped_one_refuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let outside = tempfile::tempdir().unwrap();
+    let elsewhere = rooted(&outside);
+    for (args, passes) in [
+        (&["--global", "source", "refresh"][..], true),
+        (&["source", "refresh", "--global"], true),
+        (&["source", "refresh"], false),
+        (&["source", "refresh", "--stale", "--scope=project"], false),
+    ] {
+        let output = kendex(&home, &elsewhere, args);
+        let printed = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.success(), passes, "{args:?}: {printed}");
+        assert_eq!(
+            printed.contains("not inside a project"),
+            !passes,
+            "{args:?}: {printed}"
+        );
+    }
+}

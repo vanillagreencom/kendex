@@ -179,8 +179,7 @@ enum Command {
     #[command(hide = true)]
     Report(ReportFlags),
     /// Add, switch on or off, and check marketplaces for updates
-    #[command(subcommand)]
-    Source(commands::source_cmd::SourceCommand),
+    Source(commands::source_cmd::SourceArgs),
     /// Subscribe to marketplaces and list subscriptions
     #[command(subcommand)]
     Marketplace(commands::marketplace_cmd::MarketplaceCommand),
@@ -558,10 +557,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Command::Guard(guard_command) => return commands::guard_cmd::run(guard_command),
         Command::GeneratedPaths => generated_paths(&env)?,
         Command::Report(flags) => commands::report::run(&env, flags.into_args())?,
-        Command::Source(source_command) => {
-            let filter = ScopeFilter::resolve(None, false, ScopeFilter::Project)?;
-            commands::source_cmd::run(&env, source_command, filter)?;
-        }
+        Command::Source(args) => commands::source_cmd::run(&env, args)?,
         Command::Marketplace(command) => commands::marketplace_cmd::run(&env, command)?,
         Command::Trash(command) => commands::trash_cmd::run(&env, command)?,
         Command::Index { dir, json } => commands::index_cmd::run(dir, json)?,

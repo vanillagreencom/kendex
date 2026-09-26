@@ -1,10 +1,21 @@
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use kendex_core::env::Env;
 use kendex_core::{remote, source_ops};
 
 use super::engine_common::apply_report;
 use super::{CliResult, out, resolve_scopes, say, scope_label};
 use crate::scope::ScopeFilter;
+
+#[derive(Args)]
+pub struct SourceArgs {
+    #[arg(short = 'g', long, global = true)]
+    global: bool,
+    /// project | global | all (default project; all for refresh --stale)
+    #[arg(long, global = true)]
+    scope: Option<String>,
+    #[command(subcommand)]
+    command: SourceCommand,
+}
 
 #[derive(Subcommand)]
 pub enum SourceCommand {
@@ -50,12 +61,15 @@ pub enum SourceCommand {
     },
 }
 
-pub fn run(env: &Env, command: SourceCommand, filter: ScopeFilter) -> CliResult {
+pub fn run(env: &Env, args: SourceArgs) -> CliResult {
+    let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
+    let command = args.command;
     // The stale refresh serves the session check, which reads project AND
     // global — a project-scoped default here would leave global mirrors
     // stale forever (and die outright when run outside a project).
     if let SourceCommand::Refresh { stale: true } = &command {
-        let scopes = resolve_scopes(env, ScopeFilter::All)?;
+        let stale = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::All)?;
+        let scopes = resolve_scopes(env, stale)?;
         for note in kendex_core::drift::refresh::refresh_stale(env, &scopes) {
             say(&format!("note: {}", note));
         }
