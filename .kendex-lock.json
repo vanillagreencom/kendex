@@ -3535,8 +3535,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d706de9ce80aa48642533f12db60350053d42759a93a96faeb9cb83d7dc25aeb",
-      "renderedHash": "00d228c37351ce325c9c942ae5c36f5d94a27d37da2a34659eab4036535faaf0",
+      "sourceHash": "157d4755381ccffc1005c22dddd0f7d3af2baa8e8e507f2db14426ce6f13991a",
+      "renderedHash": "ba1b51d92f1e5c21f73e50f85b41b7397e3a542dd6de8699cc7589a1668814b2",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3594,8 +3594,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d706de9ce80aa48642533f12db60350053d42759a93a96faeb9cb83d7dc25aeb",
-      "renderedHash": "00d228c37351ce325c9c942ae5c36f5d94a27d37da2a34659eab4036535faaf0",
+      "sourceHash": "157d4755381ccffc1005c22dddd0f7d3af2baa8e8e507f2db14426ce6f13991a",
+      "renderedHash": "ba1b51d92f1e5c21f73e50f85b41b7397e3a542dd6de8699cc7589a1668814b2",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3652,8 +3652,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "d706de9ce80aa48642533f12db60350053d42759a93a96faeb9cb83d7dc25aeb",
-      "renderedHash": "00d228c37351ce325c9c942ae5c36f5d94a27d37da2a34659eab4036535faaf0",
+      "sourceHash": "157d4755381ccffc1005c22dddd0f7d3af2baa8e8e507f2db14426ce6f13991a",
+      "renderedHash": "ba1b51d92f1e5c21f73e50f85b41b7397e3a542dd6de8699cc7589a1668814b2",
       "enabled": true,
       "emitted": {
         "kind": "skill",

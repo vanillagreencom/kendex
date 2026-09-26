@@ -102,7 +102,16 @@ pub(super) fn fetch_and_run(line: &Line) -> Option<Reach> {
             },
         });
     }
-    line.find("eval(").map(|at| Reach {
+    // A name that only ends in the letters is another name: `gh_eval(`
+    // defines or calls a function of that name, and nothing on the line
+    // reaches `eval` itself.
+    let names_eval = |at: &usize| {
+        !line
+            .before(*at)
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    };
+    let eval = line.occurrences("eval(").into_iter().find(names_eval);
+    eval.map(|at| Reach {
         what: "hands a built-up string to an interpreter",
         preposition: "built from",
         // Everything after the parenthesis, not the text up to the first

@@ -59,7 +59,8 @@ struct SafetyBypass;
 /// about it, and then for the comment explaining the refusal and the
 /// message it prints when refusing. A switch a document writes inside a
 /// code span, a shell comment or a printed string is that document
-/// naming the switch; a switch standing as code is a switch, in whatever
+/// naming the switch, and so is one a test hands a stub or an assertion
+/// as data; a switch standing as code is a switch, in whatever
 /// language the file is written. Every needle goes through
 /// [`Line::standing`], which answers that and nothing else.
 impl AuditRule for SafetyBypass {
@@ -78,9 +79,14 @@ impl AuditRule for SafetyBypass {
                         .map(|(needle, what)| (needle, what, Severity::High)),
                 );
             for (needle, what, base) in tiers {
-                let Some(standing) =
-                    line.standing(needle, &[Quotation::CodeSpan, Quotation::ShellText])
-                else {
+                let Some(standing) = line.standing(
+                    needle,
+                    &[
+                        Quotation::CodeSpan,
+                        Quotation::ShellText,
+                        Quotation::Fixture,
+                    ],
+                ) else {
                     continue;
                 };
                 let finding = self.finding(doc, line, needle, what, base);
