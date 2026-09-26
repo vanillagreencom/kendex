@@ -120,9 +120,11 @@ ORCH_TMUX_VERIFY_SECS = "15"
 ORCH_LANE_SSH_PROMPT_SECS = "60"
 
 # Provider processes lane-host runs at once, per home: every overseer and
-# checkout on the machine shares the count. A call at the cap waits this many
-# seconds for a slot, then refuses as lane-host-busy with exit 69.
+# checkout on the machine shares the count.
 ORCH_LANE_HOST_MAX_CALLS = "4"
+
+# Seconds a lane-host call at the ORCH_LANE_HOST_MAX_CALLS cap waits for a
+# slot before it refuses as lane-host-busy with exit 69.
 ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
 # Max concurrent lanes the overseer keeps in flight. open-terminal refuses a

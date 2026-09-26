@@ -154,7 +154,7 @@ class LaneHostCallersTests(unittest.TestCase):
     VERB = re.compile(r"(?:create|wait|cat|put|append|touch|stop|close|list|accounts|\$@)")
     # Keywords, `!`, environment assignments and an optional argv prefix, then
     # the command word and the word after it.
-    COMMAND = re.compile(r'^(?:\s|!|(?:if|then|elif|do|while|until)\b|[A-Za-z_]\w*=(?:"[^"]*"|[^\s"]*)'
+    COMMAND = re.compile(r'^(?:\s|!|(?:if|then|elif|do|while|until)\b|[A-Za-z_]\w*=(?:"[^"]*"|[^\s"]*(?=\s))'
                          r'|\$\{\w+\[@\]\+"\$\{\w+\[@\]\}"\})*("\$[^"]*")\s+("[^"]*"|[^\s;|&)]+)')
     FUNCTION = re.compile(r"^([A-Za-z_]\w*)\(\) *\{")
     SCRIPT = re.compile(r'^(?:\$\{\w+:-)?\$(?:SCRIPT_DIR|SKILLS_DIR)/([\w./-]+?)\}?$')
