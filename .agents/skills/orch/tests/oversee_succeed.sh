@@ -736,25 +736,13 @@ assert_eq "$RC|$(keyed interrupted "$(cat "$TMP_ROOT/interrupted.out")" | sed -n
 # A signal that lands while the runtime's create runs, the window the script
 # header names: the successor window is open and its id lives only in the
 # provider's answer, not yet in SUCC_PANE. The close-out must read the session
-# off that answer and stop it, or two overseers run. A stub overseer-host whose
-# create opens the real window, prints its answer, then blocks holds the script
-# in that window; the group kill reaches the script and the stub together, so
-# the answer is captured while SUCC_PANE is still empty.
-INTCREATE="$(mutant_scripts int-create overseer-host)" || exit 1
-cat > "$INTCREATE/overseer-host" <<STUB
-#!/bin/sh
-if [ "\$1" = create ]; then
-  "$SRC_DIR/overseer-host" "\$@" || exit \$?
-  # The window is open and its answer is on stdout; hold the pipe so the
-  # script's create substitution has the answer but has not returned.
-  exec sleep 30
-fi
-exec "$SRC_DIR/overseer-host" "\$@"
-STUB
-chmod +x "$INTCREATE/overseer-host"
+# off that answer and stop it, or two overseers run. A tmux shim on PATH
+# delays send-keys, so the group kill lands inside the real provider, between
+# its new-window and its answer; the shim is on PATH for these rows alone.
+REAL_TMUX="$(command -v tmux)"
 # int_create_run BIN — the script launched in its own process group so the
-# group kill reaches the blocking create too, run until the overseer window
-# opens, then TERMed. Sets INT_OVERSEERS to the overseer count after it exits.
+# group kill reaches the provider too, run until the overseer window opens,
+# then TERMed. Sets INT_OVERSEERS to the overseer count after it exits.
 int_create_run() { # SUCCEED_BIN
   new_caller "$MARK"
   local before after=""
@@ -770,22 +758,36 @@ int_create_run() { # SUCCEED_BIN
   INT_OVERSEERS="$after"
 }
 if command -v setsid >/dev/null 2>&1; then
-  int_create_run "$INTCREATE/oversee-succeed"
+  # The delay is the span the kill must land in: longer than the poll above
+  # takes to see the new window.
+  cat > "$BIN/tmux" <<SHIM
+#!/bin/sh
+[ "\$1" != send-keys ] || sleep 2
+exec "$REAL_TMUX" "\$@"
+SHIM
+  chmod +x "$BIN/tmux"
+  int_create_run "$SUCCEED"
   assert_eq "$INT_OVERSEERS" \
     "0" \
     "a signal during create closes the successor read off the provider's answer"
-  # The must-fail control: the library's ol_session_abandon recovers the
-  # session from the provider's answer where the caller never assigned it.
-  # Drop that recovery and the window leaks.
+  # The provider's control: without its signal guard it dies between
+  # new-window and its answer, and the window leaks.
+  INTHOST="$(mutant_scripts int-create-host overseer-host-tmux)" || exit 1
+  mutate_file "$INTHOST/overseer-host-tmux" "    trap '' HUP INT TERM" '    :'
+  int_create_run "$INTHOST/oversee-succeed"
+  assert_eq "$INT_OVERSEERS" \
+    "1" \
+    "control: a provider without its signal guard leaks the successor"
+  # The library's control: ol_session_abandon recovers the session from the
+  # provider's answer where the caller never assigned it. Drop that recovery
+  # and the window leaks.
   INTCTL="$(mutant_scripts int-create-ctl lib/overseer-launch.sh)" || exit 1
-  # The stub provider beside the mutated library: a fixture, not a mutation.
-  rm -f -- "${INTCTL:?}/overseer-host"
-  cp "$INTCREATE/overseer-host" "$INTCTL/overseer-host"
   mutate_file "$INTCTL/lib/overseer-launch.sh" '  [[ -n "$OL_SESSION" ]] || ol_session_from_out' '  :'
   int_create_run "$INTCTL/oversee-succeed"
   assert_eq "$INT_OVERSEERS" \
     "1" \
     "control: without the recovery a signal during create leaks the successor"
+  rm -f -- "${BIN:?}/tmux"
   tm kill-window -a -t fleet:0 2>/dev/null || true
 else
   echo "  skip  a signal during create closes the successor (no setsid)"
