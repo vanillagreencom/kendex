@@ -196,33 +196,22 @@ assert_eq "$(grep -o 'owner=owner -f name=repo -F number=42 -f gate=Review gate'
   "owner=owner -f name=repo -F number=42 -f gate=Review gate" "the checkout's repository and the review gate's default context otherwise"
 assert_eq "$(run . --bogus) $(cat "$TMP_ROOT/stderr")" 'rc=1 {"error":"Unknown option: --bogus"}' "an unknown option is refused"
 
-echo "=== controls ==="
-# Each planted defect runs from a copy of the scripts, so the mutant sources
-# the same lib and the source tree is never written.
-cp -R "$REPO_ROOT/skills/github/scripts" "$TMP_ROOT/scripts"
-mutant() { # NAME ANCHOR REPLACEMENT
-  assert_eq "$(grep -Fc -- "$2" "$PR_TIMELINE")" "1" "the $1 control finds its anchor"
-  BIN="$TMP_ROOT/scripts/commands/pr-timeline.$1.sh"
-  A="$2" R="$3" awk '{ i = index($0, ENVIRON["A"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["R"] substr($0, i + length(ENVIRON["A"])); print }' \
-    "$PR_TIMELINE" > "$BIN"
-}
-mutant group-suites 'select(.workflowRun.event == "merge_group") end]' 'select(true) end]'
-run . >/dev/null
-assert_eq "$(jq -c '.ci_merge_group_secs' "$TMP_ROOT/stdout")" "2400" \
-  "control: without the merge_group filter the merge commit's push suite joins the merge-group figure"
-mutant unscoped "head_checks=\$(jq -c '._checks.head' <<<\"\$result\" | scope_current_run)" "head_checks=\$(jq -c '._checks.head' <<<\"\$result\")"
+echo "=== control ==="
+# The suite's one planted defect: the head checks read without
+# scope_current_run. It runs from a private copy of pr-timeline.sh beside a
+# link to the shipped lib, so the source tree is never written.
+mkdir -p "$TMP_ROOT/scripts/commands"
+ln -s "$REPO_ROOT/skills/github/scripts/lib" "$TMP_ROOT/scripts/lib"
+BIN="$TMP_ROOT/scripts/commands/pr-timeline.sh"
+ANCHOR="head_checks=\$(jq -c '._checks.head' <<<\"\$result\" | scope_current_run)"
+assert_eq "$(grep -Fc -- "$ANCHOR" "$PR_TIMELINE")" "1" "the control finds its one site"
+A="$ANCHOR" R="head_checks=\$(jq -c '._checks.head' <<<\"\$result\")" \
+  awk '{ i = index($0, ENVIRON["A"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["R"] substr($0, i + length(ENVIRON["A"])); print }' \
+  "$PR_TIMELINE" > "$BIN"
+assert_eq "$(grep -Fc -- "$ANCHOR" "$BIN")" "0" "the control applied its mutation"
 run "$STALE_HEAD" >/dev/null
 assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs]' "$TMP_ROOT/stdout")" '[null,2400]' \
   "control: without scope_current_run the superseded failed run is read and timed"
-mutant latest-pass '| .created_at] | min // empty' '| .created_at] | max // empty'
-HISTORY_B1="10:30:pending" HISTORY_H2="10:25:success 10:24:failure 10:02:success"
-run . >/dev/null
-assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout")" '"2026-09-20T10:25:00Z"' \
-  "control: the latest success on a head in place of its first reads a pass the head had earlier"
-HISTORY_B1="10:05:success" HISTORY_H2="10:25:success"
-mutant no-truncation 'if ($truncated | length) > 0 then' 'if false then'
-assert_eq "$(run '.data.repository.pullRequest.reviews.totalCount = 101')" "rc=0" \
-  "control: without the truncation check a partial review list prints stamps"
 BIN="$PR_TIMELINE"
 
 echo

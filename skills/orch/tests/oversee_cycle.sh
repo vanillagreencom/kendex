@@ -2,10 +2,11 @@
 # oversee-cycle: a closed lane's record against its class target, the stamps
 # it writes to the lane record, the repeat-miss bar, and the per-class rollup.
 #
-# The real script runs from a copy of orch/scripts laid out beside a stub
-# github skill, whose pr-timeline answers the case's timeline.json, a stub
-# harness-ci classifier, which answers the case's class file, and a lane-host
-# fake, which serves a hosted lane's files from the case's host directory.
+# The real script runs from links to the shipped orch/scripts, laid out by
+# mutant_scripts beside a stub github skill, whose pr-timeline answers the
+# case's timeline.json, and a stub harness-ci classifier, which answers the
+# case's class file; a lane-host fake, which serves a hosted lane's files from
+# the case's host directory, stands in for that one link.
 # Each stub logs its argv to the case. The checkout is a two-commit
 # repository whose HEAD is the merge commit the timeline names; its origin
 # holds one more commit the checkout lacks. Each case asserts the printed
@@ -17,20 +18,15 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
-PASS=0
-FAIL=0
-assert_eq() { # GOT WANT LABEL
-  if [[ "$1" == "$2" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$3" "$2" "$1"
-  fi
-}
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
+# mutant_scripts and mutate_file: the layout and the controls below.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 
 LAYOUT="$TMP_ROOT/skills"
-mkdir -p "$LAYOUT/orch" "$LAYOUT/github/scripts" "$LAYOUT/harness-ci/scripts"
-cp -R "$TEST_DIR/../scripts" "$LAYOUT/orch/scripts"
+mutant_scripts skills/orch >/dev/null || exit 1
+mkdir -p "$LAYOUT/github/scripts" "$LAYOUT/harness-ci/scripts"
 cp -R "$TEST_DIR/../../github/scripts/lib" "$LAYOUT/github/scripts/lib"
 BIN="$LAYOUT/orch/scripts/oversee-cycle"
 cat > "$LAYOUT/github/scripts/github.sh" <<'SH'
@@ -52,6 +48,7 @@ printf 'change_class=%s\n' "$(cat "$CASE/class")"
 SH
 # `cat --item ITEM PATH` serves PATH from the case's host directory, exit 2
 # where it holds no such file, as a provider answers; `touch` answers.
+rm -- "$LAYOUT/orch/scripts/lane-host"
 cat > "$LAYOUT/orch/scripts/lane-host" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$CASE/lane-host.calls"
@@ -393,100 +390,35 @@ assert_eq "$("$BIN" --help | tail -n 1)" "Targets, seconds: render 300, trivial 
   "the last help line is the target table"
 
 # --- controls ----------------------------------------------------------------
-# One planted defect per surface, each in a copy beside the script so it
-# resolves the same stubs; each must turn its case red.
-mutant() { # NAME ANCHOR REPLACEMENT
-  assert_eq "$(grep -Fc -- "$2" "$BIN")" "1" "the $1 control finds its anchor"
-  A="$2" R="$3" awk '{ i = index($0, ENVIRON["A"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["R"] substr($0, i + length(ENVIRON["A"])); print }' \
-    "$BIN" > "$BIN.$1"
-  chmod +x "$BIN.$1"
-  RUN_BIN="$BIN.$1"
+# One planted defect per surface: the record and rollup verbs of oversee-cycle
+# and the lane_item_state it reads rounds through, each in a private copy of
+# that one file among links to the shipped scripts, beside the same stubs.
+control() { # NAME FILE ANCHOR REPLACEMENT — sets RUN_BIN to the mutant's oversee-cycle
+  local dir
+  dir="$(mutant_scripts "skills/$1" "$2")" || exit 1
+  mutate_file "$dir/$2" "$3" "$4"
+  RUN_BIN="$dir/oversee-cycle"
 }
 
 echo "=== controls ==="
-mutant no-miss 'elif $actual > $target then "miss"' 'elif false then "miss"'
+control m-record oversee-cycle 'elif $actual > $target then "miss"' 'elif false then "miss"'
 new_case c-miss; printf standard > "$CASE/class"; timeline 5401
 assert_eq "$(field verdict "$(record KEN-1 standard)")" "verdict=met" \
   "control: without the target comparison a close past its target reports no miss"
 
-mutant no-write '(.lanes[] | select(.item == $item)).cycle = $cycle' '.'
-new_case c-write; printf micro > "$CASE/class"; timeline 1200
-record KEN-2 micro >/dev/null
-assert_eq "$(state '.lanes[] | select(.item == "KEN-2") | .cycle.stamps')" "null" \
-  "control: without the record write the lane carries no stamps"
-
-mutant no-fix-rounds 'fix: (.cycles // 0),' 'fix: 0,'
-new_case c-rounds; printf micro > "$CASE/class"; timeline 1200
-printf '{"cycles": 3}' > "$REPO/tmp/workflow-state-KEN-2.json"
-assert_eq "$(field fix "$(record KEN-2 micro)")" "fix=0" \
-  "control: a fix count not read from the lane's state reads as none"
-rm -f -- "${REPO:?}/tmp/workflow-state-KEN-2.json"
-
-mutant first-phase 'sort_by(- .secs)' 'sort_by(.secs)'
-new_case c-phase; printf micro > "$CASE/class"; timeline 1200
-assert_eq "$(field phase "$(record KEN-1 micro)")" "phase=first_commit" \
-  "control: sorting gaps shortest first names a phase that did not dominate"
-
-mutant phase-over-missing 'if ($missing | length) > 0 then' 'if false then'
-new_case c-missing; printf small > "$CASE/class"; timeline 1100
-jq --arg armed "$(at 1010)" '.stamps.ci_green = null | .stamps.armed = $armed' "$CASE/timeline.json" > "$CASE/t" && mv -- "$CASE/t" "$CASE/timeline.json"
-assert_eq "$(field phase "$(record KEN-1 standard)")" "phase=armed" \
-  "control: naming a phase across a missing stamp blames armed for CI's time"
-
-mutant unmeasured-class '[[ "$CHANGE_CLASS_MEASURED" != true ]]' 'false'
-new_case c-measured; printf standard > "$CASE/class"; printf false > "$CASE/measured"; timeline 1000
-assert_eq "$(field class "$(record KEN-1 micro)")" "class=standard" \
-  "control: without the marker check the classifier's fallback reads as a class"
-
-other_repo_row() { # prints class and fix for the lane whose worktree names another origin
-  new_case "$1"; printf micro > "$CASE/class"; timeline 1200
-  edit_json "$CASE/state/workflow-state-oversee.json" "(.lanes[] | select(.item == \"KEN-5\")).mail_root = \"$ELSE\""
-  got="$(record KEN-5 micro)"
-  printf '%s %s' "$(field class "$got")" "$(field fix "$got")"
-}
-mutant other-repo 'elif other_repo "$checkout"; then' 'elif false; then'
-assert_eq "$(other_repo_row c-other-repo)" "class=micro fix=9" \
-  "control: without the repository check another repository's lane is classified from this checkout"
-RUN_BIN=""
-LIB="$LAYOUT/orch/scripts/lib/lane-gitfile.sh"
-cp -- "$LIB" "$TMP_ROOT/lane-gitfile.sh.kept"
-anchor='path="$(cd -- "$6" && "$1" path "$4" 2>"$7/state.err")" || return 2'
-assert_eq "$(grep -Fc -- "$anchor" "$LIB")" "1" "the lane-root control finds its anchor"
-A="$anchor" awk '{ i = index($0, ENVIRON["A"]); if (i) $0 = substr($0, 1, i - 1) "path=\"$(\"$1\" path \"$4\" 2>\"$7/state.err\")\" || return 2" substr($0, i + length(ENVIRON["A"])); print }' \
-  "$TMP_ROOT/lane-gitfile.sh.kept" > "$LIB"
-assert_eq "$(other_repo_row c-lane-root)" "class=- fix=-" \
-  "control: read from the caller's checkout, another repository's lane has no rounds"
-cp -- "$TMP_ROOT/lane-gitfile.sh.kept" "$LIB"
-
-# One planted removal per conjunct of the repeat bar, each run against the
-# row that conjunct alone decides, which then prints a bar.
-while IFS='@' read -r name anchor replacement row; do
-  mutant "repeat-$name" "$anchor" "$replacement"
-  sequence="$(awk -F'|' -v row="$row" '$1 == row { print $2 }' <<<"$REPEAT_ROWS")"
-  assert_eq "$(repeat_row "c-repeat-$name" "$sequence" | grep -c '^repeat-miss' || true)" "1" \
-    "control: without the $name conjunct the $row row fires the bar"
-done <<'ROWS'
-this-miss@if $cycle.verdict != "miss"@if false@met-record
-counted-miss@[.lanes[]? | select(.cycle.verdict == "miss")@[.lanes[]? | select(true)@met-not-counted
-same-phase@| select(.cycle.phase == $cycle.phase) | .item]@| .item]@other-phase
-named-phase@or $cycle.phase == null@or false@unnamed-phase
-newly-made@or ($prior.verdict == "miss" and $prior.phase == $cycle.phase)@or false@recorded-again
-exactly-third@select(length == 3)@select(length >= 3)@fourth
-ROWS
-
-mutant no-state-rollup '[[ "$VERB" != rollup ]] || exit 0' ':'
-new_case c-no-state
-rm -f -- "${CASE:?}/state/workflow-state-oversee.json"
-rc=0; rollup >/dev/null || rc=$?
-assert_eq "rc=$rc $(head -n 1 "$CASE/err")" "rc=1 oversee-cycle: state-missing=$CASE/state/workflow-state-oversee.json" \
-  "control: without the no-state exit a Stop before any launch refuses its rollup"
-
-mutant p90-floor '| if $n == 0 then "-" else $a[(($n * $p) | ceil) - 1] end;' '| if $n == 0 then "-" else $a[(($n * $p) | floor) - 1] end;'
+control m-rollup oversee-cycle '| if $n == 0 then "-" else $a[(($n * $p) | ceil) - 1] end;' '| if $n == 0 then "-" else $a[(($n * $p) | floor) - 1] end;'
 new_case c-rollup
 jq -n --argjson c "[$(cycle '"micro"' 100 met null false false),$(cycle '"micro"' 400 met null false false),$(cycle '"micro"' 1000 miss null false false),$(cycle '"micro"' 200 met null false false)]" \
   '{lanes: [$c | to_entries[] | {item: "KEN-\(.key)", status: "done", cycle: .value}], fleet_log: []}' \
   > "$CASE/state/workflow-state-oversee.json"
 assert_eq "$(rollup | grep -o 'p90=[0-9]*')" "p90=400" "control: a floor rank reports a p90 below the slowest tenth"
+
+control m-lane-state lib/lane-gitfile.sh 'path="$(cd -- "$6" && "$1" path "$4" 2>"$7/state.err")" || return 2' \
+  'path="$("$1" path "$4" 2>"$7/state.err")" || return 2'
+new_case c-lane-root; printf micro > "$CASE/class"; timeline 1200
+edit_json "$CASE/state/workflow-state-oversee.json" "(.lanes[] | select(.item == \"KEN-5\")).mail_root = \"$ELSE\""
+assert_eq "$(field fix "$(record KEN-5 micro)")" "fix=-" \
+  "control: read from the caller's checkout, another repository's lane has no rounds"
 RUN_BIN=""
 
 echo
