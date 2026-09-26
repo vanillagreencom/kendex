@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
 use crate::error::Result;
-use crate::hash::{hash_files, installation_hash};
+use crate::hash::{hash_files, in_place_installation_hash, installation_hash};
 use crate::lock::{EmittedArtifact, entry_key};
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::render::skill::render_skill;
+use crate::render::skill::{SKILL_FILE, SkillText, render_skill};
 
 use super::desired::{
     Artifact, Desired, DesiredState, IN_PLACE_DISABLED, ItemCtx, effective_method, in_place_source,
@@ -26,15 +26,18 @@ struct SurfaceGroup {
     members: Vec<HarnessId>,
 }
 
-/// One rendered variant: the tree's files and their content hash. A group
-/// whose cap cannot be honored produces a refused placeholder and installs
-/// nothing.
+/// One group's rendering: the tree's files, their content hash and how its
+/// `SKILL.md` read as text, or nothing where a member's loader rejected
+/// the tree and the group installs nothing.
 use crate::render::skill::Files;
 
-struct Variant {
-    files: Files,
-    hash: String,
-    refused: bool,
+enum Variant {
+    Refused,
+    Rendered {
+        files: Files,
+        hash: String,
+        read_as: SkillText,
+    },
 }
 
 /// The tools that will read this skill without being installed to. The
@@ -144,7 +147,8 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
         return Ok(());
     }
     let identity = (ItemKind::Skill, ctx.decl.source.as_str(), ctx.name);
-    if !enabled && in_place_source(ctx.env, ctx.scope, identity).is_some() {
+    let source = in_place_source(ctx.env, ctx.scope, identity);
+    if !enabled && source.is_some() {
         for group in &groups {
             refuse(ctx, state, group, IN_PLACE_DISABLED);
         }
@@ -167,10 +171,10 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
     if ctx.harnesses.contains(&HarnessId::Copilot) {
         super::copilot::switched_off_elsewhere(ctx, ItemKind::Skill, state);
     }
-    let mut variants: Vec<Variant> = Vec::new();
-    for group in &groups {
-        variants.push(render_variant(ctx, state, group, enabled)?);
-    }
+    let variants = groups
+        .iter()
+        .map(|group| render_variant(ctx, state, group, enabled))
+        .collect::<Result<Vec<Variant>>>()?;
 
     // The base tree is the scope's shared location; the group that natively
     // reads it owns it, the first group otherwise. A variant with the base's
@@ -181,20 +185,23 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
         .iter()
         .position(|group| group.native == base)
         .unwrap_or(0);
-    // Only once the tree that would sit in the shared place is known to
-    // render: a refused group installs nothing there, and saying what is
-    // installed here reaches other tools would name a tree that is about
-    // to be removed.
-    if !variants[owner].refused {
-        cross_read_note(ctx, method, state);
-    }
+    // Where each group's tree lands, and whether it may land there at
+    // all: a group deduplicates onto the owner's rendering, so its place
+    // follows from what rendered and never from where the owner's tree
+    // was then refused to stand.
+    let mut trees: Vec<Option<Tree>> = Vec::with_capacity(groups.len());
     for (index, group) in groups.iter().enumerate() {
-        let variant = &variants[index];
-        if variant.refused {
+        let Variant::Rendered {
+            files,
+            hash,
+            read_as,
+        } = &variants[index]
+        else {
+            trees.push(None);
             continue;
-        }
-        let deduped =
-            index == owner || (!variants[owner].refused && variant.hash == variants[owner].hash);
+        };
+        let deduped = index == owner
+            || matches!(&variants[owner], Variant::Rendered { hash: owned, .. } if owned == hash);
         let (canonical, link) = if method == Method::Copy {
             (group.native.clone(), None)
         } else if deduped {
@@ -205,14 +212,69 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
         } else {
             (group.native.clone(), None)
         };
-        let artifact = Artifact::Tree {
+        // The one place the question is answered: this tree is the source
+        // exactly where the source is where it stands.
+        let in_place = source.as_ref() == Some(&canonical);
+        if in_place && let Some(reason) = in_place_refusal(ctx, group, *read_as) {
+            refuse(ctx, state, group, &reason);
+            trees.push(None);
+            continue;
+        }
+        trees.push(Some(Tree {
             canonical,
-            files: variant.files.clone(),
+            files: files.clone(),
             link,
-        };
-        push_installs(ctx, state, group, artifact, enabled, method)?;
+            in_place,
+        }));
+    }
+    // Only once the tree that would sit in the shared place is known to
+    // land: a refused group installs nothing there, and saying what is
+    // installed here reaches other tools would name a tree that is about
+    // to be removed.
+    if trees[owner].is_some() {
+        cross_read_note(ctx, method, state);
+    }
+    for (group, tree) in groups.iter().zip(trees) {
+        if let Some(tree) = tree {
+            push_installs(ctx, state, group, tree, enabled, method)?;
+        }
     }
     Ok(())
+}
+
+/// Why the tree standing at the in-place source installs nothing, or
+/// `None` where its rendering may be written back. That rendering goes
+/// over the person's own `SKILL.md` whole, so it may carry nothing the
+/// person's bytes do not: a decode that repaired them would put U+FFFD
+/// where they stood, and a name this pass rewrote would go into the
+/// person's name line. A copy keeps either as its own render.
+///
+/// The in-place source serves its skills under their directory names,
+/// which carry no `/`, so a declaration that would install under another
+/// spelling is not found there and never reaches the rename; reaching it
+/// would be the source and this pass disagreeing about what a name is,
+/// said so rather than written into the person's file.
+fn in_place_refusal(ctx: &ItemCtx, group: &SurfaceGroup, read_as: SkillText) -> Option<String> {
+    match read_as {
+        SkillText::Repaired => Some(format!(
+            "its {SKILL_FILE} is not valid UTF-8, and the project-instructions block cannot be written into it without changing its bytes"
+        )),
+        SkillText::Exact if group.installed != ctx.name => Some(format!(
+            "internal: in-place skill {} would render under the name {}, and the in-place source serves directory names alone",
+            ctx.name, group.installed
+        )),
+        SkillText::Exact => None,
+    }
+}
+
+/// The parts of one rendered tree, as [`Artifact::Tree`] carries them: a
+/// skill installs as a tree and nothing else, so the installation is built
+/// from these rather than from an artifact that could be any kind.
+struct Tree {
+    canonical: PathBuf,
+    files: Files,
+    link: Option<PathBuf>,
+    in_place: bool,
 }
 
 /// One rendering as the installation every member of its group wants.
@@ -224,20 +286,31 @@ fn push_installs(
     ctx: &ItemCtx,
     state: &mut DesiredState,
     group: &SurfaceGroup,
-    artifact: Artifact,
+    tree: Tree,
     enabled: bool,
     method: Method,
 ) -> Result<()> {
+    let Tree {
+        canonical,
+        files,
+        link,
+        in_place,
+    } = tree;
+    let artifact = Artifact::Tree {
+        canonical: canonical.clone(),
+        files,
+        link,
+        in_place,
+    };
     // Where the tree and the link landed goes on the record. A tool's
     // directory moves between kendex versions, and a pass that derived
     // the place again would name one this install never wrote — the
-    // link it did write is then findable only through the record.
-    let identity = (ItemKind::Skill, ctx.decl.source.as_str(), ctx.name);
-    let in_place = in_place_source(ctx.env, ctx.scope, identity);
+    // link it did write is then findable only through the record. The
+    // person's own source tree is never on it.
     let paths = artifact
         .paths()
         .into_iter()
-        .filter(|path| in_place.as_ref() != Some(path))
+        .filter(|path| !(in_place && *path == canonical))
         .collect();
     let emitted = Some(EmittedArtifact {
         kind: ItemKind::Skill,
@@ -246,6 +319,26 @@ fn push_installs(
     });
     let source = Some(ctx.source(&artifact)?);
     for harness in &group.members {
+        // An in-place tree is the person's source: kendex writes no render
+        // of it, so no rendered hash anchors an edit, and the inputs it
+        // records are the sections that shape the block it does write.
+        let (hash, rendered_hash) = match in_place {
+            true => (
+                in_place_installation_hash(ctx.manifest, ItemKind::Skill, ctx.name, *harness),
+                None,
+            ),
+            false => (
+                installation_hash(
+                    ctx.sealed,
+                    ctx.item_path,
+                    ctx.manifest,
+                    ItemKind::Skill,
+                    ctx.name,
+                    *harness,
+                )?,
+                artifact.rendered_hash(),
+            ),
+        };
         state.items.push(Desired {
             key: entry_key(ItemKind::Skill, ctx.name, *harness),
             kind: ItemKind::Skill,
@@ -257,15 +350,8 @@ fn push_installs(
             provenance: ctx.provenance.to_owned(),
             source_commit: ctx.source_commit.map(str::to_owned),
             recorded_fork: ctx.manifest.recorded_fork(ItemKind::Skill, ctx.name),
-            hash: installation_hash(
-                ctx.sealed,
-                ctx.item_path,
-                ctx.manifest,
-                ItemKind::Skill,
-                ctx.name,
-                *harness,
-            )?,
-            rendered_hash: artifact.rendered_hash(),
+            hash,
+            rendered_hash,
             source: source.clone(),
             upstream_skills: None,
             emitted: emitted.clone(),
@@ -306,7 +392,7 @@ fn render_variant(
     group: &SurfaceGroup,
     enabled: bool,
 ) -> Result<Variant> {
-    let mut rendered = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
+    let (mut rendered, read_as) = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
     // `SKILL.md.disabled` is the name kendex keeps a switched-off
     // installation's content under, so a catalog shipping one of its own
     // has written down a tree that cannot be installed both ways: turning
@@ -314,10 +400,13 @@ fn render_variant(
     // with nothing said about it. `fork` refuses the same shape for the
     // same reason; there is nothing to choose between them here either.
     if let Some(reason) = both_names(rendered.files()) {
-        return Ok(refuse(ctx, state, group, &reason));
+        refuse(ctx, state, group, &reason);
+        return Ok(Variant::Refused);
     }
     // A skill from a plugin-registry catalog installs under its plugin, and the
-    // catalog's own SKILL.md knows nothing of that.
+    // catalog's own SKILL.md knows nothing of that. Whether the renamed
+    // rendering may stand where it lands is the placement's question,
+    // asked of each tree where it is placed (`in_place_refusal`).
     if group.installed != ctx.name {
         rendered.set_skill_name(&group.installed);
     }
@@ -334,7 +423,8 @@ fn render_variant(
             rendered.files(),
         );
         if let Some(reason) = super::desired::refusal_reason(&findings) {
-            return Ok(refuse(ctx, state, group, &reason));
+            refuse(ctx, state, group, &reason);
+            return Ok(Variant::Refused);
         }
         for finding in findings
             .into_iter()
@@ -361,10 +451,10 @@ fn render_variant(
         rendered.disable();
     }
     let hash = hash_files(rendered.files());
-    Ok(Variant {
+    Ok(Variant::Rendered {
         files: rendered.into_files(),
         hash,
-        refused: false,
+        read_as,
     })
 }
 
@@ -373,7 +463,7 @@ fn render_variant(
 /// One rendering serves the whole group — they read one file on disk — so a
 /// refusal is the group's, never one member's: installing it for the others
 /// would put the rejected bytes exactly where the refusing one reads.
-fn refuse(ctx: &ItemCtx, state: &mut DesiredState, group: &SurfaceGroup, reason: &str) -> Variant {
+fn refuse(ctx: &ItemCtx, state: &mut DesiredState, group: &SurfaceGroup, reason: &str) {
     for harness in &group.members {
         state.refused.push(super::desired::Refused {
             kind: ItemKind::Skill,
@@ -381,11 +471,6 @@ fn refuse(ctx: &ItemCtx, state: &mut DesiredState, group: &SurfaceGroup, reason:
             harness: *harness,
             reason: reason.to_owned(),
         });
-    }
-    Variant {
-        files: Vec::new(),
-        hash: String::new(),
-        refused: true,
     }
 }
 

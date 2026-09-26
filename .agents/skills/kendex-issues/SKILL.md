@@ -71,7 +71,7 @@ Only from a change **merged on `origin/main`**. Batch: if open items would force
 
 ### This skill's home
 
-Source: `.agents/skills/kendex-issues/SKILL.md` in the kendex checkout, the real directory, declared `source = "in-place"` and installed project-scoped only. `git rev-parse --show-toplevel` prints that checkout's root from anywhere inside it. Edit it there; the per-harness links already point at it. Then run `kendex apply` from the root so the install record matches the edit; until you do, `kendex verify` reports the skill as changed since install. A `~/.agents/skills/kendex-issues` link is a collision. Delete it.
+Source: `.agents/skills/kendex-issues/SKILL.md` in the kendex checkout, the real directory, declared `source = "in-place"` and installed project-scoped only. `git rev-parse --show-toplevel` prints that checkout's root from anywhere inside it. Edit it there; the per-harness links already point at it, and an edit is the source changing, so `kendex refresh`, `kendex check` and `kendex verify` stay green with no apply, once the first refresh after upgrading kendex has re-recorded the entry. kendex writes one thing into the file, the project-instructions block between its markers; leave the markers in place. A `~/.agents/skills/kendex-issues` link is a collision. Delete it.
 
 ## Guardrails
 

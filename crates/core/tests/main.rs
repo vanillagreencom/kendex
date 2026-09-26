@@ -53,6 +53,7 @@ mod hook_records;
 mod hook_removal;
 mod hook_sweep;
 mod hooks_readme;
+mod in_place_edits;
 mod in_place_preservation;
 mod install_into_project;
 mod install_seam;

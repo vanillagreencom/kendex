@@ -42,7 +42,10 @@ pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
         // What an install recorded landing at beats deriving a place it
         // never took: a codex command stored as a skill tree under a name
         // the collision rules may have changed, a skill's tree and the
-        // link a tool's directory has since moved away from.
+        // link a tool's directory has since moved away from. The in-place
+        // source is never among them, whatever an older record says: no
+        // entry owns the person's tree, so no edit hold, take-over or
+        // removal reaches it — the one place that rule is kept.
         (Some(emitted), _) => files.extend(
             emitted
                 .paths

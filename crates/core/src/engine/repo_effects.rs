@@ -343,7 +343,10 @@ fn unreadable(at: &std::path::Path) -> crate::error::CoreError {
 /// A candidate with neither name is skipped; a candidate whose
 /// declaration will not read is an error, because the alternative is to
 /// call a package that declares an uninstaller a package that declares
-/// nothing.
+/// nothing. Its bytes are decoded as the add side and the render decode
+/// them, with U+FFFD where they are not UTF-8: the declaration is the
+/// frontmatter, and a byte the render repaired is the same declaration
+/// the install read.
 fn installed_tree(
     env: &Env,
     scope: &Scope,
@@ -369,12 +372,16 @@ fn installed_tree(
     for root in candidates {
         for file in crate::render::skill::NAME_FILES {
             let declaration = root.join(file);
-            if let Some(text) = crate::fs::read_if_exists(&declaration)? {
-                return Ok(Some(Installed {
-                    root,
-                    declaration,
-                    text,
-                }));
+            match std::fs::read(&declaration) {
+                Ok(bytes) => {
+                    return Ok(Some(Installed {
+                        root,
+                        declaration,
+                        text: String::from_utf8_lossy(&bytes).into_owned(),
+                    }));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(crate::error::CoreError::io(&declaration, error)),
             }
         }
     }

@@ -9,7 +9,7 @@ mod rendered;
 pub(crate) use rendered::with_name;
 pub use rendered::{Files, Rendered};
 
-const SKILL_FILE: &str = "SKILL.md";
+pub(crate) const SKILL_FILE: &str = "SKILL.md";
 
 /// The files of a skill's tree that carry the name the item answers to:
 /// SKILL.md under either spelling, because a switched-off installation
@@ -68,16 +68,28 @@ fn instructions_block_range(text: &str) -> Option<(usize, usize)> {
     Some((start, end))
 }
 
+/// How SKILL.md read as text. `Repaired` says its bytes were not UTF-8
+/// and the rendering holds U+FFFD where they stood. A copy carries that
+/// as its own render; an in-place tree's rendering is written back over
+/// the person's file whole, so the in-place pass refuses on it rather
+/// than change bytes kendex never writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillText {
+    Exact,
+    Repaired,
+}
+
 /// The rendered skill: every file of the source tree — read through the
 /// sealed source, so a hostile catalog cannot smuggle host files in — with
 /// `[skill-instructions]` injected into SKILL.md. Returned as
-/// (relative path, bytes) so apply can materialize it transactionally.
+/// (relative path, bytes) so apply can materialize it transactionally,
+/// with how SKILL.md read as text beside it.
 pub fn render_skill(
     sealed: &SealedSource,
     source_dir: &Path,
     manifest: &Manifest,
     name: &str,
-) -> Result<Rendered> {
+) -> Result<(Rendered, SkillText)> {
     let instructions = merged_instructions(&manifest.skill_instructions, name);
     with_instructions(sealed, source_dir, instructions.as_deref())
 }
@@ -87,22 +99,31 @@ pub fn render_skill(
 /// publisher's inputs, so nothing in the project's own instructions, marker
 /// or otherwise, can be mistaken for the publisher's.
 pub fn render_authored(sealed: &SealedSource, source_dir: &Path) -> Result<Files> {
-    Ok(with_instructions(sealed, source_dir, None)?.into_files())
+    Ok(with_instructions(sealed, source_dir, None)?.0.into_files())
 }
 
 fn with_instructions(
     sealed: &SealedSource,
     source_dir: &Path,
     instructions: Option<&str>,
-) -> Result<Rendered> {
+) -> Result<(Rendered, SkillText)> {
     let mut files = sealed.collect_skill_tree(source_dir)?;
+    let mut read_as = SkillText::Exact;
     for (rel, bytes) in &mut files {
         if rel == Path::new(SKILL_FILE) {
-            let text = String::from_utf8_lossy(bytes).into_owned();
+            // A borrowed decode is the bytes themselves; an owned one had
+            // a sequence replaced, which is the one thing the caller asks.
+            let text = match String::from_utf8_lossy(bytes) {
+                std::borrow::Cow::Borrowed(text) => text.to_owned(),
+                std::borrow::Cow::Owned(text) => {
+                    read_as = SkillText::Repaired;
+                    text
+                }
+            };
             *bytes = inject_instructions(&text, instructions).into_bytes();
         }
     }
-    Ok(Rendered::new(files))
+    Ok((Rendered::new(files), read_as))
 }
 
 /// Inject (or refresh) the project-instructions block right after the
@@ -244,7 +265,8 @@ mod tests {
 
         let sealed = crate::source_read::SealedSource::open(tmp.path()).unwrap();
         let src = sealed.root().join("github");
-        let rendered = render_skill(&sealed, &src, &manifest, "github").unwrap();
+        let (rendered, read_as) = render_skill(&sealed, &src, &manifest, "github").unwrap();
+        assert_eq!(read_as, SkillText::Exact);
         assert_eq!(rendered.files().len(), 2);
         let skill_md = rendered
             .files()

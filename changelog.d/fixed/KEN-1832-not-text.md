@@ -1,0 +1,1 @@
+- An in-place skill whose `SKILL.md` is not valid UTF-8 is refused where its own tree would be written, so `apply` never writes replacement characters into it; a copy of it still installs and removes.

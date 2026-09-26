@@ -74,12 +74,15 @@ pub fn resolve_scopes(env: &Env, filter: ScopeFilter) -> Result<Vec<Scope>, Stri
 ///
 /// The walk answers for the directory a command was typed in, which a
 /// session that cannot move its shell cannot choose. Inside a linked git
-/// worktree there is nothing to choose either: the catalog's
-/// `block-worktree-refresh` hook refuses a bare project-scope verb typed
-/// there, and refuses a `cd` before it, because neither says which
-/// checkout the write lands in. A named project is the other door: the
-/// write lands in the checkout the command's own words carry, and nowhere
-/// else, which is the one thing that guard was missing.
+/// worktree that carries no manifest of its own there is nothing to choose
+/// either: the walk answers with a root whose declarations are not the
+/// worktree's, so the catalog's `block-worktree-refresh` hook refuses a
+/// bare project-scope verb typed there, and refuses a `cd` before it
+/// anywhere, because neither says which checkout the write lands in. A
+/// named project is the other door: the write lands in the checkout the
+/// command's own words carry, and nowhere else. A worktree that owns its
+/// manifest is the project the walk answers with, and the hook passes the
+/// bare verb there.
 ///
 /// Naming a project and naming the personal scope are two different
 /// destinations, so a run that asks for both is refused rather than

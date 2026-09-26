@@ -2,10 +2,10 @@
 //! the command rather than walked up to from the working directory.
 //!
 //! The walk answers for the directory a command was typed in, which an
-//! agent session cannot move, and which inside a linked git worktree the
-//! catalog's `block-worktree-refresh` hook refuses a bare verb in. These
-//! run the real binary from a directory that is not the destination and
-//! then read the destination.
+//! agent session cannot move, and which inside a linked git worktree with
+//! no manifest of its own the catalog's `block-worktree-refresh` hook
+//! refuses a bare verb in. These run the real binary from a directory that
+//! is not the destination and then read the destination.
 #![cfg(unix)]
 
 use crate::test_util;

@@ -142,10 +142,10 @@ pub enum Fix {
     /// form, so a session running the catalog's `block-worktree-refresh`
     /// hook is refused it inside that linked git worktree — every such
     /// verb where the project is the main checkout's, and `update-pi`
-    /// where it is the worktree's own. The command is still the fix, and
-    /// the renderer marks it with why it will not run here — a reader
-    /// handed no remedy at all is left with the drift and no way out of
-    /// it.
+    /// alone where it is the worktree's own. The command is still the
+    /// fix, and the renderer marks it with why it will not run here — a
+    /// reader handed no remedy at all is left with the drift and no way
+    /// out of it.
     Elsewhere(String),
 }
 
@@ -163,9 +163,12 @@ pub enum Fix {
 pub enum ProjectTarget {
     /// The checked project in a linked worktree, which holds a manifest of
     /// its own, readable or not, whether it is the worktree's root or a
-    /// folder below it. A verb typed there writes it, so the verbs with no
-    /// `--project-path` form that write the project they are typed in run
-    /// there as they are.
+    /// folder below it. A bare verb typed there writes it and nothing
+    /// else, so every remedy but `update-pi` runs there as it is, with no
+    /// path in the command: the path reaches no command and is carried
+    /// for `kendex check --json`, which prints the target as its path
+    /// alone, and for the serialization guard that path shares with the
+    /// main checkout's.
     Worktree(std::path::PathBuf),
     /// The project at the same place inside the main checkout, where the
     /// checked worktree carries no manifest and the declarations are the
@@ -224,33 +227,21 @@ impl Remedy {
         )
     }
 
-    /// Whether this verb, with no `--project-path` form, writes a linked
-    /// worktree's own project by being typed inside it: the verbs the
-    /// catalog's `block-worktree-refresh` hook lets through where the
-    /// project is [`ProjectTarget::Worktree`]. That hook runs `update-pi` in
-    /// a linked worktree only as `kendex update-pi --scope global`.
-    fn writes_where_typed(&self) -> bool {
-        matches!(
-            self,
-            Remedy::Add { .. }
-                | Remedy::Remove { .. }
-                | Remedy::Fork { .. }
-                | Remedy::DriftHook { .. }
-        )
-    }
-
     /// The pasteable spelling, or `None` when the identifier the command
     /// would carry is not one that may reach a command position — the
     /// line then stands without a remedy.
     ///
     /// `target` is the project a project-scope command has to name to
     /// reach the place the line is about, set by [`CheckReport`] where the
-    /// checked directory is a linked worktree. A verb with no
-    /// `--project-path` form renders its bare command there: runnable
-    /// where the target is the worktree itself and the verb writes the
-    /// project it is typed in, and otherwise [`Fix::Elsewhere`] — the
-    /// command is still the fix, and the marker the renderer adds says why
-    /// it will not run where the report was read.
+    /// checked directory is a linked worktree. Only the main checkout's
+    /// project is named: a verb that takes `--project-path` carries it,
+    /// and one with no such form renders its bare command as
+    /// [`Fix::Elsewhere`]. The worktree's own project is reached by every
+    /// bare verb typed there, so the command carries no path and only
+    /// `update-pi`, which the catalog's `block-worktree-refresh` hook runs
+    /// in a linked worktree at global scope alone, is [`Fix::Elsewhere`] —
+    /// the command is still the fix, and the marker the renderer adds
+    /// says why it will not run where the report was read.
     pub fn render(&self, target: Option<&ProjectTarget>) -> Option<Fix> {
         self.render_with_scope(target, false)
     }
@@ -272,24 +263,23 @@ impl Remedy {
         }
         // Asked once, for every arm below. The global scope is one flag
         // wherever it appears; a project scope is the place the command is
-        // typed in, or the one it names where this verb can name it.
-        // `quoted` because a project path is whatever the filesystem
-        // allowed and this is a command position.
+        // typed in, or the main checkout's project it names where this
+        // verb can name it. `quoted` because a project path is whatever
+        // the filesystem allowed and this is a command position.
         let named = target.filter(|_| !self.global());
         let scope = if !self.global() && explicit_project {
             " --scope project"
         } else {
             ""
         };
-        let place = match (self.global(), named.filter(|_| self.takes_project_path())) {
+        let place = match (self.global(), named) {
             (true, _) => " --global".to_owned(),
-            (false, Some(target)) => {
-                format!(
-                    "{scope} --project-path {}",
-                    command_word(target.path(), false)?
-                )
+            (false, Some(ProjectTarget::MainCheckout(path))) if self.takes_project_path() => {
+                format!("{scope} --project-path {}", command_word(path, false)?)
             }
-            (false, None) => scope.to_owned(),
+            (false, Some(ProjectTarget::MainCheckout(_) | ProjectTarget::Worktree(_)) | None) => {
+                scope.to_owned()
+            }
         };
         let command = match self {
             Remedy::Apply { .. } => format!("kendex apply{place}"),
@@ -331,9 +321,8 @@ impl Remedy {
         };
         let elsewhere = match named {
             None => false,
-            Some(_) if self.takes_project_path() => false,
-            Some(ProjectTarget::Worktree(_)) => !self.writes_where_typed(),
-            Some(ProjectTarget::MainCheckout(_)) => true,
+            Some(ProjectTarget::Worktree(_)) => matches!(self, Remedy::UpdatePi { .. }),
+            Some(ProjectTarget::MainCheckout(_)) => !self.takes_project_path(),
         };
         Some(match elsewhere {
             true => Fix::Elsewhere(command),
@@ -408,11 +397,12 @@ pub struct CheckReport {
     ///
     /// Set for a checked project that is a linked git worktree. kendex
     /// refuses no write there; the catalog's `block-worktree-refresh`
-    /// hook does, in a session that installed it, because a bare verb
-    /// does not say which checkout the write lands in. The name is put in
-    /// the command for every worktree reader all the same: it is the one
+    /// hook does, in a session that installed it, where a bare verb would
+    /// write the main checkout's project. That project is named in the
+    /// command for every worktree reader all the same: it is the one
     /// spelling that is right whether or not the hook is installed, and a
-    /// report cannot see which sessions run it.
+    /// report cannot see which sessions run it. The worktree's own project
+    /// is what a bare verb typed there writes, so it is never named.
     ///
     /// It is the worktree itself where the worktree carries a manifest of
     /// its own, readable or not. Where it carries none it is the project
