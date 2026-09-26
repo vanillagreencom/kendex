@@ -25,8 +25,8 @@ overseer_launch_args() {
 overseer_command_record() {
   local pane="${TMUX_PANE:-}" key server window line record detail
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
-  # The key is the orch library's, the same function the report and the lane
-  # turn-end hook read a session's own key with: the hook compares its own
+  # The key is the orch library's, the same function the lane turn-end hook
+  # and `oversee register` read a session's own key with: the hook compares its own
   # against the pair written here, and a second derivation that drifted would
   # leave the overseer's turn end judged by nothing, with no keyed line.
   # That library swallows tmux's own words, and a second read of `#{pid}` here

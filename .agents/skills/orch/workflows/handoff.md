@@ -50,7 +50,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 Choose the launch flags for THIS task before launching — model, effort, and permission posture are a per-task judgment, sized to the item's difficulty and, for a claude or codex item, to its account lane under [oversee.md](oversee.md) § 3 Lane directive. An `open-terminal` launch under a `--lane` names a model, and an effort where its harness has an effort flag; `open-terminal --help` holds the flag each harness takes, marks the harness with no effort flag, and refuses a lane launch that names either none. The commands below pass no `--cmd`, so those words go in `--launch-flags`; a launch that does pass `--cmd` names them inside that command instead, the template being rendered verbatim, and `--launch-flags` beside it are refused as reaching nothing. A claude lane must include a permission-bypass flag (`open-terminal` warns when the flags omit one, and leaves a `--cmd` launch alone, its own argv carrying the posture).
 
-Omit `--tmux` and `--ghostty` unless the user explicitly requests a terminal-mode override. With neither flag `open-terminal` auto-detects the mode: tmux windows inside tmux, GUI terminals outside it. What the screen looks like is not a request; `--ghostty` inside tmux moves the lane out of the workspace.
+Omit `--tmux` and `--ghostty` unless the user explicitly requests a terminal-mode override. With neither flag `open-terminal` auto-detects the mode: tmux windows when `$TMUX` or `ORCH_TMUX_SESSION` is set, GUI terminals otherwise. What the screen looks like is not a request; `--ghostty` inside tmux moves the lane out of the workspace.
 
 ```bash
 .agents/skills/orch/scripts/open-terminal --tracker linear --harness [HARNESS] --launch-flags "[FLAGS]" [ISSUE_IDS]

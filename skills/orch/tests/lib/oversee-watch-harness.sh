@@ -157,8 +157,10 @@ dash_t() {
 }
 case "${1:-}" in
   # `has-session -t =<s>` asks whether the server holds session <s>: the
-  # caller's own, or one a windows-<s>.txt fixture names.
+  # caller's own, or one a windows-<s>.txt fixture names. has-session-fail
+  # answers as a server that is not running at all.
   has-session)
+    [[ ! -f "$STUB_DIR/has-session-fail" ]] || { echo 'no server running on /tmp/tmux-stub/default' >&2; exit 1; }
     s=""
     while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && s="${2#=}"; shift; done
     [[ "$s" != "$(current_session)" && ! -f "$STUB_DIR/windows-$s.txt" ]] || exit 0

@@ -111,6 +111,7 @@ message() { # KEY FIELD=VALUE...
     tmux-missing) text='register runs inside the overseer'\''s own tmux pane; launch reaches a tmux server through $TMUX or ORCH_TMUX_SESSION.' ;;
     session-unresolved) text='No tmux session is named for the overseer window: give --session or set ORCH_TMUX_SESSION. Nothing was opened.' ;;
     tmux-session-missing) text='The tmux session named does not exist on the server this run reaches. Nothing was opened; the server field names the socket.' ;;
+    tmux-failed) text='The tmux call the operation field names failed on the server the server field names, for another reason than an absent session: no server may be running at that socket. Nothing was opened; tmux says why below.' ;;
     state-unwritable) text='The oversee workflow state could not be created or read, so no session record can be kept. Nothing was launched.' ;;
     overseer-live) text='The fleet state names an overseer session this tmux server still lists, so a second one is not opened beside it. Two overseers never act at once: replace a live one through oversee-succeed, or stop it and clear the record.' ;;
     invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:rank:effort with harness claude or codex.' ;;
@@ -191,6 +192,16 @@ DEP_ERR="$(mktemp)" || die launch-failed step=mktemp
 export DEP_ERR
 trap 'rm -f -- "$DEP_ERR"' EXIT
 
+# A launch runs from the directory the session starts in: the settings it
+# loads and the fleet state its record goes into are that repository's, the
+# ones the launched overseer's hooks, watch and succession read, wherever
+# this command was typed.
+if [[ "$COMMAND" == launch ]]; then
+  given="${CWD:-$PWD}"
+  CWD="$(cd -- "$given" 2>/dev/null && pwd -P)" || die invalid-cwd "dir=$given"
+  cd -- "$CWD" || die invalid-cwd "dir=$given"
+fi
+
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export PROJECT_ROOT
 # shellcheck source=lib/kendex-env.sh
@@ -207,8 +218,12 @@ source "$SCRIPT_DIR/lib/overseer-launch.sh"
 # shellcheck source=lib/tmux-server.sh
 source "$SCRIPT_DIR/lib/tmux-server.sh"
 
-ol_runtime || die launch-failed step=host-resolve
-[[ "$OL_RUNTIME" == tmux ]] || die runtime-unsupported "host=$OL_RUNTIME"
+# The runtime, held to tmux by the library both launchers share: this
+# launcher reads the new session's account off its pane.
+if ! ol_runtime_supported; then
+  [[ "$OL_REASON" != runtime-unsupported ]] || die runtime-unsupported "host=$OL_RUNTIME"
+  die launch-failed step=host-resolve
+fi
 
 # The oversee state, where the record lives: created for a fresh fleet, read
 # for every other. One refusal for both, naming the path.
@@ -253,12 +268,13 @@ fi
 # lib/tmux-server.sh's, answered for the session just resolved.
 export ORCH_TMUX_SESSION="$SESSION_NAME"
 SERVER_SOCKET="$(tmux_server_socket)" || die tmux-missing var=TMUX
+# Only tmux's own "can't find session" is a missing session; any other answer,
+# no server at the socket among them, is the call failing.
 if ! err="$(tmux has-session -t "=$SESSION_NAME" 2>&1)"; then
   printf '%s\n' "$err" > "$DEP_ERR"
+  [[ "$err" == "can't find session"* ]] || die tmux-failed operation=has-session "server=$SERVER_SOCKET"
   die tmux-session-missing "session=$SESSION_NAME" "server=$SERVER_SOCKET"
 fi
-[[ -n "$CWD" ]] || CWD="$PWD"
-[[ -d "$CWD" ]] || die invalid-cwd "dir=$CWD"
 
 state_ready
 # A live overseer: the record names a tmux session, and this server lists
@@ -323,25 +339,18 @@ FLAGS+=(${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"})
 ol_command_line "$harness" "$HANDOFF" "$lane_dir" "$CWD" ${FLAGS[@]+"${FLAGS[@]}"} \
   || die launch-trust-missing "lane=$lane_dir" "dir=$CWD" "reason=$OL_TRUST_REASON"
 
-# Every failure from here closes the session and puts the record back.
-SESSION="" RECORD_WRITTEN=0
+# Every failure from here closes the session and puts the record back: the
+# close-out is the library's ol_session_abandon, the words are this script's.
 abandon() {
-  # The detail the refusal carries was written to DEP_ERR before this ran;
-  # the stop and the restore write theirs there too, so it is kept aside and
-  # put back for the refusal to relay.
-  local detail
-  detail="$(cat -- "$DEP_ERR" 2>/dev/null)" || detail=""
-  [[ -z "$SESSION" ]] || ol_session_stop "$SESSION" || true
-  if (( RECORD_WRITTEN )); then
-    ol_record_restore || { message record-unwritten field=overseer step=restore >&2; [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2; }
-    RECORD_WRITTEN=0
-  fi
-  if [[ -n "$detail" ]]; then printf '%s\n' "$detail" > "$DEP_ERR"; else : > "$DEP_ERR"; fi
+  ol_session_abandon || { message record-unwritten field=overseer step=restore >&2; [[ -z "$OL_DETAIL" ]] || printf '%s\n' "$OL_DETAIL" >&2; }
   die "$@"
 }
+# A signal that lands during the runtime's create runs its trap once the call
+# returns; ol_session_abandon inside abandon reads the session off the
+# provider's answer and closes it, so it is named here only where create had
+# already returned it.
 interrupted() { # SIGNAL
-  [[ -n "$SESSION" ]] || { ol_session_from_out; SESSION="$OL_SESSION"; }
-  abandon interrupted "session=${SESSION:-none}" "signal=$1"
+  abandon interrupted "session=${OL_SESSION:-none}" "signal=$1"
 }
 trap 'interrupted TERM' TERM
 trap 'interrupted INT' INT
@@ -351,20 +360,15 @@ ol_session_open "$CWD" overseer "$OL_CMD" --session "$SESSION_NAME" || abandon l
 SESSION="$OL_SESSION"
 message overseer-launch "form=$OL_FORM" "lane=$lane_dir" "trust=$OL_TRUST_ROUTE" \
   "session=$SESSION" "window=$OL_WINDOW" "server=$SERVER_SOCKET"
-ol_record_write tmux "$SESSION" "$OL_WINDOW" "$OL_SERVER" "$lane_dir" "$OL_CMD" \
+ol_record_write "$OL_RUNTIME" "$SESSION" "$OL_WINDOW" "$OL_SERVER" "$lane_dir" "$OL_CMD" \
   || abandon record-unwritten field=overseer step=write
-RECORD_WRITTEN=1
 
 if ! ol_session_verify "$SESSION" "$OL_LANE_VAR" "$lane_dir" "$OL_FORM" "$WAIT_SECS"; then
   case "$OL_REASON" in
     wrong-lane) abandon overseer-wrong-lane "picked=$lane_dir" "observed=$OL_OBSERVED" ;;
     result-unknown) abandon overseer-lane-unknown "result=$OL_RESULT" ;;
-    dialog)
-      printf '%s\n' "$OL_DETAIL" > "$DEP_ERR"
-      abandon overseer-dialog "session=$SESSION" "waited=$OL_WAITED" ;;
-    not-working)
-      printf '%s\n' "$OL_DETAIL" > "$DEP_ERR"
-      abandon overseer-not-working "session=$SESSION" "waited=$OL_WAITED" ;;
+    dialog) abandon overseer-dialog "session=$SESSION" "waited=$OL_WAITED" ;;
+    not-working) abandon overseer-not-working "session=$SESSION" "waited=$OL_WAITED" ;;
     inspect-failed) abandon launch-failed "step=$OL_STEP" ;;
     *) abandon launch-failed step=verify "reason=$OL_REASON" ;;
   esac

@@ -192,9 +192,31 @@ out="$(run_watch TMUX= ORCH_TMUX_SESSION=nosuch OVERSEE_WATCH_SUCCEED=/nonexiste
 assert_eq "rc=$rc first=$(sed -n 1p "$err")" \
   "rc=2 first=oversee-watch: session-missing session=nosuch source=ORCH_TMUX_SESSION server=$DEFAULT_SOCKET lanes=gh-1" \
   "an ORCH_TMUX_SESSION tmux does not hold is refused naming it, its source and the server" "$err"
+# A has-session answer that is not "can't find session" is the call failing,
+# not a missing session: a socket with no server is tmux-failed, not
+# session-missing, so the fix it prescribes is not "start that session".
+new_case session_setting_no_server
+touch "$STUB_DIR/has-session-fail"
+err="$TMP_ROOT/e-session_setting_no_server"
+out="$(run_watch TMUX= ORCH_TMUX_SESSION=main OVERSEE_WATCH_SUCCEED=/nonexistent -- --max-loops 1 gh-1 2>"$err")" \
+  && rc=0 || rc=$?
+assert_eq "rc=$rc first=$(sed -n 1p "$err")" \
+  "rc=2 first=oversee-watch: tmux-failed operation=has-session server=$DEFAULT_SOCKET lanes=gh-1" \
+  "a has-session that answers no-server is refused tmux-failed, not session-missing" "$err"
+# The must-fail control: without the answer split every failure is read as a
+# missing session, so a dead server prescribes starting the session.
+mutant session_no_server_unsplit lib/tmux-server.sh '    [[ "$WATCH_SESSION_DETAIL" == "can'"'"'t find session"* ]] \' '    if false; then :; fi \'
+new_case session_no_server_unsplit_mutant
+touch "$STUB_DIR/has-session-fail"
+err="$TMP_ROOT/e-session_no_server_unsplit"
+out="$(WATCH_BIN="$MUTANT" run_watch TMUX= ORCH_TMUX_SESSION=main OVERSEE_WATCH_SUCCEED=/nonexistent -- --max-loops 1 gh-1 2>"$err")" \
+  && rc=0 || rc=$?
+assert_eq "first=$(sed -n 1p "$err" | sed 's/ session=[^ ]*//')" \
+  "first=oversee-watch: session-missing source=ORCH_TMUX_SESSION server=$DEFAULT_SOCKET lanes=gh-1" \
+  "control: without the answer split a dead server is misreported as a missing session" "$err"
 # The must-fail control: a resolver that reads the setting without asking tmux
 # for it takes the missing session as resolved, and the lane reads gone.
-mutant session_setting_unchecked oversee-watch '    if out="$(tmux has-session -t "=$ORCH_TMUX_SESSION" 2>&1)"; then' '    if out="" && true; then'
+mutant session_setting_unchecked lib/tmux-server.sh '    if out="$(tmux has-session -t "=$ORCH_TMUX_SESSION" 2>&1)"; then' '    if out="" && true; then'
 new_case session_setting_unchecked_mutant
 err="$TMP_ROOT/e-session_setting_unchecked_mutant"
 out="$(WATCH_BIN="$MUTANT" run_watch TMUX= ORCH_TMUX_SESSION=nosuch OVERSEE_WATCH_SUCCEED=/nonexistent -- --max-loops 1 gh-1 2>"$err")" \
@@ -582,7 +604,7 @@ take_case() { # NAME ORIGIN PANE
     LIVE_PIDS+=" $OLD"
   fi
   err="$TMP_ROOT/e-$1"
-  out="$(repeat_watch_run TMUX_PANE=%9 LIFECYCLE_SLEEP_FAIL=1 -- 2>"$err")" && rc=0 || rc=$?
+  out="$(repeat_watch_run ${TAKE_ENV[@]+"${TAKE_ENV[@]}"} TMUX_PANE=%9 LIFECYCLE_SLEEP_FAIL=1 -- 2>"$err")" && rc=0 || rc=$?
 }
 stopped() { cat "$STUB_DIR/fixture.log" 2>/dev/null || echo no; }
 # Whether any of the files a restart leaves beside the state is still there.
@@ -606,6 +628,16 @@ assert_contains "$(cat "$err")" "oversee-succeed: watch-restarted pid=1 pane=%9"
 take_case take_pane_gone hand %8
 assert_eq "stopped=$(stopped) taken=$(grep -c "^oversee-watch: watch-taken-over pid=$OLD pane=%8 reason=pane-gone\$" "$err")" \
   "stopped=stopped taken=1" "a watch serving a pane tmux no longer lists is stopped and replaced" "$err"
+
+# The same takeover from OUTSIDE tmux, ORCH_TMUX_SESSION naming the fleet: the
+# person's server lists the panes just the same, so a stale record whose pane
+# it no longer lists is taken over, not refused watch-running. watch_pane_gone
+# gates on the same tmux_server_named its sibling checks read.
+TAKE_ENV=(TMUX= ORCH_TMUX_SESSION=main)
+take_case take_pane_gone_setting hand %8
+assert_eq "stopped=$(stopped) taken=$(grep -c "^oversee-watch: watch-taken-over pid=$OLD pane=%8 reason=pane-gone\$" "$err")" \
+  "stopped=stopped taken=1" "outside tmux with the setting, a pane the server no longer lists is taken over" "$err"
+unset TAKE_ENV
 
 take_case take_hand hand %9
 assert_eq "rc=$rc refused=$(grep -c "^oversee-watch: watch-running pid=$OLD pane=%9 " "$err") stopped=$(stopped) out=${out:-none}" \

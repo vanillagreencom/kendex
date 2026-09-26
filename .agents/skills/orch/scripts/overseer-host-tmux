@@ -70,6 +70,7 @@ message() { # KEY FIELD=VALUE...
     session-gone) text='The tmux server no longer lists this session, so the verb has nothing to act on.' ;;
     session-unreadable) text='The session could not be read; tmux says why below.' ;;
     tmux-session-missing) text='The tmux session named for the new window does not exist on this server.' ;;
+    tmux-failed) text='The tmux call the operation field names failed for another reason than an absent session, no server at the socket among them; tmux says why below.' ;;
     create-failed) text='The window could not be opened or typed into; a window already opened was closed again. The step field names the call that failed.' ;;
     stop-failed) text='The window could not be closed.' ;;
   esac
@@ -158,8 +159,11 @@ case "$VERB" in
       target="$(pane_field "$AFTER" '#{window_id}')" || die session-unreadable "session=$AFTER"
     else
       # Exact (`=`): tmux otherwise takes a prefix match for a session name.
+      # Only tmux's own "can't find session" is a missing session; any other
+      # answer is the call failing.
       if ! err="$(tmux has-session -t "=$TMUX_SESSION_NAME" 2>&1)"; then
         printf '%s\n' "$err" > "$DEP_ERR"
+        [[ "$err" == "can't find session"* ]] || die tmux-failed operation=has-session "session=$TMUX_SESSION_NAME"
         die tmux-session-missing "session=$TMUX_SESSION_NAME"
       fi
       if ! last_idx="$(tmux list-windows -t "=$TMUX_SESSION_NAME" -F '#{window_index}' 2>"$DEP_ERR" | tail -1)" \
