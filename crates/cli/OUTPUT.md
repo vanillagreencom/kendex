@@ -39,7 +39,7 @@ ASCII applies when `LC_ALL`, `LC_CTYPE` or `LANG`, first non-empty, names no UTF
 |---|---|---|
 | `header(verb, target)` | `kendex <verb>` and the target | nothing |
 | `section(title, count, status)` | blank line, bold title in the status colour, muted count | `title:` |
-| `row(status, label, Value)` | glyph and label; under it the value's copy as a command, then its remark wrapped | `  label — copy remark` |
+| `row(status, &[Span], Value)` | glyph and label, its commands never broken; under it the value's copy as a command, then its remark wrapped | `  label — copy remark` |
 | `change(name, old, new, scope)` | `name  old → new  [scope]` | the same, uncoloured |
 | `callout(what, why, choices)` | blank line, `!` and what, then why and the choices | `! what`, then why and the choices, indented |
 | `choices(&[Choice])` | `[Enter] Set up · [s] Skip`, the recommended one bold | the same, uncoloured |
@@ -51,7 +51,7 @@ ASCII applies when `LC_ALL`, `LC_CTYPE` or `LANG`, first non-empty, names no UTF
 | `details(title, lines, folded)` | folded: the title and a line count | the title indented two spaces, every line indented four |
 | `note(&[Span])` | muted text, its commands never broken | the spans joined |
 
-Rich wraps prose between words and never breaks a command: text a component takes as `Span::Command`, or a `Value`'s copy, starts a new line where it does not fit and is drawn whole, and the terminal wraps one wider than a line. Each component escapes the values it is handed; `ui::stdout` and `ui::stderr` print what it drew unchanged. Snapshot tests per component in both renderings sit in `src/ui/components/tests.rs`; `tests/presentation/design.rs` holds `NO_COLOR` output equal to a pipe's and a rich run at `COLUMNS=80` to 80 cells, commands aside. `tests/tapes/check.tape` records the pilot with vhs.
+Rich wraps prose between words and never breaks a command: text a component takes as `Span::Command` (core marks the commands in a report line and its next step with `report::Sentence`), or a `Value`'s copy, starts a new line where it does not fit and is drawn whole, and the terminal wraps one wider than a line. Each component escapes the values it is handed; `ui::stdout` and `ui::stderr` print what it drew unchanged. Snapshot tests per component in both renderings sit in `src/ui/components/tests.rs`; `tests/presentation/design.rs` holds `NO_COLOR` output equal to a pipe's and a rich run at `COLUMNS=80` to 80 cells, commands aside. `tests/tapes/check.tape` records the pilot with vhs.
 
 ## cliclack
 

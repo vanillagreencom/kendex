@@ -1,5 +1,5 @@
 use kendex_core::drift::report::{
-    CheckReport, CheckStatus, Class, Line, Remedy, Section, page, render_plain,
+    CheckReport, CheckStatus, Class, Line, Remedy, Section, Sentence, page, render_plain,
 };
 
 use super::{screen, verdict};
@@ -8,7 +8,7 @@ use crate::ui::testing::{plain, rich, tagged};
 fn line(class: Class, text: &str, remedy: Option<Remedy>) -> Line {
     Line {
         class,
-        text: text.to_owned(),
+        text: text.to_owned().into(),
         remedy,
     }
 }
@@ -171,6 +171,48 @@ fn a_narrow_terminal_keeps_the_next_steps_command_whole() {
             "<90>this checkout to refresh project</>",
             "<90>packages.</>",
         ]
+    );
+}
+
+/// A command inside an item's own text, the backup a stale drift hook
+/// line names, is drawn whole on a line of its own when it is wider than
+/// the room, while the prose around it wraps; plain keeps the line as the
+/// joined text.
+#[test]
+fn a_command_in_an_item_is_never_broken() {
+    let script = "/home/me/dev/app/.claude/hooks/kendex-drift-check.sh";
+    let backup = format!("cp -i {script} {script}.backup");
+    let text = Sentence::default()
+        .prose("the session drift hook script is from an older kendex; backup first if needed: ")
+        .command(&backup);
+    let report = CheckReport {
+        status: CheckStatus::Drift,
+        sections: vec![section(
+            "stale",
+            vec![Line {
+                class: Class::Drift,
+                text: text.clone(),
+                remedy: None,
+            }],
+        )],
+        snapshot_age_secs: None,
+        project_target: None,
+        deep_pass_owed: false,
+    };
+    let rows = tagged(&screen(&rich(80), &report, "here").report);
+    assert_eq!(
+        rows,
+        [
+            "",
+            "<1;33>stale</>  <90>1</>",
+            "  <33>!</> the session drift hook script is from an older kendex; backup first if",
+            "    needed:",
+            &format!("    {backup}"),
+        ]
+    );
+    assert_eq!(
+        screen(&plain(), &report, "here").report,
+        ["stale:".to_owned(), format!("  {text}")]
     );
 }
 

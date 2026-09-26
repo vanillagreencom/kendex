@@ -34,7 +34,7 @@ fn drawn(style: &Style) -> Vec<(&'static str, Vec<String>)> {
             "row",
             style.row(
                 Status::Failed,
-                "skill tidy",
+                &[Span::Prose("skill tidy")],
                 Some(Value {
                     copy: "fix: kendex apply",
                     remark: Some("(not from here)"),
@@ -43,7 +43,7 @@ fn drawn(style: &Style) -> Vec<(&'static str, Vec<String>)> {
         ),
         (
             "row bare",
-            style.row(Status::Done, "skill tidy [claude]", None),
+            style.row(Status::Done, &[Span::Prose("skill tidy [claude]")], None),
         ),
         (
             "change",
@@ -256,7 +256,7 @@ fn a_hostile_value_is_escaped_by_every_component() {
             style.section(hostile, 1, Status::Notice),
             style.row(
                 Status::Notice,
-                hostile,
+                &[Span::Prose(hostile), Span::Command(hostile)],
                 Some(Value {
                     copy: hostile,
                     remark: Some(hostile),
@@ -300,7 +300,7 @@ fn a_rich_line_wraps_inside_its_width() {
         style.header("check", long),
         style.row(
             Status::Decision,
-            long,
+            &[Span::Prose(long)],
             Some(Value {
                 copy: "fix: kendex apply",
                 remark: Some(long),
@@ -331,7 +331,7 @@ fn a_command_wider_than_the_room_is_drawn_whole() {
     let command = "fix: kendex apply --replace-unmanaged --project-path /home/me/dev/app";
     let drawn = rich(40).row(
         Status::Decision,
-        "skill tidy",
+        &[Span::Prose("skill tidy")],
         Some(Value {
             copy: command,
             remark: Some("(no --project-path form; the hook refuses this verb here)"),

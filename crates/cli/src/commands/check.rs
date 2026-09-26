@@ -1,6 +1,8 @@
 use std::process::ExitCode;
 
-use kendex_core::drift::report::{self, CheckReport, CheckStatus, Class, Page, PageSection};
+use kendex_core::drift::report::{
+    self, CheckReport, CheckStatus, Class, Page, PageSection, Sentence,
+};
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
 
@@ -106,28 +108,25 @@ fn screen(style: &Style, checked: &CheckReport, target: &str) -> Screen {
                     copy,
                     remark: fix.remark(),
                 });
-            report.extend(style.row(status(item.class), &item.text, value));
+            report.extend(style.row(status(item.class), &spans(&item.text), value));
         }
     }
     if let Some(age) = &page.age {
         report.extend(style.note(&[Span::Prose(age)]));
     }
     if let Some(next) = &page.next {
-        let spans: Vec<Span<'_>> = next
-            .0
-            .iter()
-            .map(|span| match span {
-                report::Span::Prose(text) => Span::Prose(text),
-                report::Span::Command(text) => Span::Command(text),
-            })
-            .collect();
-        report.extend(style.note(&spans));
+        report.extend(style.note(&spans(next)));
     }
     Screen {
         head: style.header("check", target),
         report,
         verdict: style.summary(outcome(checked.status), &verdict(&page)),
     }
+}
+
+/// A report sentence as the components take it, its commands still marked.
+fn spans(sentence: &Sentence) -> Vec<Span<'_>> {
+    sentence.spans().into_iter().map(Span::from).collect()
 }
 
 /// Drift wants the reader's decision, a verdict still owed is a notice,

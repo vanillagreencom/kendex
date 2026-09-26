@@ -149,6 +149,16 @@ pub enum Span<'a> {
     Command(&'a str),
 }
 
+impl<'a> From<kendex_core::drift::report::Span<'a>> for Span<'a> {
+    fn from(span: kendex_core::drift::report::Span<'a>) -> Span<'a> {
+        use kendex_core::drift::report::Span as Report;
+        match span {
+            Report::Prose(text) => Span::Prose(text),
+            Report::Command(text) => Span::Command(text),
+        }
+    }
+}
+
 /// `spans` broken into lines no wider than their room in terminal cells:
 /// the first line has `first` cells to fill, the rest `rest`, the room each
 /// has after its indent. Prose breaks at spaces, and a word wider than the

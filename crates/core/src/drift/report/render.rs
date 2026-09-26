@@ -22,31 +22,6 @@ fn age_word(secs: u64) -> String {
     }
 }
 
-/// Text a reader reads with the commands in it marked: a rendering may
-/// break prose between words, and never a command, which split at a space
-/// reads as a shorter one.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Span {
-    Prose(String),
-    Command(String),
-}
-
-/// Spans read in order: their plain spelling is each span's text, joined
-/// with nothing between.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Sentence(pub Vec<Span>);
-
-impl fmt::Display for Sentence {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for span in &self.0 {
-            match span {
-                Span::Prose(text) | Span::Command(text) => out.write_str(text)?,
-            }
-        }
-        Ok(())
-    }
-}
-
 fn next_action(report: &CheckReport) -> Option<Sentence> {
     let mut global = false;
     let mut project = false;
@@ -63,42 +38,34 @@ fn next_action(report: &CheckReport) -> Option<Sentence> {
     }
     let command =
         |global| match Remedy::render_refresh_action(global, report.project_target.as_ref()) {
-            Some(Fix::Here(command)) => Some(Span::Command(format!("{command} --yes"))),
+            Some(Fix::Here(command)) => Some(format!("{command} --yes")),
             Some(Fix::Elsewhere(_)) | None => None,
         };
-    let prose = |text: &str| Span::Prose(text.to_owned());
-    let list_global = || Span::Command("kendex check --global".to_owned());
     let checkout = match report.project_target {
         Some(ProjectTarget::MainCheckout(_)) => " in that checkout",
         Some(ProjectTarget::Worktree(_)) | None => " in this checkout",
     };
-    let spans = match (global, project) {
+    let next = Sentence::default().prose("Next: ");
+    Some(match (global, project) {
         (false, false) => return None,
-        (true, false) => vec![
-            prose("Next: "),
-            list_global(),
-            prose(" to list global packages; "),
-            command(true)?,
-            prose(" to refresh them."),
-        ],
-        (false, true) => vec![
-            prose("Next: "),
-            command(false)?,
-            prose(checkout),
-            prose(" to refresh project packages."),
-        ],
-        (true, true) => vec![
-            prose("Next: "),
-            list_global(),
-            prose(" to list global packages; "),
-            command(true)?,
-            prose(" for global packages; "),
-            command(false)?,
-            prose(checkout),
-            prose(" for project packages."),
-        ],
-    };
-    Some(Sentence(spans))
+        (true, false) => next
+            .command("kendex check --global")
+            .prose(" to list global packages; ")
+            .command(&command(true)?)
+            .prose(" to refresh them."),
+        (false, true) => next
+            .command(&command(false)?)
+            .prose(checkout)
+            .prose(" to refresh project packages."),
+        (true, true) => next
+            .command("kendex check --global")
+            .prose(" to list global packages; ")
+            .command(&command(true)?)
+            .prose(" for global packages; ")
+            .command(&command(false)?)
+            .prose(checkout)
+            .prose(" for project packages."),
+    })
 }
 
 /// A report as its complete rendering shows it: every item with the remedy
@@ -124,7 +91,7 @@ pub struct PageSection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageItem {
     pub class: Class,
-    pub text: String,
+    pub text: Sentence,
     pub fix: Option<PageFix>,
 }
 
@@ -175,7 +142,7 @@ impl PageItem {
     pub fn line(&self) -> String {
         match &self.fix {
             Some(fix) => format!("{} — {fix}", self.text),
-            None => self.text.clone(),
+            None => self.text.to_string(),
         }
     }
 }

@@ -120,21 +120,23 @@ impl Style {
 
     /// One thing, what is true of it, and what goes with it: a remedy, a
     /// version, a path.
-    pub fn row(&self, status: Status, label: &str, value: Option<Value<'_>>) -> Vec<String> {
-        let label = escaped(label);
+    /// The label's commands are marked, so the rich rendering never breaks
+    /// one.
+    pub fn row(&self, status: Status, label: &[Span<'_>], value: Option<Value<'_>>) -> Vec<String> {
+        let label = Escaped::from(label);
         let value = value.map(|value| (escaped(value.copy), value.remark.map(escaped)));
         match self.look {
             Look::Plain => vec![match value {
-                Some((copy, Some(remark))) => format!("  {label} — {copy} {remark}"),
-                Some((copy, None)) => format!("  {label} — {copy}"),
-                None => format!("  {label}"),
+                Some((copy, Some(remark))) => format!("  {} — {copy} {remark}", label.joined()),
+                Some((copy, None)) => format!("  {} — {copy}", label.joined()),
+                None => format!("  {}", label.joined()),
             }],
             Look::Rich { palette, width } => {
                 let lead = format!(
                     "  {} ",
                     paint(palette, status.token(), self.glyph(status.symbol()))
                 );
-                let mut lines = fitted(width, &lead, 4, 4, &[Span::Prose(&label)], str::to_owned);
+                let mut lines = fitted(width, &lead, 4, 4, &label.spans(), str::to_owned);
                 if let Some((copy, remark)) = value {
                     lines.extend(fitted(
                         width,
@@ -402,28 +404,47 @@ impl Style {
     /// A footnote to what is above it: an age, a pointer onward. The
     /// commands in it are marked, so the rich rendering never breaks one.
     pub fn note(&self, spans: &[Span<'_>]) -> Vec<String> {
-        let texts: Vec<(bool, String)> = spans
-            .iter()
-            .map(|span| match span {
-                Span::Prose(text) => (false, escaped(text)),
-                Span::Command(text) => (true, escaped(text)),
-            })
-            .collect();
+        let text = Escaped::from(spans);
         match self.look {
-            Look::Plain => vec![texts.into_iter().map(|(_, text)| text).collect()],
-            Look::Rich { palette, width } => {
-                let spans: Vec<Span<'_>> = texts
-                    .iter()
-                    .map(|(command, text)| match command {
-                        true => Span::Command(text),
-                        false => Span::Prose(text),
-                    })
-                    .collect();
-                fitted(width, "", 0, 0, &spans, |chunk| {
-                    paint(palette, Token::Muted, chunk)
-                })
-            }
+            Look::Plain => vec![text.joined()],
+            Look::Rich { palette, width } => fitted(width, "", 0, 0, &text.spans(), |chunk| {
+                paint(palette, Token::Muted, chunk)
+            }),
         }
+    }
+}
+
+/// Spans with each run escaped, and whether it is a command kept.
+struct Escaped(Vec<(bool, String)>);
+
+impl From<&[Span<'_>]> for Escaped {
+    fn from(spans: &[Span<'_>]) -> Escaped {
+        Escaped(
+            spans
+                .iter()
+                .map(|span| match span {
+                    Span::Prose(text) => (false, escaped(text)),
+                    Span::Command(text) => (true, escaped(text)),
+                })
+                .collect(),
+        )
+    }
+}
+
+impl Escaped {
+    fn spans(&self) -> Vec<Span<'_>> {
+        self.0
+            .iter()
+            .map(|(command, text)| match command {
+                true => Span::Command(text),
+                false => Span::Prose(text),
+            })
+            .collect()
+    }
+
+    /// The plain spelling: every run joined with nothing between.
+    fn joined(&self) -> String {
+        self.0.iter().map(|(_, text)| text.as_str()).collect()
     }
 }
 

@@ -381,7 +381,10 @@ pub(super) fn backup_command(env: &Env, path: &std::path::Path) -> Option<String
 #[serde(rename_all = "camelCase")]
 pub struct Line {
     pub class: Class,
-    pub text: String,
+    /// The plain spelling in JSON, with its commands marked for a
+    /// rendering that wraps.
+    #[specta(type = String)]
+    pub text: Sentence,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remedy: Option<Remedy>,
 }
@@ -636,26 +639,26 @@ fn main_checkout_project(
     crate::discover::is_project(&mapped).then_some(mapped)
 }
 
-fn drift(text: String, remedy: Option<Remedy>) -> Line {
+fn drift(text: impl Into<Sentence>, remedy: Option<Remedy>) -> Line {
     Line {
         class: Class::Drift,
-        text,
+        text: text.into(),
         remedy,
     }
 }
 
-fn unevaluated(text: String, remedy: Remedy) -> Line {
+fn unevaluated(text: impl Into<Sentence>, remedy: Remedy) -> Line {
     Line {
         class: Class::Unevaluated,
-        text,
+        text: text.into(),
         remedy: Some(remedy),
     }
 }
 
-fn unknown(text: String) -> Line {
+fn unknown(text: impl Into<Sentence>) -> Line {
     Line {
         class: Class::Unknown,
-        text,
+        text: text.into(),
         remedy: None,
     }
 }
@@ -829,6 +832,7 @@ pub fn wants_background_refresh(env: &Env, scopes: &[Scope], checked: &CheckRepo
 
 mod render;
 mod scope;
+mod sentence;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -837,6 +841,7 @@ mod tests_evidence;
 mod tests_render;
 mod text;
 
-pub use render::{Page, PageFix, PageItem, PageSection, Sentence, Span, page, render_plain};
+pub use render::{Page, PageFix, PageItem, PageSection, page, render_plain};
 use scope::check_scope;
+pub use sentence::{Sentence, Span};
 pub use text::{Text, fold};

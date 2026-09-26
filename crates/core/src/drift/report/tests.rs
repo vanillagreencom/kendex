@@ -131,6 +131,17 @@ fn an_old_drift_hook_names_reinstall_and_backup_commands() {
         .and_then(|section| section.lines.first())
         .unwrap();
     assert_eq!(stale.remedy, Some(Remedy::DriftHook { global: false }));
+    // The backup is a command, so a rendering that wraps never breaks it.
+    let backup = format!(
+        "cp -i {} {}",
+        crate::names::quoted(&script.display().to_string()),
+        crate::names::quoted(&format!("{}.backup", script.display()))
+    );
+    assert!(
+        stale.text.spans().contains(&Span::Command(&backup)),
+        "{:?}",
+        stale.text.spans()
+    );
     let text = item_lines(&report);
     assert!(
         text.contains(&format!(

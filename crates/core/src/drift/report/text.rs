@@ -23,8 +23,9 @@ pub enum Text {
     /// whole point of such a line is to name things a person then acts on,
     /// so half of one is not a shorter report but a wrong one. What bounds
     /// it is [`render_plain`]'s whole-report budget, which drops a line
-    /// entire rather than leaving part of a path behind.
-    Own(String),
+    /// entire rather than leaving part of a path behind. A command in it is
+    /// marked, so a rendering that wraps never breaks it.
+    Own(Sentence),
     /// A whole sentence carrying bytes from outside — a delegated script's
     /// verdict, an io error's cause — which is never cut.
     ///
@@ -55,8 +56,8 @@ pub fn fold(report: &mut CheckReport, title: &str, class: Class, text: Text) {
     let line = Line {
         class,
         text: match text {
-            Text::Own(text) => printable(&text),
-            Text::Relayed { producer, line } => relayed(&producer, &line),
+            Text::Own(text) => text.map(scrubbed).trimmed(),
+            Text::Relayed { producer, line } => relayed(&producer, &line).into(),
         },
         remedy: None,
     };
@@ -119,9 +120,15 @@ fn relayed(producer: &str, line: &str) -> String {
 /// nothing a path carries can forge a second report line, and credentials
 /// become fingerprints. For text whose length this crate already bounds.
 fn printable(raw: &str) -> String {
+    scrubbed(raw).trim().to_owned()
+}
+
+/// [`printable`] without the trim, for one run of a sentence: the spaces
+/// at a run's edges are the ones between it and its neighbours.
+fn scrubbed(raw: &str) -> String {
     let cleaned: String = raw
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
-    crate::quality::redact(cleaned.trim())
+    crate::quality::redact(&cleaned)
 }
