@@ -20,9 +20,9 @@
 # measured=false, and only this script can tell the two apart: the cause alone
 # does not, so a consumer that must not treat a fallback as a class reads the
 # marker rather than a list of causes of its own. The render proof runs `kendex verify --scope
-# project --json` in that private checkout, with `--base` set to the base-rev:
-# line harness-only printed, and reads its document. The classes, first match
-# winning:
+# project --json --at-record` in that private checkout, with `--base` set to
+# the base-rev: line harness-only printed, and reads its document. The classes,
+# first match winning:
 #
 #   render   every changed path is a file kendex generated, `kendex verify`
 #            reports files checked and none failed, and every changed path is
@@ -33,7 +33,11 @@
 #            cause=render-path-unowned, and a shared file whose rest the run
 #            cannot vouch for answers cause=render-path-partial. That verdict
 #            is that every installed file equals a fresh render of its
-#            declared source as the local mirror resolves it, that the two
+#            declared source at the commit the install record names, a
+#            commit on the history of the revision the local mirror
+#            resolves that source to, so a render the catalog has moved
+#            past since it was pushed is weighed on its own terms and
+#            printed as a `render-stale:` line per source it trails. The two
 #            files kendex keeps about itself are as it writes them, and that
 #            every recorded entry is one the declarations back. Provenance
 #            is proved by rendering, never by trusting .kendex-generated.json
@@ -104,6 +108,12 @@ ORCH_CONTRACT_REQUIRED=1
 # is the render proof's whole contract with kendex: a kendex printing another
 # version, or none, answers standard rather than being read by guesswork.
 VERIFY_DOCUMENT_VERSION=1
+# The flag that weighs a render at the commits its install record names.
+# A kendex without it is still called, and weighs the render at its sources'
+# revisions now, which refuses every render the catalog has moved past: the
+# kendex main builds the harness-ci and review-gate templates pin before the
+# first build carrying the flag. The probe goes once both pins carry it.
+VERIFY_AT_RECORD=--at-record
 # One tab, resolved once. The ownership pass reads it once per printed
 # position per changed path, and a substitution at that read forks a
 # subshell every time: minutes over a repository's own refresh.
@@ -381,6 +391,13 @@ renders_match() {
   fi
   verify_args=(verify --scope project --json)
   [ -z "$base_rev" ] || verify_args=("${verify_args[@]}" --base "$base_rev")
+  if ! verify_help="$( (cd -- "$proof_tree" && kendex verify --help) 2>/dev/null)"; then
+    verify_help=""
+  fi
+  case "$verify_help" in
+    *"$VERIFY_AT_RECORD"*) verify_args=("${verify_args[@]}" "$VERIFY_AT_RECORD") ;;
+    *) printf 'render-reading: current cause=verify-lacks-at-record\n' >&2 ;;
+  esac
   if ! VERIFY_JSON="$( (cd -- "$proof_tree" && kendex "${verify_args[@]}") 2>"$work/verify-stderr" )"; then
     cat "$work/verify-stderr" >&2
     RENDER_REFUSAL="cause=verify-refused"
@@ -416,6 +433,14 @@ renders_match() {
     return 1
   fi
   printf 'render-proof: checked=%s failed=%s\n' "$checked" "$failed" >&2
+  # Each source the record trails, as the document names it. The render was
+  # weighed at the record's commits, so this is the render's age, never a
+  # refusal.
+  if ! jq -r '.stale // [] | .[] | "render-stale: source=\(.source) recorded=\(.recorded) resolved=\(.resolved)"' \
+    <<<"$VERIFY_JSON" >&2 2>/dev/null; then
+    RENDER_REFUSAL="cause=verify-document-unreadable version=$version"
+    return 1
+  fi
 }
 
 # The counts say a run passed; the positions its passing rows printed say

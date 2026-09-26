@@ -100,8 +100,21 @@ pub struct Row {
     pub positions: Vec<Placed>,
 }
 
-/// The whole document: the rows, the closing counts, and whether the run
-/// closed clean, which is its exit status as a field.
+/// A repository source the record trails: the commit the record names
+/// for it, and the one it resolves to now. Every render read at the
+/// recorded commit is behind the source by the commits between the two.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stale {
+    #[serde(flatten)]
+    pub scope: Scope,
+    pub source: String,
+    pub recorded: String,
+    pub resolved: String,
+}
+
+/// The whole document: the rows, the closing counts, whether the run
+/// closed clean, which is its exit status as a field, and the sources
+/// the record trails.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Document {
     pub version: u32,
@@ -109,18 +122,70 @@ pub struct Document {
     pub checked: usize,
     pub failed: usize,
     pub rows: Vec<Row>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stale: Vec<Stale>,
 }
 
 impl Document {
-    pub fn new(clean: bool, checked: usize, failed: usize, rows: Vec<Row>) -> Document {
+    pub fn new(
+        clean: bool,
+        checked: usize,
+        failed: usize,
+        rows: Vec<Row>,
+        stale: Vec<Stale>,
+    ) -> Document {
         Document {
             version: DOCUMENT_VERSION,
             clean,
             checked,
             failed,
             rows,
+            stale,
         }
     }
+}
+
+/// What a verify pass renders each recorded package at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reading {
+    /// The revision each declaration resolves to now.
+    Current,
+    /// The commit the record names for it. The render agrees with that
+    /// commit by construction, so [`record`] holds the commit itself to
+    /// the history of the one its source resolves to now: a record cannot
+    /// pick a commit its source never published on the declared revision,
+    /// though a mirror fetches every ref the remote serves.
+    Recorded,
+}
+
+impl Reading {
+    /// The plan this reading renders through.
+    pub fn plan_options(self) -> crate::engine::PlanOptions {
+        match self {
+            Reading::Current => crate::engine::PlanOptions::default(),
+            Reading::Recorded => crate::engine::PlanOptions::at_record(),
+        }
+    }
+}
+
+/// Each repository source whose recorded commit is not the one the same
+/// declaration resolves to now. A source recorded for another repository
+/// or revision is not stale but a different declaration, which [`record`]
+/// names.
+pub fn stale(scope: &Scope, lock: &Lock, report: &EngineReport) -> Vec<Stale> {
+    lock.sources
+        .iter()
+        .filter_map(|(name, recorded)| {
+            let now = report.record.sources.get(name)?;
+            (now.repo == recorded.repo && now.rev == recorded.rev && now.commit != recorded.commit)
+                .then(|| Stale {
+                    scope: scope.clone(),
+                    source: name.clone(),
+                    recorded: recorded.commit.clone(),
+                    resolved: now.commit.clone(),
+                })
+        })
+        .collect()
 }
 
 /// One bookkeeping file's standing: where it sits, and everything found
@@ -201,12 +266,15 @@ pub fn inventory(scope: &Scope, report: &EngineReport) -> Result<Option<Standing
 /// honest record is behind a moving branch and stays honest, and a commit
 /// the mirror never held is one no resolution produced. A mirror that
 /// cannot answer for a commit is named as such, so the reader fetches it
-/// rather than searching the record for an edit nobody made.
+/// rather than searching the record for an edit nobody made. Under
+/// [`Reading::Recorded`] an entry's and a set's commit is also held to
+/// the history of the commit its source resolves to now.
 pub fn record(
     env: &Env,
     scope: &Scope,
     lock: &Lock,
     report: &EngineReport,
+    reading: Reading,
 ) -> Result<Option<Standing>> {
     let path = crate::lock::lock_path(env, scope);
     let Some(text) = crate::fs::read_if_exists(&path)? else {
@@ -256,6 +324,14 @@ pub fn record(
             problems.push(format!("{key}: {field} is not what this pass records"));
         }
         problems.extend(entry_commit_problem(env, key, entry, would_record));
+        if let (Reading::Recorded, Some(commit)) = (reading, &entry.source_commit) {
+            problems.extend(published_problem(
+                env,
+                &format!("{key}: sourceCommit {commit}"),
+                commit,
+                planned.sources.get(&entry.source),
+            ));
+        }
     }
     for (name, recorded) in &lock.sources {
         problems.extend(source_problem(
@@ -279,6 +355,14 @@ pub fn record(
             recorded,
             planned.bundles.get(name),
         ));
+        if reading == Reading::Recorded {
+            problems.extend(published_problem(
+                env,
+                &format!("set {name}: commit {}", recorded.commit),
+                &recorded.commit,
+                planned.sources.get(&recorded.source),
+            ));
+        }
     }
     for name in planned.bundles.keys() {
         if !lock.bundles.contains_key(name) {
@@ -418,6 +502,24 @@ fn bundle_problem(
         &declared.commit,
         &format!("set {name}: commit {}", recorded.commit),
     )
+}
+
+/// A commit a held pass rendered at, held to the history of the commit
+/// its source resolves to now. A source this pass resolved nothing for
+/// leaves nothing to hold the commit to, which is named rather than
+/// passed.
+fn published_problem(
+    env: &Env,
+    subject: &str,
+    recorded: &str,
+    source: Option<&SourceRev>,
+) -> Option<String> {
+    let Some(source) = source else {
+        return Some(format!(
+            "{subject}: its source resolved to nothing this pass could hold the commit to"
+        ));
+    };
+    history_problem(env, &source.repo, recorded, &source.commit, subject)
 }
 
 fn selector(rev: Option<&str>) -> &str {

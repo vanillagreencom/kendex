@@ -486,6 +486,14 @@ impl PlanOptions {
         }
     }
 
+    /// [`PlanOptions::for_packages`] naming nobody: every package the
+    /// lock can place holds at the commit it records. What `verify
+    /// --at-record` renders against, so a record the source has moved past
+    /// is weighed on its own terms.
+    pub fn at_record() -> Self {
+        PlanOptions::for_packages([])
+    }
+
     /// [`PlanOptions::for_package`] that also discards that package's own
     /// edits. Both fields are set from one pair, so the package whose
     /// edits go and the package that moves can never be different ones.

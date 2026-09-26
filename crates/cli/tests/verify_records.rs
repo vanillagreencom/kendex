@@ -1658,3 +1658,73 @@ fn a_moved_hook_is_replayed_with_its_retirement_first() {
         "{document:?}"
     );
 }
+
+/// `--at-record` renders each recorded package at the commit the record
+/// names. A catalog that moved on past the install stales every row of
+/// the plain verify, while the same record weighed at its own commits is
+/// clean and names the source it trails in the document. A commit the
+/// mirror holds off the declared revision's history, here a side branch
+/// whose skill bytes are the installed ones, renders identically, so only
+/// the history check fails it: dropping that check is this surface's
+/// must-fail control.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn at_record_weighs_a_record_the_source_moved_past_on_its_own_commits() {
+    let world = world();
+    let installed_at = git(&world.catalog, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    git(&world.catalog, &["checkout", "-q", "-b", "side"]);
+    write(&world.catalog.join("NOTES.md"), "A side note.\n");
+    commit(&world.catalog, "a side branch");
+    let side = git(&world.catalog, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    git(&world.catalog, &["checkout", "-q", "main"]);
+    let skill = world.catalog.join("skills/second/SKILL.md");
+    let text = fs::read_to_string(&skill).unwrap();
+    write(&skill, &format!("{text}\nA paragraph added later.\n"));
+    commit(&world.catalog, "the catalog moves on");
+    let tip = git(&world.catalog, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    let fetched = kendex(&world.home, &world.project, &["source", "refresh"]);
+    assert!(fetched.status.success(), "{}", said(&fetched));
+
+    let (current, _) = verify(&world, None);
+    assert!(!current.status.success(), "{}", said(&current));
+    let at_record = |world: &World| {
+        let output = kendex(
+            &world.home,
+            &world.project,
+            &["verify", "--scope", "project", "--json", "--at-record"],
+        );
+        let document: Document = serde_json::from_slice(&output.stdout).unwrap();
+        (output, document)
+    };
+    let (held, document) = at_record(&world);
+    assert!(held.status.success(), "{}", said(&held));
+    assert!(
+        document.stale.iter().any(|stale| stale.source == "cat"
+            && stale.recorded == installed_at
+            && stale.resolved == tip),
+        "{document:?}"
+    );
+
+    on_record(move |lock| {
+        for key in ["skill:second:claude", "skill:second:codex"] {
+            lock["entries"][key]["sourceCommit"] = serde_json::Value::String(side.clone());
+        }
+    })(&world);
+    let (off_history, document) = at_record(&world);
+    assert!(!off_history.status.success(), "{}", said(&off_history));
+    let record = row(&document, "record", RECORD, None).unwrap();
+    assert!(
+        record
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("is not on the declared revision's history"),
+        "{record:?}"
+    );
+}
