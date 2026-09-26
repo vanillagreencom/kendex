@@ -198,14 +198,15 @@ cross-repository write. A hosted send is outside that check: its root is a
 path on another host, and nothing here can establish which repository owns it.
 
 Exit codes: 0 did what it says; 2 usage, an unreadable message file, an item
-outside the alphabet, a lock, a write or a host that failed; 124 `wait`
-reached --timeout with no answer. Refusal keys, first line
-`lane-mail: <key>=<value>`: verb-invalid, option-unknown, option-conflict,
-missing-value, option-required, item-invalid, after-invalid, seconds-invalid,
-command-missing, file-unreadable, root-unresolved, repo-unresolved,
-repo-self, lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
-write-failed, host-append, host-unreachable, mail-read-failed, timeout,
-item-case-variant, mailbox-missing. `duplicate` is the one key whose value follows ` id=`
+outside the alphabet, a lock, a write or a host that failed; 69
+`lane-host-busy`, lane-host's own status for a call it refused at its per-home
+cap, passed through; 124 `wait` reached --timeout with no answer. Refusal
+keys, first line `lane-mail: <key>=<value>`: verb-invalid, option-unknown,
+option-conflict, missing-value, option-required, item-invalid, after-invalid,
+seconds-invalid, command-missing, file-unreadable, root-unresolved,
+repo-unresolved, repo-self, lane-foreign, mailbox-unsafe, cursor-invalid,
+duplicate, lock-failed, write-failed, host-append, host-unreachable,
+mail-read-failed, lane-host-busy, timeout, item-case-variant, mailbox-missing. `duplicate` is the one key whose value follows ` id=`
 rather than `=`, so it names the earlier envelope through the same field the
 receipt above prints.
 
@@ -224,7 +225,9 @@ refuses, so a failed read confirms the host with `lane-host touch` first. A
 failed probe is `host-unreachable`, carrying the host's `state=` from
 `lane-host list` because a stopped host is started and a gone one relaunched.
 A probe that answers reads 2 as a mailbox the lane has not opened and every
-other status as `mail-read-failed`, never as silence.
+other status as `mail-read-failed`, never as silence. A call lane-host refused
+at its per-home cap ran no provider: it is `lane-host-busy` with lane-host's
+exit 69, never probed and never read as a host out of reach.
 
 A hosted write adds its line through `lane-host append`, which takes its lock
 on the host holding the file. That is the same lock a local write takes on the
@@ -275,6 +278,7 @@ lm_message() { # KEY VALUE
     host-append) text='The hosted mailbox could not be appended through lane-host append. The host answered the probe, so the provider declined the write and the line below is what it reported; a provider with no append verb fails here too. Nothing falls back to reading the mailbox and putting it back, which drops a line when two machines write one file.' ;;
     host-unreachable) text='The lane host could not be reached, so the mailbox state is unknown: a read is refused rather than reported as empty, and a write rather than reported as delivered. A stopped host is started; a gone one is relaunched.' ;;
     mail-read-failed) text='The hosted mailbox could not be read and its host answers, so the read is refused rather than reported as empty. A send stopped here appended nothing: a mailbox no read could judge is one no send can be judged against.' ;;
+    lane-host-busy) text='lane-host refused the call at its per-home cap on provider calls, so the mailbox was neither read nor written and the host was not judged. Run the verb again; the line below is the one lane-host printed.' ;;
     timeout) text='No answer to this ask arrived before --timeout.' ;;
     mail) text='Overseer mail landed in this lane mailbox. Run the command below and act on every directive it prints.' ;;
     mailbox-missing) text='The mailbox directory is not there, so no watch of it can wake the lane. Run the watch from the lane worktree, or with --root naming it, for the item its launch created.' ;;
@@ -396,6 +400,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$SCRIPT_DIR/lib/file-lock.sh"
 # shellcheck source=lib/mailbox-append.sh
 . "$SCRIPT_DIR/lib/mailbox-append.sh"
+# shellcheck source=lib/lane-host-slots.sh
+. "$SCRIPT_DIR/lib/lane-host-slots.sh"
 
 # The template names TMPDIR outright, as lib/review-artifact-gates.sh does: a
 # bare `mktemp` reads it only on GNU, and BSD mktemp, the one macOS ships,
@@ -604,8 +610,16 @@ lm_host_answers() {
   local probe_rc=0
   "$SCRIPT_DIR/lane-host" touch --item "$ITEM" >/dev/null 2>"$WORK_DIR/probe.err" || probe_rc=$?
   [ "$probe_rc" -ne 0 ] || return 0
+  lm_host_busy "$probe_rc" "$WORK_DIR/probe.err"
   REFUSE_EXTRA="state=$(lm_host_state)"
   refuse host-unreachable "$ITEM" "$(cat -- "$WORK_DIR/probe.err")"
+}
+
+# A call lane-host refused at its per-home cap ran no provider, so it says
+# nothing about the host and is never probed: the probe would wait for a slot
+# in turn. It exits with lane-host's own status, which a caller reads as busy.
+lm_host_busy() { # STATUS ERR_FILE
+  [ "$1" -ne "$LANE_HOST_BUSY_EXIT" ] || refuse lane-host-busy "$ITEM" "$(cat -- "$2")" "$LANE_HOST_BUSY_EXIT"
 }
 
 # Fetch REMOTE_PATH into DEST, empty when the mailbox does not exist yet. A
@@ -624,6 +638,7 @@ lm_fetch() { # REMOTE_PATH DEST — LM_FETCH_ABSENT 1 where the file was not the
   fi
   "$SCRIPT_DIR/lane-host" cat --item "$ITEM" "$1" >"$2" 2>"$WORK_DIR/host.err" || rc=$?
   [ "$rc" -ne 0 ] || return 0
+  lm_host_busy "$rc" "$WORK_DIR/host.err"
   lm_host_answers
   [ "$rc" -eq 2 ] || refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/host.err")"
   # The host answers and the file is not there: a lane that has not opened its
@@ -849,6 +864,7 @@ lm_append_host() { # FILE LINE
   "$SCRIPT_DIR/lane-host" append --item "$ITEM" "$1" <"$WORK_DIR/send.line" \
     >/dev/null 2>"$WORK_DIR/append.err" || rc=$?
   [ "$rc" -ne 0 ] || return 0
+  lm_host_busy "$rc" "$WORK_DIR/append.err"
   lm_host_answers
   refuse host-append "$ITEM" "$(cat -- "$WORK_DIR/append.err")"
 }

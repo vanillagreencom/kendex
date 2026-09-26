@@ -68,6 +68,8 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | Report settings | `ORCH_REPORT`, `ORCH_REPORT_EVERY_MINUTES`, `ORCH_REPORT_EVERY_ISSUES`, `ORCH_REPORT_UPCOMING`, `ORCH_REPORT_COLUMNS`: `oversee-report --help` | |
 | Watch settings | `ORCH_WATCH_TAIL_LINES`, `ORCH_WATCH_PREPARE_SECS`: `oversee-watch --help` § Environment | |
 | `ORCH_LANE_HOST` | Provider `lane-host` runs: an executable script path or `local`. `open-terminal` launches through it; `--host` overrides. [Host protocol](schemas/lane-host.md) | `local` |
+| `ORCH_LANE_HOST_MAX_CALLS` | Provider processes `lane-host` runs at once per home, across every overseer and checkout on the machine. [Host protocol](schemas/lane-host.md#provider-protocol) | `4` |
+| `ORCH_LANE_HOST_BUSY_WAIT_SECS` | Seconds a `lane-host` call at that cap waits for a slot before it refuses as `lane-host-busy`, exit `69` | `30` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal | empty |
 | `RECONCILE_STALE_HOURS` | Hours before an In Progress or In Review item counts as started-stale in `reconcile-work-items` sweeps | `24` |
 | `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` drives; empty resolves the installed worktree skill's script | resolved |

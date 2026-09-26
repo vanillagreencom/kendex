@@ -121,6 +121,12 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # session. The refusal counts the ssh lines typed in its attempts field.
 ORCH_LANE_SSH_PROMPT_SECS = "60"
 
+# Provider processes lane-host runs at once, per home: every overseer and
+# checkout on the machine shares the count. A call at the cap waits this many
+# seconds for a slot, then refuses as lane-host-busy with exit 69.
+ORCH_LANE_HOST_MAX_CALLS = "4"
+ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
+
 # Rename auto-discovered launch lanes (`<config-dir>=<alias>` pairs); the
 # inventory is always discovered — this only renames it. ORCH_LANE_DIRS
 # covers layouts discovery cannot reach.

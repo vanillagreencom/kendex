@@ -639,6 +639,7 @@ ow_message() { # REASON FIELD=VALUE...
     watch-taken-over) text='A live watch on this fleet state was stopped and this one runs in its place. The reason field says why it could be: succession is the watch oversee-succeed restarted for this pane, pane-gone one whose pane tmux no longer lists.' ;;
     watch-replayed) text='A watch oversee-succeed restarted wrote output no session read, and the restart wrote how it went. Both follow, stdout here and stderr on stderr, and are then removed, so no event it reported and no refusal it ended on is lost.' ;;
     mail-read-failed) text='The lane mailbox could not be read. Fix what lane-mail names rather than reading the lane as silent.' ;;
+    lane-host-busy) text='No lane-host slot freed; the next pass retries.' ;;
     mail-read-invalid) text='The lane mailbox reader did not open with its count line.' ;;
     limit-scan-failed) text='The screen could not be searched for a usage limit. The field names the lane, or the overseer pane where the overseer is the one being read.' ;;
     reset-scan-failed) text='The limit banner could not be searched for its reset clause.' ;;
@@ -1647,6 +1648,7 @@ hosted_clone() { # ITEM STATE
     3)
       lane_failure_set handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=${LANE_HOSTED_GITLINE:-<empty>}"
       return 1 ;;
+    4) lane_failure_set lane-host-busy "" "item=$1"; return 1 ;;
     1)
       HOSTED_GONE=1
       if ! HOSTED_CLONE="$(lane_row_get clone-root "$2" "$1")" || [[ -z "$HOSTED_CLONE" ]]; then
@@ -1682,6 +1684,7 @@ item_state_dir() { # ITEM
   fi
   lane_host_fetch "$SCRIPT_DIR/lane-host" "$1" "$LANE_HOSTED_STATE_PATH" \
     "$ITEM_STATE_DIR/workflow-state-$1.json" "$WORK_DIR/host.err" || rc=$?
+  [[ "$rc" -ne 4 ]] || { lane_failure_set lane-host-busy "" "item=$1"; return 1; }
   if [[ "$rc" -gt 1 ]]; then
     lane_failure_set handoff-read-failed "$(cat "$WORK_DIR/host.err")" "item=$1" "path=${LANE_HOSTED_STATE_PATH%/*}"
     return 1
@@ -2103,6 +2106,7 @@ mail_read() { # ITEM LANE_MAIL_ARGS...
   shift
   MAIL_OUT="$("$LANE_MAIL" "$@" 2>"$WORK_DIR/mail.err")" || rc=$?
   [[ "$rc" -ne 0 ]] || return 0
+  [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { lane_failure_set lane-host-busy "" "item=$item"; return 1; }
   lane_failure_set mail-read-failed "$(cat "$WORK_DIR/mail.err")" "item=$item" "exit=$rc"
   return 1
 }
