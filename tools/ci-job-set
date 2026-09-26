@@ -256,29 +256,41 @@ requirements() {
 # `install.sh` is not read out of `atomic-install.sh`. A skill is also named as
 # `skills/<name>` or `../<name>/`. Exit 2 where the search failed.
 consumers() {
-  local path end n=0 listed deleted files status=0
+  local path paths="" exact candidates files status=0
   set --
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    end='([^A-Za-z0-9_.-]|$)'
-    case "$path" in */) end="" ;; esac
-    set -- "$@" -e "(^|[^A-Za-z0-9_.-])$(printf '%s' "$path" | sed 's/[][\.*^$+?(){}|]/\\&/g')$end"
-    n=$((n + 1))
+    set -- "$@" -e "$path"
+    paths="$paths$path
+"
   done
-  [ "$n" -gt 0 ] || return 0
-  # Tracked and present: a file the working tree deleted is read by nothing.
-  listed="$(git -c core.quotePath=false ls-files)" || return 2
-  deleted="$(git -c core.quotePath=false ls-files --deleted)" || return 2
-  listed="$(printf '%s\n' "$listed" | awk -v mode=path "$PACKAGE_AWK")" || return 2
-  if [ -n "$deleted" ] && [ -n "$listed" ]; then
-    listed="$(grep -vxF -e "$deleted" <<<"$listed")" || [ "$?" -eq 1 ] || return 2
-  fi
-  [ -n "$listed" ] || return 0
+  [ "$#" -gt 0 ] || return 0
+  # git grep's fixed-string pass narrows every tracked file present in the
+  # working tree to the few holding a path at all, at one speed on every
+  # platform; the bounded match then reads those few alone, since BSD grep
+  # runs a long -E alternation over many files far slower than GNU grep.
+  candidates="$(git -c core.quotePath=false grep -l -I -F "$@")" || status=$?
+  case "$status" in
+    0) ;;
+    1) return 0 ;;
+    *) return 2 ;;
+  esac
+  candidates="$(printf '%s\n' "$candidates" | awk -v mode=path "$PACKAGE_AWK")" || return 2
+  [ -n "$candidates" ] || return 0
+  exact="$(printf '%s' "$paths" | awk '{
+    end = /\/$/ ? "" : "([^A-Za-z0-9_.-]|$)"
+    gsub(/[][\\.*^$+?(){}|]/, "\\\\&")
+    print "(^|[^A-Za-z0-9_.-])" $0 end
+  }')" || return 2
   local IFS='
 '
   set -f
+  set --
+  for path in $exact; do
+    set -- "$@" -e "$path"
+  done
   # shellcheck disable=SC2086 # one file per line
-  set -- "$@" $listed
+  set -- "$@" -- $candidates
   set +f
   files="$(grep -lE "$@")" || status=$?
   [ "$status" -le 1 ] || return 2

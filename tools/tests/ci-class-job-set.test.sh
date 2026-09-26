@@ -233,7 +233,6 @@ pins() { echo "$(echo $(lane_sources "$1"))|$(echo $(build_names "$2"))"; } # JO
 check "the declared lists are the pinned sets" "$SOURCES|$NAMES" "$(pins "$JOB_SET" "$ROOT/tools/rust-reads")"
 sources="$(lane_sources "$JOB_SET")" names="$(build_names "$ROOT/tools/rust-reads")"
 while IFS= read -r p; do check "lane source $p runs every lane" "$ALL_ON" "$(selection standard false "$p")"; done <<<"$sources"
-while IFS= read -r p; do sel_row "build name $p is a build input" micro false "$p" "$SHARD_BUILD" +rest; done <<<"$names"
 mkdir -p "$TMP/member/tools"
 sed 's/(\(ci-job-set.\)ci-aggregate/(\1nothing/' "$JOB_SET" >"$TMP/member/tools/ci-job-set"
 sed 's/ \.cargo \\$/ \\/' "$ROOT/tools/rust-reads" >"$TMP/member/tools/rust-reads"
@@ -300,6 +299,11 @@ while IFS='|' read -r class paths expected; do
     "$(SELECT_IN="$READ_WORLD" selection "$class" true "$(printf '%s\n' $paths)")"
 done <<<"$READ_ROWS"
 [ "$read_rows" -ge 6 ] || { echo "the read table read $read_rows rows" >&2; exit 1; }
+# Each declared build name is a build input. Read in the fixture checkout,
+# where no file names one, so the search adds nothing to `rest`.
+while IFS= read -r p; do
+  check "build name $p is a build input" "$BUILD_ROW" "$(SELECT_IN="$READ_WORLD" selection micro false "$p")"
+done <<<"$names"
 mkdir -p "$TMP/no-crates"
 check "a read set rust-reads cannot derive is refused" "exit=2 rust-reads-failed" \
   "$(SELECT_IN="$TMP/no-crates" selection trivial true docs/a.md)"
@@ -442,7 +446,7 @@ done <<'CONTROLS'
 s/^    \[ "\$required" != "\$1" \] || reach_skill "\$skill"$/    :/@skills/orch/scripts/lib/branch-growth.sh
 s/skills\/\*:script) reach_skill "\${package#skills\/}"/skills\/*:script) want_package "$package"/@skills/github/scripts/lib/gh-auth.sh
 s/? "suite" : "script")/? "script" : "script")/@skills/preflight/scripts/preflight
-s/"(^|\[^A-Za-z0-9_.-\])\$(printf/"$(printf/@install.sh
+s/print "(^|\[^A-Za-z0-9_.-\])" \$0 end/print $0 end/@install.sh
 s/^\$path" ;;$/" ;;/@kendex.settings.toml
 /^      \*\.md | \*\.markdown) ;;$/d@README.md
 s/^      \*\/\*) pending="\$pending$/      *.md | *.markdown) ;; *\/*) pending="$pending/@docs/x/policy.md
