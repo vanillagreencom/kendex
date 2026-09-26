@@ -445,8 +445,8 @@ else
 fi
 
 assert_doc_mutant_fails micro_dirty_transfer_is_owned "$micro_workflow" \
-  'the branch is local-only and can be dirty. Transfer it through the worktree owner'"'"'s guarded path, which restores the main checkout to its default branch and moves staged, unstaged and untracked changes with the branch.' \
-  'the branch must be clean. Leave dirty changes in the main checkout and transfer only the branch.' \
+  'the branch is local-only and can be dirty. Transfer it through the worktree owner'"'"'s guarded path, which restores the main checkout to its default branch and moves staged, unstaged and untracked changes with the branch. Run `/orch [BRIEF] [ISSUE_ID]` from the path it prints:' \
+  'the branch must be clean. Leave dirty changes in the main checkout and transfer only the branch. Run `/orch [BRIEF] [ISSUE_ID]` from the path it prints:' \
   "leaving dirty edits in main"
 
 # On a hosted fleet the overseer's main-checkout route runs on the control VM,
