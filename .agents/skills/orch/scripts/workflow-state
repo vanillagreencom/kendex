@@ -1080,10 +1080,11 @@ unit_names_item() { # UNIT ITEM
 # state and the directory holding it.
 #
 # A live item's paths stay whatever their age. An item is live while its own
-# workflow state stands, whatever its age: the item's close-out, `remove`,
-# takes that state when the item ends. With a fleet state, a lane whose record
-# is not `done` is live too; a checkout with no fleet state, where no overseer
-# runs, has only the workflow states to judge by. The
+# workflow state stands and was written within the retention or records a
+# worktree that still stands: the item's close-out, `remove`, takes that state
+# when the item ends. With a fleet state, a lane whose record is not `done` is
+# live too; a checkout with no fleet state, where no overseer runs, has only
+# the workflow states to judge by. The
 # keep list is explicit, and a path on it is never a candidate whatever its age.
 # Nothing leaves the disk or the state before one archive holding all of it is
 # written: a failed archive removes nothing, and the rows are dropped from the
@@ -1142,10 +1143,22 @@ cmd_prune() {
         live+=$'\n'
     fi
     # An item whose own workflow state stands is live under either branch, the
-    # fleet state apart: a lane closed while its item was open keeps that state
-    # for a later resume, and only the item's close-out takes it.
+    # fleet state apart, while that state was written within the retention or
+    # the worktree it records still stands: a lane closed while its item was
+    # open keeps that state for a later resume, and only the item's close-out
+    # takes it. A state past the retention whose worktree is gone is an item
+    # nothing resumes, one a close-out never reached, and it ages out with its
+    # files.
+    local recent wt
     for f in "$sd/$STATE_PREFIX-"*.json; do
         [[ -f "$f" && "$f" != "$sd/${state_file##*/}" ]] || continue
+        if ! recent=$(find "$f" -mtime "-$days" -print 2>&1); then
+            unit="$f" err="$recent"; state_message prune-age-unreadable "$@" >&2; return 1
+        fi
+        if [[ -z "$recent" ]]; then
+            wt=$(jq -r '.worktree // empty' "$f") || return 1
+            [[ -n "$wt" && -d "$wt" ]] || continue
+        fi
         f="${f#"$sd/$STATE_PREFIX-"}"
         live+="${f%.json}"$'\n'
     done
@@ -1165,7 +1178,7 @@ cmd_prune() {
         shopt -u nullglob
     fi
 
-    local item recent kept_by reports=0
+    local item kept_by reports=0
     for unit in ${units[@]+"${units[@]}"}; do
         kept_by=""
         for keep in ${keeps[@]+"${keeps[@]}"}; do
@@ -1414,7 +1427,9 @@ EOF
                                 nothing. Never removes a --keep path, the first
                                 lane record, a path named for a lane whose
                                 record is not done, nor a path named for an
-                                item whose workflow state file stands. Refused
+                                item whose workflow state file stands and was
+                                written within the retention or names a
+                                worktree that still exists. Refused
                                 as prune-progress-overlap where the progress
                                 report directory is or holds the state
                                 directory. Prints "pruned path=PATH" per removed
