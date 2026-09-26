@@ -60,6 +60,12 @@
 #                                               PR, so an evicted pending
 #                                               run strands nothing
 #   w30. zero open PRs / ghost author        -> clean pass
+# A head that moved during the pass (the PR re-read after a failure):
+#   wm1. listed head moved, current converges -> walks the current head, exit 0
+#   wm2. failure on the head the PR still has -> exit 1, as before
+#   wm3. PR closed since the listing          -> skipped, exit 0
+#   wm4-wm6. re-read fails, is malformed, or  -> exit 1
+#        the current head fails too
 #   wp1-wp3. pagination merges               -> page-two PRs enumerate; a
 #                                               page-two guard entry defers
 # The WORKFLOW YAML is asserted in its own suite,
@@ -113,6 +119,12 @@ if [[ -n "${STUB_PREDICATE_FAIL_PR:-}" && "${STUB_PREDICATE_FAIL_PR}" == "${PR_N
   echo "::error::stubbed predicate failure for PR ${PR_NUMBER}" >&2
   exit 2
 fi
+# STUB_PREDICATE_FAIL_HEAD fails only that head's evaluation, the shape of a
+# head a push moved away before the predicate could fetch it.
+if [[ -n "${STUB_PREDICATE_FAIL_HEAD:-}" && "${STUB_PREDICATE_FAIL_HEAD}" == "${HEAD_SHA:-}" ]]; then
+  echo "::error::stubbed predicate failure for head ${HEAD_SHA}" >&2
+  exit 2
+fi
 # 124 is the status a passed per-PR deadline returns, so a row asks for it
 # rather than sleeping out the writer's real bound.
 # A real overrun: the row sets a one-second share and this sleeps past it, so
@@ -136,6 +148,9 @@ chmod +x "$TMP_ROOT/scripts/review-predicate.sh" "$TMP_ROOT/scripts/review-write
 #                       URL); defaults to STUB_GATE_HISTORY; "fail" fails
 #                       only the re-read
 #   STUB_OPEN_PRS       JSON array answered for pulls?state=open
+#   STUB_PR_CURRENT     JSON answered for the single-PR re-read pulls/<n>;
+#                       defaults to that PR's STUB_OPEN_PRS row, open and
+#                       unmoved; "fail" fails the re-read
 #   STUB_POST_LOG       file collecting every status POST's args
 #   (No runs/jobs/rerun stubs: the writer never touches those APIs.)
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
@@ -177,6 +192,18 @@ case "$args" in
     if [[ "${STUB_GATE_HISTORY:-[]}" == "whitespace" ]]; then printf '   \n'; exit 0; fi
     printf '%s\n' "${STUB_GATE_HISTORY:-[]}"
     if [[ -n "${STUB_GATE_HISTORY_PAGE2:-}" ]]; then printf '%s\n' "$STUB_GATE_HISTORY_PAGE2"; fi
+    ;;
+  *"/pulls/"*)
+    number="${args##*/pulls/}"
+    current="${STUB_PR_CURRENT:-}"
+    if [[ "$current" == "fail" ]]; then
+      echo "HTTP 500" >&2
+      exit 1
+    fi
+    if [[ -z "$current" ]]; then
+      current="$(jq -c --argjson n "$number" '.[] | select(.number == $n) + {state: "open"}' <<<"${STUB_OPEN_PRS:-[]}")" || exit 1
+    fi
+    printf '%s\n' "$current"
     ;;
   *"pulls?state=open"*)
     if [[ "${STUB_OPEN_PRS:-[]}" == "fail" ]]; then
@@ -250,6 +277,8 @@ OPEN7='[{"number":7,"head":{"sha":"sha7"},"base":{"sha":"base7"},"user":{"login"
 OPEN8='[{"number":8,"head":{"sha":"sha8"},"base":{"sha":"base8"},"user":{"login":"bob"}}]'
 OPEN_GHOST='[{"number":9,"head":{"sha":"sha9"},"base":{"sha":"base9"},"user":null}]'
 ERROR_PAGE='{"message":"Server Error"}'
+PR7_MOVED='{"number":7,"state":"open","head":{"sha":"sha7new"},"base":{"sha":"base7new"},"user":{"login":"alice"}}'
+PR7_CLOSED='{"number":7,"state":"closed","head":{"sha":"sha7"},"base":{"sha":"base7"},"user":{"login":"alice"}}'
 
 # run_writer MODE ENV — runs the writer under the stubs. MODE is `single`
 # (the single-head recursive contract: PR_NUMBER and HEAD_SHA set), `nohead`
@@ -446,6 +475,20 @@ table \
   "w22d: a whitespace-only open-PR listing exits 1 naming the shape violation|all:workflow_run|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=whitespace|rc=1 posts=none error~writer-list-malformed@acme/widgets=true" \
   "w22e: an error-object open-PR page exits 1 naming the shape violation|all:workflow_run|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=$ERROR_PAGE|rc=1 posts=none error~writer-list-malformed@acme/widgets=true" \
   "w26c: a ghost-authored PR still converges, with an empty PR_AUTHOR handed down|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN_GHOST;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha9 author=-"
+
+echo "=== a head that moved during the pass ==="
+# The listing is read once, so a push before a PR's turn leaves the predicate
+# a head it cannot fetch. The failed PR is re-read once: a moved head is walked
+# on the current head and base, a closed PR is left for the next pass, and a
+# failure on the head the PR still has, an unreadable re-read, or a failure on
+# the current head too, still fails the pass.
+table \
+  "wm1: a listed head that moved converges on the current head and base in the same pass|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN7;STUB_GATE_HISTORY=[];STUB_PREDICATE_FAIL_HEAD=sha7;STUB_PR_CURRENT=$PR7_MOVED|rc=0 posts=pending@sha7new base=base7,base7new notice~writer-head-moved@7=true error~writer-convergence-failed@7=false" \
+  "wm2: a predicate failure on the head the PR still has fails the pass|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN7;STUB_GATE_HISTORY=[];STUB_PREDICATE_FAIL_HEAD=sha7|rc=1 posts=none notice~writer-head-moved@7=false error~writer-convergence-failed@7=true" \
+  "wm3: a PR closed since the listing is skipped as a retry|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[];STUB_PREDICATE_FAIL_HEAD=sha7;STUB_PR_CURRENT=$PR7_CLOSED|rc=0 posts=pending@sha8 notice~writer-head-moved@7=true error~writer-convergence-failed@7=false" \
+  "wm4: a failed re-read keeps the failure and names the read|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN7;STUB_GATE_HISTORY=[];STUB_PREDICATE_FAIL_HEAD=sha7;STUB_PR_CURRENT=fail|rc=1 posts=none error~writer-pr-read-failed@7=true error~writer-convergence-failed@7=true" \
+  "wm5: an error-object re-read keeps the failure and names the read|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN7;STUB_GATE_HISTORY=[];STUB_PREDICATE_FAIL_HEAD=sha7;STUB_PR_CURRENT=$ERROR_PAGE|rc=1 posts=none error~writer-pr-read-failed@7=true error~writer-convergence-failed@7=true" \
+  "wm6: a failure on the current head too fails the pass after one re-read|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN7;STUB_GATE_HISTORY=[];STUB_PREDICATE_FAIL_PR=7;STUB_PR_CURRENT=$PR7_MOVED|rc=1 posts=none base=base7,base7new notice~writer-head-moved@7=true error~writer-convergence-failed@7=true"
 
 echo "=== pagination merges (one array per page; page limits strand state) ==="
 table \
