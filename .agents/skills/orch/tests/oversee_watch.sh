@@ -1246,9 +1246,8 @@ standing_delay_case repeat_delay_standing
 assert_eq "$DELAYS" "60 5" "a lane failure still standing fails no later run, so the delay after it is the mail interval" \
   "$TMP_ROOT/e-repeat_delay_standing"
 
-# A local lane whose worktree sits outside the watch's own checkout (a
-# proposal sweep launched from a source repository) has its mailbox read at
-# the root its record carries, never in this checkout.
+# A local lane whose worktree sits outside the watch's own checkout has its
+# mailbox read at the root its record carries, never in this checkout.
 new_case repeat_state_local_root
 LOCAL_ROOT="$TMP_ROOT/elsewhere/ken-11"
 mkdir -p "$LOCAL_ROOT/tmp/lane-mail/KEN-11"

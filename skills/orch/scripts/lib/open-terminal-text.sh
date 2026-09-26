@@ -280,8 +280,8 @@ Options:
                     each launch's directory is placed: a fleet passes the
                     directory holding the file `workflow-state path oversee`
                     prints from the overseer's checkout, so a launch run
-                    from another repository (a proposal sweep) records into
-                    the state the watch reads. Without it the launch names
+                    from another repository records into the state the
+                    watch reads. Without it the launch names
                     no fleet: no lane record is written and no state is
                     created, which is what a launch-only handoff wants
                     (handoff.md § 2).
