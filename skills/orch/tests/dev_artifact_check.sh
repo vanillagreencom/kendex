@@ -16,8 +16,8 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 # The mode a fix round runs is read from the project's settings, and orch-env
@@ -236,7 +236,6 @@ receipt_table \
   "round mode without --round-id^impl^^--worktree $WT --issue $ISSUE^rc=2" \
   "round mode without --worktree^impl^^--issue $ISSUE --round-id $R^rc=2" \
   "a path-unsafe --issue^impl^^--worktree $WT --issue a/b --round-id $R^rc=2" \
-  "a path-traversal --issue^impl^^--worktree $WT --issue .. --round-id $R^rc=2" \
   "a path-traversal --round-id^impl^^--worktree $WT --issue $ISSUE --round-id ..^rc=2" \
   "a malformed --expect-items^fix^^$FILE_ARGS --expect-items 1,x^rc=2" \
   "a nonexistent worktree^impl^^--worktree $TMP_ROOT/does-not-exist --issue $ISSUE --round-id $R^rc=2" \

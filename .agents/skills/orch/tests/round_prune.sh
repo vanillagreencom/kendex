@@ -24,18 +24,8 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 
-PASS=0
-FAIL=0
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # df as round-prune calls it, `df -P -- PATH`: DF_TARGET_USED percent for a
 # path ending in /target, DF_OUTSIDE_USED for one ending in /cargo-out, 10

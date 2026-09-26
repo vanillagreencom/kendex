@@ -1,5 +1,5 @@
 # Shared sandbox for the oversee-watch suites: the stub binaries every case
-# drives, the assertion helpers, and one `run_watch` entry point.
+# drives, the assertion library, and one `run_watch` entry point.
 #
 # oversee-watch reads GitHub (pr-watch, `gh pr list`), Linear, the tmux
 # panes of the lane windows, and the accounts through `lanes list`.
@@ -10,9 +10,9 @@
 #
 # Sourced, never run: the runners glob tests/*.sh, so nothing here executes on
 # its own. Sourcing it sets the shell options, builds $TMP_ROOT and the stub
-# binaries under it, arms the cleanup trap, and defines the assertion helpers,
-# `new_case` and `run_watch`. A suite sources it, adds its cases, and prints
-# the `pass: N   fail: M` line itself.
+# binaries under it, arms the cleanup trap, sources lib/assertions.sh, and
+# defines `new_case` and `run_watch`. A suite sources it, adds its cases, and
+# prints the `pass: N   fail: M` line itself.
 # Set here as well as in each suite: this file's own body relies on it, and a
 # suite that forgot it must not get a sandbox built without it.
 set -euo pipefail
@@ -36,51 +36,8 @@ OVERSEE_TEST_REAL_DATE="$(command -v date)" \
 # about the screen it claims to describe.
 CODEX_PANES="$REPO_ROOT/skills/orch/tests/fixtures/oversee-watch"
 
-PASS=0
-FAIL=0
-
-dump_stderr() {
-  local file="$1"
-  [[ -n "$file" && -f "$file" ]] || return 0
-  printf '        stderr:\n'
-  sed 's/^/          /' "$file"
-}
-
-assert_eq() {
-  local got="$1" want="$2" name="$3" stderr_file="${4:-}"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-    dump_stderr "$stderr_file"
-  fi
-}
-
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3" stderr_file="${4:-}"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-    dump_stderr "$stderr_file"
-  fi
-}
-
-assert_not_contains() {
-  local haystack="$1" needle="$2" name="$3" stderr_file="${4:-}"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        forbidden substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-    dump_stderr "$stderr_file"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
-}
+# shellcheck source=assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/assertions.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/cases"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"

@@ -22,13 +22,11 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 PANEL='{"agents": ["rev-a"], "reason": "test"}'
 
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 # mutant_scripts and mutate_file, the two halves of the gate's control below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 echo "=== workflow-state re-review cycle cap ==="
 
@@ -38,21 +36,21 @@ sd="$TMP_ROOT/state"
 # init seeds the key, so the first read is a number and not a null the gate
 # has to coalesce.
 seeded="$("$WS" --state-dir "$sd" get KEN-1 .rereview_cycles)"
-[[ "$seeded" == "0" ]] && ok "init seeds rereview_cycles at 0" \
-  || bad "init seeds rereview_cycles at 0" "got=$seeded"
+[[ "$seeded" == "0" ]] && pass "init seeds rereview_cycles at 0" \
+  || fail "init seeds rereview_cycles at 0" "got=$seeded"
 
 # Past the cap: rereview_cycles=5 refuses the re-entry and leaves the state alone.
 "$WS" --state-dir "$sd" update KEN-1 '.rereview_cycles = 5' >/dev/null
 err="$("$WS" --state-dir "$sd" set KEN-1 rereview_panel "$PANEL" 2>&1 >/dev/null)" && rc=0 || rc=$?
 [[ "$rc" -eq 1 ]] && [[ "${err%%$'\n'*}" == "workflow-state: cycle-cap count=5 limit=4" ]] \
-  && ok "rereview_cycles=5 refuses rereview_panel, naming the count and the cap" \
-  || bad "rereview_cycles=5 refuses rereview_panel, naming the count and the cap" "rc=$rc err=$err"
+  && pass "rereview_cycles=5 refuses rereview_panel, naming the count and the cap" \
+  || fail "rereview_cycles=5 refuses rereview_panel, naming the count and the cap" "rc=$rc err=$err"
 panel="$("$WS" --state-dir "$sd" get KEN-1 .rereview_panel)"
-[[ "$panel" == "null" ]] && ok "a refused write leaves rereview_panel unset" \
-  || bad "a refused write leaves rereview_panel unset" "panel=$panel"
+[[ "$panel" == "null" ]] && pass "a refused write leaves rereview_panel unset" \
+  || fail "a refused write leaves rereview_panel unset" "panel=$panel"
 after="$("$WS" --state-dir "$sd" get KEN-1 .rereview_cycles)"
-[[ "$after" == "5" ]] && ok "a refused write does not raise the counter" \
-  || bad "a refused write does not raise the counter" "got=$after"
+[[ "$after" == "5" ]] && pass "a refused write does not raise the counter" \
+  || fail "a refused write does not raise the counter" "got=$after"
 
 # The boundary. The count is entries already taken, so the last permitted
 # entry is the one at cap-1 and the entry AT the cap is refused: a guard that
@@ -63,13 +61,13 @@ after="$("$WS" --state-dir "$sd" get KEN-1 .rereview_cycles)"
 agents="$("$WS" --state-dir "$sd" get KEN-1 '.rereview_panel.agents[0]')"
 raised="$("$WS" --state-dir "$sd" get KEN-1 .rereview_cycles)"
 [[ "$rc" -eq 0 ]] && [[ "$agents" == "rev-a" ]] && [[ "$raised" == "4" ]] \
-  && ok "the fourth entry is permitted and raises the count to the cap" \
-  || bad "the fourth entry is permitted and raises the count to the cap" "rc=$rc agents=$agents got=$raised"
+  && pass "the fourth entry is permitted and raises the count to the cap" \
+  || fail "the fourth entry is permitted and raises the count to the cap" "rc=$rc agents=$agents got=$raised"
 "$WS" --state-dir "$sd" set KEN-1 rereview_panel "$PANEL" >/dev/null 2>&1 && rc=0 || rc=$?
 after4="$("$WS" --state-dir "$sd" get KEN-1 .rereview_cycles)"
 [[ "$rc" -ne 0 ]] && [[ "$after4" == "4" ]] \
-  && ok "the fifth entry is refused at the cap and spends nothing" \
-  || bad "the fifth entry is refused at the cap and spends nothing" "rc=$rc got=$after4"
+  && pass "the fifth entry is refused at the cap and spends nothing" \
+  || fail "the fifth entry is refused at the cap and spends nothing" "rc=$rc got=$after4"
 
 # --- fix rounds outside the loop leave the loop budget alone --------
 # `dev-fix.md` increments `cycles` on EVERY fix round it runs — QA fixes in
@@ -82,13 +80,13 @@ for _ in 1 2 3 4 5 6 7; do
   "$WS" --state-dir "$sd_qa" increment KEN-9 cycles >/dev/null
 done
 tally="$("$WS" --state-dir "$sd_qa" get KEN-9 .cycles)"
-[[ "$tally" == "7" ]] && ok "increment … cycles is unbounded" \
-  || bad "increment … cycles is unbounded" "cycles=$tally"
+[[ "$tally" == "7" ]] && pass "increment … cycles is unbounded" \
+  || fail "increment … cycles is unbounded" "cycles=$tally"
 "$WS" --state-dir "$sd_qa" set KEN-9 rereview_panel "$PANEL" >/dev/null && rc=0 || rc=$?
 budget="$("$WS" --state-dir "$sd_qa" get KEN-9 .rereview_cycles)"
 [[ "$rc" -eq 0 ]] && [[ "$budget" == "1" ]] \
-  && ok "seven fix rounds spend no loop budget — the re-entry still passes" \
-  || bad "seven fix rounds spend no loop budget — the re-entry still passes" "rc=$rc rereview_cycles=$budget"
+  && pass "seven fix rounds spend no loop budget — the re-entry still passes" \
+  || fail "seven fix rounds spend no loop budget — the re-entry still passes" "rc=$rc rereview_cycles=$budget"
 
 # --- the loop scenario, end to end --------------------------------
 # Four § 4 cycles reach the cap, a QA fix round follows, and its § 7 → § 6
@@ -101,27 +99,27 @@ for _ in 1 2 3 4; do
   "$WS" --state-dir "$sd_scn" increment KEN-8 cycles >/dev/null
 done
 spent="$("$WS" --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
-[[ "$spent" == "4" ]] && ok "four § 4 re-entries spend exactly the whole budget" \
-  || bad "four § 4 re-entries spend exactly the whole budget" "got=$spent"
+[[ "$spent" == "4" ]] && pass "four § 4 re-entries spend exactly the whole budget" \
+  || fail "four § 4 re-entries spend exactly the whole budget" "got=$spent"
 "$WS" --state-dir "$sd_scn" set KEN-8 rereview_panel "$PANEL" >/dev/null 2>&1 && rc=0 || rc=$?
-[[ "$rc" -ne 0 ]] && ok "a fifth § 4 re-entry is refused, so the cap is the count allowed" \
-  || bad "a fifth § 4 re-entry is refused, so the cap is the count allowed" "rc=$rc"
+[[ "$rc" -ne 0 ]] && pass "a fifth § 4 re-entry is refused, so the cap is the count allowed" \
+  || fail "a fifth § 4 re-entry is refused, so the cap is the count allowed" "rc=$rc"
 # The QA fix round bumps the tally, then its § 7 → § 6 re-check runs.
 "$WS" --state-dir "$sd_scn" increment KEN-8 cycles >/dev/null
 "$WS" --state-dir "$sd_scn" set KEN-8 qa_recheck_panel "$PANEL" >/dev/null 2>&1 && rc=0 || rc=$?
 qa_agents="$("$WS" --state-dir "$sd_scn" get KEN-8 '.qa_recheck_panel.agents[0]')"
 [[ "$rc" -eq 0 ]] && [[ "$qa_agents" == "rev-a" ]] \
-  && ok "the QA re-check is permitted with the § 4 budget fully spent" \
-  || bad "the QA re-check is permitted with the § 4 budget fully spent" "rc=$rc agents=$qa_agents"
+  && pass "the QA re-check is permitted with the § 4 budget fully spent" \
+  || fail "the QA re-check is permitted with the § 4 budget fully spent" "rc=$rc agents=$qa_agents"
 still="$("$WS" --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
-[[ "$still" == "4" ]] && ok "the QA re-check leaves rereview_cycles where the § 4 loop left it" \
-  || bad "the QA re-check leaves rereview_cycles where the § 4 loop left it" "got=$still"
+[[ "$still" == "4" ]] && pass "the QA re-check leaves rereview_cycles where the § 4 loop left it" \
+  || fail "the QA re-check leaves rereview_cycles where the § 4 loop left it" "got=$still"
 # Repeating it never accrues budget either: the key is outside the cap entirely.
 "$WS" --state-dir "$sd_scn" set KEN-8 qa_recheck_panel "$PANEL" >/dev/null 2>&1 && rc=0 || rc=$?
 again="$("$WS" --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
 [[ "$rc" -eq 0 ]] && [[ "$again" == "4" ]] \
-  && ok "a second QA re-check is permitted and still spends nothing" \
-  || bad "a second QA re-check is permitted and still spends nothing" "rc=$rc got=$again"
+  && pass "a second QA re-check is permitted and still spends nothing" \
+  || fail "a second QA re-check is permitted and still spends nothing" "rc=$rc got=$again"
 
 # --- § 2 records the first-cycle panel -----------------------------
 # The first cycle's panel lands on its own key with its agents and its reason,
@@ -131,15 +129,15 @@ sd_first="$TMP_ROOT/state-first"
 "$WS" --state-dir "$sd_first" set KEN-3 first_panel '{"agents": ["reviewer-doc", "reviewer-error"], "reason": "docs + shell"}' >/dev/null && rc=0 || rc=$?
 first="$("$WS" --state-dir "$sd_first" get KEN-3 '[.first_panel.agents, .first_panel.reason, .rereview_cycles] | tojson')"
 [[ "$rc" -eq 0 && "$first" == '[["reviewer-doc","reviewer-error"],"docs + shell",0]' ]] \
-  && ok "first_panel is written with its agents and its reason and spends no re-review budget" \
-  || bad "first_panel is written with its agents and its reason and spends no re-review budget" "rc=$rc got=$first"
+  && pass "first_panel is written with its agents and its reason and spends no re-review budget" \
+  || fail "first_panel is written with its agents and its reason and spends no re-review budget" "rc=$rc got=$first"
 
 REVIEW_PR_WF="$REPO_ROOT/skills/orch/workflows/review-pr.md"
 section_2() { awk '$0 == "## 2. Prepare Reviewers" { on = 1; next } on && /^## 3[.]/ { on = 0 } on' "$1"; }
 FIRST_WRITE='workflow-state set [ISSUE_ID] first_panel'
 grep -q -F "$FIRST_WRITE" <<<"$(section_2 "$REVIEW_PR_WF")" \
-  && ok "§ 2 records its panel on first_panel" \
-  || bad "§ 2 records no first_panel"
+  && pass "§ 2 records its panel on first_panel" \
+  || fail "§ 2 records no first_panel"
 
 # --- § 7 states which counter governs it --------------------------
 # The doc side of the same separation. § 7 must name its own key and must not
@@ -151,34 +149,34 @@ grep -q -F "$FIRST_WRITE" <<<"$(section_2 "$REVIEW_PR_WF")" \
 section_7() { awk '$0 == "## 7. Handle QA Items" { on = 1; next } on && /^## 8[.]/ { on = 0 } on' "$1"; }
 S7="$(section_7 "$REVIEW_PR_WF")"
 grep -q -F 'qa_recheck_panel' <<<"$S7" \
-  && ok "§ 7 sets its QA panel on its own key" \
-  || bad "§ 7 does not name qa_recheck_panel"
+  && pass "§ 7 sets its QA panel on its own key" \
+  || fail "§ 7 does not name qa_recheck_panel"
 grep -q -F 'rereview_cycles' <<<"$S7" \
-  && bad "§ 7 still names the § 4 budget" "$(grep -n -F 'rereview_cycles' <<<"$S7")" \
-  || ok "§ 7 neither reads nor raises rereview_cycles"
+  && fail "§ 7 still names the § 4 budget" "$(grep -n -F 'rereview_cycles' <<<"$S7")" \
+  || pass "§ 7 neither reads nor raises rereview_cycles"
 grep -q -F 'At The Cap' <<<"$S7" \
-  && bad "§ 7 still routes through § 4's At The Cap check" \
-  || ok "§ 7 routes through no cap check"
+  && fail "§ 7 still routes through § 4's At The Cap check" \
+  || pass "§ 7 routes through no cap check"
 # With no counter, the two convergence exits both need a round to surface
 # nothing new. A loop where every round finds a DIFFERENT blocker fires
 # neither, so the section needs the recurrence exit as well: one root cause
 # reappearing ends it with a structural close, not another patch round.
 grep -q -F 'finding-disposition.md#recurrence' <<<"$S7" \
-  && ok "§ 7 carries the recurrence exit for a loop that never surfaces nothing" \
-  || bad "§ 7 has no exit for a loop where every round finds something new"
+  && pass "§ 7 carries the recurrence exit for a loop that never surfaces nothing" \
+  || fail "§ 7 has no exit for a loop where every round finds something new"
 
 # Other set fields are untouched by the cap.
 "$WS" --state-dir "$sd" set KEN-1 skip_qa true >/dev/null && rc=0 || rc=$?
-[[ "$rc" -eq 0 ]] && ok "set of another field passes with the counter at the cap" \
-  || bad "set of another field passes with the counter at the cap" "rc=$rc"
+[[ "$rc" -eq 0 ]] && pass "set of another field passes with the counter at the cap" \
+  || fail "set of another field passes with the counter at the cap" "rc=$rc"
 
 # The cap follows REVIEW_MAX_CYCLES from the environment.
 "$WS" --state-dir "$sd" init KEN-2 --worktree "$REPO_ROOT" --branch ken-2 >/dev/null
 "$WS" --state-dir "$sd" update KEN-2 '.rereview_cycles = 2' >/dev/null
 err="$(REVIEW_MAX_CYCLES=2 "$WS" --state-dir "$sd" set KEN-2 rereview_panel "$PANEL" 2>&1 >/dev/null)" && rc=0 || rc=$?
 [[ "$rc" -eq 1 ]] && [[ "${err%%$'\n'*}" == "workflow-state: cycle-cap count=2 limit=2" ]] \
-  && ok "REVIEW_MAX_CYCLES=2 allows two entries and refuses the third" \
-  || bad "REVIEW_MAX_CYCLES=2 allows two entries and refuses the third" "rc=$rc err=$err"
+  && pass "REVIEW_MAX_CYCLES=2 allows two entries and refuses the third" \
+  || fail "REVIEW_MAX_CYCLES=2 allows two entries and refuses the third" "rc=$rc err=$err"
 
 # --- planted controls: one per instrument, proving each can fail ----------
 echo
@@ -192,9 +190,9 @@ sdo="$TMP_ROOT/state-ctrl-off"
 "$OFF_WS" --state-dir "$sdo" init KEN-9x --worktree "$REPO_ROOT" --branch ken-9x >/dev/null
 "$OFF_WS" --state-dir "$sdo" update KEN-9x '.rereview_cycles = 4' >/dev/null
 if "$OFF_WS" --state-dir "$sdo" set KEN-9x rereview_panel "$PANEL" >/dev/null 2>&1; then
-  ok "the boundary assertion flags a guard that admits a fifth entry"
+  pass "the boundary assertion flags a guard that admits a fifth entry"
 else
-  bad "the boundary assertion MISSED a guard that admits a fifth entry" "the control refused at the cap"
+  fail "the boundary assertion MISSED a guard that admits a fifth entry" "the control refused at the cap"
 fi
 
 # § 7 changed to the shared key: the assertion must catch the counter
@@ -202,22 +200,22 @@ fi
 CTRL_WF="$TMP_ROOT/review-pr-shared.md"
 sed 's/the § 4 budget `REVIEW_MAX_CYCLES` bounds is neither read nor raised in this section/`rereview_cycles` is read here/' "$REVIEW_PR_WF" > "$CTRL_WF"
 if cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
-  bad "§ 7 counter control planted nothing — its sed program matched no text"
+  fail "§ 7 counter control planted nothing — its sed program matched no text"
 elif grep -q -F 'rereview_cycles' <<<"$(section_7 "$CTRL_WF")"; then
-  ok "the assertion flags rereview_cycles back inside § 7"
+  pass "the assertion flags rereview_cycles back inside § 7"
 else
-  bad "the assertion MISSED rereview_cycles back inside § 7"
+  fail "the assertion MISSED rereview_cycles back inside § 7"
 fi
 
 # The unpatched § 2: no first_panel write, so the first cycle leaves no record.
 CTRL_WF="$TMP_ROOT/review-pr-nofirst.md"
 grep -v -F "$FIRST_WRITE" "$REVIEW_PR_WF" > "$CTRL_WF" || true
 if cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
-  bad "§ 2 first_panel control planted nothing — its filter matched no text"
+  fail "§ 2 first_panel control planted nothing — its filter matched no text"
 elif grep -q -F "$FIRST_WRITE" <<<"$(section_2 "$CTRL_WF")"; then
-  bad "the assertion MISSED § 2 recording no first_panel"
+  fail "the assertion MISSED § 2 recording no first_panel"
 else
-  ok "the assertion flags § 2 recording no first_panel"
+  pass "the assertion flags § 2 recording no first_panel"
 fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

@@ -11,10 +11,8 @@ RW="$SKILL_DIR/scripts/reconcile-work-items"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-PASS=0
-FAIL=0
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 R="$TMP/repo"
 mkdir -p "$R/.cache/linear"
@@ -77,19 +75,19 @@ chmod +x "$TMP/gh-stub"
 OUT=""; RC=0
 OUT="$(cd "$R" && GH_REPO=elsewhere/other GITHUB_REPOSITORY=elsewhere/other RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 
-[ "$RC" -eq 1 ] && ok "findings exit 1" || bad "exit code" "rc=$RC out=$OUT"
-case "$OUT" in *"container-parked issue=T-1"*) ok "the parked container is reported" ;; *) bad "parked container" "$OUT" ;; esac
+[ "$RC" -eq 1 ] && pass "findings exit 1" || fail "exit code" "rc=$RC out=$OUT"
+case "$OUT" in *"container-parked issue=T-1"*) pass "the parked container is reported" ;; *) fail "parked container" "$OUT" ;; esac
 # A "(one PR)" root with Done children is the single-PR bundle contract
 # working, never a parked container.
-case "$OUT" in *"container-parked issue=T-16"*) bad "one-PR bundle flagged as parked" "$OUT" ;; *) ok "a (One PR) bundle root is not container-parked (case-insensitive marker)" ;; esac
-case "$OUT" in *"container-parked issue=T-5"*) bad "healthy container reported" "$OUT" ;; *) ok "a container with a pending child stays quiet" ;; esac
-case "$OUT" in *"T-8"*) bad "closed container reported" "$OUT" ;; *) ok "a closed container stays quiet" ;; esac
-case "$OUT" in *"started-stale issue=T-10"*"pr=merged"*) ok "the stale started item with a merged PR is reported" ;; *) bad "stale merged" "$OUT" ;; esac
-case "$OUT" in *"T-11"*) bad "fresh started reported" "$OUT" ;; *) ok "a fresh started item stays quiet" ;; esac
-case "$OUT" in *"T-12"*) bad "live-PR started reported" "$OUT" ;; *) ok "a stale item with a live PR stays quiet" ;; esac
-case "$OUT" in *"done-unchecked issue=T-13"*) ok "the Done item with open boxes is reported" ;; *) bad "done unchecked" "$OUT" ;; esac
-case "$OUT" in *"T-14"*) bad "all-checked reported" "$OUT" ;; *) ok "a Done item with every box checked stays quiet" ;; esac
-case "$OUT" in *"T-15"*) bad "trashed reported" "$OUT" ;; *) ok "a trashed row stays out of every check" ;; esac
+case "$OUT" in *"container-parked issue=T-16"*) fail "one-PR bundle flagged as parked" "$OUT" ;; *) pass "a (One PR) bundle root is not container-parked (case-insensitive marker)" ;; esac
+case "$OUT" in *"container-parked issue=T-5"*) fail "healthy container reported" "$OUT" ;; *) pass "a container with a pending child stays quiet" ;; esac
+case "$OUT" in *"T-8"*) fail "closed container reported" "$OUT" ;; *) pass "a closed container stays quiet" ;; esac
+case "$OUT" in *"started-stale issue=T-10"*"pr=merged"*) pass "the stale started item with a merged PR is reported" ;; *) fail "stale merged" "$OUT" ;; esac
+case "$OUT" in *"T-11"*) fail "fresh started reported" "$OUT" ;; *) pass "a fresh started item stays quiet" ;; esac
+case "$OUT" in *"T-12"*) fail "live-PR started reported" "$OUT" ;; *) pass "a stale item with a live PR stays quiet" ;; esac
+case "$OUT" in *"done-unchecked issue=T-13"*) pass "the Done item with open boxes is reported" ;; *) fail "done unchecked" "$OUT" ;; esac
+case "$OUT" in *"T-14"*) fail "all-checked reported" "$OUT" ;; *) pass "a Done item with every box checked stays quiet" ;; esac
+case "$OUT" in *"T-15"*) fail "trashed reported" "$OUT" ;; *) pass "a trashed row stays out of every check" ;; esac
 
 # Clean fixture: only healthy rows -> exit 0 with the clean line.
 jq '[.[] | select(.identifier == "T-5" or .identifier == "T-6" or .identifier == "T-7" or .identifier == "T-14" or .identifier == "T-11")]' \
@@ -98,46 +96,46 @@ mv "$R/.cache/linear/issues2.json" "$R/.cache/linear/issues.json"
 OUT=""; RC=0
 OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && case "$OUT" in *"clean"*) true ;; *) false ;; esac \
-  && ok "a healthy tracker exits 0 with the clean line" || bad "clean run" "rc=$RC out=$OUT"
+  && pass "a healthy tracker exits 0 with the clean line" || fail "clean run" "rc=$RC out=$OUT"
 
 # A malformed row inside an array-shaped cache: the scan must die loudly,
 # never end early as a clean pass.
 printf '[{"identifier":"T-BAD"}, 42]' >"$R/.cache/linear/issues.json"
 OUT=""; RC=0
 OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
-[ "$RC" -eq 2 ] && ok "a malformed cache row is a loud collection error" || bad "malformed row" "rc=$RC out=$OUT"
+[ "$RC" -eq 2 ] && pass "a malformed cache row is a loud collection error" || fail "malformed row" "rc=$RC out=$OUT"
 
 # Object-shaped but incomplete rows must not read as a clean tracker: a row
 # without identifier/state carries nothing the scans can inspect.
 printf '[{}]' >"$R/.cache/linear/issues.json"
 OUT=""; RC=0
 OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
-[ "$RC" -eq 2 ] && ok "an empty-object row is a config error, never clean" || bad "empty-object row" "rc=$RC out=$OUT"
+[ "$RC" -eq 2 ] && pass "an empty-object row is a config error, never clean" || fail "empty-object row" "rc=$RC out=$OUT"
 printf '[{"identifier":"T-1","state":{"name":"Todo"}}]' >"$R/.cache/linear/issues.json"
 OUT=""; RC=0
 OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
-[ "$RC" -eq 2 ] && ok "a row missing state.type is a config error" || bad "missing state.type" "rc=$RC out=$OUT"
+[ "$RC" -eq 2 ] && pass "a row missing state.type is a config error" || fail "missing state.type" "rc=$RC out=$OUT"
 
 # A started row without a usable timestamp must be a config error: GNU date
 # parses an empty field as midnight today, which would quietly read as fresh.
 printf '[{"identifier":"T-1","title":"t","state":{"name":"In Progress","type":"started"},"parent":null,"description":"","updatedAt":""}]' >"$R/.cache/linear/issues.json"
 OUT=""; RC=0
 OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
-[ "$RC" -eq 2 ] && ok "a started row with an empty updatedAt is a config error, never fresh" || bad "empty updatedAt" "rc=$RC out=$OUT"
+[ "$RC" -eq 2 ] && pass "a started row with an empty updatedAt is a config error, never fresh" || fail "empty updatedAt" "rc=$RC out=$OUT"
 printf '[{"identifier":"T-1","title":"t","state":{"name":"In Progress","type":"started"},"parent":null,"description":"","updatedAt":"   "}]' >"$R/.cache/linear/issues.json"
 OUT=""; RC=0
 OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
-[ "$RC" -eq 2 ] && ok "a whitespace-only updatedAt is a config error (GNU date parses it as midnight)" || bad "blank updatedAt" "rc=$RC out=$OUT"
+[ "$RC" -eq 2 ] && pass "a whitespace-only updatedAt is a config error (GNU date parses it as midnight)" || fail "blank updatedAt" "rc=$RC out=$OUT"
 printf '[{"identifier":"T-1","title":"t","state":{"name":"In Progress","type":"started"},"parent":null,"description":""}]' >"$R/.cache/linear/issues.json"
 OUT=""; RC=0
 OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
-[ "$RC" -eq 2 ] && ok "a started row with no updatedAt key at all is a config error" || bad "missing updatedAt key" "rc=$RC out=$OUT"
+[ "$RC" -eq 2 ] && pass "a started row with no updatedAt key at all is a config error" || fail "missing updatedAt key" "rc=$RC out=$OUT"
 
 # Missing cache: loud config error, never a clean pass.
 rm "$R/.cache/linear/issues.json"
 OUT=""; RC=0
 OUT="$(cd "$R" && "$RW" 2>&1)" || RC=$?
-[ "$RC" -eq 2 ] && ok "a missing cache is a config error, never clean" || bad "missing cache" "rc=$RC out=$OUT"
+[ "$RC" -eq 2 ] && pass "a missing cache is a config error, never clean" || fail "missing cache" "rc=$RC out=$OUT"
 
 # --- settings-file threshold -------------------------------------------------
 # RECONCILE_STALE_HOURS set in the project's kendex.settings.toml (not the
@@ -152,11 +150,11 @@ cat >"$R2/.cache/linear/issues.json" <<JSON
 JSON
 RC=0
 OUT="$(cd "$R2" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && ok "default 24h threshold stays quiet at 2h" || bad "default threshold" "rc=$RC out=$OUT"
+[ "$RC" -eq 0 ] && pass "default 24h threshold stays quiet at 2h" || fail "default threshold" "rc=$RC out=$OUT"
 printf '[env]\nRECONCILE_STALE_HOURS = "1"\n' >"$R2/kendex.settings.toml"
 RC=0
 OUT="$(cd "$R2" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
-{ [ "$RC" -eq 1 ] && printf '%s' "$OUT" | grep -q "VST-900"; } && ok "settings-file RECONCILE_STALE_HOURS reaches the sweep" || bad "settings-file threshold" "rc=$RC out=$OUT"
+{ [ "$RC" -eq 1 ] && grep -q "VST-900" <<<"$OUT"; } && pass "settings-file RECONCILE_STALE_HOURS reaches the sweep" || fail "settings-file threshold" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

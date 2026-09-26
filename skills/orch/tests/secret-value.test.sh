@@ -10,10 +10,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 PATTERN_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/references/secret-value.ere"
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH"' EXIT
-PASS=0
-FAIL=0
-pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 echo "=== orch secret-value pattern ==="
 

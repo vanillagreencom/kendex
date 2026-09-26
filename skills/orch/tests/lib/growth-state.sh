@@ -50,8 +50,8 @@ mutant_scripts() {
 # running the unmutated script, and a control that cannot fail proves only that
 # its row ran. FILE is a private copy, mutant_scripts' FILE or the caller's
 # own; a symlink is refused, since editing through it would rewrite the
-# shipped script and editing around it would leave the mutant unmutated. The
-# caller supplies assert_eq.
+# shipped script and editing around it would leave the mutant unmutated. Its
+# assert_eq is lib/assertions.sh's, which the caller sources.
 mutate_file() {
   local file="$1" old="$2" new="$3" name
   [[ ! -L "$file" ]] || { printf 'mutate_file: symlink %s\n' "$file" >&2; exit 1; }

@@ -19,13 +19,11 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 # mutant_scripts and mutate_file, the two halves of the control at the end.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 echo "=== workflow-state update --arg/--argjson ==="
 
@@ -47,27 +45,27 @@ CAP_FILTER='.fixed_items = ((.fixed_items // []) | map(select(.location != $loc 
 
 "$WS" --state-dir "$sd" update KEN-1 --arg loc "$LOC" --arg desc "$DESC" --arg src pr-review "$CAP_FILTER" >/dev/null \
   && rc=0 || rc=$?
-[[ "$rc" -eq 0 ]] && ok "the capped-item write succeeds on text with an apostrophe, a quote, and a backslash" \
-  || bad "the capped-item write succeeds on text with an apostrophe, a quote, and a backslash" "rc=$rc"
+[[ "$rc" -eq 0 ]] && pass "the capped-item write succeeds on text with an apostrophe, a quote, and a backslash" \
+  || fail "the capped-item write succeeds on text with an apostrophe, a quote, and a backslash" "rc=$rc"
 
 got_desc="$("$WS" --state-dir "$sd" get KEN-1 '.escalated_items[0].description')"
-[[ "$got_desc" == "$DESC" ]] && ok "the description round-trips byte for byte" \
-  || bad "the description round-trips byte for byte" "got=$got_desc want=$DESC"
+[[ "$got_desc" == "$DESC" ]] && pass "the description round-trips byte for byte" \
+  || fail "the description round-trips byte for byte" "got=$got_desc want=$DESC"
 
 got_loc="$("$WS" --state-dir "$sd" get KEN-1 '.escalated_items[0].location')"
-[[ "$got_loc" == "$LOC" ]] && ok "the location round-trips byte for byte" \
-  || bad "the location round-trips byte for byte" "got=$got_loc want=$LOC"
+[[ "$got_loc" == "$LOC" ]] && pass "the location round-trips byte for byte" \
+  || fail "the location round-trips byte for byte" "got=$got_loc want=$LOC"
 
 got_outcome="$("$WS" --state-dir "$sd" get KEN-1 '.escalated_items[0].outcome')"
-[[ "$got_outcome" == "blocked" ]] && ok "the entry carries outcome blocked" \
-  || bad "the entry carries outcome blocked" "got=$got_outcome"
+[[ "$got_outcome" == "blocked" ]] && pass "the entry carries outcome blocked" \
+  || fail "the entry carries outcome blocked" "got=$got_outcome"
 
 # The superseded entry goes, and only it.
 remaining="$("$WS" --state-dir "$sd" get KEN-1 '.fixed_items | length')"
 survivor="$("$WS" --state-dir "$sd" get KEN-1 '.fixed_items[0].location')"
 [[ "$remaining" == "1" ]] && [[ "$survivor" == "$OTHER_LOC" ]] \
-  && ok "the matching fixed_items entry is dropped and the unrelated one survives" \
-  || bad "the matching fixed_items entry is dropped and the unrelated one survives" "len=$remaining first=$survivor"
+  && pass "the matching fixed_items entry is dropped and the unrelated one survives" \
+  || fail "the matching fixed_items entry is dropped and the unrelated one survives" "len=$remaining first=$survivor"
 
 # --- the documented § 4 form, end to end from an artifact file --------------
 # review-pr § 4 types only a path, an array name, and an index: the finding's
@@ -90,30 +88,30 @@ sda="$TMP_ROOT/state-artifact"
 "$WS" --state-dir "$sda" update KEN-2 --slurpfile art "$ART" --arg src pr-review \
   '$art[0].blockers[0] as $item | .fixed_items = ((.fixed_items // []) | map(select(.location != $item.location or .description != $item.description))) | .escalated_items = ((.escalated_items // []) + [{description: $item.description, location: $item.location, reason: "outstanding at the review cycle cap", outcome: "blocked", source: $src}])' >/dev/null \
   && rc=0 || rc=$?
-[[ "$rc" -eq 0 ]] && ok "the documented artifact-bound write succeeds" \
-  || bad "the documented artifact-bound write succeeds" "rc=$rc"
+[[ "$rc" -eq 0 ]] && pass "the documented artifact-bound write succeeds" \
+  || fail "the documented artifact-bound write succeeds" "rc=$rc"
 
 art_loc="$("$WS" --state-dir "$sda" get KEN-2 '.escalated_items[0].location')"
 art_desc="$("$WS" --state-dir "$sda" get KEN-2 '.escalated_items[0].description')"
-[[ "$art_loc" == "$ART_LOC" ]] && ok "the artifact location round-trips through the file binding" \
-  || bad "the artifact location round-trips through the file binding" "got=$art_loc"
-[[ "$art_desc" == "$ART_DESC" ]] && ok "a multi-line description round-trips through the file binding" \
-  || bad "a multi-line description round-trips through the file binding" "got=$art_desc"
+[[ "$art_loc" == "$ART_LOC" ]] && pass "the artifact location round-trips through the file binding" \
+  || fail "the artifact location round-trips through the file binding" "got=$art_loc"
+[[ "$art_desc" == "$ART_DESC" ]] && pass "a multi-line description round-trips through the file binding" \
+  || fail "a multi-line description round-trips through the file binding" "got=$art_desc"
 
 art_fixed="$("$WS" --state-dir "$sda" get KEN-2 '.fixed_items | length')"
-[[ "$art_fixed" == "0" ]] && ok "the superseded entry is dropped by the artifact-bound write" \
-  || bad "the superseded entry is dropped by the artifact-bound write" "len=$art_fixed"
+[[ "$art_fixed" == "0" ]] && pass "the superseded entry is dropped by the artifact-bound write" \
+  || fail "the superseded entry is dropped by the artifact-bound write" "len=$art_fixed"
 
 err="$("$WS" --state-dir "$sda" update KEN-2 --slurpfile art "$TMP_ROOT/absent.json" '.cycles = 1' 2>&1 >/dev/null)" && rc=0 || rc=$?
 [[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: slurpfile-missing arg1=art arg2=$TMP_ROOT/absent.json"* ]] \
-  && ok "--slurpfile refuses a missing file" \
-  || bad "--slurpfile refuses a missing file" "rc=$rc err=$err"
+  && pass "--slurpfile refuses a missing file" \
+  || fail "--slurpfile refuses a missing file" "rc=$rc err=$err"
 
 printf 'not json' > "$TMP_ROOT/bad.json"
 err="$("$WS" --state-dir "$sda" update KEN-2 --slurpfile art "$TMP_ROOT/bad.json" '.cycles = 1' 2>&1 >/dev/null)" && rc=0 || rc=$?
 [[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: slurpfile-value arg1=art arg2=$TMP_ROOT/bad.json"* ]] \
-  && ok "--slurpfile refuses a file that is not one JSON value" \
-  || bad "--slurpfile refuses a file that is not one JSON value" "rc=$rc err=$err"
+  && pass "--slurpfile refuses a file that is not one JSON value" \
+  || fail "--slurpfile refuses a file that is not one JSON value" "rc=$rc err=$err"
 
 # --- dev-fix § 2 step 6, the entry bound from its own file ------------------
 # Both outcome writes clear the item from BOTH buckets before appending their
@@ -132,12 +130,12 @@ ENTRY="$TMP_ROOT/state-item-KEN-5.json"
 # Round one fixes it.
 jq -n --arg l "$LOC" --arg d "$DESC" '{description: $d, location: $l, commit: "abc123f", source: "pr-review"}' > "$ENTRY"
 "$WS" --state-dir "$sd6" update KEN-5 --slurpfile item "$ENTRY" "$STEP6_FIXED" >/dev/null && rc=0 || rc=$?
-[[ "$rc" -eq 0 ]] && ok "the fixed write succeeds with the entry bound from a file" \
-  || bad "the fixed write succeeds with the entry bound from a file" "rc=$rc"
+[[ "$rc" -eq 0 ]] && pass "the fixed write succeeds with the entry bound from a file" \
+  || fail "the fixed write succeeds with the entry bound from a file" "rc=$rc"
 
 step6_desc="$("$WS" --state-dir "$sd6" get KEN-5 '.fixed_items[0].description')"
-[[ "$step6_desc" == "$DESC" ]] && ok "a description holding a quote and an apostrophe round-trips" \
-  || bad "a description holding a quote and an apostrophe round-trips" "got=$step6_desc"
+[[ "$step6_desc" == "$DESC" ]] && pass "a description holding a quote and an apostrophe round-trips" \
+  || fail "a description holding a quote and an apostrophe round-trips" "got=$step6_desc"
 
 # Round two re-raises the same defect and blocks it: the fixed entry goes.
 jq -n --arg l "$LOC" --arg d "$DESC" '{description: $d, location: $l, reason: "could not fix", outcome: "blocked", source: "pr-review"}' > "$ENTRY"
@@ -145,8 +143,8 @@ jq -n --arg l "$LOC" --arg d "$DESC" '{description: $d, location: $l, reason: "c
 f_len="$("$WS" --state-dir "$sd6" get KEN-5 '.fixed_items | length')"
 e_len="$("$WS" --state-dir "$sd6" get KEN-5 '.escalated_items | length')"
 [[ "$f_len" == "0" ]] && [[ "$e_len" == "1" ]] \
-  && ok "escalating a fixed item leaves it in one bucket" \
-  || bad "escalating a fixed item leaves it in one bucket" "fixed=$f_len escalated=$e_len"
+  && pass "escalating a fixed item leaves it in one bucket" \
+  || fail "escalating a fixed item leaves it in one bucket" "fixed=$f_len escalated=$e_len"
 
 # Round three fixes the escalated item: the escalated entry goes. This is the
 # direction ../workflows/review.md § 4 and a standalone fix round reach, neither of which
@@ -157,8 +155,8 @@ f_len="$("$WS" --state-dir "$sd6" get KEN-5 '.fixed_items | length')"
 e_len="$("$WS" --state-dir "$sd6" get KEN-5 '.escalated_items | length')"
 f_sha="$("$WS" --state-dir "$sd6" get KEN-5 '.fixed_items[0].commit')"
 [[ "$f_len" == "1" ]] && [[ "$e_len" == "0" ]] && [[ "$f_sha" == "def456a" ]] \
-  && ok "fixing an escalated item leaves it in one bucket, against the live sha" \
-  || bad "fixing an escalated item leaves it in one bucket, against the live sha" "fixed=$f_len escalated=$e_len sha=$f_sha"
+  && pass "fixing an escalated item leaves it in one bucket, against the live sha" \
+  || fail "fixing an escalated item leaves it in one bucket, against the live sha" "fixed=$f_len escalated=$e_len sha=$f_sha"
 
 # An unrelated entry in either bucket is untouched by any of it.
 jq -n --arg l "$OTHER_LOC" '{description: "unrelated", location: $l, reason: "skipped", outcome: "skipped", source: "pr-review"}' > "$TMP_ROOT/other.json"
@@ -168,8 +166,8 @@ jq -n --arg l "$LOC" --arg d "$DESC" '{description: $d, location: $l, commit: "0
 other_len="$("$WS" --state-dir "$sd6" get KEN-5 '.escalated_items | length')"
 other_loc="$("$WS" --state-dir "$sd6" get KEN-5 '.escalated_items[0].location')"
 [[ "$other_len" == "1" ]] && [[ "$other_loc" == "$OTHER_LOC" ]] \
-  && ok "an unrelated entry survives a write for a different item" \
-  || bad "an unrelated entry survives a write for a different item" "len=$other_len loc=$other_loc"
+  && pass "an unrelated entry survives a write for a different item" \
+  || fail "an unrelated entry survives a write for a different item" "len=$other_len loc=$other_loc"
 
 # The key is the recorded pair. A description the reviewer re-authored instead
 # of copying leaves the stale entry standing, which is what the re-review
@@ -178,32 +176,32 @@ jq -n --arg l "$LOC" --arg d "$DESC (fix recorded in abc123f did not hold)" '{de
 "$WS" --state-dir "$sd6" update KEN-5 --slurpfile item "$ENTRY" "$STEP6_ESCALATED" >/dev/null
 stale="$("$WS" --state-dir "$sd6" get KEN-5 '.fixed_items | length')"
 [[ "$stale" == "1" ]] \
-  && ok "a re-authored description misses the key and strands the stale entry" \
-  || bad "a re-authored description misses the key and strands the stale entry" "fixed=$stale"
+  && pass "a re-authored description misses the key and strands the stale entry" \
+  || fail "a re-authored description misses the key and strands the stale entry" "fixed=$stale"
 
 # --argjson on the same entry: the shape the file replaces.
 argjson_entry='{"description":"'"$DESC"'","location":"'"$LOC"'","commit":"abc123f","source":"pr-review"}'
 "$WS" --state-dir "$sd6" update KEN-5 --argjson item "$argjson_entry" "$STEP6_FIXED" >/dev/null 2>&1 && rc=0 || rc=$?
-[[ "$rc" -ne 0 ]] && ok "the same entry pasted as --argjson is refused as invalid JSON" \
-  || bad "the same entry pasted as --argjson is refused as invalid JSON" "rc=$rc"
+[[ "$rc" -ne 0 ]] && pass "the same entry pasted as --argjson is refused as invalid JSON" \
+  || fail "the same entry pasted as --argjson is refused as invalid JSON" "rc=$rc"
 
 # --- --argjson binds parsed JSON, and refuses what is not JSON -------------
 "$WS" --state-dir "$sd" update KEN-1 --argjson labels '["needs-review","skills"]' '.qa_labels = $labels' >/dev/null
 labels="$("$WS" --state-dir "$sd" get KEN-1 '.qa_labels | join(",")')"
-[[ "$labels" == "needs-review,skills" ]] && ok "--argjson binds parsed JSON" \
-  || bad "--argjson binds parsed JSON" "labels=$labels"
+[[ "$labels" == "needs-review,skills" ]] && pass "--argjson binds parsed JSON" \
+  || fail "--argjson binds parsed JSON" "labels=$labels"
 
 before="$("$WS" --state-dir "$sd" get KEN-1 '.qa_labels | length')"
 err="$("$WS" --state-dir "$sd" update KEN-1 --argjson labels 'not json' '.qa_labels = $labels' 2>&1 >/dev/null)" && rc=0 || rc=$?
 after="$("$WS" --state-dir "$sd" get KEN-1 '.qa_labels | length')"
 [[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: argjson-value arg1=labels"* ]] && [[ "$before" == "$after" ]] \
-  && ok "--argjson refuses a non-JSON value and writes nothing" \
-  || bad "--argjson refuses a non-JSON value and writes nothing" "rc=$rc err=$err before=$before after=$after"
+  && pass "--argjson refuses a non-JSON value and writes nothing" \
+  || fail "--argjson refuses a non-JSON value and writes nothing" "rc=$rc err=$err before=$before after=$after"
 
 err="$("$WS" --state-dir "$sd" update KEN-1 --argjson pair '1 2' '.cycles = 0' 2>&1 >/dev/null)" && rc=0 || rc=$?
 [[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: argjson-value arg1=pair"* ]] \
-  && ok "--argjson refuses a stream of several values" \
-  || bad "--argjson refuses a stream of several values" "rc=$rc err=$err"
+  && pass "--argjson refuses a stream of several values" \
+  || fail "--argjson refuses a stream of several values" "rc=$rc err=$err"
 
 # false and null are JSON values like any other. Validating with `jq -e .`
 # reads the parsed value's truthiness instead of the parse, so both come back
@@ -213,37 +211,37 @@ err="$("$WS" --state-dir "$sd" update KEN-1 --argjson pair '1 2' '.cycles = 0' 2
 flag_val="$("$WS" --state-dir "$sd" get KEN-1 '.skip_qa')"
 flag_type="$("$WS" --state-dir "$sd" get KEN-1 '.skip_qa | type')"
 [[ "$rc" -eq 0 ]] && [[ "$flag_val" == "false" ]] && [[ "$flag_type" == "boolean" ]] \
-  && ok "--argjson binds the scalar false as a boolean" \
-  || bad "--argjson binds the scalar false as a boolean" "rc=$rc val=$flag_val type=$flag_type"
+  && pass "--argjson binds the scalar false as a boolean" \
+  || fail "--argjson binds the scalar false as a boolean" "rc=$rc val=$flag_val type=$flag_type"
 
 "$WS" --state-dir "$sd" set KEN-1 pre_delegate_sha deadbeef >/dev/null
 "$WS" --state-dir "$sd" update KEN-1 --argjson sha 'null' '.pre_delegate_sha = $sha' >/dev/null && rc=0 || rc=$?
 sha_type="$("$WS" --state-dir "$sd" get KEN-1 '.pre_delegate_sha | type')"
 [[ "$rc" -eq 0 ]] && [[ "$sha_type" == "null" ]] \
-  && ok "--argjson binds the scalar null as JSON null" \
-  || bad "--argjson binds the scalar null as JSON null" "rc=$rc type=$sha_type"
+  && pass "--argjson binds the scalar null as JSON null" \
+  || fail "--argjson binds the scalar null as JSON null" "rc=$rc type=$sha_type"
 
 # --- argument-shape refusals -----------------------------------------------
 err="$("$WS" --state-dir "$sd" update KEN-1 --arg loc 2>&1 >/dev/null)" && rc=0 || rc=$?
 [[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: binding-arguments arg1=--arg"* ]] \
-  && ok "--arg without a VALUE is refused" \
-  || bad "--arg without a VALUE is refused" "rc=$rc err=$err"
+  && pass "--arg without a VALUE is refused" \
+  || fail "--arg without a VALUE is refused" "rc=$rc err=$err"
 
 err="$("$WS" --state-dir "$sd" update KEN-1 '.cycles = 1' '.cycles = 2' 2>&1 >/dev/null)" && rc=0 || rc=$?
 [[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: extra-expression count=2"* ]] \
-  && ok "two jq expressions are refused" \
-  || bad "two jq expressions are refused" "rc=$rc err=$err"
+  && pass "two jq expressions are refused" \
+  || fail "two jq expressions are refused" "rc=$rc err=$err"
 
 err="$("$WS" --state-dir "$sd" update KEN-1 --arg loc "$LOC" 2>&1 >/dev/null)" && rc=0 || rc=$?
 [[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: missing-expression count=0"* ]] \
-  && ok "bindings with no expression are refused" \
-  || bad "bindings with no expression are refused" "rc=$rc err=$err"
+  && pass "bindings with no expression are refused" \
+  || fail "bindings with no expression are refused" "rc=$rc err=$err"
 
 # A bare expression with no bindings still works — the old call shape.
 "$WS" --state-dir "$sd" update KEN-1 '.cycles = 4' >/dev/null
 cycles="$("$WS" --state-dir "$sd" get KEN-1 .cycles)"
-[[ "$cycles" == "4" ]] && ok "an update with no bindings behaves as before" \
-  || bad "an update with no bindings behaves as before" "cycles=$cycles"
+[[ "$cycles" == "4" ]] && pass "an update with no bindings behaves as before" \
+  || fail "an update with no bindings behaves as before" "cycles=$cycles"
 
 # --- must-fail control: the interpolated form on the same input -------------
 echo
@@ -264,8 +262,8 @@ for scalar in false null; do
   "$TRUTHY" --state-dir "$sdt" update KEN-3 --argjson v "$scalar" '.skip_qa = $v' >/dev/null 2>&1 \
     || refused=$((refused + 1))
 done
-[[ "$refused" -eq 2 ]] && ok "the -e form refuses both false and null, which this fix accepts" \
-  || bad "the -e form refuses both false and null, which this fix accepts" "refused=$refused of 2"
+[[ "$refused" -eq 2 ]] && pass "the -e form refuses both false and null, which this fix accepts" \
+  || fail "the -e form refuses both false and null, which this fix accepts" "refused=$refused of 2"
 
 # The form review-pr documented before this change pasted the location into a
 # single-quoted shell word. The apostrophe closes that word and the stray
@@ -277,9 +275,9 @@ sdp="$TMP_ROOT/state-pasted"
 printf "%s --state-dir %s update KEN-4 --arg loc '%s' '.cycles = 1'\n" \
   "$WS" "$sdp" "$ART_LOC" > "$TMP_ROOT/pasted.sh"
 if bash "$TMP_ROOT/pasted.sh" >/dev/null 2>&1; then
-  bad "the pasted-into-quotes form breaks on a location holding an apostrophe" "it parsed and ran"
+  fail "the pasted-into-quotes form breaks on a location holding an apostrophe" "it parsed and ran"
 else
-  ok "the pasted-into-quotes form breaks on a location holding an apostrophe"
+  pass "the pasted-into-quotes form breaks on a location holding an apostrophe"
 fi
 
 sd2="$TMP_ROOT/state-interpolated"
@@ -288,8 +286,8 @@ err="$("$WS" --state-dir "$sd2" update KEN-2 \
   ".escalated_items = ((.escalated_items // []) + [{description: \"$DESC\", location: \"$LOC\", outcome: \"blocked\"}])" 2>&1 >/dev/null)" && rc=0 || rc=$?
 recorded="$("$WS" --state-dir "$sd2" get KEN-2 '.escalated_items | length')"
 [[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: jq-failed state=$sd2/workflow-state-KEN-2.json"* ]] && [[ "$recorded" == "0" ]] \
-  && ok "the interpolated form fails on this text and records nothing" \
-  || bad "the interpolated form fails on this text and records nothing" "rc=$rc recorded=$recorded err=$err"
+  && pass "the interpolated form fails on this text and records nothing" \
+  || fail "the interpolated form fails on this text and records nothing" "rc=$rc recorded=$recorded err=$err"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

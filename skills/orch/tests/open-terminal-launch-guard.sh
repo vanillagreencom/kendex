@@ -31,15 +31,8 @@ SRC_LIB_DIR="$SCRIPTS_DIR/lib"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
-assert_eq() { [[ "$1" == "$2" ]] && ok "$3" || bad "$3" "expected: $2   got: $1"; }
-assert_contains() {
-  grep -qF -- "$2" <<<"$1" && ok "$3" || bad "$3" "wanted substring: $2
-        in: $1"
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # Stub bin. The GUI terminal APPENDS rather than truncating, so a case that
 # expects no launch fails loudly on a stray one instead of overwriting it.

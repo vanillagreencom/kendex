@@ -18,20 +18,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 
-PASS=0
-FAIL=0
-
-# Assert a phrase appears anywhere in a file (tolerant substring match).
-assert_contains() {
-  local file="$1" needle="$2" name="$3"
-  if grep -Fq -- "$needle" "$file"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing: %s\n        file:    %s\n' "$name" "$needle" "$file"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # Assert a phrase appears within a specific `### <heading>` section, so the
 # guidance is anchored to the Single Return Message invariant, not just present
@@ -53,12 +41,10 @@ assert_section_contains() {
     grab { print }
   ' "$file")
   if grep -Fq -- "$needle" <<<"$body"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
+    pass "$name"
   else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing in section "%s": %s\n        file: %s\n' \
-      "$name" "$heading" "$needle" "$file"
+    fail "$name" "missing in section \"$heading\": $needle"
+    printf '        file: %s\n' "$file"
   fi
 }
 
@@ -96,13 +82,13 @@ assert_section_contains "$orch_skill" "$sec" "unrequested commits" \
 
 # --- dev: the send_input MESSAGE is the durable return and the FINAL_ANSWER
 #     echo is expected, not a separate return the agent should author.
-assert_contains "$dev_skill" "send_input" \
+assert_file_contains "$dev_skill" "send_input" \
   "dev SKILL names the Codex send_input return channel"
-assert_contains "$dev_skill" "FINAL_ANSWER" \
+assert_file_contains "$dev_skill" "FINAL_ANSWER" \
   "dev SKILL names the FINAL_ANSWER echo"
-assert_contains "$dev_skill" "durable return" \
+assert_file_contains "$dev_skill" "durable return" \
   "dev SKILL states the send_input MESSAGE is the durable return"
-assert_contains "$dev_skill" "not a separate return" \
+assert_file_contains "$dev_skill" "not a separate return" \
   "dev SKILL states the FINAL_ANSWER echo is not a separate return"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

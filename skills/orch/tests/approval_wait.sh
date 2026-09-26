@@ -18,9 +18,8 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-# The pass/fail counters and the assertion vocabulary every waiter suite shares.
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/runs"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
@@ -761,16 +760,14 @@ table "$REVIEW" \
   'approval-mode pr view 503s then an approval is approved with the count|1 1 3 --json|STUB_APPROVAL_MODE=approved_after_503|rc=0 status=approved transient_api_errors=2'
 
 echo "=== the verdict names the repository it read ==="
-# `gh repo view` answers for the working directory and ignores GH_REPO, so a
-# wait launched from this checkout for another repository's PR read this
-# checkout's same-numbered PR. GH_REPO decides; a value that is not owner/name
-# is refused before any review read, never sent to an API path that cannot
-# hold it. The refusal names the rejected value in its diagnostic and leaves
-# the result's repo empty, so nothing reads an unvalidated candidate as the
+# The resolution ladder is lib/gh-repo.sh's, and gh-repo-resolve.test.sh holds
+# its rows. These hold approval-wait's own use of it: the slug GH_REPO names is the
+# repository the verdict carries, over the checkout `gh repo view` answers for,
+# and a value the resolver refuses is approval-wait's repo-shape error, with the
+# result's repo left empty so nothing reads an unvalidated candidate as the
 # repository the verdict is about.
 table "$APPROVAL" \
   'GH_REPO names the repository, over the checkout gh repo view answers for||GH_REPO=other/elsewhere,STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved repo=other/elsewhere' \
-  'GH_REPO unset names the checkout||STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved repo=owner/repo' \
   'a GH_REPO that is not owner/name is refused||GH_REPO=elsewhere,STUB_APPROVAL_MODE=approved_decision|rc=1 status=error repo= error_line=approval-wait:+repo-shape+repo=elsewhere'
 
 echo "=== text mode prints a result line for every branch the emitter has ==="

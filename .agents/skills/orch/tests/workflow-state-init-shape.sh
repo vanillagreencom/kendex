@@ -15,17 +15,8 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 
-PASS=0
-FAIL=0
-assert_eq() { # GOT WANT NAME
-  if [[ "$1" == "$2" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$3"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$3" "$2" "$1"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 sd="$TMP_ROOT/state"
 "$WS" --state-dir "$sd" init KEN-1 --worktree "$REPO_ROOT" --branch ken-1 >/dev/null

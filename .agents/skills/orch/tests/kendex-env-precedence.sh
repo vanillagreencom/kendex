@@ -22,19 +22,8 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 
-PASS=0
-FAIL=0
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 echo "=== kendex-env precedence ==="
 
@@ -183,9 +172,9 @@ s6_case() { # NAME CONTENT EXPECT_SUBSTRING [EXPORT_ASSIGNMENT]
   code=$?
   set -e
   if [[ "$code" -ne 0 && "$err" == *"$want"* ]]; then
-    PASS=$((PASS + 1)); printf '  ok    scenario 6: %s fails the load\n' "$name"
+    pass "scenario 6: $name fails the load"
   else
-    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 6: %s fails the load (code=%s err=%s)\n' "$name" "$code" "$err"
+    fail "scenario 6: $name fails the load" "code=$code err=$err"
   fi
 }
 s6_case "a duplicate key inside [env]" $'[env]\nDUP = "a"\nDUP = "b"' "kendex-env: duplicate-key file=$PROJ6/kendex.settings.toml key=DUP"
@@ -226,9 +215,9 @@ s8_case() { # NAME STAGE EXPECT_SUBSTRING — STAGE runs inside the project dir
   code=$?
   set -e
   if [ "$code" -ne 0 ] && case "$err" in *"$want"*) true ;; *) false ;; esac; then
-    PASS=$((PASS + 1)); printf '  ok    scenario 8: %s fails the load and names the path\n' "$name"
+    pass "scenario 8: $name fails the load and names the path"
   else
-    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 8: %s fails the load and names the path\n        code=%s stderr: %s\n' "$name" "$code" "$err"
+    fail "scenario 8: $name fails the load and names the path" "code=$code stderr: $err"
   fi
 }
 s8_case "a DIRECTORY at .env.local" 'mkdir .env.local' "kendex-env: not-file arg1=$TMP_ROOT/proj8/.env.local"
@@ -335,9 +324,9 @@ s10_refuses() { # PATH NAME
   code=$?
   set -e
   if [[ "$code" -ne 0 && "$err" == *"kendex-env: private-env-path arg1=$1"* ]]; then
-    PASS=$((PASS + 1)); printf '  ok    scenario 10: %s fails the load and names the path\n' "$2"
+    pass "scenario 10: $2 fails the load and names the path"
   else
-    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 10: %s fails the load and names the path\n        code=%s stderr: %s\n' "$2" "$code" "$err"
+    fail "scenario 10: $2 fails the load and names the path" "code=$code stderr: $err"
   fi
 }
 s10_refuses "/etc/passwd" "an ABSOLUTE path"
@@ -361,9 +350,9 @@ s10_link_refuses() { # NAME REASON — plants the shape, then expects the named 
   code=$?
   set -e
   if [[ "$code" -ne 0 && "$err" == *"kendex-env: $2 arg1=$1"* ]]; then
-    PASS=$((PASS + 1)); printf '  ok    scenario 10: %s fails the load as %s\n' "$1" "$2"
+    pass "scenario 10: $1 fails the load as $2"
   else
-    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 10: %s fails the load as %s\n        code=%s stderr: %s\n' "$1" "$2" "$code" "$err"
+    fail "scenario 10: $1 fails the load as $2" "code=$code stderr: $err"
   fi
 }
 
@@ -435,9 +424,9 @@ s10_backslash=$(
 set -e
 case "$s10_backslash" in
   *"kendex-env: value-syntax"*"key=KENDEX_ENV_FILE"*)
-    PASS=$((PASS + 1)); printf '  ok    scenario 10: a BACKSLASH fails on the value grammar, before the path check\n' ;;
+    pass "scenario 10: a BACKSLASH fails on the value grammar, before the path check" ;;
   *)
-    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 10: a BACKSLASH fails on the value grammar, before the path check\n        stderr: %s\n' "$s10_backslash" ;;
+    fail "scenario 10: a BACKSLASH fails on the value grammar, before the path check" "stderr: $s10_backslash" ;;
 esac
 
 # The caller's environment outranks the project's answer here as it does

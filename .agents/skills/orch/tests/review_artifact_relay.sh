@@ -36,41 +36,8 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 REVIEW_PR="$REPO_ROOT/skills/orch/workflows/review-pr.md"
 SUBMIT_PR="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
 
-PASS=0
-FAIL=0
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_file_contains() {
-  local file="$1" pattern="$2" name="$3"
-  if grep -Fq -- "$pattern" "$file"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing pattern: %s\n        file: %s\n' "$name" "$pattern" "$file"
-  fi
-}
-
-assert_file_not_contains() {
-  local file="$1" pattern="$2" name="$3"
-  if grep -Fq -- "$pattern" "$file"; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        unexpected pattern: %s\n        file: %s\n' "$name" "$pattern" "$file"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # wc, not grep -c: grep exits 1 on a zero count, which under `pipefail` would
 # make "no bad lines" indistinguishable from a broken command.

@@ -35,141 +35,16 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-# The pass/fail counters and the assertion vocabulary every waiter suite shares.
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 
-mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/seq"
-ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
-
-# Sequenced `gh` stub, one poll per numbered fixture — the same contract
-# queue_wait_conflicting.sh documents:
-#   $STUB_SEQ_DIR/state-<n>.json   `pr view --json state,mergedAt,mergeable`
-#   $STUB_SEQ_DIR/queue-<n>.json   queue-membership GraphQL body
-# `<prefix>-last.json` serves every poll past the last numbered fixture, and
-# review-thread reads answer with an empty set so the late-findings guard
-# stays quiet. `STUB_QUEUE_DELAY` makes the queue read itself cost that many
-# seconds on the clock below, the production condition under which a
-# confirmation count can be larger than the remaining budget can hold however
-# short the gaps are made.
-cat > "$TMP_ROOT/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-set -uo pipefail
-
-_next() {
-  local f="$STUB_SEQ_DIR/$1.count" n=0
-  [[ -f "$f" ]] && n="$(cat "$f")"
-  n=$((n + 1))
-  printf '%s' "$n" > "$f"
-  printf '%s' "$n"
-}
-
-_emit_fixture() {
-  local prefix="$1" n="$2" f
-  f="$STUB_SEQ_DIR/$prefix-$n.json"
-  [[ -f "$f" ]] || f="$STUB_SEQ_DIR/$prefix-last.json"
-  if [[ ! -f "$f" ]]; then
-    printf 'stub: no fixture for %s-%s\n' "$prefix" "$n" >&2
-    exit 1
-  fi
-  cat "$f"
-  exit 0
-}
-
-_args_have_sub() {
-  local needle="$1" a
-  shift
-  for a in "$@"; do
-    [[ "$a" == *"$needle"* ]] && return 0
-  done
-  return 1
-}
-
-# Exact, for the field list: a substring match would serve the fixture
-# whatever was asked for, so a dropped field would read as empty and leave
-# the suite green.
-_args_have() {
-  local needle="$1" a
-  shift
-  for a in "$@"; do
-    [[ "$a" == "$needle" ]] && return 0
-  done
-  return 1
-}
-
-case "${1:-}" in
-  auth) [[ "${2:-}" == "status" ]] && { echo "Logged in"; exit 0; } ;;
-  repo) [[ "${2:-}" == "view" ]] && { echo "owner/repo"; exit 0; } ;;
-  api)
-    if [[ "${2:-}" == "graphql" ]]; then
-      if _args_have_sub "reviewThreads" "$@"; then
-        echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
-        exit 0
-      fi
-      [[ -n "${STUB_QUEUE_DELAY:-}" ]] && sleep "$STUB_QUEUE_DELAY"
-      _emit_fixture queue "$(_next graphql)"
-    fi
-    if [[ "${2:-}" == "user" ]]; then echo "test-user"; exit 0; fi
-    if [[ "${2:-}" == repos/*/actions/runs* ]]; then echo '{"workflow_runs":[]}'; exit 0; fi
-    ;;
-  pr)
-    if [[ "${2:-}" == "view" ]]; then
-      if _args_have "state,mergedAt,mergeable" "$@"; then
-        _emit_fixture state "$(_next prview)"
-      fi
-      echo "CLEAN"
-      exit 0
-    fi
-    ;;
-esac
-printf 'unexpected gh call: %s\n' "$*" >&2
-exit 1
-EOF
-chmod +x "$TMP_ROOT/bin/gh"
-
-# Virtual clock, on the same PATH as the gh stub: `date +%s` reads a file the
-# `sleep` stub advances, so the budget arithmetic these cases assert is exact
-# rather than raced against the runner. Full rationale, and the per-case escape
-# hatch back to real time, in lib/virtual-clock.sh. It also means the suite no
-# longer needs `date +%N`, a GNU extension absent on macOS.
-# shellcheck source=lib/virtual-clock.sh
-source "$TEST_DIR/lib/virtual-clock.sh"
-virtual_clock_install "$TMP_ROOT/bin" "$TMP_ROOT/clock"
-
-SEQ_DIR=""
-new_case() {
-  SEQ_DIR="$TMP_ROOT/seq/$1"
-  rm -rf -- "${SEQ_DIR:?}"
-  mkdir -p "$SEQ_DIR"
-}
-
-write_fixture() { # <prefix> <n|last> <json>
-  printf '%s' "$3" > "$SEQ_DIR/$1-$2.json"
-}
+# The sequenced gh stub, the virtual clock, new_case, write_fixture, the q_*
+# queue bodies and run_queue_wait.
+# shellcheck source=lib/queue-wait-seq.sh
+source "$TEST_DIR/lib/queue-wait-seq.sh"
 
 pr_open_mergeable='{"state":"OPEN","mergedAt":null,"mergeable":"MERGEABLE"}'
 pr_open_conflicting='{"state":"OPEN","mergedAt":null,"mergeable":"CONFLICTING"}'
-
-q_in_queue='{"data":{"repository":{"pullRequest":{"id":"PR_node1","isInMergeQueue":true,"mergeQueueEntry":{"state":"QUEUED"},"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
-q_out='{"data":{"repository":{"pullRequest":{"id":"PR_node1","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":null}}}}'
-q_armed_only='{"data":{"repository":{"pullRequest":{"id":"PR_node1","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
-
-run_queue_wait() {
-  local env_args=()
-  while [[ $# -gt 0 && "$1" != "--" ]]; do
-    env_args+=("$1")
-    shift
-  done
-  shift || true
-  (cd "$TMP_ROOT/repo" \
-    && PATH="$TMP_ROOT/bin:$PATH" \
-       env STUB_SEQ_DIR="$SEQ_DIR" \
-           QUEUE_WAIT_CONFIRM_POLLS=2 \
-           QUEUE_WAIT_ARM_GRACE=120 \
-           QUEUE_WAIT_PROBE_INTERVAL=0 \
-           ${env_args[@]+"${env_args[@]}"} \
-           .agents/skills/orch/scripts/queue-wait "$@")
-}
 
 echo "=== queue-wait confirmation against the deadline (KEN-837) ==="
 

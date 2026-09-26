@@ -22,9 +22,8 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-# The pass/fail counters and the assertion vocabulary every waiter suite shares.
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
@@ -103,16 +102,12 @@ case "${1:-}" in
   repo)
     if [[ "${2:-}" == "view" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
-      # Simulate `gh repo view --json nameWithOwner` returning empty so ci-wait
-      # falls back to deriving owner/repo from the origin URL.
-      [[ "${STUB_GH_REPO_VIEW_EMPTY:-0}" == "1" ]] && exit 0
       echo "owner/repo"
       exit 0
     fi
     ;;
   pr)
-    # Capture the --repo slug ci-wait resolved and reject a stale ".git"
-    # suffix the way real gh does ("Could not resolve to a Repository").
+    # Capture the --repo slug ci-wait resolved.
     _repo_arg=""
     _prev=""
     for _a in "$@"; do
@@ -121,10 +116,6 @@ case "${1:-}" in
     done
     if [[ -n "${STUB_REPO_ARG_FILE:-}" && -n "$_repo_arg" ]]; then
       printf '%s' "$_repo_arg" > "$STUB_REPO_ARG_FILE"
-    fi
-    if [[ -n "$_repo_arg" && "$_repo_arg" == *.git ]]; then
-      echo "Could not resolve to a Repository with the name '$_repo_arg'." >&2
-      exit 1
     fi
     if [[ "${2:-}" == "view" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
@@ -387,20 +378,17 @@ observe() {
 }
 
 # stage SPEC — the repo-side fixture one row needs: `envlocal=<line>` writes
-# that line to .env.local (`envlocal=` removes it), `origin=<url>` sets the
-# origin remote. Several items separate with `;`. Every row's stage is applied
-# from a clean repo.
+# that line to .env.local (`envlocal=` removes it). Several items separate
+# with `;`. Every row's stage is applied from a clean repo.
 stage() {
   local spec="$1" items item
   rm -f "$TMP_ROOT/repo/.env.local"
-  git -C "$TMP_ROOT/repo" remote remove origin 2>/dev/null || true
   [[ -n "$spec" ]] || return 0
   IFS=';' read -ra items <<<"$spec"
   for item in "${items[@]}"; do
     case "$item" in
       envlocal=) ;;
       envlocal=*) printf '%s\n' "${item#envlocal=}" > "$TMP_ROOT/repo/.env.local" ;;
-      origin=*) git -C "$TMP_ROOT/repo" remote add origin "${item#origin=}" ;;
       *) echo "stage: unknown item $item" >&2; exit 1 ;;
     esac
   done
@@ -506,26 +494,15 @@ table '1 30 300' \
   'error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 stdout~ci-wait:+error+pr=1+repo=owner/repo=true'
 
 echo "=== the verdict names the repository it read ==="
-# `gh repo view` answers for the working directory and ignores GH_REPO, so a
-# wait launched from this checkout for another repository's PR read this
-# checkout's same-numbered PR. GH_REPO decides, and the slug it names is what
-# reaches `gh --repo`; a value that is not owner/name is refused before any
-# check read. The refusal names the rejected value in its diagnostic and
-# leaves the result's repo empty, so nothing reads an unvalidated candidate
-# as the repository the verdict is about.
+# The resolution ladder is lib/gh-repo.sh's, and gh-repo-resolve.test.sh holds
+# its rows. These hold ci-wait's own use of it: the slug GH_REPO names is the
+# repository the verdict carries and the one `gh --repo` gets, over the
+# checkout `gh repo view` answers for, and a value the resolver refuses is
+# ci-wait's repo-shape error, with the result's repo left empty so nothing
+# reads an unvalidated candidate as the repository the verdict is about.
 table "$JSON" \
   'GH_REPO names the repository, over the checkout gh repo view answers for|||GH_REPO=other/elsewhere|rc=0 verdict=pass repo=other/elsewhere repo_arg=other/elsewhere' \
-  'GH_REPO unset names the checkout||||rc=0 verdict=pass repo=owner/repo repo_arg=owner/repo' \
   'a GH_REPO that is not owner/name is refused|||GH_REPO=elsewhere|rc=1 status=error error_named=true repo= stderr~ci-wait:+repo-shape+repo=elsewhere=true repo_arg=none'
-
-echo "=== the repo slug falls back to the origin URL without its .git suffix ==="
-# When `gh repo view` answers empty, owner/repo comes from the origin URL; the
-# stub rejects a `.git`-suffixed --repo the way gh does, so a pass proves the
-# suffix was stripped and the path segment kept.
-table "$JSON" \
-  'an ssh origin ending in .git|origin=git@github.com:owner/repo.git||STUB_GH_REPO_VIEW_EMPTY=1|rc=0 verdict=pass repo_arg=owner/repo' \
-  'an https origin ending in .git|origin=https://github.com/owner/repo.git||STUB_GH_REPO_VIEW_EMPTY=1|rc=0 verdict=pass repo_arg=owner/repo' \
-  'an https origin without .git keeps its last segment|origin=https://github.com/owner/repo||STUB_GH_REPO_VIEW_EMPTY=1|rc=0 verdict=pass repo_arg=owner/repo'
 
 echo "=== checks are scoped to the latest run per workflow ==="
 # An older cancelled run's jobs are not current failures while the newer run

@@ -24,16 +24,8 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 STATE="$TMP_ROOT/state"
 mkdir -p "$STATE"
 
-PASS=0
-FAIL=0
-assert_eq() { # GOT WANT LABEL
-  if [[ "$1" == "$2" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$3" "$2" "$1"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # One call: its status and every line it printed, newlines shown as `|`.
 standing() { # ITEM

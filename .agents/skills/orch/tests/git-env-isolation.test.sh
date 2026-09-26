@@ -30,13 +30,8 @@ SUBJECT=dev_round_gate.sh
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-PASS=0
-FAIL=0
-ok()  { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
-check() { # check <desc> <expected> <actual>
-  if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1 (expected '$2', got '$3')"; fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # --- A sandbox repository, and a fingerprint of what must not move ----------
 # The log AND the index: an inherited GIT_DIR writes commits, an inherited
@@ -67,10 +62,10 @@ set +e
 run_suite "$TEST_DIR/$SUBJECT" "$sandbox"
 subject_status=$?
 set -e
-check "the subject suite still passes under an inherited git environment" \
-  "0" "$subject_status"
-check "the sandbox repository's log and index are untouched" \
-  "$before" "$(fingerprint "$sandbox")"
+assert_eq "$subject_status" \
+  "0" "the subject suite still passes under an inherited git environment"
+assert_eq "$(fingerprint "$sandbox")" \
+  "$before" "the sandbox repository's log and index are untouched"
 
 # --- 1b. Must-fail: the same run with lib/git-env.sh neutralized -----------
 # Only the lib changes, so a difference here is the clearing and nothing else.
@@ -98,9 +93,9 @@ set +e
 run_suite "$mutant/tests/$SUBJECT" "$mutant_sandbox"
 set -e
 if [[ "$mutant_before" != "$(fingerprint "$mutant_sandbox")" ]]; then
-  ok "must-fail: without the lib the same run writes into the sandbox"
+  pass "must-fail: without the lib the same run writes into the sandbox"
 else
-  bad "must-fail: the sandbox survived a run with the lib neutralized, so the control proves nothing"
+  fail "must-fail: the sandbox survived a run with the lib neutralized, so the control proves nothing"
 fi
 
 # --- 2. Lint: the source line sits directly under the `set` line -----------
@@ -118,11 +113,11 @@ misplaced() { # misplaced <dir> ; names every *.sh in it that is not compliant
   done
 }
 
-check "the lib clears all four variables together" \
+assert_eq "$(grep '^unset ' "$TEST_DIR/lib/git-env.sh")" \
   "unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE" \
-  "$(grep '^unset ' "$TEST_DIR/lib/git-env.sh")"
-check "every suite under tests/ sources the lib under its set line" \
-  "" "$(misplaced "$TEST_DIR")"
+  "the lib clears all four variables together"
+assert_eq "$(misplaced "$TEST_DIR")" \
+  "" "every suite under tests/ sources the lib under its set line"
 
 # --- 2b. Must-fail: an absent line and three present-but-inert ones --------
 probe="$TMP/probe"
@@ -140,9 +135,9 @@ printf '#!/usr/bin/env bash\nset -euo pipefail\nif false; then\n%s\nfi\ngit init
   printf '%s\n' "$SOURCE_LINE"
   printf 'EOF\ngit init -q sandbox\n'
 } > "$probe/heredoc-body.sh"
-check "must-fail: the lint names the absent line and every inert placement" \
+assert_eq "$(misplaced "$probe")" \
   "$(printf 'after-fixture.sh\nbare.sh\ndead-branch.sh\nheredoc-body.sh')" \
-  "$(misplaced "$probe")"
+  "must-fail: the lint names the absent line and every inert placement"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

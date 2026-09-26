@@ -16,13 +16,11 @@ WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 # Outside any checkout, so no project settings file answers for a setting.
 cd "$TMP_ROOT"
 
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 # mutant_scripts and mutate_file, the two halves of the control below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 echo
 echo "--- workflow-state fleet-log ---"
@@ -36,8 +34,8 @@ sd="$TMP_ROOT/state"
 # Rows: ORCH_TAKEOVER_ROWS, then the items the read must print in order.
 while IFS='|' read -r rows want; do
   got="$(ORCH_TAKEOVER_ROWS="$rows" "$WS" --state-dir "$sd" fleet-log takeover | jq -rs 'map(.item) | join(",")')"
-  [[ "$got" == "$want" ]] && ok "takeover at ORCH_TAKEOVER_ROWS=$rows prints exactly the last rows" \
-    || bad "takeover at ORCH_TAKEOVER_ROWS=$rows prints exactly the last rows" "got=$got"
+  [[ "$got" == "$want" ]] && pass "takeover at ORCH_TAKEOVER_ROWS=$rows prints exactly the last rows" \
+    || fail "takeover at ORCH_TAKEOVER_ROWS=$rows prints exactly the last rows" "got=$got"
 done <<'ROWS'
 10|KEN-4,KEN-5,KEN-6,KEN-7,KEN-8,KEN-9,KEN-10,KEN-11,KEN-12,KEN-13
 3|KEN-11,KEN-12,KEN-13
@@ -46,7 +44,7 @@ done <<'ROWS'
 ROWS
 
 got="$(env -u ORCH_TAKEOVER_ROWS "$WS" --state-dir "$sd" fleet-log takeover | jq -s 'length')"
-[[ "$got" == "10" ]] && ok "takeover reads 10 rows by default" || bad "takeover reads 10 rows by default" "got=$got"
+[[ "$got" == "10" ]] && pass "takeover reads 10 rows by default" || fail "takeover reads 10 rows by default" "got=$got"
 
 # The cycle rows oversee-cycle logs, one per merge and one per class at
 # Stop, never fill the takeover window the rulings are handed over in.
@@ -61,30 +59,30 @@ got="$(ORCH_TAKEOVER_ROWS=2 "$WS" --state-dir "$csd" fleet-log takeover | jq -rs
 got="$("$WS" --state-dir "$sd" fleet-log audit | jq -rs 'map(.kind) | unique | join(",")')"
 count="$("$WS" --state-dir "$sd" fleet-log audit | jq -s 'length')"
 [[ "$got" == "proposal,ruling" && "$count" == "8" ]] \
-  && ok "audit prints every proposal and ruling row and no other kind" \
-  || bad "audit prints every proposal and ruling row and no other kind" "kinds=$got count=$count"
+  && pass "audit prints every proposal and ruling row and no other kind" \
+  || fail "audit prints every proposal and ruling row and no other kind" "kinds=$got count=$count"
 
 rc=0
 "$WS" --state-dir "$sd" fleet-log tail >/dev/null 2>"$TMP_ROOT/reader.err" || rc=$?
 key="$(head -n 1 "$TMP_ROOT/reader.err")"
 [[ "$rc" -eq 2 && "$key" == "workflow-state: fleet-log-reader reader=tail" ]] \
-  && ok "another reader is refused as fleet-log-reader" \
-  || bad "another reader is refused as fleet-log-reader" "rc=$rc key=$key"
+  && pass "another reader is refused as fleet-log-reader" \
+  || fail "another reader is refused as fleet-log-reader" "rc=$rc key=$key"
 
 # A first fleet session has no fleet state yet: its takeover is empty, not a
 # refusal whose advice would write an issue-shaped state as the fleet's.
 rc=0
 out="$("$WS" --state-dir "$TMP_ROOT/no-fleet" fleet-log takeover 2>&1)" || rc=$?
-[[ "$rc" -eq 0 && -z "$out" ]] && ok "takeover with no fleet state prints nothing and exits 0" \
-  || bad "takeover with no fleet state prints nothing and exits 0" "rc=$rc out=$out"
+[[ "$rc" -eq 0 && -z "$out" ]] && pass "takeover with no fleet state prints nothing and exits 0" \
+  || fail "takeover with no fleet state prints nothing and exits 0" "rc=$rc out=$out"
 
 # The suite's one must-fail control: the takeover slice dropped. The read then
 # prints the whole log.
 NO_SLICE="$(mutant_scripts no-slice workflow-state)/workflow-state" || exit 1
 mutate_file "$NO_SLICE" 'else .[-$n:][] end' 'else .[] end'
 got="$("$NO_SLICE" --state-dir "$sd" fleet-log takeover | jq -s 'length')"
-[[ "$got" == "14" ]] && ok "control: without the slice the takeover read prints every row" \
-  || bad "control: without the slice the takeover read prints every row" "got=$got"
+[[ "$got" == "14" ]] && pass "control: without the slice the takeover read prints every row" \
+  || fail "control: without the slice the takeover read prints every row" "got=$got"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

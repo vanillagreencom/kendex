@@ -19,13 +19,11 @@ TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 source "$REPO_ROOT/skills/orch/scripts/lib/date-ladder.sh"
 
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 # mutant_scripts and mutate_file, the two halves of the control below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 echo
 echo "--- workflow-state prune ---"
@@ -90,14 +88,14 @@ sd="$p/tmp"
 start_before="$(jq -r '.lanes[0].launched_at' "$sd/workflow-state-oversee.json")"
 rc=0
 prune "$p" --keep tmp/waiter.run > "$TMP_ROOT/main.out" 2>"$TMP_ROOT/main.err" || rc=$?
-[[ "$rc" -eq 0 ]] && ok "prune exits 0" || bad "prune exits 0" "rc=$rc err=$(cat "$TMP_ROOT/main.err")"
+[[ "$rc" -eq 0 ]] && pass "prune exits 0" || fail "prune exits 0" "rc=$rc err=$(cat "$TMP_ROOT/main.err")"
 
 # Every path the policy removes, and every path it keeps, one row each.
 while IFS='|' read -r want path label; do
   if [[ -e "$sd/$path" ]]; then got=kept; else got=removed; fi
   [[ "$got" == "$want" ]] \
-  && ok "$label is $want" \
-  || bad "$label is $want" "path=$path got=$got"
+  && pass "$label is $want" \
+  || fail "$label is $want" "path=$path got=$got"
 done <<'ROWS'
 removed|directive.md|a three-day-old directive
 removed|workflow-state-KEN-2.json|a closed lane's workflow state
@@ -128,8 +126,8 @@ ROWS
 while IFS='|' read -r want filter label; do
   got="$(jq -r "if ($filter) then \"kept\" else \"removed\" end" "$sd/workflow-state-oversee.json")"
   [[ "$got" == "$want" ]] \
-  && ok "$label is $want" \
-  || bad "$label is $want" "got=$got"
+  && pass "$label is $want" \
+  || fail "$label is $want" "got=$got"
 done <<'ROWS'
 kept|.lanes[0].item == "KEN-0"|the first lane record, done and old
 kept|any(.lanes[]; .item == "KEN-1")|a running lane record
@@ -142,22 +140,22 @@ kept|any(.fleet_log[]; .text == "date-only")|a fleet_log row whose at is not ISO
 ROWS
 start_after="$(jq -r '.lanes[0].launched_at' "$sd/workflow-state-oversee.json")"
 [[ "$start_after" == "$start_before" ]] \
-  && ok "the fleet start, the first lane record's launched_at, is unchanged" \
-  || bad "the fleet start, the first lane record's launched_at, is unchanged" "before=$start_before after=$start_after"
+  && pass "the fleet start, the first lane record's launched_at, is unchanged" \
+  || fail "the fleet start, the first lane record's launched_at, is unchanged" "before=$start_before after=$start_after"
 
 count="$(grep '^pruned fleet_log=' "$TMP_ROOT/main.out" || true)"
 [[ "$count" == "pruned fleet_log=1 lanes=2 progress_reports=2 paths=7" ]] \
-  && ok "the count line names each record removed" \
-  || bad "the count line names each record removed" "got=$count"
+  && pass "the count line names each record removed" \
+  || fail "the count line names each record removed" "got=$count"
 
 archive="$(sed -n 's/^kept=//p' "$TMP_ROOT/main.out")"
 [[ "$archive" == "$p/fleet/archive/main/oversee/prune-"*.tgz && -s "$archive" ]] \
-  && ok "kept= names the archive written under the fleet archive" \
-  || bad "kept= names the archive written under the fleet archive" "archive=$archive"
+  && pass "kept= names the archive written under the fleet archive" \
+  || fail "kept= names the archive written under the fleet archive" "archive=$archive"
 modes="$(ls -ld "$archive" | cut -c1-10) $(ls -ld "${archive%/*}" | cut -c1-10)"
 [[ "$modes" == "-rw------- drwx------" ]] \
-  && ok "the archive is 600 and its directory 700 under a 022 umask" \
-  || bad "the archive is 600 and its directory 700 under a 022 umask" "modes=$modes"
+  && pass "the archive is 600 and its directory 700 under a 022 umask" \
+  || fail "the archive is 600 and its directory 700 under a 022 umask" "modes=$modes"
 
 listing="$(tar -tzf "$archive" 2>/dev/null || true)"
 missing=""
@@ -166,22 +164,22 @@ for path in directive.md workflow-state-KEN-2.json workflow-state-KEN-12.json la
   grep -qxF -- "${sd#/}/$path" <<<"$listing" || missing="$missing $path"
 done
 [[ -z "$missing" ]] \
-  && ok "the archive holds every removed path" \
-  || bad "the archive holds every removed path" "missing:$missing"
+  && pass "the archive holds every removed path" \
+  || fail "the archive holds every removed path" "missing:$missing"
 mkdir -p "$TMP_ROOT/unpacked"
 tar -xzf "$archive" -C "$TMP_ROOT/unpacked" 2>/dev/null || true
 records="$(find "$TMP_ROOT/unpacked" -name records.json)"
 got="$(jq -c '[.fleet_log[].text, (.lanes[] | .item)]' "$records" 2>/dev/null || true)"
 [[ "$got" == '["old","KEN-2","KEN-12"]' ]] \
-  && ok "the archive holds the removed fleet_log row and lane records" \
-  || bad "the archive holds the removed fleet_log row and lane records" "got=$got"
+  && pass "the archive holds the removed fleet_log row and lane records" \
+  || fail "the archive holds the removed fleet_log row and lane records" "got=$got"
 
 # A prune with nothing past the window archives nothing.
 rc=0
 out="$(prune "$p" --keep tmp/waiter.run 2>&1)" || rc=$?
 [[ "$rc" -eq 0 && "$(tail -n 1 <<<"$out")" == "kept=none" ]] \
-  && ok "a prune with nothing to remove prints kept=none" \
-  || bad "a prune with nothing to remove prints kept=none" "rc=$rc out=$out"
+  && pass "a prune with nothing to remove prints kept=none" \
+  || fail "a prune with nothing to remove prints kept=none" "rc=$rc out=$out"
 
 # No fleet state, as on a first session that stops before its first launch:
 # no lane records to tell live from closed, so nothing is judged. The prune
@@ -200,8 +198,8 @@ rc=0
 out="$(bare_run "$WS")" || rc=$?
 [[ "$rc" -eq 0 && "$out" == "pruned fleet-state=none path=$bare/tmp/workflow-state-oversee.json" \
    && "$(tree_of "$bare")" == "$bare_before" && ! -e "$bare/fleet" ]] \
-  && ok "a prune with no fleet state prints fleet-state=none and touches nothing" \
-  || bad "a prune with no fleet state prints fleet-state=none and touches nothing" "rc=$rc out=$out"
+  && pass "a prune with no fleet state prints fleet-state=none and touches nothing" \
+  || fail "a prune with no fleet state prints fleet-state=none and touches nothing" "rc=$rc out=$out"
 
 # A step that fails before the archive stands removes nothing and writes no
 # archive: an archive tar cannot write, an archive root that is a file, a find
@@ -237,8 +235,8 @@ while IFS='|' read -r case_name want label; do
   [[ "$rc" -eq 1 && "$key" == "workflow-state: $want"* && "$(tree_of "$fp")" == "$before" \
      && "$(cat "$fp/tmp/workflow-state-oversee.json")" == "$state_before" \
      && -z "$(find "$fp/fleet" -name '*.tgz' 2>/dev/null)" ]] \
-  && ok "$label is refused as ${want%% *} and removes nothing" \
-  || bad "$label is refused as ${want%% *} and removes nothing" "rc=$rc key=$key"
+  && pass "$label is refused as ${want%% *} and removes nothing" \
+  || fail "$label is refused as ${want%% *} and removes nothing" "rc=$rc key=$key"
 done <<ROWS
 tar|prune-archive-failed path=$TMP_ROOT/fail-tar/fleet/archive/fail-tar/oversee|an archive tar cannot write
 root|prune-archive-failed path=$TMP_ROOT/fail-root/fleet-file/archive/fail-root/oversee|an archive root that is a file
@@ -247,9 +245,9 @@ overlap|prune-progress-overlap path=$TMP_ROOT/fail-overlap/tmp state-dir=$TMP_RO
 overlap-holds|prune-progress-overlap path=$TMP_ROOT/fail-overlap-holds state-dir=$TMP_ROOT/fail-overlap-holds/tmp|a progress directory that holds the state directory
 ROWS
 grep -qxF 'tar: planted failure' "$TMP_ROOT/fail-tar.err" \
-  && ok "the archive refusal carries tar's own words" || bad "the archive refusal carries tar's own words"
+  && pass "the archive refusal carries tar's own words" || fail "the archive refusal carries tar's own words"
 grep -qxF 'find: planted failure' "$TMP_ROOT/fail-find.err" \
-  && ok "the age refusal carries find's own words" || bad "the age refusal carries find's own words"
+  && pass "the age refusal carries find's own words" || fail "the age refusal carries find's own words"
 
 # A removal that fails part way: the archive already holds every path, and
 # the rows have already left the state.
@@ -269,15 +267,15 @@ run_prune "$fp" "$WS" "$RM_BIN:" --keep tmp/waiter.run >/dev/null 2>"$fp.err" ||
 key="$(head -n 1 "$fp.err")"
 kept="${key##* kept=}"
 [[ "$rc" -eq 1 && "$key" == "workflow-state: prune-remove-failed path=$fp/tmp/directive.md kept="* ]] \
-  && ok "a removal that fails is refused as prune-remove-failed" \
-  || bad "a removal that fails is refused as prune-remove-failed" "rc=$rc key=$key"
+  && pass "a removal that fails is refused as prune-remove-failed" \
+  || fail "a removal that fails is refused as prune-remove-failed" "rc=$rc key=$key"
 [[ -s "$kept" ]] && grep -qxF -- "${fp#/}/tmp/directive.md" <<<"$(tar -tzf "$kept" 2>/dev/null || true)" \
-  && ok "the archive it names holds the path it could not remove" \
-  || bad "the archive it names holds the path it could not remove" "kept=$kept"
+  && pass "the archive it names holds the path it could not remove" \
+  || fail "the archive it names holds the path it could not remove" "kept=$kept"
 got="$(jq -c '[any(.fleet_log[]; .text == "old"), any(.lanes[]; .item == "KEN-2")]' "$fp/tmp/workflow-state-oversee.json")"
 [[ "$got" == '[false,false]' ]] \
-  && ok "the pruned rows had already left the state" \
-  || bad "the pruned rows had already left the state" "got=$got"
+  && pass "the pruned rows had already left the state" \
+  || fail "the pruned rows had already left the state" "got=$got"
 
 # The suite's one must-fail control: the live-lane match dropped, so a running
 # lane's mailbox is pruned with the closed lanes' files.
@@ -288,8 +286,8 @@ build "$mp"
 (cd "$mp" && env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$mp/fleet" \
   "$NO_LIVE" prune --keep tmp/waiter.run) >/dev/null 2>&1 || true
 [[ ! -e "$mp/tmp/lane-mail/KEN-1" ]] \
-  && ok "control: without the live-lane match a running lane's mailbox is pruned" \
-  || bad "control: without the live-lane match a running lane's mailbox is pruned"
+  && pass "control: without the live-lane match a running lane's mailbox is pruned" \
+  || fail "control: without the live-lane match a running lane's mailbox is pruned"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -19,30 +19,8 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 RBB="$REPO_ROOT/skills/orch/scripts/resolve-base-branch"
 
-PASS=0
-FAIL=0
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if [[ "$haystack" == *"$needle"* ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected to contain: %s\n        got: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # --- fixtures ---------------------------------------------------------------
 # A bare upstream with origin/HEAD -> main, and a clone whose remote HEAD is

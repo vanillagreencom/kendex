@@ -30,10 +30,10 @@
 # Inherent counts stay: "the two state buckets" names the contract itself, and
 # no change to the tree can make it wrong.
 #
-# A suite also gets, beyond the rule forms: `pass` and `fail` for a verdict it
-# reaches itself, `md_report` to close, the path variables SKILL_DIR,
-# SKILLS_ROOT, REPO_ROOT and MD_LIB_DIR, and MD_TMP for scratch. Nothing else
-# here is a suite's to call.
+# A suite also gets, beyond the rule forms: lib/assertions.sh, whose `pass`
+# and `fail` report a verdict it reaches itself, `md_report` to close, the
+# path variables SKILL_DIR, SKILLS_ROOT, REPO_ROOT and MD_LIB_DIR, and MD_TMP
+# for scratch. Nothing else here is a suite's to call.
 #
 # THOSE PATHS ARE RESOLVED FROM THIS FILE, so TESTS_DIR, SKILL_DIR and
 # SKILLS_ROOT all name orch whoever sourced it. A caller outside orch must set
@@ -93,15 +93,12 @@ REPO_ROOT="$(cd "$SKILLS_ROOT/.." && pwd)"
 MD_TMP="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$MD_TMP"' EXIT
 
-PASS=0
-FAIL=0
+# shellcheck source=assertions.sh
+source "$MD_LIB_DIR/assertions.sh"
 MD_RULES=()
 MD_FORBIDS=()
 MD_PERMITS=0
 MD_SEP=$'\037'
-
-pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 
 # _md_indices COUNT — 0..COUNT-1, or nothing. `${!arr[@]}` on an empty array is
 # unbound under `set -u` in Bash 3.2, which `SKILL.md` § Configuration declares

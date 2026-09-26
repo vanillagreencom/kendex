@@ -19,7 +19,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 CHECK="$REPO_ROOT/skills/orch/scripts/review-artifact-check"
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
-source "$TEST_DIR/lib/waiter-assertions.sh"
+source "$TEST_DIR/lib/assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 source "$TEST_DIR/lib/review-artifact-fixture.sh"
@@ -114,7 +114,7 @@ IFS=$'\t' read -r got want <<<"$(run_row "$CTRL" "$row" c-no-match)"
 if [[ "$got" != "$want" ]]; then
   pass "control no-match turns red: $target"
 else
-  FAIL=$((FAIL + 1)); printf '  FAIL  control no-match left its row green: %s\n' "$target"
+  fail "control no-match left its row green: $target"
 fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
