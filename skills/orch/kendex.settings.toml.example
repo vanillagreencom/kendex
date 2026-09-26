@@ -129,6 +129,11 @@ ORCH_LANE_HOST_MAX_CALLS = "4"
 # slot before it refuses as lane-host-busy with exit 69.
 ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
+# Seconds a write into a window just opened reads it again until its shell is
+# in the foreground. A tmux default-command that wraps the shell, such as one
+# starting it in its own systemd scope, holds the pane for a moment first.
+# PANE_WRITE_SETTLE_SECS = "2"
+
 # Rename auto-discovered launch lanes (`<config-dir>=<alias>` pairs); the
 # inventory is always discovered — this only renames it. ORCH_LANE_DIRS
 # covers layouts discovery cannot reach.

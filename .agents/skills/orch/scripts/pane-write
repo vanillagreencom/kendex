@@ -23,7 +23,9 @@ runs the process meant. Nothing is typed on a refusal.
   --expect PROCESS the process the pane must run: the lane's harness (claude,
                    codex, pi), ssh for a lane whose record carries host, or
                    shell for a window just opened, which accepts bash, zsh,
-                   fish, sh, dash and tmux's default-shell. For any name but
+                   fish, sh, dash and tmux's default-shell, read again for up
+                   to $PANE_WRITE_SETTLE_SECS (default 2, 0-99) while a
+                   default-command wrapper holds the pane. For any name but
                    shell, the pane's foreground command, or the pane process or
                    a process below it, must carry the name
   --file PATH      paste the file's bytes as one bracketed paste, then Enter
@@ -43,6 +45,7 @@ Exit 1 is a refusal, and nothing was typed:
   pane-read-failed  tmux or the process table did not answer
   process-mismatch  the pane does not run PROCESS; running= names what it runs
   expect-missing    --expect is empty
+  settle-invalid    PANE_WRITE_SETTLE_SECS is not a whole number from 0 to 99
   key-invalid       --key names a key outside the list above
   file-unreadable   --file is not a readable regular file
   argument-invalid  an option is unknown, repeated or missing its value, or a

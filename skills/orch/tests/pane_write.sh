@@ -69,14 +69,37 @@ printf '#!/bin/sh\nexit 1\n' > "$FAILPS/ps"
 printf '#!/bin/sh\n[ "$1" = paste-buffer ] && exit 1\nexec "%s" "$@"\n' "$REAL_TMUX" > "$FAILPASTE/tmux"
 printf '#!/bin/sh\n[ "$1" = paste-buffer ] && sleep 2\nexec "%s" "$@"\n' "$REAL_TMUX" > "$SLOWPASTE/tmux"
 chmod +x "$FAILPS/ps" "$FAILPASTE/tmux" "$SLOWPASTE/tmux"
+# A tmux whose pane list names systemd-run as every pane's command for the
+# first reads, as many as WRAP_LIMIT holds, the window a fleet-confine
+# default-command holds before its shell takes the foreground. A row writes
+# both files first.
+WRAPPED="$TMP_ROOT/wrapped"
+WRAP_COUNT="$TMP_ROOT/wrap-count"
+WRAP_LIMIT="$TMP_ROOT/wrap-limit"
+mkdir -p "$WRAPPED"
+cat > "$WRAPPED/tmux" <<EOF
+#!/bin/sh
+if [ "\$1" = list-panes ]; then
+  n=\$((\$(cat '$WRAP_COUNT') + 1))
+  echo "\$n" > '$WRAP_COUNT'
+  if [ "\$n" -le "\$(cat '$WRAP_LIMIT')" ]; then
+    "$REAL_TMUX" "\$@" | awk -F'\t' -v OFS='\t' '{ \$NF = "systemd-run" } 1'
+    exit
+  fi
+fi
+exec "$REAL_TMUX" "\$@"
+EOF
+chmod +x "$WRAPPED/tmux"
 
 # pw DIR SELF ARGS... — the entry point under DIR, with TMUX_PANE set to SELF
-# where SELF is not empty, and $PW_PREFIX ahead of PATH where it is set.
+# where SELF is not empty, $PW_PREFIX ahead of PATH where it is set, and
+# $PW_SETTLE as the settle time, one second so a refused shell costs little.
 PW_PREFIX=""
+PW_SETTLE=1
 pw() {
   local dir="$1" self="$2"
   shift 2
-  env -i PATH="${PW_PREFIX:+$PW_PREFIX:}$PATH" HOME="$TMP_ROOT" LANG=C.UTF-8 TMUX_TMPDIR="$SOCK_DIR" ${self:+TMUX_PANE="$self"} "$dir/pane-write" "$@"
+  env -i PATH="${PW_PREFIX:+$PW_PREFIX:}$PATH" HOME="$TMP_ROOT" LANG=C.UTF-8 TMUX_TMPDIR="$SOCK_DIR" PANE_WRITE_SETTLE_SECS="$PW_SETTLE" ${self:+TMUX_PANE="$self"} "$dir/pane-write" "$@"
 }
 
 # received [PANE RECV] — what the program in PANE, the lane's by default, read
@@ -150,6 +173,32 @@ done
 # drive the copy-mode cursor were it not cancelled first.
 assert_eq "$(observe "$REF" "" "--window;lane;--expect;cat;--file;$HELLO" 'tm copy-mode -t "$LANE_PANE"')" \
   "rc=0 key=none received=hello," "a pane in copy mode is returned to its program before the Enter"
+
+# wrapped DIR READS — a shell write into the `own` window while the pane list
+# names systemd-run for READS reads, with the running= the refusal names.
+wrapped() {
+  local seen
+  seen="$(observe "$1" "" "--window;own;--expect;shell;--key;Enter" "echo 0 > '$WRAP_COUNT'; echo $2 > '$WRAP_LIMIT'" "$WRAPPED")"
+  printf '%s %s' "$seen" "$(awk '$1 == "pane-write:" { for (i = 3; i <= NF; i++) if ($i ~ /^running=/) print $i }' "$TMP_ROOT/err")"
+}
+# At a one-second settle the resolution reads the pane once and the settle ten
+# times more, so the eleventh list-panes call is the last reading: a wrapper
+# held for ten reads is gone by it, one held for eleven is not.
+assert_eq "$(wrapped "$REF" 10)" "rc=0 key=none received= " \
+  "a window a default-command wrapper holds until the last reading passes once its shell is in the foreground"
+assert_eq "$(wrapped "$REF" 11)" "rc=1 key=process-mismatch received= running=systemd-run" \
+  "a window the wrapper holds past the settle time is refused on the last reading"
+# SETTLE|EXPECTED — the setting's two sides: two digits at most, and digits only.
+SETTLES=(
+  "99|rc=0 key=none received="
+  "100|rc=1 key=settle-invalid received="
+  "abc|rc=1 key=settle-invalid received="
+)
+for r in "${SETTLES[@]}"; do
+  IFS='|' read -r settle want <<<"$r"
+  assert_eq "$(observe "$REF" "" "--window;own;--expect;shell;--key;Enter" "PW_SETTLE=$settle")" \
+    "$want" "a settle time of $settle reads as the 0-99 whole seconds the setting allows"
+done
 
 # buffers_left — how many pane-write buffers the fixture server holds, each
 # deleted once counted so the next count starts from none.
@@ -241,6 +290,15 @@ assert_eq "$(failed_paste "$MUTANT")" "rc=2 key=write-failed received= buffers=1
 mutant shared-buffer 'buffer="pane-write-$$-${PANE_WRITE_ID#%}"' 'buffer="pane-write-$$"'
 assert_eq "$(concurrent "$MUTANT")" "rc=0,2 lane=two, pair=" \
   "control: a buffer named for the script alone hands one job's text to the other's pane"
+mutant settle '[[ "$reads" -lt $((10#$settle * 10)) ]] || break' 'break'
+assert_eq "$(wrapped "$MUTANT" 10)" "rc=1 key=process-mismatch received= running=systemd-run" \
+  "control: without the settle the wrapper's first reading refuses the window"
+mutant settle-invalid '[[ "$settle" =~ ^[0-9]{1,2}$ ]]' '[[ "$settle" =~ ^.*$ ]]'
+assert_eq "$(observe "$MUTANT" "" "--window;own;--expect;shell;--key;Enter" "PW_SETTLE=abc")" \
+  "rc=0 key=none received=" "control: without the settle check a word for the settle time is never judged"
+mutant settle-digits '^[0-9]{1,2}$' '^[0-9]+$'
+assert_eq "$(observe "$MUTANT" "" "--window;own;--expect;shell;--key;Enter" "PW_SETTLE=100")" \
+  "rc=0 key=none received=" "control: without the two-digit bound a three-digit settle time is never judged"
 mutant copy-mode 'pane_write_mode_clear() {' 'pane_write_mode_clear() { return 0;'
 assert_eq "$(observe "$MUTANT" "" "--window;lane;--expect;cat;--file;$HELLO" 'tm copy-mode -t "$LANE_PANE"')" \
   "rc=0 key=none received=hello" "control: without the copy-mode cancel the Enter never reaches the program"
