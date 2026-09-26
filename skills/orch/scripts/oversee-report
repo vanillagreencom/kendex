@@ -50,6 +50,8 @@ message() { # KEY VALUE [CAUSE]
       tracker-missing) echo "The Linear CLI is not executable, so the issue's title and Done-when cannot be read. Install the linear skill or set OVERSEE_REPORT_TRACKER." ;;
       tracker-read) echo "The issue could not be read from the tracker:" ;;
       mail-read) echo "The lane's mailbox could not be read, so whether it waits on an answer is unknown:" ;;
+      owner-asks) echo "The overseer mailbox's owner asks could not be listed, so what waits on the owner is unknown:" ;;
+      notice) echo "The report file stands and was printed above, and the notice carrying it to the owner could not be sent:" ;;
       item-state) echo "The lane's own workflow state could not be read, so whether a post-PR stop holds it is unknown:" ;;
       lane-host-busy) echo "lane-host refused a provider call for this lane at its per-home cap on provider calls, so what the lane waits on is unknown and nothing is rendered from a partial fleet. Run the report again:" ;;
       summary) echo "The summary file is missing or empty. The report opens with the overseer's own summary, so nothing is written without one." ;;
@@ -102,9 +104,13 @@ due      prints `report-due reason=minutes since=<UTC>` once the last report
 render   prints the rows.
 write    prints the summary file's text, a blank line and the rows, and
          writes the same bytes to the path `workflow-state
-         progress-report-path` prints, with --succession passed on to it.
-         The new file is the next report's starting point. A path that
-         already stands is refused.
+         progress-report-path` prints, with --succession passed on to it,
+         then sends the owner the report notice, `lane-mail notice --item
+         overseer --to owner --attach <that file>` with the summary as its
+         text, so a relay carries the file to the owner. The new file is
+         the next report's starting point. A path that already stands is
+         refused; a notice that cannot be sent is refused as `notice`
+         after the report is printed, the file standing.
 
 Rows:
   Landed          each fleet item, a lanes[] record of any status, whose own
@@ -122,7 +128,10 @@ Rows:
   Next            the first ORCH_REPORT_UPCOMING keys of launch_queue that
                   have no lanes[] record, whatever its status: a record is
                   written at launch, so a key with one has launched.
-  Waiting on you  each owner_items entry, as `Question for you: <text>`,
+  Waiting on you  each owner ask no answer has closed, from `lane-mail
+                  pending --item overseer --to owner`, as `Question for you:
+                  <text>`, with its recommendation and the time it stands by
+                  default where the ask carries them,
                   then one line per thing a running lane waits on, naming the
                   item: an ask `lane-mail pending` lists, the post_pr_stop its
                   own workflow state holds, and failing checks on its open PR
@@ -631,8 +640,16 @@ render() {
   table Next "$list"
   echo
 
-  if ! list="$(jq -r '(.owner_items // [])[] | "- Question for you: \(.text | gsub("\n"; " "))"' <<<"$STATE_JSON")"; then
-    refuse state "$STATE"
+  # The open questions are the overseer mailbox's own record, read through
+  # the one field that names their audience; nothing here keeps a second list.
+  if ! list="$("$LANE_MAIL" pending --item overseer --to owner 2>"$WORK_DIR/mail.err")"; then
+    refuse owner-asks overseer "$(cat "$WORK_DIR/mail.err")"
+  fi
+  if ! list="$(jq -r -R 'fromjson? | objects
+    | "- Question for you: \(.text // "" | gsub("\n"; " "))"
+      + (if .recommend then " (recommended \(.recommend); taken by default at \(.deadline // "no deadline"))" else "" end)' \
+    <<<"$list" 2>"$WORK_DIR/mail.err")"; then
+    refuse owner-asks overseer "$(cat "$WORK_DIR/mail.err")"
   fi
   list+="${list:+${BLOCKERS:+$'\n'}}$BLOCKERS"
   if [[ -z "$list" ]]; then
@@ -666,4 +683,10 @@ TZ=UTC touch -t "$STAMP" -- "$TMP_FILE" || refuse write "$TMP_FILE"
 mv -- "$TMP_FILE" "$TARGET" || refuse write "$TARGET"
 TMP_FILE=""
 cat -- "$TARGET" || refuse write "$TARGET"
+# The report reaches the owner as one notice carrying the file, after the
+# print so the chat has the report whatever the notice does. The summary is
+# the notice's text: the file's own opening, in the overseer's words.
+printf '%s\n' "$SUMMARY_TEXT" > "$WORK_DIR/notice.txt" || refuse write "$WORK_DIR/notice.txt"
+"$LANE_MAIL" notice --item overseer --to owner --attach "$TARGET" --file "$WORK_DIR/notice.txt" \
+  2>"$WORK_DIR/notice.err" || refuse notice "$TARGET" "$(cat "$WORK_DIR/notice.err")"
 message report-written "$TARGET"

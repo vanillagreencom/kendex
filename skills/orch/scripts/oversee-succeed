@@ -213,7 +213,7 @@
 #   -- FLAGS...      Passed to the harness word by word, each quoted. A caller,
 #                    print or walled entry carries every word unchanged but
 #                    the question-tool words, which every entry carries
-#                    exactly when ORCH_OVERSEER_QUESTION_TOOL is off. A
+#                    exactly when ORCH_QUESTION_TOOL is off, its default. A
 #                    named same-harness entry replaces model and effort but
 #                    keeps permission words exact. A named cross-harness entry
 #                    accepts one transferable full-bypass posture, and no other
@@ -317,7 +317,7 @@ message() { # KEY FIELD=VALUE...
     line-unrecorded) text='The successor launch line could not be written to the fleet state, so a later dead-overseer relaunch has none to send. The succession itself stands.' ;;
     settings-rejected) text='The settings load failed; no successor is chosen from partial settings.' ;;
     invalid-succession) text='ORCH_OVERSEER_SUCCESSION takes on or off.' ;;
-    invalid-question-tool) text='ORCH_OVERSEER_QUESTION_TOOL takes on or off.' ;;
+    invalid-question-tool) text='ORCH_QUESTION_TOOL takes off or overseer.' ;;
     succession-off) text='ORCH_OVERSEER_SUCCESSION is off; nothing was launched.' ;;
     invalid-headroom-trigger) text='ORCH_OVERSEER_HEADROOM_PCT takes a whole number of percent from 0 to 100.' ;;
     invalid-wall-minutes) text='ORCH_OVERSEER_WALL_MINUTES takes a whole number of minutes; 0 disables this trigger.' ;;
@@ -653,20 +653,20 @@ if [[ "$MODE" != print ]]; then
   fi
 fi
 
-# Whether a successor keeps the harness question tool. The overseer keeps it by
-# default, because the owner answers there; `off` gives every successor the
-# words that take it away, as every lane launch carries. The setting is the one
-# owner: question-tool words in the caller's own flags never carry, since a
-# successor on another harness would be handed a flag its launch refuses.
-# Read only by the modes that
-# build a line: `dead` sends the line it was handed and `check` launches nothing.
+# Whether a successor keeps the harness question tool: ORCH_QUESTION_TOOL,
+# decided by lib/lane-launch.sh for every overseer launcher. Off by default,
+# so a successor carries the words that take the tool away, as every lane
+# launch does, and every question for the owner is mailbox mail; `overseer`
+# keeps it. The setting is the one owner: question-tool words in the caller's
+# own flags never carry, since a successor on another harness would be handed
+# a flag its launch refuses. Read only by the modes that build a line: `dead`
+# sends the line it was handed and `check` launches nothing.
 QUESTION_OFF=()
 if [[ "$MODE" != dead && "$MODE" != check ]]; then
-  case "${ORCH_OVERSEER_QUESTION_TOOL:-on}" in
-    on) ;;
-    off) QUESTION_OFF=(--question-off) ;;
-    *) die invalid-question-tool "ORCH_OVERSEER_QUESTION_TOOL=$ORCH_OVERSEER_QUESTION_TOOL" ;;
-  esac
+  if ! question_policy="$(launch_overseer_question_tool)"; then
+    die invalid-question-tool "ORCH_QUESTION_TOOL=${ORCH_QUESTION_TOOL:-}"
+  fi
+  [[ "$question_policy" != off ]] || QUESTION_OFF=(--question-off)
 fi
 
 CALLER_PANE="${DEAD_PANE:-${WALLED_PANE:-${TMUX_PANE:-}}}"

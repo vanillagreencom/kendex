@@ -9,7 +9,7 @@ The overseer-to-overseer channel: one repository's overseer writes another's mai
 | `lane-mail peer ask --repo [NAME_OR_PATH] --file [PATH] [--options a,b]` | one ask, one id, in the peer's mailbox and then in this overseer's own record; prints `id=[MESSAGE_ID]`. A delivery that refuses records nothing, so nothing is owed for a question the peer never received |
 | `lane-mail peer send --repo [NAME_OR_PATH] --re [MESSAGE_ID] --file [PATH]` | the answer to a peer's ask, releasing that overseer's `wait` |
 | `lane-mail peer send --repo [NAME_OR_PATH] --file [PATH]` | a note that answers no ask |
-| `lane-mail pending --item overseer` | the asks this overseer SENT that a peer has not answered, then the directives in its own mailbox no reader has taken yet |
+| `lane-mail pending --item overseer` | the asks this overseer SENT that a peer or the owner has not answered, then the directives in its own mailbox no reader has taken yet; `--to peer` keeps the peer asks alone, `--to owner` the owner's |
 | `lane-mail wait --item overseer --id [MESSAGE_ID]` | blocks for a peer's answer to this overseer's own ask |
 
 Every `peer-note` line carries `kind=`, and only `kind=ask` is owed a reply: an answer sent to a directive would name an id that is in no outbox, so nothing would ever clear it from the sender's `pending`.
