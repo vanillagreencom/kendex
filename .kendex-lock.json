@@ -3535,8 +3535,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b0545e0870a4d1b732ba235c0c34dc5a71712a1df3de3c8301f3c68d5eedf9c5",
-      "renderedHash": "5fe996c157c0ede04229b2042bff69a289d93e85ec2080dfd7ebbdd89ad1c310",
+      "sourceHash": "28d62796a2373d835f3fbd0aae35a9502384611611ab2587f448eb9e2cd0bbb5",
+      "renderedHash": "5125717f36b285caa6fd98049896c3d4508ff5c02e6468ddc8e6373b73159a4e",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3594,8 +3594,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b0545e0870a4d1b732ba235c0c34dc5a71712a1df3de3c8301f3c68d5eedf9c5",
-      "renderedHash": "5fe996c157c0ede04229b2042bff69a289d93e85ec2080dfd7ebbdd89ad1c310",
+      "sourceHash": "28d62796a2373d835f3fbd0aae35a9502384611611ab2587f448eb9e2cd0bbb5",
+      "renderedHash": "5125717f36b285caa6fd98049896c3d4508ff5c02e6468ddc8e6373b73159a4e",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3652,8 +3652,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b0545e0870a4d1b732ba235c0c34dc5a71712a1df3de3c8301f3c68d5eedf9c5",
-      "renderedHash": "5fe996c157c0ede04229b2042bff69a289d93e85ec2080dfd7ebbdd89ad1c310",
+      "sourceHash": "28d62796a2373d835f3fbd0aae35a9502384611611ab2587f448eb9e2cd0bbb5",
+      "renderedHash": "5125717f36b285caa6fd98049896c3d4508ff5c02e6468ddc8e6373b73159a4e",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3865,8 +3865,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "1cd415eab0c39b3ef1762f12c80bcaf9f978f8de0d34d022ce0a594a59f724b0",
-      "renderedHash": "a2fe47603bd0227caab0f5c1786efda3791f53878fbcc9fe876edb3f9b587528",
+      "sourceHash": "217d5ff1fa4480c91cd6966bb0e333cb7a3177eeeaf6873276769c80d9919630",
+      "renderedHash": "57af8b6a9c62ac02c7a1f8782c09f4ea028e41bfabf2f9203aa2d825704aefff",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3897,8 +3897,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "1cd415eab0c39b3ef1762f12c80bcaf9f978f8de0d34d022ce0a594a59f724b0",
-      "renderedHash": "a2fe47603bd0227caab0f5c1786efda3791f53878fbcc9fe876edb3f9b587528",
+      "sourceHash": "217d5ff1fa4480c91cd6966bb0e333cb7a3177eeeaf6873276769c80d9919630",
+      "renderedHash": "57af8b6a9c62ac02c7a1f8782c09f4ea028e41bfabf2f9203aa2d825704aefff",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -3928,8 +3928,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "1cd415eab0c39b3ef1762f12c80bcaf9f978f8de0d34d022ce0a594a59f724b0",
-      "renderedHash": "a2fe47603bd0227caab0f5c1786efda3791f53878fbcc9fe876edb3f9b587528",
+      "sourceHash": "217d5ff1fa4480c91cd6966bb0e333cb7a3177eeeaf6873276769c80d9919630",
+      "renderedHash": "57af8b6a9c62ac02c7a1f8782c09f4ea028e41bfabf2f9203aa2d825704aefff",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -4279,7 +4279,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "ab4f27d51b63ca90eba4a5676fe67908391c800f"
+      "commit": "d72fb83e957238492bc769ea48bb4907648ce35d"
     }
   }
 }
