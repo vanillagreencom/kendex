@@ -18,9 +18,11 @@
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a no-op hook, an always-block hook) run against these assertions. The copy
-# sits under this repository, tmp/ included: the hook finds the command
-# reader by walking up from its own directory, and a copy parked outside the
-# checkout refuses every command as missing-library.
+# sits under this repository, tmp/ included, and keeps the name
+# block-worktree-refresh.sh: the hook finds the command reader by walking up
+# from its own directory, and a copy parked outside the checkout refuses every
+# command as missing-library; the payload rows read the keyed-line prefix
+# from the file name, and a copy under another name fails them as malformed.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -118,6 +120,43 @@ if git -C "$OUTSIDE" rev-parse --git-dir >/dev/null 2>&1; then
   exit 2
 fi
 
+# The kendex commands the hook may find on PATH, each a stub: one whose
+# refresh help lists --project-path, one whose help predates it, one whose
+# refresh help fails, and one that records every call it takes, so a pass
+# proves the probe never ran. A further world holds every tool the hook reads
+# and no kendex at all. Every run below hands the hook a PATH built from
+# these, never the machine's, so no row runs an installed kendex and the
+# refusal text is the same on every machine; the cli table is the one place
+# the kendex on PATH varies.
+stub_cli() { # DIR HELP-LINE -> a kendex on DIR/ printing that line under refresh --help
+  mkdir -p "$1"
+  cat >"$1/kendex" <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  --version) echo "kendex 0.9.0-stub" ;;
+  refresh) printf 'Usage: kendex refresh [OPTIONS]\\n\\nOptions:\\n%s\\n' '$2' ;;
+esac
+STUB
+  chmod +x "$1/kendex"
+}
+CLI_WITH="$TMP_ROOT/cli-with"
+stub_cli "$CLI_WITH" '      --project-path <PATH>  The project this run reads and writes'
+CLI_WITHOUT="$TMP_ROOT/cli-without"
+stub_cli "$CLI_WITHOUT" '  -y, --yes  Accept changes'
+CLI_BROKEN="$TMP_ROOT/cli-broken"
+mkdir -p "$CLI_BROKEN"
+printf '#!/usr/bin/env bash\ncase "$1" in --version) echo "kendex 0.9.0-stub" ;; refresh) echo "refresh: the help could not be rendered" >&2; exit 1 ;; esac\n' >"$CLI_BROKEN/kendex"
+chmod +x "$CLI_BROKEN/kendex"
+CLI_CALLS="$TMP_ROOT/cli-calls"
+mkdir -p "$CLI_CALLS"
+printf '#!/usr/bin/env bash\necho "$*" >>"%s/log"\n' "$CLI_CALLS" >"$CLI_CALLS/kendex"
+chmod +x "$CLI_CALLS/kendex"
+CLI_NONE="$TMP_ROOT/cli-none"
+mkdir -p "$CLI_NONE"
+for tool in bash cat jq git; do
+  target="$(command -v "$tool" 2>/dev/null)" && ln -sf "$target" "$CLI_NONE/$tool"
+done
+
 json_for() { # command [cwd] [tool field] -> payload
   if [ -n "${3:-}" ]; then
     jq -nc --arg c "$1" --arg d "$2" --arg f "$3" --arg s "$WT" \
@@ -131,14 +170,14 @@ json_for() { # command [cwd] [tool field] -> payload
 
 run_in() { # dir command [tool field] -> rc, stderr in ERR_FILE
   set +e
-  json_for "$2" "$1" "${3:-}" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+  json_for "$2" "$1" "${3:-}" | PATH="$CLI_WITH:$CLI_NONE" "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
   rc=$?
   set -e
 }
 
 run_from() { # dir command -> rc; no cwd in the payload, the hook runs in dir
   set +e
-  (cd "$1" && json_for "$2" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE")
+  (cd "$1" && json_for "$2" | PATH="$CLI_WITH:$CLI_NONE" "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE")
   rc=$?
   set -e
 }
@@ -441,7 +480,6 @@ a bare refresh there writes that worktree, the one project it can, and passes|pa
 a bare apply there passes|payload|own|0|-|kendex apply
 a bare updates --apply there passes|payload|own|0|-|kendex updates --apply
 refresh there naming its target passes too|payload|own|0|-|kendex refresh --project-path $OWN
-a bare refresh in a worktree with no kendex.toml is still refused|payload|worktree|2|block-worktree-refresh: refused=refresh|kendex refresh
 update-pi there is refused as before|payload|own|2|block-worktree-refresh: refused=update-pi|kendex update-pi
 update-pi --scope global there passes|payload|own|0|-|kendex update-pi --scope global
 a skill named refresh on an add there is an argument, and the add passes|payload|own|0|-|kendex add orch --skill refresh
@@ -502,34 +540,6 @@ assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: paylo
 payload_table "$HOOK" 'kendex refresh' 'kendex verify' "$WT"
 
 echo "=== block-worktree-refresh: the installed kendex decides whether --project-path is offered ==="
-# Three kendex commands on PATH: one whose refresh help lists --project-path,
-# one whose help predates it, and one that records every call it takes, so a
-# pass proves the probe never ran. A fourth world holds every tool the hook
-# reads and no kendex at all.
-stub_cli() { # DIR HELP-LINE -> a kendex on DIR/ printing that line under refresh --help
-  mkdir -p "$1"
-  cat >"$1/kendex" <<STUB
-#!/usr/bin/env bash
-case "\$1" in
-  --version) echo "kendex 0.9.0-stub" ;;
-  refresh) printf 'Usage: kendex refresh [OPTIONS]\\n\\nOptions:\\n%s\\n' '$2' ;;
-esac
-STUB
-  chmod +x "$1/kendex"
-}
-CLI_WITH="$TMP_ROOT/cli-with"
-stub_cli "$CLI_WITH" '      --project-path <PATH>  The project this run reads and writes'
-CLI_WITHOUT="$TMP_ROOT/cli-without"
-stub_cli "$CLI_WITHOUT" '  -y, --yes  Accept changes'
-CLI_CALLS="$TMP_ROOT/cli-calls"
-mkdir -p "$CLI_CALLS"
-printf '#!/usr/bin/env bash\necho "$*" >>"%s/log"\n' "$CLI_CALLS" >"$CLI_CALLS/kendex"
-chmod +x "$CLI_CALLS/kendex"
-CLI_NONE="$TMP_ROOT/cli-none"
-mkdir -p "$CLI_NONE"
-for tool in bash cat jq git; do
-  target="$(command -v "$tool" 2>/dev/null)" && ln -sf "$target" "$CLI_NONE/$tool"
-done
 run_with_cli() { # dir command cli-dir -> rc, stderr in ERR_FILE, that kendex first on PATH
   set +e
   json_for "$2" "$1" | env -i HOME="$HOME" PWD="$1" PATH="$3:$CLI_NONE" "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
@@ -549,6 +559,7 @@ while IFS='|' read -r label world cli expected first wanted unwanted command; do
   case "$cli" in
     with) path="$CLI_WITH" ;;
     without) path="$CLI_WITHOUT" ;;
+    broken) path="$CLI_BROKEN" ;;
     none) path="$CLI_NONE" ;;
     *) printf 'cli table: unknown cli: %s\n' "$cli" >&2; exit 1 ;;
   esac
@@ -567,6 +578,7 @@ a moved verb with no such form says so too|main|without|2|block-worktree-refresh
 a moved write names the flag where the kendex has it|main|with|2|block-worktree-refresh: moved=refresh|--project-path PATH|-|cd $WT && kendex refresh
 and names the skew where it lacks it|main|without|2|block-worktree-refresh: moved=refresh|predates --project-path|--project-path PATH|cd $WT && kendex refresh
 no kendex on PATH is named as unasked, and the flag is not offered|worktree|none|2|block-worktree-refresh: refused=refresh|could not be asked whether it takes --project-path (kendex is not on PATH)|--project-path PATH|kendex refresh
+a kendex whose refresh help fails is unasked too, its first line the reason|worktree|broken|2|block-worktree-refresh: refused=refresh|could not be asked whether it takes --project-path (kendex refresh --help failed: refresh: the help could not be rendered)|--project-path PATH|kendex refresh
 a worktree that owns its manifest passes the bare refresh whichever kendex is installed|own|without|0|-|-|-|kendex refresh
 and with the flag listed too|own|with|0|-|-|-|kendex refresh
 ROWS

@@ -3,9 +3,15 @@
 //! and the record; nothing else of the tree is compared, recorded or
 //! rewritten, so an edit to it changes nothing kendex says or records.
 //!
-//! The must-fail control for the edit surface is the engine before this
-//! one: an edit moved the recorded source hash, so the plan raised a stale
-//! row and the record it wrote differed from the committed one.
+//! Controls, one production edit per surface: the in-place hash covering
+//! the tree's bytes again reddens `an_edit_to_the_tree_raises_no_row_and_
+//! moves_no_record`; the block never written reddens `apply_writes_the_
+//! instructions_block_and_nothing_else` and `a_changed_instruction_rewrites_
+//! the_block_alone`; the in-place answer taken per item rather than per
+//! artifact reddens `a_copy_delivered_from_an_in_place_declaration_is_a_
+//! render`. The edit hold needs no guard of its own: no record owns the
+//! source tree (`engine::owned::installed`), so the hold never finds an
+//! entry recorded there.
 #![cfg(unix)]
 
 use crate::test_util;

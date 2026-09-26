@@ -168,10 +168,22 @@ fn verify_fails_a_missing_entry_point_and_a_missing_link() {
 
     let skill = fs::read(world.skill_file()).unwrap();
     fs::remove_file(world.skill_file()).unwrap();
-    assert_eq!(world.exit_code(&["verify", "--scope", "project"]), 1);
+    let verify = world.run(&["verify", "--scope", "project"]);
+    assert_eq!(verify.status.code(), Some(1), "{}", said(&verify));
+    assert!(
+        said(&verify).contains("3 checked, 0 OK, 3 failed"),
+        "{}",
+        said(&verify)
+    );
     fs::write(world.skill_file(), skill).unwrap();
     assert_eq!(world.exit_code(&["verify", "--scope", "project"]), 0);
 
     fs::remove_file(world.project.join(".claude/skills/deploy")).unwrap();
-    assert_eq!(world.exit_code(&["verify", "--scope", "project"]), 1);
+    let verify = world.run(&["verify", "--scope", "project"]);
+    assert_eq!(verify.status.code(), Some(1), "{}", said(&verify));
+    assert!(
+        said(&verify).contains("3 checked, 2 OK, 1 failed"),
+        "{}",
+        said(&verify)
+    );
 }
