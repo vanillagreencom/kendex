@@ -334,13 +334,15 @@ assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026
   "a watch for another fleet's --since does not report the note again" "$err"
 
 # The overseer answers an owner note in its own mailbox, and that reply is no
-# note of the owner's: the watch acknowledges it and reports nothing. `sent` is
-# the reply lane-mail stamps `overseer`; `owner-answer` is an answer carrying
-# `owner`, which the owner never writes. Each row's mutant drops the one line
-# that skips it, and reports the reply back.
+# note of the owner's: the watch acknowledges it and reports nothing, and still
+# reports the owner note behind it in the same pass. `sent` is the reply
+# lane-mail stamps `overseer`; `owner-answer` is an answer carrying `owner`,
+# which the owner never writes. Each row's mutant drops the one line that skips
+# it, and reports the reply back.
 new_case mail_overseer_reply
 printf 'Held.\n' > "$TMP_ROOT/reply.txt"
-overseer_reply() { # sent|owner-answer -> the reply's id
+printf 'Hold KEN-8 too.\n' > "$TMP_ROOT/after-reply.txt"
+overseer_reply() { # sent|owner-answer -> the reply's id, then the note's after it
   mail_reset overseer
   case "$1" in
     sent)
@@ -351,7 +353,8 @@ overseer_reply() { # sent|owner-answer -> the reply's id
         >> "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
       ;;
   esac
-  jq -r .id "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
+  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item overseer --directive --file "$TMP_ROOT/after-reply.txt") >/dev/null
+  jq -rs 'map(.id) | join(" ")' "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
 }
 for row in \
   'sent|EVENT peer-note overseer %s kind=answer re=some-note|            overseer) continue ;;' \
@@ -365,11 +368,13 @@ for row in \
   chmod +x "$mutant"
   assert_eq "$(cmp -s "$mutant" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
     "differs" "control: the $name mutant really drops its skip"
-  overseer_reply "$name" >/dev/null
+  ids="$(overseer_reply "$name")"
   err="$TMP_ROOT/reply-$name"
   out="$(run_watch -- --max-loops 1 2>"$err")"
-  assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" "the overseer's own $name reply is never reported to it" "$err"
-  reply="$(overseer_reply "$name")"
+  assert_eq "$(head -1 <<<"$out")" "EVENT owner-note ${ids#* }" \
+    "the overseer's own $name reply is never reported to it, and the note after it is" "$err"
+  ids="$(overseer_reply "$name")"
+  reply="${ids%% *}"
   err="$TMP_ROOT/reply-$name-mutant"
   out="$(WATCH_BIN="$mutant" run_watch -- --max-loops 1 2>"$err")"
   # shellcheck disable=SC2059 # the row's line is the format

@@ -175,7 +175,7 @@
 <tr><td>A hosted lane cannot move to an account whose token was stored after its sandbox was created</td><td>A resume onto a fresh account after a session limit</td><td>fleet FLT-36</td></tr>
 <tr><td>A hosted idle lane is woken by a pane paste, not by the launcher</td><td>Every directive to an idle hosted lane</td><td><a href="https://linear.app/vanillagreen/issue/KEN-1534">KEN-1534</a></td></tr>
 <tr><td>A send prints nothing on success</td><td>A sender that checks its delivery sends again</td><td><a href="https://linear.app/vanillagreen/issue/KEN-1545">KEN-1545</a></td></tr>
-<tr><td>A peer on another host is reached by ssh and the owner-stamped <code>send</code></td><td>Every cross-host note reads as an owner directive</td><td><a href="https://linear.app/vanillagreen/issue/KEN-1546">KEN-1546</a></td></tr>
+<tr><td>A peer on another host is reached by ssh and the owner-stamped <code>send --directive</code>, never <code>--re</code>: an answer in the overseer's own mailbox is its own reply and is not reported</td><td>Every cross-host note reads as an owner directive, and a cross-host answer sent with <code>--re</code> is never seen</td><td><a href="https://linear.app/vanillagreen/issue/KEN-1546">KEN-1546</a></td></tr>
 <tr><td>A dead login copy reads the same as a walled account</td><td>The operator cannot tell a renewal to run from a wall to wait out</td><td><a href="https://linear.app/vanillagreen/issue/KEN-1523">KEN-1523</a></td></tr>
 </table>
 
