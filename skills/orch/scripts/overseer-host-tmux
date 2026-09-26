@@ -23,7 +23,8 @@
 #            window=@N server=PID`, before the harness has drawn anything:
 #            the record a caller writes before the first turn. A window that
 #            opened and could not be typed into is closed again, so a failed
-#            create leaves nothing behind.
+#            create leaves nothing behind. HUP, INT and TERM do not
+#            interrupt it between opening the window and printing its line.
 #   inspect  prints one keyed line, `session=%N window=@N server=PID
 #            state=STATE`, then the pane's screen. STATE is
 #            lib/lane-state.sh's word for the pane, the one judge every
@@ -175,6 +176,11 @@ case "$VERB" in
       fi
       target="=$TMUX_SESSION_NAME:$last_idx"
     fi
+    # From the window opening to the answer, a group signal would leave a window
+    # no caller can name: create runs to its answer through these signals so the
+    # caller's close-out reads the session off it. A tmux client sets its own HUP
+    # and TERM handlers once running, so only its own brief run stays exposed.
+    trap '' HUP INT TERM
     spec="$(tmux new-window -d -a -t "$target" -n "$NAME" -c "$CWD" \
       -P -F '#{pane_id} #{window_id} #{pid}' 2>"$DEP_ERR")" || die create-failed step=new-window
     read -r pane window server <<<"$spec"
