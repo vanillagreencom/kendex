@@ -342,7 +342,7 @@ the same for refresh|2|block-worktree-refresh: refused=refresh|kendex refresh --
 a quoted span after refresh is opened as command text and cut the same way|2|block-worktree-refresh: refused=refresh|kendex refresh --global '--scope' project
 a comment after a global write leaves it whole|0|-|kendex refresh --global # a note
 a stderr redirection and a pipe after a global write leave it whole|0|-|kendex refresh --global 2>&1 | tail
-a quoted span the reader masks is still the command's text|0|-|kendex add --global "./a b"
+a quoted span the reader masks is still found in the command text|0|-|kendex add --global "./a b"
 a substitution lifted out of a quoted word leaves a segment the command does not hold, so no global scope is read|2|block-worktree-refresh: refused=add|kendex add --global "a\0044(echo b)" --scope project
 marketplace list is a read|0|-|kendex marketplace list
 the verb is found after a chained command|2|block-worktree-refresh: refused=refresh|true && kendex refresh
