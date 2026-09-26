@@ -24,8 +24,8 @@
 #      that is not a number refuses
 #   4. the ALONE list — each suite run-all.sh names there starts only when
 #      no other suite runs, and no suite starts while it runs
-#   5. an interrupt — SIGINT to the runner's process group ends the run at
-#      130 and stops the suite it was running, which would otherwise finish
+#   5. a signal — SIGINT or SIGHUP to the runner's process group, or SIGTERM
+#      to the runner alone, ends the run and the suite it was running
 #
 # Bash 3.2 compatible.
 
@@ -35,7 +35,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/run-all-parallel.XXXXXX")" ||
   { echo "mktemp failed" >&2; exit 1; }
-trap 'rm -rf -- "$TMP_ROOT"' EXIT
+# Section 5's suites loop until killed; one a red row left alive dies here.
+STAGED=()
+trap '[ "${#STAGED[@]}" -eq 0 ] || kill "${STAGED[@]}" 2>/dev/null; rm -rf -- "$TMP_ROOT"' EXIT
 
 PASS=0
 FAIL=0
@@ -257,33 +259,44 @@ verdicts="$(printf '%s\n' "$ALONE_NAMES" | awk -v ev="$B.ev" '
 want="$(printf '%s\n' "$ALONE_NAMES" | awk '{printf "%s=alone ", $1}')"
 assert_eq "rc=$RC $verdicts" "rc=0 $want" "every ALONE suite runs with no other suite beside it"
 
-echo "=== 5. an interrupt stops the running suites ==="
-# The runner leads its own process group (set -m), so the group signal is a
-# terminal's Ctrl-C and never reaches this file; perl sets SIGINT back to its
-# default, since a shell started with it ignored could not trap it.
-B="$TMP_ROOT/interrupt"
-battery "$B"
-printf '#!/usr/bin/env bash\nsleep 3\ntouch "$MARK"\n' >"$B/long.sh"
-mkdir -p "$B.bin"
-printf '#!/usr/bin/env bash\necho 2\n' >"$B.bin/nproc"
-chmod +x "$B.bin/nproc"
-set -m
-perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die "exec: $!"' env -i PATH="$B.bin:$PATH" HOME="$HOME" \
-  TMPDIR="$B.tmp" MARK="$B.mark" bash "$B/run-all.sh" >"$B.out" 2>&1 &
-runner=$!
-set +m
-tick=0
-until grep -q '^start suite=long$' "$B.out" 2>/dev/null || [ "$tick" -ge 50 ]; do
-  sleep 0.1
-  tick=$((tick + 1))
-done
-sleep 0.5
-kill -INT -- "-$runner"
-RC=0
-wait "$runner" || RC=$?
-sleep 4
-assert_eq "rc=$RC mark=$([ -e "$B.mark" ] && echo written || echo absent)" "rc=130 mark=absent" \
-  "SIGINT ends the run at 130 and the suite it was running never finishes"
+echo "=== 5. a signal that ends the run ends its suites ==="
+# The runner leads its own process group here (set -m), so a group signal
+# never reaches this file; perl sets SIGINT back to its default, as a shell
+# started with it ignored could not trap it. The suite writes its pid and
+# blocks, so only the runner can end it. TERM goes to the runner alone, the
+# case the group does not cover.
+# SIGNAL|TARGET|EXPECTED RUNNER STATUS
+SIGNAL_ROWS='INT|group|130
+TERM|runner|143
+HUP|group|129'
+while IFS='|' read -r sig target want; do
+  B="$TMP_ROOT/signal-$sig"
+  battery "$B"
+  printf '#!/usr/bin/env bash\necho "$$" >"$PIDFILE"\nwhile :; do sleep 1; done\n' >"$B/block.sh"
+  mkdir -p "$B.bin"
+  printf '#!/usr/bin/env bash\necho 2\n' >"$B.bin/nproc"
+  chmod +x "$B.bin/nproc"
+  set -m
+  perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die "exec: $!"' env -i PATH="$B.bin:$PATH" HOME="$HOME" \
+    TMPDIR="$B.tmp" PIDFILE="$B.pid" bash "$B/run-all.sh" >"$B.out" 2>&1 &
+  runner=$!
+  set +m
+  tick=0
+  until [ -s "$B.pid" ] || [ "$tick" -ge 100 ]; do sleep 0.1; tick=$((tick + 1)); done
+  suite_pid="$(cat "$B.pid" 2>/dev/null)"
+  STAGED+=("$suite_pid")
+  if [ "$target" = group ]; then kill -"$sig" -- "-$runner"; else kill -"$sig" "$runner"; fi
+  RC=0
+  wait "$runner" 2>/dev/null || RC=$?
+  # A suite orphaned by the runner's exit stays visible until it is reaped.
+  tick=0
+  while kill -0 "$suite_pid" 2>/dev/null && [ "$tick" -lt 50 ]; do sleep 0.1; tick=$((tick + 1)); done
+  state=gone
+  [ -n "$suite_pid" ] || state=never-started
+  ! kill -0 "$suite_pid" 2>/dev/null || state=alive
+  assert_eq "rc=$RC suite=$state" \
+    "rc=$want suite=gone" "SIG$sig to the $target ends the run at $want and ends the suite it ran"
+done <<<"$SIGNAL_ROWS"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

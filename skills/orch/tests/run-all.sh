@@ -172,14 +172,20 @@ report() { # BASE STATUS SECONDS
   printf 'suite=%s seconds=%s pass=%s fail=%s\n' "$1" "$3" "$pass" "$fail"
 }
 
-# Each suite is launched with job control on, so it leads its own process
-# group with SIGINT at its default rather than ignored as a plain background
-# job's is; a Ctrl-C reaches the runner alone, and this sends TERM to every
-# running suite's whole group and waits for it before the runner exits.
+# Suites stay in the runner's process group, so HUP, TERM or KILL sent to
+# the group ends them with it. A background job ignores SIGINT, and TERM may
+# reach the runner alone, so on either this sends TERM to every running suite
+# and its descendants and waits for each before the runner exits.
+stop_tree() { # PID ; TERM to it, then to each child it had
+  local kids kid
+  kids="$(pgrep -P "$1")"
+  kill -TERM "$1" 2>/dev/null
+  for kid in $kids; do stop_tree "$kid"; done
+}
 stop_suites() {
   local k=0
   while [ "$k" -lt "$JOBS" ]; do
-    [ -z "${SLOT_PID[k]:-}" ] || kill -TERM -- "-${SLOT_PID[k]}" 2>/dev/null
+    [ -z "${SLOT_PID[k]:-}" ] || stop_tree "${SLOT_PID[k]}"
     k=$((k + 1))
   done
   k=0
@@ -221,10 +227,8 @@ while [ "$finished" -lt "$RUN" ]; do
     if [ -z "${SLOT[k]}" ] && [ "$next" -lt "$RUN" ] &&
       { [ "$next" -lt "$POOLED" ] || [ "$running" -eq 0 ]; }; then
       printf 'start suite=%s\n' "${SUITES[next]}"
-      set -m
       bash "$TEST_DIR/${SUITES[next]}.sh" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
       SLOT_PID[k]=$!
-      set +m
       SLOT[k]="${SUITES[next]}"
       SLOT_START[k]=$SECONDS
       running=$((running + 1))
