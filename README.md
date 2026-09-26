@@ -1,8 +1,6 @@
-# kendex
+# kendex <a href="https://daytona.io" target="_blank" rel="noopener"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/daytona-startup-grid-dark-transparent.svg"><img src="docs/img/daytona-startup-grid-light-transparent.svg" alt="Daytona Startup Grid" height="36" align="absmiddle"></picture></a>
 
 kendex is a desktop app and command-line tool (CLI) for AI coding tools such as Claude Code, Codex and Cursor. It manages agents, skills, hooks and other customizations. You set them up once and use them across your tools and projects.
-
-<p><a href="https://daytona.io" target="_blank" rel="noopener"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/daytona-startup-grid-dark-transparent.svg"><img src="docs/img/daytona-startup-grid-light-transparent.svg" alt="Daytona Startup Grid" height="36"></picture></a></p>
 
 <p><img src="docs/img/harness-claude.png" alt="Claude Code" height="20"> <img src="docs/img/harness-codex.png" alt="Codex" height="20"> <img src="docs/img/harness-opencode.png" alt="OpenCode" height="20"> <img src="docs/img/harness-cursor.png" alt="Cursor" height="20"> <img src="docs/img/harness-pi.png" alt="Pi" height="20"> <img src="docs/img/harness-gemini.png" alt="Gemini CLI" height="20"> <img src="docs/img/harness-copilot.png" alt="GitHub Copilot" height="20"> <img src="docs/img/harness-antigravity.png" alt="Antigravity" height="20"></p>
 
