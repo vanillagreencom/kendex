@@ -39,9 +39,9 @@ tmux_server_socket() {
 # session NAME, matched exactly (`=`: tmux otherwise takes a prefix). Returns
 # 0 where it does, 3 where tmux answers that it cannot find the session, and 1
 # for any other failure, no server at the socket among them, with tmux's own
-# words in TMUX_SESSION_DETAIL. This is the one reading of that answer: a
-# caller keys its missing-session and failed-call refusals off the status and
-# never matches the text itself.
+# words in TMUX_SESSION_DETAIL. This is the one reading of has-session's
+# answer: a caller keys its missing-session and failed-call refusals off the
+# status and never matches that text itself.
 TMUX_SESSION_DETAIL=""
 tmux_session_present() {
   if TMUX_SESSION_DETAIL="$(tmux has-session -t "=$1" 2>&1)"; then return 0; fi
