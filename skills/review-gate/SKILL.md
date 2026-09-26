@@ -27,7 +27,7 @@ Two greens do NOT mean a review happened. `REVIEW_GATE_MODE = "off"` evaluates n
 |---|---|---|
 | `approved` | `success` | Evidence exists for this head, the whole diff sits under `REVIEW_GATE_RENDER_PATHS`, or `REVIEW_GATE_DOCS_ONLY = "none"` and the shared CI classifier accepts the diff as docs-only; no standing objection; no unresolved threads. For an inactive or `current` class policy, `REVIEW_GATE_MODE = "off"` evaluates no evidence term. Success there means only "gate disabled", stated in the status description. |
 | `awaiting` | `pending` | No review evidence for this head yet. |
-| `threads-open` | `pending` | Evidence exists, but review threads are unresolved. |
+| `threads-open` | `pending` | Evidence exists, but review threads are unresolved. A merge-route waiver resolution that has lapsed counts as unresolved: [README class policy](README.md#class-policy). |
 | `changes-requested` | `failure` | A reviewer objects. Red means objection, never a build failure. |
 | `untracked-claim` | `failure` | A disposition reply that claims tracking and names no issue fails the gate. |
 | `unreasoned-decline` | `failure` | A decline whose reason strips to nothing against the label vocabulary fails the gate. |

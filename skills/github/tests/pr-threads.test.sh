@@ -17,7 +17,8 @@
 #            safe: `safe count=<n> unresolved=<n> threads=[<id>:<r|u>,...]
 #            first=<author>:<author_type>/<path>:<line>/<body>` of the first
 #            listed thread, then `comments=<type,type>/<comment_count>` of that
-#            thread's every comment;
+#            thread's every comment, then `resolved_by=<login>`, empty while
+#            it is open;
 #            `-` when empty
 #   graphql  how many `api graphql` calls the row made (one per page)
 set -euo pipefail
@@ -55,10 +56,11 @@ GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT/bin"
 
 # --- the threads --------------------------------------------------------------
 thread() { # id isResolved authorType [replyAuthorType]
-  local reply=""
+  local reply="" resolver=null
   [[ -z "${4:-}" ]] || reply="$(printf ',{"author":{"login":"replier","__typename":"%s"},"body":"reply"}' "$4")"
-  printf '{"id":"%s","isResolved":%s,"isOutdated":false,"path":"src/lib.rs","line":7,"comments":{"totalCount":%s,"nodes":[{"author":{"login":"reviewer","__typename":"%s"},"body":"note"}%s]}}' \
-    "$1" "$2" "$([[ -n "$reply" ]] && echo 2 || echo 1)" "$3" "$reply"
+  [[ "$2" != true ]] || resolver='{"login":"resolver[bot]"}'
+  printf '{"id":"%s","isResolved":%s,"isOutdated":false,"resolvedBy":%s,"path":"src/lib.rs","line":7,"comments":{"totalCount":%s,"nodes":[{"author":{"login":"reviewer","__typename":"%s"},"body":"note"}%s]}}' \
+    "$1" "$2" "$resolver" "$([[ -n "$reply" ]] && echo 2 || echo 1)" "$3" "$reply"
 }
 PAGE1="[$(thread PRRT_done_a true User),$(thread PRRT_done_b true User),$(thread PRRT_open false Bot User)]"
 PAGE2="[$(thread PRRT_page2_open false User),$(thread PRRT_page2_done true User)]"
@@ -103,7 +105,7 @@ out_text() {
       "$([[ "$text" == "$reference" ]] && printf exact || printf reshaped)"
     return
   fi
-  jq -r '"safe count=\(.count) unresolved=\(.unresolved_count) threads=[\([.threads[] | .id + ":" + (if .is_resolved then "r" else "u" end)] | join(","))] first=\(.threads[0] | if . == null then "-" else "\(.author):\(.author_type)/\(.path):\(.line)/\(.body) comments=\([.comments[].author_type] | join(","))/\(.comment_count)" end)"' <<<"$text"
+  jq -r '"safe count=\(.count) unresolved=\(.unresolved_count) threads=[\([.threads[] | .id + ":" + (if .is_resolved then "r" else "u" end)] | join(","))] first=\(.threads[0] | if . == null then "-" else "\(.author):\(.author_type)/\(.path):\(.line)/\(.body) comments=\([.comments[].author_type] | join(","))/\(.comment_count) resolved_by=\(.resolved_by)" end)"' <<<"$text"
 }
 
 run() {
@@ -143,8 +145,8 @@ raw --unresolved keeps only the unresolved node, the payload untouched|-|--unres
 raw --resolved keeps only the resolved nodes|-|--resolved --format=raw|0|raw nodes=[PRRT_done_a:r,PRRT_done_b:r] bytes=exact|1
 unfiltered raw is the API payload, every thread|-|--format=raw|0|raw nodes=[PRRT_done_a:r,PRRT_done_b:r,PRRT_open:u] bytes=exact|1
 the filter applies across every fetched page|page2|--unresolved --format=raw|0|raw nodes=[PRRT_open:u,PRRT_page2_open:u] bytes=exact|2
-safe --unresolved counts the filtered set and the PR's unresolved total|-|--unresolved|0|safe count=1 unresolved=1 threads=[PRRT_open:u] first=reviewer:Bot/src/lib.rs:7/note comments=Bot,User/2|1
-safe --resolved counts the filtered set, the unresolved total unchanged|-|--resolved|0|safe count=2 unresolved=1 threads=[PRRT_done_a:r,PRRT_done_b:r] first=reviewer:User/src/lib.rs:7/note comments=User/1|1
+safe --unresolved counts the filtered set and the PR's unresolved total|-|--unresolved|0|safe count=1 unresolved=1 threads=[PRRT_open:u] first=reviewer:Bot/src/lib.rs:7/note comments=Bot,User/2 resolved_by=|1
+safe --resolved counts the filtered set, the unresolved total unchanged|-|--resolved|0|safe count=2 unresolved=1 threads=[PRRT_done_a:r,PRRT_done_b:r] first=reviewer:User/src/lib.rs:7/note comments=User/1 resolved_by=resolver[bot]|1
 "
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

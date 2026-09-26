@@ -197,6 +197,7 @@ while IFS='|' read -r shape target check value; do
 done <<'ROWS'
 mode|scripts/review-writer.sh|runtime-mode|scripts/review-writer.sh
 missing|scripts/pr-watch.sh|runtime-missing|scripts/pr-watch.sh
+missing|scripts/lib/waiver.sh|runtime-missing|scripts/lib/waiver.sh
 untracked|scripts/pr-watch.sh|runtime-untracked|scripts/pr-watch.sh
 untracked|scripts/review-policy|runtime-untracked|scripts/review-policy
 symlink|scripts/pr-watch.sh|runtime-symlink|scripts/pr-watch.sh

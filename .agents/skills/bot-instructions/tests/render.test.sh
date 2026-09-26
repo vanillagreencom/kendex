@@ -138,6 +138,29 @@ TOML
 expect_clause toml-schema "renders in every repo" \
   "a repo surface taking a default surface's name is refused" render --dry-run --repo "$taken"
 
+# A repo declaring no surface of its own still carries the default ones, so
+# the renders that turn on having any surface see them: Copilot's Path rules
+# pointer, and the largest surfaces a Qodo budget finding names.
+bare_surfaces="$(bi_new_repo no-repo-surface)" || exit 1
+python3 - "$bare_surfaces/kendex.toml" <<'PY' || bad "the no-surface fixture drops the repo surfaces"
+import sys
+path = sys.argv[1]
+s = open(path).read()
+cut = s.index("\n[[bot-instructions.surface]]")
+open(path, "w").write(s[:cut + 1])
+PY
+if bi_must_adopt --repo "$bare_surfaces" && bi_must render --repo "$bare_surfaces"; then
+  if grep -q '^## Path rules$' "$bare_surfaces/.github/copilot-instructions.md"; then
+    ok "copilot-instructions.md points at the path rules with only default surfaces"
+  else
+    bad "copilot-instructions.md points at the path rules with only default surfaces"
+  fi
+  printf '\n[bot-instructions.budgets]\nqodo_best_practices_lines = 1\n' >>"$bare_surfaces/kendex.toml"
+  expect_clause qodo-best-practices "Largest surfaces — docs-plans: 1" \
+    "a Qodo budget finding names the default surfaces when the repo declares none" \
+    render --dry-run --repo "$bare_surfaces"
+fi
+
 # One title. A consumer that lints every tracked markdown file rejects a
 # second level-one heading, and Copilot reads the levels below all the same.
 for f in .github/copilot-instructions.md .github/instructions/code-review.md; do
