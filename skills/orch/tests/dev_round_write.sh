@@ -24,7 +24,10 @@ source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
-VRUN="$(validate_run_dir "$TMP_ROOT/validate-run" full)"
+# The mode a fix round runs is read from the project's settings, and orch-env
+# reads the process environment first: a developer's own range command would
+# otherwise decide the fix receipts' acceptance.
+unset DEV_VALIDATE_RANGE_CMD
 mkdir -p "$TMP_ROOT/linear/scripts" "$TMP_ROOT/bin"
 # The size owner reads the issue through its sibling Linear CLI. This stand-in
 # supplies the same raw cache row on Bash 3.2 test runners.
@@ -161,14 +164,43 @@ echo "=== a two-item round record, immutable once stamped ==="
 # worktree); an identical re-invocation is an idempotent retry, a different
 # set under the same round id is refused with the original intact, and a
 # fresh round id writes a distinct file beside the prior round's.
+WRITE_BEFORE="$(date +%s)"
 run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
+WRITE_AFTER="$(date +%s)"
 FIRST="$OUT"
-E="rc=0 out=$WT/tmp/dev-round-issue-1230-$RID.json written=yes .schema_version=2 .schema_version|type=number .round_id=$RID .issue=issue-1230 .base_sha=$BASE_SHA .adds|tojson=[\"crates/parser/src/lib.rs\",\"skills/orch/scripts/new-check\"] .items|length=2 .items[0].n=1 .items[0].n|type=number"
-assert_eq "$(observe "$E")" "$E" "the record carries the round token, the normalized issue, HEAD as base_sha, the adds list and one numbered item per --item" "$ERR"
+E="rc=0 out=$WT/tmp/dev-round-issue-1230-$RID.json written=yes .schema_version=2 .schema_version|type=number .round_id=$RID .issue=issue-1230 .base_sha=$BASE_SHA .delegated_at|type=number (.delegated_at>=$WRITE_BEFORE)and(.delegated_at<=$WRITE_AFTER)=true .adds|tojson=[\"crates/parser/src/lib.rs\",\"skills/orch/scripts/new-check\"] .items|length=2 .items[0].n=1 .items[0].n|type=number"
+assert_eq "$(observe "$E")" "$E" "the record carries the round token, the normalized issue, HEAD as base_sha, the delegation time, the adds list and one numbered item per --item" "$ERR"
 assert_eq "$(rec '.items[1].text')" "$ITEM2" "an item's formatted block is preserved verbatim, multi-line" "$ERR"
+# Control: a writer that stamps a constant time records one outside the
+# write's own window.
+STAMP_MUTANT_SCRIPTS="$(copy_scripts round-stamp-mutant)"
+mutate_file "$STAMP_MUTANT_SCRIPTS/dev-round-write" 'delegated_at="$(date +%s)"' 'delegated_at=0'
+SAVED_WRITE_BIN="$WRITE_BIN"
+WRITE_BIN="$STAMP_MUTANT_SCRIPTS/dev-round-write"
+WRITE_BEFORE="$(date +%s)"
+run_write --worktree "$WT" --issue issue-1230 --round-id 90-90 --item 1 "stamp control" "$OK_REACH"
+WRITE_AFTER="$(date +%s)"
+WRITE_BIN="$SAVED_WRITE_BIN"
+E="rc=0 (.delegated_at>=$WRITE_BEFORE)and(.delegated_at<=$WRITE_AFTER)=false"
+assert_eq "$(observe "$E")" "$E" "control: with a constant stamp the delegation time falls outside the write" "$ERR"
 assert_eq "$([[ -e "$WT/.git/kendex" ]] && echo yes || echo no)" "no" "nothing is written outside the worktree"
 run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
 assert_eq "$(observe "rc=0 out=$FIRST [.items[].n]|tojson=[1,2]")" "rc=0 out=$FIRST [.items[].n]|tojson=[1,2]" "an identical re-invocation is idempotent: same path, record unchanged" "$ERR"
+# A retry a minute after the first invocation stamps a later time, which is
+# not a different delegation: the record keeps the first invocation's.
+FIRST_AT="$(( $(jq -r '.delegated_at' "$FIRST") - 60 ))"
+jq --argjson at "$FIRST_AT" '.delegated_at = $at' "$FIRST" > "$FIRST.next"
+mv "$FIRST.next" "$FIRST"
+run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
+assert_eq "$(observe "rc=0 .delegated_at=$FIRST_AT")" "rc=0 .delegated_at=$FIRST_AT" "a later identical retry is idempotent and keeps the first invocation's delegation time" "$ERR"
+# Control: an identity that counts the time refuses that retry as a conflict.
+TIME_MUTANT_SCRIPTS="$(copy_scripts round-time-mutant)"
+mutate_file "$TIME_MUTANT_SCRIPTS/dev-round-write" 'a="$(jq -c '"'"'del(.delegated_at)'"'"' "$1" 2>/dev/null)" || return 1' 'a="$(jq -c . "$1" 2>/dev/null)" || return 1'
+SAVED_WRITE_BIN="$WRITE_BIN"
+WRITE_BIN="$TIME_MUTANT_SCRIPTS/dev-round-write"
+run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
+WRITE_BIN="$SAVED_WRITE_BIN"
+assert_eq "$(observe "rc=2")" "rc=2" "control: with the time counted the later retry is refused as a conflict" "$ERR"
 run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 3 replacement "$OK_REACH"
 OUT="$FIRST"
 assert_eq "$(observe "rc=2 [.items[].n]|tojson=[1,2]")" "rc=2 [.items[].n]|tojson=[1,2]" "a different set under the same round id is refused and the original stands" "$ERR"
@@ -343,7 +375,7 @@ run_write --worktree "$PRW" --issue pr-51 --round-id 51-1 --item 1 "pr key round
 E="rc=0 written=yes .issue=pr-51 .size_check.verdict=allowance_missing .size_check.production_allowance=null"
 assert_eq "$(observe "$E")" "$E" "a round under a pr-N key stamps with the measured allowance_missing verdict" "$ERR"
 "$RETURN_WRITE" --worktree "$PRW" --kind fix --issue pr-51 --round-id 51-1 --branch main \
-  --commit "$(git -C "$PRW" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
+  --commit "$(git -C "$PRW" rev-parse HEAD)" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-prw-51-1-1" "$PRW" pr-51 51-1)" --item 1 Applied done >/dev/null
 set +e
 "$CHECK" --worktree "$PRW" --issue pr-51 --round-id 51-1 --expect-items-from-round >/dev/null 2>&1
 pr_check_rc=$?
@@ -363,7 +395,7 @@ run_write --worktree "$LW" --issue "$LOCAL_KEY" --round-id "$LOCAL_RID" --item 1
 E="rc=0 written=yes .issue=$LOCAL_KEY .round_id=$LOCAL_RID .size_check.verdict=allowance_missing"
 assert_eq "$(observe "$E")" "$E" "a round under a minted local key stamps with the measured allowance_missing verdict" "$ERR"
 "$RETURN_WRITE" --worktree "$LW" --kind fix --issue "$LOCAL_KEY" --round-id "$LOCAL_RID" --branch main \
-  --commit "$(git -C "$LW" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
+  --commit "$(git -C "$LW" rev-parse HEAD)" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-lw-local" "$LW" "$LOCAL_KEY" "$LOCAL_RID")" --item 1 Applied done >/dev/null
 set +e
 "$CHECK" --worktree "$LW" --issue "$LOCAL_KEY" --round-id "$LOCAL_RID" --expect-items-from-round >/dev/null 2>&1
 local_check_rc=$?

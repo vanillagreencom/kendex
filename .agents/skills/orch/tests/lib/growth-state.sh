@@ -59,8 +59,9 @@ growth_round_write() {
   env ORCH_STATE_DIR="$worktree/tmp" "$writer" "$@"
 }
 
-# validate_run_dir DIR MODE [EXIT] — a finished dev-validate-run run directory
-# for a receipt to name: a start record under MODE, a wall time of 3300
+# validate_run_dir DIR MODE [EXIT] [HEAD] [START] — a finished dev-validate-run
+# run directory for a receipt to name: a start record under MODE, started at
+# HEAD and at the epoch second START where each is given, a wall time of 3300
 # seconds, and a sentinel recording EXIT, 0 by default; EXIT "none" leaves the
 # run unfinished, with neither, and "no-verdict" records the bound ending it,
 # as the runner's child does. The receipt reads it back through
@@ -69,6 +70,8 @@ growth_round_write() {
 validate_run_dir() {
   mkdir -p "$1"
   printf 'validate-mode=%s\n' "$2" > "$1/start"
+  [[ -z "${4:-}" ]] || printf 'head=%s\n' "$4" >> "$1/start"
+  [[ -z "${5:-}" ]] || printf 'start=%s\n' "$5" >> "$1/start"
   if [[ "${3:-0}" != none ]]; then
     printf 'started-at=2026-01-01T00:00:00Z\nended-at=2026-01-01T00:55:00Z\nseconds=3300\n' > "$1/timing"
   fi
@@ -78,4 +81,15 @@ validate_run_dir() {
     *) printf 'guard-exit=%s at=2026-01-01T00:55:00Z\n' "${3:-0}" > "$1/exit" ;;
   esac
   printf '%s\n' "$1"
+}
+
+# round_run_dir DIR WORKTREE ISSUE RID [MODE] — a passing run started at the
+# base_sha of WORKTREE's round record for ISSUE and RID, in the second the
+# round was delegated, which is where and when a fix round's own run starts,
+# so a fix receipt may name it. MODE is full by default. Prints DIR.
+round_run_dir() {
+  local base delegated_at
+  base="$(jq -r '.base_sha' "$2/tmp/dev-round-$3-$4.json")" || return 1
+  delegated_at="$(jq -r '.delegated_at' "$2/tmp/dev-round-$3-$4.json")" || return 1
+  validate_run_dir "$1" "${5:-full}" 0 "$base" "$delegated_at"
 }

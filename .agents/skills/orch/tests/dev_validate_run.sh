@@ -18,6 +18,10 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 RUN="$SCRIPTS_DIR/dev-validate-run"
 
+# start_of RUN_DIR — the epoch second the run's start record names, which its
+# --record line carries.
+start_of() { sed -n 's/^start=//p' "$1/start"; }
+
 PASS=0
 FAIL=0
 
@@ -237,14 +241,14 @@ assert_eq "$t_secs" "$(jq -n --arg a "$t_start" --arg b "$t_end" '($b | fromdate
 assert_eq "$([[ "$t_secs" -ge 2 ]] && echo within || echo "outside:$t_secs")" "within" \
   "and the span is the command's: at least its 2-second bound"
 run_script "$RUN" --record --run-dir "$timeout_dir"
-assert_eq "$OUT rc=$RC" "validate-mode=full verdict=no-verdict seconds=$t_secs started-at=$t_start ended-at=$t_end rc=0" \
+assert_eq "$OUT rc=$RC" "validate-mode=full verdict=no-verdict head= start=$(start_of "$timeout_dir") seconds=$t_secs started-at=$t_start ended-at=$t_end rc=0" \
   "the record of a run killed at its bound reads no-verdict, never pass or FAILING, and carries its wall time" "$ERR"
 
 # Control: a sentinel reader that files the bound's verdict with the failures
 # hands the receipt a FAILING for that same cut-off run.
 mutant mutant-cut-failing '*" verdict=no-verdict") SENTINEL_VERDICT=no-verdict ;;' '*" verdict=no-verdict") SENTINEL_VERDICT=FAILING ;;'
 run_script "$MUTANT" --record --run-dir "$timeout_dir"
-assert_eq "$OUT" "validate-mode=full verdict=FAILING seconds=$t_secs started-at=$t_start ended-at=$t_end" \
+assert_eq "$OUT" "validate-mode=full verdict=FAILING head= start=$(start_of "$timeout_dir") seconds=$t_secs started-at=$t_start ended-at=$t_end" \
   "control: with the bound's verdict unread the cut-off run's record reads FAILING" "$ERR"
 
 # Control: with the own-exit marker never written, a command's own exit 124
@@ -365,8 +369,8 @@ for row in "${MODE_ROWS[@]}"; do
     "$label — the start record names the mode and base that ran" "$ERR"
   run_script "$RUN" --record --run-dir "$mode_dir"
   assert_eq "$(sed -E 's/ seconds=[0-9]+ started-at=[^ ]+ ended-at=[^ ]+$/ seconds=N started-at=T ended-at=T/' <<<"$OUT")" \
-    "validate-mode=$want_mode verdict=pass seconds=N started-at=T ended-at=T" \
-    "$label — the run's record names that mode, the pass and its wall time" "$ERR"
+    "validate-mode=$want_mode verdict=pass head=$head_sha start=$(start_of "$mode_dir") seconds=N started-at=T ended-at=T" \
+    "$label — the run's record names that mode, the pass, the HEAD and second it started at and its wall time" "$ERR"
 done
 # The last range run's started line keeps the shape every waiter reads; the
 # class fields that close it are the classifier rows' to pin.
@@ -384,6 +388,36 @@ run_script "$MUTANT" --worktree "$proj" --poll 1 --validate-mode range --base HE
 assert_eq "$(output_of "$OUT")" "full" \
   "control: with the range setting unread the range run logs the full battery" "$ERR"
 
+# Control: a start record that names no HEAD binds the run to no round, and
+# the record row reddens on it.
+mutant mutant-no-head "head_sha=\"\$(git rev-parse --verify -q 'HEAD^{commit}')\"" 'head_sha=""'
+run_script "$MUTANT" --worktree "$proj" --poll 1 --validate-mode range --base HEAD
+headless_dir="$(run_dir_of "$OUT")"
+run_script "$RUN" --record --run-dir "$headless_dir"
+assert_eq "${OUT%% seconds=*}" "validate-mode=range verdict=pass head= start=$(start_of "$headless_dir")" \
+  "control: with the HEAD unrecorded the record names none" "$ERR"
+
+# --- --resolve-mode names the mode a range run records, and starts nothing ----
+# label|project's range command|mode printed
+RESOLVE_ROWS=(
+  "a project with a range command resolves a range request to range|$RANGE_CMD|range"
+  "a project with no range command resolves a range request to full||full"
+)
+n=0
+for row in "${RESOLVE_ROWS[@]}"; do
+  IFS='|' read -r label range_cmd want_mode <<<"$row"
+  n=$((n + 1))
+  proj="$(make_mode_proj "proj-resolve-$n" "$range_cmd")"
+  run_script "$RUN" --resolve-mode --worktree "$proj"
+  assert_eq "$OUT rc=$RC runs=$(find "$proj" -maxdepth 2 -name 'dev-validate-*' | wc -l | tr -d ' ')" \
+    "validate-mode=$want_mode rc=0 runs=0" "$label" "$ERR"
+done
+# Control: a resolution that never reads the range command names full for the
+# project that sets one.
+mutant mutant-resolve-full 'validate_mode=range' 'validate_mode=full'
+run_script "$MUTANT" --resolve-mode --worktree "$TMP_ROOT/proj-resolve-1"
+assert_eq "$OUT" "validate-mode=full" \
+  "control: with the range command unread the project that sets one resolves to full" "$ERR"
 # --- A range base a rebase left off the branch ---------------------------------
 # A branch that forked from main, committed b1 (the round's recorded base, the
 # pre-rebase head), and was then rebased over the three commits main gained and
@@ -421,14 +455,26 @@ ORPHAN_ROWS=(
   "a base still on the branch validates from that base, as before|$RUN|$rebased_b1|r1 |$rebased_b1|"
   "control: a run that keeps the orphaned base spans main's commits|$MUTANT|$pre_rebase|m1 m2 m3 r1 |$pre_rebase|$pre_rebase"
 )
+# The record's orphaned field, empty where the line carries none.
+record_orphaned() { sed -n 's/.* validate-base-orphaned=\([^ ]*\).*/\1/p' <<<"$1"; }
+orphan_dirs=()
 for row in "${ORPHAN_ROWS[@]}"; do
   IFS='|' read -r label script base want_range want_base want_orphaned <<<"$row"
   run_script "$script" --worktree "$proj_orphan" --poll 1 --validate-mode range --base "$base"
   orphan_dir="$(run_dir_of "$OUT")"
+  orphan_dirs+=("$orphan_dir")
   assert_eq "$RC $(output_of "$OUT" | tr '\n' ' ')" "0 $want_range" "$label" "$ERR"
   assert_eq "$(start_line "$orphan_dir" validate-base)|$(start_line "$orphan_dir" validate-base-orphaned)" \
     "$want_base|$want_orphaned" "$label — the start record names the base that ran and the orphaned one" "$ERR"
+  run_script "$RUN" --record --run-dir "$orphan_dir"
+  assert_eq "$RC $(record_orphaned "$OUT")" "0 $want_orphaned" \
+    "$label — the record names the orphaned base a fix receipt binds through" "$ERR"
 done
+# Control: a record that drops the orphaned base names none for the rebased run.
+mutant mutant-record-no-orphan '"${record_orphaned:+ validate-base-orphaned=$record_orphaned}"' '""'
+run_script "$MUTANT" --record --run-dir "${orphan_dirs[0]}"
+assert_eq "$RC $(record_orphaned "$OUT")" "0 " \
+  "control: with the field dropped the rebased run's record names no orphaned base" "$ERR"
 
 # An orphaned base with no origin base branch to take a fork point from is
 # refused, never run over the orphaned range.
@@ -442,9 +488,18 @@ assert_eq "$RC $(grep '^dev-validate-run: ' <<<"$ERR")" "2 dev-validate-run: orp
 proj_orphan_full="$TMP_ROOT/proj-orphan-full"
 cp -R "$proj_orphan" "$proj_orphan_full"
 grep -v '^DEV_VALIDATE_RANGE_CMD' "$proj_orphan/kendex.settings.toml" > "$proj_orphan_full/kendex.settings.toml"
+# It still records the orphaned base, which a fix receipt binds through.
 run_script "$RUN" --worktree "$proj_orphan_full" --poll 1 --validate-mode range --base "$pre_rebase"
-assert_eq "$RC $(output_of "$OUT") $(start_line "$(run_dir_of "$OUT")" validate-mode)" "0 full full" \
-  "an orphaned base in a project with no range command runs the whole battery" "$ERR"
+full_dir="$(run_dir_of "$OUT")"
+assert_eq "$RC $(output_of "$OUT") $(start_line "$full_dir" validate-mode) $(start_line "$full_dir" validate-base-orphaned)" \
+  "0 full full $pre_rebase" \
+  "an orphaned base in a project with no range command runs the whole battery and records the base" "$ERR"
+# Control: an orphaned base recorded only where the range command runs leaves
+# the whole-battery run with none.
+mutant mutant-orphan-range-only '(( ancestor_rc == 0 )) || orphaned_sha="$base_sha"' 'true'
+run_script "$MUTANT" --worktree "$proj_orphan_full" --poll 1 --validate-mode range --base "$pre_rebase"
+assert_eq "$RC $(start_line "$(run_dir_of "$OUT")" validate-base-orphaned)" "0 " \
+  "control: with the base recorded in range mode alone the whole-battery run records none" "$ERR"
 
 # --- A command that ignores SIGTERM is still ended inside the bound -----------
 # Fixtures in this repository trap TERM by construction. The bound's TERM ends
@@ -500,7 +555,7 @@ assert_eq "$RC" "3" "and exits 3, which is the instruction to poll again" "$ERR"
 assert_eq "$([[ "$slow_elapsed" -le 5 ]] && echo within || echo "over:$slow_elapsed")" "within" \
   "and it returns on its own budget rather than a whole poll interval past it"
 run_script "$RUN" --record --run-dir "$slow_dir"
-assert_eq "$OUT rc=$RC" "validate-mode=full verdict=unfinished rc=0" \
+assert_eq "$OUT rc=$RC" "validate-mode=full verdict=unfinished head= start=$(start_of "$slow_dir") rc=0" \
   "the record of a run still going reads unfinished, never pass" "$ERR"
 kill -KILL -- "-$started" 2>/dev/null || kill -KILL "$started" 2>/dev/null || true
 wait "$started" 2>/dev/null || true
@@ -580,7 +635,7 @@ assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: option-unused option=--bud
 assert_eq "$RC" "2" "and exits 2"
 
 run_script "$RUN" --poll 1
-assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: required options=--worktree,--wait,--stop,--record,--child" \
+assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: required options=--worktree,--wait,--stop,--record,--resolve-mode,--child" \
   "a call naming no mode is refused"
 assert_eq "$RC" "2" "and exits 2"
 
@@ -759,6 +814,9 @@ MODE_REFUSALS=(
   "a record of a wall time whose seconds are no number is refused|--record --run-dir $TMP_ROOT/badtimed|dev-validate-run: timing-unreadable path=$TMP_ROOT/badtimed/timing"
   "a record of a wall time whose start is no UTC time is refused|--record --run-dir $TMP_ROOT/badstart|dev-validate-run: timing-unreadable path=$TMP_ROOT/badstart/timing"
   "a record of a wall time whose end is no UTC time is refused|--record --run-dir $TMP_ROOT/badend|dev-validate-run: timing-unreadable path=$TMP_ROOT/badend/timing"
+  "a base handed to --resolve-mode is refused|--resolve-mode --worktree $proj_refuse --base HEAD|dev-validate-run: option-unused option=--base mode=resolve"
+  "a validation mode handed to --resolve-mode is refused|--resolve-mode --worktree $proj_refuse --validate-mode range|dev-validate-run: option-unused option=--validate-mode mode=resolve"
+  "--resolve-mode with no worktree is refused|--resolve-mode|dev-validate-run: required option=--worktree"
 )
 for row in "${MODE_REFUSALS[@]}"; do
   IFS='|' read -r label args want <<<"$row"

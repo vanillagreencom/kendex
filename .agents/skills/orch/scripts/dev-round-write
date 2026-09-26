@@ -58,6 +58,8 @@
 #     "round_id": "[ROUND_ID]",             // required, matches the filename token
 #     "issue": "[ISSUE_ID]",                // required, normalized state key
 #     "base_sha": "[HEAD_AT_DELEGATION]",    // required, full commit id
+#     "delegated_at": 1769600000,             // required, epoch second the
+#                                             // round's first invocation started
 #     "adds": ["tools/allowed-file"],        // required, protected additions
 #     "cut": false,                          // required, true for a declared cut
 #     "size_check": {"verdict": "pass", "…": "…"}, // branch-size-check record
@@ -242,8 +244,10 @@ the same list the delegation's Adds: line renders. A blank or tab separates,
 so a path containing whitespace is read as two paths and cannot be authorized
 as one. Absolute, traversing, empty-component, and duplicate paths are
 rejected.
-The record captures the worktree's current HEAD as base_sha; a worktree with
-no resolvable HEAD is rejected.
+The record captures the worktree's current HEAD as base_sha, and the epoch
+second the round's first dev-round-write invocation started as delegated_at
+(an identical retry keeps it; identity compares every other field); a
+worktree with no resolvable HEAD is rejected.
 Before writing the round, branch-size-check measures additions and records
 its report in size_check. Over-allowance and unsized branches continue.
 A malformed Expected delta exits 3; a read or measurement failure exits 2.
@@ -382,6 +386,10 @@ done
 [[ -d "$worktree" ]] || die not-directory "$@"
 check_id_token --issue "$issue"
 check_id_token --round-id "$round_id"
+# Taken when the invocation starts. A retry keeps the first invocation's time:
+# the identity comparison below leaves it out, so the round's start is when it
+# was first delegated.
+delegated_at="$(date +%s)"
 base_sha="$(git -C "$worktree" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" \
   || die missing-head "$@"
 
@@ -494,6 +502,7 @@ jq -n \
   --arg round_id "$round_id" \
   --arg issue "$issue" \
   --arg base_sha "$base_sha" \
+  --argjson delegated_at "$delegated_at" \
   --argjson adds "$adds_json" \
   --argjson cut "$cut" \
   --argjson size_check "$size_check" \
@@ -504,6 +513,7 @@ jq -n \
      round_id: $round_id,
      issue: $issue,
      base_sha: $base_sha,
+     delegated_at: $delegated_at,
      adds: $adds,
      cut: $cut,
      size_check: $size_check,
@@ -516,8 +526,17 @@ jq -n \
 # An identical re-invocation (a retry after an unclear failure) is idempotent;
 # different content under the same token would silently rewrite what was
 # delegated — e.g. a retry with a partial list shrinking the set the
-# completion artifact is checked against. jq output is deterministic, so a
-# byte comparison decides identity.
+# completion artifact is checked against. Identity is every field but
+# delegated_at, which a retry stamps again and the placed record keeps from
+# its first invocation; jq output is deterministic, so the rest compares as
+# text.
+# A record jq cannot read is never the same.
+same_record() {
+  local a b
+  a="$(jq -c 'del(.delegated_at)' "$1" 2>/dev/null)" || return 1
+  b="$(jq -c 'del(.delegated_at)' "$2" 2>/dev/null)" || return 1
+  [[ "$a" == "$b" ]]
+}
 # Placement is ATOMIC create-if-absent, not check-then-move: a bare
 # existence test races a concurrent retry (both observe absent, both mv,
 # last write silently wins — exactly the rewrite this block forbids).
@@ -525,10 +544,10 @@ jq -n \
 # record; every other lands in the comparison branch below, where an
 # identical retry is idempotent and a divergent one refuses.
 if [[ "$out_exists" == "true" ]]; then
-  cmp -s "$tmp" "$out" \
+  same_record "$tmp" "$out" \
     || die record-conflict "$@"
 elif ! ln "$tmp" "$out" 2>/dev/null; then
-  cmp -s "$tmp" "$out" \
+  same_record "$tmp" "$out" \
     || die record-race "$@"
 fi
 
