@@ -31,6 +31,14 @@ vi.mock("@/bindings", () => ({
   },
 }));
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), success: vi.fn() } }));
+// The write lifecycle and the machine read behind it are
+// `write-rescan.test.ts`'s; here a write runs its body and nothing else.
+vi.mock("@/lib/rescan", () => ({
+  writingRepo: async <R>(body: () => Promise<R>, enter?: () => void) => {
+    enter?.();
+    return body();
+  },
+}));
 
 /** One changed path the write is said to have made, unless the row says
  *  otherwise. */
