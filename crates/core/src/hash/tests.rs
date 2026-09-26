@@ -345,6 +345,9 @@ fn a_source_hash_asks_git_only_where_a_crlf_pair_could_convert() {
     std::fs::create_dir_all(root.join("skill")).unwrap();
     std::fs::write(root.join("skill/SKILL.md"), b"one\ntwo\n").unwrap();
     std::fs::write(root.join("skill/notes.md"), b"three\n").unwrap();
+    // Binary to Git, so no checkout gives it a CRLF pair: one file Git
+    // can convert is enough to ask it.
+    std::fs::write(root.join("skill/asset.bin"), b"four\0\n").unwrap();
     git(&["add", "skill"]);
     git(&[
         "-c",
@@ -384,6 +387,10 @@ fn a_source_hash_asks_git_only_where_a_crlf_pair_could_convert() {
     assert_eq!(
         std::fs::read(root.join("skill/SKILL.md")).unwrap(),
         b"one\r\ntwo\r\n"
+    );
+    assert_eq!(
+        std::fs::read(root.join("skill/asset.bin")).unwrap(),
+        b"four\0\n"
     );
     let (crlf, _) = hash();
     assert_eq!(crlf, lf, "a CRLF checkout lost the committed identity");
