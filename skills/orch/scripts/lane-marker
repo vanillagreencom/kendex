@@ -61,7 +61,10 @@ handed its mail and never judged on its handoff marks. A root the first half
 binds with no `tmp/lane-mail` directory is refused as `lane-mail-check:
 mailbox-missing=<path>` before every tool call and at every turn end until
 that directory stands. Each launcher calls this: `open-terminal` locally,
-`lane-host create` over its transport.
+`lane-host create` over its transport. The mailbox loses the context reading a
+session before this launch recorded in it, `context.json`, so a new session is
+never reported at its predecessor's handoff mark. `--marker-path` writes
+nothing, so a launcher using it empties that record over its own transport.
 
 `--marker-path` prints the marker half's path under the common git directory
 it is given and writes nothing. A launcher whose lane is on another machine
@@ -133,6 +136,14 @@ done
 { [ ! -L "$MARKER" ] && { [ ! -e "$MARKER" ] || [ -f "$MARKER" ]; }; } || refuse unsafe "$MARKER"
 
 MADE=$(mkdir -p -- "$COMMON/lane-mail" "$BOX" 2>&1) || refuse write "$BOX" "$MADE"
+
+# A launch starts a session with nothing in its context, so the reading the
+# session before it recorded in this mailbox is not this one's: left there, it
+# would report a fresh lane at its predecessor's mark until its first turn end.
+# The file's name is lib/lane-context.sh's, the one owner of that record.
+# shellcheck source=lib/lane-context.sh
+source "${BASH_SOURCE[0]%/*}/lib/lane-context.sh"
+CLEARED=$(rm -f -- "${BOX:?}/$LANE_CONTEXT_RECORD" 2>&1) || refuse write "$BOX/$LANE_CONTEXT_RECORD" "$CLEARED"
 
 # The root lands through a temporary file renamed over the marker, so the write
 # never follows a link a peer put there between the check above and here.

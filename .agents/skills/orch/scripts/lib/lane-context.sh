@@ -1,55 +1,17 @@
 #!/usr/bin/env bash
-# Context use per live work lane, read from the lane's own pane status line
-# and nothing else. A harness session file is a private format whose fields
-# are ambiguous to anyone but the harness; the status line is the number the
-# harness itself stands behind, on the screen the operator is looking at.
+# Context use per session, read from the records the harness itself writes and
+# never from a pane. A session's turn-end hook reads its own transcript through
+# the adapter for its harness (lib/adapters/), which answers the tokens the last
+# response left in the context and the window the model has, and records that
+# reading in the session's mailbox directory. Every other reader, `lanes
+# context`, `oversee-succeed` and the watch through it, reads that record, so a
+# hosted lane reads the same as a local one and a scrolled or quiet pane changes
+# nothing.
 #
-# Two shapes, two directions:
-#   Claude prints `Opus 5 41%`       — the percentage USED.
-#   Codex  prints `Context 86% left` — the percentage REMAINING, or
-#                 `Context 14% used` when its status item is configured the
-#                 other way round. Both spellings ship in one binary.
-# The shape that matched decides the direction, so nothing has to record
-# which harness a pane runs. Both are reported as CONTEXT_USED_PCT: one
-# direction, and a rising number always means a fuller context.
-#
-# WHERE the status line sits differs by harness, and that is what decides
-# how each one is found.
-#
-# Codex draws its status line LAST. In every captured pane it is the final
-# non-empty row, with blank rows and nothing else below it, so the codex
-# reading is taken from that row and from no other row on the screen. A
-# final row that is not a status line is no reading at all, never a search
-# up the transcript for something shaped like one. POSITION carries that
-# refusal because shape cannot: codex's status items are user-configured
-# (`[tui].status_line` — model with reasoning, git branch, project name,
-# codex version, tokens used, working directory), and `gpt-6-astra default`
-# is a configured item while `compact now` is a sentence about compaction,
-# and the two are the same shape. A reader that refuses what it does not
-# recognise leaves the lane unmeasured, and an unmeasured lane is never
-# compacted — which is the outcome compaction exists to prevent. So what
-# follows the separator is taken as it comes.
-#
-# Claude draws ONE ROW PER RUNNING AGENT below its status line, so the
-# footer grows with the fleet — and the deepest footers belong to the
-# orchestrating lanes, the ones this measurement exists for. Its status line
-# is never the final row, so the claude reading is the BOTTOM-MOST whole-line
-# match instead: anything above it is a prior render of the same lane,
-# from before it compacted. Bottom-most is safe only because a reading is a
-# whole STATUS LINE and never a fragment prose can carry too: otherwise the
-# lowest sentence naming a model and a percentage beats the real status line
-# above it.
-#
-# A screen that outlived its harness is refused rather than measured, and
-# that refusal takes positive evidence, never distance: the pane's
-# foreground process must BE a harness this reader knows. A pane that has
-# outlived its harness would otherwise have its last render reported as
-# current forever.
-#
-# A lane is live while its claim's pane is (lib/lane-claims.sh). A pane that
-# cannot be captured — on another tmux server, or gone between the claim read
-# and here — is reported `unreadable` with no number: an unmeasured lane must
-# never read as an empty one.
+# One judge: lane_context_handoff_due enforces the absolute token cap and the
+# remaining-capacity mark. ORCH_HANDOFF_CONTEXT_PCT can request an earlier
+# handoff. No reader carries its own arithmetic. Missing capacity is unmeasured
+# below the absolute cap, never judged against a guess.
 set -euo pipefail
 
 # A launch home reaches this library in CODEX_HOME, and only lane-home.sh says
@@ -60,45 +22,42 @@ set -euo pipefail
 # nothing else, where an external would leave it half loaded.
 # shellcheck source=lane-home.sh
 source "${BASH_SOURCE[0]%/*}/lane-home.sh"
+# The adapters, one per harness a transcript is read for, named the same way.
+# shellcheck source=adapters/claude.sh
+source "${BASH_SOURCE[0]%/*}/adapters/claude.sh"
+# shellcheck source=adapters/codex.sh
+source "${BASH_SOURCE[0]%/*}/adapters/codex.sh"
+# shellcheck source=adapters/pi.sh
+source "${BASH_SOURCE[0]%/*}/adapters/pi.sh"
 
-# The foreground processes that ARE a harness, matched whole. A denylist of
-# shells cannot establish that one is running: after a harness exits, a pane
-# running less, vim or git log still holds the old footer and passes any
-# not-a-shell test. `[a-z0-9]*claude` covers the per-account wrappers this
-# fleet launches through — nclaude, dclaude, 1claude — which exec the real
-# binary, and agent-confine is the launcher both harnesses exec through, so
-# it names neither. Anything else is refused BY NAME, so a harness missing
-# from this list reads as a named refusal in the report rather than as a lane
-# that stopped being measured.
-LANE_CONTEXT_HARNESSES='[a-z0-9]*claude|codex|pi|agent-confine'
+# The word an adapter prints for a usage object whose field names it does not
+# read, kept apart from a reading and from the empty answer a transcript with
+# no usage line gives: a reader reports this one rather than summing it to zero.
+LANE_CONTEXT_UNREAD=unread
 
-# Shells choose the refusal's wording and nothing else: a pane back at its
-# shell ended its session, which says more than the process name does.
-LANE_CONTEXT_SHELLS='sh|bash|zsh|fish|dash|ksh|mksh|tcsh|csh|nu|xonsh|elvish'
+# The file a session's reading is recorded in, inside its mailbox directory:
+# `tmp/lane-mail/<item>/` for a lane and `tmp/lane-mail/overseer/` for the
+# overseer. A hosted lane's mailbox is already read through its host, so the
+# record reaches the overseer by the same road.
+LANE_CONTEXT_RECORD=context.json
+# The orch scripts directory this library sits under, where git-context is.
+LANE_CONTEXT_SCRIPTS="${BASH_SOURCE[0]%/*}/.."
 
-# The window a Claude model runs on, for a status line that names none. A
-# fleet status-line command that divides by the window and prints the
-# percentage alone names none on EVERY line, so this table is not a
-# default-window fallback: it is the window itself, wherever the line is
-# silent. Claude's own built-in line names one, and a named window wins.
-#
-# An entry is the window the model ACTUALLY runs, established by measuring
-# the largest prompt the model has been sent on this fleet, and a model whose
-# window that does not establish is LEFT OUT. Absent yields no window, which
-# the report prints as a dash and the overseer reads as unmeasured — the
-# honest answer. A wrong figure is worse than none in both directions: too
-# small hides a nearly full lane behind a confident low number and it rides
-# into compaction, too large launches a successor an overseer with room does
-# not need.
-#
-# The key is the TIER WORD the status line prints, so Opus 5 and Opus 4.8
-# share one entry.
-LANE_CONTEXT_DEFAULT_WINDOWS='fable=1000000 opus=1000000'
+# lane_context_overseer_box DIR — the overseer mailbox directory for the
+# checkout DIR is in: `tmp/lane-mail/overseer` at its main checkout, where
+# lane-mail keeps the overseer mailbox, or at DIR itself where git-context
+# names no main checkout. Every writer and reader of the overseer's reading
+# asks here.
+lane_context_overseer_box() { # DIR
+  local root
+  root=$("$LANE_CONTEXT_SCRIPTS/git-context" common-root "$1" 2>/dev/null) || root="$1"
+  printf '%s/tmp/lane-mail/overseer\n' "${root:-$1}"
+}
 
-# One record. $1 window, $2 pane id, $3 config dir, $4 account label,
-# $5 harness, $6 used percent, $7 status, $8 detail, $9 context tokens,
-# ${10} the tmux server the pane id belongs to, ${11} non-empty on the
-# READER'S OWN row. Empty numeric or label fields become null, never 0 or "".
+# One report row. $1 lane, $2 pane id, $3 config dir, $4 account label, $5
+# status, $6 detail, $7 the tmux server the pane id belongs to, $8 non-empty on
+# the READER'S OWN row, $9 the judged reading's JSON, empty where there is none.
+# Empty fields become null, never 0 or "".
 #
 # `caller` is the answer to "which row is this session", and
 # lane_context_with_caller is the one place that decides it: it already holds
@@ -110,21 +69,27 @@ LANE_CONTEXT_DEFAULT_WINDOWS='fable=1000000 opus=1000000'
 lane_context_emit() {
   jq -nc \
     --arg lane "$1" --arg pane "$2" --arg cfg "$3" --arg account "$4" \
-    --arg harness "$5" --arg used "$6" --arg status "$7" --arg detail "$8" \
-    --arg tokens "${9:-}" --arg server "${10:-}" --arg caller "${11:-}" '
-    {
-      lane: (if $lane == "" then null else $lane end),
-      pane: $pane,
-      server: (if $server == "" then null else $server end),
-      caller: ($caller != ""),
-      account: (if $account == "" then null else $account end),
-      config_dir: (if $cfg == "" then null else $cfg end),
-      harness: (if $harness == "" then null else $harness end),
-      context_used_pct: (if $used == "" then null else ($used | tonumber) end),
-      context_tokens: (if $tokens == "" then null else ($tokens | tonumber) end),
-      status: $status,
-      detail: (if $detail == "" then null else $detail end)
-    }'
+    --arg status "$5" --arg detail "$6" --arg server "${7:-}" --arg caller "${8:-}" \
+    --arg reading "${9:-}" '
+    def nul: if . == "" then null else . end;
+    (if $reading == "" then {} else ($reading | fromjson) end) as $r
+    | {
+        lane: ($lane | nul),
+        pane: $pane,
+        server: ($server | nul),
+        caller: ($caller != ""),
+        account: ($account | nul),
+        config_dir: ($cfg | nul),
+        harness: ($r.harness // null),
+        model: ($r.model // null),
+        context_used_pct: ($r.used_pct // null),
+        context_tokens: ($r.tokens // null),
+        context_window: ($r.window // null),
+        context_at: ($r.at // null),
+        context_handoff_due: (if $r | has("handoff_due") then $r.handoff_due else null end),
+        status: $status,
+        detail: ($detail | nul)
+      }'
 }
 
 # The shape a pane's foreground process ($1) offers, decided here and in no
@@ -132,10 +97,9 @@ lane_context_emit() {
 # claude shape alone, and anything else `both`, because a reader with no rule
 # for a harness has nothing better than the shapes themselves — `pi`, an empty
 # name for a pane that has left the enumeration, and `agent-confine`, which is
-# the launcher BOTH harnesses exec through and so names neither. Reading the
-# screen and refusing it both select on this answer, so a wrapper spelling
-# included to one list and not the other cannot read one harness's screen and
-# name the other's in its refusal.
+# the launcher BOTH harnesses exec through and so names neither. The account a
+# session spends and the harness its succession launches both select on this
+# answer, so a wrapper spelling is read the same way by both.
 lane_context_shape() {
   case "${1:-}" in
     codex) printf 'codex\n' ;;
@@ -181,48 +145,11 @@ lane_context_caller_cfg() { # SHAPE
   esac
 }
 
-# lane_context_fields LINE — one `lane_context_parse` line split into the six
-# fields it prints: LANE_CTX_HARNESS, LANE_CTX_USED, LANE_CTX_TOKENS,
-# LANE_CTX_WINDOW, LANE_CTX_SOURCE and LANE_CTX_MODEL. Every consumer of that
-# line reads it here, so the split is written once.
-#
-# Split by hand, never `IFS=$'\t' read`: a TAB is IFS whitespace, so read
-# collapses a RUN of them into one delimiter. A claude line naming no window
-# prints three empty fields in a row, and read then hands the MODEL back as the
-# token count — a model name where a number belongs, and no model at all for
-# the caller whose account mark turns on it. Only a model the window table
-# leaves out reaches that shape, so the fault is invisible on the tiers the
-# table names. The claims reader below splits by hand for the same reason.
-#
-# A line carrying fewer fields than it prints leaves the ones it did not reach
-# empty, never a copy of the last one it did.
-lane_context_fields() { # LINE
-  local rest="${1:-}"
-  LANE_CTX_HARNESS="" LANE_CTX_USED="" LANE_CTX_TOKENS=""
-  LANE_CTX_WINDOW="" LANE_CTX_SOURCE="" LANE_CTX_MODEL=""
-  LANE_CTX_HARNESS="${rest%%$'\t'*}"
-  [ "$rest" != "$LANE_CTX_HARNESS" ] || return 0
-  rest="${rest#*$'\t'}"
-  LANE_CTX_USED="${rest%%$'\t'*}"
-  [ "$rest" != "$LANE_CTX_USED" ] || return 0
-  rest="${rest#*$'\t'}"
-  LANE_CTX_TOKENS="${rest%%$'\t'*}"
-  [ "$rest" != "$LANE_CTX_TOKENS" ] || return 0
-  rest="${rest#*$'\t'}"
-  LANE_CTX_WINDOW="${rest%%$'\t'*}"
-  [ "$rest" != "$LANE_CTX_WINDOW" ] || return 0
-  rest="${rest#*$'\t'}"
-  LANE_CTX_SOURCE="${rest%%$'\t'*}"
-  [ "$rest" != "$LANE_CTX_SOURCE" ] || return 0
-  LANE_CTX_MODEL="${rest#*$'\t'}"
-}
-
 # lane_context_mark_model HARNESS MODEL — the model a session of HARNESS
-# launched on MODEL will be judged on by a later reading of its own status
-# line, which is the reading `lane_context_parse` above takes. Claude's line
-# names the model, so that session is judged on MODEL's own buckets; codex's
-# names none, so it is judged on the account's binding bucket and this answers
-# empty, as the parse does for such a pane.
+# launched on MODEL is judged on by its own account mark, which reads the model
+# its recorded reading names. A claude session's account mark is judged on
+# MODEL's own buckets; a codex session's is judged on the account's binding
+# bucket, the reading the fleet has always taken of one, and this answers empty.
 #
 # It exists so a caller CHOOSING an account for a session it is about to
 # launch holds that account to the reading the session will take of itself. A
@@ -236,141 +163,120 @@ lane_context_mark_model() { # HARNESS MODEL
   esac
 }
 
-# Read one context figure from a captured screen on stdin. $1 is the pane's
-# foreground process, which `lane_context_shape` turns into the shape offered.
-# Prints `<harness>\t<used percent>\t<context tokens>\t<window tokens>\t<window
-# source>\t<model>`; exits 1 when the shape offered found nothing. The MODEL is
-# the one the status line names, with its version, and it is empty wherever the
-# line names none: every codex reading, since that shape reads a context
-# percentage and nothing else. A caller judging an account on the buckets this
-# session spends passes it to lib/lane-model.sh, which leaves out the
-# model-scoped windows the name does not match; an empty model names none, and
-# that file judges such a session on the account's binding bucket instead.
-#
-# The window is the
-# token count the status line itself names — Claude's `(1M context)`
-# parenthetical between the version and the percentage, source `status-line` —
-# and the token figure is the percentage times that window. A claude line
-# naming no window — every line a status-line command that prints the
-# percentage alone draws — takes the window the model named on that same line
-# runs, from LANE_CONTEXT_DEFAULT_WINDOWS, source
-# `model-default`. All three are empty where neither answers: the codex status
-# line never names a window, and a claude line naming none for a model the
-# table leaves out is unmeasured rather than guessed at. The overseer's
-# handoff mark is an absolute token count, so a lane with no figure never
-# reaches it — and the source is what says which reading a refusal rests on.
-#
-# The codex shape is offered the FINAL NON-EMPTY line and no other. The
-# claude shape is offered every line and its LAST match wins; no window is
-# taken off the bottom, because the footer under a claude status line is one
-# row per running agent and has no bound, so any count would lose exactly the
-# busiest lanes. Where both are offered, a final line carrying the codex shape
-# settles the reading, out of range included: falling through to a claude
-# match higher up would be the search the position rule exists to refuse. On a
-# codex pane there is no falling through at all — the claude shape is never
-# offered, so a screen that does not end in a codex status line is
-# could-not-tell however much of this fleet's transcript sits above it.
-#
-# Matching is done on a lowercased copy of each line: a model name is a word,
-# and the harness spells it differently in different places. The claude
-# reading is a WHOLE LINE, never a fragment of one: the status line runs
-# `<cwd> [(<branch>)] <model> <version> [(<window>)] <N>% (<account>)`, so a
-# match starts at the line's own beginning with a working directory and runs
-# to the line's own END. BOTH ends, because either alone leaves the fragment
-# in: prose carries it before — `Opus 5 92% is already heavily used` — and
-# after — `/fake Opus 5 99% (work) is an example`, whose status-shaped PREFIX
-# matched while the sentence it sits in did not have to. Under a bottom-most
-# rule either sentence outranks the real status line above it. What the
-# account may be followed by is claude's own right-hand hint, a slash
-# command (`/rc`) — never running text. The branch parenthetical is optional:
-# a lane outside a repository has none, and a session that has not rendered a
-# percentage yet matches nothing at all.
-# The codex reading is a WHOLE LINE at its OPENING and takes what follows as
-# it comes. The context item opens the line — leading whitespace or box
-# decoration only, nothing alphanumeric — so `Documentation: Context 60% used
-# means compact now` is not one, and `Context 60% used means compact now`
-# needs the separator its configured items are drawn behind. Past that
-# separator the line is read no further. Every candidate for the job — a path
-# (`/var/tmp/…`), a model with its reasoning effort (`gpt-6-astra default`), a
-# git branch, a project name, a version, a token count — is one to three bare
-# words, and so is a sentence's opening; a shape that admits the ones this
-# reader has seen and refuses the rest refuses configured status lines it has
-# not seen, and leaves those lanes unmeasured. Position is what keeps prose
-# out, so the shape does not have to try.
-# Codex's status item is user-configured and both directions ship, so both
-# are matched and only `left` is converted. A percentage over 100 is not a
-# context figure and is dropped rather than reported, whichever shape carried
-# it.
-lane_context_parse() {
-  local out shape
-  shape="$(lane_context_shape "${1:-}")"
-  out="$(awk -v shape="$shape" -v defaults="$LANE_CONTEXT_DEFAULT_WINDOWS" '
-    BEGIN {
-      n = split(defaults, pairs, / /)
-      for (i = 1; i <= n; i++) { split(pairs[i], kv, "="); default_window[kv[1]] = kv[2] }
-    }
-    {
-      if ($0 ~ /[^ \t]/) last = $0
-      if (shape == "codex") next
-      low = tolower($0)
-      if (match(low, /^[ \t]*[^ \t()]+([ \t]+\([^)]*\))?[ \t]+(opus|sonnet|haiku|fable)[ \t]+[0-9]+(\.[0-9]+)?([ \t]*\([^)]*\))?[ \t]+[0-9]+%[ \t]+\([^) \t]+\)([ \t]+\/[^ \t]*)*[ \t]*$/)) {
-        line = substr(low, RSTART, RLENGTH)
-        # The window parenthetical is the one naming a token count, so the
-        # branch parenthetical before the model never matches it, and a
-        # window the line DOES name always wins over the table. With none,
-        # the MODEL answers.
-        #
-        # The model is matched where the status line puts it, before its
-        # version and after the optional branch parenthetical, so a working
-        # directory or branch spelling a model name cannot stand in for it.
-        # It is read whether or not the line names a window, because the two
-        # answer different questions: the window is how much room this session
-        # has left, and the model is which of the account buckets it spends.
-        # The version is kept, so the name reaches a scoped window of THAT
-        # generation and not of every one the tier ever had; the bare tier word
-        # alone is the window table key below.
-        window = ""; source = ""; named = ""
-        if (match(line, /[ \t](opus|sonnet|haiku|fable)[ \t]+[0-9]+(\.[0-9]+)?/)) {
-          named = substr(line, RSTART + 1, RLENGTH - 1)
-        }
-        if (match(line, /\([0-9]+(\.[0-9]+)?[km][ \t]+context\)/)) {
-          w = substr(line, RSTART + 1, RLENGTH - 2)
-          unit = (w ~ /m/) ? 1000000 : 1000
-          sub(/[km].*$/, "", w)
-          window = w * unit
-          source = "status-line"
-        } else if (named != "") {
-          model = named
-          sub(/[ \t].*$/, "", model)
-          if (default_window[model] != "") { window = default_window[model]; source = "model-default" }
-        }
-        match(line, /[0-9]+%[ \t]+\([^) \t]+\)/)
-        s = substr(line, RSTART, RLENGTH)
-        sub(/%.*$/, "", s)
-        if (s != "" && s + 0 <= 100) { c_found = 1; c_used = s + 0; c_window = window; c_source = source; c_model = named }
-      }
-    }
-    END {
-      window = ""; source = ""
-      low = (shape == "claude") ? "" : tolower(last)
-      if (match(low, /^[^a-z0-9]*context:?[ \t]+[0-9]+%[ \t]+(left|used)([ \t]+(·|[|])[ \t]+[^ \t].*)?[ \t]*$/)) {
-        codex_line = 1
-        s = substr(low, RSTART, RLENGTH)
-        match(s, /[0-9]+%[ \t]+(left|used)/)
-        s = substr(s, RSTART, RLENGTH)
-        remaining = (s ~ /left$/)
-        gsub(/[^0-9]/, "", s)
-        if (s + 0 <= 100) { harness = "codex"; used = remaining ? 100 - (s + 0) : s + 0 }
-      }
-      if (!codex_line && c_found) { harness = "claude"; used = c_used; window = c_window; source = c_source; model = c_model }
-      else model = ""
-      if (harness == "") exit
-      if (window == "") printf "%s\t%d\t\t\t\t%s\n", harness, used, model
-      else printf "%s\t%d\t%d\t%d\t%s\t%s\n", harness, used, int(used * window / 100), window, source, model
-    }
-  ')"
-  [[ -n "$out" ]] || return 1
-  printf '%s\n' "$out"
+# lane_context_reading HARNESS [WINDOW] — one reading of the transcript on
+# stdin, through HARNESS's adapter: `<tokens>\t<window>\t<model>`, the word
+# LANE_CONTEXT_UNREAD for a usage object the adapter does not read, or nothing
+# for a transcript holding no usage yet. WINDOW is a window the harness named
+# outside its transcript, which only Pi's turn-end payload does. Exit 3 names a
+# harness no adapter reads; any other failure is the adapter's own.
+lane_context_reading() { # HARNESS [WINDOW]
+  case "${1:-}" in
+    claude) lane_adapter_claude_reading "$LANE_CONTEXT_UNREAD" ;;
+    codex) lane_adapter_codex_reading "$LANE_CONTEXT_UNREAD" ;;
+    pi) lane_adapter_pi_reading "$LANE_CONTEXT_UNREAD" "${2:-}" ;;
+    *) return 3 ;;
+  esac
+}
+
+# Normalize the requested handoff percentage for the judge and its reports.
+# A larger setting cannot weaken the mandatory remaining-capacity mark.
+lane_context_handoff_pct() { # PCT
+  case "${1:-}" in '' | *[!0-9]* | 0*) return 2 ;; esac
+  [ "$1" -le 100 ] || return 2
+  if [ "$1" -gt 90 ]; then printf '90\n'; else printf '%s\n' "$1"; fi
+}
+
+# lane_context_handoff_due TOKENS WINDOW PCT — the one judgement of a context
+# reading: `due` at 400000 used tokens or strictly past PCT percent of WINDOW,
+# with PCT capped at 90. WINDOW is the effective capacity before compaction,
+# or the actual window when compaction is disabled. Exit 1 below the token cap
+# where WINDOW is empty or 0, which is unmeasured and never room. Exit 2 where
+# PCT is not a whole number from 1
+# to 100, or a figure is not a whole number or carries a leading zero a shell
+# would read as octal. Every reader of a reading asks here, so a lane, the
+# overseer and the report cannot judge one reading two ways.
+lane_context_handoff_due() { # TOKENS WINDOW PCT
+  local pct
+  pct=$(lane_context_handoff_pct "${3:-}") || return 2
+  case "${1:-}" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
+  if [ "$1" -ge 400000 ]; then
+    printf 'due\n'
+    return 0
+  fi
+  case "${2:-}" in '' | 0) return 1 ;; *[!0-9]* | 0*) return 2 ;; esac
+  if [ $(($1 * 100)) -gt $(($2 * pct)) ]; then
+    printf 'due\n'
+  else
+    printf 'room\n'
+  fi
+}
+
+# lane_context_record BOX HARNESS TOKENS WINDOW MODEL [SESSION] [PANE_KEY] —
+# write a session's reading to BOX/$LANE_CONTEXT_RECORD, through a file renamed
+# over it so no reader meets half a record. `used_pct` is the whole percent of
+# the window used, null with the window. SESSION is the id the harness names
+# the session by and PANE_KEY the `<server pid> <pane id>` it runs in, which is
+# how a successor overseer's reader tells its own record from the one its
+# predecessor left in the same mailbox. Exit non-zero where the record could not
+# be written, the cause on stderr.
+lane_context_record() { # BOX HARNESS TOKENS WINDOW MODEL [SESSION] [PANE_KEY]
+  local box="${1:?}" staged at
+  at=$(date -u +%Y-%m-%dT%H:%M:%SZ) || return 1
+  staged="$box/.$LANE_CONTEXT_RECORD.$$"
+  if ! jq -nc --arg harness "$2" --argjson tokens "$3" --arg window "$4" --arg model "$5" \
+    --arg session "${6:-}" --arg pane_key "${7:-}" --arg at "$at" '
+    def nul: if . == "" then null else . end;
+    ($window | nul | if . == null then null else tonumber end) as $w
+    | {harness: $harness, model: ($model | nul), tokens: $tokens, window: $w,
+       used_pct: (if $w == null or $w == 0 then null else ($tokens * 100 / $w | floor) end),
+       session_id: ($session | nul), pane_key: ($pane_key | nul), at: $at}' >"$staged"; then
+    rm -f -- "${staged:?}"
+    return 1
+  fi
+  mv -f -- "$staged" "$box/$LANE_CONTEXT_RECORD" || { rm -f -- "${staged:?}"; return 1; }
+}
+
+# lane_context_record_fields RECORD — one recorded reading split into
+# LANE_CTX_HARNESS, LANE_CTX_TOKENS, LANE_CTX_WINDOW, LANE_CTX_MODEL,
+# LANE_CTX_PANE_KEY and LANE_CTX_AT, each empty where the record holds none.
+# Exit 1, every field empty, where RECORD is not a record lane_context_record
+# wrote: an object carrying a token count.
+lane_context_record_fields() { # RECORD
+  local fields rest
+  LANE_CTX_HARNESS="" LANE_CTX_TOKENS="" LANE_CTX_WINDOW=""
+  LANE_CTX_MODEL="" LANE_CTX_PANE_KEY="" LANE_CTX_AT=""
+  fields=$(jq -er 'select(type == "object" and (.tokens | type) == "number")
+    | [(.harness // ""), (.tokens | tostring), (.window // "" | tostring),
+       (.model // ""), (.pane_key // ""), (.at // "")] | join("\t")' <<<"${1:-}" 2>/dev/null) || return 1
+  # Split by hand for the reason lane_context_collect gives: an empty field
+  # would otherwise collapse into its neighbour.
+  rest="$fields"
+  LANE_CTX_HARNESS="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+  LANE_CTX_TOKENS="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+  LANE_CTX_WINDOW="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+  LANE_CTX_MODEL="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+  LANE_CTX_PANE_KEY="${rest%%$'\t'*}"
+  LANE_CTX_AT="${rest#*$'\t'}"
+}
+
+# lane_context_record_judged RECORD PCT — RECORD with `handoff_due` set from
+# lane_context_handoff_due: true, false, or null where capacity is unknown
+# below the independent token limit.
+# Exit 1 where RECORD is not a record lane_context_record wrote, 2 where PCT is
+# out of range; nothing is printed then.
+lane_context_record_judged() { # RECORD PCT
+  local verdict rc=0 due
+  lane_context_record_fields "${1:-}" || return 1
+  verdict=$(lane_context_handoff_due "$LANE_CTX_TOKENS" "$LANE_CTX_WINDOW" "${2:-}") || rc=$?
+  case "$rc" in
+    0)
+      due=false
+      [ "$verdict" != due ] || due=true
+      ;;
+    1) due=null ;;
+    *) return 2 ;;
+  esac
+  jq -c --argjson due "$due" '.handoff_due = $due' <<<"$1"
 }
 
 # The key a live session's own row is matched on, `<tmux server pid> <pane id>`
@@ -422,34 +328,19 @@ lane_context_with_caller() {
   printf '%s\n' "$claims"$'\n'"$cfg"$'\t'"$name"$'\t'"$server"$'\t'"$pane"$'\t'caller
 }
 
-# One record per live lane claim, as a JSON array. $1: `lane_claims_read`
-# output, $2: the name of a function mapping a config dir to its account
-# label.
+# One report row per live lane claim, as a JSON array. $1: `lane_claims_read`
+# output with lane_context_with_caller's flag, $2: the name of a function
+# mapping a config dir to its account label, $3: the name of a function given a
+# row's lane and caller flag that prints that session's recorded reading and
+# exits 0, exits 1 where none is recorded, and exits 2 with the cause on stdout
+# where the record could not be read. $4: the percentage every row is judged at.
 #
-# `capture-pane -t %N` resolves a pane id against the CURRENT client's server
-# and no other, while pane ids restart at %0 on every server — which is why a
-# claim's liveness key is `<server pid> <pane id>` (lib/lane-claims.sh), and
-# why claims from other servers survive that read. A pane id alone is not
-# that key: a foreign claim whose number also exists here would be measured
-# against an unrelated local pane and emitted as ok. So the claim's server is
-# compared against this one, enumerated once, before anything is captured.
-# The same enumeration carries each pane's foreground process, which is what
-# says whether a harness is still drawing the screen about to be read — and
-# WHICH harness, which is how the reader knows the shape to look for without
-# guessing it from a screen that quotes both all day.
+# No pane is read. A session that has not ended a turn since its launch has no
+# reading, and its row is `unrecorded`, never an empty context; a reading whose
+# window its adapter could not name is `window-unread`, never `ok`.
 lane_context_collect() {
-  local claims="$1" alias_fn="$2" cfg lane server pane caller screen parsed claim rest
-  local this_server detail cmd pane_cmds p_pid p_pane p_cmd
-  # `<pane id> <command>` per line, not an associative array: macOS Bash 3.2
-  # has none and rejects an associative-array declaration, which under this
-  # file's errexit would abort the whole report rather than lose one lane.
-  pane_cmds=""
-  this_server=""
-  while read -r p_pid p_pane p_cmd; do
-    [[ -n "$p_pane" ]] || continue
-    [[ -n "$this_server" ]] || this_server="$p_pid"
-    pane_cmds+="$p_pane $p_cmd"$'\n'
-  done < <(tmux list-panes -a -F '#{pid} #{pane_id} #{pane_current_command}' 2>/dev/null)
+  local claims="$1" alias_fn="$2" fetch_fn="$3" pct="$4" cfg lane server pane caller claim rest
+  local out rc judged
   {
     # Split by hand, never `IFS=$'\t' read`: a TAB is IFS whitespace, so read
     # drops a LEADING one and every field of a row whose config dir is empty
@@ -465,46 +356,40 @@ lane_context_collect() {
       caller=""
       [[ "$rest" != *$'\t'* ]] || caller="${rest#*$'\t'}"
       [[ -n "$pane" && "$claim" == *$'\t'*$'\t'*$'\t'* ]] || continue
-      if [[ "$server" != "$this_server" ]]; then
-        # Empty means nothing could be enumerated at all: no pane id here
-        # resolves, and reporting the local screen for any of them would be
-        # the same fabrication.
-        detail="the pane belongs to another tmux server; its pane id names nothing here"
-        [[ -n "$this_server" ]] || detail="no tmux server could be enumerated; no pane id resolves"
-        lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
-          "unreadable" "$detail" "" "$server" "$caller"
-        continue
-      fi
-      # tmux names a login shell with the dash it was started with.
-      cmd="$(awk -v p="$pane" '$1 == p { print $2; exit }' <<<"$pane_cmds")"
-      cmd="${cmd#-}"
-      # An empty name means the pane is on no list this server printed, so it
-      # is gone: the capture below is what says so, and says it as unreadable.
-      if [[ -n "$cmd" && ! "$cmd" =~ ^($LANE_CONTEXT_HARNESSES)$ ]]; then
-        detail="the pane is running $cmd, not a harness this reader measures; any reading left on its screen is what the lane ended with"
-        [[ ! "$cmd" =~ ^($LANE_CONTEXT_SHELLS)$ ]] || detail="the pane has exited to its shell; any reading left on its screen is what the lane ended with"
-        lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
-          "no_status_line" "$detail" "" "$server" "$caller"
-        continue
-      fi
-      if ! screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)"; then
-        lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
-          "unreadable" "the pane could not be captured; it is gone from this server" "" "$server" "$caller"
-        continue
-      fi
-      if ! parsed="$(lane_context_parse "$cmd" <<<"$screen")"; then
-        case "$(lane_context_shape "$cmd")" in
-          codex) detail="the screen does not end in a valid codex context figure; the last non-empty row is the only row a codex reading is taken from" ;;
-          claude) detail="the screen carries no claude status line" ;;
-          *) detail="the screen carries neither harness's context figure" ;;
-        esac
-        lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
-          "no_status_line" "$detail" "" "$server" "$caller"
-        continue
-      fi
-      lane_context_fields "$parsed"
-      lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \
-        "$LANE_CTX_HARNESS" "$LANE_CTX_USED" "ok" "" "$LANE_CTX_TOKENS" "$server" "$caller"
+      rc=0
+      out="$("$fetch_fn" "$lane" "$caller")" || rc=$?
+      case "$rc" in
+        0) ;;
+        1)
+          lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \
+            unrecorded "no turn end of this session has recorded a reading" "$server" "$caller"
+          continue
+          ;;
+        *)
+          lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \
+            unreadable "$out" "$server" "$caller"
+          continue
+          ;;
+      esac
+      rc=0
+      judged="$(lane_context_record_judged "$out" "$pct")" || rc=$?
+      case "$rc" in
+        0)
+          # Below the token limit, unknown capacity is neither due nor room.
+          # The row reports that gap instead of an ok row with a blank handoff.
+          if [[ "$(jq -r '.handoff_due' <<<"$judged")" == null ]]; then
+            lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" window-unread \
+              "the harness adapter named no context window for this session's model" "$server" "$caller" "$judged"
+          else
+            lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" ok "" "$server" "$caller" "$judged"
+          fi
+          ;;
+        1)
+          lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \
+            unreadable "the recorded reading is not an object carrying a token count" "$server" "$caller"
+          ;;
+        *) return 2 ;;
+      esac
     done <<<"$claims"
   } | jq -s '.'
 }
@@ -543,13 +428,13 @@ lane_context_message() {
       ;;
     legend)
       printf 'lane-context: percent kind=consumed\n'
-      printf 'CONTEXT_USED_PCT: percent of the context window CONSUMED. A Codex lane prints what is LEFT or what is USED; only LEFT is converted here.\n'
-      printf 'lane-context: tokens kind=window-percent absent=-\n'
-      printf 'CONTEXT_TOKENS: that percent of the window the status line names, as Claude does with (1M context), or of the model default where it names none; a dash where neither answers.\n'
+      printf 'CONTEXT_USED_PCT: percent of effective capacity CONSUMED at the recorded turn end; a dash where capacity is unknown.\n'
+      printf 'lane-context: tokens kind=recorded absent=-\n'
+      printf 'CONTEXT_TOKENS: the tokens the last response left in the context, read from the transcript by the harness adapter at the session'"'"'s last turn end; a dash where no reading is recorded.\n'
       printf 'lane-context: headroom kind=account-binding handoff=threshold\n'
       printf 'HEADROOM: percent remaining in the account binding bucket; HANDOFF is required at or below ORCH_HANDOFF_HEADROOM_PCT.\n'
-      printf 'lane-context: handoff kind=lane-threshold overseer-trigger=ORCH_OVERSEER_HEADROOM_PCT\n'
-      printf 'HANDOFF: the LANE threshold and no other. An overseer succeeds itself at ORCH_OVERSEER_HEADROOM_PCT, the higher figure by default (5 against 3), so by default its own row reads - at a headroom that already fires its succession.\n'
+      printf 'lane-context: handoff kind=lane-threshold context=ORCH_HANDOFF_CONTEXT_PCT overseer-trigger=ORCH_OVERSEER_HEADROOM_PCT\n'
+      printf 'HANDOFF: required by the shared context rule, or at the LANE headroom threshold. It never reports the overseer'"'"'s own ORCH_OVERSEER_HEADROOM_PCT, wall or qualifying-accounts triggers: by default the overseer succeeds itself at 5 percent headroom against the lane'"'"'s 3, so its own row can read - at a headroom that already fires its succession.\n'
       printf 'lane-context: caller kind=lane-marker marker=*\n'
       printf 'LANE: a leading * marks the row of the session that ran this command.\n'
       ;;
@@ -558,7 +443,7 @@ lane_context_message() {
 
 # Table for the records on stdin. The legend is part of the output, not a
 # nicety: a bare percentage column is read in whichever direction the reader
-# last saw one, and the two harnesses print opposite directions.
+# last saw one.
 #
 # The caller's own row carries a leading `*` on its lane name. An overseer is
 # told its own pane is in this report, and without a mark it has no way to

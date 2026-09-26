@@ -54,11 +54,11 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_OVERSEER_LANES`, `ORCH_LANE_ACCOUNT_CLAIMS` | Fleet, account (`0` off) lane caps: `open-terminal --help` | `3`, `3` |
 | `ORCH_LANE_OUTPUT` | Lane pane output: [skill-rules.md](references/skill-rules.md) § Lane Output | `quiet` |
 | `ORCH_ROUND_PRUNE_DISK_PCT` | Disk use percent at or past which `round-prune` clears the item worktree's Cargo output before a dev round: [skill-rules.md](references/skill-rules.md) § Round Closure | `75` |
-| `ORCH_HANDOFF_CONTEXT_TOKENS` | Context tokens at or past which a turn end is refused until that session's handoff record stands. The `lane-mail-check` hook judges a lane on it and `oversee-succeed` judges the overseer on it, for that hook and the watch. `lanes context` marks no lane on it: its `HANDOFF` column answers for the headroom mark alone | `500000` |
+| `ORCH_HANDOFF_CONTEXT_PCT` | Earlier handoff percentage (1 to 100, capped at 90); strict comparison and independent token limit: [context rule](references/oversee-events.md#judgement-rules) | `90` |
 | `ORCH_HANDOFF_HEADROOM_PCT` | Account headroom at or below which `lanes context` marks a live lane for handoff and the `lane-mail-check` turn-end hook refuses that lane's turn end, read against the binding bucket | `3` |
 | `ORCH_OVERSEER_PREFERENCE` | Comma-separated `harness:rank:effort` entries that `oversee-succeed` tries in order. `rank` is a kendex tier ladder position, 1 the top tier. A named entry writes its harness's model and effort, keeps same-harness permission words exact, and carries only full bypass across harnesses. The caller fallback keeps the flags after `--` but question-tool words. Lane selection: `oversee-succeed --help`. | empty |
 | `ORCH_OVERSEER_QUESTION_TOOL` | `off` strips successors' question tool | `on` |
-| `ORCH_OVERSEER_SUCCESSION` | `on` lets `oversee-succeed` launch the successor overseer; `off` launches nothing and turns off the turn-end refusal naming it; the `overseer-mark` watch line still goes out. A live overseer asks the user to start the next session. A dead or walled one gets a notice only | `on` |
+| `ORCH_OVERSEER_SUCCESSION` | `on` lets `oversee-succeed` launch the successor overseer; `off` launches none and turns off the account-mark turn-end refusals, not the context one. `overseer-mark` still goes out. A live overseer asks the user to start the next session. A dead or walled one gets a notice only | `on` |
 | `ORCH_OVERSEER_DEAD_PASSES` | Consecutive watch passes that must read the overseer pane as exited, or as walled, before the watch reports it; a walled reading needs its account judged at or below the trigger too | `2` |
 | `ORCH_OVERSEER_HEADROOM_PCT` | Account headroom at or below which `oversee-succeed` succeeds the overseer onto an account above it, and refuses its turn end through `lane-mail-check` | `5` |
 | `ORCH_OVERSEER_WALL_MINUTES` | Projected wall minutes that fire overseer succession. `0` disables this trigger | `20` |
@@ -76,6 +76,8 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | Lane settings | `ORCH_LANE_DIRS`, `ORCH_LANE_ALIASES`, `ORCH_LANE_EXCLUDE`, `ORCH_LANE_RETIRE`, `ORCH_LANES_USAGE_TTL`, `ORCH_LANES_USAGE_MAX_AGE`, `ORCH_TMUX_VERIFY_SECS`, `ORCH_LANE_SSH_PROMPT_SECS`, `ORCH_TMUX_SESSION`: `lanes --help`, `open-terminal --help` | |
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
 | `ORCH_SIZE_TEST_PATHS` | Path globs counted as test lines in size reports and cut comparisons | empty |
+
+Launch settings and Codex compaction limits: [skill-rules.md](references/skill-rules.md#coordination), Compaction.
 
 Every lane merges its own pull request through the merge queue: it arms auto-merge on its head and waits in `queue-wait` for the verdict. `ORCH_MERGE_BYPASS`, `ORCH_ADMIN_MERGE_GH_CONFIG_DIR` and `ORCH_ADMIN_MERGE_CLASSES` are retired, and `github.sh pr-merge` refuses every call while one is set; `pr-merge --help` § Retired settings names every settings layer to delete them from.
 

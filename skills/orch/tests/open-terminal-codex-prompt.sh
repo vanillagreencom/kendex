@@ -27,7 +27,7 @@ TC=""
 # The words every codex command leads with, quoted per token as start_cmd
 # quotes each flag: the launch-only setting that keeps Codex off its startup
 # update prompt, then the feature switch that keeps its question tool away.
-CODEX_SETTINGS="'-c' 'check_for_update_on_startup=false' '-c' 'features.default_mode_request_user_input=false'"
+CODEX_SETTINGS="'-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false'"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
@@ -94,7 +94,7 @@ REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
 cp "$SRC_OT" "$REPO/scripts/open-terminal"
 cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$REPO/scripts/"
-cp "$SRC_LIB_DIR"/*.sh "$REPO/scripts/lib/"
+cp -R "$SRC_LIB_DIR/." "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
 chmod +x "$REPO/scripts/open-terminal"
 git -C "$REPO" init -q

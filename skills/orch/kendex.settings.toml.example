@@ -168,10 +168,9 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # its handoff at the next safe point.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
-# Context tokens at or past which a turn end is refused until that session's
-# handoff record stands: the lane-mail-check hook judges a lane on it, and
-# oversee-succeed judges the overseer on it for that hook and for the watch.
-# ORCH_HANDOFF_CONTEXT_TOKENS = "500000"
+# Earlier context handoff percentage. Shared rule and boundary behavior:
+# references/oversee-events.md, Judgement rules.
+# ORCH_HANDOFF_CONTEXT_PCT = "90"
 
 # The recording policy: the most bytes one fleet log row's text may carry,
 # the fleet log rows a successor overseer reads at takeover, the days before

@@ -31,6 +31,10 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/toml.sh"
 # which account a session is spending.
 # shellcheck source=lane-home.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lane-home.sh"
+# The claude adapter names the window a claude model runs, which decides
+# whether a claude command may turn its compaction off (launch_choice_compaction).
+# shellcheck source=adapters/claude.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/adapters/claude.sh"
 
 # The env prefix that puts a launch on a chosen account: the harness names the
 # variable, the directory IS the account. One mapping for every caller — the
@@ -60,7 +64,7 @@ lane_env_prefix() { # HARNESS DIR
 # One row per harness,
 # `HARNESS|MODEL SPELLINGS|EFFORT SPELLINGS|EFFORT-IN-MODEL|ATTACH WORD|
 # PERMISSION SPELLINGS|TRANSFER PERMISSION SPELLINGS|LAUNCH SETTINGS|
-# QUESTION TOOL OFF`, each
+# QUESTION TOOL OFF|COMPACTION OFF`, each
 # spelling list space-separated, so a consumer's harness or a new flag spelling
 # is one row rather than a code path. A spelling that ends in `=` is a whole
 # token with its value attached; any other is a flag word taking the next token
@@ -77,7 +81,8 @@ lane_env_prefix() { # HARNESS DIR
 # a `FLAG=VALUE` spelling also accepts `FLAG VALUE` when a caller supplied it.
 # `-` says the harness launch form has no permission word in that set. The
 # eighth is the launch-only settings every command a launcher builds for that
-# harness carries, written as they stand, and `-` where it has none. Codex
+# harness carries, written as they stand, one `;`-separated run per setting, and
+# `-` where it has none. Codex
 # checks for a newer CLI on startup and opens an interactive update prompt when
 # one exists; the first paste a lane receives then answers that prompt, installs
 # the update and exits the session. `check_for_update_on_startup=false` is the
@@ -87,7 +92,12 @@ lane_env_prefix() { # HARNESS DIR
 # table names none. A lane asks its overseer through `lane-mail ask`, and a
 # question tool in a lane opens a dialog nobody at the pane answers, so every
 # lane command carries them; an overseer carries them only where
-# ORCH_OVERSEER_QUESTION_TOOL is off.
+# ORCH_OVERSEER_QUESTION_TOOL is off. The tenth holds the harness compaction
+# policy settings; `-` means no launch setting. Claude reads DISABLE_AUTO_COMPACT
+# from --settings. Codex defers normal compaction to its reported usable-window
+# cap; it can still compact between external handoff checks or on other paths.
+# references/skill-rules.md, Compaction, cites the verified runtime contract.
+# Pi uses its settings file, which open-terminal reads instead.
 #
 # The FIRST spelling of each list is the one written; the rest are further
 # spellings a caller may have typed, which launch_choice_value reads.
@@ -132,10 +142,10 @@ lane_env_prefix() { # HARNESS DIR
 #             variable, JSON no flag word carries: the row names none, and an
 #             opencode lane keeps its question tool.
 LAUNCH_CHOICE_FLAGS=(
-  'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions|-|--disallowedTools=AskUserQuestion,EnterPlanMode'
-  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false|-c features.default_mode_request_user_input=false'
-  'opencode|-m --model|-|-|-|-|-|-|-'
-  'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question'
+  'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions|-|--disallowedTools=AskUserQuestion,EnterPlanMode|--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}'
+  'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false|-c features.default_mode_request_user_input=false|-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0'
+  'opencode|-m --model|-|-|-|-|-|-|-|-'
+  'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question|-'
 )
 # The row for harness $1, empty where the table names no such harness.
 launch_choice_row() { # HARNESS
@@ -420,31 +430,50 @@ launch_choice_permission_write() { # HARNESS
 }
 
 # The words a launcher builds for HARNESS, left in LAUNCH_CHOICE_KEPT: that
-# harness's launch settings first, with `--question-off` its question-tool
-# words after them, then WORD... in order with every row's settings run and
-# question-tool run taken out wherever it stands whole. A caller's flags handed
+# harness's launch settings first, then the compaction words
+# launch_choice_compaction gives the model the command launches on, with
+# `--question-off` its question-tool words after them, then WORD... in order
+# with every row's settings, compaction and question-tool runs taken out
+# wherever each stands whole. The model is `--model MODEL` where the caller
+# writes it outside WORD..., and otherwise the one WORD... names.
+# LAUNCH_CHOICE_COMPACTION says what became of the compaction words: `on`,
+# `none` for a row that has none, `no-model` where no model is named and
+# `no-window` where its window is unnamed, the last two leaving compaction on. A caller's flags handed
 # on keep none of their own: the same harness would carry them twice, another
 # harness would be handed a word its launch form refuses, and whether a launch
 # keeps its question tool is the flag's answer, never the caller's words.
 # Runs are matched newline-bounded, since a caller's flag word can hold a space.
-launch_choice_lead_settings() { # [--question-off] HARNESS WORD...
-  local question_off=false
+LAUNCH_CHOICE_COMPACTION=""
+launch_choice_lead_settings() { # [--question-off] [--model MODEL] HARNESS WORD...
+  local question_off=false model="" model_given=false compaction_rc=0 own_compaction
   if [[ "${1:-}" == --question-off ]]; then
     question_off=true
     shift
   fi
-  local harness="$1" nl=$'\n' lead="" row name settings question run words line
+  if [[ "${1:-}" == --model ]]; then
+    model="${2:-}" model_given=true
+    shift 2
+  fi
+  local harness="$1" nl=$'\n' lead="" row name settings question compaction run words line
   shift
+  [[ "$model_given" == true ]] || model="$(launch_choice_value "$(launch_choice_model_spellings "$harness")" "$*")"
+  own_compaction="$(launch_choice_compaction "$harness" "$model")" || compaction_rc=$?
+  case "$compaction_rc:$own_compaction" in
+    0:) LAUNCH_CHOICE_COMPACTION=none ;;
+    0:*) LAUNCH_CHOICE_COMPACTION=on ;;
+    *) LAUNCH_CHOICE_COMPACTION=no-window; [[ -n "$model" ]] || LAUNCH_CHOICE_COMPACTION=no-model ;;
+  esac
   words="$nl$(printf '%s\n' "$@")$nl"
   for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
-    IFS='|' read -r name _ _ _ _ _ _ settings question <<<"$row"
-    for run in "$settings" "$question"; do
+    IFS='|' read -r name _ _ _ _ _ _ settings question compaction <<<"$row"
+    for run in "$settings" "$compaction" "$question"; do
       [[ "$run" != - ]] || continue
       run="${run// /$nl}"
       while [[ "$words" == *"$nl$run$nl"* ]]; do words="${words/"$nl$run$nl"/$nl}"; done
     done
     [[ "$name" == "$harness" ]] || continue
     [[ "$settings" == - ]] || lead="${settings// /$nl}"
+    [[ -z "$own_compaction" ]] || lead="$lead$nl${own_compaction// /$nl}"
     [[ "$question_off" != true || "$question" == - ]] || lead="$lead$nl${question// /$nl}"
   done
   LAUNCH_CHOICE_KEPT=()
@@ -459,24 +488,92 @@ launch_choice_question_off() { # HARNESS
   local row words
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 0
-  IFS='|' read -r _ _ _ _ _ _ _ _ words <<<"$row"
+  IFS='|' read -r _ _ _ _ _ _ _ _ words _ <<<"$row"
   [[ "$words" == - ]] || printf '%s\n' "$words"
 }
 
-# Whether TEXT carries WORDS as consecutive tokens. Each token is compared with
-# its quotes and backslashes taken out, the shell quoting a caller writes into a
-# command it hands on; no question-tool word holds one of those characters.
+# launch_choice_compaction HARNESS MODEL: the compaction policy settings for
+# a session on MODEL, empty where the row names none. Exit 1,
+# printing nothing, where the row names words and no adapter can name MODEL's
+# window: disabling Claude compaction would leave its capacity unknown.
+# The one owner of that rule: every command a
+# launcher builds takes its words from here, and a fleet launch refuses on the
+# same answer. A claude window is the claude adapter's by model; a codex
+# rollout names its own window whatever the model.
+launch_choice_compaction() { # HARNESS MODEL
+  local words
+  words="$(launch_choice_compaction_off "$1")"
+  [[ -n "$words" ]] || return 0
+  case "$1" in
+    claude) [[ -n "$(lane_adapter_claude_window "${2:-}")" ]] || return 1 ;;
+  esac
+  printf '%s\n' "$words"
+}
+
+# The compaction policy settings for harness $1, empty where the row
+# says `-` or the table names no such harness.
+launch_choice_compaction_off() { # HARNESS
+  local row words
+  row="$(launch_choice_row "$1")"
+  [[ -n "$row" ]] || return 0
+  IFS='|' read -r _ _ _ _ _ _ _ _ _ words <<<"$row"
+  [[ "$words" == - ]] || printf '%s\n' "$words"
+}
+
+# The words TEXT names as the shell would hand them to the command, into
+# LAUNCH_CHOICE_ARGV: split on unquoted blanks, with single quotes, double
+# quotes and backslashes removed as the shell removes them, and nothing
+# expanded, since TEXT is a caller's command and evaluating it would run it.
+LAUNCH_CHOICE_ARGV=()
+launch_choice_shell_words() { # TEXT
+  local text="$1" i=0 n c next word="" inword=false quote=""
+  LAUNCH_CHOICE_ARGV=()
+  n=${#text}
+  while (( i < n )); do
+    c="${text:i:1}"
+    if [[ "$quote" == "'" ]]; then
+      if [[ "$c" == "'" ]]; then quote=""; else word+="$c"; fi
+    elif [[ "$quote" == '"' ]]; then
+      next="${text:i+1:1}"
+      if [[ "$c" == '"' ]]; then
+        quote=""
+      elif [[ "$c" == '\' && ( "$next" == '$' || "$next" == '`' || "$next" == '"' || "$next" == '\' ) ]]; then
+        word+="$next"
+        i=$((i + 1))
+      else
+        word+="$c"
+      fi
+    else
+      case "$c" in
+        ' ' | $'\t' | $'\n')
+          if [[ "$inword" == true ]]; then
+            LAUNCH_CHOICE_ARGV+=("$word")
+            word="" inword=false
+          fi
+          ;;
+        "'" | '"') quote="$c" inword=true ;;
+        '\') word+="${text:i+1:1}" inword=true; i=$((i + 1)) ;;
+        *) word+="$c" inword=true ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  [[ "$inword" != true ]] || LAUNCH_CHOICE_ARGV+=("$word")
+}
+
+# Whether TEXT, a caller's command, hands its command WORDS as consecutive
+# arguments, exactly as the table spells them once the shell has removed the
+# command's own quoting. A word quoted so its shell strips what the word needs,
+# the claude compaction word's JSON quotes among them, is not the word.
 launch_choice_words_present() { # WORDS TEXT
-  local -a want=() tokens=()
-  local i j tok
+  local -a want=()
+  local i j
   read -r -a want <<<"$1"
-  read -r -a tokens <<<"$2"
   (( ${#want[@]} > 0 )) || return 1
-  for ((i = 0; i + ${#want[@]} <= ${#tokens[@]}; i++)); do
+  launch_choice_shell_words "$2"
+  for ((i = 0; i + ${#want[@]} <= ${#LAUNCH_CHOICE_ARGV[@]}; i++)); do
     for ((j = 0; j < ${#want[@]}; j++)); do
-      tok="${tokens[i + j]}"
-      tok="${tok//[\'\"\\]/}"
-      [[ "$tok" == "${want[j]}" ]] || continue 2
+      [[ "${LAUNCH_CHOICE_ARGV[i + j]}" == "${want[j]}" ]] || continue 2
     done
     return 0
   done

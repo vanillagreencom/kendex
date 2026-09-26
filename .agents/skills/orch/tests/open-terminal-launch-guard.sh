@@ -80,7 +80,7 @@ stage() {
   mkdir -p "$1/scripts/lib"
   cp "$2" "$1/scripts/open-terminal"
   cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$1/scripts/"
-  cp "$SRC_LIB_DIR"/*.sh "$1/scripts/lib/"
+  cp -R "$SRC_LIB_DIR/." "$1/scripts/lib/"
   orch_fixture_shared_libs "$1"
   chmod +x "$1/scripts/open-terminal"
   git -C "$1" init -q

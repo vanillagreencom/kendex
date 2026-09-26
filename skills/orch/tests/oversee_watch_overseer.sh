@@ -74,6 +74,12 @@ case "${1:-}" in
     else echo "claude -n overseer 'brief'"; fi
     exit 0 ;;
   --check-marks)
+    # oversee-succeed needs explicit identity for a node pane with no context
+    # record. The fixture also rejects launch-only arguments on this call.
+    if [[ -f "$STUB_DIR/succeed.require-harness" && "$*" != '--check-marks --harness codex' ]]; then
+      echo "oversee-succeed: harness-unnamed pane=${TMUX_PANE:-none}" >&2
+      exit 1
+    fi
     # The lane-read window this judgement inherits, recorded per call: the
     # watch names its own pass interval there so the reader inside serves a
     # figure it has not come round for yet instead of posting for it again.
@@ -98,7 +104,7 @@ case "${1:-}" in
        && "$(wc -c < "$STUB_DIR/succeed.check-count")" -gt 1 ]]
     then cat "$STUB_DIR/succeed.check-later"
     elif [[ -f "$STUB_DIR/succeed.check" ]]; then cat "$STUB_DIR/succeed.check"
-    else echo "oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"; fi
+    else echo "oversee-succeed: account-below-mark headroom=80"; fi
     exit 0 ;;
   --dead-pane)
     printf '%s\n' "$*" >> "$STUB_DIR/succeed.launched"
@@ -567,13 +573,13 @@ assert_eq "notes=$(grep -c '^EVENT owner-note' <<<"$OUT" || true) cursor=$(mail_
 overseer_case record_first_start idle
 printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
 printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
-run TMUX_PANE="$PANE" -- --max-loops 1 --handoff tmp/handoffs/FLEET.md -- --verbose --model fable
+run TMUX_PANE="$PANE" -- --max-loops 1 --handoff tmp/handoffs/FLEET.md --harness codex -- --verbose --model fable
 assert_eq "server=$(recorded server) pane=$(recorded pane) window=$(recorded window)" "server=7000 pane=$PANE window=$WINDOW" \
   "the first start records the tmux server, pane and window" "$ERR"
 assert_eq "$(recorded launch_line)" "$LINE" "and the line a successor of it would run" "$ERR"
 assert_eq "$(grep -- '^--print-launch-line' "$STUB_DIR/succeed.args")" \
-  "--print-launch-line --handoff tmp/handoffs/FLEET.md -- --verbose --model fable" \
-  "the handoff path and the overseer's own flags reach the builder" "$ERR"
+  "--print-launch-line --handoff tmp/handoffs/FLEET.md --harness codex -- --verbose --model fable" \
+  "the handoff path, the harness a node pane cannot name, and the overseer's own flags reach the builder" "$ERR"
 assert_eq "$(succeed_calls --print-launch-line)" "1" \
   "and the line is built once, not once per pass" "$ERR"
 
@@ -800,6 +806,37 @@ assert_not_contains "$OUT" "EVENT merged 7 ken-1" \
 # running out — and acting on the screen alone closes a window whose harness
 # is alive. `wall_confirmed` is the account judgement that settles it.
 wall_confirmed() { printf '%s\n' "$WALL_MARK_LINE" > "$STUB_DIR/succeed.check"; }
+
+# A node pane cannot name Codex before its first completed context record.
+# Both consumers use the shared account judgement, without launch-only flags.
+HARNESS_CONTROL="$(mutant_scripts no-harness/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/no-harness/github"
+mutate_file "$HARNESS_CONTROL/oversee-watch" '"$SUCCEED" "${judge_args[@]}"' '"$SUCCEED" --check-marks'
+while IFS='|' read -r name state mode event expected_rc expected_events expected_args; do
+  overseer_case "$name" "$state"
+  printf 'node\n' > "$STUB_DIR/cmd-$PANE.txt"
+  if [[ "$state" == walled ]]; then
+    printf '%s\n' 'Usage limit reached. Increase your limits to continue.' > "$STUB_DIR/pane-$PANE.txt"
+  else
+    cat "$CODEX_PANES/codex-composer-idle.txt" > "$STUB_DIR/pane-$PANE.txt"
+  fi
+  touch "$STUB_DIR/succeed.require-harness"
+  wall_confirmed
+  watch_path=.agents/skills/orch/scripts/oversee-watch
+  [[ "$mode" != control ]] || watch_path="$HARNESS_CONTROL/oversee-watch"
+  WATCH_BIN="$watch_path" run TMUX_PANE="$PANE" -- --max-loops 2 \
+    --harness codex --handoff tmp/handoffs/FIRST.md -- --verbose
+  context_record=absent
+  [[ ! -e "$CASE_REPO_ROOT/tmp/lane-mail/overseer/context.json" ]] || context_record=present
+  assert_eq "rc=$RC events=$(grep -c "^EVENT $event " <<<"$OUT" || true) args=$(grep '^--check-marks' "$STUB_DIR/succeed.args" | sort -u) context=$context_record" \
+    "rc=$expected_rc events=$expected_events args=$expected_args context=absent" \
+    "$name: a Codex node pane receives its account judgement before a context record" "$ERR"
+done <<'ROWS'
+node_account|idle|source|overseer-mark|0|1|--check-marks --harness codex
+node_wall|walled|source|overseer-walled|3|1|--check-marks --harness codex
+node_account_control|idle|control|overseer-mark|0|0|--check-marks
+node_wall_control|walled|control|overseer-walled|0|0|--check-marks
+ROWS
 
 overseer_case walled_relaunch walled
 state_with "$LINE"
@@ -1068,7 +1105,7 @@ state_with "$LINE"
 mark_stands
 run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 1
 assert_eq "marks=$(marks_seen)" "marks=1" "the crossing is reported once" "$ERR"
-check_switch_after_first "oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
+check_switch_after_first "oversee-succeed: account-below-mark headroom=80"
 run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 2
 assert_eq "rc=$RC judged=$(checks_since_switch) marks=$(marks_seen)" \
   "rc=0 judged=2 marks=0" \

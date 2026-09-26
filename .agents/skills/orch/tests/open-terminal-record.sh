@@ -127,7 +127,7 @@ REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
 cp "$SRC_OT" "$REPO/scripts/open-terminal"
 cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$REPO/scripts/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$REPO/scripts/lib/"
+cp -R "$SCRIPTS_DIR/lib/." "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
 chmod +x "$REPO/scripts/open-terminal"
 git -C "$REPO" init -q
@@ -178,6 +178,10 @@ records() { "$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == 
 stamped() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] && echo iso || echo "$1"; }
 field() { sed -n "s/.* $2=\([^ ]*\).*/\1/p" <<<"$1"; }
 
+# A fleet launch names its harness and carries the words the fleet gate asks
+# for; a row about some other part of the launch passes that gate with this.
+FLEET_CMD=(--harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL")
+
 echo "=== a launch appends one record under the item's workflow-state id ==="
 run_ot --ghostty --harness claude --launch-flags "--model opus --verbose" CC-1
 REC="$(record CC-1)"
@@ -191,19 +195,19 @@ LAUNCHED_AT="$(field "$REC" launched_at)"
 # The choice words sit INSIDE the --cmd command, which is the command this
 # launch runs: a template is rendered verbatim and no launch flag is appended to
 # it, so the model recorded here is the model the harness was started with.
-RUN_TMUX=stub,1,0 run_ot --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-2
+RUN_TMUX=stub,1,0 run_ot --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-2
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-2)")" \
   "rc=0 item=CC-2 tracker=linear repo=null harness=claude window=stub:CC-2 account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=opus session_id=null status=running over_cap=null" \
   "a tmux launch under a lane records its window, its account dir, the tmux surface and the model its own command names"
-RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --repo o/r --cmd true 2709
+RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --repo o/r "${FLEET_CMD[@]}" 2709
 assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surface|model|session_id|launched_at|over_cap)=[^ ]*//g')" \
-  "rc=0 item=issue-2709 tracker=github repo=o/r harness=null window=stub:gh-2709 status=running" \
+  "rc=0 item=issue-2709 tracker=github repo=o/r harness=claude window=stub:gh-2709 status=running" \
   "a GitHub item is recorded under its workflow-state id with the window the watch reads it through"
 
 # --repo is optional on a supported GitHub launch: the resolver answers and
 # every launch command carries that answer, so the record carries it too. A
 # record left null here is a lane whose close-out cannot read its item.
-STUB_GH_REPO=o/resolved RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --cmd true 2711
+STUB_GH_REPO=o/resolved RUN_TMUX=stub,1,0 run_ot --tmux --tracker github "${FLEET_CMD[@]}" 2711
 assert_eq "rc=$RC repo=$(field "$(record issue-2711)" repo)" "rc=0 repo=o/resolved" \
   "a GitHub launch with no --repo records the repository its resolver answered"
 
@@ -223,7 +227,7 @@ logged() { awk -v op="$1" '$1 == op { t = $2 } END { print t }' "$TMUX_LOG"; }
 session_row() {
   local state="$TMP_ROOT/$1"
   : > "$TMUX_LOG"
-  STUB_TMUX_LOG="$TMUX_LOG" RUN_TMUX=stub,1,0 run_ot STATE_DIR="$state" --tmux --cmd true "$2"
+  STUB_TMUX_LOG="$TMUX_LOG" RUN_TMUX=stub,1,0 run_ot STATE_DIR="$state" --tmux "${FLEET_CMD[@]}" "$2"
   printf 'rc=%s target=%s list=%s pane=%s window=%s recorded=%s refused=%s' "$RC" \
     "$(logged new-window)" "$(logged list-windows)" "$(logged session-read)" \
     "$("$WS" --state-dir "$state" get oversee "[.lanes[]? | select(.item == \"$2\") | .window] | first // \"none\"" 2>/dev/null || echo none)" \
@@ -305,15 +309,6 @@ assert_eq "$(RUN_SESSION=fleetx STUB_HAS_SESSION_ERR='no server running on /tmp/
   "rc=1 target= list= pane= window=none recorded=none refused=tmux-failed+operation=has-session+item=CC-127+detail=no+server+running+on+/tmp/tmux-1000/default" \
   "a has-session that fails for another reason refuses as tmux-failed operation=has-session and opens nothing"
 
-echo "=== the model is read from the command the launch runs, as the harness reads it ==="
-# No --harness here, so no row judges these launches and the record is the only
-# reader of the model: it names whatever the launch passes, in every spelling
-# the table holds.
-for row in "--model=sonnet|CC-10|sonnet" "-m haiku|CC-11|haiku" "|CC-12|null" "--verbose|CC-13|null"; do
-  IFS='|' read -r words item want <<<"$row"
-  run_ot --ghostty --cmd "true${words:+ $words}" "$item"
-  assert_eq "rc=$RC model=$(field "$(record "$item")" model)" "rc=0 model=$want" "command words '$words' record model $want"
-done
 
 echo "=== --launch-flags beside --cmd reach nothing and are refused ==="
 # start_cmd renders a template verbatim and appends no flag to it, so a model
@@ -369,7 +364,7 @@ HOSTED_DISK="$TMP_ROOT/remote"
 mkdir -p "$HOSTED_DISK/srv/lane"
 printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$HOSTED_DISK/srv/lane/.git"
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
-  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-60
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-60
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-60)")" \
   "rc=0 item=CC-60 tracker=linear repo=o/r harness=claude window=stub:CC-60 account=$LANE_DIR host=$HOST_STUB mail_root=/srv/lane surface=tmux model=opus session_id=null status=running over_cap=null" \
   "a hosted record carries the host spec and the remote path create named, never the local tree"
@@ -392,13 +387,13 @@ marker_at() {
 }
 
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
-  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-63
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-63
 assert_eq "rc=$RC marker=$(marker_at cc-63) records=$(records CC-63) summary=$(grep -c '^open-terminal: summary launched=1 ' <<<"$OUT" || true)" \
   "rc=0 marker=root records=1 summary=1" \
   "a hosted launch binds its lowercased item to the root the lane opens in, under the clone the provider's worktree names"
 
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" LANE_HOST_STUB_PUT_STATUS=1 RUN_TMUX=stub,1,0 \
-  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-64
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-64
 assert_eq "rc=$RC marker=$(marker_at cc-64) records=$(records CC-64) refused=$(grep -c '^open-terminal: marker-failed item=CC-64 path=/srv/clone/.git/lane-mail/cc-64$' <<<"$ERR" || true) summary=$(grep -c '^open-terminal: summary launched=0 ' <<<"$ERR" || true)" \
   "rc=1 marker=none records=0 refused=1 summary=1" \
   "a hosted launch whose marker write fails names the item and the marker path, records nothing and launches nothing"
@@ -407,7 +402,7 @@ assert_eq "rc=$RC marker=$(marker_at cc-64) records=$(records CC-64) refused=$(g
 # and marked, so a sandbox made before its provider wrote records is not deaf
 # for the rest of its life.
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
-  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-65
+  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-65
 assert_eq "rc=$RC marker=$(marker_at cc-65) relaunch=$(grep -c '^create --item CC-65 .*--relaunch $' "$TMP_ROOT/host.log" || true)" \
   "rc=0 marker=root relaunch=1" \
   "a hosted relaunch writes the marker its host never carried"
@@ -417,7 +412,7 @@ assert_eq "rc=$RC marker=$(marker_at cc-65) relaunch=$(grep -c '^create --item C
 # nothing either, so neither reaches the operator unless the launcher names it.
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" \
   LANE_HOST_STUB_CAT_STATUS=2 LANE_HOST_STUB_CAT_PATH=/srv/lane/.git RUN_TMUX=stub,1,0 \
-  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-68
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-68
 assert_eq "rc=$RC first=$(grep -c '^open-terminal: host-gitfile-unread item=CC-68 path=/srv/lane/.git$' <<<"$ERR" || true) marker_failed=$(grep -c '^open-terminal: marker-failed ' <<<"$ERR" || true) records=$(records CC-68)" \
   "rc=1 first=1 marker_failed=0 records=0" \
   "a lane whose .git the host cannot produce names that read, not the marker write"
@@ -428,7 +423,7 @@ BENT_DISK="$TMP_ROOT/remote-bent"
 mkdir -p "$BENT_DISK/srv/lane"
 printf 'gitdir: worktrees/lane\n' > "$BENT_DISK/srv/lane/.git"
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$BENT_DISK" RUN_TMUX=stub,1,0 \
-  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-69
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-69
 assert_eq "rc=$RC first=$(grep -c '^open-terminal: host-gitfile-invalid item=CC-69 path=/srv/lane/.git value=gitdir: worktrees/lane$' <<<"$ERR" || true) marker_failed=$(grep -c '^open-terminal: marker-failed ' <<<"$ERR" || true) records=$(records CC-69)" \
   "rc=1 first=1 marker_failed=0 records=0" \
   "a .git that names no linked worktree git directory names that read and the line it held"
@@ -438,7 +433,7 @@ assert_eq "rc=$RC first=$(grep -c '^open-terminal: host-gitfile-invalid item=CC-
 # opens in and lane-mail-check reads that lane as none.
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" \
   LANE_HOST_STUB_PUT_BYTES=/srv/stale RUN_TMUX=stub,1,0 \
-  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-70
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-70
 assert_eq "rc=$RC marker=$(marker_at cc-70) records=$(records CC-70) refused=$(grep -cx 'open-terminal: marker-failed item=CC-70 path=/srv/clone/.git/lane-mail/cc-70' <<<"$ERR" || true)" \
   "rc=1 marker=other records=0 refused=1" \
   "a marker that reads back holding another root fails the item and records nothing"
@@ -447,7 +442,7 @@ echo "=== --state-dir is the record's one address, wherever the launch runs from
 ELSEWHERE="$TMP_ROOT/elsewhere"
 mkdir -p "$ELSEWHERE"
 git -C "$ELSEWHERE" init -q
-run_ot STATE_DIR= CWD="$ELSEWHERE" --ghostty --cmd true --state-dir "$TMP_ROOT/named" CC-50
+run_ot STATE_DIR= CWD="$ELSEWHERE" --ghostty "${FLEET_CMD[@]}" --state-dir "$TMP_ROOT/named" CC-50
 assert_eq "rc=$RC named=$(jq -r '[.lanes[] | select(.item == "CC-50")] | length' "$TMP_ROOT/named/workflow-state-oversee.json" 2>/dev/null || echo none) launch_dir=$([[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" \
   "rc=0 named=1 launch_dir=none" \
   "a launch run from another checkout records into the named state directory and not into that checkout's own"
@@ -457,9 +452,9 @@ echo "=== a record that cannot be written into a live state fails the item with 
 # (which the watch's own filter anticipates) makes the update-report filter
 # index it and fail, the write path record-write-failed guards. The state is
 # created by an ordinary launch first, then broken.
-run_ot STATE_DIR="$TMP_ROOT/rwf-state" --ghostty --cmd true CC-80
+run_ot STATE_DIR="$TMP_ROOT/rwf-state" --ghostty "${FLEET_CMD[@]}" CC-80
 "$WS" --state-dir "$TMP_ROOT/rwf-state" update oversee '.lanes += [42]' >/dev/null
-run_ot STATE_DIR="$TMP_ROOT/rwf-state" --ghostty --cmd true CC-81
+run_ot STATE_DIR="$TMP_ROOT/rwf-state" --ghostty "${FLEET_CMD[@]}" CC-81
 assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened item=CC-81 ' <<<"$OUT" || true) refused=$(grep -c '^open-terminal: record-write-failed item=CC-81 state=oversee$' <<<"$ERR" || true) summary=$(grep -o 'failed=[0-9]*' <<<"$ERR")" \
   "rc=1 opened=1 refused=1 summary=failed=1" \
   "a launch whose record write fails opens its window, is reported record-write-failed after the cause workflow-state names, and counts failed"
@@ -469,7 +464,7 @@ echo "=== launched_at is read before the window opens ==="
 # seconds, longer than the stamp's resolution: a stamp read before the open is
 # not later than that moment, and one read after it is.
 OPENED_AT="$TMP_ROOT/opened-at"
-STUB_OPENED_AT="$OPENED_AT" STUB_OPEN_DELAY=2 RUN_TMUX=stub,1,0 run_ot --tmux --cmd true CC-95
+STUB_OPENED_AT="$OPENED_AT" STUB_OPEN_DELAY=2 RUN_TMUX=stub,1,0 run_ot --tmux "${FLEET_CMD[@]}" CC-95
 assert_eq "rc=$RC order=$([[ "$(field "$(record CC-95)" launched_at)" > "$(cat "$OPENED_AT")" ]] && echo later || echo not-later)" "rc=0 order=not-later" \
   "the recorded launched_at is not later than the moment the window opened"
 
@@ -490,7 +485,7 @@ echo "=== a refused item and a wake create no state where none exists ==="
 # past the item refusals, and a wake mints none, so a mistyped id or a wake
 # pointed at the wrong address leaves no empty fleet for the watch to read.
 EMPTY_STATE="$TMP_ROOT/empty-state"
-run_ot STATE_DIR="$EMPTY_STATE" --ghostty --cmd true bad_id
+run_ot STATE_DIR="$EMPTY_STATE" --ghostty "${FLEET_CMD[@]}" bad_id
 assert_eq "rc=$RC refused=$(grep -c '^open-terminal: issue-invalid item=bad_id$' <<<"$ERR" || true) state=$([[ -e "$EMPTY_STATE/workflow-state-oversee.json" ]] && echo written || echo none)" \
   "rc=1 refused=1 state=none" \
   "an item id matching no pattern is refused, after the line git-context prints, before the state is created"
@@ -501,7 +496,7 @@ assert_eq "rc=$RC refused=$(grep -c "^open-terminal: state-absent item=CC-40 sta
 
 echo "=== a state that cannot be created refuses the batch before any window opens ==="
 : > "$TMP_ROOT/blocker"
-run_ot STATE_DIR="$TMP_ROOT/blocker/state" --ghostty --cmd true CC-20 CC-21
+run_ot STATE_DIR="$TMP_ROOT/blocker/state" --ghostty "${FLEET_CMD[@]}" CC-20 CC-21
 assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened ' <<<"$OUT" || true) refused=$(grep -c '^open-terminal: state-unwritable state=oversee$' <<<"$ERR" || true) summary=$(grep -c '^open-terminal: summary ' <<<"$ERR$OUT" || true)" \
   "rc=1 opened=0 refused=1 summary=0" \
   "a state directory under a file refuses the whole batch as state-unwritable, with no window opened and no summary"
@@ -512,7 +507,7 @@ fixture_copy() {
   local dir="$TMP_ROOT/$1"
   mkdir -p "$dir/scripts/lib"
   cp "$SRC_OT" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$dir/scripts/"
-  cp "$SCRIPTS_DIR/lib"/*.sh "$dir/scripts/lib/"
+  cp -R "$SCRIPTS_DIR/lib/." "$dir/scripts/lib/"
   orch_fixture_shared_libs "$dir"
   git -C "$dir" init -q
 }
@@ -520,7 +515,7 @@ fixture_copy() {
 echo "=== a launcher with no workflow-state beside it refuses before any window opens ==="
 fixture_copy nohelper
 rm "$TMP_ROOT/nohelper/scripts/workflow-state"
-run_ot SCRIPT="$TMP_ROOT/nohelper/scripts/open-terminal" --ghostty --cmd true CC-70
+run_ot SCRIPT="$TMP_ROOT/nohelper/scripts/open-terminal" --ghostty "${FLEET_CMD[@]}" CC-70
 assert_eq "rc=$RC first=$(sed -n 1p <<<"$ERR") opened=$(grep -c '^open-terminal: terminal-opened ' <<<"$OUT" || true)" \
   "rc=1 first=open-terminal: helper-missing path=$TMP_ROOT/nohelper/scripts/workflow-state opened=0" \
   "the missing helper is named first and no terminal opens"
@@ -532,7 +527,7 @@ UNWRITTEN_OT="$(mutant_scripts unwritten open-terminal)/open-terminal" || exit 1
 git -C "$TMP_ROOT/unwritten" init -q
 orch_fixture_shared_libs "$TMP_ROOT/unwritten"
 mutate_file "$UNWRITTEN_OT" '    lane_record_write "$RECORD_MODE" "$wt_id" "$record_window" "$record_root" "$record_session" "$launched_at" || record_rc=$?' '    :'
-run_ot SCRIPT="$UNWRITTEN_OT" STATE_DIR="$TMP_ROOT/unwritten-state" --ghostty --cmd true CC-30
+run_ot SCRIPT="$UNWRITTEN_OT" STATE_DIR="$TMP_ROOT/unwritten-state" --ghostty "${FLEET_CMD[@]}" CC-30
 assert_eq "rc=$RC records=$("$WS" --state-dir "$TMP_ROOT/unwritten-state" get oversee '(.lanes // []) | length')" "rc=0 records=0" \
   "control: without the write a launch leaves the created state with no record and reports success"
 
@@ -584,7 +579,7 @@ hand_off() {
     LANE_HOST_STUB_DIR="$HOSTED_DISK" LANE_HOST_STUB_CREATE_LINE="$PREPARING_LINE" RUN_TMUX=stub,1,0
   local kv
   for kv in ${envs[@]+"${envs[@]}"}; do export "${kv?}"; done
-  run_ot ${args[@]+"${args[@]}"} --tmux --harness "${HAND_OFF_HARNESS:-claude}" --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "${HAND_OFF_CMD:-true --model opus --effort high} $QUESTION_OFF_ALL" "$item"
+  run_ot ${args[@]+"${args[@]}"} --tmux --harness "${HAND_OFF_HARNESS:-claude}" --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "${HAND_OFF_CMD:-true --model opus --effort high} $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" "$item"
   for kv in ${envs[@]+"${envs[@]}"}; do unset "${kv%%=*}"; done
   unset STUB_TMUX_LOG STUB_PANE_CMD STUB_PANE_TEXT LANE_HOST_STUB_LOG LANE_HOST_STUB_DIR LANE_HOST_STUB_CREATE_LINE RUN_TMUX
 }
@@ -600,7 +595,7 @@ assert_eq "record=$(settled CC-73) marker=$(marker_at cc-73) window=$(field "$(r
 # A later launch that is not handed off drops the preparation it replaces, or
 # the watch would read that stale record of a live lane.
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
-  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-73
+  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-73
 assert_eq "rc=$RC record=$(prepared CC-73)" "rc=0 record=running none none" \
   "a relaunch whose host answers at once drops the earlier preparation from the record"
 
@@ -624,7 +619,7 @@ assert_eq "rc=$RC logged=$(log_line "$STATE/lane-prepare-CC-77.log" 'open-termin
 
 # The hand-off record cannot be written: the state holds an entry the write
 # path cannot index. Nothing is left running and the window closes.
-run_ot STATE_DIR="$TMP_ROOT/pu-state" --ghostty --cmd true CC-80
+run_ot STATE_DIR="$TMP_ROOT/pu-state" --ghostty "${FLEET_CMD[@]}" CC-80
 "$WS" --state-dir "$TMP_ROOT/pu-state" update oversee '.lanes += [42]' >/dev/null
 hand_off CC-78 -- STATE_DIR="$TMP_ROOT/pu-state"
 assert_eq "rc=$RC refused=$(grep -c '^open-terminal: prepare-unrecorded item=CC-78 state=oversee$' <<<"$ERR" || true) closed=$(grep -c '^kill-window %1$' "$TMUX_LOG" || true) summary=$(grep -o 'launched=[0-9]* skipped=[0-9]* failed=[0-9]*' <<<"$ERR")" \

@@ -28,7 +28,7 @@ Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
                      [--item ISSUE_ID]... [--repo OWNER/REPO]...
                      [--hosted ITEM=REMOTE_ROOT]... [--root ITEM=PATH]...
                      [--handoff PATH] [--state PATH [--skip-lane WINDOW]...]
-                     [LANE_WINDOW...] [-- OVERSEER_FLAGS...]
+                     [--harness claude|codex] [LANE_WINDOW...] [-- OVERSEER_FLAGS...]
        oversee-watch --repeat SECS --state PATH [any option above]...
 
 Blocks until the fleet needs the overseer, then prints every event it found
@@ -94,14 +94,14 @@ The long pass's events, checked and reported in this order:
                              naming the account and when its binding bucket
                              frees up goes to both channels and the repeat
                              stops
-  EVENT overseer-mark <pane> kind=<context|headroom|rate|qualifying> value=<N> mark=<N>
+  EVENT overseer-mark <pane> kind=<headroom|rate|qualifying> value=<N> mark=<N>
                              succession=<on|off>
-                             the OVERSEER's own context use or account headroom
-                             reached its own mark, judged by
-                             `oversee-succeed --check-marks` so the rule is
-                             stated once. It reaches an overseer BETWEEN turn
-                             ends, where its own turn-end hook cannot: the hook
-                             refuses at the same marks, and a session part way
+                             the OVERSEER's own account reached its mark,
+                             judged by `oversee-succeed --check-marks`; its
+                             context mark is its turn-end hook's alone. It
+                             reaches an overseer BETWEEN turn ends, where that
+                             hook cannot: the hook refuses at the same marks,
+                             and a session part way
                              through a long turn meets neither until this line.
                              The route follows on the next line. Emitted once
                              at the crossing and again every
@@ -365,6 +365,8 @@ Options:
                       tmux's own target form, names one in another session.
                       A bare name with no session resolved is refused as
                       session-unresolved naming the lane and the --state file
+  --harness H         the OVERSEER's harness, handed to each oversee-succeed
+                      call; a Codex pane reads node, which names neither
   -- OVERSEER_FLAGS...
                       the flags the OVERSEER itself runs under — its
                       permission flags, plus its current model and effort
@@ -664,6 +666,7 @@ parse_argv() {
   STATE_FILE=""
   HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
   OVERSEER_FLAGS=()
+  OVERSEER_HARNESS=""
   # How many leading words are this watch's own, before the `--` that starts
   # the overseer's flags: what the watch records of its command, and what a
   # restart from a successor pane runs again with the successor's flags.
@@ -676,6 +679,7 @@ parse_argv() {
       # window: the words are the harness's and this parser reads none of them.
       --) ARGV_BASE_COUNT=$((total - $#)); shift; OVERSEER_FLAGS=("$@"); break ;;
       --handoff) need_val "$@"; HANDOFF="$2"; shift 2 ;;
+      --harness) need_val "$@"; OVERSEER_HARNESS="$2"; shift 2 ;;
       --handoff=*) HANDOFF="${1#--handoff=}"; need_val --handoff "$HANDOFF"; shift ;;
       --repeat) need_val "$@"; REPEAT="$2"; shift 2 ;;
       --repeat=*) REPEAT="${1#--repeat=}"; need_val --repeat "$REPEAT"; shift ;;
@@ -1248,21 +1252,18 @@ overseer_record_refuse() { # DETAIL REASON FIELD=VALUE...
 OVERSEER_LAUNCH_ARGS=()
 overseer_launch_args() {
   OVERSEER_LAUNCH_ARGS=(--handoff "$HANDOFF")
+  [[ -z "$OVERSEER_HARNESS" ]] || OVERSEER_LAUNCH_ARGS+=(--harness "$OVERSEER_HARNESS")
   [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || OVERSEER_LAUNCH_ARGS+=(-- "${OVERSEER_FLAGS[@]}")
 }
 
 overseer_command_record() {
   local pane="${TMUX_PANE:-}" key server window line record detail
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
-  # The key is the orch library's, the same function the report and the lane
-  # turn-end hook read a session's own key with: the hook compares its own
-  # against the pair written here, and a second derivation that drifted would
-  # leave the overseer's turn end judged by nothing, with no keyed line.
-  # That library swallows tmux's own words, and a second read of `#{pid}` here
-  # would be a twin of the verb it owns, so the refusal names the read that
-  # failed instead of replaying a message this script cannot have. The window
-  # read below runs here and does replay tmux's. A key that came back in some
-  # other shape is its own cause and is replayed as one.
+  # The key is the orch library's, which the report and the turn-end hook read
+  # a session's own key with, so the hook's comparison cannot drift from this
+  # pair. That library swallows tmux's words and a second `#{pid}` read here
+  # would twin it, so the refusal names the failed read. The window read below
+  # replays tmux's words; a key of another shape is replayed as its own cause.
   if ! key="$(lane_context_caller_key)"; then
     overseer_record_refuse "tmux reported no server pid for pane $pane" \
       overseer-unrecorded "pane=$pane" "step=identity"
@@ -1397,6 +1398,7 @@ repeat_watch() { # ARGV...
     fi
     args=(--interval "$INTERVAL" --max-loops "$MAX_LOOPS" \
           --handoff "$HANDOFF" --state "$STATE_FILE")
+    [[ -z "$OVERSEER_HARNESS" ]] || args+=(--harness "$OVERSEER_HARNESS")
     [[ -z "$SINCE" ]] || args+=(--since "$SINCE")
     for line in ${REPOS[@]+"${REPOS[@]}"}; do args+=(--repo "$line"); done
     for line in ${GIVEN_HOSTED[@]+"${GIVEN_HOSTED[@]}"}; do args+=(--hosted "$line"); done
@@ -2603,7 +2605,7 @@ overseer_relaunch_failed() { # ROW ROWS IDENTITY PANE WINDOW ATTEMPT STEP
 # the first one's reading.
 #
 # OVERSEER_MARK_KEY is the answer's own key, `mark-reached`, `mark-unmeasured`
-# or `below-mark` for either of the two below-mark lines; the KIND, VALUE,
+# or `below-mark` for the `account-below-mark` line; the KIND, VALUE,
 # MARK, ACCOUNT and RESETS globals are its fields, empty where the line
 # carries none. Exit 1 means no judgement was made at all, the note already
 # said once, and nothing may be concluded from any of them.
@@ -2650,6 +2652,7 @@ bounded_account_read() {
 overseer_marks_judge() {
   local line first field
   local errf="$WORK_DIR/overseer-mark.err"
+  local judge_args=(--check-marks)
   [[ "$OVERSEER_MARK_READ" -eq 0 ]] || return "$OVERSEER_MARK_RC"
   OVERSEER_MARK_READ=1
   # Every field belongs to THIS reading. Cleared before the line is parsed,
@@ -2671,7 +2674,8 @@ overseer_marks_judge() {
   # usage endpoint per account, and on a cache miss on the host-wide usage
   # refresh lock and a 429 retry's sleep and second request, which together can
   # outlast the pass interval.
-  if ! bounded_account_read overseer-mark-unjudged "$errf" "$SUCCEED" --check-marks; then
+  [[ -z "$OVERSEER_HARNESS" ]] || judge_args+=(--harness "$OVERSEER_HARNESS")
+  if ! bounded_account_read overseer-mark-unjudged "$errf" "$SUCCEED" "${judge_args[@]}"; then
     [[ ! -s "$errf" ]] || cat -- "$errf" >&2
     return 1
   fi
@@ -2680,8 +2684,7 @@ overseer_marks_judge() {
   case "$first" in
     'oversee-succeed: mark-reached '*) OVERSEER_MARK_KEY=mark-reached ;;
     'oversee-succeed: mark-unmeasured '*) OVERSEER_MARK_KEY=mark-unmeasured ;;
-    'oversee-succeed: window-below-mark '* | 'oversee-succeed: context-below-mark '*)
-      OVERSEER_MARK_KEY=below-mark ;;
+    'oversee-succeed: account-below-mark '*) OVERSEER_MARK_KEY=below-mark ;;
     # A line this watch has no name for settles nothing, exactly as a run that
     # failed does: it is not a mark, and it is not evidence that one lifted.
     *) overseer_note overseer-mark-unjudged "path=$SUCCEED" "line=$first"; return 1 ;;

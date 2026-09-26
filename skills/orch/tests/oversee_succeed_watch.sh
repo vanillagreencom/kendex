@@ -65,14 +65,22 @@ tm set-option -g default-shell /bin/sh
 tm set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 
-# A 1M window past the context mark, so every run below succeeds itself.
-MARK='  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /rc'
+# A caller past the context mark, so every run below succeeds itself: the
+# reading its turn-end hook would have taken, 95 percent of a 1M window, handed
+# in as --context, and recorded for its pane, which names its model.
+# shellcheck source=../scripts/lib/lane-context.sh
+source "$SRC_DIR/lib/lane-context.sh"
+MARK='  kendex (ken-1453) Fable 5.1 (1M context) 95% (fixture@example.com)     /rc'
+SERVER_PID="$(tm display-message -p '#{pid}')"
 new_caller() {
   local f="$TMP_ROOT/caller.screen" spec
   printf '%s\n' "$MARK" > "$f"
   tm kill-window -a -t fleet:0
   spec="$(tm new-window -d -t fleet:1 -P -F '#{pane_id} #{window_id}' "cat '$f'; exec sleep 100000")"
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
+  mkdir -p "$TMP_ROOT/work/tmp/lane-mail/overseer"
+  lane_context_record "$TMP_ROOT/work/tmp/lane-mail/overseer" claude 950000 1000000 claude-fable-5-1 s1 \
+    "$SERVER_PID $CALLER_PANE"
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     [[ "$(tm capture-pane -p -t "$CALLER_PANE")" != *'(fixture@example.com)'* ]] || return 0
     sleep 0.2
@@ -124,7 +132,7 @@ run_succeed() {
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     CLAUDE_CONFIG_DIR="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" \
     ORCH_OVERSEER_PREFERENCE=claude:1:high ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 \
-    "${1:-$SUCCEED}" -- --permission-mode dontAsk --verbose 2>&1)" || RC=$?
+    "${1:-$SUCCEED}" --context 950000:1000000 -- --permission-mode dontAsk --verbose 2>&1)" || RC=$?
   # The window the caller held, which the successor holds once the close ran.
   SUCC_PANE="$(tm list-panes -t fleet:1 -F '#{pane_id}' 2>/dev/null || true)"
 }
@@ -208,8 +216,8 @@ assert_eq "$(grep -c "^stopped $OLD\$" "$TMP_ROOT/watch.log")|$(kill -0 "$OLD" 2
   "1|gone" \
   "the watch serving the caller's pane is stopped, once"
 assert_eq "${NEW:+found}|$(started_line "${NEW:-none}")" \
-  "found|pane=$SUCC_PANE origin=succession lane=$H/.claude cwd=$TMP_ROOT/work argv=$WATCH_ARGS -- --model fable --effort high --permission-mode dontAsk --verbose" \
-  "and started again from the successor pane, with the successor's flags and account"
+  "found|pane=$SUCC_PANE origin=succession lane=$H/.claude cwd=$TMP_ROOT/work argv=$WATCH_ARGS --harness claude -- --model fable --effort high --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --permission-mode dontAsk --verbose" \
+  "and started again from the successor pane, with the successor's harness, flags and account"
 assert_eq "$(grep -c "^oversee-succeed: watch-restarted pid=$NEW pane=$SUCC_PANE $SETSID_LINE\$" "$WATCH_ERR")|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
   "1|2" \
   "the restart is written beside the fleet state with the new loop's pid and the successor pane"
