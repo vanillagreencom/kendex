@@ -241,11 +241,11 @@ pub(super) fn plan_not_written(
     Ok(decided)
 }
 
-/// Invariant 4 for every record the item pass did not plan: a record under
-/// a declared key that is another declaration's — installed from one
-/// catalog, now set to come from another that refuses it, withholds it or
-/// plans nothing on this tool — is the conflict it would be where the plan
-/// writes. The record stays, the row says to remove it first and why
+/// Invariant 4 for every record the item pass did not plan whose
+/// declaration's item was read (`DesiredState::processed`): a record that
+/// is another declaration's — installed from one catalog, now set to come
+/// from another that refuses it, withholds it or plans nothing on this
+/// tool — is the conflict it would be where the plan writes. The record stays, the row says to remove it first and why
 /// nothing replaces it here, and no later pass takes it. Returns the keys
 /// of the records this pass kept.
 fn plan_rebound(
@@ -265,7 +265,7 @@ fn plan_rebound(
         .collect();
     let mut decided = BTreeSet::new();
     for (key, entry) in &lock.entries {
-        let declared = state.provenance.get(&(entry.kind, entry.name.clone()));
+        let declared = state.processed.get(&(entry.kind, entry.name.clone()));
         let Some(provenance) = declared.filter(|_| !planned.contains(key)) else {
             continue;
         };
@@ -316,12 +316,12 @@ fn plan_withheld(
     kept: &mut KeptAsIs,
 ) -> BTreeSet<String> {
     let mut decided = BTreeSet::new();
-    for ((kind, name, harness), withheld) in &state.withheld {
+    for ((kind, name, harness), because) in &state.withheld {
         let key = entry_key(*kind, name, *harness);
         let Some(entry) = lock.entries.get(&key) else {
             continue;
         };
-        if rebound.contains(&key) || withheld.because.takes() {
+        if rebound.contains(&key) || because.takes() {
             continue;
         }
         kept.keep(new_lock, &key, entry);

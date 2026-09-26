@@ -348,7 +348,7 @@ fn verdicts<'a>(
     let lacking: BTreeSet<String> = state
         .withheld
         .iter()
-        .filter(|(_, withheld)| withheld.because == Withholding::Requires)
+        .filter(|(_, because)| **because == Withholding::Requires)
         .map(|((kind, name, harness), _)| entry_key(*kind, name, *harness))
         .collect();
     let mut verdicts = Vec::new();
@@ -372,7 +372,9 @@ fn verdicts<'a>(
         // that did resolve has already said everything it wants installed,
         // so an entry it did not ask for — a harness dropped from its list —
         // is stranded and must be cleaned up like any other orphan.
-        let departed_harness = state.processed.contains(&(entry.kind, entry.name.clone()));
+        let departed_harness = state
+            .processed
+            .contains_key(&(entry.kind, entry.name.clone()));
         let unreachable_source =
             manifest.declared(entry.kind).contains_key(&entry.name) && !departed_harness;
         // An installation something else brought in was derived from a

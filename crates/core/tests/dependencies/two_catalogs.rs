@@ -321,6 +321,74 @@ fn a_rebind_planning_nothing_on_a_tool_reaches_the_provenance_conflict_and_not_t
     }
 }
 
+/// An agent installed from the other catalog, then set to come from the
+/// wrapper's catalog, which cannot say what it would install: it does not
+/// carry the agent, its control file will not parse, or its copy of the
+/// agent will not read. A declaration that planned nothing is skipped with
+/// its note, not judged: the record stays the other catalog's on both
+/// tools, with no row and nothing taken to the trash.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_rebind_to_a_catalog_that_cannot_answer_keeps_the_record_without_a_row() {
+    /// What the wrapper's catalog holds: its copy of the agent, if any,
+    /// and whether its control file parses.
+    type Row = (&'static str, Option<&'static str>, bool);
+    let rows: [Row; 3] = [
+        ("not carried", None, true),
+        ("control file unparsable", Some(CRITIC), false),
+        ("item unreadable", Some("Body.\n"), true),
+    ];
+    for (case, from_cat, parses) in rows {
+        let (f, other) = two_catalogs("[agents.critic]\nsource = \"other\"\n");
+        fs::create_dir_all(other.join("agents")).unwrap();
+        fs::write(other.join("agents/critic.md"), CRITIC).unwrap();
+        apply_now(&f);
+        if let Some(bytes) = from_cat {
+            fs::create_dir_all(f.source.join("agents")).unwrap();
+            fs::write(f.source.join("agents/critic.md"), bytes).unwrap();
+        }
+        if !parses {
+            fs::write(f.source.join("kendex.toml"), UNPARSABLE).unwrap();
+        }
+        declare_two(&f, &other, "[agents.critic]\nsource = \"cat\"\n");
+
+        let report = plan_apply(
+            &f.env,
+            &f.scope,
+            &PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            },
+        )
+        .unwrap();
+        let rows: Vec<(HarnessId, DriftState, &str)> = report
+            .drift
+            .iter()
+            .filter(|row| row.name == "critic")
+            .map(|row| (row.harness, row.state, row.detail.as_str()))
+            .collect();
+        assert_eq!(rows, Vec::new(), "{case}");
+        let trashed: Vec<&PathBuf> = report
+            .plan
+            .ops
+            .iter()
+            .filter_map(|op| match &op.op {
+                Op::Trash { path, .. } => Some(path),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(trashed, Vec::<&PathBuf>::new(), "{case}");
+        for harness in [HarnessId::Claude, HarnessId::Codex] {
+            let key = format!("agent:critic:{}", harness.name());
+            assert_eq!(
+                report.record.entries[&key].source_repo,
+                identity(&other),
+                "{case}: {key}"
+            );
+        }
+    }
+}
+
 /// A row the plan leaves on a hook, spelled before the fixture exists:
 /// the conflict names the fixture's catalogs.
 #[derive(Clone, Copy)]

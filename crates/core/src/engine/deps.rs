@@ -14,7 +14,7 @@ use crate::source::{SourceConfig, find_item, list_items};
 use crate::source_read::SealedSource;
 
 use super::ItemWarning;
-use super::desired::{DesiredState, Withheld, Withholding};
+use super::desired::{DesiredState, Withholding};
 use super::desired_kinds::{NotWritten, manifest_refusal, not_written};
 use super::expansion::{CatalogKey, Catalogs, Expansion, Offer, OpenCatalog};
 
@@ -228,7 +228,7 @@ fn record(wanted: BTreeMap<Node, Wanted>, state: &mut DesiredState) {
             found
                 .withheld
                 .into_iter()
-                .map(|(harness, because)| ((kind, name.clone(), harness), Withheld { because })),
+                .map(|(harness, because)| ((kind, name.clone(), harness), because)),
         );
     }
 }

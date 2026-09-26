@@ -27,9 +27,8 @@ pub(super) fn desired_custom_hooks(
     let names = custom_hook_names(manifest);
     for (hook, name) in manifest.custom_hooks.iter().zip(names) {
         let spec = HookSpec::custom(hook, name.clone());
-        state.processed.insert((ItemKind::Hook, name.clone()));
         state
-            .provenance
+            .processed
             .insert((ItemKind::Hook, name.clone()), PROVENANCE.to_owned());
         // The entry's own list outranks the scope defaults, the same way a
         // declared item's does: a hook adopted from one tool names that
