@@ -12,10 +12,12 @@
 #   bash skills/orch/tests/run-all.sh session_init      # subset by name
 #   bash skills/orch/tests/run-all.sh open-terminal oversee   # either name
 #   bash skills/orch/tests/run-all.sh '!open-terminal' '!oversee'  # neither
+#   bash skills/orch/tests/run-all.sh =lanes      # that one suite alone
 #
-# Each argument is a substring of a suite's base name. A bare one selects,
-# one written `!name` rejects, and a file runs when it matches a selector —
-# or none was given — and matches no rejector. Two runs whose arguments are
+# Each argument is a substring of a suite's base name, or, written `=name`,
+# the whole of one. A bare one selects, one written `!name` rejects, and a
+# file runs when it matches a selector — or none was given — and matches no
+# rejector. Two runs whose arguments are
 # a set and that set negated therefore partition the battery: every suite
 # runs in exactly one of them, and a suite added later lands in the negated
 # run rather than in neither. CI's orch shards are that partition.
@@ -61,6 +63,13 @@ for arg in "$@"; do
 done
 FILTER="$*"
 
+matches() { # BASE FILTER
+  case "$2" in
+    =*) [ "$1" = "${2#=}" ] ;;
+    *) case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac ;;
+  esac
+}
+
 # Bash 3.2 under `set -u` errors on "${arr[@]}" when arr is empty, so each
 # expansion below sits behind its own count.
 wanted() { # BASE
@@ -68,12 +77,12 @@ wanted() { # BASE
   if [ "${#SELECT[@]}" -gt 0 ]; then
     keep=0
     for pat in "${SELECT[@]}"; do
-      case "$1" in *"$pat"*) keep=1; break ;; esac
+      if matches "$1" "$pat"; then keep=1; break; fi
     done
   fi
   if [ "$keep" -eq 1 ] && [ "${#REJECT[@]}" -gt 0 ]; then
     for pat in "${REJECT[@]}"; do
-      case "$1" in *"$pat"*) keep=0; break ;; esac
+      if matches "$1" "$pat"; then keep=0; break; fi
     done
   fi
   [ "$keep" -eq 1 ]

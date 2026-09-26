@@ -26,6 +26,8 @@
 #      no other suite runs, and no suite starts while it runs
 #   5. a signal — SIGINT or SIGHUP to the runner's process group, or SIGTERM
 #      to the runner alone, ends the run and the suite it was running
+#   6. a name filter — a bare one selects each suite whose name holds it,
+#      one written `=name` that suite alone, and `!` rejects either way
 #
 # Bash 3.2 compatible.
 
@@ -297,6 +299,26 @@ while IFS='|' read -r sig target want; do
   assert_eq "rc=$RC suite=$state" \
     "rc=$want suite=gone" "SIG$sig to the $target ends the run at $want and ends the suite it ran"
 done <<<"$SIGNAL_ROWS"
+
+echo "=== 6. a name filter selects by substring, or by whole name written =name ==="
+B="$TMP_ROOT/filter"
+battery "$B"
+for name in lanes lanes_context other; do suite "$B" "$name" 0 ''; done
+mkdir -p "$B.bin"
+printf '#!/usr/bin/env bash\necho 2\n' >"$B.bin/nproc"
+chmod +x "$B.bin/nproc"
+# FILTERS|SUITES THAT START, sorted
+FILTER_ROWS='=lanes|lanes
+lanes|lanes lanes_context
+!=lanes|lanes_context other
+=lanes =other|lanes other'
+while IFS='|' read -r filters want; do
+  RC=0
+  # shellcheck disable=SC2086 # the row's filters, split on purpose
+  OUT="$(env -i PATH="$B.bin:$PATH" HOME="$HOME" TMPDIR="$B.tmp" bash "$B/run-all.sh" $filters 2>&1)" || RC=$?
+  started="$(printf '%s\n' "$OUT" | sed -n 's/^start suite=//p' | sort | tr '\n' ' ')"
+  assert_eq "rc=$RC started=$started" "rc=0 started=$want " "the filters $filters start $want"
+done <<<"$FILTER_ROWS"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
