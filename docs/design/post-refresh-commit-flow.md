@@ -85,7 +85,7 @@ Each row removes something from the offer. Rows apply together.
 | No remote can be chosen | The rule below | Offer without push and without pull request, a reason named for each |
 | The `gh` probe failed | The probe below | Offer without pull request, the reason named |
 | The branch's rules on GitHub take changes only through a pull request | The branch-rules read below | Offer without push, the reason named |
-| A package's files in this repository would go out of date in the commit | `commit_offer::stale`, [commit-offer-held.md](commit-offer-held.md) | No commit choice: the package's setup and `leave`, each package and why named |
+| A package's files in this repository would go out of date in the commit | `commit_offer::stale`, [commit-offer-held.md](commit-offer-held.md) | No commit choice: the package's setup and `leave`, each package and why named. With no terminal it replaces the line naming the flags |
 
 The remote is chosen by rule, never by a prompt: the current branch's upstream remote; else `origin`; else the only remote when the project has exactly one; else none, and push and pull request are unavailable.
 
@@ -212,9 +212,9 @@ A step that times out is reported as that step's failure, naming the step and th
 
 ## Surfacing a refusal
 
-- Both halves are shown whole, one line at a time, in order: stdout first, then stderr, so the block ends on the refusal itself. git and gh both write their refusal to stderr. stdout carries whatever ran and passed on the way, such as a pre-push hook's own report, which git keeps there.
+- Both halves are shown whole, one line at a time, in order: stdout first, then stderr, so the block ends on the refusal itself. A refused commit whose words carry a findings block is the one exception to that order, in the next bullet but one. git and gh both write their refusal to stderr. stdout carries whatever ran and passed on the way, such as a pre-push hook's own report, which git keeps there.
 - Each line goes through the surface's escaping: `ui::say` on the CLI, React text on the app. A control character in a hook's output must not move a cursor or colour a line.
-- A refused commit whose words carry a findings block leads with it: the first `<check>: findings=N` record with N above zero, through the line before the next `<name>: <key>=<value>` record (`Failed::findings`). A pre-commit chain prints every lane it ran, the passing ones first, so the lane that refused is otherwise last. The CLI puts the rest behind a choice at the prompt, and a flag's run prints it after the block for the log. The app keeps the whole output, block first.
+- A refused commit whose words carry a findings block leads with it (`Failed::findings`). The block is the first `<check>: findings=N` record with N above zero and its finding lines: back over the unindented lines before it that open no `<name>: <key>=<value>` record, where a check such as preflight prints its findings first, and forward to the line before the next such record. The commit-guards chain runs every lane whatever an earlier one said, in the fixed order doc-limits, preflight, bot-instructions, `commit-guards all`, the repo-local entry, then its result line, and git returns stdout before stderr. The refusing lane's findings therefore sit among passing lanes' output. The CLI puts the rest behind a choice at the prompt, and a flag's run prints it after the block for the log. The app keeps the whole output, block first.
 - Beyond that order, nothing is summarised, reworded, or truncated to a first line. The one pattern read from the words is GitHub refusing a push for want of a pull request: a `remote: ` line carrying `GH013` (a ruleset) or `GH006` (branch protection), and a `remote: ` line naming the rule, `Changes must be made through a pull request` or `Changes must be made through the merge queue`. Both codes also cover refusals a pull request does not get past, such as a secret in the push or an unsigned commit, so the code alone is not read as the rule. The reading adds a way on and takes none of the words away.
 - No output cap. `Hardened::max_output` refuses the whole call when the cap is passed, and its error carries none of what the program said, which would lose exactly the words the contract promises. A hook's output is bounded by the hook, and no cap is worth a refusal that says nothing.
 
@@ -312,14 +312,16 @@ A refused commit prints git's words and asks again. The words below are one repo
 1-3, or Enter to leave them as diffs:
 ```
 
-A refused commit whose words carry a findings block leads with it, and the rest waits behind a choice:
+A refused commit whose words carry a findings block leads with it, and the rest waits behind a choice. The findings below are bot-instructions' own lines, each drift finding followed by its remedy, shown to fix the shape:
 
 ```
   the commit was refused
   the repository's commit check found problems:
     bot-instructions: findings=2
     drift: differs from a fresh render, first at line 27 [.github/copilot-instructions.md]
+      remedy: run `.agents/skills/bot-instructions/scripts/bot-instructions render`, then stage every file it changes
     drift: the ## Code Review Rules owned region differs from a fresh render [AGENTS.md]
+      remedy: run `.agents/skills/bot-instructions/scripts/bot-instructions render`, then stage every file it changes
   the commit check printed 41 more lines
   1  commit again with the same message
   2  commit again with a different message

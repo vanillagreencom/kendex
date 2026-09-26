@@ -15,9 +15,12 @@
 //!
 //! The yes is spent where it is given. Nothing here writes it down as a
 //! standing consent, so no later run inherits it: `kendex refresh` repairs
-//! the files a package installs and never arms anything, and a repository
-//! is armed by the invocation that says so — this one, or `kendex guard
-//! install`. Not even where kendex's own record says this repository was
+//! the files a package installs and arms nothing on its own, and a
+//! repository is armed by the invocation that says so — this one, `kendex
+//! guard install`, or the yes a writing verb asks for at a terminal: the
+//! commit offer's setup of a package holding the commit, and the setup a
+//! linked work tree is offered where its main checkout has it. Each of
+//! those asks after printing this same disclosure. Not even where kendex's own record says this repository was
 //! armed before, for two reasons. The yes was given against the disclosure
 //! as it read that day, its declared writes and its summary, and a
 //! package's next version can declare more — a hook lane the armed shims
@@ -54,7 +57,7 @@ use kendex_core::repo_effects::{DeclaredEffects, Disclosure, Spoken};
 use super::{CliResult, answer, fail, fail_refusal, say, scope_label};
 
 mod disclose;
-pub use disclose::disclose;
+pub use disclose::{disclose, print_disclosure};
 
 /// Name every package kendex recorded arming in this scope whose effect
 /// the package no longer stands behind, and how many lines that took.
@@ -232,25 +235,28 @@ pub fn apply(scope: &Scope, declared: &DeclaredEffects) -> CliResult {
 ///
 /// The one step that keeps such a work tree from staying not set up
 /// without anyone deciding it. The record stays per work tree, so the
-/// answer is asked here rather than read off the main checkout's.
-/// A run with nobody to ask leaves the skip line said above it as the
-/// account.
+/// answer is asked here rather than read off the main checkout's, against
+/// the same disclosure every other yes is given against. A run with
+/// nobody to ask leaves the skip line said above it as the account.
 pub fn set_up_beside_main(
+    env: &Env,
     scope: &Scope,
     skipped: &kendex_core::bot_instructions::Skipped,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     if skipped.set_up_in.is_none() || !std::io::stdin().is_terminal() {
         return Ok(false);
     }
-    let declared = &skipped.declared;
-    say(&format!(
-        "  {}: {}",
-        declared.name, declared.effects.summary
-    ));
-    if !crate::ui::confirm(&format!("set {} up in this work tree too?", declared.name))? {
+    let shown = disclose(env, scope, std::slice::from_ref(&skipped.declared))?;
+    let [disclosure] = shown.as_slice() else {
+        return Ok(false);
+    };
+    if !crate::ui::confirm(&format!(
+        "set {} up in this work tree too?",
+        disclosure.name
+    ))? {
         return Ok(false);
     }
-    apply(scope, declared)?;
+    apply(scope, &disclosure.declared)?;
     Ok(true)
 }
 

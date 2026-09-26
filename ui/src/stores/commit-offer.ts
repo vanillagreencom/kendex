@@ -13,7 +13,6 @@ import {
   droppedToast,
   NOTHING_TO_COMMIT_TOAST,
   pushedToast,
-  STILL_STALE,
 } from "@/lib/copy-commit-offer";
 import { askingAgain, forgetRoot, isForgotten } from "@/lib/forgotten-roots";
 import { readOrder } from "@/lib/read-state";
@@ -40,9 +39,12 @@ export type Stage =
   | { at: "busy"; step: Route }
   /** The setup a held offer carries is running. */
   | { at: "settingUp" }
-  /** The setup did not run through, or the packages are still not ready
-   *  after it: what went wrong, and nothing was committed. */
+  /** The setup's installer, or the read after it, failed: what went
+   *  wrong, and nothing was committed. */
   | { at: "setUpFailed"; error: string }
+  /** The setup ran and the fresh reading still holds the commit. The
+   *  head is that reading, so its `stale` is what the state draws. */
+  | { at: "stillHeld" }
   | {
       at: "commitRefused";
       refused: Refused;
@@ -168,9 +170,10 @@ interface CommitOfferState {
   setMessage: (message: string) => void;
   run: () => Promise<void>;
   /** Set up each package holding the head offer, then read the project
-   *  again: the files the setup rendered join the offer, and each package
-   *  is asked again. One setup per offer: a package still not ready after
-   *  its own setup ran ends in `setUpFailed`. */
+   *  again against the same reading the offer was scoped to: the files the
+   *  setup rendered join the offer, and each package is asked again. One
+   *  setup per offer: a package still holding the commit after its own
+   *  setup ran ends in `stillHeld`. */
   setUp: () => Promise<void>;
   openPullRequest: () => Promise<void>;
   /** Leaving the files as diffs, which dismissing the dialog also is.
@@ -313,6 +316,29 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
   };
 
   const head = () => get().queue[0];
+
+  /** Read the head project again after a step this dialog ran, against the
+   *  same reading the offer was scoped to: the action's own work plus what
+   *  the step wrote, with the earlier edits still asked about. An offer a
+   *  person opened keeps no reading, and is opened again as they opened
+   *  it. */
+  const reread = async (root: string): Promise<OpenedFor> => {
+    const since = get().baselines[root];
+    if (since === undefined) return get().openFor(root);
+    const response = await commands.commitOfferScan([root], [since]);
+    if (response.status === "error") {
+      return { at: "failed", error: response.error };
+    }
+    const offer = response.data.find((one) => one.root === root);
+    if (!offer) return { at: "nothing" };
+    set({
+      queue: [offer, ...get().queue.filter((one) => one.root !== root)],
+      // The set the earlier edits ride along with may have changed, so
+      // the yes about them is asked again.
+      accepted: false,
+    });
+    return { at: "offer" };
+  };
 
   // The scans overlap, so only the latest one that started may answer, and
   // nothing is asked until the last of them has.
@@ -749,19 +775,23 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
       for (const held of offer.stale) {
         const armed = await commands.repoEffectsApply(
           { scope: "project", root: offer.root },
-          held.declared,
+          held.disclosure.declared,
         );
         if (armed.status === "error") {
           set({ stage: { at: "setUpFailed", error: armed.error } });
           return;
         }
       }
-      const opened = await get().openFor(offer.root);
-      switch (opened.at) {
+      const read = await reread(offer.root);
+      switch (read.at) {
         case "offer": {
           const next = head();
-          if (next?.root === offer.root && next.stale.length > 0)
-            set({ stage: { at: "setUpFailed", error: STILL_STALE } });
+          set({
+            stage:
+              next?.root === offer.root && next.stale.length > 0
+                ? { at: "stillHeld" }
+                : { at: "offer" },
+          });
           return;
         }
         case "nothing":
@@ -774,7 +804,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
           advance();
           return;
         case "failed":
-          set({ stage: { at: "setUpFailed", error: opened.error } });
+          set({ stage: { at: "setUpFailed", error: read.error } });
           return;
       }
     },

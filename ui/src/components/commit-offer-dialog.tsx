@@ -1,7 +1,13 @@
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { ProjectOffer, Refused, TangledFile } from "@/bindings";
+import type {
+  ProjectOffer,
+  Refused,
+  StalePackage,
+  TangledFile,
+} from "@/bindings";
 import { ExternalLink } from "@/components/external-link";
+import { DisclosureBody } from "@/components/marketplaces/repo-effects-dialog";
 import { offerEntries } from "@/components/project-changes/change-rows";
 import { ChangedFiles } from "@/components/project-changes/changed-files";
 import { Button } from "@/components/ui/button";
@@ -85,8 +91,9 @@ import {
   SHARED_NOTE,
   STALE_LABEL,
   STALE_NOTE,
+  STILL_HELD_NOTE,
+  STILL_HELD_TITLE,
   saidLabel,
-  settingUpNote,
   setUpLabel,
   staleLine,
   stillCarries,
@@ -172,6 +179,8 @@ function Body({ offer, stage }: { offer: ProjectOffer; stage: Stage }) {
       return <HeldState offer={offer} busy />;
     case "setUpFailed":
       return <SetUpFailedState error={stage.error} />;
+    case "stillHeld":
+      return <StillHeldState offer={offer} />;
     case "commitRefused":
       return (
         <CommitRefusedState
@@ -366,9 +375,24 @@ function OfferState({
   );
 }
 
+/** Why one package holds the commit, with its check's own words. */
+function HeldBy({ held }: { held: StalePackage }) {
+  return (
+    <>
+      <p>{staleLine(held)}</p>
+      {held.said.length > 0 ? (
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
+          {held.said.join("\n")}
+        </pre>
+      ) : null}
+    </>
+  );
+}
+
 /** A package whose files in this repository the commit would carry out of
- *  date holds the offer: which, why, what its setup changes, and the two
- *  choices, setting it up here or leaving the files as diffs. */
+ *  date holds the offer: which, why, the disclosure its setup's yes is
+ *  given against, the same block the repository-effects dialog draws, and
+ *  the two choices, setting it up here or leaving the files as diffs. */
 function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
   const setUp = useCommitOfferStore((s) => s.setUp);
   const leave = useCommitOfferStore((s) => s.leave);
@@ -384,15 +408,8 @@ function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
         <Section title={STALE_LABEL}>
           {offer.stale.map((held) => (
             <div key={held.name} className="space-y-1.5">
-              <p>{staleLine(held)}</p>
-              {held.said.length > 0 ? (
-                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
-                  {held.said.join("\n")}
-                </pre>
-              ) : null}
-              <p className="text-muted-foreground">
-                {settingUpNote(held.name, held.declared.summary)}
-              </p>
+              <HeldBy held={held} />
+              <DisclosureBody disclosure={held.disclosure} />
             </div>
           ))}
         </Section>
@@ -414,8 +431,36 @@ function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
   );
 }
 
-/** The setup chosen at a held offer did not run through, or left the
- *  package still not ready. Nothing was committed. */
+/** The setup ran and the fresh reading still holds the commit: why, in
+ *  that reading's words, and no second setup, as the terminal. */
+function StillHeldState({ offer }: { offer: ProjectOffer }) {
+  const leave = useCommitOfferStore((s) => s.leave);
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>{STILL_HELD_TITLE}</DialogTitle>
+        <DialogDescription>{STILL_HELD_NOTE}</DialogDescription>
+      </DialogHeader>
+      <div className="space-y-4 text-sm">
+        <Section title={STALE_LABEL}>
+          {offer.stale.map((held) => (
+            <div key={held.name} className="space-y-1.5">
+              <HeldBy held={held} />
+            </div>
+          ))}
+        </Section>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={leave}>
+          {LEAVE_LABEL}
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+/** The setup chosen at a held offer did not run through: its installer,
+ *  or the read after it, failed. Nothing was committed. */
 function SetUpFailedState({ error }: { error: string }) {
   const leave = useCommitOfferStore((s) => s.leave);
   return (

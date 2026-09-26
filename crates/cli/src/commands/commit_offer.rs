@@ -405,7 +405,7 @@ fn set_up_here(
     generated: &mut GeneratedPaths,
 ) -> CliResult {
     for held in stale {
-        super::repo_effects::apply(scope, &held.declared)?;
+        super::repo_effects::apply(scope, &held.disclosure.declared)?;
     }
     kendex_core::bot_instructions::add_to_generated(env, scope, generated)?;
     Ok(())

@@ -3,14 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type ChangedFile,
   commands,
+  type ProjectBaseline,
   type ProjectOffer,
   type StalePackage,
 } from "@/bindings";
-import {
-  droppedToast,
-  NOTHING_TO_COMMIT_TOAST,
-  STILL_STALE,
-} from "@/lib/copy-commit-offer";
+import { droppedToast, NOTHING_TO_COMMIT_TOAST } from "@/lib/copy-commit-offer";
 import {
   ready,
   routesFor,
@@ -734,45 +731,56 @@ describe("the root a project is looked up by", () => {
   });
 });
 
-// A person opens a project's review while a scan an earlier write started
-// is still out. That scan answers about the write, with its scope and its
-// attribution; landing it over the offer they asked for answers a question
-// nobody put.
 // A package whose files the commit would carry out of date holds the offer.
-// Its setup runs, then the project is read again: a clear reading is an
-// ordinary offer, one still held ends the setup rather than offering it
-// twice, and a setup that failed reads nothing.
+// Its setup runs, then the project is read again against the reading the
+// offer was scoped to: a clear reading is an ordinary offer, one still held
+// ends in its own state carrying that reading's words rather than offering
+// the setup twice, and a setup that failed reads nothing.
 describe("setting up a package that holds the commit", () => {
-  const held: StalePackage = {
+  const root = "/home/method/dev/site";
+  const declared = {
     name: "bot-instructions",
-    why: "notSetUp",
-    said: [],
-    declared: {
-      name: "bot-instructions",
-      root: "/home/method/dev/site/.agents/skills/bot-instructions",
-      summary: "Renders the review-bot files.",
-      writes: [".github/copilot-instructions.md"],
-      installer: "scripts/bot-instructions render",
-      uninstaller: null,
-      checker: "scripts/bot-instructions check",
-      removal: null,
-      notes: [],
-      companions: [],
-    },
+    root: "/home/method/dev/site/.agents/skills/bot-instructions",
+    summary: "Renders the review-bot files.",
+    writes: [".github/copilot-instructions.md"],
+    installer: "scripts/bot-instructions render",
+    uninstaller: null,
+    checker: "scripts/bot-instructions check",
+    removal: null,
+    notes: [],
+    companions: [],
   };
+  const held = (
+    why: StalePackage["why"],
+    said: string[] = [],
+  ): StalePackage => ({
+    name: "bot-instructions",
+    why,
+    said,
+    disclosure: {
+      declared,
+      name: "bot-instructions",
+      summary: "Renders the review-bot files.",
+      writes: [],
+      companions: [],
+      notes: [],
+      undo: null,
+    },
+  });
+  const since: ProjectBaseline = { root, held: [] };
 
   beforeEach(() => {
     vi.clearAllMocks();
     useCommitOfferStore.setState({
-      queue: [offer({ stale: [held] })],
+      queue: [offer({ stale: [held("notSetUp")] })],
       stage: { at: "offer" },
       route: "commit",
       scoped: "action",
-      accepted: false,
+      accepted: true,
       message: "",
       scanFailure: null,
       scanning: false,
-      baselines: {},
+      baselines: { [root]: since },
       asked: null,
     });
   });
@@ -783,14 +791,14 @@ describe("setting up a package that holds the commit", () => {
       armed: { status: "ok", data: { stdout: [], stderr: [] } },
       after: [] as StalePackage[],
       stage: { at: "offer" },
-      reopened: true,
+      reread: true,
     },
     {
-      name: "the package is still not ready",
+      name: "the package still holds the commit",
       armed: { status: "ok", data: { stdout: [], stderr: [] } },
-      after: [held],
-      stage: { at: "setUpFailed", error: STILL_STALE },
-      reopened: true,
+      after: [held("outOfDate", ["drift: .github/copilot-instructions.md"])],
+      stage: { at: "stillHeld" },
+      reread: true,
     },
     {
       name: "the setup failed",
@@ -800,28 +808,60 @@ describe("setting up a package that holds the commit", () => {
         at: "setUpFailed",
         error: "bot-instructions: render exited 2",
       },
-      reopened: false,
+      reread: false,
     },
   ] as const)("ends where it should: $name", async (row) => {
     vi.mocked(commands.repoEffectsApply).mockResolvedValue(row.armed as never);
-    vi.mocked(commands.commitOfferOpen).mockResolvedValue({
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
       status: "ok",
-      data: { kind: "offer", offer: offer({ stale: [...row.after] }) },
+      data: [offer({ stale: [...row.after] })],
     });
 
     await useCommitOfferStore.getState().setUp();
 
     expect(commands.repoEffectsApply).toHaveBeenCalledWith(
-      { scope: "project", root: "/home/method/dev/site" },
-      held.declared,
+      { scope: "project", root },
+      declared,
     );
-    expect(useCommitOfferStore.getState().stage).toEqual(row.stage);
-    expect(vi.mocked(commands.commitOfferOpen).mock.calls.length > 0).toBe(
-      row.reopened,
+    const state = useCommitOfferStore.getState();
+    expect(state.stage).toEqual(row.stage);
+    expect(vi.mocked(commands.commitOfferScan).mock.calls).toEqual(
+      row.reread ? [[[root], [since]]] : [],
     );
+    if (row.reread) expect(state.queue[0].stale).toEqual(row.after);
+  });
+
+  // The read after the setup keeps the offer scoped to the write that
+  // opened it: the same reading goes back, the action's own paths stay,
+  // and the yes about earlier edits is asked again.
+  it("keeps the action's scope across the setup", async () => {
+    vi.mocked(commands.repoEffectsApply).mockResolvedValue({
+      status: "ok",
+      data: { stdout: [], stderr: [] },
+    });
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "ok",
+      data: [offer({ choice: true, actionPaths: ["one.md", "two.md"] })],
+    });
+
+    await useCommitOfferStore.getState().setUp();
+
+    expect(commands.commitOfferOpen).not.toHaveBeenCalled();
+    const state = useCommitOfferStore.getState();
+    expect(state.scoped).toBe("action");
+    expect(state.accepted).toBe(false);
+    expect(state.baselines[root]).toBe(since);
+    expect(selectionOf(state)).toEqual({
+      kind: "only",
+      paths: ["one.md", "two.md"],
+    });
   });
 });
 
+// A person opens a project's review while a scan an earlier write started
+// is still out. That scan answers about the write, with its scope and its
+// attribution; landing it over the offer they asked for answers a question
+// nobody put.
 describe("a review a person opened, against a scan already out", () => {
   beforeEach(() => {
     useCommitOfferStore.setState({

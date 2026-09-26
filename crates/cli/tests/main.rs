@@ -25,6 +25,7 @@ mod collection_cli;
 mod command_inside_the_app;
 mod command_record;
 mod commit_offer_cli;
+mod commit_offer_terminal;
 mod compat;
 mod deps_cli;
 mod dev_sandbox;

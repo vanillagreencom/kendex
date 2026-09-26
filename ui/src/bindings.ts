@@ -5073,11 +5073,11 @@ export type StalePackage = {
 	/**  What the package's check said, escaped. Empty where it did not run. */
 	said: string[],
 	/**
-	 *  The package as installed here, handed back to `repo_effects_apply`
-	 *  by the setup choice. Its `summary` is what the setup
-	 *  changes, in the package's own words.
+	 *  What the setup changes, the block the dialog shows before its yes.
+	 *  Its `declared` is handed back to `repo_effects_apply` untouched;
+	 *  every word drawn is the disclosure's own display text.
 	 */
-	declared: DeclaredEffects,
+	disclosure: Disclosure,
 };
 
 export type StaleWhy = 
