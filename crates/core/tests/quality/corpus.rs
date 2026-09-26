@@ -173,7 +173,7 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
     };
     assert_eq!(
         mentioned(lane_launch),
-        vec![("safety-bypass", Some(97))],
+        vec![("safety-bypass", Some(109))],
         "{:#?}",
         result.mentions
     );
