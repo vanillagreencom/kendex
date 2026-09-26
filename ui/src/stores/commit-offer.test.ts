@@ -849,6 +849,22 @@ describe("setting up a package that holds the commit", () => {
       toast: true,
     },
     {
+      name: "the read after it found the checkout blocked",
+      byWrite: true,
+      armed: applied,
+      read: {
+        status: "ok",
+        data: {
+          kind: "blocked",
+          flag: { root, count: 1, reason: { kind: "noBranch" } },
+        },
+      },
+      stage: { at: "offer" },
+      open: [root, since],
+      head: null,
+      toast: false,
+    },
+    {
       name: "an offer a person opened",
       byWrite: false,
       armed: applied,
