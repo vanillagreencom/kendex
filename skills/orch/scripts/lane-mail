@@ -153,9 +153,10 @@ Envelope, one JSON object per line: id, kind, at, from, re (answers only),
 halt (true on a directive sent with --halt), text and options (asks with
 choices). kind is ask, notice, answer or directive; at is UTC; id is
 <epoch>-<pid>-<random>. from is the sender, read from its own checkout and
-never from an option: a lane verb writes the item, a send into the overseer's
-own mailbox writes `owner`, and everything else an overseer sends writes
-`overseer:<repository>`. The repository is the `[marketplace]` name in the
+never from an option: a lane verb writes the item, a note sent into the
+overseer's own mailbox writes `owner`, an answer sent there with --re writes
+`overseer`, the overseer's reply to that note, and everything else an overseer
+sends writes `overseer:<repository>`. The repository is the `[marketplace]` name in the
 caller's kendex.toml, else the last segment of its origin URL, else the
 checkout's own directory name.
 
@@ -467,12 +468,15 @@ lm_repository() {
 }
 
 # Who sent it, never typed: a lane writes its own item, a note into the
-# overseer's own mailbox is the owner's, and every other overseer write carries
-# the repository it was sent from.
+# overseer's own mailbox is the owner's, an answer there is the overseer's own
+# reply to one, since the owner answers nothing, and every other overseer write
+# carries the repository it was sent from.
 FROM=""
 case "$VERB:$ITEM" in
   ask:* | notice:*) FROM="$ITEM" ;;
-  send:overseer) FROM=owner ;;
+  send:overseer)
+    if [ -n "$MSGID" ]; then FROM=overseer; else FROM=owner; fi
+    ;;
   send:* | peer:*) FROM="overseer:$(lm_repository)" ;;
 esac
 
