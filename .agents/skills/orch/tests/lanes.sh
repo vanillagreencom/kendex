@@ -1907,11 +1907,21 @@ table \
   "and a codex row is listed for a codex listing, which is that same match from the other side|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-mixed.tsv|host-accounts --harness codex --json|rc=0 length=1 first.config_dir=$H/.codex first.harness=codex first.measured_through=host" \
   "a provider without the optional verb answers 2 and says nothing|$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1|host-accounts|rc=2 lines=0 key=none" \
   "a provider that fails the verb answers 1 under its keyed line|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS_STATUS=7|host-accounts|rc=1 lines=0 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=7" \
+  "a read lane-host refused at its per-home cap answers 1 under lane-host-busy, not as the verb failing|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS_STATUS=69|host-accounts|rc=1 lines=0 key=lane-host-busy,step=accounts,item=-" \
   "no configured provider is refused, never answered as an absent verb|ORCH_LANE_HOST=local|host-accounts|rc=1 lines=0 key=host-accounts-local,host=local" \
   "--json carries the config dir the provider was given, unescaped, which is the form a caller compares|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness claude --json|rc=0 length=1 first.config_dir=$H/.claude first.measured_through=host"
 run_lanes "$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv" host-accounts --harness claude
 assert_eq "$OUT" "$H/.claude"$'\t'"claude" \
   "the printed row names the config dir the provider was given and that row's harness"
+# Control: without the busy arm a read lane-host refused at its cap is reported
+# as a provider failing the verb.
+lanes_mutant mutant-accounts-busy lanes \
+  '\[\[ "\$rc" -eq "\$LANE_HOST_BUSY_EXIT" \]\]' '[[ "$rc" -eq 999 ]]'
+LANES_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-accounts-busy/lanes"
+table \
+  "control: without the busy arm a refused read is host-accounts-unreadable|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS_STATUS=69|host-accounts|rc=1 lines=0 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=69"
+LANES="$LANES_PATCHED"
 echo "=== a renewal a ceiling lands on finishes, keeps the rotated token and releases the mutex ==="
 # `refresh_claude_token` takes that mutex inside a command substitution, which
 # a ceiling signals along with the shell that called it: `timeout` signals the

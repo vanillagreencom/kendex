@@ -1429,9 +1429,30 @@ lane_session_state() { # DIR — prints busy, idle or unjudged
 LANE_MARKER_REASON=marker-failed
 LANE_MARKER_FIELDS=()
 
-# One call over the transport `lane-host create` came over.
+# One call over the transport `lane-host create` came over. The background
+# launch job sets HOST_BUSY_RETRY: it exists to wait for the host, so a call
+# lane-host refused at its per-home cap is asked again, leaving the record
+# preparing and the window open, and lane-close stops the job by its record.
+# The provider ran nothing for a refused call and read none of its stdin.
+HOST_BUSY_RETRY=false
 host_transport() { # VERB ARGS...
-  (cd "${PROJECT_ROOT:-$PWD}" && ORCH_LANE_HOST="$LANE_HOST" "$SCRIPT_DIR/lane-host" "$@")
+  local rc
+  while :; do
+    rc=0
+    (cd "${PROJECT_ROOT:-$PWD}" && ORCH_LANE_HOST="$LANE_HOST" "$SCRIPT_DIR/lane-host" "$@") || rc=$?
+    [[ "$rc" -eq "$LANE_HOST_BUSY_EXIT" && "$HOST_BUSY_RETRY" == true ]] || return "$rc"
+    # A zero ORCH_LANE_HOST_BUSY_WAIT_SECS refuses at once; this keeps that
+    # from spinning.
+    sleep 1
+  done
+}
+
+# A marker call lane-host refused at its per-home cap ran no provider, so the
+# step is reported as busy, never as the read or write failing.
+host_marker_busy() { # STATUS
+  [[ "$1" -eq "$LANE_HOST_BUSY_EXIT" ]] || return 0
+  LANE_MARKER_REASON=lane-host-busy
+  LANE_MARKER_FIELDS=(step=marker "${LANE_MARKER_FIELDS[@]}")
 }
 
 # A hosted lane's marker, written where the lane's own git resolves it and read
@@ -1449,7 +1470,7 @@ host_lane_marker() { # ITEM ROOT
   local gitfile common marker read_back
   LANE_MARKER_REASON=host-gitfile-unread
   LANE_MARKER_FIELDS=("path=$2/.git")
-  gitfile="$(host_transport cat --item "$1" "$2/.git")" || return 1
+  gitfile="$(host_transport cat --item "$1" "$2/.git")" || { host_marker_busy $?; return 1; }
   LANE_MARKER_REASON=host-gitfile-invalid
   LANE_MARKER_FIELDS=("path=$2/.git" "value=$gitfile")
   common="$(lane_gitfile_common_dir "$gitfile")" || return 1
@@ -1457,8 +1478,8 @@ host_lane_marker() { # ITEM ROOT
   LANE_MARKER_FIELDS=("path=$common")
   marker="$("$SCRIPT_DIR/lane-marker" --marker-path "$common" "$1")" || return 1
   LANE_MARKER_FIELDS=("path=$marker")
-  printf '%s\n' "$2" | host_transport put --item "$1" "$marker" || return 1
-  read_back="$(host_transport cat --item "$1" "$marker")" || return 1
+  printf '%s\n' "$2" | host_transport put --item "$1" "$marker" || { host_marker_busy $?; return 1; }
+  read_back="$(host_transport cat --item "$1" "$marker")" || { host_marker_busy $?; return 1; }
   [[ "$read_back" == "$2" ]]
 }
 
@@ -1971,6 +1992,7 @@ launch_handoff() {
 # only over a stopped record, which is what it says the record is.
 launch_prepared() { # LOG
   local reason=wait-failed
+  HOST_BUSY_RETRY=true
   if host_transport wait --item "$wt_id"; then
     reason=launch-failed
     if LAUNCH_PREPARE="$(prepare_record "$1")"; then launch_finish && return 0; fi
@@ -2189,6 +2211,10 @@ for raw in "${ITEMS[@]}"; do
     ot_message item-owned "item=$item" "exit=75" >&2
     skipped=$((skipped + 1))
     continue
+  elif [[ "$create_rc" -eq "$LANE_HOST_BUSY_EXIT" && "$LANE_HOST" != local ]]; then
+    ot_message lane-host-busy "item=$item" step=create >&2
+    failed=$((failed + 1))
+    continue
   elif [[ "$create_rc" -ne 0 && "$LANE_HOST" != local ]]; then
     ot_message host-create-failed "item=$item" "exit=$create_rc" >&2
     failed=$((failed + 1))
@@ -2254,7 +2280,13 @@ for raw in "${ITEMS[@]}"; do
     launch_handoff || { failed=$((failed + 1)); continue; }
     preparing=$((preparing + 1))
   else
-    if [[ "$host_state" == preparing ]] && ! host_transport wait --item "$wt_id"; then
+    wait_rc=0
+    [[ "$host_state" != preparing ]] || host_transport wait --item "$wt_id" || wait_rc=$?
+    if [[ "$wait_rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then
+      ot_message lane-host-busy "item=$item" step=wait >&2
+      failed=$((failed + 1))
+      continue
+    elif [[ "$wait_rc" -ne 0 ]]; then
       ot_message host-prepare-failed "item=$item" >&2
       failed=$((failed + 1))
       continue

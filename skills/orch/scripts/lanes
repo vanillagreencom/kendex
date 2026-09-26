@@ -155,7 +155,8 @@
 #          asserts, so it is not among the words printed here. Where
 #          ORCH_LANE_HOST names a provider, `lane-host touch` then says whether
 #          the HOST answers; a failed probe prints `lanes: host-unreachable`
-#          on stderr with the provider's own message, and leaves the state
+#          on stderr with the provider's own message, one lane-host refused at
+#          its per-home cap `lanes: lane-host-busy`, and either leaves the state
 #          alone. --json prints {"item":..,"state":..}. Exit 1 when a scan
 #          failed rather than answered.
 #   check  Exit 0 when no lane setting excludes or retires <config-dir>, or the
@@ -518,6 +519,10 @@ message() {
     host-account-invalid)
       printf 'lanes: host-account-invalid account=%s field=%s\n' "$1" "$2"
       printf '%s\n' "the provider's accounts row carries a field this script cannot read, so the row is left out rather than listed on a guess"
+      ;;
+    lane-host-busy)
+      printf 'lanes: lane-host-busy step=%s item=%s\n' "$1" "$2"
+      printf '%s\n' "lane-host refused the provider call at its per-home cap on provider calls, and its own line is above; the provider ran nothing, so this says nothing about the host. Ask again"
       ;;
     host-unreachable)
       printf 'lanes: host-unreachable item=%s state=%s\n' "$1" "$2"
@@ -1882,7 +1887,10 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 	trap 'rm -f -- "${err:?}"; exit 1' INT TERM
 	rows="$(${bound[@]+"${bound[@]}"} "$SCRIPT_DIR/lane-host" accounts 2>"$err")" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
-		if [[ "$rc" -ne 2 ]]; then
+		if [[ "$rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then
+			cat -- "$err" >&2
+			message lane-host-busy accounts - >&2
+		elif [[ "$rc" -ne 2 ]]; then
 			cat -- "$err" >&2
 			message host-accounts-unreadable "$host" "$rc" >&2
 		fi
@@ -2292,6 +2300,8 @@ source "$SCRIPT_DIR/lib/lane-model.sh"
 # hand back and the launchers render, owned in one place so they cannot drift.
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
+# shellcheck source=lib/lane-host-slots.sh
+source "$SCRIPT_DIR/lib/lane-host-slots.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # The lib carries the strict mode its other callers run under. This one is
@@ -2520,7 +2530,12 @@ case "$SUB" in
 			probe_rc=0
 			# The provider knows the item, never the session a window sits in.
 			probe_err="$("$SCRIPT_DIR/lane-host" touch --item "${LANE_ARG#*:}" 2>&1 >/dev/null)" || probe_rc=$?
-			[[ "$probe_rc" -eq 0 ]] || message host-unreachable "$LANE_ARG" "$LANE_STATE_ANSWER" "$probe_err" >&2
+			if [[ "$probe_rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then
+				printf '%s\n' "$probe_err" >&2
+				message lane-host-busy touch "$LANE_ARG" >&2
+			elif [[ "$probe_rc" -ne 0 ]]; then
+				message host-unreachable "$LANE_ARG" "$LANE_STATE_ANSWER" "$probe_err" >&2
+			fi
 		fi
 		if [[ "$AS_JSON" == "true" ]]; then
 			jq -nc --arg i "$LANE_ARG" --arg s "$LANE_STATE_ANSWER" '{item:$i,state:$s}'

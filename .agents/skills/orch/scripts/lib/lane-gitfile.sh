@@ -104,7 +104,9 @@ lane_hosted_state_path() {
 # through the probe above with ORCH_LANE_HOST set to HOST. A hosted worktree
 # already gone, which ../../workflows/merge-pr.md § 5 leaves behind a merged
 # lane until lane-close runs, has no state either. 0 read, the state possibly
-# empty; 2 the read failed, SCRATCH/state.err saying why.
+# empty; 2 the read failed, SCRATCH/state.err saying why; 4 lane-host refused
+# the provider call at its per-home cap (lane-host-busy), SCRATCH/state.err
+# carrying its line.
 LANE_ITEM_STATE=""
 lane_item_state() {
   local path rc=0
@@ -124,6 +126,7 @@ lane_item_state() {
     0) ;;
     1) return 0 ;;
     3) printf '%s\n' "$6/.git: ${LANE_HOSTED_GITLINE:-<empty>}" >"$7/state.err"; return 2 ;;
+    4) return 4 ;;
     *) return 2 ;;
   esac
   lane_hosted_state_path "$LANE_HOSTED_CLONE" "$3" "$4"
@@ -132,6 +135,7 @@ lane_item_state() {
   case "$rc" in
     0) LANE_ITEM_STATE="$(jq -c . -- "$7/item-state.json" 2>"$7/state.err")" || return 2 ;;
     1) ;;
+    4) return 4 ;;
     *) return 2 ;;
   esac
 }

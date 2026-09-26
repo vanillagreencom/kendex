@@ -562,7 +562,9 @@ verb_state() {
 # non-zero `touch` is a probe that failed — schemas/lane-host.md gives the verb
 # no "no such lane" reply — so exits 1 and 2 answer alike and neither says
 # `gone`, which would send an overseer down the window-gone path onto an item
-# whose remote session is still running. The `CC-1|idle|ssh` row is the
+# whose remote session is still running. Exit 69 is lane-host refusing the
+# probe at its per-home cap, which says nothing about the host and is noted as
+# lane-host-busy. The `CC-1|idle|ssh` row is the
 # inverse: a pane that answered leaves the provider unasked. The
 # `kendex:` rows are the SESSION:WINDOW form a lane record carries, which
 # selects the pane under that session and answers as the bare name does.
@@ -580,6 +582,7 @@ CC-404|none|local|1|unjudged rc=0 note=none
 CC-404|none|ssh|0|unjudged rc=0 note=none
 CC-404|none|ssh|1|unjudged rc=0 note=host-unreachable
 CC-404|none|ssh|2|unjudged rc=0 note=host-unreachable
+CC-404|none|ssh|69|unjudged rc=0 note=lane-host-busy
 CC-1|idle|ssh|1|idle rc=0 note=none
 kendex:CC-1|idle|local|0|idle rc=0 note=none
 fleet:CC-1|idle|local|0|unjudged rc=0 note=none
@@ -597,6 +600,17 @@ probed() {
 for name in kendex:CC-404 CC-404; do
   assert_eq "$(probed "$name")" "CC-404" "lanes state $name probes the provider with the bare item"
 done
+
+# Control: without the busy arm a probe lane-host refused at its cap is noted
+# as a host out of reach.
+BUSY_MUT_REPO="$TMP_ROOT/verb-busy-mutant"
+cp -R "$VERB_REPO" "$BUSY_MUT_REPO"
+busy_arm='			if [[ "$probe_rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then'
+assert_eq "$(grep -cxF -- "$busy_arm" "$BUSY_MUT_REPO/scripts/lanes")" "1" "control: the busy arm is one line to change"
+busy_arm="$busy_arm" awk '$0 == ENVIRON["busy_arm"] { print "\t\t\tif false; then"; next } { print }' \
+  "$VERB_REPO/scripts/lanes" > "$BUSY_MUT_REPO/scripts/lanes"
+assert_eq "$(VERB_RUN_REPO="$BUSY_MUT_REPO" verb_state CC-404 none ssh 69)" "unjudged rc=0 note=host-unreachable" \
+  "control: without the busy arm a refused probe is noted host-unreachable"
 
 # The provider's own bytes reach the operator: a note naming only the key would
 # leave the reason for the failed probe on the far side of the dispatcher.

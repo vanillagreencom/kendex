@@ -96,6 +96,7 @@ ot_message() { # REASON FIELD=VALUE...
     host-resolve-failed) text='The lane-host helper could not resolve the host.' ;;
     host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex or pi. Nothing was created.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
+    lane-host-busy) text='lane-host refused the call step names at its per-home cap on provider calls, after waiting ORCH_LANE_HOST_BUSY_WAIT_SECS for a slot; its own line is above and the provider ran nothing. After a refused create nothing was made: launch the item again. After a refused wait or marker call the host holds the item: relaunch it with --relaunch.' ;;
     host-line-invalid) text='The lane host create output lacks ssh-target, path or remote-prefix on one line, or names a state other than preparing.' ;;
     host-prepare-failed) text='The lane host accepted this item and its wait reported the preparation failed; the provider says why above. No lane was started. The host keeps what it made until lane-host close or a --relaunch.' ;;
     lane-preparing) text='The lane host accepted this item and is still preparing it. A background job waits for the host, launches the lane in the window opened for it and records the outcome, which oversee-watch reports as lane-ready or lane-prepare-failed. log is the job output.' ;;
@@ -428,8 +429,9 @@ Each item's worktree is created here (worktree create, or create --reuse
 under --relaunch when the item's tree already exists). An item whose worktree
 is owned by another session (create exit 75) is skipped and the remaining
 items still launch. A hosted item takes the same skip on lane-host create
-exit 75; any other create failure is host-create-failed. The final summary line reports launched, skipped, and
-failed counts, and preparing where a hosted launch was handed to a background job.
+exit 75; a create lane-host refused at its per-home cap is lane-host-busy, and
+any other create failure is host-create-failed. The final summary line reports
+launched, skipped, and failed counts, and preparing where a hosted launch was handed to a background job.
 
 Every launch that stands under --state-dir is recorded in the oversee
 workflow state that flag names (`workflow-state get oversee .lanes`, created
