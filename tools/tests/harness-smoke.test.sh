@@ -384,6 +384,10 @@ a relayed refusal on its own line passes|lane-mail-check: question-tool=AskUserQ
 a whole-line NO-QUESTION-TOOL is unanswerable|NO-QUESTION-TOOL|unanswerable|said NO-QUESTION-TOOL:
 the echoed prompt alone fails: its NO-QUESTION-TOOL is mid-line||fail|refusal=none:
 EOF
+plant "$STAND_SMOKE" 's/grep -qE -e "\^\$QUESTION_NONE\\\$"/grep -qE -e "$QUESTION_NONE"/'
+verdict_case "control: an unanchored NO-QUESTION-TOOL read takes the echoed prompt for an answer" \
+  lane-question "$STAND_SMOKE" STANDIN_SAYS= unanswerable "said NO-QUESTION-TOOL:"
+cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
