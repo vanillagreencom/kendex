@@ -1043,6 +1043,20 @@ SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES" run_succeed qualifyingtwomark '' -
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=40" \
   "a count no successor settles does not fire the qualifying-set trigger"
+# The judgement walks the preference as a succession would: a codex entry whose
+# successor finds no other codex account above the trigger settles the same
+# count, and a preference the walk cannot read refuses the judgement.
+codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+for pref_row in \
+  "codex:1:high|0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
+  "bogus|1|oversee-succeed: invalid-preference entry=bogus"; do
+  IFS='|' read -r pref_value pref_rc pref_want <<<"$pref_row"
+  new_caller "$UNDER_MARK"
+  SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES:$H/.codex" \
+    run_succeed "qualifyingpref-${pref_value%%:*}" "$pref_value" --check-marks
+  assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "$pref_rc|$pref_want" \
+    "a qualifying judgement walks the preference $pref_value"
+done
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES" run_succeed qualifyingrefires ''
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
