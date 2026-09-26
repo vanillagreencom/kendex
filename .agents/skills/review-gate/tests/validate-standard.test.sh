@@ -61,7 +61,10 @@ printf '{"name": "main", "protected": true, "protection": {"enabled": false}}\n'
 printf '{"secrets": [{"name": "APP_ID"}, {"name": "APP_KEY"}, {"name": "OTHER"}]}\n' >"$BASE/environment-secrets-kendex.json"
 printf '{"secrets": [{"name": "COPILOT_TOKEN"}]}\n' >"$BASE/environment-secrets-copilot.json"
 printf '{"secrets": [{"name": "OTHER"}]}\n' >"$BASE/repository-secrets.json"
+# The organization-wide list and the list shared with this repository are
+# two endpoints; only the first answers for the organization scope.
 printf '{"secrets": [{"name": "SHARED"}]}\n' >"$BASE/organization-secrets.json"
+printf '{"secrets": [{"name": "SHARED"}, {"name": "ELSEWHERE"}]}\n' >"$BASE/organization-actions-secrets.json"
 printf '{"secrets": [{"name": "NPM_TOKEN"}]}\n' >"$BASE/dependabot-secrets.json"
 printf '{"secrets": []}\n' >"$BASE/organization-dependabot-secrets.json"
 
@@ -165,8 +168,8 @@ a repository Dependabot secret of a standard name~~dependabot-secrets.json~.secr
 an organization Dependabot secret of a standard name~~organization-dependabot-secrets.json~.secrets += [{"name": "APP_ID"}]~standard-secrets-outside=dependabot-organization:APP_ID
 another environment's secrets unreadable~environment-secrets-copilot~~~standard-secrets-outside=unreadable:environment:copilot
 repository Dependabot secrets unreadable~dependabot-secrets~~~standard-secrets-outside=unreadable:dependabot
-an organization secret of a standard name~~organization-secrets.json~.secrets += [{"name": "APP_KEY"}]~standard-secrets-outside=organization:APP_KEY
-organization secrets unreadable~organization-secrets~~~standard-secrets-outside=unreadable:organization
+an organization secret of a standard name not shared with this repository~~organization-actions-secrets.json~.secrets += [{"name": "APP_KEY"}]~standard-secrets-outside=organization:APP_KEY
+organization secrets unreadable~organization-actions-secrets~~~standard-secrets-outside=unreadable:organization
 ROWS
 
 # One drifted element that answers two rows: without the environment there
@@ -200,8 +203,8 @@ if grep -qx '  2: gh-shim-error=api value=ruleset-2' <<<"$RAW" && grep -q '^  1:
 else
   bad "a withheld field and a failed ruleset read each name their own cause" "$RAW"
 fi
-run "$BASE" organization-secrets
-if grep -qx '  organization: gh-shim-error=api value=organization-secrets' <<<"$RAW"; then
+run "$BASE" organization-actions-secrets
+if grep -qx '  organization: gh-shim-error=api value=organization-actions-secrets' <<<"$RAW"; then
   ok "a failed secret read keeps its cause after later reads succeed"
 else
   bad "a failed secret read keeps its cause after later reads succeed" "$RAW"

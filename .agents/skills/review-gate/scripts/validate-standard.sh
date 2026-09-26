@@ -61,10 +61,11 @@ One verdict line per row, VALUE being what was observed:
   standard-environment-secrets      that environment holds every secret the
                                     standard names (names only)
   standard-secrets-outside          no other secret carries one of those names:
-                                    repository and organization Actions
-                                    secrets, repository and organization
-                                    Dependabot secrets, and every other
-                                    environment of the repository
+                                    repository Actions secrets, every
+                                    organization Actions secret (shared with
+                                    this repository or not), repository and
+                                    organization Dependabot secrets, and
+                                    every other environment of the repository
 
 A failed read reports its row as FAIL with `unreadable` in the value, never
 as a match. The permission each row's reads need, as GitHub App permissions:
@@ -84,7 +85,9 @@ as a match. The permission each row's reads need, as GitHub App permissions:
                                     Actions read
   environment-secrets               the environment's secret names:
                                     Environments read
-  secrets-outside                   Actions secret names: Secrets read;
+  secrets-outside                   repository Actions secret names:
+                                    Secrets read; organization Actions
+                                    secret names: organization Secrets read;
                                     repository Dependabot secret names:
                                     Dependabot secrets read; organization
                                     Dependabot secret names: organization
@@ -356,9 +359,11 @@ esac
 
 # A secret of the same name anywhere else is readable by a workflow on a
 # branch the environment's policy excludes, which is what that policy
-# exists to prevent. Each scope is one LABEL<TAB>ENDPOINT line.
+# exists to prevent. Each scope is one LABEL<TAB>ENDPOINT line. The
+# organization scopes read the organization-wide lists: a secret shared
+# only with other repositories is still outside the environment.
 scopes="repository	repos/$FULL/actions/secrets
-organization	repos/$FULL/actions/organization-secrets
+organization	orgs/$OWNER/actions/secrets
 dependabot	repos/$FULL/dependabot/secrets
 dependabot-organization	orgs/$OWNER/dependabot/secrets"
 outside=""

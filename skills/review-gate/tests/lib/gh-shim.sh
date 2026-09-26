@@ -72,6 +72,7 @@ case "$url" in
   "repos/"*"/dependabot/secrets") name=dependabot-secrets ;;
   *"/environments") name=environments ;;
   *"/actions/organization-secrets") name=organization-secrets ;;
+  "orgs/"*"/actions/secrets") name=organization-actions-secrets ;;
   *"/actions/secrets") name=repository-secrets ;;
   "repos/{owner}/{repo}") name=repository ;;
   *) printf 'gh-shim-error=request value=%q\n' "$url" >&2; exit 90 ;;
