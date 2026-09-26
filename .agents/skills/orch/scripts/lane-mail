@@ -1019,17 +1019,24 @@ lm_guard_resolve() { # FILE
   [ ! -s "$WORK_DIR/resolved.earlier" ]
 }
 
-# The ask ID closes: the owner ask in to-overseer.jsonl with that id, into
-# ASK_JSON, read through lm_fetch as every read of this mailbox is.
+# The owner ask in to-overseer.jsonl with that id, into ASK_JSON, read through
+# lm_fetch as every read of this mailbox is: the one judge of what an owner ask
+# is, for the resolve that closes one and the reply that names one. Returns 1
+# with ASK_JSON empty where no such ask stands.
 ASK_JSON=""
-lm_owner_ask() { # ID
+lm_owner_ask_find() { # ID
   lm_fetch "$TO_OVERSEER" "$WORK_DIR/ask.raw"
   lm_terminated "$WORK_DIR/ask.raw" "$WORK_DIR/ask.jsonl"
   if ! ASK_JSON="$(lm_objects "$WORK_DIR/ask.jsonl" |
     jq -c --arg id "$1" 'select(.kind == "ask" and .to == "owner" and .id == $id)' | awk 'NR == 1')"; then
     refuse file-unreadable "$TO_OVERSEER"
   fi
-  [ -n "$ASK_JSON" ] || refuse ask-unknown "$1"
+  [ -n "$ASK_JSON" ]
+}
+
+# The ask ID closes, refused where none stands.
+lm_owner_ask() { # ID
+  lm_owner_ask_find "$1" || refuse ask-unknown "$1"
 }
 
 # The line resolve prints, once per resolution however many times it is asked.
@@ -1183,10 +1190,8 @@ case "$VERB" in
       # a notice of this overseer's own answers nothing.
       lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
       lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
-      lm_fetch "$TO_OVERSEER" "$WORK_DIR/over.raw"
-      lm_terminated "$WORK_DIR/over.raw" "$WORK_DIR/over.jsonl"
       lm_objects "$WORK_DIR/lane.jsonl" | jq -e --arg id "$REF" 'select(.id == $id)' >/dev/null ||
-        lm_objects "$WORK_DIR/over.jsonl" | jq -e --arg id "$REF" 'select(.kind == "ask" and .to == "owner" and .id == $id)' >/dev/null ||
+        lm_owner_ask_find "$REF" ||
         refuse ref-unknown "$REF"
     fi
     [ -z "$ATTACH" ] || lm_attach_confined
