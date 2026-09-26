@@ -170,9 +170,10 @@ LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|rus
 # A shard cited by name in prose: a name in backticks, then `shard`.
 SHARD_CITATION='`[a-z0-9][a-z0-9-]*` shards?'
 # What the repository's own install record covers: the catalog trees, their
-# renders, the manifests that shape them, and the record itself. Build
-# inputs, the kendex code that renders and records, are the other half.
-INSTALL_RECORD='^(skills/[^/]+|agents|hooks|commands|pi-extensions|\.agents|\.claude|\.codex|\.pi)/|^(kendex\.toml|kendex-local\.toml|\.kendex-lock\.json|\.kendex-generated\.json|CLAUDE\.md)$'
+# renders, the manifests that shape them, the record itself, and every
+# AGENTS.md with the CLAUDE.md shim kendex keeps beside it, at any depth.
+# Build inputs, the kendex code that renders and records, are the other half.
+INSTALL_RECORD='^(skills/[^/]+|agents|hooks|commands|pi-extensions|\.agents|\.claude|\.codex|\.pi)/|^(kendex\.toml|kendex-local\.toml|\.kendex-lock\.json|\.kendex-generated\.json)$|(^|/)(AGENTS|CLAUDE)\.md$'
 # What selects every shell shard: the lane sources and the rest of .github/.
 ALL_SHARDS="^\\.github/|$LANE_SOURCES"
 

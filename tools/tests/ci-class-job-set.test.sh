@@ -193,13 +193,13 @@ micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$SHARD_CODE|+node +pi-claude
 micro|false|hooks/block-bare-cd.sh|$SHARD_CODE|+rest +node
 micro|false|skills/deep-research/SKILL.md|$SHARD_PROSE|+rest +node
 micro|false|pi-extensions/pi-hooks/extensions/hooks.ts|$SHARD_CODE|+rest +node
-micro|false|$SKILLS_AGENTS|$SHARD_PROSE|["guards-scans","guards-tools"]
+micro|false|$SKILLS_AGENTS|$SHARD_PROSE|["guards-scans","guards-tools","rest"]
 micro|false|.github/instructions/code-review.md|$SHARD_PROSE|$ROSTER
 micro|false|.github/AGENTS.md skills/orch/scripts/lanes|$(lanes true true true false true false)|$ROSTER
 micro|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
 small|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
 standard|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
-standard|true|AGENTS.md|$NONE_PROSE|[]
+standard|true|AGENTS.md|$SHARD_PROSE|["rest"]
 standard|true|CLAUDE.md|$SHARD_PROSE|["rest"]
 standard|true|GEMINI.md|$NONE_PROSE|[]
 standard|true|$UNREAD_LEGAL|$NONE_PROSE|[]
@@ -351,7 +351,7 @@ CONTROLS
 #   commit-guards' suite runs preflight, and doc-limits and worktree declare
 #   commit-guards;
 #   a tools/ suite reads kendex.settings.toml and names atomic-install.sh and
-#   AGENTS.md; hooks/ suites read crates/demo/src/discover.rs and
+#   README.md; hooks/ suites read crates/demo/src/discover.rs and
 #   docs/x/policy.md; a Pi package's suite runs tools/demo-tool;
 #   skills/AGENTS.md and docs/cite.md cite a shard.
 # A script's read carries the change to its skill's readers; a suite's read
@@ -379,7 +379,7 @@ skill price-handling ''
 printf '. "$(dirname "$0")/../../github/scripts/lib/gh-auth.sh"\n' >"$SEL_WORLD/skills/worktree/scripts/worktree"
 printf '. "$HERE/../../orch/scripts/lib/branch-growth.sh"\n' >"$SEL_WORLD/skills/harness-ci/scripts/change-class"
 printf 'run "$R/.agents/skills/preflight/scripts/preflight"\n' >"$SEL_WORLD/skills/commit-guards/tests/scope.test.sh"
-printf 'read "$ROOT/kendex.settings.toml" lib/atomic-install.sh AGENTS.md\n' >"$SEL_WORLD/tools/tests/settings.test.sh"
+printf 'read "$ROOT/kendex.settings.toml" lib/atomic-install.sh README.md\n' >"$SEL_WORLD/tools/tests/settings.test.sh"
 printf 'DISCOVER="$TEST_DIR/../../crates/demo/src/discover.rs"\n' >"$SEL_WORLD/hooks/tests/discover.test.sh"
 printf 'policy "$ROOT/docs/x/policy.md"\n' >"$SEL_WORLD/hooks/tests/policy.test.sh"
 mkdir -p "$SEL_WORLD/pi-extensions/pi-demo/tests" "$SEL_WORLD/docs"
@@ -400,18 +400,26 @@ skills/orch/scripts/lib/branch-growth.sh|["review-gate",$ORCH,"guards-scans","gu
 skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-tools","linear","rest"]
 kendex.settings.toml|["guards-tools"]
 install.sh|[]
-AGENTS.md|[]
+README.md|[]
 crates/demo/src/discover.rs|["guards-tools","rest","node"]
 .claude/hooks/lane-mail-check|["guards-tools","rest","node"]
 .pi/kendex/hooks/lane-mail-check|["guards-tools","rest","node"]
 hooks/block-bare-cd.sh|["guards-scans","guards-tools","rest","node"]
 docs/x/policy.md|["guards-tools","node"]
 tools/demo-tool|["guards-scans","guards-tools","node"]
-skills/AGENTS.md|["guards-scans","guards-tools"]
+skills/AGENTS.md|["guards-scans","guards-tools","rest"]
 docs/cite.md|["guards-tools"]
 kendex.toml|["rest"]
+agents/reviewer.md|["rest"]
+commands/scrub.md|["rest"]
+.codex/agents/reviewer.toml|["rest"]
+.kendex-lock.json|["rest"]
+.kendex-generated.json|["rest"]
+docs/x/AGENTS.md|["rest"]
+crates/x/CLAUDE.md|["rest"]
+skills/CLAUDE.md|["guards-scans","rest"]
 ROWS
-[ "$world_rows" -ge 16 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
+[ "$world_rows" -ge 24 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
 
 # The shard selection's rules, each removed from a copy run over the fixture
 # world: the copy must answer its path other than the script does. Fields
@@ -436,11 +444,17 @@ s/skills\/\*:script) reach_skill "\${package#skills\/}"/skills\/*:script) want_p
 s/? "suite" : "script")/? "script" : "script")/@skills/preflight/scripts/preflight
 s/"(^|\[^A-Za-z0-9_.-\])\$(printf/"$(printf/@install.sh
 s/^\$path" ;;$/" ;;/@kendex.settings.toml
-/^      \*\.md | \*\.markdown) ;;$/d@AGENTS.md
+/^      \*\.md | \*\.markdown) ;;$/d@README.md
 s/^      \*\/\*) pending="\$pending$/      *.md | *.markdown) ;; *\/*) pending="$pending/@docs/x/policy.md
 s/0) want_shard guards-tools ;;/0) ;;/@docs/cite.md
 s/hooks) want_shard guards-tools node ;;/hooks) want_shard guards-tools ;;/@hooks/block-bare-cd.sh
 s/^  ! any "\$INSTALL_RECORD" || want_shard rest$/  :/@hooks/block-bare-cd.sh
+s/|agents|hooks|/|hooks|/@agents/reviewer.md
+s/|commands|/|/@commands/scrub.md
+s/|\\\.codex|/|/@.codex/agents/reviewer.toml
+s/|\\\.kendex-lock\\\.json|/|/@.kendex-lock.json
+s/|\\\.kendex-generated\\\.json)/)/@.kendex-generated.json
+s/|(^|\/)(AGENTS|CLAUDE)\\\.md\$'/'/@docs/x/AGENTS.md crates/x/CLAUDE.md
 /^  \/\^pi-extensions\\\/\/ { package = "pi-extensions" }$/d@tools/demo-tool
 s/^\.\.\/\$1\/"$/"/@skills/orch/scripts/lib/branch-growth.sh
 s/^        want_package tools$/        :/@skills/price-handling/scripts/x
