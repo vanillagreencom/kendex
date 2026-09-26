@@ -31,6 +31,7 @@ assert_eq() { # GOT WANT LABEL
 LAYOUT="$TMP_ROOT/skills"
 mkdir -p "$LAYOUT/orch" "$LAYOUT/github/scripts" "$LAYOUT/harness-ci/scripts"
 cp -R "$TEST_DIR/../scripts" "$LAYOUT/orch/scripts"
+cp -R "$TEST_DIR/../../github/scripts/lib" "$LAYOUT/github/scripts/lib"
 BIN="$LAYOUT/orch/scripts/oversee-cycle"
 cat > "$LAYOUT/github/scripts/github.sh" <<'SH'
 #!/usr/bin/env bash
@@ -60,7 +61,15 @@ case "$1" in
   *) exit 9 ;;
 esac
 SH
-chmod +x "$LAYOUT/github/scripts/github.sh" "$LAYOUT/harness-ci/scripts/change-class" "$LAYOUT/orch/scripts/lane-host"
+# gh answers `repo view` with the case's slug file, owner/repo by default,
+# which is the repository this checkout resolves to.
+mkdir -p "$TMP_ROOT/bin"
+cat > "$TMP_ROOT/bin/gh" <<'SH'
+#!/usr/bin/env bash
+[[ "$1 $2" == "repo view" ]] || exit 1
+if [[ -f "$CASE/slug" ]]; then cat "$CASE/slug"; else echo owner/repo; fi
+SH
+chmod +x "$LAYOUT/github/scripts/github.sh" "$LAYOUT/harness-ci/scripts/change-class" "$LAYOUT/orch/scripts/lane-host" "$TMP_ROOT/bin/gh"
 
 commit() { git -C "$1" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "$2"; }
 ORIGIN="$TMP_ROOT/origin.git"
@@ -117,7 +126,7 @@ edit_json() { jq "$2" "$1" > "$1.new" && mv -- "$1.new" "$1"; } # FILE FILTER
 record() { # ITEM TIER [ARGS...]
   local item="$1" tier="$2" rc=0
   shift 2
-  (cd "$REPO" && env -u ORCH_STATE_DIR "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" record --pr 7 --tier "$tier" "$@" "$item") \
+  (cd "$REPO" && PATH="$TMP_ROOT/bin:$PATH" env -u ORCH_STATE_DIR -u GH_REPO "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" record --pr 7 --tier "$tier" "$@" "$item") \
     > "$CASE/out" 2> "$CASE/err" || rc=$?
   printf 'rc=%s %s' "$rc" "$(cat "$CASE/out")"
 }
@@ -232,8 +241,38 @@ timeline 1200
 edit_json "$CASE/state/workflow-state-oversee.json" '(.lanes[] | select(.item == "KEN-1")).repo = "owner/other"'
 record KEN-1 micro >/dev/null
 record KEN-2 micro --repo owner/cli >/dev/null
-assert_eq "$(tr '\n' ';' < "$CASE/github.calls")" "pr-timeline 7 --repo owner/other;pr-timeline 7 --repo owner/cli;" \
-  "the lane record's repo, else --repo, names the repository"
+record KEN-1 micro --repo owner/cli >/dev/null
+assert_eq "$(tr '\n' ';' < "$CASE/github.calls")" "pr-timeline 7 --repo owner/other;pr-timeline 7 --repo owner/cli;pr-timeline 7 --repo owner/cli;" \
+  "--repo, else the lane record's repo, names the repository; --repo wins over the record"
+
+echo "=== the class is read only from a checkout of the lane's repository ==="
+# ELSE is another repository, with an origin of its own; a worktree of this
+# checkout shares its origin.
+ELSE="$TMP_ROOT/else"
+git init -q "$ELSE"
+git -C "$ELSE" config gc.auto 0
+git -C "$ELSE" config maintenance.auto false
+git -C "$ELSE" remote add origin "$TMP_ROOT/else-origin.git"
+mkdir -p "$ELSE/tmp"
+printf '{"cycles": 9}' > "$ELSE/tmp/workflow-state-KEN-5.json"
+git -C "$REPO" worktree add -q "$TMP_ROOT/same" HEAD
+new_case other-repo
+printf micro > "$CASE/class"
+timeline 1200
+edit_json "$CASE/state/workflow-state-oversee.json" "(.lanes[] | select(.item == \"KEN-5\")).mail_root = \"$ELSE\" | (.lanes[] | select(.item == \"KEN-6\")).mail_root = \"$TMP_ROOT/same\""
+while IFS='|' read -r label item args want; do
+  [[ -n "$label" ]] || continue
+  : > "$CASE/class.calls"
+  # shellcheck disable=SC2086
+  got="$(record "$item" micro $args)"
+  assert_eq "$(field class "$got") $(field fix "$got")|$(grep -m 1 class-unread "$CASE/err" || true)|$(wc -l < "$CASE/class.calls" | tr -d ' ')" "$want" "$label"
+done <<'ROWS'
+a local lane whose worktree names another origin|KEN-5||class=- fix=9|oversee-cycle: class-unread cause=checkout-other-repo|0
+a lane named in another repository|KEN-1|--repo owner/other|class=- fix=-|oversee-cycle: class-unread cause=checkout-other-repo|0
+a lane named in this repository, in any case|KEN-1|--repo Owner/Repo|class=micro fix=-||1
+a local lane in a worktree of this checkout|KEN-6||class=micro fix=-||1
+ROWS
+git -C "$REPO" worktree remove --force "$TMP_ROOT/same"
 
 echo "=== a missing stamp names no phase ==="
 # CI green at 1000 and armed at 1010: with CI gone the gate-to-armed gap
@@ -282,26 +321,46 @@ assert_eq "$(head -n 1 "$CASE/err")" "oversee-cycle: not-merged=7" "a PR with no
 assert_eq "$(state '[.lanes[] | has("cycle")] | any')" "false" "and no refusal wrote a record"
 
 # --- the repeat-miss bar -----------------------------------------------------
-# A miss at 5000 s ends on merged; a first commit at 4000 s moves a miss's
-# phase to first_commit.
-echo "=== the third miss on one phase names the three lanes ==="
-new_case repeat
-printf micro > "$CASE/class"
-timeline 5000
-record KEN-1 micro >/dev/null
-assert_eq "$(record KEN-2 micro | grep -c '^repeat-miss' || true)" "0" "two misses on one phase are under the bar"
-jq --arg fc "$(at 4000)" '.stamps.first_commit = $fc' "$CASE/timeline.json" > "$CASE/other.json"
-cp -- "$CASE/timeline.json" "$CASE/merged.json"
-cp -- "$CASE/other.json" "$CASE/timeline.json"
-got="$(record KEN-3 micro)"
-assert_eq "$(field phase "$got")|$(grep -c '^repeat-miss' <<<"$got" || true)" "phase=first_commit|0" \
-  "a third miss on another phase is under the bar"
-cp -- "$CASE/merged.json" "$CASE/timeline.json"
-got="$(record KEN-4 micro)"
-assert_eq "$(tail -n 1 <<<"$got")" "repeat-miss phase=merged items=KEN-1,KEN-2,KEN-4" "the third on one phase names its phase and lanes"
-assert_eq "$(state '.fleet_log[-1].text')" '"repeat-miss phase=merged items=KEN-1,KEN-2,KEN-4"' "and the fleet log carries it"
-assert_eq "$(record KEN-4 micro | grep -c '^repeat-miss' || true)" "0" "recording the third again makes no second bar"
-assert_eq "$(record KEN-5 micro | grep -c '^repeat-miss' || true)" "0" "a fourth miss on the phase is past the bar"
+# The bar is one predicate with one conjunct per rule: this record is a miss,
+# its phase is named, it was not already a miss on that phase, and the
+# fleet's records that are misses on that phase are exactly three. Each row
+# records a sequence and asserts the bar lines its last record printed; each
+# conjunct has a row it alone decides, and a control below that plants its
+# removal against that row.
+#   m   a miss at 5000 s, its longest gap ending at merged
+#   f   a miss whose first commit at 4000 s makes that gap the phase
+#   n   a miss with CI green absent, so no phase is named
+#   ok  a met record at 800 s, its phase merged too
+echo "=== the repeat-miss bar ==="
+repeat_row() { # CASE SEQUENCE — prints the bar lines the last record printed
+  local step kind item got="" armed
+  new_case "$1"
+  printf micro > "$CASE/class"
+  for step in $2; do
+    kind="${step%%:*}" item="KEN-${step#*:}"
+    case "$kind" in
+      m) timeline 5000 ;;
+      f) timeline 5000; edit_json "$CASE/timeline.json" ".stamps.first_commit = \"$(at 4000)\"" ;;
+      n) timeline 5000; edit_json "$CASE/timeline.json" '.stamps.ci_green = null' ;;
+      ok) timeline 800 ;;
+      *) echo "repeat_row: unknown step $step" >&2; exit 2 ;;
+    esac
+    got="$(record "$item" micro)"
+  done
+  grep '^repeat-miss' <<<"$got" || true
+}
+REPEAT_ROWS='third|m:1 m:2 m:3|repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3
+met-record|m:1 m:2 m:3 ok:4|
+met-not-counted|ok:1 m:2 m:3|
+other-phase|m:1 m:2 f:3|
+unnamed-phase|n:1 n:2 n:3|
+recorded-again|m:1 m:2 m:3 m:3|
+fourth|m:1 m:2 m:3 m:4|'
+while IFS='|' read -r name sequence want; do
+  assert_eq "$(repeat_row "repeat-$name" "$sequence")" "$want" "repeat bar, $name: $sequence"
+done <<<"$REPEAT_ROWS"
+repeat_row repeat-log "m:1 m:2 m:3" >/dev/null
+assert_eq "$(state '.fleet_log[-1].text')" '"repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3"' "the fleet log carries the bar line"
 
 # --- the rollup --------------------------------------------------------------
 echo "=== the rollup counts each class, its median and p90 ==="
@@ -373,17 +432,41 @@ new_case c-measured; printf standard > "$CASE/class"; printf false > "$CASE/meas
 assert_eq "$(field class "$(record KEN-1 micro)")" "class=standard" \
   "control: without the marker check the classifier's fallback reads as a class"
 
-mutant repeat-bar 'select(length == 3)' 'select(length == 4)'
-new_case c-repeat; printf micro > "$CASE/class"; timeline 5000
-record KEN-1 micro >/dev/null; record KEN-2 micro >/dev/null
-assert_eq "$(record KEN-3 micro | grep -c '^repeat-miss' || true)" "0" \
-  "control: a bar at four misses is silent on the third"
+other_repo_row() { # prints class and fix for the lane whose worktree names another origin
+  new_case "$1"; printf micro > "$CASE/class"; timeline 1200
+  edit_json "$CASE/state/workflow-state-oversee.json" "(.lanes[] | select(.item == \"KEN-5\")).mail_root = \"$ELSE\""
+  got="$(record KEN-5 micro)"
+  printf '%s %s' "$(field class "$got")" "$(field fix "$got")"
+}
+mutant other-repo 'elif other_repo "$checkout"; then' 'elif false; then'
+assert_eq "$(other_repo_row c-other-repo)" "class=micro fix=9" \
+  "control: without the repository check another repository's lane is classified from this checkout"
+RUN_BIN=""
+LIB="$LAYOUT/orch/scripts/lib/lane-gitfile.sh"
+cp -- "$LIB" "$TMP_ROOT/lane-gitfile.sh.kept"
+anchor='path="$(cd -- "$6" && "$1" path "$4" 2>"$7/state.err")" || return 2'
+assert_eq "$(grep -Fc -- "$anchor" "$LIB")" "1" "the lane-root control finds its anchor"
+A="$anchor" awk '{ i = index($0, ENVIRON["A"]); if (i) $0 = substr($0, 1, i - 1) "path=\"$(\"$1\" path \"$4\" 2>\"$7/state.err\")\" || return 2" substr($0, i + length(ENVIRON["A"])); print }' \
+  "$TMP_ROOT/lane-gitfile.sh.kept" > "$LIB"
+assert_eq "$(other_repo_row c-lane-root)" "class=- fix=-" \
+  "control: read from the caller's checkout, another repository's lane has no rounds"
+cp -- "$TMP_ROOT/lane-gitfile.sh.kept" "$LIB"
 
-mutant repeat-again ' or ($prior.verdict == "miss" and $prior.phase == $cycle.phase)' ''
-new_case c-again; printf micro > "$CASE/class"; timeline 5000
-record KEN-1 micro >/dev/null; record KEN-2 micro >/dev/null; record KEN-3 micro >/dev/null
-assert_eq "$(record KEN-3 micro | grep -c '^repeat-miss' || true)" "1" \
-  "control: without the prior-record check recording the third again fires the bar again"
+# One planted removal per conjunct of the repeat bar, each run against the
+# row that conjunct alone decides, which then prints a bar.
+while IFS='@' read -r name anchor replacement row; do
+  mutant "repeat-$name" "$anchor" "$replacement"
+  sequence="$(awk -F'|' -v row="$row" '$1 == row { print $2 }' <<<"$REPEAT_ROWS")"
+  assert_eq "$(repeat_row "c-repeat-$name" "$sequence" | grep -c '^repeat-miss' || true)" "1" \
+    "control: without the $name conjunct the $row row fires the bar"
+done <<'ROWS'
+this-miss@if $cycle.verdict != "miss"@if false@met-record
+counted-miss@[.lanes[]? | select(.cycle.verdict == "miss")@[.lanes[]? | select(true)@met-not-counted
+same-phase@| select(.cycle.phase == $cycle.phase) | .item]@| .item]@other-phase
+named-phase@or $cycle.phase == null@or false@unnamed-phase
+newly-made@or ($prior.verdict == "miss" and $prior.phase == $cycle.phase)@or false@recorded-again
+exactly-third@select(length == 3)@select(length >= 3)@fourth
+ROWS
 
 mutant p90-floor '| if $n == 0 then "-" else $a[(($n * $p) | ceil) - 1] end;' '| if $n == 0 then "-" else $a[(($n * $p) | floor) - 1] end;'
 new_case c-rollup

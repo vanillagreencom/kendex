@@ -13,8 +13,11 @@
 # pull request's stamps from the github skill's `pr-timeline`, and the class
 # of the merged diff from harness-ci's classifier through lib/change-class.sh,
 # over the merge commit's first parent to the merge commit, read from this
-# checkout, which fetches the merge commit from origin where it lacks it. A
-# classifier answer whose `measured=` marker is not true is no class. --repo
+# checkout, which fetches the merge commit from origin where it lacks it. Run
+# it from a checkout of the lane's repository: where the lane's worktree names
+# another origin, or --repo another repository, the class is unread with
+# cause checkout-other-repo. A classifier answer whose `measured=` marker is
+# not true is no class. --repo
 # defaults to the lane record's repo, then this checkout's. --tier is the tier oversee.md
 # § Item Tier gave the item at its first launch. The round counts come from
 # the lane's own workflow state, read as oversee-report reads it through
@@ -71,6 +74,8 @@ LANE_HOST="$SCRIPT_DIR/lane-host"
 source "$SCRIPT_DIR/lib/change-class.sh"
 # shellcheck source=lib/lane-gitfile.sh
 source "$SCRIPT_DIR/lib/lane-gitfile.sh"
+# shellcheck source=../../github/scripts/lib/gh-repo.sh
+source "$SCRIPT_DIR/../../github/scripts/lib/gh-repo.sh"
 
 TARGETS='{"render":300,"trivial":300,"micro":900,"small":1500,"standard":5400}'
 
@@ -164,10 +169,12 @@ if ! lane="$(jq -c --arg item "$ITEM" '[.lanes[]? | select(.item == $item)] | fi
 fi
 [[ -n "$lane" ]] || refuse record-missing "$ITEM"
 [[ -n "$REPO" ]] || REPO="$(jq -r '.repo // empty' <<<"$lane")"
+LANE_HOST_SPEC="$(jq -r '.host // empty' <<<"$lane")"
+LANE_ROOT="$(jq -r '.mail_root // empty' <<<"$lane")"
 
 rounds=null rounds_unread=""
 if ! lane_item_state "$WORKFLOW_STATE" "$LANE_HOST" "${ORCH_STATE_DIR:-tmp}" "$ITEM" \
-  "$(jq -r '.host // empty' <<<"$lane")" "$(jq -r '.mail_root // empty' <<<"$lane")" "$WORK"; then
+  "$LANE_HOST_SPEC" "$LANE_ROOT" "$WORK"; then
   rounds_unread="$WORK/state.err"
 elif [[ -n "$LANE_ITEM_STATE" ]]; then
   rounds="$(jq -c '{review: ((if .first_panel then 1 else 0 end) + (.rereview_cycles // 0)),
@@ -182,13 +189,35 @@ timeline="$("$GITHUB" pr-timeline "$PR" ${REPO:+--repo "$REPO"} 2>"$WORK/timelin
 merge="$(jq -r '.merge_commit // empty' <<<"$timeline")" || refuse timeline-failed "$PR"
 [[ -n "$merge" ]] || refuse not-merged "$PR"
 
+# other_repo CHECKOUT — true where CHECKOUT is provably not a checkout of the
+# lane's repository: a local lane's worktree names another origin, or the
+# repository the timeline was read from is not the one CHECKOUT resolves to.
+# Where neither can be read nothing is proved, and the class read goes on.
+lower() { awk '{ print tolower($0) }'; }
+other_repo() {
+  local mine theirs
+  if [[ -z "$LANE_HOST_SPEC" && -n "$LANE_ROOT" && -d "$LANE_ROOT" ]]; then
+    mine="$(git -C "$1" config --get remote.origin.url)" || return 1
+    theirs="$(git -C "$LANE_ROOT" config --get remote.origin.url)" || return 1
+    [[ "$mine" != "$theirs" ]]
+    return
+  fi
+  [[ -n "$REPO" ]] || return 1
+  mine="$(unset GH_REPO; kendex_github_resolve_gh_repo "$1" 2>/dev/null)" || return 1
+  [[ "$(lower <<<"$mine")" != "$(lower <<<"$REPO")" ]]
+}
+
 # The class is the classifier's and nothing else's: an unread class records
 # null with its cause, and the verdict says unclassified rather than judging
-# the lane against a target it was never measured into.
+# the lane against a target it was never measured into. It is read from this
+# checkout, which must be one of the lane's repository: another repository's
+# merge commit is never fetched from this one's origin.
 class="" class_cause=""
 checkout="$(git rev-parse --show-toplevel 2>/dev/null)" || checkout=""
 if [[ -z "$checkout" ]]; then
   class_cause="checkout-absent"
+elif other_repo "$checkout"; then
+  class_cause="checkout-other-repo"
 elif ! base="$(git -C "$checkout" rev-parse --verify -q "$merge^1^{commit}")" \
   && ! { git -C "$checkout" fetch -q origin "$merge" 2>"$WORK/class.err" \
          && base="$(git -C "$checkout" rev-parse --verify -q "$merge^1^{commit}")"; }; then
@@ -252,10 +281,16 @@ fi
 
 # The bar fires on the record that makes the third miss: one that was
 # already a miss on this phase, recorded again, makes nothing new.
+# One conjunct per line: this record is a miss, on a named phase, that it was
+# not already; the fleet's records that are misses, on that phase, are
+# exactly three.
 repeat="$(jq -r --argjson cycle "$cycle" --argjson prior "$(jq -c '.cycle // null' <<<"$lane")" '
-  if $cycle.verdict != "miss" or $cycle.phase == null
-     or ($prior.verdict == "miss" and $prior.phase == $cycle.phase) then empty else
-    [.lanes[]? | select(.cycle.verdict == "miss" and .cycle.phase == $cycle.phase) | .item]
+  if $cycle.verdict != "miss"
+     or $cycle.phase == null
+     or ($prior.verdict == "miss" and $prior.phase == $cycle.phase)
+  then empty else
+    [.lanes[]? | select(.cycle.verdict == "miss")
+               | select(.cycle.phase == $cycle.phase) | .item]
     | select(length == 3) | "repeat-miss phase=\($cycle.phase) items=\(join(","))" end' "$STATE_FILE")" \
   || refuse state-unreadable "$STATE_FILE"
 if [[ -n "$repeat" ]]; then

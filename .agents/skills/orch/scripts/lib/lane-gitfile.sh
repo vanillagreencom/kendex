@@ -86,8 +86,11 @@ lane_hosted_state_path() {
 
 # lane_item_state WORKFLOW_STATE LANE_HOST_CLI STATE_DIR ITEM HOST ROOT SCRATCH
 # — sets LANE_ITEM_STATE to the item's own workflow-state JSON, empty where
-# the lane has written none. A local lane's, HOST empty, is under the caller's
-# project state directory; a hosted lane's is in its clone at ROOT, read
+# the lane has written none. A local lane's, HOST empty, is under the project
+# state directory of its own checkout, ROOT, where ROOT is a directory, so a
+# lane of another repository reads from that repository, and of the caller's
+# checkout where ROOT is gone or unrecorded; a hosted lane's is in its clone
+# at ROOT, read
 # through the probe above with ORCH_LANE_HOST set to HOST. A hosted worktree
 # already gone, which ../../workflows/merge-pr.md § 5 leaves behind a merged
 # lane until lane-close runs, has no state either. 0 read, the state possibly
@@ -97,7 +100,11 @@ lane_item_state() {
   local path rc=0
   LANE_ITEM_STATE=""
   if [[ -z "$5" ]]; then
-    path="$("$1" path "$4" 2>"$7/state.err")" || return 2
+    if [[ -n "$6" && -d "$6" ]]; then
+      path="$(cd -- "$6" && "$1" path "$4" 2>"$7/state.err")" || return 2
+    else
+      path="$("$1" path "$4" 2>"$7/state.err")" || return 2
+    fi
     [[ -f "$path" ]] || return 0
     LANE_ITEM_STATE="$(jq -c . -- "$path" 2>"$7/state.err")" || return 2
     return 0
