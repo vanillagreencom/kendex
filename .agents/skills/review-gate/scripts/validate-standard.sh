@@ -58,7 +58,12 @@ One verdict line per row, VALUE being what was observed:
                                     ci_context ran on the head of the pull
                                     request merged into the default branch
                                     most recently; VALUE lists the job names
-                                    that ran there
+                                    that ran there. The row reads
+                                    FAIL check=ci-context-missing when no
+                                    such job ran, VALUE then being the job
+                                    names that did run or `none`, and FAIL
+                                    under its own key when the read failed
+                                    or nothing has merged
   standard-app                      the standard's app is installed on every
                                     repository of the organization
   standard-environment              the standard's environment exists and
@@ -331,11 +336,11 @@ EOF_RUNS
   emitted="$(printf '%s\n' "$names" | LC_ALL=C sort -u | sed '/^$/d' | paste -sd ';' -)" ||
     die ci-context-names "$sha" "could not list the job names read for $sha"
   if [ -z "$emitted" ]; then
-    bad standard-ci-context none "no Actions job ran on $sha, the head of pull request #$number, the latest merged into $BRANCH; the ruleset's $WANT_CI context never reports there"
+    bad ci-context-missing none "$FULL ran no Actions job on $sha, the head of pull request #$number, the latest merged into $BRANCH; the ruleset's $WANT_CI context never reports there"
   elif grep -qxF -- "$WANT_CI" <<<"$names"; then
     ok standard-ci-context "$emitted" "$FULL reported $WANT_CI on $sha, the head of pull request #$number"
   else
-    bad standard-ci-context "$emitted" "$FULL reported no $WANT_CI job on $sha, the head of pull request #$number, the latest merged into $BRANCH, so the ruleset's required $WANT_CI context never reports and no pull request merges. Give the job that aggregates every lane the name $WANT_CI: .agents/skills/harness-ci/references/wiring.md § The CI context"
+    bad ci-context-missing "$emitted" "$FULL reported no $WANT_CI job on $sha, the head of pull request #$number, the latest merged into $BRANCH, so the ruleset's required $WANT_CI context never reports and no pull request merges. Give the job that aggregates every lane the name $WANT_CI: .agents/skills/harness-ci/references/wiring.md § The CI context"
   fi
 }
 ci_context_row

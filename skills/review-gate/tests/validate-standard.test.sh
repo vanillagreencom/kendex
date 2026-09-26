@@ -102,9 +102,10 @@ ok check=standard-environment-secrets value=APP_ID\;APP_KEY
 ok check=standard-secrets-outside value=none'
 
 # The baseline with each named row turned to FAIL at its observed value.
-# OVERRIDES is `check=value` pairs separated by `^`, values as printed.
+# OVERRIDES is `check=value` pairs separated by `^`, values as printed; a
+# `check@key=value` pair also reports the row under the FAIL key `key`.
 expected_listing() { # OVERRIDES
-  local line check pair out=""
+  local line check pair name out=""
   while IFS= read -r line; do
     check="${line#ok check=}"
     check="${check%% value=*}"
@@ -113,7 +114,8 @@ expected_listing() { # OVERRIDES
     while [ -n "$rest" ]; do
       pair="${rest%%^*}"
       [ "$pair" = "$rest" ] && rest="" || rest="${rest#*^}"
-      [ "${pair%%=*}" = "$check" ] && hit="FAIL check=$check value=${pair#*=}"
+      name="${pair%%=*}"
+      [ "${name%%@*}" = "$check" ] && hit="FAIL check=${name#*@} value=${pair#*=}"
     done
     out="${out:+$out
 }${hit:-$line}"
@@ -175,9 +177,9 @@ the branch unreadable~branch~~~standard-classic-protection=unreadable
 the app on selected repositories~~installations.json~.installations[1].repository_selection = "selected"~standard-app=selected
 the app not installed~~installations.json~.installations |= [.[0]]~standard-app=absent
 installations unreadable~installations~~~standard-app=unreadable
-lanes reporting their own names and no CI aggregate~~jobs-7.json~.jobs |= map(select(.name != "CI"))~standard-ci-context=build\;lint-typecheck\;writer
-an aggregate whose name only starts with CI~~jobs-7.json~.jobs |= map(if .name == "CI" then .name = "CI Required" else . end)~standard-ci-context=CI\ Required\;build\;lint-typecheck\;writer
-no job ran on the head~~workflow-runs.json~.workflow_runs = []~standard-ci-context=none
+lanes reporting their own names and no CI aggregate~~jobs-7.json~.jobs |= map(select(.name != "CI"))~standard-ci-context@ci-context-missing=build\;lint-typecheck\;writer
+an aggregate whose name only starts with CI~~jobs-7.json~.jobs |= map(if .name == "CI" then .name = "CI Required" else . end)~standard-ci-context@ci-context-missing=CI\ Required\;build\;lint-typecheck\;writer
+no job ran on the head~~workflow-runs.json~.workflow_runs = []~standard-ci-context@ci-context-missing=none
 no pull request merged~~pulls.json~map(.merged_at = null)~standard-ci-context=no-merged-pull-request
 a merged head that is not a sha~~pulls.json~.[2].head.sha = "main"~standard-ci-context=unreadable
 pull requests unreadable~pulls~~~standard-ci-context=unreadable
