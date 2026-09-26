@@ -160,7 +160,7 @@ cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-cont
 # `lanes` is what a --lane row's lane_check calls; without it the row refuses
 # with helper-missing before reaching the gate it is about.
 cp "$SCRIPTS_DIR/lanes" "$REPO/scripts/lanes"
-cp "$SRC_LIB_DIR"/*.sh "$REPO/scripts/lib/"
+cp -R "$SRC_LIB_DIR/." "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
 chmod +x "$REPO/scripts/open-terminal" "$REPO/scripts/lanes"
 git -C "$REPO" init -q
@@ -412,7 +412,7 @@ if wait_capture; then
   # rendered line through a login shell, which is the shape under test.
   (cd "$globbait" && OT_ARGV_CAPTURE="$TMP_ROOT/argv" bash -lc "PATH=\"$BIN:\$PATH\"; ${cmd##*&& }") >/dev/null 2>&1 || true
   rm -f "$BIN/claude"
-  assert_eq "$(tr '\n' ' ' < "$TMP_ROOT/argv" 2>/dev/null || echo unrun)" "-n CC-737 --disallowedTools=AskUserQuestion,EnterPlanMode --model opus[1m] --dangerously-skip-permissions $BRIEF " \
+  assert_eq "$(tr '\n' ' ' < "$TMP_ROOT/argv" 2>/dev/null || echo unrun)" "-n CC-737 --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --disallowedTools=AskUserQuestion,EnterPlanMode --model opus[1m] --dangerously-skip-permissions $BRIEF " \
     "the argv claude receives is the flags as given: a same-named file cannot rewrite the model id"
 else
   fail "the bracketed model id row never invoked the terminal stub, so its argv cannot be read"

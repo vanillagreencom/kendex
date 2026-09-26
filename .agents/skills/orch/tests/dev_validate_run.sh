@@ -594,7 +594,7 @@ assert_eq "$RC" "2" "and exits 2"
 LAYOUT="$TMP_ROOT/layout"
 mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/harness-ci/scripts"
 cp "$SCRIPTS_DIR/dev-validate-run" "$SCRIPTS_DIR/orch-env" "$SCRIPTS_DIR/resolve-base-branch" "$LAYOUT/orch/scripts/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$LAYOUT/orch/scripts/lib/"
+cp -R "$SCRIPTS_DIR/lib/." "$LAYOUT/orch/scripts/lib/"
 cat > "$LAYOUT/harness-ci/scripts/change-class" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$STUB_ARGS"

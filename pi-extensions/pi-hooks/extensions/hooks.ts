@@ -6,7 +6,7 @@ import { agentLine, deliver, type HookResult, personLine, runListener, unreadabl
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
 import { SESSION_START_LISTENER, TOOL_CALL_LISTENER, TOOL_RESULT_LISTENER, TURN_END_LISTENER } from "./registry.js";
-import { claudeSessionFields, claudeSessionSource, claudeToolInput, claudeToolName, piSubagentName } from "./vocab.js";
+import { claudeSessionFields, claudeSessionSource, claudeToolInput, claudeToolName, piContextFields, piSubagentName } from "./vocab.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
 
@@ -326,11 +326,12 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// when this dispatch is running because the last one steered — which is
 		// what the field is for: a hook reading it knows it is already the
 		// reason the agent kept going, and can stand down the way it does on
-		// Claude Code.
+		// Claude Code. It also carries the model's `context_window`, which Pi
+		// alone has to hand over: its session file never names one.
 		const run = await runListener(
 			TURN_END_LISTENER,
 			undefined,
-			JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive, ...claudeSessionFields(ctx) }),
+			JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive, ...claudeSessionFields(ctx), ...piContextFields(ctx) }),
 			ctx,
 			cfg,
 			project,
