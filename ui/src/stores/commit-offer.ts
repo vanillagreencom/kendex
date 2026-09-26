@@ -7,6 +7,7 @@ import {
   type ProjectFlag,
   type ProjectOffer,
   type Refused,
+  type StalePackage,
 } from "@/bindings";
 import {
   committedToast,
@@ -44,7 +45,8 @@ export type Stage =
    *  wrong, and nothing was committed. */
   | { at: "setUpFailed"; error: string }
   /** The setup ran and the fresh reading still holds the commit. The
-   *  head is that reading, so its `stale` is what the state draws. */
+   *  head is that reading, so what [`heldBy`] reads off it is what the
+   *  state draws. */
   | { at: "stillHeld" }
   | {
       at: "commitRefused";
@@ -218,6 +220,19 @@ export function selectionOf(state: {
   if (!offer || state.scoped === "all" || offer.actionPaths.length === 0)
     return { kind: "all" };
   return { kind: "only", paths: offer.actionPaths };
+}
+
+/** The packages holding the commit the reader has picked: every pending
+ *  change, or only this action's work. An older pending change to a
+ *  package's files holds only the commit that carries it, so the two can
+ *  differ. Read off the same selection the commit is sent with. */
+export function heldBy(state: {
+  queue: ProjectOffer[];
+  scoped: Scoped;
+}): StalePackage[] {
+  const offer = state.queue[0];
+  if (!offer) return [];
+  return selectionOf(state).kind === "all" ? offer.stale : offer.staleAction;
 }
 
 /** Whether the primary action may run: a commit labelled as one action's
@@ -788,7 +803,8 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
 
     setUp: async () => {
       const offer = head();
-      if (!offer || offer.stale.length === 0) return;
+      const held = heldBy(get());
+      if (!offer || held.length === 0) return;
       // Taken before the write: the write's own reading of the projects
       // records one for an offer a person opened, which has none and reads
       // as they opened it.
@@ -800,10 +816,10 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
       // alone while its answer is on screen.
       const refused = await writingRepo(
         async () => {
-          for (const held of offer.stale) {
+          for (const one of held) {
             const armed = await commands.repoEffectsApply(
               { scope: "project", root: offer.root },
-              held.disclosure.declared,
+              one.disclosure.declared,
             );
             if (armed.status === "error") return armed.error;
           }
@@ -819,7 +835,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
       switch (read.at) {
         case "offer": {
           const next = head();
-          if (next?.root === offer.root && next.stale.length > 0) {
+          if (next?.root === offer.root && heldBy(get()).length > 0) {
             set({ stage: { at: "stillHeld" } });
             return;
           }

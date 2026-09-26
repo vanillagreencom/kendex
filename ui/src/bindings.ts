@@ -4033,11 +4033,20 @@ export type ProjectOffer = {
 	 */
 	tracked: boolean,
 	/**
-	 *  Packages whose files in this repository a commit would carry out of
-	 *  date. Where any is listed the commit is not offered: the dialog
-	 *  offers their setup, or leaving the files as diffs.
+	 *  Packages whose files in this repository a commit of every pending
+	 *  change would carry out of date. Where the commit on offer is that
+	 *  one and any is listed, it is not offered: the dialog offers their
+	 *  setup, or leaving the files as diffs.
 	 */
 	stale: StalePackage[],
+	/**
+	 *  The same reading for a commit of only this action's work,
+	 *  `action_paths`, which a write-opened offer starts on. An older
+	 *  pending change can hold every pending change while this action's
+	 *  own commit is clean. Equal to `stale` where no action opened the
+	 *  offer.
+	 */
+	staleAction: StalePackage[],
 };
 
 /**

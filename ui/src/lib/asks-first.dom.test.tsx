@@ -73,6 +73,7 @@ const offer = {
   openNumber: null,
   shared: [],
   stale: [],
+  staleAction: [],
 } as unknown as ProjectOffer;
 
 /** An install still on screen: its ask is open until the reader closes it. */
@@ -311,6 +312,9 @@ describe("the questions a write leaves behind", () => {
         {
           ...offer,
           stale: [
+            { name: "guards", why: "notSetUp", said: [], disclosure: guards },
+          ],
+          staleAction: [
             { name: "guards", why: "notSetUp", said: [], disclosure: guards },
           ],
         },

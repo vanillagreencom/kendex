@@ -160,10 +160,17 @@ pub struct ProjectOffer {
     /// The branch already tracks the chosen remote, so a push needs no
     /// `--set-upstream`.
     pub tracked: bool,
-    /// Packages whose files in this repository a commit would carry out of
-    /// date. Where any is listed the commit is not offered: the dialog
-    /// offers their setup, or leaving the files as diffs.
+    /// Packages whose files in this repository a commit of every pending
+    /// change would carry out of date. Where the commit on offer is that
+    /// one and any is listed, it is not offered: the dialog offers their
+    /// setup, or leaving the files as diffs.
     pub stale: Vec<StalePackage>,
+    /// The same reading for a commit of only this action's work,
+    /// `action_paths`, which a write-opened offer starts on. An older
+    /// pending change can hold every pending change while this action's
+    /// own commit is clean. Equal to `stale` where no action opened the
+    /// offer.
+    pub stale_action: Vec<StalePackage>,
 }
 
 /// One package holding the commit, from
@@ -431,15 +438,11 @@ fn read(
     // Asked before the commit is offered, the same reading the terminal
     // makes, so neither surface offers a commit the repository's own check
     // would refuse over a package's files.
-    let stale: Vec<StalePackage> = commit_offer::stale(env, &scope, &scan)
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .map(StalePackage::from)
-        .collect();
+    let held = held_by_scope(env, &scope, &scan, pending.as_ref())?;
     // The window's write is not a typed command, so the message names the
     // shell the person is in rather than a verb they typed.
     match commit_offer::offer(scan, COMMAND, Probe::Gh) {
-        Ok(offer) => Ok(Some(Ok(drawn(root, key, offer, pending.as_ref(), stale)))),
+        Ok(offer) => Ok(Some(Ok(drawn(root, key, offer, pending.as_ref(), held)))),
         Err(failed) => Ok(Some(Err(ProjectFlag {
             root: key.to_owned(),
             count: 0,
@@ -448,6 +451,54 @@ fn read(
             },
         }))),
     }
+}
+
+/// The packages holding each commit the offer can make: every pending
+/// change, and only this action's work.
+///
+/// Each is `commit_offer::stale` over the paths that commit carries. The
+/// terminal commits every pending change and reads the whole scan; the
+/// window starts a write-opened offer on the action's own paths, so an
+/// older pending change to a package's files holds only the commit that
+/// carries it. Where no action opened the offer, or both commits are the
+/// same set, one reading answers for both.
+fn held_by_scope(
+    env: &Env,
+    scope: &Scope,
+    scan: &commit_offer::Scan,
+    pending: Option<&Pending>,
+) -> Result<HeldBy, String> {
+    let read = |scan: &commit_offer::Scan| -> Result<Vec<StalePackage>, String> {
+        Ok(commit_offer::stale(env, scope, scan)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(StalePackage::from)
+            .collect())
+    };
+    let all = read(scan)?;
+    let action = match pending {
+        Some(pending) if !pending.same() => {
+            let paths = pending.action_set();
+            read(&commit_offer::Scan {
+                owned: scan
+                    .owned
+                    .iter()
+                    .filter(|owned| paths.contains(&owned.path))
+                    .cloned()
+                    .collect(),
+                ..scan.clone()
+            })?
+        }
+        Some(_) | None => all.clone(),
+    };
+    Ok(HeldBy { all, action })
+}
+
+/// [`held_by_scope`]'s answer, one list per commit the offer can make.
+#[derive(Debug)]
+struct HeldBy {
+    all: Vec<StalePackage>,
+    action: Vec<StalePackage>,
 }
 
 /// What the default message names when the write came from the window.
@@ -459,7 +510,7 @@ fn drawn(
     key: &str,
     offer: Offer,
     pending: Option<&Pending>,
-    stale: Vec<StalePackage>,
+    held: HeldBy,
 ) -> ProjectOffer {
     let did: BTreeMap<&str, &kendex_core::commit_offer::PendingFile> = pending
         .map(|pending| {
@@ -525,7 +576,8 @@ fn drawn(
         tracked: offer.remote.as_ref().is_some_and(|remote| remote.tracked),
         remote: offer.remote.as_ref().map(|remote| remote.name.clone()),
         branch: offer.branch,
-        stale,
+        stale: held.all,
+        stale_action: held.action,
     }
 }
 
@@ -1233,7 +1285,10 @@ mod tests {
             },
             // No reading was taken before the write.
             None,
-            Vec::new(),
+            HeldBy {
+                all: Vec::new(),
+                action: Vec::new(),
+            },
         );
         assert!(unattributed.action_paths.is_empty());
         assert!(
@@ -1683,6 +1738,62 @@ mod tests {
                 .collect();
             assert_eq!(stale, want, "check {check:?}");
         }
+    }
+
+    /// An older pending change to a package's files holds only the commit
+    /// that carries it. A doctrine change left as diffs, then an action
+    /// that writes an unrelated file: the action's own commit is clean, and
+    /// a commit of every pending change is held because the package is not
+    /// set up here.
+    #[test]
+    #[cfg(unix)]
+    fn an_older_pending_change_holds_only_the_commit_that_carries_it() {
+        use kendex_core::env::{Env, FakeOs};
+
+        let tmp = tempfile::tempdir().expect("a fixture directory");
+        let home = tmp.path().join("home");
+        let root = tmp.path().join("project");
+        write_bot_fixture(&root);
+        std::fs::create_dir_all(&home).expect("the fixture home is made");
+        let root = root.canonicalize().expect("the project root canonicalizes");
+        bot_fixture_repo(&root, &home);
+        let scope = Scope::Project { root: root.clone() };
+        let env = Env::fake(&home, FakeOs::Linux);
+        record_bot_package(&env, &scope, &root, false);
+        let doctrine = root.join(".agents/skills/bot-instructions/SKILL.md");
+        let text = std::fs::read_to_string(&doctrine).expect("the doctrine reads");
+        std::fs::write(&doctrine, format!("{text}Changed rules.\n"))
+            .expect("an earlier action changed the doctrine");
+        let shim = root.join("CLAUDE.md");
+        let generated = kendex_core::engine::GeneratedPaths {
+            whole: std::collections::BTreeSet::from([doctrine, shim.clone()]),
+            ..kendex_core::engine::GeneratedPaths::default()
+        };
+        let since = commit_offer::baseline(&scope, &generated).expect("the reading before");
+        std::fs::write(&shim, "@AGENTS.md\n").expect("the action writes its file");
+        let scan = commit_offer::scan(&scope, &generated)
+            .expect("the project reads")
+            .expect("kendex owns changed files");
+        let pending = commit_offer::pending(&scan, &since);
+
+        let held =
+            held_by_scope(&env, &scope, &scan, Some(&pending)).expect("the packages are asked");
+
+        let named = |held: &[StalePackage]| -> Vec<(String, StaleWhy)> {
+            held.iter().map(|one| (one.name.clone(), one.why)).collect()
+        };
+        assert_eq!(named(&held.action), Vec::new(), "the action's own commit");
+        assert_eq!(
+            named(&held.all),
+            vec![("bot-instructions".to_owned(), StaleWhy::NotSetUp)],
+            "every pending change"
+        );
+        let whole = held_by_scope(&env, &scope, &scan, None).expect("the packages are asked");
+        assert_eq!(
+            named(&whole.action),
+            named(&whole.all),
+            "no action opened it"
+        );
     }
 
     /// Discovery applies the package's ownership result to the app's commit

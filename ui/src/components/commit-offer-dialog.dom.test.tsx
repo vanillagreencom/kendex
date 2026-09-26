@@ -40,6 +40,7 @@ const offer: ProjectOffer = {
   repo: "acme/site",
   tracked: true,
   stale: [],
+  staleAction: [],
 };
 
 const refused = (step: string, said: string): Refused => ({
@@ -159,7 +160,7 @@ describe("an offer a package holds", () => {
     },
   ])("draws its stage: $name", async (row) => {
     useCommitOfferStore.setState({
-      queue: [{ ...offer, stale: [row.held] }],
+      queue: [{ ...offer, stale: [row.held], staleAction: [row.held] }],
       stage: row.stage,
     });
     mount(<CommitOfferDialog />);
@@ -177,6 +178,53 @@ describe("an offer a package holds", () => {
     for (const one of footer)
       expect((one as HTMLButtonElement).disabled).toBe(row.disabled);
     expect(buttons()).not.toContain(COMMIT_LABEL);
+  });
+});
+
+// An older pending change to a package's files holds only the commit that
+// carries it: this action's own commit is offered, and picking every
+// pending change draws the hold, with the choice between them still on
+// screen to go back.
+describe("an offer held for every pending change only", () => {
+  it("offers the action's commit and holds the other", async () => {
+    const stale: StalePackage = {
+      name: "bot-instructions",
+      why: "notSetUp",
+      said: [],
+      disclosure: {
+        declared: {
+          name: "bot-instructions",
+          root: "/home/method/dev/site/.agents/skills/bot-instructions",
+          summary: "Renders the review-bot files.",
+          writes: [],
+          installer: "scripts/bot-instructions render",
+          uninstaller: null,
+          checker: null,
+          removal: null,
+          notes: [],
+          companions: [],
+        },
+        name: "bot-instructions",
+        summary: "Renders the review-bot files.",
+        writes: [],
+        companions: [],
+        notes: [],
+        undo: null,
+      },
+    };
+    useCommitOfferStore.setState({
+      queue: [{ ...offer, choice: true, stale: [stale], staleAction: [] }],
+      scoped: "action",
+    });
+    mount(<CommitOfferDialog />);
+    await settle();
+    expect(buttons()).toContain(COMMIT_LABEL);
+    expect(buttons()).not.toContain("Set up bot-instructions here");
+
+    act(() => useCommitOfferStore.getState().scope("all"));
+    await settle();
+    expect(buttons()).toContain("Set up bot-instructions here");
+    expect(buttons()).toContain(ACTION_SEGMENT);
   });
 });
 

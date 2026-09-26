@@ -105,6 +105,7 @@ import {
 } from "@/lib/copy-commit-offer";
 import { cn } from "@/lib/utils";
 import {
+  heldBy,
   type Route,
   ready,
   routesFor,
@@ -165,12 +166,13 @@ export function CommitOfferDialog() {
 }
 
 function Body({ offer, stage }: { offer: ProjectOffer; stage: Stage }) {
+  const held = useCommitOfferStore(heldBy).length > 0;
   switch (stage.at) {
     case "offer":
     case "busy":
-      // A package holding the commit replaces the commit choices with its
-      // setup: the commit would carry its files out of date.
-      return offer.stale.length > 0 ? (
+      // A package holding the picked commit replaces the commit choices
+      // with its setup: that commit would carry its files out of date.
+      return held ? (
         <HeldState offer={offer} busy={false} />
       ) : (
         <OfferState offer={offer} stage={stage} />
@@ -180,7 +182,7 @@ function Body({ offer, stage }: { offer: ProjectOffer; stage: Stage }) {
     case "setUpFailed":
       return <SetUpFailedState error={stage.error} />;
     case "stillHeld":
-      return <StillHeldState offer={offer} />;
+      return <StillHeldState />;
     case "commitRefused":
       return (
         <CommitRefusedState
@@ -396,6 +398,7 @@ function HeldBy({ held }: { held: StalePackage }) {
 function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
   const setUp = useCommitOfferStore((s) => s.setUp);
   const leave = useCommitOfferStore((s) => s.leave);
+  const stale = useCommitOfferStore(heldBy);
   return (
     <>
       <DialogHeader>
@@ -406,7 +409,7 @@ function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
       </DialogHeader>
       <div className="space-y-4 text-sm">
         <Section title={STALE_LABEL}>
-          {offer.stale.map((held) => (
+          {stale.map((held) => (
             <div key={held.name} className="space-y-1.5">
               <HeldBy held={held} />
               <DisclosureBody disclosure={held.disclosure} />
@@ -416,15 +419,17 @@ function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
         <Section title={FILES_LABEL}>
           <ChangedFiles root={offer.root} entries={offerEntries(offer)} />
         </Section>
+        {/* The hold is on the commit picked here: a commit of only this
+            action's work can be clean where every pending change is not,
+            so the choice between them stays on screen. */}
+        <Scope offer={offer} busy={busy} />
       </div>
       <DialogFooter>
         <Button variant="outline" disabled={busy} onClick={leave}>
           {LEAVE_LABEL}
         </Button>
         <Button disabled={busy} onClick={() => void setUp()}>
-          {busy
-            ? SETTING_UP_LABEL
-            : setUpLabel(offer.stale.map((held) => held.name))}
+          {busy ? SETTING_UP_LABEL : setUpLabel(stale.map((held) => held.name))}
         </Button>
       </DialogFooter>
     </>
@@ -433,8 +438,9 @@ function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
 
 /** The setup ran and the fresh reading still holds the commit: why, in
  *  that reading's words, and no second setup, as the terminal. */
-function StillHeldState({ offer }: { offer: ProjectOffer }) {
+function StillHeldState() {
   const leave = useCommitOfferStore((s) => s.leave);
+  const stale = useCommitOfferStore(heldBy);
   return (
     <>
       <DialogHeader>
@@ -443,7 +449,7 @@ function StillHeldState({ offer }: { offer: ProjectOffer }) {
       </DialogHeader>
       <div className="space-y-4 text-sm">
         <Section title={STALE_LABEL}>
-          {offer.stale.map((held) => (
+          {stale.map((held) => (
             <div key={held.name} className="space-y-1.5">
               <HeldBy held={held} />
             </div>
