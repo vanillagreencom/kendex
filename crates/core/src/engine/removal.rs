@@ -204,6 +204,31 @@ enum Verdict {
 /// The row a withheld hook's installed copy leaves as it goes.
 const WITHHELD: &str = "withheld: a hook it requires will not run here — will be removed";
 
+/// The conflict a held orphan leaves, naming the remedy that takes it.
+const EDITED: &str =
+    "no longer wanted, but its files were edited on disk — remove it by name to confirm";
+
+/// [`EDITED`] for an orphan something that stays derives: removing it by
+/// name would keep it removed on every tool, from what still requires it
+/// too, so the remedy is applying with edits discarded, which takes the
+/// held copy and writes nothing down.
+const EDITED_DERIVED: &str = "no longer wanted, but its files were edited on disk — apply with edits discarded to confirm; removing it by name would also keep it from every tool where something still requires or bundles it";
+
+/// The conflict a held orphan leaves: [`EDITED_DERIVED`] where this plan
+/// derives an item of its kind and name on some tool, [`EDITED`]
+/// otherwise. The plan's own reasons are what its apply records and what
+/// the removal's catalog reading finds again, so an edge only the catalog
+/// knows counts, and one recorded from something going does not.
+fn edited(state: &desired::DesiredState, entry: &LockEntry) -> &'static str {
+    let derived = state.items.iter().any(|item| {
+        item.kind == entry.kind && item.name == entry.name && derived_at_all(&item.reasons)
+    });
+    match derived {
+        true => EDITED_DERIVED,
+        false => EDITED,
+    }
+}
+
 /// `decided_keys` are the records the refusal and withheld passes already
 /// planned for; nothing here asks about them again. `kept`
 /// is every record an earlier pass kept as it was in place of writing it,
@@ -278,7 +303,7 @@ pub(super) fn orphans(
                 drift.push(row(
                     entry,
                     DriftState::Conflict,
-                    "no longer wanted, but its files were edited on disk — remove it by name to confirm".into(),
+                    edited(state, entry).into(),
                     Some(super::DriftCause::LocalEdit),
                 ));
                 new_lock.entries.insert(key.clone(), entry.clone());
@@ -384,7 +409,7 @@ fn verdicts<'a>(
         // reported per declaration, so asking here would only count it into
         // a retention it is not part of.
         let unreadable_origin = !unreachable_source
-            && derived_at_all(entry)
+            && derived_at_all(&entry.reasons)
             && !named
             && !origins.readable(env, scope, manifest, state, &entry.source);
         if unreachable_source || unreadable_origin {
@@ -523,8 +548,8 @@ fn derived_only(entry: &LockEntry) -> bool {
     !entry.reasons.contains(&Reason::Requested)
 }
 
-/// Whether anything derived this installation at all — a set carries it, or
-/// something requires it.
+/// Whether anything derived an installation with these reasons at all — a
+/// set carries it, or something requires it.
 ///
 /// One entry can be both asked for by name and derived, and a declaration
 /// dropped while its catalog will not read leaves exactly that entry: out of
@@ -532,8 +557,8 @@ fn derived_only(entry: &LockEntry) -> bool {
 /// gated on an unreadable origin has to know is whether a derivation is at
 /// stake, which is not the same question as whether the person also asked
 /// for it.
-fn derived_at_all(entry: &LockEntry) -> bool {
-    entry.reasons.iter().any(|reason| match reason {
+fn derived_at_all(reasons: &BTreeSet<Reason>) -> bool {
+    reasons.iter().any(|reason| match reason {
         Reason::MemberOf { .. } | Reason::RequiredBy { .. } => true,
         Reason::Requested => false,
     })

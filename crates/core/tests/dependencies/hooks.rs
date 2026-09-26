@@ -792,10 +792,8 @@ fn a_companion_is_withheld_where_every_hook_that_requires_it_is() {
         kendex_core::engine::DriftState::Orphaned,
         "no longer wanted — will be removed",
     );
-    const EDITED: (kendex_core::engine::DriftState, &str) = (
-        kendex_core::engine::DriftState::Conflict,
-        "no longer wanted, but its files were edited on disk — remove it by name to confirm",
-    );
+    const EDITED: (kendex_core::engine::DriftState, &str) =
+        (kendex_core::engine::DriftState::Conflict, EDITED_DERIVED);
     let rows: [Row; 3] = [
         (false, false, &[REMOVED], (false, false)),
         (true, false, &[REMOVED, EDITED], (true, true)),
@@ -905,6 +903,186 @@ fn edit_installed(f: &Fixture, harness: HarnessId, file: &str) {
     fs::write(&path, script).unwrap();
 }
 
+/// The edited orphan's row where removing it by name takes nothing more.
+const EDITED_REMOVE_BY_NAME: &str =
+    "no longer wanted, but its files were edited on disk — remove it by name to confirm";
+/// The edited orphan's row where a record of it is derived from something
+/// that stays.
+const EDITED_DERIVED: &str = "no longer wanted, but its files were edited on disk — apply with edits discarded to confirm; removing it by name would also keep it from every tool where something still requires or bundles it";
+
+/// The remedy an edited orphan's row names, done as a person reading it
+/// would, and the next apply after it.
+#[allow(clippy::unwrap_used)]
+fn follow_remedy(f: &Fixture, name: &str, detail: &str) {
+    let report = match detail {
+        EDITED_REMOVE_BY_NAME => {
+            ops::remove(&f.env, &f.scope, &[name.to_owned()], None, false).unwrap()
+        }
+        EDITED_DERIVED => plan_apply(
+            &f.env,
+            &f.scope,
+            &PlanOptions {
+                remove_orphans: true,
+                overwrite_edited: true,
+                ..PlanOptions::default()
+            },
+        )
+        .unwrap(),
+        other => panic!("the row names no remedy this test knows: {other}"),
+    };
+    apply::execute(&f.env, &report.plan).unwrap();
+    apply_now(f);
+}
+
+/// The plain hook installed on both tools, then no longer declared.
+#[allow(clippy::unwrap_used)]
+fn plain_orphan() -> Fixture {
+    let f = hook_fixture("[hooks.plain]\nsource = \"cat\"\n");
+    fs::write(f.source.join("hooks/plain.sh"), PLAIN).unwrap();
+    apply_now(&f);
+    edit_installed(&f, HarnessId::Codex, "plain.sh");
+    declare(&f, "");
+    f
+}
+
+/// Boss requiring narrow alone: extra is no companion of it yet.
+const BOSS_NARROW_ONLY: &str = "#!/usr/bin/env bash\n# ---\n# name: boss\n# event: PreToolUse\n# description: run before a tool call with narrow\n# requires: [narrow]\n# ---\nexit 0\n";
+
+/// The declarations installed first with boss as `boss` says, the Codex
+/// copy of extra edited, then boss requiring both companions and declared
+/// alone: extra is orphaned on Codex, where boss is withheld, and derived
+/// by boss on Claude Code.
+#[allow(clippy::unwrap_used)]
+fn orphaned_extra(first: &str, boss: &str) -> Fixture {
+    let f = hook_fixture(first);
+    fs::write(f.source.join("hooks/boss.sh"), boss).unwrap();
+    fs::write(f.source.join("hooks/narrow.sh"), NARROW).unwrap();
+    fs::write(f.source.join("hooks/extra.sh"), EXTRA).unwrap();
+    apply_now(&f);
+    edit_installed(&f, HarnessId::Codex, "extra.sh");
+    fs::write(f.source.join("hooks/boss.sh"), BOSS).unwrap();
+    declare(&f, "[hooks.boss]\nsource = \"cat\"\n");
+    f
+}
+
+/// Extra asked for by name beside boss, which already required it.
+fn derived_orphan() -> Fixture {
+    orphaned_extra(
+        "[hooks.boss]\nsource = \"cat\"\n\n[hooks.extra]\nsource = \"cat\"\n",
+        BOSS,
+    )
+}
+
+/// Extra installed alone, so no record says anything requires it.
+fn orphan_declared_alone() -> Fixture {
+    orphaned_extra("[hooks.extra]\nsource = \"cat\"\n", BOSS)
+}
+
+/// Extra installed beside a boss that did not require it yet, so the edge
+/// is the catalog's alone.
+fn orphan_before_the_edge() -> Fixture {
+    orphaned_extra(
+        "[hooks.boss]\nsource = \"cat\"\n\n[hooks.extra]\nsource = \"cat\"\n",
+        BOSS_NARROW_ONLY,
+    )
+}
+
+/// An orphan edited on disk is held under `apply`, and its row names the
+/// remedy that takes the held copy and nothing the row does not name.
+/// Removing a companion by name keeps it removed for every hook that
+/// requires it, so boss would be withheld on Claude Code, where it runs
+/// with that companion: that row names applying with edits discarded
+/// instead, whether the record already says boss requires it or only the
+/// catalog does. Where nothing derives the orphan, removing it by name is
+/// the remedy. Each row's remedy is followed as the row words it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edited_orphans_remedy_takes_only_what_its_row_names() {
+    type Placed = (&'static str, HarnessId, (bool, bool));
+    type Row = (
+        &'static str,
+        fn() -> Fixture,
+        &'static str,
+        &'static str,
+        &'static [Placed],
+    );
+    const DERIVED_KEPT: &[Placed] = &[
+        ("extra", HarnessId::Codex, (false, false)),
+        ("extra", HarnessId::Claude, (true, true)),
+        ("boss", HarnessId::Claude, (true, true)),
+    ];
+    let rows: [Row; 4] = [
+        (
+            "nothing derives it",
+            plain_orphan,
+            "plain",
+            EDITED_REMOVE_BY_NAME,
+            &[
+                ("plain", HarnessId::Codex, (false, false)),
+                ("plain", HarnessId::Claude, (false, false)),
+            ],
+        ),
+        (
+            "a companion boss derives on Claude Code",
+            derived_orphan,
+            "extra",
+            EDITED_DERIVED,
+            DERIVED_KEPT,
+        ),
+        (
+            "boss declared after extra alone, the edge only in the catalog",
+            orphan_declared_alone,
+            "extra",
+            EDITED_DERIVED,
+            DERIVED_KEPT,
+        ),
+        (
+            "boss gained the edge in the catalog after the install",
+            orphan_before_the_edge,
+            "extra",
+            EDITED_DERIVED,
+            DERIVED_KEPT,
+        ),
+    ];
+    for (label, world, name, expected, placed) in rows {
+        let f = world();
+        let report = plan_apply(
+            &f.env,
+            &f.scope,
+            &PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            },
+        )
+        .unwrap();
+        let held: Vec<&str> = report
+            .drift
+            .iter()
+            .filter(|row| {
+                row.name == name
+                    && row.harness == HarnessId::Codex
+                    && row.state == kendex_core::engine::DriftState::Conflict
+            })
+            .map(|row| row.detail.as_str())
+            .collect();
+        let [detail] = held[..] else {
+            panic!("{label}: no single held row: {:?}", drift_details(&report));
+        };
+        follow_remedy(&f, name, detail);
+        for (item, harness, lands) in placed {
+            assert_eq!(
+                (
+                    hook_on_disk(&f, *harness, &format!("{item}.sh")),
+                    registered(&f, *harness, item)
+                ),
+                *lands,
+                "{label}: {item} on {harness:?} (written, registered) after following: {detail}"
+            );
+        }
+        assert_eq!(detail, expected, "{label}");
+    }
+}
+
 /// The companion requires a hook of its own, two steps down a chain whose
 /// end names a hook the catalog lacks. A chain is walked one step per
 /// pass of the spread, so the companion is orphaned on Codex before its own
@@ -970,8 +1148,6 @@ type KeptChainRow = (
 fn kept_chain_rows() -> [KeptChainRow; 4] {
     use kendex_core::engine::DriftState::{Conflict, Orphaned};
     const REMOVED: &str = "no longer wanted — will be removed";
-    const EDITED: &str =
-        "no longer wanted, but its files were edited on disk — remove it by name to confirm";
     const LEFT: &str = "left over from an earlier setup; nothing needs it anymore";
     const BY_BOSS: &str = "needed by boss, which stays installed — kept with it";
     const BY_EXTRA: &str = "needed by extra, which stays installed — kept with it";
@@ -989,7 +1165,7 @@ fn kept_chain_rows() -> [KeptChainRow; 4] {
             HarnessId::Codex,
             &[
                 ("extra", Orphaned, REMOVED),
-                ("extra", Conflict, EDITED),
+                ("extra", Conflict, EDITED_DERIVED),
                 ("last", Orphaned, BY_MID),
                 ("mid", Orphaned, BY_EXTRA),
             ],
@@ -1008,7 +1184,7 @@ fn kept_chain_rows() -> [KeptChainRow; 4] {
             HarnessId::Codex,
             &[
                 ("extra", Orphaned, REMOVED),
-                ("extra", Conflict, EDITED),
+                ("extra", Conflict, EDITED_REMOVE_BY_NAME),
                 ("last", Orphaned, BY_MID),
                 ("mid", Orphaned, BY_EXTRA),
             ],
