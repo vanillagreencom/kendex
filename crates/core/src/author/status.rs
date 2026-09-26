@@ -14,7 +14,7 @@ use specta::Type;
 
 use crate::check_catalog::{self, CheckFinding};
 use crate::error::{CoreError, Result};
-use crate::process::Hardened;
+use crate::process::{git_line, origin_url};
 use crate::source_read::SealedSource;
 
 /// One Mine row, computed fresh from the folder on every ask.
@@ -142,7 +142,7 @@ fn git_readiness(path: &Path) -> GitReadiness {
         return GitReadiness::default();
     }
     let porcelain = git_line(path, &["status", "--porcelain"]);
-    let remote = git_line(path, &["remote", "get-url", "origin"]).filter(|url| !url.is_empty());
+    let remote = origin_url(path);
     // Submission sends `origin`, so "ahead" must measure against origin's
     // copy of this branch — not `@{upstream}`, which on a fork tracks the
     // upstream and would call a branch pushed to origin's fork clean while
@@ -169,24 +169,6 @@ fn git_readiness(path: &Path) -> GitReadiness {
         remote,
         ahead,
     }
-}
-
-/// One git question, one trimmed answer; `None` on any failure. Multi-line
-/// output collapses to the whole trimmed text, which is empty exactly when
-/// `git status --porcelain` has nothing to say. `--no-optional-locks`
-/// keeps even `status` from refreshing `.git/index` — reading a folder
-/// must not change a byte inside it.
-fn git_line(path: &Path, args: &[&str]) -> Option<String> {
-    let mut no_locks: Vec<&str> = vec!["--no-optional-locks"];
-    no_locks.extend_from_slice(args);
-    let output = Hardened::git_in(path, &no_locks)
-        .timeout(std::time::Duration::from_secs(10))
-        .run()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 /// Register an existing folder under Mine, reading it as-is: zero bytes

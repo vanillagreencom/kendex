@@ -147,10 +147,18 @@ fn a_version_bump_in_any_key_field_re_scores() {
     let path = cache_file(&env);
     let written = fs::read_to_string(&path).unwrap();
 
-    for field in ["format", "ruleset", "discovery"] {
+    // Each key field, with the stale value it takes: the versions are
+    // numbers, the accepted-findings table's digest is text.
+    let stale: [(&str, serde_json::Value); 4] = [
+        ("format", 9999.into()),
+        ("ruleset", 9999.into()),
+        ("discovery", 9999.into()),
+        ("allowance", "another-table".into()),
+    ];
+    for (field, value) in stale {
         // Plant a stale version under an otherwise valid record.
         let mut record: serde_json::Value = serde_json::from_str(&written).unwrap();
-        record[field] = 9999.into();
+        record[field] = value;
         fs::write(&path, record.to_string()).unwrap();
 
         let rescored = score(&env, &scope);

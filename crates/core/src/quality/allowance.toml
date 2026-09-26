@@ -1,0 +1,48 @@
+# Findings kendex accepts in its own packages, one row per finding, keyed
+# on the text of the file holding it. A row is added by hand and reviewed
+# with the finding it accepts; `cargo test -p kendex-core -- --ignored
+# regenerate_allowance` refreshes the hash, line and message of the rows
+# already here and refuses a row whose finding is gone, and
+# `crates/core/tests/allowance.rs` fails while the table is stale. Read by
+# `crates/core/src/quality/allowance.rs`.
+
+ruleset = 6
+
+[[package]]
+kind = "skill"
+name = "orch"
+
+[[package.file]]
+path = "scripts/lib/lane-launch.sh"
+hash = "a37f04d3ce0cef36640457882dffd9386600430d10741a51505fca4135817854"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line = 135
+message = "`--dangerously-skip-permissions` turns off permission prompts"
+
+[[package]]
+kind = "skill"
+name = "harness-ci"
+
+[[package.file]]
+path = "references/wiring.md"
+hash = "c87867b654b4ad08ee46394834e8c54a2e82b3cd46fd512eb7e897857068fab5"
+
+[[package.file.finding]]
+rule = "rce"
+line = 207
+message = "this line pipes a download straight into a shell with `https://kendex.ai/install.sh`, so whatever the far end serves is what runs"
+
+[[package]]
+kind = "skill"
+name = "review-gate"
+
+[[package.file]]
+path = "templates/review-gate-writer.yml"
+hash = "05c242972d6362eb6c27bcb4ae7652daa6cfdcb845a0350f8ddedf7defdd5196"
+
+[[package.file.finding]]
+rule = "rce"
+line = 633
+message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/${K… 99f983ea52d58ae0`, so whatever the far end serves is what runs"

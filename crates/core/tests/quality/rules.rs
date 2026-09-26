@@ -3,13 +3,16 @@
 use std::path::PathBuf;
 
 use kendex_core::model::ItemKind;
-use kendex_core::quality::{AuditInput, AuditResult, Content, McpEntry, Severity, TreeFile, audit};
+use kendex_core::quality::{
+    AuditInput, AuditResult, Content, McpEntry, Publisher, Severity, TreeFile, audit,
+};
 
 pub fn document(kind: ItemKind, text: &str) -> AuditResult {
     audit(AuditInput {
         kind,
         name: "sample".into(),
         harness: None,
+        publisher: Publisher::Other,
         location: "sample.md".into(),
         content: Content::Document { text: text.into() },
     })
@@ -30,6 +33,7 @@ pub fn skill_bytes(files: &[(&str, &[u8])]) -> AuditResult {
         kind: ItemKind::Skill,
         name: "sample".into(),
         harness: None,
+        publisher: Publisher::Other,
         location: "skills/sample".into(),
         content: Content::SkillTree {
             files: files
@@ -45,6 +49,7 @@ pub fn mcp(entry: McpEntry) -> AuditResult {
         kind: ItemKind::McpServer,
         name: "sample".into(),
         harness: None,
+        publisher: Publisher::Other,
         location: ".mcp.json".into(),
         content: Content::Mcp(entry),
     })
@@ -270,6 +275,7 @@ fn dangerous_commands_weigh_more_in_a_hook_than_in_a_skill() {
         kind: ItemKind::Hook,
         name: "guard".into(),
         harness: None,
+        publisher: Publisher::Other,
         location: "hooks/guard.sh".into(),
         content: Content::Hook {
             event: "PreToolUse".into(),

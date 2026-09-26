@@ -26,6 +26,7 @@ fn an_offered_package_serves_its_advisory_fields_at_the_top_level() {
     assert_eq!(
         keys,
         [
+            "accepted",
             "contentHash",
             "findings",
             "fromCache",
@@ -56,6 +57,7 @@ fn a_cache_record_keeps_the_payload_at_the_top_level_too() {
         format: CACHE_FORMAT,
         content_hash: "b3a19f04c7d2e851".to_owned(),
         discovery: DISCOVERY_VERSION,
+        allowance: Allowance::builtin_digest().to_owned(),
         advisory: crate::quality::sample::populated(),
     };
 
@@ -70,6 +72,8 @@ fn a_cache_record_keeps_the_payload_at_the_top_level_too() {
     assert_eq!(
         keys,
         [
+            "accepted",
+            "allowance",
             "contentHash",
             "discovery",
             "findings",

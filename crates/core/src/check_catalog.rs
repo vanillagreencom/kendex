@@ -23,7 +23,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::model::{HarnessId, ItemKind};
-use crate::quality::{self, AuditInput, Content};
+use crate::quality::{self, AuditInput, Content, Publisher};
 use crate::render::validate;
 use crate::source::{CatalogMode, SourceConfig};
 use crate::source_read::SealedSource;
@@ -230,6 +230,13 @@ pub fn check_with(
     config: &SourceConfig,
     display: &str,
 ) -> Result<CatalogCheck> {
+    // Whose checkout this is decides which accepted findings are set
+    // aside, and it is decided here, once, for the three readers of a
+    // checkout that come through this pass, the check, the directory
+    // index and the Mine row, so none of them can score a package another
+    // would not. A path source installs by its declared provenance
+    // instead (`Publisher::of`).
+    let publisher = Publisher::of_checkout(sealed.root());
     let catalog = config
         .findings()
         .map(|finding| CheckFinding {
@@ -279,7 +286,9 @@ pub fn check_with(
     for kind in CHECKED_KINDS {
         for name in crate::source::list_items(sealed, config, kind) {
             match crate::source::find_item(sealed, config, kind, &name) {
-                Some(path) => report.items.push(check_item(sealed, kind, &name, &path)?),
+                Some(path) => report
+                    .items
+                    .push(check_item(sealed, kind, &name, &path, publisher)?),
                 // A listed name every lookup refuses (an illegal spelling,
                 // say) is a catalog problem, not content to score.
                 None => report.catalog.push(CheckFinding {
@@ -301,32 +310,55 @@ pub fn check_with(
 }
 
 /// Both passes over one item at its catalog path — the unit the indexer
-/// scores packages with.
+/// scores packages with. `publisher` is whose repository the catalog is,
+/// which [`check_with`] establishes once from the checkout's `origin`
+/// remote for every item it checks.
 pub fn check_item(
     sealed: &SealedSource,
     kind: ItemKind,
     name: &str,
     path: &Path,
+    publisher: Publisher,
 ) -> Result<CheckedItem> {
-    let content = content(sealed, kind, path)?;
-    let file = sealed.catalog_path(path);
-    let mut structural = structural(kind, name, &file, &content);
-    structural.extend(settings::findings(sealed, kind, name, &file, path)?);
+    let input = audit_input(sealed, kind, name, path, publisher)?;
+    let mut structural = structural(kind, name, &input.location, &input.content);
+    structural.extend(settings::findings(
+        sealed,
+        kind,
+        name,
+        &input.location,
+        path,
+    )?);
+    let file = input.location.clone();
     // The safety half of the authoring check: the same rules an install
     // runs, over the same content.
-    let advisory = quality::audit(AuditInput {
-        kind,
-        name: name.to_owned(),
-        harness: None,
-        location: file.clone(),
-        content,
-    });
+    let advisory = quality::audit(input);
     Ok(CheckedItem {
         kind,
         name: name.to_owned(),
         file,
         structural,
         advisory,
+    })
+}
+
+/// What the safety rules read of one offered item at its catalog path:
+/// the one construction this check and the accepted-findings refresh
+/// share, so the two cannot read one package differently.
+pub(crate) fn audit_input(
+    sealed: &SealedSource,
+    kind: ItemKind,
+    name: &str,
+    path: &Path,
+    publisher: Publisher,
+) -> Result<AuditInput> {
+    Ok(AuditInput {
+        kind,
+        name: name.to_owned(),
+        harness: None,
+        location: sealed.catalog_path(path),
+        publisher,
+        content: content(sealed, kind, path)?,
     })
 }
 

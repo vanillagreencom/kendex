@@ -1,0 +1,1 @@
+- The installed audit reads every adapter's view of one skill tree as the row that wrote it, and a hand copy elsewhere as nobody's, so an accepted finding is set aside only where kendex wrote.

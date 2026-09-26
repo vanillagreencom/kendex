@@ -39,6 +39,7 @@ function row(
     source: null,
     findings,
     mentions: [],
+    accepted: [],
     skipped: [],
     safety: { score, deductions: [] },
     quality: null,

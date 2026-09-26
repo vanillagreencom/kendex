@@ -91,6 +91,7 @@ fn plugin(sources: kendex_core::quality::PluginSources) -> kendex_core::quality:
         kind: ItemKind::Plugin,
         name: "sample@market".into(),
         harness: None,
+        publisher: kendex_core::quality::Publisher::Other,
         location: "plugins/sample".into(),
         content: kendex_core::quality::Content::Plugin(sources),
     })

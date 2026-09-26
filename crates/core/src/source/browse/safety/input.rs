@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use crate::error::Result;
 use crate::model::ItemKind;
-use crate::quality::{AuditInput, Content};
+use crate::quality::{AuditInput, Content, Publisher};
 
 use super::super::Browsed;
 use super::Item;
@@ -59,6 +59,7 @@ pub(super) fn input_for(
         name: name.to_owned(),
         harness: None,
         location,
+        publisher: Publisher::of(&browsed.source.provenance),
         content,
     })
 }

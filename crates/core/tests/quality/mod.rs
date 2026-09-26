@@ -4,10 +4,12 @@
 #![cfg(unix)]
 
 mod advisory;
+mod allowance;
 mod corpus;
 mod fixture;
 mod kinds;
 mod mentions;
+mod publisher;
 mod reading;
 mod rules;
 mod rules_blocks;

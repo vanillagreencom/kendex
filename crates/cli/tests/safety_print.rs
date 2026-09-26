@@ -185,6 +185,195 @@ fn a_verbose_refresh_prints_what_the_rules_read_as_a_mention() {
     assert!(finding_lines(&printed).is_empty(), "{printed}");
 }
 
+/// Every file under `from`, copied to `to`.
+#[allow(clippy::unwrap_used)]
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        match entry.file_type().unwrap().is_dir() {
+            true => copy_tree(&entry.path(), &target),
+            false => {
+                fs::copy(entry.path(), &target).unwrap();
+            }
+        }
+    }
+}
+
+/// One git command under `dir`, through the constructor every kendex
+/// process goes through, so the fixture's git reads no host state.
+#[allow(clippy::unwrap_used)]
+fn git(dir: &Path, args: &[&str]) {
+    let output = kendex_core::process::Hardened::git(args, Some(dir))
+        .run()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+}
+
+/// Commit everything under `upstream`, as a fixture's own git user.
+fn commit_all(upstream: &Path, message: &str) {
+    git(upstream, &["add", "-A"]);
+    git(
+        upstream,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--quiet",
+            "-m",
+            message,
+        ],
+    );
+}
+
+/// kendex's own repository under the fake git base at `home/git`, holding
+/// this repository's copy of `harness-ci` and a stub of `orch`, the one
+/// companion it requires; and a project under `home` declaring it.
+#[allow(clippy::unwrap_used)]
+fn kendexs_own_repository(home: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let upstream = home
+        .join("git")
+        .join(kendex_core::manifest::DEFAULT_SOURCE_REPO);
+    copy_tree(
+        &repo.join("skills/harness-ci"),
+        &upstream.join("skills/harness-ci"),
+    );
+    fs::create_dir_all(upstream.join("skills/orch")).unwrap();
+    fs::write(
+        upstream.join("skills/orch/SKILL.md"),
+        "---\nname: orch\ndescription: stands in for orch\n---\n\nA stub.\n",
+    )
+    .unwrap();
+    fs::write(upstream.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    git(&upstream, &["init", "--quiet", "-b", "main"]);
+    commit_all(&upstream, "one");
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.harness-ci]\nsource = \"cat\"\n",
+            kendex_core::manifest::DEFAULT_SOURCE_REPO
+        ),
+    )
+    .unwrap();
+    (upstream, project)
+}
+
+/// `kendex refresh` of the project, served from the fake git base.
+#[allow(clippy::expect_used)]
+fn refresh_from_base(home: &Path, project: &Path, verbose: bool) -> String {
+    let mut args = vec!["refresh", "-y", "--scope", "project"];
+    if verbose {
+        args.push("--verbose");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_kendex"))
+        .args(&args)
+        .current_dir(project)
+        .env_clear()
+        .envs(test_util::fixture_env(home))
+        .env("KENDEX_BACKGROUND_REFRESH", "off")
+        .env(
+            "KENDEX_GIT_BASE",
+            format!("file://{}", home.join("git").display()),
+        )
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .output()
+        .expect("kendex binary runs");
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+/// A package kendex publishes with a finding its own table accepts,
+/// installed from kendex's own repository holding exactly the published
+/// bytes: the accepted finding is off the plain run and prints only on a
+/// verbose one, one line per row of the table. An edit to the file
+/// holding it puts the finding back on the plain run. What the rest of
+/// the package scores is the rules' business, not this case's, so no
+/// score or empty finding list is asserted.
+///
+/// The package requires one companion, stubbed here so the plan installs
+/// it; the first assertion names the package, so a table that no longer
+/// lists it points here.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_finding_kendex_accepted_in_its_own_package_prints_only_on_a_verbose_run() {
+    let package = kendex_core::quality::Allowance::builtin()
+        .packages
+        .iter()
+        .find(|package| package.name == "harness-ci")
+        .unwrap_or_else(|| panic!("the compiled-in table accepts nothing in skills/harness-ci; pick another package for this case"))
+        .clone();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let home = home.as_path();
+    let (upstream, project) = kendexs_own_repository(home);
+
+    // The finding lines that name a row of the table.
+    let flagged_rows = |printed: &str| -> usize {
+        finding_lines(printed)
+            .into_iter()
+            .filter(|line| {
+                package
+                    .files
+                    .iter()
+                    .flat_map(|file| file.accepted.iter())
+                    .any(|row| line.contains(&row.message))
+            })
+            .count()
+    };
+    let printed = refresh_from_base(home, &project, false);
+    assert!(
+        printed.contains("safety: skill harness-ci for Claude Code scores "),
+        "{printed}"
+    );
+    assert_eq!(flagged_rows(&printed), 0, "{printed}");
+    assert!(
+        !printed.contains("accepted in kendex's own package"),
+        "{printed}"
+    );
+
+    let printed = refresh_from_base(home, &project, true);
+    let accepted: Vec<&str> = printed
+        .lines()
+        .filter(|line| line.starts_with("  accepted in kendex's own package: "))
+        .collect();
+    let expected: Vec<String> = package
+        .files
+        .iter()
+        .flat_map(|file| {
+            file.accepted.iter().map(move |row| {
+                let line = row.line.map(|line| format!(":{line}")).unwrap_or_default();
+                format!(
+                    "  accepted in kendex's own package: {} (skills/harness-ci/{}{line})",
+                    row.message, file.path
+                )
+            })
+        })
+        .collect();
+    assert_eq!(accepted, expected, "{printed}");
+    assert_eq!(flagged_rows(&printed), 0, "{printed}");
+
+    // One byte more in the accepted file, published, and the finding is
+    // back.
+    let edited = &package.files[0];
+    let path = upstream.join("skills/harness-ci").join(&edited.path);
+    let mut bytes = fs::read(&path).unwrap();
+    bytes.extend_from_slice(b"\n");
+    fs::write(&path, bytes).unwrap();
+    commit_all(&upstream, "two");
+    let printed = refresh_from_base(home, &project, false);
+    assert_eq!(flagged_rows(&printed), edited.accepted.len(), "{printed}");
+    assert!(
+        !printed.contains("accepted in kendex's own package"),
+        "{printed}"
+    );
+}
+
 /// add, apply and refresh print the identical block for the identical
 /// content: one format, not three that happen to agree.
 #[test]

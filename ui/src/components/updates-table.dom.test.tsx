@@ -394,6 +394,7 @@ describe("the reading behind a row's score", () => {
           },
         ],
         mentions: [],
+        accepted: [],
         skipped: [],
         safety: { score: 58, deductions: [] },
         quality: null,

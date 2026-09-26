@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use kendex_core::model::ItemKind;
-use kendex_core::quality::{AuditInput, Content, Severity, TreeFile, audit};
+use kendex_core::quality::{AuditInput, Content, Publisher, Severity, TreeFile, audit};
 
 use super::rules::{document, rules_hit, severity_of, skill};
 
@@ -19,6 +19,7 @@ fn tree(files: Vec<(&str, Vec<u8>)>) -> kendex_core::quality::AuditResult {
         kind: ItemKind::Skill,
         name: "sample".into(),
         harness: None,
+        publisher: Publisher::Other,
         location: "skills/sample".into(),
         content: Content::SkillTree {
             files: files
@@ -138,26 +139,29 @@ fn an_observed_mcp_server_is_read_from_the_config_that_holds_it() {
     )
     .unwrap();
 
-    let input = kendex_core::quality::observe::input_for(&kendex_core::model::ObservedItem {
-        kind: ItemKind::McpServer,
-        name: "files".into(),
-        harness: kendex_core::model::HarnessId::Claude,
-        scope: kendex_core::model::Scope::Global,
-        at: kendex_core::model::observed_at(
-            &config,
-            &kendex_core::model::FileState::ConfigEntry,
-            None,
-        ),
-        path: config,
-        file_state: kendex_core::model::FileState::ConfigEntry,
-        enabled: None,
-        origin: None,
-        summary: None,
-        action: None,
-        tags: Vec::new(),
-        modified_at: None,
-        vendor: None,
-    });
+    let input = kendex_core::quality::observe::input_for(
+        &kendex_core::model::ObservedItem {
+            kind: ItemKind::McpServer,
+            name: "files".into(),
+            harness: kendex_core::model::HarnessId::Claude,
+            scope: kendex_core::model::Scope::Global,
+            at: kendex_core::model::observed_at(
+                &config,
+                &kendex_core::model::FileState::ConfigEntry,
+                None,
+            ),
+            path: config,
+            file_state: kendex_core::model::FileState::ConfigEntry,
+            enabled: None,
+            origin: None,
+            summary: None,
+            action: None,
+            tags: Vec::new(),
+            modified_at: None,
+            vendor: None,
+        },
+        kendex_core::quality::Publisher::Other,
+    );
     let result = audit(input);
     let hits = rules_hit(&result);
     assert!(hits.contains(&"broad-permissions"), "{:?}", result.findings);
@@ -178,26 +182,29 @@ fn an_mcp_server_with_no_readable_entry_reports_its_rules_as_skipped() {
     let config = tmp.path().join(".mcp.json");
     std::fs::write(&config, r#"{"mcpServers":{"other":{"command":"npx"}}}"#).unwrap();
 
-    let input = kendex_core::quality::observe::input_for(&kendex_core::model::ObservedItem {
-        kind: ItemKind::McpServer,
-        name: "files".into(),
-        harness: kendex_core::model::HarnessId::Claude,
-        scope: kendex_core::model::Scope::Global,
-        at: kendex_core::model::observed_at(
-            &config,
-            &kendex_core::model::FileState::ConfigEntry,
-            None,
-        ),
-        path: config,
-        file_state: kendex_core::model::FileState::ConfigEntry,
-        enabled: None,
-        origin: None,
-        summary: None,
-        action: None,
-        tags: Vec::new(),
-        modified_at: None,
-        vendor: None,
-    });
+    let input = kendex_core::quality::observe::input_for(
+        &kendex_core::model::ObservedItem {
+            kind: ItemKind::McpServer,
+            name: "files".into(),
+            harness: kendex_core::model::HarnessId::Claude,
+            scope: kendex_core::model::Scope::Global,
+            at: kendex_core::model::observed_at(
+                &config,
+                &kendex_core::model::FileState::ConfigEntry,
+                None,
+            ),
+            path: config,
+            file_state: kendex_core::model::FileState::ConfigEntry,
+            enabled: None,
+            origin: None,
+            summary: None,
+            action: None,
+            tags: Vec::new(),
+            modified_at: None,
+            vendor: None,
+        },
+        kendex_core::quality::Publisher::Other,
+    );
     let result = audit(input);
     assert!(result.findings.is_empty());
     assert!(!result.skipped.is_empty(), "an unread entry is not a pass");

@@ -50,12 +50,71 @@ fn git_runs_without_redirecting_environment_and_without_prompts() {
     );
     let args: Vec<_> = hardened.command.get_args().collect();
     assert_eq!(
-        &args[..3],
+        &args[..5],
         [
             OsStr::new("-c"),
             OsStr::new("protocol.ext.allow=never"),
+            OsStr::new("-c"),
+            OsStr::new("core.fsmonitor=false"),
             OsStr::new("status")
         ]
+    );
+}
+
+/// A repository whose own config names a `core.fsmonitor` command runs
+/// it on any index refresh, and a catalog checkout kendex reads can name
+/// one. Every git call kendex builds settles the hook off, so the command
+/// never runs; the same call with nothing settled runs it, which is what
+/// proves the fixture reaches the hook at all.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn no_git_call_runs_a_repositorys_own_fsmonitor_hook() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let marker = tmp.path().join("hook-ran");
+    let hook = tmp.path().join("fsmonitor");
+    fs::write(
+        &hook,
+        format!("#!/bin/sh\ntouch '{}'\nprintf '/'\n", marker.display()),
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    for args in [
+        &["init", "--quiet", "-b", "main"][..],
+        &["config", "core.fsmonitor", &hook.display().to_string()][..],
+    ] {
+        assert!(
+            Hardened::git(args, Some(&repo))
+                .run()
+                .unwrap()
+                .status
+                .success(),
+            "git {args:?}"
+        );
+    }
+    fs::write(repo.join("file"), "one\n").unwrap();
+
+    let unsettled = Hardened::git_settled(
+        &[],
+        vec![OsString::from("status"), OsString::from("--porcelain")],
+        Some(&repo),
+    )
+    .run()
+    .unwrap();
+    assert!(unsettled.status.success(), "{unsettled:?}");
+    assert!(marker.exists(), "the fixture's hook runs under plain git");
+    fs::remove_file(&marker).unwrap();
+
+    let settled = Hardened::git(&["status", "--porcelain"], Some(&repo))
+        .run()
+        .unwrap();
+    assert!(settled.status.success(), "{settled:?}");
+    assert!(
+        !marker.exists(),
+        "kendex's git call ran the repository's hook"
     );
 }
 

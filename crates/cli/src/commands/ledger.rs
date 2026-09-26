@@ -196,6 +196,7 @@ mod tests {
                 },
                 findings,
                 mentions: Vec::new(),
+                accepted: Vec::new(),
                 skipped,
                 quality: None,
                 ruleset: kendex_core::quality::RULESET_VERSION,

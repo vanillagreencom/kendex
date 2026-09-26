@@ -14,6 +14,7 @@ mod add_from_local;
 mod adopt_many_tools;
 mod adopt_pinned;
 mod agent_skill_roots;
+mod allowance;
 mod antigravity;
 mod app_update;
 mod authored_summaries;

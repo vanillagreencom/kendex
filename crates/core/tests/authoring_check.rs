@@ -142,6 +142,119 @@ fn check_and_index_agree_on_the_offered_set() {
     }
 }
 
+/// Every file under `from`, copied to `to`.
+#[allow(clippy::unwrap_used)]
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        match entry.file_type().unwrap().is_dir() {
+            true => copy_tree(&entry.path(), &target),
+            false => {
+                fs::copy(entry.path(), &target).unwrap();
+            }
+        }
+    }
+}
+
+/// The check, the index and the Mine row read one checkout the same way
+/// where they can differ: a checkout whose `origin` is kendex's own
+/// repository has its accepted finding set aside in all three, and one
+/// whose `origin` is a fork, one with no `origin`, and a folder that is
+/// no repository keep it in all three. The package is this repository's
+/// `harness-ci`, whose accepted finding in `references/wiring.md` the
+/// table names; what the rest of the package scores is the rules'
+/// business, so the index's score and the Mine row's count are held to
+/// the check's rather than to a number.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_index_and_mine_agree_on_the_checkout() {
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/harness-ci");
+    let init: &[&str] = &["init", "--quiet", "-b", "main"];
+    let at_wiring = |findings: &[kendex_core::quality::Finding]| -> Vec<String> {
+        findings
+            .iter()
+            .filter(|finding| finding.location.ends_with("references/wiring.md"))
+            .map(|finding| finding.rule.clone())
+            .collect()
+    };
+    let rows: [(&str, Vec<&[&str]>, bool); 4] = [
+        (
+            "kendex",
+            vec![
+                init,
+                &[
+                    "remote",
+                    "add",
+                    "origin",
+                    "https://github.com/vanillagreencom/kendex.git",
+                ],
+            ],
+            true,
+        ),
+        (
+            "fork",
+            vec![
+                init,
+                &[
+                    "remote",
+                    "add",
+                    "origin",
+                    "https://github.com/someone/kendex.git",
+                ],
+            ],
+            false,
+        ),
+        ("no origin", vec![init], false),
+        ("no git", vec![], false),
+    ];
+    for (row, git, accepted) in rows {
+        let (_tmp, root) = repo();
+        copy_tree(&shipped, &root.join("skills/harness-ci"));
+        fs::write(root.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+        for args in git {
+            let output = kendex_core::process::Hardened::git(args, Some(&root))
+                .run()
+                .unwrap();
+            assert!(output.status.success(), "{row}: git {args:?}");
+        }
+        let sealed = SealedSource::open(&root).unwrap();
+        let checked = check(&sealed, "repo").unwrap();
+        let item = checked
+            .items
+            .iter()
+            .find(|item| item.name == "harness-ci")
+            .unwrap();
+        let (flagged, set_aside) = match accepted {
+            true => (vec![], vec!["rce".to_owned()]),
+            false => (vec!["rce".to_owned()], vec![]),
+        };
+        assert_eq!(at_wiring(&item.advisory.findings), flagged, "{row}: check");
+        assert_eq!(
+            at_wiring(&item.advisory.accepted),
+            set_aside,
+            "{row}: check"
+        );
+        let indexed = index(&sealed, "repo").unwrap();
+        let package = indexed
+            .packages
+            .iter()
+            .find(|package| package.name == "harness-ci")
+            .unwrap();
+        assert_eq!(
+            package.safety.score, item.advisory.safety.score,
+            "{row}: index"
+        );
+        let mine = kendex_core::author::status::status(&root).unwrap();
+        assert_eq!(
+            mine.safety_findings as usize,
+            item.advisory.findings.len(),
+            "{row}: mine"
+        );
+    }
+}
+
 /// A kind dir's support directories (tests, fixtures) hold suites about the
 /// items, not items — the check must not list them as installable names.
 #[test]

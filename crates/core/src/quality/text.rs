@@ -233,6 +233,7 @@ pub fn prepare(input: AuditInput) -> Prepared {
     };
     let content = match input.content {
         Content::Document { text } => {
+            let digest = digest(&text);
             let text = clean(input.location.clone(), &text);
             docs.push(Doc {
                 location: input.location.clone(),
@@ -241,6 +242,7 @@ pub fn prepare(input: AuditInput) -> Prepared {
                     &text,
                     language(&input.location, &text).reading(&BTreeSet::new()),
                 ),
+                digest,
             });
             Content::Document { text }
         }
@@ -292,12 +294,15 @@ fn tree_docs(
 ) -> Vec<TreeFile> {
     // The location a deobfuscation report is filed under is the one every
     // line rule cites, spelled once here for both.
-    let placed: Vec<(TreeFile, String)> = files
+    let placed: Vec<(TreeFile, String, Option<Cleaned>)> = files
         .into_iter()
         .map(|file| {
             let location = format!("{root}/{}", crate::paths::slashed(&file.path));
-            let text = file.text.map(|text| clean(location.clone(), &text));
-            (TreeFile { text, ..file }, location)
+            let cleaned = file.text.map(|text| Cleaned {
+                digest: digest(&text),
+                text: clean(location.clone(), &text),
+            });
+            (TreeFile { text: None, ..file }, location, cleaned)
         })
         .collect();
     // A script calls the message helpers its tree's library files define,
@@ -306,21 +311,28 @@ fn tree_docs(
     // language is decided once, here, for both passes.
     let languages: Vec<Option<Language>> = placed
         .iter()
-        .map(|(file, location)| file.text.as_deref().map(|text| language(location, text)))
+        .map(|(_, location, cleaned)| {
+            cleaned
+                .as_ref()
+                .map(|cleaned| language(location, &cleaned.text))
+        })
         .collect();
     let shell: Vec<&str> = placed
         .iter()
         .zip(&languages)
         .filter(|(_, language)| **language == Some(Language::Shell))
-        .filter_map(|((file, _), _)| file.text.as_deref())
+        .filter_map(|((_, _, cleaned), _)| cleaned.as_ref().map(|cleaned| cleaned.text.as_str()))
         .collect();
     let diagnostic = shell::diagnostic_functions(&shell);
     placed
         .into_iter()
         .zip(languages)
-        .map(|((file, location), language)| {
-            if let (Some(text), Some(language)) = (&file.text, language) {
-                let split = lines(text, language.reading(&diagnostic));
+        .map(|((file, location, cleaned), language)| {
+            let Some(cleaned) = cleaned else {
+                return file;
+            };
+            if let Some(language) = language {
+                let split = lines(&cleaned.text, language.reading(&diagnostic));
                 docs.push(Doc {
                     lines: match is_supporting(&file.path) {
                         true => split.into_iter().map(Line::as_description).collect(),
@@ -328,9 +340,13 @@ fn tree_docs(
                     },
                     role: super::DocRole::Text,
                     location,
+                    digest: cleaned.digest,
                 });
             }
-            file
+            TreeFile {
+                text: Some(cleaned.text),
+                ..file
+            }
         })
         .collect()
 }
@@ -380,24 +396,29 @@ fn hook_docs(
 ) -> (String, Option<String>, Option<String>) {
     // The command line is run by a shell, and its script defines nothing
     // the command line can call.
+    let command_digest = digest(&command);
     let command = clean(format!("{root} (command)"), &command);
     docs.push(Doc {
         location: format!("{root} (command)"),
         role: super::DocRole::Text,
         lines: lines(&command, Reading::Shell(&BTreeSet::new())),
+        digest: command_digest,
     });
     // What the harness stores beside the command, not what it runs: one
     // value per line, one document, for the rules about values.
     let values = values.map(|values| {
+        let digest = digest(&values);
         let values = clean(format!("{root} (entry)"), &values);
         docs.push(Doc {
             location: format!("{root} (entry)"),
             role: super::DocRole::Values,
             lines: lines(&values, Reading::Plain),
+            digest,
         });
         values
     });
     let script = script.map(|body| {
+        let digest = digest(&body);
         let body = clean(root.to_owned(), &body);
         let language = language(root, &body);
         let diagnostic = match language {
@@ -408,10 +429,25 @@ fn hook_docs(
             location: root.to_owned(),
             role: super::DocRole::Text,
             lines: lines(&body, language.reading(&diagnostic)),
+            digest,
         });
         body
     });
     (command, values, script)
+}
+
+/// One tree file's text as the rules read it, beside the name of the text
+/// it was read from: the digest is taken before deobfuscation, so it is
+/// the hash a file of exactly the author's text has on disk.
+struct Cleaned {
+    text: String,
+    digest: String,
+}
+
+/// What names a document's text wherever a reading has to say which text
+/// it read: the hash a file of exactly this text has on disk.
+fn digest(text: &str) -> String {
+    crate::hash::hash_bytes(text.as_bytes())
 }
 
 /// Split into lines, marking the ones that are quoting somebody else and
