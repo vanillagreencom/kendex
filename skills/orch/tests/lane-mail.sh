@@ -436,6 +436,16 @@ lm notice --item KEN-1 --file "$(text n 'fyi')"
 lm pending --item KEN-1 --root "$LANE"
 assert_eq "$(jq -rs 'map(.kind) | unique | join(",")' <<<"$OUT")" "ask" "pending lists asks alone"
 
+# The overseer answers an owner note in its own mailbox; that reply must not
+# read as the owner's.
+new_lane self_reply
+lm send --item overseer --directive --file "$(text d 'Owner note.')"
+OWNER_NOTE="$(jq -r '.id' < "$LANE/tmp/lane-mail/overseer/to-lane.jsonl")"
+lm send --item overseer --re "$OWNER_NOTE" --file "$(text d 'Held.')"
+assert_eq "$RC=$(jq -rs 'map(.kind + " " + .from) | join(",")' < "$LANE/tmp/lane-mail/overseer/to-lane.jsonl")" \
+  "0=directive owner,answer overseer" \
+  "an answer into the overseer's own mailbox is the overseer's reply, not the owner's"
+
 # The peer channel: two repositories, each an overseer of its own. `new_lane`
 # builds a checkout under TMP_ROOT, so a peer named by its bare name is the
 # sibling layout the resolution assumes.

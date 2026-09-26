@@ -333,6 +333,55 @@ out="$(run_watch LINEAR_TEAM -- --max-loops 1 --since 2026-01-01T00:00:00Z 2>"$e
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-01-01T00:00:00Z" \
   "a watch for another fleet's --since does not report the note again" "$err"
 
+# The overseer answers an owner note in its own mailbox, and that reply is no
+# note of the owner's: the watch acknowledges it and reports nothing, and still
+# reports the owner note behind it in the same pass. `sent` is the reply
+# lane-mail stamps `overseer`; `owner-answer` is an answer carrying `owner`,
+# which the owner never writes. Each row's mutant drops the one line that skips
+# it, and reports the reply back.
+new_case mail_overseer_reply
+printf 'Held.\n' > "$TMP_ROOT/reply.txt"
+printf 'Hold KEN-8 too.\n' > "$TMP_ROOT/after-reply.txt"
+overseer_reply() { # sent|owner-answer -> the reply's id, then the note's after it
+  mail_reset overseer
+  case "$1" in
+    sent)
+      (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item overseer --re some-note --file "$TMP_ROOT/reply.txt") >/dev/null
+      ;;
+    owner-answer)
+      jq -nc '{id: "1-1-reply", kind: "answer", at: "2026-01-01T00:00:00Z", from: "owner", re: "some-note", text: "Held."}' \
+        >> "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
+      ;;
+  esac
+  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item overseer --directive --file "$TMP_ROOT/after-reply.txt") >/dev/null
+  jq -rs 'map(.id) | join(" ")' "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
+}
+for row in \
+  'sent|EVENT peer-note overseer %s kind=answer re=some-note|            overseer) continue ;;' \
+  'owner-answer|EVENT owner-note %s|              [[ "$kind" != answer ]] || continue'; do
+  name="${row%%|*}"
+  rest="${row#*|}"
+  mutant_line="${rest%%|*}"
+  skip_line="${rest#*|}"
+  mutant="$MUTANT_DIR/orch/scripts/oversee-watch-reply-$name"
+  grep -vxF -- "$skip_line" "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$mutant"
+  chmod +x "$mutant"
+  assert_eq "$(cmp -s "$mutant" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+    "differs" "control: the $name mutant really drops its skip"
+  ids="$(overseer_reply "$name")"
+  err="$TMP_ROOT/reply-$name"
+  out="$(run_watch -- --max-loops 1 2>"$err")"
+  assert_eq "$(head -1 <<<"$out")" "EVENT owner-note ${ids#* }" \
+    "the overseer's own $name reply is never reported to it, and the note after it is" "$err"
+  ids="$(overseer_reply "$name")"
+  reply="${ids%% *}"
+  err="$TMP_ROOT/reply-$name-mutant"
+  out="$(WATCH_BIN="$mutant" run_watch -- --max-loops 1 2>"$err")"
+  # shellcheck disable=SC2059 # the row's line is the format
+  assert_eq "$(head -1 <<<"$out")" "$(printf "$mutant_line" "$reply")" \
+    "control: without its skip the $name reply is read back as a note" "$err"
+done
+
 # One mailbox, two checkouts. lane-mail resolves the overseer mailbox to the
 # main checkout from a linked worktree as well, and every fleet lane runs in
 # one, so a watch started there reads the same mailbox through the same cursor

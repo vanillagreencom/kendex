@@ -2263,13 +2263,17 @@ check_mail() {
         # line carries its kind, because only an ask is owed a reply and an
         # answer to a directive would name an id in no outbox; `re=` rides an
         # answer, without which two replies from one peer are told apart by
-        # their wording alone.
+        # their wording alone. An answer no peer sent is the overseer's own
+        # reply, skipped: the owner answers nothing.
         overseer:*)
-          if [[ -z "$from" || "$from" == owner ]]; then
-            echo "EVENT owner-note $id"
-          else
-            echo "EVENT peer-note ${from#overseer:} $id kind=$kind${re:+ re=$re}"
-          fi
+          case "$from" in
+            overseer) continue ;;
+            "" | owner)
+              [[ "$kind" != answer ]] || continue
+              echo "EVENT owner-note $id"
+              ;;
+            *) echo "EVENT peer-note ${from#overseer:} $id kind=$kind${re:+ re=$re}" ;;
+          esac
           ;;
         *:ask) echo "EVENT lane-question $item $id" ;;
         # Only the lane writes this file, and it writes asks and notices; any
