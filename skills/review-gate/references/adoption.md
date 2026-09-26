@@ -6,7 +6,7 @@ How a repo wires the shared engine: the writer workflow, the validate step, rule
 
 The gate never polices CI. A repo must satisfy ONE of these:
 
-1. **A merge queue** whose required contexts include the repo's test aggregate (recommended).
+1. **A merge queue** whose required contexts include the repo's `CI` aggregate (recommended).
 2. **No held-back jobs** — every required check runs on every push.
 
 Held-back jobs report `skipped`, and GitHub counts skipped as satisfied.
@@ -48,10 +48,16 @@ Value rules come from the engine, not from a copy of it: the settings half calls
 
 ## Repo-side wiring
 
-- **Ruleset**: require the gate context (the repo's `REVIEW_GATE_CONTEXT` value) alongside the test aggregate in the merge queue's required checks.
-- **Thread resolution**: keep (or add) the zero-bypass `required_review_thread_resolution` ruleset.
-- **No standing bypass actor**: the queue ruleset carries none, so every merge goes through the merge queue. A gate-repair PR takes the break-glass procedure in [../SKILL.md](../SKILL.md#4-operations); a settings-change PR takes normal review.
-- **Merge queue**: the writer's `merge_group` leg posts the gate context on queue shas unconditionally. Verify the queue's required checks include both the gate context and the test aggregate.
+The organization rulesets carry this shape for every repository. Until they stand, the repository's own ruleset carries it. `scripts/validate-standard.sh` reports each part of it.
+
+A repository reaches this shape in one order. The workflow change that reports `CI` on `pull_request` and `merge_group`, both under `on:`, and the ruleset change to exactly `CI` and `Review gate` apply back to back. Where the workflow change renames an existing aggregate, the ruleset changes first and the rename merges through the queue at once. After the first merge through the queue, `scripts/validate-standard.sh` runs: its `standard-ci-context` ok confirms the workflow change on both legs, and its `standard-required-contexts` and `standard-merge-queue` oks confirm the ruleset change.
+
+- **Required contexts**: exactly two, `CI` and `Review gate`, the `ci_context` and `gate_context` of the skill's `standard.json`. `Review gate` is the repo's `REVIEW_GATE_CONTEXT` value. `CI` is the aggregate [harness-ci wiring.md § The CI context](../../harness-ci/references/wiring.md#the-ci-context) describes.
+- **Merge queue**: required on the default branch. The writer's `merge_group` leg posts the gate context on queue shas unconditionally.
+- **Thread resolution**: a pull-request rule requires every review thread resolved.
+- **Copilot review**: a rule requests a Copilot review, which holds no merge.
+- **No bypass actor**: no ruleset carries one, a Repository-admin actor included, so every merge goes through the merge queue. A gate-repair PR takes the break-glass procedure in [../SKILL.md](../SKILL.md#4-operations); a settings-change PR takes normal review.
+- **No classic branch protection** beside the rulesets.
 - **Required checks must NOT include the writer's own job names.** Require the commit STATUS context only.
 - **App-secret environment**: the organization owner runs `.agents/skills/review-gate/scripts/provision-environment.sh --org ORG` from their own machine. It creates the environment `standard.json` names, with a default-branch-only deployment policy and the secrets it names, in every repository of the organization that is not archived; run it again for a new repository. An adoption never creates the environment.
 

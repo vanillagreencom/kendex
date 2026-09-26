@@ -29,7 +29,8 @@ mkdir -p "$SKILL" "$BIN" "$BASE/repos/acme/done" "$BASE/repos/acme/fresh"
 cp -R "$SKILL_DIR/scripts" "$SKILL/scripts"
 cat >"$SKILL/standard.json" <<'JSON'
 {
-  "required_contexts": ["CI"],
+  "ci_context": "CI",
+  "gate_context": "Review gate",
   "app": "lanes-app",
   "environment": "kendex",
   "environment_secrets": ["APP_ID", "APP_KEY"]

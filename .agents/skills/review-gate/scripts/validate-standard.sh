@@ -4,7 +4,7 @@
 #
 # READ-ONLY: every GitHub call below is a GET. It answers whether the
 # repository's GitHub-side settings match the organization standard. The
-# standard's values (required contexts, app, environment, secret names)
+# standard's values (the CI and gate contexts, app, environment, secret names)
 # live in ../standard.json; the rows that hold no value (organization
 # source, merge queue, thread resolution, Copilot review, no classic
 # protection, zero bypass actors) are fixed here. Its subject is GitHub
@@ -46,7 +46,7 @@ One verdict line per row, VALUE being what was observed:
                                     from an organization ruleset
   standard-merge-queue              the default branch requires the merge queue
   standard-required-contexts        the required contexts are exactly the
-                                    standard's required_contexts
+                                    standard's ci_context and gate_context
   standard-conversation-resolution  a pull-request rule requires every review
                                     thread resolved
   standard-copilot-review           a rule requests a Copilot review
@@ -54,6 +54,18 @@ One verdict line per row, VALUE being what was observed:
                                     actor
   standard-classic-protection       the default branch has no classic branch
                                     protection beside the rulesets
+  standard-ci-context               an Actions job named the standard's
+                                    ci_context ran for the pull request the
+                                    default branch's head merged, on its
+                                    pull_request leg and on its merge_group
+                                    leg. VALUE is the pull_request leg's job
+                                    names; a FAIL value is one of
+                                    ci-context-missing:LEG:JOBS (LEG ran no
+                                    such job; JOBS is what ran, or none),
+                                    merge-group-unobserved:JOBS (the
+                                    pull_request leg ran CI and the head did
+                                    not come through the merge queue),
+                                    no-associated-pull-request or unreadable
   standard-app                      the standard's app is installed on every
                                     repository of the organization
   standard-environment              the standard's environment exists and
@@ -83,6 +95,10 @@ as a match. The permission each row's reads need, as GitHub App permissions:
                                     organization's for an organization
                                     ruleset); a withheld field is unreadable
   classic-protection                the branch: Contents read
+  ci-context                        the default branch's head commit:
+                                    Contents read; its pull requests: Pull
+                                    requests read; the workflow runs on each
+                                    leg and their jobs: Actions read
   app                               the organization's installations:
                                     organization Administration read
   environment                       environments and branch policies:
@@ -100,8 +116,8 @@ as a match. The permission each row's reads need, as GitHub App permissions:
                                     read (and Actions read to list them)
 A token holding only repository Administration, Metadata, Actions,
 Environments and Secrets read plus organization Secrets read reads
-bypass-actors, classic-protection and app as unreadable, and the Dependabot
-scopes of secrets-outside as unreadable.
+bypass-actors, classic-protection, ci-context and app as unreadable, and the
+Dependabot scopes of secrets-outside as unreadable.
 
 Exit codes:
   0  every row matched
@@ -273,6 +289,107 @@ if read_api "repos/$FULL/branches/$BRANCH_URI" '.protection.enabled | if type ==
 else
   bad standard-classic-protection unreadable "the branch $BRANCH could not be read: $READ_ERR"
 fi
+
+# ---------------------------------------------------------- CI context ---
+
+# The ruleset requires the CI context by name on the pull request and again
+# on the merge group, so a repository whose jobs carry other names, or whose
+# CI never runs for a merge group, never merges. An Actions job reports its
+# name as a check context on the commit it ran for. The pull request the
+# default branch's head merged holds the head where the pull_request leg ran.
+# The merge_group leg ran on the head itself, which the merge queue merged;
+# a head that did not come through the queue has none, and the leg stays
+# unconfirmed rather than read from another commit. Commit statuses are not
+# read: the CI context is an Actions job, and statuses need a permission the
+# standard's app does not hold.
+
+# The names of the jobs that ran on SHA for EVENT, one per line, sorted and
+# unique, in LEG_JOBS; LEG_RUNS counts the runs. A failed read returns 1
+# with READ_ERR naming it.
+LEG_JOBS=""
+LEG_RUNS=0
+leg_jobs() { # SHA EVENT
+  local runs run_id names=""
+  LEG_JOBS=""
+  LEG_RUNS=0
+  read_api "repos/$FULL/actions/runs?head_sha=$1&event=$2&per_page=100" '.workflow_runs[].id' --paginate ||
+    { READ_ERR="the $2 runs on $1: $READ_ERR"; return 1; }
+  runs="$READ_OUT"
+  while IFS= read -r run_id; do
+    [ -n "$run_id" ] || continue
+    LEG_RUNS=$((LEG_RUNS + 1))
+    read_api "repos/$FULL/actions/runs/$run_id/jobs?per_page=100" '.jobs[].name' --paginate ||
+      { READ_ERR="the jobs of $2 run $run_id: $READ_ERR"; return 1; }
+    names="${names:+$names
+}$READ_OUT"
+  done <<EOF_RUNS
+$runs
+EOF_RUNS
+  LEG_JOBS="$(printf '%s\n' "$names" | LC_ALL=C sort -u | sed '/^$/d')" ||
+    die ci-context-names "$1" "could not list the job names read for $1"
+}
+leg_list() { # JOBS — the job names as one VALUE field, or none
+  local list
+  list="$(printf '%s\n' "$1" | paste -sd ';' -)" || die ci-context-names join "could not join the job names read for the CI context"
+  printf '%s\n' "${list:-none}"
+}
+
+ci_context_row() {
+  local head merged number pr_sha pr_jobs pr_list
+  if ! read_api "repos/$FULL/commits/$BRANCH_URI" '.sha'; then
+    bad standard-ci-context unreadable "the head commit of $BRANCH could not be read: $READ_ERR"
+    return 0
+  fi
+  head="$READ_OUT"
+  case "$head" in
+    "" | *[!0123456789abcdef]*)
+      bad standard-ci-context unreadable "the head of $BRANCH is not a commit sha: $head"
+      return 0
+      ;;
+  esac
+  if ! read_api "repos/$FULL/commits/$head/pulls" \
+    "map(select(.merged_at != null and .base.ref == $(jq_string "$BRANCH"))) | if length == 0 then \"\" else (.[0] | \"\\(.number) \\(.head.sha)\") end"; then
+    bad standard-ci-context unreadable "the pull requests of $head, the head of $BRANCH, could not be read: $READ_ERR"
+    return 0
+  fi
+  merged="$READ_OUT"
+  if [ -z "$merged" ]; then
+    bad standard-ci-context no-associated-pull-request "$head, the head of $BRANCH, belongs to no pull request merged into $BRANCH, so no commit shows which contexts $FULL's CI reports"
+    return 0
+  fi
+  number="${merged%% *}"
+  pr_sha="${merged#* }"
+  case "$pr_sha" in
+    "" | *[!0123456789abcdef]*)
+      bad standard-ci-context unreadable "the head of pull request #$number is not a commit sha: $merged"
+      return 0
+      ;;
+  esac
+
+  if ! leg_jobs "$pr_sha" pull_request; then
+    bad standard-ci-context unreadable "$READ_ERR"
+    return 0
+  fi
+  pr_jobs="$LEG_JOBS"
+  pr_list="$(leg_list "$pr_jobs")"
+  if ! grep -qxF -- "$WANT_CI" <<<"$pr_jobs"; then
+    bad standard-ci-context "ci-context-missing:pull_request:$pr_list" "$FULL reported no $WANT_CI job for pull request #$number on its head $pr_sha, so the ruleset's required $WANT_CI context never reports and no pull request merges. Give the job that aggregates every lane the name $WANT_CI: .agents/skills/harness-ci/references/wiring.md § The CI context"
+    return 0
+  fi
+
+  if ! leg_jobs "$head" merge_group; then
+    bad standard-ci-context unreadable "$READ_ERR"
+    return 0
+  fi
+  if [ "$LEG_RUNS" -eq 0 ]; then
+    bad standard-ci-context "merge-group-unobserved:$pr_list" "$FULL reported $WANT_CI for pull request #$number on $pr_sha. No merge_group run ran on $head, the head of $BRANCH, so the head did not come through the merge queue, and the merge_group leg is unconfirmed until the next merge through the queue."
+  elif ! grep -qxF -- "$WANT_CI" <<<"$LEG_JOBS"; then
+    bad standard-ci-context "ci-context-missing:merge_group:$(leg_list "$LEG_JOBS")" "$FULL reported no $WANT_CI job for the merge group on $head, the head of $BRANCH, so the merge queue waits on a $WANT_CI context nothing reports: .agents/skills/harness-ci/references/wiring.md § The CI context"
+  else
+    ok standard-ci-context "$pr_list" "$FULL reported $WANT_CI for pull request #$number on $pr_sha and for its merge group on $head"
+  fi
+}
+ci_context_row
 
 # ------------------------------------------------------------- the app ---
 

@@ -27,7 +27,8 @@ mkdir -p "$SKILL" "$BIN" "$BASE"
 cp -R "$SKILL_DIR/scripts" "$SKILL/scripts"
 cat >"$SKILL/standard.json" <<'JSON'
 {
-  "required_contexts": ["Review gate", "CI"],
+  "ci_context": "CI",
+  "gate_context": "Review gate",
   "app": "lanes-app",
   "environment": "kendex",
   "environment_secrets": ["APP_ID", "APP_KEY"]
@@ -72,6 +73,25 @@ printf '{"secrets": [{"name": "SHARED"}]}\n' >"$BASE/organization-secrets.json"
 printf '{"secrets": [{"name": "SHARED"}, {"name": "ELSEWHERE"}]}\n' >"$BASE/organization-actions-secrets.json"
 printf '{"secrets": [{"name": "NPM_TOKEN"}]}\n' >"$BASE/dependabot-secrets.json"
 printf '{"secrets": []}\n' >"$BASE/organization-dependabot-secrets.json"
+# The default branch's head, dead, is the queue's merge commit. Its first
+# associated pull request merged into another branch, so a read that ignores
+# the base takes the wrong head.
+printf '{"sha": "dead"}\n' >"$BASE/commit.json"
+cat >"$BASE/commit-pulls.json" <<'JSON'
+[
+  {"number": 20, "merged_at": "2026-09-22T09:00:00Z", "base": {"ref": "release"}, "head": {"sha": "cafe"}},
+  {"number": 12, "merged_at": null, "base": {"ref": "main"}, "head": {"sha": "c0c0"}},
+  {"number": 11, "merged_at": "2026-09-21T09:00:00Z", "base": {"ref": "main"}, "head": {"sha": "beef"}}
+]
+JSON
+# The pull_request leg: the CI workflow's run carries the lanes and their
+# aggregate; the second run is another workflow's. The merge_group leg on the
+# head runs the CI workflow alone.
+printf '{"workflow_runs": [{"id": 7}, {"id": 8}]}\n' >"$BASE/workflow-runs.json"
+printf '{"jobs": [{"name": "lint-typecheck"}, {"name": "build"}, {"name": "CI"}]}\n' >"$BASE/jobs-7.json"
+printf '{"jobs": [{"name": "writer"}]}\n' >"$BASE/jobs-8.json"
+printf '{"workflow_runs": [{"id": 9}]}\n' >"$BASE/workflow-runs-merge-group.json"
+printf '{"jobs": [{"name": "lint-typecheck"}, {"name": "build"}, {"name": "CI"}]}\n' >"$BASE/jobs-9.json"
 
 BASELINE='ok check=standard-ruleset-source value=Organization
 ok check=standard-merge-queue value=present
@@ -80,6 +100,7 @@ ok check=standard-conversation-resolution value=true
 ok check=standard-copilot-review value=present
 ok check=standard-bypass-actors value=0
 ok check=standard-classic-protection value=off
+ok check=standard-ci-context value=CI\;build\;lint-typecheck\;writer
 ok check=standard-app value=all
 ok check=standard-environment value=custom:branch:main
 ok check=standard-environment-secrets value=APP_ID\;APP_KEY
@@ -159,6 +180,23 @@ the branch unreadable~branch~~~standard-classic-protection=unreadable
 the app on selected repositories~~installations.json~.installations[1].repository_selection = "selected"~standard-app=selected
 the app not installed~~installations.json~.installations |= [.[0]]~standard-app=absent
 installations unreadable~installations~~~standard-app=unreadable
+lanes reporting their own names and no CI aggregate~~jobs-7.json~.jobs |= map(select(.name != "CI"))~standard-ci-context=ci-context-missing:pull_request:build\;lint-typecheck\;writer
+an aggregate whose name only starts with CI~~jobs-7.json~.jobs |= map(if .name == "CI" then .name = "CI Required" else . end)~standard-ci-context=ci-context-missing:pull_request:CI\ Required\;build\;lint-typecheck\;writer
+no job ran on the pull request~~workflow-runs.json~.workflow_runs = []~standard-ci-context=ci-context-missing:pull_request:none
+the CI job on the second page of a run's jobs~~jobs-7.json,jobs-7.page2.json~if . == null then {"jobs": [{"name": "CI"}]} else .jobs |= map(select(.name != "CI")) end~
+the CI run on the second page of runs~~jobs-7.json,workflow-runs.page2.json,jobs-10.json~if . == null then {"workflow_runs": [{"id": 10}], "jobs": [{"name": "CI"}]} else .jobs |= map(select(.name != "CI")) end~
+a head that did not come through the merge queue~~workflow-runs-merge-group.json~.workflow_runs = []~standard-ci-context=merge-group-unobserved:CI\;build\;lint-typecheck\;writer
+a head outside the queue after an older merge group that ran CI~~workflow-runs-merge-group.json,workflow-runs-merge-group-latest.json,workflow-runs-merge-group-f00d.json,jobs-11.json~if . == null then {"workflow_runs": [{"id": 11, "head_branch": "gh-readonly-queue/main/pr-10-f00d", "head_sha": "f00d"}], "jobs": [{"name": "CI"}]} else .workflow_runs = [] end~standard-ci-context=merge-group-unobserved:CI\;build\;lint-typecheck\;writer
+a merge group that ran no CI job~~jobs-9.json~.jobs |= map(select(.name != "CI"))~standard-ci-context=ci-context-missing:merge_group:build\;lint-typecheck
+a head no merged pull request produced~~commit-pulls.json~map(.merged_at = null)~standard-ci-context=no-associated-pull-request
+a head merged only into another branch~~commit-pulls.json~map(select(.base.ref != "main"))~standard-ci-context=no-associated-pull-request
+a branch head that is not a sha~~commit.json~.sha = "main"~standard-ci-context=unreadable
+a merged head that is not a sha~~commit-pulls.json~.[2].head.sha = "main"~standard-ci-context=unreadable
+the branch head unreadable~commit~~~standard-ci-context=unreadable
+the head's pull requests unreadable~commit-pulls~~~standard-ci-context=unreadable
+pull_request runs unreadable~workflow-runs~~~standard-ci-context=unreadable
+the head's merge_group runs unreadable~workflow-runs-merge-group~~~standard-ci-context=unreadable
+a run's jobs unreadable~jobs-8~~~standard-ci-context=unreadable
 the environment deploys from every branch~~environments.json~.environments[1].deployment_branch_policy = null~standard-environment=unrestricted
 the environment deploys from protected branches~~environments.json~.environments[1].deployment_branch_policy = {"protected_branches": true, "custom_branch_policies": false}~standard-environment=protected-branches
 the environment deploys from a second branch~~branch-policies.json~.branch_policies += [{"name": "dev", "type": "branch"}]~standard-environment=custom:branch:main\,branch:dev
@@ -217,6 +255,25 @@ else
   bad "a failed secret read keeps its cause after later reads succeed" "$RAW"
 fi
 
+echo "=== the CI context is read on both legs of the latest merge ==="
+# The row's reads in order: the branch head, its pull requests, the
+# pull_request leg on the merged pull request's head, and the merge_group leg
+# on the branch head.
+dir="$TMP/case-latest-merge"
+cp -R "$BASE" "$dir"
+rm -f -- "${dir:?}/.urls.log"
+run "$dir" ""
+want_urls='repos/acme/widgets/commits/main
+repos/acme/widgets/commits/dead/pulls
+repos/acme/widgets/actions/runs?head_sha=beef&event=pull_request&per_page=100
+repos/acme/widgets/actions/runs?head_sha=dead&event=merge_group&per_page=100'
+got_urls="$(grep -E '/commits/|/actions/runs\?' "$dir/.urls.log" || true)"
+if [ "$got_urls" = "$want_urls" ]; then
+  ok "the reads name the branch head, its merged pull request's head and the merge_group leg"
+else
+  bad "the reads name the branch head, its merged pull request's head and the merge_group leg" "$(diff <(printf '%s\n' "$want_urls") <(printf '%s\n' "$got_urls") || true)"
+fi
+
 echo "=== the check could not run ==="
 # name ~ shim failure ~ manifest replacement (empty keeps the test's) ~ argument ~ first error line
 while IFS='~' read -r name fail manifest arg key; do
@@ -236,8 +293,10 @@ while IFS='~' read -r name fail manifest arg key; do
   fi
 done <<'ROWS'
 the repository unreadable~repository~~~review-gate-error=repository-read
-a manifest without an app~~{"required_contexts": ["CI"], "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
-a manifest with no contexts~~{"required_contexts": [], "app": "a", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
+a manifest without an app~~{"ci_context": "CI", "gate_context": "Review gate", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
+a manifest without a gate context~~{"ci_context": "CI", "app": "a", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
+a manifest without a CI context~~{"gate_context": "Review gate", "app": "a", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
+a manifest whose two contexts are one~~{"ci_context": "CI", "gate_context": "CI", "app": "a", "environment": "kendex", "environment_secrets": ["A"]}~~review-gate-error=standard-malformed
 an argument~~~--repo~review-gate-error=unknown-arguments
 ROWS
 

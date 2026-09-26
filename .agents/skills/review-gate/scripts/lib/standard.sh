@@ -4,7 +4,8 @@
 # writes the environment half of them; both load the manifest here, so its
 # shape is judged in one place. Requires diagnostics.sh loaded first.
 
-# Sets WANT_CONTEXTS (the required contexts, sorted, `;`-joined), WANT_APP,
+# Sets WANT_CONTEXTS (the required contexts, the CI and gate contexts,
+# sorted, `;`-joined), WANT_CI (the CI context), WANT_APP,
 # WANT_ENV and WANT_SECRETS (the environment's secret names, sorted, one per
 # line). With no jq on PATH, or a missing, unreadable or malformed
 # manifest, it prints the refusal to stderr and returns 1; the caller exits
@@ -19,16 +20,22 @@ rg_standard_load() { # MANIFEST
     return 1
   fi
   if ! jq -e '
-    (.required_contexts | type == "array" and length > 0 and all(.[]; type == "string" and length > 0))
+    (.ci_context | type == "string" and length > 0)
+    and (.gate_context | type == "string" and length > 0)
+    and .ci_context != .gate_context
     and (.app | type == "string" and length > 0)
     and (.environment | type == "string" and length > 0)
     and (.environment_secrets | type == "array" and length > 0 and all(.[]; type == "string" and length > 0))
   ' "$1" >/dev/null 2>&1; then
-    rg_message error standard-malformed "$1" "the standard manifest does not parse, or lacks a non-empty required_contexts, app, environment or environment_secrets" >&2
+    rg_message error standard-malformed "$1" "the standard manifest does not parse, or lacks a non-empty ci_context, gate_context distinct from it, app, environment or environment_secrets" >&2
     return 1
   fi
-  WANT_CONTEXTS="$(jq -r '.required_contexts | unique | join(";")' "$1")" || {
-    rg_message error standard-read "$1" "could not read required_contexts" >&2
+  WANT_CONTEXTS="$(jq -r '[.ci_context, .gate_context] | unique | join(";")' "$1")" || {
+    rg_message error standard-read "$1" "could not read ci_context and gate_context" >&2
+    return 1
+  }
+  WANT_CI="$(jq -r '.ci_context' "$1")" || {
+    rg_message error standard-read "$1" "could not read ci_context" >&2
     return 1
   }
   WANT_APP="$(jq -r '.app' "$1")" || {
