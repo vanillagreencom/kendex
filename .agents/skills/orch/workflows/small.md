@@ -46,7 +46,7 @@ Before § 4, repeat the § 2 check on the tree the review left. `tier=small` con
 
 Run [start-worktree.md](start-worktree.md) § 4. Bot threads get two rounds: `workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS --issue [ISSUE_ID]` reads a cap of 2 for this item, and at that cap [review-pr-comments.md](review-pr-comments.md) answers every standing thread by reply.
 
-A step here that moves HEAD repeats the § 2 check on the new tree before it pushes: a review-pr-comments.md § 6.1 fix round after its verification pass, and a [submit-pr.md](submit-pr.md) § 3 re-submit cycle before it re-enters submit-pr.md § 2. `tier=small` continues to the push; anything else escapes.
+Whenever HEAD differs from the head the last § 2 check measured, repeat that check before the lane's next push and before [submit-pr.md](submit-pr.md) § 6.1 Merge Gates; a step that pushes before it returns, such as ci-fix, is checked on its return. `tier=small` continues; anything else escapes.
 
 ## 5. Finalize
 
