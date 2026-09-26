@@ -53,8 +53,8 @@ csd="$TMP_ROOT/cycle-state"
 "$WS" --state-dir "$csd" update oversee '.fleet_log = [range(0; 6) as $i
   | {at: "2020-01-01T00:00:00Z", kind: (if $i < 2 then "ruling" else "cycle" end), item: "KEN-\($i)", text: "row \($i)"}]'
 got="$(ORCH_TAKEOVER_ROWS=2 "$WS" --state-dir "$csd" fleet-log takeover | jq -rs 'map(.item) | join(",")')"
-[[ "$got" == "KEN-0,KEN-1" ]] && ok "takeover reads the last rows but the cycle rows" \
-  || bad "takeover reads the last rows but the cycle rows" "got=$got"
+[[ "$got" == "KEN-0,KEN-1" ]] && pass "takeover reads the last rows but the cycle rows" \
+  || fail "takeover reads the last rows but the cycle rows" "got=$got"
 
 got="$("$WS" --state-dir "$sd" fleet-log audit | jq -rs 'map(.kind) | unique | join(",")')"
 count="$("$WS" --state-dir "$sd" fleet-log audit | jq -s 'length')"
