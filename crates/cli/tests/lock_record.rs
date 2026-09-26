@@ -11,9 +11,10 @@
 //! what it was asked and keeps the pull request's open, armed and queued
 //! state in files. The must-fail control for this surface: the script with
 //! its `kendex refresh` line deleted answers the first run with
-//! `stale-after-refresh`, and with its `rolling-current` stand-down deleted
-//! pushes over the open rolling pull request a record-free merge left
-//! current.
+//! `stale-after-refresh`, and with its rolling judge replaced by a byte
+//! compare of the refresh against the rolling commit it pushes over the
+//! open rolling pull request a record-free merge left current, because a
+//! git source's `sources.<name>.commit` line moves with every merge.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -28,6 +29,13 @@ use kendex_core::process::Hardened;
 
 fn script() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/lock-record")
+}
+
+/// The github skill's merge-queue library the script sources, named here
+/// so a change to that render runs this suite.
+fn merge_queue_library() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.agents/skills/github/scripts/lib/merge-queue.sh")
 }
 
 fn said(output: &Output) -> String {
@@ -138,10 +146,32 @@ esac
 echo \"gh stub: $*\" >&2; exit 97
 ";
 
+/// Where the consumer's package comes from.
+#[derive(Clone, Copy)]
+enum Source {
+    /// A directory inside the consumer, which records no commit line.
+    Path,
+    /// The consumer's own origin as a git source, the shape this
+    /// repository takes: the record's `sources.<name>.commit` line moves
+    /// to the origin's tip on every refresh.
+    Git,
+}
+
+impl Source {
+    /// The directory under the consumer the package's `skills/` sits in.
+    fn root(self) -> &'static str {
+        match self {
+            Source::Path => "catalog/",
+            Source::Git => "",
+        }
+    }
+}
+
 /// The consumer, its bare origin, the checkout the script judges, and where
 /// the `gh` stub keeps its log and its pull request's state.
 struct World {
     _tmp: tempfile::TempDir,
+    source: Source,
     home: PathBuf,
     origin: PathBuf,
     main: PathBuf,
@@ -149,11 +179,15 @@ struct World {
     gh_state: PathBuf,
 }
 
-/// A consumer with one skill of two scripts from a path source, installed
-/// on `claude` and committed with its record, cloned bare as the origin and
-/// again as the checkout of `main` the script runs against.
-#[allow(clippy::unwrap_used)]
 fn world() -> World {
+    world_from(Source::Path)
+}
+
+/// A consumer with one skill of two scripts, cloned bare as the origin and
+/// again as the checkout of `main` the script runs against, where it is
+/// installed on `claude`, committed with its record and pushed.
+#[allow(clippy::unwrap_used)]
+fn world_from(source: Source) -> World {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let bin = home.join("bin");
@@ -165,43 +199,30 @@ fn world() -> World {
     executable(&bin.join("gh"), GH_STUB);
 
     let seed = home.join("seed");
+    let origin = home.join("origin.git");
+    let declared = match source {
+        Source::Path => "path = \"catalog\"".to_owned(),
+        Source::Git => format!("repo = \"file://{}\"", origin.display()),
+    };
     write(
         &seed.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+        &format!(
+            "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\n{declared}\n\n[skills.deploy]\nsource = \"cat\"\n"
+        ),
     );
+    let package = seed.join(source.root()).join("skills/deploy");
     write(
-        &seed.join("catalog/skills/deploy/SKILL.md"),
+        &package.join("SKILL.md"),
         "---\nname: deploy\ndescription: ship the service\n---\nRun scripts/ship, then scripts/roll.\n",
     );
-    write(
-        &seed.join("catalog/skills/deploy/scripts/ship"),
-        "#!/bin/sh\necho ship\n",
-    );
-    write(
-        &seed.join("catalog/skills/deploy/scripts/roll"),
-        "#!/bin/sh\necho roll\n",
-    );
+    write(&package.join("scripts/ship"), "#!/bin/sh\necho ship\n");
+    write(&package.join("scripts/roll"), "#!/bin/sh\necho roll\n");
     write(&seed.join("README.md"), "the consumer\n");
     git_ok(&home, &seed, &["init", "-q", "-b", "main"]);
     git_ok(&home, &seed, &["config", "commit.gpgsign", "false"]);
     git_ok(&home, &seed, &["config", "core.hooksPath", ".git/hooks"]);
     git_ok(&home, &seed, &["add", "-A"]);
     git_ok(&home, &seed, &["commit", "-q", "-m", "consumer"]);
-    let installed = kendex(
-        &home,
-        &seed,
-        &["refresh", "--scope", "project", "--yes", "--leave"],
-    );
-    assert!(installed.status.success(), "{}", said(&installed));
-    git_ok(&home, &seed, &["add", "-A"]);
-    git_ok(&home, &seed, &["commit", "-q", "-m", "install"]);
-    let tracked = git_ok(&home, &seed, &["ls-files"]);
-    assert!(
-        tracked.lines().any(|line| line == ".kendex-lock.json"),
-        "{tracked}"
-    );
-
-    let origin = home.join("origin.git");
     git_ok(
         &home,
         &seed,
@@ -226,8 +247,23 @@ fn world() -> World {
     );
     git_ok(&home, &main, &["config", "commit.gpgsign", "false"]);
     git_ok(&home, &main, &["config", "core.hooksPath", ".git/hooks"]);
+    let installed = kendex(
+        &home,
+        &main,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    assert!(installed.status.success(), "{}", said(&installed));
+    git_ok(&home, &main, &["add", "-A"]);
+    git_ok(&home, &main, &["commit", "-q", "-m", "install"]);
+    git_ok(&home, &main, &["push", "-q", "origin", "main"]);
+    let tracked = git_ok(&home, &main, &["ls-files"]);
+    assert!(
+        tracked.lines().any(|line| line == ".kendex-lock.json"),
+        "{tracked}"
+    );
     World {
         _tmp: tmp,
+        source,
         home,
         origin,
         main,
@@ -276,7 +312,7 @@ impl World {
             name,
             &[
                 (
-                    &format!("catalog/skills/deploy/scripts/{script}"),
+                    &format!("{}skills/deploy/scripts/{script}", self.source.root()),
                     text.as_str(),
                 ),
                 (
@@ -472,26 +508,10 @@ fn two_branches_on_one_package_merge_in_sequence_and_main_records_after_each() {
     assert_eq!(world.gh_log(), before);
 }
 
-#[test]
-fn a_merge_that_moves_no_record_leaves_the_open_rolling_pull_request_untouched() {
-    let world = world();
-    world.branch("a", "ship");
-    world.branch_outside_the_package("c");
-    let merged = world.queue_merge("a");
-    assert!(merged.status.success(), "{}", said(&merged));
-    let first = world.lock_record();
-    assert_eq!(first.status.code(), Some(0), "{}", said(&first));
-    let rolling = world.rolling_head();
-
-    // Main moves on under the open pull request without touching what the
-    // record covers: the rolling branch already carries the record this
-    // tree writes, so a push would only restart its checks.
-    let merged = world.queue_merge("c");
-    assert!(merged.status.success(), "{}", said(&merged));
-    let before = world.gh_log();
-    let second = world.lock_record();
-    let output = said(&second);
-    assert_eq!(second.status.code(), Some(0), "{output}");
+/// One stand-down run over `main` moved on by a merge outside the package:
+/// the rolling pull request's commit verifies clean on the new head, so
+/// nothing is pushed and the gh reads are the list and the state.
+fn assert_stood_down(world: &World, before: &str, output: &str, rolling: &str) {
     assert!(
         output.contains(&format!(
             "lock-record: rolling-current={rolling} pull-request=41"
@@ -501,21 +521,65 @@ fn a_merge_that_moves_no_record_leaves_the_open_rolling_pull_request_untouched()
     assert!(!output.contains("lock-record: recorded="), "{output}");
     assert_eq!(world.rolling_head(), rolling, "{output}");
     let asked = world.gh_log();
-    let asked = asked.strip_prefix(&before).unwrap_or(&asked);
-    assert_eq!(
-        asked.lines().count(),
-        1,
-        "one gh read, the pull request list:\n{asked}"
-    );
+    let asked = asked.strip_prefix(before).unwrap_or(&asked);
     assert!(
         asked.starts_with("pr list --head kendex/lock --base main --state open"),
         "{asked}"
     );
+    assert!(asked.contains("isInMergeQueue"), "{asked}");
+    assert!(!asked.contains("pr create"), "{asked}");
     let status = git_ok(&world.home, &world.main, &["status", "--porcelain"]);
     assert_eq!(
         status, "",
         "the stand-down left the checkout as it found it"
     );
+}
+
+#[test]
+fn a_merge_that_moves_no_record_leaves_the_open_rolling_pull_request_untouched() {
+    let world = world_from(Source::Git);
+    world.branch("a", "ship");
+    world.branch_outside_the_package("c");
+    world.branch_writing("d", &[("NOTES.md", "notes\n")]);
+    let merged = world.queue_merge("a");
+    assert!(merged.status.success(), "{}", said(&merged));
+    let first = world.lock_record();
+    assert_eq!(first.status.code(), Some(0), "{}", said(&first));
+    let rolling = world.rolling_head();
+
+    // Main moves on under the armed pull request without touching what the
+    // record covers. The commit line the refresh would write has moved to
+    // the new tip; the record the pull request carries still verifies.
+    let merged = world.queue_merge("c");
+    assert!(merged.status.success(), "{}", said(&merged));
+    let before = world.gh_log();
+    let second = world.lock_record();
+    let output = said(&second);
+    assert_eq!(second.status.code(), Some(0), "{output}");
+    assert_stood_down(&world, &before, &output, &rolling);
+    assert!(output.contains("lock-record: armed=already\n"), "{output}");
+    let asked = world.gh_log();
+    let asked = asked.strip_prefix(&before).unwrap_or(&asked);
+    assert_eq!(asked.lines().count(), 2, "{asked}");
+
+    // The same, with the arm gone (a cancelled run, or a queue removal):
+    // the stand-down arms the rolling head it judged current.
+    let merged = world.queue_merge("d");
+    assert!(merged.status.success(), "{}", said(&merged));
+    fs::remove_file(world.gh_state.join("armed")).unwrap();
+    let before = world.gh_log();
+    let third = world.lock_record();
+    let output = said(&third);
+    assert_eq!(third.status.code(), Some(0), "{output}");
+    assert_stood_down(&world, &before, &output, &rolling);
+    assert!(output.contains("lock-record: armed=41\n"), "{output}");
+    assert!(
+        world.gh_log().contains(&format!(
+            "pr merge 41 --squash --auto --match-head-commit {rolling}\n"
+        )),
+        "{output}"
+    );
+    assert!(world.gh_state.join("armed").exists(), "{output}");
 
     // The queue merges the untouched pull request onto the newer main.
     world.merge_rolling();
@@ -524,6 +588,11 @@ fn a_merge_that_moves_no_record_leaves_the_open_rolling_pull_request_untouched()
 
 #[test]
 fn a_push_over_an_armed_and_queued_rolling_pull_request_disarms_and_dequeues_first() {
+    assert!(
+        merge_queue_library().is_file(),
+        "{}",
+        merge_queue_library().display()
+    );
     let world = world();
     world.branch("a", "ship");
     world.branch("b", "roll");

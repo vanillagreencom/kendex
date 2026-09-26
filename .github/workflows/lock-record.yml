@@ -28,9 +28,10 @@ permissions:
   contents: read
 
 # A newer push to main supersedes a run still judging an older head: the
-# record it would open is stale before it lands. A force-push of the
-# rolling branch is one ref update, so a run cancelled mid-way leaves the
-# branch at one head or the other, and the next run replaces it either way.
+# record it would open is stale before it lands. A run cancelled mid-way can
+# leave the rolling pull request disarmed or dequeued, or its branch pushed
+# with no arm; the next run reads that state first and arms the pull request
+# on either path, the stand-down and the push alike.
 concurrency:
   group: lock-record
   cancel-in-progress: true
@@ -38,11 +39,11 @@ concurrency:
 jobs:
   record:
     # The workflow token checks out the tree, held to contents: read and
-    # persisted nowhere. The App's token reaches the last step alone: git
-    # pushes the rolling branch through the credential helper gh installs
-    # for it there, and gh opens and arms the pull request. The build and
-    # the refresh, which run dependency build scripts and package sources
-    # from the tree, never see it.
+    # persisted nowhere. The build, whose dependency build scripts run from
+    # the tree, never sees the App's token. The refresh and the push share
+    # the last step, which holds it: tools/lock-record runs the tree's
+    # package scripts under GH_TOKEN before it pushes, and its header is the
+    # authority on what each command there runs with.
     permissions:
       contents: read
     environment: kendex
