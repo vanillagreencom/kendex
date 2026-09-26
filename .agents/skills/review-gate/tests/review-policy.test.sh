@@ -144,5 +144,24 @@ assert_eq "$RC" "2" "a settings library that cannot initialize refuses"
 assert_eq "$(diagnostic_key)" "diagnostics-load" \
   "must-fail: and the library's own diagnostic reaches stderr"
 
+echo "=== review-policy names the review bots a none row waives threads from ==="
+
+# `trusted-logins|want`: the trusted list as a repository sets it, and the
+# line --review-bots prints. Only a `[bot]` entry is a bot, both separators
+# split, and the suffix is dropped because GitHub's GraphQL login lacks it.
+bot_rows=0
+while IFS='|' read -r trusted want; do
+  bot_rows=$((bot_rows + 1))
+  got="$(cd "$TMP" && REVIEW_GATE_SETTINGS_FILE=/dev/null \
+    REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="$trusted" \
+    "$SKILL_DIR/scripts/review-policy" --review-bots 2>&1)" || got="exit $? $got"
+  assert_eq "$got" "$want" "review bots of [$trusted]"
+done <<'ROWS'
+copilot-pull-request-reviewer[bot]; coderabbitai[bot],bmethod|review-bots=copilot-pull-request-reviewer,coderabbitai
+bmethod|review-bots=
+|review-bots=
+ROWS
+assert_eq "$bot_rows" "3" "the review-bot table ran every row"
+
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

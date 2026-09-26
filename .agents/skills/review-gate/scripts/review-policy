@@ -16,7 +16,7 @@ fi
 
 usage() {
   cat <<'USAGE'
-Usage: review-policy [--check-config]
+Usage: review-policy [--check-config | --review-bots]
        review-policy --event EVENT [--base REF] [--head REF] [--repo DIR]
 
 REVIEW_GATE_CLASS_POLICY is empty by default. Empty prints `policy=inactive`
@@ -41,6 +41,14 @@ line with no marker exits 2 as well. The caller fixes what the cause names
 and asks again.
 
 Exit 2 prints no policy record. The caller cannot assert a class.
+
+--review-bots prints the review bots a `none` row waives threads from, as
+
+  review-bots=LOGIN,LOGIN
+
+the REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS entries that end in `[bot]`,
+with that suffix dropped: the spelling GitHub's GraphQL API gives a bot's
+login. An empty list names no bot, and nothing is waived.
 USAGE
 }
 
@@ -77,6 +85,23 @@ if [ -n "$POLICY" ]; then
   fi
 else
   POLICY_ROWS=""
+fi
+
+if [ "${1:-}" = "--review-bots" ]; then
+  [ "$#" -eq 1 ] || fail policy-arguments "$*" "--review-bots takes no other arguments"
+  TRUSTED="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 2
+  TRUSTED_N="$(rg_pack "$TRUSTED" ';,')" ||
+    fail policy-review-bots REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "the trusted-login list could not be read"
+  BOTS=""
+  while IFS= read -r login; do
+    case "$login" in
+      *'[bot]') BOTS="${BOTS:+$BOTS,}${login%'[bot]'}" ;;
+    esac
+  done <<EOF_LOGINS
+$TRUSTED_N
+EOF_LOGINS
+  printf 'review-bots=%s\n' "$BOTS"
+  exit 0
 fi
 
 CLASSIFIER="$SCRIPT_DIR/../../harness-ci/scripts/change-class"

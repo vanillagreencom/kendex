@@ -12,6 +12,7 @@
 # range, whose head end is STUB_POLICY_HEAD where set, else STUB_HEAD. STUB_REVIEW_DECISION and STUB_REVIEW_LATEST are the readiness check's
 # reviewDecision and latestReviews. STUB_REPLY_FAIL and STUB_RESOLVE_FAIL
 # make the review-thread reply and resolve mutations answer a GraphQL error,
+# STUB_REOPEN_FAIL the unresolve mutation,
 # and STUB_REQUIRE_TOKEN refuses either without the bot token.
 # Sourced, never run — CI's suite glob picks up skills/*/tests/*.sh only, so
 # this file lives one level down.
@@ -168,6 +169,14 @@ case "${1:-}" in
                 exit 0
             fi
             # The thread mutations post-reply.sh and resolve-thread.sh send.
+            if [[ "$*" == *unresolveReviewThread* ]]; then
+                if [[ "${STUB_REOPEN_FAIL:-false}" == "true" ]]; then
+                    echo '{"errors":[{"message":"reopen refused"}]}'
+                    exit 1
+                fi
+                echo '{"data":{"unresolveReviewThread":{"thread":{"id":"PRRT_x","isResolved":false}}}}'
+                exit 0
+            fi
             if [[ "$*" == *addPullRequestReviewThreadReply* || "$*" == *resolveReviewThread* ]]; then
                 if [[ "${STUB_REQUIRE_TOKEN:-false}" == "true" && "${GH_TOKEN:-}" != "ghp_test_token" ]]; then
                     echo "missing effective token for thread mutation" >&2

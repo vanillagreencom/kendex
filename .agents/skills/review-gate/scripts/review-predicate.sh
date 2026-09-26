@@ -398,19 +398,10 @@ ERROR_PATTERNS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS "encounter
 THREADS_MODE="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 2
 
 # ONE parse of each packed trust list, here at the single place the settings
-# are resolved. Every consumer below works from these: the configuration
-# checks, the evidence reads, and the awaiting label. Entry boundaries and
-# emptiness are decided once, so a value like " ; , " cannot be an open trust
-# model to one reader and a named list to another.
-# pipefail inside, checked at every caller: this decides the trust boundary,
-# and the last stage of the pipeline returns 0 on empty output. A `tr` that
-# died would leave a RESTRICTED list looking empty, which the evidence read
-# takes as "any non-author" — the trust list would open the gate it was set
-# to close. A broken pipeline is exit 2 with no verdict instead.
-rg_pack() { # RAW SEPARATORS -> one trimmed, non-empty entry per line
-  ( set -o pipefail
-    printf '%s\n' "$1" | tr "$2" '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d' )
-}
+# are resolved, with lib/settings.sh's rg_pack. Every consumer below works from
+# these: the configuration checks, the evidence reads, and the awaiting label.
+# Entry boundaries and emptiness are decided once, so a value like " ; , "
+# cannot be an open trust model to one reader and a named list to another.
 # Called OUTSIDE the substitutions below: an `exit` inside `$( )` would leave
 # the subshell and the predicate would carry on with the empty value.
 rg_pack_failed() { # KEY
