@@ -4025,6 +4025,12 @@ export type ProjectOffer = {
 	 *  `--set-upstream`.
 	 */
 	tracked: boolean,
+	/**
+	 *  Packages whose files in this repository a commit would carry out of
+	 *  date. Where any is listed the commit is not offered: the dialog
+	 *  offers their setup, or leaving the files as diffs.
+	 */
+	stale: StalePackage[],
 };
 
 /**
@@ -5056,6 +5062,31 @@ export type SourcesAfter_Serialize = {
 	sources: SourceRow[],
 	undone?: string[],
 };
+
+/**
+ *  One package holding the commit, from
+ *  [`kendex_core::commit_offer::stale`].
+ */
+export type StalePackage = {
+	name: string,
+	why: StaleWhy,
+	/**  What the package's check said, escaped. Empty where it did not run. */
+	said: string[],
+	/**
+	 *  The package as installed here, handed back to `repo_effects_apply`
+	 *  by the setup choice. Its `summary` is what the setup
+	 *  changes, in the package's own words.
+	 */
+	declared: DeclaredEffects,
+};
+
+export type StaleWhy = 
+/**  kendex has not set the package up in this checkout. */
+"notSetUp" | 
+/**  The package's check says its files are out of date. */
+"outOfDate" | 
+/**  The package's check could not answer. */
+"unchecked";
 
 /**
  *  What stands at the folder a project would be reconnected to.

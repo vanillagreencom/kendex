@@ -277,80 +277,138 @@ fn make(
         command: String::new(),
     };
     let session = SESSION.get().unwrap_or(&default);
-    let scan = match commit_offer::scan(scope, generated) {
-        Ok(None) => return Ok(None),
-        Ok(Some(scan)) => scan,
-        // A read the offer is built from that would not run leaves the
-        // offer unbuildable. The verb's own writes still stand, so this is
-        // one line rather than a failure of the run.
-        Err(failed) => {
-            block::unreadable(root, &failed);
+    let mut generated = generated.clone();
+    let mut set_up = false;
+    // Read again after a setup: the files it rendered join the offer, and
+    // the packages are asked again whether they now stand behind them.
+    loop {
+        let scan = match commit_offer::scan(scope, &generated) {
+            Ok(None) => return Ok(None),
+            Ok(Some(scan)) => scan,
+            // A read the offer is built from that would not run leaves the
+            // offer unbuildable. The verb's own writes still stand, so this
+            // is one line rather than a failure of the run.
+            Err(failed) => {
+                block::unreadable(root, &failed);
+                return Ok(Some(Outcome::Nothing));
+            }
+        };
+        let answered = session.flags.answered();
+        // Two states where kendex owns changed files and cannot offer at
+        // all: a commit would land somewhere nobody asked for.
+        match &scan.branch {
+            Branch::Detached => {
+                block::no_branch(root, scan.count());
+                return Ok(Some(Outcome::Nothing));
+            }
+            Branch::InProgress(operation) => {
+                block::in_progress(root, scan.count(), *operation);
+                return Ok(Some(Outcome::Nothing));
+            }
+            Branch::On(_) => {}
+        }
+        if answered == Some(Choice::Leave) {
             return Ok(Some(Outcome::Nothing));
         }
-    };
-    let answered = session.flags.answered();
-    // Two states where kendex owns changed files and cannot offer at all:
-    // a commit would land somewhere nobody asked for.
-    match &scan.branch {
-        Branch::Detached => {
-            block::no_branch(root, scan.count());
-            return Ok(Some(Outcome::Nothing));
-        }
-        Branch::InProgress(operation) => {
-            block::in_progress(root, scan.count(), *operation);
-            return Ok(Some(Outcome::Nothing));
-        }
-        Branch::On(_) => {}
-    }
-    if answered == Some(Choice::Leave) {
-        return Ok(Some(Outcome::Nothing));
-    }
-    if answered.is_none() {
         // The setting turns off the asking, not the choices — which is why
         // it is read here and not before a flag has had its say.
-        if !commit_offer::asking(env) {
+        if answered.is_none() && !commit_offer::asking(env) {
             return Ok(Some(Outcome::Nothing));
         }
-        if !std::io::stdin().is_terminal() {
+        let person = answered.is_none() && std::io::stdin().is_terminal();
+        // Asked before the commit is offered, so a commit the repository's
+        // own check would refuse over a package's files is never offered.
+        let stale = match commit_offer::stale(env, scope, &scan) {
+            Ok(stale) => stale,
+            Err(error) => {
+                block::not_vouched(root, &error.to_string());
+                return Ok(Some(Outcome::Nothing));
+            }
+        };
+        if !stale.is_empty() {
+            block::stale(&scan, &stale);
+            // One setup per offer. A package still not ready after its own
+            // setup ran is not one a second run of it fixes.
+            if set_up || !person {
+                block::stale_way_on(set_up);
+                return Ok(Some(match (set_up, answered) {
+                    (false, None) => Outcome::Nothing,
+                    (true, _) | (false, Some(_)) => Outcome::CommitRefused,
+                }));
+            }
+            match block::pick_stale(&stale)? {
+                block::Held::Leave => return Ok(Some(Outcome::Nothing)),
+                block::Held::SetUp => {
+                    set_up = true;
+                    if let Err(error) = set_up_here(env, scope, &stale, &mut generated) {
+                        block::set_up_failed(&error.to_string());
+                        return Ok(Some(Outcome::CommitRefused));
+                    }
+                    continue;
+                }
+            }
+        }
+        if answered.is_none() && !person {
             block::no_terminal(root, scan.count());
             return Ok(Some(Outcome::Nothing));
         }
-    }
-    // A flag that already chose `commit` never pushes, so `gh` is not
-    // asked about the branch's rules or a pull request. One that chose
-    // `push` is, so a push the rules would refuse is refused before the
-    // commit rather than after it.
-    let probe = match answered {
-        Some(Choice::Commit) => Probe::Skip,
-        Some(Choice::Push) | Some(Choice::Pr) | Some(Choice::Leave) | None => Probe::Gh,
-    };
-    let offer = match commit_offer::offer(scan, &session.command, probe) {
-        Ok(offer) => offer,
-        Err(failed) => {
-            block::unreadable(root, &failed);
-            return Ok(Some(Outcome::Nothing));
-        }
-    };
-    match answered {
-        Some(choice) => {
-            // A precondition that removed the choice a flag names refuses
-            // with that precondition's reason, and the verb's writes still
-            // stand. Nothing was committed, which is what the ledger says.
-            if let Some(reason) = block::not_on_offer(&offer, choice) {
-                block::flag_refused(&offer, choice, &reason);
-                return Ok(Some(Outcome::CommitRefused));
+        // A flag that already chose `commit` never pushes, so `gh` is not
+        // asked about the branch's rules or a pull request. One that chose
+        // `push` is, so a push the rules would refuse is refused before the
+        // commit rather than after it.
+        let probe = match answered {
+            Some(Choice::Commit) => Probe::Skip,
+            Some(Choice::Push) | Some(Choice::Pr) | Some(Choice::Leave) | None => Probe::Gh,
+        };
+        let offer = match commit_offer::offer(scan, &session.command, probe) {
+            Ok(offer) => offer,
+            Err(failed) => {
+                block::unreadable(root, &failed);
+                return Ok(Some(Outcome::Nothing));
             }
-            routes::take(
-                &offer,
-                generated,
-                choice,
-                session.flags.message.clone(),
-                Asking::No,
-            )
-            .map(Some)
-        }
-        None => ask(&offer, generated, session.flags.message.clone()).map(Some),
+        };
+        return match answered {
+            Some(choice) => {
+                // A precondition that removed the choice a flag names
+                // refuses with that precondition's reason, and the verb's
+                // writes still stand. Nothing was committed, which is what
+                // the ledger says.
+                if let Some(reason) = block::not_on_offer(&offer, choice) {
+                    block::flag_refused(&offer, choice, &reason);
+                    return Ok(Some(Outcome::CommitRefused));
+                }
+                routes::take(
+                    &offer,
+                    &generated,
+                    choice,
+                    session.flags.message.clone(),
+                    Asking::No,
+                )
+                .map(Some)
+            }
+            None => ask(&offer, &generated, session.flags.message.clone()).map(Some),
+        };
     }
+}
+
+/// Set each held package up here, and add what bot-instructions renders to
+/// the files the offer covers.
+///
+/// The setup is the package's declared installer, the same run the
+/// package page and an install's separate yes make, relayed the same way.
+/// bot-instructions is the one package whose rendered files kendex reads
+/// back, through its own dry run.
+fn set_up_here(
+    env: &Env,
+    scope: &Scope,
+    stale: &[commit_offer::Stale],
+    generated: &mut GeneratedPaths,
+) -> CliResult {
+    for held in stale {
+        super::repo_effects::apply(scope, &held.declared)?;
+    }
+    kendex_core::bot_instructions::add_to_generated(env, scope, generated)?;
+    Ok(())
 }
 
 /// Whether the person is at the prompt: a flag's answer takes its route

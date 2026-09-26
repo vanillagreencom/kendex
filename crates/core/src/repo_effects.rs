@@ -142,6 +142,39 @@ pub fn armed_here(
     )
 }
 
+/// The main checkout of the repository, where this scope is a linked work
+/// tree of it and kendex recorded setting this package's checkout effect up
+/// there but not here.
+///
+/// A checkout effect's record belongs to the work tree it was made in, so
+/// a linked work tree of a set-up repository reads as not set up. That
+/// stays so: the work tree's own copy of the package is the code a record
+/// here would let kendex run. What this answer is for is the other half,
+/// that the state is never silent. A surface that finds the package not
+/// set up here names the main checkout and offers the setup in one step.
+///
+/// The main checkout's own git directory is the common one, so its record
+/// for a checkout effect sits where a shared effect's record does. `None`
+/// for a shared effect, whose one record every work tree already reads.
+pub fn set_up_in_main_checkout(
+    scope: &crate::model::Scope,
+    declared: &DeclaredEffects,
+) -> crate::error::Result<Option<std::path::PathBuf>> {
+    let crate::model::Scope::Project { root } = scope else {
+        return Ok(None);
+    };
+    if touches_git(&declared.effects) {
+        return Ok(None);
+    }
+    let Some(repo) = crate::guard::Repo::probe(root)? else {
+        return Ok(None);
+    };
+    if !repo.is_linked() || !armed::recorded(armed::record_dir(&repo, true), &declared.name)? {
+        return Ok(None);
+    }
+    repo.main_checkout().map(Some)
+}
+
 pub(crate) fn err(message: impl Into<String>) -> crate::error::CoreError {
     crate::error::CoreError::Guard {
         check: "repo-effects".to_owned(),

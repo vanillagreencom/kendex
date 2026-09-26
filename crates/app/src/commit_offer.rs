@@ -18,11 +18,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use kendex_core::commit_offer::{
     self, Attribution, Baseline, Branch, Changes, Committed, Failed, Held, Offer, Pending, Probe,
-    RestorePlan, Selection, Step, Tangled, Unavailable,
+    RestorePlan, Selection, Stale, Staleness, Step, Tangled, Unavailable,
 };
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::package::diff::PackageDiff;
+use kendex_core::repo_effects::DeclaredEffects;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -159,6 +160,52 @@ pub struct ProjectOffer {
     /// The branch already tracks the chosen remote, so a push needs no
     /// `--set-upstream`.
     pub tracked: bool,
+    /// Packages whose files in this repository a commit would carry out of
+    /// date. Where any is listed the commit is not offered: the dialog
+    /// offers their setup, or leaving the files as diffs.
+    pub stale: Vec<StalePackage>,
+}
+
+/// One package holding the commit, from
+/// [`kendex_core::commit_offer::stale`].
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct StalePackage {
+    pub name: String,
+    pub why: StaleWhy,
+    /// What the package's check said, escaped. Empty where it did not run.
+    pub said: Vec<String>,
+    /// The package as installed here, handed back to `repo_effects_apply`
+    /// by the setup choice. Its `summary` is what the setup
+    /// changes, in the package's own words.
+    pub declared: DeclaredEffects,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum StaleWhy {
+    /// kendex has not set the package up in this checkout.
+    NotSetUp,
+    /// The package's check says its files are out of date.
+    OutOfDate,
+    /// The package's check could not answer.
+    Unchecked,
+}
+
+impl From<Stale> for StalePackage {
+    fn from(stale: Stale) -> StalePackage {
+        let (why, said) = match stale.why {
+            Staleness::NotSetUp => (StaleWhy::NotSetUp, Vec::new()),
+            Staleness::OutOfDate(said) => (StaleWhy::OutOfDate, said),
+            Staleness::Unchecked(said) => (StaleWhy::Unchecked, said),
+        };
+        StalePackage {
+            name: stale.declared.name.clone(),
+            why,
+            said,
+            declared: stale.declared,
+        }
+    }
 }
 
 /// Who opened the offer, which decides whether one is made at all.
@@ -235,21 +282,13 @@ impl From<&Failed> for Refused {
 
 /// Put a hook's keyed findings block before the successful checks that ran
 /// ahead of it. The whole output remains present; only the first thing the
-/// commit failure view shows changes.
+/// commit failure view shows changes. Where the block is, is
+/// [`Failed::findings`]' answer, the one the terminal reads too.
 fn said_first(failed: &Failed) -> Vec<String> {
     let mut lines = failed.said().to_vec();
-    if failed.step != Step::Commit {
-        return lines;
+    if let Some(block) = failed.findings() {
+        lines.rotate_left(block.start);
     }
-    let Some(at) = lines.iter().position(|line| {
-        let Some((name, count)) = line.rsplit_once(": findings=") else {
-            return false;
-        };
-        !name.is_empty() && count.parse::<u64>().is_ok_and(|count| count > 0)
-    }) else {
-        return lines;
-    };
-    lines.rotate_left(at);
     lines
 }
 
@@ -389,10 +428,18 @@ fn read(
         }
         Opened::ByPerson => None,
     };
+    // Asked before the commit is offered, the same reading the terminal
+    // makes, so neither surface offers a commit the repository's own check
+    // would refuse over a package's files.
+    let stale: Vec<StalePackage> = commit_offer::stale(env, &scope, &scan)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(StalePackage::from)
+        .collect();
     // The window's write is not a typed command, so the message names the
     // shell the person is in rather than a verb they typed.
     match commit_offer::offer(scan, COMMAND, Probe::Gh) {
-        Ok(offer) => Ok(Some(Ok(drawn(root, key, offer, pending.as_ref())))),
+        Ok(offer) => Ok(Some(Ok(drawn(root, key, offer, pending.as_ref(), stale)))),
         Err(failed) => Ok(Some(Err(ProjectFlag {
             root: key.to_owned(),
             count: 0,
@@ -407,7 +454,13 @@ fn read(
 /// The rule is the command, and in the app the command is the app.
 const COMMAND: &str = "app";
 
-fn drawn(root: &Path, key: &str, offer: Offer, pending: Option<&Pending>) -> ProjectOffer {
+fn drawn(
+    root: &Path,
+    key: &str,
+    offer: Offer,
+    pending: Option<&Pending>,
+    stale: Vec<StalePackage>,
+) -> ProjectOffer {
     let did: BTreeMap<&str, &kendex_core::commit_offer::PendingFile> = pending
         .map(|pending| {
             pending
@@ -472,6 +525,7 @@ fn drawn(root: &Path, key: &str, offer: Offer, pending: Option<&Pending>) -> Pro
         tracked: offer.remote.as_ref().is_some_and(|remote| remote.tracked),
         remote: offer.remote.as_ref().map(|remote| remote.name.clone()),
         branch: offer.branch,
+        stale,
     }
 }
 
@@ -1169,6 +1223,7 @@ mod tests {
             },
             // No reading was taken before the write.
             None,
+            Vec::new(),
         );
         assert!(unattributed.action_paths.is_empty());
         assert!(
@@ -1550,6 +1605,69 @@ mod tests {
                 "{what}: {:?}",
                 read.map(|one| one.map(|offer| offer.files))
             );
+        }
+    }
+
+    /// The window's offer carries each package the terminal would hold the
+    /// commit over, with the package's own words: a rendered surface whose
+    /// check says it is out of date is listed, one whose check passes is
+    /// not.
+    #[test]
+    #[cfg(unix)]
+    fn an_offer_lists_the_packages_that_hold_its_commit() {
+        use kendex_core::env::{Env, FakeOs};
+
+        for (check, held) in [
+            ("exit 0", false),
+            ("echo 'drift: fixture' >&2; exit 1", true),
+        ] {
+            let tmp = tempfile::tempdir().expect("a fixture directory");
+            let home = tmp.path().join("home");
+            let root = tmp.path().join("project");
+            write_bot_fixture(&root);
+            let script = root.join(".agents/skills/bot-instructions/scripts/bot-instructions");
+            let renders = std::fs::read_to_string(&script).expect("the fixture renderer reads");
+            std::fs::write(
+                &script,
+                renders.replacen(
+                    "#!/bin/sh\n",
+                    &format!("#!/bin/sh\nif [ \"$1\" = check ]; then\n  {check}\nfi\n"),
+                    1,
+                ),
+            )
+            .expect("the fixture check is written");
+            std::fs::create_dir_all(&home).expect("the fixture home is made");
+            let root = root.canonicalize().expect("the project root canonicalizes");
+            bot_fixture_repo(&root, &home);
+            let scope = Scope::Project { root: root.clone() };
+            let env = Env::fake(&home, FakeOs::Linux);
+            record_bot_package(&env, &scope, &root, true);
+            crate::audit::apply_scope(&env, &scope, false).expect("the render succeeds");
+
+            let key = root.to_string_lossy().into_owned();
+            let Some(Ok(offer)) =
+                read(&env, &root, &key, Opened::ByPerson).expect("the project reads")
+            else {
+                panic!("check {check:?}: no offer was read");
+            };
+
+            let stale: Vec<(&str, bool, &[String])> = offer
+                .stale
+                .iter()
+                .map(|one| {
+                    (
+                        one.name.as_str(),
+                        matches!(one.why, StaleWhy::OutOfDate),
+                        one.said.as_slice(),
+                    )
+                })
+                .collect();
+            let said = ["drift: fixture".to_owned()];
+            let want: Vec<(&str, bool, &[String])> = match held {
+                true => vec![("bot-instructions", true, &said[..])],
+                false => Vec::new(),
+            };
+            assert_eq!(stale, want, "check {check:?}");
         }
     }
 

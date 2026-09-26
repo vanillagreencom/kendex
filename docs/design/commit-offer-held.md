@@ -1,0 +1,50 @@
+# Commit offer: packages that hold the commit
+
+The commit offer in [post-refresh-commit-flow.md](post-refresh-commit-flow.md) is never made while a package's files in this repository would go out of date in the commit. This file is that precondition: how the offer reads it, and the state each surface draws in place of the commit choices.
+
+## The reading
+
+A package can declare an effect on files in the checkout, the way bot-instructions renders the review-bot files. A commit carries those files, and commit-guards' pre-commit chain runs `bot-instructions check --staged` wherever that package is installed. `commit_offer::stale` asks each such package before the commit is offered, where the set touches the package's own files or a path it declares it writes. An effect inside `.git` is out of scope: a commit carries none of those files.
+
+| Standing | How kendex reads it | Why named |
+| --- | --- | --- |
+| Not set up here | No arming record for this checkout; no package code runs | `not set up in this checkout` |
+| Set up, its check exits 1 | The declared checker, licensed by the record | `out of date`, with the check's words |
+| Set up, its check could not answer | The declared checker exits above 1 or does not run | `could not say`, with its words or why |
+| Set up, its check exits 0, or it declares none | The declared checker | not named |
+
+The setup choice runs each named package's declared installer, the same run the package page makes, then reads the project again: the files the setup rendered join the set, and each package is asked again. One setup per offer. A package still named after its own setup ran ends the offer with nothing committed.
+
+A linked work tree reads its own arming record, never its main checkout's: the work tree's copy of the package is the code a record there would license. Where the main checkout set a checkout effect up, the skipped-render line names the main checkout, and the CLI asks at the same point whether to set the package up in this work tree too.
+
+## CLI
+
+The block replaces the commit choices:
+
+```
+/home/method/dev/site: 90 files kendex wrote are not committed
+  bot-instructions is not set up in this checkout, so its files in this repository were not brought up to date
+  committing now would carry those files out of date, so kendex does not offer the commit
+  setting bot-instructions up: Renders the enabled review-bot instruction files, the pointed code-review file and the owned Code Review Rules region in this repository.
+  1  set up bot-instructions here, then offer the commit with its files
+  2  leave them as diffs
+1-2, or Enter to leave them as diffs:
+```
+
+With no terminal, or a flag naming a commit, the block ends on `set it up here first: at a terminal, where kendex offers it, or with Set up on its package page in the app`. A flag's run exits 1, `not committed`.
+
+## App
+
+The held state is drawn in place of the offer state.
+
+| Element | Copy |
+| --- | --- |
+| Title | `12 files kendex wrote in site are not committed` |
+| Description | `Committing now would carry those files out of date, so kendex does not offer the commit.` |
+| Section heading | `Not ready to commit` |
+| Per package | `bot-instructions is not set up in this checkout, so its files in this repository were not brought up to date.`, `… says its files in this repository are out of date.` or `… could not say whether its files in this repository are up to date.`, the check's words under it, then `Setting bot-instructions up: <its summary>` |
+| Section heading | `Files` |
+| Footer, outline | `Leave as diffs` |
+| Footer, primary | `Set up bot-instructions here`; `Setting up…` while it runs |
+
+A setup that fails, or leaves a package still named, ends in `The setup did not finish` with the words, and `Leave as diffs` only.

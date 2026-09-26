@@ -1,7 +1,16 @@
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { type ChangedFile, commands, type ProjectOffer } from "@/bindings";
-import { droppedToast, NOTHING_TO_COMMIT_TOAST } from "@/lib/copy-commit-offer";
+import {
+  type ChangedFile,
+  commands,
+  type ProjectOffer,
+  type StalePackage,
+} from "@/bindings";
+import {
+  droppedToast,
+  NOTHING_TO_COMMIT_TOAST,
+  STILL_STALE,
+} from "@/lib/copy-commit-offer";
 import {
   ready,
   routesFor,
@@ -21,6 +30,7 @@ vi.mock("@/bindings", () => ({
     commitOfferStartBranch: vi.fn(),
     commitOfferByHand: vi.fn(),
     projectChangesScan: vi.fn(),
+    repoEffectsApply: vi.fn(),
   },
 }));
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), success: vi.fn() } }));
@@ -58,6 +68,7 @@ const offer = (over: Partial<ProjectOffer> = {}): ProjectOffer => ({
   newBranch: "kendex/renders",
   repo: "acme/site",
   tracked: true,
+  stale: [],
   ...over,
 });
 
@@ -727,6 +738,90 @@ describe("the root a project is looked up by", () => {
 // is still out. That scan answers about the write, with its scope and its
 // attribution; landing it over the offer they asked for answers a question
 // nobody put.
+// A package whose files the commit would carry out of date holds the offer.
+// Its setup runs, then the project is read again: a clear reading is an
+// ordinary offer, one still held ends the setup rather than offering it
+// twice, and a setup that failed reads nothing.
+describe("setting up a package that holds the commit", () => {
+  const held: StalePackage = {
+    name: "bot-instructions",
+    why: "notSetUp",
+    said: [],
+    declared: {
+      name: "bot-instructions",
+      root: "/home/method/dev/site/.agents/skills/bot-instructions",
+      summary: "Renders the review-bot files.",
+      writes: [".github/copilot-instructions.md"],
+      installer: "scripts/bot-instructions render",
+      uninstaller: null,
+      checker: "scripts/bot-instructions check",
+      removal: null,
+      notes: [],
+      companions: [],
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useCommitOfferStore.setState({
+      queue: [offer({ stale: [held] })],
+      stage: { at: "offer" },
+      route: "commit",
+      scoped: "action",
+      accepted: false,
+      message: "",
+      scanFailure: null,
+      scanning: false,
+      baselines: {},
+      asked: null,
+    });
+  });
+
+  it.each([
+    {
+      name: "the reading after it is clear",
+      armed: { status: "ok", data: { stdout: [], stderr: [] } },
+      after: [] as StalePackage[],
+      stage: { at: "offer" },
+      reopened: true,
+    },
+    {
+      name: "the package is still not ready",
+      armed: { status: "ok", data: { stdout: [], stderr: [] } },
+      after: [held],
+      stage: { at: "setUpFailed", error: STILL_STALE },
+      reopened: true,
+    },
+    {
+      name: "the setup failed",
+      armed: { status: "error", error: "bot-instructions: render exited 2" },
+      after: [] as StalePackage[],
+      stage: {
+        at: "setUpFailed",
+        error: "bot-instructions: render exited 2",
+      },
+      reopened: false,
+    },
+  ] as const)("ends where it should: $name", async (row) => {
+    vi.mocked(commands.repoEffectsApply).mockResolvedValue(row.armed as never);
+    vi.mocked(commands.commitOfferOpen).mockResolvedValue({
+      status: "ok",
+      data: { kind: "offer", offer: offer({ stale: [...row.after] }) },
+    });
+
+    await useCommitOfferStore.getState().setUp();
+
+    expect(commands.repoEffectsApply).toHaveBeenCalledWith(
+      { scope: "project", root: "/home/method/dev/site" },
+      held.declared,
+    );
+    expect(useCommitOfferStore.getState().stage).toEqual(row.stage);
+    expect(vi.mocked(commands.commitOfferOpen).mock.calls.length > 0).toBe(
+      row.reopened,
+    );
+  });
+});
+
 describe("a review a person opened, against a scan already out", () => {
   beforeEach(() => {
     useCommitOfferStore.setState({

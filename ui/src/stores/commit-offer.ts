@@ -13,6 +13,7 @@ import {
   droppedToast,
   NOTHING_TO_COMMIT_TOAST,
   pushedToast,
+  STILL_STALE,
 } from "@/lib/copy-commit-offer";
 import { askingAgain, forgetRoot, isForgotten } from "@/lib/forgotten-roots";
 import { readOrder } from "@/lib/read-state";
@@ -37,6 +38,11 @@ export type Scoped = "action" | "all";
 export type Stage =
   | { at: "offer" }
   | { at: "busy"; step: Route }
+  /** The setup a held offer carries is running. */
+  | { at: "settingUp" }
+  /** The setup did not run through, or the packages are still not ready
+   *  after it: what went wrong, and nothing was committed. */
+  | { at: "setUpFailed"; error: string }
   | {
       at: "commitRefused";
       refused: Refused;
@@ -161,6 +167,11 @@ interface CommitOfferState {
   accept: (accepted: boolean) => void;
   setMessage: (message: string) => void;
   run: () => Promise<void>;
+  /** Set up each package holding the head offer, then read the project
+   *  again: the files the setup rendered join the offer, and each package
+   *  is asked again. One setup per offer: a package still not ready after
+   *  its own setup ran ends in `setUpFailed`. */
+  setUp: () => Promise<void>;
   openPullRequest: () => Promise<void>;
   /** Leaving the files as diffs, which dismissing the dialog also is.
    *
@@ -729,6 +740,43 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
         return;
       }
       await open(offer, sha, branch, files, true, null, offer.branch);
+    },
+
+    setUp: async () => {
+      const offer = head();
+      if (!offer || offer.stale.length === 0) return;
+      set({ stage: { at: "settingUp" } });
+      for (const held of offer.stale) {
+        const armed = await commands.repoEffectsApply(
+          { scope: "project", root: offer.root },
+          held.declared,
+        );
+        if (armed.status === "error") {
+          set({ stage: { at: "setUpFailed", error: armed.error } });
+          return;
+        }
+      }
+      const opened = await get().openFor(offer.root);
+      switch (opened.at) {
+        case "offer": {
+          const next = head();
+          if (next?.root === offer.root && next.stale.length > 0)
+            set({ stage: { at: "setUpFailed", error: STILL_STALE } });
+          return;
+        }
+        case "nothing":
+          toast.info(NOTHING_TO_COMMIT_TOAST);
+          advance();
+          return;
+        // The project's card carries the state that stops an offer, from
+        // the read behind it.
+        case "blocked":
+          advance();
+          return;
+        case "failed":
+          set({ stage: { at: "setUpFailed", error: opened.error } });
+          return;
+      }
     },
 
     openPullRequest: async () => {

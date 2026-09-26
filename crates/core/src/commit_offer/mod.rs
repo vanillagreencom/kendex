@@ -46,6 +46,7 @@ mod pending;
 mod regions;
 mod restore;
 mod run;
+mod stale;
 
 pub use changes::{Changed, Changes, ModeChange, file_changes};
 pub use gh::{OpenPullRequest, probe};
@@ -62,6 +63,7 @@ pub use run::{
     CommitFailure, Committed, Opened, Pushed, abandon_branch, body, by_hand, commit,
     open_pull_request, push, push_head, start_branch,
 };
+pub use stale::{Stale, Staleness, stale};
 
 #[cfg(test)]
 mod tests;
@@ -184,6 +186,36 @@ impl Failed {
         self.refusal == Refusal::TimedOut
     }
 
+    /// Where the first findings block in a refused commit's words sits, or
+    /// `None` where the commit's words carry none.
+    ///
+    /// A pre-commit chain prints every lane it ran, the passing ones too,
+    /// and git hands back its stdout before its stderr. The lane that
+    /// refused is therefore rarely first, and the reader needs it first.
+    /// The block starts at a `<check>: findings=N` record with N above
+    /// zero, the first line of the family's findings protocol. It runs to
+    /// the line before the next keyed record, `<name>: <key>=<value>`,
+    /// which is the next check or the chain's own verdict, or to the end.
+    /// Only a commit's words are read this way: no other step runs a hook
+    /// that speaks the protocol.
+    pub fn findings(&self) -> Option<std::ops::Range<usize>> {
+        if self.step != Step::Commit {
+            return None;
+        }
+        let lines = self.said();
+        let start = lines.iter().position(|line| {
+            let Some((name, count)) = line.rsplit_once(": findings=") else {
+                return false;
+            };
+            !name.is_empty() && count.parse::<u64>().is_ok_and(|count| count > 0)
+        })?;
+        let end = lines[start + 1..]
+            .iter()
+            .position(|line| keyed(line))
+            .map_or(lines.len(), |after| start + 1 + after);
+        Some(start..end)
+    }
+
     /// Whether GitHub refused this push because the branch takes changes
     /// only through a pull request.
     ///
@@ -223,6 +255,16 @@ impl Failed {
                 ],
             )
     }
+}
+
+/// Whether a line opens a keyed record, `<name>: <key>=<value>`: the first
+/// line every check in the guard family prints for a refusal, a finding
+/// count or a step.
+fn keyed(line: &str) -> bool {
+    let word = |text: &str| !text.is_empty() && !text.contains(char::is_whitespace);
+    line.split_once(": ").is_some_and(|(name, rest)| {
+        word(name) && rest.split_once('=').is_some_and(|(key, _)| word(key))
+    })
 }
 
 /// One changed path the offer covers.
