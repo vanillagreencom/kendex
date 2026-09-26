@@ -40,7 +40,7 @@ That read decodes strictly, and so does every other read in this package. **Text
 
 **No timestamps and no input hashes** in a rendered file. A render is reproducible from its inputs, and either would turn every unrelated re-render into a diff.
 
-**Ordering is fixed, never sorted at render time.** Doctrine blocks appear in the order each section below states. `[[bot-instructions.surface]]` entries appear in TOML declaration order. Exclusion entries appear with the derived render trees first, in lexicographic order, then `[[bot-instructions.exclusions.path]]` entries in declaration order. Stable ordering is what makes a re-render diff readable.
+**Ordering is fixed, never sorted at render time.** Doctrine blocks appear in the order each section below states. `[[bot-instructions.surface]]` entries appear in TOML declaration order, followed by the spec copy's default surfaces in the order `SKILL.md` § Default surfaces declares them. Exclusion entries appear with the derived render trees first, in lexicographic order, then `[[bot-instructions.exclusions.path]]` entries in declaration order. Stable ordering is what makes a re-render diff readable.
 
 **Repo text keeps its line breaks** except in CodeRabbit's `tone_instructions` scalar, which is one line by construction. No repo text reaches the `AGENTS.md` owned region at all: the one line it carries is the directive.
 
@@ -155,7 +155,7 @@ Read by Copilot code review, repo-wide, from the pull request's head branch.
 1. The marker comment.
 2. `# <repo name>` followed by `[bot-instructions.repo] summary`, which the routing table's placement note names as this destination's opening rather than its close.
 3. `## Code review`, one sentence naming the configured `code-review.md` path and telling the reader to read it first, emitted on one line and never wrapped: a reader looking for the file name reads one line, and a wrap splits the pointer in two. The repo name is the file's only level-one heading.
-4. `## Path rules`, one sentence naming `.github/instructions/` as where per-path rules live, emitted only when at least one `[[bot-instructions.surface]]` exists.
+4. `## Path rules`, one sentence naming `.github/instructions/` as where per-path rules live, emitted only when at least one surface exists, a default surface included.
 
 No doctrine block is restated here, so this destination has no routing column. Copilot reads both files from the pull request head, and a second copy of eight blocks is a second thing to keep in step.
 

@@ -70,8 +70,8 @@
 #   - A `render` or `trivial` diff runs bot_instructions alone, the one
 #     seconds-long verify job: its check, the document byte ceilings and the
 #     work-marker scan. The classifier proved a `render` diff by
-#     re-rendering it, and a `trivial` one is inside the docs path set and its
-#     line ceiling.
+#     re-rendering it, and a `trivial` one is inside the docs path set, or a
+#     configured allowlist and its line ceiling.
 #   - The exception: a `trivial` diff changing a path a tools/rust-reads
 #     include or manifest row names, or a path under a directory it names,
 #     takes the measured row its paths select, so the cargo lane runs on a

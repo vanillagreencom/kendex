@@ -9,8 +9,10 @@
 # STUB_BRANCH_EXIT). STUB_POST_GRAPHQL_PARTIAL makes the post-merge read a
 # GraphQL 200 carrying an errors array beside data, STUB_POST_VIEW_FAIL fails
 # its pr-view fallback, and STUB_BASE_OID is the base end of the class-policy
-# range. STUB_REVIEW_DECISION and STUB_REVIEW_LATEST are the readiness check's
-# reviewDecision and latestReviews.
+# range, whose head end is STUB_POLICY_HEAD where set, else STUB_HEAD. STUB_REVIEW_DECISION and STUB_REVIEW_LATEST are the readiness check's
+# reviewDecision and latestReviews. STUB_REPLY_FAIL and STUB_RESOLVE_FAIL
+# make the review-thread reply and resolve mutations answer a GraphQL error,
+# and STUB_REQUIRE_TOKEN refuses either without the bot token.
 # Sourced, never run — CI's suite glob picks up skills/*/tests/*.sh only, so
 # this file lives one level down.
 #
@@ -165,6 +167,27 @@ case "${1:-}" in
                     '{data:{repository:{pullRequest:{state:$state,headRefOid:$head,headRefName:$branch,mergeCommit:(if $commit == "" then null else {oid:$commit} end),autoMergeRequest:$auto,isInMergeQueue:$in_queue,mergeQueueEntry:$queue_entry}}}}'
                 exit 0
             fi
+            # The thread mutations post-reply.sh and resolve-thread.sh send.
+            if [[ "$*" == *addPullRequestReviewThreadReply* || "$*" == *resolveReviewThread* ]]; then
+                if [[ "${STUB_REQUIRE_TOKEN:-false}" == "true" && "${GH_TOKEN:-}" != "ghp_test_token" ]]; then
+                    echo "missing effective token for thread mutation" >&2
+                    exit 45
+                fi
+                if [[ "$*" == *addPullRequestReviewThreadReply* ]]; then
+                    if [[ "${STUB_REPLY_FAIL:-false}" == "true" ]]; then
+                        echo '{"errors":[{"message":"reply refused"}]}'
+                        exit 1
+                    fi
+                    echo '{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"C_1","url":"https://github.com/owner/repo/pull/123#discussion_r1"}}}}'
+                    exit 0
+                fi
+                if [[ "${STUB_RESOLVE_FAIL:-false}" == "true" ]]; then
+                    echo '{"errors":[{"message":"resolve refused"}]}'
+                    exit 1
+                fi
+                echo '{"data":{"resolveReviewThread":{"thread":{"id":"PRRT_x","isResolved":true}}}}'
+                exit 0
+            fi
             if [[ "${STUB_THREADS_FETCH_FAIL:-false}" == "true" ]]; then
                 echo '{"errors":[{"message":"review threads unavailable"}]}'
                 exit 1
@@ -246,7 +269,7 @@ case "${1:-}" in
                         echo "could not read the pull request endpoints" >&2
                         exit 1
                     fi
-                    jq -cn --arg b "${STUB_BASE_OID-base-oid}" --arg h "${STUB_HEAD:-test-head}" \
+                    jq -cn --arg b "${STUB_BASE_OID-base-oid}" --arg h "${STUB_POLICY_HEAD:-${STUB_HEAD:-test-head}}" \
                         '{baseRefOid:(if $b == "" then null else $b end),headRefOid:$h}'
                     exit 0
                 fi

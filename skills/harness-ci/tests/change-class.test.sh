@@ -178,7 +178,7 @@ render-inventory-gain|standard|clean|.kendex-generated.json:1
 instruction-source|standard|clean|AGENTS.md:10
 configuration-source|standard|clean|kendex.settings.toml:2 runtime/product.ts:2
 trivial-at-ceiling|trivial|dirty|docs/guide.md:20
-trivial-one-over|small|dirty|docs/guide.md:21
+trivial-docs-past-the-ceiling|trivial|dirty|docs/guide.md:400
 micro-at-ceiling|micro|dirty|runtime/product.ts:20
 micro-counts-production-not-total|micro|dirty|runtime/product.ts:10 runtime/tests/product.test.sh:200
 micro-one-over|small|dirty|runtime/product.ts:21
@@ -880,8 +880,8 @@ git -C "$repo" commit -q -m "configured allowlist"
 PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='runtime/*' \
   assert_class "a configured allowlist decides trivial" trivial \
   --repo "$repo" --event pull_request --base "$base" --head HEAD
-PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_MAX_LINES=1 \
-  assert_class "a configured ceiling refuses trivial" micro \
+PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='runtime/*' HARNESS_CI_TRIVIAL_MAX_LINES=1 \
+  assert_class "a configured ceiling bounds the configured allowlist" micro \
   --repo "$repo" --event pull_request --base "$base" --head HEAD
 
 # A ceiling that is not a whole number is a wiring error, not a skipped check:

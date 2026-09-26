@@ -50,9 +50,11 @@
 #            nobody. The proof reads that program's `--json` document,
 #            version 1, and never its human rows; a kendex that prints no
 #            such document, or another version of it, answers standard.
-#   trivial  every changed path is on HARNESS_CI_TRIVIAL_PATHS, blank-separated
-#            globs defaulting to the `harness-only --mode docs` set, and the
-#            change is within HARNESS_CI_TRIVIAL_MAX_LINES (default 20).
+#   trivial  every changed path is in the `harness-only --mode docs` set,
+#            whatever the size of the change. Where HARNESS_CI_TRIVIAL_PATHS
+#            names the repository's own allowlist as blank-separated globs, it
+#            replaces that set, and the change must also be within
+#            HARNESS_CI_TRIVIAL_MAX_LINES (default 20).
 #   micro    production additions within the micro ceiling.
 #   small    one subsystem, production additions within the small ceiling. A
 #            path's subsystem is its first directory, with a leading render
@@ -613,18 +615,21 @@ case "$trivial_max" in
     die "cause=invalid-setting setting=HARNESS_CI_TRIVIAL_MAX_LINES" \
       "HARNESS_CI_TRIVIAL_MAX_LINES must be a whole number" ;;
 esac
-if [ "$total" -le "$trivial_max" ]; then
-  if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
+# A repository's own allowlist can name paths that run, so its size is
+# bounded. The shipped set is documentation, so a documentation diff is
+# trivial at any size.
+if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
+  if [ "$total" -le "$trivial_max" ]; then
     set_globs "$HARNESS_CI_TRIVIAL_PATHS"
     path_matches every &&
       answer trivial "cause=allowlisted-paths lines=$total"
-  else
-    # The shipped allowlist is that mode's own path set, read from its verdict.
-    if docs_verdict="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" \
-      --output /dev/null 2>/dev/null)" &&
-      [ "$docs_verdict" = "docs_only=true" ]; then
-      answer trivial "cause=documentation-paths lines=$total"
-    fi
+  fi
+else
+  # The shipped allowlist is that mode's own path set, read from its verdict.
+  if docs_verdict="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" \
+    --output /dev/null 2>/dev/null)" &&
+    [ "$docs_verdict" = "docs_only=true" ]; then
+    answer trivial "cause=documentation-paths lines=$total"
   fi
 fi
 

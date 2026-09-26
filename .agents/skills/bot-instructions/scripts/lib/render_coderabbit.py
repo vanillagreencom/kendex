@@ -41,7 +41,7 @@ def path_filters(model):
 
 def path_instructions(model):
     out = []
-    for surface in model.config.surfaces:
+    for surface in model.surfaces:
         gs = surface["globs"]
         # Joined as a brace alternation, which minimatch understands and which
         # is safe here because path_instructions never reaches sparse-checkout.

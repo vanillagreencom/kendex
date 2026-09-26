@@ -37,7 +37,7 @@ def build(model, schema=None):
         region = render_markdown.agents_region_body(model)
     if bots["copilot"]:
         files[".github/copilot-instructions.md"] = render_markdown.copilot_instructions(model)
-        for surface in model.config.surfaces:
+        for surface in model.surfaces:
             files[f".github/instructions/{surface['name']}.instructions.md"] = (
                 render_markdown.instructions_file(model, surface)
             )
@@ -52,7 +52,7 @@ def build(model, schema=None):
     if bots["qodo"]:
         data[".pr_agent.toml"] = render_qodo.guidance(model)
         files[".pr_agent.toml"] = render_qodo.render(model, data[".pr_agent.toml"])
-    if bots["qodo_best_practices"] and model.config.surfaces:
+    if bots["qodo_best_practices"] and model.surfaces:
         # No surfaces: the file is not written. An existing marked one becomes
         # an orphan, so retiring the last surface says so rather than leaving
         # a marker-only file that looks like current guidance.
@@ -62,7 +62,7 @@ def build(model, schema=None):
     if bots["macroscope"]:
         files[".macroscope/ignore.md"] = render_markdown.macroscope_ignore(model)
         files[".macroscope/correctness/doctrine.md"] = render_markdown.macroscope_doctrine(model)
-        for surface in model.config.surfaces:
+        for surface in model.surfaces:
             files[f".macroscope/correctness/{surface['name']}.md"] = (
                 render_markdown.macroscope_surface(model, surface)
             )
