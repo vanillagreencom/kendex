@@ -471,6 +471,8 @@ map_row() { # HOW PATHS NOTE [GUARD] — sets VERDICT
   else
     noted=$([[ "$OUT" == *"$3"* ]] && echo "$3" || echo missing)
   fi
+  # A note whose reason has no explanation arm prints the broken-guard line.
+  [[ "$OUT" != *"no explanation is defined for this value"* ]] || noted=unexplained
   VERDICT="rc=$RC started=$(started) note=$noted"
   back_to_mapped
 }
@@ -567,6 +569,7 @@ for row in "${UNREAD_ROWS[@]}"; do
   range_grep_fails "$unread" "$GUARD"
   [ "$RC" -eq 0 ] && [ "$(started)" = "$MAPPED_ALL" ] \
     && [[ "$OUT" == *"$(note_for unreadable skills/mapped/scripts/lib/pid.sh)"* ]] \
+    && [[ "$OUT" != *"no explanation is defined for this value"* ]] \
     && ok "an unreadable $unread runs the whole set and names the read" \
     || bad "an unreadable $unread runs the whole set and names the read" "rc=$RC started=$(started) out=$OUT"
   if mutant_guard 's/^        \*) return 2 ;;$/        *) ;;/'; then
