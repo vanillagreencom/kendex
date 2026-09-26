@@ -80,7 +80,7 @@ The full per-tool facts are in [docs/adapters](docs/adapters/README.md).
 - Use `kendex.toml` to declare a project setup and add instructions or options for each tool.
 - Package settings apply per project only; change them in the package's Customize tab or that project's `kendex.settings.toml`.
 - Keep private settings and secrets in `.env.local`.
-- If a formatter such as Biome or Prettier checks JSON at the project root, add `.kendex-lock.json` and `.kendex-generated.json` to its ignore list. kendex writes both files in its own layout on every refresh.
+- If a formatter such as Biome or Prettier checks JSON at the project root, add `.kendex-lock.json` and `.kendex-generated.json` to its ignore list. kendex writes both files in its own layout whenever what they record changes.
 
 ## Documentation
 
