@@ -1,0 +1,1 @@
+- Verify checks adopted workflow copies against their declared package templates and records template hashes in the generated-file inventory.

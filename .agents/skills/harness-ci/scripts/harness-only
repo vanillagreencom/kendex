@@ -287,11 +287,25 @@ head_inventory="$(git_repo show "$head:.kendex-generated.json" 2>/dev/null)" || 
   "head generated paths are absent or unreadable"
 # The array contains files, never folder prefixes. A file must be generated
 # at each endpoint where it exists, so adopting a render as source runs checks.
-for inventory in "$base_inventory" "$head_inventory"; do
-  jq -e 'type == "array" and all(.[]; type == "string")' <<<"$inventory" >/dev/null 2>&1 \
-    || verdict false "cause=invalid-generated-paths" \
-      "generated paths are invalid"
-done
+inventory_paths() { # JSON — validate writer entries and retain only their paths
+  jq -ecs '
+    def path_string: type == "string" and length > 0
+      and (contains("\n") or contains("\u0000") | not);
+    def entry: if type == "string" then path_string
+      elif type == "object" then
+        keys == ["path", "template", "templateHash"]
+        and (.path | path_string) and (.template | path_string)
+        and (.templateHash | type == "string" and length == 71 and test("^sha256:[0-9a-f]{64}$"))
+      else false end;
+    if length == 1 and (.[0] | type == "array" and all(.[]; entry))
+    then .[0] | map(if type == "string" then . else .path end)
+    else "" | halt_error(21) end
+  ' <<<"$1"
+}
+base_inventory="$(inventory_paths "$base_inventory" 2>/dev/null)" \
+  || verdict false "cause=invalid-generated-paths" "generated paths are invalid"
+head_inventory="$(inventory_paths "$head_inventory" 2>/dev/null)" \
+  || verdict false "cause=invalid-generated-paths" "generated paths are invalid"
 printf '%s\n%s\n' "$base_inventory" "$head_inventory" | jq -es '
   .[0] as $base | .[1] | all(.[]; . as $path | ($base | index($path)) != null)
 ' >/dev/null 2>&1 || verdict false "cause=generated-ownership-gain" \

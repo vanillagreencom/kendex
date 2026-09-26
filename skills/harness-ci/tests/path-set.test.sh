@@ -85,4 +85,39 @@ commit_paths "$repo" "product claims generated ownership" src/claimed.rs
 assert_verdict ownership-gain false \
   --repo "$repo" --event push --base "$base" --head HEAD
 
+
+# The inventory tracks adopted workflow paths; template refreshes keep ownership.
+repo="$(new_repo adopted-workflow)"
+workflow='.github/workflows/kendex-refresh.yml'
+record='{"path":".github/workflows/kendex-refresh.yml","template":".agents/skills/review-gate/templates/kendex-refresh.yml","templateHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+jq --argjson record "$record" '. + [$record]' "$repo/.kendex-generated.json" >"$SANDBOX/inventory"
+mv "$SANDBOX/inventory" "$repo/.kendex-generated.json"
+commit_paths "$repo" baseline "$workflow"
+adopted_base="$(git -C "$repo" rev-parse HEAD)"
+commit_paths "$repo" refresh "$workflow"
+assert_verdict adopted-workflow true --repo "$repo" --event push --base "$adopted_base"
+jq 'map(if type == "object" then .templateHash = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" else . end)' \
+  "$repo/.kendex-generated.json" >"$SANDBOX/inventory"
+mv "$SANDBOX/inventory" "$repo/.kendex-generated.json"
+commit_paths "$repo" template-update "$workflow"
+assert_verdict adopted-template-update true --repo "$repo" --event push --base "$adopted_base"
+valid_head="$(git -C "$repo" rev-parse HEAD)"
+for mutation in 'del(.path)' '.template = null' '.templateHash = "bad"' '.extra = true'; do
+  git -C "$repo" checkout -q -B invalid "$valid_head"
+  jq "map(if type == \"object\" then $mutation else . end)" "$repo/.kendex-generated.json" >"$SANDBOX/inventory"
+  mv "$SANDBOX/inventory" "$repo/.kendex-generated.json"
+  commit_paths "$repo" malformed "$workflow"
+  assert_verdict "invalid adopted record: $mutation" false --repo "$repo" --event push --base "$adopted_base"
+done
+git -C "$repo" checkout -q -B valid "$valid_head"
+original="$HARNESS_ONLY"
+[ "$(grep -Fc 'else .path end)' "$original")" -eq 1 ]
+sed 's/else .path end)/else .template end)/' "$original" >"$SANDBOX/harness-only"
+cmp -s "$original" "$SANDBOX/harness-only" && { echo "control changed no bytes" >&2; exit 1; }
+chmod +x "$SANDBOX/harness-only"
+HARNESS_ONLY="$SANDBOX/harness-only"
+assert_verdict 'control: template membership loses the adopted workflow' false \
+  --repo "$repo" --event push --base "$adopted_base"
+HARNESS_ONLY="$original"
+
 report path-set

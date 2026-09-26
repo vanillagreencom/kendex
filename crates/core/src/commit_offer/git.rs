@@ -312,5 +312,5 @@ pub fn committed_inventory(root: &Path) -> Result<std::collections::BTreeSet<Str
     let Some(bytes) = read(root, &["show", &spec])? else {
         return Ok(std::collections::BTreeSet::new());
     };
-    Ok(serde_json::from_slice(&bytes).unwrap_or_default())
+    Ok(crate::engine::generated_paths::committable_paths(&bytes).unwrap_or_default())
 }

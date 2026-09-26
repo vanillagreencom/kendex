@@ -260,7 +260,7 @@ pub fn inventory(scope: &Scope, report: &EngineReport) -> Result<Option<Standing
         }));
     };
     let mut problems = Vec::new();
-    match serde_json::from_str::<BTreeSet<String>>(&text) {
+    match crate::engine::generated_paths::inventory_paths(text.as_bytes()) {
         Ok(committed) => {
             let expected = report.generated.relative(root);
             problems.extend(
@@ -280,6 +280,20 @@ pub fn inventory(scope: &Scope, report: &EngineReport) -> Result<Option<Standing
         problems.push("not laid out as kendex writes it".to_owned());
     }
     Ok(Some(Standing { path, problems }))
+}
+
+/// Adoption copies held byte for byte to the declared package's templates.
+/// These positions are verified but never rewritten by the apply plan.
+pub fn adopted_workflows(report: &EngineReport) -> Vec<Standing> {
+    report
+        .generated
+        .adopted
+        .iter()
+        .map(|(path, workflow)| Standing {
+            path: path.clone(),
+            problems: workflow.problems.clone(),
+        })
+        .collect()
 }
 
 /// The committed record held to what this pass would record, or `None`

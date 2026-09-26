@@ -318,7 +318,13 @@ fn bookkeeping_rows(
     for (kind, standing) in [
         ("record", record),
         ("inventory", attest::inventory(scope, report)?),
-    ] {
+    ]
+    .into_iter()
+    .chain(
+        attest::adopted_workflows(report)
+            .into_iter()
+            .map(|standing| ("adopted-workflow", Some(standing))),
+    ) {
         let Some(standing) = standing else {
             continue;
         };

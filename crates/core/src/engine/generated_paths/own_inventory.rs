@@ -31,7 +31,7 @@ use crate::engine::{PlanOptions, plan_apply};
 use crate::env::Env;
 use crate::model::Scope;
 
-use super::{GeneratedPaths, INVENTORY};
+use super::INVENTORY;
 
 /// The first word of every line this check writes.
 const NAME: &str = "render-inventory";
@@ -207,10 +207,9 @@ fn committed(inventory: &Path) -> Result<(String, BTreeSet<String>), Finding> {
             });
         }
     };
-    let listed =
-        serde_json::from_str::<BTreeSet<String>>(&text).map_err(|error| Finding::Invalid {
-            cause: error.to_string(),
-        })?;
+    let listed = super::inventory_paths(text.as_bytes()).map_err(|error| Finding::Invalid {
+        cause: error.to_string(),
+    })?;
     Ok((text, listed))
 }
 
@@ -233,7 +232,7 @@ fn check_against(env: &Env, root: &Path, inventory: &Path) -> Standing {
         Err(error) => return unplanned(error.to_string()),
     };
     let declared = report.generated.relative(root);
-    let document = match GeneratedPaths::laid_out(&declared, root) {
+    let document = match report.generated.document(root) {
         Ok(document) => document,
         Err(error) => return unplanned(error.to_string()),
     };

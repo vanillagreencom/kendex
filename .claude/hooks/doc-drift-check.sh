@@ -80,7 +80,7 @@ refuse() { # KEY VALUE [DETAIL], or `drift` alone
         printf 'the render inventory .kendex-generated.json is present and could not be read\n'
         ;;
       inventory=invalid-json)
-        printf 'the render inventory .kendex-generated.json is not one JSON array of non-empty path strings, none holding a newline or a NUL; refusing rather than judging every render as code a document was meant to cover\n'
+        printf 'the render inventory .kendex-generated.json is not one JSON array of path strings or adopted workflow records; refusing rather than judging every render as code a document was meant to cover\n'
         ;;
       session-id=invalid)
         printf 'the payload carries no usable session_id, so naming these documents could not be recorded; refusing\n'
@@ -338,14 +338,20 @@ if [ -f "$INVENTORY" ]; then
   # visible at all: without it an empty, whitespace-only or truncated file
   # yields no output and no error, which is the file being read as a project
   # with nothing rendered. Exactly one document, an array whose members are
-  # non-empty strings holding neither a newline nor a NUL, since a path with a
-  # newline in it could not be matched a line at a time below.
+  # path strings or adopted workflow records. Paths hold neither a newline
+  # nor a NUL, since membership below is matched a line at a time.
   GENERATED=$(printf '%s' "$INVENTORY_JSON" | jq -ers '
     if length == 1 then .[0] else "" | halt_error(20) end
-    | if type == "array" and all(.[];
-        type == "string" and length > 0
-        and (contains("\n") or contains("\u0000") | not))
-      then join("\n")
+    | def path_string: type == "string" and length > 0
+        and (contains("\n") or contains("\u0000") | not);
+      def entry: if type == "string" then path_string
+        elif type == "object" then
+          keys == ["path", "template", "templateHash"]
+          and (.path | path_string) and (.template | path_string)
+          and (.templateHash | type == "string" and length == 71 and test("^sha256:[0-9a-f]{64}$"))
+        else false end;
+      if type == "array" and all(.[]; entry)
+      then map(if type == "string" then . else .path end) | join("\n")
       else "" | halt_error(21) end' 2>&1) ||
     refuse inventory invalid-json "$GENERATED"
 fi
