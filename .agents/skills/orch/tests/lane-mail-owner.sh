@@ -20,16 +20,8 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # shellcheck source=lib/growth-state.sh
 source "$REPO_ROOT/skills/orch/tests/lib/growth-state.sh"
 
-PASS=0
-FAIL=0
-assert_eq() { # GOT WANT LABEL
-  if [[ "$1" == "$2" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$3" "$2" "$1"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # A fresh overseer checkout: a repository whose `.agents` tree holds the orch
 # scripts, so `--item overseer` resolves its own mailbox and `--attach` finds
