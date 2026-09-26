@@ -2,7 +2,7 @@
 //! that would land on the same file, and the problems the catalog reports
 //! about itself.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{HarnessId, ItemKind};
 use crate::names;
@@ -11,21 +11,20 @@ use crate::source::SourceConfig;
 use super::desired::{DesiredState, Refused};
 use super::expansion::Expansion;
 
-/// The installations two declarations both claim, and why each is refused.
-/// Namespacing is what makes this reachable: `a/b` and a plain `a__b` are
-/// two names in `kendex.toml` and one file on disk, as are two names a
-/// filesystem folds together. Neither is installed — writing one would hand
-/// its content to the other's name, and there is no way to tell which one
-/// the user meant.
-pub(super) struct Collisions(BTreeMap<(ItemKind, String), Vec<(HarnessId, String)>>);
+/// The installations two declarations both claim. Namespacing is what makes
+/// this reachable: `a/b` and a plain `a__b` are two names in `kendex.toml`
+/// and one file on disk, as are two names a filesystem folds together.
+/// Neither is installed — writing one would hand its content to the other's
+/// name, and there is no way to tell which one the user meant.
+pub(super) struct Collisions(BTreeSet<(ItemKind, String, HarnessId)>);
 
 impl Collisions {
-    /// Every clash in what this plan would install. The whole set is
-    /// checked, not only what the manifest spells out: a bundle carrying
-    /// two members that land on one file is the same collision as two
-    /// declarations that do.
-    pub(super) fn find(expansion: &Expansion) -> Collisions {
-        let mut claimed: BTreeMap<(ItemKind, String), Vec<(HarnessId, String)>> = BTreeMap::new();
+    /// Every clash in what this plan would install, recorded as refusals on
+    /// the state. The whole set is checked, not only what the manifest spells
+    /// out: a bundle carrying two members that land on one file is the same
+    /// collision as two declarations that do.
+    pub(super) fn find(expansion: &Expansion, state: &mut DesiredState) -> Collisions {
+        let mut claimed = BTreeSet::new();
         for kind in [ItemKind::Skill, ItemKind::Agent, ItemKind::Command] {
             // Folded rendered name → the names that spell it, per tool: the
             // same two names can clash on one tool and not on another, since
@@ -51,49 +50,25 @@ impl Collisions {
                         .filter(|other| *other != name)
                         .map(String::as_str)
                         .collect();
-                    claimed.entry((kind, name.clone())).or_default().push((
+                    state.refused.push(Refused {
+                        kind,
+                        name: name.clone(),
                         harness,
-                        format!(
+                        reason: format!(
                             "`{name}` and `{}` both install as `{rendered}` on {} — one would take the other's place",
                             others.join("`, `"),
                             harness.display_name()
                         ),
-                    ));
+                    });
+                    claimed.insert((kind, name.clone(), harness));
                 }
             }
         }
         Collisions(claimed)
     }
 
-    /// Records this item's clashes as refusals on the state, under the
-    /// provenance its declaration resolved to: a refusal is judged against
-    /// the record it would take (invariant 4), so it is recorded once that
-    /// provenance is known.
-    pub(super) fn refuse(
-        &self,
-        kind: ItemKind,
-        name: &str,
-        provenance: &str,
-        state: &mut DesiredState,
-    ) {
-        let Some(clashes) = self.0.get(&(kind, name.to_owned())) else {
-            return;
-        };
-        for (harness, reason) in clashes {
-            state.refused.push(Refused {
-                kind,
-                name: name.to_owned(),
-                harness: *harness,
-                reason: reason.clone(),
-                provenance: provenance.to_owned(),
-            });
-        }
-    }
-
     pub(super) fn allows(&self, kind: ItemKind, name: &str, harness: HarnessId) -> bool {
-        self.0
-            .get(&(kind, name.to_owned()))
-            .is_none_or(|clashes| clashes.iter().all(|(claimed, _)| *claimed != harness))
+        !self.0.contains(&(kind, name.to_owned(), harness))
     }
 }
 

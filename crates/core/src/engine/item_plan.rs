@@ -192,10 +192,8 @@ pub(super) fn plan_item(
 /// sanctioned rebind is a recorded fork — remote to local, written into
 /// the manifest by the fork operation the user confirmed. The conflict
 /// row's detail where the record is not the declaration's, and `None`
-/// where the declaration may write over the record. Every pass that meets
-/// a record under a declared key shares this one judgement: the item pass,
-/// the refusal and withheld passes (`plan_pass`) and the orphan pass
-/// (`removal::orphans`).
+/// where the declaration may write over the record. The item pass asks it
+/// of what it writes, and `plan_pass::plan_rebound` of every other record.
 pub(super) fn rebound(entry: &LockEntry, provenance: &str, recorded_fork: bool) -> Option<String> {
     let sanctioned = entry.source_repo == provenance
         || entry.source_repo == crate::manifest::LOCAL_SOURCE_NAME

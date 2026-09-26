@@ -249,14 +249,12 @@ impl Expansion {
     }
 }
 
-/// A catalog open for reading: the sealed root, its layout tables, the
-/// bare-name index its dependency lookups share, built once per catalog,
-/// and the provenance an installation from it is recorded under.
+/// A catalog open for reading: the sealed root, its layout tables, and the
+/// bare-name index its dependency lookups share, built once per catalog.
 pub(super) struct OpenCatalog {
     pub(super) sealed: SealedSource,
     pub(super) config: SourceConfig,
     pub(super) offered: super::deps::OfferedSkills,
-    pub(super) provenance: String,
 }
 /// Which catalog: the source name and the revision it is read at.
 pub(super) type CatalogKey = (String, Option<String>);
@@ -396,7 +394,6 @@ impl Catalogs<'_> {
             sealed,
             config,
             offered: super::deps::OfferedSkills::default(),
-            provenance: ready.provenance,
         })
     }
 }

@@ -154,8 +154,9 @@ fn a_withheld_rebind_reaches_the_provenance_conflict_and_not_the_trash() {
         .map(|row| (row.state, row.detail.as_str()))
         .collect();
     let conflict = format!(
-        "installed from {} but now set to come from {} — remove it first",
+        "installed from {} but now set to come from {} — remove it first — {} does not install it on Codex",
         identity(&other),
+        identity(&f.source),
         identity(&f.source)
     );
     assert_eq!(
@@ -213,19 +214,33 @@ const CRITIC_MAX: &str =
 /// set to come from the wrapper's catalog, whose copy plans nothing on
 /// Codex: a hook that catalog does not derive there, and an agent Codex
 /// refuses. The Codex record is still the other catalog's, so the plan
-/// says so as the provenance conflict a rebind always gets, keeps the
-/// record, and takes nothing to the trash, on either tool.
+/// says so as the provenance conflict a rebind always gets, with why
+/// nothing replaces it there, keeps the record, and takes nothing to the
+/// trash, on either tool.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_rebind_planning_nothing_on_a_tool_reaches_the_provenance_conflict_and_not_the_trash() {
     /// The declaration's kind, its catalog file, the other catalog's
-    /// bytes and the wrapper catalog's bytes.
-    type Row = (ItemKind, &'static str, &'static str, &'static str);
+    /// bytes, the wrapper catalog's bytes, and the record line of Codex's
+    /// refusal, where it refuses.
+    type Row = (
+        ItemKind,
+        &'static str,
+        &'static str,
+        &'static str,
+        Option<&'static str>,
+    );
     let rows: [Row; 2] = [
-        (ItemKind::Hook, "hooks/solo.sh", SOLO, SOLO_CLAUDE),
-        (ItemKind::Agent, "agents/critic.md", CRITIC, CRITIC_MAX),
+        (ItemKind::Hook, "hooks/solo.sh", SOLO, SOLO_CLAUDE, None),
+        (
+            ItemKind::Agent,
+            "agents/critic.md",
+            CRITIC,
+            CRITIC_MAX,
+            Some("kendex-effort-rejected: harness=codex key=model_reasoning_effort value=max "),
+        ),
     ];
-    for (kind, file, from_other, from_cat) in rows {
+    for (kind, file, from_other, from_cat, refusal) in rows {
         let name = Path::new(file).file_stem().unwrap().to_str().unwrap();
         let declaration =
             |source: &str| format!("[{}s.{name}]\nsource = \"{source}\"\n", kind.name());
@@ -257,20 +272,37 @@ fn a_rebind_planning_nothing_on_a_tool_reaches_the_provenance_conflict_and_not_t
             identity(&other),
             identity(&f.source)
         );
-        for harness in [HarnessId::Claude, HarnessId::Codex] {
-            let rows: Vec<(DriftState, &str)> = report
+        let rows = |harness| -> Vec<(DriftState, &str)> {
+            report
                 .drift
                 .iter()
                 .filter(|row| row.name == name && row.harness == harness)
                 .map(|row| (row.state, row.detail.as_str()))
-                .collect();
-            assert_eq!(
-                rows,
-                [(DriftState::Conflict, conflict.as_str())],
-                "{key} on {harness:?}: {:?}",
-                drift_details(&report)
-            );
-        }
+                .collect()
+        };
+        assert_eq!(
+            rows(HarnessId::Claude),
+            [(DriftState::Conflict, conflict.as_str())],
+            "{key}: {:?}",
+            drift_details(&report)
+        );
+        let codex = rows(HarnessId::Codex);
+        let [(DriftState::Conflict, detail)] = codex.as_slice() else {
+            panic!("{key}: {:?}", drift_details(&report));
+        };
+        let explained = match refusal {
+            Some(record) => {
+                detail.starts_with(record) && detail.ends_with(&format!(" — {conflict}"))
+            }
+            None => {
+                *detail
+                    == format!(
+                        "{conflict} — {} does not install it on Codex",
+                        identity(&f.source)
+                    )
+            }
+        };
+        assert!(explained, "{key}: {detail}");
         let trashed: Vec<&PathBuf> = report
             .plan
             .ops
@@ -307,8 +339,9 @@ impl Expected {
             Expected::Conflict => (
                 DriftState::Conflict,
                 format!(
-                    "installed from {} but now set to come from {} — remove it first",
+                    "installed from {} but now set to come from {} — remove it first — {} does not install it on Codex",
                     identity(other),
+                    identity(source),
                     identity(source)
                 ),
             ),

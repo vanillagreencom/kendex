@@ -470,7 +470,6 @@ fn refuse(ctx: &ItemCtx, state: &mut DesiredState, group: &SurfaceGroup, reason:
             name: ctx.name.to_owned(),
             harness: *harness,
             reason: reason.to_owned(),
-            provenance: ctx.provenance.to_owned(),
         });
     }
 }

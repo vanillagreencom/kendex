@@ -244,9 +244,6 @@ pub struct Refused {
     pub name: String,
     pub harness: HarnessId,
     pub reason: String,
-    /// The provenance of the declaration refused, for invariant 4's
-    /// judgement of a record already installed (`item_plan::rebound`).
-    pub provenance: String,
 }
 
 #[derive(Debug, Default)]
@@ -258,12 +255,14 @@ pub struct DesiredState {
     pub notes: Vec<String>,
     pub warnings: Vec<super::ItemWarning>,
     pub refused: Vec<Refused>,
-    /// Declarations whose source resolved and whose item was found, each
-    /// with the provenance it was planned under. What these produced is
-    /// the complete truth about them, so a lock entry they did not produce
-    /// is stranded, not merely skipped this pass — unless it is another
-    /// catalog's, which invariant 4 keeps (`removal::orphans`).
-    pub processed: BTreeMap<(ItemKind, String), String>,
+    /// Declarations whose source resolved and whose item was found. What
+    /// these produced is the complete truth about them, so a lock entry
+    /// they did not produce is stranded, not merely skipped this pass.
+    pub processed: BTreeSet<(ItemKind, String)>,
+    /// The provenance each declaration whose source resolved is planned
+    /// under, for invariant 4's judgement of a record the plan does not
+    /// write (`plan_pass::plan_rebound`).
+    pub provenance: BTreeMap<(ItemKind, String), String>,
     /// Manifest with upstream skill additions merged in — present only when
     /// the merge changed something and must be written back.
     pub manifest_update: Option<Manifest>,
@@ -313,17 +312,14 @@ pub struct DesiredState {
     /// and the finding the walk pushed says why. What becomes of a copy
     /// already installed there is the reason's ([`Withholding`]), behind
     /// invariant 4's conflict where the record is another catalog's
-    /// (`plan_pass::plan_withheld`).
+    /// (`plan_pass::plan_rebound`).
     pub withheld: BTreeMap<(ItemKind, String, HarnessId), Withheld>,
 }
 
-/// What the walk recorded about one hook withheld from one tool: the
-/// provenance of the declaration it decided about, carried for invariant
-/// 4's judgement of a copy already installed (`item_plan::rebound`), and
-/// why it is withheld, which decides how that copy is taken out.
+/// What the walk recorded about one hook withheld from one tool: why it
+/// is withheld, which decides how a copy already installed is taken out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Withheld {
-    pub provenance: String,
     pub because: Withholding,
 }
 
@@ -446,7 +442,7 @@ fn compute(
     // installed bundles carry, and what those skills require — while the
     // manifest keeps holding only what was chosen.
     let expansion = super::expansion::expand(env, scope, manifest, held, &mut state);
-    let collisions = super::catalog::Collisions::find(&expansion);
+    let collisions = super::catalog::Collisions::find(&expansion, &mut state);
     // What the sources' current checkouts offer, read once. Item-level pins
     // do not widen this inventory.
     let scope_skills = super::ScopeSkills::of(env, scope, manifest)?;
@@ -466,10 +462,9 @@ fn compute(
             else {
                 continue;
             };
-            // A clash is judged against the record it would take, so it is
-            // refused once the declaration's provenance is known; one whose
-            // source does not resolve is skipped whole, record kept.
-            collisions.refuse(kind, name, &provenance, &mut state);
+            state
+                .provenance
+                .insert((kind, name.clone()), provenance.clone());
             let Some((sealed, config)) =
                 read_catalog(&root, &provenance, name, &decl.source, &mut state)?
             else {
@@ -483,9 +478,7 @@ fn compute(
                     .push(not_offered_note(&sealed, &config, kind, name, &decl.source));
                 continue;
             };
-            state
-                .processed
-                .insert((kind, name.clone()), provenance.clone());
+            state.processed.insert((kind, name.clone()));
             let mut harnesses = planned.harnesses.clone();
             if harnesses.is_empty() {
                 no_harness_note(kind, name, decl, manifest, &mut state);
