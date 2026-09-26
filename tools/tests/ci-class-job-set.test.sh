@@ -190,6 +190,9 @@ micro|false|$DISCOVER_RS|$SHARD_BUILD|+guards-tools +rest
 micro|false|.claude/hooks/lane-mail-check|$SHARD_CODE|+guards-tools
 micro|false|pi-extensions/pi-qol/src/x.ts|$SHARD_CODE|+node -pi-claude-bridge
 micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$SHARD_CODE|+node +pi-claude-bridge
+micro|false|hooks/block-bare-cd.sh|$SHARD_CODE|+rest +node
+micro|false|skills/deep-research/SKILL.md|$SHARD_PROSE|+rest +node
+micro|false|pi-extensions/pi-hooks/extensions/hooks.ts|$SHARD_CODE|+rest +node
 micro|false|$SKILLS_AGENTS|$SHARD_PROSE|["guards-scans","guards-tools"]
 micro|false|.github/instructions/code-review.md|$SHARD_PROSE|$ROSTER
 micro|false|.github/AGENTS.md skills/orch/scripts/lanes|$(lanes true true true false true false)|$ROSTER
@@ -197,7 +200,7 @@ micro|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
 small|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
 standard|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
 standard|true|AGENTS.md|$NONE_PROSE|[]
-standard|true|CLAUDE.md|$NONE_PROSE|[]
+standard|true|CLAUDE.md|$SHARD_PROSE|["rest"]
 standard|true|GEMINI.md|$NONE_PROSE|[]
 standard|true|$UNREAD_LEGAL|$NONE_PROSE|[]
 trivial|true|$UNREAD_LEGAL|$NONE_PROSE|[]
@@ -345,7 +348,7 @@ CONTROLS
 #   worktree's script sources github's lib, and orch declares worktree;
 #   harness-ci's script sources orch's lib, and review-gate declares
 #   harness-ci;
-#   commit-guards' suite runs preflight, and doc-limits declares
+#   commit-guards' suite runs preflight, and doc-limits and worktree declare
 #   commit-guards;
 #   a tools/ suite reads kendex.settings.toml and names atomic-install.sh and
 #   AGENTS.md; hooks/ suites read crates/demo/src/discover.rs and
@@ -365,7 +368,7 @@ skill() { # NAME REQUIRED-LIST — a SKILL.md, with a dependencies block where R
   fi >"$SEL_WORLD/skills/$1/SKILL.md"
 }
 skill github ''
-skill worktree ''
+skill worktree commit-guards
 skill orch worktree
 skill harness-ci ''
 skill review-gate harness-ci
@@ -394,20 +397,21 @@ done <<ROWS
 skills/price-handling/scripts/x|["guards-scans","guards-tools","rest"]
 skills/github/scripts/lib/gh-auth.sh|["review-gate",$ORCH,"guards-scans","guards-tools","worktree","rest"]
 skills/orch/scripts/lib/branch-growth.sh|["review-gate",$ORCH,"guards-scans","guards-tools","rest"]
-skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-tools","linear"]
+skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-tools","linear","rest"]
 kendex.settings.toml|["guards-tools"]
 install.sh|[]
 AGENTS.md|[]
 crates/demo/src/discover.rs|["guards-tools","rest","node"]
-.claude/hooks/lane-mail-check|["guards-tools","node"]
-.pi/kendex/hooks/lane-mail-check|["guards-tools","node"]
-hooks/block-bare-cd.sh|["guards-scans","guards-tools","node"]
+.claude/hooks/lane-mail-check|["guards-tools","rest","node"]
+.pi/kendex/hooks/lane-mail-check|["guards-tools","rest","node"]
+hooks/block-bare-cd.sh|["guards-scans","guards-tools","rest","node"]
 docs/x/policy.md|["guards-tools","node"]
 tools/demo-tool|["guards-scans","guards-tools","node"]
 skills/AGENTS.md|["guards-scans","guards-tools"]
 docs/cite.md|["guards-tools"]
+kendex.toml|["rest"]
 ROWS
-[ "$world_rows" -ge 15 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
+[ "$world_rows" -ge 16 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
 
 # The shard selection's rules, each removed from a copy run over the fixture
 # world: the copy must answer its path other than the script does. Fields
@@ -436,6 +440,7 @@ s/^\$path" ;;$/" ;;/@kendex.settings.toml
 s/^      \*\/\*) pending="\$pending$/      *.md | *.markdown) ;; *\/*) pending="$pending/@docs/x/policy.md
 s/0) want_shard guards-tools ;;/0) ;;/@docs/cite.md
 s/hooks) want_shard guards-tools node ;;/hooks) want_shard guards-tools ;;/@hooks/block-bare-cd.sh
+s/^  ! any "\$INSTALL_RECORD" || want_shard rest$/  :/@hooks/block-bare-cd.sh
 /^  \/\^pi-extensions\\\/\/ { package = "pi-extensions" }$/d@tools/demo-tool
 s/^\.\.\/\$1\/"$/"/@skills/orch/scripts/lib/branch-growth.sh
 s/^        want_package tools$/        :/@skills/price-handling/scripts/x
