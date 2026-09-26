@@ -1014,7 +1014,11 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # read -a splits on IFS without globbing; a bare `for tok in $LAUNCH_FLAGS`
   # would expand the very brackets this quoting exists to protect.
   read -r -a flag_tokens <<<"$LAUNCH_FLAGS"
-  launch_choice_lead_settings --question-off "$HARNESS" ${flag_tokens[@]+"${flag_tokens[@]}"}
+  # A wake names no model of its own: its compaction words are the ones the
+  # model its resumed session runs gets, which the caller read into WAKE_MODEL.
+  local -a model_arg=()
+  [[ -z "$wake_dir" ]] || model_arg=(--model "$WAKE_MODEL")
+  launch_choice_lead_settings --question-off ${model_arg[@]+"${model_arg[@]}"} "$HARNESS" ${flag_tokens[@]+"${flag_tokens[@]}"}
   for tok in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
     flags+="'$tok' "
   done
@@ -1903,6 +1907,17 @@ launch_finish() {
   record_session=""
   if [[ -n "$session_file" ]] && ! record_session="$(session_id_of "$HARNESS" "$session_file")"; then
     ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1
+  fi
+  # A wake starts a new process on that session, which takes none of the
+  # settings the first one was launched with. Its compaction follows the model
+  # the transcript's last reading names, so a session whose window is named
+  # stays uncompacted and one whose transcript names no model keeps it.
+  WAKE_MODEL="" wake_reading=""
+  if [[ "$WAKE" == true && -n "$session_file" ]]; then
+    if ! wake_reading="$(lane_context_reading "$HARNESS" < "$session_file")"; then
+      ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1
+    fi
+    [[ "$wake_reading" != *$'\t'* ]] || WAKE_MODEL="${wake_reading##*$'\t'}"
   fi
   cmd="$(start_cmd "$item" "$wt_id" "$repo" "$record_session" ${wake_args[@]+"${wake_args[@]}"})" || return 1
   # The brief the claude arms pass as the initial CLI prompt, restated for the

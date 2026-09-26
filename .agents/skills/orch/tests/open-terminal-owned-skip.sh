@@ -452,6 +452,19 @@ for row in "claude|claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMod
   assert_contains "$OUT" "open-terminal: lane-woken item=CC-1 harness=$harness log=$TMP_ROOT/wt/CC-1/tmp/lane-wake-CC-1.log" "$harness wake names its log"
   assert_eq "$(cat "$capture" 2>/dev/null)" "$expected" "$harness wake delivers the inbox line through its native resume"
 done
+# A wake starts a new claude process, which takes none of the first launch's
+# settings. The session above names no model, so it keeps its compaction; one
+# whose transcript names a model the claude adapter holds a window for is woken
+# with its compaction off, as its own launch was.
+CLAUDE_TRANSCRIPT="$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl"
+cp -p -- "$CLAUDE_TRANSCRIPT" "$TMP_ROOT/claude-transcript.keep"
+printf '%s\n' '{"type":"assistant","message":{"model":"claude-opus-5-5","usage":{"input_tokens":1,"cache_read_input_tokens":500000,"output_tokens":7}}}' >>"$CLAUDE_TRANSCRIPT"
+touch -r "$TMP_ROOT/claude-transcript.keep" "$CLAUDE_TRANSCRIPT"
+OT_CAPTURE="$TMP_ROOT/wake-claude-opus.cmd" LANES_HOME="$SESSION_HOME" run_case wake-claude-opus -- --wake --harness claude CC-1
+assert_eq "$(cat "$TMP_ROOT/wake-claude-opus.cmd" 2>/dev/null)" \
+  "claude -n CC-1 --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE" \
+  "a claude wake of a session on a model with a named window turns its compaction off"
+mv -- "$TMP_ROOT/claude-transcript.keep" "$CLAUDE_TRANSCRIPT"
 # A GitHub item is the issue number while its worktree id is issue-<n>, and the
 # mailbox is bound under the worktree id: write_lane_marker writes it there and
 # the overseer's `lane-mail send --item` writes the same id. A line built from
