@@ -1539,8 +1539,8 @@ case "$VERB" in
     fi
     # An answered ask is not news again; `pending` is what is still owed a
     # reply. --to keeps one audience's asks and --due the ones past their
-    # deadline by this clock, the one deadline judge the watch and the report
-    # share.
+    # deadline by this clock, the one deadline judge the watch resolves its
+    # owner asks by.
     NOW_EPOCH="$(date -u +%s)" || refuse write-failed "$BOX"
     lm_objects "$WORK_DIR/new" | jq -c --arg answered "$ANSWERED" --arg verb "$VERB" \
       --arg to "$TO" --argjson due "$DUE" --argjson now "$NOW_EPOCH" "$LM_JQ_DEFS"'
