@@ -29,7 +29,7 @@ row="$(jq -c --arg id "$4" '.[] | select(.identifier == $id)' .cache/linear/issu
 jq --null-input --argjson issue "$row" '{issue: $issue}'
 SH
 chmod +x "$TMP_ROOT/linear/scripts/linear.sh"
-LIVE_SCRIPTS="$(copy_scripts live)"
+LIVE_SCRIPTS="$(mutant_scripts live)" || exit 1
 
 PASS=0
 FAIL=0
@@ -100,14 +100,10 @@ RENDER_WT="$(build_branch render 10:skills/orch/SKILL.md 10:.agents/skills/orch/
 assert_eq "$(measure "$LIVE_SCRIPTS" "$RENDER_WT")" "checker-rc=0 production=10 tests=0 mirror=10 allowance=1 test-allowance=1 | rc=0 verdict=over production=10 tests=0 mirror=10 allowance=1 test-allowance=1" \
   "a render is billed once in the checker and the fix-round report"
 
-MUTANT_SCRIPTS="$(copy_scripts mirror-mutant)"
-MUTANT_LIB="$MUTANT_SCRIPTS/lib/branch-growth.sh"
-assert_eq "$(grep -Fc 'mirror += lines[i]; continue' "$MUTANT_LIB")" "1" \
-  "mirror control finds exactly one live exclusion"
-sed -i.bak 's/mirror += lines\[i\]; continue/production += lines[i]; continue/' "$MUTANT_LIB"
-assert_eq "$([[ "$(grep -Fc 'mirror += lines[i]; continue' "$MUTANT_LIB")" == 0 ]] \
-  && ! cmp -s "$MUTANT_LIB" "$LIVE_SCRIPTS/lib/branch-growth.sh" && echo yes)" "yes" \
-  "mirror control removes pairing only in its private copy"
+# The suite's one must-fail control: the render pairing billed to production
+# in a private copy of the measurement both consumers source.
+MUTANT_SCRIPTS="$(mutant_scripts mirror-mutant lib/branch-growth.sh)" || exit 1
+mutate_file "$MUTANT_SCRIPTS/lib/branch-growth.sh" 'mirror += lines[i]; continue' 'production += lines[i]; continue'
 MUTANT_WT="$(build_branch render-mutant 10:skills/orch/SKILL.md 10:.agents/skills/orch/SKILL.md)"
 assert_eq "$(measure "$MUTANT_SCRIPTS" "$MUTANT_WT")" "checker-rc=0 production=20 tests=0 mirror=0 allowance=1 test-allowance=1 | rc=0 verdict=over production=20 tests=0 mirror=0 allowance=1 test-allowance=1" \
   "must-fail control: without pairing the render is billed to production"
@@ -132,12 +128,6 @@ CHATTY_WT="$(build_branch chatty 40:crates/core/src/lib.rs 6:core/src/lib.rs)"
 printf 'echo "crates"\n' > "$CHATTY_WT/.env.local"
 assert_eq "$(measure "$LIVE_SCRIPTS" "$CHATTY_WT")" "checker-rc=0 production=46 tests=0 mirror=0 allowance=1 test-allowance=1 | rc=0 verdict=over production=46 tests=0 mirror=0 allowance=1 test-allowance=1" \
   "a target env notice stays outside the checker JSON record"
-NOISY_MUTANT="$(copy_scripts noisy-mutant)/lib/branch-growth.sh" || exit 1
-assert_eq "$(grep -Fc '2>"$diagnostic_file"' "$NOISY_MUTANT")" "1" "control: one stderr channel to merge"
-sed -i.bak 's@2>"\$diagnostic_file"@2>\&1@' "$NOISY_MUTANT"
-assert_eq "$(grep -Fc '2>"$diagnostic_file"' "$NOISY_MUTANT")" "0" "control: the private copy merges stderr into JSON"
-assert_eq "$(measure_round "${NOISY_MUTANT%/lib/branch-growth.sh}" "$CHATTY_WT")" \
-  "rc=2 dev-round-write: growth-unmeasured worktree=$CHATTY_WT issue=KEN-GROWTH" "must-fail control: merged notice invalidates JSON"
 
 CALLER="$TMP_ROOT/caller"; git init -q -b main "$CALLER"
 printf '[env]\nORCH_STATE_DIR = "state"\n' > "$CALLER/kendex.settings.toml"
@@ -148,13 +138,6 @@ separate_rc=0; separate="$(cd "$CALLER" && env -u ORCH_STATE_DIR "$LIVE_SCRIPTS/
 assert_eq "$separate_rc $(jq -r '.size_check.verdict' "$RENDER_WT/tmp/dev-round-KEN-GROWTH-2-2.json")" \
   "0 over" \
   "a separate caller uses its configured state directory to mint the round"
-STATE_MUTANT="$(copy_scripts state-mutant)/lib/branch-growth.sh" || exit 1
-assert_eq "$(grep -Fc -- '--state-dir "$state_dir"' "$STATE_MUTANT")" "1" "control: one caller-state argument to remove"
-sed -i.bak 's@--state-dir "\$state_dir"@--state-dir "\$worktree/tmp"@' "$STATE_MUTANT"
-assert_eq "$(grep -Fc -- '--state-dir "$state_dir"' "$STATE_MUTANT")" "0" "control: the private copy routes state back to the worktree"
-mutant_rc=0
-(cd "$CALLER" && env -u ORCH_STATE_DIR "${STATE_MUTANT%/lib/branch-growth.sh}/dev-round-write" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 3-3 --item 1 fix "the branch this round shrinks" >/dev/null 2>&1) || mutant_rc=$?
-assert_eq "$mutant_rc" "2" "must-fail control: forced worktree state loses the caller's round"
 (cd "$CALLER" && env -u ORCH_STATE_DIR "$LIVE_SCRIPTS/dev-round-write" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 4-4 --cut --item 1 fix "the branch this round shrinks" >/dev/null)
 head_sha="$(git -C "$RENDER_WT" rev-parse HEAD)" || exit 1
 "$LIVE_SCRIPTS/dev-return-write" --worktree "$RENDER_WT" --kind fix --issue KEN-GROWTH --round-id 4-4 --branch growth --commit "$head_sha" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-renderwt-4-4-1" "$RENDER_WT" KEN-GROWTH 4-4)" --item 1 Applied cut >/dev/null

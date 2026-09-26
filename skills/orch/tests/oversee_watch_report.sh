@@ -7,6 +7,9 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
+# mutant_scripts and mutate_file, the two halves of the control below.
+# shellcheck source=lib/growth-state.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 
 NOW=1790000000
 iso() { "$OVERSEE_TEST_REAL_DATE" -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || "$OVERSEE_TEST_REAL_DATE" -u -r "$1" +%Y-%m-%dT%H:%M:%SZ; }
@@ -101,17 +104,13 @@ assert_eq "$RC|$(grep -c "^oversee-watch: helper-missing path=$STUB_DIR/no-repor
 echo "=== must-fail control ==="
 # The watch without its report check: no report-due at any age.
 MUTANT_DIR="$TMP_ROOT/report-mutant"
-mkdir -p "$MUTANT_DIR/orch"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
+MUTANT_WATCH="$(mutant_scripts report-mutant/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-call='    check_report'
-assert_eq "$(grep -cxF -- "$call" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the report check is one call to strip"
-awk -v line="$call" '$0 == line { print "    :"; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+mutate_file "$MUTANT_WATCH" '    check_report' '    :'
 new_case report_due_mutant
 write_state
 report 999999
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" watch
+WATCH_BIN="$MUTANT_WATCH" watch
 assert_eq "events=$EVENTS" "events=" "control: without the check a report long overdue is never reported" "$STUB_DIR/err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

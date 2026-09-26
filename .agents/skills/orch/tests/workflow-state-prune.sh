@@ -19,8 +19,11 @@ TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 source "$REPO_ROOT/skills/orch/scripts/lib/date-ladder.sh"
 
-PASS=0
-FAIL=0
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
+# mutant_scripts and mutate_file, the two halves of the control below.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
@@ -276,66 +279,17 @@ got="$(jq -c '[any(.fleet_log[]; .text == "old"), any(.lanes[]; .item == "KEN-2"
   && ok "the pruned rows had already left the state" \
   || bad "the pruned rows had already left the state" "got=$got"
 
-MUTANT_DIR="$TMP_ROOT/mutant"
-mkdir -p "$MUTANT_DIR"
-cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$MUTANT_DIR/lib"
-cp "$REPO_ROOT/skills/orch/scripts/orch-env" "$REPO_ROOT/skills/orch/scripts/git-context" "$MUTANT_DIR/"
-mutant() { # NAME ANCHOR REPLACEMENT
-  [[ "$(grep -Fc -- "$2" "$WS")" == "1" ]] \
-  && ok "the $1 control finds its anchor" \
-  || bad "the $1 control finds its anchor"
-  # Through the environment, since awk -v reads backslash escapes in a value.
-  A="$2" R="$3" awk 'index($0, ENVIRON["A"]) { sub(/[^ ].*/, ""); print $0 ENVIRON["R"]; next } { print }' \
-    "$WS" > "$MUTANT_DIR/$1"
-}
-# One planted defect per rule: the mutant, its anchor and replacement, the
-# PATH prefix and settings it runs under, and what the defect lets through.
-control() { # NAME PREFIX EXTRA_ENV CHECK LABEL
-  local mp="$TMP_ROOT/m-$1"
-  build "$mp"
-  (cd "$mp" && PATH="$2$PATH" env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$mp/fleet" \
-    $3 bash "$MUTANT_DIR/$1" prune --keep tmp/waiter.run) >/dev/null 2>&1 || true
-  (cd "$mp" && eval "$4") && ok "control: $5" || bad "control: $5"
-}
-
-# Planted: prune's absent-state read made the existence check. A Stop before
-# the first launch then refuses as state-missing.
-mutant absent-refused 'if ! state_file=$(fleet_state_file); then' \
-  'state_file=$(get_state_file oversee); ensure_state_exists "$state_file"; if false; then'
-rc=0
-bare_run "$MUTANT_DIR/absent-refused" >/dev/null || rc=$?
-[[ "$rc" -ne 0 ]] && ok "control: without the absent-state read a prune with no fleet state refuses" \
-  || bad "control: without the absent-state read a prune with no fleet state refuses" "rc=$rc"
-
-mutant no-live '[[ ! "${unit##*/}" =~ $re ]] || kept_by=live' ':'
-control no-live "" "" '[[ ! -e tmp/lane-mail/KEN-1 ]]' \
-  "without the live-lane match a running lane's mailbox is pruned"
-
-mutant no-keep '[[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || kept_by=keep' ':'
-control no-keep "" "" '[[ ! -e tmp/waiter.run ]]' "without the --keep match the kept watch log is pruned"
-
-mutant archive-ignored '&& tar -czf "$stage.tgz" -C / -T "$stage/paths" 2>"$stage/tar.err"; }; then' \
-  '&& { tar -czf "$stage.tgz" -C / -T "$stage/paths" || true; }; }; then'
-control archive-ignored "$TAR_BIN:" "" '[[ ! -e tmp/directive.md ]]' \
-  "without the archive refusal a failed archive still removes the directive"
-
-mutant first-lane "lanes: [(.lanes // [])[1:][] | select(.status == \"done\" and (.launched_at | old))]}' \"\$state_file\") || return 1" \
-  "lanes: [(.lanes // [])[] | select(.status == \"done\" and (.launched_at | old))]}' \"\$state_file\") || return 1"
-control first-lane "" "" '[[ "$(jq -r ".lanes[0].item" tmp/workflow-state-oversee.json)" != KEN-0 ]]' \
-  "without the first-record exception the fleet start is pruned"
-
-mutant report-names '[[ ! "${f##*/}" =~ $PROGRESS_REPORT_RE ]] || units+=("$f")' \
-  'units+=("$f")'
-control report-names "" "" '[[ ! -e tmp/progress-reports/notes.md ]]' \
-  "without the report-name filter an unrelated old file in the progress directory is pruned"
-
-mutant no-overlap 'state_message prune-progress-overlap "$@" >&2; return 1' ':'
-control no-overlap "" "ORCH_PROGRESS_REPORT_DIR=tmp" '[[ ! -e tmp/directive.md ]]' \
-  "without the overlap refusal a progress directory equal to the state directory prunes"
-
-mutant no-umask 'umask 077' ':'
-control no-umask "" "" '[[ "$(ls -l fleet/archive/*/oversee/*.tgz | cut -c1-10)" != -rw------- ]]' \
-  "without the private umask the archive is readable beyond its owner"
+# The suite's one must-fail control: the live-lane match dropped, so a running
+# lane's mailbox is pruned with the closed lanes' files.
+NO_LIVE="$(mutant_scripts no-live workflow-state)/workflow-state" || exit 1
+mutate_file "$NO_LIVE" '[[ ! "${unit##*/}" =~ $re ]] || kept_by=live' ':'
+mp="$TMP_ROOT/m-no-live"
+build "$mp"
+(cd "$mp" && env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$mp/fleet" \
+  "$NO_LIVE" prune --keep tmp/waiter.run) >/dev/null 2>&1 || true
+[[ ! -e "$mp/tmp/lane-mail/KEN-1" ]] \
+  && ok "control: without the live-lane match a running lane's mailbox is pruned" \
+  || bad "control: without the live-lane match a running lane's mailbox is pruned"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

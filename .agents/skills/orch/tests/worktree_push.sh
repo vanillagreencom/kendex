@@ -41,7 +41,7 @@ row="$(jq -c --arg id "$4" '.[] | select(.identifier == $id)' .cache/linear/issu
 jq -n --argjson issue "$row" '{issue: $issue}'
 SH
 chmod +x "$TMP_ROOT/linear/scripts/linear.sh"
-ROUND_WRITE_BIN="$(copy_scripts live)/dev-round-write"
+ROUND_WRITE_BIN="$(mutant_scripts live)/dev-round-write" || exit 1
 
 PASS=0
 FAIL=0
@@ -477,18 +477,10 @@ assert_eq "$(cat "$live_state/tmp/workflow-state-KEN-LIVE.json" | jq -r ".rebase
 (cd "$live_state" && "$STATE" set KEN-LIVE dev_round_id 1-1)
 
 # Must-fail control: with the refusal removed, the live round is pushed over.
-# The copy carries the whole scripts directory so the mutant resolves its
-# siblings (workflow-state) exactly as the real script does.
-mutant_root="$TMP_ROOT/live-refusal-mutant"
-mkdir -p "$mutant_root"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$mutant_root/"
-live_mutant="$mutant_root/scripts/worktree-push"
-assert_eq "$(grep -c 'refuse_live_round "\$active_round"' "$live_mutant")" "1" \
-  "control finds exactly one live-round refusal to remove"
-sed -i.bak 's/refuse_live_round "\$active_round"/: "no refusal"/' "$live_mutant"
-chmod +x "$live_mutant"
-assert_eq "$(grep -c 'refuse_live_round "\$active_round"' "$live_mutant")" "0" \
-  "control removes the refusal only from its private copy"
+# The mutant resolves its siblings (workflow-state) through the links beside
+# it, exactly as the real script does.
+live_mutant="$(mutant_scripts live-refusal-mutant worktree-push)/worktree-push" || exit 1
+mutate_file "$live_mutant" 'refuse_live_round "$active_round"' ': "no refusal"'
 rm -f "$live_wt/tmp/dev-return-KEN-LIVE-1-1.json"
 : > "$live_args"
 mutant_rc=0
@@ -526,11 +518,9 @@ assert_eq "$([[ -s "$check_args" ]] && echo ran || echo no)" "no" \
 
 # A state that cannot be read is not a state with no round. Each arm stubs one
 # answer, and the honest stub above is the control that they are the cause.
-check_stub_root="$TMP_ROOT/check-stub"
-mkdir -p "$check_stub_root"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$check_stub_root/"
-check_stub="$check_stub_root/scripts/worktree-push"
-cat > "$check_stub_root/scripts/workflow-state" <<'EOF'
+check_stub_scripts="$(mutant_scripts check-stub workflow-state)" || exit 1
+check_stub="$check_stub_scripts/worktree-push"
+cat > "$check_stub_scripts/workflow-state" <<'EOF'
 #!/usr/bin/env bash
 # Answers the two state reads worktree-push makes, honestly unless told
 # otherwise: the identity reads must pass so each case fails for its own
@@ -558,7 +548,7 @@ if [[ "$mode" == exists ]]; then
 fi
 exit 0
 EOF
-chmod +x "$check_stub_root/scripts/workflow-state" "$check_stub"
+chmod +x "$check_stub_scripts/workflow-state"
 # Every refusal in this script exits 1, so the exit code alone cannot tell one
 # arm from the one below it: each case asserts the message its own arm prints.
 check_err="$TMP_ROOT/check-stub.err"

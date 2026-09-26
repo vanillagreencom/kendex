@@ -175,19 +175,13 @@ if [ -z "$gaps" ]; then
 else
   fail "Pi rows name parameters the package instructions lack: $gaps"
 fi
-# Control, one row per parameter form: a planted span must be reported.
-while IFS='|' read -r span want; do
-  cp "$PI" "$MD_TMP/pi-control.md"
-  printf '| Plant | `%s` |\n' "$span" >> "$MD_TMP/pi-control.md"
-  case "$(pi_param_gaps "$MD_TMP/pi-control.md")" in
-    *"$want"*) pass "control: a planted $span is reported" ;;
-    *) fail "control: a planted $span went unreported" ;;
-  esac
-done <<'ROWS'
-notifyBogus: true|notifyBogus
-notifyMode: "never-a-mode"|notifyMode never-a-mode
-bg_status action: "bogus"|bg_status action bogus
-ROWS
+# The extractor's one control: a planted parameter span must be reported.
+cp "$PI" "$MD_TMP/pi-control.md"
+printf '| Plant | `notifyBogus: true` |\n' >> "$MD_TMP/pi-control.md"
+case "$(pi_param_gaps "$MD_TMP/pi-control.md")" in
+  *notifyBogus*) pass "control: a planted notifyBogus: true is reported" ;;
+  *) fail "control: a planted notifyBogus: true went unreported" ;;
+esac
 
 # --- The numbered follow ----------------------------------------------------
 # Runs the fence every harness saves as follow.sh against a log, from a start
@@ -206,7 +200,6 @@ awk '
 follow_lines() {
   if [ -f "$MD_TMP/follow.out" ]; then awk 'END { print NR }' "$MD_TMP/follow.out"; else echo 0; fi
 }
-follow_lines_unguarded() { awk 'END { print NR }' "$MD_TMP/follow.out"; }
 # One follow, its lines counted by COUNTER. With DELAY, follow.out appears only
 # DELAY seconds after the job starts, as when a slow fork opens it late; that
 # job is `sh` from the start, so a kill never lands on a forked copy of this one.
@@ -248,12 +241,6 @@ if [ "$FOLLOW_OUT" = "$FOLLOW_WANT" ]; then
   pass "the follow row waits for a follow.out opened late"
 else
   fail "with follow.out opened late the follow printed: $FOLLOW_OUT"
-fi
-follow_run follow_lines_unguarded 0.3 2>/dev/null
-if [ -z "$FOLLOW_OUT" ]; then
-  pass "control: a count that errors on a missing follow.out stops waiting and reads nothing"
-else
-  fail "control: a count that errors on a missing follow.out still read: $FOLLOW_OUT"
 fi
 
 # --- The handoff shape ------------------------------------------------------

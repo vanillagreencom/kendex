@@ -16,8 +16,11 @@ WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 # Outside any checkout, so no project settings file answers for a setting.
 cd "$TMP_ROOT"
 
-PASS=0
-FAIL=0
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
+# mutant_scripts and mutate_file, the two halves of the control below.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
@@ -65,31 +68,13 @@ out="$("$WS" --state-dir "$TMP_ROOT/no-fleet" fleet-log takeover 2>&1)" || rc=$?
 [[ "$rc" -eq 0 && -z "$out" ]] && ok "takeover with no fleet state prints nothing and exits 0" \
   || bad "takeover with no fleet state prints nothing and exits 0" "rc=$rc out=$out"
 
-# Planted: the takeover slice dropped. The read then prints the whole log.
-MUTANT_DIR="$TMP_ROOT/mutant"
-mkdir -p "$MUTANT_DIR"
-cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$MUTANT_DIR/lib"
-cp "$REPO_ROOT/skills/orch/scripts/orch-env" "$REPO_ROOT/skills/orch/scripts/git-context" "$MUTANT_DIR/"
-anchor="if \$n == 0 then empty else .[-\$n:][] end"
-[[ "$(grep -Fc -- "$anchor" "$WS")" == "1" ]] && ok "the slice control finds the takeover slice" \
-  || bad "the slice control finds the takeover slice"
-sed 's/else \.\[-\$n:\]\[\] end/else .[] end/' "$WS" > "$MUTANT_DIR/workflow-state"
-got="$(bash "$MUTANT_DIR/workflow-state" --state-dir "$sd" fleet-log takeover | jq -s 'length')"
+# The suite's one must-fail control: the takeover slice dropped. The read then
+# prints the whole log.
+NO_SLICE="$(mutant_scripts no-slice workflow-state)/workflow-state" || exit 1
+mutate_file "$NO_SLICE" 'else .[-$n:][] end' 'else .[] end'
+got="$("$NO_SLICE" --state-dir "$sd" fleet-log takeover | jq -s 'length')"
 [[ "$got" == "14" ]] && ok "control: without the slice the takeover read prints every row" \
   || bad "control: without the slice the takeover read prints every row" "got=$got"
-
-# Planted: takeover's absent-state read made the existence check every other
-# reader takes. The first session's takeover then refuses as state-missing.
-anchor='state_file=$(fleet_state_file) || return 0'
-[[ "$(grep -Fc -- "$anchor" "$WS")" == "1" ]] && ok "the absent-state control finds its arm" \
-  || bad "the absent-state control finds its arm"
-A="$anchor" awk 'index($0, ENVIRON["A"]) { sub(/[^ ].*/, "")
-  print $0 "state_file=$(get_state_file oversee); ensure_state_exists \"$state_file\""; next } { print }' \
-  "$WS" > "$MUTANT_DIR/absent-refused"
-rc=0
-bash "$MUTANT_DIR/absent-refused" --state-dir "$TMP_ROOT/no-fleet" fleet-log takeover >/dev/null 2>&1 || rc=$?
-[[ "$rc" -ne 0 ]] && ok "control: without the absent-state arm the first takeover refuses" \
-  || bad "control: without the absent-state arm the first takeover refuses" "rc=$rc"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

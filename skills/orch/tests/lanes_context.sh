@@ -25,7 +25,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 unset ORCH_HANDOFF_HEADROOM_PCT
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
-# mutate_file, the substitution half of the must-fail control below.
+# mutant_scripts and mutate_file, the two halves of the must-fail controls below.
 # shellcheck source=lib/growth-state.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
@@ -501,15 +501,10 @@ lanes_table "$(CTX_HANDOFF_PCT=4 run_ctx --json)" \
   "the setting is the mark: at four the lane one point above the default is marked|ken-134|headroom_pct=4 handoff_required=true" \
   "a lane above the setting is still not marked|ken-103|headroom_pct=10 handoff_required=false"
 
-# The control moves the default back to the five percent this change replaced.
-# The lane at four percent is then marked for a handoff the owner rule does not
-# ask for, and the row above it reddens. The whole lib directory comes with the
-# copy because `lanes` sources its libraries beside itself, so a lone copy of
-# the script would die on startup and credit a pass to nothing.
-HANDOFF_CTRL="$TMP_ROOT/mutant-handoff"; mkdir -p "$HANDOFF_CTRL/lib"
-cp "$SCRIPTS_DIR/lanes" "$HANDOFF_CTRL/" || { printf 'control: copy failed\n' >&2; exit 1; }
-cp "$SCRIPTS_DIR/lib"/*.sh "$HANDOFF_CTRL/lib/" || { printf 'control: lib copy failed\n' >&2; exit 1; }
-chmod +x "$HANDOFF_CTRL/lanes"
+# The one must-fail control on `lanes context`: the default moved back to five
+# percent. The lane at four percent is then marked for a handoff the owner rule
+# does not ask for, and the row above it reddens.
+HANDOFF_CTRL="$(mutant_scripts mutant-handoff lanes)" || exit 1
 mutate_file "$HANDOFF_CTRL/lanes" 'ORCH_HANDOFF_HEADROOM_PCT:-3' 'ORCH_HANDOFF_HEADROOM_PCT:-5'
 lanes_table "$(CTX_LANES="$HANDOFF_CTRL/lanes" run_ctx --json)" \
   "control: with the mark back at five the lane at four percent is marked for handoff|ken-134|headroom_pct=4 handoff_required=true"
@@ -604,17 +599,11 @@ lanes_table "$CLAIMED" \
   "a sibling row in the same report is not the caller|ken-103|caller=false"
 
 echo "=== the token figure is the multiplication, not the window ==="
-# The must-fail control for the rows above: a copy of the library with the
-# multiplication dropped reports the window itself, so a 52% lane reads as a
-# full one. The mutant must differ from the source or the control proves
-# nothing; the source parses the same screen to the multiplied figure.
-# In a lib directory of its own, because the library reaches its siblings by
-# the path it was loaded from: a copy alone in a directory finds none of them.
-MUTANT_LIB="$TMP_ROOT/mutant-lib"; mkdir -p "$MUTANT_LIB"
-ln -sf "$SCRIPTS_DIR/lib/lane-home.sh" "$MUTANT_LIB/lane-home.sh"
-MUTANT="$MUTANT_LIB/mutant-lane-context.sh"
-sed 's/int(used \* window \/ 100)/window/' "$SCRIPTS_DIR/lib/lane-context.sh" > "$MUTANT"
-assert_eq "$(cmp -s "$MUTANT" "$SCRIPTS_DIR/lib/lane-context.sh" && echo same || echo differs)" "differs" "control: the mutant really drops the multiplication"
+# The one must-fail control on lane_context_parse: a copy of the library with
+# the multiplication dropped reports the window itself, so a 52% lane reads as
+# a full one; the source parses the same screen to the multiplied figure.
+MUTANT="$(mutant_scripts mutant-lib lib/lane-context.sh)/lib/lane-context.sh" || exit 1
+mutate_file "$MUTANT" 'int(used * window / 100)' 'window'
 parse_screen() { # <lib> <pane number>
   "$BASH" -c 'source "$1"; lane_context_parse claude <"$2"' _ "$1" "$PANE_DIR/$2.screen" | cut -f3
 }

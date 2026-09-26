@@ -20,8 +20,11 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 
-PASS=0
-FAIL=0
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
+# mutant_scripts and mutate_file, the two halves of the control below.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
@@ -138,8 +141,7 @@ got="$("$WS" --state-dir "$fl_sd" get oversee '.fleet_log | length')"
 # is judged by the date ladder alone, which refuses it as future on a host
 # whose `date` takes -d and stores it on one whose does not: the same record,
 # two answers, neither caller able to act on the pair. The last row is the
-# round trip's rather than the regex's, and the BSD-arm control for it is
-# below.
+# round trip's rather than the regex's, and its BSD-arm row is below.
 while IFS='|' read -r fl_value fl_label; do
   printf '{"at":"%s","kind":"ruling","item":"KEN-4","text":"shape"}\n' "$fl_value" > "$TMP_ROOT/fl-shape.json"
   rc=0
@@ -176,10 +178,6 @@ key="$(head -n 1 "$TMP_ROOT/fl-scalar.err")"
   && ok "a fleet_log record that is not an object is refused as fleet-log-record" \
   || bad "a fleet_log record that is not an object is refused as fleet-log-record" "rc=$rc key=$key"
 
-MUTANT_DIR="$TMP_ROOT/mutant"
-mkdir -p "$MUTANT_DIR"
-cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$MUTANT_DIR/lib"
-cp "$REPO_ROOT/skills/orch/scripts/orch-env" "$MUTANT_DIR/orch-env"
 # The row's text is capped in bytes, not characters: a successor reads the
 # last rows whole at takeover, and the cap is what bounds that read. Rows:
 # the setting (- for unset), the character and its count, and the verdict.
@@ -212,74 +210,17 @@ done <<'ROWS'
 100|a|101|refused
 ROWS
 
-# Planted: the cap check removed. The over-cap row is then stored, which is
-# what the unpatched append did.
-[[ "$(grep -Fc 'if (( bytes > cap )); then' "$WS")" == "1" ]] \
-  && ok "the cap control finds the cap comparison" || bad "the cap control finds the cap comparison"
-sed 's/if (( bytes > cap )); then/if false; then/' "$WS" > "$MUTANT_DIR/no-cap"
+# The suite's one must-fail control: the cap check removed. The over-cap row
+# is then stored, which is what the unpatched append did.
+NO_CAP="$(mutant_scripts no-cap workflow-state)/workflow-state" || exit 1
+mutate_file "$NO_CAP" 'if (( bytes > cap )); then' 'if false; then'
 jq -n --arg t "$(printf '%601s' '' | tr ' ' a)" '{kind: "ruling", item: "KEN-8", text: $t}' > "$TMP_ROOT/fl-over.json"
 "$WS" --state-dir "$TMP_ROOT/mutant-cap" init oversee >/dev/null
-env -u ORCH_FLEET_LOG_ROW_BYTES bash "$MUTANT_DIR/no-cap" --state-dir "$TMP_ROOT/mutant-cap" \
+env -u ORCH_FLEET_LOG_ROW_BYTES "$NO_CAP" --state-dir "$TMP_ROOT/mutant-cap" \
   append-file oversee fleet_log "$TMP_ROOT/fl-over.json" >/dev/null 2>&1 || true
 got="$("$WS" --state-dir "$TMP_ROOT/mutant-cap" get oversee '.fleet_log | length')"
 [[ "$got" == "1" ]] && ok "control: without the cap comparison the over-cap row is stored" \
   || bad "control: without the cap comparison the over-cap row is stored" "got=$got"
-
-mutant_run() { # MUTANT_NAME STATE_DIR RECORD ERR_FILE
-  local rc=0
-  "$WS" --state-dir "$2" init oversee >/dev/null
-  bash "$MUTANT_DIR/$1" --state-dir "$2" append-file oversee fleet_log "$3" >/dev/null 2>"$4" || rc=$?
-  return "$rc"
-}
-
-# Planted: the stamp dropped. The record then reaches the log with no time
-# at all, which is the drift this rule ends.
-[[ "$(grep -Fc "entry_expr='(\$entry[0] | .at = \$now)'" "$WS")" == "1" ]] \
-  && ok "the stamp control finds the stamping expression" \
-  || bad "the stamp control finds the stamping expression"
-awk -v q="'" 'index($0, "entry_expr=" q "($entry[0] | .at = $now)" q) \
-  { print "            entry_expr=" q "$entry[0]" q; next } { print }' "$WS" > "$MUTANT_DIR/no-stamp"
-mutant_run no-stamp "$TMP_ROOT/mutant-none" "$TMP_ROOT/fl-none.json" "$TMP_ROOT/no-stamp.err" || true
-got="$("$WS" --state-dir "$TMP_ROOT/mutant-none" get oversee '.fleet_log[0] | has("at")')"
-[[ "$got" == "false" ]] && ok "control: without the stamping expression the record keeps no time" \
-  || bad "control: without the stamping expression the record keeps no time" "got=$got"
-
-# Planted: the object read made total, which is the shape that lets a scalar
-# record through to jq — the failure then names the filter, not the record.
-[[ "$(grep -Fc "jq -er 'select(type == \"object\") | .at // \"\"' < \"\$file\"" "$WS")" == "1" ]] \
-  && ok "the record control finds the at read" \
-  || bad "the record control finds the at read"
-awk -v q="'" 'index($0, "jq -er " q "select(type == \"object\") | .at // \"\"" q) \
-  { print "        if ! at=$(jq -r " q ".at? // \"\"" q " < \"$file\" 2>/dev/null); then"; next } { print }' \
-  "$WS" > "$MUTANT_DIR/total-read"
-mutant_run total-read "$TMP_ROOT/mutant-scalar" "$TMP_ROOT/fl-scalar.json" "$TMP_ROOT/total-read.err" || true
-key="$(head -n 1 "$TMP_ROOT/total-read.err")"
-[[ "$key" == "workflow-state: jq-failed state=$TMP_ROOT/mutant-scalar/workflow-state-oversee.json" ]] \
-  && ok "control: without the record refusal the scalar fails as jq-failed, naming the filter" \
-  || bad "control: without the record refusal the scalar fails as jq-failed, naming the filter" "key=$key"
-
-# Planted: the clock comparison removed. The future record then lands in the
-# log unjudged.
-[[ "$(grep -Fc '[[ "$raw_epoch" -gt "$now_epoch" ]]' "$WS")" == "1" ]] \
-  && ok "the future control finds the clock comparison" \
-  || bad "the future control finds the clock comparison"
-sed 's|\[\[ "$raw_epoch" -gt "$now_epoch" ]]|false|' "$WS" > "$MUTANT_DIR/no-clock"
-mutant_run no-clock "$TMP_ROOT/mutant-future" "$TMP_ROOT/fl-future.json" "$TMP_ROOT/no-clock.err" || true
-got="$("$WS" --state-dir "$TMP_ROOT/mutant-future" get oversee '.fleet_log[0].at')"
-[[ "$got" == "2099-01-01T00:00:00Z" ]] && ok "control: without the clock comparison the future record is stored" \
-  || bad "control: without the clock comparison the future record is stored" "got=$got"
-
-# Planted: the shape refusal removed. The value then reaches the log, where a
-# reader on the other date arm cannot read it back.
-[[ "$(grep -Fc 'state_message fleet-log-at-invalid "$@" >&2; return 1' "$WS")" == "1" ]] \
-  && ok "the shape control finds the shape refusal" \
-  || bad "the shape control finds the shape refusal"
-printf '{"at":"2020-01-01 00:00:00","kind":"ruling","item":"KEN-5","text":"shape"}\n' > "$TMP_ROOT/fl-loose.json"
-sed 's|state_message fleet-log-at-invalid "$@" >&2; return 1|:|' "$WS" > "$MUTANT_DIR/no-shape"
-mutant_run no-shape "$TMP_ROOT/mutant-shape" "$TMP_ROOT/fl-loose.json" "$TMP_ROOT/no-shape.err" || true
-got="$("$WS" --state-dir "$TMP_ROOT/mutant-shape" get oversee '.fleet_log[0].at')"
-[[ "$got" == "2020-01-01 00:00:00" ]] && ok "control: without the shape refusal the non-ISO value is stored" \
-  || bad "control: without the shape refusal the non-ISO value is stored" "got=$got"
 
 # The instant is judged by a round trip through the epoch, not by whether the
 # date ladder read the string at all, because the ladder's two arms disagree
@@ -368,22 +309,6 @@ key="$(head -n 1 "$TMP_ROOT/fl-nonday.err")"
   && ok "a day past its month's length is refused on the BSD date arm too" \
   || bad "a day past its month's length is refused on the BSD date arm too" "rc=$rc key=$key"
 
-# Planted: the round trip removed. On the BSD arm the ladder then answers
-# that the thirtieth of February names an instant, and the record is stored
-# carrying a date no calendar has — stored on macOS, refused on Linux.
-[[ "$(grep -Fc "from_epoch \"\$raw_epoch\" '%Y-%m-%dT%H:%M:%SZ'" "$WS")" == "1" ]] \
-  && ok "the instant control finds the round trip" \
-  || bad "the instant control finds the round trip"
-sed 's|\[\[ "$(from_epoch "$raw_epoch" .%Y-%m-%dT%H:%M:%SZ.)" != "$raw" ]]|false|' \
-  "$WS" > "$MUTANT_DIR/no-roundtrip"
-"$WS" --state-dir "$TMP_ROOT/mutant-nonday" init oversee >/dev/null
-PATH="$BSD_PATH" bash "$MUTANT_DIR/no-roundtrip" --state-dir "$TMP_ROOT/mutant-nonday" \
-  append-file oversee fleet_log "$TMP_ROOT/fl-nonday.json" >/dev/null 2>"$TMP_ROOT/no-roundtrip.err" || true
-got="$("$WS" --state-dir "$TMP_ROOT/mutant-nonday" get oversee '.fleet_log[0].at')"
-[[ "$got" == "2020-02-30T00:00:00Z" ]] \
-  && ok "control: without the round trip the BSD arm stores the nonexistent date" \
-  || bad "control: without the round trip the BSD arm stores the nonexistent date" "got=$got"
-
 # The clock the stamp comes from is this rule's own dependency, and a `date`
 # that exits nonzero leaves both reads empty. `stamp_judge` runs inside a
 # command substitution, which carries no failure out to its caller, so the
@@ -406,36 +331,6 @@ key="$(head -n 1 "$TMP_ROOT/fl-clock.err")"
 got="$("$WS" --state-dir "$dead_sd" get oversee 'tojson')"
 [[ "$got" == "$dead_before" ]] && ok "the clock refusal leaves the state untouched" \
   || bad "the clock refusal leaves the state untouched" "got=$got"
-
-# Planted: the clock reads left unchecked, which is the shape that stamps the
-# empty string. The record then lands carrying "at": "" and the command exits
-# 0, so the field the rule owns is written from a clock nobody read.
-[[ "$(grep -Fc 'if [[ -z "$now_epoch" || -z "$now" ]]; then' "$WS")" == "1" ]] \
-  && ok "the clock control finds the clock check" \
-  || bad "the clock control finds the clock check"
-awk 'index($0, "if [[ -z \"$now_epoch\" || -z \"$now\" ]]; then") \
-  { print "    if false; then"; next } { print }' "$WS" > "$MUTANT_DIR/no-clock-read"
-"$WS" --state-dir "$TMP_ROOT/mutant-clock" init oversee >/dev/null
-rc=0
-PATH="$DEAD_BIN:$PATH" bash "$MUTANT_DIR/no-clock-read" --state-dir "$TMP_ROOT/mutant-clock" \
-  append-file oversee fleet_log "$TMP_ROOT/fl-none.json" >/dev/null 2>"$TMP_ROOT/no-clock-read.err" || rc=$?
-got="$("$WS" --state-dir "$TMP_ROOT/mutant-clock" get oversee '.fleet_log[0].at | tojson')"
-[[ "$rc" -eq 0 && "$got" == '""' ]] \
-  && ok "control: without the clock check the record is stored with an empty at" \
-  || bad "control: without the clock check the record is stored with an empty at" "rc=$rc got=$got"
-
-# Planted: the stamp written in a form `to_epoch`'s BSD arm cannot read. A
-# macOS run would then fail to parse a time this script wrote itself.
-[[ "$(grep -Fc "from_epoch \"\$now_epoch\" '%Y-%m-%dT%H:%M:%SZ'" "$WS")" == "1" ]] \
-  && ok "the format control finds the stamp format" \
-  || bad "the format control finds the stamp format"
-sed "s|from_epoch \"\$now_epoch\" '%Y-%m-%dT%H:%M:%SZ'|from_epoch \"\$now_epoch\" '%Y-%m-%d %H:%M:%S'|" \
-  "$WS" > "$MUTANT_DIR/loose-format"
-mutant_run loose-format "$TMP_ROOT/mutant-format" "$TMP_ROOT/fl-none.json" "$TMP_ROOT/loose-format.err" || true
-got="$("$WS" --state-dir "$TMP_ROOT/mutant-format" get oversee '.fleet_log[0].at')"
-[[ ! "$got" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
-  && ok "control: a stamp in another format fails the shape the row asserts" \
-  || bad "control: a stamp in another format fails the shape the row asserts" "got=$got"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -14,16 +14,18 @@
 #   § composer    whether the lane's live input line is empty, the one question
 #                a caller about to TYPE into the pane must ask
 #   § process ownership
-#                the host process table, zombie states and unreadable processes
+#                the host process table, zombie states and unreadable processes,
+#                with one must-fail control on lane_owned_processes
 #   § agreement  one screen read by BOTH the watch and the wake. The pane rungs
 #                are shared, so above idle the two answer the same word; the
 #                idle rung falls through to the harness-process read that only
 #                the wake makes, and a box with no /proc parts them there
 #   § verb       `lanes state` as the third caller: the wiring around the judge,
-#                and the host probe that reports beside the state, never as it
-#   § control    the must-fail inverse: a judge that reads the harness process
-#                and not the pane — the wake as it was — calls the idle screen
-#                unjudged
+#                and the host probe that reports beside the state, never as it,
+#                with one must-fail control on the verb
+#   § control    the must-fail control on the judge: one that reads the harness
+#                process and not the pane — the wake as it was — calls the idle
+#                screen unjudged
 #
 # The sandbox, its tmux and pgrep stubs and its assertions are
 # lib/oversee-watch-harness.sh, the same ones the watch's own suites drive, so
@@ -38,6 +40,9 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 # shellcheck source=lib/process-table.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
+# mutant_scripts and mutate_file, the two halves of the verb's control.
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 SCRIPTS_DIR="$REPO_ROOT/skills/orch/scripts"
 # The library under test, sourced into this shell: the judge is a function, and
@@ -340,18 +345,6 @@ PY
   assert_eq "$PROCESS_FAIL_PS_RC" 2 \
     "a failed process-table read returns status 2 without caller pipefail"
 
-  PROCESS_MUTANT="$PROCESS_ROOT/mutant-lane-state.sh"
-  assert_eq "$(grep -cF -- '  raw="$(ps -A -o pid= -o ppid= -o comm=)" || return 2' "$SCRIPTS_DIR/lib/lane-state.sh")" 1 \
-    "control: the separate process-table read has one mutation point"
-  sed '/^  raw="$(ps -A -o pid= -o ppid= -o comm=)" || return 2$/,+2c\
-  table="$(ps -A -o pid= -o ppid= -o comm= | awk '"'"'{ pid = $1; ppid = $2; $1 = ""; $2 = ""; name = substr($0, 3); sub(/.*\\//, "", name); print pid, ppid, name }'"'"')" || return 2' \
-    "$SCRIPTS_DIR/lib/lane-state.sh" > "$PROCESS_MUTANT"
-  PROCESS_PS_CONTROL_RC=0
-  (source "$PROCESS_MUTANT"; set +o pipefail; PATH="$PROCESS_FAIL_PS:$PATH"; lane_owned_processes "$PROCESS_ROOT" 'kz)harness') \
-    || PROCESS_PS_CONTROL_RC=$?
-  assert_eq "$PROCESS_PS_CONTROL_RC" 0 \
-    "control: the pipeline hides a failed process-table read without pipefail"
-
   process_fixture_cleanup
   PROCESS_FIXTURE_PIDS=""
   trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -651,18 +644,15 @@ assert_eq "$(head -1 <<<"$no_item_out") rc=$no_item_rc" \
   "lanes: missing-value arg1=state rc=1" \
   "lanes state with no item refuses before it reads a pane"
 
-# Control: the probe handed the whole argument again asks the provider about
-# an item named after a tmux session.
-PROBE_MUTANT_REPO="$TMP_ROOT/verb-probe-mutant"
-cp -a "$VERB_REPO" "$PROBE_MUTANT_REPO"
-python3 - "$PROBE_MUTANT_REPO/scripts/lanes" <<'PY2'
-import sys
-p = sys.argv[1]
-s = open(p).read()
-old = 'touch --item "${LANE_ARG#*:}"'
-assert s.count(old) == 1
-open(p, "w").write(s.replace(old, 'touch --item "$LANE_ARG"'))
-PY2
+# The verb's one must-fail control: the probe handed the whole argument again
+# asks the provider about an item named after a tmux session. The mutant's
+# repository carries the same provider stub the fixture's does.
+PROBE_MUTANT_SCRIPTS="$(mutant_scripts verb-probe-mutant lanes)" || exit 1
+PROBE_MUTANT_REPO="$(dirname "$PROBE_MUTANT_SCRIPTS")"
+rm -- "${PROBE_MUTANT_SCRIPTS:?}/lane-host"
+cp "$VERB_REPO/scripts/lane-host" "$PROBE_MUTANT_SCRIPTS/lane-host"
+git -C "$PROBE_MUTANT_REPO" init -q
+mutate_file "$PROBE_MUTANT_SCRIPTS/lanes" 'touch --item "${LANE_ARG#*:}"' 'touch --item "$LANE_ARG"'
 assert_eq "$(probed kendex:CC-404 "$PROBE_MUTANT_REPO")" "kendex:CC-404" \
   "control: probing with the whole argument names the session to the provider"
 

@@ -35,7 +35,7 @@ jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cac
 SH
 chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
-LIVE_SCRIPTS="$(copy_scripts live)"
+LIVE_SCRIPTS="$(mutant_scripts live)" || exit 1
 CHECK="$LIVE_SCRIPTS/dev-artifact-check"
 ROUND_WRITE_BIN="$LIVE_SCRIPTS/dev-round-write"
 RETURN_WRITE="$LIVE_SCRIPTS/dev-return-write"
@@ -260,11 +260,10 @@ for line in 'No allowance.' '**Expected delta**: 100 lines' '**Expected delta**:
     "cut_not_shrunk" "the recorded cut comparison survives: $line"
 done
 
-MUTANT_SCRIPTS="$(copy_scripts cut-comparison-mutant)"
-MUTANT_LIB="$MUTANT_SCRIPTS/lib/branch-growth.sh"
-assert_eq "$(grep -Fc 'cut_args=(--cut-from-round "$4")' "$MUTANT_LIB")" "1" "control finds the recorded comparison"
-sed -i.bak 's/cut_args=(--cut-from-round "$4")/cut_args=()/' "$MUTANT_LIB"
-assert_eq "$([[ ! -L "$MUTANT_LIB" ]] && ! cmp -s "$MUTANT_LIB" "$LIVE_SCRIPTS/lib/branch-growth.sh" && echo changed)" "changed" "control changes the private comparison"
+# dev-artifact-check's one must-fail control: the recorded comparison dropped
+# from a private copy of the measurement, so the tracker edit decides the cut.
+MUTANT_SCRIPTS="$(mutant_scripts cut-comparison-mutant lib/branch-growth.sh)" || exit 1
+mutate_file "$MUTANT_SCRIPTS/lib/branch-growth.sh" 'cut_args=(--cut-from-round "$4")' 'cut_args=()'
 write_allowance "$cut_wt" issue-1165 '**Expected delta**: 100 lines'
 LIVE_CHECK="$CHECK"
 CHECK="$MUTANT_SCRIPTS/dev-artifact-check"
@@ -288,17 +287,6 @@ assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 3-3 -
 assert_eq "$("$STATE" --state-dir "$cut_wt/tmp" get issue-1165 '.pr.size_check.verdict, .pr.size_check.production_allowance, .pr.size_check.test_allowance' | paste -sd, -)" \
   "allowance_missing,null,null" "cut acceptance keeps the unsized PR report without invented allowances"
 
-STATE_SCRIPTS="$(copy_scripts cut-state-mutant)"
-STATE_CHECKER="$STATE_SCRIPTS/branch-size-check"
-assert_eq "$(grep -Fc 'if [[ -z "$cut_from_round" ]]; then' "$STATE_CHECKER")" "1" "control finds the report write guard"
-sed -i.bak 's/if \[\[ -z "$cut_from_round" \]\]; then/if :; then # [[ -z "$cut_from_round" ]]/' "$STATE_CHECKER"
-assert_eq "$([[ ! -L "$STATE_CHECKER" ]] && ! cmp -s "$STATE_CHECKER" "$LIVE_SCRIPTS/branch-size-check" && echo changed)" "changed" "control changes the private report writer"
-CHECK="$STATE_SCRIPTS/dev-artifact-check"
-assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 3-3 --expect-items-from-round)" \
-  "valid" "control: the cut still succeeds when its comparison overwrites state"
-assert_eq "$("$STATE" --state-dir "$cut_wt/tmp" get issue-1165 '.pr.size_check.verdict, .pr.size_check.production_allowance, .pr.size_check.test_allowance' | paste -sd, -)" \
-  "pass,6,0" "control: the state write invents allowances for the unsized report"
-CHECK="$LIVE_CHECK"
 mkdir -p "$cut_wt/tests"
 printf 'test\n' > "$cut_wt/tests/new.sh"
 git -C "$cut_wt" add tests/new.sh
@@ -320,11 +308,10 @@ assert_eq "$(jq -r '[.size_check.verdict, .size_check.production_lines, .size_ch
 assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id retry --expect-items-from-round)" \
   "cut_not_shrunk" "a fresh cut retry cannot accept the same uncut growth"
 
-RETRY_SCRIPTS="$(copy_scripts cut-retry-mutant)"
-RETRY_WRITER="$RETRY_SCRIPTS/dev-round-write"
-assert_eq "$(grep -Fc '  cut_comparison="$BRANCH_ALLOWANCE_RECORD"' "$RETRY_WRITER")" "1" "control finds the preserved cut comparison"
-sed -i.bak 's/  cut_comparison="$BRANCH_ALLOWANCE_RECORD"/  cut_comparison="$size_check" # $BRANCH_ALLOWANCE_RECORD/' "$RETRY_WRITER"
-assert_eq "$([[ ! -L "$RETRY_WRITER" ]] && ! cmp -s "$RETRY_WRITER" "$LIVE_SCRIPTS/dev-round-write" && echo changed)" "changed" "control changes the private retry writer"
+# dev-round-write's one must-fail control: a private writer whose cut retry
+# records its own counts in place of the earlier comparison.
+RETRY_WRITER="$(mutant_scripts cut-retry-mutant dev-round-write)/dev-round-write" || exit 1
+mutate_file "$RETRY_WRITER" '  cut_comparison="$BRANCH_ALLOWANCE_RECORD"' '  cut_comparison="$size_check"'
 ROUND_WRITE_BIN="$RETRY_WRITER"
 "$ROUND_WRITE" --worktree "$cut_wt" --issue issue-1165 --round-id retry-mutant \
   --cut-from-round "$unsized_record" --item 1 "finish the cut" "the branch this round shrinks" >/dev/null

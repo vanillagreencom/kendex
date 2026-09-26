@@ -19,8 +19,11 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 
-PASS=0
-FAIL=0
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
+# mutant_scripts and mutate_file, the two halves of the control at the end.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
@@ -248,23 +251,21 @@ echo "--- planted control ---"
 
 # The unguarded validation: `jq -e.` reads the value, so false and null are
 # refused. A copy of the script carrying it must reject both.
-CTRL_SCRIPTS="$TMP_ROOT/scripts"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$CTRL_SCRIPTS"
-sed "s/jq -s -e 'length == 1'/jq -e ./" "$WS" > "$CTRL_SCRIPTS/workflow-state"
-chmod +x "$CTRL_SCRIPTS/workflow-state"
-if cmp -s "$CTRL_SCRIPTS/workflow-state" "$WS"; then
-  bad "truthiness control planted nothing — its sed program matched no text"
-else
-  sdt="$TMP_ROOT/state-truthiness"
-  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdt" init KEN-3 --worktree "$REPO_ROOT" --branch ken-3 >/dev/null
-  refused=0
-  for scalar in false null; do
-    "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdt" update KEN-3 --argjson v "$scalar" '.skip_qa = $v' >/dev/null 2>&1 \
-      || refused=$((refused + 1))
-  done
-  [[ "$refused" -eq 2 ]] && ok "the -e form refuses both false and null, which this fix accepts" \
-    || bad "the -e form refuses both false and null, which this fix accepts" "refused=$refused of 2"
-fi
+# The script validates in three places, so the one substitution is asserted
+# by its own counts rather than mutate_file's single site.
+TRUTHY="$(mutant_scripts truthiness workflow-state)/workflow-state" || exit 1
+assert_eq "$(grep -Fc "jq -s -e 'length == 1'" "$TRUTHY")" "3" "control finds the three binding validations"
+sed -i.bak "s/jq -s -e 'length == 1'/jq -e ./" "$TRUTHY"
+assert_eq "$(grep -Fc "jq -s -e 'length == 1'" "$TRUTHY")" "0" "control applied its mutation"
+sdt="$TMP_ROOT/state-truthiness"
+"$TRUTHY" --state-dir "$sdt" init KEN-3 --worktree "$REPO_ROOT" --branch ken-3 >/dev/null
+refused=0
+for scalar in false null; do
+  "$TRUTHY" --state-dir "$sdt" update KEN-3 --argjson v "$scalar" '.skip_qa = $v' >/dev/null 2>&1 \
+    || refused=$((refused + 1))
+done
+[[ "$refused" -eq 2 ]] && ok "the -e form refuses both false and null, which this fix accepts" \
+  || bad "the -e form refuses both false and null, which this fix accepts" "refused=$refused of 2"
 
 # The form review-pr documented before this change pasted the location into a
 # single-quoted shell word. The apostrophe closes that word and the stray

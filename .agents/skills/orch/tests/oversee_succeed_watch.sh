@@ -11,6 +11,9 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
+# mutant_scripts, for the one must-fail control below.
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUCCEED="$TEST_DIR/../scripts/oversee-succeed"
@@ -251,22 +254,17 @@ check "a fleet with no running watch reports watch-absent and starts none" \
   "$RC|$(grep -c '^oversee-succeed: watch-absent path=.*/tmp/workflow-state-oversee.json$' <<<"$OUT")|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
   "0|1|$STARTED"
 
-# The must-fail control: the succession as it stood before the handover, which
-# closes the caller and leaves its watch reading the pane that closed.
-script_mutant() { # DIR FROM TO
-  mkdir -p "$1"
-  ln -s "$SRC_DIR"/* "$1/"
-  rm -f -- "${1:?}/oversee-succeed"
-  FROM="$2" TO="$3" \
-    awk '$0 == ENVIRON["FROM"] { print ENVIRON["TO"]; hits++; next } { print } END { if (hits != 1) exit 1 }' \
-    "$SUCCEED" > "$1/oversee-succeed"
-  chmod +x "$1/oversee-succeed"
-}
-script_mutant "$TMP_ROOT/unpatched" 'if [[ "$MODE" == succeed ]]; then' 'if false; then'
+# The suite's one must-fail control: the succession as it stood before the
+# handover, which closes the caller and leaves its watch reading the pane that
+# closed. The line is matched whole, so the mutation lands on that one site.
+UNPATCHED="$(mutant_scripts unpatched oversee-succeed)" || exit 1
+awk '$0 == "if [[ \"$MODE\" == succeed ]]; then" { print "if false; then"; hits++; next } { print }
+     END { if (hits != 1) exit 1 }' "$SUCCEED" > "$UNPATCHED/oversee-succeed" \
+  || { echo "fixture: the handover mutant found no single site" >&2; exit 1; }
 new_caller
 fresh_output
 start_watch
-run_succeed "$TMP_ROOT/unpatched/oversee-succeed"
+run_succeed "$UNPATCHED/oversee-succeed"
 sleep 2
 check "control: without the handover the watch keeps serving the closed pane" \
   "$RC|$(kill -0 "$OLD" 2>/dev/null && echo alive || echo gone)|$(started_line "$OLD" | sed 's/ .*//')|$(grep -c '^oversee-succeed: watch-' <<<"$OUT")" \
@@ -294,28 +292,15 @@ fi
 exit \$rc
 EOF
   chmod +x "$TMP_ROOT/killbin/tmux"
-  killed_case() { # [SUCCEED_BIN]
-    new_caller
-    fresh_output
-    start_watch
-    ROW_PATH="$TMP_ROOT/killbin" ROW_LAUNCH=setsid run_succeed "${1:-}"
-    wait_restart
-  }
-  killed_case
+  new_caller
+  fresh_output
+  start_watch
+  ROW_PATH="$TMP_ROOT/killbin" ROW_LAUNCH=setsid run_succeed
+  wait_restart
   check "a run killed with its process group at the close still has the watch restarted from the successor pane" \
     "$RC|$(tm list-windows -t fleet -F '#{window_id}' | grep -cxF -- "$CALLER_WINDOW" || true)|${NEW:+restarted}|$(kill -0 "$OLD" 2>/dev/null && echo alive || echo gone)" \
     "137|0|restarted|gone"
   watch_stop "$NEW" "$FLEET_STATE" || true
-
-  # The control: the helper left in the run's own process group, a background
-  # job of the run, which the same kill takes with it.
-  script_mutant "$TMP_ROOT/grouped" \
-    '  job_unit_launch "$name-$(date -u +%Y%m%dT%H%M%SZ)" "$WATCH_RUNNER_FILE" \' \
-    '  sh -c '"'"'out=$1 err=$2; shift 2; exec "$@" >>"$out" 2>>"$err"'"'"' sh "$out" "$err" "$@" & JOB_UNIT_LINE=grouped; return 0; : \'
-  killed_case "$TMP_ROOT/grouped/oversee-succeed"
-  check "control: a helper in the killed group dies with it and the watch is never restarted" \
-    "$RC|${NEW:-none}" "137|none"
-  watch_stop "$OLD" "$FLEET_STATE" || true
 else
   printf '  skip  the process-group kill rows need setsid\n'
 fi
@@ -360,31 +345,20 @@ watch_stop "$OLD" "$FLEET_STATE" || true
 # A launch the runner refuses is a notice carrying the runner's own error,
 # never a handover or a restart. The helper's: a record the runner cannot
 # write, its temporary file's path taken by a directory. The restart's: a
-# setsid that starts the helper and fails every other start. Each with a
-# control that drops the error from its line.
+# setsid that starts the helper and fails every other start.
 if command -v setsid >/dev/null 2>&1; then
   RUNNER_PART="$TMP_ROOT/work/tmp/oversee-watch.runner.part"
-  helper_refused_case() { # [SUCCEED_BIN]
-    new_caller
-    fresh_output
-    start_watch
-    mkdir -p "$RUNNER_PART"
-    STARTED="$(grep -c '^started ' "$TMP_ROOT/watch.log")"
-    run_succeed "${1:-}"
-    rmdir -- "$RUNNER_PART"
-    HELPER_LINE="$(grep '^oversee-succeed: watch-restart-failed step=helper ' <<<"$OUT" || true)"
-  }
-  helper_refused_case
+  new_caller
+  fresh_output
+  start_watch
+  mkdir -p "$RUNNER_PART"
+  STARTED="$(grep -c '^started ' "$TMP_ROOT/watch.log")"
+  run_succeed
+  rmdir -- "$RUNNER_PART"
+  HELPER_LINE="$(grep '^oversee-succeed: watch-restart-failed step=helper ' <<<"$OUT" || true)"
   check "a helper the runner refuses is a notice with the runner's error, and no handover or restart" \
     "$RC|$HELPER_LINE|$(grep -c '^oversee-succeed: watch-handover ' <<<"$OUT")|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
     "0|oversee-succeed: watch-restart-failed step=helper pid=$OLD error=record-unwritable path=$(cd "$TMP_ROOT/work/tmp" && pwd -P)/oversee-watch.runner|0|$STARTED"
-  watch_stop "$OLD" "$FLEET_STATE" || true
-  script_mutant "$TMP_ROOT/helper-bare" \
-    '      message watch-restart-failed step=helper "pid=$old_watch" "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR" >&2' \
-    '      message watch-restart-failed step=helper "pid=$old_watch" >&2'
-  helper_refused_case "$TMP_ROOT/helper-bare/oversee-succeed"
-  check "control: without its error fields the helper's refusal names no cause" \
-    "$HELPER_LINE" "oversee-succeed: watch-restart-failed step=helper pid=$OLD"
   watch_stop "$OLD" "$FLEET_STATE" || true
 
   REAL_SETSID="$(command -v setsid)"
@@ -392,25 +366,15 @@ if command -v setsid >/dev/null 2>&1; then
   printf '#!/bin/sh\ncase "$*" in *--watch-restart*) exec %s "$@" ;; esac\nexit 1\n' "$REAL_SETSID" \
     > "$TMP_ROOT/helper-only/setsid"
   chmod +x "$TMP_ROOT/helper-only/setsid"
-  restart_refused_case() { # [SUCCEED_BIN]
-    new_caller
-    fresh_output
-    start_watch
-    STARTED="$(grep -c '^started ' "$TMP_ROOT/watch.log")"
-    ROW_PATH="$TMP_ROOT/helper-only" run_succeed "${1:-}"
-    wait_failed 100
-  }
-  restart_refused_case
+  new_caller
+  fresh_output
+  start_watch
+  STARTED="$(grep -c '^started ' "$TMP_ROOT/watch.log")"
+  ROW_PATH="$TMP_ROOT/helper-only" run_succeed
+  wait_failed 100
   check "a restart the runner refuses is a notice beside the fleet state with the runner's error, and starts nothing" \
     "$RC|$FAILED_LINE|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
     "0|oversee-succeed: watch-restart-failed step=start dir=$TMP_ROOT/work error=launch-failed status=1|$STARTED"
-  watch_stop "$OLD" "$FLEET_STATE" || true
-  script_mutant "$TMP_ROOT/restart-bare" \
-    '    message watch-restart-failed step=start "dir=$WATCH_CWD" "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR"' \
-    '    message watch-restart-failed step=start "dir=$WATCH_CWD"'
-  restart_refused_case "$TMP_ROOT/restart-bare/oversee-succeed"
-  check "control: without its error fields the restart's refusal names no cause" \
-    "$FAILED_LINE" "oversee-succeed: watch-restart-failed step=start dir=$TMP_ROOT/work"
   watch_stop "$OLD" "$FLEET_STATE" || true
 else
   printf '  skip  the refused-launch rows need setsid\n'

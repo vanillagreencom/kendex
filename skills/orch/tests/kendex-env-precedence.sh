@@ -18,6 +18,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB="$(cd "$TEST_DIR/.." && pwd)/scripts/lib/kendex-env.sh"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+# mutant_scripts and mutate_file, the two halves of the stdout control.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 
 PASS=0
 FAIL=0
@@ -455,17 +458,9 @@ PROJ11="$TMP_ROOT/proj11"
 mkdir -p "$PROJ11/accounts"
 git -C "$PROJ11" init -q
 printf '%s\n' 'echo env-file-output' 'KENDEX_STDOUT_TEST=private-value' > "$PROJ11/.env.local"
-cp -R "${LIB%/lib/*}" "$PROJ11/scripts"
-NOISY_LIB="$PROJ11/scripts/lib/kendex-env.sh"
-[[ -f "$NOISY_LIB" && ! -L "$NOISY_LIB" ]] || exit 1
-redirect_count=$(grep -Fxc '  source "$file" >&2' "$NOISY_LIB") || exit 1
-assert_eq "$redirect_count" "1" "stdout control finds one redirected source"
-[[ "$redirect_count" == 1 ]] || exit 1
-sed -i.bak 's/^  source "\$file" >&2$/  source "$file"/' "$NOISY_LIB"
-if cmp -s "$NOISY_LIB.bak" "$NOISY_LIB"; then
-  echo "stdout control did not change the loader" >&2
-  exit 1
-fi
+# The must-fail control: the loader's source left on stdout.
+NOISY_SCRIPTS="$(mutant_scripts noisy-loader lib/kendex-env.sh)" || exit 1
+mutate_file "$NOISY_SCRIPTS/lib/kendex-env.sh" '  source "$file" >&2' '  source "$file"'
 
 for variant in production mutant; do
   scripts="${LIB%/lib/*}"
@@ -475,7 +470,7 @@ for variant in production mutant; do
   expected_parse=pass
   expected_value="private-value"
   if [[ "$variant" == mutant ]]; then
-    scripts="$PROJ11/scripts"
+    scripts="$NOISY_SCRIPTS"
     expected_stdout="env-file-output"
     expected_stderr=""
     expected_json=""

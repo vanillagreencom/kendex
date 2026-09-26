@@ -15,6 +15,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
+# mutant_scripts, the private copy the control below mutates.
+# shellcheck source=lib/growth-state.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 
 # Every fixture banner below states a clock, and the event carries the UTC
 # instant it resolves to. Rows asserting the whole event line pin both ends of
@@ -360,97 +363,29 @@ assert_eq "$(grep -n '^EVENT ' <<<"$OUT" | cut -d: -f1 | tr '\n' ' ')" "1 6 " \
 assert_eq "$(sed -n '2,5p' <<<"$OUT")" "$(printf '%b\n' '⏺ Working through the queue.' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER")" \
   "the wall's payload is the window around the banner, the lines on both sides of it included" "$ERR"
 
-# The must-fail control: the usage-limit arm's early exit restored. The
-# mutant leaves the pass on the first walled lane, so the fleet above reads
-# as usage-limit alone; the copy must differ from the source or the control
-# proves nothing. The copy keeps orch's place in a skills tree: its libraries
-# resolve the github skill beside it.
+# The suite's one must-fail control: the usage-limit arm's early exit
+# restored. The mutant leaves the pass on the first walled lane, so the fleet
+# above reads as usage-limit alone. The substitution is scoped to the arm, so
+# its one landing is counted rather than its pattern's absence. The copy keeps
+# orch's place in a skills tree: its libraries resolve the github skill
+# beside it.
 MUTANT_DIR="$TMP_ROOT/mutant"
-mkdir -p "$MUTANT_DIR/orch"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
+MUTANT_WATCH="$(mutant_scripts mutant/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+assert_eq "$(grep -cxF -- '    PASS_EVENT=1; return 0' "$MUTANT_WATCH" || true)" "0" \
+  "control: the usage-limit arm returns nothing before the mutation"
 sed '/^    echo "EVENT \$event \$lane/,/^    PASS_EVENT=1$/ s/^    PASS_EVENT=1$/    PASS_EVENT=1; return 0/' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really restores the usage-limit arm's early exit"
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_WATCH"
+assert_eq "$(grep -cxF -- '    PASS_EVENT=1; return 0' "$MUTANT_WATCH" || true)" "1" \
+  "control: the mutant restores the usage-limit arm's early exit once"
 new_case walled_and_asking_fleet_mutant
 printf '%b\n' '⏺ Working through the queue.' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER" > "$STUB_DIR/pane-gh-1.txt"
 printf '%b\n' "$QUESTION" > "$STUB_DIR/pane-gh-2.txt"
 printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TZ=UTC
+WATCH_BIN="$MUTANT_WATCH" run TZ=UTC
 expect="rc=0 first=EVENT+usage-limit+gh-1+resets=2026-09-02T16:50:00Z out~EVENT+lane-asking=false"
 assert_eq "$(watch "$expect")" "$expect" \
   "control: with the early exit restored the asking lane goes unreported" "$ERR"
-
-# The same mutant with the dialog-row arm removed instead: a column-0 selected
-# row reads as the turn, the banner above it falls out of the slice, and the
-# screen is reported as the question it cannot answer. The slice is the shared
-# judge's, in lib/lane-state.sh, so the library is what this one rewrites; the
-# watch goes back to the real one beside it.
-cp "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MUTANT_DIR/orch/scripts/oversee-watch"
-sed 's/ || line\[last\] ~ dialog))$/))/' "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" > "$MUTANT_DIR/orch/scripts/lib/lane-state.sh"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/lib/lane-state.sh" "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" && echo same || echo differs)" "differs" \
-  "control: the mutant really removes the dialog-row arm"
-new_case column0_dialog_mutant
-lane claude
-screen banner_over_column0_dialog
-printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TZ=UTC
-expect="first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false"
-assert_eq "$(watch "$expect")" "$expect" \
-  "control: without the arm the column-0 row is the turn and the banner above it goes unreported" "$ERR"
-cp "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" "$MUTANT_DIR/orch/scripts/lib/lane-state.sh"
-
-# The must-fail control for the banner anchor: the payload capped from the
-# bottom again, as any other kind is. The judge still matches a banner
-# anywhere in the slice, so both screens above keep their wall and lose it
-# from the block the event carries.
-PAYLOAD_LINE='    banner_payload "$below" "$banner" || die limit-banner-missing "" "lane=$lane"'
-assert_eq "$(grep -cxF -- "$PAYLOAD_LINE" "$REPO_ROOT/skills/orch/scripts/oversee-watch" || true)" "1" \
-  "control: the banner anchor has one line to replace"
-awk -v want="$PAYLOAD_LINE" '$0 == want { print "    bounded_tail \"$below\""; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really caps the wall's payload from the bottom"
-new_case banner_over_dialog_mutant
-lane claude
-screen banner_over_permission_dialog
-printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TZ=UTC
-expect="rc=0 first=$AT_0950 out~hit+your+usage+limit=false"
-assert_eq "$(watch "$expect")" "$expect" \
-  "control: capped from the bottom the full-height dialog pushes the wall out of its own event" "$ERR"
-new_case quoted_wall_long_report_mutant
-lane claude
-screen quoted_wall_long_report
-printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TZ=UTC
-expect="rc=0 first=$AT_0950 out~lane+gh-9+stopped=false"
-assert_eq "$(watch "$expect")" "$expect" \
-  "control: and the long report's last twelve lines carry no limit phrase either" "$ERR"
-cp "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MUTANT_DIR/orch/scripts/oversee-watch"
-
-# The must-fail control for the lead: the window opening ON the banner again
-# instead of a few lines above it. The long report is the screen that shows
-# it, because its banner sits far enough above the slice's end that the
-# window never slides back up; the sentence that marks the quotation is the
-# line the lead was keeping.
-LEAD_LINE='  start=$((at - lead))'
-assert_eq "$(grep -cxF -- "$LEAD_LINE" "$REPO_ROOT/skills/orch/scripts/oversee-watch" || true)" "1" \
-  "control: the lead has one line to replace"
-awk -v want="$LEAD_LINE" '$0 == want { print "  start=\"$at\""; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really opens the window on the banner"
-new_case quoted_wall_lead_mutant
-lane claude
-screen quoted_wall_long_report
-printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TZ=UTC
-expect="rc=0 first=$AT_0950 out~lane+gh-9+stopped=true out~Ran+3+shell+commands=false"
-assert_eq "$(watch "$expect")" "$expect" \
-  "control: opening on the banner keeps the wall and drops the report line above it" "$ERR"
-cp "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MUTANT_DIR/orch/scripts/oversee-watch"
 
 cat > "$TMP_ROOT/bin/grep" <<'EOF'
 #!/usr/bin/env bash

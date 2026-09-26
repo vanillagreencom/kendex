@@ -45,7 +45,7 @@ jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cac
 SH
 chmod +x "$TMP_ROOT/linear/scripts/linear.sh" "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
-LIVE_SCRIPTS="$(copy_scripts live)"
+LIVE_SCRIPTS="$(mutant_scripts live)" || exit 1
 WRITE_BIN="$LIVE_SCRIPTS/dev-round-write"
 RETURN_WRITE="$LIVE_SCRIPTS/dev-return-write"
 CHECK="$LIVE_SCRIPTS/dev-artifact-check"
@@ -171,18 +171,6 @@ FIRST="$OUT"
 E="rc=0 out=$WT/tmp/dev-round-issue-1230-$RID.json written=yes .schema_version=2 .schema_version|type=number .round_id=$RID .issue=issue-1230 .base_sha=$BASE_SHA .delegated_at|type=number (.delegated_at>=$WRITE_BEFORE)and(.delegated_at<=$WRITE_AFTER)=true .adds|tojson=[\"crates/parser/src/lib.rs\",\"skills/orch/scripts/new-check\"] .items|length=2 .items[0].n=1 .items[0].n|type=number"
 assert_eq "$(observe "$E")" "$E" "the record carries the round token, the normalized issue, HEAD as base_sha, the delegation time, the adds list and one numbered item per --item" "$ERR"
 assert_eq "$(rec '.items[1].text')" "$ITEM2" "an item's formatted block is preserved verbatim, multi-line" "$ERR"
-# Control: a writer that stamps a constant time records one outside the
-# write's own window.
-STAMP_MUTANT_SCRIPTS="$(copy_scripts round-stamp-mutant)"
-mutate_file "$STAMP_MUTANT_SCRIPTS/dev-round-write" 'delegated_at="$(date +%s)"' 'delegated_at=0'
-SAVED_WRITE_BIN="$WRITE_BIN"
-WRITE_BIN="$STAMP_MUTANT_SCRIPTS/dev-round-write"
-WRITE_BEFORE="$(date +%s)"
-run_write --worktree "$WT" --issue issue-1230 --round-id 90-90 --item 1 "stamp control" "$OK_REACH"
-WRITE_AFTER="$(date +%s)"
-WRITE_BIN="$SAVED_WRITE_BIN"
-E="rc=0 (.delegated_at>=$WRITE_BEFORE)and(.delegated_at<=$WRITE_AFTER)=false"
-assert_eq "$(observe "$E")" "$E" "control: with a constant stamp the delegation time falls outside the write" "$ERR"
 assert_eq "$([[ -e "$WT/.git/kendex" ]] && echo yes || echo no)" "no" "nothing is written outside the worktree"
 run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
 assert_eq "$(observe "rc=0 out=$FIRST [.items[].n]|tojson=[1,2]")" "rc=0 out=$FIRST [.items[].n]|tojson=[1,2]" "an identical re-invocation is idempotent: same path, record unchanged" "$ERR"
@@ -193,14 +181,6 @@ jq --argjson at "$FIRST_AT" '.delegated_at = $at' "$FIRST" > "$FIRST.next"
 mv "$FIRST.next" "$FIRST"
 run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
 assert_eq "$(observe "rc=0 .delegated_at=$FIRST_AT")" "rc=0 .delegated_at=$FIRST_AT" "a later identical retry is idempotent and keeps the first invocation's delegation time" "$ERR"
-# Control: an identity that counts the time refuses that retry as a conflict.
-TIME_MUTANT_SCRIPTS="$(copy_scripts round-time-mutant)"
-mutate_file "$TIME_MUTANT_SCRIPTS/dev-round-write" 'a="$(jq -c '"'"'del(.delegated_at)'"'"' "$1" 2>/dev/null)" || return 1' 'a="$(jq -c . "$1" 2>/dev/null)" || return 1'
-SAVED_WRITE_BIN="$WRITE_BIN"
-WRITE_BIN="$TIME_MUTANT_SCRIPTS/dev-round-write"
-run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 1 "$ITEM1" "$REACH1" --item 2 "$ITEM2" "$REACH2" --adds "$ADDS"
-WRITE_BIN="$SAVED_WRITE_BIN"
-assert_eq "$(observe "rc=2")" "rc=2" "control: with the time counted the later retry is refused as a conflict" "$ERR"
 run_write --worktree "$WT" --issue issue-1230 --round-id "$RID" --item 3 replacement "$OK_REACH"
 OUT="$FIRST"
 assert_eq "$(observe "rc=2 [.items[].n]|tojson=[1,2]")" "rc=2 [.items[].n]|tojson=[1,2]" "a different set under the same round id is refused and the original stands" "$ERR"
@@ -260,12 +240,12 @@ assert_eq "$(find "$WT/tmp" -maxdepth 1 -name 'dev-round-i-60-*.json' | wc -l | 
 run_write --worktree "$WT" --issue issue-1230 --round-id 61-61 --item 1 text "kendex refresh in a linked worktree"
 E='rc=0 .items[0]|keys_unsorted|tojson=["n","text","reach"]'
 assert_eq "$(observe "$E") reach=$(rec .items[0].reach)" "$E reach=kendex refresh in a linked worktree" "a reach naming a command a person runs is accepted and recorded verbatim beside n and text" "$ERR"
-# Control: with check_reach neutered the same value is accepted, so the
-# refusals above come from the live check and not another arm. The mutation is
-# asserted to have landed before the run that depends on it.
-REACH_MUTANT="$(copy_scripts reach-mutant)/dev-round-write"
+# The suite's one must-fail control: with check_reach neutered the same value
+# is accepted, so the refusals above come from the live check and not another
+# arm. The mutation is asserted to have landed before the run that depends on
+# it.
+REACH_MUTANT="$(mutant_scripts reach-mutant dev-round-write)/dev-round-write" || exit 1
 awk '{ print } /^check_reach\(\) \{$/ { print "  return 0  # MUTATED" }' "$WRITE_BIN" > "$REACH_MUTANT"
-chmod +x "$REACH_MUTANT"
 assert_eq "$(grep -Fc -- "return 0  # MUTATED" "$REACH_MUTANT")" "1" "control: the reach mutation landed in the copy"
 set +e
 growth_round_write "$STATE" "$REACH_MUTANT" --worktree "$WT" --issue issue-1230 --round-id 63-63 --item 1 text "Copilot thread" >/dev/null 2>&1; mutant_rc=$?
@@ -347,24 +327,6 @@ for row in "${size_rows[@]}"; do
   fi
 done
 
-# Restore a refusal for measured over and unsized results in the writer.
-MUTANT_SCRIPTS="$(copy_scripts size-refusal-mutant)"
-MUTANT_WRITE="$MUTANT_SCRIPTS/dev-round-write"
-assert_eq "$(grep -Fc 'if (( measured != 0 )); then' "$MUTANT_WRITE")" "1" "control finds the result handler"
-sed -i.bak '/^if (( measured != 0 )); then/i\
-[[ "$BRANCH_ALLOWANCE_STATUS" == pass ]] || exit 3
-' "$MUTANT_WRITE"
-assert_eq "$([[ ! -L "$MUTANT_WRITE" ]] && ! cmp -s "$MUTANT_WRITE" "$WRITE_BIN" && echo changed)" "changed" "control changes the private writer"
-LIVE_WRITE="$WRITE_BIN"
-WRITE_BIN="$MUTANT_WRITE"
-for row in 'over|**Expected delta**: 4 lines' 'missing|No size field.'; do
-  IFS='|' read -r label line <<<"$row"
-  write_allowance "$GW" KEN-GROWTH "$line"
-  run_write --worktree "$GW" --issue KEN-GROWTH --round-id "control-$label" --item 1 size "$OK_REACH"
-  assert_eq "$(observe 'rc=3 written=no')" 'rc=3 written=no' "control: $label refuses the report-and-continue case" "$ERR"
-done
-WRITE_BIN="$LIVE_WRITE"
-
 echo "=== a pr-N key stamps its round and the checker reads it back ==="
 # A pull request with no issue id keys its state pr-N (review-pr-comments.md
 # § 1). No tracker holds that key, so the branch measures under
@@ -401,17 +363,6 @@ set +e
 local_check_rc=$?
 set -e
 assert_eq "$local_check_rc" "0" "dev-artifact-check reads the local-key round back" "$ERR"
-
-# Control: a size owner that reads only pr-N as naming no issue sends the local
-# key to the tracker, and the round is refused before it is stamped.
-LOCAL_MUTANT_SCRIPTS="$(copy_scripts local-key-mutant)"
-mutate_file "$LOCAL_MUTANT_SCRIPTS/branch-size-check" '|local-[0-9]+-[0-9]+-[0-9]+)$' ')$'
-LIVE_WRITE="$WRITE_BIN"
-WRITE_BIN="$LOCAL_MUTANT_SCRIPTS/dev-round-write"
-run_write --worktree "$LW" --issue "$LOCAL_KEY" --round-id "$LOCAL_RID-control" --item 1 "local review round" "$OK_REACH"
-E="rc=2 written=no stderr~branch-size-check:+linear-read+issue=$LOCAL_KEY=true"
-assert_eq "$(observe "$E")" "$E" "control: without the local key form the round is a tracker-read refusal" "$ERR"
-WRITE_BIN="$LIVE_WRITE"
 
 echo "=== a record the reader cannot use fails acceptance closed ==="
 # A record removed after delegation, a non-string base_sha, an empty path

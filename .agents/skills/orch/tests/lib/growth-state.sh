@@ -1,29 +1,60 @@
 #!/usr/bin/env bash
 
-# A must-fail control mutates a private copy of a script, never the shipped
-# one. dev-round-write, dev-return-write and dev-artifact-check each source
-# lib/branch-growth.sh from their own directory, so a lone `cp` of one of them
-# produces a mutant that dies on startup — and a control whose mutant never
-# runs credits a pass to nothing. Copy the whole scripts/ tree instead and take
-# the mutant from inside it. Prints the copied scripts directory; callers need
-# REPO_ROOT and TMP_ROOT.
-copy_scripts() {
-  local name="$1"
-  local dir="$TMP_ROOT/$name"
-  rm -rf "$dir"
-  mkdir -p "$dir"
-  cp -R "$REPO_ROOT/skills/orch/scripts" "$dir/"
-  printf '%s\n' "$dir/scripts"
+# mutant_scripts NAME [FILE] — a must-fail control mutates a private copy of
+# one script, never the shipped one. Every orch script finds its siblings and
+# lib/ through its own directory without resolving a symlink, so a lone `cp`
+# of dev-round-write dies on startup, and a control whose mutant never runs
+# credits a pass to nothing. This builds $TMP_ROOT/NAME/scripts as real
+# directories of symlinks to the shipped scripts, with FILE, a path relative
+# to scripts/, the one private copy, which the caller mutates with
+# mutate_file. With no FILE every entry is a link: the live scripts, placed
+# where a stand-in such as the Linear CLI can sit beside their skill. The
+# shipped scripts are the ones beside this tests/ directory, so a suite run
+# from an installed layout mutates its own. Prints the scripts directory;
+# callers need TMP_ROOT. Callers take the path through a command
+# substitution, where errexit does not reach, so every setup step refuses on
+# its own before the path is printed: a tree missing a sibling would kill the
+# mutant for that reason and credit the control to it rather than to the
+# planted defect.
+_mutant_scripts_refuse() { # KEY VALUE
+  printf 'mutant_scripts: %s %s\n' "$1" "$2" >&2
+  exit 1
+}
+mutant_scripts() {
+  local src dir="$TMP_ROOT/$1/scripts" entry inventory
+  src="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)" \
+    || _mutant_scripts_refuse no-scripts-dir "${BASH_SOURCE[0]}"
+  inventory="$(cd "$src" && find . -mindepth 1 | sed 's|^\./||')" \
+    || _mutant_scripts_refuse inventory-failed "$src"
+  [[ -n "$inventory" ]] || _mutant_scripts_refuse inventory-empty "$src"
+  rm -rf "${TMP_ROOT:?}/$1" || _mutant_scripts_refuse clear-failed "$TMP_ROOT/$1"
+  mkdir -p "$dir" || _mutant_scripts_refuse mkdir-failed "$dir"
+  while IFS= read -r entry; do
+    if [[ -d "$src/$entry" ]]; then
+      mkdir -p "$dir/$entry" || _mutant_scripts_refuse mkdir-failed "$dir/$entry"
+    else
+      ln -s "$src/$entry" "$dir/$entry" || _mutant_scripts_refuse link-failed "$dir/$entry"
+    fi
+  done <<<"$inventory"
+  if [[ -n "${2:-}" ]]; then
+    [[ -f "$src/$2" ]] || _mutant_scripts_refuse no-such-script "$2"
+    rm -- "$dir/$2" || _mutant_scripts_refuse unlink-failed "$dir/$2"
+    cp -p -- "$src/$2" "$dir/$2" || _mutant_scripts_refuse copy-failed "$dir/$2"
+  fi
+  printf '%s\n' "$dir"
 }
 
 # mutate_file FILE OLD NEW — the substitution half of a must-fail control,
 # asserted on both sides: OLD occurs exactly once in FILE before the edit and
 # nowhere after it. A substitution that matched nothing would leave the control
 # running the unmutated script, and a control that cannot fail proves only that
-# its row ran. The caller copies the script first, by copy_scripts above or its
-# own copy, and supplies assert_eq.
+# its row ran. FILE is a private copy, mutant_scripts' FILE or the caller's
+# own; a symlink is refused, since editing through it would rewrite the
+# shipped script and editing around it would leave the mutant unmutated. The
+# caller supplies assert_eq.
 mutate_file() {
   local file="$1" old="$2" new="$3" name
+  [[ ! -L "$file" ]] || { printf 'mutate_file: symlink %s\n' "$file" >&2; exit 1; }
   name="$(basename "$file")"
   assert_eq "$(grep -c -F -e "$old" "$file" || true)" "1" \
     "control finds exactly one site to mutate in $name"

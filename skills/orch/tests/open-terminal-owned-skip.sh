@@ -26,17 +26,14 @@ export ORCH_LANE_HOST=local
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 # shellcheck source=lib/process-table.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
-# mutate_file, for a control whose substitution carries bracket and quote
-# characters a sed expression would have to escape one by one.
+# mutant_scripts and mutate_file, the two halves of the control below.
 # shellcheck source=lib/growth-state.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
-SRC_OT="${OPEN_TERMINAL_UNDER_TEST:-$SCRIPTS_DIR/open-terminal}"
-# A control whose defect is planted in one of open-terminal's libraries reruns
-# this suite with this naming the planted copy of the directory.
-SRC_LIB_DIR="${OPEN_TERMINAL_LIB_UNDER_TEST:-$SCRIPTS_DIR/lib}"
+SRC_OT="$SCRIPTS_DIR/open-terminal"
+SRC_LIB_DIR="$SCRIPTS_DIR/lib"
 # lane_codex_home_path, so the relaunch row below names a private launch home
 # the way the launcher builds one rather than spelling its checksum.
 # shellcheck source=../scripts/lib/lane-home.sh
@@ -542,18 +539,6 @@ mkdir -p "$TMP_ROOT/exit-none"
 assert_eq "$(woken_under "$OT" wake-timeout)" "rc=0 woken=1 aborted=0" \
   "a codex wake with a lane resumes under a malformed timeout it never reads"
 
-# The mutant: the wake exclusion gone, so the gate refuses a setting the wake
-# reaches no reader of. A whole copy of the fixture repo, because the script
-# resolves its libs beside itself and a lone file finds none.
-WAKE_MUTANT_REPO="$TMP_ROOT/wake-mutant-repo"
-cp -a "$REPO" "$WAKE_MUTANT_REPO"
-WAKE_MUTANT="$WAKE_MUTANT_REPO/scripts/open-terminal"
-sed -i.bak 's/if \[\[ "$TERMINAL_MODE" == "tmux" && "$WAKE" != true \]\]; then/if [[ "$TERMINAL_MODE" == "tmux" ]]; then/' "$WAKE_MUTANT"
-assert_eq "$(cmp -s "$OT" "$WAKE_MUTANT" && echo same || echo changed)" "changed" \
-  "control: the wake-validated mutant really rewrites the timeout gate"
-assert_eq "$(woken_under "$WAKE_MUTANT" wake-timeout-mutant)" "rc=1 woken=0 aborted=1" \
-  "control: without the wake exclusion a malformed timeout aborts a resume that never reads it"
-
 # WHICH ACCOUNT a no-lane codex wake spends. Every other launcher here opens the
 # harness in a tmux pane, which inherits the tmux SERVER's environment and not
 # this process's, so the account is read off the server. A --wake does not: it
@@ -564,9 +549,8 @@ assert_eq "$(woken_under "$WAKE_MUTANT" wake-timeout-mutant)" "rc=1 woken=0 abor
 # the turn spends an account nothing claimed and the transcript copy lands in
 # that account's store.
 #
-# The stub server names an account of its OWN, so each side of the control names
-# the account it ran on rather than falling to a default that could come from
-# anywhere.
+# The stub server names an account of its OWN, so the row names the account it
+# ran on rather than falling to a default that could come from anywhere.
 WAKE_TMUX_BIN="$TMP_ROOT/wake-tmux-bin"; mkdir -p "$WAKE_TMUX_BIN"
 WAKE_SERVER_HOME="$SESSION_HOME/.server-codex"; mkdir -p "$WAKE_SERVER_HOME"
 cat > "$WAKE_TMUX_BIN/tmux" <<EOF
@@ -603,19 +587,6 @@ wake_account_under() { # SCRIPT NAME
 }
 assert_eq "$(wake_account_under "$OT" wake-account)" "rc=0 account=.selected-codex" \
   "a no-lane codex wake resumes on this process's own account, which its detached child inherits"
-
-# Control: the account reader gated on the terminal mode rather than on the
-# launcher, which is what asking only about tmux amounted to. The wake then
-# reads the server it never opens a pane on and resumes the lane on that
-# account instead.
-WAKE_HOME_REPO="$TMP_ROOT/wake-home-mutant-repo"
-cp -a "$REPO" "$WAKE_HOME_REPO"
-WAKE_HOME_MUTANT="$WAKE_HOME_REPO/scripts/open-terminal"
-mutate_file "$WAKE_HOME_MUTANT" \
-  'if [[ "$TERMINAL_MODE" == tmux && "$WAKE" != true ]]; then' \
-  'if [[ "$TERMINAL_MODE" == tmux ]]; then'
-assert_eq "$(wake_account_under "$WAKE_HOME_MUTANT" wake-account-mutant)" "rc=0 account=.server-codex" \
-  "control: a wake that reads the tmux server resumes the lane on an account nothing claimed"
 
 # A wake with no session, no worktree, or a fresh-start option is refused and starts nothing.
 for row in "session-missing item=CC-9 harness=claude|--harness claude CC-9" "directory-missing item=CC-8|--harness codex CC-8" "wake-invalid option=--wake harness=codex relaunch=true|--relaunch --harness codex CC-1"; do
@@ -837,33 +808,17 @@ claude|$CLAUDE_IDLE_PID 1 claude,$CLAUDE_IDLE_SHELL $CLAUDE_IDLE_PID bash|$(prin
 codex|$CODEX_PID 1 codex|$(printf '\xe2\x80\xba')|unjudged|nothing it could tell
 ROWS
 
-# The mutant: the refusal gone, the session state still read.
-BUSY_MUTANT_REPO="$TMP_ROOT/busy-mutant-repo"
-cp -a "$REPO" "$BUSY_MUTANT_REPO"
-BUSY_MUTANT="$BUSY_MUTANT_REPO/scripts/open-terminal"
-sed -i.bak 's/\[\[ "$wake_state" == idle \]\] ||/true ||/' "$BUSY_MUTANT"
-assert_eq "$(cmp -s "$OT" "$BUSY_MUTANT" && echo same || echo changed)" "changed" "control: the busy mutant really drops the refusal"
+# The suite's one must-fail control: the refusal gone from a copy of
+# open-terminal beside links to its helpers, the session state still read.
+BUSY_MUTANT="$(mutant_scripts busy-mutant-repo open-terminal)/open-terminal" || exit 1
+git -C "$TMP_ROOT/busy-mutant-repo" init -q
+orch_fixture_shared_libs "$TMP_ROOT/busy-mutant-repo"
+mutate_file "$BUSY_MUTANT" '[[ "$wake_state" == idle ]] ||' 'true ||'
 proc_table_write "$PROC_TABLE" "$CLAUDE_IDLE_PID 1 claude" "$CLAUDE_IDLE_SHELL $CLAUDE_IDLE_PID bash"
 proc_cwd_write "$PROC_CWD_FILE" "$CLAUDE_IDLE_PID=$WT_CC1"
 table_wake claude "$BUSY_MUTANT"
 assert_eq "$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "$LIVE_RESUME_claude" \
   "control: without the refusal a wake resumes beside a working session"
-# The mutant: a codex session with no shell under it read as idle again. With
-# no /proc the wake is unjudged before any session is read, so the control has
-# nothing to turn.
-if proc_table_readable; then
-  CODEX_IDLE_MUTANT_REPO="$TMP_ROOT/codex-idle-mutant-repo"
-  cp -a "$REPO" "$CODEX_IDLE_MUTANT_REPO"
-  CODEX_IDLE_MUTANT="$CODEX_IDLE_MUTANT_REPO/scripts/open-terminal"
-  sed -i.bak 's/^    \[\[ "$HARNESS" == claude \]\] || { printf unjudged; return 0; }$/    [[ "$HARNESS" == claude ]] || continue/' "$CODEX_IDLE_MUTANT"
-  assert_eq "$(cmp -s "$OT" "$CODEX_IDLE_MUTANT" && echo same || echo changed)" "changed" \
-    "control: the codex-idle mutant really reads a shell-less codex session as idle"
-  proc_table_write "$PROC_TABLE" "$CODEX_PID 1 codex"
-  proc_cwd_write "$PROC_CWD_FILE" "$CODEX_PID=$WT_CC1"
-  table_wake codex "$CODEX_IDLE_MUTANT"
-  assert_eq "$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "$LIVE_RESUME_codex" \
-    "control: without the codex arm a wake resumes beside a live codex session"
-fi
 # A live session whose cwd cannot be read is unjudged, never idle. The pid here
 # is this test shell's own, the one pid the row can be sure /proc still holds:
 # the producer refuses only a process that has NOT exited, and a fake pid would
@@ -876,90 +831,7 @@ assert_eq "RC=$RC resumed=$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "RC=1 re
   "a wake beside a session whose cwd cannot be read exits 1 and resumes nothing"
 assert_contains "$ERR" "open-terminal: wake-refused item=CC-1 reason=unjudged" \
   "a wake beside a session whose cwd cannot be read is refused as unjudged"
-# The mutant: a failed cwd read skips the process again. With no /proc the
-# wake is unjudged wherever a harness process runs, whatever its cwd read
-# answers, so the control has nothing to turn.
-if proc_table_readable; then
-  UNREAD_MUTANT_REPO="$TMP_ROOT/unread-mutant-repo"
-  cp -a "$REPO" "$UNREAD_MUTANT_REPO"
-  UNREAD_MUTANT="$UNREAD_MUTANT_REPO/scripts/open-terminal"
-  UNREAD_MUTANT_LIB="$UNREAD_MUTANT_REPO/scripts/lib/lane-state.sh"
-  sed -i.bak 's/^        return 2 ;;$/        continue ;;/' "$UNREAD_MUTANT_LIB"
-  assert_eq "$(cmp -s "$SRC_LIB_DIR/lane-state.sh" "$UNREAD_MUTANT_LIB" && echo same || echo changed)" "changed" \
-    "control: the unread-cwd mutant really skips the process"
-  table_wake claude "$UNREAD_MUTANT"
-  assert_eq "$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "$LIVE_RESUME_claude" \
-    "control: without the unjudged arm a wake resumes beside a session it never read"
-fi
 PROC_HIDDEN_PIDS=""
-
-if [[ "${OPEN_TERMINAL_SKIP_CONTROL:-}" != 1 ]]; then
-  CLAUDE_MUTANT_LIB="$TMP_ROOT/lib-claude-recursive"
-  cp -R "$SRC_LIB_DIR" "$CLAUDE_MUTANT_LIB"
-  CLAUDE_MUTANT="$CLAUDE_MUTANT_LIB/lane-relaunch.sh"
-  assert_eq "$(grep -cF 'find -H "$root" -mindepth 2 -maxdepth 2 -type f' "$CLAUDE_MUTANT")" "1" "control finds the Claude lead-only scan"
-  sed -i.bak 's/find -H "$root" -mindepth 2 -maxdepth 2 -type f/find -H "$root" -type f/' "$CLAUDE_MUTANT"
-  rm -f -- "$CLAUDE_MUTANT.bak"
-  assert_eq "$(grep -cF 'find -H "$root" -mindepth 2 -maxdepth 2 -type f' "$CLAUDE_MUTANT")" "0" "control removes the Claude lead-only scan"
-  if cmp -s "$SRC_LIB_DIR/lane-relaunch.sh" "$CLAUDE_MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not change the Claude scan\n'; else PASS=$((PASS + 1)); printf '  ok    control changed the Claude scan\n'; fi
-  set +e
-  OPEN_TERMINAL_LIB_UNDER_TEST="$CLAUDE_MUTANT_LIB" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/claude-control.out" 2>&1
-  CLAUDE_CONTROL_RC=$?
-  set -e
-  assert_eq "$CLAUDE_CONTROL_RC" "1" "control: recursive Claude selection chooses the newer child transcript"
-
-  LINE_MUTANT="$TMP_ROOT/open-terminal-no-continuation"
-  cp "$SRC_OT" "$LINE_MUTANT"
-  assert_eq "$(grep -cF 'elif [[ "$RELAUNCH" == true ]]; then' "$LINE_MUTANT")" "1" "control finds the relaunch continuation arm"
-  sed -i.bak 's/elif \[\[ "$RELAUNCH" == true \]\]; then/elif [[ "$RELAUNCH" == false ]]; then/' "$LINE_MUTANT"
-  rm -f -- "$LINE_MUTANT.bak"
-  if cmp -s "$SRC_OT" "$LINE_MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not disarm the continuation arm\n'; else PASS=$((PASS + 1)); printf '  ok    control disarmed the continuation arm\n'; fi
-  set +e
-  OPEN_TERMINAL_UNDER_TEST="$LINE_MUTANT" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/line-control.out" 2>&1
-  LINE_CONTROL_RC=$?
-  set -e
-  assert_eq "$LINE_CONTROL_RC" "1" "control: without the arm a relaunch resumes with no continuation line"
-
-  MERGED_MUTANT="$TMP_ROOT/open-terminal-merged-ignored"
-  cp "$SRC_OT" "$MERGED_MUTANT"
-  assert_eq "$(grep -cF 'if [[ "$merged_rc" -eq 0 && -n "$reuse_merged" ]]; then' "$MERGED_MUTANT")" "1" "control finds the merged-tree arm"
-  sed -i.bak 's/if \[\[ "$merged_rc" -eq 0 \&\& -n "$reuse_merged" \]\]; then/if [[ "$merged_rc" -eq 0 \&\& -z "$reuse_merged" ]]; then/' "$MERGED_MUTANT"
-  rm -f -- "$MERGED_MUTANT.bak"
-  if cmp -s "$SRC_OT" "$MERGED_MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not disarm the merged-tree arm\n'; else PASS=$((PASS + 1)); printf '  ok    control disarmed the merged-tree arm\n'; fi
-  set +e
-  OPEN_TERMINAL_UNDER_TEST="$MERGED_MUTANT" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/merged-control.out" 2>&1
-  MERGED_CONTROL_RC=$?
-  set -e
-  assert_eq "$MERGED_CONTROL_RC" "1" "control: without the arm a merged item is handed to the reuse rebase"
-
-  MUTANT_LIB="$TMP_ROOT/lib-pi-default"
-  cp -R "$SRC_LIB_DIR" "$MUTANT_LIB"
-  MUTANT="$MUTANT_LIB/lane-relaunch.sh"
-  assert_eq "$(grep -cF 'roots="$(pi_relaunch_root "$cwd" "$home")" || return 2' "$MUTANT")" "1" "control finds the Pi settings root"
-  sed -i.bak 's@roots="$(pi_relaunch_root "$cwd" "$home")" || return 2@roots="${PI_CODING_AGENT_SESSION_DIR:-${PI_CODING_AGENT_DIR:-$home/.pi/agent}/sessions}"@' "$MUTANT"
-  rm -f -- "$MUTANT.bak"
-  assert_eq "$(grep -cF 'roots="${PI_CODING_AGENT_SESSION_DIR:-${PI_CODING_AGENT_DIR:-$home/.pi/agent}/sessions}"' "$MUTANT")" "1" "control changes the Pi session root"
-  if cmp -s "$SRC_LIB_DIR/lane-relaunch.sh" "$MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not change the relaunch lookup\n'; else PASS=$((PASS + 1)); printf '  ok    control changed the relaunch lookup\n'; fi
-  set +e
-  OPEN_TERMINAL_LIB_UNDER_TEST="$MUTANT_LIB" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/control.out" 2>&1
-  CONTROL_RC=$?
-  set -e
-  assert_eq "$CONTROL_RC" "1" "control: the old Pi root misses settings-based sessions"
-
-  HOME_MUTANT_LIB="$TMP_ROOT/lib-codex-home-raw"
-  cp -R "$SRC_LIB_DIR" "$HOME_MUTANT_LIB"
-  HOME_MUTANT="$HOME_MUTANT_LIB/lane-relaunch.sh"
-  assert_eq "$(grep -cF 'config="$(launch_ambient_codex_home)"' "$HOME_MUTANT")" "1" "control finds the codex scan's account"
-  sed -i.bak 's@config="$(launch_ambient_codex_home)"@config="${CODEX_HOME:-$home/.codex}"@' "$HOME_MUTANT"
-  rm -f -- "${HOME_MUTANT:?}.bak"
-  assert_eq "$(grep -cF 'config="${CODEX_HOME:-$home/.codex}"' "$HOME_MUTANT")" "1" "control takes the codex scan's account raw"
-  if cmp -s "$SRC_LIB_DIR/lane-relaunch.sh" "$HOME_MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not change the codex scan\n'; else PASS=$((PASS + 1)); printf '  ok    control changed the codex scan\n'; fi
-  set +e
-  OPEN_TERMINAL_LIB_UNDER_TEST="$HOME_MUTANT_LIB" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/home-control.out" 2>&1
-  HOME_CONTROL_RC=$?
-  set -e
-  assert_eq "$HOME_CONTROL_RC" "1" "control: a private launch home taken raw scans a store the account's rollouts are not in"
-fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

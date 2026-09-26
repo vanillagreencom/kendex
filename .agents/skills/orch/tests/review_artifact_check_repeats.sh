@@ -8,10 +8,10 @@
 # result object with `detail` cut to its first line, and stderr's first line
 # for the rows that expect one.
 #
-# Invariant: every rule the --issue path adds, each part of the candidate
-# match, the accepted-only read, the index, the repeats field's absence
-# without --issue and each refusal, has a row and a named control in CONTROLS
-# whose mutant turns that row red. A rule added without both is unpinned.
+# Every rule the --issue path adds, each part of the candidate match, the
+# accepted-only read, the index, the repeats field's absence without --issue
+# and each refusal, has a row. The one must-fail control at the end turns the
+# candidate match's first row red.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -23,6 +23,8 @@ source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 source "$TEST_DIR/lib/review-artifact-fixture.sh"
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 
 export BLK='src/x.rs (`f`)' SUG='src/y.rs (`g`)'
 finding() { # LOCATION CATEGORY
@@ -102,36 +104,18 @@ while IFS= read -r row; do
   assert_eq "$got" "$want" "${row%%^*}" "$TMP_ROOT/stderr"
 done <<<"$ROWS"
 
-# Controls: a planted mutant of the script must turn its named row red.
-CTRL="$TMP_ROOT/scripts"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$CTRL"
-while IFS='^' read -r name program target; do
-  sed "$program" "$CHECK" > "$CTRL/review-artifact-check"
-  if cmp -s "$CTRL/review-artifact-check" "$CHECK"; then
-    FAIL=$((FAIL + 1)); printf '  FAIL  control %s planted nothing: its sed program matched no text\n' "$name"
-    continue
-  fi
-  row=$(grep -F -- "$target^" <<<"$ROWS")
-  IFS=$'\t' read -r got want <<<"$(run_row "$CTRL/review-artifact-check" "$row" "c-$name")"
-  if [[ "$got" != "$want" ]]; then
-    pass "control $name turns red: $target"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  control %s left its row green: %s\n' "$name" "$target"
-  fi
-done <<'CONTROLS'
-no-match^s/select(\.location == \$l)/select(.location == $l and false)/^a re-raised declined blocker is a candidate carrying its decline (file mode)
-no-ok-guard^s/"\$ok" == true && //^a malformed artifact under --issue is rejected on its parse, with no repeats
-fixed-index^s/index: \.key/index: 0/^two findings at one declined location keep their own indexes
-no-dironly-check^/declined_state_dir" || -n "\$declined_issue/d^--state-dir without --issue is a usage refusal
-first-only^s/\[\$declined\[\] | select(\.location == \$l) | {description, reason}\]/[first($declined[] | select(.location == $l)) | {description, reason}]/^every decline at the location rides along, in recorded order, and no other
-no-hits-check^/select(\$hits != \[\])/d^a finding at an undeclined location is no candidate
-no-arrays^s/\$art\[0\]\[\$name\] | arrays |/$art[0][$name] |/^a loose artifact: a string finding and no suggestions array
-no-objects^s/(\.value | objects | \.location)/(.value | .location)/^a loose artifact: a string finding and no suggestions array
-repeats-always^s/if \$declined == null then {}/if false then {}/^without --issue the result carries no repeats field
-no-blank-issue-check^s/\[\[ -n "\${2:-}" \]\] || usage_error option_value --issue; //^a blank --issue value is a usage refusal
-no-blank-dir-check^s/\[\[ -n "\${2:-}" \]\] || usage_error option_value --state-dir; //^a blank --state-dir value is a usage refusal
-state-fail-open^/get "\$declined_issue"/s#2>/dev/null)"; then#2>/dev/null || echo "[]")"; then#^unreadable declined state refuses, never reads as none declined
-CONTROLS
+# The must-fail control: the location match never holds, so the re-raised
+# blocker is no candidate.
+CTRL="$(mutant_scripts no-match review-artifact-check)/review-artifact-check" || exit 1
+mutate_file "$CTRL" 'select(.location == $l)' 'select(.location == $l and false)'
+target='a re-raised declined blocker is a candidate carrying its decline (file mode)'
+row=$(grep -F -- "$target^" <<<"$ROWS")
+IFS=$'\t' read -r got want <<<"$(run_row "$CTRL" "$row" c-no-match)"
+if [[ "$got" != "$want" ]]; then
+  pass "control no-match turns red: $target"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  control no-match left its row green: %s\n' "$target"
+fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -15,8 +15,11 @@ TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 
-PASS=0
-FAIL=0
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
+# mutant_scripts and mutate_file, the two halves of the control below.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
@@ -72,14 +75,9 @@ key="$(head -n 1 "$TMP_ROOT/opt.err")"
 
 # Planted: the succession suffix dropped. The succession report then takes
 # the name of the summary report written in the same minute.
-MUTANT_DIR="$TMP_ROOT/mutant"
-mkdir -p "$MUTANT_DIR"
-cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$MUTANT_DIR/lib"
-cp "$REPO_ROOT/skills/orch/scripts/orch-env" "$REPO_ROOT/skills/orch/scripts/git-context" "$MUTANT_DIR/"
-[[ "$(grep -Fc '1:--succession) suffix=$PROGRESS_REPORT_SUFFIX ;;' "$WS")" == "1" ]] \
-  && ok "the suffix control finds the succession arm" || bad "the suffix control finds the succession arm"
-sed 's/1:--succession) suffix=$PROGRESS_REPORT_SUFFIX ;;/1:--succession) ;;/' "$WS" > "$MUTANT_DIR/workflow-state"
-got="$(cd "$TMP_ROOT" && bash "$MUTANT_DIR/workflow-state" progress-report-path --succession)"
+NO_SUFFIX="$(mutant_scripts no-suffix workflow-state)/workflow-state" || exit 1
+mutate_file "$NO_SUFFIX" '1:--succession) suffix=$PROGRESS_REPORT_SUFFIX ;;' '1:--succession) ;;'
+got="$(cd "$TMP_ROOT" && "$NO_SUFFIX" progress-report-path --succession)"
 [[ "$got" =~ /[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}\.md$ ]] && ok "control: without the suffix the succession report loses its name" \
   || bad "control: without the suffix the succession report loses its name" "got=$got"
 

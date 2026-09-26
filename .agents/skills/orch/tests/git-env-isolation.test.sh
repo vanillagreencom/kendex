@@ -9,7 +9,8 @@
 # Two surfaces, each with the mutation that must break it:
 #   1. the clearing works — a real suite run with all four exported at a
 #      sandbox repository leaves that repository's log and index untouched;
-#      neutralize lib/git-env.sh in a copied tree and the same run writes to it
+#      neutralize lib/git-env.sh beside links to the rest and the same run
+#      writes to it
 #   2. the lint holds — every suite under tests/ carries the source line
 #      directly under its `set -...o pipefail`. Presence alone is not the rule:
 #      the line at the end of the file, inside a dead branch, or inside a
@@ -22,7 +23,8 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 SOURCE_LINE='source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"'
 # Small, git-heavy, and reaches nothing outside skills/orch/scripts, so the
-# mutant tree below is a scripts+tests copy rather than a whole checkout.
+# mutant tree below is skills/orch/{scripts,tests} rather than a whole
+# checkout.
 SUBJECT=dev_round_gate.sh
 
 TMP="$(mktemp -d)"
@@ -77,12 +79,15 @@ check "the sandbox repository's log and index are untouched" \
 # is not the clean pass the silent shape has, and pinning it would pin the
 # abort. The silent shape wants GIT_DIR and GIT_INDEX_FILE without
 # GIT_WORK_TREE, which is a second environment rather than one control.
+# Every file but the neutralized lib is a link: the subject and each lib find
+# their siblings through their own directory without resolving a symlink.
 mutant="$TMP/mutant/skills/orch"
-mkdir -p "$mutant"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$mutant/"
-mkdir -p "$mutant/tests"
-cp -R "$REPO_ROOT/skills/orch/tests/lib" "$mutant/tests/"
-cp "$REPO_ROOT/skills/orch/tests/$SUBJECT" "$mutant/tests/"
+mkdir -p "$mutant/tests/lib"
+ln -s "$REPO_ROOT/skills/orch/scripts" "$mutant/scripts"
+ln -s "$TEST_DIR/$SUBJECT" "$mutant/tests/$SUBJECT"
+for lib in "$TEST_DIR"/lib/*; do
+  [[ "${lib##*/}" == git-env.sh ]] || ln -s "$lib" "$mutant/tests/lib/${lib##*/}"
+done
 printf '#!/usr/bin/env bash\n: # mutation: the four variables are left standing\n' \
   > "$mutant/tests/lib/git-env.sh"
 

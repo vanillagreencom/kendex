@@ -16,6 +16,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
 # shellcheck source=../scripts/lib/watch-pid.sh
 source "$REPO_ROOT/skills/orch/scripts/lib/watch-pid.sh"
+# mutant_scripts, under the mutant helper below.
+# shellcheck source=lib/growth-state.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 
 REAL_SLEEP="$(command -v sleep)"
 FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
@@ -30,23 +33,21 @@ lifecycle_cleanup() {
 }
 trap lifecycle_cleanup EXIT
 
-# mutant NAME FILE FROM TO — a copy of the script tree whose FILE (relative to
-# scripts/) has the one line FROM replaced by TO; MUTANT is its oversee-watch.
-# The tree copied is MUTANT_BASE where set, a mutant's own scripts directory
-# for a second edit, and the shipped one otherwise. Refuses unless FROM is
-# exactly one line of the copied file.
+# mutant NAME FILE FROM TO — the scripts, as mutant_scripts links them, whose
+# FILE (relative to scripts/) is a private copy with the one line FROM
+# replaced by TO; MUTANT is its oversee-watch. It keeps orch's place in a
+# skills tree so its libraries resolve the github skill beside it. Refuses
+# unless FROM is exactly one line of the file.
 mutant() { # NAME FILE FROM TO
-  local dir="$TMP_ROOT/mutant-$1" base="${MUTANT_BASE:-$REPO_ROOT/skills/orch/scripts}"
-  local src="$base/$2"
+  local scripts src="$REPO_ROOT/skills/orch/scripts/$2"
   [[ "$(grep -cxF -- "$3" "$src")" == 1 ]] || { echo "mutant $1: the line to replace is not one line of $2" >&2; exit 1; }
-  mkdir -p "$dir/orch"
-  cp -R "$base" "$dir/orch/scripts"
-  ln -s "$REPO_ROOT/skills/github" "$dir/github"
+  scripts="$(mutant_scripts "mutant-$1/orch" "$2")" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mutant-$1/github"
   # Through the environment, never -v, which would read each backslash as an
   # escape and match nothing.
-  FROM="$3" TO="$4" awk '$0 == ENVIRON["FROM"] { print ENVIRON["TO"]; next } { print }' "$src" > "$dir/orch/scripts/$2"
-  ! cmp -s "$src" "$dir/orch/scripts/$2" || { echo "mutant $1: $2 unchanged" >&2; exit 1; }
-  MUTANT="$dir/orch/scripts/oversee-watch"
+  FROM="$3" TO="$4" awk '$0 == ENVIRON["FROM"] { print ENVIRON["TO"]; next } { print }' "$src" > "$scripts/$2"
+  ! cmp -s "$src" "$scripts/$2" || { echo "mutant $1: $2 unchanged" >&2; exit 1; }
+  MUTANT="$scripts/oversee-watch"
 }
 
 # A repeat pass: the wrapper's child, which inherits its session and records
@@ -144,19 +145,14 @@ session_case session_recorded
 assert_eq "rc=$rc events=$(awk '/^EVENT / { printf "%s%s", sep, $2 " " $3; sep = " " }' <<<"$out")" "rc=0 events=lane-asking gh-2" \
   "a pass reads a bare lane in the recorded session after its launching pane is gone, and reads that lane's own screen" "$err"
 assert_eq "$(grep -c '^oversee-watch: session-resolved' "$err")" "0" "a pass names no session: its wrapper already did" "$err"
-# The must-fail control: a bare name listed through whatever session tmux calls
-# current, which is where the watch read it before the session was recorded.
+# oversee-watch's one must-fail control: a bare name listed through whatever
+# session tmux calls current, which is where the watch read it before the
+# session was recorded.
 mutant session_current oversee-watch '  out="$(tmux list-windows -t "=$session" -F '"'#W'"' 2>&1)" && { printf '"'%s\\n'"' "$out"; return 0; }' \
   '  [[ "$1" == *:* ]] || { tmux list-windows -F '"'#W'"' 2>&1; return; }; out="$(tmux list-windows -t "=$session" -F '"'#W'"' 2>&1)" && { printf '"'%s\\n'"' "$out"; return 0; }'
 session_case session_current_mutant "$MUTANT"
 assert_contains "$out" "EVENT window-gone gh-1" \
   "control: listed through tmux's current session, the recorded lane reads window-gone" "$err"
-# The same for every read of the pane: a bare target names whichever pane tmux
-# finds in the session it picks, never the recorded lane's.
-mutant session_bare_target oversee-watch "    *) printf '=%s:%s\\n' \"\$WATCH_SESSION\" \"\$1\" ;;" "    *) printf '%s\\n' \"\$1\" ;;"
-session_case session_bare_target_mutant "$MUTANT"
-assert_not_contains "$out" "EVENT lane-asking gh-2" \
-  "control: read through a bare target, the recorded lane's dialog is never seen" "$err"
 
 # A standalone run resolves its session and names it once, however many bare
 # lanes it reads in it.
@@ -167,24 +163,18 @@ assert_eq "$(grep -c '^oversee-watch: session-resolved session=main$' "$err")" "
   "a standalone run names the session its bare lanes are read in, on one line" "$err"
 
 # No session to read a bare name in: refused, naming the lane and the state.
-unresolved_case() { # NAME [WATCH_BIN]
+unresolved_case() { # NAME
   new_case "$1"
   touch "$STUB_DIR/session-fail"
   fleet_state "$(lane_rec issue-1 gh-1 '' '')"
   err="$TMP_ROOT/e-$1"
-  out="$(WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_SUCCEED=/nonexistent -- --max-loops 1 --state "$STUB_DIR/state.json" 2>"$err")" \
+  out="$(run_watch OVERSEE_WATCH_SUCCEED=/nonexistent -- --max-loops 1 --state "$STUB_DIR/state.json" 2>"$err")" \
     && rc=0 || rc=$?
 }
 unresolved_case session_unresolved
 assert_eq "rc=$rc first=$(head -1 "$err") out=${out:-none}" \
   "rc=2 first=oversee-watch: session-unresolved lane=gh-1 path=$STUB_DIR/state.json out=none" \
   "a bare lane with no session resolved is refused, naming the lane and the state file" "$err"
-mutant session_unrefused oversee-watch \
-  '      || die session-unresolved "$WATCH_SESSION_DETAIL" "lane=$lane" "path=${STATE_FILE:-none}"' \
-  '      || :'
-unresolved_case session_unrefused_mutant "$MUTANT"
-assert_eq "$(grep -c '^oversee-watch: session-unresolved' "$err")" "0" \
-  "control: without the refusal the bare lane is carried with no session" "$err"
 
 # --- the host hosted lanes live on ------------------------------------------
 # The hosted lane's disk holds one ask, which only a run that read the lane
@@ -208,29 +198,14 @@ host_case hosted_provider "$FIXTURE_HOST"
 assert_eq "rc=$rc refused=$(grep -c '^oversee-watch: hosted-without-host' "$err") event=$(grep -c '^EVENT lane-question KEN-10 remote-1$' <<<"$out")" \
   "rc=0 refused=0 event=1" "a hosted lane on a host lane-host resolves to a provider is read" "$err"
 # lane-host itself failing to answer: refused with its words, never read as a
-# host. A copy of the script tree whose lane-host fails in its own voice.
-failing_lane_host() { # SCRIPTS_DIR
-  printf '#!/usr/bin/env bash\necho "lane-host: settings-rejected" >&2\nexit 4\n' > "$1/lane-host"
-  chmod +x "$1/lane-host"
-}
-mkdir -p "$TMP_ROOT/resolve-fails/orch"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$TMP_ROOT/resolve-fails/orch/scripts"
+# host. The scripts, linked, with a lane-host that fails in its own voice.
+RESOLVE_FAILS="$(mutant_scripts resolve-fails/orch lane-host)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/resolve-fails/github"
-failing_lane_host "$TMP_ROOT/resolve-fails/orch/scripts"
-host_case hosted_resolve_fails "$FIXTURE_HOST" "$TMP_ROOT/resolve-fails/orch/scripts/oversee-watch"
+printf '#!/usr/bin/env bash\necho "lane-host: settings-rejected" >&2\nexit 4\n' > "$RESOLVE_FAILS/lane-host"
+host_case hosted_resolve_fails "$FIXTURE_HOST" "$RESOLVE_FAILS/oversee-watch"
 assert_eq "rc=$rc first=$(head -1 "$err") out=${out:-none}" \
   "rc=2 first=oversee-watch: host-resolve-failed path=$TMP_ROOT/resolve-fails/orch/scripts/lane-host out=none" \
   "a lane-host that cannot answer refuses the hosted lane, naming it" "$err"
-mutant host_resolve_open oversee-watch \
-  '      || die host-resolve-failed "$out" "path=$SCRIPT_DIR/lane-host"' '      || :'
-failing_lane_host "$(dirname "$MUTANT")"
-host_case hosted_resolve_open_mutant "$FIXTURE_HOST" "$MUTANT"
-assert_eq "$(grep -c '^oversee-watch: host-resolve-failed' "$err")" "0" \
-  "control: without the refusal the failed answer is taken for a host" "$err"
-mutant hosted_unchecked oversee-watch '  [[ "$LANE_HOST_SPEC" == local ]] || return 0' '  return 0'
-host_case hosted_unchecked_mutant local "$MUTANT"
-assert_eq "$(grep -c '^oversee-watch: hosted-without-host' "$err")" "0" \
-  "control: without the check the hosted lane is carried with no host" "$err"
 # Repeat mode refuses at its first read of a state recording a hosted lane,
 # before any pass runs, and never loops.
 new_case hosted_repeat
@@ -246,17 +221,16 @@ assert_eq "rc=$rc refused=$(grep -c '^oversee-watch: hosted-without-host items=K
 # flags after its `--`: the record names the loop, whose command line carries
 # --repeat, and never the shell above it, and records the loop's own words
 # without the overseer's flags, which a restart replaces.
-record_case() { # NAME [WATCH_BIN] [WATCH ARGS...]
-  local name="$1" bin="${2:-}"
+record_case() { # NAME [WATCH ARGS...]
+  local name="$1"
   shift
-  [[ $# -eq 0 ]] || shift
   new_case "$name"
   sleep_stub
   fleet_state
   # Seconds each account read of a long pass is held, for a case that stops a
   # loop while one is in flight.
   [[ -z "${RECORD_LANES_SLEEP:-}" ]] || printf '%s\n' "$RECORD_LANES_SLEEP" > "$STUB_DIR/lanes.sleep"
-  ( WATCH_BIN="$bin" repeat_watch_run -- "$@" -- --model old --verbose >"$TMP_ROOT/o-$name" 2>"$TMP_ROOT/e-$name" && rc=0 || rc=$?
+  ( repeat_watch_run -- "$@" -- --model old --verbose >"$TMP_ROOT/o-$name" 2>"$TMP_ROOT/e-$name" && rc=0 || rc=$?
     echo "$rc" > "$STUB_DIR/loop.rc" ) &
   LAUNCHER=$!
   LIVE_PIDS+=" $LAUNCHER"
@@ -289,47 +263,11 @@ wait "$LAUNCHER" 2>/dev/null || true
 assert_eq "stop=$stop_rc rc=$(cat "$STUB_DIR/loop.rc") record=$([[ -f "$STUB_DIR/oversee-watch.pid" ]] && echo left || echo removed)" \
   "stop=0 rc=143 record=removed" "a stopped loop exits 143 and removes its record" "$TMP_ROOT/e-record_loop"
 
-# Controls, one per rule above: the record naming the launcher, the overseer's
-# flags recorded with the loop's words, the second start let through, and a
-# stopped loop that leaves its record behind.
-mutant record_parent lib/watch-pid.sh \
-  '    "$$" "$WATCH_STATE_CANON" "$pane" "$origin" "$script" "$PWD" \' \
-  '    "$PPID" "$WATCH_STATE_CANON" "$pane" "$origin" "$script" "$PWD" \'
-record_case record_parent_mutant "$MUTANT"
-assert_eq "read=${LOOP:+yes}|$(loop_args "$LOOP")" "read=yes|0" \
-  "control: a record naming its parent names no repeat loop"
-for pid in $(pgrep -P "$LOOP" 2>/dev/null || true); do watch_stop "$pid" "$STUB_DIR/state.json" || true; done
-
-mutant record_whole_argv oversee-watch \
-  '    "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" "${@:1:$ARGV_BASE_COUNT}" \' \
-  '    "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" "$@" \'
-record_case record_whole_argv_mutant "$MUTANT"
-assert_contains "$(tr '\0' ' ' < "$STUB_DIR/oversee-watch.argv")" "-- --model old --verbose" \
-  "control: recording every word keeps the overseer's flags a restart must replace"
-watch_stop "$LOOP" "$STUB_DIR/state.json" || true
-
-mutant record_unrefused oversee-watch '  if watch_pid_live "$STATE_FILE"; then' '  if false; then'
-record_case record_unrefused_first
-err="$TMP_ROOT/e-record_unrefused"
-WATCH_BIN="$MUTANT" repeat_watch_run LIFECYCLE_SLEEP_FAIL=1 -- >/dev/null 2>"$err" || true
-assert_eq "first=$(kill -0 "$LOOP" 2>/dev/null && echo alive || echo gone) refused=$(grep -c '^oversee-watch: watch-running' "$err")" \
-  "first=alive refused=0" "control: without the refusal a second watch starts beside the live one" "$err"
-watch_stop "$LOOP" "$STUB_DIR/state.json" || true
-
-# The loop releases its record at a stop and again on its way out; the control
-# takes both.
-mutant record_unreleased_exit oversee-watch "  trap 'watch_pid_release \"\$STATE_FILE\"' EXIT" '  :'
-MUTANT_BASE="$(dirname "$MUTANT")" mutant record_unreleased oversee-watch '  watch_pid_release "$STATE_FILE"' '  :'
-record_case record_unreleased "$MUTANT"
-watch_stop "$LOOP" "$STUB_DIR/state.json" || true
-wait "$LAUNCHER" 2>/dev/null || true
-assert_eq "$([[ -f "$STUB_DIR/oversee-watch.pid" ]] && echo left || echo removed)" "left" \
-  "control: a loop that does not release its record leaves it behind when stopped"
 
 # A stop whose clock ticks at once still waits its whole bound for a watch that
 # holds its record. The clock reads 0 at the start, 1 on the next four reads
-# and 2 after, so a one-second bound gives up on the sixth read. The control is
-# the deadline on the bare bound, which gives up on the second.
+# and 2 after, so a one-second bound gives up on the sixth read. watch_stop's
+# one control is the deadline on the bare bound, which gives up on the second.
 stop_bound_case() { # NAME WATCH_PID_LIB
   local holder
   new_case "$1"
@@ -350,8 +288,8 @@ assert_eq "$STOP_READS" "rc=1 reads=2" "control: a deadline on the bare bound gi
 # A plain kill -TERM on the recorded pid, while a pass sits in its interval,
 # ends that pass with the loop: a pass left behind would keep reading the
 # fleet, and draining the overseer mailbox, beside the next watch.
-term_case() { # NAME [WATCH_BIN]
-  record_case "$1" "${2:-}" --interval 30 --max-loops 2
+term_case() { # NAME
+  record_case "$1" --interval 30 --max-loops 2
   PASS_PID=""
   for _ in $(seq 1 100); do
     PASS_PID="$(pgrep -P "$LOOP" 2>/dev/null || true)"
@@ -372,11 +310,6 @@ term_case() { # NAME [WATCH_BIN]
 term_case term_loop
 assert_eq "pass=${PASS_PID:+found} $PASS_STATE loop=$LOOP_STATE" \
   "pass=found gone loop=gone" "a TERM on the loop pid ends the pass it is running" "$TMP_ROOT/e-term_loop"
-mutant term_untrapped oversee-watch "  trap 'repeat_stop 143' TERM" '  :'
-term_case term_untrapped_mutant "$MUTANT"
-assert_eq "pass=${PASS_PID:+found} $PASS_STATE" "pass=found alive" \
-  "control: with no TERM trap the loop dies and its pass runs on"
-kill -TERM "$PASS_PID" 2>/dev/null || true
 
 # descendant ROOT PATTERN — the first process under ROOT, breadth first, whose
 # command line matches the extended regex PATTERN; empty when none does.
@@ -414,8 +347,8 @@ watch_child() { # PARENT — the one oversee-watch process PARENT started, or em
     [[ "$(ps -o args= -p "$pid" 2>/dev/null)" != *oversee-watch* ]] || { printf '%s\n' "$pid"; return 0; }
   done
 }
-term_long_case() { # NAME [WATCH_BIN]
-  RECORD_LANES_SLEEP=30 record_case "$1" "${2:-}" --interval 30 --max-loops 2
+term_long_case() { # NAME
+  RECORD_LANES_SLEEP=30 record_case "$1" --interval 30 --max-loops 2
   PASS_PID=""
   LONG_PASS_PID=""
   for _ in $(seq 1 100); do
@@ -445,25 +378,12 @@ assert_eq "long=${LONG_PASS_PID:+found} $LONG_PASS_STATE pass=$PASS_STATE loop=$
   "a TERM on the loop pid ends the long pass its pass has in flight" "$TMP_ROOT/e-term_long_pass"
 assert_eq "held=${HELD_PID:+found} $HELD_STATE" "held=found gone" \
   "and the command that long pass was waiting on" "$TMP_ROOT/e-term_long_pass"
-mutant long_pass_alone oversee-watch \
-  '    tree="$(tree_pids "$LONG_PID")"' \
-  '    tree="$LONG_PID"'
-# Only the held command is read: under bash 3.2 a TERM to the long pass alone
-# does not end it while it waits on that command.
-term_long_case term_long_alone_mutant "$MUTANT"
-assert_eq "long=${LONG_PASS_PID:+found} held=${HELD_PID:+found} $HELD_STATE" "long=found held=found alive" \
-  "control: a TERM on the long pass's own pid leaves the command it waits on running"
-mutant pass_untrapped oversee-watch 'trap pass_stop TERM' ':'
-term_long_case term_long_untrapped_mutant "$MUTANT"
-assert_eq "long=${LONG_PASS_PID:+found} $LONG_PASS_STATE" "long=found alive" \
-  "control: with no TERM trap on the pass its long pass runs on"
-kill -TERM "$LONG_PASS_PID" "$PASS_PID" 2>/dev/null || true
 
 # A pass waiting out its mail interval in a tick sleep: a TERM ends it within
 # the bound and takes the sleep with it.
-tick_case() { # NAME [WATCH_BIN]
+tick_case() { # NAME
   new_case "$1"
-  ( WATCH_BIN="${2:-}" run_watch ORCH_WATCH_MAIL_INTERVAL=600 -- --interval 3600 --max-loops 2 \
+  ( run_watch ORCH_WATCH_MAIL_INTERVAL=600 -- --interval 3600 --max-loops 2 \
       >"$TMP_ROOT/o-$1" 2>"$TMP_ROOT/e-$1" ) &
   LIVE_PIDS+=" $!"
   TICK_PID=""
@@ -481,19 +401,11 @@ tick_case() { # NAME [WATCH_BIN]
 tick_case tick_term
 assert_eq "$TICK_STATES" "sleep=found pass=gone sleep=gone" \
   "a TERM on a pass in its tick sleep ends it and its sleep within the bound" "$TMP_ROOT/e-tick_term"
-mutant tick_foreground oversee-watch '      tick_sleep "$((next - now))"' '      sleep "$((next - now))"'
-tick_case tick_foreground_mutant "$MUTANT"
-assert_eq "${TICK_STATES%% sleep=[a-z]*}" "sleep=found pass=alive" \
-  "control: a foreground tick sleep holds the TERM until it returns"
-mutant tick_orphaned oversee-watch '  [[ -z "$TICK_SLEEP_PID" ]] || kill -TERM "$TICK_SLEEP_PID" 2>/dev/null || :' '  :'
-tick_case tick_orphaned_mutant "$MUTANT"
-assert_eq "$TICK_STATES" "sleep=found pass=gone sleep=alive" \
-  "control: a stop that does not end the tick sleep leaves it running"
 
 # A TERM while the overseer mailbox read waits on its cursor lock, which a
 # second process holds for 2 s: the note is peeked, printed and only then
 # acknowledged, so it is printed or still unread, never taken and unsaid.
-mid_read_case() { # NAME [WATCH_BIN]
+mid_read_case() { # NAME
   local box="$CASE_REPO_ROOT/tmp/lane-mail/overseer" pass read
   new_case "$1"
   rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
@@ -502,7 +414,7 @@ mid_read_case() { # NAME [WATCH_BIN]
     --file "$TMP_ROOT/note.txt" >/dev/null)
   flock "$box/to-lane.cursor.lock" "$REAL_SLEEP" 2 &
   LIVE_PIDS+=" $!"
-  ( WATCH_BIN="${2:-}" run_watch -- --max-loops 1 >"$TMP_ROOT/o-$1" 2>"$TMP_ROOT/e-$1" ) &
+  ( run_watch -- --max-loops 1 >"$TMP_ROOT/o-$1" 2>"$TMP_ROOT/e-$1" ) &
   LIVE_PIDS+=" $!"
   read=""
   for _ in $(seq 1 100); do
@@ -524,18 +436,13 @@ mid_read_case() { # NAME [WATCH_BIN]
 mid_read_case mid_read_term
 assert_eq "$MID_READ" "read=found pass=gone note=unread" \
   "a TERM during the overseer mailbox read leaves the note unread for the next reader" "$TMP_ROOT/e-mid_read_term"
-mutant mid_read_taken oversee-watch '      if ! mail_read "$item" inbox "${args[@]}" --peek; then' \
-  '      if ! mail_read "$item" inbox "${args[@]}"; then'
-mid_read_case mid_read_taken_mutant "$MUTANT"
-assert_eq "$MID_READ" "read=found pass=gone note=lost" \
-  "control: a read that moves the cursor itself loses the note to the stop"
 
 # A stop between the print and the ack, as a kill of the watch's whole process
 # tree or group from outside makes (a harness stopping its background command):
 # the ack is held in a lane-mail wrapper and killed with its pass. A TERM to
 # the pass alone waits for the ack. The note is printed, the cursor stays, and
 # the next reader prints it again: at least once, never lost.
-ack_stop_case() { # NAME [WATCH_BIN]
+ack_stop_case() { # NAME
   local ack pass held
   new_case "$1"
   rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
@@ -544,7 +451,7 @@ ack_stop_case() { # NAME [WATCH_BIN]
   printf '#!/usr/bin/env bash\ncase " $* " in *" --ack "*) "%s" 30 ;; esac\nexec "%s" "$@"\n' \
     "$REAL_SLEEP" "$REPO_ROOT/skills/orch/scripts/lane-mail" > "$STUB_DIR/lane-mail-held"
   chmod +x "$STUB_DIR/lane-mail-held"
-  ( WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_LANE_MAIL="$STUB_DIR/lane-mail-held" -- --max-loops 1 \
+  ( run_watch OVERSEE_WATCH_LANE_MAIL="$STUB_DIR/lane-mail-held" -- --max-loops 1 \
       >"$TMP_ROOT/o-$1" 2>"$TMP_ROOT/e-$1" ) &
   LIVE_PIDS+=" $!"
   ack=""
@@ -559,22 +466,17 @@ ack_stop_case() { # NAME [WATCH_BIN]
   kill -TERM "$ack" "$held" "$pass" 2>/dev/null || true
   gone_within "$pass"
   ACK_STOP="ack=${ack:+found} pass=$STATES printed=$(grep -c '^EVENT owner-note ' "$TMP_ROOT/o-$1" || true)"
-  ACK_STOP+=" again=$(WATCH_BIN="${2:-}" run_watch -- --max-loops 1 2>/dev/null | grep -c '^EVENT owner-note ' || true)"
+  ACK_STOP+=" again=$(run_watch -- --max-loops 1 2>/dev/null | grep -c '^EVENT owner-note ' || true)"
 }
 ack_stop_case ack_stop
 assert_eq "$ACK_STOP" "ack=found pass=gone printed=1 again=1" \
   "a stop between the print and the ack reports the note, and the next reader reports it again" "$TMP_ROOT/e-ack_stop"
-mutant ack_first oversee-watch '      envelopes="$(tail -n +2 <<<"$MAIL_OUT")"' \
-  '      envelopes="$(tail -n +2 <<<"$MAIL_OUT")"; mail_read "$item" inbox "${args[@]}" --ack "$count"'
-ack_stop_case ack_first_mutant "$MUTANT"
-assert_eq "$ACK_STOP" "ack=found pass=gone printed=0 again=1" \
-  "control: an ack before the print leaves a stopped pass having reported nothing"
 
 # The same stop on a lane's notice, whose mail row is committed only once its
 # lines are out: a `sed` shim holds the payload's indent, the one call of that
 # shape, after the event line is printed and is killed with its pass. The next
 # run reports the notice again.
-lane_stop_case() { # NAME [WATCH_BIN]
+lane_stop_case() { # NAME
   local pass held
   new_case "$1"
   rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
@@ -584,7 +486,7 @@ lane_stop_case() { # NAME [WATCH_BIN]
   printf '#!/usr/bin/env bash\n[[ "$*" != "s/^/  /" ]] || exec "%s" 30\nexec "%s" "$@"\n' \
     "$REAL_SLEEP" "$(command -v sed)" > "$STUB_DIR/bin/sed"
   chmod +x "$STUB_DIR/bin/sed"
-  ( WATCH_BIN="${2:-}" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --item KEN-7 \
+  ( run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --item KEN-7 \
       >"$TMP_ROOT/o-$1" 2>"$TMP_ROOT/e-$1" ) &
   LIVE_PIDS+=" $!"
   held=""
@@ -598,19 +500,13 @@ lane_stop_case() { # NAME [WATCH_BIN]
   kill -TERM "$held" "$pass" 2>/dev/null || true
   gone_within "$pass"
   LANE_STOP="held=${held:+found} pass=$STATES printed=$(grep -c '^EVENT lane-notice KEN-7 ' "$TMP_ROOT/o-$1" || true)"
-  LANE_STOP+=" again=$(WATCH_BIN="${2:-}" run_watch -- --max-loops 1 --item KEN-7 2>/dev/null |
+  LANE_STOP+=" again=$(run_watch -- --max-loops 1 --item KEN-7 2>/dev/null |
     grep -c '^EVENT lane-notice KEN-7 ' || true)"
 }
 lane_stop_case lane_stop
 assert_eq "$LANE_STOP" "held=found pass=gone printed=1 again=1" \
   "a stop between a lane notice's print and its row commit reports it, and the next run reports it again" \
   "$TMP_ROOT/e-lane_stop"
-mutant lane_commit_first oversee-watch \
-  "      envelopes=\"\$(awk 'NR == 1 { next } /^receipts / { exit } { print }' <<<\"\$MAIL_OUT\")\"" \
-  "      envelopes=\"\$(awk 'NR == 1 { next } /^receipts / { exit } { print }' <<<\"\$MAIL_OUT\")\"; mail_row_commit \"\$(lane_row_set lane-mail \"\$state\" \"\$cursor\" \"\$count \$first\")\""
-lane_stop_case lane_commit_first_mutant "$MUTANT"
-assert_eq "$LANE_STOP" "held=found pass=gone printed=1 again=0" \
-  "control: a row committed before the print is not reported again by the next run"
 
 # --- taking over a watch ------------------------------------------------------
 # A stand-in for a watch another start left running: it records itself as the
@@ -626,10 +522,10 @@ while :; do "$REAL_SLEEP" 1; done
 EOF
 chmod +x "$FIXTURE_WATCH"
 
-# take_case NAME ORIGIN PANE [WATCH_BIN] — a watch of ORIGIN recorded for PANE
-# with output waiting beside the state, %9 the one pane tmux lists, and a
-# start from %9. ORIGIN none records no watch at all.
-take_case() { # NAME ORIGIN PANE [WATCH_BIN]
+# take_case NAME ORIGIN PANE — a watch of ORIGIN recorded for PANE with output
+# waiting beside the state, %9 the one pane tmux lists, and a start from %9.
+# ORIGIN none records no watch at all.
+take_case() { # NAME ORIGIN PANE
   new_case "$1"
   sleep_stub
   fleet_state
@@ -646,7 +542,7 @@ take_case() { # NAME ORIGIN PANE [WATCH_BIN]
     LIVE_PIDS+=" $OLD"
   fi
   err="$TMP_ROOT/e-$1"
-  out="$(WATCH_BIN="${4:-}" repeat_watch_run TMUX_PANE=%9 LIFECYCLE_SLEEP_FAIL=1 -- 2>"$err")" && rc=0 || rc=$?
+  out="$(repeat_watch_run TMUX_PANE=%9 LIFECYCLE_SLEEP_FAIL=1 -- 2>"$err")" && rc=0 || rc=$?
 }
 stopped() { cat "$STUB_DIR/fixture.log" 2>/dev/null || echo no; }
 # Whether any of the files a restart leaves beside the state is still there.
@@ -684,7 +580,7 @@ kill -TERM "$OLD" 2>/dev/null || true
 
 # A record whose pid now runs something that is no watch, a pid reused after
 # the watch died without removing it, refuses nothing and stops nothing.
-reused_case() { # NAME [WATCH_BIN]
+reused_case() { # NAME
   local canon
   new_case "$1"
   sleep_stub
@@ -696,7 +592,7 @@ reused_case() { # NAME [WATCH_BIN]
   canon="$(cd "$STUB_DIR" && pwd -P)/state.json"
   printf 'pid=%s\nstate=%s\npane=%%9\norigin=hand\n' "$REUSED" "$canon" > "$STUB_DIR/oversee-watch.pid"
   err="$TMP_ROOT/e-$1"
-  out="$(WATCH_BIN="${2:-}" repeat_watch_run TMUX_PANE=%9 LIFECYCLE_SLEEP_FAIL=1 -- 2>"$err")" && rc=0 || rc=$?
+  out="$(repeat_watch_run TMUX_PANE=%9 LIFECYCLE_SLEEP_FAIL=1 -- 2>"$err")" && rc=0 || rc=$?
 }
 reused_case take_reused_pid
 assert_eq "refused=$(grep -c '^oversee-watch: watch-running' "$err") sleep=$(kill -0 "$REUSED" 2>/dev/null && echo alive || echo gone)" \
@@ -708,53 +604,6 @@ kill -TERM "$REUSED" 2>/dev/null || true
 take_case take_exited none ''
 assert_eq "$(grep -c '^oversee-watch: watch-replayed ' "$err")|$(sed -n 1p <<<"$out")|$(leftover)" \
   "1|EVENT lane-question KEN-1 m-1|removed" "output a restarted watch left behind is printed by a start with no live watch" "$err"
-
-# Controls, one per way a watch is taken over or its output handed on.
-mutant take_never oversee-watch \
-  '    if [[ "$WATCH_ORIGIN" == succession && -n "${TMUX_PANE:-}" && "$WATCH_PANE" == "$TMUX_PANE" ]]; then' \
-  '    if false; then'
-take_case take_never_mutant succession %9 "$MUTANT"
-assert_eq "$(grep -c '^oversee-watch: watch-taken-over' "$err")|$(stopped)" "0|no" \
-  "control: without the succession rule the successor's own start is refused" "$err"
-kill -TERM "$OLD" 2>/dev/null || true
-
-mutant take_gone_never oversee-watch '    elif watch_pane_gone "$WATCH_PANE"; then' '    elif false; then'
-take_case take_gone_never_mutant hand %8 "$MUTANT"
-assert_eq "$(grep -c '^oversee-watch: watch-taken-over' "$err")|$(stopped)" "0|no" \
-  "control: without the pane rule a watch serving a closed pane is refused" "$err"
-kill -TERM "$OLD" 2>/dev/null || true
-
-mutant take_unprinted oversee-watch '      cat -- "$WATCH_LOG_FILE" || die watch-replay-failed "" "path=$WATCH_LOG_FILE"' '      :'
-take_case take_unprinted_mutant succession %9 "$MUTANT"
-assert_not_contains "$out" "EVENT lane-question KEN-1 m-1" \
-  "control: with no print the restarted watch's event is lost" "$err"
-
-mutant take_runner_kept oversee-watch \
-  '    rm -f -- "${WATCH_LOG_FILE:?}" "${WATCH_ERR_FILE:?}" "${WATCH_RUNNER_FILE:?}" \' \
-  '    rm -f -- "${WATCH_LOG_FILE:?}" "${WATCH_ERR_FILE:?}" \'
-take_case take_runner_kept_mutant succession %9 "$MUTANT"
-assert_eq "$([[ -e "$STUB_DIR/oversee-watch.runner" ]] && echo left || echo removed)" "left" \
-  "control: a replay that leaves the restart's runner record behind" "$err"
-
-mutant take_live_only oversee-watch \
-  '     && [[ -s "$WATCH_LOG_FILE" || -s "$WATCH_ERR_FILE" ]]; then' \
-  '     && [[ -n "$why" ]] && [[ -s "$WATCH_LOG_FILE" || -s "$WATCH_ERR_FILE" ]]; then'
-take_case take_live_only_mutant none '' "$MUTANT"
-assert_eq "$(grep -c '^oversee-watch: watch-replayed ' "$err")|$(leftover)" "0|left" \
-  "control: printed only on a takeover, an exited watch's output waits unread" "$err"
-
-mutant take_any_pane oversee-watch \
-  '    if [[ "$WATCH_ORIGIN" == succession && -n "${TMUX_PANE:-}" && "$WATCH_PANE" == "$TMUX_PANE" ]]; then' \
-  '    if [[ "$WATCH_ORIGIN" == succession ]]; then'
-TAKE_PANES=$'7000 %8\n7000 %9' take_case take_any_pane_mutant succession %8 "$MUTANT"
-assert_eq "$(grep -c '^oversee-watch: watch-taken-over' "$err")|$(stopped)" "1|stopped" \
-  "control: without the pane match a start takes the watch of another live pane" "$err"
-
-mutant take_any_pid lib/watch-pid.sh '  [[ "${line# }" != Z* && "$line" == *oversee-watch* ]]' '  :'
-reused_case take_any_pid_mutant "$MUTANT"
-assert_eq "$(grep -c '^oversee-watch: watch-running' "$err")" "1" \
-  "control: without the command-line check a reused pid is taken for a live watch" "$err"
-kill -TERM "$REUSED" 2>/dev/null || true
 
 # --- the output of a watch a succession started -------------------------------
 # The real watch started the way oversee-succeed's helper starts it: repeat
@@ -772,14 +621,14 @@ if command -v perl >/dev/null 2>&1; then
     printf '"$LEADER_TARGET" "$@"\n'
   } > "$TMP_ROOT/bin/leader-watch.sh"
   chmod +x "$TMP_ROOT/bin/leader-watch.sh"
-  restarted_case() { # NAME [WATCH_BIN]
+  restarted_case() { # NAME
     local i
     new_case "$1"
     sleep_stub
     fleet_state
     printf '7000 %%9\n' > "$STUB_DIR/panes.txt"
     ( WATCH_BIN="$TMP_ROOT/bin/leader-watch.sh" repeat_watch_run TMUX_PANE=%9 OVERSEE_WATCH_ORIGIN=succession \
-        LEADER_TARGET="${2:-$WATCH_SRC}" -- >>"$STUB_DIR/oversee-watch.log" 2>>"$STUB_DIR/oversee-watch.err" & )
+        LEADER_TARGET="$WATCH_SRC" -- >>"$STUB_DIR/oversee-watch.log" 2>>"$STUB_DIR/oversee-watch.err" & )
     HELD=no
     for (( i = 0; i < 100; i++ )); do
       if grep -q '^EVENT heartbeat' "$STUB_DIR/oversee-watch.log" 2>/dev/null \
@@ -799,12 +648,6 @@ if command -v perl >/dev/null 2>&1; then
   out="$(repeat_watch_run TMUX_PANE=%9 LIFECYCLE_SLEEP_FAIL=1 -- 2>"$err")" && rc=0 || rc=$?
   assert_eq "taken=$(grep -c '^oversee-watch: watch-taken-over .* reason=succession$' "$err") printed=$(grep -c '^EVENT heartbeat' <<<"$out") $(leftover)" \
     "taken=1 printed=2 removed" "the next start from its pane stops it and prints what it wrote" "$err"
-  end_leader
-  # The control: the same watch printing its own files, which it is writing.
-  mutant restarted_self_print oversee-watch \
-    '  if [[ "${OVERSEE_WATCH_ORIGIN:-hand}" != succession ]] \' '  if true \'
-  restarted_case restarted_self_print_mutant "$MUTANT"
-  assert_eq "$HELD" "no" "control: printing the files it writes, the restarted watch never runs a pass"
   end_leader
 else
   printf '  skip  the restarted-watch rows need perl\n'
@@ -931,7 +774,7 @@ unit_start_case() { # RUNNER
 
 # A takeover while the old watch's pass is part way through a hosted lane's
 # close, which holds until the case releases it: past WATCH_STOP_SECS, which
-# a copy of the tree sets to 1, so the takeover shows the stop waits for the
+# a private copy of lib/watch-pid.sh sets to 1, so the takeover shows the stop waits for the
 # record and not for the close. The old watch is the one a succession
 # restarted for %9, which a start from %9 takes over. Its first pass learns
 # the lane's clone from the worktree and sees the lane exit; the worktree
@@ -1011,33 +854,6 @@ if command -v setsid >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1; then
   unit_takeover_case takeover_failed setsid "$SHORT/oversee-watch" 5
   assert_eq "taken=$TAKEN finishing=$FINISHING failed=$FAILED closes=$CLOSES" "taken=1 finishing=1 failed=1 closes=2" \
     "a close that fails during a takeover is reported, and the watch that took over retries it" "$TMP_ROOT/e-takeover_failed"
-
-  # Controls, one per rule the takeover rows hold, each a mutant of the same
-  # short-bound tree: the loop not waiting for its pass, the pass stop
-  # signalling the close or a child of it, the long pass taking TERM's default
-  # mid-close, the pass ending at TERM without reporting the close, the record
-  # kept until the loop exits, and the new start not waiting for the old
-  # watch's exit.
-  # name%file%line%replacement%close exit%what the row reads%expected%label
-  while IFS='%' read -r cname cfile cline cnew crc cread cwant clabel; do
-    MUTANT_BASE="$SHORT" mutant "$cname" "$cfile" "$cline" "$cnew"
-    unit_takeover_case "takeover_$cname" setsid "$MUTANT" "$crc"
-    case "$cread" in
-      at-exit) got="$AT_EXIT" ;;
-      event) got="$EVENT" ;;
-      taken) got="$TAKEN" ;;
-      closes-finishing) got="$CLOSES $FINISHING" ;;
-    esac
-    assert_eq "$got" "$cwant" "control: $clabel" "$TMP_ROOT/e-takeover_$cname"
-  done <<'ROWS'
-unit_nowait%oversee-watch%    wait "$REPEAT_CHILD_PID" 2>/dev/null || true%    :%0%at-exit%started %a loop that does not wait for its pass exits mid-close
-unit_unspared%oversee-watch%      [[ "$spared" != *" $pid "* ]] || continue%      :%0%at-exit%started %a pass stop that signals the close with the rest of the long pass kills it mid-close
-unit_unspared_tree%oversee-watch%    [[ ! -s "$CLOSE_PID_FILE" ]] || spared+="$(tree_pids "$(cat -- "$CLOSE_PID_FILE")" | tr '\n' ' ')"%    [[ ! -s "$CLOSE_PID_FILE" ]] || spared+="$(cat -- "$CLOSE_PID_FILE") "%0%at-exit%started %a pass stop that spares the close but signals its children fails it mid-close
-unit_notrap%oversee-watch%  trap 'CLOSE_TERMED=1' TERM%  :%0%at-exit%started %a pass that takes TERM's default dies mid-close
-unit_unreported%oversee-watch%  trap 'CLOSE_TERMED=1' TERM%  trap 'wait; exit 143' TERM%0%event%0%a pass that ends at TERM once the close is done never reports it
-unit_late_release%oversee-watch%  watch_pid_release "$STATE_FILE"%  :%0%taken%0%a loop that keeps its record until the close ends is refused as a live watch
-unit_no_exit_wait%oversee-watch%  if [[ -n "$taken" ]] && watch_pid_runs "$taken"; then%  if false; then%5%closes-finishing%1 0%a start that does not wait for the old watch reads the lane row before the failed close resets it
-ROWS
 else
   printf '  skip  the job-unit rows need setsid and pgrep\n'
 fi

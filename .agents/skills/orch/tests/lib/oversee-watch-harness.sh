@@ -22,6 +22,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd -P)" \
   || { echo "oversee-watch harness: test root not found" >&2; exit 1; }
 TMP_ROOT="$(mktemp -d)" || { echo "oversee-watch harness: mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "$TMP_ROOT"' EXIT
+# mutant_scripts and mutate_file, for the shortened-ceiling copy below.
+# shellcheck source=growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/growth-state.sh"
 OVERSEE_TEST_REAL_DATE="$(command -v date)" \
   || { echo "oversee-watch harness: date not found before PATH shadowing" >&2; exit 1; }
 [[ -x "$OVERSEE_TEST_REAL_DATE" ]] \
@@ -522,24 +525,20 @@ new_case() {
   printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
 }
 
-# shortened_ceiling_watch — a copy of the scripts whose oversee-watch gives
-# each account read a one-second ceiling, so a row can overrun it without
-# waiting out the real one. Sets CEILING_WATCH to that copy, and asserts the
-# copy really differs, so a ceiling line that stopped matching reddens here
-# rather than leaving a row that waits the full ceiling. It sets a variable
-# rather than printing the path because the assertion must count in the suite.
+# shortened_ceiling_watch — the scripts, as mutant_scripts links them, whose
+# oversee-watch copy gives each account read a one-second ceiling, so a row can
+# overrun it without waiting out the real one. Sets CEILING_WATCH to that copy,
+# and mutate_file asserts the ceiling line was rewritten, so a line that
+# stopped matching reddens here rather than leaving a row that waits the full
+# ceiling. It sets a variable rather than printing the path because the
+# assertion must count in the suite.
 CEILING_WATCH=""
 shortened_ceiling_watch() {
-  local dir="$TMP_ROOT/ceiling"
-  mkdir -p "$dir/orch"
-  cp -R "$REPO_ROOT/skills/orch/scripts" "$dir/orch/scripts"
-  ln -s "$REPO_ROOT/skills/github" "$dir/github"
-  sed 's/^READ_CEILING=60$/READ_CEILING=1/' \
-    "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$dir/orch/scripts/oversee-watch"
-  chmod +x "$dir/orch/scripts/oversee-watch"
-  assert_eq "$(cmp -s "$dir/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
-    "differs" "the shortened-ceiling copy really differs from the watch"
-  CEILING_WATCH="$dir/orch/scripts/oversee-watch"
+  local scripts
+  scripts="$(mutant_scripts ceiling/orch oversee-watch)" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/ceiling/github"
+  mutate_file "$scripts/oversee-watch" 'READ_CEILING=60' 'READ_CEILING=1'
+  CEILING_WATCH="$scripts/oversee-watch"
 }
 
 # run_watch [ENV=VAL ...] -- ARGS...   (fast cadence; TMUX set unless NO_TMUX=1)

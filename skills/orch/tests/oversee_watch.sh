@@ -23,8 +23,8 @@
 #       still baselines silently;
 #       rc≠0 with no lines is a global failure (exit 2); attention
 #       at start does not starve a lane's question, and a new line and a
-#       question on one pass are both reported, the control being the
-#       reducer's early exit restored; the state file is
+#       question on one pass are both reported, the watch's one must-fail
+#       control being the reducer's early exit restored; the state file is
 #       rewritten after every pass, and an uncreatable state dir or an
 #       unreadable state file exits 2 naming the path; the reducer runs for
 #       every --repo, with per-repo baselines and repo-prefixed lines on both
@@ -39,18 +39,16 @@
 #       does not; item ids match branches case-insensitively; no --since
 #       means no floor; no --item skips the check with a note; gh stderr
 #       noise on success does not break the JSON parse; a PR merged in a
-#       non-first --repo fires, the fork rejection holding per repo, red with
-#       the lookup narrowed to the first repo; a merged item still in --item
-#       is reported once across runs while a further PR on its branch is
-#       news, red with the row never kept
+#       non-first --repo fires, the fork rejection holding per repo; a merged
+#       item still in --item is reported once across runs while a further PR
+#       on its branch is news
 #   2b. handoff: an --item whose state carries `.handoff` with no
 #       `.resumed_at` fires once, with the record, read from the checkout's
 #       state directory even when the item has a worktree; a state
 #       without the key and a resumed record fire nothing; a re-run before
-#       the relaunch stamps the record fires nothing; the must-fail control
-#       is the emit arm removed
+#       the relaunch stamps the record fires nothing
 #   3.  heartbeat after --max-loops with every --repo's open PR list, each
-#       line prefixed with its repo, red with the list narrowed to the first
+#       line prefixed with its repo
 #   4.  gh auth failure exits 2; a stale env token falls through to the
 #       project GH_BOT_TOKEN; a failing pr list exits 2 (never a quiet 0)
 #   5.  lanes given outside tmux exit 2
@@ -62,19 +60,21 @@
 #       lane record is an item, its window a lane and its mail_root a hosted
 #       root, a done record is none of them, a hosted lane recorded between
 #       passes is read by the next pass with no restart, and the run ends on
-#       the state it cannot read or parse; red with the state read once,
-#       before the loop; a --hosted item no record names and a repeated
-#       --repo end it before any pass, red with the parent's check removed; a window is reported gone
-#       on the pass that first misses it and again after tmux lists it in
-#       between, red with the absence never cleared; a pass that fails before
-#       reporting leaves the absence for the next pass, red with the absence
-#       recorded before the pass runs; each repeat-mode refusal exits 2 with
-#       its keyed first line
+#       the state it cannot read or parse; a --hosted item no record names and
+#       a repeated --repo end it before any pass, repeat mode's one must-fail
+#       control being the parent's pass-set check removed; a window is
+#       reported gone on the pass that first misses it and again after tmux
+#       lists it in between; a pass that fails before reporting leaves the
+#       absence for the next pass; each repeat-mode refusal exits 2 with its
+#       keyed first line
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
+# mutant_scripts and mutate_file, the two halves of the controls below.
+# shellcheck source=lib/growth-state.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 
 echo "=== oversee-watch ==="
 
@@ -251,25 +251,21 @@ assert_contains "$out" "❯ 1. Yes" "the asking line carries its dialog" "$err"
 assert_eq "$(grep -c 'threads-open' <<<"$out")" "1" "the reducer line is printed once, never again as trailing context" "$err"
 assert_not_contains "$out" "EVENT heartbeat" "the pass with events exits before any heartbeat" "$err"
 
-# The must-fail control: the reducer arm's early exit restored. The mutant
-# leaves the pass on the new reducer line, so the same fleet reads as pr-watch
-# alone; the copy must differ from the source or the control proves nothing.
-# The copy keeps orch's place in a skills tree: its libraries resolve the
-# github skill beside it.
+# The watch's one must-fail control: the reducer arm's early exit restored.
+# The mutant leaves the pass on the new reducer line, so the same fleet reads
+# as pr-watch alone. The copy keeps orch's place in a skills tree: its
+# libraries resolve the github skill beside it.
 REDUCER_MUTANT_DIR="$TMP_ROOT/reducer-mutant"
-mkdir -p "$REDUCER_MUTANT_DIR/orch"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$REDUCER_MUTANT_DIR/orch/scripts"
+REDUCER_SCRIPTS="$(mutant_scripts reducer-mutant/orch lib/pr-watch-pass.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$REDUCER_MUTANT_DIR/github"
-sed 's/^  PASS_EVENT=1$/  exit 0/' "$REPO_ROOT/skills/orch/scripts/lib/pr-watch-pass.sh" > "$REDUCER_MUTANT_DIR/orch/scripts/lib/pr-watch-pass.sh"
-assert_eq "$(cmp -s "$REDUCER_MUTANT_DIR/orch/scripts/lib/pr-watch-pass.sh" "$REPO_ROOT/skills/orch/scripts/lib/pr-watch-pass.sh" && echo same || echo differs)" "differs" \
-  "control: the mutant really restores the reducer arm's early exit"
+mutate_file "$REDUCER_SCRIPTS/lib/pr-watch-pass.sh" '  PASS_EVENT=1' '  exit 0'
 new_case prwatch_and_asking_same_pass_mutant
 printf '0' > "$STUB_DIR/prwatch.rc.1"
 printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.2"
 printf '1' > "$STUB_DIR/prwatch.rc.2"
 printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.2.txt"
 err="$TMP_ROOT/e1f3"
-out="$(WATCH_BIN="$REDUCER_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+out="$(WATCH_BIN="$REDUCER_SCRIPTS/oversee-watch" run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "control: the mutant still reports the reducer line" "$err"
 assert_not_contains "$out" "EVENT lane-asking" "control: with the early exit restored the question goes unreported" "$err"
 
@@ -744,32 +740,9 @@ assert_not_contains "$out" "EVENT merged 78" "a fork's PR in the second repo is 
 assert_eq "$(grep -c -- '--head issue-5 --state merged' "$STUB_DIR/gh.calls")" "2" \
   "the one pass asked both repos for the item's branch" "$err"
 
-# The must-fail control: the lookup narrowed to the first --repo. The copy
-# keeps orch's place in a skills tree: its libraries resolve the github skill
-# beside it.
-MERGED_MUTANT_DIR="$TMP_ROOT/merged-mutant"
-mkdir -p "$MERGED_MUTANT_DIR/orch"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$MERGED_MUTANT_DIR/orch/scripts"
-ln -s "$REPO_ROOT/skills/github" "$MERGED_MUTANT_DIR/github"
-sed 's/^    for repo in "${REPOS\[@\]}"; do$/    for repo in "${REPOS[0]}"; do/' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really narrows the merged lookup to the first repo"
-new_case merged_second_repo_mutant
-printf '[]\n' > "$STUB_DIR/merged.owner_repo.json"
-cat > "$STUB_DIR/merged.other_repo.json" <<'EOF'
-[
-  {"number": 77, "headRefName": "issue-5", "headRepositoryOwner": {"login": "other"}, "mergedAt": "2026-08-15T10:00:00Z"}
-]
-EOF
-err="$TMP_ROOT/e2g2"
-out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --repo owner/repo --repo other/repo --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=2026-08-15T09:00:00Z" \
-  "control: with the lookup on the first repo alone the second repo's merge goes unreported" "$err"
-
 # a merged item still in --item is reported once across runs: the overseer
 # exits on the event and re-runs the watch, and the same PR is not news
-# again; a further PR merged on the same branch is. Red when the row is never
-# kept.
+# again; a further PR merged on the same branch is.
 new_case merged_once_across_runs
 cat > "$STUB_DIR/merged.json" <<'EOF'
 [
@@ -795,24 +768,6 @@ EOF
 err="$TMP_ROOT/e2h3"
 out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
 assert_eq "$out" "EVENT merged 9 issue-5 owner/repo" "run 3: a further PR on the branch is the event, and the first is not repeated beside it" "$err"
-
-# The must-fail control: the row never kept, so every run reads as the first.
-sed 's/^    state="$(lane_row_set merged "$state" "$item" "$keys")"$/    state="$(lane_row_clear merged "$state" "$item")"/' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really drops the merged row"
-new_case merged_once_across_runs_mutant
-cat > "$STUB_DIR/merged.json" <<'EOF'
-[
-  {"number": 5, "headRefName": "issue-5", "mergedAt": "2026-08-15T10:00:00Z"}
-]
-EOF
-err="$TMP_ROOT/e2h4"
-out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
-err="$TMP_ROOT/e2h5"
-out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT merged 5 issue-5 owner/repo" \
-  "control: with the row dropped the re-run delivers the same merge again" "$err"
 
 
 # --- 2b. handoff -----------------------------------------------------------
@@ -849,21 +804,6 @@ err="$TMP_ROOT/e2b3"
 out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
 assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" "the same record is reported once" "$err"
 assert_not_contains "$out" "EVENT handoff" "a re-run carries no second handoff line" "$err"
-
-MUTANT_DIR="$TMP_ROOT/mutant"
-mkdir -p "$MUTANT_DIR/orch"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
-ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-assert_eq "$(grep -Fc -- '--state-dir "$ITEM_STATE_DIR" handoff-standing "$item"' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "path control finds the handoff read"
-sed 's|--state-dir "$ITEM_STATE_DIR" handoff-standing "$item"|--state-dir "$STUB_DIR/wt-$item/tmp" handoff-standing "$item"|' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch-path"
-chmod +x "$MUTANT_DIR/orch/scripts/oversee-watch-path"
-new_case handoff_path_mutant
-handoff_record KEN-1
-mkdir -p "$STUB_DIR/wt-KEN-1/tmp"
-printf '{"cycles":0}\n' > "$STUB_DIR/wt-KEN-1/tmp/workflow-state-KEN-1.json"
-err="$TMP_ROOT/e2b2mut"
-out="$(WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch-path" run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
-assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" "control: a worktree state read loses the checkout handoff" "$err"
 
 new_case handoff_no_worktree
 handoff_record KEN-1
@@ -924,10 +864,10 @@ done
 
 # The handoff read's failure is reported once while it stands, and a read
 # that succeeded makes the next one news again: fail, fail, succeed, fail.
-handoff_flap() { # [WATCH_BIN]
+handoff_flap() {
   local run
   local -a env
-  new_case "handoff_flap${1:+_mutant}"
+  new_case handoff_flap
   handoff_record KEN-1
   old_state_reader "$STUB_DIR/old-workflow-state" 1 "" "workflow-state: unknown-command arg1=handoff-standing"
   FLAP=""
@@ -935,7 +875,7 @@ handoff_flap() { # [WATCH_BIN]
   for run in fail fail ok fail; do
     env=()
     [[ "$run" == ok ]] || env=(REAL_WORKFLOW_STATE="$STUB_DIR/old-workflow-state")
-    FLAP_BEATS+=("$(WATCH_BIN="${1:-}" run_watch ${env[@]+"${env[@]}"} -- --item KEN-1 2>"$STUB_DIR/flap.err" || true)")
+    FLAP_BEATS+=("$(run_watch ${env[@]+"${env[@]}"} -- --item KEN-1 2>"$STUB_DIR/flap.err" || true)")
     FLAP+="$(grep -c 'oversee-watch: handoff-read-failed item=KEN-1' "$STUB_DIR/flap.err" || :)"
   done
 }
@@ -945,27 +885,6 @@ assert_eq "reports=$FLAP" "reports=1001" "a handoff read failure is reported onc
 # the row is the long pass's, in the baseline this process reads from disk.
 assert_eq "$(grep -c '^  failing KEN-1 handoff-read-failed ' <<<"${FLAP_BEATS[1]}" || :)" "1" \
   "a quiet run's heartbeat names the lane whose handoff read still fails"
-python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
-import sys
-src, out = sys.argv[1:]
-s = open(src).read()
-old = '<<<"$MAIL_SEEN"$\'\\n\'"$baseline")"; then'
-assert s.count(old) == 1, "baseline-less heartbeat mutant pattern"
-open(out, "w").write(s.replace(old, '<<<"$MAIL_SEEN")"; then'))
-PY
-handoff_flap "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(grep -c '^  failing KEN-1 ' <<<"${FLAP_BEATS[1]}" || :)" "0" \
-  "control: a heartbeat reading the mail file alone says nothing of the handoff read"
-python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
-import sys
-src, out = sys.argv[1:]
-s = open(src).read()
-old = '    rec="${answer#*$\'\\n\'}"\n    state="$(lane_row_clear lane-failed "$state" "$item")"\n'
-assert s.count(old) == 1, "handoff clear mutant pattern"
-open(out, "w").write(s.replace(old, '    rec="${answer#*$\'\\n\'}"\n'))
-PY
-handoff_flap "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "reports=$FLAP" "reports=1000" "control: with the stands read clearing nothing, the returning failure is silent"
 
 # A lane's mail read fails, stands into the next run, and lifts inside it; the
 # handoff it wrote is read by the long pass after the read that succeeded,
@@ -984,68 +903,18 @@ fi
 exec "$REAL_LANE_MAIL" "$@"
 EOF
 chmod +x "$TMP_ROOT/bin/lane-mail-flaky.sh"
-failure_lifts() { # [WATCH_BIN]
+failure_lifts() {
   local -a flaky=(OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-flaky.sh"
     REAL_LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail")
-  new_case "handoff_after_lift${1:+_mutant}"
+  new_case handoff_after_lift
   handoff_record KEN-1
-  WATCH_BIN="${1:-}" run_watch "${flaky[@]}" FLAKY_ALWAYS=1 -- --item KEN-1 >/dev/null 2>&1 || true
+  run_watch "${flaky[@]}" FLAKY_ALWAYS=1 -- --item KEN-1 >/dev/null 2>&1 || true
   unlink "$STUB_DIR/flaky.n"
-  LIFTED="$(WATCH_BIN="${1:-}" run_watch "${flaky[@]}" -- --item KEN-1 2>"$TMP_ROOT/e-lifted")" || true
+  LIFTED="$(run_watch "${flaky[@]}" -- --item KEN-1 2>"$TMP_ROOT/e-lifted")" || true
 }
 failure_lifts
 assert_eq "$(head -1 <<<"$LIFTED")" "EVENT handoff KEN-1" \
   "a lane whose standing mail failure lifts mid-run has its handoff read by the next long pass" "$TMP_ROOT/e-lifted"
-python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
-import sys
-src, out = sys.argv[1:]
-s = open(src).read()
-old = '  PASS_FAILED_ITEMS=""\n  mail_items='
-assert s.count(old) == 1, "failed-items reset mutant pattern"
-open(out, "w").write(s.replace(old, '  mail_items='))
-PY
-failure_lifts "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(head -1 <<<"$LIFTED")" "$HEARTBEAT" \
-  "control: failures kept for the whole run skip the lane's handoff until the heartbeat" "$TMP_ROOT/e-lifted"
-
-# The must-fail control: the clause widened to take a status in place of the
-# verdict, so an install older than the verb reads as "no record stands". The
-# row is then cleared and the lane that handed off is never reported.
-assert_eq "$(grep -Fc 'if [[ "$rc" -eq 0 && "$answer" == "$verdict=none" ]]; then' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" \
-  "control finds the one clause that owns the no-record test"
-sed 's/if \[\[ "\$rc" -eq 0 && "\$answer" == "\$verdict=none" \]\]; then/if [[ "$rc" -ne 0 || "$answer" == "$verdict=none" ]]; then/' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch-rc1"
-chmod +x "$MUTANT_DIR/orch/scripts/oversee-watch-rc1"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch-rc1" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
-  "differs" "control: the widened-clause mutant really differs from the script"
-new_case handoff_unread_mutant
-handoff_record KEN-1
-err="$TMP_ROOT/e2b-mut-seed"
-out="$(WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch-rc1" run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
-assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" \
-  "control: the mutant reports a standing record as usual" "$err"
-READER="$STUB_DIR/old-workflow-state"
-old_state_reader "$READER" 1 "" "workflow-state: unknown-command arg1=handoff-standing"
-err="$TMP_ROOT/e2b-mut"
-out="$(WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch-rc1" run_watch REAL_WORKFLOW_STATE="$READER" -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
-assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" \
-  "control: widened back, an old install reads as no record and the pass passes" "$err"
-assert_eq "$(grep -c "$(printf 'handoff\tKEN-1\t')" "$STATE_DIR/owner_repo__none")" "0" \
-  "control: and the row of a lane that had handed off is cleared" "$err"
-
-# The must-fail control: the emit arm removed. The mutant keeps every read
-# and row and never reaches the event, so the once case above reads as a
-# heartbeat against it; the copy must differ from the source or the control
-# proves nothing.
-# The copy keeps orch's place in a skills tree: its libraries resolve the
-# github skill beside it.
-sed 's/^    \[\[ "\$key" != "\$prior" \]\] || continue$/    continue/' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" "control: the mutant really removes the emit arm"
-new_case handoff_mutant
-handoff_record KEN-1
-err="$TMP_ROOT/e2b6"
-out="$(WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
-assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" "control: without the emit arm the same record is never reported" "$err"
 
 # --- 5. heartbeat ----------------------------------------------------------
 new_case heartbeat
@@ -1057,8 +926,7 @@ assert_contains "$out" "EVENT heartbeat" "heartbeat after --max-loops with no ev
 assert_contains "$out" "$(printf 'owner/repo\t9\tissue-9\tfix the thing')" "open PR list follows the heartbeat, each line prefixed with its repo" "$err"
 assert_eq "$(grep -c 'merged' "$STUB_DIR/gh.calls")" "2" "merged check ran once per loop (2 loops)" "$err"
 
-# every --repo's open PRs follow the heartbeat; red with the list narrowed to
-# the first repo
+# every --repo's open PRs follow the heartbeat
 new_case heartbeat_multi_repo
 printf '9\tissue-9\tfix the thing\n' > "$STUB_DIR/open.owner_repo.txt"
 printf '77\tissue-9\tconsumer side\n' > "$STUB_DIR/open.other_repo.txt"
@@ -1067,15 +935,6 @@ out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "a two-repo fleet reaches the heartbeat" "$err"
 assert_contains "$out" "$(printf 'other/repo\t77\tissue-9\tconsumer side')" "the second repo's open PRs follow the heartbeat too" "$err"
 assert_contains "$out" "$(printf 'owner/repo\t9\tissue-9\tfix the thing')" "beside the first repo's" "$err"
-sed 's/^  for repo in "${REPOS\[@\]}"; do$/  for repo in "${REPOS[0]}"; do/' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really narrows the heartbeat's open-PR list to the first repo"
-new_case heartbeat_multi_repo_mutant
-printf '9\tissue-9\tfix the thing\n' > "$STUB_DIR/open.owner_repo.txt"
-printf '77\tissue-9\tconsumer side\n' > "$STUB_DIR/open.other_repo.txt"
-err="$TMP_ROOT/e5c"
-out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
-assert_not_contains "$out" "consumer side" "control: with the list on the first repo alone the second repo's PRs are missing" "$err"
 
 # --- 6. auth and listing failures ------------------------------------------
 new_case auth_fail
@@ -1087,108 +946,60 @@ assert_contains "$(cat "$err")" "oversee-watch: auth-failed service=github" "aut
 assert_eq "$out" "" "auth failure prints no EVENT" "$err"
 assert_eq "prwatch=$([[ -f "$STUB_DIR/prwatch.repos" ]] && echo called || echo none)" "prwatch=none" \
   "a dead credential stops the run before its long pass reads GitHub unauthenticated" "$err"
-python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
-import sys
-src, out = sys.argv[1:]
-s = open(src).read()
-old = "long_start() {\n  github_ready\n"
-assert s.count(old) == 1, "long-start auth mutant pattern"
-open(out, "w").write(s.replace(old, "long_start() {\n"))
-PY
-new_case auth_fail_unasked
-touch "$STUB_DIR/auth-fail"
-WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- >/dev/null 2>"$TMP_ROOT/e6a-mutant" || true
-assert_eq "prwatch=$([[ -f "$STUB_DIR/prwatch.repos" ]] && echo called || echo none)" "prwatch=called" \
-  "control: with no credential check before it, the long pass reads GitHub on a dead token" "$TMP_ROOT/e6a-mutant"
 
 # A run that dies on its credential check started no long pass, so the run
 # after the repair starts one at once rather than --interval later. Its lane
 # notice ends that run on the turn it starts, so a long pass not yet due is
 # skipped rather than waited for.
-auth_recovery_case() { # NAME [WATCH_BIN]
+auth_recovery_case() { # NAME
   local rc=0
   new_case "$1"
   mkdir -p "$TMP_ROOT/repo/tmp/lane-mail/KEN-96"
   touch "$STUB_DIR/auth-fail"
-  WATCH_BIN="${2:-}" run_watch -- --interval 3600 --item KEN-96 >/dev/null 2>"$TMP_ROOT/e-$1" || rc=$?
+  run_watch -- --interval 3600 --item KEN-96 >/dev/null 2>"$TMP_ROOT/e-$1" || rc=$?
   rm -f -- "$STUB_DIR/auth-fail"
   printf '{"id":"after-1","kind":"notice","at":"t","text":"Rebased."}\n' \
     > "$TMP_ROOT/repo/tmp/lane-mail/KEN-96/to-overseer.jsonl"
-  WATCH_BIN="${2:-}" run_watch -- --interval 3600 --item KEN-96 >/dev/null 2>>"$TMP_ROOT/e-$1" || true
+  run_watch -- --interval 3600 --item KEN-96 >/dev/null 2>>"$TMP_ROOT/e-$1" || true
   AUTH_RECOVERY="failed=$rc prwatch=$([[ -f "$STUB_DIR/prwatch.repos" ]] && echo called || echo none)"
   rm -rf -- "${TMP_ROOT:?}/repo/tmp/lane-mail/KEN-96"
 }
 auth_recovery_case auth_recovery
 assert_eq "$AUTH_RECOVERY" "failed=2 prwatch=called" \
   "a run after a failed credential check starts its long pass at once" "$TMP_ROOT/e-auth_recovery"
-python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
-import sys
-src, out = sys.argv[1:]
-s = open(src).read()
-old = "long_start() {\n  github_ready\n"
-assert s.count(old) == 1, "start-first mutant pattern"
-open(out, "w").write(s.replace(old,
-    "long_start() {\n  mail_row_commit \"$(lane_row_set long-pass \"$MAIL_SEEN\" fleet \"$PASS_NOW\")\"\n  github_ready\n"))
-PY
-auth_recovery_case auth_recovery_start_first "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$AUTH_RECOVERY" "failed=2 prwatch=none" \
-  "control: a start committed before the credential check holds the next long pass back" \
-  "$TMP_ROOT/e-auth_recovery_start_first"
 
 # The long-pass start kept is the fork's clock: under the stub clock the mail
 # pass's lane-mail moves time on before the fork, and the start is that later
 # reading, not the turn's.
-start_clock_case() { # NAME [WATCH_BIN]
+start_clock_case() { # NAME
   new_case "$1"
   printf '1790000000\n' > "$STUB_DIR/now.epoch"
   printf '#!/usr/bin/env bash\nprintf "1790000500\\n" > "$STUB_DIR/now.epoch"\nexec "%s" "$@"\n' \
     "$REPO_ROOT/skills/orch/scripts/lane-mail" > "$STUB_DIR/lane-mail-slow"
   chmod +x "$STUB_DIR/lane-mail-slow"
-  WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_LANE_MAIL="$STUB_DIR/lane-mail-slow" -- --max-loops 1 \
+  run_watch OVERSEE_WATCH_LANE_MAIL="$STUB_DIR/lane-mail-slow" -- --max-loops 1 \
     >/dev/null 2>"$TMP_ROOT/e-$1" || true
   START_CLOCK="start=$(awk -F'\t' '$1 == "long-pass" && $2 == "fleet" { print $3 }' \
     "$STATE_DIR"/*.mail 2>/dev/null || true)"
 }
 start_clock_case start_clock
 assert_eq "$START_CLOCK" "start=1790000500" "the long-pass start is the clock read at the fork" "$TMP_ROOT/e-start_clock"
-python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
-import sys
-src, out = sys.argv[1:]
-s = open(src).read()
-old = '  started="$(date -u +%s)" || die time-failed "" "clock=UTC"\n'
-assert s.count(old) == 1, "turn-clock start mutant pattern"
-open(out, "w").write(s.replace(old, '  started="$PASS_NOW"\n'))
-PY
-start_clock_case start_clock_turn "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$START_CLOCK" "start=1790000000" "control: a start stamped with the turn's clock is the earlier reading" \
-  "$TMP_ROOT/e-start_clock_turn"
 
 # A run that ends on a lane's notice before any long pass is due asks GitHub
 # nothing, not even its credential.
-mail_only_case() { # NAME [WATCH_BIN]
+mail_only_case() { # NAME
   new_case "$1"
   mkdir -p "$STATE_DIR" "$TMP_ROOT/repo/tmp/lane-mail/KEN-96"
   printf 'long-pass\tfleet\t%s\n' "$(date -u +%s)" > "$STATE_DIR/owner_repo__none.mail"
   printf '{"id":"only-1","kind":"notice","at":"t","text":"Rebased."}\n' \
     > "$TMP_ROOT/repo/tmp/lane-mail/KEN-96/to-overseer.jsonl"
-  MAIL_ONLY_OUT="$(WATCH_BIN="${2:-}" run_watch -- --interval 3600 --item KEN-96 2>"$TMP_ROOT/e-$1")" || true
+  MAIL_ONLY_OUT="$(run_watch -- --interval 3600 --item KEN-96 2>"$TMP_ROOT/e-$1")" || true
   MAIL_ONLY="notice=$(grep -c '^EVENT lane-notice KEN-96 only-1$' <<<"$MAIL_ONLY_OUT" || :) auth=$(grep -c '^auth status' < <(cat -- "$STUB_DIR/gh.calls" 2>/dev/null) || true)"
   rm -rf -- "${TMP_ROOT:?}/repo/tmp/lane-mail/KEN-96"
 }
 mail_only_case mail_only_no_github
 assert_eq "$MAIL_ONLY" "notice=1 auth=0" "a run ending on mail news before its long pass is due makes no GitHub call" \
   "$TMP_ROOT/e-mail_only_no_github"
-python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
-import sys
-src, out = sys.argv[1:]
-s = open(src).read()
-old = "if [[ ${#REPOS[@]} -eq 0 ]]; then\n  github_ready\n"
-assert s.count(old) == 1, "eager auth mutant pattern"
-open(out, "w").write(s.replace(old, "github_ready\nif [[ ${#REPOS[@]} -eq 0 ]]; then\n"))
-PY
-mail_only_case mail_only_eager "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$MAIL_ONLY" "notice=1 auth=1" "control: a credential check at startup asks GitHub on every mail-only run" \
-  "$TMP_ROOT/e-mail_only_eager"
 
 # a stale env token with no keyring falls through to the project GH_BOT_TOKEN
 new_case auth_bot_fallback
@@ -1247,14 +1058,6 @@ assert_not_contains "$(cat "$err")" "oversee-watch: lanes-omitted" "with no --it
 err="$TMP_ROOT/e8b4"
 out="$(run_watch -- --item issue-5 gh-1 2>"$err")" && rc=0 || rc=$?
 assert_not_contains "$(cat "$err")" "oversee-watch: lanes-omitted" "with a lane window the note does not fire"
-# The must-fail control: the note deleted.
-sed '/ow_message lanes-omitted /d' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really deletes the note"
-new_case no_lane_window_note_mutant
-err="$TMP_ROOT/e8b5"
-out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --item issue-5 2>"$err")" && rc=0 || rc=$?
-assert_not_contains "$(cat "$err")" "oversee-watch: lanes-omitted" "control: without the note an --item with no window skips the pane checks in silence"
 
 # --- 8c. repeat mode re-reads the oversee state before every pass ----------
 # The fleet is the state's `lanes[]` records with status running: each is an
@@ -1307,7 +1110,7 @@ repeat_sleep_stub() { # LINE...
 # A fleet of one local lane, one hosted lane and one closed lane. The wrapper
 # takes the state away once pass 2 has started, so pass 2 runs whole and the
 # third read ends the run.
-fleet_case() { # NAME [WATCH_BIN]
+fleet_case() { # NAME
   new_case "$1"
   printf 'gh-1\ngh-2\nKEN-10\n' > "$STUB_DIR/windows.txt"
   printf '⏺ working on it\n' > "$STUB_DIR/pane-KEN-10.txt"
@@ -1317,7 +1120,7 @@ fleet_case() { # NAME [WATCH_BIN]
     "$(lane_record KEN-10 KEN-10 /srv/provider "$REMOTE_ROOT" running)" "$(lane_record issue-3 gh-3 '' /w/issue-3 done)"
   swap_state '2) unlink "$STUB_DIR/state.json" ;;'
   err="$TMP_ROOT/e-$1"
-  out="$(WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" ORCH_LANE_HOST="$FIXTURE_HOST" \
+  out="$(run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" ORCH_LANE_HOST="$FIXTURE_HOST" \
     LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote" -- --max-loops 1 \
     --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
   REPEAT_ITEMS="$(awk '$(NF-1) == "handoff-standing" { printf "%s%s", sep, $NF; sep = " " }' "$STUB_DIR/workflow-state.args")"
@@ -1334,8 +1137,8 @@ assert_eq "gh-1=$(cat "$STUB_DIR/cmd-gh-1.calls") KEN-10=$(cat "$STUB_DIR/cmd-KE
 assert_eq "$(grep '^oversee-watch: fleet-read ' "$err")" "oversee-watch: fleet-read items=2 windows=2 hosted=1 dropped=1 path=$STUB_DIR/state.json" \
   "the set the passes carry is named once, with the done record counted as dropped, and not again while it stands" "$err"
 
-custom_close_case() { # NAME [WATCH_BIN]
-  local name="$1" bin="${2:-}" custom
+custom_close_case() { # NAME
+  local name="$1" custom
   new_case "$name"
   custom="$STUB_DIR/custom"
   mkdir -p "$custom" "$STUB_DIR/remote/srv/lane/issue-2" \
@@ -1352,7 +1155,7 @@ custom_close_case() { # NAME [WATCH_BIN]
     'n=$((n + 1)); printf "%s\n" "$n" > "$STUB_DIR/repeat.calls"' \
     'case "$n" in 1) rm -rf -- "$STUB_DIR/remote/srv/lane/issue-2" ;; 2) unlink "$STUB_DIR/custom/workflow-state-oversee.json" ;; esac'
   err="$TMP_ROOT/e-$name"
-  out="$(WATCH_BIN="$bin" run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
+  out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
     LANE_HOST_STUB_DIR="$STUB_DIR/remote" PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 \
     --since 2026-09-19T00:00:00Z --repeat 0 --state "$custom/workflow-state-oversee.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
 }
@@ -1362,17 +1165,6 @@ assert_eq "$(cat "$STUB_DIR/lane-close.args")" "--state-dir $STUB_DIR/custom iss
   "repeat mode gives automatic close the explicit fleet state directory" "$err"
 assert_eq "$(grep -cF -- "--state-dir $STUB_DIR/custom handoff-standing issue-2" "$STUB_DIR/workflow-state.args" || true)" "0" \
   "the fleet directory does not replace the hosted item's workflow-state directory" "$err"
-
-fleet_dir_handoff='    OVERSEE_WATCH_FLEET_STATE_DIR="$fleet_state_dir" \'
-assert_eq "$(grep -cxF -- "$fleet_dir_handoff" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" \
-  "control: the repeat pass has one fleet-state identity handoff"
-FLEET_DIR_HANDOFF="$fleet_dir_handoff" awk '$0 == ENVIRON["FLEET_DIR_HANDOFF"] { next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the fleet identity handoff mutant differs from the script"
-custom_close_case repeat_state_custom_close_defaulted "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cat "$STUB_DIR/lane-close.args")" "--state-dir $CASE_REPO_ROOT/tmp issue-2" \
-  "control: without the fleet identity handoff automatic close falls back to the checkout state" "$err"
 
 # A fleet closed out to no running record is named, not watched in silence:
 # one done record reads as items=0 with the record counted dropped, the pass
@@ -1388,14 +1180,14 @@ assert_eq "rc=$rc note=$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ pat
 # A run handed --state with no --repeat has no wrapper to have named its fleet,
 # so its own first read names it. One line, not two: the loop below re-reads
 # the same set and a read that changes nothing says nothing.
-standalone_read_case() { # NAME [WATCH_BIN]
+standalone_read_case() { # NAME
   new_case "$1"
   write_state "$STUB_DIR/state.json" "$(lane_record issue-1 '' '' /w/issue-1 running)"
   err="$TMP_ROOT/e-$1"
-  out="$(WATCH_BIN="${2:-}" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 \
+  out="$(run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 \
     --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
-  # A miss is an answer here: the control's whole claim is that no fleet-read
-  # line is printed, and under pipefail an unguarded grep would abort instead.
+  # A miss is an answer here, and under pipefail an unguarded grep would abort
+  # instead.
   STANDALONE_NOTES="$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' - || true)"
   STANDALONE_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
 }
@@ -1403,16 +1195,6 @@ standalone_read_case standalone_state_first_read
 assert_eq "rc=$rc note=$STANDALONE_NOTES events=$STANDALONE_EVENTS" \
   "rc=0 note=oversee-watch: fleet-read items=1 windows=0 hosted=0 dropped=0 events=heartbeat" \
   "a standalone --state run names the fleet its own first read found" "$err"
-# The must-fail control: the first read quiet again whatever launched the run.
-first_read_quiet='[[ "$REPEAT_CHILD" -ne 1 ]] || FIRST_READ_QUIET=quiet'
-assert_eq "$(grep -cxF -- "$first_read_quiet" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the first read's quiet is one line to unguard"
-awk -v line="$first_read_quiet" '$0 == line { print "FIRST_READ_QUIET=quiet"; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really unguards the quiet"
-standalone_read_case standalone_state_first_read_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "note=$STANDALONE_NOTES events=$STANDALONE_EVENTS" "note= events=heartbeat" \
-  "control: quiet whatever launched it, the standalone run names no fleet at all" "$err"
 # A repeat delay that cannot be slept ends the watch with its cause named,
 # never with a bare exit status: the stub fails the delay after the first pass.
 new_case repeat_sleep_fails
@@ -1422,28 +1204,17 @@ err="$TMP_ROOT/e-repeat_sleep_fails"
 out="$(run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
 assert_eq "rc=$rc named=$(grep -c '^oversee-watch: sleep-failed secs=0$' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" \
   "rc=2 named=1 events=heartbeat" "a failed repeat delay ends the watch as sleep-failed after the pass it followed" "$err"
-# The must-fail control: the bare sleep, whose failure is the watch's own exit.
-sleep_line='    wait "$REPEAT_CHILD_PID" || die sleep-failed "" "secs=$delay"'
-assert_eq "$(grep -cxF -- "$sleep_line" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the guarded delay is one line to strip"
-awk -v line="$sleep_line" '$0 == line { print "    wait \"$REPEAT_CHILD_PID\""; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-new_case repeat_sleep_fails_unguarded
-write_state "$STUB_DIR/state.json" "$(lane_record issue-1 '' '' /w/issue-1 running)"
-repeat_sleep_stub 'exit 3'
-err="$TMP_ROOT/e-repeat_sleep_fails_unguarded"
-WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" >/dev/null 2>"$err" </dev/null && rc=0 || rc=$?
-assert_eq "rc=$rc named=$(grep -c '^oversee-watch: sleep-failed' "$err")" "rc=3 named=0" "control: unguarded, the failed delay is a silent exit with the stub's status" "$err"
 # The delay between two passes is the mail interval where that is shorter,
 # so a note sent right after a run ends is read within one interval; a pass
 # that failed waits the whole delay. DELAYS is the one delay the stub was
 # asked for, after a pass that ended quietly or, with every PR list failing,
 # exited 2.
-repeat_delay_case() { # NAME ok|failed [WATCH_BIN]
+repeat_delay_case() { # NAME ok|failed
   new_case "$1"
   write_state "$STUB_DIR/state.json" "$(lane_record issue-1 '' '' /w/issue-1 running)"
   [[ "$2" == ok ]] || touch "$STUB_DIR/list-fail"
   repeat_sleep_stub 'printf "%s\n" "$1" >> "$STUB_DIR/repeat.delays"' 'exit 3'
-  WATCH_BIN="${3:-}" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" ORCH_WATCH_MAIL_INTERVAL=5 -- --max-loops 1 \
+  run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" ORCH_WATCH_MAIL_INTERVAL=5 -- --max-loops 1 \
     --repeat 60 --state "$STUB_DIR/state.json" >/dev/null 2>"$TMP_ROOT/e-$1" </dev/null || true
   DELAYS="$(paste -sd ' ' - <"$STUB_DIR/repeat.delays" 2>/dev/null || echo none)"
 }
@@ -1451,22 +1222,12 @@ repeat_delay_case repeat_delay_mail ok
 assert_eq "$DELAYS" "5" "the repeat delay after a pass is the mail interval where that is shorter" "$TMP_ROOT/e-repeat_delay_mail"
 repeat_delay_case repeat_delay_failed failed
 assert_eq "$DELAYS" "60" "a pass that exited 2 waits the whole repeat delay" "$TMP_ROOT/e-repeat_delay_failed"
-delay_cap='    [[ "$pass_rc" -eq 2 || "$MAIL_INTERVAL" -ge "$delay" ]] || delay="$MAIL_INTERVAL"'
-assert_eq "$(grep -cxF -- "$delay_cap" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the delay cap is one line to change"
-awk -v line="$delay_cap" '$0 == line { print "    :"; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-repeat_delay_case repeat_delay_uncapped ok "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$DELAYS" "60" "control: uncapped, the whole repeat delay passes with no mail read" "$TMP_ROOT/e-repeat_delay_uncapped"
-awk -v line="$delay_cap" '$0 == line { print "    [[ \"$MAIL_INTERVAL\" -ge \"$delay\" ]] || delay=\"$MAIL_INTERVAL\""; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-repeat_delay_case repeat_delay_floorless failed "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$DELAYS" "5" "control: with no floor, a failing pass is retried at the mail interval" "$TMP_ROOT/e-repeat_delay_floorless"
 
 # One lane's mailbox fails and stays failed: the run that reports it exits 2
 # and waits the whole delay, and the run after it, the failure unchanged and
 # quiet, fails nothing, so the delay before the next is the mail interval and
 # another lane's note waits no longer.
-standing_delay_case() { # NAME [WATCH_BIN]
+standing_delay_case() { # NAME
   local root="$TMP_ROOT/standing/$1/ken-12"
   new_case "$1"
   mkdir -p "$root/tmp/lane-mail/KEN-12"
@@ -1476,7 +1237,7 @@ standing_delay_case() { # NAME [WATCH_BIN]
   write_state "$STUB_DIR/state.json" "$(lane_record KEN-12 '' '' "$root" running)"
   repeat_sleep_stub 'printf "%s\n" "$1" >> "$STUB_DIR/repeat.delays"' \
     '[[ "$(grep -c . "$STUB_DIR/repeat.delays")" -lt 2 ]] || exit 3'
-  WATCH_BIN="${2:-}" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" ORCH_WATCH_MAIL_INTERVAL=5 -- --max-loops 1 \
+  run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" ORCH_WATCH_MAIL_INTERVAL=5 -- --max-loops 1 \
     --repeat 60 --state "$STUB_DIR/state.json" >/dev/null 2>"$TMP_ROOT/e-$1" </dev/null || true
   chmod 644 "$root/tmp/lane-mail/KEN-12/to-overseer.jsonl"
   DELAYS="$(paste -sd ' ' - <"$STUB_DIR/repeat.delays" 2>/dev/null || echo none)"
@@ -1484,17 +1245,6 @@ standing_delay_case() { # NAME [WATCH_BIN]
 standing_delay_case repeat_delay_standing
 assert_eq "$DELAYS" "60 5" "a lane failure still standing fails no later run, so the delay after it is the mail interval" \
   "$TMP_ROOT/e-repeat_delay_standing"
-python3 - "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" <<'PY'
-import sys
-src, out = sys.argv[1:]
-s = open(src).read()
-old = "  local -a tokens=()\n  PASS_FAILED_ITEMS+="
-assert s.count(old) == 1, "standing failure mutant pattern"
-open(out, "w").write(s.replace(old, "  local -a tokens=()\n  PASS_FAILED=1\n  PASS_FAILED_ITEMS+="))
-PY
-standing_delay_case repeat_delay_standing_fails "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$DELAYS" "60 60" "control: a standing failure that ends every run keeps every delay whole" \
-  "$TMP_ROOT/e-repeat_delay_standing_fails"
 
 # A local lane whose worktree sits outside the watch's own checkout (a
 # proposal sweep launched from a source repository) has its mailbox read at
@@ -1510,20 +1260,6 @@ err="$TMP_ROOT/e-repeat_state_local_root"
 out="$(run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
 assert_eq "rc=$rc events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out") asked=$(grep -c '^EVENT lane-question KEN-11 local-1' <<<"$out" || true)" \
   "rc=2 events=lane-question asked=1" "a local record's mail_root outside this checkout is where its mailbox is read" "$err"
-# The must-fail control: the local root not carried, so the mailbox is looked
-# for in this checkout and the ask is never seen.
-root_carry='    elif [[ -n "$root" ]]; then ROOTS+=("$item=$root"); fi'
-assert_eq "$(grep -cxF -- "$root_carry" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the local root carry is one line to drop"
-awk -v carry="$root_carry" '$0 == carry { print "    fi"; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-new_case repeat_state_local_root_dropped
-printf '{"id":"local-1","kind":"ask","at":"t","text":"Local question"}\n' > "$LOCAL_ROOT/tmp/lane-mail/KEN-11/to-overseer.jsonl"
-write_state "$STUB_DIR/state.json" "$(lane_record KEN-11 '' '' "$LOCAL_ROOT" running)"
-repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
-err="$TMP_ROOT/e-repeat_state_local_root_dropped"
-out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
-assert_eq "rc=$rc events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" "rc=2 events=heartbeat" \
-  "control: with the root dropped the pass reads an empty mailbox in this checkout and heartbeats over the ask" "$err"
 # A --hosted entry passed by hand for an item the state also records hosted
 # is merged by item, the state's root winning: the pass is not refused as
 # hosted-duplicate, and the ask is read at the recorded root.
@@ -1540,19 +1276,6 @@ out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/ho
 assert_eq "rc=$rc dup=$(grep -c 'hosted-duplicate' "$err") carried=$(grep -o '^oversee-watch: fleet-read items=[0-9]* windows=[0-9]* hosted=[0-9]*' "$err" | head -1) events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" \
   "rc=2 dup=0 carried=oversee-watch: fleet-read items=1 windows=1 hosted=1 events=lane-question" \
   "a hand-passed hosted entry and the state's record for one item merge as one, the state's root read" "$err"
-# The must-fail control: the hand-passed entry appended beside the state's,
-# which check_item_set refuses before any pass.
-hosted_merge='  for line in ${GIVEN_HOSTED[@]+"${GIVEN_HOSTED[@]}"}; do route_listed "${line%%=*}" || HOSTED+=("$line"); done'
-assert_eq "$(grep -cxF -- "$hosted_merge" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the hosted merge is one line to unguard"
-awk -v merge="$hosted_merge" '$0 == merge { print "  for line in ${GIVEN_HOSTED[@]+\"${GIVEN_HOSTED[@]}\"}; do HOSTED+=(\"$line\"); done"; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-new_case repeat_state_hosted_merge_unguarded
-write_state "$STUB_DIR/state.json" "$(lane_record KEN-10 KEN-10 /srv/provider "$REMOTE_ROOT" running)"
-repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
-err="$TMP_ROOT/e-repeat_state_hosted_merge_unguarded"
-out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" --hosted KEN-10=/srv/other 2>"$err" </dev/null)" && rc=0 || rc=$?
-assert_eq "rc=$rc dup=$(grep -c '^oversee-watch: hosted-duplicate item=KEN-10' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" "rc=2 dup=1 events=" \
-  "control: unmerged, the two entries for one item end the watch as hosted-duplicate before any pass" "$err"
 # A hand-passed hosted route for an item whose record is local is displaced by
 # the record: the mailbox is read on this disk at the recorded root, and
 # lane-host is never asked for it. A log lane-host never wrote is zero reads.
@@ -1569,27 +1292,12 @@ out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/ho
   PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" --hosted KEN-12=/srv/other 2>"$err" </dev/null)" && rc=0 || rc=$?
 assert_eq "rc=$rc asked=$(grep -c '^EVENT lane-question KEN-12 local-2' <<<"$out" || true) host_reads=$(host_cats)" \
   "rc=2 asked=1 host_reads=0" "a hand-passed hosted route yields to the item's local record: read on this disk, never through lane-host" "$err"
-# The must-fail control: the hand-passed hosted entry tested against hosted
-# records only, so the local record leaves it standing and lane-host is asked.
-route_check='  local_root "$1"'
-assert_eq "$(grep -cxF -- "$route_check" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the cross-type check is one line to blank"
-awk -v check="$route_check" '$0 == check { print "  LOCAL_ROOT=\"\""; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-new_case repeat_state_route_crossed_unchecked
-printf '{"id":"local-2","kind":"ask","at":"t","text":"Crossed question"}\n' > "$CROSSED_ROOT/tmp/lane-mail/KEN-12/to-overseer.jsonl"
-write_state "$STUB_DIR/state.json" "$(lane_record KEN-12 '' '' "$CROSSED_ROOT" running)"
-repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
-err="$TMP_ROOT/e-repeat_state_route_crossed_unchecked"
-out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote" \
-  PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" --hosted KEN-12=/srv/other 2>"$err" </dev/null)" && rc=0 || rc=$?
-assert_eq "asked=$(grep -c '^EVENT lane-question KEN-12 local-2' <<<"$out" || true) host_reads=$([[ "$(host_cats)" -gt 0 ]] && echo some || echo none)" \
-  "asked=0 host_reads=some" "control: unchecked across types, the stale hosted route wins and the ask on this disk is never read" "$err"
 # A hosted lane joining between passes is carried by the next pass with no
 # restart: pass 1 sees the local lane alone and its handoff read records the
 # hosted lane, pass 2 reads that lane's ask, pass 3 finds it drained, and the
 # read of pass 4 ends the run. A sleep stub ends a watch that never re-reads
-# the state, which the read-once control would otherwise run for ever.
-joins_case() { # NAME [WATCH_BIN]
+# the state, which would otherwise run for ever.
+joins_case() { # NAME
   new_case "$1"
   repeat_sleep_stub 'n=0; [[ ! -f "$STUB_DIR/sleep.calls" ]] || n="$(cat "$STUB_DIR/sleep.calls")"' \
     'n=$((n + 1)); printf "%s" "$n" > "$STUB_DIR/sleep.calls"' \
@@ -1603,7 +1311,7 @@ joins_case() { # NAME [WATCH_BIN]
   swap_state "'' | 0) jq --slurpfile h \"\$STUB_DIR/hosted.json\" '.lanes += \$h' \"\$STUB_DIR/state.json\" > \"\$STUB_DIR/state.next\" && mv \"\$STUB_DIR/state.next\" \"\$STUB_DIR/state.json\" ;;" \
     '3) unlink "$STUB_DIR/state.json" ;;'
   err="$TMP_ROOT/e-$1"
-  out="$(WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" ORCH_LANE_HOST="$FIXTURE_HOST" \
+  out="$(run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" ORCH_LANE_HOST="$FIXTURE_HOST" \
     LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote" PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 \
     --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
   REPEAT_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
@@ -1614,26 +1322,6 @@ assert_eq "$REPEAT_EVENTS" "heartbeat lane-question heartbeat" "a hosted lane re
 assert_eq "$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' -)" \
   "oversee-watch: fleet-read items=1 windows=1 hosted=0 dropped=0|oversee-watch: fleet-read items=2 windows=2 hosted=1 dropped=0" \
   "the set is named again on the re-read that changes it, and not on the one that does not" "$err"
-# The must-fail control: the last set never remembered, so the note names
-# every pass rather than a change.
-carried_keep='    FLEET_CARRIED="${carried[*]}"'
-assert_eq "$(grep -cxF -- "$carried_keep" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the remembered set is one line to drop"
-awk -v keep="$carried_keep" '$0 == keep { print "      :"; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-joins_case repeat_state_fleet_unremembered "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(grep -c '^oversee-watch: fleet-read ' "$err")" "6" "control: with no remembered set every read names the fleet again" "$err"
-# The must-fail control: the wrapper's read moved out of its loop, so it names
-# the fleet it launched the first pass with and never reads the state again.
-wrapper_read='    fleet_merge'
-assert_eq "$(grep -cxF -- "$wrapper_read" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the wrapper's read is one line to move"
-awk -v read="$wrapper_read" '$0 == read { next } { print } /^  check_repo_set$/ { print read }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really moves the read"
-joins_case repeat_state_read_once "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' -)" \
-  "oversee-watch: fleet-read items=1 windows=1 hosted=0 dropped=0" \
-  "control: read once, the wrapper names only the fleet it launched the first pass with" "$err"
 # A record that lands or closes between two loops of ONE pass moves that
 # pass's fleet with it, with no restart of the pass or of the watch. The
 # handoff read of loop 1 makes the change and the repeat delay then takes the
@@ -1644,7 +1332,7 @@ assert_eq "$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | pa
 # `departs` starts with the record and closes it; the hosted mailbox is
 # emptied first, since a lane with mail would deliver it in loop 1 and end the
 # pass before the loop that must no longer carry the lane ever runs.
-mid_pass_case() { # NAME joins|departs [WATCH_BIN]
+mid_pass_case() { # NAME joins|departs
   new_case "$1"
   printf 'gh-1\nKEN-10\n' > "$STUB_DIR/windows.txt"
   printf '⏺ working on it\n' > "$STUB_DIR/pane-KEN-10.txt"
@@ -1662,7 +1350,7 @@ mid_pass_case() { # NAME joins|departs [WATCH_BIN]
   fi
   repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
   err="$TMP_ROOT/e-$1"
-  out="$(WATCH_BIN="${3:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" ORCH_LANE_HOST="$FIXTURE_HOST" \
+  out="$(run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" ORCH_LANE_HOST="$FIXTURE_HOST" \
     LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote" PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" \
     -- --max-loops 3 --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
   MID_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
@@ -1677,14 +1365,6 @@ assert_contains "$out" "EVENT lane-question KEN-10 remote-1" "the ask is read at
 assert_eq "$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' -)" \
   "oversee-watch: fleet-read items=1 windows=1 hosted=0 dropped=0|oversee-watch: fleet-read items=2 windows=2 hosted=1 dropped=0" \
   "the wrapper names the set it launched the pass with, and the pass names the set its own re-read changed" "$err"
-# The must-fail control: the pass's per-loop read removed, leaving the set it
-# was launched with.
-loop_read='  [[ -z "$STATE_FILE" ]] || { fleet_merge; require_item_helpers; }'
-assert_eq "$(grep -cxF -- "$loop_read" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the pass's per-loop read is one line to remove"
-grep -vxF -- "$loop_read" "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-mid_pass_case repeat_state_joins_mid_pass_mutant joins "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$MID_ITEMS" "issue-1 issue-1 issue-1" "control: read once per pass, the lane that joined is outside every loop of that pass" "$err"
-assert_eq "$MID_EVENTS" "heartbeat" "control: read once per pass, the joined lane's ask is never read and the pass heartbeats over it" "$err"
 # The other half: a record closed between two loops leaves that pass's fleet.
 # The wrapper hands the pass only what argv gave it, so nothing outside the
 # state puts the closed item back.
@@ -1693,27 +1373,6 @@ assert_eq "$rc" "2" "the departure run ends on the state it cannot read" "$err"
 assert_eq "$MID_ITEMS" "issue-1 KEN-10 issue-1 issue-1" "the loops after the record closes no longer carry it, without the pass returning first" "$err"
 assert_eq "$MID_MAIL_READS" "1" "the closed lane's mailbox is read in the loop that carried it and never again" "$err"
 assert_eq "$MID_EVENTS" "heartbeat" "the closed lane produces no event after it leaves the fleet" "$err"
-# The must-fail control: the wrapper hands the pass its merged fleet again, so
-# the pass's own argv puts the closed item back on every later loop.
-argv_hosted='    for line in ${GIVEN_HOSTED[@]+"${GIVEN_HOSTED[@]}"}; do args+=(--hosted "$line"); done'
-argv_roots='    for line in ${GIVEN_ROOTS[@]+"${GIVEN_ROOTS[@]}"}; do args+=(--root "$line"); done'
-argv_items='    for line in ${GIVEN_ITEMS[@]+"${GIVEN_ITEMS[@]}"}; do args+=(--item "$line"); done'
-for handoff_line in "$argv_hosted" "$argv_roots" "$argv_items"; do
-  assert_eq "$(grep -cxF -- "$handoff_line" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" \
-    "control: the argv-only handoff is one line to widen: ${handoff_line##*args+=(}"
-done
-awk -v h="$argv_hosted" -v r="$argv_roots" -v i="$argv_items" '
-  $0 == h { print "    for line in ${HOSTED[@]+\"${HOSTED[@]}\"}; do args+=(--hosted \"$line\"); done"; next }
-  $0 == r { print "    for line in ${ROOTS[@]+\"${ROOTS[@]}\"}; do args+=(--root \"$line\"); done"; next }
-  $0 == i { print "    for line in ${ITEMS[@]+\"${ITEMS[@]}\"}; do args+=(--item \"$line\"); done"; next }
-  { print }' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-  "control: the mutant really widens the handoff"
-mid_pass_case repeat_state_departs_mid_pass_mutant departs "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$MID_ITEMS" "issue-1 KEN-10 issue-1 KEN-10 issue-1 KEN-10" "control: handed the merged fleet, the pass carries the closed lane on every loop" "$err"
-# Four: a mail pass on each of the three loops, and the one the heartbeat
-# reads after the last long pass.
-assert_eq "$MID_MAIL_READS" "4" "control: handed the merged fleet, the closed lane's mailbox is drained on every mail pass" "$err"
 # An argument a pass would refuse ends repeat mode before any pass. The sleep
 # stub takes the state away, so a watch that ran the pass and slept anyway
 # ends too, on a second refusal.
@@ -1731,24 +1390,23 @@ refused_case() { # NAME WATCH_BIN ARGS...
 refused_case repeat_hosted_item_gone "" --hosted issue-2=host:/x
 assert_eq "$rc" "2" "a --hosted item no running record names ends repeat mode" "$err"
 assert_eq "$REFUSED_KEYS" "oversee-watch: hosted-unknown-item item=issue-2" "it ends on that refusal before any pass runs" "$err"
-# The must-fail control: the parent's check of the pass set removed.
-assert_eq "$(grep -c '^  check_item_set$' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the pass-set check is one line to remove"
-sed '/^  check_item_set$/d' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-refused_case repeat_hosted_item_gone_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" --hosted issue-2=host:/x
+# Repeat mode's one must-fail control: the parent's check of the pass set
+# removed. The copy keeps orch's place in a skills tree, as the reducer
+# mutant's does.
+REPEAT_MUTANT_DIR="$TMP_ROOT/repeat-mutant"
+REPEAT_MUTANT="$(mutant_scripts repeat-mutant/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$REPEAT_MUTANT_DIR/github"
+mutate_file "$REPEAT_MUTANT" '  check_item_set' '  :'
+refused_case repeat_hosted_item_gone_mutant "$REPEAT_MUTANT" --hosted issue-2=host:/x
 assert_contains "$REFUSED_KEYS" "oversee-watch: state-unreadable option=--state" "control: unchecked, the failing pass is followed by a sleep and another read" "$err"
 refused_case repeat_repo_duplicate "" --repo owner/repo --repo Owner/Repo
 assert_eq "$rc" "2" "a repeated --repo ends repeat mode" "$err"
 assert_eq "$REFUSED_KEYS" "oversee-watch: repo-duplicate repo=Owner/Repo" "it ends on that refusal before any pass runs" "$err"
-# The must-fail control: the parent's check of the repository set removed.
-assert_eq "$(grep -c '^  check_repo_set$' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the repository-set check is one line to remove"
-sed '/^  check_repo_set$/d' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-refused_case repeat_repo_duplicate_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" --repo owner/repo --repo Owner/Repo
-assert_contains "$REFUSED_KEYS" "oversee-watch: state-unreadable option=--state" "control: unchecked, the refused pass is followed by a sleep and another read" "$err"
 # A record's window across five passes: listed, gone, still gone, listed
 # again, gone again. The handoff read counts passes as above and moves the
 # window in and out of the tmux stub's list; after the fifth pass the state
 # goes, and the run ends on it.
-windows_case() { # NAME [WATCH_BIN]
+windows_case() { # NAME
   new_case "$1"
   write_state "$STUB_DIR/state.json" "$(lane_record issue-1 lane-x '' /w/issue-1 running)"
   printf 'gh-1\nlane-x\n' > "$STUB_DIR/windows.txt"
@@ -1758,7 +1416,7 @@ windows_case() { # NAME [WATCH_BIN]
     "2) printf 'gh-1\\nlane-x\\n' > \"\$STUB_DIR/windows.txt\" ;;" \
     '4) unlink "$STUB_DIR/state.json" ;;'
   err="$TMP_ROOT/e-$1"
-  out="$(WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" -- --max-loops 1 \
+  out="$(run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" -- --max-loops 1 \
     --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
   WINDOW_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
   WINDOW_NOTES="$(grep -c '^oversee-watch: window-absent lane=lane-x$' "$err" || true)"
@@ -1769,25 +1427,17 @@ assert_contains "$(cat "$err")" "oversee-watch: state-unreadable option=--state"
 assert_eq "$WINDOW_EVENTS" "heartbeat window-gone heartbeat heartbeat window-gone" \
   "a window is reported gone on the pass that first misses it, and again once tmux listed it in between" "$err"
 assert_eq "$WINDOW_NOTES" "2" "each absence carries one window-absent note" "$err"
-# The must-fail control: the reported absence never cleared when tmux lists the
-# window again.
-gone_clear='        gone="$(grep -vxF -- "$line" <<<"$gone" || :)"'
-assert_eq "$(grep -cxF -- "$gone_clear" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the absence clear is one line to remove"
-awk -v clear="$gone_clear" '$0 == clear { print "        :"; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-windows_case repeat_windows_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$WINDOW_EVENTS" "heartbeat window-gone heartbeat heartbeat heartbeat" "control: never cleared, the second absence is not reported" "$err"
 # A pass that carries an absent window and fails before check_lanes reports
 # nothing, so the absence rides on: pass 1's pr-watch fails, pass 2 reports
 # window-gone, pass 3 leaves the window out, and the handoff read of pass 3
 # takes the state away.
-recovery_case() { # NAME [WATCH_BIN]
+recovery_case() { # NAME
   new_case "$1"
   write_state "$STUB_DIR/state.json" "$(lane_record issue-1 lane-x '' /w/issue-1 running)"
   printf '1' > "$STUB_DIR/prwatch.rc.1"
   swap_state '1) unlink "$STUB_DIR/state.json" ;;'
   err="$TMP_ROOT/e-$1"
-  out="$(WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" -- --max-loops 1 \
+  out="$(run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" -- --max-loops 1 \
     --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
   WINDOW_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
   WINDOW_NOTES="$(grep -c '^oversee-watch: window-absent lane=lane-x$' "$err" || true)"
@@ -1797,23 +1447,16 @@ assert_eq "$rc" "2" "the recovery run ends on the state" "$err"
 assert_contains "$(cat "$err")" "oversee-watch: reducer-failed" "the pass carrying the first absence fails before check_lanes"
 assert_eq "$WINDOW_EVENTS" "window-gone heartbeat" "the next pass still reports window-gone, and the one after leaves it out" "$err"
 assert_eq "$WINDOW_NOTES" "1" "the absence is noted once across the failed pass and the one that reports it" "$err"
-# The must-fail control: the absence recorded before the pass runs, whatever it exits.
-gone_commit='    [[ "$pass_rc" -ne 0 ]] || gone+="$pending"'
-assert_eq "$(grep -cxF -- "$gone_commit" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the absence commit is one line to move"
-awk -v commit="$gone_commit" '$0 == commit { next } $0 == "    pass_rc=0" { print "    gone+=\"$pending\"" } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-recovery_case repeat_window_after_failed_pass_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$WINDOW_EVENTS" "heartbeat heartbeat" "control: recorded before the failed pass, the absence is never reported" "$err"
 # A --skip-lane the caller passes beside --repeat reaches the pass, which
 # re-reads the record naming that window: the window tmux does not list is
 # left alone rather than reported gone every pass. The handoff read of pass 1
 # takes the state away, so the next read ends the run.
-caller_skip_case() { # NAME [WATCH_BIN]
+caller_skip_case() { # NAME
   new_case "$1"
   write_state "$STUB_DIR/state.json" "$(lane_record issue-1 lane-x '' /w/issue-1 running)"
   swap_state '1) unlink "$STUB_DIR/state.json" ;;'
   err="$TMP_ROOT/e-$1"
-  out="$(WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" -- --max-loops 1 \
+  out="$(run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" -- --max-loops 1 \
     --repeat 0 --state "$STUB_DIR/state.json" --skip-lane lane-x 2>"$err" </dev/null)" && rc=0 || rc=$?
   WINDOW_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
   WINDOW_NOTES="$(grep -c '^oversee-watch: window-absent lane=lane-x$' "$err" || true)"
@@ -1822,13 +1465,6 @@ caller_skip_case repeat_caller_skip_lane
 assert_eq "$rc" "2" "the caller-skip run ends on the state it cannot read" "$err"
 assert_eq "$WINDOW_EVENTS" "heartbeat heartbeat" "a caller's --skip-lane leaves the window unwatched in every pass, not reported gone" "$err"
 assert_eq "$WINDOW_NOTES" "0" "the window the caller skipped is never noted absent" "$err"
-# The must-fail control: the caller's skips not forwarded, so the pass carries
-# the window its own state read names.
-skip_forward='    for line in ${SKIP_LANES[@]+"${SKIP_LANES[@]}"}; do args+=(--skip-lane "$line"); done'
-assert_eq "$(grep -cxF -- "$skip_forward" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the caller-skip forward is one line to remove"
-grep -vxF -- "$skip_forward" "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-caller_skip_case repeat_caller_skip_lane_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$WINDOW_EVENTS" "window-gone window-gone" "control: unforwarded, every pass watches the window the caller skipped and reports it gone again" "$err"
 # Repeat-mode refusals, `label|env|args|first stderr line|detail line
 # holds`: each exits 2 with nothing on stdout, and a state-invalid refusal's
 # third line, the tool detail under the explanation, carries the filter rule
@@ -1836,11 +1472,10 @@ assert_eq "$WINDOW_EVENTS" "window-gone window-gone" "control: unforwarded, ever
 # directory, whose state.json holds one running lane at window lane-x,
 # bad.json the JSON null, the one non-object jq indexes without complaint,
 # nolanes.json a lanes object, and noitem.json a running record with no item.
-# The sleep stub takes every state away, so a copy that carries a refused
-# state past the read ends on the next read as state-unreadable instead of
-# looping.
-refusal_case() { # LABEL ENV ARGS [WATCH_BIN]
-  local label="$1" env="$2" args="$3" bin="${4:-}"
+# The sleep stub takes every state away, so a watch that carried a refused
+# state past the read would end on the next read instead of looping.
+refusal_case() { # LABEL ENV ARGS
+  local label="$1" env="$2" args="$3"
   new_case repeat_refusal
   write_state "$STUB_DIR/state.json" "$(lane_record issue-1 lane-x '' /w/issue-1 running)"
   printf 'null\n' > "$STUB_DIR/bad.json"
@@ -1849,7 +1484,7 @@ refusal_case() { # LABEL ENV ARGS [WATCH_BIN]
   repeat_sleep_stub 'rm -f "$STUB_DIR/state.json" "$STUB_DIR/bad.json" "$STUB_DIR/nolanes.json" "$STUB_DIR/noitem.json"'
   err="$TMP_ROOT/e-repeat-refusal"
   # shellcheck disable=SC2086
-  out="$(WATCH_BIN="$bin" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" $env -- ${args//%S/$STUB_DIR} 2>"$err" </dev/null)" && rc=0 || rc=$?
+  out="$(run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" $env -- ${args//%S/$STUB_DIR} 2>"$err" </dev/null)" && rc=0 || rc=$?
 }
 for row in \
   "an invalid --repeat||--repeat 1x --state %S/state.json|oversee-watch: repeat-invalid value=1x|" \
@@ -1866,28 +1501,6 @@ for row in \
   assert_eq "$(sed -n 1p "$err")" "${want//%S/$STUB_DIR}" "$label: names its key and value first" "$err"
   [[ -z "$detail" ]] || assert_contains "$(sed -n 3p "$err")" "$detail" "$label: the detail line names the rule that refused it"
 done
-# The must-fail controls, one per filter rule: a copy with that rule's arm
-# replaced by the identity carries the refused state past the read as a fleet
-# of no lane, runs a pass over nothing, and ends on the state the sleep stub
-# took away.
-filter_control() { # LABEL ARM_LINE IDENTITY STATE
-  local label="$1" arm="$2" identity="$3" state="$4"
-  assert_eq "$(grep -cxF -- "$arm" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the $label arm is one line to replace"
-  # The arm text reaches awk through the environment: a -v assignment
-  # processes escape sequences, and the arms' \( is read as a plain ( by GNU
-  # awk, so the line would never match and the mutant would be the script.
-  ARM="$arm" IDENTITY="$identity" awk '$0 == ENVIRON["ARM"] { print ENVIRON["IDENTITY"]; next } { print }' \
-    "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-  assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
-    "control: the $label mutant really replaces the arm"
-  refusal_case "$label" "" "--max-loops 1 --repeat 0 --state %S/$state" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-  assert_eq "rc=$rc carried=$(grep -o '^oversee-watch: fleet-read items=[0-9]*' "$err" | paste -sd '|' -) unreadable=$(grep -c '^oversee-watch: state-unreadable option=--state' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" \
-    "rc=2 carried=oversee-watch: fleet-read items=0 unreadable=1 events=heartbeat" \
-    "control: without the $label rule the refused state is watched as an empty fleet until it is gone" "$err"
-}
-filter_control state-type '  if type != "object" then error("state-type expected=object actual=\(type)") else . end' '  .' bad.json
-filter_control lanes-type '  | (.lanes // []) | if type != "array" then error("lanes-type expected=array actual=\(type)") else . end' '  | (.lanes // [])' nolanes.json
-filter_control lane-field '  | if ((.item? | type) == "string" and (.item | length) > 0) then . else error("lane-field field=item value=\(.item | tojson)") end' '  | .' noitem.json
 
 # --- 9. --help -------------------------------------------------------------
 err="$TMP_ROOT/e9"

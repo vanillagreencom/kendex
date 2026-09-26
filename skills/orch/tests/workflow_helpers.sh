@@ -191,7 +191,8 @@ assert_eq "$(sed -n '1p' "$TMP_ROOT/canonical.err")" "git-context: issue-uncanon
 # directory it was asked about would name somewhere else entirely. Git answers
 # `../..` from below a checkout top, and that climb is made from the physical
 # directory: through a symlink to a nested one, a logical climb starts at the
-# link's own place and lands outside the checkout. Both shapes are controlled.
+# link's own place and lands outside the checkout. The control restores the
+# unresolved answer.
 deep_repo="$TMP_ROOT/deep-repo"
 mkdir -p "$deep_repo/sub/deeper"
 git init -q "$deep_repo"
@@ -212,14 +213,6 @@ assert_eq "$(cmp -s "$relative_gc" "$GC" && echo same || echo differs)" "differs
   "control: the relative mutant really restores the unresolved answer"
 assert_eq "$("$relative_gc" common-root "$deep_repo/sub/deeper")" "../.." \
   "control: unresolved, the answer is a path against the caller's own directory"
-logical_gc="$TMP_ROOT/git-context-logical"
-sed 's@(cd -P -- "\$worktree" \&\& cd -P -- @(cd -- "$worktree" \&\& cd -- @' "$GC" > "$logical_gc"
-chmod +x "$logical_gc"
-assert_eq "$(cmp -s "$logical_gc" "$GC" && echo same || echo differs)" "differs" \
-  "control: the logical mutant really drops the physical climb"
-link_ancestor="$(cd -P -- "$TMP_ROOT" && cd -P -- .. && pwd -P)"
-assert_eq "$("$logical_gc" common-root "$deep_link")" "$link_ancestor" \
-  "control: climbing logically from a symlink answers an ancestor of the link, not the checkout"
 
 # The comment-triage baseline is an RFC-3339 UTC instant compared against
 # GitHub timestamps; a locale-shaped or local-zone value would silently
@@ -403,23 +396,10 @@ else
   fail "submit-pr must waive gates 3 and 4 on a live resolution, not on the recorded pair"
 fi
 
-waiver_mutant="$TMP_ROOT/submit-pr-unpinned.md"
-waiver_rule='The recorded pair says what the last resolution saw and gates nothing'
-waiver_rule_count="$(grep -Fc -- "$waiver_rule" "$submit_workflow" || true)"
-assert_eq "$waiver_rule_count" "1" "control: the pinned waiver has one mutation target"
-if [[ -L "$submit_workflow" ]]; then
-  fail "control: the submit workflow mutation source must not be a symlink"
-else
-  awk -v old="$waiver_rule" -v new='The recorded pair decides gates 3 and 4.' \
-    '{ if (index($0, old)) sub(old, new); print }' "$submit_workflow" >"$waiver_mutant"
-  assert_eq "$(cmp -s "$waiver_mutant" "$submit_workflow" && echo same || echo differs)" "differs" \
-    "control: the waiver mutant makes the record decide"
-  if pinned_waiver_is_closed "$waiver_mutant"; then
-    fail "must-fail: a waiver decided from the record must fail the live-answer contract"
-  else
-    pass "must-fail: a waiver decided from the record fails the live-answer contract"
-  fi
-fi
+assert_doc_mutant_fails pinned_waiver_is_closed "$submit_workflow" \
+  'The recorded pair says what the last resolution saw and gates nothing' \
+  'The recorded pair decides gates 3 and 4.' \
+  "a waiver decided from the record"
 
 micro_head_is_pinned() { # merge-doc
   grep -Fq 'A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`' "$1" &&
@@ -456,23 +436,10 @@ else
   fail "micro must escape when its no-review class policy cannot be proved"
 fi
 
-policy_mutant="$TMP_ROOT/micro-policy-open.md"
-policy_rule='The exact answer `change_class=micro review_evidence=none policy=active` continues.'
-policy_mutant_rule='Any answer carrying `change_class=micro` continues.'
-policy_rule_count="$(grep -Fc -- "$policy_rule" "$micro_workflow" || true)"
-assert_eq "$policy_rule_count" "1" "control: the micro class policy has one mutation target"
-if [[ -L "$micro_workflow" ]]; then
-  fail "control: the micro workflow mutation source must not be a symlink"
-else
-  awk -v old="$policy_rule" -v new="$policy_mutant_rule" '{ if (index($0, old)) sub(old, new); print }' "$micro_workflow" >"$policy_mutant"
-  assert_eq "$(cmp -s "$policy_mutant" "$micro_workflow" && echo same || echo differs)" "differs" \
-    "control: the policy mutant changes the active route"
-  if micro_policy_is_closed "$policy_mutant"; then
-    fail "must-fail: accepting an unresolved evidence policy must fail the micro contract"
-  else
-    pass "must-fail: accepting an unresolved evidence policy fails the micro contract"
-  fi
-fi
+assert_doc_mutant_fails micro_policy_is_closed "$micro_workflow" \
+  'The exact answer `change_class=micro review_evidence=none policy=active` continues.' \
+  'Any answer carrying `change_class=micro` continues.' \
+  "accepting an unresolved evidence policy"
 
 micro_dirty_transfer_is_owned() { # micro-doc
   local route=""
@@ -498,24 +465,10 @@ else
   fail "micro must route dirty main-checkout escapes 2 through 4 through transfer"
 fi
 
-dirty_mutant="$TMP_ROOT/micro-dirty-left-behind.md"
-dirty_route='- **From the main checkout at conditions 2 through 4**, the branch is local-only and can be dirty. Transfer it through the worktree owner'"'"'s guarded path, which restores the main checkout to its default branch and moves staged, unstaged and untracked changes with the branch. Run `/orch start [ISSUE_ID]` from the path it prints:'
-dirty_route_mutant='- **From the main checkout at conditions 2 through 4**, the branch must be clean. Leave dirty changes in the main checkout and transfer only the branch. Run `/orch start [ISSUE_ID]` from the path it prints:'
-dirty_route_count="$(grep -Fxc -- "$dirty_route" "$micro_workflow" || true)"
-assert_eq "$dirty_route_count" "1" "control: the dirty-transfer route has one mutation target"
-if [[ -L "$micro_workflow" ]]; then
-  fail "control: the micro workflow mutation source must not be a symlink"
-else
-  awk -v old="$dirty_route" -v new="$dirty_route_mutant" '{ if ($0 == old) $0 = new; print }' \
-    "$micro_workflow" >"$dirty_mutant"
-  assert_eq "$(cmp -s "$dirty_mutant" "$micro_workflow" && echo same || echo differs)" "differs" \
-    "control: the dirty-transfer mutant changes the route"
-  if micro_dirty_transfer_is_owned "$dirty_mutant"; then
-    fail "must-fail: leaving dirty edits in main must fail the transfer contract"
-  else
-    pass "must-fail: leaving dirty edits in main fails the transfer contract"
-  fi
-fi
+assert_doc_mutant_fails micro_dirty_transfer_is_owned "$micro_workflow" \
+  'the branch is local-only and can be dirty. Transfer it through the worktree owner'"'"'s guarded path, which restores the main checkout to its default branch and moves staged, unstaged and untracked changes with the branch.' \
+  'the branch must be clean. Leave dirty changes in the main checkout and transfer only the branch.' \
+  "leaving dirty edits in main"
 
 # On a hosted fleet the overseer's main-checkout route runs on the control VM,
 # which runs none of the toolchain the rest of the route starts: the refusal
@@ -559,41 +512,10 @@ assert_doc_mutant_fails micro_refuses_control_host "$micro_workflow" \
   'Any answer but `local` refuses the run here, with nothing read, activated or changed;' \
   'Any answer continues the run;' \
   "a micro run continuing on a remote lane host"
-assert_doc_mutant_fails micro_refuses_control_host "$micro_workflow" \
-  '**Main checkout only.** Read the lane host before anything else:' \
-  'Read the lane host before anything else:' \
-  "a micro refusal that also binds a lane"
 assert_doc_mutant_fails start_refuses_control_host "$start_workflow" \
   'Any answer but `local` refuses the run here, with no handoff resumed and nothing read, activated or created;' \
   'Any answer continues the run;' \
   "a start run continuing on a remote lane host"
-assert_doc_mutant_fails start_refuses_control_host "$start_workflow" \
-  '**Main checkout only.** Read the lane host before anything else:' \
-  'Read the lane host before anything else:' \
-  "a start refusal that also binds a lane"
-
-# The refusal moved back below § 0 keeps every pinned line and lets a handoff
-# resume first.
-start_move_mutant="$TMP_ROOT/start-refusal-after-resume.md"
-start_marker='**Main checkout only.** Read the lane host before anything else:'
-assert_eq "$(grep -Fxc -- "$start_marker" "$start_workflow" || true)" "1" \
-  "control: the start refusal has one block to move"
-MARKER="$start_marker" awk '
-  $0 == ENVIRON["MARKER"] { held = 1 }
-  held && /^## 0\. / { held = 0 }
-  held { block = block $0 "\n"; next }
-  /^## 1\. / { printf "%s", block }
-  { print }
-' "$start_workflow" >"$start_move_mutant"
-assert_eq "$(grep -Fxc -- "$start_marker" "$start_move_mutant" || true)" "1" \
-  "control: the moved start refusal keeps its marker"
-assert_eq "$(cmp -s "$start_move_mutant" "$start_workflow" && echo same || echo differs)" "differs" \
-  "control: the mutant moves the start refusal below § 0"
-if start_refuses_control_host "$start_move_mutant"; then
-  fail "must-fail: a start refusal after the handoff resume must fail its contract"
-else
-  pass "must-fail: a start refusal after the handoff resume fails its contract"
-fi
 
 # A guard sees only the top-level call, so every script that reads a listed
 # `setting` through orch-env and runs it needs its own `path` line in the

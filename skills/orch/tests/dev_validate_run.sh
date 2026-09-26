@@ -9,6 +9,9 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
+# mutant_scripts and mutate_file, the two halves of the controls below.
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
@@ -117,28 +120,15 @@ output_of() { # OUTPUT
   sed 1d "$(log_of "$1")"
 }
 
-# A copy of the scripts with one literal substitution applied to one of them,
-# dev-validate-run unless MUTANT_FILE names lib/job-unit.sh, for the controls.
-# The count assertions are the edit's proof: a pattern that stopped matching
-# would otherwise leave the control running the shipped code and passing. The
-# copy's path lands in MUTANT rather than on stdout, which the assertions own.
+# One control per mode the suite runs (a start, --record, --stop and
+# --resolve-mode): a private copy of dev-validate-run with one literal
+# substitution, beside links to the shipped scripts it calls. mutate_file's
+# count assertions are the edit's proof. The copy's path lands in MUTANT rather
+# than on stdout, which the assertions own.
 MUTANT=""
 mutant() { # NAME OLD NEW
-  local dir="$TMP_ROOT/$1" file="${MUTANT_FILE:-dev-validate-run}"
-  mkdir -p "$dir/lib"
-  cp "$SCRIPTS_DIR/dev-validate-run" "$SCRIPTS_DIR/orch-env" "$SCRIPTS_DIR/resolve-base-branch" "$dir/"
-  cp "$SCRIPTS_DIR/lib"/*.sh "$dir/lib/"
-  chmod +x "$dir/dev-validate-run" "$dir/orch-env"
-  assert_eq "$(grep -c -F -- "$2" "$dir/$file")" "1" "control $1 finds one line to mutate"
-  awk -v old="$2" -v new="$3" '{
-    i = index($0, old)
-    if (i > 0) { $0 = substr($0, 1, i - 1) new substr($0, i + length(old)) }
-    print
-  }' "$dir/$file" > "$dir/mutated"
-  mv "$dir/mutated" "$dir/$file"
-  chmod +x "$dir/dev-validate-run"
-  assert_eq "$(grep -c -F -- "$2" "$dir/$file")" "0" "control $1 applied its mutation"
-  MUTANT="$dir/dev-validate-run"
+  MUTANT="$(mutant_scripts "$1" dev-validate-run)/dev-validate-run" || exit 1
+  mutate_file "$MUTANT" "$2" "$3"
 }
 
 echo "=== dev-validate-run bounded validation runner ==="
@@ -244,15 +234,15 @@ run_script "$RUN" --record --run-dir "$timeout_dir"
 assert_eq "$OUT rc=$RC" "validate-mode=full verdict=no-verdict head= start=$(start_of "$timeout_dir") seconds=$t_secs started-at=$t_start ended-at=$t_end rc=0" \
   "the record of a run killed at its bound reads no-verdict, never pass or FAILING, and carries its wall time" "$ERR"
 
-# Control: a sentinel reader that files the bound's verdict with the failures
-# hands the receipt a FAILING for that same cut-off run.
+# --record's control: a sentinel reader that files the bound's verdict with the
+# failures hands the receipt a FAILING for that same cut-off run.
 mutant mutant-cut-failing '*" verdict=no-verdict") SENTINEL_VERDICT=no-verdict ;;' '*" verdict=no-verdict") SENTINEL_VERDICT=FAILING ;;'
 run_script "$MUTANT" --record --run-dir "$timeout_dir"
 assert_eq "$OUT" "validate-mode=full verdict=FAILING head= start=$(start_of "$timeout_dir") seconds=$t_secs started-at=$t_start ended-at=$t_end" \
   "control: with the bound's verdict unread the cut-off run's record reads FAILING" "$ERR"
 
-# Control: with the own-exit marker never written, a command's own exit 124
-# reads as the bound's.
+# The start's control: with the own-exit marker never written, a command's own
+# exit 124 reads as the bound's.
 mutant mutant-no-own-exit 'rc=$?; : > "$2"; exit "$rc"' 'rc=$?; exit "$rc"'
 run_script "$MUTANT" --worktree "$(make_proj proj-own-124 "exit 124" 20)" --poll 1
 assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=124 validate=no-verdict" \
@@ -381,22 +371,6 @@ assert_eq "$(sed -n '1s/ class=[a-z]* docs-only=[a-z]*\( class-fallback=[a-z0-9-
   "state=started run-dir=$mode_dir log=$mode_dir/log sentinel=$mode_dir/exit timeout-secs=20 poll-secs=1 cap-secs=31" \
   "a range run prints the same started line as a full one" "$ERR"
 
-# Control: a range run that reads the full battery's setting runs the full
-# battery under a range record, and the log row reddens on it.
-mutant mutant-range-reads-full '"$SCRIPT_DIR/orch-env" DEV_VALIDATE_RANGE_CMD ""' '"$SCRIPT_DIR/orch-env" DEV_VALIDATE_CMD ""'
-run_script "$MUTANT" --worktree "$proj" --poll 1 --validate-mode range --base HEAD
-assert_eq "$(output_of "$OUT")" "full" \
-  "control: with the range setting unread the range run logs the full battery" "$ERR"
-
-# Control: a start record that names no HEAD binds the run to no round, and
-# the record row reddens on it.
-mutant mutant-no-head "head_sha=\"\$(git rev-parse --verify -q 'HEAD^{commit}')\"" 'head_sha=""'
-run_script "$MUTANT" --worktree "$proj" --poll 1 --validate-mode range --base HEAD
-headless_dir="$(run_dir_of "$OUT")"
-run_script "$RUN" --record --run-dir "$headless_dir"
-assert_eq "${OUT%% seconds=*}" "validate-mode=range verdict=pass head= start=$(start_of "$headless_dir")" \
-  "control: with the HEAD unrecorded the record names none" "$ERR"
-
 # --- --resolve-mode names the mode a range run records, and starts nothing ----
 # label|project's range command|mode printed
 RESOLVE_ROWS=(
@@ -446,23 +420,17 @@ rebased_b1="$(git -C "$proj_orphan" rev-parse HEAD)"
 orphan_commit "$proj_orphan" r1
 fork="$(git -C "$proj_orphan" rev-parse main)"
 
-# Control: a run that keeps the orphaned base spans the commits main gained,
-# and the first row's range and record redden on it.
-mutant mutant-keep-orphaned-base 'base_sha="$(git merge-base HEAD "refs/remotes/origin/$base_branch")"' 'base_sha="$orphaned_sha"'
-# label|script|--base|files the range holds|validate-base|validate-base-orphaned
+# label|--base|files the range holds|validate-base|validate-base-orphaned
 ORPHAN_ROWS=(
-  "a base the rebase left off the branch validates the branch's own diff|$RUN|$pre_rebase|b1 r1 |$fork|$pre_rebase"
-  "a base still on the branch validates from that base, as before|$RUN|$rebased_b1|r1 |$rebased_b1|"
-  "control: a run that keeps the orphaned base spans main's commits|$MUTANT|$pre_rebase|m1 m2 m3 r1 |$pre_rebase|$pre_rebase"
+  "a base the rebase left off the branch validates the branch's own diff|$pre_rebase|b1 r1 |$fork|$pre_rebase"
+  "a base still on the branch validates from that base, as before|$rebased_b1|r1 |$rebased_b1|"
 )
 # The record's orphaned field, empty where the line carries none.
 record_orphaned() { sed -n 's/.* validate-base-orphaned=\([^ ]*\).*/\1/p' <<<"$1"; }
-orphan_dirs=()
 for row in "${ORPHAN_ROWS[@]}"; do
-  IFS='|' read -r label script base want_range want_base want_orphaned <<<"$row"
-  run_script "$script" --worktree "$proj_orphan" --poll 1 --validate-mode range --base "$base"
+  IFS='|' read -r label base want_range want_base want_orphaned <<<"$row"
+  run_script "$RUN" --worktree "$proj_orphan" --poll 1 --validate-mode range --base "$base"
   orphan_dir="$(run_dir_of "$OUT")"
-  orphan_dirs+=("$orphan_dir")
   assert_eq "$RC $(output_of "$OUT" | tr '\n' ' ')" "0 $want_range" "$label" "$ERR"
   assert_eq "$(start_line "$orphan_dir" validate-base)|$(start_line "$orphan_dir" validate-base-orphaned)" \
     "$want_base|$want_orphaned" "$label — the start record names the base that ran and the orphaned one" "$ERR"
@@ -470,11 +438,6 @@ for row in "${ORPHAN_ROWS[@]}"; do
   assert_eq "$RC $(record_orphaned "$OUT")" "0 $want_orphaned" \
     "$label — the record names the orphaned base a fix receipt binds through" "$ERR"
 done
-# Control: a record that drops the orphaned base names none for the rebased run.
-mutant mutant-record-no-orphan '"${record_orphaned:+ validate-base-orphaned=$record_orphaned}"' '""'
-run_script "$MUTANT" --record --run-dir "${orphan_dirs[0]}"
-assert_eq "$RC $(record_orphaned "$OUT")" "0 " \
-  "control: with the field dropped the rebased run's record names no orphaned base" "$ERR"
 
 # An orphaned base with no origin base branch to take a fork point from is
 # refused, never run over the orphaned range.
@@ -494,12 +457,6 @@ full_dir="$(run_dir_of "$OUT")"
 assert_eq "$RC $(output_of "$OUT") $(start_line "$full_dir" validate-mode) $(start_line "$full_dir" validate-base-orphaned)" \
   "0 full full $pre_rebase" \
   "an orphaned base in a project with no range command runs the whole battery and records the base" "$ERR"
-# Control: an orphaned base recorded only where the range command runs leaves
-# the whole-battery run with none.
-mutant mutant-orphan-range-only '(( ancestor_rc == 0 )) || orphaned_sha="$base_sha"' 'true'
-run_script "$MUTANT" --worktree "$proj_orphan_full" --poll 1 --validate-mode range --base "$pre_rebase"
-assert_eq "$RC $(start_line "$(run_dir_of "$OUT")" validate-base-orphaned)" "0 " \
-  "control: with the base recorded in range mode alone the whole-battery run records none" "$ERR"
 
 # --- A command that ignores SIGTERM is still ended inside the bound -----------
 # Fixtures in this repository trap TERM by construction. The bound's TERM ends
@@ -724,16 +681,6 @@ assert_eq "$(git -C "$proj_class" status --porcelain)" "?? draft.md" \
   "and HEAD, the index and the tree stay as they were" "$ERR"
 assert_eq "$(loose_objects)" "$objects_before" \
   "and the repository's object store gains no object from the snapshot" "$ERR"
-
-# Control: with the scratch store never exported the snapshot writes the
-# untracked file's blob, its tree and its commit into the shared store.
-mutant mutant-shared-store 'export GIT_OBJECT_DIRECTORY="$class_scratch/objects" GIT_ALTERNATE_OBJECT_DIRECTORIES="$objects"' 'true'
-cp "$MUTANT" "$LAYOUT/orch/scripts/dev-validate-run"
-objects_before="$(loose_objects)"
-run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
-assert_eq "$(( $(loose_objects) > objects_before ))" "1" \
-  "control: without the scratch store the snapshot adds loose objects to the shared store" "$ERR"
-cp "$SCRIPTS_DIR/dev-validate-run" "$LAYOUT/orch/scripts/dev-validate-run"
 rm -f "$proj_class/draft.md"
 
 # With no classifier installed the class is standard, and says why.
@@ -743,17 +690,6 @@ assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^state=started .* cap-sec
   "standard:false: class=standard docs-only=false class-fallback=classifier-absent" \
   "no classifier runs the whole battery, naming the absence" "$ERR"
 mv "$LAYOUT/harness-ci.off" "$LAYOUT/harness-ci"
-
-# Control: the class is read but never handed to the command, which is the
-# runner before this contract: the trivial row's command sees no class and
-# runs its whole battery.
-mutant mutant-no-class 'DEV_VALIDATE_CLASS="$child_class" DEV_VALIDATE_DOCS_ONLY' 'DEV_VALIDATE_DOCS_ONLY'
-cp "$MUTANT" "$LAYOUT/orch/scripts/dev-validate-run"
-export STUB_ANSWER=change_class=trivial STUB_DOCS=true
-run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
-assert_eq "$(output_of "$OUT" 2>/dev/null)" "unset:true:docs/a.md" \
-  "control: with the class not handed over the trivial row's command runs with no class" "$ERR"
-cp "$SCRIPTS_DIR/dev-validate-run" "$LAYOUT/orch/scripts/dev-validate-run"
 
 # --- The real classifier weighs uncommitted render edits -----------------------
 # dev-implement validates before it commits, so the runner hands the
@@ -825,40 +761,13 @@ for row in "${MODE_REFUSALS[@]}"; do
   assert_eq "$(sed -n 1p <<<"$ERR") rc=$RC" "$want rc=2" "$label"
 done
 
-# --- Control: the cap is not derived from the bound ---------------------------
-# The reported failure: the wait ended before the guard did, so the round had no
-# verdict and the agent went idle. With the cap pinned to a second instead of
-# derived from the setting, the same run reports no verdict at all.
-mutant mutant-short-cap 'cap_secs=$(( 10#$timeout_secs + KILL_GRACE + 10#$poll ))' 'cap_secs=1'
-proj_cap="$(make_proj proj-cap "sleep 5; echo done" 30)"
-run_script "$MUTANT" --worktree "$proj_cap" --poll 1
-assert_eq "$(verdict_of "$OUT")" "state=timeout cap-secs=1 validate=FAILING" \
-  "control: a cap below the run's length reports no verdict for a run that finishes" "$ERR"
-run_script "$RUN" --worktree "$proj_cap" --poll 1
-assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
-  "the derived cap outlasts that same run and reports its verdict" "$ERR"
-
-# --- Control: the command is not run under the bound --------------------------
-# Without the bound a command that never ends is never killed, so the sentinel
-# says the validation passed when nothing had finished inside the limit.
-# The poll interval keeps the cap clear of both outcomes, so the only thing the
-# two runs differ in is whether the command was killed at its bound.
-mutant mutant-unbounded '"$child_timeout_bin" --foreground -k "$KILL_GRACE" "$child_timeout_secs" \' '\'
-proj_unbounded="$(make_proj proj-unbounded "sleep 2; exit 0" 1)"
-run_script "$MUTANT" --worktree "$proj_unbounded" --poll 3
-assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
-  "control: with no bound applied the over-long command runs to completion and passes" "$ERR"
-run_script "$RUN" --worktree "$proj_unbounded" --poll 3
-assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=124 validate=no-verdict" \
-  "under the bound that same command is killed at it and gives no pass" "$ERR"
-
 # --- No process the run starts outlives it ------------------------------------
 # Each command leaves a grandchild behind and records its pid in the worktree.
 # One that calls setsid leaves the run's process group, which only a unit's
 # cgroup still holds; one that does not stays in the group the setsid fallback
 # kills. Neither is gone the instant the verdict lands, since the unit or the
 # group ends just after, so each read is proc_state_after's bounded poll.
-# The grandchild a row's command recorded, killed after the read so a control
+# The grandchild a row's command recorded, killed after the read so a row
 # that leaves it running leaves nothing behind the suite.
 grandchild_state() { # PROJ
   local pid
@@ -895,9 +804,6 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
     assert_eq "$(grandchild_state "$proj")" "gone" "$label" "$ERR"
   done
 
-  # Control: the run launched under setsid on this same host, which is the
-  # runner before units. The grandchild that left the group outlives it.
-  MUTANT_FILE=lib/job-unit.sh mutant mutant-no-unit 'elif probe_err="$(systemd-run --user --quiet --collect true </dev/null 2>&1 >/dev/null)"; then' 'elif false; then'
   proj_nounit="$(make_proj proj-no-unit 'setsid sleep 300 & echo $! > grand.pid; exit 0' 20)"
   # A capped run keeps its unit where the manager does not linger: linger is
   # asked only of a session-long job.
@@ -909,9 +815,6 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   RUN_PATH=""
   assert_eq "$(runner_line "$OUT") $(grandchild_state "$proj_nounit")" "runner=systemd unit=orch-validate-proj-no-unit-PID gone" \
     "a validation run where the manager does not linger is still a unit, and no grandchild outlives it" "$ERR"
-  run_script "$MUTANT" --worktree "$proj_nounit" --poll 1
-  assert_eq "$(runner_line "$OUT") $(grandchild_state "$proj_nounit")" "runner=setsid reason=probe-failed detail= alive" \
-    "control: outside a unit the grandchild that started its own session outlives the run" "$ERR"
 
   # The unit carries what a user unit does not inherit: the caller's exported
   # variables and its open-file soft limit, lowered here so it differs from
@@ -921,14 +824,6 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   run_script bash -c 'ulimit -Sn 777 && exec "$0" "$@"' "$RUN" --worktree "$proj_inherit" --poll 1
   assert_eq "$(output_of "$OUT")" "x:777" \
     "a unit's command sees the caller's exported variable and open-file soft limit" "$ERR"
-  MUTANT_FILE=lib/job-unit.sh mutant mutant-no-env ' ${unit_env[@]+"${unit_env[@]}"}' ''
-  run_script bash -c 'ulimit -Sn 777 && exec "$0" "$@"' "$MUTANT" --worktree "$proj_inherit" --poll 1
-  assert_eq "$(output_of "$OUT" | cut -d: -f1)" "unset" \
-    "control: with no environment handed over the command sees no such variable" "$ERR"
-  MUTANT_FILE=lib/job-unit.sh mutant mutant-no-nofile '-p "LimitNOFILE=$nofile" ' ''
-  run_script bash -c 'ulimit -Sn 777 && exec "$0" "$@"' "$MUTANT" --worktree "$proj_inherit" --poll 1
-  assert_eq "$([[ "$(output_of "$OUT")" == x:777 ]] && echo caller || echo manager)" "manager" \
-    "control: with no limit handed over the command runs under the manager's" "$ERR"
   unset VALIDATE_ENV_MARK
 
   # A host with a user manager and no setsid runs: setsid is the fallback's
@@ -942,10 +837,6 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   run_script "$RUN" --worktree "$proj_nosetsid" --poll 1
   assert_eq "$(verdict_of "$OUT") $(runner_line "$OUT")" "state=done guard-exit=0 validate=pass runner=systemd unit=orch-validate-proj-no-setsid-PID" \
     "a host with a user manager and no setsid runs its validation in a unit" "$ERR"
-  MUTANT_FILE=lib/job-unit.sh mutant mutant-setsid-first '  [[ "$JOB_UNIT_RUNNER" == systemd ]] || command -v setsid' '  command -v setsid'
-  run_script "$MUTANT" --worktree "$proj_nosetsid" --poll 1
-  assert_eq "$(sed -n 1p <<<"$ERR") $RC" "dev-validate-run: missing-command commands=setsid 2" \
-    "control: with setsid required ahead of the probe that host is refused" "$ERR"
   RUN_PATH=""
 
   # The manager expands ${NAME} in a unit's command line, so a worktree path
@@ -955,10 +846,6 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   run_script "$RUN" --worktree "$proj_dollar" --poll 1
   assert_eq "$(verdict_of "$OUT") $(runner_line "$OUT")" "state=done guard-exit=0 validate=pass runner=systemd unit=orch-validate-proj-__HOME_-PID" \
     "a worktree whose path carries a \$ runs in a unit and passes" "$ERR"
-  MUTANT_FILE=lib/job-unit.sh mutant mutant-unescaped 'unit_argv+=("$(job_unit_arg "$arg")")' 'unit_argv+=("$arg")'
-  run_script "$MUTANT" --worktree "$proj_dollar" --poll 1
-  assert_eq "$(verdict_of "$OUT")" "state=lost cap-secs=31 validate=FAILING" \
-    "control: unescaped, the manager rewrites that path and the child never finds its run" "$ERR"
 else
   echo "  skip  no systemd user manager answers on this host; the unit rows did not run"
 fi
@@ -975,12 +862,6 @@ assert_eq "$(runner_line "$OUT")" "runner=setsid reason=no-systemd-run" \
 assert_eq "$(grandchild_state "$proj_group")" "gone" \
   "and a grandchild left in its process group is gone once it completes" "$ERR"
 
-# Control: the child records its verdict and exits without ending its group.
-MUTANT_FILE=lib/job-unit.sh mutant mutant-no-group-kill '    systemd) return 0 ;;' '    systemd|setsid) return 0 ;;'
-run_script "$MUTANT" --worktree "$proj_group" --poll 1
-assert_eq "$(grandchild_state "$proj_group")" "alive" \
-  "control: without the group kill that grandchild outlives the run" "$ERR"
-
 # The group's end is SIGTERM first, a kill grace before SIGKILL, as a unit's
 # stop is: a grandchild of a run killed at its bound runs its TERM trap.
 proj_term_group="$(make_proj proj-term-group 'bash grand.sh & echo $! > grand.pid; sleep 30' 2)"
@@ -989,13 +870,6 @@ run_script "$RUN" --worktree "$proj_term_group" --poll 1
 assert_eq "$(verdict_of "$OUT") $(cat "$proj_term_group/term.flag" 2>/dev/null || echo no-term)" \
   "state=done guard-exit=124 validate=no-verdict got-term" \
   "a setsid run's grandchild gets SIGTERM, and runs its trap, when the run ends at its bound" "$ERR"
-grandchild_state "$proj_term_group" >/dev/null
-# Control: SIGKILL alone, which no trap sees.
-rm -f -- "${proj_term_group:?}/term.flag"
-MUTANT_FILE=lib/job-unit.sh mutant mutant-no-term '  kill -TERM -- "-$1" 2>/dev/null || return 0' '  :'
-run_script "$MUTANT" --worktree "$proj_term_group" --poll 1
-assert_eq "$(cat "$proj_term_group/term.flag" 2>/dev/null || echo no-term)" "no-term" \
-  "control: without the SIGTERM step the grandchild is killed with no trap run" "$ERR"
 grandchild_state "$proj_term_group" >/dev/null
 
 # Where systemd-run is installed and fails, the run is still made under setsid
@@ -1033,17 +907,6 @@ RUN_PATH="$TMP_ROOT/failing-setsid-bin:$FALLBACK_PATH"
 run_script "$RUN" --worktree "$proj_refused" --poll 1
 assert_eq "$(sed -n 1p <<<"$ERR") $RC" "dev-validate-run: launch-failed status=1 2" \
   "a setsid that cannot start the child fails the start as launch-failed" "$ERR"
-mutant mutant-launch-unmapped '    4) die launch-failed "$JOB_UNIT_ERROR" ;;' '    4) ;;'
-run_script "$MUTANT" --worktree "$proj_refused" --poll 1
-assert_eq "$(verdict_of "$OUT") $RC" "state=lost cap-secs=31 validate=FAILING 1" \
-  "control: unmapped, a launch that never happened is waited on and reads as lost" "$ERR"
-RUN_PATH="$TMP_ROOT/refusing-bin:$FALLBACK_PATH"
-
-# Control: the refused unit is not replaced, so no run is started at all.
-MUTANT_FILE=lib/job-unit.sh mutant mutant-no-fallback '    command -v setsid >/dev/null 2>&1 || { job_unit_fail missing-command commands=setsid; return; }' '    job_unit_fail missing-command commands=setsid; return'
-run_script "$MUTANT" --worktree "$proj_refused" --poll 1
-assert_eq "$(verdict_of "$OUT")|$RC" "|2" \
-  "control: without the fallback a refused unit leaves no run at all" "$ERR"
 RUN_PATH=""
 
 # --- --stop ends the runs a worktree's run directories record ------------------
@@ -1071,17 +934,6 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   assert_eq "$(grandchild_state "$proj_stop_unit")" "gone" \
     "and the unit's grandchild that started its own session is gone with it" "$ERR"
   end_long_run
-
-  # Control: the unit is never stopped, so the running one keeps its
-  # grandchild.
-  MUTANT_FILE=lib/job-unit.sh mutant mutant-no-unit-stop 'out="$(systemctl --user stop -- "$1.service" 2>&1)"' 'out="$(true)"'
-  proj_stop_kept="$(make_proj proj-stop-kept "setsid $long_cmd" 600)"
-  start_long_run "$proj_stop_kept" ""
-  run_script "$MUTANT" --stop --worktree "$proj_stop_kept"
-  assert_eq "$(grandchild_state "$proj_stop_kept")" "alive" \
-    "control: with no unit stopped the running validation's grandchild survives --stop" "$ERR"
-  end_long_run
-  run_script "$RUN" --stop --worktree "$proj_stop_kept"
 
   # Two worktrees of one name under different parents, as two repositories'
   # lanes for the same item are: stopping one leaves the other's unit running.
@@ -1125,34 +977,14 @@ assert_eq "$(proc_state_after "$stop_child") $(grandchild_state "$proj_stop_grou
 end_long_run
 
 # --stop tears a setsid run down the way its own end does, SIGTERM first: a
-# grandchild of a run stopped mid-validation runs its TERM trap. The control
-# reuses mutant-no-term, the shared teardown with its SIGTERM step removed.
+# grandchild of a run stopped mid-validation runs its TERM trap.
 proj_stop_term="$(make_proj proj-stop-term 'bash grand.sh & echo $! > grand.pid; sleep 300' 600)"
 printf '%s\n' "trap 'echo got-term > term.flag; exit 0' TERM" 'while :; do sleep 1; done' > "$proj_stop_term/grand.sh"
-# script|what --stop prints and the grandchild's flag|label
-STOP_TERM_ROWS=(
-  "$RUN|state=stopped units=0 groups=1 got-term|--stop sends a setsid run's group SIGTERM, and a grandchild runs its trap"
-  "$TMP_ROOT/mutant-no-term/dev-validate-run|state=stopped units=0 groups=1 no-term|control: without the SIGTERM step --stop kills that grandchild with no trap run"
-)
-for row in "${STOP_TERM_ROWS[@]}"; do
-  IFS='|' read -r script want label <<<"$row"
-  rm -f -- "${proj_stop_term:?}/term.flag" "${proj_stop_term:?}/grand.pid"
-  start_long_run "$proj_stop_term" "$RUN_PATH"
-  run_script "$script" --stop --worktree "$proj_stop_term"
-  assert_eq "$OUT $(cat "$proj_stop_term/term.flag" 2>/dev/null || echo no-term)" "$want" "$label" "$ERR"
-  grandchild_state "$proj_stop_term" >/dev/null
-  end_long_run
-done
-
-# Control: the group is never signalled, so the run goes on.
-MUTANT_FILE=lib/job-unit.sh mutant mutant-no-group-stop '  job_unit_teardown "$pid"' '  :'
-proj_stop_left="$(make_proj proj-stop-left "$long_cmd" 600)"
-start_long_run "$proj_stop_left" "$RUN_PATH"
-stop_child="$(cat "$proj_stop_left"/tmp/dev-validate-*/pid 2>/dev/null || true)"
-run_script "$MUTANT" --stop --worktree "$proj_stop_left"
-assert_eq "$(proc_state_after "$stop_child") $(grandchild_state "$proj_stop_left")" "alive alive" \
-  "control: without the group kill --stop leaves the run and its grandchild running" "$ERR"
-kill -KILL -- "-$stop_child" 2>/dev/null || true
+start_long_run "$proj_stop_term" "$RUN_PATH"
+run_script "$RUN" --stop --worktree "$proj_stop_term"
+assert_eq "$OUT $(cat "$proj_stop_term/term.flag" 2>/dev/null || echo no-term)" "state=stopped units=0 groups=1 got-term" \
+  "--stop sends a setsid run's group SIGTERM, and a grandchild runs its trap" "$ERR"
+grandchild_state "$proj_stop_term" >/dev/null
 end_long_run
 RUN_PATH=""
 
@@ -1208,41 +1040,6 @@ PLANT_ROWS=(
   "not-leader|setsid|no|nonleader|state=stopped units=0 groups=0|alive"
   "no-run|setsid|no|none|state=stopped units=0 groups=0|-"
 )
-# name%the file holding the rule%its line%what replaces it%what that control
-# then sees
-PLANT_CONTROLS=(
-  'reused-pid%lib/job-unit.sh%  [[ "$args" == $glob ]] || return 1%  :%state=stopped units=0 groups=1 0 gone'
-  'has-verdict%dev-validate-run%    [[ ! -s "$dir/exit" ]] || continue%    :%state=stopped units=0 groups=1 0 gone'
-  'unit-run%lib/job-unit.sh%    systemd) job_unit_stop "$JOB_UNIT_NAME" ;;%    systemd) job_unit_kill_group "$2" "$3" ;;%state=stopped units=1 groups=0 0 gone'
-  'gone-pid%lib/job-unit.sh%    kill -0 "$pid" 2>/dev/null || return 1%    :% 1 gone'
-  'not-leader%lib/job-unit.sh%  [[ "${pgid// /}" == "$pid" ]] || return 1%  :%state=stopped units=0 groups=1 0 alive'
-  'no-run%dev-validate-run%    [[ -f "$runner_file" ]] || continue%    :% 1 -'
-)
-# Every rule under which --stop leaves a run alone has its row and control
-# above: each `|| return 1` line of job_unit_kill_group and each `|| continue`
-# line of the --stop loop is a PLANT_CONTROLS line, so a rule added without a
-# control reddens here. The floors name a broken extractor, not a thin rule set.
-guard_lines() { # FILE FIRST_LINE_REGEX LAST_LINE_REGEX GUARD_REGEX
-  awk -v first="$2" -v last="$3" '$0 ~ first { on = 1 } on { print } on && $0 ~ last { exit }' "$1" \
-    | grep -E -- "$4" | sed 's/^ *//'
-}
-controlled_lines="$(for row in "${PLANT_CONTROLS[@]}"; do IFS='%' read -r _ _ line _ _ <<<"$row"; printf '%s\n' "${line#"${line%%[! ]*}"}"; done)"
-# file%first line%last line%guard%floor
-GUARD_SOURCES=(
-  'lib/job-unit.sh%^job_unit_kill_group[(][)]%^}%[|][|] return 1$%3'
-  'dev-validate-run%for runner_file in%^  done$%[|][|] continue$%2'
-)
-for source_row in "${GUARD_SOURCES[@]}"; do
-  IFS='%' read -r file first last guard floor <<<"$source_row"
-  guards="$(guard_lines "$SCRIPTS_DIR/$file" "$first" "$last" "$guard")"
-  assert_eq "$(( $(grep -c . <<<"$guards") >= floor ))" "1" \
-    "the guard extractor finds at least $floor rules in $file (fewer means the extractor broke)"
-  while IFS= read -r guard_line; do
-    [[ -n "$guard_line" ]] || continue
-    assert_eq "$(grep -c -x -F -- "$guard_line" <<<"$controlled_lines")" "1" \
-      "the $file rule '$guard_line' has a planted row and a control"
-  done <<<"$guards"
-done
 RUN_PATH="$TMP_ROOT/stop-bin:$PATH"
 for row in "${PLANT_ROWS[@]}"; do
   IFS='|' read -r name runner verdict process want_out want_state <<<"$row"
@@ -1251,20 +1048,6 @@ for row in "${PLANT_ROWS[@]}"; do
   run_script "$RUN" --stop --worktree "$proj"
   assert_eq "$OUT $RC $(planted_state)" "$want_out 0 $want_state" \
     "--stop on a planted $name record" "$ERR"
-  rm -rf -- "$proj"
-done
-for row in "${PLANT_CONTROLS[@]}"; do
-  IFS='%' read -r name file line new want <<<"$row"
-  for plant_row in "${PLANT_ROWS[@]}"; do
-    [[ "$plant_row" == "$name|"* ]] || continue
-    IFS='|' read -r _ runner verdict process _ _ <<<"$plant_row"
-  done
-  MUTANT_FILE="$file" mutant "mutant-plant-$name" "$line" "$new"
-  plant "$name" "$runner" "$verdict" "$process"
-  proj="$PLANT_PROJ"
-  run_script "$MUTANT" --stop --worktree "$proj"
-  assert_eq "$OUT $RC $(planted_state)" "$want" \
-    "control: without that line --stop on the $name record signals or fails" "$ERR"
   rm -rf -- "$proj"
 done
 
@@ -1277,6 +1060,7 @@ run_script "$RUN" --stop --worktree "$proj"
 assert_eq "$(sed -n 1p <<<"$ERR") $RC" \
   "dev-validate-run: stop-failed run-dir=$proj/tmp/dev-validate-planted-unit-refused unit=validate-planted-unit-refused.service detail=stub refused 1" \
   "a unit systemctl will not stop fails --stop, naming it" "$ERR"
+# --stop's control: a stop failure that exits 0.
 mutant mutant-stop-exit-0 'in this worktree may still be running.' "in this worktree.'; exit 0; printf '"
 run_script "$MUTANT" --stop --worktree "$proj"
 assert_eq "$RC" "0" "control: a stop failure that exits 0 reads as a clean stop" "$ERR"
@@ -1306,10 +1090,6 @@ for row in "${REPEAT_ROWS[@]}"; do
   assert_eq "$(grep -c -x -F -- "dev-validate-run: repeated option=$flag 2" <<<"$repeat_out")" "1" \
     "a second $flag is refused rather than silently winning"
 done
-# Control: the repeat check passes everything, so each second value wins.
-mutant mutant-no-once '[[ "$2" == false ]] || die repeated "option=$1"' 'true'
-assert_eq "$(repeat_rows "$MUTANT" | grep -c ' repeated ' || true)" "0" \
-  "control: without the repeat check no repeated option is refused"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

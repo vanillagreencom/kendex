@@ -8,6 +8,9 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
+# mutant_scripts and mutate_file, the two halves of the control below.
+# shellcheck source=lib/growth-state.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 
 SINCE=2026-08-15T10:00:00Z
 SINCE_EPOCH="$(date -u -d "$SINCE" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$SINCE" +%s)"
@@ -77,17 +80,13 @@ assert_eq "refused=$(grep -c '^oversee-watch: prepare-secs-invalid value=060$' "
 echo "=== must-fail control ==="
 # The once key compared against nothing: every pass reports the same outcome.
 MUTANT_DIR="$TMP_ROOT/prepare-mutant"
-mkdir -p "$MUTANT_DIR/orch"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
+MUTANT_WATCH="$(mutant_scripts prepare-mutant/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-once='    [[ "$key" != "$(lane_row_get lane-prepare "$rows" "$item")" ]] || continue'
-assert_eq "$(grep -cxF -- "$once" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the once key is one line to strip"
-awk -v line="$once" '$0 == line { print "    :"; next } { print }' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+mutate_file "$MUTANT_WATCH" '    [[ "$key" != "$(lane_row_get lane-prepare "$rows" "$item")" ]] || continue' '    :'
 new_case prepare_outcomes_mutant
 write_state "$(prepared issue-1 running)"
-watch "$((SINCE_EPOCH + 60))" "$MUTANT_DIR/orch/scripts/oversee-watch"
-watch "$((SINCE_EPOCH + 120))" "$MUTANT_DIR/orch/scripts/oversee-watch"
+watch "$((SINCE_EPOCH + 60))" "$MUTANT_WATCH"
+watch "$((SINCE_EPOCH + 120))" "$MUTANT_WATCH"
 assert_eq "events=$EVENTS" "events=EVENT lane-ready issue-1" "control: without the once key the second pass reports the ready lane again" "$STUB_DIR/err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

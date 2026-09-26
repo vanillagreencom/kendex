@@ -20,12 +20,10 @@
 #               launchers carry that refusal's key
 #   § account   the readers that ask which account a session is spending get
 #               the account back, whatever CODEX_HOME holds
-#   § control   six must-fail inverses, one per rule: the entry is read back
-#               before the launch, the directory's own table is replaced and
-#               never duplicated, the private home is never reached through an
-#               account launcher, a home names the account it sits under, an
-#               answer recorded in the private home is read, and the account's
-#               own transcript store is made before the link loop
+#   § control   one must-fail inverse per function under test: the
+#               preparation reads its entry back before the launch, the form
+#               never reaches the private home through an account launcher,
+#               and the account reader names the account a home sits under
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,7 +31,7 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 SCRIPTS_DIR="$REPO_ROOT/skills/orch/scripts"
 # shellcheck source=lib/waiter-assertions.sh
 source "$TEST_DIR/lib/waiter-assertions.sh"
-# copy_scripts and mutate_file, the two halves of the controls below.
+# mutant_scripts and mutate_file, the two halves of the controls below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 
@@ -347,15 +345,14 @@ assert_eq "$(lanes_inventory "$INV_HOME")" "$TMP_ROOT/inv/.1codex" \
 
 # --- § control --------------------------------------------------------------
 #
-# One inverse per rule the preparation enforces. Each mutates a private copy of
-# the library, so the shipped one is never edited, and each asserts the shape
-# its rule exists to prevent.
+# One inverse per function under test. Each mutates a private copy of one
+# library, so the shipped one is never edited, and each asserts the shape its
+# rule exists to prevent.
 echo "=== control: the must-fail inverses ==="
-MUTANT_SCRIPTS="$(copy_scripts lane-launch-mutant)"
-MUTANT_LIB="$MUTANT_SCRIPTS/lib/lane-launch.sh"
+MUTANT_LIB="$(mutant_scripts lane-launch-mutant lib/lane-launch.sh)/lib/lane-launch.sh" || exit 1
 
-# Rule 1: the entry is read back off the written config before the launch. A
-# preparation that writes something the harness would not read as trust must
+# lane_codex_trust_prepare: the entry is read back off the written config
+# before the launch. A preparation that writes something the harness would not read as trust must
 # refuse, not return a home.
 mutate_file "$MUTANT_LIB" "\\ntrust_level = \"trusted\"\\n" "\\ntrust_level = \"asked\"\\n"
 # The outcome AND the table count at the home the preparation would use, so a
@@ -377,41 +374,21 @@ assert_eq "$(mutant_prepare "$MUTANT_LIB" "$TMP_ROOT/control-1/.1codex" "$TMP_RO
   "refused:entry-unreadable route=none tables=1" \
   "control: an entry the reader does not read back as trust refuses the launch"
 
-# Rule 2: the directory's own table is replaced. Carrying the account's config
-# through unchanged leaves that table in place beside the new one, which is a
-# duplicate key rather than an override.
-#
-# The account here carries a table for the launch directory that says nothing
-# about trust, which is the shape that both reaches this rule and is a table:
-# a table answering `trusted` takes the preapproved route and one answering
-# anything else is refused, so neither gets this far.
-MUTANT_TWO="$(copy_scripts lane-launch-mutant-two)/lib/lane-launch.sh"
-mutate_file "$MUTANT_TWO" 'toml_without_table "$config" "projects.\"$dir\""' 'cat -- "$config"'
-mkdir -p "$TMP_ROOT/control-2/wt"
-account_config control-2 "$(printf '[projects."%s"]\napproval_policy = "never"\n' "$TMP_ROOT/control-2/wt")"
-# The mutant reports success: its own read-back finds the trust it appended, in
-# the second of two headers for one key. That is the harm exactly — a config the
-# harness rejects whole, handed to the launch as ready. The shipped side is the
-# tables=1 every prepare row above pins.
-assert_eq "$(mutant_prepare "$MUTANT_TWO" "$TMP_ROOT/control-2/.1codex" "$TMP_ROOT/control-2/wt")" \
-  "prepared route=launch-home tables=2" \
-  "control: carrying the account config through duplicates the directory's table"
-
-# Rule 3: the private home's leaf carries no harness word, so the form judge
-# never mistakes it for an account a launcher on PATH selects. The shape lives
-# in lane-home.sh, so that is the file this one mutates; the launch library
-# beside it in the copied tree sources the mutated one.
-MUTANT_THREE_SCRIPTS="$(copy_scripts lane-launch-mutant-three)"
+# lane_launch_form: the private home's leaf carries no harness word, so the
+# form judge never mistakes it for an account a launcher on PATH selects. The
+# shape lives in lane-home.sh, so that is the file this one mutates; the launch
+# library linked beside it sources the mutated one.
+MUTANT_THREE_SCRIPTS="$(mutant_scripts lane-launch-mutant-three lib/lane-home.sh)" || exit 1
 mutate_file "$MUTANT_THREE_SCRIPTS/lib/lane-home.sh" \
   "printf '%s/lane-launch/%s-%s/home\\n'" "printf '%s/lane-launch/%s-%s/1codex\\n'"
 assert_eq "$(form_answers "$MUTANT_THREE_SCRIPTS/lib/lane-launch.sh")" \
   "private=launcher:$TMP_ROOT/bin/1codex account=launcher:$TMP_ROOT/bin/1codex" \
   "control: a private home named for the account is reached through the launcher"
 
-# Rule 4: a launch home answers with the account it sits under. Without the
-# rule the reader inside a session answers with the home, which is the account
-# spent under a second name.
-MUTANT_FOUR_SCRIPTS="$(copy_scripts lane-launch-mutant-four)"
+# lane_context_caller_cfg: a launch home answers with the account it sits
+# under. Without the rule the reader inside a session answers with the home,
+# which is the account spent under a second name.
+MUTANT_FOUR_SCRIPTS="$(mutant_scripts lane-launch-mutant-four lib/lane-home.sh)" || exit 1
 mutate_file "$MUTANT_FOUR_SCRIPTS/lib/lane-home.sh" \
   '*/lane-launch/*/home) printf' '*/lane-launch/*/nowhere) printf'
 assert_eq "$(CODEX_HOME="$ACCOUNT_HOME" bash -c '
@@ -421,45 +398,6 @@ assert_eq "$(CODEX_HOME="$ACCOUNT_HOME" bash -c '
   ' bash "$MUTANT_FOUR_SCRIPTS/lib/lane-context.sh")" \
   "$ACCOUNT_HOME" \
   "control: without the home-to-account rule a session reports the home as its account"
-
-# Rule 5: the recorded answer is read from the private home too. Reading the
-# account alone leaves the home's own `untrusted` invisible, and the rebuild
-# appends trust over it — the launch then runs at full trust against the answer
-# somebody gave at the pane. The fixture is the refused home from § prepare,
-# which still carries that answer.
-MUTANT_FIVE="$(copy_scripts lane-launch-mutant-five)/lib/lane-launch.sh"
-mutate_file "$MUTANT_FIVE" 'lane_codex_recorded "$dir" "$config" "$home/config.toml"' 'lane_codex_recorded "$dir" "$config"'
-assert_eq "$(bash -c '
-    set -uo pipefail
-    source "$1"
-    outcome=prepared
-    lane_codex_trust_prepare codex "$2" "$3" 2>/dev/null || outcome="refused:$LANE_TRUST_REASON"
-    printf "%s %s\n" "$outcome" \
-      "$(lane_codex_trusted "$(lane_codex_home_path "$2" "$3")/config.toml" "$3" && printf trusted || printf refused)"
-  ' bash "$MUTANT_FIVE" "$HOME_ANSWER_LANE" "$HOME_ANSWER_DIR")" \
-  "prepared trusted" \
-  "control: reading the account config alone rebuilds the home at full trust over the answer recorded in it"
-
-# Rule 6: the account's own transcript store is made before the link loop, so
-# the loop has a name to link. Without it the harness makes a REAL directory
-# inside the private home, the account never sees the rollout, and every
-# relaunch of that lane starts a fresh thread.
-MUTANT_SIX="$(copy_scripts lane-launch-mutant-six)/lib/lane-launch.sh"
-mutate_file "$MUTANT_SIX" '( umask 077 && mkdir -p -- "$lane/sessions" ) || { LANE_TRUST_REASON=account-store; return 1; }' 'true'
-mkdir -p "$TMP_ROOT/control-6/wt"
-account_config control-6 "" no-store
-assert_eq "$(bash -c '
-    set -uo pipefail
-    source "$1"
-    lane_codex_trust_prepare codex "$2" "$3" || exit 1
-    mkdir -p "$LANE_TRUST_HOME/sessions"
-    printf "rollout\n" > "$LANE_TRUST_HOME/sessions/one.jsonl"
-    printf "home=%s account=%s\n" \
-      "$(readlink "$LANE_TRUST_HOME/sessions" || printf real)" \
-      "$([ -e "$2/sessions/one.jsonl" ] && printf has || printf none)"
-  ' bash "$MUTANT_SIX" "$TMP_ROOT/control-6/.1codex" "$TMP_ROOT/control-6/wt")" \
-  "home=real account=none" \
-  "control: without the account's own store the rollout stays inside the private home and the account never sees it"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

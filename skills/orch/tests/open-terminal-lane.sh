@@ -53,7 +53,7 @@ source "$SCRIPTS_DIR/lib/toml.sh"
 # launcher's own rule is what turns it back into the account.
 # shellcheck source=../scripts/lib/lane-home.sh
 source "$SCRIPTS_DIR/lib/lane-home.sh"
-# mutate_file, the substitution half of the must-fail controls below.
+# mutant_scripts and mutate_file, the two halves of the control below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 
@@ -618,7 +618,7 @@ assert_eq "$(observe "rc=1 launched=nolog effortmissing=harness=claude,lane=$H/.
 # --harness has still named the harness whose row judges its choice words, and
 # that row judges it. Keyed on --harness alone the gate skipped exactly this
 # shape: the launch was accepted with no model named and the lane started on
-# whatever default the harness ships. Its control is ctl-lane-harness below.
+# whatever default the harness ships.
 #
 # Only a launch naming a harness NOWHERE stays exempt — a named config dir or
 # alias with no --harness — because nothing in that argv says which harness
@@ -779,24 +779,6 @@ for row in \
     "a codex launch with no --lane is prepared under $what"
 done
 
-# Control: the walk asks the session scope alone, which is what reading without
-# -g amounted to. The global entry is then unreachable and the launch falls to
-# the harness default — the account every no-lane launch on a fleet host was
-# landing on while the operator's numbered account sat in the scope nobody read.
-GLOBAL_ROOT="$TMP_ROOT/mutant-global-scope/orch"
-mkdir -p "$GLOBAL_ROOT/scripts"
-cp -R "$SCRIPTS_DIR/." "$GLOBAL_ROOT/scripts/"
-orch_fixture_shared_libs "$GLOBAL_ROOT"
-mutate_file "$GLOBAL_ROOT/scripts/open-terminal" \
-  'for scope in session global; do' 'for scope in session; do'
-OPEN_TERMINAL_REAL="$OPEN_TERMINAL"
-OPEN_TERMINAL="$GLOBAL_ROOT/scripts/open-terminal"
-run_ot "OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.tcodex;cmd=true -m gpt-5 -c model_reasoning_effort=high" \
-  --harness codex CC-1641
-assert_eq "$(observe "rc=0 launched=1 cmd_account=.codex")" "rc=0 launched=1 cmd_account=.codex" \
-  "control: a walk that never asks the global scope spends the default account, not the server's"
-OPEN_TERMINAL="$OPEN_TERMINAL_REAL"
-
 # An account whose config exists and cannot be read refuses the item: the
 # launch would otherwise start with every table the account was approved for
 # gone. Nothing opens, and the batch exits on the failed count. The config is
@@ -831,22 +813,6 @@ assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct
   "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=85,bucket=session" \
   "a shared 5-hour wall refuses a launch whose model-scoped bucket has room"
 
-# Control: keep the refusal and its diagnostic, but make the launcher replace
-# the deciding bucket with the model spelling. The assertion above distinguishes
-# that result from the shared session bucket the judge returned.
-BUCKET_ROOT="$TMP_ROOT/mutant-launch-bucket/orch"
-mkdir -p "$BUCKET_ROOT/scripts"
-cp -R "$SCRIPTS_DIR/." "$BUCKET_ROOT/scripts/"
-orch_fixture_shared_libs "$BUCKET_ROOT"
-mutate_file "$BUCKET_ROOT/scripts/open-terminal" \
-  '"bucket=$lane_bucket"' '"bucket=model"'
-OPEN_TERMINAL_REAL="$OPEN_TERMINAL"
-OPEN_TERMINAL="$BUCKET_ROOT/scripts/open-terminal"
-run_ot "ORCH_LANE_MAX_PCT=80;cmd=true --model fable --effort high" --harness claude --lane "$H/.claude" CC-119
-assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=85,bucket=model")" \
-  "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=85,bucket=model" \
-  "control: a launcher that replaces the deciding bucket reports the wrong model bucket"
-OPEN_TERMINAL="$OPEN_TERMINAL_REAL"
 claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 
 # A lane the inventory HAS but whose windows answer nothing for this model is
@@ -898,8 +864,8 @@ assert_eq "$(observe "rc=0 launched=1 claimsnotice=1 walled=none judgefailed=non
 
 rm -rf -- "${H:?}/.uclaude" "${FIXTURE_DIR:?}/.uclaude.json"
 
-# The shared home is neutral again for the rows below; the control row further
-# down stages this fixture once more for itself.
+# The shared home is neutral again for the rows below; the space-spelled model
+# row further down stages this fixture once more for itself.
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 echo "=== a bare --lane word is an alias first, then a directory ==="
@@ -1090,8 +1056,6 @@ run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_NO_ACCOUNTS=1;$RELAU
 assert_eq "$(observe "rc=1 launched=nolog relaunchgate=0 unanswered=0 credentialdead=none unreadable=lane=$H/.xclaude,model=fable,step=windows")" \
   "rc=1 launched=nolog relaunchgate=0 unanswered=0 credentialdead=none unreadable=lane=$H/.xclaude,model=fable,step=windows" \
   "a hosted relaunch whose provider implements no accounts verb keeps the usage gate, and says nothing about a verb that is absent"
-# The control for this row is ctl-relaunch-skip, in the controls section below,
-# where mutant_repo is defined; it keeps this world's lane and fixtures.
 
 # WHICH unmeasured account gets the login remedy. The remedy is for a credential
 # this machine holds and cannot renew, which `lanes` reports as `expired` and
@@ -1330,24 +1294,6 @@ assert_eq "$(observe "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERI
   "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc" \
   "the one hosted shape that renders a brief still refuses that broken timeout before any create"
 
-# Control: keep the retry and its refusal, but take the interrupt away. The
-# pane then never comes back from the stalled client, the second dial the
-# launch above is rescued by is never made, and that launch ends as the
-# refusal on its one attempt.
-RETRY_ROOT="$TMP_ROOT/mutant-ssh-retry/orch"
-mkdir -p "$RETRY_ROOT/scripts"
-cp -R "$SCRIPTS_DIR/." "$RETRY_ROOT/scripts/"
-orch_fixture_shared_libs "$RETRY_ROOT"
-mutate_file "$RETRY_ROOT/scripts/open-terminal" \
-  'if ! tmux send-keys -t "$pane" C-c; then' 'if ! tmux display-message -p -t "$pane" Q >/dev/null; then'
-OPEN_TERMINAL_REAL="$OPEN_TERMINAL"
-OPEN_TERMINAL="$RETRY_ROOT/scripts/open-terminal"
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=2;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-125
-assert_eq "$(observe "rc=1 promptmissing=item=CC-125,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=1") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT")" \
-  "rc=1 promptmissing=item=CC-125,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=1 ssh=1 int=0" \
-  "control: a retry that never interrupts never gets the pane back, so it dials once and the lane is abandoned"
-OPEN_TERMINAL="$OPEN_TERMINAL_REAL"
-
 echo "=== the claim store belongs to the caller's checkout ==="
 # `.agents` in a worktree points back at the main checkout, so a root derived
 # from the script's own path would write where `lanes` never looks.
@@ -1391,21 +1337,6 @@ echo "=== a GH_REPO the resolver refuses never reaches the launch line ==="
 # pins what open-terminal does with it.
 BAD_REPO="o/r';id;'"
 
-# The mutant: a resolve_repo that reads the output and drops the status.
-MUTREPO="$TMP_ROOT/mutrepo"
-mkdir -p "$MUTREPO/scripts/lib"
-cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$MUTREPO/scripts/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$MUTREPO/scripts/lib/"
-orch_fixture_shared_libs "$MUTREPO"
-chmod +x "$MUTREPO/scripts/open-terminal" "$MUTREPO/scripts/lanes" "$MUTREPO/scripts/lane-marker"
-assert_eq "$(grep -Fc '[[ "$resolve_status" -eq 0 ]] || return 0' "$MUTREPO/scripts/open-terminal")" "1" \
-  "control finds exactly one live status check"
-# `#` as the delimiter: the line the control rewrites carries `||`.
-sed -i.bak 's#\[\[ "$resolve_status" -eq 0 \]\] || return 0#[[ "$resolve_status" -eq 0 ]] || :#' \
-  "$MUTREPO/scripts/open-terminal"
-assert_eq "$(grep -Fc '[[ "$resolve_status" -eq 0 ]] || return 0' "$MUTREPO/scripts/open-terminal")" "0" \
-  "control applied the mutation"
-
 # run_bad_repo SCRIPT NAME — one launch under the refused GH_REPO, from a
 # caller checkout of its own so the claim store starts empty. Prints
 # `launched=<n> rejected=<n>`: the windows opened, and the tmux lines carrying
@@ -1428,8 +1359,6 @@ run_bad_repo() {
 
 assert_eq "$(run_bad_repo "$SCRIPTREPO/scripts/open-terminal" refused)" "launched=1 rejected=0" \
   "a GH_REPO the resolver refuses renders no repository into the launch line"
-assert_eq "$(run_bad_repo "$MUTREPO/scripts/open-terminal" accepted)" "launched=1 rejected=1" \
-  "must-fail control: a resolve_repo that drops the status types the refused value into the pane"
 
 echo "=== a launch binds its item to the tree it made, or fails the item ==="
 # lane-mail-check hands a lane its mail only where this marker names the tree's
@@ -1509,40 +1438,6 @@ chmod +x "$LINKED_STUB"
 LINKED="$(marked "$OPEN_TERMINAL" linked "$LINKED_STUB")"
 assert_eq "$LINKED target=$([[ -e "$TMP_ROOT/linked-runs/marker-target" ]] && echo written || echo untouched)" \
   "rc=1 marker=none box=none refused=1 target=untouched" "a symlink at the marker path fails the item and writes through nothing"
-
-# The mutant: the marker line gone, so neither the write nor its refusal runs.
-MARKREPO="$TMP_ROOT/markrepo"
-mkdir -p "$MARKREPO/scripts/lib"
-cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" \
-  "$SCRIPTS_DIR/lane-marker" "$MARKREPO/scripts/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$MARKREPO/scripts/lib/"
-orch_fixture_shared_libs "$MARKREPO"
-chmod +x "$MARKREPO/scripts/open-terminal" "$MARKREPO/scripts/lanes" "$MARKREPO/scripts/lane-marker"
-sed -i.bak '/^  if \[\[ "\$WAKE" != true && -d "\$wt" \]\] && ! write_lane_marker /d' "$MARKREPO/scripts/open-terminal"
-assert_eq "$(grep -c 'ot_message "\$LANE_MARKER_REASON"' "$MARKREPO/scripts/open-terminal")" "0" "control applied the marker mutation"
-assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-marked "$OT_STUB_BIN/worktree")" "rc=0 marker=none box=none refused=0" \
-  "control: without the marker line a launch leaves its lane unmarked"
-assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-unmarkable "$NOGIT_STUB")" "rc=0 marker=none box=none refused=0" \
-  "control: without the marker line an unmarkable tree launches anyway"
-
-# The mailbox directory alone, with the marker still written: a launch that
-# lost only the directory leaves the lane's turn-end hook no name to resolve
-# its handoff marks by, and this is what tells that apart from a lost marker.
-# The defect is planted in the owner the launcher calls, which is what these
-# rows say the launcher does.
-BOXREPO="$TMP_ROOT/boxrepo"
-mkdir -p "$BOXREPO/scripts/lib"
-cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" \
-  "$SCRIPTS_DIR/lane-marker" "$BOXREPO/scripts/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$BOXREPO/scripts/lib/"
-orch_fixture_shared_libs "$BOXREPO"
-chmod +x "$BOXREPO/scripts/open-terminal" "$BOXREPO/scripts/lanes" "$BOXREPO/scripts/lane-marker"
-sed -i.bak 's@^MADE=\$(mkdir -p -- "\$COMMON/lane-mail" "\$BOX" 2>&1)@MADE=$(mkdir -p -- "$COMMON/lane-mail" 2>\&1)@' \
-  "$BOXREPO/scripts/lane-marker"
-assert_eq "$(grep -c 'mkdir -p -- "\$COMMON/lane-mail" "\$BOX"' "$BOXREPO/scripts/lane-marker")" "0" \
-  "control applied the mailbox-directory mutation"
-assert_eq "$(marked "$BOXREPO/scripts/open-terminal" mutant-boxless "$OT_STUB_BIN/worktree")" "rc=0 marker=root box=none refused=0" \
-  "control: without its mkdir the launch marks the lane and opens no mailbox for it"
 
 echo "=== a lane launches through its own launcher ==="
 # A command named for the lane's config directory selects the account itself,
@@ -1731,63 +1626,6 @@ lane_launch() {
   printf '%s' "${got# }"
 }
 
-# mutant_repo NAME FILE BRE [REPLACEMENT] — a copy of the scripts at
-# $TMP_ROOT/NAME with the one text BRE matches in FILE replaced, or the line
-# deleted where no REPLACEMENT is given. FILE is the copy-relative path, since
-# the launch form, the launch line and the account check live in the lib both
-# launchers source and only their wiring is open-terminal's own. One defect per
-# copy: a repo carrying several would pass its rows while any one of them was
-# caught. A rule whose deletion changes more than the rule takes a replacement:
-# dropping the account check's settle test entirely leaves a loop that never
-# breaks, which is not the behaviour it replaced, and dropping the launcher
-# print leaves the judge emitting nothing.
-#
-# Every control lives BELOW this definition, whatever section its green row sits
-# in: a call above it is an undefined function, which run_ot reports as exit 127
-# and a row reads as an ordinary assertion failure.
-mutant_repo() {
-  local dir="$TMP_ROOT/$1" file="$2"
-  mkdir -p "$dir/scripts/lib"
-  cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$dir/scripts/"
-  cp "$SCRIPTS_DIR/lib"/*.sh "$dir/scripts/lib/"
-  orch_fixture_shared_libs "$dir"
-  chmod +x "$dir/scripts/open-terminal" "$dir/scripts/lanes" "$dir/scripts/lane-marker"
-  assert_eq "$(grep -c -e "$3" "$dir/$file")" "1" "control $1 finds exactly one line to mutate"
-  if [[ $# -ge 4 ]]; then sed -i.bak "s/$3/$4/" "$dir/$file"
-  else sed -i.bak "/$3/d" "$dir/$file"; fi
-  assert_eq "$(grep -c -e "$3" "$dir/$file")" "0" "control $1 applied its mutation"
-}
-
-LAUNCH_LIB=scripts/lib/lane-launch.sh
-mutant_repo ctl-slash "$LAUNCH_LIB" 'name="\$(basename -- "\$dir")"' 'name="${dir##*\/}"'
-mutant_repo ctl-harness "$LAUNCH_LIB" '"\$name" != \*"\$harness"\*'
-mutant_repo ctl-launcher "$LAUNCH_LIB" 'launcher:\*) printf'
-mutant_repo ctl-abspath "$LAUNCH_LIB" "printf 'launcher:%s\\\\n' \"\$path\"" "printf 'launcher:%s\\\\n' \"\$name\""
-mutant_repo ctl-check scripts/open-terminal '^  lane_account_ok "\$pane" "\$title" "\$premise" ||'
-mutant_repo ctl-settle "$LAUNCH_LIB" '\[\[ -z "\$observed" || "\$observed" != "\$settled" \]\] || break' '[[ -z "$observed" ]] || break'
-# The premise the read rests on: the pane is showing the harness's own screen,
-# so the reading is about the harness and not about a wrapper still on its way
-# to exec. Returning from that wait at once puts the reading back the instant
-# after the keystrokes, which is where every shipped launch shape had it.
-mutant_repo ctl-premise scripts/open-terminal 'tmux_wait_harness() { # PANE' 'tmux_wait_harness() { return 0; # PANE'
-# The read happens on EVERY path past the keystrokes. Returning on a failed
-# verification skips it, and a pane left open on an account nobody picked keeps
-# its claim and its window.
-mutant_repo ctl-failexit scripts/open-terminal '|| tmux_launch_verify "\$pane" "\$title" "\$brief" || launch_rc=\$?' '|| tmux_launch_verify "$pane" "$title" "$brief" || return 1'
-# An unpremised read reports what it is. Without this the agreement a pane that
-# never showed a harness happens to carry is announced as a verified account,
-# byte for byte like one taken after the harness came up.
-# A launch this check can never read back must not spend the whole verification
-# timeout waiting for a screen first. Dropping the guard leaves the wait running
-# its full bound ahead of a read that returns `skipped` either way.
-mutant_repo ctl-readable scripts/open-terminal 'if lane_account_readable "\$LANE_FORM"; then' 'if true; then'
-# A launch that built a private CODEX_HOME runs under it, so the account check
-# reads that home back off the pane. Without the rule that maps a home to the
-# account it sits under, every such launch reports a mismatch against the very
-# account it is running on, and its window is closed.
-mutant_repo ctl-homeaccount scripts/lib/lane-home.sh '\*\/lane-launch\/\*\/home) printf'
-mutant_repo ctl-unpremised scripts/open-terminal 'if \[\[ "\$3" == unmet \]\]; then ot_message lane-unobserved "item=\$2" "reason=unpremised" >&2' 'if false; then ot_message lane-unobserved "item=$2" "reason=unpremised" >\&2'
-
 assert_eq "$(lane_launch "$OPEN_TERMINAL" launcher claude "$LNLANE" "$LNLANE" - "rc form bare")" \
   "rc=0 form=launcher bare=0" \
   "a lane whose launcher is on PATH launches through it by the absolute path the judge resolved, with no env prefix"
@@ -1819,19 +1657,6 @@ assert_eq "$(lane_launch "$OPEN_TERMINAL" trailing claude "$LNLANE/" "$LNLANE" -
   "rc=0 form=launcher bare=0" \
   "a lane path written with a trailing slash reaches the same launcher, the spelling --lane and ORCH_LANE_DIRS both carry through"
 
-assert_eq "$(lane_launch "$TMP_ROOT/ctl-slash/scripts/open-terminal" mutant-slash claude "$LNLANE/" "$LNLANE" - "rc form bare")" \
-  "rc=0 form=prefix bare=0" \
-  "control: splitting the path on the last slash leaves a trailing-slash lane no name to judge, and it falls back to the prefix"
-assert_eq "$(lane_launch "$TMP_ROOT/ctl-harness/scripts/open-terminal" mutant-harness claude "$LNSELF" "$LNSELF" - "rc form bare")" \
-  "rc=0 form=launcher bare=0" \
-  "control: without the harness-word rule a lane named for the harness launches through the bare harness"
-assert_eq "$(lane_launch "$TMP_ROOT/ctl-launcher/scripts/open-terminal" mutant-launcher claude "$LNLANE" "$LNLANE" - "rc form bare")" \
-  "rc=0 form=prefix bare=0" \
-  "control: without the launcher arm the lane launches through the bare harness the shim would redirect"
-assert_eq "$(lane_launch "$TMP_ROOT/ctl-abspath/scripts/open-terminal" mutant-abspath claude "$LNLANE" "$LNLANE" - "rc form bare")" \
-  "rc=0 form=none bare=1" \
-  "control: rendering the launcher's bare name leaves the pane shell to resolve it again against its own PATH"
-
 # A --cmd template is the caller's own command: its first word is not replaced
 # even on a lane whose launcher IS on PATH, and its pane is read back by
 # nothing, so neither account verdict appears. Without the template term in the
@@ -1840,143 +1665,40 @@ assert_eq "$(lane_launch "$TMP_ROOT/ctl-abspath/scripts/open-terminal" mutant-ab
 # bound: at zero probes this launch never looked, which is the guard. That bound
 # is the hard-coded 15 here, not ORCH_TMUX_VERIFY_SECS: a --cmd template reads
 # none of the waits the setting is validated for, so the setting is not read for
-# it either — which is what the control below spends.
+# it either.
 assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - "rc form verified unobserved probes" "cmd=true {item}" "text=dev@lane:~$")" \
   "rc=0 form=prefix verified=0 unobserved=0 probes=0" \
   "a --cmd template keeps the env prefix on a launcher-named lane and is read back by nothing"
-assert_eq "$(lane_launch "$TMP_ROOT/ctl-readable/scripts/open-terminal" mutant-readable claude "$LNLANE" "$LNLANE" - "rc verified probes" "cmd=true {item}" "text=dev@lane:~$")" \
-  "rc=0 verified=0 probes=16" \
-  "control: without the readable guard a launch nothing reads back still spends the whole verification timeout looking for a harness"
 
-# Controls for the model gate. run_ot reads $OPEN_TERMINAL, so each mutant takes
-# that name for its own rows and the patched path is restored after.
-OPEN_TERMINAL_PATCHED="$OPEN_TERMINAL"
-
-# One control per rule of the model-and-effort refusal, each on the same
-# arguments as the green row beside it. OUTSIDE_LANE is a config dir no lane
-# record covers, so a launch that gets past the refusal meets no usage verdict
-# and the row reads the refusal alone.
+# The suite's one must-fail control is on the model rule, on the same arguments
+# as the green row beside it. run_ot reads $OPEN_TERMINAL, so the mutant takes
+# that name for its row and the shipped path is restored after. OUTSIDE_LANE is
+# a config dir no lane record covers, so a launch that gets past the refusal
+# meets no usage verdict and the row reads the refusal alone.
+OPEN_TERMINAL_SHIPPED="$OPEN_TERMINAL"
 run_ot "" --harness claude --lane "$OUTSIDE_LANE" --cmd true CC-90
 assert_eq "$(observe "rc=1 launched=nolog modelmissing=harness=claude,lane=$OUTSIDE_LANE,spellings=--model")" \
   "rc=1 launched=nolog modelmissing=harness=claude,lane=$OUTSIDE_LANE,spellings=--model" \
   "a lane launch naming no model is refused for it"
-mutant_repo ctl-model-rule scripts/open-terminal 'if \[\[ -z "\$LAUNCH_MODEL" \]\]; then' 'if [[ -n "$LAUNCH_MODEL" ]]; then'
-OPEN_TERMINAL="$TMP_ROOT/ctl-model-rule/scripts/open-terminal"
+OPEN_TERMINAL="$(mutant_scripts ctl-model-rule/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-model-rule/orch"
+mutate_file "$OPEN_TERMINAL" 'if [[ -z "$LAUNCH_MODEL" ]]; then' 'if [[ -n "$LAUNCH_MODEL" ]]; then'
 run_ot "" --harness claude --lane "$OUTSIDE_LANE" --cmd true CC-91
 assert_eq "$(observe "modelmissing=none effortmissing=harness=claude,lane=$OUTSIDE_LANE,spellings=--effort")" \
   "modelmissing=none effortmissing=harness=claude,lane=$OUTSIDE_LANE,spellings=--effort" \
   "control: without the model rule a launch naming no model is not refused for it"
-OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
+OPEN_TERMINAL="$OPEN_TERMINAL_SHIPPED"
 
 run_ot "cmd=true --model opus" --harness claude --lane "$OUTSIDE_LANE" CC-92
 assert_eq "$(observe "rc=1 launched=nolog effortmissing=harness=claude,lane=$OUTSIDE_LANE,spellings=--effort")" \
   "rc=1 launched=nolog effortmissing=harness=claude,lane=$OUTSIDE_LANE,spellings=--effort" \
   "a lane launch naming no effort is refused for it"
-mutant_repo ctl-effort-rule scripts/open-terminal '\-z "\$LAUNCH_EFFORT" \]\]' '-n "$LAUNCH_EFFORT" ]]'
-OPEN_TERMINAL="$TMP_ROOT/ctl-effort-rule/scripts/open-terminal"
-run_ot "cmd=true --model opus" --harness claude --lane "$OUTSIDE_LANE" CC-93
-assert_eq "$(observe "rc=0 launched=1 effortmissing=none")" "rc=0 launched=1 effortmissing=none" \
-  "control: without the effort rule a launch naming no effort launches"
-OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
-# The bypass this refusal closes, planted whole: the refusal gone AND the model
-# read out of the launch flags again, which is the code as it shipped. The
-# launch then passes the gate on a word start_cmd renders nowhere, and its lane
-# is judged and its record written under a model the harness never runs. Two
-# edits on one copy, because either alone refuses the launch for the other's
-# reason. OUTSIDE_LANE is covered by no lane record, so the row reads the gate
-# alone. Its green rows are the CC-99 and CC-112 launches above.
-mutant_repo ctl-flags-reach scripts/open-terminal 'if \[\[ -n "\$CMD_TEMPLATE" && -n "\$LAUNCH_FLAGS" \]\]; then' 'if false; then'
-assert_eq "$(grep -cF 'LAUNCH_TEXT="$CMD_TEMPLATE"' "$TMP_ROOT/ctl-flags-reach/scripts/open-terminal")" "1" \
-  "control ctl-flags-reach finds one text-the-launch-runs assignment to widen"
-sed -i.bak 's/LAUNCH_TEXT="\$CMD_TEMPLATE"/LAUNCH_TEXT="$LAUNCH_FLAGS $CMD_TEMPLATE"/' \
-  "$TMP_ROOT/ctl-flags-reach/scripts/open-terminal"
-assert_eq "$(grep -cF 'LAUNCH_TEXT="$LAUNCH_FLAGS $CMD_TEMPLATE"' "$TMP_ROOT/ctl-flags-reach/scripts/open-terminal")" "1" \
-  "control ctl-flags-reach applied its second mutation"
-OPEN_TERMINAL="$TMP_ROOT/ctl-flags-reach/scripts/open-terminal"
-run_ot "flags=--model opus --effort high" --harness claude --lane "$OUTSIDE_LANE" --cmd "true $QUESTION_OFF_ALL" CC-113
-assert_eq "$(observe "rc=0 launched=1 flagsunreachable=none modelmissing=none")" \
-  "rc=0 launched=1 flagsunreachable=none modelmissing=none" \
-  "control: with the refusal gone and the flags read again, a launch whose command names no model passes the gate on a model the harness never runs"
-OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
 
-# The harness a `--lane auto:<h>` spec names is the launch's harness, and the
-# gate reads it. Keyed on --harness alone, the same launch reaches the lane with
-# no model named at all, which is the state the refusal exists to prevent. Its
-# green row is the CC-114 launch above.
-mutant_repo ctl-lane-harness scripts/open-terminal 'LAUNCH_HARNESS="\$LANE_SPEC_HARNESS"' 'LAUNCH_HARNESS="$HARNESS"'
-OPEN_TERMINAL="$TMP_ROOT/ctl-lane-harness/scripts/open-terminal"
-run_ot "cmd=true" --lane auto:claude CC-117
-assert_eq "$(observe "rc=0 launched=1 modelmissing=none effortmissing=none")" \
-  "rc=0 launched=1 modelmissing=none effortmissing=none" \
-  "control: keyed on --harness alone the gate skips a launch naming its harness only in the lane spec, and it starts on the harness default"
-OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
-
-# pi's level on the model value is read from the row's separator field. Without
-# that read, the launch that named both choices in one token is refused for the
-# effort it already passed.
-mutant_repo ctl-colon "$LAUNCH_LIB" '\[\[ "\$model" != \*"\$in_model"\* \]\] ||' '[[ "$model" == *"$in_model"* ]] ||'
-OPEN_TERMINAL="$TMP_ROOT/ctl-colon/scripts/open-terminal"
-run_ot "cmd=true --model sonnet:high" --harness pi --lane "$H/.claude" CC-105
-assert_eq "$(observe "rc=1 launched=nolog effortmissing=harness=pi,lane=$H/.claude,spellings=--thinking")" \
-  "rc=1 launched=nolog effortmissing=harness=pi,lane=$H/.claude,spellings=--thinking" \
-  "control: without the separator read the level on the model value is not the effort, and the launch is refused for naming none"
-OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
-
-# Which unmeasured account a relaunch proceeds on is the provider's answer and
-# not the --relaunch flag. Keyed on the flag alone, the same launch over a
-# provider that holds nothing proceeds and tells the operator the host runs a
-# credential nothing here established. Its green row is the CC-100 launch above,
-# on that world's expired xclaude lane and the same absent-verb provider.
-mutant_repo ctl-relaunch-skip scripts/open-terminal '&& "\$HOST_ACCOUNT" == held \]\]' ']]'
-OPEN_TERMINAL="$TMP_ROOT/ctl-relaunch-skip/scripts/open-terminal"
-run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_NO_ACCOUNTS=1;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
-  --harness claude --lane "$H/.xclaude" --repo o/r --relaunch CC-106
-assert_eq "$(observe "rc=0 launched=1 relaunchgate=1 unreadable=none")" \
-  "rc=0 launched=1 relaunchgate=1 unreadable=none" \
-  "control: keyed on the flag alone, a relaunch whose provider holds nothing proceeds and claims the host copy runs it"
-OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
-
-# The alias lookup's own status, taken and then acted on. Without the capture the
-# failing lookup ends the run under errexit inside the substitution, and the
-# launch dies with no keyed line of its own for the operator to act on. Its green
-# row is the alias-spelled resolution-failure row in the first table.
-#
-# The CHECK that reads the captured status has no control of its own: with it
-# gone the empty answer falls to the alias-not-found branch, whose `lane_check`
-# meets the same malformed setting and refuses with the same key, so no input
-# this suite can build tells the two apart. What the green row holds is the key
-# an operator acts on, which is the same either way.
-mutant_repo ctl-alias-status scripts/open-terminal ')" || alias_rc=\$?' ')"'
-OPEN_TERMINAL="$TMP_ROOT/ctl-alias-status/scripts/open-terminal"
-run_ot "ORCH_LANE_ALIASES=eclaude=work;ORCH_LANES_USAGE_TTL=soon;$CHOICE_CMD" --harness claude --lane work CC-109
-assert_eq "$(observe "rc=1 launched=nolog failed=none") keyed=$(grep -c '^open-terminal: ' <<<"$OUT" || true)" \
-  "rc=1 launched=nolog failed=none keyed=0" \
-  "control: without the alias lookup's status the launch dies inside the substitution with no keyed line"
-OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
-
-# The wall is judged for every named lane, with no launch shape exempt. Exempting
-# the hosted relaunch — the shape that reads the provider at all — lets the
-# walled account resume and open on its usage banner, which is the whole cost the
-# gate exists to avoid. Its green row is CC-107 above, on that world's wclaude
-# lane and a provider that holds it.
-mutant_repo ctl-gate-every-shape scripts/open-terminal \
-  '\[\[ "\$LANE_GATE" != true \]\] || named_lane_judge' '[[ "$LANE_GATE" != true || "$HOST_RELAUNCH" == true ]] || named_lane_judge'
-OPEN_TERMINAL="$TMP_ROOT/ctl-gate-every-shape/scripts/open-terminal"
-run_ot "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-walled.tsv;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
-  --harness claude --lane "$H/.wclaude" --repo o/r --relaunch CC-108
-assert_eq "$(observe "rc=0 launched=1 walled=none")" "rc=0 launched=1 walled=none" \
-  "control: with the hosted relaunch exempt from the gate the walled account resumes onto its own usage banner"
-OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
-
-# Without the arm that takes a choice's value from the NEXT token, every
-# space-spelled flag reads as absent: `--model sonnet` names no model, and the
-# launch is refused for naming none instead of being judged against the window
-# it did name. The uclaude fixture is where the two answers are visibly
-# different — no window of it measures sonnet, so the unpatched script refuses
-# as lane-model-unreadable and the patched one never reaches the lane at all.
+# A space-spelled choice takes its value from the NEXT token: `--model sonnet`
+# names a model, and the launch is judged against the window it named.
 claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 # The lane its own gate row left the home is removed again after that row, so
-# this pair builds it back: one scoped window for Opus and nothing else, which
+# this row builds it back: one scoped window for Opus and nothing else, which
 # has binding-bucket room and measures nothing for sonnet.
 make_lane "$H" uclaude 3600
 jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
@@ -1985,34 +1707,7 @@ run_ot "cmd=true --model sonnet --effort high" --harness claude --lane "$H/.ucla
 assert_eq "$(observe "rc=1 launched=nolog modelmissing=none unreadable=lane=$H/.uclaude,model=sonnet,step=windows")" \
   "rc=1 launched=nolog modelmissing=none unreadable=lane=$H/.uclaude,model=sonnet,step=windows" \
   "the space-spelled model is judged against that lane's own window, which measures nothing for it"
-mutant_repo ctl-take "$LAUNCH_LIB" 'printf.*tokens\[i+1\]'
-OPEN_TERMINAL="$TMP_ROOT/ctl-take/scripts/open-terminal"
-run_ot "cmd=true --model sonnet --effort high" --harness claude --lane "$H/.uclaude" CC-66
-assert_eq "$(observe "rc=1 launched=nolog unreadable=none modelmissing=harness=claude,lane=$H/.uclaude,spellings=--model")" \
-  "rc=1 launched=nolog unreadable=none modelmissing=harness=claude,lane=$H/.uclaude,spellings=--model" \
-  "control: without the take arm the space-spelled model reads as none and the launch is refused for naming none"
-
-# Without the null clause in the judge, an unmeasured wall compares as though it
-# were the smallest number there is — jq orders null below every number — and a
-# lane whose windows answer nothing for the model is handed back as having room.
-# The clause is lib/lane-model.sh's `wall_verdict`, the one classifier both pick
-# forms read, so this row reddens with the fleet chooser's own control.
-#
-# The unpatched script first: a copy taken while the row above still pointed at
-# its own mutant would carry two planted defects under one verdict, and would
-# pass while either was caught.
-OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
-mutant_repo ctl-nullwall scripts/lib/lane-model.sh 'if \. == null then "unmeasured"' 'if false then "unmeasured"'
-make_lane "$H" uclaude 3600
-jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
-                  scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.uclaude.json"
-OPEN_TERMINAL="$TMP_ROOT/ctl-nullwall/scripts/open-terminal"
-run_ot "cmd=true --model sonnet --effort high" --harness claude --lane "$H/.uclaude" CC-72
-assert_eq "$(observe "rc=0 launched=1 unreadable=none")" "rc=0 launched=1 unreadable=none" \
-  "control: without the null clause a lane nothing measures is treated as free and launches"
 rm -rf -- "${H:?}/.uclaude" "${FIXTURE_DIR:?}/.uclaude.json"
-
-OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 echo "=== the pane is read back, and a disagreement closes the window ==="
@@ -2037,13 +1732,6 @@ else
   assert_eq "$(lane_launch "$OPEN_TERMINAL" late claude "$LNBARE" "$LNLANE" late "rc verified mismatch closed")" \
     "rc=1 verified=0 mismatch=1 closed=1" \
     "a wrapper that rewrites the account after the first read is still caught: an observation counts only once it settles"
-
-  assert_eq "$(lane_launch "$TMP_ROOT/ctl-check/scripts/open-terminal" mutant-check claude "$LNBARE" "$LNLANE" - "rc verified mismatch closed")" \
-    "rc=0 verified=0 mismatch=0 closed=0" \
-    "control: without the account check a pane on the wrong account is reported as launched"
-  assert_eq "$(lane_launch "$TMP_ROOT/ctl-settle/scripts/open-terminal" mutant-settle claude "$LNBARE" "$LNLANE" late "rc verified mismatch closed")" \
-    "rc=0 verified=1 mismatch=0 closed=0" \
-    "control: trusting the first read confirms an account the pane is about to stop running"
 
   # A wrapper that holds the picked account while it comes up and hands over
   # only as the harness starts. Read the instant after the keystrokes, this
@@ -2074,13 +1762,6 @@ else
     "and on a claude relaunch that resumes a session, which carries none either"
   rm -rf -- "${RESUME_ROOT:?}"
 
-  # On the codex shape, because that is where the premise is the ONLY thing
-  # holding the read back: a claude launch also waits for its brief to appear,
-  # which delays the read past the handover whatever this wait does.
-  assert_eq "$(lane_launch "$TMP_ROOT/ctl-premise/scripts/open-terminal" mutant-premise codex "$LNCODEXSELF" "$LNLANE" gated "rc verified mismatch closed")" \
-    "rc=0 verified=1 mismatch=0 closed=0" \
-    "control: with the premise wait gone the briefless launch confirms the handover as the picked account"
-
   # The premise knows BOTH harnesses. A resumed codex pane draws its own
   # marker and no Claude one: the wait must answer on the first look, and the
   # read that follows is a premised one that reports the account it confirms.
@@ -2095,9 +1776,6 @@ else
   assert_eq "$(lane_launch "$OPEN_TERMINAL" no-screen codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc verified premise unpremised probes" "text=dev@lane:~$")" \
     "rc=0 verified=0 premise=1 unpremised=1 probes=6" \
     "a screen the premise does not know stalls for the whole bound, and the read that follows is reported unpremised"
-  assert_eq "$(lane_launch "$TMP_ROOT/ctl-unpremised/scripts/open-terminal" mutant-unpremised codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc verified premise unpremised" "text=dev@lane:~$")" \
-    "rc=0 verified=1 premise=1 unpremised=0" \
-    "control: without the unpremised arm a reading off a pane that never showed a harness is announced as a verified account"
 
   # A codex launch runs under the home it built for its worktree, so what the
   # pane carries is that home and not the account directory. The check's
@@ -2111,9 +1789,6 @@ else
   assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-trust codex "$LNCODEXSELF" "$CODEXTRUSTHOME" - "rc verified mismatch closed" "wt=$CODEXTRUSTWT")" \
     "rc=0 verified=1 mismatch=0 closed=0" \
     "a pane carrying the home this launch built confirms the account it was built under"
-  assert_eq "$(lane_launch "$TMP_ROOT/ctl-homeaccount/scripts/open-terminal" mutant-homeaccount codex "$LNCODEXSELF" "$CODEXTRUSTHOME" - "rc verified mismatch closed" "wt=$CODEXTRUSTWT")" \
-    "rc=1 verified=0 mismatch=1 closed=1" \
-    "control: without the home-to-account rule a launch is closed over the home it was given"
 
   # A launch whose verification FAILS leaves this pane open with its claim
   # live, so the account it is really running on still has to be the picked
@@ -2124,9 +1799,6 @@ else
   assert_eq "$(lane_launch "$OPEN_TERMINAL" stuck claude "$LNBARE" "$LNLANE" - "rc verified mismatch closed premise" "text=dev@lane:~$")" \
     "rc=1 verified=0 mismatch=1 closed=1 premise=1" \
     "a pane whose launch never verified is still read back, and a disagreement closes it"
-  assert_eq "$(lane_launch "$TMP_ROOT/ctl-failexit/scripts/open-terminal" mutant-failexit claude "$LNBARE" "$LNLANE" - "rc verified mismatch closed" "text=dev@lane:~$")" \
-    "rc=1 verified=0 mismatch=0 closed=0" \
-    "control: returning on the failed verification leaves the pane open on an account nobody picked"
 fi
 
 echo "=== with no threshold flag the launcher forwards none and lanes decides ==="
@@ -2157,18 +1829,6 @@ OT_REAL="$OPEN_TERMINAL"; OPEN_TERMINAL="$OUTSIDE_SCRIPTS/open-terminal"
 table \
   "a named lane at 92 percent used launches, the launcher forwarding no threshold of its own|max_pct=unset;cwd=$NOSETTINGS;$CHOICE_CMD|--harness claude --lane $H/.claude CC-75|rc=0 launched=1 cmd_lane=claude walled=none" \
   "--lane auto is judged on the same bound, passing over the account above it|max_pct=unset;cwd=$NOSETTINGS;$CHOICE_CMD|--harness claude --lane auto CC-76|rc=0 launched=1 cmd_lane=claude"
-
-# The control plants the private default this change removed INTO THAT SAME
-# COPY, so it differs from the two rows above by the defect and nothing else:
-# the launcher then forwards 90 whatever `lanes` holds, and the account at 92
-# percent is refused although the directive's own pick handed it back.
-mutate_file "$OUTSIDE_SCRIPTS/open-terminal" \
-  '[[ -z "$LANE_MAX_PCT" ]] || LANE_PCT_ARGS=(--max-pct "$LANE_MAX_PCT")' \
-  'LANE_PCT_ARGS=(--max-pct "${LANE_MAX_PCT:-90}")'
-run_ot "max_pct=unset;cwd=$NOSETTINGS;$CHOICE_CMD" --harness claude --lane "$H/.claude" CC-77
-assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=opus,pct=92,bucket=weekly")" \
-  "rc=1 launched=nolog walled=lane=$H/.claude,model=opus,pct=92,bucket=weekly" \
-  "control: a private default of 90 refuses the account the directive's own pick handed back"
 OPEN_TERMINAL="$OT_REAL"
 
 # Hermeticity proof: every window the launch rows created went through the

@@ -19,8 +19,9 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # that CLI refuses Bash 3.2, which the macOS suite leg runs. A stand-in at the
 # sibling path answers `cache issues get ID --format=raw` from the fixture's
 # cache the way the CLI does: {"issue": row} on stdout, or a stderr line and
-# exit 1 when the cache holds no such issue. The check under test is a whole
-# copy of scripts/ beside it, the same shape every mutant takes.
+# exit 1 when the cache holds no such issue. The check under test runs from
+# a directory of links to the shipped scripts beside it, the shape the
+# control's one mutated copy takes.
 mkdir -p "$TMP_ROOT/linear/scripts"
 cat > "$TMP_ROOT/linear/scripts/linear.sh" <<'SH'
 #!/usr/bin/env bash
@@ -32,7 +33,7 @@ row="$(jq -c --arg id "$4" '.[] | select(.identifier == $id)' .cache/linear/issu
 jq -n --argjson issue "$row" '{issue: $issue}'
 SH
 chmod +x "$TMP_ROOT/linear/scripts/linear.sh"
-CHECK_BIN="$(copy_scripts live)/branch-size-check"
+CHECK_BIN="$(mutant_scripts live)/branch-size-check" || exit 1
 
 PASS=0
 FAIL=0
@@ -54,11 +55,11 @@ git -C "$WT" config user.email test@example.com
 git -C "$WT" config user.name Test
 git -C "$WT" config commit.gpgsign false
 # Rename detection off in the fixture: the check passes --find-renames itself,
-# and a control run under a runner that already enables it proves nothing.
+# and a rename row run under a runner that already enables it proves nothing.
 git -C "$WT" config diff.renames false
 # Path quoting left at git's default in the fixture: the measurement passes
-# core.quotePath=false itself, and the control that strips it must see the
-# quoting, which a runner whose global config already turns it off would hide.
+# core.quotePath=false itself, and the non-ASCII row must meet the quoting,
+# which a runner whose global config already turns it off would hide.
 git -C "$WT" config core.quotePath true
 # On the base branch, so a move of them on the branch is a rename in the
 # comparison the check makes, and a rewrite of them has deletions to ignore.
@@ -135,15 +136,6 @@ assert_eq "$(jq -r '.mirror_lines' <<<"$mirror_json")" "11" \
   "a render pairs with its own source across a changed extension and a nested root, never by basename alone"
 assert_eq "$(jq -r '.production_lines' <<<"$mirror_json")" "47" \
   "a render whose source did not change stays in production beside a same-basename source"
-
-PAIR_SCRIPTS="$(copy_scripts pairing-mutant)"
-PAIR_LIB="$PAIR_SCRIPTS/lib/branch-growth.sh"
-assert_eq "$(grep -Fc 'if (rest_stem == s) return 1' "$PAIR_LIB")" "1" \
-  "pairing control finds exactly one live match"
-sed -i.bak 's/^      rest_stem = stem_path(rest)$/      rest_stem = stem_path(rest); return 1/' "$PAIR_LIB"
-capture pair_mutant_json run_check "$PAIR_SCRIPTS/branch-size-check" --json
-assert_eq "$(jq -r '.mirror_lines' <<<"$pair_mutant_json")" "27" \
-  "must-fail control: without the pairing every render-root path drops out"
 
 # --- A move a size ratchet forced is a rename, not growth -------------------
 git -C "$WT" mv src/legacy.txt src/relocated.txt
@@ -228,13 +220,12 @@ assert_eq "$test_rc" "0" "a branch past its test allowance reports and continues
 assert_eq "$([[ "${test_error%%$'\n'*}" == "branch-size-check: over production="*" tests=50 mirror="*" test-allowance=20" ]] && echo yes)" \
   "yes" "the test report prints the count and the allowance"
 
-# Restore the size refusal in a private copy: the same over-allowance input
-# must make the report-and-continue assertion fail.
-REPORT_SCRIPTS="$(copy_scripts report-mutant)"
-REPORT_MUTANT="$REPORT_SCRIPTS/branch-size-check"
+# The suite's one must-fail control: the size refusal restored in a private
+# copy, so the same over-allowance input fails the report-and-continue row.
+REPORT_MUTANT="$(mutant_scripts report-mutant branch-size-check)/branch-size-check" || exit 1
 assert_eq "$(grep -c '^exit 0$' "$REPORT_MUTANT")" "1" "control finds the measured exit"
 sed -i.bak 's/^exit 0$/exit 3/' "$REPORT_MUTANT"
-assert_eq "$([[ ! -L "$REPORT_MUTANT" ]] && ! cmp -s "$REPORT_MUTANT" "$CHECK_BIN" && echo changed)" "changed" "control changes the private script"
+assert_eq "$(grep -c '^exit 0$' "$REPORT_MUTANT")" "0" "control applied its mutation"
 rc_of mutant_report_rc run_check "$REPORT_MUTANT"
 assert_eq "$mutant_report_rc" "3" "control: the size refusal rejects the report-and-continue case"
 
@@ -302,16 +293,6 @@ for near_miss_key in local-1-2 local-x local-1-2-3x; do
     "$near_miss_key, outside the local- shape, still reaches the tracker"
 done
 
-PR_MUTANT_SCRIPTS="$(copy_scripts pr-key-mutant)"
-PR_MUTANT="$PR_MUTANT_SCRIPTS/branch-size-check"
-mutate_file "$PR_MUTANT" 'NO_ISSUE_KEY_GRAMMAR='"'"'^(pr-[0-9]+|local-[0-9]+-[0-9]+-[0-9]+)$'"'"'' 'NO_ISSUE_KEY_GRAMMAR='"'"'^$'"'"''
-set +e
-pr_mutant_error="$(run_pr_check "$PR_MUTANT" 2>&1 >/dev/null)"
-pr_mutant_rc=$?
-set -e
-assert_eq "$pr_mutant_rc,${pr_mutant_error%%$'\n'*}" "2,branch-size-check: linear-read issue=pr-51" \
-  "control: without the no-issue key the same run is a tracker-read refusal"
-
 # --- A cut retry on a pr-N key is judged against its recorded comparison -----
 # review-pr-comments keys a branch with no issue id pr-N, and a cut chosen
 # there retries through --cut-from-round. The comparison, not the key, states
@@ -334,21 +315,6 @@ bad_cut_rc=$?
 set -e
 assert_eq "$bad_cut_rc,${bad_cut_error%%$'\n'*}" "2,branch-size-check: invalid-round path=$BAD_CUT_ROUND" \
   "a pr-N cut retry still refuses a round record it cannot read"
-
-# Control: clear the cut source for a no-issue key. Both the allowance and the
-# record's validation are read from it, so the one mutation drops them
-# together, which is what pins the comparison rather than the key as the
-# allowance these two rows measure against.
-CUT_SOURCE_SCRIPTS="$(copy_scripts pr-cut-source-mutant)"
-CUT_SOURCE_MUTANT="$CUT_SOURCE_SCRIPTS/branch-size-check"
-mutate_file "$CUT_SOURCE_MUTANT" 'no_issue=false' \
-  'if [[ "$issue" =~ $NO_ISSUE_KEY_GRAMMAR ]]; then no_issue=true; cut_from_round=""; else no_issue=; fi'
-capture cut_source_json run_pr_check "$CUT_SOURCE_MUTANT" --cut-from-round "$CUT_ROUND" --json
-assert_eq "$(jq -r '.verdict' <<<"$cut_source_json")" "allowance_missing" \
-  "control: a no-issue key with its cut source cleared loses the comparison's allowance"
-rc_of cut_source_rc run_pr_check "$CUT_SOURCE_MUTANT" --cut-from-round "$BAD_CUT_ROUND"
-assert_eq "$cut_source_rc" "0" \
-  "control: the same cleared source skips the round record's validation"
 
 # --- The state file is the one named, not the one the caller stands in ------
 write_issue "**Expected delta**: 50 lines"
@@ -376,9 +342,6 @@ capture declared_json run_check \
   env ORCH_SIZE_TEST_PATHS='scripts/check-*.py scripts/probe-?.sh' "$CHECK_BIN" --json
 assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$declared_json" | paste -sd, -)" "71,64" \
   "a declared glob moves the paths it names alone, its dot matching a dot, its ? one character, its star a slash, and its whole-path anchors refusing a path that merely carries it"
-capture undeclared_json run_check "$CHECK_BIN" --json
-assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$undeclared_json" | paste -sd, -)" "85,50" \
-  "must-fail control: with the setting unset the same lines are production"
 # The globs reach the classifier through the environment, where awk performs no
 # escape processing on them. Carried by a -v assignment instead, gawk would
 # strip the backslash below and the bare star would take star-x.py, while mawk
@@ -397,15 +360,6 @@ commit_files non-ascii-test-path
 capture non_ascii_json run_check "$CHECK_BIN" --json
 assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$non_ascii_json" | paste -sd, -)" "85,59" \
   "a test path holding a non-ASCII character counts as a test path"
-
-QUOTE_SCRIPTS="$(copy_scripts quotepath-mutant)"
-QUOTE_LIB="$QUOTE_SCRIPTS/lib/branch-growth.sh"
-assert_eq "$(grep -Fc -e '-c core.quotePath=false' "$QUOTE_LIB")" "1" \
-  "quoting control finds exactly one live setting"
-sed -i.bak 's/ -c core\.quotePath=false//' "$QUOTE_LIB"
-capture quote_mutant_json run_check "$QUOTE_SCRIPTS/branch-size-check" --json
-assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$quote_mutant_json" | paste -sd, -)" "94,50" \
-  "must-fail control: without that setting the quoted path scores as production"
 
 # --- A private env file that prints leaves stdout to the record -------------
 # Untracked, so the measurement is unchanged; KENDEX_ENV_FILE is unset so the

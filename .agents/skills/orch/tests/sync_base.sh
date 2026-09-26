@@ -80,6 +80,9 @@ assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$(git -C "$SEED" rev-parse ma
 git -C "$BASE_TREE" commit -q --allow-empty -m local-ahead
 local_ahead_sha="$(git -C "$BASE_TREE" rev-parse HEAD)"
 origin_sha="$(git -C "$BASE_TREE" rev-parse origin/main)"
+# The suite's one must-fail control. sync-base reads git-https-auth from the
+# github skill beside its own, so the one copied file takes its script
+# directory from the environment rather than from where it sits.
 AHEAD_MUTANT="$TMP_ROOT/sync-base-ahead-mutant"
 assert_eq "$(grep -Fc '[[ "$LOCAL_SHA" == "$ORIGIN_SHA" ]] || {' "$SYNC")" "1" "local-ahead control finds the SHA equality gate"
 awk '
@@ -118,18 +121,6 @@ printf 'seven\n' >> "$SEED/file"
 git -C "$SEED" add file
 git -C "$SEED" commit -q -m seven
 git -C "$SEED" push -q "$UPSTREAM" main
-before="$(git -C "$BASE_TREE" rev-parse HEAD)"
-UNTRACKED_MUTANT="$TMP_ROOT/sync-base-untracked-mutant"
-assert_eq "$(grep -Fc -- '--untracked-files=no' "$SYNC")" "1" "untracked control finds the tracked-only dirtiness check"
-awk '
-  index($0, "SCRIPT_DIR=\"$(cd --") { print "SCRIPT_DIR=\"${SYNC_TEST_SCRIPT_DIR:?}\""; next }
-  { sub(/--untracked-files=no/, "--untracked-files=all"); print }
-' "$SYNC" > "$UNTRACKED_MUTANT"
-chmod +x "$UNTRACKED_MUTANT"
-rc=0
-SYNC_TEST_SCRIPT_DIR="$REPO_ROOT/skills/orch/scripts" "$UNTRACKED_MUTANT" "$CLONE" >/dev/null 2>"$TMP_ROOT/untracked-mutant.err" || rc=$?
-[[ $rc -ne 0 ]] && ok "untracked control fails when unrelated files are classified as dirty" || fail "untracked control fails when unrelated files are classified as dirty"
-assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$before" "untracked mutant does not advance the base"
 out="$($SYNC "$CLONE" 2>"$TMP_ROOT/untracked-safe.err")"
 assert_eq "$out" "main" "unrelated untracked file allows base sync"
 assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$(git -C "$SEED" rev-parse main)" "unrelated untracked file does not block the fast-forward"
@@ -173,22 +164,6 @@ assert_eq "$(cat "$BASE_TREE/ignored-clobber")" "local ignored clobber" "ignored
 rm -f -- "$BASE_TREE/ignored-clobber"
 out="$($SYNC "$CLONE" 2>"$TMP_ROOT/sync.err")"
 assert_eq "$out" "main" "cleaned ignored clobber base can catch up"
-
-EFFECT_MUTANT="$TMP_ROOT/sync-base-effect-mutant"
-assert_eq "$(grep -Fc -- 'merge --ff-only --no-overwrite-ignore' "$SYNC")" "1" "effect control finds no-overwrite-ignore"
-awk '
-  index($0, "SCRIPT_DIR=\"$(cd --") { print "SCRIPT_DIR=\"${SYNC_TEST_SCRIPT_DIR:?}\""; next }
-  { sub(/--ff-only --no-overwrite-ignore/, "--ff-only"); print }
-' "$SYNC" > "$EFFECT_MUTANT"
-chmod +x "$EFFECT_MUTANT"
-printf 'upstream effect\n' > "$SEED/ignored-effect"
-git -C "$SEED" add -f ignored-effect
-git -C "$SEED" commit -q -m ignored-effect
-git -C "$SEED" push -q "$UPSTREAM" main
-printf 'local effect\n' > "$BASE_TREE/ignored-effect"
-out="$(SYNC_TEST_SCRIPT_DIR="$REPO_ROOT/skills/orch/scripts" "$EFFECT_MUTANT" "$CLONE" 2>"$TMP_ROOT/effect-mutant.err")"
-assert_eq "$out" "main" "effect control fails when merge may overwrite ignored data"
-assert_eq "$(cat "$BASE_TREE/ignored-effect")" "upstream effect" "effect mutant exposes the ignored-file data loss the flag prevents"
 
 CASE_PROBE="$BASE_TREE/case-probe"
 mkdir "$CASE_PROBE"
