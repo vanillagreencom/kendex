@@ -1268,8 +1268,11 @@ stop_unnamed() { # [ENV=VAL...]
     '{stop_hook_active:false,transcript_path:$p}')" "$@"
 }
 
-# The two commands an overseer's refusal names, counted in the stderr it wrote.
-overseer_route() { grep -cF -- "/oversee-succeed -- [THE PERMISSION" "$ERR_FILE"; }
+# The reading the overseer transcript below leaves, as the judge takes it.
+OVERSEER_CONTEXT=600000:1000000
+# The two commands an overseer's refusal names, counted in the stderr it wrote:
+# the succession is handed the reading this turn end took, as the judge was.
+overseer_route() { grep -cF -- "/oversee-succeed --context $OVERSEER_CONTEXT -- [THE PERMISSION" "$ERR_FILE"; }
 overseer_record_named() { grep -cF -- "workflow-state set oversee handoff " "$ERR_FILE"; }
 
 new_overseer overseer_context
@@ -1277,8 +1280,8 @@ judge_says "$BELOW_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
 expect 0 - "an overseer the judgement puts under both marks ends its turn"
-assert_eq "$(judge_argv)" "--check-marks" \
-  "and the hook asked for the judgement and nothing else, opening no window" "$ERR_FILE"
+assert_eq "$(judge_argv)" "--check-marks --context $OVERSEER_CONTEXT" \
+  "and the hook asked for the judgement on the reading this turn end took, and nothing else, opening no window" "$ERR_FILE"
 judge_says "$CONTEXT_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
@@ -1334,6 +1337,26 @@ expect 2 "lane-mail-check: headroom=4" \
   "an overseer the judgement puts at its account mark is refused with the headroom it read"
 assert_eq "named=$(grep -cF -- 'the ORCH_OVERSEER_HEADROOM_PCT mark of 10' "$ERR_FILE") route=$(overseer_route)" \
   "named=1 route=1" "and the refusal names the judge's own setting and the succession"
+
+# A reading whose window the adapter could not name is handed on with that
+# window empty, to the judge and to the succession the refusal names alike, so
+# the judge reports the context unmeasured rather than judging a stored figure.
+new_overseer overseer_window_unread
+usage_line sonnet 999999 > "$TRANSCRIPT"
+judge_says "$HEADROOM_MARK_LINE"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+assert_eq "argv=$(judge_argv | tail -n 1) route=$(grep -cF -- "/oversee-succeed --context 999999: -- [THE PERMISSION" "$ERR_FILE")" \
+  "argv=--check-marks --context 999999: route=1" \
+  "an overseer reading with no window hands its judge and its succession the tokens and no window" "$ERR_FILE"
+variant no-context-arg -e 's|^    ${CONTEXT_ARGS\[@\]+"${CONTEXT_ARGS\[@\]}"} 2>|    2>|'
+install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+write_transcript "$TRANSCRIPT" 600000
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+assert_eq "$(judge_argv | tail -n 1)" "--check-marks" \
+  "control: a hook that withholds the reading hands its judge no context"
+install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
 for mark_row in \
   "rate|$RATE_MARK_LINE|30|ORCH_OVERSEER_WALL_MINUTES" \
@@ -1414,7 +1437,7 @@ REALTMUX
     "a real hook returns an available context mark before a slow capacity sweep reaches its ceiling"
   assert_eq "$(jq -r '"\(.tokens) \(.window) \(.pane_key)"' "$LANE/tmp/lane-mail/overseer/context.json" 2>/dev/null)" \
     "600000 1000000 $OVERSEER_SERVER $OVERSEER_PANE" \
-    "the figure is the one this hook recorded for this pane, which the real judgement read back"
+    "the reading judged is the one this hook took, recorded for this pane's harness and model"
 
   variant short-judge -e 's@^ACCOUNT_CEILING=20$@ACCOUNT_CEILING=1@'
   new_overseer overseer_ceiling

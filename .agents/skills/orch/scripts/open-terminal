@@ -502,11 +502,10 @@ fi
 if [[ "$FLEET" == true && "$WAKE" != true ]]; then
   case "$LAUNCH_HARNESS" in
     claude | codex)
-      if [[ "$LAUNCH_HARNESS" == claude && -z "$(lane_adapter_claude_window "$LAUNCH_MODEL")" ]]; then
-        ot_message launch-window-unknown "harness=claude" "model=${LAUNCH_MODEL:-none}" >&2
+      if ! LAUNCH_COMPACTION_OFF="$(launch_choice_compaction "$LAUNCH_HARNESS" "$LAUNCH_MODEL")"; then
+        ot_message launch-window-unknown "harness=$LAUNCH_HARNESS" "model=${LAUNCH_MODEL:-none}" >&2
         exit 1
       fi
-      LAUNCH_COMPACTION_OFF="$(launch_choice_compaction_off "$LAUNCH_HARNESS")"
       if [[ -n "$CMD_TEMPLATE" ]] && ! launch_choice_words_present "$LAUNCH_COMPACTION_OFF" "$CMD_TEMPLATE"; then
         compaction_fields=()
         read -r -a compaction_words <<<"$LAUNCH_COMPACTION_OFF"

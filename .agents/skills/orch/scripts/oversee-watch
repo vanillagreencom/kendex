@@ -1252,7 +1252,7 @@ overseer_launch_args() {
 }
 
 overseer_command_record() {
-  local pane="${TMUX_PANE:-}" key server window line record detail box
+  local pane="${TMUX_PANE:-}" key server window line record detail
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
   # The key is the orch library's, which the report and the turn-end hook read
   # a session's own key with, so the hook's comparison cannot drift from this
@@ -1285,10 +1285,6 @@ overseer_command_record() {
   detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
     set oversee overseer "$record" 2>&1)" \
     || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=write"
-  # The overseer mailbox's reading is the last session's until this one's first
-  # turn end records its own, and a pane key cannot tell the two apart.
-  box="$(lane_context_overseer_box "$PROJECT_ROOT")"
-  rm -f -- "${box:?}/$LANE_CONTEXT_RECORD"
 }
 
 # Whether PANE, a pane id, is one the tmux server this start runs on no longer

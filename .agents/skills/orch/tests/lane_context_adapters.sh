@@ -184,7 +184,7 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     '232560 of 258400 at 90: rc=0 due'
   control window-read-as-room lane-context.sh "case \"\${2:-}\" in '' | 0) return 1 ;;" "case \"\${2:-}\" in '' | 0) printf 'room\\n'; return 0 ;;" \
     '5 of no window at 90: rc=1'
-  control project-ignored adapters/pi.sh '&& [ "$LANE_ADAPTER_PI_ENABLED" != true ] ' '' \
+  control project-ignored adapters/pi.sh '[ "$LANE_ADAPTER_PI_ENABLED" = true ] && return 0' ':' \
     'user {"compaction":{"enabled":false}} and project {"compaction":{"enabled":true}}: rc=0'
 fi
 
