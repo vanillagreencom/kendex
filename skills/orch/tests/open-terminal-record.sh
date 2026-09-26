@@ -58,7 +58,8 @@ assert_eq() {
 # answers tmux's own refusal for a session STUB_DEAD_SESSIONS names, for an
 # empty name the error tmux 3.4 prints for `-t =`, and STUB_HAS_SESSION_ERR,
 # where set, for every name. list-panes lists the one pane new-window makes,
-# and fails with tmux's own line where STUB_LIST_PANES_FAIL is set.
+# and fails with tmux's own line where STUB_LIST_PANES_FAIL is set. A
+# paste-buffer marks STUB_PASTED, which run_ot clears before each launch.
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/ghostty"
@@ -87,7 +88,15 @@ case "${1:-}" in
       echo "$STUB_SESSION_NAME"
     elif [[ "$*" == *pane_current_command* ]]; then echo "${STUB_PANE_CMD:-0}"; else echo 0; fi ;;
   kill-window) logged kill-window ;;
-  list-panes) [[ -z "${STUB_LIST_PANES_FAIL:-}" ]] || { echo 'no server running on /tmp/tmux-stub/default' >&2; exit 1; }; echo %1 ;;
+  list-panes) [[ -z "${STUB_LIST_PANES_FAIL:-}" ]] || { echo 'no server running on /tmp/tmux-stub/default' >&2; exit 1; }
+    # The pane writer's identity read: the window's shell until a paste lands,
+    # then what the row says the pane runs, ssh for a hosted one.
+    if [[ "$*" == *pane_current_command* ]]; then
+      running=bash
+      [[ ! -e "${STUB_PASTED:-}" ]] || running="${STUB_PANE_CMD:-claude}"
+      printf '%%1\t%s\t%s\n' "$$" "$running"
+    else echo %1; fi ;;
+  paste-buffer) [[ -z "${STUB_PASTED:-}" ]] || : > "$STUB_PASTED" ;;
   capture-pane) printf '%s\n' "${STUB_PANE_TEXT:-}" ;;
 esac
 exit 0
@@ -157,8 +166,9 @@ run_ot() {
     shift
   done
   [[ -z "$state_dir" ]] || state_args=(--state-dir "$state_dir")
+  rm -f -- "${TMP_ROOT:?}/pasted"
   set +e
-  OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" \
+  OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" STUB_PASTED="$TMP_ROOT/pasted" \
     WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" LANES_HOME="$SESSION_HOME" EXISTS_DIR="$EXISTS_DIR" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX="${RUN_TMUX:-}" ORCH_TMUX_SESSION="${RUN_SESSION-stub}" TMUX_PANE="${RUN_PANE:-}" \
     STUB_SESSION_NAME="${STUB_SESSION_NAME:-}" STUB_TMUX_LOG="${STUB_TMUX_LOG:-}" STUB_DEAD_SESSIONS="${STUB_DEAD_SESSIONS:-}" STUB_PANE_GONE="${STUB_PANE_GONE:-}" STUB_HAS_SESSION_ERR="${STUB_HAS_SESSION_ERR:-}" GH_REPO="" STUB_GH_REPO="${STUB_GH_REPO:-}" \

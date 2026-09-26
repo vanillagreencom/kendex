@@ -130,7 +130,7 @@ n=0; [[ -f "${OT_TMUX_PANES:-}" ]] && n="$(cat "$OT_TMUX_PANES")"
 eval "$(awk '
   /^clear; ssh / { if (state != "ssh") { conn++; state = "ssh"; reads = 0 } ; next }
   /^send-keys .* C-c$/ { if (ENVIRON["OT_SSH_IGNORES_INTERRUPT"] == "") state = "shell"; next }
-  /pane_current_command/ { if (state == "ssh") reads++ }
+  /^display-message .*pane_current_command/ { if (state == "ssh") reads++ }
   END { printf "state=%s connections=%d reads=%d\n", (state == "ssh" ? "ssh" : "shell"), conn + 0, reads + 0 }
 ' "$OT_TMUX_LOG")"
 # A connection the row says has outlived its welcome: the pane is back at its
@@ -144,8 +144,21 @@ case "${1:-}" in
     echo "$OT_TMUX_SERVER_PID %$n" ;;
   list-panes)
     # The pane ids alone where the read asks for nothing more, as tmux prints them.
+    # The pane writer's identity read also asks what each pane runs, replayed
+    # for the newest window since only it is written to: ssh while a dial
+    # holds it, the harness once a local launch line has been typed, and the
+    # window's own shell before either and after an interrupt.
+    running="$(awk '
+      /^new-window / { s = "bash" }
+      /^clear; ssh / { s = "ssh"; next }
+      /^send-keys .* C-c$/ { if (ENVIRON["OT_SSH_IGNORES_INTERRUPT"] == "") s = "bash"; next }
+      /^clear; / { s = "claude" }
+      END { print (s == "" ? "bash" : s) }
+    ' "$OT_TMUX_LOG")"
     i=1; while [[ "$i" -le "$n" ]]; do
-      if [[ "${*: -1}" == '#{pane_id}' ]]; then echo "%$i"; else echo "$OT_TMUX_SERVER_PID %$i"; fi
+      if [[ "${*: -1}" == '#{pane_id}' ]]; then echo "%$i"
+      elif [[ "$*" == *pane_current_command* ]]; then printf '%%%s\t%s\t%s\n' "$i" "$OT_TMUX_SERVER_PID" "$running"
+      else echo "$OT_TMUX_SERVER_PID %$i"; fi
       i=$((i + 1))
     done ;;
   list-windows) echo "1" ;;
@@ -1230,7 +1243,7 @@ assert_eq "$(observe "rc=1 tmuxfailed=operation=capture-pane,item=CC-133 promptm
 # finds the pane back at its shell. Read against ORCH_TMUX_VERIFY_SECS the same
 # run makes five looks, so a wait that took the wrong bound cannot pass here.
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=3;ORCH_TMUX_VERIFY_SECS=1;OT_SSH_CONNECTS_ON=3;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-126
-assert_eq "$(observe "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=2") polls=$(typed pane_current_command)" \
+assert_eq "$(observe "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=2") polls=$(grep -c '^display-message .*pane_current_command' "$RUN/tmux.log" || true)" \
   "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=2 polls=9" \
   "both waits poll on the ssh bound, which the run's look count separates from the verification timeout"
 
@@ -1243,7 +1256,7 @@ assert_eq "$(observe "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prom
 # run makes four looks per wait, where the harness bound would make two in the
 # second wait and eight looks in all.
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=3;ORCH_TMUX_VERIFY_SECS=1;OT_SSH_CONNECTS_ON=2;OT_SSH_IGNORES_INTERRUPT=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-134
-assert_eq "$(observe "rc=1 promptmissing=item=CC-134,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=1") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT") polls=$(typed pane_current_command)" \
+assert_eq "$(observe "rc=1 promptmissing=item=CC-134,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=1") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT") polls=$(grep -c '^display-message .*pane_current_command' "$RUN/tmux.log" || true)" \
   "rc=1 promptmissing=item=CC-134,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=1 ssh=1 int=1 polls=8" \
   "a client that keeps the pane through the interrupt is refused on its one dial, the wait for the shell spending the ssh bound"
 # The interrupt is a keystroke that can fail on this machine like any other,

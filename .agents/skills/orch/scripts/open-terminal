@@ -121,6 +121,8 @@ source "$SCRIPT_DIR/lib/lane-claims.sh"
 source "$SCRIPT_DIR/lib/file-lock.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
+# shellcheck source=lib/pane-write.sh
+source "$SCRIPT_DIR/lib/pane-write.sh"
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
 # shellcheck source=lib/lane-gitfile.sh
@@ -1074,8 +1076,8 @@ cmd_has_unbalanced_quote() {
 # two; telling them apart is this script's question, not its.
 #
 # Readiness is the EMPTY composer, which is that line and nothing after it.
-# A composer still holding text is not somewhere to type: `send-keys -l`
-# APPENDS, so typing the brief into a composer that already holds one submits
+# A composer still holding text is not somewhere to type: a paste APPENDS,
+# so typing the brief into a composer that already holds one submits
 # `/orch start CC-737/orch start CC-737`. Its own dismissing Enter submits
 # what is there instead, which is the right recovery when what is there is the
 # brief the launch arrived with — the state this whole path exists for.
@@ -1161,20 +1163,14 @@ tmux_wait_launched() {
   return 1
 }
 
-tmux_enter() {
-  local pane="$1" mode
-  mode="$(tmux display-message -p -t "$pane" '#{pane_in_mode}')" || return 1
-  if [[ "$mode" == 1 ]]; then tmux send-keys -t "$pane" -X cancel || return 1; fi
-  mode="$(tmux display-message -p -t "$pane" '#{pane_in_mode}')" || return 1
-  [[ "$mode" == 0 ]] || return 1
-  tmux send-keys -t "$pane" Enter
-}
-tmux_paste() (
-  local pane="$1" text="$2" file
+# TEXT typed into the pane this launch opened, then Enter, through the one
+# pane writer; EXPECT is the process the pane must be running at that moment.
+tmux_paste() ( # PANE EXPECT TEXT
+  local pane="$1" expect="$2" text="$3" file
   file="$(mktemp)" || exit 1
   trap 'rm -f -- "$file"' EXIT
   printf '%s' "$text" > "$file" || exit 1
-  tmux load-buffer "$file" && tmux paste-buffer -p -d -t "$pane" && tmux_enter "$pane"
+  pane_write pane "$pane" "$expect" file "$file"
 )
 
 # Before re-typing the brief, get the TUI to a ready composer: while a
@@ -1204,8 +1200,8 @@ tmux_paste() (
 # it submitted lands after the last nudge, and testing the budget before the
 # capture would report that lane stuck. At ORCH_TMUX_VERIFY_SECS=1 that is the
 # only Enter there is.
-tmux_wait_composer() {
-  local pane="$1" brief="$2" waited=0 screen
+tmux_wait_composer() { # PANE BRIEF EXPECT
+  local pane="$1" brief="$2" expect="$3" waited=0 screen
   while :; do
     # VISIBLE viewport only (no -S -): readiness is a property of the
     # current screen — a footer buried in scrollback behind a first-run
@@ -1219,7 +1215,7 @@ tmux_wait_composer() {
     lane_launched "$screen" "$brief" && return 2
     grep -Eq -- "$READY_RE" <<<"$screen" && return 0
     (( waited < TMUX_VERIFY_SECS )) || return 1
-    tmux_enter "$pane" || return 1
+    pane_write pane "$pane" "$expect" key Enter || return 1
     sleep 1
     waited=$((waited + 1))
   done
@@ -1602,6 +1598,9 @@ tmux_window_close() { # PANE TITLE
 
 open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   local dir="$1" title="$2" cmd="$3" brief="${4:-}" target="${5:-}" line="clear; $3" pane
+  # What the pane runs once the launch line is in: the harness, or the ssh
+  # client carrying it for a hosted lane. Before that, the window's own shell.
+  local line_expect=shell running="$HARNESS"
   # Called on the left of `||` at the launch loop, which suspends errexit for
   # this whole function body — every tmux step is checked explicitly so a
   # failed window creation or keystroke cannot fall through to a success
@@ -1612,7 +1611,7 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   if [[ -n "$target" ]]; then
     local ssh_line attempts=1
     ssh_line="clear; ssh $(lane_single_quote "$target")"
-    if ! tmux_paste "$pane" "$ssh_line"; then
+    if ! tmux_paste "$pane" shell "$ssh_line"; then
       ot_message tmux-failed "operation=ssh" "item=$title" >&2
       return 1
     fi
@@ -1631,7 +1630,7 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
     # wait here takes the one bound, which the validation gate's comment
     # counts.
     if [[ "$REMOTE_PROMPT_STATE" == prompt-silent ]]; then
-      if ! tmux send-keys -t "$pane" C-c; then
+      if ! pane_write pane "$pane" ssh key C-c; then
         ot_message tmux-failed "operation=interrupt" "item=$title" >&2
         return 1
       fi
@@ -1640,7 +1639,7 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
       # ssh lines this launcher put in front of a shell, never tries at
       # getting the pane back.
       if tmux_wait_ssh_gone "$pane"; then
-        if ! tmux_paste "$pane" "$ssh_line"; then
+        if ! tmux_paste "$pane" shell "$ssh_line"; then
           ot_message tmux-failed "operation=ssh" "item=$title" >&2
           return 1
         fi
@@ -1665,8 +1664,10 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
         return 1 ;;
     esac
     line="$cmd"
+    line_expect=ssh
+    running=ssh
   fi
-  if ! tmux_paste "$pane" "$line"; then
+  if ! tmux_paste "$pane" "$line_expect" "$line"; then
     ot_message tmux-failed "operation=paste" "item=$title" >&2
     return 1
   fi
@@ -1675,7 +1676,7 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   else ot_message tmux-opened "item=$title" "path=$dir"; fi
   local launch_rc=0 premise=skipped
   HARNESS_SCREEN_MISSED=false
-  [[ -z "$brief" ]] || tmux_launch_verify "$pane" "$title" "$brief" || launch_rc=$?
+  [[ -z "$brief" ]] || tmux_launch_verify "$pane" "$title" "$brief" "$running" || launch_rc=$?
   # The premise for the read below, and the reason it is here rather than
   # inside the check above: every launch shape passes this line, including the
   # ones that carry no brief. It refuses nothing, so the read happens either
@@ -1725,11 +1726,11 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
 # pane shows no harness screen. A brief is rendered for the claude harness
 # alone, so this function runs on no other, and those markers are the whole of
 # what a claude pane can draw. open_tmux sets it false ahead of each launch.
-tmux_launch_verify() { # PANE TITLE BRIEF
-  local pane="$1" title="$2" brief="$3"
+tmux_launch_verify() { # PANE TITLE BRIEF EXPECT
+  local pane="$1" title="$2" brief="$3" expect="$4"
   tmux_wait_launched "$pane" "$brief" && return 0
   local composer_rc=0
-  tmux_wait_composer "$pane" "$brief" || composer_rc=$?
+  tmux_wait_composer "$pane" "$brief" "$expect" || composer_rc=$?
   if (( composer_rc == 2 )); then
     ot_message launch-confirmed "item=$title"
     return 0
@@ -1739,7 +1740,7 @@ tmux_launch_verify() { # PANE TITLE BRIEF
     ot_message composer-stuck "item=$title" "brief=$brief" >&2
     return 1
   fi
-  if ! tmux_paste "$pane" "$brief"; then
+  if ! tmux_paste "$pane" "$expect" "$brief"; then
     ot_message tmux-failed "operation=brief-send" "item=$title" >&2
     return 1
   fi

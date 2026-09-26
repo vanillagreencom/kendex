@@ -290,15 +290,24 @@ lane_process_cwd() { # PID
   printf '%s\n' "$out"
 }
 
+# Print the host's process table as `pid ppid name` rows, the name with any
+# directory stripped: macOS `ps` prints an executable's path where Linux prints
+# its bare name. Status 1 is a table that could not be read.
+lane_process_table() {
+  local raw table
+  raw="$(ps -A -o pid= -o ppid= -o comm=)" || return 1
+  table="$(awk '{ pid = $1; ppid = $2; $1 = ""; $2 = ""; name = substr($0, 3); sub(/.*\//, "", name); print pid, ppid, name }' <<<"$raw")" \
+    || return 1
+  printf '%s\n' "$table"
+}
+
 lane_owned_processes() { # WORKTREE HARNESS
-  local root raw table candidates pid cwd state rc
+  local root table candidates pid cwd state rc
   LANE_OWNED_PROCESS_TABLE=""
   LANE_OWNED_PROCESS_CANDIDATES=""
   LANE_OWNED_PROCESS_PIDS=""
   root="$(cd -- "$1" && pwd -P)" || return 2
-  raw="$(ps -A -o pid= -o ppid= -o comm=)" || return 2
-  table="$(awk '{ pid = $1; ppid = $2; $1 = ""; $2 = ""; name = substr($0, 3); sub(/.*\//, "", name); print pid, ppid, name }' <<<"$raw")" \
-    || return 2
+  table="$(lane_process_table)" || return 2
   candidates="$(awk -v harness="$2" '$3 == harness { print $1 }' <<<"$table")" || return 2
   for pid in $candidates; do
     rc=0

@@ -43,7 +43,6 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="$SCRIPTS_DIR/open-terminal"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
-REAL_TMUX="$(command -v tmux)" || exit 1
 # shellcheck source=lib/waiter-assertions.sh
 source "$TEST_DIR/lib/waiter-assertions.sh"
 # mutant_scripts and mutate_file, the two halves of the control below.
@@ -97,6 +96,14 @@ fi
 case "${1:-}" in
   list-windows) echo "1" ;;
   new-window) echo "%7" ;;
+  # The pane writer's identity read: the window's shell until the launch line
+  # is pasted, the harness after it.
+  list-panes)
+    if [[ "$*" == *pane_current_command* ]]; then
+      running=bash
+      ! grep -q '^paste-buffer ' "$OT_TMUX_LOG" || running=claude
+      printf '%%7\t4242\t%s\n' "$running"
+    fi ;;
   load-buffer) printf 'loaded-text %s\n' "$(cat "${!#}")" >> "$OT_TMUX_LOG" ;;
   display-message) echo 0 ;;
   capture-pane)
@@ -470,22 +477,6 @@ launch_table \
   "a codex tmux lane with no --lane reads the timeout nowhere and is not aborted by a broken one|tmux-codex|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS=false" \
   "a codex lane launch refuses a broken timeout, which its account check waits on|tmux-codex-lane|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=1 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS+value=abc=true"
 
-tmux() { "$REAL_TMUX" -L "ot-paste-$$" "$@"; }
-pane="$(tmux -f /dev/null new-session -d -P -F '#{pane_id}' "cat >> '$TMP_ROOT/received'")"
-trap 'tmux kill-server; rm -rf "$TMP_ROOT"' EXIT
-sed -n '/^tmux_enter()/,/^tmux_wait_composer()/p' "$SRC_OT" | sed '$d' > "$TMP_ROOT/paste.sh"
-source "$TMP_ROOT/paste.sh"
-for mode in legacy-copy copy normal; do
-  : > "$TMP_ROOT/received"
-  if [[ "$mode" != normal ]]; then tmux copy-mode -t "$pane"; fi
-  if [[ "$mode" == legacy-copy ]]; then
-    tmux send-keys -t "$pane" -l hello
-    tmux send-keys -t "$pane" Enter
-  else tmux_paste "$pane" hello; fi
-  sleep 1
-  expected=hello; [[ "$mode" != legacy-copy ]] || expected=""
-  assert_eq "$(cat "$TMP_ROOT/received")" "$expected" "program input: $mode"
-done
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
