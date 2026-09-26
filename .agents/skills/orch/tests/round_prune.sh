@@ -273,6 +273,29 @@ listing_refused listing-ignored "$MUTANTS/listing-ignored/scripts"
   assert_eq "recorded" "recorded" "control: without the worktree-list refusal a failed listing records the round" ||
   assert_eq "$LISTING" "rc=0 ..." "control: without the worktree-list refusal a failed listing records the round"
 
+# A registered tree whose directory is gone: git still lists it on the
+# state's branch, and it is no lane target. STALE reads SCRIPTS' round.
+stale_tree() { # NAME SCRIPTS
+  build "stale-$1" KEN-1 branch pr-5
+  rm -rf -- "${WT:?}"
+  prune 80 "$2"
+  STALE="rc=$RC $(line)"
+}
+stale_tree shipped "$ORCH_SCRIPTS"
+assert_eq "$STALE" "rc=0 round-prune: action=no-worktree used-pct=0 mark-pct=75 bytes=0 round=<round> worktree=" \
+  "a state whose branch sits on a registered tree with no directory records no-worktree"
+# Must-fail control: a git-context that takes a registered tree whatever its
+# directory hands the round a target that is gone.
+mkdir -p "$MUTANTS/stale-dir"
+cp -a "$ORCH_SCRIPTS" "$MUTANTS/stale-dir/scripts"
+SD_ANCHOR='[[ -d "$path" ]] || lane=false'
+[[ "$(grep -Fc -- "$SD_ANCHOR" "$ORCH_SCRIPTS/git-context")" == 1 ]] || { echo "control: the directory check could not be found in git-context" >&2; exit 2; }
+A="$SD_ANCHOR" awk 'index($0, ENVIRON["A"]) { print ":"; next } { print }' "$ORCH_SCRIPTS/git-context" >"$MUTANTS/stale-dir/scripts/git-context"
+stale_tree stale-dir "$MUTANTS/stale-dir/scripts"
+[[ "$STALE" == *"action=no-worktree"* ]] &&
+  assert_eq "$STALE" "another outcome" "control: taking a registered tree whatever its directory hands the round a gone target" ||
+  assert_eq "gone target" "gone target" "control: taking a registered tree whatever its directory hands the round a gone target"
+
 echo "=== target/ across two runs ==="
 # Two rounds, each starting with the round-start prune and ending with a
 # validation run that leaves a superseded unit behind. Past the mark, target/
