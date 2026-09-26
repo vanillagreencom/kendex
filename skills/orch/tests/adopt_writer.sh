@@ -11,7 +11,7 @@ stub() { # REPO PREFIX RC LINE
   chmod +x "$1/$2/review-gate/scripts/validate-workflow.sh"
 }
 while IFS='|' read -r name layout stub_rc line expected_rc expected; do
-  repo="$SCRATCH/$name"; git init -q "$repo"; mkdir "$repo/sub"
+  repo="$SCRATCH/$name"; git init -q "$repo"; git -C "$repo" config gc.auto 0; git -C "$repo" config maintenance.auto false; mkdir "$repo/sub"
   case "$layout" in
     none) ;;
     vendored) stub "$repo" .agents/skills "$stub_rc" "$line" ;;

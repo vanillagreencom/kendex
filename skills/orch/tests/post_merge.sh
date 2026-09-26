@@ -5,7 +5,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../scripts" && pwd)"
 SCRATCH="$(mktemp -d)"; trap 'rm -rf -- "$SCRATCH"' EXIT
-git init -q "$SCRATCH/seed"; git -C "$SCRATCH/seed" config user.email test@example.com; git -C "$SCRATCH/seed" config user.name test
+git init -q "$SCRATCH/seed"; git -C "$SCRATCH/seed" config gc.auto 0; git -C "$SCRATCH/seed" config maintenance.auto false; git -C "$SCRATCH/seed" config user.email test@example.com; git -C "$SCRATCH/seed" config user.name test
 printf '{}\n' > "$SCRATCH/seed/.kendex-lock.json"; git -C "$SCRATCH/seed" add -A; git -C "$SCRATCH/seed" commit -qm initial; git -C "$SCRATCH/seed" branch -M main
 # The stub's refresh re-records the committed record, as a refresh on a main
 # whose record its rolling pull request has not landed yet does, and writes
@@ -17,7 +17,7 @@ export PATH="$SCRATCH/bin:$PATH"; unset ORCH_POST_MERGE_CMD WORKTREE_DEFAULT_BRA
 # clone stays at the head it had and neither sync-base nor verify runs.
 while IFS='|' read -r FAIL_STEP expected_rc expected; do
   flag=""; [[ "$FAIL_STEP" != refresh-only ]] || flag=--refresh-only
-  git clone -q "$SCRATCH/seed" "$SCRATCH/$FAIL_STEP"; before="$(git -C "$SCRATCH/$FAIL_STEP" rev-parse HEAD)"; export before FAIL_STEP
+  git clone -q -c gc.auto=0 -c maintenance.auto=false "$SCRATCH/seed" "$SCRATCH/$FAIL_STEP"; before="$(git -C "$SCRATCH/$FAIL_STEP" rev-parse HEAD)"; export before FAIL_STEP
   git -C "$SCRATCH/seed" commit -qm advance --allow-empty; after="$(git -C "$SCRATCH/seed" rev-parse HEAD)"; export after
   touch "$SCRATCH/$FAIL_STEP/kendex.toml"
   export ORCH_POST_MERGE_CMD='[ "$ORCH_POST_MERGE_BEFORE" = "$before" ] && [ "$ORCH_POST_MERGE_AFTER" = "$after" ] && [ "$(git rev-parse HEAD)" = "$after" ] && [ "$FAIL_STEP" != command ]'
