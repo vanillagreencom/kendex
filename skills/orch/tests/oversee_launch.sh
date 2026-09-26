@@ -34,14 +34,8 @@ cleanup() {
 trap cleanup EXIT
 tm() { TMUX_TMPDIR="$TMUX_DIR" tmux -L default "$@"; }
 
-PASS=0
-FAIL=0
-check() { # NAME GOT WANT
-  if [[ "$2" == "$3" ]]; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"
-  else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$1" "$3" "$2"; fi
-}
-# The assertion mutate_file reports through, in this suite's check.
-assert_eq() { check "$3" "$1" "$2"; }
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work/tmp"
@@ -109,45 +103,47 @@ echo "=== oversee ==="
 run_oversee -- launch --wait-secs 20
 LAUNCHED="$(keyed overseer-launched "$OUT" | sed -n 1p)"
 SESSION="$(field "$LAUNCHED" session)"
-check "a first launch from outside tmux opens the overseer at the end of the named session and records it" \
-  "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/p' <<<"$LAUNCHED")|$(layout)|$(recorded_argv)" \
-  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|1 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$BRIEF;"
-check "the session record names the runtime, server, pane, window, account, line and generation" \
-  "$(recorded runtime)|$(recorded server)|$(recorded pane)|$(recorded window)|$(recorded account)|$(recorded generation)|$(recorded launch_line)" \
-  "tmux|$SERVER_PID|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $BYPASS '$BRIEF'"
-check "the launch line names the form and the session before the record" \
-  "$(keyed overseer-launch "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/session=%N/; s/window=@[0-9]*/window=@N/')" \
-  "oversee: overseer-launch form=prefix lane=$H/.claude trust=none session=%N window=@N server=$SOCKET"
+assert_eq "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/p' <<<"$LAUNCHED")|$(layout)|$(recorded_argv)" \
+  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|1 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$BRIEF;" \
+  "a first launch from outside tmux opens the overseer at the end of the named session and records it"
+assert_eq "$(recorded runtime)|$(recorded server)|$(recorded pane)|$(recorded window)|$(recorded account)|$(recorded generation)|$(recorded launch_line)" \
+  "tmux|$SERVER_PID|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $BYPASS '$BRIEF'" \
+  "the session record names the runtime, server, pane, window, account, line and generation"
+assert_eq "$(keyed overseer-launch "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/session=%N/; s/window=@[0-9]*/window=@N/')" \
+  "oversee: overseer-launch form=prefix lane=$H/.claude trust=none session=%N window=@N server=$SOCKET" \
+  "the launch line names the form and the session before the record"
 
 # A second launch while that overseer is live is refused: two overseers never
 # act at once, and the record tells them apart.
 run_oversee -- launch --wait-secs 20
-check "a launch beside a live recorded overseer refuses naming it and opens nothing" \
-  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
-  "1|oversee: overseer-live session=$SESSION server=$SOCKET generation=1|1|1"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
+  "1|oversee: overseer-live session=$SESSION server=$SOCKET generation=1|1|1" \
+  "a launch beside a live recorded overseer refuses naming it and opens nothing"
 # The must-fail control: a launcher that skips the liveness check opens a
 # second overseer beside the first.
 LIVECTL="$(mutant_scripts livectl oversee)" || exit 1
 mutate_file "$LIVECTL/oversee" '  if grep -qxF -- "$live_server $live_pane" <<<"$panes"; then' '  if false; then'
 OVERSEE_BIN="$LIVECTL/oversee" run_oversee -- launch --wait-secs 20
-check "control: without the liveness check a second overseer opens beside the first" \
-  "$RC|$(overseers)|$(recorded generation)" "0|2|2"
+assert_eq "$RC|$(overseers)|$(recorded generation)" \
+  "0|2|2" \
+  "control: without the liveness check a second overseer opens beside the first"
 tm kill-window -t "$(recorded window)"
 
 # The overseer stopped: the next launch takes the next generation.
 tm kill-window -t "$SESSION"
 run_oversee -- launch --wait-secs 20
-check "a launch after the recorded overseer's session is gone opens the next generation" \
-  "$RC|$(field "$(keyed overseer-launched "$OUT" | sed -n 1p)" generation)|$(recorded generation)|$(overseers)" "0|3|3|1"
+assert_eq "$RC|$(field "$(keyed overseer-launched "$OUT" | sed -n 1p)" generation)|$(recorded generation)|$(overseers)" \
+  "0|3|3|1" \
+  "a launch after the recorded overseer's session is gone opens the next generation"
 tm kill-window -t "$(recorded window)"
 
 # A launch whose session never works: closed, the prior record put back.
 touch "$TMP_ROOT/idle"
 run_oversee -- launch --wait-secs 2
 rm -f "$TMP_ROOT/idle"
-check "a session that never shows a working turn is closed and the record put back" \
-  "$RC|$(keyed overseer-not-working "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/session=%N/; s/waited=[0-9]*/waited=N/')|$(grep -c 'FIXTURE overseer startup waiting' <<<"$OUT")|$(overseers)|$(recorded generation)" \
-  "1|oversee: overseer-not-working session=%N waited=N|1|0|3"
+assert_eq "$RC|$(keyed overseer-not-working "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/session=%N/; s/waited=[0-9]*/waited=N/')|$(grep -c 'FIXTURE overseer startup waiting' <<<"$OUT")|$(overseers)|$(recorded generation)" \
+  "1|oversee: overseer-not-working session=%N waited=N|1|0|3" \
+  "a session that never shows a working turn is closed and the record put back"
 
 # The refusals before anything opens.
 for row in \
@@ -160,12 +156,15 @@ for row in \
   ; do
   IFS='|' read -r row_env row_want row_what <<<"$row"
   run_oversee "$row_env" -- launch --wait-secs 5
-  check "$row_what: refused, nothing opened" "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" "1|oversee: $row_want|0"
+  assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+    "1|oversee: $row_want|0" \
+    "$row_what: refused, nothing opened"
 done
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 run_oversee -- launch --wait-secs 5
-check "no lane above the trigger: refused at 3 with the walk's counts" \
-  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" "3|oversee: no-lane-qualifies entries=1 walled=2 unmeasured=0|0"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "3|oversee: no-lane-qualifies entries=1 walled=2 unmeasured=0|0" \
+  "no lane above the trigger: refused at 3 with the walk's counts"
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 # A has-session answer that is not "can't find session" is the call failing,
@@ -176,22 +175,25 @@ EMPTY_TMUX="$TMP_ROOT/empty-tmux"
 mkdir -p "$EMPTY_TMUX"
 EMPTY_SOCKET="$EMPTY_TMUX/tmux-$(id -u)/default"
 run_oversee TMUX_TMPDIR="$EMPTY_TMUX" -- launch --wait-secs 5
-check "launch against a socket with no server refuses tmux-failed, not a missing session" \
-  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "1|oversee: tmux-failed operation=has-session server=$EMPTY_SOCKET|0"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "1|oversee: tmux-failed operation=has-session server=$EMPTY_SOCKET|0" \
+  "launch against a socket with no server refuses tmux-failed, not a missing session"
 
 # register: the record for a hand-opened pane, its generation one past the
 # record's, kept where the record already names that pane.
 HAND="$(tm new-window -d -t fleet:4 -n hand -P -F '#{pane_id}' 'exec sleep 100000')"
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
-check "register writes the record for the caller's pane, one generation past the record" \
-  "$RC|$(sed -n 1p <<<"$OUT")|$(recorded runtime)|$(recorded account)" \
-  "0|oversee: registered session=$HAND window=$(tm display-message -p -t "$HAND" '#{window_id}') server=$SERVER_PID generation=4 account=$H/.eclaude|tmux|$H/.eclaude"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(recorded runtime)|$(recorded account)" \
+  "0|oversee: registered session=$HAND window=$(tm display-message -p -t "$HAND" '#{window_id}') server=$SERVER_PID generation=4 account=$H/.eclaude|tmux|$H/.eclaude" \
+  "register writes the record for the caller's pane, one generation past the record"
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" -- register --account "$H/.claude"
-check "registering the same pane again keeps its generation and takes --account" \
-  "$RC|$(recorded generation)|$(recorded account)" "0|4|$H/.claude"
+assert_eq "$RC|$(recorded generation)|$(recorded account)" \
+  "0|4|$H/.claude" \
+  "registering the same pane again keeps its generation and takes --account"
 run_oversee -- register
-check "register outside a pane refuses" "$RC|$(sed -n 1p <<<"$OUT")" "1|oversee: tmux-missing var=TMUX_PANE"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "1|oversee: tmux-missing var=TMUX_PANE" \
+  "register outside a pane refuses"
 
 # A launch typed outside the fleet directory, --cwd naming it: the run moves
 # there first, so the record goes into THAT directory's fleet state, the one
@@ -203,9 +205,9 @@ mkdir -p "$ELSEWHERE"
 WORK_REAL="$(cd "$TMP_ROOT/work" && pwd -P)"
 elsewhere_state() { if [[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]]; then echo written; else echo absent; fi; }
 RUN_DIR="$ELSEWHERE" run_oversee -- launch --cwd "$TMP_ROOT/work" --wait-secs 20
-check "launch --cwd from outside the fleet directory records into that directory's state and starts there" \
-  "$RC|$(recorded generation)|$(elsewhere_state)|$(tm display-message -p -t "$(recorded pane)" '#{pane_current_path}')" \
-  "0|5|absent|$WORK_REAL"
+assert_eq "$RC|$(recorded generation)|$(elsewhere_state)|$(tm display-message -p -t "$(recorded pane)" '#{pane_current_path}')" \
+  "0|5|absent|$WORK_REAL" \
+  "launch --cwd from outside the fleet directory records into that directory's state and starts there"
 tm kill-window -t "$(recorded window)"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
