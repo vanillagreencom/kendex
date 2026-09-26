@@ -94,14 +94,14 @@ The long pass's events, checked and reported in this order:
                              naming the account and when its binding bucket
                              frees up goes to both channels and the repeat
                              stops
-  EVENT overseer-mark <pane> kind=<context|headroom|rate|qualifying> value=<N> mark=<N>
+  EVENT overseer-mark <pane> kind=<headroom|rate|qualifying> value=<N> mark=<N>
                              succession=<on|off>
-                             the OVERSEER's own context use or account headroom
-                             reached its own mark, judged by
-                             `oversee-succeed --check-marks` so the rule is
-                             stated once. It reaches an overseer BETWEEN turn
-                             ends, where its own turn-end hook cannot: the hook
-                             refuses at the same marks, and a session part way
+                             the OVERSEER's own account reached its mark,
+                             judged by `oversee-succeed --check-marks`; its
+                             context mark is its turn-end hook's alone. It
+                             reaches an overseer BETWEEN turn ends, where that
+                             hook cannot: the hook refuses at the same marks,
+                             and a session part way
                              through a long turn meets neither until this line.
                              The route follows on the next line. Emitted once
                              at the crossing and again every
@@ -2599,7 +2599,7 @@ overseer_relaunch_failed() { # ROW ROWS IDENTITY PANE WINDOW ATTEMPT STEP
 # the first one's reading.
 #
 # OVERSEER_MARK_KEY is the answer's own key, `mark-reached`, `mark-unmeasured`
-# or `below-mark` for the `context-below-mark` line; the KIND, VALUE,
+# or `below-mark` for the `account-below-mark` line; the KIND, VALUE,
 # MARK, ACCOUNT and RESETS globals are its fields, empty where the line
 # carries none. Exit 1 means no judgement was made at all, the note already
 # said once, and nothing may be concluded from any of them.
@@ -2676,7 +2676,7 @@ overseer_marks_judge() {
   case "$first" in
     'oversee-succeed: mark-reached '*) OVERSEER_MARK_KEY=mark-reached ;;
     'oversee-succeed: mark-unmeasured '*) OVERSEER_MARK_KEY=mark-unmeasured ;;
-    'oversee-succeed: context-below-mark '*) OVERSEER_MARK_KEY=below-mark ;;
+    'oversee-succeed: account-below-mark '*) OVERSEER_MARK_KEY=below-mark ;;
     # A line this watch has no name for settles nothing, exactly as a run that
     # failed does: it is not a mark, and it is not evidence that one lifted.
     *) overseer_note overseer-mark-unjudged "path=$SUCCEED" "line=$first"; return 1 ;;

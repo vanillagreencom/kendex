@@ -1218,6 +1218,7 @@ CONTEXT_MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=
 # The same crossing with the succession the operator turned off, which the
 # judgement reports on its own line and this hook reads nowhere else.
 OFF_MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=500000 succession=off headroom=80"
+OFF_HEADROOM_LINE="oversee-succeed: mark-reached kind=headroom value=4 mark=10 succession=off account=eclaude resets=2026-07-27T06:00:00Z"
 HEADROOM_MARK_LINE="oversee-succeed: mark-reached kind=headroom value=4 mark=10 succession=on account=eclaude resets=2026-07-27T06:00:00Z"
 RATE_MARK_LINE="oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=eclaude"
 QUALIFYING_MARK_LINE="oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on"
@@ -1487,21 +1488,28 @@ stop_at "$TRANSCRIPT" false $(overseer_env)
 expect 2 "lane-mail-check: context=612000" \
   "the fleet mailbox in the overseer's own checkout names no lane, and the marks are judged"
 
-# Succession off is the route turned off, and a refusal whose route is off is a
-# turn end nothing the overseer does can reach. The setting is read off the
-# judgement's own line and nowhere else, so a spelling this hook would take for
-# `on` and that script refuses cannot exist. The watch still reports the mark,
-# so the fleet is not left silent by this.
+# Succession off passes an account mark, which the watch judges and reports
+# every pass. The context mark is judged by this hook alone, so it is refused
+# whatever the setting, with the handoff record as the route once the
+# succession refuses as off. The setting is read off the judgement's own line
+# and nowhere else, so a spelling this hook would take for `on` and that
+# script refuses cannot exist.
 new_overseer overseer_succession_off
-judge_says "$OFF_MARK_LINE"
+judge_says "$OFF_HEADROOM_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
 assert_eq "RC=$RC first=$(first_line)" "RC=0 first=-" \
-  "a crossing whose line says the succession is off ends the turn"
-judge_says "$CONTEXT_MARK_LINE"
+  "an account crossing whose line says the succession is off ends the turn"
+judge_says "$OFF_MARK_LINE"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+assert_eq "RC=$RC first=$(first_line) record=$(overseer_record_named)" \
+  "RC=2 first=lane-mail-check: context=612000 record=1" \
+  "a context crossing is refused with the succession off, naming the record that ends it"
+judge_says "$HEADROOM_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env) ORCH_OVERSEER_SUCCESSION=off
-expect 2 "lane-mail-check: context=612000" \
+expect 2 "lane-mail-check: headroom=4" \
   "and the setting in the environment decides nothing here: the line does"
 
 # The command the overseer's route names has to be in the install, or the
@@ -2118,17 +2126,24 @@ stop_at "$TRANSCRIPT" false $(overseer_env "%3")
 expect 2 "lane-mail-check: context=612000" \
   "control: without the pane comparison a session the fleet state never named is held"
 
-# The succession field's control: the arm that passes the turn removed. The
-# refusal then names a route the operator has turned off, which no turn end the
-# overseer reaches can clear.
-mutant overseer-succession -e 's@^  \[ "\$SUCCESSION" != off \] || return 0$@  :@'
+# The succession field's controls, one per rule it enforces: the arm that
+# passes an account mark removed, and the context exception removed.
+mutant overseer-succession -e 's@^  \[ "\$SUCCESSION" != off \] || \[ "\$MARK_KIND" = context \] || return 0$@  :@'
 new_overseer control_succession_off
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+judge_says "$OFF_HEADROOM_LINE"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+expect 2 "lane-mail-check: headroom=4" \
+  "control: without the field read an account mark is refused with its route turned off"
+mutant overseer-succession-context -e 's@ || \[ "\$MARK_KIND" = context \] || return 0$@ || return 0@'
+new_overseer control_succession_context
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 judge_says "$OFF_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
-expect 2 "lane-mail-check: context=612000" \
-  "control: without the field read the overseer is refused with its route turned off"
+assert_eq "RC=$RC first=$(first_line)" "RC=0 first=-" \
+  "control: without the context exception a context crossing under succession off is told nothing"
 
 # The fleet record's own control: the writer comparison removed, so a record
 # any session left on the shared item answers for this one and its turn end is

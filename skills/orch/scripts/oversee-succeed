@@ -77,9 +77,13 @@
 #        --context, the watch's included, judges the account triggers alone.
 #        It is judged at ORCH_HANDOFF_CONTEXT_PCT of that window, the one
 #        setting and the one judge the lane turn-end hook uses too. Under it
-#        prints `context-below-mark`; a reading whose window its adapter could
-#        not name prints `context-unmeasured`. Both
-#        carry the account headroom that did not fire either, `none` where
+#        prints `context-below-mark`. A context mark not judged prints
+#        `context-unmeasured`, with `reason=window-unnamed` for a reading whose
+#        window its adapter could not name and `reason=context-unread` for a
+#        run handed no reading; under --check-marks a run handed none prints
+#        `account-below-mark`, since its caller asked about the account
+#        triggers alone. Each
+#        carries the account headroom that did not fire either, `none` where
 #        the account is unmeasured and `unreadable` where the judge could not
 #        answer, exit 0 and launch nothing. Under --check-marks a mark that IS reached
 #        prints `mark-reached` and a reading that could not be taken prints
@@ -244,7 +248,9 @@
 #                    reason=<...>`,
 #                    which is not a mark that lifted: a caller holding a
 #                    standing mark keeps it. Below every mark, with each read,
-#                    the `context-below-mark` line above is printed instead.
+#                    the `context-below-mark` line above is printed instead,
+#                    and `account-below-mark` where no --context was handed in
+#                    and so no context mark was judged.
 #                    Because it launches nothing, `off` does not gate it: an
 #                    overseer past its mark is told so whether or not a
 #                    successor may open. Exit 0 with the line on stdout. Takes
@@ -298,8 +304,8 @@
 # stderr is a refusal: `successor-lane-unobserved` says the account could not
 # be read and the launch stands, so it is a notice the run continues past.
 #
-# `succession-off`, `context-unmeasured`, `context-below-mark`, `mark-reached`
-# and `mark-unmeasured` are on stdout
+# `succession-off`, `context-unmeasured`, `context-below-mark`,
+# `account-below-mark`, `mark-reached` and `mark-unmeasured` are on stdout
 # and end the run at exit 0. `successor-launch` is on stdout too, but settles no
 # exit status: it is printed mid-run, before the window is opened, and names the
 # form the lane reached the harness by. `watch-handover` and `watch-absent` are
@@ -339,8 +345,9 @@ message() { # KEY FIELD=VALUE...
     pane-unreadable) text='The caller pane could not be read.' ;;
     harness-unnamed) text='The caller pane runs no harness this script launches, and no context reading of this pane names one.' ;;
     invalid-context) text='--context takes TOKENS:WINDOW, two whole numbers, the window empty where no adapter named one.' ;;
-    context-unmeasured) text='The --context reading names no window, so the context mark is not reached; nothing was launched. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
-    context-below-mark) text='No mark is reached; nothing was launched. The overseer context is under ORCH_HANDOFF_CONTEXT_PCT of its own window, or context=unjudged where this run was handed no --context reading. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
+    context-unmeasured) text='No account mark is reached and the context mark was not judged: the --context reading names no window (window-unnamed), or this run was handed none (context-unread). Nothing was launched. At the context mark, run the succession the turn-end refusal names, which carries the reading. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
+    context-below-mark) text='No mark is reached; nothing was launched. The overseer context is under ORCH_HANDOFF_CONTEXT_PCT of its own window. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
+    account-below-mark) text='No account mark is reached. This run was handed no --context reading, so the context mark was not judged; the overseer turn-end hook judges it on the reading it takes. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
     mark-reached) text='This overseer is at or past one of its own marks and has to hand this session over. Run oversee-succeed with the permission, model and effort flags this session runs under; where succession is off, write the overseer handoff file and ask for a fresh overseer session by hand.' ;;
     mark-unmeasured) text='One trigger could not be measured this time, and no other trigger fired. Nothing is launched and nothing is settled: a reading that failed is never a mark that lifted, so a caller holding a standing mark keeps it. The reason field names the figure that was missing.' ;;
     invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:rank:effort with harness claude or codex.' ;;
@@ -873,8 +880,9 @@ if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
     # `check` has to tell them apart: its caller holds a standing mark across a
     # pass that could not measure, where a run about to launch has the
     # documented fallback of letting the mark it CAN read decide alone. So the
-    # unmeasured answers get their own key here, and the succeed path below
-    # keeps the below-mark line it always printed.
+    # unmeasured answers get their own key here. Below, a context mark not
+    # judged is never a below-mark line: `check` handed no reading was asked
+    # about the account triggers alone, and every other case is unmeasured.
     #
     # The context mark leads, judged above: a mark that fired is what the
     # caller must act on, whatever the other reading could not say.
@@ -901,9 +909,10 @@ if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
         exit 0
       fi
     fi
-    case "$CONTEXT_STATE" in
-      unmeasured) message context-unmeasured "headroom=$HEADROOM_FIELD" ;;
-      unjudged) message context-below-mark context=unjudged "mark=$CONTEXT_PCT" "headroom=$HEADROOM_FIELD" ;;
+    case "$MODE:$CONTEXT_STATE" in
+      check:unjudged) message account-below-mark "headroom=$HEADROOM_FIELD" ;;
+      *:unjudged) message context-unmeasured reason=context-unread "headroom=$HEADROOM_FIELD" ;;
+      *:unmeasured) message context-unmeasured reason=window-unnamed "headroom=$HEADROOM_FIELD" ;;
       *) message context-below-mark "tokens=$tokens" "window=$window" "mark=$CONTEXT_PCT" \
            "headroom=$HEADROOM_FIELD" ;;
     esac
