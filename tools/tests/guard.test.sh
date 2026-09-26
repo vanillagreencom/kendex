@@ -464,5 +464,38 @@ fi
 git -C "$R" reset -q HEAD -- packaging/recipe.txt
 rm -f -- "$R/packaging/recipe.txt"
 
+echo "=== the CLI draws through its ui module ==="
+# Each row plants one line in one CLI source file and runs guard over it.
+# The table counts its own rows: an emptied row list is a red, never a green.
+raw_output_case() { # pass|refuse LABEL PATH SOURCE-LINE
+  local expected=$1 label=$2 path=$3
+  mkdir -p "$(dirname "$R/$path")"
+  printf '%s\n' "$4" >"$R/$path"
+  git -C "$R" add -- "$path"
+  : >"$COMPILE_LOG"
+  run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
+  if [ "$expected" = refuse ] && [ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: cli-raw-output=1"* ]]; then
+    ok "$label"
+  elif [ "$expected" = pass ] && [ "$RC" -eq 0 ] && [[ "$OUT" != *cli-raw-output* ]]; then
+    ok "$label"
+  else
+    bad "$label" "rc=$RC out=$OUT"
+  fi
+  git -C "$R" rm -q --cached -- "$path"
+  rm -f -- "$R/$path"
+}
+before=$((PASS + FAIL))
+while IFS='|' read -r expected label path line; do
+  raw_output_case "$expected" "$label" "$path" "$line"
+done <<'ROWS'
+refuse|an escape spelled \x1b in a verb is refused|crates/cli/src/commands/paint.rs|const RED: &str = "\x1b[31m";
+refuse|an escape spelled \u{1b} in a verb is refused|crates/cli/src/commands/paint.rs|const RED: &str = "\u{1b}[31m";
+refuse|an escape spelled \033 in a verb is refused|crates/cli/src/commands/paint.rs|const RED: &str = "\033[31m";
+refuse|a stream handle in a verb is refused|crates/cli/src/commands/paint.rs|fn say() { let _ = writeln!(std::io::stderr(), "x"); }
+pass|an escape inside the ui module passes|crates/cli/src/ui/paint.rs|const RED: &str = "\x1b[31m";
+pass|a stream handle in the ui module's root passes|crates/cli/src/ui.rs|fn say() { let _ = writeln!(std::io::stderr(), "x"); }
+ROWS
+[ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the CLI output rule" >&2; exit 2; }
+
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

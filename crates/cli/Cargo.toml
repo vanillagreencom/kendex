@@ -22,6 +22,7 @@ kendex-core.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 cliclack.workspace = true
+console.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

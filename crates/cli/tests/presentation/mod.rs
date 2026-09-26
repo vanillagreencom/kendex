@@ -256,6 +256,7 @@ pub struct Ran {
     _fixture: tempfile::TempDir,
 }
 
+mod design;
 mod plain;
 mod pretty;
 mod snapshots;

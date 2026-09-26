@@ -76,6 +76,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "a caller carries its own scope_current_run or def bucket/def runid — source skills/github/scripts/lib/ci-run-correlation.sh instead." ;;
     raw-command-new)
       echo "raw Command::new — external processes go through process::Hardened." ;;
+    cli-raw-output)
+      echo "a raw escape sequence or a direct stdout/stderr handle in crates/cli/src outside the ui module — draw the line with a ui component (crates/cli/AGENTS.md § Output)." ;;
     fixture-home)
       echo "fixture HOME without KENDEX_REAL_HOME on the next line — that command would run in the dev sandbox." ;;
     test-scan)
@@ -599,6 +601,18 @@ hits=$(scan '^scope_current_run\(\)|def (bucket|runid|red|required_only)[(:]' '^
 hits=$(scan 'Command::new' '^crates/(core|cli)/src/' | grep -v '^crates/core/src/process/')
 [ -n "$hits" ] && {
   say raw-command-new "$(count_lines "$hits")"
+  show "$hits" | head -5
+}
+
+# The CLI draws through its ui module alone: a colour or a cursor move
+# composed in a verb is a verb drawing its own layout, and a stream handle
+# outside ui/ is a line no component escaped. Escapes are caught in the
+# spellings a Rust literal gives them, and a handle wherever it is named by
+# its io:: path; println!/eprintln! are clippy's print_stdout and
+# print_stderr, which the workspace denies.
+hits=$(scan '\\x1[bB]|\\u\{0*1[bB]\}|\\033|io::std(out|err)\(\)' '^crates/cli/src/' | grep -Ev '^crates/cli/src/ui(\.rs|/)')
+[ -n "$hits" ] && {
+  say cli-raw-output "$(count_lines "$hits")"
   show "$hits" | head -5
 }
 

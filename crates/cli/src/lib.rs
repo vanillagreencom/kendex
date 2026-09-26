@@ -394,9 +394,7 @@ fn bootstrap_the_command_record(env: &Env) {
 /// and its reasoning are `kendex_core::privilege`'s, beside the command
 /// record above, which stops for the same reason.
 fn announce_the_terms_on_first_run(env: &Env) {
-    if !std::io::IsTerminal::is_terminal(&std::io::stderr())
-        || kendex_core::privilege::acting_as_root()
-    {
+    if !ui::stderr_is_terminal() || kendex_core::privilege::acting_as_root() {
         return;
     }
     let Ok(settings) = kendex_core::settings::load(env) else {

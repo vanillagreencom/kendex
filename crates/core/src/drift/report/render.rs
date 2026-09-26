@@ -1,5 +1,8 @@
 //! Plain-text rendering of a check report, bounded for the session hook
-//! and complete for an explicit check.
+//! and complete for an explicit check, and the [`Page`] both are read off:
+//! the lines a complete report shows, before any of them is spelled as text.
+
+use std::fmt;
 
 use super::*;
 
@@ -62,6 +65,106 @@ fn next_action(report: &CheckReport) -> Option<String> {
     }
 }
 
+/// A report as its complete rendering shows it: every item with the remedy
+/// it offers, then the evaluation age and the next step. The CLI draws an
+/// explicit check from this, and [`render_full`] spells it as the plain
+/// lines scripts read, so the two cannot disagree about which item offers
+/// which command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Page {
+    pub sections: Vec<PageSection>,
+    /// `(package evaluation: 5m ago)`, where anything was evaluated.
+    pub age: Option<String>,
+    /// The refresh a reader runs next, where every line points at one.
+    pub next: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageSection {
+    pub title: String,
+    pub items: Vec<PageItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageItem {
+    pub class: Class,
+    pub text: String,
+    pub fix: Option<PageFix>,
+}
+
+/// The remedy an item offers, as a reader acts on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageFix {
+    /// A remedy that only prints is what to see next, never the fix.
+    pub mutates: bool,
+    pub fix: Fix,
+}
+
+impl fmt::Display for PageFix {
+    /// `fix: <command>` or `see: <command>`; a fix this session cannot type
+    /// is still the fix, marked with why it will not run here.
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let word = match self.mutates {
+            true => "fix",
+            false => "see",
+        };
+        match &self.fix {
+            Fix::Here(command) => write!(out, "{word}: {command}"),
+            Fix::Elsewhere(command) => write!(out, "{word}: {command}{NOT_FROM_HERE}"),
+        }
+    }
+}
+
+impl PageItem {
+    /// The item's plain line, without the indent that makes it detail of
+    /// its section.
+    pub fn line(&self) -> String {
+        match &self.fix {
+            Some(fix) => format!("{} — {fix}", self.text),
+            None => self.text.clone(),
+        }
+    }
+}
+
+/// Empty when clean: no section, and no age or next step to go with none.
+pub fn page(report: &CheckReport) -> Page {
+    if report.is_clean() {
+        return Page {
+            sections: Vec::new(),
+            age: None,
+            next: None,
+        };
+    }
+    let sections = report
+        .sections
+        .iter()
+        .map(|section| PageSection {
+            title: section.title.clone(),
+            items: section
+                .lines
+                .iter()
+                .map(|line| PageItem {
+                    class: line.class,
+                    text: line.text.clone(),
+                    fix: line.remedy.as_ref().and_then(|remedy| {
+                        Remedy::render(remedy, report.project_target.as_ref()).map(|fix| PageFix {
+                            mutates: remedy.mutates(),
+                            fix,
+                        })
+                    }),
+                })
+                .collect(),
+        })
+        .collect();
+    Page {
+        sections,
+        age: report
+            .snapshot_age_secs
+            .map(|age| format!("(package evaluation: {} ago)", age_word(age))),
+        next: next_action(report),
+    }
+}
+
 /// The bounded plain-text rendering for the session-start hook.
 pub fn render_plain(report: &CheckReport) -> String {
     render(report, true)
@@ -78,51 +181,28 @@ fn render(report: &CheckReport, bounded: bool) -> String {
     if report.is_clean() {
         return String::new();
     }
+    let page = page(report);
     let mut lines: Vec<String> = Vec::new();
-    for section in &report.sections {
+    for section in &page.sections {
         lines.push(format!("{}:", section.title));
-        let over = bounded && section.lines.len() > SECTION_ITEMS;
+        let over = bounded && section.items.len() > SECTION_ITEMS;
         // The overflow line spends one of the section's own slots.
         let shown_count = match over {
             true => SECTION_ITEMS - 1,
-            false => section.lines.len(),
+            false => section.items.len(),
         };
-        for line in &section.lines[..shown_count] {
-            match line.remedy.as_ref().and_then(|remedy| {
-                Remedy::render(remedy, report.project_target.as_ref())
-                    .map(|rendered| (remedy.mutates(), rendered))
-            }) {
-                Some((mutates, fix)) => {
-                    // A remedy that only prints is what to see next, never
-                    // the fix; and a fix this session cannot type is still
-                    // the fix, marked with why it will not run here.
-                    let word = match mutates {
-                        true => "fix",
-                        false => "see",
-                    };
-                    let (command, where_it_runs) = match &fix {
-                        Fix::Here(command) => (command, ""),
-                        Fix::Elsewhere(command) => (command, NOT_FROM_HERE),
-                    };
-                    lines.push(format!(
-                        "  {} — {word}: {command}{where_it_runs}",
-                        line.text
-                    ));
-                }
-                None => lines.push(format!("  {}", line.text)),
-            }
+        for item in &section.items[..shown_count] {
+            lines.push(format!("  {}", item.line()));
         }
         if over {
             lines.push(format!(
                 "  … {} more — see: kendex check",
-                section.lines.len() - shown_count
+                section.items.len() - shown_count
             ));
         }
     }
-    if let Some(age) = report.snapshot_age_secs {
-        lines.push(format!("(package evaluation: {} ago)", age_word(age)));
-    }
-    let action = next_action(report);
+    lines.extend(page.age);
+    let action = page.next;
 
     if !bounded {
         if let Some(action) = action {

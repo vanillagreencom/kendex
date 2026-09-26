@@ -1,12 +1,13 @@
 use std::process::ExitCode;
 
-use kendex_core::drift::report::{self, CheckReport};
+use kendex_core::drift::report::{self, CheckReport, CheckStatus, Class, Page, PageSection};
 use kendex_core::env::Env;
+use kendex_core::model::Scope;
 
 use super::{answer, out, resolve_scopes};
 mod commit_hooks;
 use crate::scope::ScopeFilter;
-use crate::ui;
+use crate::ui::{self, Channel, Status, Style};
 use commit_hooks::fold_commit_hooks;
 
 /// The session-start contract: exit 0 clean / 1 drift or not yet
@@ -17,8 +18,9 @@ use commit_hooks::fold_commit_hooks;
 /// on files no record accounts for; and it spawns one detached background
 /// refresh when any mirror is stale, a scope has no snapshot, or that read
 /// is still owed, so the next session reads fresh verdicts. An explicit
-/// check prints every line. `--quiet` prints the bounded session report and
-/// nothing when clean. `--json` prints the machine shape.
+/// check draws every line from the design system's components. `--quiet`
+/// prints the bounded session report and nothing when clean. `--json`
+/// prints the machine shape.
 pub fn run(
     env: &Env,
     filter: ScopeFilter,
@@ -26,8 +28,14 @@ pub fn run(
     quiet: bool,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let scopes = resolve_scopes(env, filter)?;
+    let channel = ui::channel(json);
     let checked = {
-        let _reading = ui::spinner("reading the snapshot");
+        let _reading = match (&channel, quiet) {
+            (Channel::Human(style), false) => {
+                Some(ui::Spinner::start(style, "reading the snapshot"))
+            }
+            (Channel::Human(_), true) | (Channel::Json, _) => None,
+        };
         let mut checked = report::check(env, &scopes);
         fold_commit_hooks(env, &mut checked, &scopes);
         checked
@@ -46,57 +54,107 @@ pub fn run(
         kendex_core::process::respawn_detached(&["source", "refresh", "--stale"]);
     }
 
-    if json {
-        answer(&serde_json::to_string_pretty(&checked)?);
-    } else {
-        render_text(&checked, quiet);
+    match (channel, quiet) {
+        (Channel::Json, _) => answer(&serde_json::to_string_pretty(&checked)?),
+        // The session hook's shape: the bounded report on stdout and not
+        // one line beside it. It is agent-facing text with its own budgets,
+        // not a rendering of the components.
+        (Channel::Human(_), true) => {
+            for line in report::render_plain(&checked).lines() {
+                out(line);
+            }
+        }
+        (Channel::Human(style), false) => draw(&style, &checked, &scopes),
     }
 
     Ok(ExitCode::from(checked.status.exit_code()))
 }
 
-/// `--quiet` is the session hook's shape: the bounded report on stdout and
-/// not one line beside it, so the framing and the closing verdict are for
-/// the reader who ran the verb themselves.
-fn render_text(checked: &CheckReport, quiet: bool) {
-    if !quiet {
-        ui::intro("kendex check");
-    }
-    let text = rendered_text(checked, quiet);
-    // The report is agent- and composition-facing content: stdout.
-    for line in text.lines() {
-        out(line);
-    }
-    if quiet {
-        return;
-    }
-    ui::ledger(&verdict(checked, &text), &[]);
+/// The explicit check, drawn: the report is agent- and composition-facing,
+/// so it goes to stdout; the header and the verdict are about the run, and
+/// go to stderr.
+fn draw(style: &Style, checked: &CheckReport, scopes: &[Scope]) {
+    let target: Vec<String> = scopes.iter().map(Scope::label).collect();
+    let screen = screen(style, checked, &target.join(", "));
+    ui::stderr(&screen.head);
+    ui::stdout(&screen.report);
+    ui::stderr(&screen.verdict);
 }
 
-fn rendered_text(checked: &CheckReport, quiet: bool) -> String {
-    match quiet {
-        true => report::render_plain(checked),
-        false => report::render_full(checked),
+/// What an explicit check draws, stream by stream.
+struct Screen {
+    head: Vec<String>,
+    report: Vec<String>,
+    verdict: Vec<String>,
+}
+
+/// The explicit check from the components: a header naming what was
+/// checked, one section per kind of finding with a row per item, the
+/// evaluation age and the next step, and the verdict.
+fn screen(style: &Style, checked: &CheckReport, target: &str) -> Screen {
+    let page = report::page(checked);
+    let mut report = Vec::new();
+    for section in &page.sections {
+        report.extend(style.section(&section.title, section.items.len(), section_status(section)));
+        for item in &section.items {
+            let fix = item.fix.as_ref().map(ToString::to_string);
+            report.extend(style.row(status(item.class), &item.text, fix.as_deref()));
+        }
+    }
+    for footnote in page.age.iter().chain(&page.next) {
+        report.extend(style.note(footnote));
+    }
+    let outcome = match checked.status {
+        CheckStatus::Clean => Status::Done,
+        CheckStatus::Drift => Status::Decision,
+        CheckStatus::Unknown => Status::Failed,
+    };
+    Screen {
+        head: style.header("check", target),
+        report,
+        verdict: style.summary(outcome, &verdict(&page)),
+    }
+}
+
+/// Drift wants the reader's decision, a verdict still owed is a notice,
+/// and a line the check could not produce is a failure.
+fn status(class: Class) -> Status {
+    match class {
+        Class::Drift => Status::Decision,
+        Class::Unevaluated => Status::Notice,
+        Class::Unknown => Status::Failed,
+    }
+}
+
+/// A section is as serious as its most serious row.
+fn section_status(section: &PageSection) -> Status {
+    let worst = section
+        .items
+        .iter()
+        .map(|item| item.class)
+        .max_by_key(|class| match class {
+            Class::Unevaluated => 0,
+            Class::Drift => 1,
+            Class::Unknown => 2,
+        });
+    match worst {
+        Some(class) => status(class),
+        None => unreachable!("a report section holds at least one line"),
     }
 }
 
 /// How the run ended, describing the complete report above it. The pointer
 /// to those lines is named only where every counted line has a remedy.
-fn verdict(checked: &CheckReport, rendered: &str) -> String {
-    if checked.is_clean() {
+fn verdict(page: &Page) -> String {
+    let items: Vec<_> = page
+        .sections
+        .iter()
+        .flat_map(|section| &section.items)
+        .collect();
+    if items.is_empty() {
         return "all clear — every install matches its source".to_owned();
     }
-    let items: Vec<&str> = rendered
-        .lines()
-        .filter(|line| line.starts_with("  "))
-        .collect();
-    assert!(
-        !items.is_empty(),
-        "a non-clean complete check report must contain an item line"
-    );
-    let every = items
-        .iter()
-        .all(|line| line.contains(" — fix: ") || line.contains(" — see: "));
+    let every = items.iter().all(|item| item.fix.is_some());
     format!(
         "{} item{} need{} attention{}",
         items.len(),
@@ -116,63 +174,4 @@ fn verdict(checked: &CheckReport, rendered: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use kendex_core::drift::report::{CheckReport, CheckStatus, Class, Line, Section};
-
-    use super::{rendered_text, verdict};
-
-    fn reported<T: Into<String>>(lines: Vec<T>) -> CheckReport {
-        CheckReport {
-            status: CheckStatus::Drift,
-            sections: vec![Section {
-                title: "drift".to_owned(),
-                lines: lines
-                    .into_iter()
-                    .map(|text| Line {
-                        class: Class::Drift,
-                        text: text.into(),
-                        remedy: None,
-                    })
-                    .collect(),
-            }],
-            snapshot_age_secs: None,
-            project_target: None,
-            deep_pass_owed: false,
-        }
-    }
-
-    /// A report with nothing in it reads as clean.
-    #[test]
-    fn an_empty_report_is_all_clear() {
-        let empty = CheckReport {
-            status: CheckStatus::Clean,
-            sections: Vec::new(),
-            snapshot_age_secs: None,
-            project_target: None,
-            deep_pass_owed: false,
-        };
-        assert!(verdict(&empty, "").contains("all clear"));
-    }
-
-    /// The complete report's item lines determine the count.
-    #[test]
-    fn the_count_comes_off_the_lines_the_reader_saw() {
-        let page = "drift:\n  one — fix: kendex apply\n  two — fix: kendex apply\n";
-        let said = verdict(&reported(vec!["one", "two"]), page);
-        assert!(said.starts_with("2 items need attention"), "{said}");
-        assert!(said.contains("each line above says what to run"), "{said}");
-    }
-
-    #[test]
-    fn an_explicit_check_prints_every_item_while_the_session_hook_stays_bounded() {
-        let report = reported((0..12).map(|i| format!("item-{i}")).collect());
-
-        let hook = rendered_text(&report, true);
-        assert!(hook.contains("see: kendex check"), "{hook}");
-        assert!(!hook.contains("item-11"), "{hook}");
-
-        let explicit = rendered_text(&report, false);
-        assert!(explicit.contains("item-11"), "{explicit}");
-        assert!(!explicit.contains("more — see:"), "{explicit}");
-    }
-}
+mod tests;

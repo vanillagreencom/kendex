@@ -22,6 +22,10 @@ clap = { version = "4.6", features = ["derive"] }
 # The CLI's terminal rendering: intro/outro framing, grouped log blocks,
 # confirm prompts and spinners. The plain rendering uses none of it.
 cliclack = "0.5"
+# The terminal primitives the CLI's own design system draws with: the
+# terminal's width on every platform, and a string's width in terminal
+# cells. Already in the tree under cliclack, which is going.
+console = "0.16"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 tauri = "2"
 tauri-build = "2"
