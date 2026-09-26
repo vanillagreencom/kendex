@@ -5,12 +5,14 @@
 # jq; a refusal built by interpolating the value into the JSON text turns a
 # double quote or a backslash into a parse failure that hides the refusal.
 #
-# A row is `label^script^want^argv...`, fields separated by `^`:
+# A row is `label^env^script^want^argv...`, fields separated by `^`:
+#   env     one NAME=value the command runs with, or `-` for none
 #   script  the command under scripts/commands/, without `.sh`
 #   want    the refusal's `.error`, exactly
 #   argv    the command's arguments, one per field
 # Each row's value carries a double quote, and the --body-file rows a
-# backslash too. The row passes when the command exits 1 and its stderr is
+# backslash too. The GH_REPO row reaches get_repo_info, which every command
+# resolving its repository through github-api.sh shares. The row passes when the command exits 1 and its stderr is
 # exactly one `{"error": want}` object.
 set -euo pipefail
 
@@ -59,22 +61,25 @@ MISSING="$TMP_ROOT/no\"such\\file"
 # Each surplus-positional row fills the positionals its command accepts before
 # the one it refuses.
 ROWS="\
-post-reply surplus positional^post-reply^Unexpected argument: no\"^PRRT_abc^body^no\"
-post-reply unreadable body file^post-reply^--body-file path not readable: $MISSING^PRRT_abc^--body-file^$MISSING
-post-comment surplus positional^post-comment^Unexpected argument: no\"^23^body^no\"
-post-comment unreadable body file^post-comment^--body-file path not readable: $MISSING^23^--body-file^$MISSING
-find-comment surplus positional^find-comment^Unexpected argument: no\"^23^no\"
-resolve-thread malformed thread id^resolve-thread^Invalid thread ID: no\" (must start with PRRT_)^no\"
-unresolve-thread malformed thread id^unresolve-thread^Invalid thread ID: no\" (must start with PRRT_)^no\"
-dismiss-review unknown argument^dismiss-review^Unknown argument: no\"^no\"
-await-mergeable missing PR^await-mergeable^PR #1\" not found^1\"
-pr-data unknown option^pr-data^Unknown option: --no\"^--no\"
-pr-data surplus positional^pr-data^Unexpected argument: no\"^23^no\"
-pr-data unknown format^pr-data^Invalid format: no\". Use: safe, raw^--format^no\"
-pr-threads unknown option^pr-threads^Unknown option: --no\"^--no\"
-pr-threads surplus positional^pr-threads^Unexpected argument: no\"^23^no\"
-pr-threads unknown format^pr-threads^Invalid format: no\". Use: safe, raw^--format^no\"
-pr-threads branch with no PR^pr-threads^No PR found for: no\"^no\"
+post-reply surplus positional^-^post-reply^Unexpected argument: no\"^PRRT_abc^body^no\"
+post-reply unreadable body file^-^post-reply^--body-file path not readable: $MISSING^PRRT_abc^--body-file^$MISSING
+post-comment surplus positional^-^post-comment^Unexpected argument: no\"^23^body^no\"
+post-comment unreadable body file^-^post-comment^--body-file path not readable: $MISSING^23^--body-file^$MISSING
+find-comment surplus positional^-^find-comment^Unexpected argument: no\"^23^no\"
+resolve-thread malformed thread id^-^resolve-thread^Invalid thread ID: no\" (must start with PRRT_)^no\"
+unresolve-thread malformed thread id^-^unresolve-thread^Invalid thread ID: no\" (must start with PRRT_)^no\"
+dismiss-review unknown argument^-^dismiss-review^Unknown argument: no\"^no\"
+await-mergeable missing PR^-^await-mergeable^PR #1\" not found^1\"
+pr-data unknown option^-^pr-data^Unknown option: --no\"^--no\"
+pr-data surplus positional^-^pr-data^Unexpected argument: no\"^23^no\"
+pr-data unknown format^-^pr-data^Invalid format: no\". Use: safe, raw^--format^no\"
+pr-threads unknown option^-^pr-threads^Unknown option: --no\"^--no\"
+pr-threads surplus positional^-^pr-threads^Unexpected argument: no\"^23^no\"
+pr-threads unknown format^-^pr-threads^Invalid format: no\". Use: safe, raw^--format^no\"
+pr-threads branch with no PR^-^pr-threads^No PR found for: no\"^no\"
+edit-comment surplus positional^-^edit-comment^Unexpected argument: no\"^1^body^no\"
+edit-comment unreadable body file^-^edit-comment^--body-file path not readable: $MISSING^1^--body-file^$MISSING
+repository slug that is not owner/name^GH_REPO=a\"b/c^edit-comment^Resolved repository is not owner/name: a\"b/c^1^body
 "
 
 echo "=== a refusal carrying a quoted value stays one JSON object ==="
@@ -82,14 +87,17 @@ before=$((PASS + FAIL))
 while IFS= read -r row; do
   [[ "$row" != "" ]] || continue
   IFS='^' read -r -a fields <<<"$row"
-  [[ "${#fields[@]}" -ge 4 ]] || {
+  [[ "${#fields[@]}" -ge 5 ]] || {
     printf 'a row with no argv asserts nothing: %s\n' "$row" >&2
     exit 1
   }
-  label="${fields[0]}" script="${fields[1]}" want="${fields[2]}"
+  label="${fields[0]}" script="${fields[2]}" want="${fields[3]}"
+  row_env=()
+  [[ "${fields[1]}" == - ]] || row_env=("${fields[1]}")
   rc=0
+  # `${a[@]+...}`: Bash 3.2 reads an empty array as unset under `set -u`.
   (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO \
-    "$COMMANDS/$script.sh" "${fields[@]:3}" >/dev/null 2>"$TMP_ROOT/stderr") || rc=$?
+    ${row_env[@]+"${row_env[@]}"} "$COMMANDS/$script.sh" "${fields[@]:4}" >/dev/null 2>"$TMP_ROOT/stderr") || rc=$?
   # Slurped, so a second line or a second object fails the row as surely as
   # an unparseable one.
   got="rc=$rc $(jq -sc '.' <"$TMP_ROOT/stderr" 2>/dev/null ||

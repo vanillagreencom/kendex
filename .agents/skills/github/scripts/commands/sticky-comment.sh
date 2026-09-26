@@ -114,8 +114,8 @@ fetch_comments() {
 # Windowed in-shell rather than piped into `head`, which closes early on a
 # long response and fails the writer with SIGPIPE under pipefail.
 response_excerpt() {
-  local flat="${1//$'\n'/ }"
-  printf '%s' "${flat:0:200}"
+  local excerpt="${1:0:200}"
+  printf '%s' "${excerpt//$'\n'/ }"
 }
 
 # Reject anything that is not a comments array before selection runs, so an
