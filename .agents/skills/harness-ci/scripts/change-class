@@ -103,6 +103,17 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_ONLY="$SCRIPT_DIR/harness-only"
 ORCH_DIR="$SCRIPT_DIR/../../orch"
 NARROW_CONF="$ORCH_DIR/references/narrow-change.conf"
+# The micro-tier measurement's boundary as this script reaches it: every file
+# it reads or runs whose edit changes the range measured, the settings the
+# measurement reads, or the ceilings it compares against. orch's
+# narrow-change.conf refuses the narrow classes on each, and
+# tests/narrow-boundary.test.sh holds that file's boundary group to this list,
+# to branch-size-check's, and to the `source` lines of every file they name.
+# measures-with: skills/harness-ci/scripts/change-class
+# measures-with: skills/harness-ci/scripts/harness-only
+# measures-with: skills/orch/references/narrow-change.conf
+# measures-with: skills/orch/scripts/lib/branch-growth.sh
+#
 # The lowest BRANCH_GROWTH_CONTRACT this script can measure with. An orch
 # answering less, or none at all, is refused rather than called: its
 # branch_size_classified would silently drop the base endpoint passed to it

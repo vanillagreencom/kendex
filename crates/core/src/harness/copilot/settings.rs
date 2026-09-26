@@ -50,8 +50,10 @@ pub fn repo_settings_files(project: &Path) -> [PathBuf; 2] {
 /// `extraKnownMarketplaces`, `hooks` (matrix §2, §R6). Inputs to Copilot's
 /// effective state — never a Copilot installation.
 pub fn claude_settings_files(project: &Path) -> [PathBuf; 2] {
-    let dir = project.join(".claude");
-    [dir.join("settings.json"), dir.join("settings.local.json")]
+    [
+        super::CLAUDE_SETTINGS.at(project),
+        super::CLAUDE_SETTINGS_LOCAL.at(project),
+    ]
 }
 
 /// Every file Copilot reads settings from for this scope, lowest layer
@@ -141,7 +143,7 @@ pub fn allowed_models(scope: &Scope) -> Option<Vec<String>> {
     let Scope::Project { root } = scope else {
         return None;
     };
-    let text = crate::fs::read_if_exists(&root.join(".github/allowed_models.txt"))
+    let text = crate::fs::read_if_exists(&allowed_models_file(root))
         .ok()
         .flatten()?;
     let patterns: Vec<String> = text
@@ -153,6 +155,11 @@ pub fn allowed_models(scope: &Scope) -> Option<Vec<String>> {
         .map(str::to_owned)
         .collect();
     (!patterns.is_empty()).then_some(patterns)
+}
+
+/// The file a repository names its allowed models in.
+pub fn allowed_models_file(project: &Path) -> PathBuf {
+    super::ALLOWED_MODELS.at(project)
 }
 
 /// Whether any pattern admits this model id. `*` stands for any run of

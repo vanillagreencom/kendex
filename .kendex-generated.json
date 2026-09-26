@@ -279,6 +279,7 @@
   ".agents/skills/harness-ci/tests/lib/gh-eval.py",
   ".agents/skills/harness-ci/tests/lib/sandbox.sh",
   ".agents/skills/harness-ci/tests/lib/workflow.sh",
+  ".agents/skills/harness-ci/tests/narrow-boundary.test.sh",
   ".agents/skills/harness-ci/tests/path-set.test.sh",
   ".agents/skills/harness-ci/tests/rename-into-render.test.sh",
   ".agents/skills/harness-ci/tests/wiring-errors.test.sh",

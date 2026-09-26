@@ -13,6 +13,7 @@ pub mod drift_hook;
 pub mod engine_common;
 pub mod fork_cmd;
 pub mod guard_cmd;
+pub mod harness_paths;
 pub mod harness_picker;
 pub mod index_cmd;
 pub mod init;

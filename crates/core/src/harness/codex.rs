@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::{HarnessAdapter, ProjectMarker, Reader, Surface};
+use super::{HarnessAdapter, ProjectMarker, ProjectPath, Reader, Surface};
 use crate::env::Env;
 use crate::model::{HarnessId, ItemKind};
 
@@ -20,6 +20,10 @@ impl HarnessAdapter for Codex {
 
     fn project_markers(&self) -> &'static [ProjectMarker] {
         &[ProjectMarker::Dir(".codex"), ProjectMarker::Dir(".agents")]
+    }
+
+    fn project_reads(&self) -> &'static [ProjectPath] {
+        &[]
     }
 
     fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {

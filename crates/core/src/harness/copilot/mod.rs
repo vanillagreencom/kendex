@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::{HarnessAdapter, ProjectMarker, Reader, Surface};
+use super::{HarnessAdapter, ProjectMarker, ProjectPath, Reader, Role, Surface};
 use crate::env::Env;
 use crate::hook::{HookSpec, Registration};
 use crate::model::{HarnessId, ItemKind};
@@ -8,6 +8,18 @@ use crate::model::{HarnessId, ItemKind};
 pub mod settings;
 
 pub struct Copilot;
+
+/// Claude Code's settings files, which Copilot reads for a shared cross-tool
+/// key subset: policy input here, whatever they are to Claude Code (matrix
+/// §2, §R6).
+pub(crate) const CLAUDE_SETTINGS: ProjectPath =
+    ProjectPath::file(".claude/settings.json", Role::Instruction);
+pub(crate) const CLAUDE_SETTINGS_LOCAL: ProjectPath =
+    ProjectPath::file(".claude/settings.local.json", Role::Instruction);
+
+/// The model ids a repository allows an agent to run on (matrix §4).
+pub(crate) const ALLOWED_MODELS: ProjectPath =
+    ProjectPath::file(".github/allowed_models.txt", Role::Instruction);
 
 /// Copilot's own hook events, and the fleet event each one answers to
 /// ([hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference),
@@ -83,6 +95,20 @@ impl HarnessAdapter for Copilot {
             ProjectMarker::Dir(".github/skills"),
             ProjectMarker::Dir(".github/hooks"),
         ]
+    }
+
+    /// The instruction files are what Copilot loads as context in every
+    /// session and every code review, and the files its settings readers
+    /// open beside its own surfaces are policy inputs.
+    fn project_reads(&self) -> &'static [ProjectPath] {
+        const READS: &[ProjectPath] = &[
+            ProjectPath::file(".github/copilot-instructions.md", Role::Instruction),
+            ProjectPath::files(".github/instructions", "instructions.md", Role::Instruction),
+            ALLOWED_MODELS,
+            CLAUDE_SETTINGS,
+            CLAUDE_SETTINGS_LOCAL,
+        ];
+        READS
     }
 
     fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {
