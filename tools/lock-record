@@ -17,10 +17,14 @@
 # mirrors, then asks `kendex verify` whether the committed record is what
 # this tree would write. A current record ends the run. Otherwise the open
 # rolling pull request, where one exists, is judged the same way: its
-# commit is squash-merged onto the head, as the queue would merge it, and
-# `kendex verify` asked again; a pass means that pull request records this
-# tree, so nothing is pushed and it is armed where it was not, and a
-# conflict or a failed verify means it is stale. A stale record is then
+# commit is cherry-picked onto the head with no commit, which applies the
+# change it made to the head it was recorded from, as the queue's squash
+# merge would, and `kendex verify` asked again; a pass means that pull
+# request records this tree, so nothing is pushed and it is armed where it
+# was not, and a conflict or a failed verify means it is stale. A
+# cherry-pick, unlike a merge, needs no history behind the head: the
+# workflow's checkout holds the head alone, and the fetch of the rolling
+# branch brings that commit and its parent. A stale record is then
 # re-recorded with `kendex refresh`, verified again, committed on the
 # rolling branch from the checkout's head, force-pushed, and put up as one
 # pull request the merge queue takes; a pull request already open on the
@@ -43,7 +47,7 @@
 # passes through as is:
 #   option=<arg>                unknown option, or one with no value (exit 2)
 #   repo=<dir>                  not a git checkout (exit 2)
-#   status=<dir>                git could not read the checkout (exit 2), what the refresh wrote, or the rolling commit merged onto the head (exit 1)
+#   status=<dir>                git could not read the checkout (exit 2), what the refresh wrote, or apply the rolling commit onto the head (exit 1)
 #   dirty=<n>                   the checkout has n uncommitted paths; nothing was judged (exit 2)
 #   source-refresh=<status>     `kendex source refresh` failed (exit 1)
 #   current=<sha>               the record matches the tree at that head; nothing was written
@@ -96,7 +100,7 @@ while [[ $# -gt 0 ]]; do
         --branch) branch="$2" ;;
       esac
       shift 2 ;;
-    -h | --help) sed -n '2,65p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h | --help) sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *) say option "$1" "usage: tools/lock-record [--repo DIR] [--base BRANCH] [--remote NAME] [--branch NAME]" >&2; exit 2 ;;
   esac
 done
@@ -172,15 +176,20 @@ if [[ -n "$number" ]]; then
 fi
 
 if [[ -n "$rolling" && -n "$number" ]]; then
-  # The open pull request judged by the one judge: its commit merged onto
-  # the head as the queue would merge it, then verified. The reset returns
-  # the clean start either way; a merge that conflicts is a stale record
-  # the queue could not land either.
+  # The open pull request judged by the one judge: its commit applied onto
+  # the head, then verified. The reset returns the clean start either way;
+  # a commit that conflicts is a stale record the queue could not land
+  # either, and one git cannot apply at all (a merge commit on the rolling
+  # branch, a lock left in the checkout) is reported, since neither the
+  # push nor the stand-down can say what it records.
   rc=0
-  git -C "$repo" merge --squash --no-commit -q "$rolling" >/dev/null 2>&1 || rc=$?
+  git -C "$repo" cherry-pick --no-commit "$rolling" || rc=$?
   case "$rc" in
     0 | 1) ;;
-    *) git -C "$repo" reset -q --hard HEAD; say status "$repo" "git could not merge the rolling commit $rolling onto $head, so nothing was pushed" >&2; exit 1 ;;
+    *)
+      say status "$repo" "git could not apply the rolling commit $rolling onto $head, so nothing was pushed; what git printed is above" >&2
+      git -C "$repo" reset -q --hard HEAD
+      exit 1 ;;
   esac
   if [[ $rc -eq 0 ]] && (cd -- "$repo" && kendex verify --scope project); then
     git -C "$repo" reset -q --hard HEAD

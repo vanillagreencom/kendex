@@ -41,9 +41,14 @@ jobs:
     # The workflow token checks out the tree, held to contents: read and
     # persisted nowhere. The build, whose dependency build scripts run from
     # the tree, never sees the App's token. The refresh and the push share
-    # the last step, which holds it: tools/lock-record runs the tree's
-    # package scripts under GH_TOKEN before it pushes, and its header is the
-    # authority on what each command there runs with.
+    # the last step, which holds it: the refresh runs under GH_TOKEN and the
+    # gh credential helper, which answers a github.com credential challenge
+    # on its git fetches with that token, and it launches no package script,
+    # because nothing in the runner's fresh checkout is armed and a refresh
+    # arms nothing. A step that armed an effect here would put tree code
+    # under the token.
+    # tools/lock-record's header is the authority on what each command
+    # there runs with.
     permissions:
       contents: read
     environment: kendex

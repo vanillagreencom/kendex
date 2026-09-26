@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # Run the repository's post-merge steps from its base checkout.
 set -euo pipefail
-case "${1:-}" in -h|--help)
-  printf '%s\n' 'usage: post-merge [BASE_CHECKOUT]' 'Run in the base checkout; stop at the first failed step.'; exit 0 ;; esac
+mode=full
+case "${1:-}" in
+  -h|--help)
+    printf '%s\n' 'usage: post-merge [--refresh-only] [BASE_CHECKOUT]' 'Run in the base checkout; stop at the first failed step.' \
+      '--refresh-only  the refresh and the restore alone, for a hosted fleet whose control host ran sync-base itself and whose CI and lane built and verified.'
+    exit 0 ;;
+  --refresh-only) mode=refresh-only; shift ;;
+esac
 status() { printf 'post-merge: %s=%s\n' "$1" "$2"; }
 untracked() { git status --porcelain --untracked-files=all -z | tr '\0' '\n' | LC_ALL=C sort; }
 # The checkout back to HEAD: tracked paths restored, and the untracked paths
@@ -24,17 +30,19 @@ step() {
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 [[ $# -le 1 ]] || { status arguments "$#"; exit 2; }
 cd -- "${1:-.}" || { status checkout 1; exit 1; }
-step sync-base "$SCRIPT_DIR/sync-base" . || exit $?
-ORCH_POST_MERGE_BEFORE="$(git rev-parse refs/kendex/post-merge-base)" || { status sync-base 1; exit 1; }
-ORCH_POST_MERGE_AFTER="$(git rev-parse HEAD)" || { status sync-base 1; exit 1; }
-export ORCH_POST_MERGE_BEFORE ORCH_POST_MERGE_AFTER
-COMMAND="$("$SCRIPT_DIR/orch-env" ORCH_POST_MERGE_CMD '')" || { status command 1; exit 1; }
-if [[ -n "$COMMAND" ]]; then
-  step command bash -c "$COMMAND" || exit $?
-else
-  status command skipped
+if [[ "$mode" == full ]]; then
+  step sync-base "$SCRIPT_DIR/sync-base" . || exit $?
+  ORCH_POST_MERGE_BEFORE="$(git rev-parse refs/kendex/post-merge-base)" || { status sync-base 1; exit 1; }
+  ORCH_POST_MERGE_AFTER="$(git rev-parse HEAD)" || { status sync-base 1; exit 1; }
+  export ORCH_POST_MERGE_BEFORE ORCH_POST_MERGE_AFTER
+  COMMAND="$("$SCRIPT_DIR/orch-env" ORCH_POST_MERGE_CMD '')" || { status command 1; exit 1; }
+  if [[ -n "$COMMAND" ]]; then
+    step command bash -c "$COMMAND" || exit $?
+  else
+    status command skipped
+  fi
+  git update-ref refs/kendex/post-merge-base "$ORCH_POST_MERGE_AFTER" || { status checkpoint 1; exit 1; }
 fi
-git update-ref refs/kendex/post-merge-base "$ORCH_POST_MERGE_AFTER" || { status checkpoint 1; exit 1; }
 if [[ -f kendex.toml ]]; then
   # The refresh judges and the checkout keeps the committed record, whatever
   # the refresh and the verify returned: a project that records on its
@@ -45,9 +53,10 @@ if [[ -f kendex.toml ]]; then
   before="$(untracked)" || { status restore 1; exit 1; }
   rc=0
   step refresh kendex refresh --scope project --yes --leave || rc=$?
-  [[ $rc -ne 0 ]] || step verify kendex verify --scope project || rc=$?
+  [[ $rc -ne 0 || "$mode" != full ]] || step verify kendex verify --scope project || rc=$?
   step restore restore "$before" || exit $?
   [[ $rc -eq 0 ]] || exit $rc
 else
-  status refresh skipped; status verify skipped
+  status refresh skipped
+  [[ "$mode" != full ]] || status verify skipped
 fi
