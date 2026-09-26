@@ -8,8 +8,11 @@
 # dev-start runs `init` in its preamble, which has no heading of its own, so
 # its rule reads the whole file. A prose rule reads the whole file too, and
 # pins the guard and the `init` on one line. The two workflows that keep an
-# existing state also pin both `workflow-state set` commands of that path. The
-# file-set check fails when a workflow gains an `init` no rule here reads.
+# existing state also pin both `workflow-state set` commands of that path. A
+# minted rule covers a workflow that inits only a key `workflow-state
+# new-local-key` printed in the same section, which no restored state can hold,
+# and pins that mint command there. The file-set check fails when a workflow
+# gains an `init` no rule here reads.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
@@ -20,6 +23,7 @@ W="$SKILL_DIR/workflows"
 GUARDED=()
 guard_fenced() { GUARDED+=("$2"); rule_fenced "$1 reads exists in its init section" "$W/$2" "$3" "$4"; }
 guard_prose() { GUARDED+=("$2"); rule "$1 reads exists on its init line" "$W/$2" "" "$3" 'workflow-state init'; }
+guard_minted() { GUARDED+=("$2"); rule_fenced "$1 mints the key it inits in its init section" "$W/$2" "$3" "$4"; }
 keeps_state() {
   rule_fenced "$1 keeps existing state: sets worktree" "$W/$2" "$3" 'workflow-state set [ISSUE_ID] worktree'
   rule_fenced "$1 keeps existing state: sets branch" "$W/$2" "$3" 'workflow-state set [ISSUE_ID] branch'
@@ -37,6 +41,7 @@ guard_prose post-summary post-summary.md 'workflow-state exists --json [ISSUE_ID
 guard_prose review-pr review-pr.md 'workflow-state exists --json [ISSUE_ID]`; when absent'
 guard_prose submit-pr submit-pr.md 'workflow-state exists --json [ISSUE_ID]`; when absent'
 guard_prose review-pr-comments review-pr-comments.md 'workflow-state exists --json [ISSUE_ID]` reports false'
+guard_minted review review.md "## 4. Present And Fix" 'workflow-state new-local-key'
 
 # init_files DIR — the sorted base names of DIR's workflows that run `init`.
 # Returns grep's status when grep failed rather than matched nothing.
