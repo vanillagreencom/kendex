@@ -3,7 +3,7 @@
 # and the fleet's per-class rollup of those records.
 #
 # Usage:
-#   oversee-cycle [--state-dir DIR] record --pr N --tier micro|standard
+#   oversee-cycle [--state-dir DIR] record --pr N --tier micro|small|standard
 #                 [--repo OWNER/REPO] ITEM
 #   oversee-cycle [--state-dir DIR] rollup
 #
@@ -43,7 +43,8 @@
 #   phase     the longest gap between two consecutive stamps in time order,
 #             named by the stamp that ends it; the earliest wins a tie. Null
 #             while any stamp is missing, since a missing stamp joins two gaps
-#   escaped   a micro tier whose merged class is small or standard
+#   escaped   a micro tier whose merged class is small or standard, or a small
+#             tier whose merged class is standard
 #   refixed   a push landed after the first review-gate pass; null where no
 #             gate pass or no push was read
 # When this record makes the third miss on one phase among the fleet's
@@ -168,7 +169,7 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$ITEM" ]] || usage_error item
 [[ "$PR" =~ ^[1-9][0-9]*$ ]] || usage_error --pr
-case "$TIER" in micro | standard) ;; *) usage_error --tier ;; esac
+case "$TIER" in micro | small | standard) ;; *) usage_error --tier ;; esac
 
 if ! lane="$(jq -c --arg item "$ITEM" '[.lanes[]? | select(.item == $item)] | first // empty' "$STATE_FILE")"; then
   refuse state-unreadable "$STATE_FILE"
@@ -261,7 +262,9 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
      verdict: (if $class == null then "unclassified" elif $actual == null then "unmeasured"
                elif $actual > $target then "miss" else "met" end),
      phase: $dominant.phase, phase_secs: $dominant.secs, missing: $missing, rounds: $rounds,
-     escaped: (if $class == null then null else ($tier == "micro" and ($class | IN("small", "standard"))) end),
+     escaped: (if $class == null then null
+               else ($tier == "micro" and ($class | IN("small", "standard")))
+                 or ($tier == "small" and $class == "standard") end),
      refixed: (if $s.first_gate_met == null or $s.last_push == null then null
                else $s.last_push > $s.first_gate_met end)}')" \
   || refuse timeline-failed "$PR"
