@@ -35,7 +35,10 @@ pub struct Output {
 }
 
 impl Output {
-    /// What each recorded package is rendered at.
+    /// What each recorded package is rendered at: under `--at-record`, a
+    /// package that follows its source and that the record can place at
+    /// the commit the record names, held to the source's history and, with
+    /// `--base`, to no older than the base revision's record.
     fn reading(&self) -> Reading {
         match self.at_record {
             true => Reading::Recorded,
@@ -135,10 +138,12 @@ impl Tally {
 /// wording. The human rows, the closing counts line and the exit status
 /// are the same with or without it.
 ///
-/// `--at-record` renders each recorded package at the commit the record
-/// names rather than at its source's revision now, which weighs a record
-/// on its own terms after the source has moved on, and holds that commit
-/// to the source's history instead.
+/// `--at-record` renders each package that follows its source and that
+/// the record can place at the commit the record names rather than at the
+/// source's revision now, which weighs a record on its own terms after the
+/// source has moved on. That commit is held to the source's history and,
+/// with `--base`, to no older than the commit the base revision's record
+/// names. A package with a revision of its own resolves as usual.
 pub fn run(
     env: &Env,
     names: Vec<String>,

@@ -192,7 +192,34 @@ fn at_record_refuses_a_record_older_than_the_base_record() {
     let detail = record_detail(&document);
     assert!(
         detail.contains("skill second: held at")
-            && detail.contains("the commit the base revision's record names"),
+            && detail.contains("the base revision's record names")
+            && detail.contains("which is not on its history"),
+        "{detail}"
+    );
+}
+
+/// A base whose record this build cannot read sets no floor it could
+/// trust, so every held commit is refused rather than left unbounded: a
+/// record a newer kendex wrote, or one committed with conflict markers,
+/// would otherwise let a rolled-back record through.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn at_record_refuses_every_held_commit_under_an_unreadable_base_record() {
+    let world = world();
+    let record = world.project.join(RECORD);
+    let text = fs::read_to_string(&record).unwrap();
+    write(&record, "<<<<<<< ours\n{}\n>>>>>>> theirs\n");
+    commit(&world.project, "a record no build reads");
+    git(&world.project, &["tag", "unreadable"]);
+    write(&record, &text);
+    commit(&world.project, "the record restored");
+
+    let (output, document) = at_record(&world, Some("unreadable"));
+    assert!(!output.status.success(), "{}", said(&output));
+    let detail = record_detail(&document);
+    assert!(
+        detail.contains("skill second: held at")
+            && detail.contains("the base revision's record cannot be read"),
         "{detail}"
     );
 }

@@ -479,6 +479,7 @@ fn entry_commit_problem(
         recorded_commit,
         resolved,
         &format!("{key}: sourceCommit {recorded_commit}"),
+        OFF_HISTORY,
     )
 }
 
@@ -508,6 +509,7 @@ fn source_problem(
         &recorded.commit,
         &declared.commit,
         &format!("source {name}: commit {}", recorded.commit),
+        OFF_HISTORY,
     )
 }
 
@@ -534,6 +536,7 @@ fn bundle_problem(
         &recorded.commit,
         &declared.commit,
         &format!("set {name}: commit {}", recorded.commit),
+        OFF_HISTORY,
     )
 }
 
@@ -556,8 +559,14 @@ fn held_problem(
             "{subject}: its source resolved to nothing this pass could hold the commit to"
         ));
     };
-    if let Some(problem) = history_problem(env, &source.repo, &pin.commit, &source.commit, &subject)
-    {
+    if let Some(problem) = history_problem(
+        env,
+        &source.repo,
+        &pin.commit,
+        &source.commit,
+        &subject,
+        OFF_HISTORY,
+    ) {
         return Some(problem);
     }
     let base = match floor {
@@ -569,29 +578,27 @@ fn held_problem(
         }
         Floor::Record(base) => pin.recorded_in(base)?,
     };
-    if base == pin.commit {
-        return None;
-    }
-    let mirror = crate::remote::store::mirror_dir(env, &crate::remote::cache_key(env, &pin.repo));
-    match crate::remote::store::is_ancestor(&mirror, &base, &pin.commit) {
-        Some(true) => None,
-        Some(false) => Some(format!(
-            "{subject} does not descend from {base}, the commit the base revision's record names"
-        )),
-        None => Some(format!(
-            "{subject} cannot be placed against {base}: the mirror of {} does not answer for it — fetch it with kendex source refresh",
-            pin.repo
-        )),
-    }
+    history_problem(
+        env,
+        &pin.repo,
+        &base,
+        &pin.commit,
+        &format!("{subject}: the base revision's record names {base}, which"),
+        "is not on its history",
+    )
 }
+
+/// What [`history_problem`] says of a recorded commit off the history of
+/// the revision a declaration resolves to.
+const OFF_HISTORY: &str = "is not on the declared revision's history";
 
 fn selector(rev: Option<&str>) -> &str {
     rev.unwrap_or("the source's own revision")
 }
 
 /// The sentence that fails a recorded commit, after `subject` names it:
-/// one that is no commit pin, one off the declared revision's history,
-/// or one the mirror cannot place. Equal commits are answered without a
+/// one that is no commit pin, one off the newer commit's history, said
+/// as `off_history`, or one the mirror cannot place. Equal commits are answered without a
 /// git call, which is also the only answer a path source ever needs; the
 /// rest is the mirror this declaration fetches into, asked through
 /// [`crate::remote::store::is_ancestor`]. Only a pin is asked about: git
@@ -604,6 +611,7 @@ fn history_problem(
     recorded: &str,
     resolved: &str,
     subject: &str,
+    off_history: &str,
 ) -> Option<String> {
     if recorded == resolved {
         return None;
@@ -615,9 +623,7 @@ fn history_problem(
     let mirror = crate::remote::store::mirror_dir(env, &key);
     match crate::remote::store::is_ancestor(&mirror, recorded, resolved) {
         Some(true) => None,
-        Some(false) => Some(format!(
-            "{subject} is not on the declared revision's history"
-        )),
+        Some(false) => Some(format!("{subject} {off_history}")),
         None => Some(format!(
             "{subject} cannot be placed: the mirror of {repo} does not answer for it — fetch it with kendex source refresh"
         )),

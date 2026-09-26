@@ -32,16 +32,6 @@ use crate::model::ItemKind;
 use super::super::expansion::PLANNED_KINDS;
 use super::super::report_types::{Held, HeldPin};
 
-/// The kinds a held pass pins: the planned ones and the Pi extension.
-const HELD_KINDS: [ItemKind; 6] = [
-    PLANNED_KINDS[0],
-    PLANNED_KINDS[1],
-    PLANNED_KINDS[2],
-    PLANNED_KINDS[3],
-    PLANNED_KINDS[4],
-    ItemKind::PiExtension,
-];
-
 /// What a declaration in the manifest answers for, and therefore what
 /// pinning it decides. A bundle is not an installation and has no lock
 /// entry of its own; what it is here for is the members it brought in.
@@ -236,7 +226,7 @@ fn held_manifest(
     }
     let mut held = manifest.clone();
     let mut pins = HeldPins { pins: Vec::new() };
-    for kind in HELD_KINDS {
+    for kind in PLANNED_KINDS.into_iter().chain([ItemKind::PiExtension]) {
         let pinnable: Vec<(String, String, String, String)> = held
             .declared(kind)
             .iter()
