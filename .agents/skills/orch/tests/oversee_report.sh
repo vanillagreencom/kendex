@@ -288,7 +288,7 @@ Next:
 | KEN-6 | Title 6 | Outcome 6 \\| kept |
 
 Waiting on you:
-- Question for you: Merge the pricing change? (recommended yes; taken by default at 2026-09-26T03:00:00Z)
+- Question for you: Merge the pricing change? (recommended yes; defaults to it after 2026-09-26T03:00:00Z)
 - KEN-2 waits on the overseer to answer: Which schema?
 - KEN-2 waits on red checks on #12: test, lint
 - KEN-3 waits on a stopped review gate, review-round-cap: one unresolved review thread"
