@@ -5,6 +5,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../scripts" && pwd)"
 SCRATCH="$(mktemp -d)"; trap 'rm -rf -- "$SCRATCH"' EXIT
+TMP_ROOT="$SCRATCH"
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 # validate-workflow.sh is review-gate's and tested there; each row's stub says
 # which install ran, with what arguments, one verdict line and an exit status.
 stub() { # REPO PREFIX RC LINE
@@ -39,10 +42,9 @@ table "$DIR/adopt-writer" real assert_eq
 # edited row. Its judge counts nothing, so the miss it expects stays out of the
 # suite's tally.
 miss() { [[ "$1" == "$2" ]] || { printf 'miss %s rc=%s\n' "$3" "${1%%:*}"; return 1; }; }
-edited='    status adopt edited; exit 1'
-assert_eq "$(grep -cxF -- "$edited" "$DIR/adopt-writer" || true)" 1 "control finds the edited exit as one line to strip"
-edited="$edited" awk '$0 == ENVIRON["edited"] { print "    status adopt edited"; next } { print }' "$DIR/adopt-writer" >"$SCRATCH/mutant"
-rc=0; out="$(table "$SCRATCH/mutant" mutant miss)" || rc=$?
+mutant="$(mutant_scripts mutant adopt-writer)/adopt-writer" || exit 1
+mutate_file "$mutant" 'status adopt edited; exit 1' 'status adopt edited'
+rc=0; out="$(table "$mutant" mutant miss)" || rc=$?
 assert_eq "$rc:$out" "1:miss edited rc=0" "control: a copy whose edited branch exits 0 fails the edited row"
 
 echo
