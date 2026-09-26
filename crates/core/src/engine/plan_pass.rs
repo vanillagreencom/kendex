@@ -1,7 +1,7 @@
 //! The per-item planning pass, the refusal pass and the withheld pass —
 //! the walks over the desired state that turn it into drift rows and ops.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::apply::PlannedOp;
 use crate::env::Env;
@@ -131,6 +131,7 @@ fn plan_refusals(
     scope: &Scope,
     lock: &Lock,
     state: &desired::DesiredState,
+    rebound: &BTreeSet<String>,
     guard: &mut removal::TrashGuard,
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
@@ -145,6 +146,9 @@ fn plan_refusals(
         .collect();
     for refusal in &state.refused {
         let key = crate::lock::entry_key(refusal.kind, &refusal.name, refusal.harness);
+        if rebound.contains(&key) {
+            continue;
+        }
         let mut removals = Vec::new();
         if let Some(entry) = lock.entries.get(&key) {
             // A refused rendering takes its previous installation off disk
@@ -200,9 +204,9 @@ fn plan_refusals(
 }
 
 /// The records planned for outside the item pass, because no item is
-/// written for them: what a refusal takes or keeps, then what a
-/// withholding keeps. Returns their keys, so the orphan pass asks about
-/// none of them.
+/// written for them: what invariant 4 keeps, then what a refusal takes or
+/// keeps, then what a withholding keeps. Returns their keys, so the orphan
+/// pass asks about none of them.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_not_written(
     env: &Env,
@@ -217,11 +221,13 @@ pub(super) fn plan_not_written(
     new_lock: &mut Lock,
     kept: &mut KeptAsIs,
 ) -> Result<BTreeSet<String>> {
-    let mut decided = plan_refusals(
+    let mut decided = plan_rebound(scope, manifest, lock, state, drift, new_lock, kept);
+    let refused = plan_refusals(
         env,
         scope,
         lock,
         state,
+        &decided,
         guard,
         drift,
         ops,
@@ -229,26 +235,20 @@ pub(super) fn plan_not_written(
         new_lock,
         kept,
     )?;
-    decided.extend(plan_withheld(
-        scope, manifest, lock, state, drift, new_lock, kept,
-    ));
+    let withheld = plan_withheld(lock, state, &decided, new_lock, kept);
+    decided.extend(refused);
+    decided.extend(withheld);
     Ok(decided)
 }
 
-/// A hook withheld from a tool is written there by nothing; the finding
-/// the dependency walk pushed says why. A record under the hook's key that
+/// Invariant 4 for every record the item pass did not plan whose
+/// declaration's item was read (`DesiredState::processed`): a record that
 /// is another declaration's — installed from one catalog, now set to come
-/// from another — is invariant 4's conflict, as it would be for a hook the
-/// plan writes: the record stays, the row says to remove it first, and
-/// nothing of it is taken. Otherwise the reason for withholding
-/// ([`desired::Withholding`]) says whether the copy stays: one whose
-/// companion's catalog does not answer keeps its record with no row and
-/// no op, since nothing says the copy is wrong. Every copy the withholding
-/// lets go is left to `removal::orphans`, the owner of every take a
-/// withholding leads to, where `removal::keep_what_kept_records_require`
-/// says which kept record keeps it. Returns the keys of the records this
-/// pass kept.
-fn plan_withheld(
+/// from another that refuses it, withholds it or plans nothing on this
+/// tool — is the conflict it would be where the plan writes. The record stays, the row says to remove it first and why
+/// nothing replaces it here, and no later pass takes it. Returns the keys
+/// of the records this pass kept.
+fn plan_rebound(
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
@@ -257,26 +257,71 @@ fn plan_withheld(
     new_lock: &mut Lock,
     kept: &mut KeptAsIs,
 ) -> BTreeSet<String> {
+    let planned: BTreeSet<&String> = state.items.iter().map(|item| &item.key).collect();
+    let refused: BTreeMap<String, &str> = state
+        .refused
+        .iter()
+        .map(|r| (entry_key(r.kind, &r.name, r.harness), r.reason.as_str()))
+        .collect();
     let mut decided = BTreeSet::new();
-    for ((kind, name, harness), withheld) in &state.withheld {
+    for (key, entry) in &lock.entries {
+        let declared = state.processed.get(&(entry.kind, entry.name.clone()));
+        let Some(provenance) = declared.filter(|_| !planned.contains(key)) else {
+            continue;
+        };
+        let recorded_fork = manifest.recorded_fork(entry.kind, &entry.name);
+        let Some(detail) = item_plan::rebound(entry, provenance, recorded_fork) else {
+            continue;
+        };
+        let detail = match refused.get(key) {
+            Some(reason) => format!("{reason} — {detail}"),
+            None => format!(
+                "{detail} — {provenance} does not install it on {}",
+                entry.harness.display_name()
+            ),
+        };
+        drift.push(DriftRow {
+            kind: entry.kind,
+            name: entry.name.clone(),
+            harness: entry.harness,
+            scope: scope.clone(),
+            state: DriftState::Conflict,
+            detail,
+            cause: None,
+            compared: None,
+            also_in_the_way: Vec::new(),
+        });
+        kept.keep(new_lock, key, entry);
+        decided.insert(key.clone());
+    }
+    decided
+}
+
+/// A hook withheld from a tool is written there by nothing; the finding
+/// the dependency walk pushed says why. A record `plan_rebound` kept as
+/// another declaration's is not asked about again. Otherwise the reason
+/// for withholding ([`desired::Withholding`]) says whether the copy
+/// stays: one whose
+/// companion's catalog does not answer keeps its record with no row and
+/// no op, since nothing says the copy is wrong. Every copy the withholding
+/// lets go is left to `removal::orphans`, the owner of every take a
+/// withholding leads to, where `removal::keep_what_kept_records_require`
+/// says which kept record keeps it. Returns the keys of the records this
+/// pass kept.
+fn plan_withheld(
+    lock: &Lock,
+    state: &desired::DesiredState,
+    rebound: &BTreeSet<String>,
+    new_lock: &mut Lock,
+    kept: &mut KeptAsIs,
+) -> BTreeSet<String> {
+    let mut decided = BTreeSet::new();
+    for ((kind, name, harness), because) in &state.withheld {
         let key = entry_key(*kind, name, *harness);
         let Some(entry) = lock.entries.get(&key) else {
             continue;
         };
-        let recorded_fork = manifest.recorded_fork(*kind, name);
-        if let Some(detail) = item_plan::rebound(entry, &withheld.provenance, recorded_fork) {
-            drift.push(DriftRow {
-                kind: *kind,
-                name: name.clone(),
-                harness: *harness,
-                scope: scope.clone(),
-                state: DriftState::Conflict,
-                detail,
-                cause: None,
-                compared: None,
-                also_in_the_way: Vec::new(),
-            });
-        } else if withheld.because.takes() {
+        if rebound.contains(&key) || because.takes() {
             continue;
         }
         kept.keep(new_lock, &key, entry);

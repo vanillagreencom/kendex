@@ -14,7 +14,7 @@ use crate::source::{SourceConfig, find_item, list_items};
 use crate::source_read::SealedSource;
 
 use super::ItemWarning;
-use super::desired::{DesiredState, Withheld, Withholding};
+use super::desired::{DesiredState, Withholding};
 use super::desired_kinds::{NotWritten, manifest_refusal, not_written};
 use super::expansion::{CatalogKey, Catalogs, Expansion, Offer, OpenCatalog};
 
@@ -224,17 +224,12 @@ fn record(wanted: BTreeMap<Node, Wanted>, state: &mut DesiredState) {
     }
     for ((kind, name), found) in wanted {
         state.warnings.extend(found.findings);
-        state
-            .withheld
-            .extend(found.withheld.into_iter().map(|(harness, because)| {
-                (
-                    (kind, name.clone(), harness),
-                    Withheld {
-                        provenance: found.provenance.clone(),
-                        because,
-                    },
-                )
-            }));
+        state.withheld.extend(
+            found
+                .withheld
+                .into_iter()
+                .map(|(harness, because)| ((kind, name.clone(), harness), because)),
+        );
     }
 }
 
@@ -246,9 +241,6 @@ struct Wanted {
     deps: Vec<Dep>,
     findings: Vec<ItemWarning>,
     withheld: BTreeMap<HarnessId, Withholding>,
-    /// The provenance the parent's declaration is planned under, carried
-    /// with a withholding for invariant 4's judgement of an installed copy.
-    provenance: String,
     /// Whether the parent is switched on: only a hook that would run is
     /// withheld, since one that is off arms nothing beside a missing judge.
     armed: bool,
@@ -582,13 +574,11 @@ fn wanted_by(
         sealed,
         config,
         offered,
-        provenance,
     } = catalogs.get(&own.0, own.1.as_deref(), state)?;
     let mut wanted = Wanted {
         deps: Vec::new(),
         findings: Vec::new(),
         withheld: BTreeMap::new(),
-        provenance: provenance.clone(),
         armed: parent_decl.enabled,
     };
     let Some(dir) = find_item(sealed, config, kind, parent) else {

@@ -255,10 +255,13 @@ pub struct DesiredState {
     pub notes: Vec<String>,
     pub warnings: Vec<super::ItemWarning>,
     pub refused: Vec<Refused>,
-    /// Declarations whose source resolved and whose item was found. What
-    /// these produced is the complete truth about them, so a lock entry
-    /// they did not produce is stranded, not merely skipped this pass.
-    pub processed: BTreeSet<(ItemKind, String)>,
+    /// Declarations whose source resolved and whose item was found and
+    /// read, each with the provenance it is planned under. What these
+    /// produced is the complete truth about them, so a lock entry they did
+    /// not produce is stranded, not merely skipped this pass — or, where
+    /// another catalog installed it, invariant 4's conflict
+    /// (`plan_pass::plan_rebound`).
+    pub processed: BTreeMap<(ItemKind, String), String>,
     /// Manifest with upstream skill additions merged in — present only when
     /// the merge changed something and must be written back.
     pub manifest_update: Option<Manifest>,
@@ -308,18 +311,8 @@ pub struct DesiredState {
     /// and the finding the walk pushed says why. What becomes of a copy
     /// already installed there is the reason's ([`Withholding`]), behind
     /// invariant 4's conflict where the record is another catalog's
-    /// (`plan_pass::plan_withheld`).
-    pub withheld: BTreeMap<(ItemKind, String, HarnessId), Withheld>,
-}
-
-/// What the walk recorded about one hook withheld from one tool: the
-/// provenance of the declaration it decided about, carried for invariant
-/// 4's judgement of a copy already installed (`item_plan::rebound`), and
-/// why it is withheld, which decides how that copy is taken out.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Withheld {
-    pub provenance: String,
-    pub because: Withholding,
+    /// (`plan_pass::plan_rebound`).
+    pub withheld: BTreeMap<(ItemKind, String, HarnessId), Withholding>,
 }
 
 /// Why a hook is withheld from a tool, and so what becomes of a copy
@@ -474,7 +467,9 @@ fn compute(
                     .push(not_offered_note(&sealed, &config, kind, name, &decl.source));
                 continue;
             };
-            state.processed.insert((kind, name.clone()));
+            state
+                .processed
+                .insert((kind, name.clone()), provenance.clone());
             let mut harnesses = planned.harnesses.clone();
             if harnesses.is_empty() {
                 no_harness_note(kind, name, decl, manifest, &mut state);
