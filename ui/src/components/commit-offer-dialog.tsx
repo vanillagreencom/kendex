@@ -395,7 +395,9 @@ function HeldBy({ held }: { held: StalePackage }) {
 /** A package whose files in this repository the commit would carry out of
  *  date holds the offer: which, why, the disclosure its setup's yes is
  *  given against, the same block the repository-effects dialog draws, and
- *  the two choices, setting it up here or leaving the files as diffs. */
+ *  the two choices, setting it up here or leaving the files as diffs. A
+ *  split package gets no disclosure and no setup choice: no setup clears
+ *  it, so leaving the files is the only way on. */
 function HeldState({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
   const setUp = useCommitOfferStore((s) => s.setUp);
   const leave = useCommitOfferStore((s) => s.leave);

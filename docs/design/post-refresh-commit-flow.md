@@ -85,7 +85,7 @@ Each row removes something from the offer. Rows apply together.
 | No remote can be chosen | The rule below | Offer without push and without pull request, a reason named for each |
 | The `gh` probe failed | The probe below | Offer without pull request, the reason named |
 | The branch's rules on GitHub take changes only through a pull request | The branch-rules read below | Offer without push, the reason named |
-| A package's files in this repository would go out of date in the commit | `commit_offer::stale`, [commit-offer-held.md](commit-offer-held.md) | No commit choice: the package's setup and `leave`, each package and why named. With no terminal it replaces the line naming the flags |
+| A package's files in this repository would go out of date in the commit | `commit_offer::stale`, [commit-offer-held.md](commit-offer-held.md) | No commit choice: each package and why named, then its setup and `leave`, or `leave` alone where the commit would split a package's changed files. With no terminal it replaces the line naming the flags |
 
 The remote is chosen by rule, never by a prompt: the current branch's upstream remote; else `origin`; else the only remote when the project has exactly one; else none, and push and pull request are unavailable.
 
@@ -719,7 +719,7 @@ Every state, its detection, and where its words are.
 | The re-read at commit time failed | `git status` exits non-zero or does not run when the set is re-derived | `the files could not be checked`, git's words, then the commit's three choices | `The files could not be checked`, the commit-refused state |
 | The files could not be staged | `git add` exits non-zero | `the files could not be staged`, git's words, then three choices | `The files could not be staged` |
 | The cleanup could not unstage | `git reset` exits non-zero after a refused commit | The refusal, then `kendex staged N files it could not unstage; they are still staged` | The refusal, then that line |
-| A package holds the commit | `commit_offer::stale` names one | Each package and why, then its setup and `leave` | The held state, [commit-offer-held.md](commit-offer-held.md) |
+| A package holds the commit | `commit_offer::stale` names one | Each package and why, then its setup and `leave`; a split ends on `leave` alone, [commit-offer-held.md](commit-offer-held.md) | The held state, [commit-offer-held.md](commit-offer-held.md) |
 | Commit refused | `git commit` exits non-zero | git's words, then three choices; a findings block first, the rest behind a fourth choice | `The commit was refused`, a findings block first |
 | Branch not made, `pr` route | `git switch -c` exits non-zero | git's words, then the choices without `pr` | `The branch could not be made` |
 | Commit refused, `pr` route | `git commit` exits non-zero after the switch | The same, plus the line naming the switch back and the removed branch | The same, plus that line |

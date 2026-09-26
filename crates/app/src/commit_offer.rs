@@ -464,10 +464,12 @@ fn read(
 ///
 /// Each is `commit_offer::stale` asked of the paths that commit carries. The
 /// terminal commits every pending change and reads the whole scan; the
-/// window starts a write-opened offer on the action's own paths, so an
-/// older pending change to a package's files holds only the commit that
-/// carries it. Where no action opened the offer, or both commits are the
-/// same set, one reading answers for both.
+/// window starts a write-opened offer on the action's own paths, so, under
+/// the package's check, an older pending change to a package's files holds
+/// only the commit that carries it. A commit carrying some of a package's
+/// changed paths is held as split even when the older change is the part
+/// it leaves out. Where no action opened the offer, or both commits are
+/// the same set, one reading answers for both.
 fn held_by_scope(
     env: &Env,
     scope: &Scope,

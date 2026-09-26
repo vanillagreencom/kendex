@@ -21,6 +21,7 @@
 
 use std::path::Path;
 
+use crate::engine::generated_paths::INVENTORY;
 use crate::env::Env;
 use crate::model::Scope;
 use crate::repo_effects::{Ask, DeclaredEffects, Disclosure, SetupState};
@@ -53,11 +54,13 @@ pub enum Staleness {
     Unchecked(Vec<String>),
     /// The commit carries some of the package's changed paths and leaves
     /// these out: files under its tree or its declared writes the commit
-    /// does not carry, or the manifest, whose table for the package
-    /// changed and which no commit kendex makes carries. The repository's
-    /// check renders from what the commit holds, so it compares the
-    /// carried files against inputs left behind. No setup clears this;
-    /// the way on is to leave the files and commit them together.
+    /// does not carry, the changed manifest, which no commit kendex makes
+    /// carries, or the changed inventory the commit does not carry. A
+    /// package renders from the whole manifest and from the inventory, and
+    /// the repository's check renders from what the commit holds, so it
+    /// compares the carried files against inputs left behind. No setup
+    /// clears this; the way on is to leave the files and commit them
+    /// together.
     Split(Vec<String>),
 }
 
@@ -91,7 +94,8 @@ impl Carried<'_> {
 /// commit never splits a package's pending paths ([`Staleness::Split`]):
 /// one that carries some of them and leaves others behind is held however
 /// the package stands, because the repository's check renders from the
-/// commit's inputs. Then a package declaring no installer holds nothing,
+/// commit's inputs. The changed manifest and an uncarried changed
+/// inventory count among the paths left behind for every package. Then a package declaring no installer holds nothing,
 /// since no setup could clear the hold. One not set up here holds the
 /// commit without any of its code running. One set up here is asked
 /// through its declared check, the same licensed run the package page
@@ -109,6 +113,17 @@ pub fn stale(
     scan: &Scan,
     carried: Carried,
 ) -> crate::error::Result<Vec<Stale>> {
+    let behind: Vec<&str> = scan
+        .manifest
+        .iter()
+        .map(String::as_str)
+        .chain(
+            scan.owned
+                .iter()
+                .map(|owned| owned.path.as_str())
+                .filter(|path| *path == INVENTORY && !carried.carries(path)),
+        )
+        .collect();
     let mut held = Vec::new();
     for installed in crate::engine::installed_declarations(env, scope)? {
         let crate::engine::InstalledDeclaration::Declared(declared) = installed else {
@@ -126,9 +141,7 @@ pub fn stale(
         if taken.is_empty() {
             continue;
         }
-        if let Some(manifest) = table_changed(scan, &declared.name)? {
-            left.push(manifest);
-        }
+        left.extend(&behind);
         if !left.is_empty() {
             let left = left.into_iter().map(str::to_owned).collect();
             held.push((declared, Staleness::Split(left)));
@@ -157,39 +170,6 @@ pub fn stale(
         held.push((declared, why));
     }
     disclosed(env, scope, held)
-}
-
-/// The manifest's path where git reports it changed and the table named
-/// for this package differs from the last commit's, else `None`.
-///
-/// A package that reads project settings reads the table named for it:
-/// bot-instructions renders from `[bot-instructions]`. kendex folds keys
-/// into the manifest and never commits it, so a changed table is an input
-/// every commit it makes leaves behind. A change anywhere else in the
-/// manifest is not this package's input.
-fn table_changed<'a>(scan: &'a Scan, table: &str) -> crate::error::Result<Option<&'a str>> {
-    let Some(path) = scan.manifest.as_deref() else {
-        return Ok(None);
-    };
-    let whole = scan.root.join(path);
-    let now = std::fs::read_to_string(&whole)
-        .map_err(|error| crate::error::CoreError::io(&whole, error))?;
-    let committed = super::git::read(&scan.root, &["show", &format!("HEAD:./{path}")])
-        .map_err(|failed| crate::repo_effects::err(failed.said().join("\n")))?
-        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
-    let read = |text: &str| -> crate::error::Result<Option<toml::Value>> {
-        let parsed: toml::Table =
-            toml::from_str(text).map_err(|error| crate::error::CoreError::TomlParse {
-                path: whole.clone(),
-                message: error.to_string(),
-            })?;
-        Ok(parsed.get(table).cloned())
-    };
-    let before = match committed {
-        Some(text) => read(&text)?,
-        None => None,
-    };
-    Ok((read(&now)? != before).then_some(path))
 }
 
 /// Each held package with the block its setup is shown under.
