@@ -72,7 +72,9 @@ chmod +x "$FAILPS/ps" "$FAILPASTE/tmux" "$SLOWPASTE/tmux"
 # A tmux whose pane list names systemd-run as every pane's command for the
 # first reads, as many as WRAP_LIMIT holds, the window a fleet-confine
 # default-command holds before its shell takes the foreground. A row writes
-# both files first.
+# both files first. Only a row's last word is replaced, so its separators
+# stay: the window resolution reads a tab-separated list and the id lookup a
+# space-separated one.
 WRAPPED="$TMP_ROOT/wrapped"
 WRAP_COUNT="$TMP_ROOT/wrap-count"
 WRAP_LIMIT="$TMP_ROOT/wrap-limit"
@@ -83,7 +85,7 @@ if [ "\$1" = list-panes ]; then
   n=\$((\$(cat '$WRAP_COUNT') + 1))
   echo "\$n" > '$WRAP_COUNT'
   if [ "\$n" -le "\$(cat '$WRAP_LIMIT')" ]; then
-    "$REAL_TMUX" "\$@" | awk -F'\t' -v OFS='\t' '{ \$NF = "systemd-run" } 1'
+    "$REAL_TMUX" "\$@" | sed 's/[^[:space:]]*\$/systemd-run/'
     exit
   fi
 fi
