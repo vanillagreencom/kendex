@@ -23,9 +23,6 @@ cask "kendex" do
   # steps aside, and the in-app Update button owns the upgrade.
   auto_updates true
 
-  # Both put `kendex` in brew's bin.
-  conflicts_with formula: "vanillagreencom/kendex/kendex-cli"
-
   app "kendex.app"
   binary "#{appdir}/kendex.app/Contents/MacOS/kendex"
 
@@ -35,7 +32,7 @@ cask "kendex" do
   # install is offered nothing. The reinstall below is what reaches it.
   # Earlier casks installed the kendex-cli formula beside the app, and
   # `brew uninstall kendex` leaves it in place, so it is removed by hand
-  # before the install, which the `conflicts_with` above refuses otherwise.
+  # before the install, whose `binary` link refuses the name it holds.
   caveats <<~EOS
     Upgrading from kendex 5.x, or from a cask that installed the
     kendex-cli formula: this cask now links the kendex command out of the
