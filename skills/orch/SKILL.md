@@ -48,6 +48,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `start` | `[ISSUE_ID]` \| `github OWNER/REPO#N` | `workflows/start.md` / `workflows/start-worktree.md` | Prepare one work item; from a worktree, run the full session |
 | `start new` | `linear\|github ...` | `workflows/start-new.md` | Create one issue, then start it |
 | `micro` | `[ISSUE_ID]` \| `github OWNER/REPO#N` | `workflows/micro.md` | Few-line tier: edit, commit, PR, arm, merge, with no dev agent and no review cycle |
+| `small` | `[ISSUE_ID]` \| `github OWNER/REPO#N` | `workflows/small.md` | One-subsystem tier: the full session under thin review bounds |
 | `handoff` | `linear\|github ...` | `workflows/handoff.md` | Launch independent sessions |
 | `plan-issues` | `PLAN_PATH linear\|github` | `workflows/plan-issues.md` | Convert plan items into issues |
 | `dev-start` | `[ISSUE_ID]` | `workflows/dev-start.md` | Delegate implementation |
@@ -87,6 +88,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `round-prune` | At a dev round's start, prune the item worktree's build output under its own lease when the disk is at or past `ORCH_ROUND_PRUNE_DISK_PCT`, recording the bytes in `round_prunes` |
 | `round-recover` | Close a stalled dev round from the idle agent's transcript: write the report as the artifact, or mint one re-delegation's round id |
 | `dev-validate-run` | Run `DEV_VALIDATE_CMD`, or with `--validate-mode range --base REF` `DEV_VALIDATE_RANGE_CMD`, detached under `DEV_VALIDATE_TIMEOUT_SECS`, with the change class as `DEV_VALIDATE_CLASS`, and leave its verdict on disk as one `guard-exit=N` sentinel; `--wait --run-dir` polls that run, exit 3 meaning poll again; `--record --run-dir` prints its mode, its verdict, the HEAD and time it started at, any base a rebase left off the branch and, once it has one, its wall time; `--resolve-mode --worktree` prints the mode a range run there records. Where a systemd user manager answers, the run is a transient user unit ([references/job-units.md](references/job-units.md)), so no process it started outlives it; elsewhere its process group is killed once the verdict lands. `--stop --worktree` ends the runs that worktree's run records name with no verdict, and `lane-close` calls it for a local lane. The route every harness validates through |
+| `item-tier` | Assign an item's tier, `micro`, `small` or `standard`, from the launch estimate, its Location paths, the classifier's class of its branch and the review gate's class policy; the widest input wins. `--help` |
 | `branch-size-check` | Report added production, test and render-mirror lines against the issue's optional `**Expected delta**`. Size never refuses; malformed allowance text exits 3. `--help` |
 | `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the effective gate mode |
 | `ci-wait` | Block until CI completes on a PR |

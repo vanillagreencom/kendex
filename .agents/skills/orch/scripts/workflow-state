@@ -210,6 +210,14 @@ state_message() {
       printf 'workflow-state: cap-unresolved setting=%s\n' "REVIEW_MAX_CYCLES"
       printf '%s\n' "workflow-state: could not resolve REVIEW_MAX_CYCLES; rereview_panel not set"
       ;;
+    tier-value)
+      printf 'workflow-state: tier-value value=%s\n' "$value"
+      printf '%s\n' "Error: tier is micro, small or standard, not '$value'"
+      ;;
+    panel-bound)
+      printf 'workflow-state: panel-bound field=%s agents=%s limit=%s\n' "$field" "$agents" "$SMALL_TIER_PANEL_MAX"
+      printf '%s\n' "workflow-state: a small item's review panel holds at most $SMALL_TIER_PANEL_MAX reviewers (small.md § 3); $field not set"
+      ;;
     cycle-cap)
       printf 'workflow-state: cycle-cap count=%s limit=%s\n' "$(jq -r '.entered' <<<"$report")" "$cap"
       printf '%s\n' "workflow-state: rereview_cycles is at the cap ($(jq -r '.entered' <<<"$report") >= REVIEW_MAX_CYCLES=$cap, entries already taken): the fix loop is over — no further re-review cycle and no further fix round; follow review-pr § 4 At The Cap, \"Capped items are escalated, never dropped\" — one update per still-outstanding blocker and category==fix suggestion records it in escalated_items (outcome \"blocked\") and drops its superseded fixed_items entry in the same write — then go to review-pr § 5 (verdict pass) and report them"
@@ -661,27 +669,53 @@ cmd_append_file() {
 }
 
 # The round caps, spelled once: setting name, the workflow-state field its
-# count is read from (empty when the caller keeps its own count), and its
-# default. `cap`, the rereview_panel guard below, every refusal's roster and
-# the help text derive from this table, so a cap included or renamed here needs no
-# second edit kept in step, and `cap_limit` is the one place a cap resolves.
+# count is read from (empty when the caller keeps its own count), its
+# default, and the ceiling an item whose state records `tier` small holds it
+# to (empty for none): small.md's one fix round with one re-review, and its
+# two bot rounds. `cap`, the rereview_panel guard below, every refusal's
+# roster and the help text derive from this table, so a cap included or
+# renamed here needs no second edit kept in step, and `cap_limit` is the one
+# place a cap resolves.
 cap_table() {
-    printf 'REVIEW_MAX_CYCLES\trereview_cycles\t4\n'
-    printf 'REVIEW_MAX_EXTERNAL_ROUNDS\tpr_comment_review.iterations\t4\n'
-    printf 'CI_FIX_MAX_CYCLES\t\t6\n'
+    printf 'REVIEW_MAX_CYCLES\trereview_cycles\t4\t1\n'
+    printf 'REVIEW_MAX_EXTERNAL_ROUNDS\tpr_comment_review.iterations\t4\t2\n'
+    printf 'CI_FIX_MAX_CYCLES\t\t6\t\n'
 }
 
-# One cap's "<field><tab><default>", or the one refusal naming every known cap.
+# The reviewers a small item's panel may hold, small.md § 3's other bound.
+SMALL_TIER_PANEL_MAX=3
+
+# One cap's "<field><tab><default><tab><small ceiling>", or the one refusal
+# naming every known cap.
 cap_row() {
-    cap_table | awk -F'\t' -v want="$1" '$1 == want { print $2 "\t" $3; found = 1 } END { exit found ? 0 : 1 }' && return 0
+    cap_table | awk -F'\t' -v want="$1" '$1 == want { print $2 "\t" $3 "\t" $4; found = 1 } END { exit found ? 0 : 1 }' && return 0
     state_message unknown-cap "$@" >&2
     return 2
 }
 
+# The tier an item's state records, empty when none is.
+state_tier() {
+    local state_file
+    state_file=$(get_state_file "$1")
+    ensure_state_exists "$state_file"
+    jq -r '.tier // ""' "$state_file"
+}
+
+# SETTING [ISSUE]: the resolved cap, held to the small ceiling when ISSUE's
+# state records tier small.
 cap_limit() {
-    local row
+    local row limit small tier=""
     row=$(cap_row "$1") || return 2
-    "$SCRIPT_DIR/orch-env" "$1" "${row##*$'\t'}"
+    small="${row##*$'\t'}"
+    row="${row%$'\t'*}"
+    limit=$("$SCRIPT_DIR/orch-env" "$1" "${row##*$'\t'}") || return 1
+    if [[ -n "${2:-}" && -n "$small" ]]; then
+        tier=$(state_tier "$2") || return 1
+    fi
+    if [[ "$tier" == "small" && "$limit" =~ ^[0-9]+$ ]] && (( limit > small )); then
+        limit="$small"
+    fi
+    printf '%s\n' "$limit"
 }
 
 # The workflows' reader for the table above: a cap is read through this command
@@ -711,7 +745,7 @@ cmd_cap() {
     local row field limit
     row=$(cap_row "$setting") || return 2
     field="${row%%$'\t'*}"
-    limit=$(cap_limit "$setting") || return 2
+    limit=$(cap_limit "$setting" "$issue_id") || return 2
 
     if [[ "$have_count" -eq 0 && -z "$issue_id" ]]; then
         printf '%s\n' "$limit"
@@ -759,9 +793,24 @@ cmd_set() {
 
     # review-pr § 4 writes `rereview_panel` to re-enter § 2: that write IS the re-review cycle, so it raises `rereview_cycles` under the same lock it is gated on, and refuses once that count reaches REVIEW_MAX_CYCLES, so the setting is the number of entries allowed. The count is entries already taken, so the comparison is >=, not >.
     # Nothing else spends that budget: `cycles` is the general fix-round tally, and § 7's QA re-check and § 2 verification pass write `qa_recheck_panel` and `verification_panel`, fields this branch never matches.
+    if [[ "$field" == "tier" ]]; then
+        case "$value" in
+            micro|small|standard) ;;
+            *) state_message tier-value "$@" >&2; return 2 ;;
+        esac
+    fi
+    if [[ "$field" =~ ^(first|rereview|verification)_panel$ && "$value" == "{"* ]] &&
+        [[ "$(state_tier "$issue_id")" == "small" ]]; then
+        local agents
+        agents=$(jq -r '(.agents // []) | length' <<<"$value") || return 1
+        if (( agents > SMALL_TIER_PANEL_MAX )); then
+            state_message panel-bound "$@" >&2
+            return 1
+        fi
+    fi
     if [[ "$field" == "rereview_panel" && "$value" == "{"* ]]; then
         local cap report
-        cap=$(cap_limit REVIEW_MAX_CYCLES) || { state_message cap-unresolved "$@" >&2; return 1; }
+        cap=$(cap_limit REVIEW_MAX_CYCLES "$issue_id") || { state_message cap-unresolved "$@" >&2; return 1; }
         report=$(cmd_update_report "$issue_id" "(.rereview_cycles // 0) as \$n | if \$n >= $cap then {state: ., report: {refused: true, entered: \$n}} else {state: (.rereview_panel = $value | .rereview_cycles = \$n + 1), report: {refused: false}} end") || return 1
         if [[ "$(jq -r '.refused' <<<"$report")" == "true" ]]; then
             state_message cycle-cap "$@" >&2
@@ -1284,7 +1333,7 @@ Commands:
                                 at-cap being count >= cap. Settings:
 EOF
     cap_table | awk -F'\t' \
-        '{ printf "%34s%s (%s, %s)\n", "", $1, ($2 == "" ? "--count only" : $2), $3 }'
+        '{ printf "%34s%s (%s, %s%s)\n", "", $1, ($2 == "" ? "--count only" : $2), $3, ($4 == "" ? "" : ", tier small " $4) }'
     cat << 'EOF'
   increment <issue_id> <field>  Increment numeric field
   set <issue_id> <field> <value>  Set field value ({/[ prefix, null/true/false,
@@ -1301,7 +1350,12 @@ EOF
                                 null or false, is stamped with the current UTC
                                 time. A clock this command cannot
                                 read refuses the set as clock-unreadable rather
-                                than stamping an unreadable time
+                                than stamping an unreadable time. On field
+                                tier the value is micro, small or standard,
+                                refused otherwise as tier-value. With tier
+                                small, a first_panel, rereview_panel or
+                                verification_panel naming more than 3 agents
+                                is refused as panel-bound
   set-git-head <issue_id> <field> [worktree]  Set field to current HEAD SHA
   set-now <issue_id> <field>     Set field to current epoch seconds
   new-round-id <issue_id> <field>  Generate a unique per-delegation round token,
