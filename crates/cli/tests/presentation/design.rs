@@ -166,13 +166,22 @@ fn a_clean_refresh_with_folded_detail_closes_done() {
         "pretty",
         &["refresh", "-y", "--scope", "project"],
     ));
-    let closing = printed
+    // The summary wraps at the terminal's width, and a long temporary
+    // path can push even its verb onto the lines under it: the mark is
+    // read off the one line at column 0 that opens with an outcome mark,
+    // the words off the whole run.
+    let marked: Vec<String> = printed
         .lines()
-        .find(|line| stripped(line).contains(": refreshed "))
-        .unwrap_or_else(|| panic!("no closing line: {printed:?}"));
+        .map(stripped)
+        .filter(|line| line.starts_with("✓ ") || line.starts_with("! "))
+        .collect();
     assert!(
-        stripped(closing).starts_with("✓ ") && stripped(closing).ends_with("details folded"),
+        marked.len() == 1 && marked[0].starts_with("✓ "),
         "the clean run closed on something other than done: {printed:?}"
+    );
+    assert!(
+        squashed(&stripped(&printed)).contains("safety:clean·detailsfolded"),
+        "the closing line lost its folded part: {printed:?}"
     );
     assert!(
         printed
