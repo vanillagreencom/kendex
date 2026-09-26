@@ -10,6 +10,12 @@
 //! whose files the offer touches is asked, and one kendex cannot vouch for
 //! holds the commit.
 //!
+//! Setting a held package up runs its declared installer. Only the renders
+//! kendex reads back join the offer after it: today bot-instructions',
+//! through `crate::bot_instructions::add_to_generated`. A package's declared
+//! writes are never carried whole, since one of them can be a file kendex
+//! owns a region of.
+//!
 //! An effect inside `.git` is out of scope. A commit carries none of those
 //! files, and a hook that is not set up refuses nothing.
 

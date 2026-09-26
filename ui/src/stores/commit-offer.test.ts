@@ -9,6 +9,7 @@ import {
 } from "@/bindings";
 import { droppedToast, NOTHING_TO_COMMIT_TOAST } from "@/lib/copy-commit-offer";
 import {
+  heldBy,
   ready,
   routesFor,
   selectionOf,
@@ -74,6 +75,7 @@ const offer = (over: Partial<ProjectOffer> = {}): ProjectOffer => ({
   repo: "acme/site",
   tracked: true,
   stale: [],
+  staleAction: [],
   ...over,
 });
 
@@ -401,6 +403,46 @@ describe("the reading an action is scoped against", () => {
 // Which pending changes a step carries, and when the reader has to say so.
 // The rule: a commit labelled as one action's work never carries an earlier
 // change nobody said yes to.
+// The packages holding a commit are the ones the picked commit carries:
+// only this action's work, or every pending change. An offer nobody's
+// action opened has no action set, and reads every pending change.
+describe("the packages holding the picked commit", () => {
+  const held = (name: string): StalePackage =>
+    ({ name, why: "notSetUp", said: [] }) as unknown as StalePackage;
+  it.each([
+    {
+      name: "the action's work",
+      scoped: "action",
+      actionPaths: ["one.md"],
+      want: "action",
+    },
+    {
+      name: "every pending change",
+      scoped: "all",
+      actionPaths: ["one.md"],
+      want: "all",
+    },
+    {
+      name: "no action opened it",
+      scoped: "action",
+      actionPaths: [],
+      want: "all",
+    },
+  ] as const)("reads the list for $name", (row) => {
+    const state = {
+      queue: [
+        offer({
+          actionPaths: [...row.actionPaths],
+          stale: [held("all")],
+          staleAction: [held("action")],
+        }),
+      ],
+      scoped: row.scoped,
+    };
+    expect(heldBy(state).map((one) => one.name)).toEqual([row.want]);
+  });
+});
+
 describe("the set a step carries", () => {
   const state = (over: Partial<Parameters<typeof selectionOf>[0]> = {}) => ({
     queue: [offer({ choice: true, actionPaths: ["one.md"] })],
@@ -776,11 +818,15 @@ describe("setting up a package that holds the commit", () => {
     },
   });
   const since: ProjectBaseline = { root, held: [] };
+  /** Held in both commits it can make, as a project with no older pending
+   *  change to the package's files is. */
+  const heldOffer = (stale: StalePackage[]) =>
+    offer({ stale, staleAction: stale });
 
   beforeEach(() => {
     vi.clearAllMocks();
     useCommitOfferStore.setState({
-      queue: [offer({ stale: [held("notSetUp")] })],
+      queue: [heldOffer([held("notSetUp")])],
       stage: { at: "offer" },
       route: "commit",
       scoped: "action",
@@ -796,7 +842,7 @@ describe("setting up a package that holds the commit", () => {
   const applied = { status: "ok", data: { stdout: [], stderr: [] } };
   const read = (stale: StalePackage[]) => ({
     status: "ok",
-    data: { kind: "offer", offer: offer({ stale }) },
+    data: { kind: "offer", offer: heldOffer(stale) },
   });
   const stillHeld = [
     held("outOfDate", ["drift: .github/copilot-instructions.md"]),

@@ -279,8 +279,9 @@ fn make(
     let session = SESSION.get().unwrap_or(&default);
     let mut generated = generated.clone();
     let mut set_up = false;
-    // Read again after a setup: the files it rendered join the offer, and
-    // the packages are asked again whether they now stand behind them.
+    // Read again after a setup: the renders kendex reads back join the
+    // offer (`set_up_here` says which), and the packages are asked again
+    // whether they now stand behind them.
     loop {
         let scan = match commit_offer::scan(scope, &generated) {
             Ok(None) => return Ok(None),

@@ -370,6 +370,7 @@ describe("the setup of a package holding the commit", () => {
     repo: null,
     tracked: false,
     stale: [{ name: "guards", why: "notSetUp", said: [], disclosure }],
+    staleAction: [{ name: "guards", why: "notSetUp", said: [], disclosure }],
   };
 
   it.each([
@@ -387,7 +388,7 @@ describe("the setup of a package holding the commit", () => {
     vi.mocked(commands.repoEffectsApply).mockResolvedValue(row.armed as never);
     vi.mocked(commands.commitOfferOpen).mockResolvedValue({
       status: "ok",
-      data: { kind: "offer", offer: { ...held, stale: [] } },
+      data: { kind: "offer", offer: { ...held, stale: [], staleAction: [] } },
     });
     useCommitOfferStore.setState({
       queue: [held],
