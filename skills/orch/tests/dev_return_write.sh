@@ -79,7 +79,9 @@ for rid in 9-9 14-15 17-17; do
     --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
 done
 VRUN_FIX="$(round_run_dir "$TMP_ROOT/validate-run-fix" "$FW" issue-776 7-7)"
-VRUN_FIX_RANGE="$(round_run_dir "$TMP_ROOT/validate-run-fix-range" "$FW" issue-776 7-7 range)"
+VRUN_FIX_9="$(round_run_dir "$TMP_ROOT/validate-run-fix-9" "$FW" issue-776 9-9)"
+VRUN_FIX_14="$(round_run_dir "$TMP_ROOT/validate-run-fix-14" "$FW" issue-776 14-15)"
+VRUN_FIX_RANGE="$(round_run_dir "$TMP_ROOT/validate-run-fix-range" "$FW" issue-776 17-17 range)"
 printf '## Completion Summary\n- did the thing\n' > "$TMP_ROOT/summary.md"
 SUMMARY_FILE="$TMP_ROOT/summary.md"
 
@@ -171,7 +173,7 @@ table \
   "--summary-file embeds the file and keeps summary_posted false|--worktree $WT --kind implement --issue issue-gh --round-id 6-6 --branch b --commit %H --validate pass --validate-run-dir $VRUN --no-summary --summary-file $SUMMARY_FILE|rc=0 .summary|split(\"\\n\")[0]=##+Completion+Summary .summary_posted=false" \
   "a fix carries its items, n numeric, and round-trips through the bound round|--worktree %FW --kind fix --issue issue-776 --round-id 7-7 --branch issue-776 --commit $FIX_HEAD --validate pass --validate-run-dir $VRUN_FIX --item 1 Applied fixed+nil+deref --item 2 Skipped contradicts+D010|rc=0 .kind=fix .items|length=2 .items[0].n|type=number .items[0].decision=Applied .items[1].decision=Skipped" \
   "a bundled implement aggregates its labels|--worktree $WT --kind implement --issue PROJ-100 --round-id 8-8 --branch feat/proj-100 --commit %H --validate pass --validate-run-dir $VRUN --bundled --item 1 Applied sub+A+done --item 2 Applied sub+B+done --qa-label needs-safety-audit --qa-label needs-review|rc=0 .bundled=true .items|length=2 .qa_labels|tojson=[\"needs-safety-audit\",\"needs-review\"] roundtrip=valid" \
-  "a Blocked decision is accepted|--worktree %FW --kind fix --issue issue-776 --round-id 9-9 --branch b --commit c --validate pass --validate-run-dir $VRUN_FIX --item 3 Blocked needs+API+design|rc=0 .items[0].decision=Blocked" \
+  "a Blocked decision is accepted|--worktree %FW --kind fix --issue issue-776 --round-id 9-9 --branch b --commit c --validate pass --validate-run-dir $VRUN_FIX_9 --item 3 Blocked needs+API+design|rc=0 .items[0].decision=Blocked" \
   "--recovered-text embeds the report and records recovered_from|--worktree $WT --kind implement --issue issue-rec --round-id 15-15 --branch b --commit %H --validate pass --validate-run-dir $VRUN --recovered-text $SUMMARY_FILE|rc=0 .recovered_from=transcript .summary|split(\"\\n\")[0]=##+Completion+Summary roundtrip=valid" \
   "an inline --summary embeds the text|--worktree $WT --kind implement --issue issue-1236i --round-id 12-12 --branch b --commit %H --validate pass --validate-run-dir $VRUN --no-summary --summary inline+completion+summary|rc=0 .summary=inline+completion+summary roundtrip=valid" \
   "a --validate-note is recorded verbatim beside a strictly enumerated pass|--worktree $WT --kind implement --issue issue-note --round-id $RID --branch b --commit %H --validate pass --validate-run-dir $VRUN --validate-note 80/80+on+re-run;+first+run+flaked|rc=0 .validate=pass .validate_note=80/80+on+re-run;+first+run+flaked" \
@@ -187,7 +189,7 @@ table \
   "a round that did not probe records null and the not-probed cause, never an empty list|--worktree $WT --kind implement --issue issue-nonear --round-id 16-16 --branch b --commit %H --validate pass --validate-run-dir $VRUN|rc=0 has:near_ceiling=true .near_ceiling|tojson=null .near_ceiling_error=byte-ceiling+not+probed:+no+--near-ceiling-base roundtrip=valid" \
   "a leading single-dash summary is a value|--worktree $WT --kind implement --issue issue-dash --round-id 13-13 --branch b --commit %H --validate pass --validate-run-dir $VRUN --summary -+close+as+duplicate+of+the+merged+fix --no-summary|rc=0 .summary=-+close+as+duplicate+of+the+merged+fix" \
   "double-dash prose that is not an own flag is a summary|--worktree $WT --kind implement --issue issue-ddash --round-id 14-14 --branch b --commit %H --validate pass --validate-run-dir $VRUN --summary --foo+is+a+flag+of+the+consuming+tool --no-summary|rc=0 .summary=--foo+is+a+flag+of+the+consuming+tool" \
-  "double-dash prose is accepted as --item REASONING|--worktree %FW --kind fix --issue issue-776 --round-id 14-15 --branch b --commit c --validate pass --validate-run-dir $VRUN_FIX --item 1 Skipped --force+would+be+needed|rc=0 .items[0].reasoning=--force+would+be+needed"
+  "double-dash prose is accepted as --item REASONING|--worktree %FW --kind fix --issue issue-776 --round-id 14-15 --branch b --commit c --validate pass --validate-run-dir $VRUN_FIX_14 --item 1 Skipped --force+would+be+needed|rc=0 .items[0].reasoning=--force+would+be+needed"
 assert_eq "$(find "$WT/tmp" -maxdepth 1 -name '.dev-return-*' | wc -l | tr -d ' ')" "0" "a successful write leaves no temp file behind"
 assert_eq "$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 7-7 --expect-items-from-round | jq -r '.reason')" "valid" "the fix record round-trips through the bound round's authorization"
 
@@ -246,6 +248,8 @@ echo "=== a fix receipt names only a run its own round started ==="
 # fix round is delegated at that commit, where its range run starts. The
 # implement run is still on disk and in the dev agent's context; a receipt
 # naming it would record a full pass for a commit only the range run judged.
+# A fix round that commits nothing leaves the next round delegated at the same
+# base, a minute later here, and its own run is refused for that next round.
 BW="$(new_repo bind-wt)"
 IMPL_BASE="$(git -C "$BW" rev-parse HEAD)"
 VRUN_IMPL="$(validate_run_dir "$TMP_ROOT/validate-run-implement" full 0 "$IMPL_BASE")"
@@ -259,13 +263,21 @@ cp "$FW/.cache/linear/issues.json" "$BW/.cache/linear/issues.json"
 env ORCH_STATE_DIR="$BW/tmp" "$ROUND_WRITE" --worktree "$BW" --issue issue-776 --round-id 21-21 \
   --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
 VRUN_BOUND="$(round_run_dir "$TMP_ROOT/validate-run-bound" "$BW" issue-776 21-21 range)"
+ROUND_DELEGATED="$(jq -r '.delegated_at' "$BW/tmp/dev-round-issue-776-21-21.json")"
+env ORCH_STATE_DIR="$BW/tmp" "$ROUND_WRITE" --worktree "$BW" --issue issue-776 --round-id 23-23 \
+  --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
+NEXT_RECORD="$BW/tmp/dev-round-issue-776-23-23.json"
+jq --argjson at "$(( ROUND_DELEGATED + 60 ))" '.delegated_at = $at' "$NEXT_RECORD" > "$NEXT_RECORD.next"
+mv "$NEXT_RECORD.next" "$NEXT_RECORD"
 VRUN_NOHEAD="$(validate_run_dir "$TMP_ROOT/validate-run-nohead" range)"
-VRUN_BADHEAD="$(validate_run_dir "$TMP_ROOT/validate-run-badhead" range 0 0000000000000000000000000000000000000000)"
+VRUN_BADHEAD="$(validate_run_dir "$TMP_ROOT/validate-run-badhead" range 0 0000000000000000000000000000000000000000 "$ROUND_DELEGATED")"
+NEXT_ARGS="--kind fix --issue issue-776 --round-id 23-23 --branch b --commit $ROUND_BASE --validate pass --item 1 Applied fixed"
 BIND_ARGS="--kind fix --issue issue-776 --round-id 21-21 --branch b --commit $ROUND_BASE --validate pass --item 1 Applied fixed"
 BIND_ROWS=(
   "the implement round's full run is refused, naming the run, its HEAD and the round's base|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_IMPL|rc=2 written=no stderr~dev-return-write:+run-off-round+run-dir=$VRUN_IMPL+head=$IMPL_BASE+base-sha=$ROUND_BASE=true"
   "the round's own range run is accepted and recorded as range|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_BOUND|rc=0 .validate_mode=range"
-  "a run that records no HEAD is refused|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_NOHEAD|rc=2 written=no stderr~dev-return-write:+run-off-round+run-dir=$VRUN_NOHEAD+head=+base-sha=$ROUND_BASE=true"
+  "the previous round's run at the same base is refused for the next round, naming both times|--worktree $BW $NEXT_ARGS --validate-run-dir $VRUN_BOUND|rc=2 written=no stderr~dev-return-write:+run-before-round+run-dir=$VRUN_BOUND+start=$ROUND_DELEGATED+delegated-at=$(( ROUND_DELEGATED + 60 ))=true"
+  "a run that records no HEAD is refused on its own key|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_NOHEAD|rc=2 written=no stderr~dev-return-write:+run-headless+run-dir=$VRUN_NOHEAD=true"
   "a HEAD git cannot resolve is refused on its own key|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_BADHEAD|rc=2 written=no stderr~dev-return-write:+ancestry-unreadable+run-dir=$VRUN_BADHEAD=true"
   "a fix round with no round record is refused|--worktree $BW --kind fix --issue issue-776 --round-id 22-22 --branch b --commit $ROUND_BASE --validate pass --item 1 Applied fixed --validate-run-dir $VRUN_BOUND|rc=2 written=no stderr~dev-return-write:+round-record-unreadable+path=$BW/tmp/dev-round-issue-776-22-22.json=true"
 )
@@ -283,7 +295,15 @@ table \
   "control: without the binding the implement round's full run is recorded for the fix|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_IMPL|rc=0 .validate_mode=full" \
   "control: without the binding a run that records no HEAD is written|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_NOHEAD|rc=0 written=yes" \
   "control: without the binding a HEAD git cannot resolve is written|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_BADHEAD|rc=0 written=yes" \
-  "control: without the binding a fix round with no round record is written|--worktree $BW --kind fix --issue issue-776 --round-id 22-22 --branch b --commit $ROUND_BASE --validate pass --item 1 Applied fixed --validate-run-dir $VRUN_BOUND|rc=0 written=yes"
+  "control: without the binding a fix round with no round record is written|--worktree $BW --kind fix --issue issue-776 --round-id 22-22 --branch b --commit $ROUND_BASE --validate pass --item 1 Applied fixed --validate-run-dir $VRUN_BOUND|rc=0 written=yes" \
+  "control: without the binding the previous round's run is written for the next round|--worktree $BW $NEXT_ARGS --validate-run-dir $VRUN_BOUND|rc=0 written=yes"
+rm -f -- "${BW:?}/tmp/dev-return-issue-776-23-23.json"
+# Control: with the ancestry kept and the time dropped, the previous round's
+# run at the same base binds to the next round.
+TIME_SCRIPTS="$(copy_scripts time-mutant)"
+mutate_file "$TIME_SCRIPTS/dev-return-write" '(( 10#$run_start >= 10#$round_delegated_at )) \' 'true \'
+WRITE="$TIME_SCRIPTS/dev-return-write"
+table "control: without the delegation time the previous round's run is written for the next round|--worktree $BW $NEXT_ARGS --validate-run-dir $VRUN_BOUND|rc=0 written=yes"
 WRITE="$WRITE_SHIPPED"
 
 echo "=== every refusal exits 2 on its own guard and writes nothing ==="

@@ -101,6 +101,10 @@ new_fix_round() { # NAME N RID EXIT [COMMITTED] [CUT]
     > "$WT/.cache/linear/issues.json"
   "$ROUND_WRITE" --worktree "$WT" --issue "issue-$2" --round-id "$3" ${cut[@]+"${cut[@]}"} \
     --item 1 "fix nil deref" "tools/guard on a staged render" --item 2 "rename" "tools/guard on a staged render" >/dev/null
+  # The record's delegation time is the state's, fifty seconds ago, so the
+  # run new_round started since then belongs to this round.
+  jq --argjson at "$(( NOW - 50 ))" '.delegated_at = $at' "$WT/tmp/dev-round-issue-$2-$3.json" > "$WT/tmp/round.next"
+  mv "$WT/tmp/round.next" "$WT/tmp/dev-round-issue-$2-$3.json"
   ROUND_SHA="$HEAD_SHA"
   [[ "${5:-yes}" == no ]] && return 0
   printf 'fixed\n' >> "$WT/work.txt"

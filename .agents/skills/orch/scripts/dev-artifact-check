@@ -396,7 +396,7 @@ message() {
       printf 'The emitted artifact verdict could not be read.\n'
       ;;
     mode-unresolved)
-      printf 'dev-artifact-check: mode-unresolved worktree=%s\n' "$repo"
+      printf 'dev-artifact-check: mode-unresolved worktree=%s cause=%s\n' "$repo" "$mode_cause"
       printf 'dev-validate-run --resolve-mode could not name the mode this fix round runs.\n'
       ;;
     mode-mismatch)
@@ -694,8 +694,9 @@ collect_unapproved_additions() {
 # {ok, path, reason, warning}, returns 0 iff valid.
 # want_round "" skips the round_id match (--file mode without --round-id).
 # expect_items "" uses the fix/bundled fallback instead of the exact-set rule.
-# round_record "" skips both record-derived gates — protected additions (no
-# delegated adds set) and the declared-cut size check.
+# round_record "" skips the three record-derived gates — the fix-round mode
+# check, protected additions (no delegated adds set) and the declared-cut size
+# check.
 # repo "" is --file mode with no resolved repository, and refuses the commit
 # (round mode always passes its worktree). A round-mode worktree that is not a
 # git repo skips the commit checks — production worktrees always are, and a
@@ -718,14 +719,18 @@ validate_artifact() {
   # commit gate, whose warning would otherwise precede this gate's status 2
   # refusal on stderr.
   if [[ -n "$round_record" ]] && jq -e '.kind == "fix" and .validate_mode != null' "$file" >/dev/null 2>&1; then
-    local recorded_mode round_mode
+    local recorded_mode round_mode mode_cause
     recorded_mode="$(jq -r '.validate_mode' "$file")"
-    round_mode="$("$SCRIPT_DIR/dev-validate-run" --resolve-mode --worktree "$repo" 2>/dev/null)" || round_mode=""
-    round_mode="${round_mode#validate-mode=}"
-    case "$round_mode" in
-      full|range) ;;
-      *) message mode-unresolved >&2; return 2 ;;
-    esac
+    # Captured whole, stderr included, so a refusal's keyed line becomes the
+    # cause this check names rather than a line printed ahead of its own.
+    # A resolution that exits non-zero is unresolved whatever it printed.
+    if round_mode="$("$SCRIPT_DIR/dev-validate-run" --resolve-mode --worktree "$repo" 2>&1)" \
+      && [[ "$round_mode" == validate-mode=full || "$round_mode" == validate-mode=range ]]; then
+      round_mode="${round_mode#validate-mode=}"
+    else
+      IFS= read -r mode_cause <<<"$round_mode" || mode_cause=""
+      message mode-unresolved >&2; return 2
+    fi
     if [[ "$recorded_mode" != "$round_mode" ]]; then
       message mode-mismatch >&2
       emit false "$file" "mode_mismatch"

@@ -22,6 +22,7 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
   "round_id": "1769600000123456789-1837",
   "issue": "issue-1230",
   "base_sha": "0123456789abcdef0123456789abcdef01234567",
+  "delegated_at": 1769600000,
   "adds": ["tools/refresh-fixture"],
   "cut": false,
   "cut_comparison": null,
@@ -48,6 +49,7 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
 | `round_id` | Yes | `--round-id` | Per-delegation token; equals the filename token and the round's `dev_round_id` |
 | `issue` | Yes | `--issue` | Normalized workflow-state key |
 | `base_sha` | Yes | captured from `HEAD` | Commit at delegation time; exactly 40 lowercase hex with nothing before or after, and readers refuse anything else — it reaches `git diff` as a revision argument |
+| `delegated_at` | Yes | captured from the clock | Epoch second of the record's first write. An identical retry keeps it: identity compares every other field |
 | `adds` | Yes | `--adds "PATH [PATH...]"` | Exact protected additions the round may make; an empty array allows none in the protected scope |
 | `cut` | Yes | `--cut` | Whether the round was declared a branch cut. Readers treat a missing or `null` `cut` as `false`, and refuse any other non-boolean value |
 | `size_check` | Yes | captured from `branch-size-check` | The current report defined by [workflow-state.md § Field Definitions](workflow-state.md#field-definitions), recorded at delegation |
@@ -77,7 +79,7 @@ A cut round's items name work rather than a finding, so the `reach` row's defini
 ## Readers
 
 - **`dev-artifact-check --expect-items-from-round`** derives the expected items and additions from the record; its gates and refusal reasons are that script's `--help`.
-- **`dev-return-write --kind fix`** reads `base_sha` and names a validation run only when the HEAD that run started at contains it.
+- **`dev-return-write --kind fix`** reads `base_sha` and `delegated_at`, and names a validation run only when it started at a HEAD that contains that base, no earlier than that time.
 - **A respawned dev agent** reads `items[]` to recover the item numbers, texts, and reaches.
 - **The tail-reconciliation nudge** points at the record.
 

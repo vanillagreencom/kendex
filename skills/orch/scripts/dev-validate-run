@@ -55,11 +55,12 @@
 #         state=stopped units=N groups=N
 #   dev-validate-run --record --run-dir PATH
 #       Print the run's record, read-only: the mode it ran under, its verdict,
-#       the HEAD it started at and, for a finished run, its wall time. The one
-#       reader of the run directory for anything outside this script;
-#       dev-return-write takes a receipt's mode and wall time from it, a
-#       receipt's pass needs its pass and its no-verdict its no-verdict, and a
-#       fix round's receipt needs a HEAD that contains the round's base.
+#       the HEAD and epoch second it started at and, for a finished run, its
+#       wall time. The one reader of the run directory for anything outside
+#       this script; dev-return-write takes a receipt's mode and wall time from
+#       it, a receipt's pass needs its pass and its no-verdict its no-verdict,
+#       and a fix round's receipt needs a run started at a HEAD that contains
+#       the round's base, no earlier than the round was delegated.
 #   dev-validate-run --resolve-mode --worktree PATH
 #       Print the mode a --validate-mode range run in that worktree records,
 #       read-only and starting nothing: range, or full where the project sets
@@ -95,10 +96,12 @@
 #          and start records REF as validate-base-orphaned=.
 #
 # Both modes record the worktree's HEAD when the run started as the head= line
-# of start, empty where the worktree has no commit. It binds the run to a
-# round: a fix round's receipt names a run only when that HEAD contains the
-# base the round was delegated at, so a run from an earlier round, whose HEAD
-# predates that base, cannot stand in for this one.
+# of start, empty where the worktree has no commit, beside the start= epoch
+# second. The two bind the run to a round: a fix round's receipt names a run
+# only when that HEAD contains the base the round was delegated at and the run
+# started no earlier than the delegation. The HEAD refuses a run from before
+# the base existed; the time refuses an earlier round's run at the same base,
+# which a round that committed nothing leaves behind.
 #
 # Output protocol — the agent reads these lines and the tests pin them:
 #   state=started run-dir=… log=… sentinel=… timeout-secs=N poll-secs=N cap-secs=N class=… docs-only=… [class-fallback=…]
@@ -106,7 +109,7 @@
 #   state=running elapsed-secs=N cap-secs=N run-dir=…
 #   state=timeout elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
 #   state=lost elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
-#   validate-mode=full|range verdict=pass|FAILING|no-verdict|unfinished head=SHA| [seconds=N started-at=TIME ended-at=TIME]   (--record)
+#   validate-mode=full|range verdict=pass|FAILING|no-verdict|unfinished head=SHA| start=EPOCH [seconds=N started-at=TIME ended-at=TIME]   (--record)
 #   validate-mode=full|range                                                  (--resolve-mode)
 #
 # --record's verdict is pass only for a sentinel of guard-exit=0, no-verdict
@@ -644,8 +647,8 @@ if [[ "$mode" == record ]]; then
       || die timing-unreadable "path=$run_dir/timing"
     record_timing=" seconds=$timing_seconds started-at=$timing_started ended-at=$timing_ended"
   fi
-  printf 'validate-mode=%s verdict=%s head=%s%s\n' "$record_mode" "$record_verdict" \
-    "$(start_field "$run_dir/start" head)" "$record_timing"
+  printf 'validate-mode=%s verdict=%s head=%s start=%s%s\n' "$record_mode" "$record_verdict" \
+    "$(start_field "$run_dir/start" head)" "$(start_field "$run_dir/start" start)" "$record_timing"
   exit 0
 fi
 

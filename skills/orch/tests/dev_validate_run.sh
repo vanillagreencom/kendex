@@ -18,6 +18,10 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 RUN="$SCRIPTS_DIR/dev-validate-run"
 
+# start_of RUN_DIR — the epoch second the run's start record names, which its
+# --record line carries.
+start_of() { sed -n 's/^start=//p' "$1/start"; }
+
 PASS=0
 FAIL=0
 
@@ -237,14 +241,14 @@ assert_eq "$t_secs" "$(jq -n --arg a "$t_start" --arg b "$t_end" '($b | fromdate
 assert_eq "$([[ "$t_secs" -ge 2 ]] && echo within || echo "outside:$t_secs")" "within" \
   "and the span is the command's: at least its 2-second bound"
 run_script "$RUN" --record --run-dir "$timeout_dir"
-assert_eq "$OUT rc=$RC" "validate-mode=full verdict=no-verdict head= seconds=$t_secs started-at=$t_start ended-at=$t_end rc=0" \
+assert_eq "$OUT rc=$RC" "validate-mode=full verdict=no-verdict head= start=$(start_of "$timeout_dir") seconds=$t_secs started-at=$t_start ended-at=$t_end rc=0" \
   "the record of a run killed at its bound reads no-verdict, never pass or FAILING, and carries its wall time" "$ERR"
 
 # Control: a sentinel reader that files the bound's verdict with the failures
 # hands the receipt a FAILING for that same cut-off run.
 mutant mutant-cut-failing '*" verdict=no-verdict") SENTINEL_VERDICT=no-verdict ;;' '*" verdict=no-verdict") SENTINEL_VERDICT=FAILING ;;'
 run_script "$MUTANT" --record --run-dir "$timeout_dir"
-assert_eq "$OUT" "validate-mode=full verdict=FAILING head= seconds=$t_secs started-at=$t_start ended-at=$t_end" \
+assert_eq "$OUT" "validate-mode=full verdict=FAILING head= start=$(start_of "$timeout_dir") seconds=$t_secs started-at=$t_start ended-at=$t_end" \
   "control: with the bound's verdict unread the cut-off run's record reads FAILING" "$ERR"
 
 # Control: with the own-exit marker never written, a command's own exit 124
@@ -365,8 +369,8 @@ for row in "${MODE_ROWS[@]}"; do
     "$label — the start record names the mode and base that ran" "$ERR"
   run_script "$RUN" --record --run-dir "$mode_dir"
   assert_eq "$(sed -E 's/ seconds=[0-9]+ started-at=[^ ]+ ended-at=[^ ]+$/ seconds=N started-at=T ended-at=T/' <<<"$OUT")" \
-    "validate-mode=$want_mode verdict=pass head=$head_sha seconds=N started-at=T ended-at=T" \
-    "$label — the run's record names that mode, the pass, the HEAD it started at and its wall time" "$ERR"
+    "validate-mode=$want_mode verdict=pass head=$head_sha start=$(start_of "$mode_dir") seconds=N started-at=T ended-at=T" \
+    "$label — the run's record names that mode, the pass, the HEAD and second it started at and its wall time" "$ERR"
 done
 # The last range run's started line keeps the shape every waiter reads; the
 # class fields that close it are the classifier rows' to pin.
@@ -388,8 +392,9 @@ assert_eq "$(output_of "$OUT")" "full" \
 # the record row reddens on it.
 mutant mutant-no-head "head_sha=\"\$(git rev-parse --verify -q 'HEAD^{commit}')\"" 'head_sha=""'
 run_script "$MUTANT" --worktree "$proj" --poll 1 --validate-mode range --base HEAD
-run_script "$RUN" --record --run-dir "$(run_dir_of "$OUT")"
-assert_eq "${OUT%% seconds=*}" "validate-mode=range verdict=pass head=" \
+headless_dir="$(run_dir_of "$OUT")"
+run_script "$RUN" --record --run-dir "$headless_dir"
+assert_eq "${OUT%% seconds=*}" "validate-mode=range verdict=pass head= start=$(start_of "$headless_dir")" \
   "control: with the HEAD unrecorded the record names none" "$ERR"
 
 # --- --resolve-mode names the mode a range run records, and starts nothing ----
@@ -529,7 +534,7 @@ assert_eq "$RC" "3" "and exits 3, which is the instruction to poll again" "$ERR"
 assert_eq "$([[ "$slow_elapsed" -le 5 ]] && echo within || echo "over:$slow_elapsed")" "within" \
   "and it returns on its own budget rather than a whole poll interval past it"
 run_script "$RUN" --record --run-dir "$slow_dir"
-assert_eq "$OUT rc=$RC" "validate-mode=full verdict=unfinished head= rc=0" \
+assert_eq "$OUT rc=$RC" "validate-mode=full verdict=unfinished head= start=$(start_of "$slow_dir") rc=0" \
   "the record of a run still going reads unfinished, never pass" "$ERR"
 kill -KILL -- "-$started" 2>/dev/null || kill -KILL "$started" 2>/dev/null || true
 wait "$started" 2>/dev/null || true

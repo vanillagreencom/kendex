@@ -452,16 +452,47 @@ for row in "${MODE_ROWS[@]}"; do
   assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
 done
 # A resolution that cannot be read is no verdict: the check exits 2 on its
-# own first line rather than accepting the mode it could not judge.
+# own first line, naming the resolver's refusal as its cause, rather than
+# accepting the mode it could not judge.
 mode_row "tools/guard --range x" ".validate_mode=\"full\""
 MODE_SCRIPTS="$(copy_scripts mode-unresolved)"
-printf '#!/usr/bin/env bash\nexit 2\n' > "$MODE_SCRIPTS/dev-validate-run"
+printf '#!/usr/bin/env bash\nprintf "dev-validate-run: unreadable-setting setting=DEV_VALIDATE_RANGE_CMD\\n" >&2\nexit 2\n' > "$MODE_SCRIPTS/dev-validate-run"
 set +e
 OUT="$("$MODE_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/mode-unresolved.err")"; RC=$?
 set -e
 ERR="$TMP_ROOT/mode-unresolved.err"
-assert_eq "$(observe "rc=2 stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW=true")" "rc=2 stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW=true" \
+UNRESOLVED_EXPECT="rc=2 stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW+cause=dev-validate-run:+unreadable-setting+setting=DEV_VALIDATE_RANGE_CMD=true"
+assert_eq "$(observe "$UNRESOLVED_EXPECT")" "$UNRESOLVED_EXPECT" \
   "a mode dev-validate-run cannot resolve exits 2 on its own key" "$ERR"
+# Control: a check that drops the resolver's stderr names no cause.
+CAUSE_MUTANT_SCRIPTS="$(copy_scripts cause-mutant)"
+mutate_file "$CAUSE_MUTANT_SCRIPTS/dev-artifact-check" 'resolve-mode --worktree "$repo" 2>&1)" \' 'resolve-mode --worktree "$repo" 2>/dev/null)" \'
+cp "$MODE_SCRIPTS/dev-validate-run" "$CAUSE_MUTANT_SCRIPTS/dev-validate-run"
+set +e
+OUT="$("$CAUSE_MUTANT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/cause-mutant.err")"; RC=$?
+set -e
+ERR="$TMP_ROOT/cause-mutant.err"
+assert_eq "$(observe "stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW+cause==true")" "stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW+cause==true" \
+  "control: with the resolver's stderr dropped the refusal names no cause" "$ERR"
+# A resolver that exits non-zero is unresolved even when what it printed reads
+# as a mode.
+EXIT_SCRIPTS="$(copy_scripts mode-exit)"
+printf '#!/usr/bin/env bash\nprintf "validate-mode=full\\n"\nexit 2\n' > "$EXIT_SCRIPTS/dev-validate-run"
+set +e
+OUT="$("$EXIT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/mode-exit.err")"; RC=$?
+set -e
+ERR="$TMP_ROOT/mode-exit.err"
+EXIT_EXPECT="rc=2 stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW+cause=validate-mode=full=true"
+assert_eq "$(observe "$EXIT_EXPECT")" "$EXIT_EXPECT" \
+  "a resolver that exits non-zero is unresolved whatever mode it printed" "$ERR"
+# Control: a check that ignores the resolver's exit takes the printed mode.
+EXIT_MUTANT_SCRIPTS="$(copy_scripts mode-exit-mutant)"
+mutate_file "$EXIT_MUTANT_SCRIPTS/dev-artifact-check" 'resolve-mode --worktree "$repo" 2>&1)" \' 'resolve-mode --worktree "$repo" 2>&1 || true)" \'
+cp "$EXIT_SCRIPTS/dev-validate-run" "$EXIT_MUTANT_SCRIPTS/dev-validate-run"
+set +e
+OUT="$("$EXIT_MUTANT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>/dev/null)"; RC=$?
+set -e
+assert_eq "$(observe "rc=0 reason=valid")" "rc=0 reason=valid" "control: with the exit ignored the printed mode is accepted"
 # Control: without the mode gate the full run is accepted for the range round.
 MODE_MUTANT_SCRIPTS="$(copy_scripts mode-mutant)"
 mutate_file "$MODE_MUTANT_SCRIPTS/dev-artifact-check" "if [[ -n \"\$round_record\" ]] && jq -e '.kind == \"fix\" and .validate_mode != null'" "if false && jq -e '.'"
@@ -472,7 +503,7 @@ assert_eq "$(observe "reason=valid")" "reason=valid" "control: without the mode 
 # Control: a gate that files an unresolved mode as a mismatch answers for a
 # mode it never read.
 UNRESOLVED_MUTANT_SCRIPTS="$(copy_scripts unresolved-mutant)"
-mutate_file "$UNRESOLVED_MUTANT_SCRIPTS/dev-artifact-check" '*) message mode-unresolved >&2; return 2 ;;' '*) ;;'
+mutate_file "$UNRESOLVED_MUTANT_SCRIPTS/dev-artifact-check" 'message mode-unresolved >&2; return 2' ':'
 printf '#!/usr/bin/env bash\nexit 2\n' > "$UNRESOLVED_MUTANT_SCRIPTS/dev-validate-run"
 set +e
 OUT="$("$UNRESOLVED_MUTANT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>/dev/null)"; RC=$?
