@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::error::Result;
-use crate::hash::{hash_files, installation_hash};
+use crate::hash::{hash_files, in_place_installation_hash, installation_hash};
 use crate::lock::{EmittedArtifact, entry_key};
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
@@ -246,6 +246,26 @@ fn push_installs(
     });
     let source = Some(ctx.source(&artifact)?);
     for harness in &group.members {
+        // An in-place tree is the person's source: kendex writes no render
+        // of it, so no rendered hash anchors an edit, and the inputs it
+        // records are the sections that shape the block it does write.
+        let (hash, rendered_hash) = match in_place {
+            Some(_) => (
+                in_place_installation_hash(ctx.manifest, ItemKind::Skill, ctx.name, *harness),
+                None,
+            ),
+            None => (
+                installation_hash(
+                    ctx.sealed,
+                    ctx.item_path,
+                    ctx.manifest,
+                    ItemKind::Skill,
+                    ctx.name,
+                    *harness,
+                )?,
+                artifact.rendered_hash(),
+            ),
+        };
         state.items.push(Desired {
             key: entry_key(ItemKind::Skill, ctx.name, *harness),
             kind: ItemKind::Skill,
@@ -257,15 +277,8 @@ fn push_installs(
             provenance: ctx.provenance.to_owned(),
             source_commit: ctx.source_commit.map(str::to_owned),
             recorded_fork: ctx.manifest.recorded_fork(ItemKind::Skill, ctx.name),
-            hash: installation_hash(
-                ctx.sealed,
-                ctx.item_path,
-                ctx.manifest,
-                ItemKind::Skill,
-                ctx.name,
-                *harness,
-            )?,
-            rendered_hash: artifact.rendered_hash(),
+            hash,
+            rendered_hash,
             source: source.clone(),
             upstream_skills: None,
             emitted: emitted.clone(),

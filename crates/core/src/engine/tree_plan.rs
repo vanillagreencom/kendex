@@ -144,8 +144,10 @@ pub(super) fn plan_tree(
     })
 }
 
-/// An in-place skill tree is the user's source. The engine maintains its
-/// harness links without comparing, rewriting or trashing the content.
+/// An in-place skill tree is the user's source. The engine writes one
+/// thing into it, the project-instructions block in `SKILL.md`, and
+/// maintains its harness links; it compares, rewrites and trashes nothing
+/// else of the content.
 fn plan_in_place_tree(
     scope: &Scope,
     item: &Desired,
@@ -157,10 +159,14 @@ fn plan_in_place_tree(
     let Artifact::Tree {
         canonical,
         files,
-        link: Some(link),
+        link,
     } = &item.artifact
     else {
         return Ok(Planned::Clean);
+    };
+    let block = plan_instructions_block(item, canonical, files, written, ops)?;
+    let Some(link) = link else {
+        return Ok(block);
     };
     link::plan_link(
         scope,
@@ -172,8 +178,67 @@ fn plan_in_place_tree(
         owned,
         written,
         ops,
-        &Planned::Clean,
+        &block,
     )
+}
+
+/// The project-instructions block of an in-place skill, brought up to
+/// date in its own `SKILL.md`. The rendering of an in-place tree is the
+/// tree itself with that block injected, so the rendered `SKILL.md` is the
+/// one file that can differ from disk, and the write is that file whole
+/// under the hash of what is there: every other byte of it is the render's
+/// own copy of the person's text, and strip and inject are exact inverses.
+/// Planned once per tree however many tools read it.
+fn plan_instructions_block(
+    item: &Desired,
+    canonical: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    written: &mut Written,
+    ops: &mut Vec<PlannedOp>,
+) -> Result<Planned> {
+    let skill_file = Path::new(crate::render::skill::SKILL_FILE);
+    let Some((_, wanted)) = files.iter().find(|(rel, _)| rel == skill_file) else {
+        return Ok(Planned::Conflict(format!(
+            "internal: the rendering of in-place {} {} carries no {}",
+            item.kind.name(),
+            item.name,
+            skill_file.display()
+        )));
+    };
+    let path = canonical.join(skill_file);
+    let observed = match crate::hash::RenderedIdentity::from_path(&path, false) {
+        Ok(observed) => observed,
+        Err(error) => return Ok(uncomparable(&path, &error)),
+    };
+    let rendered =
+        crate::hash::RenderedIdentity::rendered(&path, &[(PathBuf::new(), wanted.clone())]);
+    if observed.matches(rendered.persisted()) {
+        return Ok(Planned::Clean);
+    }
+    if written.claim_canonical(canonical) {
+        let hash = match hash_tree(&path) {
+            Ok(hash) => hash,
+            Err(error) => return Ok(uncomparable(&path, &error)),
+        };
+        ops.push(PlannedOp {
+            description: format!(
+                "Bring the project-instructions block in {} {}'s {} up to date",
+                item.kind.name(),
+                item.name,
+                skill_file.display()
+            )
+            .into(),
+            op: Op::WriteFile {
+                path,
+                bytes: wanted.clone(),
+                pre: Pre::HashIs { hash },
+            },
+        });
+    }
+    Ok(Planned::Drift(
+        DriftState::Stale,
+        "its project-instructions block is not current".into(),
+    ))
 }
 
 /// The harness-native position when it holds the person's own files too.

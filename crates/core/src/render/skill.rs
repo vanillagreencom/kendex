@@ -9,7 +9,7 @@ mod rendered;
 pub(crate) use rendered::with_name;
 pub use rendered::{Files, Rendered};
 
-const SKILL_FILE: &str = "SKILL.md";
+pub(crate) const SKILL_FILE: &str = "SKILL.md";
 
 /// The files of a skill's tree that carry the name the item answers to:
 /// SKILL.md under either spelling, because a switched-off installation

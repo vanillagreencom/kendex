@@ -30,6 +30,7 @@ mod deps_cli;
 mod dev_sandbox;
 mod fixture_global_root;
 mod guard_hooks;
+mod in_place_verbs;
 mod index_cli;
 mod install_registers_project;
 mod install_script;

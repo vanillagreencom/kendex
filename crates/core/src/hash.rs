@@ -552,6 +552,24 @@ fn portable_source_hash(source_tree: &Path, files: &[(PathBuf, Vec<u8>)]) -> Str
     }
 }
 
+/// The installation hash of an in-place skill: the manifest sections that
+/// shape its rendering and nothing of the tree's bytes. The tree is the
+/// person's source and its working copy at once, so its bytes are never
+/// inputs that "moved since install"; what kendex renders into it is the
+/// project-instructions block, and these sections are all that block is
+/// made of. An edit to the tree therefore leaves the record as it stands,
+/// and a changed instruction moves it.
+pub fn in_place_installation_hash(
+    manifest: &Manifest,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(relevant_sections(manifest, kind, name, harness).as_bytes());
+    hex(&hasher.finalize())
+}
+
 /// Deterministic serialization of every manifest value that shapes the
 /// rendered artifact, shared `all`/`*` keys included.
 pub fn relevant_sections(
