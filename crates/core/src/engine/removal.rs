@@ -204,6 +204,25 @@ enum Verdict {
 /// The row a withheld hook's installed copy leaves as it goes.
 const WITHHELD: &str = "withheld: a hook it requires will not run here — will be removed";
 
+/// The conflict a held orphan leaves, naming the remedy that takes it.
+const EDITED: &str =
+    "no longer wanted, but its files were edited on disk — remove it by name to confirm";
+
+/// [`EDITED`] for an orphan something that stays derives: removing it by
+/// name would keep it removed on every tool, from what still requires it
+/// too, so the remedy is applying with edits discarded, which takes the
+/// held copy and writes nothing down.
+const EDITED_DERIVED: &str = "no longer wanted, but its files were edited on disk — apply with edits discarded to confirm; removing it by name would also keep it from every tool where something still requires or bundles it";
+
+/// The conflict a held orphan named `name` leaves: [`EDITED_DERIVED`]
+/// where removing it by name would keep it removed, [`EDITED`] otherwise.
+fn edited(manifest: &Manifest, lock: &Lock, name: &str) -> &'static str {
+    match super::ops::removal_by_name_keeps_removed(manifest, lock, name) {
+        true => EDITED_DERIVED,
+        false => EDITED,
+    }
+}
+
 /// `decided_keys` are the records the refusal and withheld passes already
 /// planned for; nothing here asks about them again. `kept`
 /// is every record an earlier pass kept as it was in place of writing it,
@@ -278,7 +297,7 @@ pub(super) fn orphans(
                 drift.push(row(
                     entry,
                     DriftState::Conflict,
-                    "no longer wanted, but its files were edited on disk — remove it by name to confirm".into(),
+                    edited(manifest, lock, &entry.name).into(),
                     Some(super::DriftCause::LocalEdit),
                 ));
                 new_lock.entries.insert(key.clone(), entry.clone());

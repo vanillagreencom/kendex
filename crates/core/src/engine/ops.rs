@@ -141,13 +141,7 @@ fn removal(
 ) -> Result<EngineReport> {
     let mut manifest = manifest_for_mutation(env, scope)?;
     let lock = crate::lock::load(&lock_path(env, scope))?;
-    let bundles: Vec<String> = names
-        .iter()
-        .filter(|name| kind.is_none() && manifest.bundles.contains_key(*name))
-        .cloned()
-        .collect();
-    let mut removing = names.to_vec();
-    removing.extend(super::bundles::recorded_members(&lock, &bundles));
+    let (bundles, removing) = going(&manifest, &lock, names, kind);
     for name in names {
         // Plugin has no declared-items table — it lives in `plugins` and
         // is removed there, never through `declared_mut` (which panics on
@@ -216,6 +210,37 @@ fn removal(
         ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
     }
     Ok(report)
+}
+
+/// What a removal of these names takes: the names that are installed
+/// bundles, and every name going, those bundles' recorded members included.
+fn going(
+    manifest: &Manifest,
+    lock: &Lock,
+    names: &[String],
+    kind: Option<ItemKind>,
+) -> (Vec<String>, Vec<String>) {
+    let bundles: Vec<String> = names
+        .iter()
+        .filter(|name| kind.is_none() && manifest.bundles.contains_key(*name))
+        .cloned()
+        .collect();
+    let mut removing = names.to_vec();
+    removing.extend(super::bundles::recorded_members(lock, &bundles));
+    (bundles, removing)
+}
+
+/// Whether `kendex remove <name>` would write the name down as kept
+/// removed on the record's word ([`recorded_edges`]): a record of it, on
+/// any tool, is derived from something that is not going with it. Kept
+/// removed, it is refused on every tool, so whatever requires it goes
+/// without it even where the two ran together. The catalog's reading
+/// ([`still_derived`]) is not asked: an edge the record lacks is recorded
+/// by the apply of the plan that found it, and the next plan reads it here.
+pub(super) fn removal_by_name_keeps_removed(manifest: &Manifest, lock: &Lock, name: &str) -> bool {
+    let names = [name.to_owned()];
+    let (bundles, removing) = going(manifest, lock, &names, None);
+    !recorded_edges(lock, &names, &removing, &bundles).is_empty()
 }
 
 /// Which of these names something that stays would pull straight back in,
