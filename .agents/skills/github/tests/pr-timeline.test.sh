@@ -49,19 +49,20 @@ GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT/bin"
 response() {
   jq -cn '
     def t($hm): "2026-09-20T\($hm):00Z";
-    def run($s; $e): {status: "COMPLETED", conclusion: "SUCCESS", startedAt: t($s), completedAt: t($e)};
-    def suite($event; $runs): {workflowRun: (if $event == null then null else {event: $event} end),
+    def run($name; $s; $e): {name: $name, databaseId: 1, status: "COMPLETED", conclusion: "SUCCESS", startedAt: t($s), completedAt: t($e)};
+    def suite($event; $runs): {app: {slug: (if $event == null then "other-app" else "github-actions" end)},
+                               workflowRun: (if $event == null then null else {event: $event, workflow: {name: "ci-\($event)"}} end),
                                checkRuns: {pageInfo: {hasNextPage: false}, nodes: $runs}};
     def gate($state; $hm): {status: {context: {state: $state, createdAt: t($hm)}}};
     {data: {repository: {pullRequest: {
       number: 42, state: "MERGED", createdAt: t("09:10"), mergedAt: t("11:20"),
       mergeCommit: {oid: "m1", checkSuites: {pageInfo: {hasNextPage: false}, nodes: [
-        suite("merge_group"; [run("11:00"; "11:15")]), suite("push"; [run("11:21"; "11:40")])]}},
+        suite("merge_group"; [run("test"; "11:00"; "11:15")]), suite("push"; [run("test"; "11:21"; "11:40")])]}},
       firstCommit: {nodes: [{commit: {authoredDate: t("09:00")}}]},
       headCommit: {nodes: [{commit: ({oid: "h2", committedDate: t("10:10")} + gate("SUCCESS"; "10:25")
         + {checkSuites: {pageInfo: {hasNextPage: false}, nodes: [
-            suite("pull_request"; [run("10:20"; "10:30"), run("10:21"; "10:40")]),
-            suite(null; [run("10:22"; "10:45")])]}})}]},
+            suite("pull_request"; [run("lint"; "10:20"; "10:30"), run("test"; "10:21"; "10:40")]),
+            suite(null; [run("scan"; "10:22"; "10:45")])]}})}]},
       commits: {totalCount: 1, nodes: [{commit: {oid: "h2"}}]},
       reviews: {totalCount: 3, nodes: [
         {submittedAt: t("09:30"), author: {__typename: "User"}},
@@ -141,6 +142,21 @@ rc=0
   bash "$BIN" 42 >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
 assert_eq "rc=$rc out=$(cat "$TMP_ROOT/stdout")" "rc=1 out=" "a status history that does not read prints nothing"
 
+echo "=== a rerun supersedes the attempt it replaced ==="
+# A failed attempt of a check, then its rerun under the same name, on the
+# final head and in the merge group.
+STALE_HEAD='.data.repository.pullRequest.headCommit.nodes[0].commit.checkSuites.nodes[0].checkRuns.nodes += [{name: "test", databaseId: 0, status: "COMPLETED", conclusion: "FAILURE", startedAt: "2026-09-20T10:18:00Z", completedAt: "2026-09-20T10:19:00Z"}]'
+STALE_GROUP='.data.repository.pullRequest.mergeCommit.checkSuites.nodes[0].checkRuns.nodes += [{name: "test", databaseId: 0, status: "COMPLETED", conclusion: "FAILURE", startedAt: "2026-09-20T10:57:00Z", completedAt: "2026-09-20T10:58:00Z"}]'
+while IFS='@' read -r label edit want; do
+  [[ -n "$label" ]] || continue
+  run "$edit" >/dev/null
+  assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_merge_group_secs]' "$TMP_ROOT/stdout")" "$want" "$label"
+done <<ROWS
+a failed attempt on the head, then its successful rerun: CI green, the rerun alone timed@$STALE_HEAD@["2026-09-20T10:45:00Z",1500,900]
+a failed attempt in the merge group, then its rerun: the rerun alone timed@$STALE_GROUP@["2026-09-20T10:45:00Z",1500,900]
+a success, then a rerun that failed: CI never green@$STALE_HEAD | .data.repository.pullRequest.headCommit.nodes[0].commit.checkSuites.nodes[0].checkRuns.nodes[2] |= (.startedAt = "2026-09-20T10:22:00Z" | .completedAt = "2026-09-20T10:41:00Z")@[null,1500,900]
+ROWS
+
 echo "=== a connection longer than its page refuses ==="
 while IFS='|' read -r connection edit; do
   [[ -n "$connection" ]] || continue
@@ -182,6 +198,10 @@ mutant group-suites 'select(.workflowRun.event == "merge_group") end]' 'select(t
 run . >/dev/null
 assert_eq "$(jq -c '.ci_merge_group_secs' "$TMP_ROOT/stdout")" "2400" \
   "control: without the merge_group filter the merge commit's push suite joins the merge-group figure"
+mutant every-attempt '| group_by(.key) | map(max_by([(.startedAt // ""), (.databaseId // 0)]));' ';'
+run "$STALE_HEAD" >/dev/null
+assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs]' "$TMP_ROOT/stdout")" '[null,1620]' \
+  "control: reading every attempt keeps the superseded failure and times across it"
 mutant latest-pass '| .created_at] | min // empty' '| .created_at] | max // empty'
 HISTORY_B1="10:30:pending" HISTORY_H2="10:25:success 10:24:failure 10:02:success"
 run . >/dev/null

@@ -52,7 +52,9 @@ Output, one JSON object on stdout:
 
 Every stamp is ISO 8601 UTC, and every stamp and duration is null where the
 PR never reached it. The gate is a commit status, not a check run, so no CI
-figure counts it.
+figure counts it. Every CI figure reads the current attempt of each check
+alone: per workflow (or app) and check name, the attempt that started last,
+its id breaking a tie, so a rerun supersedes the attempt it replaced.
 
 Errors: {"error": "..."} on stderr and exit 1. A connection longer than one
 page (more than 100 commits, reviews, marked timeline events or check runs, or
@@ -92,8 +94,9 @@ fragment suites on Commit {
   checkSuites(first: 50) {
     pageInfo { hasNextPage }
     nodes {
-      workflowRun { event }
-      checkRuns(first: 100) { pageInfo { hasNextPage } nodes { status conclusion startedAt completedAt } }
+      app { slug }
+      workflowRun { event workflow { name } }
+      checkRuns(first: 100) { pageInfo { hasNextPage } nodes { name databaseId status conclusion startedAt completedAt } }
     }
   }
 }'
@@ -104,7 +107,13 @@ fragment suites on Commit {
 # the strings order them.
 FILTER='
 def suites($c): [$c.checkSuites.nodes[]?];
-def runs($s): [$s[] | .checkRuns.nodes[]];
+# A rerun adds an attempt beside the one it replaces: the current attempt of
+# each check is the one that started last, as lib/ci-run-correlation.sh
+# orders the settled runs of a workflow group, with the check id breaking
+# a tie.
+def runs($s): [$s[] | . as $suite | .checkRuns.nodes[]
+  | . + {key: [($suite.workflowRun.workflow.name // $suite.app.slug // ""), .name]}]
+  | group_by(.key) | map(max_by([(.startedAt // ""), (.databaseId // 0)]));
 def span($r): [$r[] | select(.startedAt != null and .completedAt != null)]
   | if length == 0 then null
     else (map(.completedAt | fromdate) | max) - (map(.startedAt | fromdate) | min) end;
