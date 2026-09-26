@@ -23,7 +23,7 @@ A `SESSION` is the runtime's own identifier of one session: on tmux a pane id, `
 
 | Verb | tmux calls |
 |---|---|
-| `create` | `new-window -d -a` after the predecessor's window, or after the last window of the named session, `-n NAME -c DIR`; then `send-keys -l COMMAND` and `Enter`. `server=` is the tmux server pid, the first half of the `<server pid> <pane id>` key every reader of the session record compares. |
+| `create` | `new-window -d -a` after the predecessor's window, or after the last window of the named session, `-n NAME -c DIR`; then `COMMAND` and `Enter` through `lib/pane-write.sh`'s `pane_write`, which types only into a pane at its shell. `server=` is the tmux server pid, the first half of the `<server pid> <pane id>` key every reader of the session record compares. |
 | `inspect` | `capture-pane -pJ` is the snapshot. The settled reading feeds it, the pane's pid and its foreground command to `lane_state`; `--launch` reads it whole through `pane_working` and `pane_trust_dialog`. |
 | `deliver` | Nothing forwards the block: the harness in the pane reads the watch log inside its own turn. The verb proves the pane is live. `ROUTE` is `watch-log`. |
 | `stop` | `kill-window`; with a successor, `swap-window -d`, `kill-window` and `select-window` in one client call, so the successor holds the predecessor's index and no other window moves. |

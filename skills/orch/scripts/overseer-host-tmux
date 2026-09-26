@@ -19,7 +19,9 @@
 #   create   opens a window named NAME (default overseer) with its shell in
 #            DIR, right after the window SESSION sits in, or at the end of the
 #            tmux session NAME when no predecessor is named, and types COMMAND
-#            into it followed by Enter. Prints one line, `session=%N
+#            into it followed by Enter through lib/pane-write.sh, the one
+#            writer into a pane, which refuses a pane no longer at its
+#            shell. Prints one line, `session=%N
 #            window=@N server=PID`, before the harness has drawn anything:
 #            the record a caller writes before the first turn. A window that
 #            opened and could not be typed into is closed again, so a failed
@@ -58,6 +60,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=lib/tmux-server.sh
 source "$SCRIPT_DIR/lib/tmux-server.sh"
+# shellcheck source=lib/lane-state.sh
+source "$SCRIPT_DIR/lib/lane-state.sh"
+# shellcheck source=lib/pane-write.sh
+source "$SCRIPT_DIR/lib/pane-write.sh"
 
 usage() { sed -n '/^# Usage:/,/^# Output:/p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -177,28 +183,23 @@ case "$VERB" in
       target="=$TMUX_SESSION_NAME:$last_idx"
     fi
     # From the window opening to the answer, a group signal would leave a window
-    # no caller can name: create runs to its answer through these signals so the
-    # caller's close-out reads the session off it. A tmux client sets its own HUP
-    # and TERM handlers once running, so only its own brief run stays exposed.
+    # no caller can name: create runs to its answer through these signals, the
+    # pane write included, so the caller's close-out reads the session off it. A
+    # tmux client sets its own HUP and TERM handlers once running, so only its
+    # own brief run stays exposed.
     trap '' HUP INT TERM
     spec="$(tmux new-window -d -a -t "$target" -n "$NAME" -c "$CWD" \
       -P -F '#{pane_id} #{window_id} #{pid}' 2>"$DEP_ERR")" || die create-failed step=new-window
     read -r pane window server <<<"$spec"
     [[ -n "$window" && -n "$server" ]] || die create-failed step=new-window
-    if ! tmux send-keys -t "$pane" -l -- "$LINE" 2>"$DEP_ERR"; then
+    if ! pane_write pane "$pane" shell text "$LINE" 2>"$DEP_ERR"; then
       tmux kill-window -t "$window" 2>/dev/null || true
-      die create-failed step=send-keys "window=$window"
-    fi
-    if ! tmux send-keys -t "$pane" Enter 2>"$DEP_ERR"; then
-      tmux kill-window -t "$window" 2>/dev/null || true
-      die create-failed step=enter "window=$window"
+      die create-failed step=pane-write "window=$window"
     fi
     printf 'session=%s window=%s server=%s\n' "$pane" "$window" "$server"
     ;;
   inspect)
     require_session "$SESSION"
-    # shellcheck source=lib/lane-state.sh
-    source "$SCRIPT_DIR/lib/lane-state.sh"
     if ! pane_listed "$SESSION"; then
       printf 'session=%s window=none server=none state=gone\n' "$SESSION"
       exit 0
