@@ -6,7 +6,7 @@ The tier for a change inside one subsystem and within the `small` ceiling in [re
 |---------|------|
 | `small [ISSUE_ID]` (from a worktree) | § 1 → § 5 |
 | `small github OWNER/REPO#N` (from a worktree) | normalize to `ISSUE_ID=issue-N`, then § 1 → § 5 |
-| `small [ISSUE_ID]` (from the main checkout) | [start.md](start.md) § 1 Route through § 4 Prepare Worktree, then § 1 → § 5 here in `[WT_PATH]`, in place of start.md § 5 |
+| `small [ISSUE_ID]` (from the main checkout) | [start.md](start.md) from its opening main-checkout lane-host read through § 4 Prepare Worktree, then § 1 → § 5 here in `[WT_PATH]`, in place of start.md § 5 |
 
 The runner is a lane in the item's worktree, or a session that prepared one from the main checkout by the route above.
 
