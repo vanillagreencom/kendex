@@ -134,9 +134,13 @@
 #        own fields say which account ran out and when its binding bucket
 #        frees up.
 #     4. Open the successor's session through the overseer-host adapter
-#        (`overseer-host`, schemas/overseer-host.md): on tmux a window named
-#        `overseer` right after the caller's, the harness launched there with
-#        a brief naming the handoff file. The steps from here to the close are
+#        (`overseer-host`, schemas/overseer-host.md). The runtime is held to
+#        tmux, because this script reads the successor's account off its
+#        pane: ORCH_OVERSEER_HOST naming another refuses `runtime-unsupported`
+#        before anything is printed, recorded or opened. On tmux the session
+#        is a window named `overseer` right after the caller's, the harness
+#        launched there with a brief naming the handoff file. The steps from
+#        here to the close are
 #        lib/overseer-launch.sh's, the one launcher `oversee launch` runs a
 #        first launch through. The command is built by lib/lane-launch.sh,
 #        the builder open-terminal uses, so a machine whose harness command is

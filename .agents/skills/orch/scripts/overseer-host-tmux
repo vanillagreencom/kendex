@@ -55,6 +55,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=lib/tmux-server.sh
+source "$SCRIPT_DIR/lib/tmux-server.sh"
 
 usage() { sed -n '/^# Usage:/,/^# Output:/p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -158,12 +160,13 @@ case "$VERB" in
       matches "$AFTER" '^%[0-9]+$' || die_status 2 invalid-session "value=$AFTER"
       target="$(pane_field "$AFTER" '#{window_id}')" || die session-unreadable "session=$AFTER"
     else
-      # Exact (`=`): tmux otherwise takes a prefix match for a session name.
-      # Only tmux's own "can't find session" is a missing session; any other
-      # answer is the call failing.
-      if ! err="$(tmux has-session -t "=$TMUX_SESSION_NAME" 2>&1)"; then
-        printf '%s\n' "$err" > "$DEP_ERR"
-        [[ "$err" == "can't find session"* ]] || die tmux-failed operation=has-session "session=$TMUX_SESSION_NAME"
+      # Exact, by the library's one reading of tmux's answer: absent is a
+      # missing session, anything else the call failing.
+      probe=0
+      tmux_session_present "$TMUX_SESSION_NAME" || probe=$?
+      if (( probe )); then
+        printf '%s\n' "$TMUX_SESSION_DETAIL" > "$DEP_ERR"
+        [[ "$probe" -eq 3 ]] || die tmux-failed operation=has-session "session=$TMUX_SESSION_NAME"
         die tmux-session-missing "session=$TMUX_SESSION_NAME"
       fi
       if ! last_idx="$(tmux list-windows -t "=$TMUX_SESSION_NAME" -F '#{window_index}' 2>"$DEP_ERR" | tail -1)" \

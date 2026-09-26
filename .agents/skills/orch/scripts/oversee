@@ -16,13 +16,18 @@
 #        off its tmux pane, so a runtime other than tmux refuses
 #        `runtime-unsupported` here.
 #     2. Resolve the tmux session the window opens in: --session, else
-#        ORCH_TMUX_SESSION; neither refuses `session-unresolved`, and a name
-#        tmux does not hold refuses `tmux-session-missing`. The verb needs no
+#        ORCH_TMUX_SESSION; neither refuses `session-unresolved`, a name
+#        tmux does not hold refuses `tmux-session-missing`, and a has-session
+#        call failing for any other reason, no server at the socket among
+#        them, refuses `tmux-failed` naming the socket. The verb needs no
 #        $TMUX: from outside tmux it reaches the person's own server, the
 #        socket tmux derives from their uid (lib/tmux-server.sh), which every
 #        line below names as `server=`.
 #     3. Read the fleet state's `overseer` record (schemas/workflow-state.md),
-#        creating the oversee state where a fresh fleet has none. A record
+#        creating the oversee state where a fresh fleet has none. The state,
+#        like the settings, is --cwd's repository's: the launch moves there
+#        before either is read, so the record it writes is the one the
+#        launched overseer's hooks, watch and succession read. A record
 #        naming a tmux session this server still lists is a live overseer,
 #        and a second one is never opened beside it: `overseer-live` names
 #        it and its generation. Two overseers never act at once; a live one
@@ -73,8 +78,9 @@
 # Options:
 #   --session NAME   The tmux session the window opens in (default
 #                    ORCH_TMUX_SESSION)
-#   --cwd DIR        The directory the session starts in (default the
-#                    current directory)
+#   --cwd DIR        The directory the session starts in, and the repository
+#                    whose settings and fleet state the launch uses (default
+#                    the current directory)
 #   --handoff PATH   The handoff file the brief names (default
 #                    tmp/handoffs/OVERSEER-HANDOFF.md); letters, digits and
 #                    ./_- only, so the brief survives the pane's shell
@@ -268,11 +274,13 @@ fi
 # lib/tmux-server.sh's, answered for the session just resolved.
 export ORCH_TMUX_SESSION="$SESSION_NAME"
 SERVER_SOCKET="$(tmux_server_socket)" || die tmux-missing var=TMUX
-# Only tmux's own "can't find session" is a missing session; any other answer,
-# no server at the socket among them, is the call failing.
-if ! err="$(tmux has-session -t "=$SESSION_NAME" 2>&1)"; then
-  printf '%s\n' "$err" > "$DEP_ERR"
-  [[ "$err" == "can't find session"* ]] || die tmux-failed operation=has-session "server=$SERVER_SOCKET"
+# The one reading of tmux's answer is lib/tmux-server.sh's: absent is a
+# missing session, anything else the call failing.
+probe=0
+tmux_session_present "$SESSION_NAME" || probe=$?
+if (( probe )); then
+  printf '%s\n' "$TMUX_SESSION_DETAIL" > "$DEP_ERR"
+  [[ "$probe" -eq 3 ]] || die tmux-failed operation=has-session "server=$SERVER_SOCKET"
   die tmux-session-missing "session=$SESSION_NAME" "server=$SERVER_SOCKET"
 fi
 

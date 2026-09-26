@@ -1534,7 +1534,7 @@ session_state() { # TITLE WORKFLOW_STATE_ARG...
 }
 launch_session_resolve() { # TITLE
   [[ -z "$LAUNCH_SESSION" ]] || return 0
-  local session="${ORCH_TMUX_SESSION:-}" source=ORCH_TMUX_SESSION consulted=ORCH_TMUX_SESSION recorded="" err pane_read=unset
+  local session="${ORCH_TMUX_SESSION:-}" source=ORCH_TMUX_SESSION consulted=ORCH_TMUX_SESSION recorded="" probe pane_read=unset
   if [[ "$FLEET" == true ]]; then
     consulted+=",tmux.session"
     recorded="$(session_state "$1" get oversee '.tmux.session // ""')" || return 1
@@ -1555,14 +1555,13 @@ launch_session_resolve() { # TITLE
     fi
   fi
   [[ -n "$session" ]] || { ot_message tmux-session-unresolved "item=$1" "consulted=$consulted" "pane=$pane_read" >&2; return 1; }
-  if ! err="$(tmux has-session -t "=$session" 2>&1)"; then
-    if [[ "$err" == "can't find session"* ]]; then
-      ot_message tmux-session-missing "item=$1" "session=$session" "source=$source" "server=$(tmux_server_socket)" >&2
-    else
-      ot_message tmux-failed "operation=has-session" "item=$1" "detail=$err" >&2
-    fi
-    return 1
-  fi
+  probe=0
+  tmux_session_present "$session" || probe=$?
+  case "$probe" in
+    0) ;;
+    3) ot_message tmux-session-missing "item=$1" "session=$session" "source=$source" "server=$(tmux_server_socket)" >&2; return 1 ;;
+    *) ot_message tmux-failed "operation=has-session" "item=$1" "detail=$TMUX_SESSION_DETAIL" >&2; return 1 ;;
+  esac
   if [[ "$FLEET" == true && -z "$recorded" ]]; then
     session_state "$1" update oversee --arg s "$session" '.tmux.session //= $s' >/dev/null || return 1
   fi
