@@ -18,11 +18,11 @@
 #
 # Report protocol, one record per repository on stdout:
 #   provision repo=OWNER/NAME result=RESULT
-# then one indented line per step taken (or planned, under --dry-run), or
-# the cause of a failure. RESULT is created, updated, current or failed;
-# under --dry-run, would-create, would-update, current or failed. A last
-# `provision-total repositories=N changed=N current=N failed=N` line counts
-# them. Human explanation is not parsed. Full contract: print_usage.
+# then one `  step=STEP value=VALUE` line per step taken (or planned, under
+# --dry-run), in order, and on a failure one indented line of explanation.
+# RESULT and STEP are the words print_usage lists; VALUE is %q-escaped. A
+# last `provision-total repositories=N changed=N current=N failed=N` line
+# counts the records. Human explanation is not parsed.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || {
@@ -48,13 +48,18 @@ in the skill names it and its secrets) in every repository of ORG that is
 not archived. ORG must have the standard's app installed on all of its
 repositories, the installation validate-standard.sh's standard-app row
 requires; any other installation is refused, since this command cannot
-list a selection.
+list a selection. The repository list must hold as many repositories,
+archived ones included, as the organization reports owning; a credential
+that sees fewer is refused before any write.
 
 Per repository it:
   - creates the environment where it is absent, deploying from custom
     branch policies;
   - switches an existing environment that deploys from every branch, or
-    from protected branches, to custom branch policies;
+    from protected branches, to custom branch policies, unless it carries a
+    protection rule besides its branch policy (required reviewers, a wait
+    timer): the switch could drop that rule, so the repository fails and
+    the owner switches it by hand;
   - leaves exactly one branch policy, the repository's default branch,
     deleting any other;
   - sets each standard secret the environment lacks by name. A present
@@ -73,23 +78,36 @@ empty.
            names the steps a run would take. No secret value is needed.
 
 Credential: the `gh` login of the organization owner, on the owner's own
-machine; never a lane's or CI's token. As GitHub App or fine-grained
-permissions it needs organization Administration read (the installation),
-repository Metadata read (the repositories), Administration write (the
+machine; never a lane's or CI's token. The organization's private
+repository count is returned to an owner only. As GitHub App or
+fine-grained permissions it needs organization Administration read (the
+installation), repository Metadata read (the repositories), Actions read
+(the environments and their branch policies), Administration write (the
 environment and its branch policies) and Environments write (its secrets).
 
 Output: one `provision repo=OWNER/NAME result=RESULT` record per
-repository, then indented step or cause lines. RESULT is created, updated,
-current or failed, and under --dry-run would-create, would-update, current
-or failed. The last line is
-`provision-total repositories=N changed=N current=N failed=N`.
+repository. RESULT is created, updated, current or failed, and under
+--dry-run would-create, would-update, current or failed. Under it, one
+`  step=STEP value=VALUE` line per step, in order:
+  create-environment  VALUE the environment, created on custom policies
+  switch-policy       VALUE every-branch or protected-branches, the policy
+                      switched to custom policies
+  keep-only-policy    VALUE branch:BRANCH (--dry-run after switch-policy,
+                      whose policies cannot be read before the switch)
+  delete-policy       VALUE TYPE:NAME, a branch policy deleted
+  add-policy          VALUE branch:BRANCH, the default branch added
+  set-secret          VALUE the secret name set
+A failed record ends with one indented line naming the cause. The last line
+is `provision-total repositories=N changed=N current=N failed=N`.
 
 Exit codes:
   0  every repository is provisioned (or, under --dry-run, was read)
   1  at least one repository failed; the others were still provisioned
-  2  nothing was attempted (bad arguments, a missing secret value, a
-     missing or malformed standard.json, the installation or the
-     repositories could not be read)
+  2  nothing was attempted (bad arguments, a missing secret value, jq
+     missing, a missing or malformed standard.json, the installation, the
+     organization or the repositories could not be read, the app not
+     installed on all repositories, a repository list shorter than the
+     organization's count, or no repository that is not archived)
 USAGE
 }
 
@@ -159,26 +177,50 @@ case "$GH_OUT" in
   *) die app-selection "$GH_OUT" "$WANT_APP is installed on a selection of $ORG's repositories; the standard installs it on all of them, the only installation this command can enumerate" ;;
 esac
 
-gh_run api "orgs/$ORG_URI/repos?per_page=100" --paginate --jq '.[] | select(.archived | not) | [.full_name, .default_branch] | @tsv' ||
+# The repository list shows only what the credential can see, so a
+# credential narrowed to some repositories lists a subset with no error. The
+# organization's own count, archived repositories included, is the bound it
+# must reach; GitHub returns total_private_repos to an owner only.
+gh_run api "orgs/$ORG_URI" --jq 'if (.public_repos | type) == "number" and (.total_private_repos | type) == "number" then .public_repos + .total_private_repos else "unreadable" end' ||
+  die organization-read "$ORG" "the organization $ORG could not be read: $GH_ERR"
+case "$GH_OUT" in
+  "" | *[!0-9]*) die organization-count "$ORG" "$ORG reported no repository count; GitHub returns the private count to an organization owner only, so run this under the owner's credential" ;;
+esac
+OWNED="$GH_OUT"
+
+gh_run api "orgs/$ORG_URI/repos?per_page=100" --paginate --jq '.[] | [.full_name, .default_branch, (.archived | tostring)] | @tsv' ||
   die repositories-read "$ORG" "the repositories of $ORG could not be read: $GH_ERR"
-REPOS="$GH_OUT"
+LISTED=0
+REPOS=""
+while IFS='	' read -r full branch archived; do
+  [ -n "$full" ] || continue
+  LISTED=$((LISTED + 1))
+  [ "$archived" = true ] || REPOS="${REPOS:+$REPOS
+}$full	$branch"
+done <<EOF_LISTED
+$GH_OUT
+EOF_LISTED
+[ "$LISTED" -ge "$OWNED" ] ||
+  die repositories-partial "$LISTED/$OWNED" "the credential lists $LISTED of the $OWNED repositories $ORG owns; a token limited to some repositories hides the rest, so run this under the owner's credential over all of them"
 [ -n "$REPOS" ] || die repositories-none "$ORG" "$ORG has no repository that is not archived, so there is nothing to provision"
 
 # ------------------------------------------------------------- steps ---
 
-# STEPS lists what was done (or, under --dry-run, would be) in the current
-# repository; CAUSE is set by the step or read that failed there.
+# STEPS holds the step lines of what was done (or, under --dry-run, would
+# be) in the current repository; CAUSE is set by the step or read that
+# failed there.
 STEPS=""
 CAUSE=""
-step() { # DESCRIPTION WRITER ARGS...
-  local what="$1"
-  shift
+step() { # STEP VALUE WRITER ARGS...
+  local key="$1" value="$2" line
+  shift 2
   if [ "$DRY_RUN" -eq 0 ] && ! "$@"; then
-    CAUSE="$what: $GH_ERR"
+    CAUSE="$key $value: $GH_ERR"
     return 1
   fi
+  line="$(printf '  step=%s value=%q' "$key" "$value")"
   STEPS="${STEPS:+$STEPS
-}$what"
+}$line"
 }
 
 put_environment() { # FULL
@@ -217,12 +259,12 @@ converge_branch_policies() { # FULL BRANCH
     if [ "$type" = branch ] && [ "$name" = "$2" ]; then
       have=1
     else
-      step "delete branch policy $type:$name" delete_branch_policy "$1" "$id" </dev/null || return 1
+      step delete-policy "$type:$name" delete_branch_policy "$1" "$id" </dev/null || return 1
     fi
   done <<EOF_POLICIES
 $policies
 EOF_POLICIES
-  [ "$have" -eq 1 ] || step "add branch policy branch:$2" add_branch_policy "$1" "$2"
+  [ "$have" -eq 1 ] || step add-policy "branch:$2" add_branch_policy "$1" "$2"
 }
 
 # Sets STEPS and CAUSE for one repository and prints its record.
@@ -230,34 +272,40 @@ CHANGED=0
 CURRENT=0
 FAILED=0
 provision() { # FULL BRANCH
-  local full="$1" branch="$2" policy kind created=0 listed="" name result
+  local full="$1" branch="$2" environment kind rules created=0 listed="" name result
   STEPS=""
   CAUSE=""
-  if ! gh_run api "repos/$full/environments" --paginate --jq ".environments[] | select(.name == $(jq -n --arg v "$WANT_ENV" '$v')) | .deployment_branch_policy | @json"; then
+  if ! gh_run api "repos/$full/environments" --paginate --jq ".environments[] | select(.name == $(jq -n --arg v "$WANT_ENV" '$v')) | @json"; then
     CAUSE="the environments could not be read: $GH_ERR"
   else
-    policy="$GH_OUT"
-    case "$policy" in
+    environment="$GH_OUT"
+    case "$environment" in
       "")
         created=1
-        step "create environment $WANT_ENV on custom branch policies" put_environment "$full" &&
-          step "add branch policy branch:$branch" add_branch_policy "$full" "$branch" || true
+        step create-environment "$WANT_ENV" put_environment "$full" &&
+          step add-policy "branch:$branch" add_branch_policy "$full" "$branch" || true
         ;;
       *)
-        kind="$(jq -r 'if . == null then "every-branch" elif .custom_branch_policies == true and .protected_branches == false then "custom" else "protected-branches" end' <<<"$policy" 2>/dev/null)" ||
+        kind="$(jq -r '.deployment_branch_policy | if . == null then "every-branch" elif .custom_branch_policies == true and .protected_branches == false then "custom" else "protected-branches" end' <<<"$environment" 2>/dev/null)" ||
           kind=unparsed
         case "$kind" in
           custom) converge_branch_policies "$full" "$branch" || true ;;
           every-branch | protected-branches)
-            if step "switch environment $WANT_ENV from $kind to custom branch policies" put_environment "$full"; then
+            # The switch PUTs the environment with its branch policy alone;
+            # a protection rule it does not carry could be dropped.
+            rules="$(jq -r '[.protection_rules[]? | .type | select(. != "branch_policy")] | unique | join(",")' <<<"$environment" 2>/dev/null)" ||
+              rules=unparsed
+            if [ -n "$rules" ]; then
+              CAUSE="$WANT_ENV deploys from $kind and carries protection rules ($rules) a switch to custom branch policies could drop; switch it to branch:$branch by hand"
+            elif step switch-policy "$kind" put_environment "$full"; then
               if [ "$DRY_RUN" -eq 1 ]; then
-                step "leave branch:$branch its only branch policy" true
+                step keep-only-policy "branch:$branch" true
               else
                 converge_branch_policies "$full" "$branch" || true
               fi
             fi
             ;;
-          *) CAUSE="the deployment branch policy of $WANT_ENV did not parse: $policy" ;;
+          *) CAUSE="the environment $WANT_ENV did not parse: $environment" ;;
         esac
         if [ -z "$CAUSE" ]; then
           if gh_run api "repos/$full/environments/$ENV_URI/secrets" --paginate --jq '.secrets[].name'; then
@@ -271,7 +319,7 @@ provision() { # FULL BRANCH
     if [ -z "$CAUSE" ]; then
       while IFS= read -r name; do
         [ -n "$name" ] || continue
-        step "set secret $name" set_secret "$full" "$name" || break
+        step set-secret "$name" set_secret "$full" "$name" || break
       done <<EOF_MISSING
 $(rg_standard_missing "$listed")
 EOF_MISSING
@@ -294,7 +342,7 @@ EOF_MISSING
   fi
   printf 'provision repo=%q result=%s\n' "$full" "$result"
   if [ -n "$STEPS" ]; then
-    printf '%s\n' "$STEPS" | sed 's/^/  /'
+    printf '%s\n' "$STEPS"
   fi
   if [ -n "$CAUSE" ]; then
     printf '  %s\n' "$CAUSE"

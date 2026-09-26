@@ -12,7 +12,7 @@
 # repos/OWNER/NAME/... read is served from the directory
 # repos/OWNER/NAME/ under the fixtures when that directory exists, so one
 # world can hold several repositories.
-# Every request URL is appended to .urls.log so a case can pin read shapes.
+# Every read's URL is appended to .urls.log so a case can pin read shapes.
 # A write (`gh api -X METHOD` other than GET, or `gh secret set`) reads no
 # fixture: it appends one line to .writes.log, `METHOD URL BODY` or
 # `secret-set repo=R env=E name=N value=V` with BODY and V %q-escaped, and
@@ -110,6 +110,12 @@ case "$url" in
   "orgs/"*"/actions/secrets") name=organization-actions-secrets ;;
   *"/actions/secrets") name=repository-secrets ;;
   "repos/{owner}/{repo}") name=repository ;;
+  "orgs/"*)
+    case "${url#orgs/}" in
+      */*) printf 'gh-shim-error=request value=%q\n' "$url" >&2; exit 90 ;;
+    esac
+    name=organization
+    ;;
   *) printf 'gh-shim-error=request value=%q\n' "$url" >&2; exit 90 ;;
 esac
 if [ -n "$method" ] && [ "$method" != GET ]; then

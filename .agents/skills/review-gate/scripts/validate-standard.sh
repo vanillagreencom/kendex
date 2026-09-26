@@ -106,8 +106,8 @@ scopes of secrets-outside as unreadable.
 Exit codes:
   0  every row matched
   1  at least one FAIL line
-  2  the check could not run at all (bad arguments, a missing or malformed
-     standard.json, the repository itself could not be read)
+  2  the check could not run at all (bad arguments, jq missing, a missing
+     or malformed standard.json, the repository itself could not be read)
 USAGE
 }
 

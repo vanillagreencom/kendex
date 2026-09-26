@@ -53,7 +53,7 @@ Value rules come from the engine, not from a copy of it: the settings half calls
 - **No standing bypass actor**: the queue ruleset carries none, so every merge goes through the merge queue. A gate-repair PR takes the break-glass procedure in [../SKILL.md](../SKILL.md#4-operations); a settings-change PR takes normal review.
 - **Merge queue**: the writer's `merge_group` leg posts the gate context on queue shas unconditionally. Verify the queue's required checks include both the gate context and the test aggregate.
 - **Required checks must NOT include the writer's own job names.** Require the commit STATUS context only.
-- **App-secret environment**: the organization owner runs `.agents/skills/review-gate/scripts/provision-environment.sh --org ORG` from their own machine. It creates the environment `standard.json` names, with a default-branch-only deployment policy and the secrets it names, in every repository of the organization; run it again for a new repository. An adoption never creates the environment.
+- **App-secret environment**: the organization owner runs `.agents/skills/review-gate/scripts/provision-environment.sh --org ORG` from their own machine. It creates the environment `standard.json` names, with a default-branch-only deployment policy and the secrets it names, in every repository of the organization that is not archived; run it again for a new repository. An adoption never creates the environment.
 
 ## Updating an already-adopted copy
 

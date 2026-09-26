@@ -6,10 +6,14 @@
 
 # Sets WANT_CONTEXTS (the required contexts, sorted, `;`-joined), WANT_APP,
 # WANT_ENV and WANT_SECRETS (the environment's secret names, sorted, one per
-# line). On a missing, unreadable or malformed manifest it prints the
-# refusal to stderr and returns 1; the caller exits with its could-not-run
-# status.
+# line). With no jq on PATH, or a missing, unreadable or malformed
+# manifest, it prints the refusal to stderr and returns 1; the caller exits
+# with its could-not-run status.
 rg_standard_load() { # MANIFEST
+  if ! command -v jq >/dev/null 2>&1; then
+    rg_message error jq-missing jq "jq is not on PATH; the standard manifest is read with it, so install jq" >&2
+    return 1
+  fi
   if [ ! -r "$1" ]; then
     rg_message error standard-missing "$1" "the standard manifest is missing or unreadable — re-run \`kendex refresh\`" >&2
     return 1
