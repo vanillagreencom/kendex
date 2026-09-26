@@ -52,7 +52,7 @@ Then re-adopt the review-gate writer template from the same checkout. Run it wha
 [PACKAGE_ROOT]/.agents/skills/orch/scripts/adopt-writer
 ```
 
-It runs the consumer's `validate-workflow.sh --adopt`, which re-installs the new template over a writer workflow that equals an earlier shipped version, so the render pull request carries both and the consumer's review-gate validate check stays green. Its write is part of the refresh diff and commits with it. Exit 0 continues; `adopt-writer --help` says what each exit covers. Exit 1 fails this consumer as a refresh failure does; an `adopt=edited` line names a copy a person edited, which a person in the consumer re-copies by hand.
+It runs the consumer's `validate-workflow.sh --adopt`, which re-installs the new template over a writer workflow that equals an earlier shipped version, so the render pull request carries both and the consumer's review-gate validate check stays green. Its write is part of the refresh diff and commits with it. Exit 0 continues; `adopt-writer --help` says what each exit covers. Exit 1 or 2 fails this consumer as a refresh failure does; an `adopt=edited` line names a copy a person edited, which a person in the consumer re-copies by hand.
 
 After refresh, read the consumer project's `.kendex-lock.json`. Match refreshed shipped-package entries to their `sources` rows by source name. Normalize each source row's `repo` by the same rule as `PACKAGE_SOURCE_REPO`, then keep matching rows. Require exactly one distinct non-empty `commit`, and use it as `PACKAGE_SOURCE_SHA`. If the lock is missing, unreadable, or cannot identify exactly one such commit, record that exact refusal, restore the consumer to its pre-refresh state, and do not commit.
 
