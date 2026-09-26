@@ -34,7 +34,8 @@ lane_adapter_claude_window() { # MODEL
 # for the last assistant line carrying a usage object, `$1` where that usage
 # object carries none of Claude Code's field names, and nothing where no line
 # carries usage at all. The context is the prompt that line was billed for, its
-# input tokens plus the two cache counts. `fromjson?` skips the partial line a
+# input tokens plus the two cache counts, and the response it wrote, which the
+# next request sends back. `fromjson?` skips the partial line a
 # byte window opens on and the line the harness is still appending. The window
 # is lane_adapter_claude_window's answer for the line's model.
 #
@@ -47,9 +48,9 @@ lane_adapter_claude_reading() { # UNREAD
      | select((.usage | type) == "object" and .model != "<synthetic>")
      | .model as $model | .usage
      | if has("input_tokens") or has("cache_read_input_tokens")
-          or has("cache_creation_input_tokens")
+          or has("cache_creation_input_tokens") or has("output_tokens")
        then "\((.input_tokens // 0) + (.cache_read_input_tokens // 0)
-               + (.cache_creation_input_tokens // 0))\t\($model // "")"
+               + (.cache_creation_input_tokens // 0) + (.output_tokens // 0))\t\($model // "")"
        else $unread end]
     | last // empty') || return 1
   case "$reading" in
