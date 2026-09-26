@@ -234,6 +234,45 @@ prune 80 "$MUTANTS/raw-worktree/scripts"
   assert_eq "no-worktree" "another action" "control: taking the worktree field as it stands takes the main checkout for a lane's tree" ||
   assert_eq "taken" "taken" "control: taking the worktree field as it stands takes the main checkout for a lane's tree"
 
+# A worktree listing git cannot give: which tree the state names is unknown,
+# so the round refuses with nothing pruned or recorded. SCRIPTS' round-prune
+# under a git that fails `worktree list` and runs every other command.
+REAL_GIT="$(command -v git)"
+GIT_LIST_FAIL_BIN="$TMP_ROOT/git-list-fail-bin"
+mkdir -p "$GIT_LIST_FAIL_BIN"
+cat > "$GIT_LIST_FAIL_BIN/git" <<STUB
+#!/usr/bin/env bash
+wt="" list=""
+for a in "\$@"; do
+  [[ "\$a" != worktree ]] || wt=1
+  [[ "\$a" != list ]] || list=1
+done
+if [[ -n "\$wt" && -n "\$list" ]]; then echo "fatal: planted failure" >&2; exit 128; fi
+exec "$REAL_GIT" "\$@"
+STUB
+chmod +x "$GIT_LIST_FAIL_BIN/git"
+listing_refused() { # NAME SCRIPTS
+  build "listing-$1" KEN-1
+  "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" new-round-id "$KEY" dev_round_id >/dev/null
+  RC=0
+  OUT="$(cd "$MAIN" && env PATH="$GIT_LIST_FAIL_BIN:$TMP_ROOT/bin:$PATH" DF_TARGET_USED=80 \
+    "$2/round-prune" --state-dir "$STATE" "$KEY" 2>&1)" || RC=$?
+  LISTING="rc=$RC $(grep -m 1 '^round-prune: ' <<<"$OUT" || true) git=$(grep -c -x 'fatal: planted failure' <<<"$OUT" || true) recorded=$("$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" get "$KEY" '.round_prunes // {} | length') left=$(artifacts)"
+}
+listing_refused shipped "$ORCH_SCRIPTS"
+assert_eq "$LISTING" "rc=2 round-prune: worktree-list=ken-1 git=1 recorded=0 left=.cargo-lock,deps/unit-0.rlib" \
+  "a worktree listing git cannot give is refused as worktree-list with nothing pruned or recorded"
+# Must-fail control: a copy that drops the refusal reads the failed listing as
+# no worktree and records the round.
+mkdir -p "$MUTANTS/listing-ignored"
+cp -a "$ORCH_SCRIPTS" "$MUTANTS/listing-ignored/scripts"
+A="$LW_ANCHOR" awk 'index($0, ENVIRON["A"]) { print "worktree=\"$(\"$GIT_CONTEXT\" lane-worktree \"$worktree\" \"$branch\")\" || worktree=\"\""; next } { print }' \
+  "$ORCH_SCRIPTS/round-prune" >"$MUTANTS/listing-ignored/scripts/round-prune"
+listing_refused listing-ignored "$MUTANTS/listing-ignored/scripts"
+[[ "$LISTING" == "rc=0 "* ]] &&
+  assert_eq "recorded" "recorded" "control: without the worktree-list refusal a failed listing records the round" ||
+  assert_eq "$LISTING" "rc=0 ..." "control: without the worktree-list refusal a failed listing records the round"
+
 echo "=== target/ across two runs ==="
 # Two rounds, each starting with the round-start prune and ending with a
 # validation run that leaves a superseded unit behind. Past the mark, target/
