@@ -209,8 +209,7 @@ chmod +x "$TMP_ROOT/bin/gh"
 rc=0; out="$(call)" || rc=$?
 [[ "$rc" -ne 0 && -z "$out" ]] && pass "a failed query is refused" \
   || fail "a failed query is refused" "rc=$rc out=$out"
-grep -Fq 'Bad credentials' "$ERR" && pass "the query's own stderr reaches the error file" \
-  || fail "the query's own stderr reaches the error file" "$(cat "$ERR")"
+assert_file_contains "$ERR" 'Bad credentials' "the query's own stderr reaches the error file"
 
 echo
 echo "=== both callers read threads through this walk ==="

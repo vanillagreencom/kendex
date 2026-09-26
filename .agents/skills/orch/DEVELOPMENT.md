@@ -16,7 +16,7 @@ A bare argument selects and `!name` rejects; `=name` in either place matches one
 
 Each `tests/*.sh` is self-contained: it builds its own sandbox with parametrized CLI stubs on `PATH`, prints `pass: N fail: M`, and exits 0 only when every assertion passed. `run-all.sh` discovers them at execution time, so a new suite needs no registration. It runs them `nproc` at a time, so a suite shares its host with the others and keeps every file, socket and process it makes inside its own sandbox. A suite whose fixed wall-clock window a loaded host has made it miss goes in `run-all.sh`'s `ALONE` list, and runs by itself after the others. The `run-all.sh` header states the report it prints, and `tests/run-all-parallel.sh` holds it.
 
-Every shell suite asserts through `lib/assertions.sh`, sourced directly or through `lib/md.sh` or `lib/oversee-watch-harness.sh`, and defines none of its names; `tests/assertions.test.sh` holds the library and is the one suite that judges without it. `lane-host.sh` and `lane-host-ssh.sh` run Python suites and have no shell assertions.
+Every shell suite asserts through `lib/assertions.sh`, sourced directly or through `lib/md.sh` or `lib/oversee-watch-harness.sh`, and defines none of its names. `tests/assertions.test.sh` holds the library, judging without it, and fails on any suite or lib under `tests/` that defines one of those names. `lane-host.sh` and `lane-host-ssh.sh` run Python suites and have no shell assertions.
 
 Every `tests/*.sh` carries one line directly under its `set -...o pipefail`:
 

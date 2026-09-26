@@ -4,13 +4,14 @@
 # stderr dump a failure prints, and the comparisons the suites assert with.
 # Every suite under tests/ sources it, directly or through lib/md.sh or
 # lib/oversee-watch-harness.sh, and defines none of these names itself, so how
-# an assertion judges and reports is decided here once. assertions.test.sh is
-# its suite, and the one suite that judges without it.
+# an assertion judges and what its failure prints are decided here once.
+# assertions.test.sh is its suite, the one suite that judges without it, and
+# holds the no-redefinition rule.
 #
 # Sourced, never run: the runners glob tests/*.sh, so the `lib/` prefix keeps
 # this file out of the run. Sourcing sets PASS and FAIL to 0 and defines the
-# helpers; the suite prints its own `pass: N   fail: M` line at the end and
-# exits non-zero when FAIL is.
+# helpers. Each suite prints its own closing tally, in a shape run-all.sh's
+# counts_of parses, and exits non-zero when FAIL is.
 PASS=0
 FAIL=0
 
@@ -104,20 +105,4 @@ assert_file_not_contains() {
   else
     pass "$name"
   fi
-}
-
-# touch_epoch EPOCH PATH — set PATH's mtime to EPOCH seconds.
-#
-# `touch -d @EPOCH` is GNU; BSD touch reads -d as an ISO-8601 stamp and
-# refuses the @ form ("out of range or illegal time specification"). Both take
-# a zoned ISO stamp through -d, so the epoch is rendered to one, in UTC, and
-# the trailing Z is what keeps the mtime exact on either — `-t` would be read
-# in the machine's local zone and shift the mtime by its UTC offset. GNU date
-# prints the stamp from `-d @EPOCH`, BSD date from `-r EPOCH`; the same two-arm
-# ladder as scripts/lib/date-ladder.sh, which these suites do not source.
-touch_epoch() {
-  local epoch="$1" path="$2" stamp
-  stamp="$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-    || date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ)" || return 1
-  touch -d "$stamp" "$path"
 }

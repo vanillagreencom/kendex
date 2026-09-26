@@ -146,7 +146,7 @@ printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"c
 out="$(run_close)"
 assert_eq "$out" "deferred CHILD-2 CHILD-3" "canceled descendants defer closure and are named"
 [[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && pass "canceled descendants prevent parent mutation" || fail "canceled descendants prevent parent mutation"
-grep -Fq 'issues:validate-completion' "$FAKE_LINEAR_ROOT/linear.calls" && fail "canceled descendants stop before validation" || pass "canceled descendants stop before validation"
+assert_file_not_contains "$FAKE_LINEAR_ROOT/linear.calls" 'issues:validate-completion' "canceled descendants stop before validation"
 
 # The suite's one must-fail control: the canceled-descendant refusal removed.
 CANCELED_MUTANT="$SANDBOX/skills/orch/scripts/container-close-canceled-mutant"
@@ -210,7 +210,7 @@ for gh_mode in exit invalid; do
   assert_eq "$rc" "1" "$gh_mode PR lookup fails the close"
   [[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && pass "$gh_mode PR lookup prevents parent mutation" || fail "$gh_mode PR lookup prevents parent mutation"
   assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" "In Progress" "$gh_mode PR lookup leaves the parent open for the retry"
-  grep -Fq 'PR' "$TMP_ROOT/gh-$gh_mode.err" && pass "$gh_mode PR lookup names the failure on stderr" || fail "$gh_mode PR lookup names the failure on stderr"
+  assert_file_contains "$TMP_ROOT/gh-$gh_mode.err" 'PR' "$gh_mode PR lookup names the failure on stderr"
 done
 printf '' > "$FAKE_LINEAR_ROOT/gh.mode"
 
@@ -292,10 +292,10 @@ assert_file_contains "$TMP_ROOT/flock-error.err" "container-close: lock-failed p
 [[ ! -e "$FAKE_LINEAR_ROOT/linear.calls" ]] && pass "operational flock error stops before Linear access" || fail "operational flock error stops before Linear access"
 
 MERGE_WORKFLOW="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
-grep -Fq 'scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]' "$MERGE_WORKFLOW" && pass "merge-pr passes the shared main root" || fail "merge-pr passes the shared main root"
-grep -Fq 'with every stderr diagnostic from the helper' "$MERGE_WORKFLOW" && pass "merge-pr preserves closed diagnostics" || fail "merge-pr preserves closed diagnostics"
-grep -Fq 'A bare `deferred` means the 120-second lock wait expired' "$MERGE_WORKFLOW" && pass "merge-pr documents the lock timeout" || fail "merge-pr documents the lock timeout"
-grep -Fq 'closure for [ISSUE] has not propagated; rerun merge-pr' "$MERGE_WORKFLOW" && pass "merge-pr reruns when current issue remains pending" || fail "merge-pr reruns when current issue remains pending"
+assert_file_contains "$MERGE_WORKFLOW" 'scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]' "merge-pr passes the shared main root"
+assert_file_contains "$MERGE_WORKFLOW" 'with every stderr diagnostic from the helper' "merge-pr preserves closed diagnostics"
+assert_file_contains "$MERGE_WORKFLOW" 'A bare `deferred` means the 120-second lock wait expired' "merge-pr documents the lock timeout"
+assert_file_contains "$MERGE_WORKFLOW" 'closure for [ISSUE] has not propagated; rerun merge-pr' "merge-pr reruns when current issue remains pending"
 
 rc=0
 "$SCRIPT" >/dev/null 2>"$TMP_ROOT/arguments.err" || rc=$?

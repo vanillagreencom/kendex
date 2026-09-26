@@ -76,18 +76,18 @@ OUT=""; RC=0
 OUT="$(cd "$R" && GH_REPO=elsewhere/other GITHUB_REPOSITORY=elsewhere/other RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 
 [ "$RC" -eq 1 ] && pass "findings exit 1" || fail "exit code" "rc=$RC out=$OUT"
-case "$OUT" in *"container-parked issue=T-1"*) pass "the parked container is reported" ;; *) fail "parked container" "$OUT" ;; esac
+assert_contains "$OUT" "container-parked issue=T-1" "the parked container is reported"
 # A "(one PR)" root with Done children is the single-PR bundle contract
 # working, never a parked container.
-case "$OUT" in *"container-parked issue=T-16"*) fail "one-PR bundle flagged as parked" "$OUT" ;; *) pass "a (One PR) bundle root is not container-parked (case-insensitive marker)" ;; esac
-case "$OUT" in *"container-parked issue=T-5"*) fail "healthy container reported" "$OUT" ;; *) pass "a container with a pending child stays quiet" ;; esac
-case "$OUT" in *"T-8"*) fail "closed container reported" "$OUT" ;; *) pass "a closed container stays quiet" ;; esac
+assert_not_contains "$OUT" "container-parked issue=T-16" "a (One PR) bundle root is not container-parked (case-insensitive marker)"
+assert_not_contains "$OUT" "container-parked issue=T-5" "a container with a pending child stays quiet"
+assert_not_contains "$OUT" "T-8" "a closed container stays quiet"
 case "$OUT" in *"started-stale issue=T-10"*"pr=merged"*) pass "the stale started item with a merged PR is reported" ;; *) fail "stale merged" "$OUT" ;; esac
-case "$OUT" in *"T-11"*) fail "fresh started reported" "$OUT" ;; *) pass "a fresh started item stays quiet" ;; esac
-case "$OUT" in *"T-12"*) fail "live-PR started reported" "$OUT" ;; *) pass "a stale item with a live PR stays quiet" ;; esac
-case "$OUT" in *"done-unchecked issue=T-13"*) pass "the Done item with open boxes is reported" ;; *) fail "done unchecked" "$OUT" ;; esac
-case "$OUT" in *"T-14"*) fail "all-checked reported" "$OUT" ;; *) pass "a Done item with every box checked stays quiet" ;; esac
-case "$OUT" in *"T-15"*) fail "trashed reported" "$OUT" ;; *) pass "a trashed row stays out of every check" ;; esac
+assert_not_contains "$OUT" "T-11" "a fresh started item stays quiet"
+assert_not_contains "$OUT" "T-12" "a stale item with a live PR stays quiet"
+assert_contains "$OUT" "done-unchecked issue=T-13" "the Done item with open boxes is reported"
+assert_not_contains "$OUT" "T-14" "a Done item with every box checked stays quiet"
+assert_not_contains "$OUT" "T-15" "a trashed row stays out of every check"
 
 # Clean fixture: only healthy rows -> exit 0 with the clean line.
 jq '[.[] | select(.identifier == "T-5" or .identifier == "T-6" or .identifier == "T-7" or .identifier == "T-14" or .identifier == "T-11")]' \

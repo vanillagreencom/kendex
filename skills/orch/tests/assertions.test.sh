@@ -6,6 +6,10 @@
 # This suite keeps its own counters rather than sourcing the library: a
 # library whose assert_eq passed everything would pass its own test. The
 # mismatch row is the library's must-fail control.
+#
+# It also holds the rule the library's header states: no other suite or lib
+# defines a name the library defines, since a later definition silently
+# shadows the library for that suite.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,6 +58,7 @@ table \
   'assert_not_contains without the substring passes|assert_not_contains abc z n|1 0' \
   'assert_not_contains with it fails|assert_not_contains abc b n|0 1' \
   "assert_file_contains on a line of the file passes|assert_file_contains $TMP_ROOT/file pres n|1 0" \
+  "assert_file_contains on text the file lacks fails|assert_file_contains $TMP_ROOT/file x n|0 1" \
   "assert_file_contains on a missing file fails|assert_file_contains $TMP_ROOT/none x n|0 1" \
   "assert_file_not_contains on text the file lacks passes|assert_file_not_contains $TMP_ROOT/file x n|1 0" \
   "assert_file_not_contains on text the file holds fails|assert_file_not_contains $TMP_ROOT/file pres n|0 1" \
@@ -66,6 +71,26 @@ echo "=== a suite with a failed assertion exits non-zero ==="
 bash -c 'set -euo pipefail; . "$1"; assert_eq x y n >/dev/null; [[ "$FAIL" -eq 0 ]]' bash "$LIB" \
   && rc=0 || rc=$?
 verdict "$rc" "1" "an assert_eq mismatch reddens the suite that made it"
+
+echo "=== no suite or lib redefines a library name ==="
+# The names are read off the library's own definitions; every shell file under
+# tests/ and tests/lib/ but the library is scanned for a definition of one.
+LIB_NAMES="$(sed -n 's/^\([a-z_][a-z_]*\)() {$/\1/p' "$LIB")"
+NAMES_RE="$(paste -sd '|' - <<<"$LIB_NAMES")"
+SCANNED=()
+for f in "$TEST_DIR"/*.sh "$TEST_DIR"/lib/*.sh; do
+  [[ "$f" -ef "$LIB" ]] || SCANNED+=("$f")
+done
+# redefinitions FILE... — `file:line:text` for each definition of a library name.
+redefinitions() {
+  grep -nE "^[[:space:]]*(function[[:space:]]+)?($NAMES_RE)[[:space:]]*\(\)" -- "$@" || true
+}
+verdict "$(grep -cx 'assert_eq' <<<"$LIB_NAMES" || true)" "1" \
+  "the name list read from the library holds assert_eq, so the reader is not broken"
+verdict "$(redefinitions "${SCANNED[@]}")" "" "no suite or lib under tests/ defines a library name"
+printf 'pass() { :; }\n' > "$TMP_ROOT/probe.sh"
+verdict "$(redefinitions "$TMP_ROOT/probe.sh")" "1:pass() { :; }" \
+  "must-fail control: a file defining pass() is named"
 
 echo
 printf 'pass: %d   fail: %d\n' "$OK" "$BAD"
