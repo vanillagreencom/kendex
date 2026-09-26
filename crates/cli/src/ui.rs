@@ -65,12 +65,39 @@
 //! going and then blocks would say it after coming back. [`spinner`]
 //! draws what is open before it starts, which is why every wait long
 //! enough to notice is wrapped in one.
+//!
+//! **The design system.** A converted verb draws only through the
+//! components on [`Style`] — tokens, symbols, components and the three
+//! renderings in `tokens`, `symbols`, `components` and `modes` — and
+//! prints what they drew through [`stdout`] and [`stderr`]. The framed
+//! calls above serve the verbs not yet converted. `crates/cli/OUTPUT.md`
+//! is the reference.
 
 mod blocks;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the components the pilot verb does not draw are drawn by the verbs converted after it; the snapshot tests draw every one"
+    )
+)]
+mod components;
+mod live;
+mod modes;
 mod prompt;
 mod refusal;
+mod symbols;
+mod tokens;
 
 pub use blocks::{finish, flush, intro};
+#[expect(
+    unused_imports,
+    reason = "the types a callout and a link take; the verbs converted after the pilot name them"
+)]
+pub use components::{Choice, Target};
+pub use components::{Status, Value};
+pub use live::Spinner;
+pub use modes::{Channel, Span, Style, channel};
 pub use prompt::{ask, cancelled, confirm, spinner};
 pub use refusal::{Lines, fail_refusal, outro_fail, outro_refusal};
 
@@ -187,6 +214,32 @@ pub fn escaped(text: &str) -> String {
     kendex_core::names::shown(text)
 }
 
+/// Lines a component drew, to stdout: the part of a verb's output another
+/// program composes with. The components escaped every value they were
+/// given, so these are printed as they are — escaping again would spell
+/// out the colour the component put there.
+pub fn stdout(lines: &[String]) {
+    flush();
+    let mut out = std::io::stdout().lock();
+    for line in lines {
+        let _ = writeln!(out, "{line}");
+    }
+}
+
+/// Lines a component drew, to stderr: what the person reads about the run.
+pub fn stderr(lines: &[String]) {
+    flush();
+    for line in lines {
+        write_line(line);
+    }
+}
+
+/// Whether a person is reading stderr, whatever rendering they get: being
+/// sent to a person and how a line is drawn for them are two questions.
+pub fn stderr_is_terminal() -> bool {
+    std::io::stderr().is_terminal()
+}
+
 /// Human tables go to stderr; stdout stays clean for composition.
 /// A sentence a verb puts on stdout goes here and is never framed — but
 /// the block above it is drawn first, so the two streams reach a terminal
@@ -277,6 +330,78 @@ pub fn ledger(head: &str, steps: &[String]) {
         return;
     }
     blocks::open(Tone::Done, &head, true, &steps);
+}
+
+/// Styles and a readable spelling of drawn lines, for the tests of the
+/// components and of the verbs built from them.
+#[cfg(test)]
+pub(crate) mod testing {
+    use super::modes::{Look, Style};
+    use super::symbols::Glyphs;
+    use super::tokens::Palette;
+
+    pub fn rich(width: usize) -> Style {
+        Style {
+            look: Look::Rich {
+                palette: Palette::Ansi16,
+                width,
+            },
+            glyphs: Glyphs::Unicode,
+        }
+    }
+
+    pub fn plain() -> Style {
+        Style {
+            look: Look::Plain,
+            glyphs: Glyphs::Unicode,
+        }
+    }
+
+    pub fn ascii(style: Style) -> Style {
+        Style {
+            glyphs: Glyphs::Ascii,
+            ..style
+        }
+    }
+
+    /// Drawn lines with each escape sequence spelled as a tag: `<1;34>` for
+    /// a colour switched on, `</>` for the reset, `<link URL>` and
+    /// `</link>` around a hyperlink. Any escape this does not know is left
+    /// as it is, so a snapshot shows it rather than hiding it.
+    pub fn tagged(lines: &[String]) -> Vec<String> {
+        lines.iter().map(|line| tag(line)).collect()
+    }
+
+    fn tag(line: &str) -> String {
+        let mut out = String::new();
+        let mut rest = line;
+        while let Some(at) = rest.find('\x1b') {
+            out.push_str(&rest[..at]);
+            let after = &rest[at + 1..];
+            if let Some(sgr) = after.strip_prefix('[')
+                && let Some(end) = sgr.find('m')
+            {
+                match &sgr[..end] {
+                    "0" => out.push_str("</>"),
+                    params => out.push_str(&format!("<{params}>")),
+                }
+                rest = &sgr[end + 1..];
+            } else if let Some(osc) = after.strip_prefix("]8;;")
+                && let Some(end) = osc.find("\x1b\\")
+            {
+                match &osc[..end] {
+                    "" => out.push_str("</link>"),
+                    url => out.push_str(&format!("<link {url}>")),
+                }
+                rest = &osc[end + 2..];
+            } else {
+                out.push('\x1b');
+                rest = after;
+            }
+        }
+        out.push_str(rest);
+        out
+    }
 }
 
 #[cfg(test)]

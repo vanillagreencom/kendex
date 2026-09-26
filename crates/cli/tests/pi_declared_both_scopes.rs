@@ -13,17 +13,24 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-#[allow(clippy::expect_used)]
 fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_kendex"))
-        .args(args)
+    kendex_with(home, cwd, args, &[])
+}
+
+/// The same run with `extra` set on top of the suite's environment.
+#[allow(clippy::expect_used)]
+fn kendex_with(home: &Path, cwd: &Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
+    let mut run = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    run.args(args)
         .current_dir(cwd)
         .env_clear()
         .envs(test_util::fixture_env(home))
         .env("KENDEX_BACKGROUND_REFRESH", "off")
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .output()
-        .expect("kendex binary runs")
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default());
+    for (name, value) in extra {
+        run.env(name, value);
+    }
+    run.output().expect("kendex binary runs")
 }
 
 fn said(output: &Output) -> String {
@@ -238,6 +245,46 @@ fn a_project_declaration_the_global_manifest_also_holds_is_named_with_the_copy_t
 /// scope flag: the project and the global scope are covered in one run,
 /// the row carries the project's scope word, and the global scope adds no
 /// second row for the same pair.
+/// The edit the row names is a command, so a terminal too narrow for the
+/// row still gets it whole on a line of its own: split at its space it
+/// reads as `${EDITOR:-vi}` alone, with the path left on the next line as
+/// if it were prose.
+#[test]
+fn a_narrow_terminal_draws_the_edit_command_whole() {
+    let (_tmp, home, root) = fixture(Some("pi-widgets"), "pi-widgets", &Declares::InManifest);
+    let check = kendex_with(
+        &home,
+        &root,
+        &["check", "--scope", "project"],
+        &[
+            ("KENDEX_UI", "pretty"),
+            ("COLUMNS", "40"),
+            ("LANG", "C.UTF-8"),
+        ],
+    );
+    let edit = format!(
+        "${{EDITOR:-vi}} {}",
+        kendex_core::names::quoted(&root.join("kendex.toml").display().to_string())
+    );
+    let text = String::from_utf8_lossy(&check.stdout).into_owned();
+    let unpainted: Vec<String> = text
+        .lines()
+        .map(|line| {
+            let mut parts = line.split('\u{1b}');
+            let mut plain = parts.next().unwrap_or_default().to_owned();
+            for part in parts {
+                plain.push_str(part.split_once('m').map_or(part, |(_, rest)| rest));
+            }
+            plain.trim().to_owned()
+        })
+        .collect();
+    // Wider than the 40 columns, so a line of its own and nothing else.
+    assert!(
+        unpainted.contains(&edit),
+        "the edit command was broken across lines: {unpainted:#?}"
+    );
+}
+
 #[test]
 fn an_unqualified_check_names_the_pair_once_under_the_project_scope_word() {
     let (_tmp, home, root) = fixture(Some("pi-widgets"), "pi-widgets", &Declares::InManifest);

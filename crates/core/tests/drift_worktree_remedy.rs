@@ -219,12 +219,12 @@ fn a_rendered_fix_inside_a_worktree_that_declares_is_the_bare_command() {
         lines: vec![
             report::Line {
                 class: report::Class::Drift,
-                text: "'gh' does not match its source".to_owned(),
+                text: "'gh' does not match its source".to_owned().into(),
                 remedy: Some(report::Remedy::Apply { global: false }),
             },
             report::Line {
                 class: report::Class::Drift,
-                text: "'gh' is no longer offered by its source".to_owned(),
+                text: "'gh' is no longer offered by its source".to_owned().into(),
                 remedy: Some(report::Remedy::Remove {
                     name: "gh".to_owned(),
                     global: false,
@@ -373,7 +373,7 @@ fn a_project_below_the_worktree_root_that_declares_is_its_own() {
         title: "gone from their source".to_owned(),
         lines: vec![report::Line {
             class: report::Class::Drift,
-            text: "'gh' is no longer offered by its source".to_owned(),
+            text: "'gh' is no longer offered by its source".to_owned().into(),
             remedy: Some(report::Remedy::Remove {
                 name: "gh".to_owned(),
                 global: false,

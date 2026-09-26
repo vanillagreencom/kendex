@@ -64,6 +64,17 @@ pub enum Class {
     Unknown,
 }
 
+impl Class {
+    /// What a line of this class makes of the whole check. A verdict still
+    /// owed is a state the check determined, so it counts as drift.
+    pub fn status(self) -> CheckStatus {
+        match self {
+            Class::Drift | Class::Unevaluated => CheckStatus::Drift,
+            Class::Unknown => CheckStatus::Unknown,
+        }
+    }
+}
+
 /// The closed remedy vocabulary. Nothing else ever renders in a command
 /// position; identifiers are validated before rendering and a name that
 /// fails validation drops the remedy rather than escaping into it.
@@ -370,7 +381,10 @@ pub(super) fn backup_command(env: &Env, path: &std::path::Path) -> Option<String
 #[serde(rename_all = "camelCase")]
 pub struct Line {
     pub class: Class,
-    pub text: String,
+    /// The plain spelling in JSON, with its commands marked for a
+    /// rendering that wraps.
+    #[specta(type = String)]
+    pub text: Sentence,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remedy: Option<Remedy>,
 }
@@ -555,10 +569,7 @@ impl Sections {
         let status = sections
             .iter()
             .flat_map(|section| &section.lines)
-            .map(|line| match line.class {
-                Class::Drift | Class::Unevaluated => CheckStatus::Drift,
-                Class::Unknown => CheckStatus::Unknown,
-            })
+            .map(|line| line.class.status())
             .max()
             .unwrap_or(CheckStatus::Clean);
         CheckReport {
@@ -628,26 +639,26 @@ fn main_checkout_project(
     crate::discover::is_project(&mapped).then_some(mapped)
 }
 
-fn drift(text: String, remedy: Option<Remedy>) -> Line {
+fn drift(text: impl Into<Sentence>, remedy: Option<Remedy>) -> Line {
     Line {
         class: Class::Drift,
-        text,
+        text: text.into(),
         remedy,
     }
 }
 
-fn unevaluated(text: String, remedy: Remedy) -> Line {
+fn unevaluated(text: impl Into<Sentence>, remedy: Remedy) -> Line {
     Line {
         class: Class::Unevaluated,
-        text,
+        text: text.into(),
         remedy: Some(remedy),
     }
 }
 
-fn unknown(text: String) -> Line {
+fn unknown(text: impl Into<Sentence>) -> Line {
     Line {
         class: Class::Unknown,
-        text,
+        text: text.into(),
         remedy: None,
     }
 }
@@ -821,6 +832,7 @@ pub fn wants_background_refresh(env: &Env, scopes: &[Scope], checked: &CheckRepo
 
 mod render;
 mod scope;
+mod sentence;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -829,6 +841,7 @@ mod tests_evidence;
 mod tests_render;
 mod text;
 
-pub use render::{render_full, render_plain};
+pub use render::{Page, PageFix, PageItem, PageSection, page, render_plain};
 use scope::check_scope;
+pub use sentence::{Sentence, Span};
 pub use text::{Text, fold};

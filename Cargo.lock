@@ -2335,6 +2335,7 @@ version = "1.0.1"
 dependencies = [
  "clap",
  "cliclack",
+ "console",
  "kendex-core",
  "rustix",
  "serde_json",

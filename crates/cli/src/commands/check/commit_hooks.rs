@@ -54,7 +54,7 @@ pub(super) fn fold_commit_hooks(
     checked: &mut CheckReport,
     scopes: &[kendex_core::model::Scope],
 ) {
-    use kendex_core::drift::report::{Class, Text};
+    use kendex_core::drift::report::{Class, Sentence, Text};
     use kendex_core::model::Scope;
     for scope in scopes {
         let Scope::Project { root } = scope.canonical() else {
@@ -92,11 +92,15 @@ pub(super) fn fold_commit_hooks(
             // say, and it is invited.
             Ok(false) => (
                 Class::Drift,
-                Text::Own(format!(
-                    "the hooks directory of {} holds no {} helper — `kendex guard check` asks the package what this repository's state is",
-                    root.display(),
-                    kendex_core::guard::HELPER
-                )),
+                Text::Own(
+                    Sentence::from(format!(
+                        "the hooks directory of {} holds no {} helper — `",
+                        root.display(),
+                        kendex_core::guard::HELPER
+                    ))
+                    .command("kendex guard check")
+                    .prose("` asks the package what this repository's state is"),
+                ),
             ),
             Err(error) => {
                 fold_unknown(checked, "the hooks directory", &error);
@@ -126,11 +130,14 @@ pub(super) fn fold_commit_hooks(
                 Err(error) => match kendex_core::guard::installer_present(&repo) {
                     Ok(false) => (
                         Class::Drift,
-                        Text::Own(format!(
-                            "{} is listed in {} but its scripts are not there — refresh installs it again",
-                            kendex_core::guard::SKILL,
-                            root.display()
-                        )),
+                        Text::Own(
+                            format!(
+                                "{} is listed in {} but its scripts are not there — refresh installs it again",
+                                kendex_core::guard::SKILL,
+                                root.display()
+                            )
+                            .into(),
+                        ),
                     ),
                     Ok(true) => (
                         Class::Unknown,

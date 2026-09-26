@@ -218,7 +218,7 @@ fn a_non_utf8_project_target_keeps_the_row_and_omits_the_command() {
             title: "stale".to_owned(),
             lines: vec![Line {
                 class: Class::Drift,
-                text: "'orch' does not match its source".to_owned(),
+                text: "'orch' does not match its source".to_owned().into(),
                 remedy: Some(Remedy::Apply { global: false }),
             }],
         }],
@@ -288,7 +288,7 @@ fn a_non_utf8_project_target_keeps_the_row_and_omits_the_command() {
 fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
     let line = |text: &str, remedy: Remedy| Line {
         class: Class::Drift,
-        text: text.to_owned(),
+        text: text.to_owned().into(),
         remedy: Some(remedy),
     };
     let report = |target: ProjectTarget| CheckReport {
@@ -470,7 +470,12 @@ fn a_line_kendex_composed_is_named_in_full() {
         "commit-guards armed the commit hooks, so every commit fails until {deep}/pre-commit, {deep}/commit-msg are dealt with"
     );
     let mut report = check_report();
-    fold(&mut report, "commit hooks", Class::Drift, Text::Own(text));
+    fold(
+        &mut report,
+        "commit hooks",
+        Class::Drift,
+        Text::Own(text.into()),
+    );
 
     let rendered = render_plain(&report);
     assert!(
@@ -492,7 +497,8 @@ fn a_composed_line_is_scrubbed_even_though_it_is_not_cut() {
         Class::Drift,
         Text::Own(
             "hooks at /repo/\x1b[2J\nevil with sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345 inside"
-                .to_owned(),
+                .to_owned()
+                .into(),
         ),
     );
 
@@ -604,7 +610,7 @@ fn a_relayed_line_within_the_bound_keeps_its_every_word() {
         },
     );
 
-    assert_eq!(report.sections[0].lines[0].text, verdict);
+    assert_eq!(report.sections[0].lines[0].text.as_str(), verdict);
     assert_eq!(report.status, CheckStatus::Unknown);
     assert_eq!(report.status.exit_code(), 2);
 }

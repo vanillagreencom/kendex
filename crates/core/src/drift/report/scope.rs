@@ -268,15 +268,15 @@ impl ScopeCheck<'_> {
             // strand every existing install on the old script forever.
             if crate::drift::hook::script_current(self.env, self.scope, manifest) == Some(false) {
                 let script = crate::drift::hook::script_path(self.env, self.scope);
-                let backup = super::backup_command(self.env, &script);
+                let said = Sentence::from(format!(
+                    "{prefix}the session drift hook script is from an older kendex; reinstalling overwrites local changes"
+                ));
+                let said = match super::backup_command(self.env, &script) {
+                    Some(command) => said.prose("; backup first if needed: ").command(&command),
+                    None => said,
+                };
                 sections.stale.push(drift(
-                    format!(
-                        "{prefix}the session drift hook script is from an older kendex; reinstalling overwrites local changes{}",
-                        backup
-                            .as_ref()
-                            .map(|command| format!("; backup first if needed: {command}"))
-                            .unwrap_or_default()
-                    ),
+                    said,
                     Some(Remedy::DriftHook {
                         global: self.global,
                     }),
@@ -517,23 +517,22 @@ impl ScopeCheck<'_> {
             else {
                 continue;
             };
-            sections.declared_twice.push(drift(
-                format!(
-                    "{}pi-declared-twice={}: the global manifest declares '{}' too; \
-                     Pi loads both scopes' package lists together and will not start \
-                     with one package registered twice; keep the global declaration, \
-                     which reaches every project; remove the \
-                     [pi-extensions.\"{}\"] table from this project's {manifest_file}{}",
-                    self.prefix,
-                    shown(name),
-                    shown(globally),
-                    shown(name),
-                    edit.as_ref()
-                        .map(|command| format!("; edit: {command}"))
-                        .unwrap_or_default()
-                ),
-                None,
+            let said = Sentence::from(format!(
+                "{}pi-declared-twice={}: the global manifest declares '{}' too; \
+                 Pi loads both scopes' package lists together and will not start \
+                 with one package registered twice; keep the global declaration, \
+                 which reaches every project; remove the \
+                 [pi-extensions.\"{}\"] table from this project's {manifest_file}",
+                self.prefix,
+                shown(name),
+                shown(globally),
+                shown(name),
             ));
+            let said = match &edit {
+                Some(command) => said.prose("; edit: ").command(command),
+                None => said,
+            };
+            sections.declared_twice.push(drift(said, None));
         }
     }
 
