@@ -357,6 +357,7 @@ fn a_template_the_strict_reader_refuses_declares_nothing() {
     .collect();
     let found: Vec<String> = declared(&templates)
         .into_iter()
+        .filter(|one| one.owner != KENDEX_OWNER)
         .map(|one| format!("{}:{}", one.owner, one.entry.key))
         .collect();
     assert_eq!(found, ["good:A".to_owned()]);
@@ -387,32 +388,104 @@ fn a_template_the_strict_reader_refuses_contests_nothing() {
     assert_eq!(contested(&templates), []);
 }
 
-/// kendex declares `KENDEX_ENV_FILE` publicly — it is the selector every
-/// package loader reads to find the private file — so a package declaring
-/// the same name a credential contests it exactly as another package
-/// would. Without this the key would be accepted as both a credential and
-/// the committed selector, and the loaders would have one variable with
-/// two meanings.
+/// A package declaring one of kendex's own keys under the other table
+/// contests it exactly as another package would. `KENDEX_ENV_FILE` is
+/// the public selector every package loader reads to find the private
+/// file, so a credential of that name is one variable with two meanings;
+/// `KENDEX_USER_EMAIL` is a personal identifier, so a setting of that
+/// name is an offer to commit it.
 #[test]
-fn a_package_claiming_kendex_own_key_as_a_secret_contests_it() {
+fn a_package_declaring_a_kendex_key_under_the_other_table_contests_it() {
+    let rows: [(&str, &str, &[&str], &[&str]); 2] = [
+        ("secrets", ENV_FILE_KEY, &[KENDEX_OWNER], &["greedy"]),
+        ("env", USER_EMAIL_KEY, &["greedy"], &[KENDEX_OWNER]),
+    ];
+    for (table, key, public, secret) in rows {
+        let templates = [(
+            "greedy".to_owned(),
+            TemplateSource::Text(format!("[{table}]\n# The key.\n{key} = \"\"\n")),
+        )]
+        .into_iter()
+        .collect();
+        let found = contested(&templates);
+        assert_eq!(found.len(), 1, "{key}: {found:?}");
+        assert_eq!(found[0].key, key);
+        assert_eq!(found[0].public, public, "{key}");
+        assert_eq!(found[0].secret, secret, "{key}");
+    }
+}
+
+/// A package declaring kendex's own private key as a credential agrees
+/// with kendex about where its value goes, so it shares the key rather
+/// than contesting it.
+#[test]
+fn a_package_sharing_kendex_own_secret_does_not_contest_it() {
     let templates = [(
-        "greedy".to_owned(),
-        TemplateSource::Text(format!("[secrets]\n# The key.\n{ENV_FILE_KEY} = \"\"\n")),
+        "linear".to_owned(),
+        TemplateSource::Text(format!("[secrets]\n# The key.\n{USER_EMAIL_KEY} = \"\"\n")),
     )]
     .into_iter()
     .collect();
-    let found = contested(&templates);
-    assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].key, ENV_FILE_KEY);
-    assert_eq!(found[0].public, [KENDEX_OWNER.to_owned()]);
-    assert_eq!(found[0].secret, ["greedy".to_owned()]);
+    assert_eq!(contested(&templates), []);
+}
+
+/// kendex's own template holds to the grammar every package template is
+/// read with, so its declaration is never silently empty: the key, the
+/// explainer a consumer reads beside the field, and no `# required`.
+#[test]
+fn kendex_own_template_declares_the_user_email() {
+    assert_eq!(crate::settings_template::read(&own_template()).findings, []);
+    let own = own_declared();
+    assert_eq!(own.len(), 1, "{own:?}");
+    assert_eq!(own[0].owner, KENDEX_OWNER);
+    assert_eq!(own[0].entry.key, USER_EMAIL_KEY);
+    assert_eq!(
+        own[0].entry.comment,
+        USER_EMAIL_EXPLAINER.map(|line| line.trim_start_matches("# ").to_owned())
+    );
+    assert!(!own[0].entry.required);
+}
+
+/// kendex's own key is written under kendex's own name with no package
+/// declaring it, and only there: the private write admits it by the same
+/// check a package's credential passes.
+#[test]
+fn kendex_own_key_is_written_under_kendex_and_no_other_name() {
+    let none = BTreeMap::new();
+    let written = apply_edits(
+        "",
+        &[set(KENDEX_OWNER, USER_EMAIL_KEY, "dana@example.com")],
+        &declared(&none),
+        &contested(&none),
+        Path::new(".env.local"),
+    );
+    assert_eq!(
+        written.ok().map(|(text, _)| text),
+        Some(format!("{USER_EMAIL_KEY}='dana@example.com'\n"))
+    );
+    let refused = apply_edits(
+        "",
+        &[set("linear", USER_EMAIL_KEY, "dana@example.com")],
+        &declared(&none),
+        &contested(&none),
+        Path::new(".env.local"),
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(crate::error::CoreError::SecretRefused(
+                SecretRefusal::Undeclared { .. }
+            ))
+        ),
+        "{refused:?}"
+    );
 }
 
 /// And nothing else of kendex's is seeded into the contest: a package is
 /// free to declare any other key a credential, which is the ordinary case
 /// the whole feature exists for.
 #[test]
-fn kendex_contests_only_its_own_key() {
+fn kendex_contests_only_its_own_keys() {
     let templates = [(
         "linear".to_owned(),
         TemplateSource::Text("[secrets]\n# The key.\nLINEAR_API_KEY = \"\"\n".to_owned()),

@@ -21,6 +21,7 @@ import { SecretFieldRow } from "./secret-field-row";
 
 const row = (over: Partial<SecretRow> = {}): SecretRow => ({
   key: "LINEAR_API_KEY",
+  owner: "linear",
   explainer: ["The key every call authenticates with."],
   required: true,
   current: { state: "not-set" },
@@ -33,7 +34,6 @@ const render = (
 ) =>
   mount(
     <SecretFieldRow
-      skill="linear"
       row={row(over)}
       file=".env.local"
       writable
@@ -100,7 +100,6 @@ describe("SecretFieldRow", () => {
       return (
         <>
           <SecretFieldRow
-            skill="linear"
             row={row({ current: { state: "set" } })}
             file=".env.local"
             writable
@@ -156,7 +155,6 @@ describe("SecretFieldRow", () => {
     ]) {
       const shut = mount(
         <SecretFieldRow
-          skill="linear"
           row={row()}
           file=".env.local"
           writable
@@ -206,6 +204,28 @@ describe("SecretFieldRow", () => {
     });
   });
 
+  /// A key kendex declares itself shows on a package's page and is
+  /// kendex's all the same: the edit names the row's owner, never the
+  /// page it was typed on, or core refuses it as undeclared.
+  it("hands up a value for a key kendex declares under kendex's name", async () => {
+    const onEdit = vi.fn();
+    const host = render(
+      { key: "KENDEX_USER_EMAIL", owner: "kendex", required: false },
+      { onEdit },
+    );
+    const open = button(host, SECRET_SET_ACTION);
+    if (!open) throw new Error("the field offered no set");
+    await userEvent.click(open);
+    const input = host.querySelector("input");
+    if (!input) throw new Error("set opened no input");
+    await userEvent.type(input, "d");
+    expect(onEdit).toHaveBeenLastCalledWith({
+      skill: "kendex",
+      key: "KENDEX_USER_EMAIL",
+      value: { kind: "set", value: "d" },
+    });
+  });
+
   it("hands up a clear as a clear, never as an empty value", async () => {
     const onEdit = vi.fn();
     const host = render({ current: { state: "set" } }, { onEdit });
@@ -226,7 +246,6 @@ describe("SecretFieldRow", () => {
   it("carries the explanation in the trigger, naming the resolved file", () => {
     const html = renderToStaticMarkup(
       <SecretFieldRow
-        skill="linear"
         row={row()}
         file=".env.secrets"
         writable
@@ -244,7 +263,6 @@ describe("SecretFieldRow", () => {
   it("claims nothing about git where the destination refuses", () => {
     const html = renderToStaticMarkup(
       <SecretFieldRow
-        skill="linear"
         row={row()}
         file=".env.local"
         writable={false}

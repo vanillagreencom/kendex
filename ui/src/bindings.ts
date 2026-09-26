@@ -4624,6 +4624,12 @@ export type SecretEditValue =
 export type SecretRow = {
 	key: string,
 	/**
+	 *  Whose declaration a value typed here is written under: the package
+	 *  whose page shows the row, or kendex for a key kendex declares
+	 *  itself. The edit names it, and the write is checked against it.
+	 */
+	owner: string,
+	/**
 	 *  The template's comment block, `#` markers stripped — what the
 	 *  author wrote to say what the key lets the package do.
 	 */

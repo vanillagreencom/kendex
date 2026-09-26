@@ -357,6 +357,7 @@ describe("SkillSettings", () => {
         secrets: [
           {
             key: "GH_TOKEN",
+            owner: "gh",
             explainer: ["What the token lets it do."],
             required: true,
             current: { state: "not-set" },
@@ -381,6 +382,7 @@ describe("SkillSettings", () => {
       secrets: [
         {
           key: "GH_TOKEN",
+          owner: "gh",
           explainer: ["What the token lets it do."],
           required: true,
           current: { state: "unknown", reason: "git already tracks it" },

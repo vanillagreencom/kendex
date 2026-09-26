@@ -563,6 +563,12 @@ fn a_secret_only_package_declares_a_required_field() {
         panic!("a secret-only template declares rows: {:?}", read.skills[0]);
     };
     assert_eq!(rows, []);
+    // kendex's own private keys follow the package's; this is about the
+    // package's own field.
+    let secrets: Vec<_> = secrets
+        .into_iter()
+        .filter(|row| row.owner == read.skills[0].skill)
+        .collect();
     assert_eq!(secrets.len(), 1);
     assert!(secrets[0].required);
     assert_eq!(secrets[0].current, SecretState::NotSet);

@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# --assignee on issues create and issues update takes an email address: a
+# value containing `@` is matched against every user's whole address,
+# case-insensitively, and a miss refuses before any mutation. The name form
+# keeps matching as a substring.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+assert_tmpdir TMP_ROOT
+
+mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/.cache/linear"
+cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
+# Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
+# throwaway root — without this, cache writes land in the real project's
+# `.cache/linear`.
+git -C "$TMP_ROOT" init -q -b main
+
+cat >"$TMP_ROOT/bin/curl" <<'SH'
+#!/usr/bin/env bash
+config="$(cat)"
+payload="$(sed -n 's/^data = //p' <<<"$config" | jq -r)"
+query="$(jq -r '.query' <<<"$payload")"
+variables="$(jq -c '.variables' <<<"$payload")"
+printf '%s\n' "$payload" >> "${CURL_PAYLOAD_LOG:?}"
+
+issue='{"id":"issue-uuid","identifier":"CC-760","title":"t","description":null,"state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-760","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}'
+
+case "$query" in
+*"users(first:"*)
+  printf '%s' '{"data":{"users":{"nodes":[{"id":"user-other","name":"Other Person","email":"other@example.com","displayName":"other","active":true,"admin":false,"createdAt":"2026-01-01T00:00:00Z"},{"id":"user-dana","name":"Dana Doe","email":"Dana@Example.com","displayName":"dana","active":true,"admin":false,"createdAt":"2026-01-01T00:00:00Z"}]}}}___HTTP_CODE___200'
+  ;;
+*"users(filter:"*)
+  if [[ "$(jq -r '.name' <<<"$variables")" == "Dana" ]]; then
+    printf '%s' '{"data":{"users":{"nodes":[{"id":"user-dana"}]}}}___HTTP_CODE___200'
+  else
+    printf '%s' '{"data":{"users":{"nodes":[]}}}___HTTP_CODE___200'
+  fi
+  ;;
+*"teams(filter:"*)
+  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
+  ;;
+*"issue(id:"*)
+  printf '{"data":{"issue":%s}}___HTTP_CODE___200' "$issue"
+  ;;
+*"issueCreate(input:"*)
+  printf '{"data":{"issueCreate":{"success":true,"issue":%s}}}___HTTP_CODE___200' "$issue"
+  ;;
+*"issueUpdate(id:"*)
+  printf '{"data":{"issueUpdate":{"success":true,"issue":%s}}}___HTTP_CODE___200' "$issue"
+  ;;
+*)
+  printf '%s' '{"errors":[{"message":"unexpected query"}]}___HTTP_CODE___200'
+  ;;
+esac
+SH
+chmod +x "$TMP_ROOT/bin/curl"
+
+# run_issues CASE ARGS... — one issues action with the child's whole
+# environment named here. Leaves CASE.out, CASE.err, CASE.rc and CASE.jsonl
+# (every GraphQL payload sent) in TMP_ROOT.
+run_issues() {
+  local name="$1" rc=0
+  shift
+  local log="$TMP_ROOT/$name.jsonl"
+  : >"$log"
+  (cd "$TMP_ROOT" && env -i HOME="$TMP_ROOT" PATH="$TMP_ROOT/bin:$PATH" \
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
+    CURL_PAYLOAD_LOG="$log" \
+    "$BASH" "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues "$@") \
+    >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err" || rc=$?
+  printf '%s' "$rc" >"$TMP_ROOT/$name.rc"
+}
+
+# The mutation inputs a case sent, for the one mutation its action makes.
+inputs() {
+  jq -s -c --arg mutation "$2" \
+    '[.[] | select(.query | contains($mutation)) | .variables.input]' "$TMP_ROOT/$1.jsonl"
+}
+
+# One row per case: case, action, --assignee value, and the assigneeId the
+# mutation carries, or `refused` for a miss that sends no mutation at all.
+while IFS='|' read -r name action ref want; do
+  case "$action" in
+  create) run_issues "$name" create --title t --assignee "$ref"; mutation=issueCreate ;;
+  update) run_issues "$name" update CC-760 --assignee "$ref"; mutation=issueUpdate ;;
+  esac
+  if [[ "$want" == refused ]]; then
+    assert_ne "$name: the action fails" "$(cat "$TMP_ROOT/$name.rc")" 0
+    assert_jq "$name: the refusal names the value" "$(cat "$TMP_ROOT/$name.err")" \
+      ".error == \"Assignee not found: $ref\""
+    assert_jq "$name: no $mutation is sent" "$(inputs "$name" "$mutation")" 'length == 0'
+  else
+    assert_eq "$name: the action exits zero" "$(cat "$TMP_ROOT/$name.rc")" 0
+    assert_jq "$name: the $mutation carries the user's id" \
+      "$(inputs "$name" "$mutation")" "length == 1 and .[0].assigneeId == \"$want\""
+  fi
+done <<'ROWS'
+create-email|create|dana@EXAMPLE.com|user-dana
+create-email-miss|create|nobody@example.com|refused
+update-email|update|dana@example.com|user-dana
+update-email-miss|update|nobody@example.com|refused
+update-email-partial|update|ana@example.com|refused
+update-name|update|Dana|user-dana
+ROWS

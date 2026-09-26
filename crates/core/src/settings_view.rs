@@ -138,7 +138,7 @@ pub fn scope_settings(env: &Env, scope: &Scope, want: Option<&str>) -> Result<Sc
         skills: templates
             .into_iter()
             .map(|(skill, source)| SkillSettings {
-                template: template_of(&source, &sites, &private, &contested),
+                template: template_of(&skill, &source, &sites, &private, &contested),
                 skill,
             })
             .collect(),
@@ -149,7 +149,13 @@ pub fn scope_settings(env: &Env, scope: &Scope, want: Option<&str>) -> Result<Sc
     })
 }
 
+/// One skill's rows. A skill with settings of its own also shows the
+/// private keys kendex declares itself, after its own credentials: those
+/// keys have no package page of their own, and a person configuring a
+/// package is where they look for what it reads. A key the skill declares
+/// too is shown once, as the skill's.
 fn template_of(
+    skill: &str,
     source: &TemplateSource,
     sites: &[Site],
     private: &SecretsRead,
@@ -198,13 +204,26 @@ fn template_of(
                 values: entry.values,
             })
             .collect(),
-        secrets: private.rows(
-            &template
-                .secrets
+        secrets: {
+            // REVISIT(D006): kendex's own keys on every package page.
+            let own: Vec<_> = crate::settings_secret::own_declared()
                 .into_iter()
-                .filter(|entry| !taken(&entry.key))
-                .collect::<Vec<_>>(),
-        ),
+                .map(|one| one.entry)
+                .filter(|entry| {
+                    !taken(&entry.key) && !template.secrets.iter().any(|mine| mine.key == entry.key)
+                })
+                .collect();
+            let mut rows = private.rows(
+                &template
+                    .secrets
+                    .into_iter()
+                    .filter(|entry| !taken(&entry.key))
+                    .collect::<Vec<_>>(),
+                skill,
+            );
+            rows.extend(private.rows(&own, crate::settings_secret::KENDEX_OWNER));
+            rows
+        },
     }
 }
 

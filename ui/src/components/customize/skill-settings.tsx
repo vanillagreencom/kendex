@@ -159,7 +159,6 @@ export function SkillSettings({
             {secrets.map((row) => (
               <SecretFieldRow
                 key={row.key}
-                skill={skill}
                 row={row}
                 file={secretsView.destination.file}
                 writable={secretsView.destination.state.state !== "refused"}
