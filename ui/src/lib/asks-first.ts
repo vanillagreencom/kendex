@@ -28,7 +28,11 @@
 // A question also waits for its own answer to be finished. The commit
 // offer's is read by a scan per write, and one reader action writes many
 // times, so an offer drawn while another scan is out states a project's
-// files as they stood one write ago.
+// files as they stood one write ago. An offer already being answered — a
+// step running, a refusal on screen, a held package's setup — is past
+// that point: the scan leaves the offer at the head alone while its
+// answer is on screen, so it has nothing to say about that offer, and
+// waiting on it would take the dialog down mid-answer.
 //
 // The macOS app's first-launch question, whether to install the kendex
 // command, is last: it is asked once, it loses nothing by waiting, and it
@@ -67,6 +71,9 @@ export function useMayAsk(question: Question): boolean {
   const scanning = useCommitOfferStore((s) => s.scanning);
   const problems = useProblemsStore((s) => s.dialog.open);
   const offered = useCommitOfferStore((s) => s.queue.length > 0);
+  const answering = useCommitOfferStore(
+    (s) => s.queue.length > 0 && s.stage.at !== "offer",
+  );
   // Answered, not merely unread: a terms read that has not landed or that
   // failed is no evidence the screen will stay down.
   const termsAnswered = useTermsStore((s) => s.state?.ask === false);
@@ -78,7 +85,13 @@ export function useMayAsk(question: Question): boolean {
     case "commitOfferFailure":
       return !installing && !effects && !problems && !scanning;
     case "commitOffer":
-      return !installing && !effects && !scanFailure && !problems && !scanning;
+      return (
+        !installing &&
+        !effects &&
+        !scanFailure &&
+        !problems &&
+        (!scanning || answering)
+      );
     case "commandLink":
       return (
         termsAnswered &&
