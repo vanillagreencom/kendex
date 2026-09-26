@@ -9,7 +9,7 @@ In the check below, Codex refused a command for one of three causes: an execpoli
 | Mode | Where kendex launches it | Probe flags | Sandbox | `rm -f` |
 |------|--------------------------|-------------|---------|---------|
 | Bypass | Lanes: the spelling [lane-launch.sh](../scripts/lib/lane-launch.sh) writes | `--dangerously-bypass-approvals-and-sandbox` | None | Refused |
-| `never`, full access | The user config default, `approval_policy = "never"` with `sandbox_mode = "danger-full-access"`; `-a never` on that config | none | None | Refused |
+| `never`, full access | The user config default, `approval_policy = "never"` with `sandbox_mode = "danger-full-access"`; `-a never` on that config | None, on a config holding `approval_policy = "never"` and `sandbox_mode = "danger-full-access"` | None | Refused |
 | `never`, workspace-write | `-a never` on a config whose sandbox is `workspace-write` | `-c approval_policy='"never"' -s workspace-write` | A write outside the working directory fails `Read-only file system` | Refused |
 | Approve for me | Lanes: the accepted spelling `--approve-for-me` | `--approve-for-me` | workspace-write; a write outside the working directory failed, then its reviewed escalation ran | Reviewed, then ran |
 | Read-only | second-opinion: `codex exec -s read-only` | `-s read-only` | Every write fails `Read-only file system` | Refused |
