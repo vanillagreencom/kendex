@@ -11,21 +11,35 @@
 # where a stand-in such as the Linear CLI can sit beside their skill. The
 # shipped scripts are the ones beside this tests/ directory, so a suite run
 # from an installed layout mutates its own. Prints the scripts directory;
-# callers need TMP_ROOT.
+# callers need TMP_ROOT. Callers take the path through a command
+# substitution, where errexit does not reach, so every setup step refuses on
+# its own before the path is printed: a tree missing a sibling would kill the
+# mutant for that reason and credit the control to it rather than to the
+# planted defect.
+_mutant_scripts_refuse() { # KEY VALUE
+  printf 'mutant_scripts: %s %s\n' "$1" "$2" >&2
+  exit 1
+}
 mutant_scripts() {
-  local src dir="$TMP_ROOT/$1/scripts" entry
+  local src dir="$TMP_ROOT/$1/scripts" entry inventory
   src="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)" \
-    || { printf 'mutant_scripts: no-scripts-dir %s\n' "${BASH_SOURCE[0]}" >&2; exit 1; }
-  rm -rf "${TMP_ROOT:?}/$1"
-  mkdir -p "$dir"
+    || _mutant_scripts_refuse no-scripts-dir "${BASH_SOURCE[0]}"
+  inventory="$(cd "$src" && find . -mindepth 1 | sed 's|^\./||')" \
+    || _mutant_scripts_refuse inventory-failed "$src"
+  [[ -n "$inventory" ]] || _mutant_scripts_refuse inventory-empty "$src"
+  rm -rf "${TMP_ROOT:?}/$1" || _mutant_scripts_refuse clear-failed "$TMP_ROOT/$1"
+  mkdir -p "$dir" || _mutant_scripts_refuse mkdir-failed "$dir"
   while IFS= read -r entry; do
-    if [[ -d "$src/$entry" ]]; then mkdir -p "$dir/$entry"
-    else ln -s "$src/$entry" "$dir/$entry"; fi
-  done < <(cd "$src" && find . -mindepth 1 | sed 's|^\./||')
+    if [[ -d "$src/$entry" ]]; then
+      mkdir -p "$dir/$entry" || _mutant_scripts_refuse mkdir-failed "$dir/$entry"
+    else
+      ln -s "$src/$entry" "$dir/$entry" || _mutant_scripts_refuse link-failed "$dir/$entry"
+    fi
+  done <<<"$inventory"
   if [[ -n "${2:-}" ]]; then
-    [[ -f "$src/$2" ]] || { printf 'mutant_scripts: no-such-script %s\n' "$2" >&2; exit 1; }
-    rm -- "$dir/$2"
-    cp -p -- "$src/$2" "$dir/$2"
+    [[ -f "$src/$2" ]] || _mutant_scripts_refuse no-such-script "$2"
+    rm -- "$dir/$2" || _mutant_scripts_refuse unlink-failed "$dir/$2"
+    cp -p -- "$src/$2" "$dir/$2" || _mutant_scripts_refuse copy-failed "$dir/$2"
   fi
   printf '%s\n' "$dir"
 }
