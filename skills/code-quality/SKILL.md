@@ -63,7 +63,7 @@ A new or modified production gate or guard ships with one must-fail control per 
 - A test pins values a program parses: keys, codes, enums, exit status, flags, and a text protocol a named consumer reads, stated in the producer's header. A test that pins prose or the test harness's own configuration is deleted.
 - A row pins what only its own guard emits: an expectation a neighbouring gate or a helper on both sides also produces is not a pin, and neither is a value read as a truthiness bit.
 - A dependency is tested in its own suite; a consumer suite asserts only its own use of it.
-- Shaped input (positions, settings keys, tamper classes) is one table: one loop, one assertion per row, the rows visible in the file, and one control for the table.
+- Shaped input (positions, settings keys, tamper classes) is one table: one loop, one assertion per row, the rows visible in the file, and no control beyond its surface's one.
 - A test reads time through an injectable clock; a real wait names its reason beside it.
 - A collection-driven check fails closed on an empty collection.
 - A shared fixture is a neutral world (a seeded repository, a fake SDK); a fixture that carries a planted defect is private to its case.
