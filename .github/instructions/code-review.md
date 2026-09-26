@@ -32,7 +32,7 @@ Review-gate does not order evidence across review objects, check runs, commit st
 
 A state change between reads is handled by another convergence pass. Do not request locks for that window. The schedule in `.github/workflows/review-gate-writer.yml` is best effort, not a latency guarantee.
 
-When docs carry-forward is enabled, eligible documentation changes can retain earlier evidence. Excluded policy paths require fresh evidence. This is an accepted package behavior, not active kendex policy: `REVIEW_GATE_CARRY_FORWARD` is empty here.
+`REVIEW_GATE_CARRY_FORWARD` is `docs` here: when every file changed since a reviewed commit is markdown, that commit's evidence extends to the new head. A change to a path `REVIEW_GATE_CARRY_FORWARD_EXCLUDE` names requires fresh evidence. This is accepted kendex policy, not a fail-open path.
 
 A gate success immediately before a push belongs to the earlier commit. Another convergence evaluates the new head. The merge queue checks at admission. Do not report the earlier success as a fail-open path.
 
