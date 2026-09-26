@@ -132,6 +132,7 @@ notice --item overseer --to owner --ref no/such --file $F|2=lane-mail: ref-inval
 notice --item overseer --to owner --ref 1790000000-1-1 --file $F|2=lane-mail: ref-unknown=1790000000-1-1
 notice --item overseer --to owner --ref $NOTE_TO_OWNER --file $F|2=lane-mail: ref-unknown=$NOTE_TO_OWNER
 notice --item overseer --to owner --ref $ASK_TO_OWNER --file $F|0=
+notice --item overseer --to owner --ref $PEER_ASK --file $F|2=lane-mail: ref-unknown=$PEER_ASK
 notice --item KEN-1 --attach x --file $F|2=lane-mail: option-unknown=--attach
 send --item overseer --re $OWNER_NOTE --file $F|2=lane-mail: resolve-required=$OWNER_NOTE
 send --item overseer --directive --host --root $LANE --delivery-id k --file $F|2=lane-mail: option-conflict=--host,--delivery-id
@@ -306,7 +307,7 @@ LANE_MAIL_BIN="$MUTANT_DIR/delivery-twice" lm send --item overseer --directive -
 assert_eq "$RC=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "0=2" \
   "control: without the delivery guard the retry lands a second time"
 
-mutant ref-lane-only 's@^        lm_objects "\$WORK_DIR/over.jsonl" | jq -e .*$@        false ||@'
+mutant ref-lane-only 's@^        lm_owner_ask_find "\$REF" ||$@        false ||@'
 new_repo control_ref
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b
 LANE_MAIL_BIN="$MUTANT_DIR/ref-lane-only" lm notice --item overseer --to owner --file "$(text n 'Ruled.')" --ref "$ASK"
