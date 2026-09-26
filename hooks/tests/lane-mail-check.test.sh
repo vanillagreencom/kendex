@@ -1136,8 +1136,12 @@ text_line claude 'Two bases fit. Which one should I rebase onto?' > "$TRANSCRIPT
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   "a turn ending in a question with nothing asked through lane mail is refused"
-assert_eq "$(grep -c -- 'ask --item KEN-65 --file' "$ERR_FILE") $(grep -c -- 'wait --item KEN-65 --id' "$ERR_FILE")" "1 1" \
-  "the refusal names the ask send and the wait on its id, once each"
+# The route names the lane's root, as the halt's read does, so a lane whose
+# shell is in another checkout still writes the mailbox this hook judges.
+printf -v ASK_ROUTE 'ask --item %q --root %q --file [PATH]' KEN-65 "$LANE"
+printf -v WAIT_ROUTE 'wait --item %q --root %q --id [MSGID]' KEN-65 "$LANE"
+assert_eq "$(grep -cF -- "$ASK_ROUTE" "$ERR_FILE") $(grep -cF -- "$WAIT_ROUTE" "$ERR_FILE")" "1 1" \
+  "the refusal names the ask send and the wait on its id, each rooted at the lane, once each"
 stop_at "$TRANSCRIPT" true
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   "the refusal repeats on the continued turn: sending the ask is what clears it"
@@ -1714,8 +1718,10 @@ for TOOL_NAME in AskUserQuestion EnterPlanMode request_user_input question; do
 done
 TOOL_NAME=AskUserQuestion
 tool halt
-assert_eq "$(grep -c -- 'ask --item KEN-40 --file' "$ERR_FILE") $(grep -c -- 'wait --item KEN-40 --id' "$ERR_FILE")" "1 1" \
-  "the refusal names the ask send and the wait on its id, once each"
+printf -v ASK_ROUTE 'ask --item %q --root %q --file [PATH]' KEN-40 "$LANE"
+printf -v WAIT_ROUTE 'wait --item %q --root %q --id [MSGID]' KEN-40 "$LANE"
+assert_eq "$(grep -cF -- "$ASK_ROUTE" "$ERR_FILE") $(grep -cF -- "$WAIT_ROUTE" "$ERR_FILE")" "1 1" \
+  "the refusal names the ask send and the wait on its id, each rooted at the lane, once each"
 tool halt 'git status' agent_id
 expect 2 "lane-mail-check: question-tool=AskUserQuestion" "a subagent's question tool call is refused too"
 assert_eq "$(grep -c -- 'ask --item' "$ERR_FILE")" "0" \
@@ -1723,6 +1729,22 @@ assert_eq "$(grep -c -- 'ask --item' "$ERR_FILE")" "0" \
 TOOL_NAME=Bash
 tool halt
 expect 0 - "any other tool passes the same lane"
+# Unread mail that holds no halt is the mailbox check's pass, not the call's:
+# the question tool is still judged behind it, for the lead and a subagent
+# alike, and the line stays unread for the deliver arm to hand over.
+send KEN-40 'Rebase onto main.'
+TOOL_NAME=AskUserQuestion
+tool halt
+expect 2 "lane-mail-check: question-tool=AskUserQuestion" \
+  "a directive unread in the mailbox does not pass the lead's question tool call"
+tool halt 'git status' agent_id
+expect 2 "lane-mail-check: question-tool=AskUserQuestion" "nor a subagent's"
+TOOL_NAME=Bash
+tool halt
+expect 0 - "a Bash call on that lane still passes"
+tool deliver
+assert_eq "RC=$RC context=$(context_line)" "RC=0 context=PostToolUse lane-mail-check: unread=1" \
+  "and leaves the directive unread for the deliver arm"
 send KEN-40 'Stop.' --halt
 TOOL_NAME=AskUserQuestion
 tool halt
@@ -2276,6 +2298,17 @@ install_arms "$MUTANT_PATH"
 TOOL_NAME=AskUserQuestion
 tool halt
 expect 0 - "control: without its refusal a lane's question tool call passes"
+
+# The mailbox check's pass on unread mail with no halt turned back into an
+# exit: a directive in the mailbox then lets the question tool through.
+mutant question-behind-mail -e 's@^    \[ -n "\$HALT" \] || return 0$@    [ -n "$HALT" ] || exit 0@'
+new_lane control_question_mail ken-45
+mkdir -p "$LANE/tmp/lane-mail/KEN-45"
+install_arms "$MUTANT_PATH"
+send KEN-45 'Rebase onto main.'
+TOOL_NAME=AskUserQuestion
+tool halt
+expect 0 - "control: with the mailbox check exiting on unread mail, a directive lets the question tool through"
 
 # The launch gate dropped from that check alone: a committed mailbox then
 # poses as a lane and an ordinary session loses its question tool.
