@@ -65,14 +65,16 @@
 # A fix round's run is bound to its round. The round record dev-round-write
 # stamped at delegation, PATH/tmp/dev-round-ID-RID.json, names the round's
 # base_sha and delegated_at, and a fix receipt names a run only when the HEAD
-# --record reports for it contains that base and the run started no earlier
-# than delegated_at. An earlier round's run, still on disk and in the dev
-# agent's context, fails one or the other: the implement round's started
-# before the base existed, and a fix round that committed nothing leaves the
-# next round's base at the HEAD its own run started at, but that run started
-# before the next round was delegated. Accepting either would record a pass
-# for a commit it never judged, and submit would reuse a full one as the whole
-# battery. An implement round has no round record and no binding.
+# --record reports for it contains that base, or the run records that base as
+# the one a rebase left off the branch, and the run started no earlier than
+# delegated_at. A rebase mid-round moves HEAD off the base, and the round's
+# own run then records the base as orphaned. An earlier round's run, still on
+# disk and in the dev agent's context, fails one or the other: the implement
+# round's started before the base existed, and a fix round that committed
+# nothing leaves the next round's base at the HEAD its own run started at, but
+# that run started before the next round was delegated. Accepting either would
+# record a pass for a commit it never judged, and submit would reuse a full one
+# as the whole battery. An implement round has no round record and no binding.
 #
 # Writes PATH/tmp/dev-return-ID-RID.json and prints its absolute path (one line).
 #
@@ -160,7 +162,7 @@ die() {
       validate-disagrees) printf 'A pass needs a run that passed, and no-verdict a run the timeout ended; this run is neither.\n' ;;
       round-record-unreadable) printf 'A fix receipt names a run only against its round record, and this one carries no base_sha of 40 hex or no delegated_at epoch.\n' ;;
       run-headless) printf 'The run records no starting HEAD, so it cannot be bound to a round; start a new run.\n' ;;
-      run-off-round) printf 'The run started at a HEAD that does not contain the round base, so it validated another round.\n' ;;
+      run-off-round) printf 'The run started at a HEAD that does not contain the round base, and records no rebase that left that base off the branch, so it validated another round.\n' ;;
       run-before-round) printf 'The run started before the round was delegated, so it validated an earlier round.\n' ;;
       ancestry-unreadable) printf 'Git could not compare the run HEAD with the round base.\n' ;;
       empty-text) printf 'The text must contain a non-whitespace character.\n' ;;
@@ -201,8 +203,9 @@ FAILING result is accepted beside any run. A pass or no-verdict requires it; a F
 records validate_mode null. Submit reuses only a full pass. validate_time is
 the run's wall time --record reports, a no-verdict run's included, and null
 with no run or an unfinished one. With --kind fix the run must start at a HEAD
-that contains the base_sha of PATH/tmp/dev-round-ID-RID.json, no earlier than
-its delegated_at, so a run from an earlier round is refused.
+that contains the base_sha of PATH/tmp/dev-round-ID-RID.json, or record that
+base as the one a rebase left off the branch, no earlier than its
+delegated_at, so a run from an earlier round is refused.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
 content. --recovered-text PATH embeds the report round-recover read from a
 stalled agent's transcript and records recovered_from: transcript. The three
@@ -280,6 +283,7 @@ validate_started_at=""
 validate_ended_at=""
 run_head=""
 run_start=""
+run_orphaned=""
 baseline_lines=null
 summary_file=""
 summary_file_given=false
@@ -381,8 +385,9 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
     die run-record-unreadable "path=$validate_run_dir" "cause=$run_cause"
   fi
   # The one line --record prints: validate-mode=M verdict=V head=H start=S,
-  # then seconds=N started-at=T ended-at=T where the run finished, the bound's
-  # end included.
+  # then validate-base-orphaned=O where a rebase left the run's base off the
+  # branch, then seconds=N started-at=T ended-at=T where the run finished, the
+  # bound's end included.
   run_verdict=""
   read -r -a run_fields <<<"$run_record"
   for field in ${run_fields[@]+"${run_fields[@]}"}; do
@@ -391,6 +396,7 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
       verdict=*) run_verdict="${field#*=}" ;;
       head=*) run_head="${field#*=}" ;;
       start=*) run_start="${field#*=}" ;;
+      validate-base-orphaned=*) run_orphaned="${field#*=}" ;;
       seconds=*) validate_seconds="${field#*=}" ;;
       started-at=*) validate_started_at="${field#*=}" ;;
       ended-at=*) validate_ended_at="${field#*=}" ;;
@@ -449,8 +455,8 @@ if [[ "$kind" == "fix" || "$bundled" == "true" ]]; then
   fi
 fi
 
-# A fix round's run must have started on the round's base, once the round
-# was delegated.
+# A fix round's run must have started on the round's base, or from it once a
+# rebase left it off the branch, and once the round was delegated.
 if [[ "$kind" == "fix" && "$validate_run_dir_given" == "true" ]]; then
   round_record="$worktree/tmp/dev-round-$issue-$round_id.json"
   round_fields="$(jq -r '[(if (.base_sha? | type) == "string" then .base_sha else "" end),
@@ -470,7 +476,8 @@ if [[ "$kind" == "fix" && "$validate_run_dir_given" == "true" ]]; then
   fi
   case "$ancestry" in
     0) ;;
-    1) die run-off-round "run-dir=$validate_run_dir" "head=$run_head" "base-sha=$round_base" ;;
+    1) [[ "$run_orphaned" == "$round_base" ]] \
+         || die run-off-round "run-dir=$validate_run_dir" "head=$run_head" "base-sha=$round_base" ;;
     *) die ancestry-unreadable "run-dir=$validate_run_dir" "head=$run_head" "base-sha=$round_base" ;;
   esac
   [[ "$run_start" =~ ^[0-9]+$ ]] \

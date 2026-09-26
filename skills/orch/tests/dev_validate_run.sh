@@ -455,14 +455,26 @@ ORPHAN_ROWS=(
   "a base still on the branch validates from that base, as before|$RUN|$rebased_b1|r1 |$rebased_b1|"
   "control: a run that keeps the orphaned base spans main's commits|$MUTANT|$pre_rebase|m1 m2 m3 r1 |$pre_rebase|$pre_rebase"
 )
+# The record's orphaned field, empty where the line carries none.
+record_orphaned() { sed -n 's/.* validate-base-orphaned=\([^ ]*\).*/\1/p' <<<"$1"; }
+orphan_dirs=()
 for row in "${ORPHAN_ROWS[@]}"; do
   IFS='|' read -r label script base want_range want_base want_orphaned <<<"$row"
   run_script "$script" --worktree "$proj_orphan" --poll 1 --validate-mode range --base "$base"
   orphan_dir="$(run_dir_of "$OUT")"
+  orphan_dirs+=("$orphan_dir")
   assert_eq "$RC $(output_of "$OUT" | tr '\n' ' ')" "0 $want_range" "$label" "$ERR"
   assert_eq "$(start_line "$orphan_dir" validate-base)|$(start_line "$orphan_dir" validate-base-orphaned)" \
     "$want_base|$want_orphaned" "$label — the start record names the base that ran and the orphaned one" "$ERR"
+  run_script "$RUN" --record --run-dir "$orphan_dir"
+  assert_eq "$RC $(record_orphaned "$OUT")" "0 $want_orphaned" \
+    "$label — the record names the orphaned base a fix receipt binds through" "$ERR"
 done
+# Control: a record that drops the orphaned base names none for the rebased run.
+mutant mutant-record-no-orphan '"${record_orphaned:+ validate-base-orphaned=$record_orphaned}"' '""'
+run_script "$MUTANT" --record --run-dir "${orphan_dirs[0]}"
+assert_eq "$RC $(record_orphaned "$OUT")" "0 " \
+  "control: with the field dropped the rebased run's record names no orphaned base" "$ERR"
 
 # An orphaned base with no origin base branch to take a fork point from is
 # refused, never run over the orphaned range.
@@ -476,9 +488,18 @@ assert_eq "$RC $(grep '^dev-validate-run: ' <<<"$ERR")" "2 dev-validate-run: orp
 proj_orphan_full="$TMP_ROOT/proj-orphan-full"
 cp -R "$proj_orphan" "$proj_orphan_full"
 grep -v '^DEV_VALIDATE_RANGE_CMD' "$proj_orphan/kendex.settings.toml" > "$proj_orphan_full/kendex.settings.toml"
+# It still records the orphaned base, which a fix receipt binds through.
 run_script "$RUN" --worktree "$proj_orphan_full" --poll 1 --validate-mode range --base "$pre_rebase"
-assert_eq "$RC $(output_of "$OUT") $(start_line "$(run_dir_of "$OUT")" validate-mode)" "0 full full" \
-  "an orphaned base in a project with no range command runs the whole battery" "$ERR"
+full_dir="$(run_dir_of "$OUT")"
+assert_eq "$RC $(output_of "$OUT") $(start_line "$full_dir" validate-mode) $(start_line "$full_dir" validate-base-orphaned)" \
+  "0 full full $pre_rebase" \
+  "an orphaned base in a project with no range command runs the whole battery and records the base" "$ERR"
+# Control: an orphaned base recorded only where the range command runs leaves
+# the whole-battery run with none.
+mutant mutant-orphan-range-only '(( ancestor_rc == 0 )) || orphaned_sha="$base_sha"' 'true'
+run_script "$MUTANT" --worktree "$proj_orphan_full" --poll 1 --validate-mode range --base "$pre_rebase"
+assert_eq "$RC $(start_line "$(run_dir_of "$OUT")" validate-base-orphaned)" "0 " \
+  "control: with the base recorded in range mode alone the whole-battery run records none" "$ERR"
 
 # --- A command that ignores SIGTERM is still ended inside the bound -----------
 # Fixtures in this repository trap TERM by construction. The bound's TERM ends

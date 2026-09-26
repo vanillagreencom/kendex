@@ -395,7 +395,7 @@ run_write --worktree "$LW" --issue "$LOCAL_KEY" --round-id "$LOCAL_RID" --item 1
 E="rc=0 written=yes .issue=$LOCAL_KEY .round_id=$LOCAL_RID .size_check.verdict=allowance_missing"
 assert_eq "$(observe "$E")" "$E" "a round under a minted local key stamps with the measured allowance_missing verdict" "$ERR"
 "$RETURN_WRITE" --worktree "$LW" --kind fix --issue "$LOCAL_KEY" --round-id "$LOCAL_RID" --branch main \
-  --commit "$(git -C "$LW" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
+  --commit "$(git -C "$LW" rev-parse HEAD)" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-lw-local" "$LW" "$LOCAL_KEY" "$LOCAL_RID")" --item 1 Applied done >/dev/null
 set +e
 "$CHECK" --worktree "$LW" --issue "$LOCAL_KEY" --round-id "$LOCAL_RID" --expect-items-from-round >/dev/null 2>&1
 local_check_rc=$?

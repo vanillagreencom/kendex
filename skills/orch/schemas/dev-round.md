@@ -79,7 +79,7 @@ A cut round's items name work rather than a finding, so the `reach` row's defini
 ## Readers
 
 - **`dev-artifact-check --expect-items-from-round`** derives the expected items and additions from the record; its gates and refusal reasons are that script's `--help`.
-- **`dev-return-write --kind fix`** reads `base_sha` and `delegated_at`, and names a validation run only when it started at a HEAD that contains that base, no earlier than that time.
+- **`dev-return-write --kind fix`** reads `base_sha` and `delegated_at`, and names a validation run only when it started at a HEAD that contains that base, or records that base as the one a rebase left off the branch, no earlier than that time.
 - **A respawned dev agent** reads `items[]` to recover the item numbers, texts, and reaches.
 - **The tail-reconciliation nudge** points at the record.
 

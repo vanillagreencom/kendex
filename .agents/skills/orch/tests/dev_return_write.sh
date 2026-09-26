@@ -272,6 +272,19 @@ mv "$NEXT_RECORD.next" "$NEXT_RECORD"
 VRUN_NOHEAD="$(validate_run_dir "$TMP_ROOT/validate-run-nohead" range)"
 VRUN_BADHEAD="$(validate_run_dir "$TMP_ROOT/validate-run-badhead" range 0 0000000000000000000000000000000000000000 "$ROUND_DELEGATED")"
 NEXT_ARGS="--kind fix --issue issue-776 --round-id 23-23 --branch b --commit $ROUND_BASE --validate pass --item 1 Applied fixed"
+# A rebase mid-round replays the round's work onto a new parent, so the HEAD a
+# later run starts at no longer contains the round's base, and dev-validate-run
+# records that base as orphaned. REBASED is that HEAD: the base's tree on a
+# commit that does not descend from it.
+REBASED="$(git -C "$BW" commit-tree -p "$IMPL_BASE" -m rebased "$ROUND_BASE^{tree}")"
+orphaned_run_dir() { # DIR ORPHANED START — a range run at REBASED recording ORPHANED
+  validate_run_dir "$1" range 0 "$REBASED" "$3" >/dev/null
+  printf 'validate-base-orphaned=%s\n' "$2" >> "$1/start"
+  printf '%s\n' "$1"
+}
+VRUN_ORPHANED="$(orphaned_run_dir "$TMP_ROOT/validate-run-orphaned" "$ROUND_BASE" "$ROUND_DELEGATED")"
+VRUN_ORPHANED_OTHER="$(orphaned_run_dir "$TMP_ROOT/validate-run-orphaned-other" "$IMPL_BASE" "$ROUND_DELEGATED")"
+VRUN_ORPHANED_EARLY="$(orphaned_run_dir "$TMP_ROOT/validate-run-orphaned-early" "$ROUND_BASE" "$(( ROUND_DELEGATED - 1 ))")"
 # The bound record under fresh round ids, its base intact and its delegation
 # time absent or not a number: dev-round-write wrote no delegated_at before
 # the time binding, so a round delegated across the change holds one.
@@ -283,6 +296,9 @@ BIND_ARGS="--kind fix --issue issue-776 --round-id 21-21 --branch b --commit $RO
 BIND_ROWS=(
   "the implement round's full run is refused, naming the run, its HEAD and the round's base|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_IMPL|rc=2 written=no stderr~dev-return-write:+run-off-round+run-dir=$VRUN_IMPL+head=$IMPL_BASE+base-sha=$ROUND_BASE=true"
   "the round's own range run is accepted and recorded as range|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_BOUND|rc=0 .validate_mode=range"
+  "the round's own run after a rebase left its base off the branch is accepted, the base recorded as orphaned|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_ORPHANED|rc=0 .validate_mode=range"
+  "a rebased run whose orphaned base is another round's is refused, naming its HEAD and the round's base|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_ORPHANED_OTHER|rc=2 written=no stderr~dev-return-write:+run-off-round+run-dir=$VRUN_ORPHANED_OTHER+head=$REBASED+base-sha=$ROUND_BASE=true"
+  "a rebased run recording the round's base but started before the round is refused on the time|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_ORPHANED_EARLY|rc=2 written=no stderr~dev-return-write:+run-before-round+run-dir=$VRUN_ORPHANED_EARLY+start=$(( ROUND_DELEGATED - 1 ))+delegated-at=$ROUND_DELEGATED=true"
   "the previous round's run at the same base is refused for the next round, naming both times|--worktree $BW $NEXT_ARGS --validate-run-dir $VRUN_BOUND|rc=2 written=no stderr~dev-return-write:+run-before-round+run-dir=$VRUN_BOUND+start=$ROUND_DELEGATED+delegated-at=$(( ROUND_DELEGATED + 60 ))=true"
   "a run that records no HEAD is refused on its own key|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_NOHEAD|rc=2 written=no stderr~dev-return-write:+run-headless+run-dir=$VRUN_NOHEAD=true"
   "a HEAD git cannot resolve is refused on its own key|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_BADHEAD|rc=2 written=no stderr~dev-return-write:+ancestry-unreadable+run-dir=$VRUN_BADHEAD=true"
@@ -304,6 +320,8 @@ table \
   "control: without the binding the implement round's full run is recorded for the fix|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_IMPL|rc=0 .validate_mode=full" \
   "control: without the binding a run that records no HEAD is written|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_NOHEAD|rc=0 written=yes" \
   "control: without the binding a HEAD git cannot resolve is written|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_BADHEAD|rc=0 written=yes" \
+  "control: without the binding a rebased run with another round's orphaned base is written|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_ORPHANED_OTHER|rc=0 written=yes" \
+  "control: without the binding a rebased run started before the round is written|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_ORPHANED_EARLY|rc=0 written=yes" \
   "control: without the binding a fix round with no round record is written|--worktree $BW --kind fix --issue issue-776 --round-id 22-22 --branch b --commit $ROUND_BASE --validate pass --item 1 Applied fixed --validate-run-dir $VRUN_BOUND|rc=0 written=yes" \
   "control: without the binding the previous round's run is written for the next round|--worktree $BW $NEXT_ARGS --validate-run-dir $VRUN_BOUND|rc=0 written=yes" \
   "control: without the binding a record with no delegation time is written|--worktree $BW $UNTIMED_ARGS|rc=0 written=yes" \
@@ -314,7 +332,22 @@ rm -f -- "${BW:?}/tmp/dev-return-issue-776-23-23.json" "${BW:?}/tmp/dev-return-i
 TIME_SCRIPTS="$(copy_scripts time-mutant)"
 mutate_file "$TIME_SCRIPTS/dev-return-write" '(( 10#$run_start >= 10#$round_delegated_at )) \' 'true \'
 WRITE="$TIME_SCRIPTS/dev-return-write"
-table "control: without the delegation time the previous round's run is written for the next round|--worktree $BW $NEXT_ARGS --validate-run-dir $VRUN_BOUND|rc=0 written=yes"
+table \
+  "control: without the delegation time the previous round's run is written for the next round|--worktree $BW $NEXT_ARGS --validate-run-dir $VRUN_BOUND|rc=0 written=yes" \
+  "control: without the delegation time a rebased run started before the round is written|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_ORPHANED_EARLY|rc=0 written=yes"
+# Control: with the orphaned base unread, the round's own run after a rebase
+# is refused as another round's.
+ORPHAN_SCRIPTS="$(copy_scripts orphan-mutant)"
+mutate_file "$ORPHAN_SCRIPTS/dev-return-write" '1) [[ "$run_orphaned" == "$round_base" ]] \' '1) false \'
+WRITE="$ORPHAN_SCRIPTS/dev-return-write"
+table "control: without the orphaned base the rebased round's own run is refused|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_ORPHANED|rc=2 written=no stderr~dev-return-write:+run-off-round+run-dir=$VRUN_ORPHANED=true"
+# Control: an orphaned base accepted whatever it names lets another round's
+# rebased run through.
+ANY_ORPHAN_SCRIPTS="$(copy_scripts any-orphan-mutant)"
+mutate_file "$ANY_ORPHAN_SCRIPTS/dev-return-write" '1) [[ "$run_orphaned" == "$round_base" ]] \' '1) [[ -n "$run_orphaned" ]] \'
+WRITE="$ANY_ORPHAN_SCRIPTS/dev-return-write"
+table "control: with any orphaned base accepted another round's rebased run is written|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_ORPHANED_OTHER|rc=0 written=yes"
+rm -f -- "${BW:?}/tmp/dev-return-issue-776-21-21.json"
 # Control: a record check that reads the base alone lets a record with no
 # numeric delegation time through to the time comparison, which refuses it
 # on the wrong key.

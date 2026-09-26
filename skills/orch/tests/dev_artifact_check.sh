@@ -445,7 +445,7 @@ MODE_ROWS=(
   "a full run in a project with a range command is refused, naming both modes^tools/guard --range x^.validate_mode=\"full\"^rc=1 verdict=retry reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=full+round-mode=range=true"
   "a full run in a project with no range command is valid^^.validate_mode=\"full\"^rc=0 reason=valid validate_mode=full"
   "a range run in a project with no range command is refused^^.^rc=1 reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=range+round-mode=full=true"
-  "a failing round that started no run is not judged on a mode^tools/guard --range x^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null^rc=0 verdict=retry reason=valid validate_mode=null"
+  "a failing round that started no run is not judged on a mode^tools/guard --range x^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null | .validate_time=null^rc=0 verdict=retry reason=valid validate_mode=null"
   "a wrong mode outranks a fabricated commit^tools/guard --range x^.validate_mode=\"full\" | .commit=\"$MODE_FAKE_SHA\"^rc=1 reason=mode_mismatch"
 )
 for row in "${MODE_ROWS[@]}"; do
