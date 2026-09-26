@@ -825,6 +825,31 @@ SUCCESSOR_ACCOUNTS=bad run_succeed badsuccessors '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "1|oversee-succeed: invalid-successor-accounts ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=bad" \
   "a malformed successor-account setting is refused before judgement"
+# A preference entry outside harness:rank:effort is refused before any pick,
+# by lib/overseer-launch.sh's parser, the one `oversee launch` reads the same
+# setting with.
+new_caller "$MARK"
+run_succeed badpreference 'claude:one:high' --wait-secs 5
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "1|oversee-succeed: invalid-preference entry=claude:one:high|0" \
+  "a preference entry outside the shape is refused before any pick, nothing opened"
+# The must-fail control: a copy whose library admits any rank word walks the
+# entry, and the tier ladder refuses it instead.
+PREFCTL="$TMP_ROOT/prefctl"
+script_copy "$PREFCTL"
+rm -f -- "${PREFCTL:?}/lib/overseer-launch.sh"
+PREF_LINE='    [[ "$entry" =~ ^(claude|codex):[1-9][0-9]*:[a-z]+$ ]] || { OL_BAD_ENTRY="$entry"; return 1; }'
+assert_eq "$(grep -cxF -- "$PREF_LINE" "$SRC_DIR/lib/overseer-launch.sh")" \
+  "1" \
+  "control: the entry shape is one line of the library"
+FROM="$PREF_LINE" TO='    [[ "$entry" =~ ^(claude|codex):[^:]+:[a-z]+$ ]] || { OL_BAD_ENTRY="$entry"; return 1; }' \
+  awk '$0 == ENVIRON["FROM"] { print ENVIRON["TO"]; next } { print }' \
+  "$SRC_DIR/lib/overseer-launch.sh" > "$PREFCTL/lib/overseer-launch.sh"
+new_caller "$MARK"
+SUCCEED_BIN="$PREFCTL/oversee-succeed" run_succeed prefctl 'claude:one:high' --wait-secs 5
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "1|oversee-succeed: model-failed entry=claude:one:high" \
+  "control: with the shape loosened in the library the succession walks the entry to the tier ladder"
 stage_usage_pair rateleadingzero 40 20 600
 new_caller "$UNDER_MARK"
 WALL_MINUTES=030 run_succeed rateleadingzero '' --check-marks
