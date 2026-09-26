@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Re-adopt the review-gate writer workflow in a checkout a refresh just wrote.
+# `kendex refresh` renders the new writer template but never writes
+# `.github/workflows/`, so every orch step that refreshes a project runs this
+# after the refresh and commits its write with the render.
+set -euo pipefail
+case "${1:-}" in -h|--help)
+  printf '%s\n' 'usage: adopt-writer [CHECKOUT]' \
+    'Run validate-workflow.sh --adopt from the review-gate install in CHECKOUT (default: .).' \
+    'Exit 0: no review-gate, the copy is current or re-installed, or only findings the refresh did not cause.' \
+    'Exit 1: a person edited the copy (workflow-edited), or the check could not run.'
+  exit 0 ;; esac
+status() { printf 'adopt-writer: %s=%s\n' "$1" "$2"; }
+[[ $# -le 1 ]] || { status arguments "$#"; exit 2; }
+cd -- "${1:-.}" || { status checkout 1; exit 1; }
+root="$(git rev-parse --show-toplevel)" || { status checkout 1; exit 1; }
+cd -- "$root" || { status checkout 1; exit 1; }
+# The catalog's copy runs its tracked scripts and a consumer's runs the
+# vendored ones; validate-workflow.sh judges the path from where it runs.
+script=skills/review-gate/scripts/validate-workflow.sh
+[[ -x $script ]] || script=.agents/skills/review-gate/scripts/validate-workflow.sh
+[[ -x $script ]] || { status review-gate absent; exit 0; }
+rc=0
+out="$("$script" --adopt 2>&1)" || rc=$?
+[[ -z $out ]] || printf '%s\n' "$out"
+case "$rc" in
+0) status adopt 0 ;;
+1)
+  # --adopt settles every divergence as re-installed or workflow-edited, so
+  # any other FAIL is a finding the consumer already had before the refresh.
+  if grep -q '^FAIL check=workflow-edited ' <<<"$out"; then
+    status adopt edited; exit 1
+  fi
+  status adopt standing ;;
+*) status adopt "$rc"; exit 1 ;;
+esac
