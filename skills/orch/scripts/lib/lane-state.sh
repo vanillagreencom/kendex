@@ -380,7 +380,11 @@ lane_owned_processes() { # WORKTREE HARNESS
 # signalled, 0 where none was found. On status 1 LANE_STOP_CAUSE names the step
 # that failed and LANE_STOP_PID the process it failed on, empty where the step
 # reads no single process:
-#   worktree-read-failed  neither the worktree nor its parent resolves
+#   worktree-read-failed  the standing worktree does not resolve
+#   worktree-removed      the worktree is no directory and no harness process
+#                         sits in it as its removed path, a parent that does
+#                         not resolve included: nothing is left to signal by
+#                         its directory, which is not a stop that found none
 #   process-read-failed   the ownership read answered nothing (its status 2)
 #   cwd-reader-missing    this host has neither /proc nor lsof to read a
 #                         process's directory (its status 3)
@@ -394,11 +398,16 @@ LANE_STOP_CAUSE=""
 LANE_STOP_PID=""
 LANE_STOP_WAIT_PASSES=50
 lane_stop_owned() { # WORKTREE HARNESS
-  local root pid current state rc signaled="" live="" passes="$LANE_STOP_WAIT_PASSES"
+  local root pid current state rc removed=false signaled="" live="" passes="$LANE_STOP_WAIT_PASSES"
   LANE_STOP_COUNT=0
   LANE_STOP_CAUSE=""
   LANE_STOP_PID=""
-  root="$(lane_worktree_cwd "$1")" || { LANE_STOP_CAUSE=worktree-read-failed; return 1; }
+  [[ -d "$1" ]] || removed=true
+  if ! root="$(lane_worktree_cwd "$1")"; then
+    LANE_STOP_CAUSE=worktree-read-failed
+    [[ "$removed" == false ]] || LANE_STOP_CAUSE=worktree-removed
+    return 1
+  fi
   rc=0
   lane_owned_processes "$1" "$2" || rc=$?
   case "$rc" in
@@ -406,6 +415,10 @@ lane_stop_owned() { # WORKTREE HARNESS
     3) LANE_STOP_CAUSE=cwd-reader-missing; return 1 ;;
     *) LANE_STOP_CAUSE=process-read-failed; return 1 ;;
   esac
+  if [[ "$removed" == true && -z "$LANE_OWNED_PROCESS_PIDS" ]]; then
+    LANE_STOP_CAUSE=worktree-removed
+    return 1
+  fi
   for pid in $LANE_OWNED_PROCESS_PIDS; do
     LANE_STOP_PID="$pid"
     if ! current="$(lane_process_cwd "$pid")"; then

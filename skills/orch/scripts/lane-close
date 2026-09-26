@@ -31,7 +31,8 @@ message() { # REASON FIELD=VALUE...
     lane-live)
       printf '%s\n' 'The lane is not finished. Close-out changed nothing.' \
         'state=walled is a limit banner below the lane'"'"'s last turn that its account reading did not lift. account= is that reading:' \
-        '  room            lanes pick --lane read room, and the banner names a reset still ahead in resets=.' \
+        '  room            lanes pick --lane read room, and the banner names a reset still ahead in resets=,' \
+        '                  or resets=unresolved: a reset clause this host could not resolve, such as one in a zone it has no zoneinfo for.' \
         '  walled          lanes pick --lane read the account at or above ORCH_LANE_MAX_PCT.' \
         '  unmeasured      lanes pick --lane measured nothing for the account; its words are on the lines above.' \
         '  unlisted        the recorded account is no configured lane of the harness.' \
@@ -82,10 +83,11 @@ Usage: lane-close [--state-dir PATH] [--keep-sandbox]
 
 Close one lane recorded in the oversee workflow state. The command refuses a
 live lane. It accepts an exited lane, or an idle lane whose tracker item is
-terminal. A limit banner below the lane's last turn reads it walled only while
-the account the record names stays walled: where `lanes pick --lane` reads
-that account as room and the banner names no dated reset still ahead, the
-banner is a lifted wall and the lane is judged by the rest of its screen.
+terminal. A limit banner below the lane's last turn is passed over only where
+`lanes pick --lane` reads the account the record names as room and the banner
+names no dated reset still ahead and no reset this host cannot resolve; the
+lane is then judged by the rest of its screen. Every other reading keeps the
+lane walled.
 An idle lane's harness is ended by SIGTERM, never by typing into its pane:
 through lane-host stop for a record carrying host, and for a local lane by the
 same stop against the worktree the record's mail_root names. Either stop also
@@ -425,13 +427,14 @@ die() { message pane-read-failed "item=$ITEM" "pane=$pane_id" "cause=$1" >&2; ex
 # screen is weighed against the account the record names, and it stops
 # answering only where that account reads room and the banner names no reset
 # still ahead. WALL_ACCOUNT is the lane-live message's account= word, and
-# WALL_RESETS a dated reset the banner names still ahead, empty otherwise. A
-# clock or weekday reset names no day, and with no sighting to pin one to it
-# leaves the account reading to answer alone.
+# WALL_RESETS a dated reset the banner names still ahead, or `unresolved` for a
+# reset clause that resolved to no time, empty otherwise. A clock or weekday
+# reset names no day, and with no sighting to pin one to it leaves the account
+# reading to answer alone.
 WALL_ACCOUNT=none
 WALL_RESETS=""
 read_wall() {
-  local rc=0 account slice banner key at now
+  local rc=0 account slice banner key at now clause_rc=0
   if ! account="$(record_field account)"; then message record-invalid "item=$ITEM" "field=account" >&2; exit 1; fi
   case "$harness" in claude|codex) ;; *) return 0 ;; esac
   [[ -n "$account" ]] || return 0
@@ -451,13 +454,27 @@ read_wall() {
     || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
   # die has already named the failed scan when this substitution fails.
   key="$(usage_reset_key "$banner")" || exit 1
+  # No key is either a banner naming no reset, which the account answers
+  # alone, or a clause the grammar matched and could not key, such as a zone
+  # this host has no zoneinfo for, which keeps the wall.
+  if [[ -z "$key" ]]; then
+    grep -Eq -- "$USAGE_RESET_ANY_RE" <<<"$banner" || clause_rc=$?
+    case "$clause_rc" in
+      0) WALL_RESETS=unresolved ;;
+      1) ;;
+      *) message pane-read-failed "item=$ITEM" "pane=$pane_id" "cause=reset" >&2; exit 1 ;;
+    esac
+    return 0
+  fi
   [[ "$key" == dated'|'* ]] || return 0
   now="$(date -u +%s)" || { message pane-read-failed "item=$ITEM" "pane=$pane_id" "cause=clock" >&2; exit 1; }
-  if ! at="$(usage_reset_epoch "$key" "$now")"; then
-    message pane-read-failed "item=$ITEM" "pane=$pane_id" "cause=reset" >&2
-    exit 1
+  # A dated clause date rejects, `resets Feb 30, 4pm` among them, resolves to
+  # no time, which is no evidence the reset is behind.
+  if ! at="$(usage_reset_epoch "$key" "$now")" || [[ -z "$at" ]]; then
+    WALL_RESETS=unresolved
+    return 0
   fi
-  [[ -n "$at" && "$at" -gt "$now" ]] || return 0
+  [[ "$at" -gt "$now" ]] || return 0
   WALL_RESETS="$(from_epoch "$at" '%Y-%m-%dT%H:%M:%SZ')" || WALL_RESETS="$at"
 }
 if [[ "$state" == walled ]]; then
