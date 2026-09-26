@@ -121,7 +121,8 @@ ORCH_LANE_SSH_PROMPT_SECS = "60"
 
 # Max concurrent lanes the overseer keeps in flight. open-terminal refuses a
 # fleet launch past it.
-ORCH_OVERSEER_LANES = "3"
+ORCH_OVERSEER_LANES = "12"
+ORCH_OVERSEER_PREFERENCE = "claude:1:high,codex:1:high,claude:2:high,codex:2:high"
 
 # Max live lanes on one account. open-terminal refuses a fleet launch past it;
 # zero turns this cap off.
@@ -258,7 +259,7 @@ REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 # code changes outside the classes always need fresh evidence, and
 # changes-requested / threads still fail closed. CAVEAT: "comments" is
 # line-lexical and cannot see heredocs; "docs" has no such caveat.
-REVIEW_GATE_CARRY_FORWARD = ""
+REVIEW_GATE_CARRY_FORWARD = "docs"
 
 # The kendex render trees "vendored" trusts as kendex output, e.g.
 # ".agents/*;.claude/skills/*" — bytes under them carry unreviewed, so hook
@@ -270,12 +271,12 @@ REVIEW_GATE_VENDORED_PATHS = ""
 
 # Path globs that force fresh review for policy-bearing markdown obeyed
 # mechanically. They disqualify both carry-forward and the docs-only waiver.
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;CLAUDE.md"
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;CLAUDE.md;*CLAUDE.md;.github/*;.bot-instructions/*;.agents/skills/bot-instructions/*;kendex.toml;kendex.settings.toml"
 
 # Exclusion globs DECLARED to match no tracked path yet, so the selftest
 # accepts them; a declaration not in the exclude list is an orphan and
 # fails the selftest.
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ".bot-instructions/*"
 
 # Apply the shared change class to review evidence. The policy table is in
 # skills/review-gate/README.md § Class policy.

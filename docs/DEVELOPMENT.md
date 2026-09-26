@@ -60,4 +60,4 @@ Edit `[bot-instructions]` in `kendex-local.toml`. The installed [bot-instruction
 
 Codex and Copilot retain their existing review capability. Other vendor capabilities are off because their settings are unconfirmed. Local checks prove generated file consistency, not vendor enablement, instruction loading, content exclusions, or automatic review settings. Confirm those through the [settings checklist](../skills/bot-instructions/references/checklist.md#the-settings).
 
-Review carry-forward is disabled here. The current gate accepts configured bot or human evidence and does not require a human specifically for policy-file changes. Changes to review policy need a trusted human's approval under the package's adoption policy.
+Review carry-forward is on for markdown here, and evidence never carries across a change to a path in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`. Whether a change needs evidence at all follows `REVIEW_GATE_CLASS_POLICY`. The current gate accepts configured bot or human evidence and does not require a human specifically for policy-file changes. Changes to review policy need a trusted human's approval under the package's adoption policy.
