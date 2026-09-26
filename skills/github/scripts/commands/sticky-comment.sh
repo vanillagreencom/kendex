@@ -102,12 +102,20 @@ if [[ -n "$BOT_OVERRIDE" || -n "${GH_BOT_USERNAME:-}" ]]; then
 fi
 
 if [[ -z "$PR_NUM" ]]; then
-  echo '{"error": "Usage: sticky-comment.sh <PR#> [--body|--updated-at|--verdict|--analysis]"}' >&2
+  github_error 'Usage: sticky-comment.sh <PR#> [--body|--updated-at|--verdict|--analysis]'
   exit 1
 fi
 
 fetch_comments() {
   gh api "repos/{owner}/{repo}/issues/$PR_NUM/comments" 2>&1
+}
+
+# The first 200 characters of an API response on one line, for a refusal.
+# Windowed in-shell rather than piped into `head`, which closes early on a
+# long response and fails the writer with SIGPIPE under pipefail.
+response_excerpt() {
+  local excerpt="${1:0:200}"
+  printf '%s' "${excerpt//$'\n'/ }"
 }
 
 # Reject anything that is not a comments array before selection runs, so an
@@ -119,13 +127,13 @@ validate_comments_response() {
   fi
   local message
   message=$(jq -r '.message // empty' <<<"$response" 2>/dev/null || true)
-  [ -n "$message" ] || message=$(printf '%s' "$response" | tr '\n' ' ' | head -c 200)
-  jq -nc --arg msg "$message" '{error: $msg}' >&2
+  [ -n "$message" ] || message=$(response_excerpt "$response")
+  github_error "$message"
   return 1
 }
 
 RESPONSE=$(fetch_comments) || {
-  jq -nc --arg msg "API failed: $(printf '%s' "$RESPONSE" | tr '\n' ' ' | head -c 200)" '{error: $msg}' >&2
+  github_error "API failed: $(response_excerpt "$RESPONSE")"
   exit 1
 }
 validate_comments_response "$RESPONSE" || exit 1
@@ -150,14 +158,14 @@ if [[ -z "$STICKY" || "$STICKY" == "null" ]] || ! echo "$STICKY" | jq -e '.id an
   sleep 2
   # A failed or non-array retry is an API failure, not an absent comment.
   RESPONSE=$(fetch_comments) || {
-    jq -nc --arg msg "API failed on retry: $(printf '%s' "$RESPONSE" | tr '\n' ' ' | head -c 200)" '{error: $msg}' >&2
+    github_error "API failed on retry: $(response_excerpt "$RESPONSE")"
     exit 1
   }
   validate_comments_response "$RESPONSE" || exit 1
   STICKY=$(find_sticky_comment "$RESPONSE")
 
   if [[ -z "$STICKY" || "$STICKY" == "null" ]] || ! echo "$STICKY" | jq -e '.id and .body' >/dev/null 2>&1; then
-    echo '{"error": "No sticky comment found"}' >&2
+    github_error 'No sticky comment found'
     exit 1
   fi
 fi

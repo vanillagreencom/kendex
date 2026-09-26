@@ -166,18 +166,18 @@ pr_timeline() {
         case "$1" in
             --help|-h) show_help; exit 0 ;;
             --repo)
-                [ -n "${2:-}" ] || { echo '{"error": "--repo requires OWNER/REPO"}' >&2; exit 1; }
+                [ -n "${2:-}" ] || { github_error '--repo requires OWNER/REPO'; exit 1; }
                 repo_arg="$2"; shift 2 ;;
             --gate-context)
-                [ -n "${2:-}" ] || { echo '{"error": "--gate-context requires a name"}' >&2; exit 1; }
+                [ -n "${2:-}" ] || { github_error '--gate-context requires a name'; exit 1; }
                 gate="$2"; shift 2 ;;
-            -*) jq -nc --arg a "$1" '{error: ("Unknown option: " + $a)}' >&2; exit 1 ;;
+            -*) github_error "Unknown option: $1"; exit 1 ;;
             *)
-                [ -z "$pr_num" ] || { jq -nc --arg a "$1" '{error: ("Unexpected argument: " + $a)}' >&2; exit 1; }
+                [ -z "$pr_num" ] || { github_error "Unexpected argument: $1"; exit 1; }
                 pr_num="$1"; shift ;;
         esac
     done
-    [[ "$pr_num" =~ ^[1-9][0-9]*$ ]] || { echo '{"error": "pr-timeline needs a PR number"}' >&2; exit 1; }
+    [[ "$pr_num" =~ ^[1-9][0-9]*$ ]] || { github_error 'pr-timeline needs a PR number'; exit 1; }
 
     local repo_info owner name data result
     if [ -n "$repo_arg" ]; then
@@ -190,8 +190,8 @@ pr_timeline() {
 
     data=$(gh_graphql "$QUERY" -f owner="$owner" -f name="$name" -F number="$pr_num" -f gate="$gate") || exit 1
     jq -e '.repository.pullRequest != null' >/dev/null <<<"$data" \
-        || { jq -nc --arg n "$pr_num" '{error: ("No PR found: " + $n)}' >&2; exit 1; }
-    result=$(jq -c --arg repo "$owner/$name" "$FILTER" <<<"$data") || { echo '{"error": "pr-timeline: unreadable response"}' >&2; exit 1; }
+        || { github_error "No PR found: $pr_num"; exit 1; }
+    result=$(jq -c --arg repo "$owner/$name" "$FILTER" <<<"$data") || { github_error 'pr-timeline: unreadable response'; exit 1; }
     if jq -e 'has("truncated")' >/dev/null <<<"$result"; then
         jq -c '{error: ("truncated: " + .truncated)}' <<<"$result" >&2
         exit 1
@@ -199,9 +199,9 @@ pr_timeline() {
     # The CI figures, over the checks scope_current_run keeps of each set.
     local head_checks group_checks
     head_checks=$(jq -c '._checks.head' <<<"$result" | scope_current_run) \
-        || { echo '{"error": "pr-timeline: head checks unscoped"}' >&2; exit 1; }
+        || { github_error 'pr-timeline: head checks unscoped'; exit 1; }
     group_checks=$(jq -c '._checks.group' <<<"$result" | scope_current_run) \
-        || { echo '{"error": "pr-timeline: merge-group checks unscoped"}' >&2; exit 1; }
+        || { github_error 'pr-timeline: merge-group checks unscoped'; exit 1; }
     result=$(jq -c --argjson head "$head_checks" --argjson group "$group_checks" "$CI_RUN_JQ_DEFS"'
         def span($r): [$r[] | select(.startedAt != null and .completedAt != null)]
           | if length == 0 then null
@@ -210,7 +210,7 @@ pr_timeline() {
           then ($r | map(.completedAt) | max) else null end;
         del(._checks) | .stamps.ci_green = green($head)
         | .ci_head_secs = span($head) | .ci_merge_group_secs = span($group)' <<<"$result") \
-        || { echo '{"error": "pr-timeline: unreadable checks"}' >&2; exit 1; }
+        || { github_error 'pr-timeline: unreadable checks'; exit 1; }
 
     # first_gate_met, from the status history of every head the PR carried:
     # the GraphQL status names only each head's latest, and the review writer
@@ -219,12 +219,12 @@ pr_timeline() {
     local heads sha statuses first="" earliest
     heads=$(jq -r '.repository.pullRequest | [.commits.nodes[].commit.oid,
         (.timelineItems.nodes[] | select(.__typename == "HeadRefForcePushedEvent") | .beforeCommit.oid // empty)]
-        | unique[]' <<<"$data") || { echo '{"error": "pr-timeline: unreadable response"}' >&2; exit 1; }
+        | unique[]' <<<"$data") || { github_error 'pr-timeline: unreadable response'; exit 1; }
     for sha in $heads; do
         statuses=$(gh_rest "repos/$owner/$name/commits/$sha/statuses?per_page=100" --paginate) || exit 1
         if ! earliest=$(jq -rs --arg gate "$gate" \
             '[.[][] | select(.context == $gate and .state == "success") | .created_at] | min // empty' <<<"$statuses"); then
-            jq -nc --arg sha "$sha" '{error: ("pr-timeline: unreadable statuses for " + $sha)}' >&2
+            github_error "pr-timeline: unreadable statuses for $sha"
             exit 1
         fi
         if [[ -n "$earliest" && ( -z "$first" || "$earliest" < "$first" ) ]]; then

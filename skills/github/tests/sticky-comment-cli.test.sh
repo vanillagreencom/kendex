@@ -74,6 +74,39 @@ assert_fails_with \
     "$STICKY" 123 --verdict --bot 'review-bot[bot]'
 
 echo
+echo "=== sticky-comment.sh refusal carries a response excerpt ==="
+# A refusal quotes the first 200 characters of the response, newlines read as
+# spaces, and the rest is dropped. LONG_TEXT is 20-character lines holding a
+# double quote, far past a pipe buffer, so an excerpt taken by piping the
+# response into an early-closing reader fails its writer: with SIGPIPE ignored
+# as below, that writer's error lands on stderr beside the refusal.
+LINE='gh: "quoted" failed'
+LONG_TEXT="$(for _ in $(seq 16384); do printf '%s\n' "$LINE"; done)"
+EXCERPT=""
+for _ in $(seq 10); do EXCERPT="$EXCERPT$LINE "; done
+gh_stub_fail 'api-repos/{owner}/{repo}/issues/125/comments' 1 "$LONG_TEXT"
+gh_stub_answer 'api-repos/{owner}/{repo}/issues/126/comments' "$LONG_TEXT"
+
+# A row is `label^pr^want`: want is the refusal's whole `.error`.
+ROWS="\
+a failed fetch refuses with the response excerpt^125^API failed: $EXCERPT
+a fetch answering non-JSON refuses with the bare excerpt^126^$EXCERPT"
+before=$((PASS + FAIL))
+while IFS='^' read -r label pr want; do
+    rc=0
+    (trap '' PIPE; "$STICKY" "$pr" --verdict) >/dev/null 2>"$TMPDIR/stderr" || rc=$?
+    # Slurped, so a second line or a writer's error fails the row as surely as
+    # a wrong excerpt.
+    got="rc=$rc $(jq -sc '.' <"$TMPDIR/stderr" 2>/dev/null ||
+        printf 'unparseable: %s' "$(head -c 300 "$TMPDIR/stderr")")"
+    assert_eq "$got" "rc=1 $(jq -nc --arg e "$want" '[{error: $e}]')" "$label"
+done <<<"$ROWS"
+[[ "$((PASS + FAIL))" -gt "$before" ]] || {
+    echo "no refusal row was asserted" >&2
+    exit 2
+}
+
+echo
 echo "=== find-comment.sh review-summary ==="
 out=$("$FIND_COMMENT" 124 --author 'chatgpt-codex-connector[bot]' --review-summary)
 assert_eq "$(jq -r .id <<<"$out")" "4001" "find-comment review-summary returns Codex earliest comment"

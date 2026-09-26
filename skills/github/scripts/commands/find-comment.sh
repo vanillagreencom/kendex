@@ -85,7 +85,7 @@ find_comment() {
                 if [ -z "$pr_num" ]; then
                     pr_num="$1"
                 else
-                    echo "{\"error\": \"Unexpected argument: $1\"}" >&2
+                    github_error "Unexpected argument: $1"
                     exit 1
                 fi
                 shift
@@ -94,16 +94,16 @@ find_comment() {
     done
 
     if [ -z "$pr_num" ]; then
-        echo '{"error": "PR number required"}' >&2
+        github_error 'PR number required'
         exit 1
     fi
 
     if [ -z "$pattern" ] && [ "$review_summary" != "true" ]; then
-        echo '{"error": "--pattern or --review-summary required"}' >&2
+        github_error '--pattern or --review-summary required'
         exit 1
     fi
     if [ -n "$pattern" ] && [ "$review_summary" = "true" ]; then
-        echo '{"error": "--pattern and --review-summary are mutually exclusive"}' >&2
+        github_error '--pattern and --review-summary are mutually exclusive'
         exit 1
     fi
 

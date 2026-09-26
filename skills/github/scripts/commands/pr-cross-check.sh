@@ -190,7 +190,7 @@ main() {
         if [ -f "$verify_script" ]; then
             exec "$verify_script" verify_prs "${pr_nums[@]}"
         else
-            echo '{"error": "verify-lib.sh not found. --verify mode requires a project-specific verification script at lib/verify-lib.sh"}' >&2
+            github_error 'verify-lib.sh not found. --verify mode requires a project-specific verification script at lib/verify-lib.sh'
             exit 1
         fi
     fi

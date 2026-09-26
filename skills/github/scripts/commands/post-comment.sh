@@ -81,7 +81,7 @@ post_comment() {
                 elif [ "$body_set" = false ]; then
                     body="$1"; body_set=true
                 else
-                    echo "{\"error\": \"Unexpected argument: $1\"}" >&2
+                    github_error "Unexpected argument: $1"
                     exit 1
                 fi
                 shift
@@ -91,23 +91,23 @@ post_comment() {
 
     # Resolve body source: --body-file wins when set, else positional/--body.
     if [ "$body_set" = true ] && [ "$body_file_set" = true ]; then
-        echo '{"error": "--body and --body-file are mutually exclusive"}' >&2
+        github_error '--body and --body-file are mutually exclusive'
         exit 1
     fi
     if [ "$body_file_set" = true ]; then
         if [ -z "$body_file" ]; then
-            echo '{"error": "--body-file requires a non-empty path argument"}' >&2
+            github_error '--body-file requires a non-empty path argument'
             exit 1
         fi
         if [ ! -r "$body_file" ]; then
-            echo "{\"error\": \"--body-file path not readable: $body_file\"}" >&2
+            github_error "--body-file path not readable: $body_file"
             exit 1
         fi
         body=$(cat -- "$body_file")
     fi
 
     if [ -z "$body" ]; then
-        echo '{"error": "Comment body required (positional, --body, or --body-file)"}' >&2
+        github_error 'Comment body required (positional, --body, or --body-file)'
         exit 1
     fi
 

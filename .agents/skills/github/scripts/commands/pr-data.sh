@@ -77,21 +77,21 @@ get_pr_data() {
                 ;;
             --format)
                 if [ -z "${2:-}" ]; then
-                    echo '{"error": "--format requires an argument (safe or raw)"}' >&2
+                    github_error '--format requires an argument (safe or raw)'
                     exit 1
                 fi
                 FORMAT="$2"
                 shift 2
                 ;;
             -*)
-                echo "{\"error\": \"Unknown option: $1\"}" >&2
+                github_error "Unknown option: $1"
                 exit 1
                 ;;
             *)
                 if [ "$pr_ref_set" = false ]; then
                     pr_ref="$1"; pr_ref_set=true
                 else
-                    echo "{\"error\": \"Unexpected argument: $1\"}" >&2
+                    github_error "Unexpected argument: $1"
                     exit 1
                 fi
                 shift
@@ -102,7 +102,7 @@ get_pr_data() {
     case "$FORMAT" in
         safe|raw) ;;
         *)
-            echo "{\"error\": \"Invalid format: $FORMAT. Use: safe, raw\"}" >&2
+            github_error "Invalid format: $FORMAT. Use: safe, raw"
             exit 1
             ;;
     esac

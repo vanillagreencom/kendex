@@ -71,7 +71,7 @@ get_pr_threads() {
                 ;;
             --format)
                 if [ -z "${2:-}" ]; then
-                    echo '{"error": "--format requires an argument (safe or raw)"}' >&2
+                    github_error '--format requires an argument (safe or raw)'
                     exit 1
                 fi
                 FORMAT="$2"
@@ -81,12 +81,12 @@ get_pr_threads() {
 # Unknown flags must not fall through to the positional branch and
                 # be resolved as a PR ref, turning a typo into a confusing
                 # "No PR found for: --typo".
-                echo "{\"error\": \"Unknown option: $1\"}" >&2
+                github_error "Unknown option: $1"
                 exit 1
                 ;;
             *)
                 if [ -n "$pr_ref" ]; then
-                    echo "{\"error\": \"Unexpected argument: $1\"}" >&2
+                    github_error "Unexpected argument: $1"
                     exit 1
                 fi
                 pr_ref="$1"
@@ -98,7 +98,7 @@ get_pr_threads() {
     case "$FORMAT" in
         safe|raw) ;;
         *)
-            echo "{\"error\": \"Invalid format: $FORMAT. Use: safe, raw\"}" >&2
+            github_error "Invalid format: $FORMAT. Use: safe, raw"
             exit 1
             ;;
     esac

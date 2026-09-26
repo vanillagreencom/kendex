@@ -85,7 +85,7 @@ dismiss_reviews() {
                 if [[ "$1" =~ ^[0-9]+$ ]] && [ -z "$pr_number" ]; then
                     pr_number="$1"
                 else
-                    echo "{\"error\": \"Unknown argument: $1\"}" >&2
+                    github_error "Unknown argument: $1"
                     exit 1
                 fi
                 shift

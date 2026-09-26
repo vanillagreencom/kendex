@@ -44,6 +44,8 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 source "$_LIB_DIR/gh-auth.sh"
 # shellcheck source=gh-repo.sh
 source "$_LIB_DIR/gh-repo.sh"
+# shellcheck source=json-error.sh
+source "$_LIB_DIR/json-error.sh"
 
 # Get the repository every command built on this lib reads and writes, as
 # {"owner":{"login":…},"name":…}. It goes through the shared resolver so
@@ -55,12 +57,11 @@ get_repo_info() {
     local slug resolve_status=0
     slug=$(kendex_github_resolve_gh_repo "${PROJECT_ROOT:-$PWD}") || resolve_status=$?
     if [ "$resolve_status" -eq 2 ]; then
-        jq -cn --arg slug "$slug" \
-            '{error:("Resolved repository is not owner/name: " + $slug)}' >&2
+        github_error "Resolved repository is not owner/name: $slug"
         return 1
     fi
     if [ "$resolve_status" -ne 0 ]; then
-        echo '{"error": "Not in a GitHub repository or gh not authenticated"}' >&2
+        github_error 'Not in a GitHub repository or gh not authenticated'
         return 1
     fi
     jq -cn --arg owner "${slug%%/*}" --arg name "${slug#*/}" \
@@ -127,7 +128,7 @@ check_gh_auth() {
         return 0
     fi
     if ! kendex_github_keyring_auth_status; then
-        echo '{"error": "gh CLI not authenticated. Run: gh auth login"}' >&2
+        github_error 'gh CLI not authenticated. Run: gh auth login'
         return 1
     fi
 }
@@ -163,10 +164,10 @@ gh_graphql() {
                 # Translate common errors
                 case "$error_type" in
                 NOT_FOUND)
-                    echo '{"error": "Not found"}' >&2
+                    github_error 'Not found'
                     ;;
                 *)
-                    jq -nc --arg msg "GraphQL: $error_msg" '{error: $msg}' >&2
+                    github_error "GraphQL: $error_msg"
                     ;;
                 esac
                 return 1
@@ -187,10 +188,10 @@ gh_graphql() {
 
                 case "$error_type" in
                 NOT_FOUND)
-                    echo '{"error": "Not found"}' >&2
+                    github_error 'Not found'
                     ;;
                 *)
-                    jq -nc --arg msg "$error_msg" '{error: $msg}' >&2
+                    github_error "$error_msg"
                     ;;
                 esac
                 return 1
@@ -205,7 +206,7 @@ gh_graphql() {
             continue
         fi
 
-        echo '{"error": "GitHub API request failed"}' >&2
+        github_error 'GitHub API request failed'
         return 1
     done
 }
@@ -249,7 +250,7 @@ gh_rest() {
         # Handle errors
         case "$response" in
         *"401"* | *"Unauthorized"*)
-            echo '{"error": "GitHub authentication failed"}' >&2
+            github_error 'GitHub authentication failed'
             return 1
             ;;
         *"403"* | *"rate limit"*)
@@ -259,11 +260,11 @@ gh_rest() {
                 attempt=$((attempt + 1))
                 continue
             fi
-            echo '{"error": "GitHub rate limited"}' >&2
+            github_error 'GitHub rate limited'
             return 1
             ;;
         *"404"* | *"Not Found"*)
-            echo '{"error": "Resource not found"}' >&2
+            github_error 'Resource not found'
             return 1
             ;;
         *)
@@ -275,7 +276,7 @@ gh_rest() {
             fi
             local clean_error
             clean_error=$(echo "$response" | head -c 200 | tr '\n' ' ')
-            jq -nc --arg msg "$clean_error" '{error: $msg}' >&2
+            github_error "$clean_error"
             return 1
             ;;
         esac
@@ -532,7 +533,7 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
     while :; do
         page_count=$((page_count + 1))
         if [ "$page_count" -gt 1000 ]; then
-            echo '{"error": "Review thread pagination exceeded its safety bound"}' >&2
+            github_error 'Review thread pagination exceeded its safety bound'
             return 1
         fi
 
@@ -547,7 +548,7 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
                    or ((($t.pageInfo.endCursor | type) == "string")
                        and (($t.pageInfo.endCursor | length) > 0)))
         ' >/dev/null 2>&1 <<<"$page"; then
-            echo '{"error": "GitHub returned malformed review thread pagination data"}' >&2
+            github_error 'GitHub returned malformed review thread pagination data'
             return 1
         fi
 
@@ -561,7 +562,7 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
 
         next_cursor=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.endCursor' <<<"$page") || return 1
         if [ "$next_cursor" = "$cursor" ]; then
-            echo '{"error": "GitHub review thread pagination cursor did not advance"}' >&2
+            github_error 'GitHub review thread pagination cursor did not advance'
             return 1
         fi
         cursor="$next_cursor"
@@ -607,7 +608,7 @@ check_bot_token() {
 get_current_pr() {
     local pr_json
     pr_json=$(gh pr view --json number 2>/dev/null) || {
-        echo '{"error": "No PR found for current branch"}' >&2
+        github_error 'No PR found for current branch'
         return 1
     }
     echo "$pr_json" | jq -r '.number'
@@ -632,7 +633,7 @@ resolve_pr_number() {
     # Try to find PR by branch name
     local pr_json
     pr_json=$(gh pr view "$ref" --json number 2>/dev/null) || {
-        echo "{\"error\": \"No PR found for: $ref\"}" >&2
+        github_error "No PR found for: $ref"
         return 1
     }
     echo "$pr_json" | jq -r '.number'

@@ -8,7 +8,7 @@ Maintainer notes. Consumer docs: [README.md](README.md); the agent contract: [SK
 2. Give it a `show_help()`.
 3. Add the command to the case statement in `scripts/github.sh` and to the Commands table in `SKILL.md`.
 
-Parse arguments with an explicit `while`/`shift` loop that rejects unknown flags and surplus positionals. Emit JSON with `jq -n`, never string interpolation: API error text routinely contains quotes. A failed dependency exits nonzero rather than returning an empty result that reads as "none found".
+Parse arguments with an explicit `while`/`shift` loop that rejects unknown flags and surplus positionals. Emit JSON with `jq -n`, never string interpolation: API error text routinely contains quotes. A `{error}` refusal on stderr goes through `github_error` in `scripts/lib/json-error.sh`, which `github-api.sh` sources; `tests/json-error.test.sh` drives each refusal that echoes a caller's argument, path or `GH_REPO` value with a double quote in it; `tests/edit-comment.test.sh` holds edit-comment's non-numeric id. A failed dependency exits nonzero rather than returning an empty result that reads as "none found".
 
 Subprocess time bounds go through `scripts/lib/bounded.sh`, the one portable wall-clock bound. Token resolution and the keyring fallback are `scripts/lib/gh-auth.sh`, shared with the orch waiters. Check-rollup run scoping is `scripts/lib/ci-run-correlation.sh`, shared with orch `ci-wait`. The process-group leader prefix every bounded child forks through is `scripts/lib/group-leader.sh`, shared with the second-opinion runtime, reviewer's `mutation-stability`, and orch's `tests/waiter_launch.sh`, which takes it for the signal restore rather than for group leadership; all three skills declare `github` required for it.
 
