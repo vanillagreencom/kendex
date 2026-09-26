@@ -928,6 +928,29 @@ jobs:
           fi
           echo "verify document version: $printed"
 
+      # This repository's own install record, judged by the kendex this
+      # checkout builds. Every lock entry's hashes are recomputed from the
+      # render sources, the manifest sections that shape them and the
+      # hashing code in crates/core, so a change to any of those that does
+      # not re-record .kendex-lock.json fails here with one stale row per
+      # entry. The render proof in the `changes` job reads the same verify
+      # but falls back to `standard` rather than failing, which is why the
+      # record is judged here. The source refresh fetches the mirror the
+      # record's source commits are held to and writes nothing into the
+      # checkout. The step runs ahead of the suites: a rendered Python
+      # script leaves its bytecode beside itself, which verify reads as an
+      # edit to that render.
+      - name: the committed install record matches this tree
+        if: matrix.shard == 'rest' && runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          home="$(mktemp -d)"
+          export HOME="$home" KENDEX_REAL_HOME=1 KENDEX_BACKGROUND_REFRESH=off \
+            XDG_CONFIG_HOME="$home/.config" XDG_CACHE_HOME="$home/.cache" \
+            XDG_DATA_HOME="$home/.local/share"
+          kendex source refresh
+          kendex verify --scope project
+
       - name: all other skill suites
         if: matrix.shard == 'rest'
         run: |
