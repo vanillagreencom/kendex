@@ -80,7 +80,9 @@ EOF
 cat >> "$BIN/tmux" <<'EOF'
 case "${1:-}" in
   list-windows) echo 1 ;;
-  list-panes)
+  # The pane writer's identity read, which is none of the counts below: the
+  # launch line goes into the window's own shell.
+  list-panes) if [[ "$*" == *pane_current_command* ]]; then printf '%%1\t4242\tbash\n'; exit 0; fi
     n=1
     if [[ -n "${STUB_MARK:-}" ]]; then
       calls="$STUB_MARK.list-panes.$STUB_TAG"

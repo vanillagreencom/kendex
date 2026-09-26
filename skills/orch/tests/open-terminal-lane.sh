@@ -109,6 +109,10 @@ STUBEOF
 # of dying, so the pane stays in ssh and no retyped line can reach a shell.
 # $OT_SSH_SCREEN names a file holding the connected screen, several lines and
 # not one, which is what a login printing a banner above its prompt draws.
+# $OT_COMPOSER_ON_ENTER=N is a harness whose first screen lacks the brief: the
+# pane shows a prompt until the log holds N Enter keystrokes, a ready, empty
+# composer at N, and past N the first line pasted after the Nth Enter, as the
+# turn it submitted.
 cat > "$OT_STUB_BIN/tmux" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_TMUX_LOG"
@@ -130,7 +134,7 @@ n=0; [[ -f "${OT_TMUX_PANES:-}" ]] && n="$(cat "$OT_TMUX_PANES")"
 eval "$(awk '
   /^clear; ssh / { if (state != "ssh") { conn++; state = "ssh"; reads = 0 } ; next }
   /^send-keys .* C-c$/ { if (ENVIRON["OT_SSH_IGNORES_INTERRUPT"] == "") state = "shell"; next }
-  /pane_current_command/ { if (state == "ssh") reads++ }
+  /^display-message .*pane_current_command/ { if (state == "ssh") reads++ }
   END { printf "state=%s connections=%d reads=%d\n", (state == "ssh" ? "ssh" : "shell"), conn + 0, reads + 0 }
 ' "$OT_TMUX_LOG")"
 # A connection the row says has outlived its welcome: the pane is back at its
@@ -144,8 +148,21 @@ case "${1:-}" in
     echo "$OT_TMUX_SERVER_PID %$n" ;;
   list-panes)
     # The pane ids alone where the read asks for nothing more, as tmux prints them.
+    # The pane writer's identity read also asks what each pane runs, replayed
+    # for the newest window since only it is written to: ssh while a dial
+    # holds it, the harness once a local launch line has been typed, and the
+    # window's own shell before either and after an interrupt.
+    running="$(awk '
+      /^new-window / { s = "bash" }
+      /^clear; ssh / { s = "ssh"; next }
+      /^send-keys .* C-c$/ { if (ENVIRON["OT_SSH_IGNORES_INTERRUPT"] == "") s = "bash"; next }
+      /^clear; / { s = "claude" }
+      END { print (s == "" ? "bash" : s) }
+    ' "$OT_TMUX_LOG")"
     i=1; while [[ "$i" -le "$n" ]]; do
-      if [[ "${*: -1}" == '#{pane_id}' ]]; then echo "%$i"; else echo "$OT_TMUX_SERVER_PID %$i"; fi
+      if [[ "${*: -1}" == '#{pane_id}' ]]; then echo "%$i"
+      elif [[ "$*" == *pane_current_command* ]]; then printf '%%%s\t%s\t%s\n' "$i" "$OT_TMUX_SERVER_PID" "$running"
+      else echo "$OT_TMUX_SERVER_PID %$i"; fi
       i=$((i + 1))
     done ;;
   list-windows) echo "1" ;;
@@ -183,9 +200,21 @@ case "${1:-}" in
     # The connected screen a row spells out, from a file because a screen is
     # several lines while run_ot's env list is one.
     elif [[ "$state" == ssh && -n "${OT_SSH_SCREEN:-}" ]]; then cat "$OT_SSH_SCREEN"
+    elif [[ -n "${OT_COMPOSER_ON_ENTER:-}" ]]; then
+      enters="$(grep -c '^send-keys .* Enter$' "$OT_TMUX_LOG")" || true
+      if (( enters < OT_COMPOSER_ON_ENTER )); then printf 'dev@lane:~$\n'
+      elif (( enters == OT_COMPOSER_ON_ENTER )); then printf '\xe2\x9d\xaf\xc2\xa0\n'
+      else
+        awk -v n="$OT_COMPOSER_ON_ENTER" '
+          /^send-keys .* Enter$/ { e++; next }
+          loaded { if (e >= n) { print; exit } loaded = 0; next }
+          /^load-buffer / { loaded = 1 }' "$OT_TMUX_LOG"
+      fi
     elif [[ -n "${OT_LAUNCHED_GATE:-}" && ! -e "$OT_LAUNCHED_GATE" ]]; then printf 'dev@lane:~$\n'
     else printf '%s\n' "${OT_PANE_TEXT:-dev@lane:~\$}"; fi ;;
-  load-buffer) cat "${!#}" >> "$OT_TMUX_LOG" ;;
+  # The pasted text on a line of its own: a paste carries no newline, and the
+  # next call's log line would otherwise run on from it.
+  load-buffer) { cat "${!#}"; echo; } >> "$OT_TMUX_LOG" ;;
 esac
 exit 0
 STUBEOF
@@ -1230,7 +1259,7 @@ assert_eq "$(observe "rc=1 tmuxfailed=operation=capture-pane,item=CC-133 promptm
 # finds the pane back at its shell. Read against ORCH_TMUX_VERIFY_SECS the same
 # run makes five looks, so a wait that took the wrong bound cannot pass here.
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=3;ORCH_TMUX_VERIFY_SECS=1;OT_SSH_CONNECTS_ON=3;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-126
-assert_eq "$(observe "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=2") polls=$(typed pane_current_command)" \
+assert_eq "$(observe "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=2") polls=$(grep -c '^display-message .*pane_current_command' "$RUN/tmux.log" || true)" \
   "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=2 polls=9" \
   "both waits poll on the ssh bound, which the run's look count separates from the verification timeout"
 
@@ -1243,7 +1272,7 @@ assert_eq "$(observe "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prom
 # run makes four looks per wait, where the harness bound would make two in the
 # second wait and eight looks in all.
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=3;ORCH_TMUX_VERIFY_SECS=1;OT_SSH_CONNECTS_ON=2;OT_SSH_IGNORES_INTERRUPT=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-134
-assert_eq "$(observe "rc=1 promptmissing=item=CC-134,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=1") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT") polls=$(typed pane_current_command)" \
+assert_eq "$(observe "rc=1 promptmissing=item=CC-134,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=1") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT") polls=$(grep -c '^display-message .*pane_current_command' "$RUN/tmux.log" || true)" \
   "rc=1 promptmissing=item=CC-134,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=1 ssh=1 int=1 polls=8" \
   "a client that keeps the pane through the interrupt is refused on its one dial, the wait for the shell spending the ssh bound"
 # The interrupt is a keystroke that can fail on this machine like any other,
@@ -1293,6 +1322,33 @@ run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE" --harness c
 assert_eq "$(observe "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc")" \
   "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc" \
   "the one hosted shape that renders a brief still refuses that broken timeout before any create"
+
+# A hosted lane's composer nudge and brief re-paste go into a pane ssh holds,
+# so both are written expecting ssh: the harness runs on the host, never under
+# this pane. The pane shows no brief after the launch line, then a ready
+# composer once the nudge's Enter lands, then the brief the second paste sent.
+BRIEF_ROW="ORCH_LANE_HOST=$HOST_STUB;OT_COMPOSER_ON_ENTER=3;$CHOICE"
+brief_resend() { # ITEM
+  printf 'rc=%s enters=%s brief=%s redelivered=%s refused=%s' "$RC" "$(typed "send-keys -t %1 Enter")" \
+    "$(grep -cxF -- "/orch start $1" "$RUN/tmux.log" || true)" "$(said "open-terminal: brief-redelivered item=$1")" \
+    "$(awk '$1 == "open-terminal:" && $2 == "pane-refused" { print $3, $4; exit }' <<<"$OUT" | tr ' ' ',')"
+}
+run_ot "$BRIEF_ROW" --harness claude --lane "$H/.eclaude" --repo o/r CC-151
+assert_eq "$(brief_resend CC-151)" "rc=0 enters=4 brief=1 redelivered=1 refused=" \
+  "a hosted claude lane whose first screen lacks the brief is nudged and re-sent the brief through its ssh pane"
+
+# Control: the same launch against a copy that expects the harness in that
+# pane has its nudge refused, so the brief is never re-sent and the lane fails.
+# run_ot reads $OPEN_TERMINAL, so the mutant takes that name for its row and
+# the shipped path is restored after.
+BRIEF_OT_SHIPPED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$(mutant_scripts ctl-running-ssh/orch open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-running-ssh/orch"
+mutate_file "$OPEN_TERMINAL" '    running=ssh' '    running="$HARNESS"'
+run_ot "$BRIEF_ROW" --harness claude --lane "$H/.eclaude" --repo o/r CC-152
+assert_eq "$(brief_resend CC-152)" "rc=1 enters=2 brief=0 redelivered=0 refused=operation=nudge,item=CC-152" \
+  "control: a hosted lane expecting its harness under the ssh pane has its nudge refused and never gets the brief"
+OPEN_TERMINAL="$BRIEF_OT_SHIPPED"
 
 echo "=== the claim store belongs to the caller's checkout ==="
 # `.agents` in a worktree points back at the main checkout, so a root derived

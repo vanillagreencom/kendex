@@ -43,7 +43,6 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="$SCRIPTS_DIR/open-terminal"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
-REAL_TMUX="$(command -v tmux)" || exit 1
 # shellcheck source=lib/waiter-assertions.sh
 source "$TEST_DIR/lib/waiter-assertions.sh"
 # mutant_scripts and mutate_file, the two halves of the control below.
@@ -97,6 +96,14 @@ fi
 case "${1:-}" in
   list-windows) echo "1" ;;
   new-window) echo "%7" ;;
+  # The pane writer's identity read: the window's shell until the launch line
+  # is pasted, the harness after it, or $OT_PANE_RUNNING throughout.
+  list-panes)
+    if [[ "$*" == *pane_current_command* ]]; then
+      running="${OT_PANE_RUNNING:-bash}"
+      [[ -n "${OT_PANE_RUNNING:-}" ]] || ! grep -q '^paste-buffer ' "$OT_TMUX_LOG" || running=claude
+      printf '%%7\t4242\t%s\n' "$running"
+    fi ;;
   load-buffer) printf 'loaded-text %s\n' "$(cat "${!#}")" >> "$OT_TMUX_LOG" ;;
   display-message) echo 0 ;;
   capture-pane)
@@ -450,7 +457,19 @@ launch_table \
   "launch keystrokes failing on a briefless lane is a failed lane too|tmux-codex|OT_TMUX_FAIL=send-keys|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
   "a buffer load failure is a failed launch|tmux-codex|OT_TMUX_FAIL=load-buffer|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
   "a buffer paste failure is a failed launch|tmux-codex|OT_TMUX_FAIL=paste-buffer|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
-  "a pane mode read failure is a failed launch|tmux-codex|OT_TMUX_FAIL=display-message|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=true out~open-terminal:+summary+launched=1=false"
+  "a pane mode read failure is a failed launch|tmux-codex|OT_TMUX_FAIL=display-message|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
+  "a window not at its shell is refused as such, with nothing typed, and never called a tmux failure|tmux-codex|OT_PANE_RUNNING=vim|-|-|rc=1 stderr~open-terminal:+pane-refused+operation=paste+item=CC-737=true stderr~open-terminal:+tmux-failed=false enters=0 out~open-terminal:+summary+launched=1=false"
+
+# The refusal arm's control: the same launch against a copy whose refusal
+# falls to the write-failure arm reports a tmux fault on a window that typed
+# nothing.
+REFUSAL_OT="$(mutant_scripts refusal-as-failure open-terminal)/open-terminal" || exit 1
+git -C "$TMP_ROOT/refusal-as-failure" init -q
+orch_fixture_shared_libs "$TMP_ROOT/refusal-as-failure"
+mutate_file "$REFUSAL_OT" '    1) ot_message pane-refused' '    9) ot_message pane-refused'
+OT_UNDER_TEST="$REFUSAL_OT"
+launch_table "control: a refusal read as a write failure is reported as tmux-failed|tmux-codex|OT_PANE_RUNNING=vim|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=true"
+OT_UNDER_TEST="$OT"
 
 echo "=== open-terminal claude handoff: the verify timeout ==="
 # ORCH_TMUX_VERIFY_SECS is validated where it is read, and only there: a
@@ -470,22 +489,6 @@ launch_table \
   "a codex tmux lane with no --lane reads the timeout nowhere and is not aborted by a broken one|tmux-codex|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS=false" \
   "a codex lane launch refuses a broken timeout, which its account check waits on|tmux-codex-lane|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=1 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS+value=abc=true"
 
-tmux() { "$REAL_TMUX" -L "ot-paste-$$" "$@"; }
-pane="$(tmux -f /dev/null new-session -d -P -F '#{pane_id}' "cat >> '$TMP_ROOT/received'")"
-trap 'tmux kill-server; rm -rf "$TMP_ROOT"' EXIT
-sed -n '/^tmux_enter()/,/^tmux_wait_composer()/p' "$SRC_OT" | sed '$d' > "$TMP_ROOT/paste.sh"
-source "$TMP_ROOT/paste.sh"
-for mode in legacy-copy copy normal; do
-  : > "$TMP_ROOT/received"
-  if [[ "$mode" != normal ]]; then tmux copy-mode -t "$pane"; fi
-  if [[ "$mode" == legacy-copy ]]; then
-    tmux send-keys -t "$pane" -l hello
-    tmux send-keys -t "$pane" Enter
-  else tmux_paste "$pane" hello; fi
-  sleep 1
-  expected=hello; [[ "$mode" != legacy-copy ]] || expected=""
-  assert_eq "$(cat "$TMP_ROOT/received")" "$expected" "program input: $mode"
-done
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

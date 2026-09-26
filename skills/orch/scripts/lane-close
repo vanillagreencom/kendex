@@ -463,15 +463,15 @@ case "$state" in
 esac
 
 pane_now_exited() {
-  local row screen current_pid current_cmd current_state
-  if ! row="$(tmux list-panes -a -F '#{pane_id}'$'\t''#{pane_pid}'$'\t''#{pane_current_command}' 2>/dev/null \
-    | awk -F'\t' -v pane="$pane_id" '$1 == pane { print }')"; then
-    return 2
-  fi
-  [[ -n "$row" ]] || return 0
-  IFS=$'\t' read -r _ current_pid current_cmd <<<"$row"
+  local screen current_state rc=0
+  lane_pane_by_id "$pane_id" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) return 0 ;;
+    *) return 2 ;;
+  esac
   screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" || return 2
-  lane_state current_state listed "$current_cmd" "$current_pid" "$screen" || return 2
+  lane_state current_state listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$screen" || return 2
   [[ "$current_state" == exited ]]
 }
 

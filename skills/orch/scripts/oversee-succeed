@@ -398,6 +398,8 @@ kendex_load_project_env "$PROJECT_ROOT" 2>"$DEP_ERR" || die settings-rejected "p
 source "$SCRIPT_DIR/lib/lane-context.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
+# shellcheck source=lib/pane-write.sh
+source "$SCRIPT_DIR/lib/pane-write.sh"
 # lib/lane-launch.sh sources lib/lane-claims.sh itself, the normaliser its
 # account check compares through; lane_account_id below is the one place this
 # script reaches for it.
@@ -1294,8 +1296,7 @@ spec="$(tmux new-window -d -a -t "$CALLER_WINDOW" -n overseer -c "$CALLER_PATH" 
 read -r SUCC_PANE SUCC_WINDOW <<<"$spec"
 [[ -n "$SUCC_WINDOW" ]] || abandon launch-failed step=new-window
 
-tmux send-keys -t "$SUCC_PANE" -l -- "$cmd" 2>"$DEP_ERR" || abandon launch-failed step=send-keys
-tmux send-keys -t "$SUCC_PANE" Enter 2>"$DEP_ERR" || abandon launch-failed step=enter
+pane_write pane "$SUCC_PANE" shell text "$cmd" 2>"$DEP_ERR" || abandon launch-failed step=pane-write
 
 # The account the pane is REALLY on, asked TWICE, and only the second answers.
 #
