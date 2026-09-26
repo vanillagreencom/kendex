@@ -13,13 +13,8 @@ trap 'rm -rf "$TMP"' EXIT
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 VRUN="$(validate_run_dir "$TMP/validate-run" full)"
 
-PASS=0
-FAIL=0
-ok()   { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad()  { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
-check() { # check <desc> <expected> <actual>
-  if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1 (expected '$2', got '$3')"; fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # --- Fixture worktree with a real git repo so commit checks run ---
 WT="$TMP/wt"
@@ -33,36 +28,36 @@ export ORCH_STATE_DIR="$WT/tmp"
 # --- dev-artifact-check verdicts ---
 v() { "$SCRIPTS/dev-artifact-check" --worktree "$WT" --issue T-1 --round-id "$1" 2>/dev/null | jq -r '.verdict'; }
 
-check "no artifact for the round → wait" "wait" "$(v r-none || true)"
+assert_eq "$(v r-none || true)" "wait" "no artifact for the round → wait"
 
 "$SCRIPTS/dev-return-write" --worktree "$WT" --kind implement --issue T-1 --round-id r-good \
   --branch main --commit "$SHA" --validate pass --validate-run-dir "$VRUN" --no-summary --summary ok >/dev/null
-check "valid artifact → accept" "accept" "$(v r-good)"
+assert_eq "$(v r-good)" "accept" "valid artifact → accept"
 
 "$SCRIPTS/dev-return-write" --worktree "$WT" --kind implement --issue T-1 --round-id r-failing \
   --branch main --commit "$SHA" --validate "FAILING: cargo test" --no-summary --summary ok >/dev/null
-check "validate FAILING → retry" "retry" "$(v r-failing)"
+assert_eq "$(v r-failing)" "retry" "validate FAILING → retry"
 
 printf '{"round_id":"r-broken"}' > "$WT/tmp/dev-return-T-1-r-broken.json"
-check "schema-invalid artifact → retry" "retry" "$(v r-broken || true)"
+assert_eq "$(v r-broken || true)" "retry" "schema-invalid artifact → retry"
 
 # --- review-artifact-check --path ---
 p="$("$SCRIPTS/review-artifact-check" --path "$WT" reviewer-test)"
 if [[ "$p" =~ ^"$WT"/tmp/review-reviewer-test-[0-9]{8}-[0-9]{6}\.json$ ]]; then
-  ok "--path prints the canonical timestamped path"
+  pass "--path prints the canonical timestamped path"
 else
-  bad "--path prints the canonical timestamped path (got '$p')"
+  fail "--path prints the canonical timestamped path (got '$p')"
 fi
-[[ -d "$WT/tmp" ]] && ok "--path creates tmp/" || bad "--path creates tmp/"
+[[ -d "$WT/tmp" ]] && pass "--path creates tmp/" || fail "--path creates tmp/"
 if "$SCRIPTS/review-artifact-check" --path "$WT" 'evil/../name' >/dev/null 2>&1; then
-  bad "--path rejects a path-unsafe agent name"
+  fail "--path rejects a path-unsafe agent name"
 else
-  ok "--path rejects a path-unsafe agent name"
+  pass "--path rejects a path-unsafe agent name"
 fi
 if "$SCRIPTS/review-artifact-check" --path "$TMP/nope" reviewer-test >/dev/null 2>&1; then
-  bad "--path rejects a missing worktree"
+  fail "--path rejects a missing worktree"
 else
-  ok "--path rejects a missing worktree"
+  pass "--path rejects a missing worktree"
 fi
 
 # --- ci-wait none-configured route (gh fully stubbed) ---
@@ -91,17 +86,17 @@ chmod +x "$BIN/gh"
 
 out=$(cd "$WT" && PATH="$BIN:$PATH" env -u GH_REPO GH_STUB_LOG="$TMP/gh.log" \
   CI_WAIT_NO_CHECKS_GRACE=1 GH_TOKEN=stub "$SCRIPTS/ci-wait" 1 1 5 --json 2>/dev/null || true)
-check "no workflows + no protection + no rules → verdict none" "none" "$(jq -r '.verdict // empty' <<<"$out")"
-check "none-configured is status complete" "complete" "$(jq -r '.status // empty' <<<"$out")"
+assert_eq "$(jq -r '.verdict // empty' <<<"$out")" "none" "no workflows + no protection + no rules → verdict none"
+assert_eq "$(jq -r '.status // empty' <<<"$out")" "complete" "none-configured is status complete"
 # This route builds its own result object rather than routing through
 # emit_result, so the repository every other verdict names is asserted here
 # too, on both the JSON object and the plain line.
-check "none-configured names the repository it read" "owner/repo" "$(jq -r '.repo // empty' <<<"$out")"
+assert_eq "$(jq -r '.repo // empty' <<<"$out")" "owner/repo" "none-configured names the repository it read"
 
 text=$(cd "$WT" && PATH="$BIN:$PATH" env -u GH_REPO GH_STUB_LOG="$TMP/gh-text.log" \
   CI_WAIT_NO_CHECKS_GRACE=1 GH_TOKEN=stub "$SCRIPTS/ci-wait" 1 1 5 2>/dev/null || true)
-check "the plain none-configured line names its base and repository" \
-  "ci-wait: none-configured base=main repo=owner/repo" "${text%%$'\n'*}"
+assert_eq "${text%%$'\n'*}" \
+  "ci-wait: none-configured base=main repo=owner/repo" "the plain none-configured line names its base and repository"
 
 # Teeth: with active workflows present the shortcut must NOT fire — the run
 # falls through to the grace path and, at grace 1s with no checks, errors out.
@@ -109,9 +104,9 @@ out2=$(cd "$WT" && PATH="$BIN:$PATH" env -u GH_REPO GH_STUB_WORKFLOWS=3 \
   CI_WAIT_NO_CHECKS_GRACE=1 GH_TOKEN=stub "$SCRIPTS/ci-wait" 1 1 5 --json 2>/dev/null || true)
 v2="$(jq -r '.verdict // empty' <<<"$out2")"
 if [[ "$v2" != "none" ]]; then
-  ok "active workflows suppress the none-configured shortcut (teeth)"
+  pass "active workflows suppress the none-configured shortcut (teeth)"
 else
-  bad "active workflows suppress the none-configured shortcut (teeth)"
+  fail "active workflows suppress the none-configured shortcut (teeth)"
 fi
 
 echo

@@ -24,30 +24,8 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 SUBMIT_DOC="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
 
-PASS=0
-FAIL=0
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_file_contains() {
-  local file="$1" needle="$2" name="$3"
-  if grep -qF "$needle" "$file"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing in %s: %s\n' "$name" "$file" "$needle"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 echo "=== workflow-state set raw-string semantics (kendex#705) ==="
 
@@ -157,11 +135,9 @@ while IFS= read -r doc; do
 done < <(find "$REPO_ROOT/skills" -name '*.md' | LC_ALL=C sort)
 
 if [[ -z "$offenders" ]]; then
-  PASS=$((PASS + 1))
-  printf '  ok    %s\n' "no skills doc passes workflow-state set a quote-wrapped value"
+  pass "no skills doc passes workflow-state set a quote-wrapped value"
 else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  %s\n' "workflow-state set lines carry '\"…\"'-wrapped values:"
+  fail "workflow-state set lines carry '\"…\"'-wrapped values:"
   printf '%s' "$offenders" | sed 's/^/          /'
 fi
 

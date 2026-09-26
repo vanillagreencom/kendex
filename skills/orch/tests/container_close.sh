@@ -6,13 +6,8 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
-PASS=0
-FAIL=0
-
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
-assert_eq() { [[ "$1" == "$2" ]] && ok "$3" || { printf '        expected: %s\n        got:      %s\n' "$2" "$1"; fail "$3"; }; }
-assert_contains() { grep -Fq "$2" "$1" && ok "$3" || fail "$3"; }
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 SANDBOX="$TMP_ROOT/repo"
 mkdir -p "$SANDBOX/skills/orch/scripts" "$SANDBOX/skills/linear/scripts" "$TMP_ROOT/bin"
@@ -144,14 +139,14 @@ reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Todo","state_type":"unstarted"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 out="$(run_close)"
 assert_eq "$out" "deferred CHILD-2" "pending child defers closure and is named"
-[[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "pending child prevents parent mutation" || fail "pending child prevents parent mutation"
+[[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && pass "pending child prevents parent mutation" || fail "pending child prevents parent mutation"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-3","title":"three","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 out="$(run_close)"
 assert_eq "$out" "deferred CHILD-2 CHILD-3" "canceled descendants defer closure and are named"
-[[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "canceled descendants prevent parent mutation" || fail "canceled descendants prevent parent mutation"
-grep -Fq 'issues:validate-completion' "$FAKE_LINEAR_ROOT/linear.calls" && fail "canceled descendants stop before validation" || ok "canceled descendants stop before validation"
+[[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && pass "canceled descendants prevent parent mutation" || fail "canceled descendants prevent parent mutation"
+assert_file_not_contains "$FAKE_LINEAR_ROOT/linear.calls" 'issues:validate-completion' "canceled descendants stop before validation"
 
 # The suite's one must-fail control: the canceled-descendant refusal removed.
 CANCELED_MUTANT="$SANDBOX/skills/orch/scripts/container-close-canceled-mutant"
@@ -173,8 +168,8 @@ out="$(run_close)"
 assert_eq "$out" "closed PARENT-1" "completed children close the container"
 assert_eq "$(cat "$FAKE_LINEAR_ROOT/complete.args")" "summary" "first completion posts the bundle summary"
 assert_eq "$(cat "$FAKE_LINEAR_ROOT/summary.calls")" "summary" "first completion posts one summary"
-assert_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-1 ✓ one — PR #101" "summary preserves the first child PR"
-assert_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-2 ✓ two — PR #102" "summary preserves the second child PR"
+assert_file_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-1 ✓ one — PR #101" "summary preserves the first child PR"
+assert_file_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-2 ✓ two — PR #102" "summary preserves the second child PR"
 out="$(run_close)"
 assert_eq "$out" "closed PARENT-1" "completed parent returns idempotently"
 assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "completed retry does not mutate again"
@@ -183,7 +178,7 @@ reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 touch "$FAKE_LINEAR_ROOT/fail.complete.once"
 rc=0; run_close >/dev/null 2>"$TMP_ROOT/partial.err" || rc=$?
-[[ $rc -ne 0 ]] && ok "summary-success state-failure remains retryable" || fail "summary-success state-failure remains retryable"
+[[ $rc -ne 0 ]] && pass "summary-success state-failure remains retryable" || fail "summary-success state-failure remains retryable"
 assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" "In Progress" "partial completion leaves the parent open"
 assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/summary.calls" | tr -d ' ')" "1" "partial completion posts one summary"
 out="$(run_close)"
@@ -197,8 +192,8 @@ for validation_mode in exit false string_all_ok missing_parent duplicate_parent 
   printf '%s\n' "$validation_mode" > "$FAKE_LINEAR_ROOT/validation.mode"
   printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
   rc=0; run_close >/dev/null 2>"$TMP_ROOT/validation-$validation_mode.err" || rc=$?
-  [[ $rc -ne 0 ]] && ok "$validation_mode validation refuses closure" || fail "$validation_mode validation refuses closure"
-  [[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "$validation_mode validation prevents parent mutation" || fail "$validation_mode validation prevents parent mutation"
+  [[ $rc -ne 0 ]] && pass "$validation_mode validation refuses closure" || fail "$validation_mode validation refuses closure"
+  [[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && pass "$validation_mode validation prevents parent mutation" || fail "$validation_mode validation prevents parent mutation"
 done
 
 # The summary is written once — a later run short-circuits on the completed
@@ -213,9 +208,9 @@ for gh_mode in exit invalid; do
   printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
   rc=0; run_close >/dev/null 2>"$TMP_ROOT/gh-$gh_mode.err" || rc=$?
   assert_eq "$rc" "1" "$gh_mode PR lookup fails the close"
-  [[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "$gh_mode PR lookup prevents parent mutation" || fail "$gh_mode PR lookup prevents parent mutation"
+  [[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && pass "$gh_mode PR lookup prevents parent mutation" || fail "$gh_mode PR lookup prevents parent mutation"
   assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" "In Progress" "$gh_mode PR lookup leaves the parent open for the retry"
-  grep -Fq 'PR' "$TMP_ROOT/gh-$gh_mode.err" && ok "$gh_mode PR lookup names the failure on stderr" || fail "$gh_mode PR lookup names the failure on stderr"
+  assert_file_contains "$TMP_ROOT/gh-$gh_mode.err" 'PR' "$gh_mode PR lookup names the failure on stderr"
 done
 printf '' > "$FAKE_LINEAR_ROOT/gh.mode"
 
@@ -225,7 +220,7 @@ printf '' > "$FAKE_LINEAR_ROOT/gh.mode"
 reset_state
 printf '%s\n' '[{"id":"CHILD-9","title":"nine","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 assert_eq "$(run_close)" "closed PARENT-1" "a valid lookup with no match closes the container"
-assert_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-9 ✓ nine — PR unavailable" "a valid lookup with no match records the reference unavailable"
+assert_file_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-9 ✓ nine — PR unavailable" "a valid lookup with no match records the reference unavailable"
 
 # A missing `gh` is the one permanent cause: no retry of this close can ever
 # produce the reference, so it fails open — but with its own token, so the
@@ -244,19 +239,19 @@ for path_dir in "${path_dirs[@]}"; do
 done
 PATH="$TMP_ROOT/bin-nogh" command -v gh >/dev/null 2>&1 \
   && fail "the gh-less PATH still resolves gh" \
-  || ok "the gh-less PATH resolves no gh"
+  || pass "the gh-less PATH resolves no gh"
 reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 rc=0; out="$(cd "$CALLER_ONE" && PATH="$TMP_ROOT/bin-nogh" "$SCRIPT" "$SANDBOX" PARENT-1 2>"$TMP_ROOT/gh-missing.err")" || rc=$?
 assert_eq "$rc" "0" "a missing gh still closes the container"
 assert_eq "$out" "closed PARENT-1" "a missing gh prints the close"
-assert_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-1 ✓ one — PR lookup failed" "a missing gh records a token distinct from unavailable"
-assert_contains "$TMP_ROOT/gh-missing.err" "container-close: gh-missing child-id=CHILD-1" "a missing gh names its permanent cause on stderr"
+assert_file_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-1 ✓ one — PR lookup failed" "a missing gh records a token distinct from unavailable"
+assert_file_contains "$TMP_ROOT/gh-missing.err" "container-close: gh-missing child-id=CHILD-1" "a missing gh names its permanent cause on stderr"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":{"bad":true},"state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 rc=0; run_close >/dev/null 2>"$TMP_ROOT/invalid-child.err" || rc=$?
-[[ $rc -ne 0 && ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "invalid child rows prevent parent mutation" || fail "invalid child rows prevent parent mutation"
+[[ $rc -ne 0 && ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && pass "invalid child rows prevent parent mutation" || fail "invalid child rows prevent parent mutation"
 
 WAIT_MUTANT="$SANDBOX/skills/orch/scripts/container-close-wait-mutant"
 assert_eq "$(grep -Fc 'LOCK_WAIT_SECONDS=120' "$SCRIPT")" "1" "bounded-wait control finds the production wait"
@@ -279,8 +274,8 @@ touch "$FAKE_LINEAR_ROOT/release.complete"
 wait "$pid_one"; wait "$pid_two"
 assert_eq "$(cat "$TMP_ROOT/race-one.out"):$(cat "$TMP_ROOT/race-two.out")" "closed PARENT-1:closed PARENT-1" "lock loser re-evaluates after the owner releases"
 assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "shared lock allows one parent mutation"
-[[ -f "$SANDBOX/tmp/container-close.lock" ]] && ok "repository lock remains for later closers" || fail "repository lock remains for later closers"
-[[ ! -e "$SANDBOX/tmp/container-close-PARENT-1.lock" ]] && ok "parent lock does not remain" || fail "parent lock does not remain"
+[[ -f "$SANDBOX/tmp/container-close.lock" ]] && pass "repository lock remains for later closers" || fail "repository lock remains for later closers"
+[[ ! -e "$SANDBOX/tmp/container-close-PARENT-1.lock" ]] && pass "parent lock does not remain" || fail "parent lock does not remain"
 
 exec 8>>"$SANDBOX/tmp/container-close.lock"
 flock 8
@@ -293,14 +288,14 @@ reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 rc=0; FLOCK_TEST_RC=74 "$SCRIPT" "$SANDBOX" PARENT-1 >/dev/null 2>"$TMP_ROOT/flock-error.err" || rc=$?
 assert_eq "$rc" "1" "operational flock error fails instead of deferring"
-assert_contains "$TMP_ROOT/flock-error.err" "container-close: lock-failed parent-id=PARENT-1 lock-rc=74" "operational flock error reports its status"
-[[ ! -e "$FAKE_LINEAR_ROOT/linear.calls" ]] && ok "operational flock error stops before Linear access" || fail "operational flock error stops before Linear access"
+assert_file_contains "$TMP_ROOT/flock-error.err" "container-close: lock-failed parent-id=PARENT-1 lock-rc=74" "operational flock error reports its status"
+[[ ! -e "$FAKE_LINEAR_ROOT/linear.calls" ]] && pass "operational flock error stops before Linear access" || fail "operational flock error stops before Linear access"
 
 MERGE_WORKFLOW="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
-grep -Fq 'scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]' "$MERGE_WORKFLOW" && ok "merge-pr passes the shared main root" || fail "merge-pr passes the shared main root"
-grep -Fq 'with every stderr diagnostic from the helper' "$MERGE_WORKFLOW" && ok "merge-pr preserves closed diagnostics" || fail "merge-pr preserves closed diagnostics"
-grep -Fq 'A bare `deferred` means the 120-second lock wait expired' "$MERGE_WORKFLOW" && ok "merge-pr documents the lock timeout" || fail "merge-pr documents the lock timeout"
-grep -Fq 'closure for [ISSUE] has not propagated; rerun merge-pr' "$MERGE_WORKFLOW" && ok "merge-pr reruns when current issue remains pending" || fail "merge-pr reruns when current issue remains pending"
+assert_file_contains "$MERGE_WORKFLOW" 'scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]' "merge-pr passes the shared main root"
+assert_file_contains "$MERGE_WORKFLOW" 'with every stderr diagnostic from the helper' "merge-pr preserves closed diagnostics"
+assert_file_contains "$MERGE_WORKFLOW" 'A bare `deferred` means the 120-second lock wait expired' "merge-pr documents the lock timeout"
+assert_file_contains "$MERGE_WORKFLOW" 'closure for [ISSUE] has not propagated; rerun merge-pr' "merge-pr reruns when current issue remains pending"
 
 rc=0
 "$SCRIPT" >/dev/null 2>"$TMP_ROOT/arguments.err" || rc=$?

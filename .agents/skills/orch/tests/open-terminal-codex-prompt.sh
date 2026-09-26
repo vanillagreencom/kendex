@@ -46,41 +46,8 @@ FLEET_HOME="$TMP_ROOT/fleet-home"
 mkdir -p "$FLEET_HOME"
 LAUNCH_ENV=(LANES_HOME="$FLEET_HOME" CODEX_HOME=)
 
-PASS=0
-FAIL=0
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-assert_not_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        forbidden substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # Stub bin: ghostty captures its final argument — the composed `cd ... && codex
 # ...` command open_gui hands to `bash -lc` — into $OT_CAPTURE; gh exits 1 so
@@ -161,8 +128,7 @@ if wait_capture "$CAP1"; then
   assert_not_contains "$c1_cmd" '$' "linear:codex command contains no \$"
   assert_not_contains "$c1_cmd" '`' "linear:codex command contains no backtick"
 else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  linear:codex never invoked the terminal stub\n'
+  fail "linear:codex never invoked the terminal stub"
 fi
 
 # Case 2: github:codex — same prose shape carrying repo#item.
@@ -179,8 +145,7 @@ if wait_capture "$CAP2"; then
   assert_not_contains "$c2_cmd" '$' "github:codex command contains no \$"
   assert_not_contains "$c2_cmd" '`' "github:codex command contains no backtick"
 else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  github:codex never invoked the terminal stub\n'
+  fail "github:codex never invoked the terminal stub"
 fi
 
 echo

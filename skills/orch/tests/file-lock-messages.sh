@@ -5,6 +5,8 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SCRATCH="$(mktemp -d)"
@@ -15,20 +17,24 @@ ln -s "$(command -v rmdir)" "$SCRATCH/bin/rmdir"
 rc=0
 PATH="$SCRATCH/bin" /bin/bash -c 'source "$1"; orch_take_lock 200 "$2" 0' bash \
   "$ROOT/skills/orch/scripts/lib/file-lock.sh" "$SCRATCH/held.lock" >"$SCRATCH/out" 2>"$SCRATCH/err" || rc=$?
-[[ "$rc" -eq 1 && ! -s "$SCRATCH/out" ]]
-[[ "$(sed -n '1p' "$SCRATCH/err")" == "file-lock: lock-timeout lock-file=$SCRATCH/held.lock wait-s=0" ]]
+assert_eq "$rc" "1" "a held lock times out" "$SCRATCH/err"
+assert_eq "$(wc -c <"$SCRATCH/out" | tr -d ' ')" "0" "and prints nothing on stdout"
+assert_eq "$(sed -n '1p' "$SCRATCH/err")" "file-lock: lock-timeout lock-file=$SCRATCH/held.lock wait-s=0" \
+  "its first stderr line names the lock and the wait limit"
 
 # The operator's escape hatch is a command, so it is run rather than read.
 REMEDY="$(sed -n '2p' "$SCRATCH/err" | sed 's/^.*remove it: //')"
-[[ -n "$REMEDY" ]]
+[[ -n "$REMEDY" ]] || { printf 'file-lock messages: no remedy on the second stderr line\n' >&2; exit 1; }
 eval "$REMEDY"
-[[ ! -d "$SCRATCH/held.lock.d" ]]
+assert_eq "$([[ -d "$SCRATCH/held.lock.d" ]] && echo held || echo released)" "released" \
+  "the printed remedy removes the held mutex"
 
 # Two mutexes one shell holds at once, as open-terminal holds a fleet's launch
 # lock and its claim store's, both go on the one release.
 PATH="$SCRATCH/bin" /bin/bash -c 'source "$1"; orch_take_lock 7 "$2" 1 && orch_take_lock 8 "$3" 1 && [ -d "$2.d" ] && [ -d "$3.d" ] && orch_release_lock' bash \
   "$ROOT/skills/orch/scripts/lib/file-lock.sh" "$SCRATCH/fleet.lock" "$SCRATCH/store.lock"
-[[ ! -d "$SCRATCH/fleet.lock.d" && ! -d "$SCRATCH/store.lock.d" ]]
+assert_eq "$([[ -d "$SCRATCH/fleet.lock.d" || -d "$SCRATCH/store.lock.d" ]] && echo held || echo released)" "released" \
+  "one release frees both mutexes a shell holds"
 
 # A held mutex and the signals a ceiling sends. `refresh_claude_token` replaces
 # these handlers while it renames the credentials file, and what it puts back
@@ -75,12 +81,17 @@ EOF
     settled_mutex "$lock.d" "${3:-}"
   }
 
-  [[ "$(reaped_mutex rearmed orch_arm_lock_signals)" == released ]]
+  assert_eq "$(reaped_mutex rearmed orch_arm_lock_signals)" "released" \
+    "a holder that re-arms its signal handlers releases the mutex at the ceiling"
   # The inverse, and the must-fail control for the row above it: the same
   # holder clearing the handlers instead of restoring them keeps the mutex,
   # which is the state every later renewal on that file would wait on.
-  [[ "$(reaped_mutex cleared 'trap - INT TERM' 10)" == held ]]
+  assert_eq "$(reaped_mutex cleared 'trap - INT TERM' 10)" "held" \
+    "must-fail control: a holder that clears them instead keeps the mutex"
 else
   printf 'file-lock messages: skip a reaped mutex, this host has no timeout to bound one with\n'
 fi
-printf 'file-lock messages: pass\n'
+
+echo
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]

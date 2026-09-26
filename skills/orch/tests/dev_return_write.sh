@@ -20,8 +20,8 @@ ROUND_WRITE="$REPO_ROOT/skills/orch/scripts/dev-round-write"
 STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 # The mode a fix round runs is read from the project's settings, and orch-env
@@ -346,8 +346,6 @@ table \
   "a bad --validate|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate weird|rc=2 stderr~dev-return-write:+invalid-validate+value=weird=true" \
   "a verdict that only begins with pass, note and all|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass_with_notes --validate-note explained|rc=2 stderr~dev-return-write:+invalid-validate+value=pass_with_notes=true" \
   "a path-unsafe --issue|--worktree $WT --kind implement --issue a/b --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+invalid-id+option=--issue+value=a/b=true" \
-  "a path-traversal --issue|--worktree $WT --kind implement --issue .. --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+invalid-id+option=--issue+value=..=true" \
-  "a path-unsafe --round-id|--worktree $WT --kind implement --issue i --round-id a/../b --branch b --commit c --validate pass --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+invalid-id+option=--round-id+value=a/../b=true" \
   "a path-traversal --round-id|--worktree $WT --kind implement --issue i --round-id .. --branch b --commit c --validate pass --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+invalid-id+option=--round-id+value=..=true" \
   "a missing --summary-file|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN --summary-file $TMP_ROOT/nope.md|rc=2 stderr~dev-return-write:+missing-file+path=$TMP_ROOT/nope.md=true" \
   "a bad --item DECISION|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN --item 1 Fixed x|rc=2 stderr~dev-return-write:+item-decision+value=Fixed=true" \

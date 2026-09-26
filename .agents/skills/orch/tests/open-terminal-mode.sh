@@ -30,19 +30,8 @@ SRC_LIB_DIR="$SCRIPTS_DIR/lib"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
-assert_eq() { [[ "$1" == "$2" ]] && ok "$3" || bad "$3" "expected: $2   got: $1"; }
-assert_contains() {
-  grep -qF -- "$2" <<<"$1" && ok "$3" || bad "$3" "wanted substring: $2
-        in: $1"
-}
-assert_not_contains() {
-  grep -qF -- "$2" <<<"$1" && bad "$3" "unwanted substring: $2
-        in: $1" || ok "$3"
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # Stub bin. A GUI terminal stub logs its own name, its argv and the tmux
 # identity it was handed (`<unset>` when the variable is absent, which is what a
@@ -285,9 +274,9 @@ mkdir -p "$NO_SETSID_PATH"
 rm -f -- "$NO_SETSID_PATH/setsid"
 # Without this the case passes vacuously through the setsid branch.
 if PATH="$NO_SETSID_PATH" command -v setsid >/dev/null 2>&1; then
-  bad "the probe PATH resolves no setsid" "setsid is still reachable"
+  fail "the probe PATH resolves no setsid" "setsid is still reachable"
 else
-  ok "the probe PATH resolves no setsid"
+  pass "the probe PATH resolves no setsid"
 fi
 
 RUN_PATH="$BIN:$NO_SETSID_PATH"

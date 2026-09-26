@@ -16,12 +16,9 @@ cleanup() {
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup EXIT
-PASS=0
-FAIL=0
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
-ok() { printf 'ok: %s\n' "$1"; PASS=$((PASS + 1)); }
-bad() { printf 'FAIL: %s\n  %s\n' "$1" "$2"; FAIL=$((FAIL + 1)); }
-assert_eq() { [[ "$1" == "$2" ]] && ok "$3" || bad "$3" "expected: $2 | got: $1"; }
 host_call_count() { awk 'END { print NR + 0 }' "$HOST_CALLS"; }
 close_call_count() { grep -c '^close ' "$HOST_CALLS" || true; }
 # The provider stop calls that name this harness, and the pane-writing tmux

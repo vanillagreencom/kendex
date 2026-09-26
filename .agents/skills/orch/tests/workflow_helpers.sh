@@ -17,29 +17,8 @@ REPO_ROOT="$(cd "$SKILL_DIR/../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
-
-pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    pass "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_file_contains() {
-  local file="$1" pattern="$2" name="$3"
-  if grep -Fq -- "$pattern" "$file"; then pass "$name"; else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing pattern: %s\n        file: %s\n' "$name" "$pattern" "$file"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # Plants one literal substitution in a copy of a workflow doc and asserts the
 # contract PREDICATE, green on the real doc, goes red on the copy. OLD must

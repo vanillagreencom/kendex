@@ -9,8 +9,8 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -316,20 +316,20 @@ CLASS_WAIVED_ENV="$POLICY_ENV $RANGE_ENV STUB_CLASS=render PR_REVIEW_GATE=review
 exempt_count="$(grep -Fc "printf 'exempt\\n'" "$CLASS_PREDICATE" || true)"
 assert_eq "$exempt_count" "1" "control: the waived-class verdict has one mutation target"
 if [[ -L "$CLASS_PREDICATE" ]]; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "control: the mutation source must not be a symlink"
+  fail "control: the mutation source must not be a symlink"
 else
   mutant="$TMP_ROOT/approval-wait.mutant"
   sed "s/printf 'exempt\\\\n'/printf 'off\\\\n'/" "$CLASS_PREDICATE" >"$mutant"
   if cmp -s "$mutant" "$CLASS_PREDICATE"; then
-    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "control: the mutant must change the waived-class verdict"
+    fail "control: the mutant must change the waived-class verdict"
   else
     cat "$mutant" >"$CLASS_PREDICATE"
     stage class ""
     run class "$CLASS_WAIVED_ENV" --resolve-mode --base "$CLASS_BASE_SHA" --head "$CLASS_HEAD_SHA"
     if [[ "$OUT" == exempt ]]; then
-      FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "must-fail: collapsing exempt onto off must fail the waived-class contract"
+      fail "must-fail: collapsing exempt onto off must fail the waived-class contract"
     else
-      PASS=$((PASS + 1)); printf '  ok    %s\n' "must-fail: collapsing exempt onto off fails the waived-class contract"
+      pass "must-fail: collapsing exempt onto off fails the waived-class contract"
     fi
   fi
 fi

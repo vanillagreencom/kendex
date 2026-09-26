@@ -10,8 +10,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 REAL_TMUX="$(command -v tmux)" || { echo "pane_write: tmux-missing" >&2; exit 1; }
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 SOCK_DIR="$TMP_ROOT/sock"
 mkdir -p "$SOCK_DIR"

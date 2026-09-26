@@ -12,16 +12,8 @@ LANES="$(cd "$TEST_DIR/.." && pwd)/scripts/lanes"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 echo "=== lanes refuses a rejected settings load ==="
 
@@ -34,9 +26,9 @@ out="$( (cd "$TMP_ROOT/badcfg" && LANES_HOME="$TMP_ROOT/home" ORCH_LANES_FETCH_C
 assert_eq "$rc" "1" "a refused settings load terminates lanes before any lane work"
 assert_eq "$out" "" "no lane result is produced from a partial settings read"
 if grep -Fxq "lanes: settings-rejected path=$TMP_ROOT/badcfg" "$TMP_ROOT/err"; then
-  PASS=$((PASS + 1)); printf '  ok    the refusal names the settings load, not the lane inventory\n'
+  pass "the refusal names the settings load, not the lane inventory"
 else
-  FAIL=$((FAIL + 1)); printf '  FAIL  the refusal names the settings load, not the lane inventory\n        stderr: %s\n' "$(cat "$TMP_ROOT/err")"
+  fail "the refusal names the settings load, not the lane inventory" "stderr: $(cat "$TMP_ROOT/err")"
 fi
 
 # A bounded run without `timeout`: stock macOS ships none, this skill supports

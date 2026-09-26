@@ -19,17 +19,8 @@ TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 REAL_DATE="$(command -v date)"
 
-PASS=0
-FAIL=0
-assert_eq() { # GOT WANT LABEL
-  if [[ "$1" == "$2" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$3" "$2" "$1"
-    [[ ! -s "$CASE/err" ]] || sed 's/^/        stderr: /' "$CASE/err"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # The clock every case reads: `date -u +%s` answers the case's now file, else
 # NOW; every other call is the host's date.

@@ -25,20 +25,8 @@ RUN="$SCRIPTS_DIR/dev-validate-run"
 # --record line carries.
 start_of() { sed -n 's/^start=//p' "$1/start"; }
 
-PASS=0
-FAIL=0
-
-assert_eq() {
-  local got="$1" want="$2" name="$3" extra="${4:-}"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-    [[ -z "$extra" ]] || printf '        stderr:   %s\n' "$extra"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # A project whose settings carry one validation command and one bound. The
 # environment is passed explicitly so a developer's own DEV_VALIDATE_* never
@@ -88,7 +76,7 @@ run_script() { # SCRIPT ARG...
     PATH="${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
   RC=$?
   set -e
-  ERR="$(cat "$err")"
+  ERR="$err"
 }
 
 # The run directory the start line names, which every later read addresses.
@@ -159,7 +147,7 @@ farm_path() { # NAME OMIT...
 proj_dep="$(make_proj proj-dep "echo x" 20)"
 RUN_PATH="$(farm_path no-timeout timeout gtimeout)"
 run_script "$RUN" --worktree "$proj_dep" --poll 1
-assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: missing-command commands=timeout,gtimeout" \
+assert_eq "$(sed -n 1p <"$ERR")" "dev-validate-run: missing-command commands=timeout,gtimeout" \
   "a host carrying neither timeout spelling is refused, never run unbounded"
 assert_eq "$RC" "2" "and exits 2"
 
@@ -167,7 +155,7 @@ assert_eq "$RC" "2" "and exits 2"
 if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
   RUN_PATH="$(farm_path no-setsid setsid)"
   run_script "$RUN" --worktree "$proj_dep" --poll 1
-  assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: missing-command commands=setsid" \
+  assert_eq "$(sed -n 1p <"$ERR")" "dev-validate-run: missing-command commands=setsid" \
     "a host with no setsid is refused, since the run could not outlive its launcher"
   assert_eq "$RC" "2" "and exits 2"
 fi
@@ -443,7 +431,7 @@ done
 # refused, never run over the orphaned range.
 git -C "$proj_orphan" update-ref -d refs/remotes/origin/main
 run_script "$RUN" --worktree "$proj_orphan" --poll 1 --validate-mode range --base "$pre_rebase"
-assert_eq "$RC $(grep '^dev-validate-run: ' <<<"$ERR")" "2 dev-validate-run: orphaned-base-unresolved base=$pre_rebase" \
+assert_eq "$RC $(grep '^dev-validate-run: ' <"$ERR")" "2 dev-validate-run: orphaned-base-unresolved base=$pre_rebase" \
   "an orphaned base with no origin base branch is refused, naming the base"
 
 # A project with no range command runs its whole battery on an orphaned base,
@@ -559,40 +547,40 @@ assert_eq "$RC" "1" "and exits nonzero, so no caller reads it as a pass" "$ERR"
 # --- Refusals: every one names its key and exits 2 ----------------------------
 proj_empty="$(make_proj proj-empty "" 20)"
 run_script "$RUN" --worktree "$proj_empty" --poll 1
-assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: empty-validate-cmd setting=DEV_VALIDATE_CMD" \
+assert_eq "$(sed -n 1p <"$ERR")" "dev-validate-run: empty-validate-cmd setting=DEV_VALIDATE_CMD" \
   "an empty validation command is refused, naming the setting"
 assert_eq "$RC" "2" "and exits 2"
 
 proj_zero="$(make_proj proj-zero "echo x" 0)"
 run_script "$RUN" --worktree "$proj_zero" --poll 1
-assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: invalid-seconds setting=DEV_VALIDATE_TIMEOUT_SECS value=0" \
+assert_eq "$(sed -n 1p <"$ERR")" "dev-validate-run: invalid-seconds setting=DEV_VALIDATE_TIMEOUT_SECS value=0" \
   "a bound of zero is refused rather than read as no bound"
 assert_eq "$RC" "2" "and exits 2"
 
 proj_words="$(make_proj proj-words "echo x" 90m)"
 run_script "$RUN" --worktree "$proj_words" --poll 1
-assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: invalid-seconds setting=DEV_VALIDATE_TIMEOUT_SECS value=90m" \
+assert_eq "$(sed -n 1p <"$ERR")" "dev-validate-run: invalid-seconds setting=DEV_VALIDATE_TIMEOUT_SECS value=90m" \
   "a bound written as a duration is refused, not silently read as the default hour"
 assert_eq "$RC" "2" "and exits 2"
 
 mkdir -p "$TMP_ROOT/unstarted"
 run_script "$RUN" --wait --run-dir "$TMP_ROOT/unstarted"
-assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: no-run path=$TMP_ROOT/unstarted/start" \
+assert_eq "$(sed -n 1p <"$ERR")" "dev-validate-run: no-run path=$TMP_ROOT/unstarted/start" \
   "a poll of a directory no run started is refused"
 assert_eq "$RC" "2" "and exits 2"
 
 run_script "$RUN" --wait --run-dir "$stale" --poll 5
-assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: option-unused option=--poll mode=wait" \
+assert_eq "$(sed -n 1p <"$ERR")" "dev-validate-run: option-unused option=--poll mode=wait" \
   "a poll interval handed to the waiter is refused, never silently dropped"
 assert_eq "$RC" "2" "and exits 2"
 
 run_script "$RUN" --worktree "$proj_log" --budget 5
-assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: option-unused option=--budget mode=start" \
+assert_eq "$(sed -n 1p <"$ERR")" "dev-validate-run: option-unused option=--budget mode=start" \
   "a call budget handed to the blocking form is refused the same way"
 assert_eq "$RC" "2" "and exits 2"
 
 run_script "$RUN" --poll 1
-assert_eq "$(sed -n 1p <<<"$ERR")" "dev-validate-run: required options=--worktree,--wait,--stop,--record,--resolve-mode,--child" \
+assert_eq "$(sed -n 1p <"$ERR")" "dev-validate-run: required options=--worktree,--wait,--stop,--record,--resolve-mode,--child" \
   "a call naming no mode is refused"
 assert_eq "$RC" "2" "and exits 2"
 
@@ -758,7 +746,7 @@ for row in "${MODE_REFUSALS[@]}"; do
   IFS='|' read -r label args want <<<"$row"
   # shellcheck disable=SC2086 # the row's argument list, split on purpose
   run_script "$RUN" $args
-  assert_eq "$(sed -n 1p <<<"$ERR") rc=$RC" "$want rc=2" "$label"
+  assert_eq "$(sed -n 1p <"$ERR") rc=$RC" "$want rc=2" "$label"
 done
 
 # --- No process the run starts outlives it ------------------------------------
@@ -905,7 +893,7 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP_ROOT/failing-setsid-bin/setsid"
 chmod +x "$TMP_ROOT/failing-setsid-bin/setsid"
 RUN_PATH="$TMP_ROOT/failing-setsid-bin:$FALLBACK_PATH"
 run_script "$RUN" --worktree "$proj_refused" --poll 1
-assert_eq "$(sed -n 1p <<<"$ERR") $RC" "dev-validate-run: launch-failed status=1 2" \
+assert_eq "$(sed -n 1p <"$ERR") $RC" "dev-validate-run: launch-failed status=1 2" \
   "a setsid that cannot start the child fails the start as launch-failed" "$ERR"
 RUN_PATH=""
 
@@ -1057,7 +1045,7 @@ printf '#!/usr/bin/env bash\necho "stub refused" >&2\nexit 1\n' > "$TMP_ROOT/sto
 plant unit-refused systemd no other
 proj="$PLANT_PROJ"
 run_script "$RUN" --stop --worktree "$proj"
-assert_eq "$(sed -n 1p <<<"$ERR") $RC" \
+assert_eq "$(sed -n 1p <"$ERR") $RC" \
   "dev-validate-run: stop-failed run-dir=$proj/tmp/dev-validate-planted-unit-refused unit=validate-planted-unit-refused.service detail=stub refused 1" \
   "a unit systemctl will not stop fails --stop, naming it" "$ERR"
 # --stop's control: a stop failure that exits 0.
@@ -1081,7 +1069,7 @@ repeat_rows() { # SCRIPT
     IFS='|' read -r flag args <<<"$row"
     # shellcheck disable=SC2086 # the row's arguments are space-separated paths without spaces
     run_script "$1" $args
-    printf '%s %s\n' "$(sed -n 1p <<<"$ERR")" "$RC"
+    printf '%s %s\n' "$(sed -n 1p <"$ERR")" "$RC"
   done
 }
 repeat_out="$(repeat_rows "$RUN")"

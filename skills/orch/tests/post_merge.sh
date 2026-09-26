@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../scripts" && pwd)"
 SCRATCH="$(mktemp -d)"; trap 'rm -rf -- "$SCRATCH"' EXIT
 git init -q "$SCRATCH/seed"; git -C "$SCRATCH/seed" config user.email test@example.com; git -C "$SCRATCH/seed" config user.name test
@@ -16,8 +18,7 @@ while IFS='|' read -r FAIL_STEP expected_rc expected; do
   case "$FAIL_STEP" in sync-base) git -C "$SCRATCH/$FAIL_STEP" remote set-url origin "$SCRATCH/absent" ;; success) "$DIR/sync-base" "$SCRATCH/success" >/dev/null ;; empty) ORCH_POST_MERGE_CMD='' ;; absent) rm -- "$SCRATCH/$FAIL_STEP/kendex.toml" ;; esac
   rc=0; out="$(bash "${POST_MERGE_UNDER_TEST:-$DIR/post-merge}" "$SCRATCH/$FAIL_STEP" 2>"$SCRATCH/error")" || rc=$?
   out="$(printf '%s\n' "$out" | sed '/^main$/d' | tr '\n' ',')"
-  [[ "$rc:$out" == "$expected_rc:$expected" ]] || { printf 'FAIL %s: %s:%s\n' "$FAIL_STEP" "$rc" "$out"; cat "$SCRATCH/error"; exit 1; }
-  printf 'pass: %s\n' "$FAIL_STEP"
+  assert_eq "$rc:$out" "$expected_rc:$expected" "$FAIL_STEP" "$SCRATCH/error"
   case "$FAIL_STEP" in command) FAIL_STEP=retry; bash "${POST_MERGE_UNDER_TEST:-$DIR/post-merge}" "$SCRATCH/command" >/dev/null ;; success) before=$after; bash "${POST_MERGE_UNDER_TEST:-$DIR/post-merge}" "$SCRATCH/success" >/dev/null ;; esac
 done <<'ROWS'
 sync-base|1|post-merge: sync-base=1,
@@ -28,3 +29,7 @@ success|0|post-merge: sync-base=0,post-merge: command=0,refresh --scope project 
 empty|0|post-merge: sync-base=0,post-merge: command=skipped,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=0,
 absent|0|post-merge: sync-base=0,post-merge: command=0,post-merge: refresh=skipped,post-merge: verify=skipped,
 ROWS
+
+echo
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]

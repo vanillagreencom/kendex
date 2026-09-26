@@ -19,16 +19,8 @@ LANE_MARKER="$SCRIPTS_DIR/lane-marker"
 TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
-PASS=0
-FAIL=0
-assert_eq() { # GOT WANT LABEL
-  if [[ "$1" == "$2" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$3" "$2" "$1"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # A worktree to mark. LINKED_TMP=1 makes its tmp a symlink to a directory
 # outside it, the shape skills/worktree's WORKTREE_SYMLINKS produces.

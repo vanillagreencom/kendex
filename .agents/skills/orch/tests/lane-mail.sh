@@ -26,17 +26,8 @@ mkdir -p "$TMP_ROOT/case-probe/A"
 CASE_SENSITIVE=1
 [ ! -d "$TMP_ROOT/case-probe/a" ] || CASE_SENSITIVE=0
 
-PASS=0
-FAIL=0
-
-assert_eq() { # GOT WANT LABEL
-  if [[ "$1" == "$2" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$3" "$2" "$1"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # A fresh lane worktree: the orch scripts where a lane's own `.agents` tree
 # holds them, so `--host` resolves the same `lane-host` a lane would run.

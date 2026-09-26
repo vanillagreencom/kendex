@@ -37,8 +37,8 @@ OPEN_TERMINAL="$SCRIPTS_DIR/open-terminal"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$TEST_DIR/lib/lanes-fixture.sh"
 # shellcheck source=lib/question-off.sh
@@ -1892,7 +1892,7 @@ OPEN_TERMINAL="$OT_REAL"
 if grep -q '^new-window' "$TMP_ROOT"/runs/*/tmux.log 2>/dev/null; then
   pass "launch rows drove the tmux stub, not a real server"
 else
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "launch rows bypassed the tmux stub (real windows were created)"
+  fail "launch rows bypassed the tmux stub (real windows were created)"
 fi
 
 echo

@@ -43,28 +43,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-PASS=0
-FAIL=0
-pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then pass "$name"
-  else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"; fi
-}
-
-assert_contains() {
-  local hay="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$hay"; then pass "$name"
-  else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        wanted: %s\n        in: %s\n' "$name" "$needle" "$hay"; fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # Whole-line match. The legend repeats CONTEXT_USED_PCT, so a substring
 # assertion on the header's number column is satisfied by the footer alone.
 assert_line() {
   local hay="$1" re="$2" name="$3"
   if grep -qE -- "$re" <<<"$hay"; then pass "$name"
-  else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        wanted line matching: %s\n        in: %s\n' "$name" "$re" "$hay"; fi
+  else fail "$name" "wanted line matching: $re"; printf '        in: %s\n' "$hay"; fi
 }
 
 BIN="$TMP_ROOT/bin"; mkdir -p "$BIN"

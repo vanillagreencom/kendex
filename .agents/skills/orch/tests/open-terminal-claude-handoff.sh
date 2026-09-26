@@ -43,8 +43,8 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="$SCRIPTS_DIR/open-terminal"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 # mutant_scripts and mutate_file, the two halves of the control below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
@@ -415,8 +415,7 @@ if wait_capture; then
   assert_eq "$(tr '\n' ' ' < "$TMP_ROOT/argv" 2>/dev/null || echo unrun)" "-n CC-737 --disallowedTools=AskUserQuestion,EnterPlanMode --model opus[1m] --dangerously-skip-permissions $BRIEF " \
     "the argv claude receives is the flags as given: a same-named file cannot rewrite the model id"
 else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  the bracketed model id row never invoked the terminal stub, so its argv cannot be read\n'
+  fail "the bracketed model id row never invoked the terminal stub, so its argv cannot be read"
 fi
 
 echo "=== open-terminal claude handoff: tmux brief delivery ==="

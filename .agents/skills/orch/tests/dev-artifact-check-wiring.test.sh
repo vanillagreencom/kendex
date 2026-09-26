@@ -14,8 +14,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 ORCH="$REPO_ROOT/skills/orch"
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 
 # present FILE TOKEN — `yes` when FILE holds TOKEN as a fixed string; a FILE
 # that does not exist aborts the suite, so a renamed document cannot pass an

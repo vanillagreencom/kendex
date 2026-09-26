@@ -9,7 +9,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-source "$TEST_DIR/lib/waiter-assertions.sh"
+source "$TEST_DIR/lib/assertions.sh"
 # The INT rows below read a signal disposition no suite owns. A non-interactive
 # shell sets SIGINT and SIGQUIT to SIG_IGN in every job it starts with `&`, the
 # ignore survives exec, and no later `trap` takes it back — and open-terminal's

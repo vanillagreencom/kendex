@@ -20,8 +20,8 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 
 LIVE_LIB="$REPO_ROOT/skills/orch/scripts/lib/gh-repo.sh"
 LIVE_FN=orch_resolve_gh_repo
@@ -46,15 +46,18 @@ exit 1
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
 
-# Three project roots for the remote fallback: a github.com origin, no remote at
-# all, and an origin on another host whose PATH carries github.com.
-for name in origin-repo no-remote foreign-origin; do
+# Project roots for the remote fallback: a github.com origin in the ssh form
+# and in the https form with and without its .git suffix, no remote at all, and
+# an origin on another host whose PATH carries github.com.
+for name in origin-repo https-origin https-bare-origin no-remote foreign-origin; do
   mkdir -p "$TMP_ROOT/$name"
   git -C "$TMP_ROOT/$name" init -q
   git -C "$TMP_ROOT/$name" config user.email test@example.com
   git -C "$TMP_ROOT/$name" config user.name Test
 done
 git -C "$TMP_ROOT/origin-repo" remote add origin git@github.com:remote-owner/remote-repo.git
+git -C "$TMP_ROOT/https-origin" remote add origin https://github.com/remote-owner/remote-repo.git
+git -C "$TMP_ROOT/https-bare-origin" remote add origin https://github.com/remote-owner/remote-repo
 git -C "$TMP_ROOT/foreign-origin" remote add origin https://gitlab.example/group/github.com/owner/repo
 
 # run_resolve ENV ROOT LIB FN — call FN with ENV (a comma-separated list of
@@ -112,6 +115,8 @@ table \
   'GH_REPO unset reads the checkout|STUB_REPO_VIEW=cwd-owner/cwd-repo|origin-repo|rc=0 out=cwd-owner/cwd-repo' \
   'GH_REPO wins even where the checkout resolves to nothing|GH_REPO=other/elsewhere|no-remote|rc=0 out=other/elsewhere' \
   'an unresolvable checkout falls back to the origin remote, without its .git suffix||origin-repo|rc=0 out=remote-owner/remote-repo' \
+  'an https origin loses its .git suffix the same way||https-origin|rc=0 out=remote-owner/remote-repo' \
+  'an https origin without .git keeps its last segment||https-bare-origin|rc=0 out=remote-owner/remote-repo' \
   'an origin on another host carrying github.com in its path resolves nothing||foreign-origin|rc=1 out=empty' \
   'no GH_REPO, no gh answer and no origin resolves nothing, never a default||no-remote|rc=1 out=empty'
 

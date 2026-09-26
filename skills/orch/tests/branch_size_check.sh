@@ -35,18 +35,8 @@ SH
 chmod +x "$TMP_ROOT/linear/scripts/linear.sh"
 CHECK_BIN="$(mutant_scripts live)/branch-size-check" || exit 1
 
-PASS=0
-FAIL=0
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 WT="$TMP_ROOT/wt"
 mkdir -p "$WT"

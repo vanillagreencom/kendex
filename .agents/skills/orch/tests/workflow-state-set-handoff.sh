@@ -20,13 +20,11 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 source "$REPO_ROOT/skills/orch/scripts/lib/date-ladder.sh"
 
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 # mutant_scripts and mutate_file, the two halves of the control below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 echo
 echo "--- workflow-state set handoff ---"
@@ -44,25 +42,25 @@ after="$(date -u +%s)"
 stamped="$("$WS" --state-dir "$SD" get KEN-H '.handoff.written_at')"
 stamped_epoch="$(to_epoch "$stamped")" || stamped_epoch=""
 [[ -n "$stamped_epoch" && "$stamped_epoch" -ge "$before" && "$stamped_epoch" -le "$after" ]] \
-  && ok "a handoff record with no written_at is stamped from the clock" \
-  || bad "a handoff record with no written_at is stamped from the clock" "written_at=$stamped window=$before..$after"
+  && pass "a handoff record with no written_at is stamped from the clock" \
+  || fail "a handoff record with no written_at is stamped from the clock" "written_at=$stamped window=$before..$after"
 # The window alone passes on every spelling GNU `date -d` accepts. The schema
 # names one shape and the readers order records on it, so it is asserted here
 # the way the fleet log's stamp is.
 [[ "$stamped" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
-  && ok "the stamp carries the ISO 8601 UTC form the schema names" \
-  || bad "the stamp carries the ISO 8601 UTC form the schema names" "written_at=$stamped"
+  && pass "the stamp carries the ISO 8601 UTC form the schema names" \
+  || fail "the stamp carries the ISO 8601 UTC form the schema names" "written_at=$stamped"
 got="$("$WS" --state-dir "$SD" get KEN-H '.handoff | keys | join(",")')"
 [[ "$got" == "branch,merged,open_pr,remaining,traps,worktree,written_at" ]] \
-  && ok "the stamp joins the record the lane wrote rather than replacing it" \
-  || bad "the stamp joins the record the lane wrote rather than replacing it" "keys=$got"
+  && pass "the stamp joins the record the lane wrote rather than replacing it" \
+  || fail "the stamp joins the record the lane wrote rather than replacing it" "keys=$got"
 
 # A `written_at` the clock has already passed is a late write, and a late
 # write is real: it is kept as the record carries it.
 "$WS" --state-dir "$SD" set KEN-H handoff '{"written_at":"2020-01-01T00:00:00Z","branch":"b"}' >/dev/null
 got="$("$WS" --state-dir "$SD" get KEN-H '.handoff.written_at')"
-[[ "$got" == "2020-01-01T00:00:00Z" ]] && ok "a handoff written_at earlier than the clock is kept" \
-  || bad "a handoff written_at earlier than the clock is kept" "got=$got"
+[[ "$got" == "2020-01-01T00:00:00Z" ]] && pass "a handoff written_at earlier than the clock is kept" \
+  || fail "a handoff written_at earlier than the clock is kept" "got=$got"
 
 # refuses VALUE KEY_PREFIX NAME — the set is refused with that first line and
 # the record it would have replaced still stands.
@@ -72,10 +70,10 @@ refuses() { # VALUE KEY_PREFIX NAME
   "$WS" --state-dir "$SD" set KEN-H handoff "$value" >/dev/null 2>"$TMP_ROOT/refuse.err" || rc=$?
   key="$(head -n 1 "$TMP_ROOT/refuse.err")"
   after_record="$("$WS" --state-dir "$SD" get KEN-H '.handoff | tojson')"
-  [[ "$rc" -eq 1 && "$key" == "$want"* ]] && ok "$name" \
-    || bad "$name" "rc=$rc key=$key"
-  [[ "$after_record" == "$before_record" ]] && ok "$name: the refused record never reaches the state" \
-    || bad "$name: the refused record never reaches the state" "after=$after_record"
+  [[ "$rc" -eq 1 && "$key" == "$want"* ]] && pass "$name" \
+    || fail "$name" "rc=$rc key=$key"
+  [[ "$after_record" == "$before_record" ]] && pass "$name: the refused record never reaches the state" \
+    || fail "$name: the refused record never reaches the state" "after=$after_record"
 }
 
 refuses '{"written_at":"2099-01-01T00:00:00Z","branch":"b"}' \
@@ -105,8 +103,8 @@ refuses '"not an object"' 'workflow-state: handoff-record issue=KEN-H' \
 # past handoff.
 "$WS" --state-dir "$SD" set KEN-H post_pr_stop "$RECORD" >/dev/null
 got="$("$WS" --state-dir "$SD" get KEN-H '.post_pr_stop | has("written_at")')"
-[[ "$got" == "false" ]] && ok "set stamps no field but handoff" \
-  || bad "set stamps no field but handoff" "got=$got"
+[[ "$got" == "false" ]] && pass "set stamps no field but handoff" \
+  || fail "set stamps no field but handoff" "got=$got"
 
 # The suite's one must-fail control: the clock comparison neutralized in the
 # one helper both stamped fields call. The future record then lands in the
@@ -117,8 +115,8 @@ mutate_file "$NO_CLOCK" '[[ "$raw_epoch" -gt "$now_epoch" ]]' 'false'
 "$NO_CLOCK" --state-dir "$TMP_ROOT/mutant-future" set KEN-H handoff \
   '{"written_at":"2099-01-01T00:00:00Z","branch":"b"}' >/dev/null 2>&1 || true
 got="$("$WS" --state-dir "$TMP_ROOT/mutant-future" get KEN-H '.handoff.written_at')"
-[[ "$got" == "2099-01-01T00:00:00Z" ]] && ok "control: without the clock comparison the future record is stored" \
-  || bad "control: without the clock comparison the future record is stored" "got=$got"
+[[ "$got" == "2099-01-01T00:00:00Z" ]] && pass "control: without the clock comparison the future record is stored" \
+  || fail "control: without the clock comparison the future record is stored" "got=$got"
 
 # The clock the stamp comes from is this rule's own dependency, and a `date`
 # that exits nonzero leaves both reads empty. `stamp_judge` runs inside a
@@ -137,11 +135,11 @@ PATH="$DEAD_BIN:$PATH" "$WS" --state-dir "$SD" set KEN-H handoff '{"branch":"b"}
   >/dev/null 2>"$TMP_ROOT/clock.err" || rc=$?
 key="$(head -n 1 "$TMP_ROOT/clock.err")"
 [[ "$rc" -eq 1 && "$key" == "workflow-state: clock-unreadable field=handoff" ]] \
-  && ok "a handoff set whose clock cannot be read is refused as clock-unreadable" \
-  || bad "a handoff set whose clock cannot be read is refused as clock-unreadable" "rc=$rc key=$key"
+  && pass "a handoff set whose clock cannot be read is refused as clock-unreadable" \
+  || fail "a handoff set whose clock cannot be read is refused as clock-unreadable" "rc=$rc key=$key"
 got="$("$WS" --state-dir "$SD" get KEN-H 'tojson')"
-[[ "$got" == "$dead_before" ]] && ok "the clock refusal leaves the state untouched" \
-  || bad "the clock refusal leaves the state untouched" "got=$got"
+[[ "$got" == "$dead_before" ]] && pass "the clock refusal leaves the state untouched" \
+  || fail "the clock refusal leaves the state untouched" "got=$got"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -20,40 +20,17 @@ WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 
-PASS=0
-FAIL=0
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 assert_file_exists() {
   local file="$1" name="$2"
-  if [[ -f "$file" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected file to exist: %s\n' "$name" "$file"
-  fi
+  if [[ -f "$file" ]]; then pass "$name"; else fail "$name" "expected file to exist: $file"; fi
 }
 
 assert_file_absent() {
   local file="$1" name="$2"
-  if [[ ! -f "$file" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected file to be absent: %s\n' "$name" "$file"
-  fi
+  if [[ ! -f "$file" ]]; then pass "$name"; else fail "$name" "expected file to be absent: $file"; fi
 }
 
 echo "=== workflow-state --state-dir global flag ==="
