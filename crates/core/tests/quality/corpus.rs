@@ -133,17 +133,17 @@ fn the_guard_hooks_scan_clean() {
     }
 }
 
-/// Thirty-one lines of this skill spell `--dangerously-skip-permissions`.
+/// Thirty lines of this skill spell `--dangerously-skip-permissions`.
 /// One is a row of the launch table's source, which a lane launch really
 /// runs: the one Critical finding, which kendex's own table accepts for
 /// exactly those bytes and a verbose reading still lists. The launch
 /// table's comment naming the switch is a mention.
 ///
-/// The other thirty are in the open-terminal, oversee-succeed and
+/// The other twenty-eight are in the open-terminal, oversee-succeed and
 /// overseer-watch tests, which hand the launch lines they check to their
-/// stubs and assertions: a string a test assigns, prints or passes on,
-/// and a word it passes to a function the tests define, on the line that
-/// names the function or a line continuing it. Each is a mention, and the
+/// stubs and assertions: a string a test assigns or prints, and an
+/// argument of a function the tests define, on the line that names the
+/// function or a line continuing it. Each is a mention, and the
 /// skill scores clean. A reading that counted them again would be reading
 /// a test's data as a command, and this is where that fails; so does a
 /// table that lets an edit to the launcher keep its acceptance
@@ -180,7 +180,7 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
     for (fixture, lines) in [
         (open_terminal, 6),
         (oversee_succeed, 20),
-        (overseer_watch, 4),
+        (overseer_watch, 2),
     ] {
         let rules: Vec<&str> = mentioned(fixture)
             .into_iter()

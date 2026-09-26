@@ -8,9 +8,10 @@ pub mod vocab;
 
 /// Where a rendered document keeps its code, line by line. The reading's
 /// own type is `blocks::Code`, which no caller names: each takes the field
-/// it asked for. A caller inside `render` reaches it by the private
+/// it asked for, and a caller telling a code block from an HTML one names
+/// `Block`. A caller inside `render` reaches it by the private
 /// module path; one outside, as `quality::text` is, re-exports it then.
-pub(crate) use blocks::code_by_line;
+pub(crate) use blocks::{Block, code_by_line};
 
 /// One thing the user should hear about a rendering, with the fix when
 /// there is one — every render lint travels through this shape.

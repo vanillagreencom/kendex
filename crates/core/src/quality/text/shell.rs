@@ -20,11 +20,12 @@
 //!
 //! A test is read one step further. Its shell file hands stubs and
 //! assertions the launch lines it checks, so in a file under a test
-//! directory a quoted string it assigns or passes to any command but a
-//! shell is data, and so is every word it passes to a function the tests
-//! define. A switch the test runs, as an argument of a program it does not
-//! define or inside a string handed to `eval` or a shell, is still a
-//! command.
+//! directory three shapes are data: a quoted string an assignment takes
+//! as its value, a quoted string `echo` or `printf` prints, and every
+//! argument of a function the tests define, each where the command's
+//! output reaches no other command. Every other string and word counts:
+//! one handed to any program the tests do not define, to a command whose
+//! name is quoted or expanded, or to a command piped on.
 //!
 //! A line ending in a backslash goes on to the next, and the lines are read
 //! as the one command the shell reads, so an argument on a continuation
@@ -37,7 +38,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::Quotation;
+use super::{Quotation, Span};
 
 /// Builtins that print what they are handed.
 const SPEAKS: &[&str] = &["echo", "printf"];
@@ -332,8 +333,15 @@ struct Simple {
     words: Vec<(usize, usize)>,
     /// The quoted strings an assignment before its name takes as a value.
     values: Vec<(usize, usize)>,
-    /// Its output reaches the next command.
+    /// Its output reaches the next command, through a pipe or a process
+    /// substitution.
     piped: bool,
+    /// The enclosing command this one is a substitution in, by its `id`,
+    /// and which part of that command the substitution stands in. `None`
+    /// for a command standing on the line itself.
+    within: Option<(usize, Slot)>,
+    /// Which command this is, counted in the order commands open.
+    id: usize,
     /// Its output is redirected somewhere that is not the terminal.
     away: bool,
     /// An assignment word opened a value: what follows up to the next
@@ -341,6 +349,17 @@ struct Simple {
     value_pending: bool,
     /// The word after a bare `>` is the redirection's target.
     target_pending: bool,
+}
+
+/// Which part of its enclosing command a substitution's output becomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    /// An assignment's value.
+    Value,
+    /// One of the command's arguments.
+    Argument,
+    /// The command's name, or a redirection's target.
+    Head,
 }
 
 /// Whether a redirection target is still the terminal, or nowhere:
@@ -353,6 +372,7 @@ fn to_terminal(target: &str) -> bool {
 fn commands(line: &str) -> Vec<Simple> {
     let mut done = Vec::new();
     let mut open = vec![Simple::default()];
+    let mut next_id = 1;
     for tok in lex(line) {
         let Some(cur) = open.last_mut() else {
             unreachable!("the lexer closes only what it opened");
@@ -363,11 +383,17 @@ fn commands(line: &str) -> Vec<Simple> {
                 if cur.target_pending {
                     cur.target_pending = false;
                     cur.away |= !to_terminal(word);
+                    // `> >(sh)`: the target is a process substitution, and
+                    // the output reaches the command inside it.
+                    cur.piped |= word == ">";
                     continue;
                 }
                 cur.value_pending = false;
                 match cur.head {
                     None if KEYWORDS.contains(&word) => {}
+                    // A `case` arm's pattern, `echo)` or `*)`, is not the
+                    // arm's command: the word after it is.
+                    None if word.ends_with(')') && !word.contains('(') => {}
                     None if is_assignment(word) => cur.value_pending = true,
                     None => cur.head = Some(Head::Named(start, end)),
                     Some(_) => match word.split_once('>') {
@@ -405,31 +431,45 @@ fn commands(line: &str) -> Vec<Simple> {
                 }
             },
             Tok::Break | Tok::Pipe => {
-                let depth = cur.depth;
-                cur.piped = tok == Tok::Pipe;
+                let (depth, within) = (cur.depth, cur.within);
+                cur.piped |= tok == Tok::Pipe;
                 done.push(std::mem::replace(
                     cur,
                     Simple {
                         depth,
+                        within,
+                        id: next_id,
                         ..Simple::default()
                     },
                 ));
+                next_id += 1;
             }
             Tok::Open => {
                 // A target a substitution names, `> "$(mktemp)"`, is a
-                // file whatever it turns out to be.
-                if cur.target_pending {
+                // file whatever it turns out to be, and `> >(sh)` hands the
+                // output to a command.
+                let slot = if cur.target_pending {
                     cur.target_pending = false;
                     cur.away = true;
-                }
-                if cur.head.is_none() && !cur.value_pending {
+                    cur.piped = true;
+                    Slot::Head
+                } else if cur.value_pending {
+                    Slot::Value
+                } else if cur.head.is_none() {
                     cur.head = Some(Head::Opaque);
-                }
+                    Slot::Head
+                } else {
+                    Slot::Argument
+                };
                 let depth = cur.depth + 1;
+                let within = Some((cur.id, slot));
                 open.push(Simple {
                     depth,
+                    within,
+                    id: next_id,
                     ..Simple::default()
                 });
+                next_id += 1;
             }
             Tok::Close => {
                 if let Some(closed) = open.pop() {
@@ -562,22 +602,6 @@ pub fn named_spans(line: &str, diagnostic: &BTreeSet<String>) -> Vec<(usize, usi
         .collect()
 }
 
-/// Whether this program runs the program text it is handed, piped in or
-/// as an argument.
-///
-/// A version on the end of the name is the same interpreter: `python3` is
-/// what anybody actually writes, and a whole-word match on `python` alone
-/// misses it. Nothing else is stretched — a name that is not one of these
-/// runs whatever it runs, and saying otherwise would hold back lines
-/// nothing interprets.
-pub fn interprets(program: &str) -> bool {
-    const SHELLS: &[&str] = &["sh", "bash", "zsh", "python"];
-    SHELLS.contains(&program)
-        || program.strip_prefix("python").is_some_and(|version| {
-            !version.is_empty() && version.chars().all(|c| c.is_ascii_digit() || c == '.')
-        })
-}
-
 /// The functions a shell file's lines are read against.
 #[derive(Debug, Clone, Copy)]
 pub struct Context<'a> {
@@ -610,45 +634,77 @@ pub fn defined_functions(sources: &[&str]) -> BTreeSet<String> {
         .collect()
 }
 
-/// Byte ranges of this line a test hands over as data: each quoted string
-/// that is an argument of a command other than `eval` or an interpreter,
-/// or an assignment's value, and each bare argument of one of `helpers`,
-/// the functions the tests define. What such a function then does with
-/// its argument is not read: a stub records it, an assertion compares it,
-/// and a helper that launches the script under test hands it to that
-/// script's stubbed programs. A command's name is never data, and neither
-/// is a bare argument of a program the tests do not define.
+/// Byte ranges of this line a test hands over as data: the quoted value
+/// of an assignment, each quoted string `echo` or `printf` prints, and
+/// each argument of one of `helpers`, the functions the tests define —
+/// where the command's output reaches no other command, and where it
+/// stands on the line or in a substitution whose output is itself data.
+/// What such a function then does with its argument is not read: a stub
+/// records it, an assertion compares it, and a helper that launches the
+/// script under test hands it to that script's stubbed programs.
 pub fn fixture_spans(line: &str, helpers: &BTreeSet<String>) -> Vec<(usize, usize)> {
-    commands(line)
-        .into_iter()
-        .flat_map(|command| {
-            let (strings, words) = match command.head {
-                Some(Head::Named(start, end)) => {
-                    let word = &line[start..end];
-                    let program = word.rsplit('/').next().unwrap_or(word);
-                    let runs = word == "eval" || interprets(program);
-                    (!runs, helpers.contains(word))
-                }
-                Some(Head::Opaque) => (true, false),
-                None => (false, false),
-            };
-            let mut spans = command.values;
-            if strings {
-                spans.extend(command.strings);
+    let commands = commands(line);
+    let at: BTreeMap<usize, usize> = commands
+        .iter()
+        .enumerate()
+        .map(|(at, command)| (command.id, at))
+        .collect();
+    // What a command hands over as data, if anything: its printed strings
+    // alone, or every argument of a function the tests define.
+    let carries = |command: &Simple| match command.head {
+        _ if command.piped => None,
+        Some(Head::Named(start, end)) => {
+            let word = &line[start..end];
+            match (SPEAKS.contains(&word), helpers.contains(word)) {
+                (_, true) => Some(true),
+                (true, false) => Some(false),
+                (false, false) => None,
             }
-            if words {
-                spans.extend(command.words);
+        }
+        Some(Head::Opaque) | None => None,
+    };
+    // Whether a command's output is data, read up through the commands
+    // it is a substitution in; the lexer nests no deeper than
+    // `MAX_NESTING`, so neither does this.
+    let is_data = |command: &Simple| {
+        let mut within = command.within;
+        while let Some((id, slot)) = within {
+            let Some(outer) = at.get(&id).map(|at| &commands[*at]) else {
+                unreachable!("a substitution's enclosing command is on its line");
+            };
+            match slot {
+                Slot::Value => {}
+                Slot::Argument if carries(outer).is_some() => {}
+                Slot::Argument | Slot::Head => return false,
+            }
+            within = outer.within;
+        }
+        true
+    };
+    commands
+        .iter()
+        .filter(|command| is_data(command))
+        .flat_map(|command| {
+            let mut spans = command.values.clone();
+            match carries(command) {
+                Some(true) => {
+                    spans.extend(&command.strings);
+                    spans.extend(&command.words);
+                }
+                Some(false) => spans.extend(&command.strings),
+                None => {}
             }
             spans
         })
         .collect()
 }
 
-/// Each line's quoted ranges, one list per line of `lines`, with the
-/// quotation that names each. A run of lines joined by trailing
-/// backslashes is read as the one line the shell reads, and each range is
-/// handed back to the lines it covers.
-pub fn quoted(lines: &[String], context: Context<'_>) -> Vec<Vec<(usize, usize, Quotation)>> {
+/// Each line's quoted ranges, one list per line of `lines`. A run of lines
+/// joined by trailing backslashes is read as the one line the shell reads,
+/// and each range is handed back to the lines it covers, found by a search
+/// of where each line starts, so a run of any length is read in time
+/// linear in its length and ranges.
+pub fn quoted(lines: &[String], context: Context<'_>) -> Vec<Vec<Span>> {
     let mut found = vec![Vec::new(); lines.len()];
     let mut first = 0;
     while first < lines.len() {
@@ -671,23 +727,39 @@ pub fn quoted(lines: &[String], context: Context<'_>) -> Vec<Vec<(usize, usize, 
                 false => joined.push_str(line),
             }
         }
-        let mut spans: Vec<(usize, usize, Quotation)> = named_spans(&joined, context.diagnostic)
+        let mut spans: Vec<Span> = named_spans(&joined, context.diagnostic)
             .into_iter()
-            .map(|(start, end)| (start, end, Quotation::ShellText))
+            .map(|(start, end)| Span {
+                start,
+                end,
+                by: Quotation::ShellText,
+            })
             .collect();
         if let Some(helpers) = context.helpers {
             spans.extend(
                 fixture_spans(&joined, helpers)
                     .into_iter()
-                    .map(|(start, end)| (start, end, Quotation::Fixture)),
+                    .map(|(start, end)| Span {
+                        start,
+                        end,
+                        by: Quotation::Fixture,
+                    }),
             );
         }
-        for (at, line) in lines[first..=last].iter().enumerate() {
-            let (from, to) = (starts[at], starts[at] + line.len());
-            found[first + at].extend(spans.iter().filter_map(|(start, end, by)| {
-                let (start, end) = ((*start).max(from), (*end).min(to));
-                (start < end).then(|| (start - from, end - from, *by))
-            }));
+        for span in spans {
+            let mut at = starts.partition_point(|start| *start <= span.start) - 1;
+            while at < starts.len() && starts[at] < span.end {
+                let (from, to) = (starts[at], starts[at] + lines[first + at].len());
+                let (start, end) = (span.start.max(from), span.end.min(to));
+                if start < end {
+                    found[first + at].push(Span {
+                        start: start - from,
+                        end: end - from,
+                        by: span.by,
+                    });
+                }
+                at += 1;
+            }
         }
         first = last + 1;
     }
@@ -832,10 +904,37 @@ mod tests {
             let named: Vec<Vec<&str>> = quoted(&lines, Context::none())
                 .iter()
                 .zip(&lines)
-                .map(|(spans, line)| spans.iter().map(|(s, e, _)| &line[*s..*e]).collect())
+                .map(|(spans, line)| {
+                    spans
+                        .iter()
+                        .map(|span| &line[span.start..span.end])
+                        .collect()
+                })
                 .collect();
             assert_eq!(named, *want, "{lines:?}");
         }
+    }
+
+    /// A continued run hands each range back to its own lines by a search,
+    /// never by reading every range for every line: a run of a hundred
+    /// thousand lines, each carrying a string, reads well inside a second,
+    /// where reading the ranges line by line takes many.
+    #[test]
+    fn a_long_continued_run_is_read_in_linear_time() {
+        const LINES: usize = 100_000;
+        let lines: Vec<String> = (0..LINES)
+            .map(|n| format!("echo \"--no-verify {n}\" \\"))
+            .chain(["echo done".to_owned()])
+            .collect();
+        let started = std::time::Instant::now();
+        let found = quoted(&lines, Context::none());
+        let took = started.elapsed();
+        assert_eq!(found.len(), LINES + 1);
+        assert!(found[..LINES].iter().all(|spans| spans.len() == 1));
+        assert!(
+            took < std::time::Duration::from_secs(1),
+            "a run of {LINES} continued lines took {took:?}"
+        );
     }
 
     /// Past the nesting bound the rest of the line is code: a line built to

@@ -8,6 +8,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use super::super::homoglyph;
 use super::Normalization;
+use crate::render::Block;
 
 /// Which of a document's lookalike letters are reported. Every one is
 /// folded whatever this says, so the rules read the plain text either way;
@@ -95,9 +96,11 @@ fn code_ranges(text: &str) -> Vec<Range<usize>> {
     // `code_by_line` has one entry per line `str::lines` yields, which is
     // one per piece this split yields, terminator included.
     for (index, line) in text.split_inclusive('\n').enumerate() {
+        // An HTML block is not code: markdown reads nothing inside one,
+        // and a reader sees its text, a comment's included, as written.
         match code.block.get(index) {
-            Some(true) => ranges.push(start..start + line.len()),
-            Some(false) => ranges.extend(
+            Some(Some(Block::Code)) => ranges.push(start..start + line.len()),
+            Some(Some(Block::Html) | None) => ranges.extend(
                 code.spans[index]
                     .iter()
                     .map(|(from, to)| start + from..start + to),

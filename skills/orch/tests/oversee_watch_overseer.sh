@@ -577,9 +577,7 @@ assert_eq "$(succeed_calls --print-launch-line)" "1" \
 # A manual replacement can reuse the same durable tmux server, pane and window.
 # Its new watch owns the command and replaces the former session's bypass flag.
 overseer_case record_same_pane_restart idle
-jq -n --arg pane "$PANE" --arg window "$WINDOW" \
-  '{triaged: [], overseer: {server: "7000", pane: $pane, window: $window, launch_line: "claude -n overseer --model old --dangerously-skip-permissions"}}' \
-  > "$STUB_DIR/oversee-state.json"
+state_with "$BYPASS_LINE"
 printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
 run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
 assert_eq "server=$(recorded server) pane=$(recorded pane) window=$(recorded window) line=$(recorded launch_line)" \
@@ -827,9 +825,7 @@ assert_contains "$OUT" "EVENT merged 7 ken-1" \
 mutate 's/overseer_command_record$/ : # owner write removed/' \
   "drops the current watch command write"
 overseer_case identity_mutant idle
-jq -n --arg pane "$PANE" --arg window "$WINDOW" \
-  '{triaged: [], overseer: {server: "7000", pane: $pane, window: $window, launch_line: "claude -n overseer --model old --dangerously-skip-permissions"}}' \
-  > "$STUB_DIR/oversee-state.json"
+state_with "$BYPASS_LINE"
 printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
 WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "line=$(recorded launch_line) derived=$(succeed_calls --print-launch-line)" \

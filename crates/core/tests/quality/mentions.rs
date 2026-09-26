@@ -164,52 +164,109 @@ fn a_string_handed_to_a_tree_function_is_named_only_when_that_function_only_prin
     }
 }
 
+/// The lines of `tests/launch.sh` in
+/// `a_test_hands_a_switch_to_its_stubs_as_data_and_runs_it_as_code`, and
+/// whether the switch there is a finding.
+const LAUNCH_ROWS: &[(&str, bool)] = &[
+    ("BYPASS=\"claude --dangerously-skip-permissions\"", false),
+    (
+        "printf '%s\\n' \"claude --dangerously-skip-permissions\" > \"$stub\"",
+        false,
+    ),
+    (
+        "echo) printf '%s\\n' \"claude --dangerously-skip-permissions\" ;;",
+        false,
+    ),
+    (
+        "check launch \"$(cat \"$CAP\")\" \"claude --dangerously-skip-permissions\"",
+        false,
+    ),
+    (
+        "spec=\"$(run_case walled \"claude --dangerously-skip-permissions\")\"",
+        false,
+    ),
+    (
+        "check launch \"$(run_case '--dangerously-skip-permissions')\" ok",
+        false,
+    ),
+    ("run_case walled -- --dangerously-skip-permissions", false),
+    (
+        "run_case walled \\\n  -- --dangerously-skip-permissions",
+        false,
+    ),
+    (
+        "check launch \\\n  \"claude --dangerously-skip-permissions\"",
+        false,
+    ),
+    ("claude --dangerously-skip-permissions", true),
+    ("\"$LAUNCH\" --dangerously-skip-permissions", true),
+    ("claude \\\n  --dangerously-skip-permissions", true),
+    ("eval \"claude --dangerously-skip-permissions\"", true),
+    ("bash -c \"claude --dangerously-skip-permissions\"", true),
+    (
+        "# a comment \\\nclaude --dangerously-skip-permissions",
+        true,
+    ),
+    (
+        "jq -n '{line: \"claude --dangerously-skip-permissions\"}' > \"$state\"",
+        true,
+    ),
+    ("claude \"--dangerously-skip-permissions\"", true),
+    ("echo claude --dangerously-skip-permissions", true),
+    ("git commit \"--no-verify\"", true),
+    ("echo \"claude --dangerously-skip-permissions\" | sh", true),
+    (
+        "printf '%s\\n' \"claude --dangerously-skip-permissions\" | bash",
+        true,
+    ),
+    (
+        "echo \"claude --dangerously-skip-permissions\" > >(sh)",
+        true,
+    ),
+    ("run_case \"--dangerously-skip-permissions\" | sh", true),
+    (
+        "env bash -c \"claude --dangerously-skip-permissions\"",
+        true,
+    ),
+    (
+        "xargs -I{} sh -c \"claude --dangerously-skip-permissions {}\"",
+        true,
+    ),
+    (
+        "\"$SHELL\" -c \"claude --dangerously-skip-permissions\"",
+        true,
+    ),
+    ("dash -c \"claude --dangerously-skip-permissions\"", true),
+    ("su -c \"claude --dangerously-skip-permissions\"", true),
+    ("ssh host \"claude --dangerously-skip-permissions\"", true),
+    ("trap \"claude --dangerously-skip-permissions\" EXIT", true),
+    (
+        "command eval \"claude --dangerously-skip-permissions\"",
+        true,
+    ),
+    (
+        "sudo bash -c \"claude --dangerously-skip-permissions\"",
+        true,
+    ),
+    (
+        "eval \"$(echo 'claude --dangerously-skip-permissions')\"",
+        true,
+    ),
+    (
+        "\"$(printf '%s' 'claude --dangerously-skip-permissions')\"",
+        true,
+    ),
+];
+
 /// A test hands the launch lines it checks to its stubs and assertions as
-/// data, and runs a switch only where it hands it to a program it does not
-/// define or to a string a shell runs. One row per shape: the lines of
-/// `tests/launch.sh`, which defines `check` and `run_case`, and whether
-/// the switch there is a finding.
+/// data, and runs a switch wherever it hands it to anything else: a
+/// program it does not define, a command whose name is quoted or expanded,
+/// or a command piped on. One row of `LAUNCH_ROWS` per shape, read beside
+/// `tests/lib.sh`, which defines `check` and `run_case`.
 #[test]
 fn a_test_hands_a_switch_to_its_stubs_as_data_and_runs_it_as_code() {
     let helpers = "#!/usr/bin/env bash\ncheck() { [ \"$2\" = \"$3\" ] || exit 1; }\nrun_case() { \"$LAUNCH\" \"$@\"; }\n";
-    let rows: &[(&str, bool)] = &[
-        ("BYPASS=\"claude --dangerously-skip-permissions\"", false),
-        (
-            "printf '%s\\n' \"claude --dangerously-skip-permissions\" > \"$stub\"",
-            false,
-        ),
-        (
-            "echo) printf '%s\\n' \"claude --dangerously-skip-permissions\" ;;",
-            false,
-        ),
-        (
-            "check launch \"$(cat \"$CAP\")\" \"claude --dangerously-skip-permissions\"",
-            false,
-        ),
-        (
-            "jq -n '{line: \"claude --dangerously-skip-permissions\"}' > \"$state\"",
-            false,
-        ),
-        ("run_case walled -- --dangerously-skip-permissions", false),
-        (
-            "run_case walled \\\n  -- --dangerously-skip-permissions",
-            false,
-        ),
-        (
-            "check launch \\\n  \"claude --dangerously-skip-permissions\"",
-            false,
-        ),
-        ("claude --dangerously-skip-permissions", true),
-        ("\"$LAUNCH\" --dangerously-skip-permissions", true),
-        ("claude \\\n  --dangerously-skip-permissions", true),
-        ("eval \"claude --dangerously-skip-permissions\"", true),
-        ("bash -c \"claude --dangerously-skip-permissions\"", true),
-        (
-            "# a comment \\\nclaude --dangerously-skip-permissions",
-            true,
-        ),
-    ];
-    for (body, runs) in rows {
+    for (body, runs) in LAUNCH_ROWS {
         let result = skill(&[
             ("SKILL.md", "Run it.\n"),
             ("tests/lib.sh", helpers),
@@ -219,14 +276,21 @@ fn a_test_hands_a_switch_to_its_stubs_as_data_and_runs_it_as_code() {
             true => (&["safety-bypass"], &[]),
             false => (&[], &["safety-bypass"]),
         };
+        // `sudo` is its own rule's finding; this table is about the switch.
+        fn bypass(found: &[kendex_core::quality::Finding]) -> Vec<&str> {
+            rules(found)
+                .into_iter()
+                .filter(|rule| *rule == "safety-bypass")
+                .collect()
+        }
         assert_eq!(
-            rules(&result.findings),
+            bypass(&result.findings),
             flagged,
             "{body:?}: {:#?}",
             result.findings
         );
         assert_eq!(
-            rules(&result.mentions),
+            bypass(&result.mentions),
             named,
             "{body:?}: {:#?}",
             result.mentions

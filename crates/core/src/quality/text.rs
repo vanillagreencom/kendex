@@ -14,7 +14,6 @@ use std::collections::BTreeSet;
 mod normalize;
 mod shell;
 pub use normalize::{Letters, deobfuscate};
-pub use shell::interprets;
 
 use super::phrase::find_phrase;
 use super::{AuditInput, Content, Doc, Prepared, Severity, TreeFile};
@@ -112,9 +111,10 @@ pub enum Quotation {
     /// terminal.
     ShellText,
     /// In a shell file under a test directory, a literal the test hands
-    /// over as data: a quoted string it assigns, prints or passes to any
-    /// command but one that runs it as shell, and every word it passes to
-    /// a function the tests define.
+    /// over as data: a quoted string an assignment takes as its value, a
+    /// quoted string `echo` or `printf` prints, and every argument of a
+    /// function the tests define, where the command's output reaches no
+    /// other command.
     Fixture,
 }
 
@@ -305,83 +305,94 @@ fn tree_docs(
     docs: &mut Vec<Doc>,
 ) -> Vec<TreeFile> {
     // The location a deobfuscation report is filed under is the one every
-    // line rule cites, spelled once here for both, and what the file is to
-    // its skill is decided once here for every pass below.
-    let placed: Vec<(TreeFile, String, Option<Supporting>, Option<Cleaned>)> = files
+    // line rule cites, spelled once here for both; what the file is to its
+    // skill and the language it is read in are decided once here for
+    // every pass below.
+    let placed: Vec<Placed> = files
         .into_iter()
         .map(|file| {
             let location = format!("{root}/{}", crate::paths::slashed(&file.path));
             let supports = supporting(&file.path);
-            let cleaned = file.text.map(|text| Cleaned {
-                digest: digest(&text),
-                text: clean(location.clone(), &text, letters(&location, supports)),
+            let cleaned = file.text.map(|written| {
+                let text = clean(location.clone(), &written, letters(&location, supports));
+                Cleaned {
+                    language: language(&location, &text),
+                    digest: digest(&written),
+                    text,
+                }
             });
-            (TreeFile { text: None, ..file }, location, supports, cleaned)
+            Placed {
+                file: TreeFile { text: None, ..file },
+                location,
+                supports,
+                cleaned,
+            }
         })
         .collect();
     // A script calls the message helpers its tree's library files define,
-    // so the diagnostic functions are read off every shell file of the
-    // tree before any one of them is split into lines. Each file's
-    // language is decided once, here, for both passes.
-    let languages: Vec<Option<Language>> = placed
+    // and a test the helpers its tree's other tests define, so both are
+    // read off every shell file of the tree before any one of them is
+    // split into lines.
+    let shell: Vec<(&str, bool)> = placed
         .iter()
-        .map(|(_, location, _, cleaned)| {
-            cleaned
-                .as_ref()
-                .map(|cleaned| language(location, &cleaned.text))
-        })
-        .collect();
-    let shell: Vec<(&str, Option<Supporting>)> = placed
-        .iter()
-        .zip(&languages)
-        .filter(|(_, language)| **language == Some(Language::Shell))
-        .filter_map(|((_, _, supports, cleaned), _)| {
-            cleaned
-                .as_ref()
-                .map(|cleaned| (cleaned.text.as_str(), *supports))
+        .filter_map(|placed| {
+            let cleaned = placed.cleaned.as_ref()?;
+            (cleaned.language == Language::Shell).then_some((cleaned.text.as_str(), placed.tests()))
         })
         .collect();
     let every: Vec<&str> = shell.iter().map(|(text, _)| *text).collect();
     let diagnostic = shell::diagnostic_functions(&every);
-    // A test calls the helpers its tree's other tests and their libraries
-    // define, so they are read off every test file before any is split.
     let tests: Vec<&str> = shell
         .iter()
-        .filter(|(_, supports)| *supports == Some(Supporting::Test))
+        .filter(|(_, tests)| *tests)
         .map(|(text, _)| *text)
         .collect();
     let helpers = shell::defined_functions(&tests);
     placed
         .into_iter()
-        .zip(languages)
-        .map(|((file, location, supports, cleaned), language)| {
-            let Some(cleaned) = cleaned else {
-                return file;
+        .map(|placed| {
+            let tests = placed.tests();
+            let Some(cleaned) = placed.cleaned else {
+                return placed.file;
             };
-            if let Some(language) = language {
-                let context = shell::Context {
-                    diagnostic: &diagnostic,
-                    helpers: (supports == Some(Supporting::Test)).then_some(&helpers),
-                };
-                let split = lines(&cleaned.text, language.reading(context));
-                docs.push(Doc {
-                    lines: match supports {
-                        Some(Supporting::Test | Supporting::Reference) => {
-                            split.into_iter().map(Line::as_description).collect()
-                        }
-                        None => split,
-                    },
-                    role: super::DocRole::Text,
-                    location,
-                    digest: cleaned.digest,
-                });
-            }
+            let context = shell::Context {
+                diagnostic: &diagnostic,
+                helpers: tests.then_some(&helpers),
+            };
+            let split = lines(&cleaned.text, cleaned.language.reading(context));
+            docs.push(Doc {
+                lines: match placed.supports {
+                    Some(Supporting::Test | Supporting::Reference) => {
+                        split.into_iter().map(Line::as_description).collect()
+                    }
+                    None => split,
+                },
+                role: super::DocRole::Text,
+                location: placed.location,
+                digest: cleaned.digest,
+            });
             TreeFile {
                 text: Some(cleaned.text),
-                ..file
+                ..placed.file
             }
         })
         .collect()
+}
+
+/// One tree file on its way to becoming a document: where it is filed,
+/// what it is to its skill, and its text as the rules read it.
+struct Placed {
+    file: TreeFile,
+    location: String,
+    supports: Option<Supporting>,
+    cleaned: Option<Cleaned>,
+}
+
+impl Placed {
+    /// Under a test directory: read against the tests' own helpers.
+    fn tests(&self) -> bool {
+        self.supports == Some(Supporting::Test)
+    }
 }
 
 /// A file that comes along with a skill rather than being what a harness
@@ -511,6 +522,7 @@ fn hook_docs(
 struct Cleaned {
     text: String,
     digest: String,
+    language: Language,
 }
 
 /// What names a document's text wherever a reading has to say which text
@@ -558,15 +570,7 @@ pub fn lines(text: &str, reading: Reading<'_>) -> Vec<Line> {
             .into_iter()
             .map(marked(Quotation::CodeSpan))
             .collect(),
-        Reading::Shell(context) => shell::quoted(&lower, context)
-            .into_iter()
-            .map(|spans| {
-                spans
-                    .into_iter()
-                    .map(|(start, end, by)| Span { start, end, by })
-                    .collect()
-            })
-            .collect(),
+        Reading::Shell(context) => shell::quoted(&lower, context),
         Reading::Plain => vec![Vec::new(); raw.len()],
     };
     raw.iter()

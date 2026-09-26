@@ -66,9 +66,9 @@ const EXTENSIONS: Options = Options::ENABLE_TABLES;
 pub struct Code {
     /// The code spans of each line, as byte ranges local to its own line.
     pub spans: Vec<Vec<(usize, usize)>>,
-    /// Whether markdown reads the line as something other than prose: a
-    /// code block, fenced or indented, or a raw HTML block. Where any of
-    /// those starts and stops is the parser's answer, and this field is how
+    /// The block, if any, in which markdown reads the line as something
+    /// other than prose: a code block, fenced or indented, or a raw HTML
+    /// block. Where any of those starts and stops is the parser's answer, and this field is how
     /// a caller gets it without asking again — so the answer is not written
     /// out here as well, where it could drift from the one that ships.
     /// [`reached`] is where a range becomes a set of lines.
@@ -78,7 +78,16 @@ pub struct Code {
     /// names it, because the line was never read. Left as authored is the
     /// safe direction, but not a reported one — as the `SKILL.md` skip in
     /// `rewrite_prose` is not either.
-    pub block: Vec<bool>,
+    pub block: Vec<Option<Block>>,
+}
+
+/// A block markdown reads as something other than prose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Block {
+    /// A code block, fenced or indented.
+    Code,
+    /// A raw HTML block, comments included.
+    Html,
 }
 
 /// Where `text` keeps its code. A run of backticks may close on a later
@@ -106,7 +115,7 @@ pub fn code_by_line(text: &str) -> Code {
     let lines = line_spans(text);
     let mut code = Code {
         spans: vec![Vec::new(); lines.len()],
-        block: vec![false; lines.len()],
+        block: vec![None; lines.len()],
     };
     for (event, span) in Parser::new_ext(text, EXTENSIONS).into_offset_iter() {
         match event {
@@ -116,9 +125,14 @@ pub fn code_by_line(text: &str) -> Code {
                     code.spans[at].push((span.start.max(start) - start, span.end.min(end) - start));
                 }
             }
-            Event::Start(Tag::CodeBlock(_) | Tag::HtmlBlock) => {
+            Event::Start(Tag::CodeBlock(_)) => {
                 for at in reached(&lines, &span) {
-                    code.block[at] = true;
+                    code.block[at] = Some(Block::Code);
+                }
+            }
+            Event::Start(Tag::HtmlBlock) => {
+                for at in reached(&lines, &span) {
+                    code.block[at] = Some(Block::Html);
                 }
             }
             _ => {}
@@ -181,7 +195,7 @@ fn line_spans(text: &str) -> Vec<(usize, usize)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{code_by_line, line_spans};
+    use super::{Block, code_by_line, line_spans};
 
     /// The two readings are handed to callers that zip them against
     /// `str::lines` or against `str::split_inclusive`, so a range list one
@@ -277,11 +291,12 @@ mod tests {
             "\n",             // 16
             "out\n",          // 17
         );
+        let (prose, code, html) = (None, Some(Block::Code), Some(Block::Html));
         assert_eq!(
             code_by_line(text).block,
             vec![
-                false, false, true, true, true, true, false, true, true, true, false, false, true,
-                true, true, true, false, false,
+                prose, prose, code, code, code, code, prose, code, code, code, prose, prose, html,
+                html, html, html, prose, prose,
             ]
         );
     }

@@ -44,7 +44,7 @@ pub fn rewrite_prose(body: &str, harness: HarnessId) -> (String, Vec<RenderWarni
     // directly — a second fallback here could only disagree with the first.
     let code = code_by_line(body);
     for (at, line) in body.split_inclusive('\n').enumerate() {
-        let quoted = code.block.get(at).copied().unwrap_or(true);
+        let quoted = code.block.get(at).is_none_or(Option::is_some);
         if quoted || line.contains(SKILL_POINTER) {
             out.push_str(line);
             continue;

@@ -7,7 +7,6 @@
 //! learns about the one that never runs.
 
 use super::super::Line;
-use crate::quality::text::interprets;
 
 /// What this line does, and what it does it to — so two lines that reach
 /// for two different things are two sentences. A sentence that says only
@@ -42,6 +41,23 @@ impl Reach {
         };
         format!("{} {} `{shown}`", self.what, self.preposition)
     }
+}
+
+/// Interpreters a download can be handed straight to.
+const SHELLS: &[&str] = &["sh", "bash", "zsh", "python"];
+
+/// Whether this program reads what is piped into it and runs it.
+///
+/// A version on the end of the name is the same interpreter: `python3` is
+/// what anybody actually writes, and a whole-word match on `python` alone
+/// misses it. Nothing else is
+/// stretched — a name that is not one of these runs whatever it runs, and
+/// saying otherwise would hold back lines nothing interprets.
+fn interprets(program: &str) -> bool {
+    SHELLS.contains(&program)
+        || program.strip_prefix("python").is_some_and(|version| {
+            !version.is_empty() && version.chars().all(|c| c.is_ascii_digit() || c == '.')
+        })
 }
 
 /// The commands a line runs, read once with the shell's own quoting.
