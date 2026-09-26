@@ -8,13 +8,16 @@
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+# HOOK_UNDER_TEST overrides the hook each fixture installs, so a must-fail
+# control runs against these same assertions.
+hook_source="${HOOK_UNDER_TEST:-$ROOT/hooks/command-safety.sh}"
 mkdir -p "$ROOT/tmp"
 scratch="$(mktemp -d "$ROOT/tmp/command-safety.XXXXXX")" || exit 1
 trap 'rm -rf -- "$scratch"' EXIT
 repo="$scratch/project"
 mkdir -p "$repo/.claude/hooks" "$repo/.agents/skills/commit-guards/scripts"
 git -C "$repo" init -q
-cp "$ROOT/hooks/command-safety.sh" "$repo/.claude/hooks/command-safety.sh"
+cp "$hook_source" "$repo/.claude/hooks/command-safety.sh"
 cp -R "$ROOT/skills/commit-guards/scripts/lib" "$repo/.agents/skills/commit-guards/scripts/lib"
 hook="$repo/.claude/hooks/command-safety.sh"
 unset COMMAND_SAFETY_DENY_PATTERN COMMIT_GUARDS_SETTINGS_FILE
@@ -228,7 +231,7 @@ global="$scratch/global/.claude"
 hostile="$scratch/hostile"
 mkdir -p "$global/hooks" "$global/skills/commit-guards/scripts" "$hostile/.agents/skills/commit-guards/scripts/lib"
 git -C "$hostile" init -q
-cp "$ROOT/hooks/command-safety.sh" "$global/hooks/command-safety.sh"
+cp "$hook_source" "$global/hooks/command-safety.sh"
 cp -R "$ROOT/skills/commit-guards/scripts/lib" "$global/skills/commit-guards/scripts/lib"
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "BLOCK_THIS"\n' >"$hostile/kendex.settings.toml"
 hostile_marker="$scratch/hostile-loader-ran"

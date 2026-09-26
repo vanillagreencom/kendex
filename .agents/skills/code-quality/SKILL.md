@@ -111,7 +111,7 @@ Commit bodies explain intent, never narrate the diff.
 
 ## Over-Engineering
 
-Build only what was asked. No speculative abstractions and no error handling for impossible scenarios. In production code, no generalization before a third caller exists, and no wrapper that only forwards; a decision re-derived at N sites already has N callers. Test helpers follow § Tests. A new dependency needs a one-line justification in its commit message.
+Build only what was asked. No speculative abstractions and no error handling for impossible scenarios. In production code, no generalization before a third caller exists, and no wrapper that only forwards; a decision re-derived at N sites already has N callers. Test helpers live in the tree's one assertion library (§ Tests), whatever their caller count. A new dependency needs a one-line justification in its commit message.
 
 One judge per question: never re-implement a decision (classify, validate, parse, detect state) another component or language already owns; delegate. A decision re-derived at each use site in one file is the same defect: compute it once and let each site match on the result. A second spelling is a defect even when both copies agree.
 
