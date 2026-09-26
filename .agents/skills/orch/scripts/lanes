@@ -125,9 +125,9 @@
 #         (lib/lane-context.sh), and the window its model has. No pane is
 #         read. A lane's reading is in its own mailbox, which the running
 #         lane record of the fleet state (`workflow-state get oversee`)
-#         places, read through its host where that record names one; the
-#         caller's own row with no lane record is the overseer, read from
-#         the overseer mailbox and only where the reading names this pane.
+#         places, read through its host where that record names one. The
+#         caller's own row with no lane record is the overseer, which is
+#         judged at its own turn end and reads `unrecorded` here.
 #         CONTEXT_USED_PCT is the share of that window CONSUMED. A row
 #         with no reading is `unrecorded`, never empty; one whose reading names
 #         no window is `window-unread`; one whose record could not be read, or
@@ -1946,27 +1946,18 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 # lane_context_collect fetch contract: the record on stdout and exit 0, exit 1
 # where none is recorded, exit 2 with the cause on stdout where it could not be
 # read. A row whose window a running fleet lane record names is that lane, read
-# in its own mailbox, through its host where the record names one. The
-# caller's own row with no such record is the overseer, whose record is read
-# only where it names this very pane: a successor's report must not carry the
-# figure its predecessor left in the same mailbox.
+# in its own mailbox, through its host where the record names one.
 context_record_fetch() { # LANE CALLER
 	local lane="$1" caller="$2" rec fields item host root path out rc=0 probe_rc=0
 	rec="$(jq -c --arg w "$lane" 'map(select(((.window // "") | sub("^.*:"; "")) == $w)) | first // empty' <<<"$CONTEXT_LANES")" \
 		|| { printf 'the fleet lane records could not be searched for window %s\n' "$lane"; return 2; }
 	if [[ -z "$rec" ]]; then
-		if [[ -z "$caller" ]]; then
-			printf 'no running fleet lane record names the window %s, so the mailbox its reading is recorded in is unknown\n' "$lane"
-			return 2
-		fi
-		path="$CONTEXT_OVERSEER_BOX/$LANE_CONTEXT_RECORD"
-		[[ -e "$path" ]] || return 1
-		out="$(cat -- "$path" 2>&1)" || { printf '%s\n' "$out"; return 2; }
-		[[ -n "$out" ]] || return 1
-		lane_context_record_fields "$out" || { printf '%s\n' "$out"; return 0; }
-		[[ -n "$CONTEXT_CALLER_KEY" && "$LANE_CTX_PANE_KEY" == "$CONTEXT_CALLER_KEY" ]] || return 1
-		printf '%s\n' "$out"
-		return 0
+		# The caller's own row with no lane record is the overseer, whose context
+		# is judged at its own turn end on the reading that turn end took and on
+		# no stored one, so this report carries none for it.
+		[[ -z "$caller" ]] || return 1
+		printf 'no running fleet lane record names the window %s, so the mailbox its reading is recorded in is unknown\n' "$lane"
+		return 2
 	fi
 	fields="$(jq -r '[(.item // ""), (.host // ""), (.mail_root // "")] | join("\t")' <<<"$rec")" \
 		|| { printf 'the fleet lane record for window %s could not be read\n' "$lane"; return 2; }
@@ -2645,15 +2636,12 @@ case "$SUB" in
 		# lane's turn-end handoff hook asks the same function about itself, so
 		# no session is one account in this report and another there.
 		caller_cfg=""
-		CONTEXT_CALLER_KEY=""
 		if [[ -n "${TMUX_PANE:-}" ]]; then
 			caller_cmd="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_command}' 2>/dev/null)" || caller_cmd=""
 			caller_cfg="$(lane_context_caller_cfg "$(lane_context_shape "${caller_cmd#-}")")"
-			CONTEXT_CALLER_KEY="$(lane_context_caller_key)" || CONTEXT_CALLER_KEY=""
 		fi
 		# Where each row's reading is recorded: a lane's in its own mailbox, which
-		# its fleet lane record places, and the overseer's in the overseer mailbox
-		# at the main checkout, where lane-mail keeps it.
+		# its fleet lane record places.
 		# No fleet state is a session outside any fleet, whose rows are the
 		# caller's alone; a state that is there and cannot be read is refused.
 		CONTEXT_LANES='[]'
@@ -2663,7 +2651,6 @@ case "$SUB" in
 			CONTEXT_LANES="$("$SCRIPT_DIR/workflow-state" get oversee '[.lanes // [] | .[] | select(.status == "running")]' 2>/dev/null)" \
 				|| die context-fleet oversee
 		fi
-		CONTEXT_OVERSEER_BOX="$(lane_context_overseer_box "$PWD")"
 		# A separate list, never LANE_CLAIMS_LIVE itself: the caller's pane is
 		# a pane to measure and not a launch in flight, and the usage pass
 		# below counts that global's rows against each account.

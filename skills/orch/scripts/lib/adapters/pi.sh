@@ -32,10 +32,11 @@ lane_adapter_pi_agent_dir() {
   printf '%s\n' "${PI_CODING_AGENT_DIR:-${LANES_HOME:-$HOME}/.pi/agent}"
 }
 
-# Whether Pi would compact a session started in DIR: 0 where it may, 1 where
-# the user settings file turns `compaction.enabled` off and the project file does
-# not turn it back on, 2 where a settings file could not be read, which it
-# names in LANE_ADAPTER_PI_FILE with jq's words in LANE_ADAPTER_PI_CAUSE. An
+# Whether Pi would compact a session started in DIR: 0 where it may, naming in
+# LANE_ADAPTER_PI_FILE the file that decides it, 1 where the user settings file
+# turns `compaction.enabled` off and the project file does not turn it back on,
+# 2 where a settings file could not be read, which it names in
+# LANE_ADAPTER_PI_FILE with jq's words in LANE_ADAPTER_PI_CAUSE. An
 # absent key is Pi's default, true. The project file counts only against the
 # switch: Pi applies it only in a workspace it trusts, so a project `false` may
 # be ignored where a project `true` may not.
@@ -46,8 +47,12 @@ lane_adapter_pi_compaction_on() { # DIR
   lane_adapter_pi_enabled "$(lane_adapter_pi_agent_dir)/settings.json" || return 2
   user="$LANE_ADAPTER_PI_ENABLED"
   lane_adapter_pi_enabled "$1/.pi/settings.json" || return 2
+  # The file whose value decides: the project one where it turns compaction
+  # back on, the user one otherwise.
+  LANE_ADAPTER_PI_FILE="$1/.pi/settings.json"
+  [ "$LANE_ADAPTER_PI_ENABLED" = true ] && return 0
   LANE_ADAPTER_PI_FILE="$(lane_adapter_pi_agent_dir)/settings.json"
-  [ "$user" = false ] && [ "$LANE_ADAPTER_PI_ENABLED" != true ] && return 1
+  [ "$user" = false ] && return 1
   return 0
 }
 

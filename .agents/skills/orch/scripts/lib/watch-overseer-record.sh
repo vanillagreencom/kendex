@@ -23,7 +23,7 @@ overseer_launch_args() {
 }
 
 overseer_command_record() {
-  local pane="${TMUX_PANE:-}" key server window line record detail box
+  local pane="${TMUX_PANE:-}" key server window line record detail
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
   # The key is the orch library's, the same function the lane turn-end hook
   # and `oversee register` read a session's own key with: the hook compares its own
@@ -63,9 +63,5 @@ overseer_command_record() {
         | if (.server // "") == $server and (.pane // "") == $pane then . else {} end)
         + {server: $server, pane: $pane, window: $window, launch_line: $line}' 2>&1)" \
     || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=write"
-  # The overseer mailbox's reading is the last session's until this one's first
-  # turn end records its own, and a pane key cannot tell the two apart.
-  box="$(lane_context_overseer_box "$PROJECT_ROOT")"
-  rm -f -- "${box:?}/$LANE_CONTEXT_RECORD"
 }
 
