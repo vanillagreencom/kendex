@@ -57,6 +57,7 @@ message() { # REASON FIELD=VALUE...
     state-write-failed) printf '%s\n' 'The lane closed, but its fleet record could not be updated.' ;;
     prepare-stop-failed) printf '%s\n' 'The background launch job the record names could not be stopped. Close-out changed nothing else.' ;;
     validate-stop-failed) printf '%s\n' "A validation run in the lane's worktree could not be ended. The window and record are unchanged; dev-validate-run's own words are on the lines above this one." ;;
+    item-files-failed) printf '%s\n' "The item's files in the state directory could not all be removed. The host is closed; the window and record are unchanged, and a second close retries the removal. workflow-state's own words are on the lines above this one." ;;
     helper-missing) printf '%s\n' 'The required helper is not executable. Close-out changed nothing.' ;;
     stopped) printf '%s\n' 'The lane window closed and its sandbox was kept.' ;;
     closed) printf '%s\n' 'The lane, sandbox and fleet record closed.' ;;
@@ -94,7 +95,10 @@ and its window closed. --keep-sandbox ends the harness, closes its window and
 records stopped without closing the lane host.
 A local lane's close also ends every validation run its worktree, the record's
 mail_root, holds with no verdict, through dev-validate-run --stop; a hosted
-lane's runs end with its sandbox.
+lane's runs end with its sandbox. A close that is not --keep-sandbox removes
+the item's files from the state directory through workflow-state remove after
+the host close, printing its removed path= lines; a removal that fails refuses
+as item-files-failed with the window and record unchanged.
 
 A lane holding an ask nobody has answered refuses as ask-unanswered, under
 --keep-sandbox and on a stopped record alike: the answer would reach a session
@@ -302,6 +306,15 @@ stop_validations() {
     || { message validate-stop-failed "item=$ITEM" "worktree=$mail_root" "status=$rc" >&2; exit 1; }
 }
 
+# The item's close-out under tmp/: every file the state directory holds named
+# for it, through workflow-state remove, the one owner of that removal. Only a
+# full close reaches it; a kept sandbox is relaunched into those files.
+remove_item_files() {
+  local rc=0
+  "$WORKFLOW_STATE" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} remove "$ITEM" || rc=$?
+  [[ "$rc" -eq 0 ]] || { message item-files-failed "item=$ITEM" "status=$rc" >&2; exit 1; }
+}
+
 pane_still_exists() {
   local listed
   listed="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)" || return 2
@@ -309,14 +322,14 @@ pane_still_exists() {
 }
 
 # The end of every close-out: a local lane's validations ended, the host closed
-# unless --keep-sandbox, the window closed where pane_id names one tmux still
-# lists, then the record and the line naming the outcome, pane= carried where
-# the close had a pane.
+# and the item's files removed unless --keep-sandbox, the window closed where
+# pane_id names one tmux still lists, then the record and the line naming the
+# outcome, pane= carried where the close had a pane.
 pane_id=""
 finish_close() {
   local next_status=done pane_rc=0 fields=("item=$ITEM")
   [[ -n "$host" ]] || stop_validations
-  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || exit $?; fi
+  if [[ "$KEEP_SANDBOX" == true ]]; then next_status=stopped; else close_host || exit $?; remove_item_files; fi
   if [[ -n "$pane_id" ]]; then
     pane_still_exists || pane_rc=$?
     case "$pane_rc" in

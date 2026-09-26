@@ -4,6 +4,8 @@
 # files, an old directive, an old handoff archive and an old progress report
 # go, with the fleet_log rows and done lane records past the window. A live
 # lane's files, a --keep path and the named keep list stay whatever their age.
+# A checkout with no fleet state prunes the same directory by age, holding an
+# item whose own workflow state is inside the window.
 # Everything removed is in the archive `kept=` names first, and a prune whose
 # archive cannot be written removes nothing.
 
@@ -21,9 +23,6 @@ source "$REPO_ROOT/skills/orch/scripts/lib/date-ladder.sh"
 
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
-# mutant_scripts and mutate_file, the two halves of the control below.
-# shellcheck source=lib/growth-state.sh
-source "$TEST_DIR/lib/growth-state.sh"
 
 echo
 echo "--- workflow-state prune ---"
@@ -181,25 +180,67 @@ out="$(prune "$p" --keep tmp/waiter.run 2>&1)" || rc=$?
   && pass "a prune with nothing to remove prints kept=none" \
   || fail "a prune with nothing to remove prints kept=none" "rc=$rc out=$out"
 
-# No fleet state, as on a first session that stops before its first launch:
-# no lane records to tell live from closed, so nothing is judged. The prune
-# prints the one line, touches nothing, archives nothing and writes no state,
-# even over an old file.
-bare="$TMP_ROOT/bare"
-mkdir -p "$bare/tmp"
-printf 'x\n' > "$bare/tmp/directive.md"
-touch -t "$old_touch" "$bare/tmp/directive.md"
-bare_before="$(tree_of "$bare")"
-bare_run() { # SCRIPT
-  (cd "$bare" && env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$bare/fleet" \
-    bash "$1" prune --keep tmp/waiter.run) 2>&1
+# No fleet state, as on a workstation checkout no overseer runs in: the same
+# directory is pruned by age. KEN-1 runs, its workflow state written today;
+# KEN-2 closed, its state already taken by its close-out; KEN-3 was abandoned,
+# its state as old as its files; KEN-12 extends KEN-1's key. mutstab-diag is a
+# scratch directory nothing names, and waiter.run the --keep run directory.
+build_bare() { # DIR
+  local sd="$1/tmp" f
+  mkdir -p "$sd/mutstab-diag" "$sd/waiter.run"
+  for f in completion-summary-KEN-1.md dev-return-KEN-1-7.json workflow-state-KEN-1.json.lock \
+    completion-summary-KEN-2.md workflow-state-KEN-3.json audit-KEN-3.json completion-summary-KEN-12.md \
+    mutstab-diag/run.log waiter.run/watch.log directive.md; do
+    printf 'x\n' > "$sd/$f"
+  done
+  find "$sd" -mindepth 1 -exec touch -t "$old_touch" {} +
+  printf '{}\n' > "$sd/workflow-state-KEN-1.json"
+  printf 'x\n' > "$sd/fresh.md"
 }
+bare_run() { # DIR SCRIPT
+  (cd "$1" && env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$1/fleet" \
+    bash "$2" prune --keep tmp/waiter.run) 2>&1
+}
+bare="$TMP_ROOT/bare"
+build_bare "$bare"
 rc=0
-out="$(bare_run "$WS")" || rc=$?
-[[ "$rc" -eq 0 && "$out" == "pruned fleet-state=none path=$bare/tmp/workflow-state-oversee.json" \
-   && "$(tree_of "$bare")" == "$bare_before" && ! -e "$bare/fleet" ]] \
-  && pass "a prune with no fleet state prints fleet-state=none and touches nothing" \
-  || fail "a prune with no fleet state prints fleet-state=none and touches nothing" "rc=$rc out=$out"
+out="$(bare_run "$bare" "$WS")" || rc=$?
+[[ "$rc" -eq 0 ]] && pass "a prune with no fleet state exits 0" || fail "a prune with no fleet state exits 0" "rc=$rc out=$out"
+while IFS='|' read -r want path label; do
+  if [[ -e "$bare/tmp/$path" ]]; then got=kept; else got=removed; fi
+  [[ "$got" == "$want" ]] \
+  && pass "with no fleet state $label is $want" \
+  || fail "with no fleet state $label is $want" "path=$path got=$got"
+done <<'ROWS'
+removed|completion-summary-KEN-2.md|a closed item's file
+removed|workflow-state-KEN-3.json|an abandoned item's old workflow state
+removed|audit-KEN-3.json|an abandoned item's file
+removed|completion-summary-KEN-12.md|an old file whose item extends a running one's
+removed|mutstab-diag|an old scratch directory no item names
+removed|directive.md|an old file no item names
+kept|workflow-state-KEN-1.json|a running item's workflow state
+kept|workflow-state-KEN-1.json.lock|a running item's old lock
+kept|completion-summary-KEN-1.md|a running item's old file
+kept|dev-return-KEN-1-7.json|a running item's old round artifact
+kept|waiter.run/watch.log|the --keep run directory
+kept|fresh.md|a file inside the retention
+ROWS
+count="$(grep '^pruned fleet_log=' <<<"$out" || true)"
+[[ "$count" == "pruned fleet_log=0 lanes=0 progress_reports=0 paths=6" && ! -e "$bare/tmp/workflow-state-oversee.json" ]] \
+  && pass "with no fleet state the count names the paths alone and no fleet state is written" \
+  || fail "with no fleet state the count names the paths alone and no fleet state is written" "got=$count"
+archive="$(sed -n 's/^kept=//p' <<<"$out")"
+listing="$(tar -tzf "$archive" 2>/dev/null || true)"
+grep -qxF -- "${bare#/}/tmp/mutstab-diag/run.log" <<<"$listing" \
+  && pass "with no fleet state the archive holds what went" \
+  || fail "with no fleet state the archive holds what went" "archive=$archive"
+# No state directory at all is a checkout nothing has written to yet.
+mkdir -p "$TMP_ROOT/empty"
+rc=0
+out="$( (cd "$TMP_ROOT/empty" && ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$TMP_ROOT/empty/fleet" "$WS" prune) 2>&1)" || rc=$?
+[[ "$rc" -eq 0 && "$out" == $'pruned fleet_log=0 lanes=0 progress_reports=0 paths=0\nkept=none' && ! -e "$TMP_ROOT/empty/tmp" ]] \
+  && pass "a prune with no state directory removes nothing and creates none" \
+  || fail "a prune with no state directory removes nothing and creates none" "rc=$rc out=$out"
 
 # A step that fails before the archive stands removes nothing and writes no
 # archive: an archive tar cannot write, an archive root that is a file, a find
@@ -249,6 +290,31 @@ grep -qxF 'tar: planted failure' "$TMP_ROOT/fail-tar.err" \
 grep -qxF 'find: planted failure' "$TMP_ROOT/fail-find.err" \
   && pass "the age refusal carries find's own words" || fail "the age refusal carries find's own words"
 
+# With no fleet state the live items are read by a find of their own: one that
+# fails there, while every other find answers, is refused and removes nothing.
+REAL_FIND="$(command -v find)"
+STATE_FIND_BIN="$TMP_ROOT/state-find-bin"
+mkdir -p "$STATE_FIND_BIN"
+cat > "$STATE_FIND_BIN/find" <<STUB
+#!/bin/sh
+for a in "\$@"; do [ "\$a" != -maxdepth ] || { echo "find: planted failure" >&2; exit 1; }; done
+exec "$REAL_FIND" "\$@"
+STUB
+chmod +x "$STATE_FIND_BIN/find"
+bare_refused() { # DIR SCRIPT
+  (cd "$1" && PATH="$STATE_FIND_BIN:$PATH" env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 \
+    FLEET_DIR="$1/fleet" bash "$2" prune) >/dev/null 2>"$1.err"
+}
+fp="$TMP_ROOT/fail-state-find"
+build_bare "$fp"
+before="$(tree_of "$fp")"
+rc=0
+bare_refused "$fp" "$WS" || rc=$?
+[[ "$rc" -eq 1 && "$(head -n 1 "$fp.err")" == "workflow-state: prune-age-unreadable path=$fp/tmp" \
+   && "$(tree_of "$fp")" == "$before" && ! -e "$fp/fleet" ]] \
+  && pass "with no fleet state a find that cannot read the live items is refused and removes nothing" \
+  || fail "with no fleet state a find that cannot read the live items is refused and removes nothing" "rc=$rc err=$(cat "$fp.err")"
+
 # A removal that fails part way: the archive already holds every path, and
 # the rows have already left the state.
 REAL_RM="$(command -v rm)"
@@ -277,17 +343,86 @@ got="$(jq -c '[any(.fleet_log[]; .text == "old"), any(.lanes[]; .item == "KEN-2"
   && pass "the pruned rows had already left the state" \
   || fail "the pruned rows had already left the state" "got=$got"
 
-# The suite's one must-fail control: the live-lane match dropped, so a running
-# lane's mailbox is pruned with the closed lanes' files.
-NO_LIVE="$(mutant_scripts no-live workflow-state)/workflow-state" || exit 1
-mutate_file "$NO_LIVE" '[[ ! "${unit##*/}" =~ $re ]] || kept_by=live' ':'
-mp="$TMP_ROOT/m-no-live"
-build "$mp"
-(cd "$mp" && env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$mp/fleet" \
-  "$NO_LIVE" prune --keep tmp/waiter.run) >/dev/null 2>&1 || true
-[[ ! -e "$mp/tmp/lane-mail/KEN-1" ]] \
-  && pass "control: without the live-lane match a running lane's mailbox is pruned" \
-  || fail "control: without the live-lane match a running lane's mailbox is pruned"
+MUTANT_DIR="$TMP_ROOT/mutant"
+mkdir -p "$MUTANT_DIR"
+cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$MUTANT_DIR/lib"
+cp "$REPO_ROOT/skills/orch/scripts/orch-env" "$REPO_ROOT/skills/orch/scripts/git-context" "$MUTANT_DIR/"
+mutant() { # NAME ANCHOR REPLACEMENT
+  [[ "$(grep -Fc -- "$2" "$WS")" == "1" ]] \
+  && pass "the $1 control finds its anchor" \
+  || fail "the $1 control finds its anchor"
+  # Through the environment, since awk -v reads backslash escapes in a value.
+  A="$2" R="$3" awk 'index($0, ENVIRON["A"]) { sub(/[^ ].*/, ""); print $0 ENVIRON["R"]; next } { print }' \
+    "$WS" > "$MUTANT_DIR/$1"
+}
+# One planted defect per rule: the mutant, its anchor and replacement, the
+# PATH prefix and settings it runs under, and what the defect lets through.
+control() { # NAME PREFIX EXTRA_ENV CHECK LABEL
+  local mp="$TMP_ROOT/m-$1"
+  build "$mp"
+  (cd "$mp" && PATH="$2$PATH" env -u ORCH_PROGRESS_REPORT_DIR ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$mp/fleet" \
+    $3 bash "$MUTANT_DIR/$1" prune --keep tmp/waiter.run) >/dev/null 2>&1 || true
+  (cd "$mp" && eval "$4") && pass "control: $5" || fail "control: $5"
+}
+
+# The same planted defects on the checkout with no fleet state.
+control_bare() { # NAME CHECK LABEL
+  local mp="$TMP_ROOT/mb-$1"
+  build_bare "$mp"
+  bare_run "$mp" "$MUTANT_DIR/$1" >/dev/null || true
+  (cd "$mp" && eval "$2") && pass "control: $3" || fail "control: $3"
+}
+
+# Planted: a prune with no fleet state stops before judging anything, as it
+# did before the workstation backstop.
+mutant absent-skipped 'state_file=$(fleet_state_file) || fleet=false' \
+  'state_file=$(fleet_state_file) || { printf "pruned fleet-state=none\n"; return 0; }'
+control_bare absent-skipped '[[ -e tmp/completion-summary-KEN-2.md ]]' \
+  "without the no-fleet-state pass a closed item's old file stays"
+
+mutant no-live '[[ -z "$item" ]] || ! unit_names_item "$unit" "$item" || kept_by=live' ':'
+control no-live "" "" '[[ ! -e tmp/lane-mail/KEN-1 ]]' \
+  "without the live-lane match a running lane's mailbox is pruned"
+
+mutant no-state-live 'live+="${unit%.json}"$'"'"'\n'"'" ':'
+control_bare no-state-live '[[ ! -e tmp/completion-summary-KEN-1.md ]]' \
+  "without the fresh-state match a running item's old file is pruned"
+
+mutant state-find-ignored 'unit="$sd" err="$found"; state_message prune-age-unreadable "$@" >&2; return 1' ':'
+mp="$TMP_ROOT/mb-state-find-ignored"
+build_bare "$mp"
+bare_refused "$mp" "$MUTANT_DIR/state-find-ignored" || true
+[[ ! -e "$mp/tmp/completion-summary-KEN-1.md" ]] \
+  && pass "control: without the live-read refusal a running item's old file is pruned" \
+  || fail "control: without the live-read refusal a running item's old file is pruned"
+
+mutant no-keep '[[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || kept_by=keep' ':'
+control no-keep "" "" '[[ ! -e tmp/waiter.run ]]' "without the --keep match the kept watch log is pruned"
+control_bare no-keep '[[ ! -e tmp/waiter.run ]]' \
+  "without the --keep match a live run directory is pruned on a checkout with no fleet state"
+
+mutant archive-ignored '&& tar -czf "$stage.tgz" -C / -T "$stage/paths" 2>"$stage/tar.err"; }; then' \
+  '&& { tar -czf "$stage.tgz" -C / -T "$stage/paths" || true; }; }; then'
+control archive-ignored "$TAR_BIN:" "" '[[ ! -e tmp/directive.md ]]' \
+  "without the archive refusal a failed archive still removes the directive"
+
+mutant first-lane "lanes: [(.lanes // [])[1:][] | select(.status == \"done\" and (.launched_at | old))]}' \"\$state_file\") || return 1" \
+  "lanes: [(.lanes // [])[] | select(.status == \"done\" and (.launched_at | old))]}' \"\$state_file\") || return 1"
+control first-lane "" "" '[[ "$(jq -r ".lanes[0].item" tmp/workflow-state-oversee.json)" != KEN-0 ]]' \
+  "without the first-record exception the fleet start is pruned"
+
+mutant report-names '[[ ! "${f##*/}" =~ $PROGRESS_REPORT_RE ]] || units+=("$f")' \
+  'units+=("$f")'
+control report-names "" "" '[[ ! -e tmp/progress-reports/notes.md ]]' \
+  "without the report-name filter an unrelated old file in the progress directory is pruned"
+
+mutant no-overlap 'state_message prune-progress-overlap "$@" >&2; return 1' ':'
+control no-overlap "" "ORCH_PROGRESS_REPORT_DIR=tmp" '[[ ! -e tmp/directive.md ]]' \
+  "without the overlap refusal a progress directory equal to the state directory prunes"
+
+mutant no-umask 'umask 077' ':'
+control no-umask "" "" '[[ "$(ls -l fleet/archive/*/oversee/*.tgz | cut -c1-10)" != -rw------- ]]' \
+  "without the private umask the archive is readable beyond its owner"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

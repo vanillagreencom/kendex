@@ -411,6 +411,12 @@ Use the output as `MAIN_REPO_ROOT`.
    .agents/skills/orch/scripts/workflow-state remove [STATE_KEY]
    ```
 
+   That removal is the item's close-out under `tmp/`: it takes every file there named for the item, keeping what [schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out) keeps. Where `workflow-state exists oversee` exits nonzero, no overseer prunes this checkout, so run its age backstop too. A refusal blocks nothing after it; its first line goes into § 6 under the worktree line:
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state prune
+   ```
+
    On success, re-run step 4's disposal predicate whole. Step 4 read it two steps ago, and step 5's replies and this step's build can each dirty the tree or move the branch. `worktree remove` runs `git worktree remove --force` and then `rm -rf`, so it refuses nothing itself: uncommitted content, untracked content and a worktree that has moved to another branch all go with the directory, and the predicate is the only thing between them and that.
 
    Every part holding removes it, run from `[MAIN_REPO_ROOT]` so the lane is not deleting its own cwd:
