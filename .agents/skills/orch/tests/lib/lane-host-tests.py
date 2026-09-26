@@ -180,7 +180,15 @@ class LaneHostCallersTests(unittest.TestCase):
         value = word.strip('"') if not name else None
         text = (scripts / path).read_text(errors="replace")
         if name and not name.group(1).isdigit():
-            bound = re.findall(r"^\s*" + name.group(1) + r'="([^"]*)"$', text, re.M)
+            binding = r"^\s*" + name.group(1) + r'="([^"]*)"$'
+            bound = re.findall(binding, text, re.M)
+            if not bound:
+                # A library reads the binding the script sourcing it made: every
+                # binding of the name in the package must name one script.
+                bound = [v for p in scripts.rglob("*") if p.is_file()
+                         for v in re.findall(binding, p.read_text(errors="replace"), re.M)]
+                named = {m.group(1) if (m := self.SCRIPT.match(v)) else None for v in bound}
+                bound = bound[:1] if len(named) == 1 and None not in named else []
             value = bound[0] if len(bound) == 1 else None
         if name and name.group(1).isdigit():
             # A positional is the wrapper where every caller passes the wrapper.
