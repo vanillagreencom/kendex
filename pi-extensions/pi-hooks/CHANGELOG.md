@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- A global hook whose kendex declaration sets an `env` table is still recognised as the rendered hook it is once kendex resolves `bash` ahead of that environment, so a declared `PATH` no longer stops the hook from starting.
+
 ### 0.13.0
 
 - A global hook whose kendex declaration sets an `env` table is recognised as the rendered hook it is, so where a project installs the same hook, the project's copy runs in its place instead of both running. A hook whose declaration sets that table runs with the environment it names, at project scope and global scope alike, which it did not before: a hook reading a variable the declaration gives it, such as a repository's skill-load rules, saw nothing there.

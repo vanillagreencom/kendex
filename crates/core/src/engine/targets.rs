@@ -143,27 +143,38 @@ pub(super) fn opencode_instruction_prefix(scope: &Scope) -> &'static str {
 /// segment it is. It is assigned first, before the walk, because it is also
 /// what names this hook to a reader: [`crate::hook::command_stem`] takes the
 /// command's first path-shaped word. A declared environment stands before the
-/// final `bash`, after that word.
+/// final interpreter word, after that word ([`launch`]).
 fn project_command(rel: &str, vars: Option<&BTreeMap<String, String>>) -> String {
     format!(
         "p={}; r=$({{ cd -P . && pwd; }} 2>/dev/null); case $r in /*) ;; *) r=;; esac; \
 while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || {{ r=${{r%/*}}; [ -n \"$r\" ] || r=/; }}; done; \
-[ -n \"$r\" ] || {{ printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }}; {}bash \"$r/$p\"",
+[ -n \"$r\" ] || {{ printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }}; {}\"$r/$p\"",
         crate::names::quoted(rel),
-        assignments(vars),
+        launch(vars).unwrap_or_else(|| "bash ".to_owned()),
     )
 }
 
 /// A command naming its script outright, `bash "<path>"`, where `path` is
 /// already fit to stand inside double quotes. A declared environment binds the
-/// path first and stands before `bash`, so the script is still the command's
-/// first path-shaped word, the one [`crate::hook::command_stem`] names the hook
-/// by; an assignment ahead of it could hold a `/` of its own.
+/// path first and stands before the interpreter word, so the script is still
+/// the command's first path-shaped word, the one [`crate::hook::command_stem`]
+/// names the hook by; an assignment ahead of it could hold a `/` of its own.
 fn direct_command(path: &str, vars: Option<&BTreeMap<String, String>>) -> String {
-    match assignments(vars) {
-        set if set.is_empty() => format!("bash \"{path}\""),
-        set => format!("h=\"{path}\"; {set}bash \"$h\""),
+    match launch(vars) {
+        None => format!("bash \"{path}\""),
+        Some(launch) => format!("h=\"{path}\"; {launch}\"$h\""),
     }
+}
+
+/// The words that start a hook's script under its declared environment,
+/// ending ready for its path; `None` where nothing is declared, and the script
+/// starts under a bare `bash`. A shell resolves a command word with its
+/// assignments in force, so a declared `PATH` would decide where the
+/// interpreter is found: the interpreter is resolved first, under the
+/// launching environment, and the assignments prefix its resolved path.
+fn launch(vars: Option<&BTreeMap<String, String>>) -> Option<String> {
+    let set = assignments(vars);
+    (!set.is_empty()).then(|| format!("b=$(command -v bash); {set}\"$b\" "))
 }
 
 /// A hook's declared environment as the words that set it for the one command

@@ -201,7 +201,7 @@ fn a_declared_environment_is_assigned_ahead_of_the_script_that_names_the_hook() 
         "KENDEX_SKILL_LOAD_RULES".to_owned(),
         "crates/ui/**/*.rs=iced-rs; it's".to_owned(),
     )]);
-    let assignment = "KENDEX_SKILL_LOAD_RULES='crates/ui/**/*.rs=iced-rs; it'\\''s' bash ";
+    let assignment = "b=$(command -v bash); KENDEX_SKILL_LOAD_RULES='crates/ui/**/*.rs=iced-rs; it'\\''s' \"$b\" ";
     for harness in [
         HarnessId::Claude,
         HarnessId::Codex,
@@ -236,4 +236,42 @@ fn a_declared_environment_is_assigned_ahead_of_the_script_that_names_the_hook() 
         command,
         format!("h=\"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\"; {assignment}\"$h\"")
     );
+}
+
+/// A declared `PATH` reaches the script and never the interpreter lookup: both
+/// command shapes, the global one naming its script and the project one walking
+/// up to it, start the script, which reports the `PATH` it was given. The
+/// launching shell's own `PATH` is set on the child, since the lookup reads it.
+#[cfg(unix)]
+#[test]
+fn a_declared_path_reaches_the_script_and_not_the_interpreter_lookup() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = crate::test_util::rooted(&tmp);
+    std::fs::create_dir_all(root.join("hooks")).unwrap();
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    let script = root.join("hooks/guard.sh");
+    std::fs::write(&script, "printf '%s' \"$PATH\"\n").unwrap();
+    let vars = BTreeMap::from([("PATH".to_owned(), "/nonexistent".to_owned())]);
+    for command in [
+        direct_command(&crate::paths::slashed(&script), Some(&vars)),
+        project_command("hooks/guard.sh", Some(&vars)),
+    ] {
+        let line = format!(
+            "cd {} && {command}",
+            crate::names::quoted(&crate::paths::slashed(&root.join("sub")))
+        );
+        let out = crate::process::Hardened::program("/bin/sh", &["-c", &line])
+            .env("PATH", "/usr/bin:/bin")
+            .run()
+            .unwrap();
+        assert_eq!(
+            (
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout).as_ref()
+            ),
+            (Some(0), "/nonexistent"),
+            "{line}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }
